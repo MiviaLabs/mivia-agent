@@ -65,6 +65,490 @@ func TestMigrateRecoversFromApplyPhaseCrash(t *testing.T) {
 	}
 }
 
+func TestSchemaRepairReplacesMalformedLiveWorktreeIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP INDEX worktree_instances_live_name_idx`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX worktree_instances_live_name_idx ON worktree_instances(workspace_id,instance_id) WHERE state != 'deleted'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("repair malformed live-name index: %v", err)
+	}
+	defer store.Close()
+	for index, id := range []string{"wt_1111111111111111", "wt_2222222222222222"} {
+		_, err := store.db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES('workspace','same',?,?,'creating',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, id, fmt.Sprintf("/tmp/wt-%d", index))
+		if index == 0 && err != nil {
+			t.Fatal(err)
+		}
+		if index == 1 && err == nil {
+			t.Fatal("schema repair accepted two live instances with the same workspace and worktree")
+		}
+	}
+}
+
+func TestSchemaRepairPreservesLiveIndexPredicateLiteralCase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`DROP INDEX worktree_instances_live_name_idx`,
+		`CREATE UNIQUE INDEX worktree_instances_live_name_idx ON worktree_instances(workspace_id,worktree) WHERE state != 'DELETED'`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("repair predicate literal: %v", err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES('workspace','same','wt_1111111111111111','/tmp/old','deleted',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES('workspace','same','wt_2222222222222222','/tmp/new','creating',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`); err != nil {
+		store.Close()
+		t.Fatalf("same-name recreation after index repair: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := OpenSQLite(path); err != nil {
+		t.Fatalf("idempotent reopen after predicate repair: %v", err)
+	} else if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSchemaRepairRejectsDuplicateLiveWorktrees(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP INDEX worktree_instances_live_name_idx`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX worktree_instances_live_name_idx ON worktree_instances(workspace_id,instance_id) WHERE state != 'deleted'`); err != nil {
+		t.Fatal(err)
+	}
+	for index, id := range []string{"wt_1111111111111111", "wt_2222222222222222"} {
+		if _, err := db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES('workspace','same',?,?,'creating',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, id, fmt.Sprintf("/tmp/wt-%d", index)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := OpenSQLite(path); err == nil {
+		reopened.Close()
+		t.Fatal("schema repair accepted duplicate live worktrees")
+	}
+}
+
+func TestSchemaRepairReplacesMalformedWorktreeInstanceIDIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP INDEX worktree_instances_id_idx`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX worktree_instances_id_idx ON worktree_instances(workspace_id,worktree,instance_id)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("repair malformed instance-ID index: %v", err)
+	}
+	defer store.Close()
+	for index, name := range []string{"wt-a", "wt-b"} {
+		_, err := store.db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES('workspace',?,'wt_1111111111111111',?,'creating',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, name, fmt.Sprintf("/tmp/wt-%d", index))
+		if index == 0 && err != nil {
+			t.Fatal(err)
+		}
+		if index == 1 && err == nil {
+			t.Fatal("schema repair accepted one instance ID for two worktree names")
+		}
+	}
+}
+
+func TestSchemaRepairRejectsDuplicateWorktreeInstanceIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP INDEX worktree_instances_id_idx`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX worktree_instances_id_idx ON worktree_instances(workspace_id,worktree,instance_id)`); err != nil {
+		t.Fatal(err)
+	}
+	for index, name := range []string{"wt-a", "wt-b"} {
+		if _, err := db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES('workspace',?,'wt_1111111111111111',?,'creating',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, name, fmt.Sprintf("/tmp/wt-%d", index)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := OpenSQLite(path); err == nil {
+		reopened.Close()
+		t.Fatal("schema repair accepted duplicate worktree instance IDs")
+	}
+}
+
+func TestSchemaRepairRebuildsMalformedWorktreeRoutesV9(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db := openMalformedWorktreeRoutesV9(t, path)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("repair malformed v9 routes: %v", err)
+	}
+	defer store.Close()
+	for index, dir := range []string{"/tmp/a", "/tmp/b"} {
+		_, err := store.db.Exec(`INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES('workspace','subject','wt-a',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'wt_1111111111111111')`, dir)
+		if index == 0 && err != nil {
+			t.Fatal(err)
+		}
+		if index == 1 && err == nil {
+			t.Fatal("schema repair accepted a duplicate exact worktree route")
+		}
+	}
+}
+
+func TestSchemaRepairRejectsDuplicateExactWorktreeRoutes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db := openMalformedWorktreeRoutesV9(t, path)
+	for _, dir := range []string{"/tmp/a", "/tmp/b"} {
+		if _, err := db.Exec(`INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES('workspace','subject','wt-a',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'wt_1111111111111111')`, dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := OpenSQLite(path); err == nil {
+		reopened.Close()
+		t.Fatal("schema repair accepted duplicate exact worktree routes")
+	}
+}
+
+func openMalformedWorktreeRoutesV9(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`ALTER TABLE worktree_routes RENAME TO worktree_routes_old`,
+		`CREATE TABLE worktree_routes(workspace_id TEXT NOT NULL,subject_id TEXT NOT NULL,worktree TEXT NOT NULL,dir TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,instance_id TEXT,PRIMARY KEY(workspace_id,subject_id,worktree,dir))`,
+		`INSERT INTO worktree_routes SELECT * FROM worktree_routes_old`,
+		`DROP TABLE worktree_routes_old`,
+		`CREATE UNIQUE INDEX worktree_routes_instance_idx ON worktree_routes(workspace_id,subject_id,worktree,dir)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	return db
+}
+
+func TestSchemaRepairReplacesMalformedV7SecondaryIndexes(t *testing.T) {
+	tests := []struct {
+		name string
+		bad  string
+		want string
+	}{
+		{name: "worktree_routes_worktree_instance_idx", bad: `CREATE UNIQUE INDEX worktree_routes_worktree_instance_idx ON worktree_routes(instance_id)`, want: `CREATE INDEX worktree_routes_worktree_instance_idx ON worktree_routes(worktree,instance_id)`},
+		{name: "chat_session_dirs_worktree_instance_idx", bad: `CREATE UNIQUE INDEX chat_session_dirs_worktree_instance_idx ON chat_session_dirs(instance_id)`, want: `CREATE INDEX chat_session_dirs_worktree_instance_idx ON chat_session_dirs(worktree,instance_id)`},
+		{name: "chat_sessions_instance_idx", bad: `CREATE UNIQUE INDEX chat_sessions_instance_idx ON chat_sessions(instance_id)`, want: `CREATE INDEX chat_sessions_instance_idx ON chat_sessions(instance_id)`},
+		{name: "context_sessions_instance_idx", bad: `CREATE UNIQUE INDEX context_sessions_instance_idx ON context_sessions(instance_id)`, want: `CREATE INDEX context_sessions_instance_idx ON context_sessions(instance_id)`},
+		{name: "chat_session_admissions_instance_idx", bad: `CREATE UNIQUE INDEX chat_session_admissions_instance_idx ON chat_session_admissions(instance_id)`, want: `CREATE INDEX chat_session_admissions_instance_idx ON chat_session_admissions(instance_id)`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "context.db")
+			store, err := OpenSQLite(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`DROP INDEX IF EXISTS ` + test.name); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(test.bad); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			store, err = OpenSQLite(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			var definition string
+			if err := store.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='index' AND name=?`, test.name).Scan(&definition); err != nil {
+				t.Fatal(err)
+			}
+			if normalizeSchemaDefinition(definition) != normalizeSchemaDefinition(test.want) {
+				t.Fatalf("index definition = %q, want %q", definition, test.want)
+			}
+		})
+	}
+}
+
+func TestSchemaRepairRestoresWorktreeInstanceStateConstraint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	seedWorktreeInstancesWithoutStateCheck(t, path, "active")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, err = store.db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES('workspace','bad','wt_2222222222222222','/tmp/bad','corrupt',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`)
+	if err == nil {
+		t.Fatal("repaired worktree table accepted an invalid state")
+	}
+}
+
+func TestSchemaRepairRejectsInvalidWorktreeInstanceState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	seedWorktreeInstancesWithoutStateCheck(t, path, "corrupt")
+	if reopened, err := OpenSQLite(path); err == nil {
+		reopened.Close()
+		t.Fatal("schema repair accepted an invalid worktree state")
+	}
+}
+
+func TestSchemaRepairRejectsNonNullableLegacyInstanceColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`ALTER TABLE chat_session_dirs RENAME TO chat_session_dirs_old`,
+		`CREATE TABLE chat_session_dirs(workspace_id TEXT NOT NULL,subject_id TEXT NOT NULL,name TEXT NOT NULL,dir TEXT NOT NULL DEFAULT '',worktree TEXT NOT NULL DEFAULT '',instance_id TEXT NOT NULL,PRIMARY KEY(workspace_id,subject_id,name))`,
+		`INSERT INTO chat_session_dirs SELECT * FROM chat_session_dirs_old`,
+		`DROP TABLE chat_session_dirs_old`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := OpenSQLite(path); err == nil {
+		reopened.Close()
+		t.Fatal("schema repair accepted a non-null legacy instance column")
+	}
+}
+
+func TestNewerSchemaFailsBeforeRepairMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`ALTER TABLE worktree_instances ADD COLUMN future_value TEXT`,
+		`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at,future_value) VALUES('workspace','wt-a','wt_1111111111111111','/tmp/wt-a','active',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'keep-me')`,
+		`PRAGMA user_version = 10`,
+		`UPDATE context_schema_migrations SET dirty=1 WHERE version=7`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := OpenSQLite(path); err == nil {
+		reopened.Close()
+		t.Fatal("newer schema was accepted")
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var value string
+	if err := db.QueryRow(`SELECT future_value FROM worktree_instances WHERE worktree='wt-a'`).Scan(&value); err != nil {
+		t.Fatalf("rejected newer schema changed future column: %v", err)
+	}
+	if value != "keep-me" {
+		t.Fatalf("future value = %q, want keep-me", value)
+	}
+	var dirty int
+	if err := db.QueryRow(`SELECT dirty FROM context_schema_migrations WHERE version=7`).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if dirty != 1 {
+		t.Fatalf("newer schema dirty flag = %d, want unchanged", dirty)
+	}
+}
+
+func TestNewerSchemaDoesNotCreateMigrationTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "context.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 10`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := OpenSQLite(path); err == nil {
+		reopened.Close()
+		t.Fatal("newer schema was accepted")
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='context_schema_migrations'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("newer schema gained context_schema_migrations")
+	}
+}
+
+func seedWorktreeInstancesWithoutStateCheck(t *testing.T, path, state string) {
+	t.Helper()
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	statements := []string{
+		`DROP TABLE worktree_instances`,
+		`CREATE TABLE worktree_instances(workspace_id TEXT NOT NULL,worktree TEXT NOT NULL,instance_id TEXT NOT NULL,canonical_path TEXT NOT NULL,state TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(workspace_id,worktree,instance_id))`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES('workspace','wt-a','wt_1111111111111111','/tmp/wt-a',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, state); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func assertContextSchemaClean(t *testing.T, db *sql.DB) {
 	t.Helper()
 	version, dirty, err := contextSchemaState(db)

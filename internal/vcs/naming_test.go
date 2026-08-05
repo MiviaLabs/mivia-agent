@@ -41,13 +41,8 @@ func TestSanitizeName(t *testing.T) {
 }
 
 func TestSanitizeNameTruncation(t *testing.T) {
-	// Build a name longer than MaxWorktreeNameLen
 	long := strings.Repeat("a", MaxWorktreeNameLen+10)
-	got, err := SanitizeName(long)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(got) > MaxWorktreeNameLen {
-		t.Errorf("len=%d, want <= %d", len(got), MaxWorktreeNameLen)
+	if got, err := SanitizeName(long); err == nil {
+		t.Fatalf("SanitizeName accepted truncated alias %q", got)
 	}
 }

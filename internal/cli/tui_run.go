@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -19,6 +20,7 @@ const workerWaitTimeout = 15 * time.Second
 // new session rooted in dir. It avoids mutating live tools and hooks in place.
 type workspaceRestart struct {
 	dir, resumeSessionName string
+	worktreeInstance       contextstate.WorktreeInstance
 }
 
 func (e *workspaceRestart) Error() string {
@@ -70,7 +72,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	metricsAdapter.Close()
 	bus.Close()
 	if model.restartWorkspace != "" {
-		return &workspaceRestart{dir: model.restartWorkspace, resumeSessionName: model.resumeSessionName}
+		return &workspaceRestart{dir: model.restartWorkspace, resumeSessionName: model.resumeSessionName, worktreeInstance: model.restartWorktreeInstance}
 	}
 	return err
 }

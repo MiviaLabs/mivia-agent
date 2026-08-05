@@ -76,11 +76,12 @@ func (s *Session) emitContextCompaction(preparation contextmgr.Preparation, turn
 	}, preparation)
 }
 
-func (s *Session) advanceContextHead(store contextstate.Store, principal contextstate.Principal, expected contextstate.Revision, expectedBinding, newBinding contextstate.BindingRevision, reason string, clearActive bool) error {
+func (s *Session) advanceContextHead(store contextstate.Store, principal contextstate.Principal, instance contextstate.WorktreeInstance, expected contextstate.Revision, expectedBinding, newBinding contextstate.BindingRevision, reason string, clearActive bool) error {
 	request := contextstate.AdvanceRequest{
 		OperationID: fmt.Sprintf("%s-%s-%d-%d-%d", reason, principal.SessionID, expected.Session, expected.Durable, newBinding.Generation),
 		Principal:   principal, SessionID: principal.SessionID, Expected: expected,
-		ExpectedBinding: expectedBinding, NewSession: expected.Session + 1,
+		WorktreeInstance: instance,
+		ExpectedBinding:  expectedBinding, NewSession: expected.Session + 1,
 		NewDurable: expected.Durable + 1, NewSourceSequence: expected.Source,
 		NewBinding: newBinding, ClearActive: clearActive, Reason: reason,
 	}
@@ -90,12 +91,12 @@ func (s *Session) advanceContextHead(store contextstate.Store, principal context
 // advanceBindingIfNeeded temporarily releases the session mutex for the
 // durable CAS and returns with it reacquired so the caller can publish the
 // already-validated binding atomically with the in-memory head.
-func (s *Session) advanceBindingIfNeeded(enabled bool, store contextstate.Store, principal contextstate.Principal, expected contextstate.Revision, expectedBinding, newBinding contextstate.BindingRevision, reason string) error {
+func (s *Session) advanceBindingIfNeeded(enabled bool, store contextstate.Store, principal contextstate.Principal, instance contextstate.WorktreeInstance, expected contextstate.Revision, expectedBinding, newBinding contextstate.BindingRevision, reason string) error {
 	if !enabled {
 		return nil
 	}
 	s.mu.Unlock()
-	err := s.advanceContextHead(store, principal, expected, expectedBinding, newBinding, reason, false)
+	err := s.advanceContextHead(store, principal, instance, expected, expectedBinding, newBinding, reason, false)
 	s.mu.Lock()
 	return err
 }

@@ -34,6 +34,7 @@ func (s *SQLite) LoadWorktreeSession(ctx context.Context, p contextstate.Princip
 		return nil, out, err
 	}
 	out.Name = n
+	out.WorktreeInstance = i
 	return append([]byte(nil), b...), out, tx.Commit()
 }
 
@@ -93,6 +94,9 @@ func (s *SQLite) PruneWorktreeSessionSnapshots(ctx context.Context, p contextsta
 			if _, err := tx.ExecContext(ctx, `DELETE FROM chat_session_dirs WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, p.WorkspaceID, p.SubjectID, key, i.ID); err != nil {
 				return err
 			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity='snapshot' AND name=? AND storage_key=?`, p.WorkspaceID, p.SubjectID, i.ID, name, key); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -117,8 +121,11 @@ func (s *SQLite) SaveWorktreeSessionAdmission(ctx context.Context, p contextstat
 			return err
 		}
 		b, _ := json.Marshal(r.Names)
-		_, err = tx.ExecContext(ctx, `INSERT INTO chat_session_admissions(workspace_id,subject_id,name,agent,digest,names,updated_at,instance_id) VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET agent=excluded.agent,digest=excluded.digest,names=excluded.names,updated_at=excluded.updated_at,instance_id=excluded.instance_id`, p.WorkspaceID, p.SubjectID, k, r.Agent, r.Digest, string(b), i.ID)
-		return err
+		result, err := tx.ExecContext(ctx, `INSERT INTO chat_session_admissions(workspace_id,subject_id,name,agent,digest,names,updated_at,instance_id) VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET agent=excluded.agent,digest=excluded.digest,names=excluded.names,updated_at=excluded.updated_at WHERE chat_session_admissions.instance_id IS excluded.instance_id`, p.WorkspaceID, p.SubjectID, k, r.Agent, r.Digest, string(b), i.ID)
+		if err != nil {
+			return err
+		}
+		return requireCatalogMutation(result)
 	})
 }
 

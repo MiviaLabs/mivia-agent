@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -102,6 +103,34 @@ func TestContextPreparationRetainsWorktreeInstance(t *testing.T) {
 	}
 	if input.WorktreeInstance != instance {
 		t.Fatalf("preparation worktree instance = %+v, want %+v", input.WorktreeInstance, instance)
+	}
+}
+
+func TestBoundSessionSaveOptionsRetainSetupDirectory(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+	if err := os.Chdir(dirA); err != nil {
+		t.Fatal(err)
+	}
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := session.SetContextWorktreeBinding(instance); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dirB); err != nil {
+		t.Fatal(err)
+	}
+	options := session.sessionSaveOptions()
+	if options.Dir != dirA {
+		t.Fatalf("save directory = %q, want retained %q", options.Dir, dirA)
+	}
+	if options.WorktreeInstance != instance || options.Worktree != instance.Worktree {
+		t.Fatalf("save binding = %+v, %q; want %+v", options.WorktreeInstance, options.Worktree, instance)
 	}
 }
 

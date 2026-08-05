@@ -148,28 +148,6 @@ func TestWorktreeDialogEnterSwitchFailsOnFakePath(t *testing.T) {
 	}
 }
 
-func TestWorktreeDialogSwitchRealDir(t *testing.T) {
-	m := newReadyChatModel(30, 90)
-
-	// Create a real temp directory to switch to.
-	tmpDir := t.TempDir()
-	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{
-		{Name: "real-wt", Branch: "main", Path: tmpDir},
-	})
-	m.hitMap.invalidate()
-
-	m.handleChatKey("enter", false)
-	if m.worktreeDlg != nil {
-		t.Fatalf("dialog should close on successful switch, notice: %q", m.worktreeDlg.notice)
-	}
-	if m.workspaceDir != tmpDir {
-		t.Fatalf("workspace = %q, want %q", m.workspaceDir, tmpDir)
-	}
-	if m.restartWorkspace != tmpDir {
-		t.Fatalf("restart workspace = %q, want %q", m.restartWorkspace, tmpDir)
-	}
-}
-
 // ─── Delete confirmation ───────────────────────────────────────────────
 
 func TestWorktreeDialogDeleteRequiresConfirmation(t *testing.T) {
@@ -552,7 +530,7 @@ func TestApplyWorktreeCreatedSuccess(t *testing.T) {
 		Path:   "/tmp/project/.mivia/worktrees/wt-2",
 		Branch: "feature/new",
 	}
-	msg := worktreeCreatedMsg{wt: wt, err: nil, dlg: m.worktreeDlg}
+	msg := worktreeCreatedMsg{wt: wt, instance: testWorktreeInstance(wt.Name), err: nil, dlg: m.worktreeDlg}
 	m.applyWorktreeCreated(msg)
 
 	if m.worktreeDlg.creating {
@@ -652,8 +630,9 @@ func TestApplyWorktreeCreatedSuccessRendersInUpdate(t *testing.T) {
 			Path:   "/tmp/project/.mivia/worktrees/wt-1",
 			Branch: "main",
 		},
-		err: nil,
-		dlg: m.worktreeDlg,
+		instance: testWorktreeInstance("wt-1"),
+		err:      nil,
+		dlg:      m.worktreeDlg,
 	}
 	m.applyWorktreeCreated(msg)
 

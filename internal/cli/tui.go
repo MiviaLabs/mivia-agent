@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -186,11 +187,12 @@ type tuiModel struct {
 	queuedSlashCmds []tea.Cmd
 	// restartWorkspace is set by worktree actions. The outer chat loop then
 	// builds a fresh session in this directory. It is not a live root switch.
-	restartWorkspace  string
-	resumeSessionName string
-	width             int
-	height            int
-	ready             bool
+	restartWorkspace        string
+	resumeSessionName       string
+	restartWorktreeInstance contextstate.WorktreeInstance
+	width                   int
+	height                  int
+	ready                   bool
 }
 
 // composerPlaceholder is the default hint text shown in the composer textarea.

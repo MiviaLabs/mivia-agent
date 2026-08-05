@@ -6,10 +6,10 @@ import (
 	"encoding/base32"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -24,17 +24,20 @@ const (
 )
 
 type worktreeDialog struct {
-	worktrees []vcs.WorktreeInfo
-	cursor    int
-	scroll    int
-	confirm   worktreeConfirm
-	notice    string
-	noticeErr bool
-	creating  bool
+	worktrees            []vcs.WorktreeInfo
+	recovery             map[string]worktreeRecoveryRow
+	bindings             map[string]worktreeDialogBinding
+	cursor               int
+	scroll               int
+	confirm              worktreeConfirm
+	notice               string
+	noticeErr            bool
+	creating             bool
+	lifecycleUnavailable bool
 }
 
 func newWorktreeDialog(worktrees []vcs.WorktreeInfo) *worktreeDialog {
-	return &worktreeDialog{worktrees: append([]vcs.WorktreeInfo(nil), worktrees...)}
+	return &worktreeDialog{worktrees: append([]vcs.WorktreeInfo(nil), worktrees...), recovery: make(map[string]worktreeRecoveryRow), bindings: make(map[string]worktreeDialogBinding)}
 }
 
 func (d *worktreeDialog) setNotice(msg string, isErr bool) {
@@ -59,6 +62,8 @@ func (d *worktreeDialog) removeAt(i int) {
 	if i < 0 || i >= len(d.worktrees) {
 		return
 	}
+	delete(d.recovery, d.worktrees[i].Name)
+	delete(d.bindings, d.worktrees[i].Name)
 	d.worktrees = append(d.worktrees[:i], d.worktrees[i+1:]...)
 	if d.cursor >= len(d.worktrees) {
 		d.cursor = max(0, len(d.worktrees)-1)
@@ -165,7 +170,11 @@ func (d *worktreeDialog) rowLines(inner, visible int) []string {
 			marker = tuiAccentStyle.Render("▸ ")
 			name = lipgloss.NewStyle().Bold(true).Render(name)
 		}
-		meta := tuiDimStyle.Render(wt.Branch)
+		metaText := wt.Branch
+		if recovery, ok := d.recovery[wt.Name]; ok {
+			metaText = worktreeRecoveryLabel(recovery.Info.State)
+		}
+		meta := tuiDimStyle.Render(metaText)
 		line := marker + name
 		gap := inner - lipgloss.Width(line) - lipgloss.Width(meta)
 		if gap < 1 {
@@ -221,15 +230,27 @@ func (m *tuiModel) handleWorktreeDialogKey(key string) (bool, bool, []tea.Cmd) {
 		d.move(1)
 		d.clampScrollTo(visible)
 	case "enter":
+		if d.lifecycleUnavailable {
+			d.setNotice("worktree lifecycle state is unavailable", true)
+			return true, true, nil
+		}
 		if wt, ok := d.selected(); ok {
-			if wt.Branch == "recovery required" {
+			if recovery, found := d.selectedRecovery(); found && recovery.Info.State == contextstate.WorktreeDeleting {
 				d.setNotice("remove this row to recover deletion", true)
+				return true, true, nil
+			}
+			if recovery, found := d.selectedRecovery(); found && recovery.Info.State == contextstate.WorktreeCreating {
+				m.recoverCreatingWorktree(wt, recovery.Info)
 				return true, true, nil
 			}
 			m.switchToWorktree(wt)
 			return true, true, nil
 		}
 	case "d":
+		if d.lifecycleUnavailable {
+			d.setNotice("worktree lifecycle state is unavailable", true)
+			return true, true, nil
+		}
 		if _, ok := d.selected(); ok {
 			d.confirm = wtConfirmDelete
 		}
@@ -237,6 +258,10 @@ func (m *tuiModel) handleWorktreeDialogKey(key string) (bool, bool, []tea.Cmd) {
 		m.switchToMainTree()
 		return true, true, nil
 	case "c":
+		if d.lifecycleUnavailable {
+			d.setNotice("worktree lifecycle state is unavailable", true)
+			return true, true, nil
+		}
 		if m.workspaceSwitchBusy() {
 			d.setNotice("cannot switch while agent is running", true)
 			return true, true, nil
@@ -262,9 +287,15 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			d.setNotice("delete failed: "+err.Error(), true)
 			break
 		}
-		if wt.Branch == "recovery required" {
-			recovered, err := recoverManagedWorktreeRemoval(wtDir, wt.Name, worktreeConfig.BranchPrefix)
-			if err != nil || !recovered {
+		if recovery, found := d.selectedRecovery(); found && recovery.Info.State == contextstate.WorktreeDeleting {
+			store, closeStore, storeErr := m.worktreeLifecycleStore(wtDir)
+			if storeErr != nil {
+				d.setNotice("recovery failed: "+storeErr.Error(), true)
+				break
+			}
+			err := recoverManagedWorktreeRemovalInfoInStore(store, wtDir, recovery.Info, worktreeConfig.BranchPrefix)
+			closeStore()
+			if err != nil {
 				d.setNotice("recovery failed: "+fmt.Sprint(err), true)
 				break
 			}
@@ -276,13 +307,34 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			d.setNotice("cannot delete the current worktree", true)
 			break
 		}
-		instance, err := beginManagedWorktreeRemovalForSession(m.session, wtDir, &wt)
+		lock, lockErr := lockWorktreeLifecycle(wtDir, wt.Name)
+		if lockErr != nil {
+			d.setNotice("delete failed: "+lockErr.Error(), true)
+			break
+		}
+		defer lock.Close()
+		expected, hasBinding := d.bindings[wt.Name]
+		if hasBinding {
+			current, validateErr := m.validateWorktreeSwitch(wt)
+			if validateErr != nil || expected.Err != nil || current != expected.Instance {
+				err := validateErr
+				if err == nil {
+					err = expected.Err
+				}
+				if err == nil {
+					err = contextstate.ErrWorktreeDeleted
+				}
+				d.setNotice("delete failed: "+err.Error(), true)
+				break
+			}
+		}
+		instance, err := beginManagedWorktreeRemovalForSessionExpected(m.session, wtDir, &wt, expected.Instance, hasBinding)
 		if err != nil {
 			d.setNotice("delete failed: "+err.Error(), true)
 			break
 		}
-		if err := vcs.RemoveWithPrefix(context.Background(), wtDir, wt.Name, worktreeConfig.BranchPrefix); err != nil {
-			if reactivateErr := reactivateManagedWorktree(wtDir, instance); reactivateErr != nil {
+		if err := vcs.RemoveWithPrefixLease(context.Background(), wtDir, wt.Name, worktreeConfig.BranchPrefix, lock.File()); err != nil {
+			if reactivateErr := reactivateManagedWorktreeForSession(m.session, wtDir, instance); reactivateErr != nil {
 				d.setNotice("delete failed: "+err.Error()+"; session lifecycle recovery failed: "+reactivateErr.Error(), true)
 			} else {
 				d.setNotice("delete failed: "+err.Error(), true)
@@ -321,7 +373,13 @@ func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 		m.hitMap.invalidate()
 		return
 	}
+	if msg.wt == nil || msg.instance.IsZero() || msg.instance.Validate() != nil || msg.instance.Worktree != msg.wt.Name {
+		d.setNotice("create failed: invalid worktree instance", true)
+		m.hitMap.invalidate()
+		return
+	}
 	d.worktrees = append(d.worktrees, *msg.wt)
+	d.bindings[msg.wt.Name] = worktreeDialogBinding{Instance: msg.instance}
 	d.cursor = len(d.worktrees) - 1
 	d.setNotice(fmt.Sprintf("created %q at %s", msg.wt.Name, msg.wt.Path), false)
 	d.clampScroll()
@@ -329,13 +387,15 @@ func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 	m.hitMap.invalidate()
 	if info, err := os.Stat(msg.wt.Path); err == nil && info.IsDir() {
 		m.restartInWorkspace(msg.wt.Path)
+		m.restartWorktreeInstance = msg.instance
 	}
 }
 
 type worktreeCreatedMsg struct {
-	wt  *vcs.WorktreeInfo
-	err error
-	dlg *worktreeDialog
+	wt       *vcs.WorktreeInfo
+	instance contextstate.WorktreeInstance
+	err      error
+	dlg      *worktreeDialog
 }
 
 func (m *tuiModel) createWorktreeFromDialog() tea.Cmd {
@@ -371,93 +431,4 @@ func (m *tuiModel) createWorktreeAsync(dir, name string, dlg *worktreeDialog) te
 		}
 	}
 	return m.createWorktreeAsyncWithPrefix(repoRoot, name, worktreeConfig.BranchPrefix, dlg)
-}
-
-func (m *tuiModel) switchToWorktree(wt vcs.WorktreeInfo) {
-	if m.workspaceSwitchBusy() {
-		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
-		return
-	}
-	if info, err := os.Stat(wt.Path); err != nil {
-		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
-		return
-	} else if !info.IsDir() {
-		m.worktreeDlg.setNotice("switch failed: path is not a directory", true)
-		return
-	}
-	m.restartInWorkspace(wt.Path)
-}
-
-func (m *tuiModel) switchToMainTree() {
-	if m.workspaceSwitchBusy() {
-		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
-		return
-	}
-	dir, _ := os.Getwd()
-	root, err := vcs.MainRepoRoot(dir)
-	if err != nil {
-		m.worktreeDlg.setNotice("not inside a git repo", true)
-		return
-	}
-	m.restartInWorkspace(root)
-}
-
-func (m *tuiModel) workspaceSwitchBusy() bool {
-	return m.waiting || m.cancelling
-}
-
-func (m *tuiModel) restartInWorkspace(dir string) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
-		return
-	}
-	m.workspaceDir = abs
-	m.restartWorkspace = abs
-	m.worktreeDlg = nil
-	m.hitMap.invalidate()
-}
-
-func worktreeContainsCurrentDir(path string) bool {
-	root, err := filepath.Abs(path)
-	if err != nil {
-		return true
-	}
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		root = resolved
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return true
-	}
-	if cwd, err = filepath.EvalSymlinks(cwd); err != nil {
-		return true
-	}
-	rel, err := filepath.Rel(root, cwd)
-	if err != nil {
-		return true
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
-}
-
-func (m *tuiModel) resolveWorkspaceDir() string {
-	dir := m.workspaceDir
-	if dir != "" && strings.HasPrefix(dir, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			dir = strings.Replace(dir, "~", home, 1)
-		}
-	}
-	if dir == "" {
-		wd, _ := os.Getwd()
-		return wd
-	}
-	return dir
-}
-
-func (m *tuiModel) resolveRepoRoot() string {
-	dir := m.resolveWorkspaceDir()
-	if root, err := vcs.MainRepoRoot(dir); err == nil {
-		return root
-	}
-	return dir
 }

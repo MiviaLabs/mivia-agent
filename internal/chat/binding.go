@@ -226,11 +226,12 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 	binding.ModelGeneration = s.binding.ModelGeneration + 1
 	contextStore := s.contextStore
 	contextPrincipal := s.contextPrincipal
+	contextWorktree := s.contextWorktree
 	contextExpected := s.contextHead
 	contextEnabled := s.contextEnabledLocked() && contextStore != nil
 	expectedBinding := captureBindingRevision(s.binding)
 	newBinding := captureBindingRevision(binding)
-	if err := s.advanceBindingIfNeeded(contextEnabled, contextStore, contextPrincipal, contextExpected, expectedBinding, newBinding, "switch"); err != nil {
+	if err := s.advanceBindingIfNeeded(contextEnabled, contextStore, contextPrincipal, contextWorktree, contextExpected, expectedBinding, newBinding, "switch"); err != nil {
 		s.mu.Unlock()
 		closeUnpublishedDispatcher(binding.Dispatcher, current)
 		return fmt.Errorf("advance context binding: %w", err)

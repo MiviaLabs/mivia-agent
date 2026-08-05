@@ -42,7 +42,8 @@ func sessionInfoFromCatalog(info contextstate.SessionCatalogInfo) SessionInfo {
 	return SessionInfo{Name: info.Name, Model: info.Model, Provider: info.Provider,
 		CreatedAt: created, UpdatedAt: updated, TurnCount: info.TurnCount,
 		TokenCount: info.TokenCount, MessageCount: info.MessageCount, ChunkCount: 1,
-		Dir: info.Dir, Worktree: info.Worktree, WorktreeRoute: info.WorktreeRoute}
+		Dir: info.Dir, Worktree: info.Worktree, WorktreeRoute: info.WorktreeRoute,
+		WorktreeInstance: info.WorktreeInstance}
 }
 
 func (s *Session) saveContextSession(name string, msgs []provider.Message, selection ModelBinding) error {
@@ -70,14 +71,15 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 // snapshot save. The zero value (no directory) is valid for callers that
 // cannot resolve one.
 func (s *Session) sessionSaveOptions() contextstate.SessionSaveOptions {
-	dir, worktree := currentDirContext()
 	s.mu.RLock()
 	instance := s.contextWorktree
+	dir := s.contextSessionDir
 	s.mu.RUnlock()
 	if !instance.IsZero() {
-		worktree = instance.Worktree
+		return contextstate.SessionSaveOptions{Dir: dir, Worktree: instance.Worktree, WorktreeInstance: instance}
 	}
-	return contextstate.SessionSaveOptions{Dir: dir, Worktree: worktree, WorktreeInstance: instance}
+	dir, worktree := currentDirContext()
+	return contextstate.SessionSaveOptions{Dir: dir, Worktree: worktree}
 }
 
 func (s *Session) loadContextCatalog(name string) (bool, error) {

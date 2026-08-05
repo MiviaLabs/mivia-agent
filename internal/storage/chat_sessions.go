@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -54,6 +53,11 @@ func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Princip
 		if err := requireActiveWorktreeTx(ctx, tx, principal, opts.WorktreeInstance); err != nil {
 			return err
 		}
+		if opts.WorktreeInstance.IsZero() {
+			if err := rejectManagedCatalogKey(ctx, tx, principal, name); err != nil {
+				return err
+			}
+		}
 		storedName := name
 		if !opts.WorktreeInstance.IsZero() {
 			var err error
@@ -62,11 +66,18 @@ func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Princip
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count,instance_id=excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, storedName, model, provider, messages, now, now, turns, tokens, messageCount, nullableText(opts.WorktreeInstance.ID)); err != nil {
+		result, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count WHERE chat_sessions.instance_id IS excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, storedName, model, provider, messages, now, now, turns, tokens, messageCount, nullableText(opts.WorktreeInstance.ID))
+		if err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, upsertSessionDirSQL, principal.WorkspaceID, principal.SubjectID, storedName, opts.Dir, opts.Worktree, nullableText(opts.WorktreeInstance.ID))
-		return err
+		if err := requireCatalogMutation(result); err != nil {
+			return err
+		}
+		result, err = tx.ExecContext(ctx, upsertSessionDirSQL, principal.WorkspaceID, principal.SubjectID, storedName, opts.Dir, opts.Worktree, nullableText(opts.WorktreeInstance.ID))
+		if err != nil {
+			return err
+		}
+		return requireCatalogMutation(result)
 	})
 }
 
@@ -75,6 +86,9 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
 	if err := validateSessionCatalogName(name); err != nil {
+		return nil, contextstate.SessionCatalogInfo{}, err
+	}
+	if err := rejectManagedCatalogKey(ctx, s.db, principal, name); err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
 	var payload []byte
@@ -105,7 +119,7 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 	if err := principal.Validate(); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT c.name,c.model,c.provider,'',c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,''),0 FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id IS NULL UNION ALL SELECT t.session_id,t.model,t.provider,t.session_id,t.created,t.updated,t.source_sequence,0,t.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),0 FROM (SELECT cs.workspace_id,cs.subject_id,cs.session_id,cs.model,cs.provider,cs.source_sequence,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP) AS created,COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP) AS updated FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 AND cs.instance_id IS NULL AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.model,cs.provider,cs.source_sequence) t LEFT JOIN chat_session_dirs d ON d.workspace_id=t.workspace_id AND d.subject_id=t.subject_id AND d.name=t.session_id UNION ALL SELECT 'worktree:' || r.worktree,'','', '',r.created_at,r.updated_at,0,0,0,r.dir,r.worktree,1 FROM worktree_routes r WHERE r.workspace_id=? AND r.subject_id=? AND (r.instance_id IS NULL OR EXISTS (SELECT 1 FROM worktree_instances wi WHERE wi.workspace_id=r.workspace_id AND wi.worktree=r.worktree AND wi.instance_id=r.instance_id AND wi.state='active')) ORDER BY 6 DESC,1`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.name,c.model,c.provider,'',c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id IS NULL UNION ALL SELECT t.session_id,t.model,t.provider,t.session_id,t.created,t.updated,t.source_sequence,0,t.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM (SELECT cs.workspace_id,cs.subject_id,cs.session_id,cs.model,cs.provider,cs.source_sequence,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP) AS created,COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP) AS updated FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 AND cs.instance_id IS NULL AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.model,cs.provider,cs.source_sequence) t LEFT JOIN chat_session_dirs d ON d.workspace_id=t.workspace_id AND d.subject_id=t.subject_id AND d.name=t.session_id UNION ALL SELECT 'worktree:' || r.worktree,'','', '',r.created_at,r.updated_at,0,0,0,r.dir,r.worktree,1,COALESCE(r.instance_id,'') FROM worktree_routes r WHERE r.workspace_id=? AND r.subject_id=? AND (r.instance_id IS NULL OR EXISTS (SELECT 1 FROM worktree_instances wi WHERE wi.workspace_id=r.workspace_id AND wi.worktree=r.worktree AND wi.instance_id=r.instance_id AND wi.state='active')) ORDER BY 6 DESC,1`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -113,8 +127,12 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 	var out []contextstate.SessionCatalogInfo
 	for rows.Next() {
 		var info contextstate.SessionCatalogInfo
-		if err := rows.Scan(&info.Name, &info.Model, &info.Provider, &info.SessionID, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree, &info.WorktreeRoute); err != nil {
+		var instanceID string
+		if err := rows.Scan(&info.Name, &info.Model, &info.Provider, &info.SessionID, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree, &info.WorktreeRoute, &instanceID); err != nil {
 			return nil, err
+		}
+		if instanceID != "" {
+			info.WorktreeInstance = contextstate.WorktreeInstance{Worktree: info.Worktree, ID: instanceID}
 		}
 		out = append(out, info)
 	}
@@ -152,6 +170,7 @@ func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstat
 		if err := tx.QueryRowContext(ctx, `SELECT name FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity='snapshot' AND storage_key=?`, principal.WorkspaceID, principal.SubjectID, instance.ID, storageKey).Scan(&info.Name); err != nil {
 			return nil, err
 		}
+		info.WorktreeInstance = instance
 		out = append(out, info)
 	}
 	if err := rows.Err(); err != nil {
@@ -169,6 +188,7 @@ func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstat
 		}
 		info.SessionID = info.Name
 		info.TurnCount = info.MessageCount
+		info.WorktreeInstance = instance
 		out = append(out, info)
 	}
 	if err := liveRows.Err(); err != nil {
@@ -281,17 +301,17 @@ func (s *SQLite) deleteContextSessionOrOrphanedAdmission(ctx context.Context, pr
 // chat_session_admissions carries no foreign key to the catalog, so every
 // delete path has to name it explicitly or the row - and the agent and tool
 // names in it - outlives the session forever.
-const deleteSessionAdmissionSQL = `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=?`
+const deleteSessionAdmissionSQL = `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id IS NULL`
 
 // deleteSessionDirSQL reclaims a named session's directory record. It is the
 // same shape as the admission record: a side table with no foreign key, so
 // every delete path names it explicitly or the row outlives the session.
-const deleteSessionDirSQL = `DELETE FROM chat_session_dirs WHERE workspace_id=? AND subject_id=? AND name=?`
+const deleteSessionDirSQL = `DELETE FROM chat_session_dirs WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id IS NULL`
 
 // upsertSessionDirSQL records (or refreshes) a session's directory metadata.
 // The name key is a chat_sessions snapshot name for named saves and a
 // context_sessions session_id for live sessions.
-const upsertSessionDirSQL = `INSERT INTO chat_session_dirs(workspace_id,subject_id,name,dir,worktree,instance_id) VALUES(?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET dir=excluded.dir,worktree=excluded.worktree,instance_id=excluded.instance_id`
+const upsertSessionDirSQL = `INSERT INTO chat_session_dirs(workspace_id,subject_id,name,dir,worktree,instance_id) VALUES(?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET dir=excluded.dir,worktree=excluded.worktree WHERE chat_session_dirs.instance_id IS excluded.instance_id`
 
 // deleteSessionSnapshotRow removes a snapshot and its admission record in one
 // transaction and reports how many snapshot rows it removed, so the caller can
@@ -306,7 +326,10 @@ const upsertSessionDirSQL = `INSERT INTO chat_session_dirs(workspace_id,subject_
 func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal contextstate.Principal, name string) (int64, error) {
 	var count int64
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name)
+		if err := rejectManagedCatalogKey(ctx, tx, principal, name); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name)
 		if err != nil {
 			return err
 		}
@@ -411,12 +434,16 @@ func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextsta
 			_ = tx.Rollback()
 			return err
 		}
+		if err := rejectManagedCatalogKey(ctx, tx, principal, name); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 		// Reclaim the admission record only for a snapshot this prune actually
 		// removed. A name that matched nothing may still be a live
 		// context-backed session, and stripping its admitted tool set while it
 		// keeps running is the failure mode the delete path already had to fix.
 		var pruned int64
-		result, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name)
+		result, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name)
 		if err == nil {
 			pruned, err = result.RowsAffected()
 		}
@@ -437,60 +464,4 @@ func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextsta
 		}
 	}
 	return tx.Commit()
-}
-
-var _ contextstate.SessionAdmissionCatalog = (*SQLite)(nil)
-var _ contextstate.WorktreeAdmissionCatalog = (*SQLite)(nil)
-
-// SaveSessionAdmission persists a named session's admitted tool set. An empty
-// name set deletes the row: resuming a session that admitted nothing must not
-// resurrect an older set.
-func (s *SQLite) SaveSessionAdmission(ctx context.Context, principal contextstate.Principal, name string, record contextstate.SessionAdmission) error {
-	if err := principal.Validate(); err != nil {
-		return err
-	}
-	if err := validateSessionCatalogName(name); err != nil {
-		return err
-	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if len(record.Names) == 0 {
-		_, err := s.db.ExecContext(ctx, `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name)
-		return err
-	}
-	// A []string always marshals; there is no error branch to test here, so
-	// there is none to write.
-	encoded, _ := json.Marshal(record.Names)
-	if contextstate.Exceeds(len(encoded), contextstate.CurrentLimits().SessionStateBytes) {
-		return fmt.Errorf("%w: admitted tool set is too large", contextstate.ErrInvalidDTO)
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO chat_session_admissions(workspace_id,subject_id,name,agent,digest,names,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET agent=excluded.agent,digest=excluded.digest,names=excluded.names,updated_at=excluded.updated_at`,
-		principal.WorkspaceID, principal.SubjectID, name, record.Agent, record.Digest, string(encoded), now)
-	return err
-}
-
-// LoadSessionAdmission returns the stored admission record. A session with no
-// row yields the zero value and a nil error: no admissions is a normal state,
-// not a failure.
-func (s *SQLite) LoadSessionAdmission(ctx context.Context, principal contextstate.Principal, name string) (contextstate.SessionAdmission, error) {
-	if err := principal.Validate(); err != nil {
-		return contextstate.SessionAdmission{}, err
-	}
-	if err := validateSessionCatalogName(name); err != nil {
-		return contextstate.SessionAdmission{}, err
-	}
-	var record contextstate.SessionAdmission
-	var encoded string
-	err := s.db.QueryRowContext(ctx, `SELECT agent,digest,names FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=?`, principal.WorkspaceID, principal.SubjectID, name).Scan(&record.Agent, &record.Digest, &encoded)
-	if err == sql.ErrNoRows {
-		return contextstate.SessionAdmission{}, nil
-	}
-	if err != nil {
-		return contextstate.SessionAdmission{}, err
-	}
-	if err := json.Unmarshal([]byte(encoded), &record.Names); err != nil {
-		return contextstate.SessionAdmission{}, fmt.Errorf("%w: decode admitted tools", contextstate.ErrInvalidDTO)
-	}
-	return record, nil
 }

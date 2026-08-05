@@ -1,6 +1,7 @@
 package vcs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -33,6 +34,11 @@ func Create(ctx context.Context, repoRoot string, name string, baseRef string) (
 // It creates the branch branchPrefix plus the sanitised worktree name.
 // baseRef is the branch, tag, or SHA to check out.
 func CreateWithPrefix(ctx context.Context, repoRoot string, name string, baseRef string, branchPrefix string) (*WorktreeInfo, error) {
+	return CreateWithPrefixLease(ctx, repoRoot, name, baseRef, branchPrefix, nil)
+}
+
+// CreateWithPrefixLease keeps lease open in the Git mutation process.
+func CreateWithPrefixLease(ctx context.Context, repoRoot string, name string, baseRef string, branchPrefix string, lease *os.File) (*WorktreeInfo, error) {
 	// filepath.Abs only fails when Getwd fails (effectively never); git fails
 	// loudly instead if the root is unusable, so drop the dead error branch.
 	root, _ := filepath.Abs(repoRoot)
@@ -81,7 +87,7 @@ func CreateWithPrefix(ctx context.Context, repoRoot string, name string, baseRef
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runGitMutation(cmd, lease); err != nil {
 		return nil, &gitCommandError{cmd: "worktree add", output: string(out), err: err}
 	}
 	actualBranch, _ := CurrentBranch(ctx, targetPath)
@@ -119,6 +125,11 @@ func Remove(ctx context.Context, repoRoot string, name string) error {
 // references. It preserves all branches. This avoids a race when another
 // process changes the worktree branch during removal.
 func RemoveWithPrefix(ctx context.Context, repoRoot string, name string, branchPrefix string) error {
+	return RemoveWithPrefixLease(ctx, repoRoot, name, branchPrefix, nil)
+}
+
+// RemoveWithPrefixLease keeps lease open in the Git mutation process.
+func RemoveWithPrefixLease(ctx context.Context, repoRoot string, name string, branchPrefix string, lease *os.File) error {
 	root, _ := filepath.Abs(repoRoot) // Abs only fails if Getwd fails; git errors otherwise
 	sanitised, err := SanitizeName(name)
 	if err != nil {
@@ -144,15 +155,32 @@ func RemoveWithPrefix(ctx context.Context, repoRoot string, name string, branchP
 	}
 	cmd := exec.CommandContext(ctx, "git", "worktree", "remove", targetPath, "--force")
 	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runGitMutation(cmd, lease); err != nil {
 		return &gitCommandError{cmd: "worktree remove", output: string(out), err: err}
 	}
 	// Prune stale references.
 	prune := exec.CommandContext(ctx, "git", "worktree", "prune")
 	prune.Dir = root
-	_ = prune.Run()
+	_, _ = runGitMutation(prune, lease)
 
 	return nil
+}
+
+func runGitMutation(cmd *exec.Cmd, lease *os.File) ([]byte, error) {
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	cleanup, err := inheritProcessLease(cmd, lease)
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		cleanup()
+		return output.Bytes(), err
+	}
+	cleanup()
+	err = cmd.Wait()
+	return output.Bytes(), err
 }
 
 // validateWorktreeBranchPrefix validates the complete branch name before it

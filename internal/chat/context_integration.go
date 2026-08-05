@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -111,9 +112,11 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 		}
 		s.sessionStore, s.saveManager, s.SessionDir = nil, nil, ""
 	}
+	worktree := s.contextWorktree
+	sessionDir := s.contextSessionDir
 	s.mu.Unlock()
 	if manager != nil && manager.Enabled && store != nil {
-		snapshot, err := ensureAndLoadContextStore(store, principal, s.captureBindingRevision(), s.contextWorktree)
+		snapshot, err := ensureAndLoadContextStore(store, principal, s.captureBindingRevision(), worktree, sessionDir)
 		if err != nil {
 			return err
 		}
@@ -143,8 +146,9 @@ func (s *Session) SetContextStore(store contextstate.Store) error {
 	}
 	s.mu.RLock()
 	worktree := s.contextWorktree
+	sessionDir := s.contextSessionDir
 	s.mu.RUnlock()
-	snapshot, err := ensureAndLoadContextStore(store, principal, s.captureBindingRevision(), worktree)
+	snapshot, err := ensureAndLoadContextStore(store, principal, s.captureBindingRevision(), worktree, sessionDir)
 	if err != nil {
 		return err
 	}
@@ -167,7 +171,7 @@ func (s *Session) loadContextSnapshot(operationName string) error {
 	if store == nil || !principal.IsBound() {
 		return fmt.Errorf("context store is not configured")
 	}
-	snapshot, err := loadBoundContextStore(store, principal, principal.SessionID, instance)
+	snapshot, err := loadBoundContextStore(context.Background(), store, principal, principal.SessionID, instance)
 	if err != nil {
 		return err
 	}
@@ -211,7 +215,7 @@ func (s *Session) resyncContextHead() error {
 	if store == nil || !principal.IsBound() {
 		return fmt.Errorf("context store not configured")
 	}
-	snapshot, err := loadBoundContextStore(store, principal, principal.SessionID, instance)
+	snapshot, err := loadBoundContextStore(context.Background(), store, principal, principal.SessionID, instance)
 	if err != nil {
 		return err
 	}
@@ -234,25 +238,26 @@ func (s *Session) resyncContextHead() error {
 	return nil
 }
 
-func ensureAndLoadContextStore(store contextstate.Store, principal contextstate.Principal, binding contextstate.BindingRevision, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
+func ensureAndLoadContextStore(store contextstate.Store, principal contextstate.Principal, binding contextstate.BindingRevision, instance contextstate.WorktreeInstance, retainedDir string) (contextstate.Snapshot, error) {
 	dir, worktree := currentDirContext()
 	if !instance.IsZero() {
+		dir = retainedDir
 		worktree = instance.Worktree
 	}
 	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: dir, Worktree: worktree, WorktreeInstance: instance}); err != nil {
 		return contextstate.Snapshot{}, err
 	}
-	return loadBoundContextStore(store, principal, principal.SessionID, instance)
+	return loadBoundContextStore(context.Background(), store, principal, principal.SessionID, instance)
 }
 
-func loadBoundContextStore(store contextstate.Store, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
+func loadBoundContextStore(ctx context.Context, store contextstate.Store, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
 	if !instance.IsZero() {
 		if scoped, ok := store.(contextstate.WorktreeStore); ok {
-			return scoped.LoadWorktree(context.Background(), principal, sessionID, instance)
+			return scoped.LoadWorktree(ctx, principal, sessionID, instance)
 		}
 		return contextstate.Snapshot{}, contextstate.ErrWorktreeDeleted
 	}
-	return store.Load(context.Background(), principal, sessionID)
+	return store.Load(ctx, principal, sessionID)
 }
 
 func (s *Session) contextEnabledLocked() bool {
@@ -277,8 +282,21 @@ func (s *Session) captureContextLocked() contextTurnConfig {
 // SetContextWorktreeBinding retains the physical worktree identity for every
 // later context mutation. Call it before installing a context store.
 func (s *Session) SetContextWorktreeBinding(instance contextstate.WorktreeInstance) error {
+	dir, _ := currentDirContext()
+	return s.SetContextWorktreeBindingAt(instance, dir, dir)
+}
+
+// SetContextWorktreeBindingAt retains the exact managed worktree paths.
+func (s *Session) SetContextWorktreeBindingAt(instance contextstate.WorktreeInstance, root, dir string) error {
 	if err := instance.Validate(); err != nil {
 		return err
+	}
+	if instance.IsZero() || !filepath.IsAbs(root) || !filepath.IsAbs(dir) {
+		return fmt.Errorf("context worktree binding requires absolute paths")
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == ".." || filepath.IsAbs(rel) || len(rel) > 3 && rel[:3] == ".."+string(filepath.Separator) {
+		return fmt.Errorf("context session directory is outside the worktree root")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -286,6 +304,8 @@ func (s *Session) SetContextWorktreeBinding(instance contextstate.WorktreeInstan
 		return fmt.Errorf("context worktree binding must be set before context setup")
 	}
 	s.contextWorktree = instance
+	s.contextWorktreeRoot = filepath.Clean(root)
+	s.contextSessionDir = filepath.Clean(dir)
 	return nil
 }
 
@@ -462,31 +482,4 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 	snapshot.context.manager.PreparationManager.Discard(preparation)
 	s.emitContextCompaction(preparation, snapshot.myTurn)
 	return reply, nil
-}
-
-func (s *Session) plainTurnCurrent(token OperationToken, turn uint64) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.turnID == turn && s.tokenCurrentLocked(token)
-}
-
-func contextTurnMessages(messages []provider.Message, userText string) []provider.Message {
-	for index := len(messages) - 1; index >= 0; index-- {
-		if messages[index].Role == provider.RoleUser && messages[index].Content == userText {
-			return cloneContextMessages(messages[index:])
-		}
-	}
-	for index := len(messages) - 1; index >= 0; index-- {
-		if messages[index].Role == provider.RoleUser {
-			return cloneContextMessages(messages[index:])
-		}
-	}
-	return nil
-}
-
-func outputReserve(maxTokens *int) int {
-	if maxTokens == nil || *maxTokens < 0 {
-		return 0
-	}
-	return *maxTokens
 }

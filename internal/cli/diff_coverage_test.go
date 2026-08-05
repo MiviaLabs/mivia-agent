@@ -45,9 +45,10 @@ func TestUpdateWorktreeCreatedMsg(t *testing.T) {
 	openWorktreeDialogOnModel(m, 0)
 	dlg := m.worktreeDlg
 	model, _ := m.Update(worktreeCreatedMsg{
-		wt:  &vcs.WorktreeInfo{Name: "wt-x", Path: "/tmp/wt-x", Branch: "main"},
-		err: nil,
-		dlg: dlg,
+		wt:       &vcs.WorktreeInfo{Name: "wt-x", Path: "/tmp/wt-x", Branch: "main"},
+		instance: testWorktreeInstance("wt-x"),
+		err:      nil,
+		dlg:      dlg,
 	})
 	after := model.(*tuiModel)
 	if after.worktreeDlg == nil || len(after.worktreeDlg.worktrees) != 1 {

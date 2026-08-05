@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
@@ -112,9 +113,6 @@ func runWorktreeList(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree list: %w", err)
 	}
-	for _, worktree := range worktrees {
-		fmt.Fprintf(stdout, "%s\t%s\t%s\n", worktree.Name, worktree.Branch, worktree.Path)
-	}
 	store, err := openRepositoryContextStore(repoRoot)
 	if err != nil {
 		return fmt.Errorf("worktree list: %w", err)
@@ -128,10 +126,35 @@ func runWorktreeList(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree list: %w", err)
 	}
-	for _, info := range deleting {
-		fmt.Fprintf(stdout, "%s\trecovery required\t%s\n", info.Instance.Worktree, info.CanonicalPath)
-	}
+	writeWorktreeList(stdout, worktrees, deleting)
 	return nil
+}
+
+func writeWorktreeList(stdout io.Writer, worktrees []vcs.WorktreeInfo, deleting []contextstate.WorktreeInstanceInfo) {
+	written := make([]bool, len(deleting))
+	for _, worktree := range worktrees {
+		matched := -1
+		canonicalPath, err := canonicalMarkerRoot(worktree.Path)
+		if err == nil {
+			for index, info := range deleting {
+				if info.Instance.Worktree == worktree.Name && info.CanonicalPath == canonicalPath {
+					matched = index
+					break
+				}
+			}
+		}
+		if matched >= 0 {
+			written[matched] = true
+			fmt.Fprintf(stdout, "%s\trecovery required\t%s\n", worktree.Name, canonicalPath)
+			continue
+		}
+		fmt.Fprintf(stdout, "%s\t%s\t%s\n", worktree.Name, worktree.Branch, worktree.Path)
+	}
+	for index, info := range deleting {
+		if !written[index] {
+			fmt.Fprintf(stdout, "%s\trecovery required\t%s\n", info.Instance.Worktree, info.CanonicalPath)
+		}
+	}
 }
 
 func runWorktreeRemove(args []string, stdout io.Writer) error {
@@ -151,7 +174,12 @@ func runWorktreeRemove(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
-	if recovered, err := recoverManagedWorktreeRemoval(repoRoot, args[0], worktreeConfig.BranchPrefix); err != nil {
+	lock, err := lockWorktreeLifecycle(repoRoot, args[0])
+	if err != nil {
+		return fmt.Errorf("worktree remove: lock lifecycle: %w", err)
+	}
+	defer lock.Close()
+	if recovered, err := recoverManagedWorktreeRemovalLocked(repoRoot, args[0], worktreeConfig.BranchPrefix, lock.File()); err != nil {
 		return fmt.Errorf("worktree remove: recovery: %w", err)
 	} else if recovered {
 		fmt.Fprintf(stdout, "removed worktree %q\n", args[0])
@@ -171,7 +199,7 @@ func runWorktreeRemove(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree remove: begin session cleanup: %w", err)
 	}
-	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, args[0], worktreeConfig.BranchPrefix); err != nil {
+	if err := vcs.RemoveWithPrefixLease(context.Background(), repoRoot, args[0], worktreeConfig.BranchPrefix, lock.File()); err != nil {
 		if reactivateErr := reactivateManagedWorktree(repoRoot, instance); reactivateErr != nil {
 			return fmt.Errorf("worktree remove: %w; session lifecycle recovery failed: %v", err, reactivateErr)
 		}
