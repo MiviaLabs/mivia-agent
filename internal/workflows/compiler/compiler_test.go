@@ -482,10 +482,13 @@ func TestCompile_VerifierNameValidation(t *testing.T) {
 // --- Digest stability tests ---
 
 func TestCompile_UnlimitedLoop(t *testing.T) {
+	// STE: an unlimited loop (max_iterations=-1) needs at least one global limit
+	// (max_duration_seconds or max_step_attempts) so execution can always terminate.
 	wf := &definition.WorkflowFile{
 		Name:        "unlimited-loop-test",
 		Version:     1,
 		InitialStep: "implement",
+		Limits:      definition.Limits{MaxDurationSeconds: 3600},
 		Steps: []definition.Step{
 			{ID: "implement", Kind: "agent", Agent: "go-engineer"},
 		},

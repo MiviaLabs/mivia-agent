@@ -117,7 +117,9 @@ func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) 
 	if err != nil {
 		return workflowledger.Snapshot{}, nil, nil, err
 	}
-	compiled, err := compiler.Compile(&wf)
+	// Resume is recovery, not admission: the definition was already admitted,
+	// so the unbounded-cycle admission check must not strand an in-flight run.
+	compiled, err := compiler.CompileForResume(&wf)
 	if err != nil {
 		return workflowledger.Snapshot{}, nil, nil, err
 	}

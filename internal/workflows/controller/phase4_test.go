@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -421,5 +422,138 @@ func TestAgentFailureUsesOnFailureNeverRepairLoop(t *testing.T) {
 	defer runner.mu.Unlock()
 	if len(runner.calls) != 2 {
 		t.Fatalf("calls = %d, want 2", len(runner.calls))
+	}
+}
+
+func TestUnlimitedAttemptsAndUnlimitedLoopConverges(t *testing.T) {
+	// max_step_attempts=0 and max_iterations=-1 must never trip their caps:
+	// the run converges on an approved verdict after one repair back-edge.
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "unlimited", InitialStep: "implement",
+		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits: definition.Limits{MaxStepAttempts: 0, MaxDurationSeconds: 3600},
+		Steps: []definition.Step{
+			{ID: "implement", Kind: "agent", Agent: "dev", OnFailure: "failure",
+				Context: []definition.ContextBinding{{From: "inputs.task", As: "task"}}},
+			{ID: "review", Kind: "agent_gate", Agent: "rev", OnFailure: "failure"},
+		},
+		Transitions: []definition.Transition{
+			{From: "implement", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},
+			{From: "review", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}}},
+			{From: "review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "review_repair", MaxIterations: -1},
+		},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": json.RawMessage(`{"summary":"v1"}`),
+		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[]}`),
+		"implement#2": json.RawMessage(`{"summary":"v2"}`),
+		"review#2":    json.RawMessage(`{"verdict":"approved","findings":[]}`),
+	}}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, runner, compiled, map[string]StepRuntime{
+		"implement": {Agent: agents.ResolvedAgent{Name: "dev"}},
+		"review":    {Agent: agents.ResolvedAgent{Name: "rev"}},
+	}, map[string]any{"task": "x"}, "wfr-unlimited-loop", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctrl.Run(context.Background())
+	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run = %+v err=%v", got, err)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewAttempts := 0
+	for _, a := range attempts {
+		if a.StepID == "review" {
+			reviewAttempts++
+		}
+	}
+	if reviewAttempts != 2 {
+		t.Fatalf("review attempts = %d, want 2: %+v", reviewAttempts, attempts)
+	}
+	counters, err := repo.GetLoopCounters(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counters) != 1 || counters[0].LoopName != "review_repair" || counters[0].Iterations != 1 {
+		t.Fatalf("loop counters = %+v", counters)
+	}
+}
+
+func TestUnlimitedAttemptsUnlimitedLoopStoppedByDeadline(t *testing.T) {
+	// Unlimited caps are legal at runtime, but the admission deadline still
+	// bounds the run: once the deadline passes, no implement#2 is dispatched.
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "unlimited", InitialStep: "implement",
+		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits: definition.Limits{MaxStepAttempts: 0, MaxDurationSeconds: 3600},
+		Steps: []definition.Step{
+			{ID: "implement", Kind: "agent", Agent: "dev", OnFailure: "failure",
+				Context: []definition.ContextBinding{{From: "inputs.task", As: "task"}}},
+			{ID: "review", Kind: "agent_gate", Agent: "rev", OnFailure: "failure"},
+		},
+		Transitions: []definition.Transition{
+			{From: "implement", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},
+			{From: "review", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}}},
+			{From: "review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "review_repair", MaxIterations: -1},
+		},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#*": json.RawMessage(`{"summary":"v"}`),
+		"review#*":    json.RawMessage(`{"verdict":"changes_requested","findings":[]}`),
+	}}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, runner, compiled, map[string]StepRuntime{
+		"implement": {Agent: agents.ResolvedAgent{Name: "dev"}},
+		"review":    {Agent: agents.ResolvedAgent{Name: "rev"}},
+	}, map[string]any{"task": "x"}, "wfr-unlimited-deadline", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
+	if err := ctrl.SetTimeSource(func() time.Time { return start }); err != nil {
+		t.Fatal(err)
+	}
+	deadline := start.Add(time.Minute)
+	if err := ctrl.SetAdmission(Admission{DeadlineAt: &deadline}); err != nil {
+		t.Fatal(err)
+	}
+	// Admit the run explicitly; Run() cannot be used because the scripted
+	// changes_requested outputs would spin until the wall-clock context expiry.
+	if err := ctrl.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// implement#1 executes; run is not done.
+	got, done, err := ctrl.Advance(context.Background())
+	if err != nil || done {
+		t.Fatalf("advance 1 = %+v done=%v err=%v", got, done, err)
+	}
+	// review#1 routes back to implement; run is still not done.
+	got, done, err = ctrl.Advance(context.Background())
+	if err != nil || done {
+		t.Fatalf("advance 2 = %+v done=%v err=%v", got, done, err)
+	}
+	// Past the admission deadline: the next advance times out before
+	// dispatching implement#2.
+	ctrl.now = func() time.Time { return start.Add(2 * time.Minute) }
+	got, done, err = ctrl.Advance(context.Background())
+	if !done || got.Status != workflowledger.RunStatusTimedOut {
+		t.Fatalf("advance 3 = %+v done=%v err=%v", got, done, err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) != 2 {
+		t.Fatalf("runner calls = %d, want 2 (no implement#2 dispatched): %+v", len(runner.calls), runner.calls)
 	}
 }

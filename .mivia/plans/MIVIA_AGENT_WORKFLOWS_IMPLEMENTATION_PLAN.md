@@ -435,6 +435,7 @@ mivia workflow cleanup <run-id>
 - ✅ Host verifier catalogue with `go-default` fixed host logic; unknown verifiers fail closed.
 - ✅ Per-loop caps (`max_iterations`, including `-1`) and global `max_step_attempts` before back-edge / new attempt dispatch; transition decisions persisted on attempts.
 - ✅ Repair-loop history test: `implement#2` / `review#2` after `changes_requested`, terminates within limits; infra failures use `on_failure` only.
+- ✅ Unbounded-cycle admission guard: the compiler rejects a workflow whose graph contains a cycle with no finite-capped loop edge (`max_iterations > 0`) when both `max_step_attempts` and `max_duration_seconds` are 0. Unlimited loops (`max_iterations = -1`) and unlimited `max_step_attempts` (0) remain legal whenever at least one global limit is set. `CompileForResume` skips the admission check so an in-flight run admitted under an earlier policy still resumes; other validators still run.
 
 **Exit:** the feature-delivery repair loop produces `implement#2` / `review#2` history and terminates within global limits. ✅
 
@@ -460,10 +461,10 @@ mivia workflow cleanup <run-id>
 | Area | Required proof | Status |
 |---|---|---|
 | Parsing | Unknown TOML fields, duplicate IDs, invalid names/path escapes and oversized files fail before execution. | ✅ Tested |
-| Compilation | All routes resolve; structural match cases are deterministic or have an explicit fallback; all cycles are bounded. | ✅ Tested |
+| Compilation | All routes resolve; structural match cases are deterministic or have an explicit fallback; every cycle is self-bounded (contains a loop with `max_iterations > 0`) or a global limit exists. | ✅ Tested |
 | Authority | A workspace workflow cannot alter agent tool/model/provider authority or invoke raw commands. | ✅ Enforced by design (no runtime yet) |
 | Evidence | A review cannot route on free-form prose; invalid schema output is not accepted as approval. | ✅ Matcher + agent_gate route on schema fields only |
-| Loops | Back-edge creates a fresh numbered attempt; per-loop caps or global caps terminate deterministically. | ✅ Runtime loop counters + global max_step_attempts |
+| Loops | Back-edge creates a fresh numbered attempt; per-loop caps or global caps terminate deterministically. Compiler rejects uncapped cycles with no global limit. | ✅ Runtime loop counters + global max_step_attempts + validateCycles |
 | Persistence | Crash before/after every state write resumes without duplicate agent dispatch or duplicate transition. | ✅ Ledger (Phase 2); controller uses claim + CAS |
 | Cancellation | Cancel wins safely against an in-flight child/approval/delivery attempt and leaves explainable status. | ✅ Partial — cancel/timeout attempt statuses; Phase 6 race matrix remains |
 | Delivery | Missing `--allow-publish`, no diff, failed gate, or exhausted loop creates no PR. | ⬜ Needs delivery implementation |

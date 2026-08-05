@@ -85,6 +85,86 @@ func TestValidateWorkflowResumeSnapshotRejectsInvalidData(t *testing.T) {
 	}
 }
 
+// newPreviouslyAdmittedUnboundedSnapshot builds a resume snapshot for a
+// workflow that plain Compile now rejects (uncapped cycle, no global limits).
+func newPreviouslyAdmittedUnboundedSnapshot(t *testing.T, root string) (workflowledger.RunSnapshot, []byte) {
+	t.Helper()
+	storePath := filepath.Join(root, "workflow.db")
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	writeWorkflowRunFixture(t, root, "http://127.0.0.1:1", storePath)
+	rawDefinition := []byte(`version = 1
+name = "two-step"
+initial_step = "one"
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 100
+[[steps]]
+id = "one"
+kind = "agent"
+agent = "one"
+template = "templates/one.md"
+output_schema = "schemas/out.json"
+context = [{ from = "inputs.task", as = "task", max_bytes = 100 }]
+[[steps]]
+id = "two"
+kind = "agent"
+agent = "two"
+template = "templates/two.md"
+output_schema = "schemas/out.json"
+context = [{ from = "steps.one.output", as = "previous", max_bytes = 100 }]
+[[transitions]]
+from = "one"
+to = "two"
+[transitions.match]
+status = "succeeded"
+[[transitions]]
+from = "two"
+to = "one"
+[transitions.match]
+status = "succeeded"
+[[transitions]]
+from = "two"
+to = "success"
+[transitions.match]
+status = "succeeded"
+output = { ok = "true" }
+`)
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "workflows", "two-step.toml"), rawDefinition, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wf, _, err := definition.ParseWorkflowTOML(rawDefinition, "two-step.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := compiler.CompileForResume(&wf)
+	if err != nil {
+		t.Fatalf("CompileForResume: %v", err)
+	}
+	snapshot := newForcedResumeSnapshot(t, root, compiled, rawDefinition)
+	rawSnapshot, err := workflowledger.MarshalSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-resume-unbounded", WorkflowName: compiled.Name, WorkflowDigest: compiled.Digest,
+		SnapshotDigest: workflowledger.SnapshotDigest(rawSnapshot),
+		InputDigest:    workflowledger.InputDigest(snapshot.Inputs),
+		Status:         workflowledger.RunStatusPending, ActiveStepID: compiled.InitialStep,
+	}
+	return run, rawSnapshot
+}
+
+func TestValidateWorkflowResumeSnapshotAcceptsPreviouslyAdmittedUnboundedLoop(t *testing.T) {
+	// A run admitted before the unbounded-cycle policy must still resume.
+	// Plain Compile now rejects its definition; resume must not.
+	root := t.TempDir()
+	run, rawSnapshot := newPreviouslyAdmittedUnboundedSnapshot(t, root)
+	if _, _, _, err := validateWorkflowResumeSnapshot(run, rawSnapshot); err != nil {
+		t.Fatalf("resume validation rejected an admitted run: %v", err)
+	}
+}
+
 func TestValidateWorkflowSnapshotReferences(t *testing.T) {
 	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "one", Agent: "agent", Template: "prompt.txt"}}}
 	snapshot := workflowledger.Snapshot{Schemas: map[string]workflowledger.RefSnapshot{
