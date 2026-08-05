@@ -58,6 +58,15 @@ func (s *SQLite) Backup(ctx context.Context, d string) error {
 }
 
 func (s *SQLite) Append(ctx context.Context, e Event) error {
+	return s.append(ctx, e, "", false)
+}
+
+// AppendClaimed atomically checks the run claim and appends the event.
+func (s *SQLite) AppendClaimed(ctx context.Context, e Event, holder string) error {
+	return s.append(ctx, e, holder, true)
+}
+
+func (s *SQLite) append(ctx context.Context, e Event, holder string, claimed bool) error {
 	if len(e.Payload) == 0 {
 		return fmt.Errorf("empty payload")
 	}
@@ -67,7 +76,20 @@ func (s *SQLite) Append(ctx context.Context, e Event) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO events(id,run_id,sequence,kind,payload) VALUES(?,?,?,?,?)`, e.ID, e.RunID, e.Sequence, e.Kind, e.Payload)
+	if claimed {
+		var res sql.Result
+		res, err = tx.ExecContext(ctx, `INSERT INTO events(id,run_id,sequence,kind,payload) SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM run_claims WHERE run_id = ? AND (holder <> ? OR ? = ''))`, e.ID, e.RunID, e.Sequence, e.Kind, e.Payload, e.RunID, holder, holder)
+		if err == nil {
+			var n int64
+			n, err = res.RowsAffected()
+			if err == nil && n == 0 {
+				_ = tx.Rollback()
+				return ErrClaimHeld
+			}
+		}
+	} else {
+		_, err = tx.ExecContext(ctx, `INSERT INTO events(id,run_id,sequence,kind,payload) VALUES(?,?,?,?,?)`, e.ID, e.RunID, e.Sequence, e.Kind, e.Payload)
+	}
 	if err != nil {
 		_ = tx.Rollback()
 		if isConstraint(err) {
@@ -164,6 +186,9 @@ func (s *SQLite) ListRunIDs(ctx context.Context) ([]string, error) {
 }
 func (s *SQLite) Close() error { return s.db.Close() }
 func (s *SQLite) ClaimRun(ctx context.Context, id, h string) error {
+	if h == "" {
+		return ErrClaimNotHeld
+	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO run_claims(run_id, holder, acquired_at) VALUES(?, ?, datetime('now')) ON CONFLICT(run_id) DO UPDATE SET acquired_at=excluded.acquired_at WHERE run_claims.holder = excluded.holder`, id, h)
 	if err != nil {
 		return fmt.Errorf("claim run %q: %w", id, err)

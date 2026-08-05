@@ -33,6 +33,19 @@ func (f *failingAppendStore) Append(ctx context.Context, e storage.Event) error 
 	return f.inner.Append(ctx, e)
 }
 
+func (f *failingAppendStore) AppendClaimed(ctx context.Context, e storage.Event, holder string) error {
+	f.mu.Lock()
+	fail := e.Kind == storageKindRunCreated && f.failRunCreated > 0
+	if fail {
+		f.failRunCreated--
+	}
+	f.mu.Unlock()
+	if fail {
+		return errors.New("injected run_created append failure")
+	}
+	return f.inner.AppendClaimed(ctx, e, holder)
+}
+
 func (f *failingAppendStore) Events(ctx context.Context, runID string) ([]storage.Event, error) {
 	return f.inner.Events(ctx, runID)
 }

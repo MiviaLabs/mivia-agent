@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -31,6 +32,9 @@ func (s *StorageRepository) checkOpen() error {
 func (s *StorageRepository) CreateRun(ctx context.Context, snap RunSnapshot, snapshotJSON []byte) error {
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
+	}
+	if !strings.HasPrefix(snap.RunID, "wfr-") {
+		return ErrInvalidTransition
 	}
 	if err := s.rebaseRunSequence(ctx, snap.RunID); err != nil {
 		return err

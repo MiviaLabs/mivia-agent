@@ -647,6 +647,13 @@ func (f *failingStore) Append(ctx context.Context, e storage.Event) error {
 	return f.Store.Append(ctx, e)
 }
 
+func (f *failingStore) AppendClaimed(ctx context.Context, e storage.Event, holder string) error {
+	if f.fail {
+		return errAppendSentinel
+	}
+	return f.Store.AppendClaimed(ctx, e, holder)
+}
+
 // countingStore wraps a storage.Store and counts Events(runID) calls, so a
 // regression to the O(N^2) foreign-run catch-up shows up as a non-zero count.
 // It is per-test: the test resets the counter before the call under

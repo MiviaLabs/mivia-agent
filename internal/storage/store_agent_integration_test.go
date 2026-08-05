@@ -193,6 +193,14 @@ func (f *flushSQLite) Append(ctx context.Context, e Event) error {
 	return f.store.Append(ctx, e)
 }
 
+func (f *flushSQLite) AppendClaimed(ctx context.Context, e Event, holder string) error {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return f.err
+	}
+	return f.store.AppendClaimed(ctx, e, holder)
+}
+
 func (f *flushSQLite) Events(ctx context.Context, runID string) ([]Event, error) {
 	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
 	if f.err != nil {
