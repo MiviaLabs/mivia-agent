@@ -106,7 +106,10 @@ func readTemplateFile(root *os.Root, name string) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	data, _ := io.ReadAll(io.LimitReader(file, MaxTemplateBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, MaxTemplateBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read template: %w", err)
+	}
 	if len(data) > MaxTemplateBytes {
 		return nil, fmt.Errorf("template %s exceeds %d bytes", name, MaxTemplateBytes)
 	}

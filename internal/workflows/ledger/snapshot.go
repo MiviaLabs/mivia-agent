@@ -10,14 +10,20 @@ import (
 // SnapshotSchemaVersion is the version of the immutable run snapshot wire format.
 const SnapshotSchemaVersion = 1
 
-// RefSnapshot pins one resolved external reference (agent definition, JSON
-// schema, template, verifier profile) by content digest. Bytes carries the
-// snapshotted content for templates and schemas (bounded by the workflow file
-// size caps); agents and verifiers are pinned by digest only.
+// RefSnapshot pins one schema, template, or verifier by content digest.
+// Bytes stores bounded content for templates and schemas.
 type RefSnapshot struct {
 	Digest  string `json:"digest"`
 	Version int    `json:"version,omitempty"`
 	Bytes   []byte `json:"bytes,omitempty"`
+}
+
+// AgentSnapshot pins an agent definition and its effective provider binding.
+type AgentSnapshot struct {
+	Digest       string `json:"digest"`
+	Version      int    `json:"version,omitempty"`
+	ProviderName string `json:"provider_name,omitempty"`
+	Model        string `json:"model,omitempty"`
 }
 
 type DeliverySnapshot struct {
@@ -32,15 +38,15 @@ type DeliverySnapshot struct {
 // resolved agent/schema/template/verifier references. Resume never re-reads a
 // changed TOML file: everything needed is in this snapshot.
 type Snapshot struct {
-	SchemaVersion    int                    `json:"schema_version"`
-	DefinitionTOML   []byte                 `json:"definition_toml"`
-	DefinitionDigest string                 `json:"definition_digest"`
-	Inputs           map[string]string      `json:"inputs,omitempty"`
-	Agents           map[string]RefSnapshot `json:"agents,omitempty"`
-	Schemas          map[string]RefSnapshot `json:"schemas,omitempty"`
-	Templates        map[string]RefSnapshot `json:"templates,omitempty"`
-	Verifiers        map[string]RefSnapshot `json:"verifiers,omitempty"`
-	Delivery         *DeliverySnapshot      `json:"delivery,omitempty"`
+	SchemaVersion    int                      `json:"schema_version"`
+	DefinitionTOML   []byte                   `json:"definition_toml"`
+	DefinitionDigest string                   `json:"definition_digest"`
+	Inputs           map[string]string        `json:"inputs,omitempty"`
+	Agents           map[string]AgentSnapshot `json:"agents,omitempty"`
+	Schemas          map[string]RefSnapshot   `json:"schemas,omitempty"`
+	Templates        map[string]RefSnapshot   `json:"templates,omitempty"`
+	Verifiers        map[string]RefSnapshot   `json:"verifiers,omitempty"`
+	Delivery         *DeliverySnapshot        `json:"delivery,omitempty"`
 }
 
 // MarshalSnapshot serializes the snapshot to its canonical JSON form. The
@@ -61,6 +67,16 @@ func UnmarshalSnapshot(data []byte) (Snapshot, error) {
 
 // SnapshotDigest returns the hex SHA-256 of the canonical snapshot bytes.
 func SnapshotDigest(data []byte) string {
+	return DigestHex(data)
+}
+
+// InputDigest returns the digest of the canonical input JSON object.
+func InputDigest(inputs map[string]string) string {
+	if inputs == nil {
+		inputs = map[string]string{}
+	}
+	// A map with string keys and values always has a JSON representation.
+	data, _ := json.Marshal(inputs)
 	return DigestHex(data)
 }
 

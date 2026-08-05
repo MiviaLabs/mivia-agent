@@ -83,6 +83,7 @@ type LifecycleSubscriber func(event ledger.LifecycleEvent)
 
 type Coordinator interface {
 	Spawn(context.Context, []subagents.Task, string) (*RunHandle, error)
+	EnsureRun(context.Context, EnsureRunRequest) (*RunHandle, error)
 	Inspect(context.Context, *RunHandle) (ledger.RunSnapshot, error)
 	Join(context.Context, *RunHandle) (*RunResult, error)
 	Cancel(context.Context, *RunHandle) error
@@ -162,7 +163,8 @@ type coordinator struct {
 	handlesByRun    map[string]*RunHandle // runID → handle (for messaging delivery)
 	handlesMu       sync.Mutex
 	spawnMu         sync.Mutex
-	holderID        string // random per-process ID for run execution claims
+	resumeMu        sync.Mutex // serializes resume admission within this coordinator
+	holderID        string     // random per-process ID for run execution claims
 	now             func() time.Time
 	nowMu           sync.RWMutex
 	retryMu         sync.RWMutex
@@ -314,16 +316,18 @@ func (c *coordinator) emitLifecycleEvent(evt ledger.LifecycleEvent) {
 	}
 }
 
-// newRunID returns an unguessable run identifier. Unguessability is load-bearing
+// NewRunID returns an unguessable run identifier. Unguessability is load-bearing
 // (INV-AG-9): run IDs must not be enumerable. crypto/rand.Read never returns an
 // error and always fills its buffer, crashing the program if the operating
 // system's source fails, so there is no error path - and no weaker fallback
 // would be acceptable if there were.
-func newRunID() string {
+func NewRunID() string {
 	var token [16]byte
 	_, _ = rand.Read(token[:])
 	return "run-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(token[:])
 }
+
+func newRunID() string { return NewRunID() }
 
 var eventIDCounter atomic.Uint64
 

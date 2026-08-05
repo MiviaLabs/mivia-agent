@@ -119,6 +119,10 @@ type TaskSnapshot struct {
 	Skill        string `json:"skill,omitempty"`
 	ProviderName string `json:"provider_name,omitempty"`
 	Model        string `json:"model,omitempty"`
+	// Scope is a non-authority execution serialization key. It must survive resume.
+	Scope string `json:"scope,omitempty"`
+	// OutputSchema is part of the work request and must survive coordinator recovery.
+	OutputSchema map[string]any `json:"output_schema,omitempty"`
 	// Input is the task payload, stored so a resumed task re-executes the work
 	// it was given rather than an empty request.
 	//
@@ -160,6 +164,8 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 		Skill:        s.Skill,
 		ProviderName: s.ProviderName,
 		Model:        s.Model,
+		Scope:        s.Scope,
+		OutputSchema: cloneJSONMap(s.OutputSchema),
 		Timeout:      s.Timeout,
 		Budget:       s.Budget,
 		Depth:        s.Depth,
@@ -180,6 +186,21 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 	if s.CompletedAt != nil {
 		t := *s.CompletedAt
 		out.CompletedAt = &t
+	}
+	return out
+}
+
+func cloneJSONMap(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return nil
+	}
+	var out map[string]any
+	if json.Unmarshal(raw, &out) != nil {
+		return nil
 	}
 	return out
 }

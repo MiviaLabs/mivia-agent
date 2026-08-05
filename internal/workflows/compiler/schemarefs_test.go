@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -291,6 +292,196 @@ func TestValidateSchemaReferences_AdditionalPropertiesInvalidType(t *testing.T) 
 	}
 	if !contains(err.Error(), "must be false or a schema object") {
 		t.Errorf("error %q should mention additionalProperties type", err.Error())
+	}
+}
+
+func TestValidateSchemaReferenceBytesUsesSuppliedContent(t *testing.T) {
+	wf := &definition.WorkflowFile{Steps: []definition.Step{{
+		ID: "review", OutputSchema: "review.json",
+	}}}
+	closed := []byte(`{"type":"object","additionalProperties":false}`)
+	if err := ValidateSchemaReferenceBytes(wf, map[string][]byte{"review.json": closed}); err != nil {
+		t.Fatalf("ValidateSchemaReferenceBytes: %v", err)
+	}
+
+	open := []byte(`{"type":"object","additionalProperties":true}`)
+	if err := ValidateSchemaReferenceBytes(wf, map[string][]byte{"review.json": open}); err == nil {
+		t.Fatal("ValidateSchemaReferenceBytes accepted an open schema")
+	}
+}
+
+func TestValidateSchemaReferenceBytesRequiresEveryReference(t *testing.T) {
+	wf := &definition.WorkflowFile{Steps: []definition.Step{{
+		ID: "review", OutputSchema: "review.json",
+	}}}
+	if err := ValidateSchemaReferenceBytes(wf, map[string][]byte{}); err == nil {
+		t.Fatal("ValidateSchemaReferenceBytes accepted a missing schema")
+	}
+}
+
+func TestValidateSchemaReferenceBytesRejectsInvalidWorkflowAndPath(t *testing.T) {
+	if err := ValidateSchemaReferenceBytes(nil, nil); err == nil {
+		t.Fatal("nil workflow was accepted")
+	}
+	wf := &definition.WorkflowFile{Steps: []definition.Step{{ID: "review", OutputSchema: "../review.json"}}}
+	if err := ValidateSchemaReferenceBytes(wf, map[string][]byte{}); err == nil {
+		t.Fatal("escaping schema reference was accepted")
+	}
+}
+
+func TestValidateSchemaReferenceBytesRejectsEmptySubschema(t *testing.T) {
+	wf := &definition.WorkflowFile{Steps: []definition.Step{{
+		ID: "review", OutputSchema: "review.json",
+	}}}
+	data := []byte(`{"type":"object","additionalProperties":{}}`)
+	if err := ValidateSchemaReferenceBytes(wf, map[string][]byte{"review.json": data}); err == nil {
+		t.Fatal("ValidateSchemaReferenceBytes accepted an unrestricted empty subschema")
+	}
+}
+
+func TestValidateSchemaReferenceBytesRejectsNoOpSubschemas(t *testing.T) {
+	wf := &definition.WorkflowFile{Steps: []definition.Step{{ID: "review", OutputSchema: "review.json"}}}
+	for name, subschema := range map[string]string{
+		"required":   `{"required":[]}`,
+		"properties": `{"properties":{}}`,
+		"allOf":      `{"allOf":[]}`,
+		"pattern":    `{"pattern":""}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := []byte(`{"type":"object","additionalProperties":` + subschema + `}`)
+			if err := ValidateSchemaReferenceBytes(wf, map[string][]byte{"review.json": data}); err == nil {
+				t.Fatalf("accepted no-op subschema %s", subschema)
+			}
+		})
+	}
+}
+
+func TestValidateSchemaReferenceBytesRejectsMoreNoOpSubschemas(t *testing.T) {
+	wf := &definition.WorkflowFile{Steps: []definition.Step{{ID: "review", OutputSchema: "review.json"}}}
+	for name, subschema := range map[string]string{
+		"uniqueItems":       `{"uniqueItems":false}`,
+		"minLength":         `{"minLength":0}`,
+		"minItems":          `{"minItems":0}`,
+		"minProperties":     `{"minProperties":0}`,
+		"propertyNames":     `{"propertyNames":{}}`,
+		"if":                `{"if":{"type":"string"}}`,
+		"then":              `{"then":{"type":"string"}}`,
+		"property child":    `{"properties":{"name":{}}}`,
+		"dependentRequired": `{"dependentRequired":{"name":[]}}`,
+		"self dependency":   `{"dependentRequired":{"name":["name"]}}`,
+		"dependent schema":  `{"dependentSchemas":{"name":{"required":["name"]}}}`,
+		"zero contains":     `{"contains":false,"minContains":0}`,
+		"anyOf tautology":   `{"anyOf":[{}]}`,
+		"not false":         `{"not":false}`,
+		"universal pattern": `{"pattern":".*"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := []byte(`{"type":"object","additionalProperties":` + subschema + `}`)
+			if err := ValidateSchemaReferenceBytes(wf, map[string][]byte{"review.json": data}); err == nil {
+				t.Fatalf("accepted no-op subschema %s", subschema)
+			}
+		})
+	}
+}
+
+func TestValidateSchemaReferenceBytesAcceptsRestrictivePatternSubschema(t *testing.T) {
+	wf := &definition.WorkflowFile{Steps: []definition.Step{{ID: "review", OutputSchema: "review.json"}}}
+	data := []byte(`{"type":"object","additionalProperties":{"pattern":"^x+$"}}`)
+	if err := ValidateSchemaReferenceBytes(wf, map[string][]byte{"review.json": data}); err != nil {
+		t.Fatalf("rejected restrictive pattern: %v", err)
+	}
+}
+
+func TestValidateSchemaReferenceBytesCompilesSelectedSchema(t *testing.T) {
+	wf := &definition.WorkflowFile{Steps: []definition.Step{{ID: "review", OutputSchema: "review.json"}}}
+	data := []byte(`{"$ref":"https://example.test/schema.json","additionalProperties":false}`)
+	if err := ValidateSchemaReferenceBytes(wf, map[string][]byte{"review.json": data}); err == nil {
+		t.Fatal("accepted unsupported remote schema reference")
+	}
+}
+
+func TestSchemaRestrictionHelpersRejectMalformedValues(t *testing.T) {
+	for name, schema := range map[string]map[string]json.RawMessage{
+		"bad enum":       {"enum": json.RawMessage(`{}`)},
+		"bad pattern":    {"pattern": json.RawMessage(`1`)},
+		"bad required":   {"required": json.RawMessage(`{}`)},
+		"zero minimum":   {"minLength": json.RawMessage(`0`)},
+		"bad maximum":    {"maxLength": json.RawMessage(`"x"`)},
+		"false unique":   {"uniqueItems": json.RawMessage(`false`)},
+		"bad properties": {"properties": json.RawMessage(`[]`)},
+		"empty allOf":    {"allOf": json.RawMessage(`[]`)},
+		"unknown":        {"unknown": json.RawMessage(`true`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if schemaHasRestriction(schema) {
+				t.Fatalf("schema %+v was classified as restrictive", schema)
+			}
+		})
+	}
+	if !rawSchemaRestricts(json.RawMessage(`false`)) || rawSchemaRestricts(json.RawMessage(`true`)) {
+		t.Fatal("boolean schema restriction classification is incorrect")
+	}
+	if rawSchemaRestricts(json.RawMessage(`[]`)) {
+		t.Fatal("array schema was classified as restrictive")
+	}
+}
+
+func TestSchemaKeywordRestrictionPositiveBranches(t *testing.T) {
+	for name, schema := range map[string]map[string]json.RawMessage{
+		"const":          {"const": json.RawMessage(`null`)},
+		"empty enum":     {"enum": json.RawMessage(`[]`)},
+		"property child": {"properties": json.RawMessage(`{"name":{"type":"string"}}`)},
+		"contains":       {"contains": json.RawMessage(`{}`)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !schemaHasRestriction(schema) {
+				t.Fatalf("schema %+v was not restrictive", schema)
+			}
+		})
+	}
+	if patternKeywordRestricts(json.RawMessage(`"["`)) {
+		t.Fatal("invalid pattern was classified as restrictive")
+	}
+}
+
+func TestSchemaRestrictionFallbackAndWitnessErrors(t *testing.T) {
+	rareProperty := map[string]json.RawMessage{
+		"properties": json.RawMessage(`{"rare":{"type":"string"}}`),
+	}
+	if !schemaHasRestriction(rareProperty) {
+		t.Fatal("rare property restriction was not detected")
+	}
+	pattern := map[string]json.RawMessage{
+		"pattern": json.RawMessage(`"^(|\\n|a|x)$"`),
+	}
+	if !schemaHasRestriction(pattern) {
+		t.Fatal("pattern fallback restriction was not detected")
+	}
+	invalidRaw := map[string]json.RawMessage{"bad": json.RawMessage(`{`)}
+	if schemaRejectsWitness(invalidRaw) {
+		t.Fatal("invalid raw schema was classified as restrictive")
+	}
+}
+
+func TestTypeKeywordRestrictionBoundaries(t *testing.T) {
+	for _, raw := range []json.RawMessage{json.RawMessage(`""`), json.RawMessage(`[]`), json.RawMessage(`{}`), json.RawMessage(`["null","boolean","object","array","number","string"]`)} {
+		if typeKeywordRestricts(raw) {
+			t.Fatalf("type value %s was classified as restrictive", raw)
+		}
+	}
+	if !typeKeywordRestricts(json.RawMessage(`"string"`)) || !typeKeywordRestricts(json.RawMessage(`["string"]`)) {
+		t.Fatal("narrow type was classified as unrestricted")
+	}
+}
+
+func TestSchemaListRestrictionBoundaries(t *testing.T) {
+	for _, raw := range []json.RawMessage{json.RawMessage(`{}`), json.RawMessage(`[]`), json.RawMessage(`[true,{}]`)} {
+		if schemaListRestricts(raw) {
+			t.Fatalf("schema list %s was classified as restrictive", raw)
+		}
+	}
+	if !schemaListRestricts(json.RawMessage(`[true,{"type":"string"}]`)) {
+		t.Fatal("schema list with a narrow member was classified as unrestricted")
 	}
 }
 

@@ -93,3 +93,26 @@ func TestLoadToolsNotInDefaultRegistry(t *testing.T) {
 		t.Fatalf("load_tools is registered in the default registry; its Wave B class assertion must move here from internal/cli")
 	}
 }
+
+func TestWorkspaceWriteCapableUsesRegisteredSurface(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws, RunAllowlist: []string{"true"}})
+	if !WorkspaceWriteCapable(reg, []string{"read_file", "write_file"}) {
+		t.Fatal("write_file surface was classified as read-only")
+	}
+	if !WorkspaceWriteCapable(reg, []string{"run_command"}) {
+		t.Fatal("run_command surface was classified as read-only")
+	}
+	if WorkspaceWriteCapable(reg, []string{"read_file", "not_registered"}) {
+		t.Fatal("read-only registered surface was classified as write-capable")
+	}
+}
+
+func TestWorkspaceWriteCapableRejectsNilRegistry(t *testing.T) {
+	if WorkspaceWriteCapable(nil, []string{"write_file", "run_command"}) {
+		t.Fatal("nil registry was classified as write-capable")
+	}
+}

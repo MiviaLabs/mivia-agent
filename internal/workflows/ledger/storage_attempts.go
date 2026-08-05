@@ -161,6 +161,10 @@ func (s *StorageRepository) CompleteStepAttempt(ctx context.Context, runID, atte
 		s.mu.Unlock()
 		return ErrInvalidTransition
 	}
+	if len(outcome.EvidenceJSON) > MaxEvidenceBytes {
+		s.mu.Unlock()
+		return fmt.Errorf("evidence exceeds %d bytes", MaxEvidenceBytes)
+	}
 	now := s.now()
 	payload, rollback, err := s.applyAttemptCompletionLocked(&p, idx, outcome, now, runID, attemptID)
 	stepID := p.Attempts[idx].StepID
@@ -195,13 +199,23 @@ func (s *StorageRepository) applyAttemptCompletionLocked(p *Projection, idx int,
 	prevAttempt := cur.Clone()
 	prevTransitions := append([]TransitionRecord(nil), p.Transitions...)
 	prevActive := p.ActiveStepID
+	coordinatorRunID, taskID := outcome.CoordinatorRunID, outcome.TaskID
+	if coordinatorRunID == "" {
+		coordinatorRunID = cur.CoordinatorRunID
+	}
+	if taskID == "" {
+		taskID = cur.TaskID
+	}
 	cur.Status = outcome.Status
+	cur.CoordinatorRunID = coordinatorRunID
+	cur.TaskID = taskID
 	cur.OutputRef = outcome.OutputRef
 	cur.OutputDigest = outcome.OutputDigest
 	cur.ToStepID = outcome.ToStepID
 	cur.TransitionIndex = outcome.TransitionIndex
 	cur.MatchDigest = outcome.MatchDigest
 	cur.DecisionJSON = append([]byte(nil), outcome.DecisionJSON...)
+	cur.EvidenceJSON = append([]byte(nil), outcome.EvidenceJSON...)
 	cur.FinishedAt = &now
 	cur.Version = 2
 	if outcome.ToStepID != "" {
@@ -234,16 +248,19 @@ func (s *StorageRepository) applyAttemptCompletionLocked(p *Projection, idx int,
 		s.proj[runID] = q
 	}
 	payload, err := marshalAttemptCompleted(attemptCompletedPayload{
-		AttemptID:       attemptID,
-		Status:          outcome.Status,
-		OutputRef:       outcome.OutputRef,
-		OutputDigest:    outcome.OutputDigest,
-		ToStepID:        outcome.ToStepID,
-		TransitionIndex: outcome.TransitionIndex,
-		MatchDigest:     outcome.MatchDigest,
-		DecisionJSON:    append([]byte(nil), outcome.DecisionJSON...),
-		FinishedAt:      now,
-		CreatedAt:       now,
+		AttemptID:        attemptID,
+		Status:           outcome.Status,
+		CoordinatorRunID: coordinatorRunID,
+		TaskID:           taskID,
+		OutputRef:        outcome.OutputRef,
+		OutputDigest:     outcome.OutputDigest,
+		ToStepID:         outcome.ToStepID,
+		TransitionIndex:  outcome.TransitionIndex,
+		MatchDigest:      outcome.MatchDigest,
+		DecisionJSON:     append([]byte(nil), outcome.DecisionJSON...),
+		EvidenceJSON:     append([]byte(nil), outcome.EvidenceJSON...),
+		FinishedAt:       now,
+		CreatedAt:        now,
 	})
 	if err != nil {
 		return nil, rollback, err

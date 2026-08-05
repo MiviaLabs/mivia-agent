@@ -202,12 +202,15 @@ func applyAttemptCompleted(proj *Projection, st *rebuildState, ev storage.Event)
 	}
 	a := &proj.Attempts[i]
 	a.Status = p.Status
+	a.CoordinatorRunID = p.CoordinatorRunID
+	a.TaskID = p.TaskID
 	a.OutputRef = p.OutputRef
 	a.OutputDigest = p.OutputDigest
 	a.ToStepID = p.ToStepID
 	a.TransitionIndex = p.TransitionIndex
 	a.MatchDigest = p.MatchDigest
 	a.DecisionJSON = append([]byte(nil), p.DecisionJSON...)
+	a.EvidenceJSON = append([]byte(nil), p.EvidenceJSON...)
 	a.FinishedAt = cloneTime(&p.FinishedAt)
 	a.Version = 2
 	if p.ToStepID != "" {

@@ -43,10 +43,14 @@ func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempot
 }
 
 func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string) (*RunHandle, error) {
-	runID, now := newRunID(), c.nowLocked()
+	return c.createAndStartRunWithID(ctx, newRunID(), tasks, key, fingerprint, true)
+}
+
+func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string, tasks []subagents.Task, key, fingerprint string, recoverDuplicate bool) (*RunHandle, error) {
+	now := c.nowLocked()
 	run := ledger.RunSnapshot{RunID: runID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Labels: map[string]string{}, Tasks: make([]ledger.TaskSnapshot, 0, len(tasks))}
 	if err := c.repo.CreateRun(ctx, key, run); err != nil {
-		if errors.Is(err, ledger.ErrDuplicate) && key != "" {
+		if errors.Is(err, ledger.ErrDuplicate) && key != "" && recoverDuplicate {
 			h, found, lookupErr := c.recoverIdempotentWithRetry(ctx, key, fingerprint)
 			if lookupErr != nil {
 				return nil, lookupErr
@@ -62,11 +66,8 @@ func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.T
 	// mutations. If another executor already holds a claim, refuse.
 	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
-			// Clean up the run we just created.
-			_ = c.repo.DeleteRun(ctx, runID)
 			return nil, ErrRunHeldByAnotherExecutor
 		}
-		_ = c.repo.DeleteRun(ctx, runID)
 		return nil, fmt.Errorf("claim run %q: %w", runID, err)
 	}
 
@@ -210,7 +211,7 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 		displayName = c.names.Generate("task")
 	}
 	attemptID := newAttemptID()
-	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID, ParentTaskID: parentTaskID(task.Owner), DisplayName: displayName, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Input: task.Input, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, Status: string(ledger.TaskStatusQueued), DependsOn: append([]string(nil), task.DependsOn...), CreatedAt: now, Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: taskID, RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
+	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID, ParentTaskID: parentTaskID(task.Owner), DisplayName: displayName, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Scope: task.Scope, OutputSchema: task.OutputSchema, Input: task.Input, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, Status: string(ledger.TaskStatusQueued), DependsOn: append([]string(nil), task.DependsOn...), CreatedAt: now, Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: taskID, RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
 	if err := c.repo.CreateTask(ctx, snap); err != nil {
 		return namedTask{}, fmt.Errorf("create task %q: %w", taskID, err)
 	}
@@ -242,12 +243,12 @@ func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string
 	return h
 }
 
-// releaseAndDeleteRun releases the execution claim on a run and deletes the
-// run record. Used during error cleanup in createAndStartRun when the claim
-// has already been acquired but a subsequent step fails.
+// releaseAndDeleteRun deletes a run while this coordinator still holds its
+// execution claim. It releases the claim after the delete attempt. This order
+// prevents another host from claiming the run before cleanup deletes it.
 func (c *coordinator) releaseAndDeleteRun(ctx context.Context, runID string) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = c.repo.ReleaseRun(cleanupCtx, runID, c.holderID)
 	_ = c.repo.DeleteRun(cleanupCtx, runID)
+	_ = c.repo.ReleaseRun(cleanupCtx, runID, c.holderID)
 }

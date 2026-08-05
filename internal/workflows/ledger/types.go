@@ -162,6 +162,7 @@ type StepAttempt struct {
 	TransitionIndex  int           `json:"transition_index,omitempty"`
 	MatchDigest      string        `json:"match_digest,omitempty"`
 	DecisionJSON     []byte        `json:"decision_json,omitempty"`
+	EvidenceJSON     []byte        `json:"evidence_json,omitempty"`
 	StartedAt        time.Time     `json:"started_at"`
 	FinishedAt       *time.Time    `json:"finished_at,omitempty"`
 	Version          uint64        `json:"version"`
@@ -171,6 +172,7 @@ type StepAttempt struct {
 func (s StepAttempt) Clone() StepAttempt {
 	clone := s
 	clone.DecisionJSON = append([]byte(nil), s.DecisionJSON...)
+	clone.EvidenceJSON = append([]byte(nil), s.EvidenceJSON...)
 	if s.FinishedAt != nil {
 		t := *s.FinishedAt
 		clone.FinishedAt = &t
@@ -184,14 +186,20 @@ func (s StepAttempt) Clone() StepAttempt {
 // decision computed from snapshotted typed evidence before the completion is
 // persisted; they are empty for interrupted/canceled/timed_out completions.
 type AttemptOutcome struct {
-	Status          AttemptStatus
-	OutputRef       string
-	OutputDigest    string
-	ToStepID        string
-	TransitionIndex int
-	MatchDigest     string
-	DecisionJSON    []byte
+	Status           AttemptStatus
+	CoordinatorRunID string
+	TaskID           string
+	OutputRef        string
+	OutputDigest     string
+	ToStepID         string
+	TransitionIndex  int
+	MatchDigest      string
+	DecisionJSON     []byte
+	EvidenceJSON     []byte
 }
+
+// MaxEvidenceBytes bounds persisted evidence-selection metadata.
+const MaxEvidenceBytes = 16 << 10
 
 type TransitionRecord struct {
 	RunID           string    `json:"run_id"`
