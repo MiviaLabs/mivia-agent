@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const currentContextSchemaVersion = 6
+const currentContextSchemaVersion = 7
 
 func sqliteDSN(path string) string {
 	separator := "?"
@@ -34,7 +34,7 @@ func migrateContextSchema(db *sql.DB) error {
 		return fmt.Errorf("context schema version %d is newer than supported version %d", version, currentContextSchemaVersion)
 	}
 	if version == currentContextSchemaVersion {
-		return nil
+		return ensureContextSchemaV7(db)
 	}
 	if version == 0 {
 		if err := applyContextSchemaV1(db); err != nil {
@@ -67,7 +67,13 @@ func migrateContextSchema(db *sql.DB) error {
 		version = 5
 	}
 	if version == 5 {
-		return applyContextSchemaV6(db)
+		if err := applyContextSchemaV6(db); err != nil {
+			return err
+		}
+		version = 6
+	}
+	if version == 6 {
+		return applyContextSchemaV7(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
 }
@@ -121,6 +127,11 @@ func repairContextSchema(db *sql.DB) error {
 			// makes migrateContextSchema report the dirty schema, and no later
 			// version can be repairable once an earlier one is missing.
 			return nil
+		}
+		if v == 7 {
+			if err := ensureContextSchemaV7(db); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -184,6 +195,8 @@ func contextVersionTable(v int) string {
 		return "chat_session_dirs"
 	case 6:
 		return "worktree_routes"
+	case 7:
+		return "worktree_instances"
 	default:
 		return ""
 	}

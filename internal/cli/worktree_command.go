@@ -20,7 +20,7 @@ func runWorktree(args []string) error {
 
 func runWorktreeWithIO(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("worktree: expected create, list, or remove")
+		return fmt.Errorf("worktree: expected create, list, remove, or adopt")
 	}
 
 	switch args[0] {
@@ -30,9 +30,40 @@ func runWorktreeWithIO(args []string, stdout io.Writer) error {
 		return runWorktreeList(args[1:], stdout)
 	case "remove":
 		return runWorktreeRemove(args[1:], stdout)
+	case "adopt":
+		return runWorktreeAdopt(args[1:], stdout)
 	default:
-		return fmt.Errorf("worktree: unknown subcommand %q (try create, list, or remove)", args[0])
+		return fmt.Errorf("worktree: unknown subcommand %q (try create, list, remove, or adopt)", args[0])
 	}
+}
+
+func runWorktreeAdopt(args []string, stdout io.Writer) error {
+	workspaceDir, _, args, err := parseWorktreeCommandArgs(args, false)
+	if err != nil {
+		return fmt.Errorf("worktree adopt: %w", err)
+	}
+	if len(args) != 1 {
+		return fmt.Errorf("worktree adopt: expected exactly one name")
+	}
+	repoRoot, err := worktreeCommandRoot(workspaceDir)
+	if err != nil {
+		return fmt.Errorf("worktree adopt: %w", err)
+	}
+	worktree, err := vcs.Resolve(context.Background(), repoRoot, args[0])
+	if err != nil {
+		return fmt.Errorf("worktree adopt: %w", err)
+	}
+	if worktree == nil {
+		return fmt.Errorf("worktree adopt: worktree %q not found", args[0])
+	}
+	if _, err := readWorktreeMarker(worktree.Path); err == nil {
+		return fmt.Errorf("worktree adopt: worktree %q already has a lifecycle marker", worktree.Name)
+	}
+	if _, err := registerManagedWorktree(repoRoot, worktree); err != nil {
+		return fmt.Errorf("worktree adopt: %w", err)
+	}
+	fmt.Fprintf(stdout, "adopted worktree %q at %s\n", worktree.Name, worktree.Path)
+	return nil
 }
 
 func runWorktreeCreate(args []string, stdout io.Writer) error {
@@ -56,20 +87,12 @@ func runWorktreeCreate(args []string, stdout io.Writer) error {
 	if err != nil {
 		var exists vcs.WorktreeExistsError
 		if errors.As(err, &exists) {
-			worktree, resolveErr := vcs.Resolve(context.Background(), repoRoot, args[0])
-			if resolveErr != nil || worktree == nil {
-				return fmt.Errorf("worktree create: %w", err)
-			}
-			if routeErr := registerWorktreeRoute(repoRoot, worktree); routeErr != nil {
-				return fmt.Errorf("worktree create: existing worktree %q is not registered: %w", worktree.Name, routeErr)
-			}
-			fmt.Fprintf(stdout, "registered worktree %q at %s\n", worktree.Name, worktree.Path)
-			return nil
+			return fmt.Errorf("worktree create: %w; use worktree adopt NAME for an existing worktree", err)
 		}
 		return fmt.Errorf("worktree create: %w", err)
 	}
-	if err := registerWorktreeRoute(repoRoot, worktree); err != nil {
-		return fmt.Errorf("worktree create: created %q at %s but could not register its session route: %w; rerun this create command to repair it", worktree.Name, worktree.Path, err)
+	if _, err := registerManagedWorktree(repoRoot, worktree); err != nil {
+		return fmt.Errorf("worktree create: created %q at %s but could not register its session lifecycle: %w", worktree.Name, worktree.Path, err)
 	}
 	fmt.Fprintf(stdout, "created worktree %q at %s\n", worktree.Name, worktree.Path)
 	return nil
@@ -123,19 +146,27 @@ func runWorktreeRemove(args []string, stdout io.Writer) error {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
 	if worktree == nil {
-		if err := removeWorktreeRoute(repoRoot, args[0]); err != nil {
-			return fmt.Errorf("worktree remove: worktree %q not found and route cleanup failed: %w", args[0], err)
+		if err := recoverManagedWorktreeRemoval(repoRoot, args[0]); err == nil {
+			fmt.Fprintf(stdout, "removed worktree %q\n", args[0])
+			return nil
 		}
 		return fmt.Errorf("worktree remove: worktree %q not found", args[0])
 	}
 	if worktreeContainsCurrentDir(worktree.Path) {
 		return fmt.Errorf("worktree remove: cannot remove the current worktree")
 	}
+	instance, err := beginManagedWorktreeRemoval(repoRoot, worktree)
+	if err != nil {
+		return fmt.Errorf("worktree remove: begin session cleanup: %w", err)
+	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, args[0], worktreeConfig.BranchPrefix); err != nil {
+		if reactivateErr := reactivateManagedWorktree(repoRoot, instance); reactivateErr != nil {
+			return fmt.Errorf("worktree remove: %w; session lifecycle recovery failed: %v", err, reactivateErr)
+		}
 		return fmt.Errorf("worktree remove: %w", err)
 	}
-	if err := removeWorktreeRoute(repoRoot, worktree.Name); err != nil {
-		return fmt.Errorf("worktree remove: removed %q but could not clean its session route: %w", worktree.Name, err)
+	if err := finishManagedWorktreeRemoval(repoRoot, instance); err != nil {
+		return fmt.Errorf("worktree remove: removed %q but could not clean its sessions: %w", worktree.Name, err)
 	}
 	fmt.Fprintf(stdout, "removed worktree %q\n", worktree.Name)
 	return nil

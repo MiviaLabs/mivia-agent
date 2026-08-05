@@ -23,6 +23,7 @@ type contextTurnConfig struct {
 	policy    contextstate.PolicySnapshot
 	redaction contextstate.RedactionPolicy
 	revision  contextstate.Revision
+	worktree  contextstate.WorktreeInstance
 }
 
 type plainTurnSnapshot struct {
@@ -112,7 +113,7 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 	}
 	s.mu.Unlock()
 	if manager != nil && manager.Enabled && store != nil {
-		snapshot, err := ensureAndLoadContextStore(store, principal, s.captureBindingRevision())
+		snapshot, err := ensureAndLoadContextStore(store, principal, s.captureBindingRevision(), s.contextWorktree)
 		if err != nil {
 			return err
 		}
@@ -140,7 +141,10 @@ func (s *Session) SetContextStore(store contextstate.Store) error {
 	if store == nil || !enabled || !principal.IsBound() {
 		return nil
 	}
-	snapshot, err := ensureAndLoadContextStore(store, principal, s.captureBindingRevision())
+	s.mu.RLock()
+	worktree := s.contextWorktree
+	s.mu.RUnlock()
+	snapshot, err := ensureAndLoadContextStore(store, principal, s.captureBindingRevision(), worktree)
 	if err != nil {
 		return err
 	}
@@ -158,11 +162,12 @@ func (s *Session) loadContextSnapshot(operationName string) error {
 	principal := s.contextPrincipal
 	token := s.captureOperationTokenLocked("context-load:" + operationName)
 	binding := captureBindingRevision(s.binding)
+	instance := s.contextWorktree
 	s.mu.RUnlock()
 	if store == nil || !principal.IsBound() {
 		return fmt.Errorf("context store is not configured")
 	}
-	snapshot, err := store.Load(context.Background(), principal, principal.SessionID)
+	snapshot, err := loadBoundContextStore(store, principal, principal.SessionID, instance)
 	if err != nil {
 		return err
 	}
@@ -201,11 +206,12 @@ func (s *Session) resyncContextHead() error {
 	store := s.contextStore
 	principal := s.contextPrincipal
 	binding := captureBindingRevision(s.binding)
+	instance := s.contextWorktree
 	s.mu.RUnlock()
 	if store == nil || !principal.IsBound() {
 		return fmt.Errorf("context store not configured")
 	}
-	snapshot, err := store.Load(context.Background(), principal, principal.SessionID)
+	snapshot, err := loadBoundContextStore(store, principal, principal.SessionID, instance)
 	if err != nil {
 		return err
 	}
@@ -228,34 +234,25 @@ func (s *Session) resyncContextHead() error {
 	return nil
 }
 
-func ensureAndLoadContextStore(store contextstate.Store, principal contextstate.Principal, binding contextstate.BindingRevision) (contextstate.Snapshot, error) {
+func ensureAndLoadContextStore(store contextstate.Store, principal contextstate.Principal, binding contextstate.BindingRevision, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
 	dir, worktree := currentDirContext()
-	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: dir, Worktree: worktree}); err != nil {
+	if !instance.IsZero() {
+		worktree = instance.Worktree
+	}
+	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: dir, Worktree: worktree, WorktreeInstance: instance}); err != nil {
 		return contextstate.Snapshot{}, err
 	}
-	return store.Load(context.Background(), principal, principal.SessionID)
+	return loadBoundContextStore(store, principal, principal.SessionID, instance)
 }
 
-func (s *Session) ContextStore() contextstate.Store {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.contextStore
-}
-
-func (s *Session) ContextEnabled() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.contextEnabledLocked()
-}
-
-func (s *Session) ContextManager() *contextmgr.ContextManager {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.contextManager == nil {
-		return nil
+func loadBoundContextStore(store contextstate.Store, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
+	if !instance.IsZero() {
+		if scoped, ok := store.(contextstate.WorktreeStore); ok {
+			return scoped.LoadWorktree(context.Background(), principal, sessionID, instance)
+		}
+		return contextstate.Snapshot{}, contextstate.ErrWorktreeDeleted
 	}
-	copyManager := *s.contextManager
-	return &copyManager
+	return store.Load(context.Background(), principal, sessionID)
 }
 
 func (s *Session) contextEnabledLocked() bool {
@@ -273,7 +270,23 @@ func (s *Session) captureContextLocked() contextTurnConfig {
 		manager: &manager, principal: s.contextPrincipal,
 		policy: s.contextPolicy, redaction: s.contextRedaction,
 		revision: s.contextHead,
+		worktree: s.contextWorktree,
 	}
+}
+
+// SetContextWorktreeBinding retains the physical worktree identity for every
+// later context mutation. Call it before installing a context store.
+func (s *Session) SetContextWorktreeBinding(instance contextstate.WorktreeInstance) error {
+	if err := instance.Validate(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.contextStore != nil || s.contextManager != nil {
+		return fmt.Errorf("context worktree binding must be set before context setup")
+	}
+	s.contextWorktree = instance
+	return nil
 }
 
 func (s *Session) beginPlainTurn(userText string) (plainTurnSnapshot, func(), error) {
@@ -393,7 +406,7 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 }
 
 func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w io.Writer, snapshot plainTurnSnapshot) (string, error) {
-	input := prepareInputForContext(snapshot.messages, snapshot.budget, snapshot.maxTokens, snapshot.binding, snapshot.context.principal, snapshot.context.policy)
+	input := prepareInputForContext(snapshot.messages, snapshot.budget, snapshot.maxTokens, snapshot.binding, snapshot.context.principal, snapshot.context.policy, snapshot.context.worktree)
 	input.Revision = snapshot.context.revision
 	if snapshot.tools != nil {
 		input.Tools = snapshot.tools.OpenAITools()

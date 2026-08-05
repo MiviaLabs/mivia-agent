@@ -34,6 +34,9 @@ func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Princip
 	if !contextstate.ValidSessionDir(opts.Dir) || !contextstate.ValidSessionDir(opts.Worktree) {
 		return fmt.Errorf("%w: invalid session directory metadata", contextstate.ErrInvalidDTO)
 	}
+	if err := opts.WorktreeInstance.Validate(); err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -41,10 +44,13 @@ func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Princip
 	// land or neither does, so a torn write cannot leave a snapshot whose
 	// restore metadata is missing or points at an older location.
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count`, principal.WorkspaceID, principal.SubjectID, name, model, provider, messages, now, now, turns, tokens, messageCount); err != nil {
+		if err := requireActiveWorktreeTx(ctx, tx, principal, opts.WorktreeInstance); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, upsertSessionDirSQL, principal.WorkspaceID, principal.SubjectID, name, opts.Dir, opts.Worktree)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count,instance_id=excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, name, model, provider, messages, now, now, turns, tokens, messageCount, nullableText(opts.WorktreeInstance.ID)); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, upsertSessionDirSQL, principal.WorkspaceID, principal.SubjectID, name, opts.Dir, opts.Worktree, nullableText(opts.WorktreeInstance.ID))
 		return err
 	})
 }
@@ -207,7 +213,7 @@ const deleteSessionDirSQL = `DELETE FROM chat_session_dirs WHERE workspace_id=? 
 // upsertSessionDirSQL records (or refreshes) a session's directory metadata.
 // The name key is a chat_sessions snapshot name for named saves and a
 // context_sessions session_id for live sessions.
-const upsertSessionDirSQL = `INSERT INTO chat_session_dirs(workspace_id,subject_id,name,dir,worktree) VALUES(?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET dir=excluded.dir,worktree=excluded.worktree`
+const upsertSessionDirSQL = `INSERT INTO chat_session_dirs(workspace_id,subject_id,name,dir,worktree,instance_id) VALUES(?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET dir=excluded.dir,worktree=excluded.worktree,instance_id=excluded.instance_id`
 
 // deleteSessionSnapshotRow removes a snapshot and its admission record in one
 // transaction and reports how many snapshot rows it removed, so the caller can
@@ -356,6 +362,61 @@ func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextsta
 }
 
 var _ contextstate.SessionAdmissionCatalog = (*SQLite)(nil)
+var _ contextstate.WorktreeAdmissionCatalog = (*SQLite)(nil)
+
+func (s *SQLite) SaveWorktreeSessionAdmission(ctx context.Context, principal contextstate.Principal, name string, record contextstate.SessionAdmission, instance contextstate.WorktreeInstance) error {
+	if err := instance.Validate(); err != nil || instance.IsZero() {
+		return fmt.Errorf("%w: invalid worktree instance", contextstate.ErrInvalidDTO)
+	}
+	if err := principal.Validate(); err != nil {
+		return err
+	}
+	if err := validateSessionCatalogName(name); err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := requireActiveWorktreeTx(ctx, tx, principal, instance); err != nil {
+			return err
+		}
+		if len(record.Names) == 0 {
+			_, err := tx.ExecContext(ctx, `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, name, instance.ID)
+			return err
+		}
+		encoded, _ := json.Marshal(record.Names)
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		_, err := tx.ExecContext(ctx, `INSERT INTO chat_session_admissions(workspace_id,subject_id,name,agent,digest,names,updated_at,instance_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET agent=excluded.agent,digest=excluded.digest,names=excluded.names,updated_at=excluded.updated_at,instance_id=excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, name, record.Agent, record.Digest, string(encoded), now, instance.ID)
+		return err
+	})
+}
+
+func (s *SQLite) LoadWorktreeSessionAdmission(ctx context.Context, principal contextstate.Principal, name string, instance contextstate.WorktreeInstance) (contextstate.SessionAdmission, error) {
+	if err := instance.Validate(); err != nil || instance.IsZero() {
+		return contextstate.SessionAdmission{}, contextstate.ErrWorktreeDeleted
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return contextstate.SessionAdmission{}, err
+	}
+	defer tx.Rollback()
+	if err := requireActiveWorktreeTx(ctx, tx, principal, instance); err != nil {
+		return contextstate.SessionAdmission{}, err
+	}
+	var r contextstate.SessionAdmission
+	var encoded string
+	err = tx.QueryRowContext(ctx, `SELECT agent,digest,names FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, name, instance.ID).Scan(&r.Agent, &r.Digest, &encoded)
+	if err == sql.ErrNoRows {
+		return contextstate.SessionAdmission{}, nil
+	}
+	if err != nil {
+		return contextstate.SessionAdmission{}, err
+	}
+	if err := json.Unmarshal([]byte(encoded), &r.Names); err != nil {
+		return contextstate.SessionAdmission{}, fmt.Errorf("%w: decode admitted tools", contextstate.ErrInvalidDTO)
+	}
+	return r, nil
+}
 
 // SaveSessionAdmission persists a named session's admitted tool set. An empty
 // name set deletes the row: resuming a session that admitted nothing must not

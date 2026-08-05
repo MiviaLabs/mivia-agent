@@ -233,6 +233,17 @@ func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	worktreeStore, err := openContextStorePath(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registerManagedWorktreeInStore(worktreeStore, repoRoot, worktree); err != nil {
+		_ = worktreeStore.Close()
+		t.Fatal(err)
+	}
+	if err := worktreeStore.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chdir(worktree.Path); err != nil {
 		t.Fatal(err)
 	}

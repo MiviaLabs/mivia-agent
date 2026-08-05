@@ -50,6 +50,9 @@ func validateCommitIdentity(r CommitRequest) error {
 	if err := r.ExpectedBinding.Validate(); err != nil {
 		return err
 	}
+	if err := r.WorktreeInstance.Validate(); err != nil {
+		return err
+	}
 	return r.NewBinding.Validate()
 }
 

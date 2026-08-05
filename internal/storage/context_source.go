@@ -224,6 +224,7 @@ type contextSessionRow struct {
 	Model             string
 	BindingGeneration uint64
 	Tombstoned        bool
+	InstanceID        sql.NullString
 }
 
 func (s *SQLite) authorizeContextSession(ctx context.Context, principal contextstate.Principal, sessionID string) (contextSessionRow, error) {
@@ -236,7 +237,7 @@ func (s *SQLite) authorizeContextSession(ctx context.Context, principal contexts
 	var row contextSessionRow
 	var subjectID, capability string
 	var tombstoned int
-	err := s.db.QueryRowContext(ctx, `SELECT subject_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,tombstoned FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, sessionID).Scan(&subjectID, &capability, &row.SessionRevision, &row.DurableRevision, &row.SourceSequence, &row.Provider, &row.Model, &row.BindingGeneration, &tombstoned)
+	err := s.db.QueryRowContext(ctx, `SELECT subject_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,tombstoned,instance_id FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, sessionID).Scan(&subjectID, &capability, &row.SessionRevision, &row.DurableRevision, &row.SourceSequence, &row.Provider, &row.Model, &row.BindingGeneration, &tombstoned, &row.InstanceID)
 	if err == sql.ErrNoRows {
 		return contextSessionRow{}, contextstate.ErrSessionNotFound
 	}
@@ -263,7 +264,7 @@ func authorizeContextSessionTx(ctx context.Context, tx *sql.Tx, principal contex
 	var row contextSessionRow
 	var subjectID, capability string
 	var tombstoned int
-	err := tx.QueryRowContext(ctx, `SELECT subject_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,tombstoned FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, sessionID).Scan(&subjectID, &capability, &row.SessionRevision, &row.DurableRevision, &row.SourceSequence, &row.Provider, &row.Model, &row.BindingGeneration, &tombstoned)
+	err := tx.QueryRowContext(ctx, `SELECT subject_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,tombstoned,instance_id FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, sessionID).Scan(&subjectID, &capability, &row.SessionRevision, &row.DurableRevision, &row.SourceSequence, &row.Provider, &row.Model, &row.BindingGeneration, &tombstoned, &row.InstanceID)
 	if err == sql.ErrNoRows {
 		return contextSessionRow{}, contextstate.ErrSessionNotFound
 	}

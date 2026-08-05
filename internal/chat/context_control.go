@@ -74,7 +74,7 @@ func (s *Session) ContextPreparation() (contextmgr.PreparationManager, contextmg
 	if cfg.manager == nil {
 		return nil, contextmgr.PrepareInput{}, false
 	}
-	input := prepareInputForContext(s.Messages, s.MaxContextTokens, s.MaxTokens, s.binding, cfg.principal, cfg.policy)
+	input := prepareInputForContext(s.Messages, s.MaxContextTokens, s.MaxTokens, s.binding, cfg.principal, cfg.policy, cfg.worktree)
 	input.Revision = cfg.revision
 	return cfg.manager.PreparationManager, input, true
 }
@@ -105,7 +105,7 @@ func (s *Session) Compact(ctx context.Context) error {
 	if cfg.manager == nil || store == nil {
 		return fmt.Errorf("context compaction is not configured")
 	}
-	input := prepareInputForContext(messages, s.MaxContextTokens, s.MaxTokens, binding, cfg.principal, cfg.policy)
+	input := prepareInputForContext(messages, s.MaxContextTokens, s.MaxTokens, binding, cfg.principal, cfg.policy, cfg.worktree)
 	input.Revision = cfg.revision
 	input.Force = true
 	snapshot, err := store.Load(ctx, cfg.principal, cfg.principal.SessionID)
@@ -164,6 +164,7 @@ func (s *Session) RotateSessionID() (string, error) {
 	store := s.contextStore
 	workspaceID, subjectID := s.contextPrincipal.WorkspaceID, s.contextPrincipal.SubjectID
 	binding := captureBindingRevision(s.binding)
+	worktree := s.contextWorktree
 	oldID := s.SessionID
 	s.mu.RUnlock()
 	newID := runtime.NewSessionID()
@@ -183,7 +184,7 @@ func (s *Session) RotateSessionID() (string, error) {
 	}
 	var snapshot contextstate.Snapshot
 	if manager != nil && manager.Enabled && store != nil {
-		snapshot, err = ensureAndLoadContextStore(store, principal, binding)
+		snapshot, err = ensureAndLoadContextStore(store, principal, binding, worktree)
 		if err != nil {
 			return "", err
 		}

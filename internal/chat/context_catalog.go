@@ -60,7 +60,7 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 			turns++
 		}
 	}
-	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs), sessionSaveOptions()); err != nil {
+	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs), s.sessionSaveOptions()); err != nil {
 		return err
 	}
 	return s.persistAdmission(name)
@@ -69,9 +69,15 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 // sessionSaveOptions captures the current directory context for a named
 // snapshot save. The zero value (no directory) is valid for callers that
 // cannot resolve one.
-func sessionSaveOptions() contextstate.SessionSaveOptions {
+func (s *Session) sessionSaveOptions() contextstate.SessionSaveOptions {
 	dir, worktree := currentDirContext()
-	return contextstate.SessionSaveOptions{Dir: dir, Worktree: worktree}
+	s.mu.RLock()
+	instance := s.contextWorktree
+	s.mu.RUnlock()
+	if !instance.IsZero() {
+		worktree = instance.Worktree
+	}
+	return contextstate.SessionSaveOptions{Dir: dir, Worktree: worktree, WorktreeInstance: instance}
 }
 
 func (s *Session) loadContextCatalog(name string) (bool, error) {

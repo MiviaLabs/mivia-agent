@@ -19,11 +19,11 @@ func cloneContextMessages(messages []provider.Message) []provider.Message {
 	return output
 }
 
-func prepareInputForContext(messages []provider.Message, budget int, maxTokens *int, binding ModelBinding, principal contextstate.Principal, policy contextstate.PolicySnapshot) contextmgr.PrepareInput {
+func prepareInputForContext(messages []provider.Message, budget int, maxTokens *int, binding ModelBinding, principal contextstate.Principal, policy contextstate.PolicySnapshot, instance contextstate.WorktreeInstance) contextmgr.PrepareInput {
 	return contextmgr.PrepareInput{
 		Messages: messages, Budget: budget, OutputReserve: outputReserve(maxTokens),
 		CurrentObjective: latestUserMessage(messages), Principal: principal,
-		Revision: contextstate.Revision{}, Binding: captureBindingRevision(binding), Policy: policy,
+		Revision: contextstate.Revision{}, Binding: captureBindingRevision(binding), WorktreeInstance: instance, Policy: policy,
 	}
 }
 

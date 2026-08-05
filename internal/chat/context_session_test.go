@@ -89,6 +89,22 @@ func TestPlainTurnUsesPreparationTransaction(t *testing.T) {
 	}
 }
 
+func TestContextPreparationRetainsWorktreeInstance(t *testing.T) {
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := session.SetContextWorktreeBinding(instance); err != nil {
+		t.Fatal(err)
+	}
+	contextSessionManager(t, session, nil)
+	_, input, ok := session.ContextPreparation()
+	if !ok {
+		t.Fatal("ContextPreparation unavailable")
+	}
+	if input.WorktreeInstance != instance {
+		t.Fatalf("preparation worktree instance = %+v, want %+v", input.WorktreeInstance, instance)
+	}
+}
+
 func TestCheckpointFailureDoesNotFallbackToJSONL(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
 	prep, pub := contextSessionManager(t, session, errors.New("checkpoint failed"))

@@ -2,11 +2,79 @@ package storage
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
+
+func TestWorktreeSessionCatalogFencesDeletingInstance(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, ok := any(store).(contextstate.WorktreeSessionCatalog)
+	if !ok {
+		t.Fatal("SQLite does not implement WorktreeSessionCatalog")
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := catalog.RegisterWorktreeInstance(context.Background(), principal, instance, "/repo/.mivia/worktrees/wt-a"); err != nil {
+		t.Fatalf("RegisterWorktreeInstance: %v", err)
+	}
+	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t), WorktreeInstance: instance}); err != nil {
+		t.Fatalf("EnsureSession active instance: %v", err)
+	}
+	var storedID sql.NullString
+	if err := store.db.QueryRow(`SELECT instance_id FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, principal.SessionID).Scan(&storedID); err != nil {
+		t.Fatal(err)
+	}
+	if !storedID.Valid || storedID.String != instance.ID {
+		t.Fatalf("stored instance ID = %q, want %q", storedID.String, instance.ID)
+	}
+	if err := store.SaveSession(context.Background(), principal, "snapshot", []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	if err := catalog.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
+		t.Fatalf("BeginWorktreeDeletion: %v", err)
+	}
+	if _, err := store.LoadWorktree(context.Background(), principal, principal.SessionID, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("LoadWorktree during deletion = %v, want ErrWorktreeDeleted", err)
+	}
+	if err := store.SaveSession(context.Background(), principal, "late", []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance}); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("SaveSession during deletion = %v, want ErrWorktreeDeleted", err)
+	}
+	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t), WorktreeInstance: instance}); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("EnsureSession during deletion = %v, want ErrWorktreeDeleted", err)
+	}
+	if deleted, err := catalog.DeleteWorktreeSessions(context.Background(), principal, instance); err != nil || deleted != 2 {
+		t.Fatalf("DeleteWorktreeSessions = %d, %v; want 2, nil", deleted, err)
+	}
+	for _, table := range []string{"chat_sessions", "chat_session_dirs"} {
+		var count int
+		if err := store.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE workspace_id=? AND subject_id=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, instance.ID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s retains %d deleted rows", table, count)
+		}
+	}
+}
+
+func mustBinding(t *testing.T) contextstate.BindingRevision {
+	t.Helper()
+	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return binding
+}
 
 func TestSQLiteChatSessionCatalogRoundTripAndPrune(t *testing.T) {
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))

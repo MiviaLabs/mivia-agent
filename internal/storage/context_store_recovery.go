@@ -26,11 +26,11 @@ func (r contextSessionRow) Binding() contextstate.BindingRevision {
 }
 
 func readContextHead(ctx context.Context, q contextRowQueryer, principal contextstate.Principal) (contextHead, error) {
-	return scanContextHead(q.QueryRowContext(ctx, `SELECT subject_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,active_checkpoint_id,tombstoned FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, principal.SessionID), principal)
+	return scanContextHead(q.QueryRowContext(ctx, `SELECT subject_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,active_checkpoint_id,tombstoned,instance_id FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, principal.SessionID), principal)
 }
 
 func readContextHeadTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal) (contextHead, error) {
-	return scanContextHead(tx.QueryRowContext(ctx, `SELECT subject_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,active_checkpoint_id,tombstoned FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, principal.SessionID), principal)
+	return scanContextHead(tx.QueryRowContext(ctx, `SELECT subject_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,active_checkpoint_id,tombstoned,instance_id FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, principal.SessionID), principal)
 }
 
 type contextRowQueryer interface {
@@ -41,7 +41,7 @@ func scanContextHead(row *sql.Row, principal contextstate.Principal) (contextHea
 	var head contextHead
 	var subjectID, capability string
 	var tombstoned int
-	err := row.Scan(&subjectID, &capability, &head.SessionRevision, &head.DurableRevision, &head.SourceSequence, &head.Provider, &head.Model, &head.BindingGeneration, &head.ActiveCheckpointID, &tombstoned)
+	err := row.Scan(&subjectID, &capability, &head.SessionRevision, &head.DurableRevision, &head.SourceSequence, &head.Provider, &head.Model, &head.BindingGeneration, &head.ActiveCheckpointID, &tombstoned, &head.InstanceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return contextHead{}, contextstate.ErrSessionNotFound
 	}

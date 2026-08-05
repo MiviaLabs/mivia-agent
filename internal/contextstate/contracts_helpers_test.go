@@ -3,8 +3,21 @@ package contextstate
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"testing"
 )
+
+func TestWorktreeInstanceValidation(t *testing.T) {
+	valid := WorktreeInstance{Worktree: "feature-a", ID: "wt_1234567890abcdef"}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate valid instance: %v", err)
+	}
+	for _, instance := range []WorktreeInstance{{Worktree: "feature-a"}, {ID: valid.ID}, {Worktree: "bad/name", ID: valid.ID}} {
+		if err := instance.Validate(); !errors.Is(err, ErrInvalidDTO) {
+			t.Fatalf("Validate(%+v) = %v, want ErrInvalidDTO", instance, err)
+		}
+	}
+}
 
 func TestValidateSourceEvents(t *testing.T) {
 	t.Parallel()

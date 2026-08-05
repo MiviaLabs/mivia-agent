@@ -39,6 +39,7 @@ var (
 	ErrStaleRevision        = errors.New("stale revision")
 	ErrStaleBinding         = errors.New("stale binding")
 	ErrCheckpointConflict   = errors.New("checkpoint conflict")
+	ErrWorktreeDeleted      = errors.New("worktree session deleted")
 	ErrPromptBudgetExceeded = errors.New("prompt budget exceeded")
 )
 

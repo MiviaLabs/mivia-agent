@@ -68,7 +68,7 @@ func TestDeleteSnapshotOrphanDirSweepError(t *testing.T) {
 
 	// Seed an orphaned dir row for the ghost name so the sweep has a target,
 	// then break the dir table so the sweep DELETE fails.
-	if _, err := store.db.ExecContext(ctx, upsertSessionDirSQL, principal.WorkspaceID, principal.SubjectID, "ghost", "/orphan", ""); err != nil {
+	if _, err := store.db.ExecContext(ctx, upsertSessionDirSQL, principal.WorkspaceID, principal.SubjectID, "ghost", "/orphan", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	dropSessionDirsTable(t, store)

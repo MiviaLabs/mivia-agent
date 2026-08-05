@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -68,6 +69,159 @@ func registerWorktreeRouteInStore(store *storage.SQLite, root string, wt *vcs.Wo
 		return err
 	}
 	return store.SaveWorktreeRoute(context.Background(), principal, wt.Name, wt.Path)
+}
+
+func registerManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
+	store, err := openRepositoryContextStore(root)
+	if err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
+	defer store.Close()
+	return registerManagedWorktreeInStore(store, root, wt)
+}
+
+func registerManagedWorktreeInStore(store *storage.SQLite, root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
+	if wt == nil {
+		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree route requires a worktree")
+	}
+	instance, err := newManagedWorktreeInstance(wt.Name)
+	if err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
+	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, wt.Path); err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
+	if err := writeWorktreeMarker(wt.Path, instance); err != nil {
+		if beginErr := store.BeginWorktreeDeletion(context.Background(), principal, instance); beginErr == nil {
+			_, _ = store.DeleteWorktreeSessions(context.Background(), principal, instance)
+		}
+		return contextstate.WorktreeInstance{}, err
+	}
+	return instance, nil
+}
+
+func registerManagedWorktreeForSession(sess *chat.Session, root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
+	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+		return registerManagedWorktreeInStore(store, root, wt)
+	}
+	return registerManagedWorktree(root, wt)
+}
+
+func newManagedWorktreeInstance(name string) (contextstate.WorktreeInstance, error) {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return contextstate.WorktreeInstance{}, fmt.Errorf("generate worktree instance ID: %w", err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: name, ID: "wt_" + hex.EncodeToString(random[:])}
+	return instance, instance.Validate()
+}
+
+func beginManagedWorktreeRemoval(root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
+	return beginManagedWorktreeRemovalInStore(nil, root, wt)
+}
+
+func beginManagedWorktreeRemovalForSession(sess *chat.Session, root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
+	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+		return beginManagedWorktreeRemovalInStore(store, root, wt)
+	}
+	return beginManagedWorktreeRemoval(root, wt)
+}
+
+func beginManagedWorktreeRemovalInStore(store *storage.SQLite, root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
+	if wt == nil {
+		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree route requires a worktree")
+	}
+	instance, err := readWorktreeMarker(wt.Path)
+	if err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
+	if instance.Worktree != wt.Name {
+		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker name does not match")
+	}
+	ownedStore := false
+	if store == nil {
+		var err error
+		store, err = openRepositoryContextStore(root)
+		if err != nil {
+			return contextstate.WorktreeInstance{}, err
+		}
+		ownedStore = true
+	}
+	if ownedStore {
+		defer store.Close()
+	}
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
+	return instance, store.BeginWorktreeDeletion(context.Background(), principal, instance)
+}
+
+func finishManagedWorktreeRemoval(root string, instance contextstate.WorktreeInstance) error {
+	return finishManagedWorktreeRemovalInStore(nil, root, instance)
+}
+
+func recoverManagedWorktreeRemoval(root, name string) error {
+	store, err := openRepositoryContextStore(root)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return err
+	}
+	instance, err := store.DeletingWorktreeInstance(context.Background(), principal, name)
+	if err != nil {
+		return err
+	}
+	_, err = store.DeleteWorktreeSessions(context.Background(), principal, instance)
+	return err
+}
+
+func finishManagedWorktreeRemovalForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
+	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+		return finishManagedWorktreeRemovalInStore(store, root, instance)
+	}
+	return finishManagedWorktreeRemoval(root, instance)
+}
+
+func finishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, instance contextstate.WorktreeInstance) error {
+	ownedStore := false
+	if store == nil {
+		var err error
+		store, err = openRepositoryContextStore(root)
+		if err != nil {
+			return err
+		}
+		ownedStore = true
+	}
+	if ownedStore {
+		defer store.Close()
+	}
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return err
+	}
+	_, err = store.DeleteWorktreeSessions(context.Background(), principal, instance)
+	return err
+}
+
+func reactivateManagedWorktree(root string, instance contextstate.WorktreeInstance) error {
+	store, err := openRepositoryContextStore(root)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return err
+	}
+	return store.ReactivateWorktreeInstance(context.Background(), principal, instance)
 }
 
 // removeWorktreeRoute removes the route after Git has removed its worktree.
