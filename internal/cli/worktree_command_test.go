@@ -26,6 +26,9 @@ func TestWorktreeCommandAdoptAddsMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := registerWorktreeRoute(repoRoot, worktree); err != nil {
+		t.Fatalf("seed legacy route: %v", err)
+	}
 	var output bytes.Buffer
 	if err := runWorktreeWithIO([]string{"adopt", "legacy", "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("adopt: %v", err)

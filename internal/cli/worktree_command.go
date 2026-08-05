@@ -58,6 +58,24 @@ func runWorktreeAdopt(args []string, stdout io.Writer) error {
 	}
 	if _, err := readWorktreeMarker(worktree.Path); err == nil {
 		return fmt.Errorf("worktree adopt: worktree %q already has a lifecycle marker", worktree.Name)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("worktree adopt: inspect lifecycle marker: %w", err)
+	}
+	canonicalPath, err := canonicalMarkerRoot(worktree.Path)
+	if err != nil {
+		return fmt.Errorf("worktree adopt: %w", err)
+	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		return fmt.Errorf("worktree adopt: %w", err)
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		return fmt.Errorf("worktree adopt: %w", err)
+	}
+	if err := store.RequireLegacyWorktreeRoute(context.Background(), principal, worktree.Name, canonicalPath); err != nil {
+		return fmt.Errorf("worktree adopt: worktree needs one matching legacy route")
 	}
 	if _, err := registerManagedWorktree(repoRoot, worktree); err != nil {
 		return fmt.Errorf("worktree adopt: %w", err)
@@ -117,6 +135,22 @@ func runWorktreeList(args []string, stdout io.Writer) error {
 	}
 	for _, worktree := range worktrees {
 		fmt.Fprintf(stdout, "%s\t%s\t%s\n", worktree.Name, worktree.Branch, worktree.Path)
+	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		return fmt.Errorf("worktree list: %w", err)
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		return fmt.Errorf("worktree list: %w", err)
+	}
+	deleting, err := store.ListDeletingWorktreeInstances(context.Background(), principal)
+	if err != nil {
+		return fmt.Errorf("worktree list: %w", err)
+	}
+	for _, info := range deleting {
+		fmt.Fprintf(stdout, "%s\trecovery required\t%s\n", info.Instance.Worktree, info.CanonicalPath)
 	}
 	return nil
 }

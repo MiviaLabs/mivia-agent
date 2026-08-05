@@ -78,6 +78,7 @@ type WorktreeSessionCatalog interface {
 	LoadWorktreeSession(context.Context, Principal, string, WorktreeInstance) ([]byte, SessionCatalogInfo, error)
 	ListWorktreeSessions(context.Context, Principal, WorktreeInstance) ([]SessionCatalogInfo, error)
 	DeleteWorktreeSessionSnapshot(context.Context, Principal, string, WorktreeInstance) error
+	PruneWorktreeSessionSnapshots(context.Context, Principal, []string, WorktreeInstance) error
 }
 
 // SessionAdmission is a named session's deferred-tool admission record (plan

@@ -29,6 +29,26 @@ func (s *SQLite) DeletingWorktreeInstance(ctx context.Context, principal context
 	return contextstate.WorktreeInstance{Worktree: worktree, ID: id}, nil
 }
 
+func (s *SQLite) ListDeletingWorktreeInstances(ctx context.Context, principal contextstate.Principal) ([]contextstate.WorktreeInstanceInfo, error) {
+	if err := principal.Validate(); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT worktree,instance_id,canonical_path,state FROM worktree_instances WHERE workspace_id=? AND state=? ORDER BY worktree`, principal.WorkspaceID, contextstate.WorktreeDeleting)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []contextstate.WorktreeInstanceInfo
+	for rows.Next() {
+		var info contextstate.WorktreeInstanceInfo
+		if err := rows.Scan(&info.Instance.Worktree, &info.Instance.ID, &info.CanonicalPath, &info.State); err != nil {
+			return nil, err
+		}
+		out = append(out, info)
+	}
+	return out, rows.Err()
+}
+
 // CreatingWorktreeInstance returns the retained creation record for a name.
 func (s *SQLite) CreatingWorktreeInstance(ctx context.Context, principal contextstate.Principal, worktree string) (contextstate.WorktreeInstanceInfo, error) {
 	if err := principal.Validate(); err != nil {
@@ -44,6 +64,41 @@ func (s *SQLite) CreatingWorktreeInstance(ctx context.Context, principal context
 		return contextstate.WorktreeInstanceInfo{}, err
 	}
 	return info, nil
+}
+
+// ValidateActiveWorktreeInstance verifies the exact active catalog binding.
+func (s *SQLite) ValidateActiveWorktreeInstance(ctx context.Context, principal contextstate.Principal, instance contextstate.WorktreeInstance, canonicalPath string) error {
+	if err := validateWorktreeInstancePath(principal, instance, canonicalPath); err != nil {
+		return err
+	}
+	var found string
+	err := s.db.QueryRowContext(ctx, `SELECT canonical_path FROM worktree_instances WHERE workspace_id=? AND worktree=? AND instance_id=? AND state=?`, principal.WorkspaceID, instance.Worktree, instance.ID, contextstate.WorktreeActive).Scan(&found)
+	if err == sql.ErrNoRows {
+		return contextstate.ErrWorktreeDeleted
+	}
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(found) != filepath.Clean(canonicalPath) {
+		return contextstate.ErrWorktreeDeleted
+	}
+	return nil
+}
+
+// RequireLegacyWorktreeRoute verifies the exact unbound route needed for adoption.
+func (s *SQLite) RequireLegacyWorktreeRoute(ctx context.Context, principal contextstate.Principal, worktree, canonicalPath string) error {
+	if err := principal.Validate(); err != nil || !filepath.IsAbs(canonicalPath) {
+		return contextstate.ErrWorktreeDeleted
+	}
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=? AND dir=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, worktree, canonicalPath).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return contextstate.ErrWorktreeDeleted
+	}
+	return nil
 }
 
 // LoadWorktree loads a durable session only while its exact instance is active.
