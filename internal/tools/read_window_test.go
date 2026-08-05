@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func TestReadFileWindowLineNumbers(t *testing.T) {
@@ -247,6 +249,52 @@ func TestReadFileWindowWidthMinimum(t *testing.T) {
 	}
 	if !strings.Contains(out, "1 | only line") {
 		t.Fatalf("expected width-1 line prefix, got: %q", out)
+	}
+}
+
+// TestReadFileErrTooLongReportsEnforcedBound pins the ErrTooLong message to
+// the bound the scanner actually enforces. For an uncapped tool (maxBytes==0)
+// the enforced bound is the 1 MiB floor, not "(0 bytes)"; for a small
+// configured bound it is max(scannerMax, cap(buf)) = 64 KiB, not the
+// configured value.
+func TestReadFileErrTooLongReportsEnforcedBound(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Uncapped tool: one line longer than the 1 MiB scanner floor.
+	big := strings.Repeat("x", 1<<20+1)
+	bigPath := filepath.Join(ws.Abs, "bigline.txt")
+	if err := os.WriteFile(bigPath, []byte(big+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := &readFileTool{ws: ws, maxBytes: 0}
+	_, err = tool.readLineWindow(context.Background(), bigPath, 1, 10)
+	if err == nil {
+		t.Fatal("expected an ErrTooLong error for an oversized line")
+	}
+	if !strings.Contains(err.Error(), "1048576") {
+		t.Fatalf("uncapped read: error must report the 1 MiB enforced bound, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "(0 bytes)") {
+		t.Fatalf("uncapped read: error must not report unenforced maxBytes=0, got: %v", err)
+	}
+
+	// Small configured bound: the scanner enforces max(scannerMax, cap(buf))
+	// = 64 KiB (bufio.Scanner.Buffer semantics), never the raw 1024.
+	big2 := strings.Repeat("y", 64*1024+1)
+	big2Path := filepath.Join(ws.Abs, "bigline2.txt")
+	if err := os.WriteFile(big2Path, []byte(big2+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool2 := &readFileTool{ws: ws, maxBytes: 1024}
+	_, err = tool2.readLineWindow(context.Background(), big2Path, 1, 10)
+	if err == nil {
+		t.Fatal("expected an ErrTooLong error for an oversized line")
+	}
+	if !strings.Contains(err.Error(), "65536") {
+		t.Fatalf("small bound: error must report the 64 KiB enforced bound, got: %v", err)
 	}
 }
 
