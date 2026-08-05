@@ -303,6 +303,7 @@ def main() -> None:
             "scripts/git-hooks/commit-msg",
             "scripts/git-hooks/prepare-commit-msg",
             "scripts/git-hooks/post-commit",
+            "scripts/git-hooks/run_without_git_env",
             ".githooks/pre-commit",
             ".githooks/pre-push",
             ".githooks/commit-msg",
@@ -329,6 +330,7 @@ def main() -> None:
         "scripts/git-hooks/commit-msg",
         "scripts/git-hooks/prepare-commit-msg",
         "scripts/git-hooks/post-commit",
+        "scripts/git-hooks/run_without_git_env",
         "scripts/install_git_hooks.sh",
         "scripts/run_agent_hook_guard.sh",
         "scripts/agent_hook_guard.py",
@@ -431,6 +433,9 @@ def main() -> None:
     ]:
         if needle not in pre_push:
             fail(f"scripts/git-hooks/pre-push: missing {needle}")
+
+    if "run_without_git_env" not in pre_commit or "run_without_git_env" not in pre_push:
+        fail("Git verification hooks must run children without the outer Git environment")
 
     prepare = text("scripts/git-hooks/prepare-commit-msg")
     if "mivia-precommit-summary" not in prepare:

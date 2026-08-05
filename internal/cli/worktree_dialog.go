@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -57,13 +58,7 @@ func oneLineNotice(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// newWorktreeName returns a unique name for a new worktree. Uniqueness
-// matters: a leftover branch from an aborted earlier run makes
-// `git worktree add -b wt/<name>` fail forever if the name is reused.
-// crypto/rand.Read never returns an error and always fills its buffer - it
-// crashes the program itself if the operating system's source fails - so
-// there is no error to handle here. This is uniqueness, not secrecy: the
-// base32 alphabet lowercases cleanly through SanitizeName.
+// newWorktreeName returns a unique, safe worktree name.
 func newWorktreeName() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
@@ -284,11 +279,16 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			break
 		}
 		wtDir := m.resolveRepoRoot()
+		worktreeConfig, err := config.LoadWorktreeConfig(wtDir)
+		if err != nil {
+			d.setNotice("delete failed: "+err.Error(), true)
+			break
+		}
 		if worktreeContainsCurrentDir(wt.Path) {
 			d.setNotice("cannot delete the current worktree", true)
 			break
 		}
-		if err := vcs.Remove(context.Background(), wtDir, wt.Name); err != nil {
+		if err := vcs.RemoveWithPrefix(context.Background(), wtDir, wt.Name, worktreeConfig.BranchPrefix); err != nil {
 			d.setNotice("delete failed: "+err.Error(), true)
 			break
 		}
@@ -337,11 +337,7 @@ func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 	}
 }
 
-// worktreeCreatedMsg is delivered back to the bubbletea Update loop after
-// the asynchronous vcs.Create call finishes, avoiding a data race on dialog
-// fields that the View goroutine reads every frame. dlg identifies the dialog
-// that issued the create: a result delivered after that dialog was closed and
-// a new one opened must be dropped, or the worktree is appended twice.
+// worktreeCreatedMsg returns asynchronous creation to the issuing dialog.
 type worktreeCreatedMsg struct {
 	wt  *vcs.WorktreeInfo
 	err error
@@ -357,15 +353,41 @@ func (m *tuiModel) createWorktreeFromDialog() tea.Cmd {
 	d.setNotice("", false)
 	m.hitMap.invalidate() // re-render to show "creating worktree…" placeholder
 	wtDir := m.resolveRepoRoot()
-	return m.createWorktreeAsync(wtDir, newWorktreeName(), d)
+	worktreeConfig, err := config.LoadWorktreeConfig(wtDir)
+	if err != nil {
+		d.creating = false
+		d.setNotice("create failed: "+err.Error(), true)
+		m.hitMap.invalidate()
+		return nil
+	}
+	return m.createWorktreeAsyncWithPrefix(wtDir, newWorktreeName(), worktreeConfig.BranchPrefix, d)
 }
 
 // createWorktreeAsync runs vcs.Create in a goroutine and returns a command
 // that delivers the result as a worktreeCreatedMsg back to the Update loop.
 func (m *tuiModel) createWorktreeAsync(dir, name string, dlg *worktreeDialog) tea.Cmd {
+	repoRoot, err := vcs.MainRepoRoot(dir)
+	if err != nil {
+		return func() tea.Msg {
+			return worktreeCreatedMsg{err: err, dlg: dlg}
+		}
+	}
+	worktreeConfig, err := config.LoadWorktreeConfig(repoRoot)
+	if err != nil {
+		return func() tea.Msg {
+			return worktreeCreatedMsg{err: err, dlg: dlg}
+		}
+	}
+	return m.createWorktreeAsyncWithPrefix(repoRoot, name, worktreeConfig.BranchPrefix, dlg)
+}
+
+// createWorktreeAsyncWithPrefix runs vcs.CreateWithPrefix in a goroutine and
+// returns a command that delivers the result as a worktreeCreatedMsg back to
+// the Update loop.
+func (m *tuiModel) createWorktreeAsyncWithPrefix(dir, name, branchPrefix string, dlg *worktreeDialog) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		wt, err := vcs.Create(ctx, dir, name, "")
+		wt, err := vcs.CreateWithPrefix(ctx, dir, name, "", branchPrefix)
 		if err == nil {
 			err = registerWorktreeRouteForSession(m.session, dir, wt)
 		}

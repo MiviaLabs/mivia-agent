@@ -69,9 +69,103 @@ func TestCreate(t *testing.T) {
 	if wt.Branch == "" {
 		t.Errorf("Branch is empty")
 	}
+	if want := "mivia/feature-auth"; wt.Branch != want {
+		t.Errorf("Branch = %q, want %q", wt.Branch, want)
+	}
 	// Verify the path exists.
 	if _, err := os.Stat(wt.Path); err != nil {
 		t.Errorf("worktree path does not exist: %v", err)
+	}
+}
+
+func TestIntegrationCreateWithPrefix(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	wt, err := CreateWithPrefix(ctx, root, "custom-prefix", "HEAD", "agent/")
+	if err != nil {
+		t.Fatalf("CreateWithPrefix: %v", err)
+	}
+	if want := "agent/custom-prefix"; wt.Branch != want {
+		t.Errorf("Branch = %q, want %q", wt.Branch, want)
+	}
+
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/agent/custom-prefix")
+	cmd.Dir = root
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("custom managed branch is not created: %v", err)
+	}
+}
+
+// TestIntegrationRemovePreservesManagedBranchAfterBranchChange verifies that
+// removal does not delete the configured managed branch when the worktree
+// changes to another branch before removal.
+func TestIntegrationRemovePreservesManagedBranchAfterBranchChange(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	wt, err := CreateWithPrefix(ctx, root, "preserve-branch", "HEAD", "agent/")
+	if err != nil {
+		t.Fatalf("CreateWithPrefix: %v", err)
+	}
+	run(t, wt.Path, "git", "switch", "-c", "feature/alternate")
+	if err := RemoveWithPrefix(ctx, root, wt.Name, "agent/"); err != nil {
+		t.Fatalf("RemoveWithPrefix: %v", err)
+	}
+
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+wt.Branch)
+	cmd.Dir = root
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("managed branch %q is removed after the worktree changes branch: %v", wt.Branch, err)
+	}
+}
+
+// TestIntegrationCreateWithPrefixReusesRetainedBranch verifies that a
+// configured managed branch remains available after removal. A later create
+// with the same name must check out the retained branch without reset.
+func TestIntegrationCreateWithPrefixReusesRetainedBranch(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	const name = "reuse-branch"
+	const prefix = "agent/"
+
+	worktree, err := CreateWithPrefix(ctx, root, name, "HEAD", prefix)
+	if err != nil {
+		t.Fatalf("first CreateWithPrefix: %v", err)
+	}
+	write(t, worktree.Path, "retained.txt", "retain this commit")
+	run(t, worktree.Path, "git", "add", "retained.txt")
+	run(t, worktree.Path, "git", "commit", "-m", "retain worktree branch")
+
+	retainedHeadCmd := exec.Command("git", "rev-parse", "HEAD")
+	retainedHeadCmd.Dir = worktree.Path
+	retainedHeadOut, err := retainedHeadCmd.Output()
+	if err != nil {
+		t.Fatalf("get retained branch HEAD: %v", err)
+	}
+	retainedHead := strings.TrimSpace(string(retainedHeadOut))
+
+	if err := RemoveWithPrefix(ctx, root, name, prefix); err != nil {
+		t.Fatalf("RemoveWithPrefix: %v", err)
+	}
+
+	recreated, err := CreateWithPrefix(ctx, root, name, "HEAD", prefix)
+	if err != nil {
+		t.Fatalf("second CreateWithPrefix: %v", err)
+	}
+	if want := prefix + name; recreated.Branch != want {
+		t.Errorf("Branch = %q, want %q", recreated.Branch, want)
+	}
+
+	recreatedHeadCmd := exec.Command("git", "rev-parse", "HEAD")
+	recreatedHeadCmd.Dir = recreated.Path
+	recreatedHeadOut, err := recreatedHeadCmd.Output()
+	if err != nil {
+		t.Fatalf("get recreated branch HEAD: %v", err)
+	}
+	if got := strings.TrimSpace(string(recreatedHeadOut)); got != retainedHead {
+		t.Errorf("recreated branch HEAD = %q, want retained HEAD %q", got, retainedHead)
+	}
+	if _, err := os.Stat(filepath.Join(recreated.Path, "retained.txt")); err != nil {
+		t.Errorf("retained branch content is missing: %v", err)
 	}
 }
 
@@ -143,7 +237,7 @@ func TestRemoveRejectsTruncatedName(t *testing.T) {
 	}
 }
 
-func TestRemove_CleansUpBranch(t *testing.T) {
+func TestRemove_PreservesBranch(t *testing.T) {
 	root := initTestRepo(t)
 	ctx := context.Background()
 	name := "wt-1"
@@ -151,7 +245,7 @@ func TestRemove_CleansUpBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	branchName := "wt/" + name
+	branchName := "mivia/" + name
 
 	// Verify the branch was created.
 	branchCmd := exec.Command("git", "branch", "--list", branchName)
@@ -174,24 +268,15 @@ func TestRemove_CleansUpBranch(t *testing.T) {
 		t.Errorf("worktree path still exists after Remove")
 	}
 
-	// Verify the branch is deleted.
+	// Verify the branch remains after Remove.
 	branchCmd = exec.Command("git", "branch", "--list", branchName)
 	branchCmd.Dir = root
 	out, err = branchCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git branch --list after remove: %v\n%s", err, out)
 	}
-	if strings.TrimSpace(string(out)) != "" {
-		t.Errorf("branch %q still exists after Remove:\n%s", branchName, out)
-	}
-
-	// Verify that recreating with the same name succeeds (the original bug scenario).
-	wt2, err := Create(ctx, root, name, "HEAD")
-	if err != nil {
-		t.Fatalf("re-create after remove should succeed, got: %v", err)
-	}
-	if wt2.Name != name {
-		t.Errorf("re-created worktree Name = %q, want %q", wt2.Name, name)
+	if strings.TrimSpace(string(out)) == "" {
+		t.Errorf("branch %q is removed after Remove", branchName)
 	}
 }
 

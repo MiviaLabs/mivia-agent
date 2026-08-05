@@ -91,6 +91,13 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 # system prompts - not required for agent files in .mivia/agents/.
 
 # ---------------------------------------------------------------------------
+# WORKTREES - branch names for Mivia-managed Git worktrees
+# ---------------------------------------------------------------------------
+[worktrees]
+# Mivia adds this prefix to each worktree branch name. The value must end in /.
+branch_prefix = "mivia/"
+
+# ---------------------------------------------------------------------------
 # CHAT - session defaults
 # ---------------------------------------------------------------------------
 # Root system prompt comes from .mivia/agents/mivia.toml when present (or

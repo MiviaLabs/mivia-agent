@@ -14,10 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PREPARE_HOOK = ROOT / "scripts" / "git-hooks" / "prepare-commit-msg"
 COMMIT_MSG_HOOK = ROOT / "scripts" / "git-hooks" / "commit-msg"
 COMMIT_POLICY = ROOT / ".mivia" / "policy" / "commit-message.json"
+ISOLATED_GIT_ENV = ROOT / "scripts" / "git-hooks" / "run_without_git_env"
 
 
 def run(
-    args: list[str], cwd: Path, *, check: bool = True
+    args: list[str], cwd: Path, *, check: bool = True, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     if os.name == "nt" and args and args[0] not in {"git", "bash"}:
         command = Path(args[0])
@@ -53,6 +54,7 @@ def run(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
+        env=env,
     )
     if check and proc.returncode != 0:
         raise AssertionError(
@@ -129,6 +131,7 @@ def test_hooks_executable_and_present() -> None:
         "scripts/git-hooks/prepare-commit-msg",
         "scripts/git-hooks/post-commit",
         "scripts/git-hooks/run_with_timeout",
+        "scripts/git-hooks/run_without_git_env",
         ".githooks/pre-commit",
         ".githooks/pre-push",
         ".githooks/commit-msg",
@@ -278,6 +281,7 @@ def test_install_git_hooks_sets_hooks_path(root: Path) -> None:
         "scripts/git-hooks/commit-msg",
         "scripts/git-hooks/prepare-commit-msg",
         "scripts/git-hooks/post-commit",
+        "scripts/git-hooks/run_without_git_env",
         ".githooks/pre-commit",
         ".githooks/pre-push",
         ".githooks/commit-msg",
@@ -297,6 +301,35 @@ def test_install_git_hooks_sets_hooks_path(root: Path) -> None:
         raise AssertionError(
             f"core.hooksPath expected '.githooks' (relative or absolute), got {hooks_path!r}"
         )
+    auto_setup = run(["git", "config", "--get", "push.autoSetupRemote"], root).stdout.strip()
+    assert auto_setup == "true", auto_setup
+
+
+def test_install_sets_first_push_upstream_in_linked_worktree(root: Path) -> None:
+    if os.name == "nt":
+        return
+    init_repo(root)
+    run(["git", "commit", "-m", "chore(test): initial"], root)
+    remote = root.parent / "origin.git"
+    run(["git", "init", "--bare", str(remote)], root.parent)
+    run(["git", "remote", "add", "origin", str(remote)], root)
+    linked = root.parent / "linked"
+    run(["git", "worktree", "add", "-b", "mivia/first-push", str(linked), "HEAD"], root)
+    try:
+        (linked / "worktree.txt").write_text("content\n", encoding="utf-8")
+        run(["git", "add", "worktree.txt"], linked)
+        run(["git", "commit", "-m", "chore(test): worktree"], linked)
+        test_install_git_hooks_sets_hooks_path(root)
+        empty_hooks = root / "empty-hooks"
+        empty_hooks.mkdir()
+        run(["git", "config", "core.hooksPath", str(empty_hooks)], root)
+        run(["git", "push"], linked)
+        upstream = run(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], linked
+        ).stdout.strip()
+        assert upstream == "origin/mivia/first-push", upstream
+    finally:
+        run(["git", "worktree", "remove", "--force", str(linked)], root)
 
 
 def test_summary_file_name_is_mivia() -> None:
@@ -352,6 +385,95 @@ def test_pre_commit_has_invariant_gate() -> None:
     assert "internal/config/" in pre
     # Invariant summary must be in the quality line
     assert "INVARIANT_SUMMARY" in pre
+    helper_call = 'run_verify() { "$ROOT/scripts/git-hooks/run_without_git_env" "$@"; }'
+    assert helper_call in pre
+    push = (ROOT / "scripts" / "git-hooks" / "pre-push").read_text(encoding="utf-8")
+    assert helper_call in push
+
+
+def test_pre_push_without_a_base_scans_all_tracked_files() -> None:
+    """Run the pre-push base selection with no usable upstream or origin base."""
+    if os.name == "nt":
+        return
+    source = (ROOT / "scripts" / "git-hooks" / "pre-push").read_text(encoding="utf-8")
+    start = source.index("# Secret scan:")
+    end = source.index("\nrun_verify python3 scripts/check_docs_ownership.py", start)
+    selection = source[start:end]
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_bin = Path(tmp) / "bin"
+        fake_bin.mkdir()
+        fake_git = fake_bin / "git"
+        fake_git.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+case \"$*\" in
+  'rev-parse --abbrev-ref HEAD') printf 'mivia/no-upstream\\n' ;;
+  'rev-list --first-parent -2 HEAD') printf 'first-parent\\n' ;;
+  'merge-base HEAD first-parent') printf 'first-parent-base\\n'; exit 0 ;;
+  *) exit 1 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        fake_git.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+        proc = run(
+            [
+                "bash",
+                "-c",
+                "set -euo pipefail\n"
+                "run_verify() { printf '%s\\n' \"$@\"; }\n"
+                + selection,
+            ],
+            ROOT,
+            env=env,
+        )
+    assert proc.stdout.splitlines() == ["python3", "scripts/secret_scan.py", "--tracked"]
+    assert "git rev-list --first-parent" not in selection
+
+
+def test_isolated_git_env_preserves_main_and_worktree_indexes(root: Path) -> None:
+    assert ISOLATED_GIT_ENV.is_file(), ISOLATED_GIT_ENV
+    init_repo(root)
+    run(["git", "commit", "-m", "chore(test): initial"], root)
+    linked = root / "linked"
+    run(["git", "worktree", "add", "-b", "mivia/hook-env", str(linked), "HEAD"], root)
+    try:
+        assert_nested_git_fixture_preserves_index(root)
+        assert_nested_git_fixture_preserves_index(linked)
+    finally:
+        run(["git", "worktree", "remove", "--force", str(linked)], root)
+
+
+def assert_nested_git_fixture_preserves_index(checkout: Path) -> None:
+    before = run(["git", "write-tree"], checkout).stdout.strip()
+    env = os.environ.copy()
+    env["GIT_DIR"] = run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-dir"], checkout
+    ).stdout.strip()
+    env["GIT_WORK_TREE"] = str(checkout)
+    env["GIT_INDEX_FILE"] = run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-path", "index"], checkout
+    ).stdout.strip()
+    env["GIT_COMMON_DIR"] = run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], checkout
+    ).stdout.strip()
+    fixture = """
+        set -eu
+        fixture=$(mktemp -d)
+        trap 'rm -rf "$fixture"' EXIT
+        cd "$fixture"
+        git init -q
+        git config user.email hook-test@example.invalid
+        git config user.name 'Hook Test'
+        printf 'test\\n' > README.md
+        git add README.md
+        git commit -qm fixture
+    """
+    run([str(ISOLATED_GIT_ENV), "bash", "-c", fixture], checkout, env=env)
+    after = run(["git", "write-tree"], checkout).stdout.strip()
+    assert after == before, f"outer index changed in {checkout}"
 
 
 def main() -> None:
@@ -368,11 +490,14 @@ def main() -> None:
     test_summary_file_name_is_mivia()
     test_pre_commit_is_staged_only_and_bounded()
     test_pre_commit_has_invariant_gate()
+    test_pre_push_without_a_base_scans_all_tracked_files()
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         test_prepare_commit_msg_appends_summary(base / "append")
         test_prepare_commit_msg_rejects_stale_summary(base / "stale")
         test_install_git_hooks_sets_hooks_path(base / "install")
+        test_isolated_git_env_preserves_main_and_worktree_indexes(base / "isolation")
+        test_install_sets_first_push_upstream_in_linked_worktree(base / "first-push")
     print("test_git_hooks: ok")
 
 

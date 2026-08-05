@@ -56,13 +56,15 @@ chmod +x \
   scripts/test_semgrep_rules.py \
   scripts/secret-scan \
   scripts/docs-check \
-  scripts/git-hooks/file-size-check 2>/dev/null || true
+  scripts/git-hooks/file-size-check \
+  scripts/git-hooks/run_without_git_env 2>/dev/null || true
 
 # Use absolute path so hooks resolve correctly in all worktrees.
 # --local writes to .git/config (shared across worktrees) which is the
 # right scope: every tree in this repo gets the same hooks.
 HOOKS_DIR="$(cd "$ROOT/.githooks" && pwd)"
 git config core.hooksPath "$HOOKS_DIR"
+git config push.autoSetupRemote true
 
 printf 'Installed mivia Git hooks via core.hooksPath=%s\n' "$HOOKS_DIR"
 printf 'Required local commands: python3; go/gofmt when go.mod exists; semgrep for pre-push\n'

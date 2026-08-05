@@ -18,27 +18,26 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command '$1'"
 }
 
+run_verify() { "$ROOT/scripts/git-hooks/run_without_git_env" "$@"; }
+
 require_cmd python3
-python3 scripts/verify_agent_config.py
-python3 scripts/git-hooks/file-size-check --tracked
-python3 scripts/check_go_structure.py --strict --all
+run_verify python3 scripts/verify_agent_config.py
+run_verify python3 scripts/git-hooks/file-size-check --tracked
+run_verify python3 scripts/check_go_structure.py --strict --all
 
 git diff --check
 
 # Secret scan: merge-base range when available, else all tracked files.
-# For worktree branches (wt/*) that have no upstream tracking branch,
-# find the fork point from the first parent walk. For feature branches
-# with no upstream, fall back to origin/main or origin/master.
+# A Mivia-managed worktree must not use HEAD^ as a base. That base can
+# hide files from earlier commits on a new branch. Use an upstream or
+# an origin base. If neither exists, scan all tracked files.
 # MIVIA_PUSH_VERIFY_BASE/TIP override all automatic detection.
 if [[ -n "${MIVIA_PUSH_VERIFY_BASE:-}" && -n "${MIVIA_PUSH_VERIFY_TIP:-}" ]]; then
   BASE_REF="$MIVIA_PUSH_VERIFY_BASE"
   TIP_REF="$MIVIA_PUSH_VERIFY_TIP"
 else
-  BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   BASE_REF="$(
     git merge-base HEAD '@{upstream}' 2>/dev/null \
-    || { [[ "$BRANCH" == wt/* ]] \
-         && git merge-base HEAD "$(git rev-list --first-parent -2 HEAD | tail -1)" 2>/dev/null; } \
     || git merge-base HEAD origin/main 2>/dev/null \
     || git merge-base HEAD origin/master 2>/dev/null \
     || true
@@ -47,25 +46,25 @@ else
 fi
 
 if [[ -n "${BASE_REF:-}" ]]; then
-  python3 scripts/secret_scan.py --base "$BASE_REF" --tip "$TIP_REF"
+  run_verify python3 scripts/secret_scan.py --base "$BASE_REF" --tip "$TIP_REF"
 else
-  python3 scripts/secret_scan.py --tracked
+  run_verify python3 scripts/secret_scan.py --tracked
 fi
 
-python3 scripts/check_docs_ownership.py
+run_verify python3 scripts/check_docs_ownership.py
 
-python3 scripts/test_git_hooks.py
-python3 scripts/test_agent_hook_guard.py
-python3 scripts/test_secret_scan.py
-python3 scripts/test_docs_ownership.py
-python3 scripts/test_semgrep_rules.py
+run_verify python3 scripts/test_git_hooks.py
+run_verify python3 scripts/test_agent_hook_guard.py
+run_verify python3 scripts/test_secret_scan.py
+run_verify python3 scripts/test_docs_ownership.py
+run_verify python3 scripts/test_semgrep_rules.py
 
 if [[ -f semgrep/agent-standards.yml ]]; then
   require_cmd semgrep
-  semgrep --validate --config semgrep/agent-standards.yml >/dev/null
+  run_verify semgrep --validate --config semgrep/agent-standards.yml >/dev/null
   # -j 2 bounds semgrep-core's worker domains: default per-CPU workers fail
   # io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK (containers).
-  semgrep --config semgrep/agent-standards.yml \
+  run_verify semgrep --config semgrep/agent-standards.yml \
     --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 .
 else
   printf 'pre-push: semgrep/agent-standards.yml missing; skipping semgrep scan\n' >&2
@@ -74,8 +73,8 @@ fi
 # Invariant validation (manifest cross-reference + invariant tests)
 if command -v go >/dev/null 2>&1; then
   pushd "$ROOT" >/dev/null
-  make validate-invariants
-  make invariants
+  run_verify make validate-invariants
+  run_verify make invariants
   popd >/dev/null
 else
   printf 'pre-push: go not found; skipping invariant validation\n' >&2
@@ -96,10 +95,10 @@ run_go_gates() {
       return 1
     fi
   fi
-  go test ./...
-  go vet ./...
+  run_verify go test ./...
+  run_verify go vet ./...
   if [[ -d cmd/mivia ]]; then
-    go build -o /dev/null ./cmd/mivia
+    run_verify go build -o /dev/null ./cmd/mivia
   fi
 }
 
@@ -109,7 +108,7 @@ case "$ROOT" in
     DISTRO="${MIVIA_WSL_DISTRO:-Ubuntu}"
     NATIVE_ROOT="$(wsl.exe -d "$DISTRO" -- wslpath -u "$ROOT" | tr -d '\r')"
     [[ -n "$NATIVE_ROOT" ]] || fail "could not resolve UNC checkout to native WSL path"
-    wsl.exe -d "$DISTRO" -- bash -lc "cd '$NATIVE_ROOT' && if git ls-files -z -- '*.go' | xargs -0 gofmt -l | grep -q .; then printf 'pre-push: gofmt required\n' >&2; exit 1; fi; go test ./... && go vet ./... && go build -o /dev/null ./cmd/mivia"
+    run_verify wsl.exe -d "$DISTRO" -- bash -lc "cd '$NATIVE_ROOT' && if git ls-files -z -- '*.go' | xargs -0 gofmt -l | grep -q .; then printf 'pre-push: gofmt required\n' >&2; exit 1; fi; go test ./... && go vet ./... && go build -o /dev/null ./cmd/mivia"
     ;;
   *)
     run_go_gates

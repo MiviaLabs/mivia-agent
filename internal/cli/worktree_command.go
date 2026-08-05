@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
@@ -47,7 +48,11 @@ func runWorktreeCreate(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree create: %w", err)
 	}
-	worktree, err := vcs.Create(context.Background(), repoRoot, args[0], baseRef)
+	worktreeConfig, err := config.LoadWorktreeConfig(repoRoot)
+	if err != nil {
+		return fmt.Errorf("worktree create: %w", err)
+	}
+	worktree, err := vcs.CreateWithPrefix(context.Background(), repoRoot, args[0], baseRef, worktreeConfig.BranchPrefix)
 	if err != nil {
 		var exists vcs.WorktreeExistsError
 		if errors.As(err, &exists) {
@@ -83,6 +88,9 @@ func runWorktreeList(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree list: %w", err)
 	}
+	if _, err := config.LoadWorktreeConfig(repoRoot); err != nil {
+		return fmt.Errorf("worktree list: %w", err)
+	}
 	worktrees, err := vcs.List(context.Background(), repoRoot)
 	if err != nil {
 		return fmt.Errorf("worktree list: %w", err)
@@ -106,6 +114,10 @@ func runWorktreeRemove(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
+	worktreeConfig, err := config.LoadWorktreeConfig(repoRoot)
+	if err != nil {
+		return fmt.Errorf("worktree remove: %w", err)
+	}
 	worktree, err := vcs.Resolve(context.Background(), repoRoot, args[0])
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
@@ -119,7 +131,7 @@ func runWorktreeRemove(args []string, stdout io.Writer) error {
 	if worktreeContainsCurrentDir(worktree.Path) {
 		return fmt.Errorf("worktree remove: cannot remove the current worktree")
 	}
-	if err := vcs.Remove(context.Background(), repoRoot, args[0]); err != nil {
+	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, args[0], worktreeConfig.BranchPrefix); err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
 	if err := removeWorktreeRoute(repoRoot, worktree.Name); err != nil {
