@@ -1,7 +1,7 @@
 # Mivia Agent Workflows v1 — Implementation Plan
 
 **Repository:** `MiviaLabs/mivia-agent`
-**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phases 3–6 remaining
+**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phases 4–6 remaining
 **Scope:** local harness only; no cloud control plane or workflow-level parallelism in v1.
 
 ---
@@ -13,7 +13,7 @@
 | Phase 0 | Design fixtures and contracts | ✅ Complete |
 | Phase 1 | Discovery, strict parsing, compiler | ✅ Complete |
 | Phase 2 | Ledger, isolated worktree, lifecycle | ✅ Complete — durable ledger + recovery rules shipped (commit `f17969e`); worktree infra stayed as shipped, no new worktree code (owner scope) |
-| Phase 3 | Agent step adapter | ⬜ Not started |
+| Phase 3 | Agent step adapter | ✅ Complete |
 | Phase 4 | Transitions, loops, gates | ⬜ Not started |
 | Phase 5 | PR delivery | ⬜ Not started |
 | Phase 6 | Hardening and documentation | ⬜ Not started |
@@ -418,7 +418,7 @@ mivia workflow cleanup <run-id>
 
 **Exit:** an interrupted synthetic workflow can resume with the same snapshot and one complete audit trail. ✅
 
-### Phase 3 — agent step adapter ⬜ TODO
+### Phase 3 — agent step adapter ✅ Complete
 
 - Implement `AgentStepRunner` on top of the existing coordinator and its `subagents.Task` routing.
 - Build bounded prompt context from validated inputs and selected evidence references; record evidence selection in the attempt.
