@@ -288,6 +288,23 @@ func TestLifecycleFaultSeamLockDirectoryFirstUseRaceKeepsFailClosed(t *testing.T
 	}
 }
 
+func TestLifecycleFaultSeamCreationRecoveryLockError(t *testing.T) {
+	repo := newWorktreeCommandRepo(t)
+	store, err := openRepositoryContextStore(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sentinel := errors.New("creation recovery lock fault")
+	original := openLifecycleGitRoot
+	openLifecycleGitRoot = func(string) (*os.Root, error) { return nil, sentinel }
+	t.Cleanup(func() { openLifecycleGitRoot = original })
+	info := contextstate.WorktreeInstanceInfo{Instance: contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}, State: contextstate.WorktreeCreating}
+	if _, err := recoverManagedWorktreeCreationInStore(store, repo, info); !errors.Is(err, sentinel) {
+		t.Fatalf("creation recovery lock error = %v", err)
+	}
+}
+
 func TestLifecycleFaultSeamLockFileStatError(t *testing.T) {
 	base := t.TempDir()
 	if err := os.Mkdir(filepath.Join(base, worktreeLifecycleLockDir), 0o700); err != nil {
