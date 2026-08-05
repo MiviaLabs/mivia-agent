@@ -7,9 +7,9 @@ import (
 	"os/exec"
 )
 
-func inheritProcessLease(cmd *exec.Cmd, lease *os.File) (func(), error) {
+func startProcessWithLease(cmd *exec.Cmd, lease *os.File) (func(), error) {
 	if lease != nil {
 		cmd.ExtraFiles = append(cmd.ExtraFiles, lease)
 	}
-	return func() {}, nil
+	return func() {}, cmd.Start()
 }

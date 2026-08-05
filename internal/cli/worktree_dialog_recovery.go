@@ -10,6 +10,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
+var canonicalWorktreeDialogRoot = canonicalMarkerRoot
+
 type worktreeRecoveryRow struct {
 	Info contextstate.WorktreeInstanceInfo
 }
@@ -50,7 +52,7 @@ func (m *tuiModel) validateWorktreeSwitch(wt vcs.WorktreeInfo) (contextstate.Wor
 	if instance.Worktree != wt.Name {
 		return contextstate.WorktreeInstance{}, contextstate.ErrWorktreeDeleted
 	}
-	canonicalPath, err := canonicalMarkerRoot(wt.Path)
+	canonicalPath, err := canonicalWorktreeDialogRoot(wt.Path)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
@@ -60,10 +62,7 @@ func (m *tuiModel) validateWorktreeSwitch(wt vcs.WorktreeInfo) (contextstate.Wor
 		return contextstate.WorktreeInstance{}, err
 	}
 	defer closeStore()
-	principal, err := worktreeRoutePrincipal(root)
-	if err != nil {
-		return contextstate.WorktreeInstance{}, err
-	}
+	principal, _ := worktreeRoutePrincipal(root)
 	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
@@ -71,7 +70,7 @@ func (m *tuiModel) validateWorktreeSwitch(wt vcs.WorktreeInfo) (contextstate.Wor
 }
 
 func (m *tuiModel) validateWorktreeWithoutMarker(wt vcs.WorktreeInfo) error {
-	canonicalPath, err := canonicalMarkerRoot(wt.Path)
+	canonicalPath, err := canonicalWorktreeDialogRoot(wt.Path)
 	if err != nil {
 		return err
 	}
@@ -81,10 +80,7 @@ func (m *tuiModel) validateWorktreeWithoutMarker(wt vcs.WorktreeInfo) error {
 		return err
 	}
 	defer closeStore()
-	principal, err := worktreeRoutePrincipal(root)
-	if err != nil {
-		return err
-	}
+	principal, _ := worktreeRoutePrincipal(root)
 	info, legacy, err := classifyMissingWorktreeMarker(store, principal, wt.Name, canonicalPath)
 	if err != nil {
 		return err

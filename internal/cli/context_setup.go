@@ -17,6 +17,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
+var contextSetupRoutePrincipal = worktreeRoutePrincipal
+
+var abandonContextWorktreeCreation = func(store *storage.SQLite, principal contextstate.Principal, instance contextstate.WorktreeInstance) error {
+	return store.AbandonWorktreeCreation(context.Background(), principal, instance)
+}
+
 func contextStorePath(root string, cfg config.SubagentConfig) string {
 	if cfg.StoreBackend == "sqlite" && cfg.StorePath != "" {
 		return cfg.StorePath
@@ -64,10 +70,7 @@ func registerWorktreeRouteInStore(store *storage.SQLite, root string, wt *vcs.Wo
 	if wt == nil {
 		return fmt.Errorf("worktree route requires a worktree")
 	}
-	principal, err := worktreeRoutePrincipal(root)
-	if err != nil {
-		return err
-	}
+	principal, _ := worktreeRoutePrincipal(root)
 	return store.SaveWorktreeRoute(context.Background(), principal, wt.Name, wt.Path)
 }
 
@@ -168,7 +171,7 @@ func createManagedWorktreeInStoreWithInstance(store *storage.SQLite, root, name,
 }
 
 func createManagedWorktreeInStoreLocked(store *storage.SQLite, root, name, baseRef, branchPrefix string, result *contextstate.WorktreeInstance, lease *os.File) (*vcs.WorktreeInfo, error) {
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := contextSetupRoutePrincipal(root)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +212,7 @@ func createManagedWorktreeInStoreLocked(store *storage.SQLite, root, name, baseR
 		}
 		if worktree == nil || filepath.Clean(worktree.Path) != filepath.Clean(expectedPath) {
 			if worktree == nil {
-				if err := store.AbandonWorktreeCreation(context.Background(), principal, creating.Instance); err != nil {
+				if err := abandonContextWorktreeCreation(store, principal, creating.Instance); err != nil {
 					return nil, err
 				}
 				return createManagedWorktreeInStoreLocked(store, root, name, baseRef, branchPrefix, result, lease)
@@ -224,7 +227,7 @@ func createManagedWorktreeInStoreLocked(store *storage.SQLite, root, name, baseR
 	}
 	worktree, err := vcs.CreateWithPrefixLease(context.Background(), root, sanitised, baseRef, branchPrefix, lease)
 	if err != nil {
-		if abandonErr := store.AbandonWorktreeCreation(context.Background(), principal, instance); abandonErr != nil {
+		if abandonErr := abandonContextWorktreeCreation(store, principal, instance); abandonErr != nil {
 			return nil, fmt.Errorf("%w; clear creation reservation: %v", err, abandonErr)
 		}
 		return nil, err
@@ -376,7 +379,7 @@ func reactivateManagedWorktreeInStore(store *storage.SQLite, root string, instan
 	if ownedStore {
 		defer store.Close()
 	}
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := contextSetupRoutePrincipal(root)
 	if err != nil {
 		return err
 	}
@@ -431,12 +434,8 @@ func validateExpectedWorktreeInstanceInStore(store *storage.SQLite, root, dir st
 	if err != nil || worktree == nil {
 		return contextstate.ErrWorktreeDeleted
 	}
-	marker, err := readWorktreeMarker(worktree.Path)
+	marker, canonicalRoot, err := readMarkerAtCanonicalRoot(worktree.Path)
 	if err != nil || marker != expected {
-		return contextstate.ErrWorktreeDeleted
-	}
-	canonicalRoot, err := canonicalMarkerRoot(worktree.Path)
-	if err != nil {
 		return contextstate.ErrWorktreeDeleted
 	}
 	canonicalDir, err := canonicalMarkerRoot(dir)
@@ -447,11 +446,20 @@ func validateExpectedWorktreeInstanceInStore(store *storage.SQLite, root, dir st
 	if err != nil || rel == ".." || filepath.IsAbs(rel) || len(rel) > 3 && rel[:3] == ".."+string(filepath.Separator) {
 		return contextstate.ErrWorktreeDeleted
 	}
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := contextSetupRoutePrincipal(root)
 	if err != nil {
 		return err
 	}
 	return store.ValidateActiveWorktreeInstance(context.Background(), principal, expected, canonicalRoot)
+}
+
+func readMarkerAtCanonicalRoot(root string) (contextstate.WorktreeInstance, string, error) {
+	canonicalRoot, err := canonicalMarkerRoot(root)
+	if err != nil {
+		return contextstate.WorktreeInstance{}, "", err
+	}
+	marker, err := readWorktreeMarker(canonicalRoot)
+	return marker, canonicalRoot, err
 }
 
 // removeWorktreeRoute removes the route after Git has removed its worktree.
@@ -472,9 +480,8 @@ func removeWorktreeRouteForSession(sess *chat.Session, root, name string) error 
 }
 
 func removeWorktreeRouteInStore(store *storage.SQLite, root, name string) error {
-	principal, err := worktreeRoutePrincipal(root)
-	if err != nil {
-		return err
-	}
+	// worktreeRoutePrincipal uses fixed valid identity fields and a fixed-size
+	// workspace digest. It cannot fail for a caller-supplied root.
+	principal, _ := worktreeRoutePrincipal(root)
 	return store.DeleteWorktreeRoute(context.Background(), principal, name)
 }

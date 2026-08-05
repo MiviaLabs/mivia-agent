@@ -10,6 +10,10 @@ import (
 
 const worktreeLifecycleLockDir = "mivia-worktree-locks"
 
+var openLifecycleGitRoot = os.OpenRoot
+var lstatLifecyclePath = func(root *os.Root, path string) (os.FileInfo, error) { return root.Lstat(path) }
+var mkdirLifecycleDir = func(root *os.Root, path string, mode os.FileMode) error { return root.Mkdir(path, mode) }
+
 type worktreeLifecycleLock struct {
 	file       *os.File
 	gitRoot    *os.Root
@@ -35,7 +39,7 @@ func lockWorktreeLifecycle(root, name string) (*worktreeLifecycleLock, error) {
 	if err != nil {
 		return nil, err
 	}
-	gitRoot, err := os.OpenRoot(commonDir)
+	gitRoot, err := openLifecycleGitRoot(commonDir)
 	if err != nil {
 		return nil, fmt.Errorf("open Git common directory: %w", err)
 	}
@@ -49,7 +53,7 @@ func lockWorktreeLifecycle(root, name string) (*worktreeLifecycleLock, error) {
 		return nil, err
 	}
 	path := filepath.Join(worktreeLifecycleLockDir, sanitized+".lock")
-	if info, err := gitRoot.Lstat(path); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+	if info, err := lstatLifecyclePath(gitRoot, path); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
 		return nil, fmt.Errorf("worktree lifecycle lock is not a regular file")
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("inspect worktree lifecycle lock: %w", err)
@@ -63,12 +67,12 @@ func lockWorktreeLifecycle(root, name string) (*worktreeLifecycleLock, error) {
 }
 
 func ensureRegularLifecycleLockDir(root *os.Root) error {
-	info, err := root.Lstat(worktreeLifecycleLockDir)
+	info, err := lstatLifecyclePath(root, worktreeLifecycleLockDir)
 	if os.IsNotExist(err) {
-		if err := root.Mkdir(worktreeLifecycleLockDir, 0o700); err != nil {
+		if err := mkdirLifecycleDir(root, worktreeLifecycleLockDir, 0o700); err != nil {
 			return fmt.Errorf("create worktree lifecycle lock directory: %w", err)
 		}
-		info, err = root.Lstat(worktreeLifecycleLockDir)
+		info, err = lstatLifecyclePath(root, worktreeLifecycleLockDir)
 	}
 	if err != nil {
 		return fmt.Errorf("inspect worktree lifecycle lock directory: %w", err)

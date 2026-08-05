@@ -9,6 +9,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
+var (
+	statWorktreeSwitchPath = os.Stat
+	absWorktreeSwitchPath  = filepath.Abs
+	evalWorktreeSwitchPath = filepath.EvalSymlinks
+	getwdWorktreeSwitch    = os.Getwd
+	relWorktreeSwitchPath  = filepath.Rel
+)
+
 func (m *tuiModel) switchToWorktree(wt vcs.WorktreeInfo) {
 	if m.workspaceSwitchBusy() {
 		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
@@ -30,7 +38,7 @@ func (m *tuiModel) switchToWorktree(wt vcs.WorktreeInfo) {
 		}
 		instance = binding.Instance
 	}
-	if info, err := os.Stat(wt.Path); err != nil {
+	if info, err := statWorktreeSwitchPath(wt.Path); err != nil {
 		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
 		return
 	} else if !info.IsDir() {
@@ -60,7 +68,7 @@ func (m *tuiModel) workspaceSwitchBusy() bool {
 }
 
 func (m *tuiModel) restartInWorkspace(dir string) {
-	abs, err := filepath.Abs(dir)
+	abs, err := absWorktreeSwitchPath(dir)
 	if err != nil {
 		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
 		return
@@ -73,21 +81,21 @@ func (m *tuiModel) restartInWorkspace(dir string) {
 }
 
 func worktreeContainsCurrentDir(path string) bool {
-	root, err := filepath.Abs(path)
+	root, err := absWorktreeSwitchPath(path)
 	if err != nil {
 		return true
 	}
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+	if resolved, err := evalWorktreeSwitchPath(root); err == nil {
 		root = resolved
 	}
-	cwd, err := os.Getwd()
+	cwd, err := getwdWorktreeSwitch()
 	if err != nil {
 		return true
 	}
-	if cwd, err = filepath.EvalSymlinks(cwd); err != nil {
+	if cwd, err = evalWorktreeSwitchPath(cwd); err != nil {
 		return true
 	}
-	rel, err := filepath.Rel(root, cwd)
+	rel, err := relWorktreeSwitchPath(root, cwd)
 	if err != nil {
 		return true
 	}

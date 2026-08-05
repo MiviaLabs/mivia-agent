@@ -242,9 +242,56 @@ func TestContextManagerLoadsStoreHeadWhenAttachedSecond(t *testing.T) {
 	}
 }
 
+func TestLoadContextSnapshotReturnsStoreError(t *testing.T) {
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &contextLoadFailureStore{}
+	manager := &contextmgr.ContextManager{PreparationManager: &contextPreparationProbe{}, CheckpointPublisher: &contextPublisherProbe{}, Enabled: true}
+	if err := session.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("load failed")
+	store.err = want
+	if err := session.loadContextSnapshot("test"); !errors.Is(err, want) {
+		t.Fatalf("loadContextSnapshot error = %v, want %v", err, want)
+	}
+}
+
+func TestContextWorktreeBindingRejectsInvalidPaths(t *testing.T) {
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := session.SetContextWorktreeBindingAt(contextstate.WorktreeInstance{}, "/repo", "/repo"); err == nil {
+		t.Fatal("zero worktree instance accepted")
+	}
+	if err := session.SetContextWorktreeBindingAt(instance, "relative", "relative"); err == nil {
+		t.Fatal("relative worktree paths accepted")
+	}
+	if err := session.SetContextWorktreeBindingAt(instance, "/repo/worktree", "/repo/other"); err == nil {
+		t.Fatal("session directory outside the worktree accepted")
+	}
+}
+
 type contextHeadProbeStore struct {
 	revision contextstate.Revision
 	loaded   contextstate.Principal
+}
+
+type contextLoadFailureStore struct {
+	contextHeadProbeStore
+	err error
+}
+
+func (s *contextLoadFailureStore) Load(ctx context.Context, principal contextstate.Principal, sessionID string) (contextstate.Snapshot, error) {
+	if s.err != nil {
+		return contextstate.Snapshot{}, s.err
+	}
+	return s.contextHeadProbeStore.Load(ctx, principal, sessionID)
 }
 
 func (s *contextHeadProbeStore) EnsureSession(context.Context, contextstate.EnsureSessionRequest) error {

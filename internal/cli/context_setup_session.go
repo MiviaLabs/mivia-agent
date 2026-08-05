@@ -13,6 +13,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
+var setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.ContextManager, principal contextstate.Principal) error {
+	return session.SetContextManager(manager, principal)
+}
+
 func openRepositoryContextStore(root string) (*storage.SQLite, error) {
 	path, err := repositorySessionStorePath(root, chatInvocation{}, &config.Resolved{})
 	if err != nil {
@@ -109,7 +113,7 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
 		Enabled:             true,
 	}
-	if err := sess.SetContextManager(manager, principal); err != nil {
+	if err := setContextManagerForSetup(sess, manager, principal); err != nil {
 		return err
 	}
 	return sess.SetContextStore(store)

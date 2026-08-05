@@ -170,12 +170,8 @@ func runGitMutation(cmd *exec.Cmd, lease *os.File) ([]byte, error) {
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
-	cleanup, err := inheritProcessLease(cmd, lease)
+	cleanup, err := startProcessWithLease(cmd, lease)
 	if err != nil {
-		return nil, err
-	}
-	if err := cmd.Start(); err != nil {
-		cleanup()
 		return output.Bytes(), err
 	}
 	cleanup()

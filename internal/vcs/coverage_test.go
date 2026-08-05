@@ -3,6 +3,7 @@ package vcs
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -268,5 +269,16 @@ func TestRemoveGitCommandFailure(t *testing.T) {
 	err := Remove(ctx, root, "wt-a")
 	if _, ok := err.(*gitCommandError); !ok {
 		t.Fatalf("expected gitCommandError, got %T: %v", err, err)
+	}
+}
+
+func TestRunGitMutationReportsStartFailure(t *testing.T) {
+	cmd := exec.Command(filepath.Join(t.TempDir(), "missing-command"))
+	output, err := runGitMutation(cmd, nil)
+	if err == nil {
+		t.Fatal("runGitMutation with a missing command succeeded")
+	}
+	if len(output) != 0 {
+		t.Fatalf("output = %q, want empty", output)
 	}
 }
