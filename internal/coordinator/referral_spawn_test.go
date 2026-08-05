@@ -305,9 +305,9 @@ func TestBindReferralAskEmptyNoop(t *testing.T) {
 func TestSpawnReferralFromAskMeta(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
-	var gotDigest string
+	gotDigest := make(chan string, 1)
 	_ = d.Register(runtime.Subagent, "aud", handlerFunc(func(_ context.Context, req runtime.Request) (json.RawMessage, error) {
-		gotDigest = req.AgentDigest
+		gotDigest <- req.AgentDigest
 		return json.RawMessage(`{}`), nil
 	}))
 	_ = d.Register(runtime.Subagent, "p", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
@@ -329,8 +329,16 @@ func TestSpawnReferralFromAskMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = c.Join(context.Background(), h)
-	if gotDigest != "sha256:test" {
-		t.Fatalf("digest=%q", gotDigest)
+	// The handler runs on a worker goroutine; the channel is the
+	// synchronization edge. Join guarantees task completion, not
+	// visibility of a plain variable written by the handler.
+	select {
+	case digest := <-gotDigest:
+		if digest != "sha256:test" {
+			t.Fatalf("digest=%q", digest)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("referral handler did not run")
 	}
 }
 

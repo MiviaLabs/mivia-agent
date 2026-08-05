@@ -450,6 +450,13 @@ func tombstoneWorktreeSessionTx(ctx context.Context, tx *sql.Tx, principal conte
 	return err
 }
 
+// pauseAfterWorktreeFenceCheck is a deterministic test hook. It runs after
+// requireActiveWorktreeTx confirms the instance is active, before the fenced
+// mutation proceeds. Tests use it to interleave a stale in-flight mutation
+// with a concurrent deletion (plan 57 test #9). Storage tests are sequential;
+// do not arm it from parallel tests. It is a no-op in production.
+var pauseAfterWorktreeFenceCheck = func() {}
+
 func requireActiveWorktreeTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, instance contextstate.WorktreeInstance) error {
 	if instance.IsZero() {
 		return nil
@@ -465,6 +472,7 @@ func requireActiveWorktreeTx(ctx context.Context, tx *sql.Tx, principal contexts
 	if state != contextstate.WorktreeActive {
 		return contextstate.ErrWorktreeDeleted
 	}
+	pauseAfterWorktreeFenceCheck()
 	return nil
 }
 
