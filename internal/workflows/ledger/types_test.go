@@ -32,6 +32,7 @@ func TestValidRunTransition(t *testing.T) {
 		{RunStatusWaitingApproval, RunStatusRunning},
 		{RunStatusWaitingApproval, RunStatusFailed},
 		{RunStatusWaitingApproval, RunStatusCanceled},
+		{RunStatusWaitingApproval, RunStatusTimedOut},
 		{RunStatusDeliveryPending, RunStatusSucceeded},
 		{RunStatusDeliveryPending, RunStatusDeliveryFailed},
 	}

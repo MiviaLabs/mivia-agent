@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // StepRuntime contains snapshotted data required to execute one agent step.
@@ -35,8 +36,8 @@ type Admission struct {
 	DeadlineAt   *time.Time
 }
 
-// LinearController advances a workflow with one agent step at a time.
-// It deliberately rejects gates, loops, and ambiguous routes in Phase 3.
+// LinearController advances a workflow one active step at a time.
+// Phase 4 supports agent, agent_gate, evidence_gate, human_gate, and loops.
 type LinearController struct {
 	Repo        workflowledger.Repository
 	Runner      AgentStepRunner
@@ -46,6 +47,8 @@ type LinearController struct {
 	RunID       string
 	Snapshot    []byte
 	Holder      string
+	Verifiers   *verifier.Catalogue
+	WorkDir     string
 	admission   Admission
 	forceResume bool
 	now         func() time.Time
@@ -67,15 +70,29 @@ func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner,
 	if len(snapshot) == 0 {
 		return nil, fmt.Errorf("workflow snapshot is empty")
 	}
-	for _, transition := range wf.Transitions {
-		if transition.Loop != "" {
-			return nil, fmt.Errorf("phase 3 does not support loop transition %q", transition.Loop)
-		}
-	}
-	if hasCycle(wf) {
-		return nil, fmt.Errorf("phase 3 does not support cyclic workflow transitions")
-	}
 	return &LinearController{Repo: repo, Runner: runner, Workflow: wf, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now}, nil
+}
+
+// SetVerifiers sets the host verifier catalogue before Start.
+func (c *LinearController) SetVerifiers(cat *verifier.Catalogue) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	c.Verifiers = cat
+	return nil
+}
+
+// SetWorkDir sets the workspace directory for evidence_gate host checks.
+func (c *LinearController) SetWorkDir(dir string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	c.WorkDir = dir
+	return nil
 }
 
 // SetAdmission sets immutable host admission data before Start.
@@ -256,18 +273,28 @@ func (c *LinearController) Advance(ctx context.Context) (workflowledger.RunSnaps
 		settled, timeoutErr := c.timeoutExpiredRun(run)
 		return settled, true, timeoutErr
 	}
+	if run.Status == workflowledger.RunStatusWaitingApproval {
+		// Finish partial Approve/Reject, or remain paused until operator action.
+		return c.reconcileWaitingApproval(ctx, run)
+	}
 	step, ok := c.WorkflowStep(run.ActiveStepID)
 	if !ok {
 		return c.fail(ctx, run, fmt.Errorf("workflow step %q is not declared", run.ActiveStepID))
 	}
-	if step.Kind != "agent" {
-		return c.fail(ctx, run, fmt.Errorf("phase 3 supports agent steps only; step %q is %q", step.ID, step.Kind))
+	switch step.Kind {
+	case "agent", "agent_gate":
+		runtime, ok := c.Steps[step.ID]
+		if !ok {
+			return c.fail(ctx, run, fmt.Errorf("step %q has no snapshotted runtime", step.ID))
+		}
+		return c.advanceAgentStep(ctx, run, step, runtime)
+	case "evidence_gate":
+		return c.advanceEvidenceGate(ctx, run, step)
+	case "human_gate":
+		return c.advanceHumanGate(ctx, run, step)
+	default:
+		return c.fail(ctx, run, fmt.Errorf("unsupported step kind %q on step %q", step.Kind, step.ID))
 	}
-	runtime, ok := c.Steps[step.ID]
-	if !ok {
-		return c.fail(ctx, run, fmt.Errorf("step %q has no snapshotted runtime", step.ID))
-	}
-	return c.advanceAgentStep(ctx, run, step, runtime)
 }
 
 func (c *LinearController) WorkflowStep(id string) (definition.Step, bool) {
@@ -314,42 +341,6 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 		return nil, nil, fmt.Errorf("unsupported context binding %q", binding.From)
 	}
 	return inputs, evidence, nil
-}
-
-func (c *LinearController) nextStep(step definition.Step, output any, runErr error) (string, error) {
-	if runErr != nil {
-		return "failure", nil
-	}
-	var selected string
-	for _, transition := range c.Workflow.Transitions {
-		if transition.From != step.ID || transition.Match.Status != "succeeded" {
-			continue
-		}
-		if len(transition.Match.Output) > 0 {
-			object, ok := output.(map[string]any)
-			if !ok {
-				continue
-			}
-			matched := true
-			for key, want := range transition.Match.Output {
-				if fmt.Sprint(object[key]) != want {
-					matched = false
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-		}
-		if selected != "" {
-			return "failure", fmt.Errorf("step %q has multiple matching transitions", step.ID)
-		}
-		selected = transition.To
-	}
-	if selected == "" {
-		return "failure", fmt.Errorf("step %q has no matching transition", step.ID)
-	}
-	return selected, nil
 }
 
 func (c *LinearController) fail(ctx context.Context, run workflowledger.RunSnapshot, cause error) (workflowledger.RunSnapshot, bool, error) {
@@ -429,39 +420,6 @@ func validateBindingLimits(step definition.Step, inputs map[string]any, attempts
 		}
 	}
 	return nil
-}
-
-func hasCycle(wf *compiler.CompiledWorkflow) bool {
-	graph := make(map[string][]string)
-	for _, transition := range wf.Transitions {
-		if wf.StepIDs[transition.From] && wf.StepIDs[transition.To] {
-			graph[transition.From] = append(graph[transition.From], transition.To)
-		}
-	}
-	state := make(map[string]uint8)
-	var visit func(string) bool
-	visit = func(id string) bool {
-		if state[id] == 1 {
-			return true
-		}
-		if state[id] == 2 {
-			return false
-		}
-		state[id] = 1
-		for _, next := range graph[id] {
-			if visit(next) {
-				return true
-			}
-		}
-		state[id] = 2
-		return false
-	}
-	for id := range graph {
-		if visit(id) {
-			return true
-		}
-	}
-	return false
 }
 
 func cloneValues(values map[string]any) map[string]any {

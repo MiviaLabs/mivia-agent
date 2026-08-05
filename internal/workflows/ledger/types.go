@@ -20,7 +20,7 @@ const (
 
 // ValidRunTransition reports whether a run may move from one status to another.
 // Edges: pending->running; running->waiting_approval|delivery_pending|succeeded|failed|canceled|timed_out;
-// waiting_approval->running|failed|canceled; delivery_pending->succeeded|delivery_failed.
+// waiting_approval->running|failed|canceled|timed_out; delivery_pending->succeeded|delivery_failed.
 // Terminal statuses (succeeded/failed/canceled/timed_out/delivery_failed) have no outgoing edges.
 func ValidRunTransition(from, to RunStatus) bool {
 	switch from {
@@ -35,7 +35,7 @@ func ValidRunTransition(from, to RunStatus) bool {
 		return false
 	case RunStatusWaitingApproval:
 		switch to {
-		case RunStatusRunning, RunStatusFailed, RunStatusCanceled:
+		case RunStatusRunning, RunStatusFailed, RunStatusCanceled, RunStatusTimedOut:
 			return true
 		}
 		return false

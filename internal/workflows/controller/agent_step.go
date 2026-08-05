@@ -23,13 +23,26 @@ type AgentStepRunner interface {
 	RunStep(context.Context, AgentStepRequest) (AgentStepResult, error)
 }
 
+// RouteDecision is the durable transition decision attached to one attempt.
+type RouteDecision struct {
+	ToStepID        string
+	TransitionIndex int
+	MatchDigest     string
+	DecisionJSON    []byte
+	// Loop is set when the selected transition is a named back-edge.
+	// The controller checks the loop cap before route selection returns, and
+	// increments the counter only after the attempt completion is durable.
+	Loop          string
+	MaxIterations int
+}
+
 // RecordStepResult writes the child identity and bounded evidence selection to
 // one workflow attempt. The controller calls it after attempt admission.
 func RecordStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus) error {
-	return recordStepResult(ctx, repo, attempt, result, status, "")
+	return recordStepResult(ctx, repo, attempt, result, status, RouteDecision{})
 }
 
-func recordStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, toStep string) error {
+func recordStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}
@@ -48,7 +61,12 @@ func recordStepResult(ctx context.Context, repo workflowledger.Repository, attem
 	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
 		return err
 	}
-	outcome := workflowledger.AttemptOutcome{Status: status, CoordinatorRunID: result.CoordinatorRunID, TaskID: result.TaskID, EvidenceJSON: append([]byte(nil), result.EvidenceJSON...), ToStepID: toStep, OutputRef: outputRef}
+	outcome := workflowledger.AttemptOutcome{
+		Status: status, CoordinatorRunID: result.CoordinatorRunID, TaskID: result.TaskID,
+		EvidenceJSON: append([]byte(nil), result.EvidenceJSON...), OutputRef: outputRef,
+		ToStepID: route.ToStepID, TransitionIndex: route.TransitionIndex,
+		MatchDigest: route.MatchDigest, DecisionJSON: append([]byte(nil), route.DecisionJSON...),
+	}
 	if outputRef != "" {
 		outcome.OutputDigest = workflowledger.DigestHex(result.Output)
 	}
@@ -57,14 +75,19 @@ func recordStepResult(ctx context.Context, repo workflowledger.Repository, attem
 
 // CompleteExistingStepResult completes an attempt that the controller already
 // recorded before an interruption. The stable child key prevents re-dispatch.
-func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, toStep string) error {
+func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Repository, attempt workflowledger.StepAttempt, result AgentStepResult, status workflowledger.AttemptStatus, route RouteDecision) error {
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}
 	if len(result.EvidenceJSON) > workflowledger.MaxEvidenceBytes {
 		return fmt.Errorf("evidence exceeds %d bytes", workflowledger.MaxEvidenceBytes)
 	}
-	outcome := workflowledger.AttemptOutcome{Status: status, CoordinatorRunID: result.CoordinatorRunID, TaskID: result.TaskID, EvidenceJSON: append([]byte(nil), result.EvidenceJSON...), ToStepID: toStep}
+	outcome := workflowledger.AttemptOutcome{
+		Status: status, CoordinatorRunID: result.CoordinatorRunID, TaskID: result.TaskID,
+		EvidenceJSON: append([]byte(nil), result.EvidenceJSON...),
+		ToStepID:     route.ToStepID, TransitionIndex: route.TransitionIndex,
+		MatchDigest: route.MatchDigest, DecisionJSON: append([]byte(nil), route.DecisionJSON...),
+	}
 	if len(result.Output) > 0 && status == workflowledger.AttemptStatusSucceeded {
 		outcome.OutputDigest = workflowledger.DigestHex(result.Output)
 		outcome.OutputRef = "sha256:" + outcome.OutputDigest

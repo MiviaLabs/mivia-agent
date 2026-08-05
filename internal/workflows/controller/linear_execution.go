@@ -16,32 +16,17 @@ func (c *LinearController) advanceAgentStep(ctx context.Context, run workflowled
 	if err != nil {
 		return run, false, err
 	}
-	attempt, found := latestAttempt(attempts, step.ID)
-	if !found {
-		attempt = c.newAttempt(step.ID, nextAttemptNo(attempts, step.ID))
-		if err := c.Repo.CreateStepAttempt(ctx, attempt); err != nil {
-			return c.fail(ctx, run, err)
-		}
-		attempt, err = c.Repo.GetStepAttempt(ctx, c.RunID, attempt.AttemptID)
-		if err != nil {
-			return c.fail(ctx, run, err)
-		}
+	attempt, ok, err := c.admitAttempt(ctx, run, step.ID, attempts)
+	if err != nil {
+		return c.fail(ctx, run, err)
 	}
-	if workflowledger.IsTerminalAttemptStatus(attempt.Status) {
-		if attempt.Status != workflowledger.AttemptStatusInterrupted {
-			return c.reconcileTerminalAttempt(ctx, run, attempt)
-		}
-		if c.Workflow.Limits.MaxStepAttempts > 0 && attempt.AttemptNo >= c.Workflow.Limits.MaxStepAttempts {
-			return c.fail(ctx, run, fmt.Errorf("step %q exceeded max attempts", step.ID))
-		}
-		attempt = c.newAttempt(step.ID, attempt.AttemptNo+1)
-		if err := c.Repo.CreateStepAttempt(ctx, attempt); err != nil {
-			return c.fail(ctx, run, err)
-		}
-		attempt, err = c.Repo.GetStepAttempt(ctx, c.RunID, attempt.AttemptID)
-		if err != nil {
-			return c.fail(ctx, run, err)
-		}
+	if !ok {
+		return c.reconcileTerminalAttempt(ctx, run, attempt)
+	}
+	// Refresh attempts after possible create for context binding.
+	attempts, err = c.Repo.ListStepAttempts(ctx, c.RunID)
+	if err != nil {
+		return run, false, err
 	}
 	return c.executeAgentAttempt(ctx, run, step, runtime, attempt, attempts)
 }
@@ -90,39 +75,47 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 			status = workflowledger.AttemptStatusTimedOut
 		}
 	}
-	next := ""
+	route := RouteDecision{}
 	if runErr == nil {
-		next, err = c.nextStep(step, result.ValidatedOutput, nil)
-		if err != nil {
-			status, runErr = workflowledger.AttemptStatusFailed, err
+		outMap, mapErr := resultOutputMap(result)
+		if mapErr != nil {
+			status, runErr = workflowledger.AttemptStatusFailed, mapErr
+			route = failureRoute(step)
+		} else {
+			route, err = c.selectRoute(ctx, step, status, outMap)
+			if err != nil {
+				status, runErr = workflowledger.AttemptStatusFailed, err
+				if route.ToStepID == "" {
+					route = failureRoute(step)
+				}
+			}
 		}
+	} else if status == workflowledger.AttemptStatusFailed {
+		// Infrastructure/schema/agent failures use on_failure, never repair loops.
+		route = failureRoute(step)
 	}
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
-	if err = CompleteExistingStepResult(writeCtx, c.Repo, attempt, result, status, next); err != nil {
+	if status == workflowledger.AttemptStatusSucceeded {
+		if err = c.completeSucceededRoute(writeCtx, attempt, result, route); err != nil {
+			if isLoopAccountError(err) {
+				// Route is durable; under-count and continue (same as crash after complete).
+				return settleAfterRoute(ctx, c, run, route)
+			}
+			return c.fail(writeCtx, run, err)
+		}
+		return settleAfterRoute(ctx, c, run, route)
+	}
+	if err = CompleteExistingStepResult(writeCtx, c.Repo, attempt, result, status, route); err != nil {
 		return c.fail(writeCtx, run, err)
 	}
-	if runErr != nil {
-		runStatus := workflowledger.RunStatusFailed
-		if status == workflowledger.AttemptStatusCanceled {
-			runStatus = workflowledger.RunStatusCanceled
-		} else if status == workflowledger.AttemptStatusTimedOut {
-			runStatus = workflowledger.RunStatusTimedOut
-		}
-		return c.failWithStatus(writeCtx, run, runErr, runStatus)
+	runStatus := workflowledger.RunStatusFailed
+	if status == workflowledger.AttemptStatusCanceled {
+		runStatus = workflowledger.RunStatusCanceled
+	} else if status == workflowledger.AttemptStatusTimedOut {
+		runStatus = workflowledger.RunStatusTimedOut
 	}
-	run, err = c.Repo.GetRun(ctx, c.RunID)
-	if next != "success" {
-		return run, false, err
-	}
-	if err != nil {
-		return run, false, err
-	}
-	if err := c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusSucceeded, nil); err != nil {
-		return run, false, err
-	}
-	run, err = c.Repo.GetRun(ctx, c.RunID)
-	return run, true, err
+	return c.failWithStatus(writeCtx, run, runErr, runStatus)
 }
 
 func stepPersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -135,6 +128,6 @@ func stepPersistenceContext(ctx context.Context) (context.Context, context.Cance
 func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, cause error) (workflowledger.RunSnapshot, bool, error) {
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
-	_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{}, workflowledger.AttemptStatusFailed, "")
+	_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{}, workflowledger.AttemptStatusFailed, RouteDecision{})
 	return c.fail(writeCtx, run, cause)
 }

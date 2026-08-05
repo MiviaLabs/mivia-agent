@@ -382,14 +382,33 @@ func TestLinearControllerRunsTwoStepsAndPersistsChildReferences(t *testing.T) {
 	}
 }
 
-func TestLinearControllerRejectsLoopAndDuplicateSnapshot(t *testing.T) {
-	wf := linearWorkflow(t)
-	wf.Transitions[0].Loop = "repeat"
-	_, err := NewLinearController(workflowledger.NewMemoryRepository(), &linearRunner{}, wf, nil, nil, "wfr-loop", []byte("snapshot"))
-	if err == nil {
-		t.Fatal("loop was accepted")
+func TestLinearControllerAcceptsLoopTransitions(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "looped", InitialStep: "implement",
+		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits: definition.Limits{MaxStepAttempts: 8},
+		Steps: []definition.Step{
+			{ID: "implement", Kind: "agent", Agent: "dev", OnFailure: "failure"},
+			{ID: "review", Kind: "agent_gate", Agent: "rev", OnFailure: "failure"},
+		},
+		Transitions: []definition.Transition{
+			{From: "implement", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},
+			{From: "review", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}}},
+			{From: "review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "review_repair", MaxIterations: -1},
+		},
 	}
-	wf = linearWorkflow(t)
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewLinearController(workflowledger.NewMemoryRepository(), &linearRunner{}, compiled, nil, nil, "wfr-loop-ok", []byte("snapshot"))
+	if err != nil {
+		t.Fatalf("loop transitions rejected: %v", err)
+	}
+}
+
+func TestLinearControllerRejectsDuplicateSnapshot(t *testing.T) {
+	wf := linearWorkflow(t)
 	repo := workflowledger.NewMemoryRepository()
 	runner := &linearRunner{outputs: map[string]json.RawMessage{"first": json.RawMessage(`{}`), "second": json.RawMessage(`{}`)}}
 	first, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{"first": {Agent: agents.ResolvedAgent{Name: "one"}}, "second": {Agent: agents.ResolvedAgent{Name: "two"}}}, map[string]any{"task": "a"}, "wfr-duplicate", []byte("one"))
