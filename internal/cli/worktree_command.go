@@ -56,28 +56,7 @@ func runWorktreeAdopt(args []string, stdout io.Writer) error {
 	if worktree == nil {
 		return fmt.Errorf("worktree adopt: worktree %q not found", args[0])
 	}
-	if _, err := readWorktreeMarker(worktree.Path); err == nil {
-		return fmt.Errorf("worktree adopt: worktree %q already has a lifecycle marker", worktree.Name)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("worktree adopt: inspect lifecycle marker: %w", err)
-	}
-	canonicalPath, err := canonicalMarkerRoot(worktree.Path)
-	if err != nil {
-		return fmt.Errorf("worktree adopt: %w", err)
-	}
-	store, err := openRepositoryContextStore(repoRoot)
-	if err != nil {
-		return fmt.Errorf("worktree adopt: %w", err)
-	}
-	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repoRoot)
-	if err != nil {
-		return fmt.Errorf("worktree adopt: %w", err)
-	}
-	if err := store.RequireLegacyWorktreeRoute(context.Background(), principal, worktree.Name, canonicalPath); err != nil {
-		return fmt.Errorf("worktree adopt: worktree needs one matching legacy route")
-	}
-	if _, err := registerManagedWorktree(repoRoot, worktree); err != nil {
+	if _, err := adoptManagedWorktree(repoRoot, worktree); err != nil {
 		return fmt.Errorf("worktree adopt: %w", err)
 	}
 	fmt.Fprintf(stdout, "adopted worktree %q at %s\n", worktree.Name, worktree.Path)
@@ -172,15 +151,17 @@ func runWorktreeRemove(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
+	if recovered, err := recoverManagedWorktreeRemoval(repoRoot, args[0], worktreeConfig.BranchPrefix); err != nil {
+		return fmt.Errorf("worktree remove: recovery: %w", err)
+	} else if recovered {
+		fmt.Fprintf(stdout, "removed worktree %q\n", args[0])
+		return nil
+	}
 	worktree, err := vcs.Resolve(context.Background(), repoRoot, args[0])
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
 	if worktree == nil {
-		if err := recoverManagedWorktreeRemoval(repoRoot, args[0]); err == nil {
-			fmt.Fprintf(stdout, "removed worktree %q\n", args[0])
-			return nil
-		}
 		return fmt.Errorf("worktree remove: worktree %q not found", args[0])
 	}
 	if worktreeContainsCurrentDir(worktree.Path) {

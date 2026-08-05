@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -101,6 +102,65 @@ func TestWorktreeCreationLifecycleActivatesOnlyItsCreatingInstance(t *testing.T)
 	}
 }
 
+func TestWorktreeCatalogRejectsNonCanonicalPath(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	worktreePath := filepath.Join(root, "wt-a")
+	if err := os.Mkdir(worktreePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	nonCanonical := worktreePath + "/../wt-a"
+	err = store.BeginWorktreeCreation(context.Background(), principal, instance, nonCanonical)
+	if !errors.Is(err, contextstate.ErrInvalidDTO) {
+		t.Fatalf("BeginWorktreeCreation(%q) = %v, want ErrInvalidDTO", nonCanonical, err)
+	}
+}
+
+func TestRegisterWorktreeInstancePreservesMatchingLegacyRoute(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "wt-a")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveWorktreeRoute(context.Background(), principal, "wt-a", path); err != nil {
+		t.Fatalf("SaveWorktreeRoute: %v", err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
+		t.Fatalf("BeginWorktreeCreation: %v", err)
+	}
+	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, path); err != nil {
+		t.Fatalf("RegisterWorktreeInstance: %v", err)
+	}
+	var legacy, bound int
+	if err := store.db.QueryRow(`SELECT count(*) FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, instance.Worktree).Scan(&legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT count(*) FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, instance.Worktree, instance.ID).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	if legacy != 1 || bound != 1 {
+		t.Fatalf("route rows = legacy %d, bound %d; want one of each", legacy, bound)
+	}
+}
+
 func TestLoadWorktreeRejectsAnotherActiveInstance(t *testing.T) {
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
@@ -192,6 +252,50 @@ func TestWorktreeAdmissionsWithSameNameRemainSeparate(t *testing.T) {
 		record, err := store.LoadWorktreeSessionAdmission(context.Background(), principal, "same", instance)
 		if err != nil || len(record.Names) != 1 || record.Names[0] != fmt.Sprintf("tool-%d", index) {
 			t.Fatalf("LoadWorktreeSessionAdmission(%s) = %#v, %v", instance.Worktree, record, err)
+		}
+	}
+}
+
+func TestPruneWorktreeSessionSnapshotsRollsBackAllNames(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "wt-a")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, path); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"first", "second"} {
+		if err := store.SaveSession(context.Background(), principal, name, []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveWorktreeSessionAdmission(context.Background(), principal, name, contextstate.SessionAdmission{Agent: "agent", Digest: "digest", Names: []string{"tool"}}, instance); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err = store.PruneWorktreeSessionSnapshots(context.Background(), principal, []string{"first", "bad/name"}, instance)
+	if !errors.Is(err, contextstate.ErrInvalidDTO) {
+		t.Fatalf("PruneWorktreeSessionSnapshots = %v, want ErrInvalidDTO", err)
+	}
+	for _, name := range []string{"first", "second"} {
+		if _, _, err := store.LoadWorktreeSession(context.Background(), principal, name, instance); err != nil {
+			t.Fatalf("LoadWorktreeSession(%q) after rollback: %v", name, err)
+		}
+		record, err := store.LoadWorktreeSessionAdmission(context.Background(), principal, name, instance)
+		if err != nil || len(record.Names) != 1 {
+			t.Fatalf("LoadWorktreeSessionAdmission(%q) = %#v, %v", name, record, err)
 		}
 	}
 }
@@ -305,6 +409,49 @@ func TestSQLiteChatSessionCatalogListsWorktreeRoutesOnlyForTheirOwner(t *testing
 	}
 	if len(otherList) != 0 {
 		t.Fatalf("foreign workspace routes leaked: %+v", otherList)
+	}
+}
+
+func TestSQLiteChatSessionCatalogHidesDeletedBoundRoute(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	owner, err := contextstate.NewPrincipal("workspace", "owner", "owner-subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := contextstate.NewPrincipal("workspace", "other", "other-subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "wt-a")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := store.BeginWorktreeCreation(context.Background(), owner, instance, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterWorktreeInstance(context.Background(), owner, instance, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES(?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?)`, owner.WorkspaceID, other.SubjectID, instance.Worktree, path, instance.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginWorktreeDeletion(context.Background(), owner, instance); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DeleteWorktreeSessions(context.Background(), owner, instance); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.ListSessions(context.Background(), other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("deleted bound route remains visible: %+v", list)
 	}
 }
 

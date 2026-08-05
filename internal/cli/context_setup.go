@@ -94,7 +94,11 @@ func registerManagedWorktreeInStore(store *storage.SQLite, root string, wt *vcs.
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
-	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, wt.Path); err != nil {
+	canonicalPath, err := canonicalMarkerRoot(wt.Path)
+	if err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, canonicalPath); err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
 	if err := completeManagedWorktreeCreationInStore(store, root, wt, instance); err != nil {
@@ -123,7 +127,11 @@ func completeManagedWorktreeCreationInStore(store *storage.SQLite, root string, 
 			return err
 		}
 	}
-	return store.RegisterWorktreeInstance(context.Background(), principal, instance, wt.Path)
+	canonicalPath, err := canonicalMarkerRoot(wt.Path)
+	if err != nil {
+		return err
+	}
+	return store.RegisterWorktreeInstance(context.Background(), principal, instance, canonicalPath)
 }
 
 // createManagedWorktree reserves lifecycle state before it creates Git state.
@@ -273,24 +281,6 @@ func beginManagedWorktreeRemovalInStore(store *storage.SQLite, root string, wt *
 
 func finishManagedWorktreeRemoval(root string, instance contextstate.WorktreeInstance) error {
 	return finishManagedWorktreeRemovalInStore(nil, root, instance)
-}
-
-func recoverManagedWorktreeRemoval(root, name string) error {
-	store, err := openRepositoryContextStore(root)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	principal, err := worktreeRoutePrincipal(root)
-	if err != nil {
-		return err
-	}
-	instance, err := store.DeletingWorktreeInstance(context.Background(), principal, name)
-	if err != nil {
-		return err
-	}
-	_, err = store.DeleteWorktreeSessions(context.Background(), principal, instance)
-	return err
 }
 
 func finishManagedWorktreeRemovalForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const currentContextSchemaVersion = 8
+const currentContextSchemaVersion = 9
 
 func migrateContextSchema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
@@ -25,7 +25,7 @@ func migrateContextSchema(db *sql.DB) error {
 		return fmt.Errorf("context schema version %d is newer than supported version %d", version, currentContextSchemaVersion)
 	}
 	if version == currentContextSchemaVersion {
-		return ensureContextSchemaV8(db)
+		return ensureContextSchemaV9(db)
 	}
 	if version == 0 {
 		if err := applyContextSchemaV1(db); err != nil {
@@ -70,7 +70,13 @@ func migrateContextSchema(db *sql.DB) error {
 		version = 7
 	}
 	if version == 7 {
-		return applyContextSchemaV8(db)
+		if err := applyContextSchemaV8(db); err != nil {
+			return err
+		}
+		version = 8
+	}
+	if version == 8 {
+		return applyContextSchemaV9(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
 }
@@ -88,19 +94,7 @@ func contextSchemaState(db *sql.DB) (int, bool, error) {
 	return version, dirty != 0, nil
 }
 
-// repairContextSchema recovers from a crash between a migration's apply phase
-// and its finalize phase. The apply phase commits the DDL plus the (version,
-// dirty=1) row; the finalize phase commits `PRAGMA user_version = version` and
-// the dirty clear together, and PRAGMA user_version is transactional, so the
-// only reachable interrupted state is "tables present, dirty=1, user_version
-// still version-1". Repair re-drives the whole finalize phase for that version,
-// which is what lets migrateContextSchema resume from the repaired version
-// instead of re-applying DDL that already exists and failing forever on
-// "table already exists". Returns nil when no repair is needed.
-//
-// It also covers the legacy window "user_version published, dirty still 1":
-// finalizeContextVersion omits the PRAGMA when the store is already at or past
-// v, so the dirty row is cleared without rewinding a newer version.
+// repairContextSchema recovers a committed apply phase before finalization.
 func repairContextSchema(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
@@ -132,6 +126,11 @@ func repairContextSchema(db *sql.DB) error {
 		}
 		if v == 8 {
 			if err := ensureContextSchemaV8(db); err != nil {
+				return err
+			}
+		}
+		if v == 9 {
+			if err := ensureContextSchemaV9(db); err != nil {
 				return err
 			}
 		}
@@ -201,6 +200,8 @@ func contextVersionTable(v int) string {
 		return "worktree_instances"
 	case 8:
 		return "worktree_catalog_keys"
+	case 9:
+		return "worktree_routes_v9_contract"
 	default:
 		return ""
 	}

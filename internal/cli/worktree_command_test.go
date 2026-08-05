@@ -3,13 +3,18 @@ package cli
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
+	_ "modernc.org/sqlite"
 )
 
 func TestExecuteWorktreeCommandIsRegistered(t *testing.T) {
@@ -38,6 +43,226 @@ func TestWorktreeCommandAdoptAddsMarker(t *testing.T) {
 	}
 	if _, err := readWorktreeMarker(worktree.Path); err != nil {
 		t.Fatalf("read adopted marker: %v", err)
+	}
+}
+
+func TestWorktreeCommandAdoptRecoversAfterMarkerWriteCrash(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := vcs.Create(context.Background(), repoRoot, "legacy-crash", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registerWorktreeRoute(repoRoot, worktree); err != nil {
+		t.Fatal(err)
+	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_1234567890abcdef"}
+	if err := store.BeginWorktreeAdoption(context.Background(), principal, instance, worktree.Path); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runWorktreeWithIO([]string{"adopt", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
+		t.Fatalf("recover adoption: %v", err)
+	}
+	marker, err := readWorktreeMarker(worktree.Path)
+	if err != nil || marker != instance {
+		t.Fatalf("recovered marker = %+v, %v", marker, err)
+	}
+}
+
+func TestWorktreeCommandRemoveRecoversDeletingLiveWorktree(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := createManagedWorktree(repoRoot, "recover-live", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatalf("createManagedWorktree: %v", err)
+	}
+	if _, err := beginManagedWorktreeRemoval(repoRoot, worktree); err != nil {
+		t.Fatalf("beginManagedWorktreeRemoval: %v", err)
+	}
+	var output bytes.Buffer
+	if err := runWorktreeWithIO([]string{"remove", "recover-live", "--workspace", repoRoot}, &output); err != nil {
+		t.Fatalf("remove recovery: %v", err)
+	}
+	if output.String() != "removed worktree \"recover-live\"\n" {
+		t.Fatalf("remove output = %q", output.String())
+	}
+	resolved, err := vcs.Resolve(context.Background(), repoRoot, "recover-live")
+	if err != nil || resolved != nil {
+		t.Fatalf("resolve recovered worktree = %v, %v", resolved, err)
+	}
+}
+
+func TestWorktreeCommandRemoveRecoversAfterGitRemovalBeforeCleanup(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := createManagedWorktree(repoRoot, "recover-gone", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := beginManagedWorktreeRemoval(repoRoot, worktree); err != nil {
+		t.Fatal(err)
+	}
+	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, worktree.Name, "mivia/"); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
+		t.Fatalf("remove recovery: %v", err)
+	}
+	if output.String() != "removed worktree \"recover-gone\"\n" {
+		t.Fatalf("remove output = %q", output.String())
+	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DeletingWorktreeInstance(context.Background(), principal, worktree.Name); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("deleting record = %v, want ErrWorktreeDeleted", err)
+	}
+}
+
+func TestWorktreeCommandRemoveRecoveryKeepsSameNameReplacement(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	old, err := createManagedWorktree(repoRoot, "recover-replacement", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldInstance, err := beginManagedWorktreeRemoval(repoRoot, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, old.Name, "mivia/"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = vcs.Create(context.Background(), repoRoot, old.Name, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runWorktreeWithIO([]string{"remove", old.Name, "--workspace", repoRoot}, &output); err != nil {
+		t.Fatalf("remove recovery: %v", err)
+	}
+	if output.String() != "removed worktree \"recover-replacement\"\n" {
+		t.Fatalf("remove output = %q", output.String())
+	}
+	resolved, err := vcs.Resolve(context.Background(), repoRoot, old.Name)
+	if err != nil || resolved == nil {
+		t.Fatalf("replacement worktree = %v, %v", resolved, err)
+	}
+	if _, err := readWorktreeMarker(resolved.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replacement marker = %v, want missing marker", err)
+	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DeletingWorktreeInstance(context.Background(), principal, oldInstance.Worktree); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("old deleting record = %v, want ErrWorktreeDeleted", err)
+	}
+}
+
+func TestCreateManagedWorktreeRecoversAfterGitCreateBeforeMarker(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "crash-create", ID: "wt_1234567890abcdef"}
+	expectedPath := filepath.Join(workspace.WorktreesDir(repoRoot), instance.Worktree)
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, expectedPath); err != nil {
+		t.Fatal(err)
+	}
+	created, err := vcs.Create(context.Background(), repoRoot, instance.Worktree, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(worktreeMarkerPath(created.Path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker before recovery = %v, want not exist", err)
+	}
+	if err := runWorktreeWithIO([]string{"adopt", instance.Worktree, "--workspace", repoRoot}, &bytes.Buffer{}); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("adopt interrupted creation = %v, want ErrWorktreeDeleted", err)
+	}
+	recovered, err := createManagedWorktreeInStore(store, repoRoot, instance.Worktree, "HEAD", "mivia/")
+	if err != nil {
+		t.Fatalf("recover creation: %v", err)
+	}
+	if recovered.Path != created.Path {
+		t.Fatalf("recovered path = %q, want %q", recovered.Path, created.Path)
+	}
+	marker, err := readWorktreeMarker(created.Path)
+	if err != nil || marker != instance {
+		t.Fatalf("recovered marker = %+v, %v", marker, err)
+	}
+	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, expectedPath); err != nil {
+		t.Fatalf("recovered instance is not active: %v", err)
+	}
+}
+
+func TestBindManagedWorktreeSessionRejectsMismatchedCatalogPath(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := createManagedWorktree(repoRoot, "binding-path", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	otherPath := t.TempDir()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(repoRoot, "repository.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE worktree_instances SET canonical_path=? WHERE workspace_id=? AND worktree=? AND state='active'`, otherPath, principal.WorkspaceID, worktree.Name); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	m := newReadyChatModel(30, 90)
+	if err := bindManagedWorktreeSession(m.session, repoRoot, worktree.Path, filepath.Join(repoRoot, "repository.db")); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("bindManagedWorktreeSession = %v, want ErrWorktreeDeleted", err)
 	}
 }
 

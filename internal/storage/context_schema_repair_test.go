@@ -23,7 +23,7 @@ func seedContextCrashState(t *testing.T, v int) *sql.DB {
 	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
 		t.Fatal(err)
 	}
-	apply := []func(*sql.DB) error{applyContextSchemaV1, applyContextSchemaV2, applyContextSchemaV3, applyContextSchemaV4, applyContextSchemaV5, applyContextSchemaV6, applyContextSchemaV7, applyContextSchemaV8}
+	apply := []func(*sql.DB) error{applyContextSchemaV1, applyContextSchemaV2, applyContextSchemaV3, applyContextSchemaV4, applyContextSchemaV5, applyContextSchemaV6, applyContextSchemaV7, applyContextSchemaV8, applyContextSchemaV9}
 	// A migration added without extending this list would silently go untested:
 	// the loop below would panic for the new version, or worse, a caller passing
 	// a lower v would still pass. Fail loudly instead.
@@ -77,7 +77,7 @@ func assertContextSchemaClean(t *testing.T, db *sql.DB) {
 	if dirty {
 		t.Fatal("schema still dirty after repair")
 	}
-	for _, table := range []string{"context_sessions", "chat_sessions", "chat_session_admissions", "chat_session_dirs", "worktree_routes", "worktree_instances", "worktree_catalog_keys"} {
+	for _, table := range []string{"context_sessions", "chat_sessions", "chat_session_admissions", "chat_session_dirs", "worktree_routes", "worktree_instances", "worktree_catalog_keys", "worktree_routes_v9_contract"} {
 		var count int
 		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatal(err)
