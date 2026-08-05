@@ -30,10 +30,10 @@ type RecoveredRun struct {
 // Repository is the durable storage boundary for workflow runs. Implementations
 // must be concurrency-safe and return defensive copies.
 //
-// Concurrency contract: every mutation must be performed under the run's
-// execution claim (ClaimRun) and serialized per run; the repository enforces
-// intra-process per-run serialization itself, and ClaimRun fences cross-process
-// writers. CAS methods take the caller's observed version and fail with
+// Concurrency contract: mutations are serialized per run. When a caller holds
+// an execution claim (ClaimRun), only that holder can mutate the run. The
+// repository enforces intra-process serialization and claim fencing. CAS
+// methods take the caller's observed version and fail with
 // ErrConflict when the recorded version has moved.
 type Repository interface {
 	// CreateRun admits a run: persists the run snapshot (typed fields + the
