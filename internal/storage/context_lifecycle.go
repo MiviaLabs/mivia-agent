@@ -23,7 +23,7 @@ func (s *SQLite) DeleteSession(ctx context.Context, principal contextstate.Princ
 	if err != nil {
 		return contextstate.DeleteResult{}, err
 	}
-	row, authErr := authorizeContextSessionTx(ctx, tx, principal, sessionID)
+	row, authErr := authorizeUnboundContextSessionTx(ctx, tx, principal, sessionID)
 	if errors.Is(authErr, contextstate.ErrSessionTombstoned) {
 		_ = tx.Rollback()
 		return s.existingDeleteResult(ctx, principal)
@@ -72,7 +72,7 @@ func (s *SQLite) ExportSession(ctx context.Context, principal contextstate.Princ
 	if err != nil {
 		return contextstate.ExportResult{}, err
 	}
-	row, err := authorizeContextSessionTx(ctx, tx, principal, sessionID)
+	row, err := authorizeUnboundContextSessionTx(ctx, tx, principal, sessionID)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.ExportResult{}, err

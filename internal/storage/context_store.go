@@ -102,22 +102,6 @@ func (s *SQLite) EnsureSession(ctx context.Context, request contextstate.EnsureS
 	return tx.Commit()
 }
 
-func validateEnsureRequest(request contextstate.EnsureSessionRequest) error {
-	if err := request.Principal.Validate(); err != nil {
-		return err
-	}
-	if !request.Principal.IsBound() {
-		return fmt.Errorf("%w: owner capability is not bound", contextstate.ErrPrincipalMismatch)
-	}
-	if !contextstate.ValidSessionDir(request.Dir) || !contextstate.ValidSessionDir(request.Worktree) {
-		return fmt.Errorf("%w: invalid session directory metadata", contextstate.ErrInvalidDTO)
-	}
-	if err := request.WorktreeInstance.Validate(); err != nil {
-		return err
-	}
-	return request.Binding.Validate()
-}
-
 func (s *SQLite) Commit(ctx context.Context, request contextstate.CommitRequest) error {
 	if err := request.Validate(); err != nil {
 		return err
@@ -375,6 +359,9 @@ func (s *SQLite) Load(ctx context.Context, principal contextstate.Principal, ses
 	}
 	row, err := readContextHead(ctx, s.db, principal)
 	if err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	if err := requireWorktreeSessionBinding(row.contextSessionRow, contextstate.WorktreeInstance{}); err != nil {
 		return contextstate.Snapshot{}, err
 	}
 	if row.Tombstoned {

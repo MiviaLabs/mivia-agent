@@ -41,7 +41,7 @@ func (s *SQLite) ImportSource(ctx context.Context, principal contextstate.Princi
 		_ = tx.Rollback()
 		return contextstate.ImportResult{}, err
 	}
-	row, err := authorizeContextSessionTx(ctx, tx, principal, principal.SessionID)
+	row, err := authorizeUnboundContextSessionTx(ctx, tx, principal, principal.SessionID)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.ImportResult{}, err

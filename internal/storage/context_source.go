@@ -28,7 +28,7 @@ func (s *SQLite) appendSourceEvents(ctx context.Context, principal contextstate.
 	if err != nil {
 		return err
 	}
-	if _, err := authorizeContextSessionTx(ctx, tx, principal, principal.SessionID); err != nil {
+	if _, err := authorizeUnboundContextSessionTx(ctx, tx, principal, principal.SessionID); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -248,6 +248,9 @@ func (s *SQLite) authorizeContextSession(ctx context.Context, principal contexts
 		return contextSessionRow{}, contextstate.ErrPrincipalMismatch
 	}
 	row.Tombstoned = tombstoned != 0
+	if err := requireWorktreeSessionBinding(row, contextstate.WorktreeInstance{}); err != nil {
+		return row, err
+	}
 	if row.Tombstoned {
 		return row, contextstate.ErrSessionTombstoned
 	}

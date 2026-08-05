@@ -11,6 +11,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
+var lifecycleRoutePrincipal = worktreeRoutePrincipal
+var lifecycleCanonicalMarkerRoot = canonicalMarkerRoot
+var lifecycleResolveWorktree = vcs.Resolve
+
 func adoptManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
 	if wt == nil {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree route requires a worktree")
@@ -142,7 +146,7 @@ func recoverManagedWorktreeRemovalInfoInStoreLocked(store *storage.SQLite, root 
 	if info.State != contextstate.WorktreeDeleting {
 		return contextstate.ErrWorktreeDeleted
 	}
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := lifecycleRoutePrincipal(root)
 	if err != nil {
 		return err
 	}
@@ -160,13 +164,13 @@ func recoverManagedWorktreeRemovalInfoInStoreLocked(store *storage.SQLite, root 
 	if !found {
 		return contextstate.ErrWorktreeDeleted
 	}
-	worktree, err := vcs.Resolve(context.Background(), root, info.Instance.Worktree)
+	worktree, err := lifecycleResolveWorktree(context.Background(), root, info.Instance.Worktree)
 	if err != nil {
 		return err
 	}
 	if worktree != nil {
 		instance, markerErr := readWorktreeMarker(worktree.Path)
-		path, pathErr := canonicalMarkerRoot(worktree.Path)
+		path, pathErr := lifecycleCanonicalMarkerRoot(worktree.Path)
 		if pathErr != nil {
 			return pathErr
 		}
@@ -198,7 +202,7 @@ func recoverManagedWorktreeCreationInStoreLocked(store *storage.SQLite, root str
 	if info.State != contextstate.WorktreeCreating {
 		return nil, contextstate.ErrWorktreeDeleted
 	}
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := lifecycleRoutePrincipal(root)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +210,7 @@ func recoverManagedWorktreeCreationInStoreLocked(store *storage.SQLite, root str
 	if err != nil || current != info {
 		return nil, contextstate.ErrWorktreeDeleted
 	}
-	worktree, err := vcs.Resolve(context.Background(), root, info.Instance.Worktree)
+	worktree, err := lifecycleResolveWorktree(context.Background(), root, info.Instance.Worktree)
 	if err != nil {
 		return nil, err
 	}

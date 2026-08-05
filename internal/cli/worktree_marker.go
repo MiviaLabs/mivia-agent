@@ -26,6 +26,19 @@ type worktreeMarker struct {
 	ID       string `json:"id"`
 }
 
+var (
+	lockWorktreeMarkerForUpdate = lockWorktreeMarkerFile
+	writeWorktreeMarkerTemp     = func(file *os.File, content []byte) (int, error) { return file.Write(content) }
+	closeWorktreeMarkerTemp     = func(file *os.File) error { return file.Close() }
+	renameWorktreeMarker        = os.Rename
+	openWorktreeMarkerFile      = openWorktreeMarkerForRead
+	writeWorktreeExcludeTemp    = func(file *os.File, content []byte) (int, error) { return file.Write(content) }
+	closeWorktreeExcludeTemp    = func(file *os.File) error { return file.Close() }
+	readWorktreeMarkerRandom    = rand.Read
+	statWorktreeMarkerFile      = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
+	readWorktreeMarkerFile      = func(reader io.Reader) ([]byte, error) { return io.ReadAll(reader) }
+)
+
 func worktreeMarkerPath(root string) string {
 	return filepath.Join(root, ".mivia", worktreeMarkerName)
 }
@@ -64,14 +77,14 @@ func writeWorktreeMarker(root string, instance contextstate.WorktreeInstance) er
 		temporary.Close()
 		return fmt.Errorf("secure worktree marker: %w", err)
 	}
-	if _, err := temporary.Write(data); err != nil {
+	if _, err := writeWorktreeMarkerTemp(temporary, data); err != nil {
 		temporary.Close()
 		return fmt.Errorf("write worktree marker: %w", err)
 	}
-	if err := temporary.Close(); err != nil {
+	if err := closeWorktreeMarkerTemp(temporary); err != nil {
 		return fmt.Errorf("close worktree marker: %w", err)
 	}
-	if err := os.Rename(name, worktreeMarkerPath(canonical)); err != nil {
+	if err := renameWorktreeMarker(name, worktreeMarkerPath(canonical)); err != nil {
 		return fmt.Errorf("publish worktree marker: %w", err)
 	}
 	return nil
@@ -161,7 +174,7 @@ func lockWorktreeMarkerExclude(root *os.Root, path string) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("open Git exclude lock: %w", err)
 	}
-	unlock, err := lockWorktreeMarkerFile(file)
+	unlock, err := lockWorktreeMarkerForUpdate(file)
 	if err != nil {
 		file.Close()
 		return nil, err
@@ -196,11 +209,11 @@ func replaceWorktreeMarkerExclude(root *os.Root, path string, content []byte, mo
 		return err
 	}
 	defer root.Remove(name)
-	if _, err := temporary.Write(content); err != nil {
+	if _, err := writeWorktreeExcludeTemp(temporary, content); err != nil {
 		temporary.Close()
 		return fmt.Errorf("write Git exclude: %w", err)
 	}
-	if err := temporary.Close(); err != nil {
+	if err := closeWorktreeExcludeTemp(temporary); err != nil {
 		return fmt.Errorf("close Git exclude: %w", err)
 	}
 	if err := root.Rename(name, path); err != nil {
@@ -212,7 +225,7 @@ func replaceWorktreeMarkerExclude(root *os.Root, path string, content []byte, mo
 func createWorktreeMarkerExcludeTemp(root *os.Root, dir string, mode os.FileMode) (*os.File, string, error) {
 	for range 10 {
 		var random [8]byte
-		if _, err := rand.Read(random[:]); err != nil {
+		if _, err := readWorktreeMarkerRandom(random[:]); err != nil {
 			return nil, "", fmt.Errorf("name Git exclude temporary file: %w", err)
 		}
 		name := filepath.Join(dir, ".exclude-"+hex.EncodeToString(random[:]))
@@ -248,19 +261,19 @@ func readWorktreeMarker(root string) (contextstate.WorktreeInstance, error) {
 	} else if statErr != nil {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("inspect worktree marker: %w", statErr)
 	}
-	file, err := openWorktreeMarkerForRead(markerRoot, markerPath)
+	file, err := openWorktreeMarkerFile(markerRoot, markerPath)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("read worktree marker: %w", err)
 	}
 	defer file.Close()
-	info, err := file.Stat()
+	info, err := statWorktreeMarkerFile(file)
 	if err != nil || !info.Mode().IsRegular() {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker is not a regular file")
 	}
 	if info.Size() > maxWorktreeMarkerBytes {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker is too large")
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxWorktreeMarkerBytes+1))
+	data, err := readWorktreeMarkerFile(io.LimitReader(file, maxWorktreeMarkerBytes+1))
 	if err != nil {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("read worktree marker: %w", err)
 	}

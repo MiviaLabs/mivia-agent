@@ -26,10 +26,8 @@ func (m *tuiModel) openWorktreeDialog() {
 	store, closeStore, storeErr := m.worktreeLifecycleStore(wtDir)
 	lifecycleErr := storeErr
 	if storeErr == nil {
-		principal, principalErr := worktreeRoutePrincipal(wtDir)
-		if principalErr != nil {
-			lifecycleErr = principalErr
-		} else {
+		principal, _ := worktreeRoutePrincipal(wtDir)
+		{
 			creating, createErr := store.ListCreatingWorktreeInstances(context.Background(), principal)
 			if createErr != nil {
 				lifecycleErr = createErr

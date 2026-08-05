@@ -10,9 +10,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func inheritProcessLease(cmd *exec.Cmd, lease *os.File) (func(), error) {
+func startProcessWithLease(cmd *exec.Cmd, lease *os.File) (func(), error) {
 	if lease == nil {
-		return func() {}, nil
+		return func() {}, cmd.Start()
 	}
 	handle := windows.Handle(lease.Fd())
 	if err := windows.SetHandleInformation(handle, windows.HANDLE_FLAG_INHERIT, windows.HANDLE_FLAG_INHERIT); err != nil {
@@ -22,7 +22,12 @@ func inheritProcessLease(cmd *exec.Cmd, lease *os.File) (func(), error) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.AdditionalInheritedHandles = append(cmd.SysProcAttr.AdditionalInheritedHandles, syscall.Handle(handle))
-	return func() {
+	cleanup := func() {
 		_ = windows.SetHandleInformation(handle, windows.HANDLE_FLAG_INHERIT, 0)
-	}, nil
+	}
+	if err := cmd.Start(); err != nil {
+		cleanup()
+		return nil, err
+	}
+	return cleanup, nil
 }

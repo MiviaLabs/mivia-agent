@@ -98,6 +98,7 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 
 var runConfiguredChatOnceImpl = runConfiguredChatOnce
 var loadConfigForRestart = config.Load
+var classifyMissingMarkerForBind = classifyMissingWorktreeMarker
 
 func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	configPath := invocation.configPath
@@ -312,16 +313,13 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 		return err
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repositoryRoot)
-	if err != nil {
-		return err
-	}
+	principal, _ := worktreeRoutePrincipal(repositoryRoot)
 	instance, markerErr := readWorktreeMarker(worktree.Path)
 	if errors.Is(markerErr, os.ErrNotExist) {
 		if !expected.IsZero() {
 			return contextstate.ErrWorktreeDeleted
 		}
-		info, legacy, err := classifyMissingWorktreeMarker(store, principal, name, canonicalPath)
+		info, legacy, err := classifyMissingMarkerForBind(store, principal, name, canonicalPath)
 		if err != nil {
 			return err
 		}
