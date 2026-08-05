@@ -369,6 +369,16 @@ func TestIsBlockedFetchIP(t *testing.T) {
 		"0.0.0.0",
 		"100.64.0.1",
 		"224.0.0.1",
+		// IANA special-purpose ranges the net.IP predicates do not cover.
+		"0.0.0.1",         // 0.0.0.0/8 this network (unspecified /32 is above)
+		"192.0.0.1",       // 192.0.0.0/24 IETF protocol assignments
+		"192.0.2.1",       // TEST-NET-1
+		"192.88.99.1",     // deprecated 6to4 relay anycast
+		"198.18.0.1",      // benchmarking
+		"198.51.100.1",    // TEST-NET-2
+		"203.0.113.1",     // TEST-NET-3
+		"240.0.0.1",       // reserved for future use
+		"255.255.255.255", // limited broadcast
 	}
 	for _, s := range blocked {
 		ip := net.ParseIP(s)
@@ -385,6 +395,41 @@ func TestIsBlockedFetchIP(t *testing.T) {
 	}
 }
 
+// TestReservedNetsAreComplete pins the reservedNets constants: every entry
+// must parse to a non-nil network and cover its representative address, so a
+// typo in a CIDR string fails here instead of silently weakening the SSRF
+// gate (the init path ignores parse errors by design, matching cgnatNet).
+func TestReservedNetsAreComplete(t *testing.T) {
+	want := map[string]string{
+		"0.0.0.0/8":          "0.0.0.1",
+		"192.0.0.0/24":       "192.0.0.1",
+		"192.0.2.0/24":       "192.0.2.1",
+		"192.88.99.0/24":     "192.88.99.1",
+		"198.18.0.0/15":      "198.18.0.1",
+		"198.51.100.0/24":    "198.51.100.1",
+		"203.0.113.0/24":     "203.0.113.1",
+		"240.0.0.0/4":        "240.0.0.1",
+		"255.255.255.255/32": "255.255.255.255",
+	}
+	if len(reservedNets) != len(want) {
+		t.Fatalf("reservedNets has %d entries, want %d", len(reservedNets), len(want))
+	}
+	for _, n := range reservedNets {
+		if n == nil {
+			t.Fatal("reservedNets contains a nil network (unparseable CIDR constant)")
+		}
+	}
+	for cidr, ipStr := range want {
+		_, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			t.Fatalf("test CIDR %q does not parse: %v", cidr, err)
+		}
+		if !n.Contains(net.ParseIP(ipStr)) {
+			t.Fatalf("network %q does not contain its representative %s", cidr, ipStr)
+		}
+	}
+}
+
 func TestValidateFetchURLBlocksPrivateLiterals(t *testing.T) {
 	ctx := context.Background()
 	for _, u := range []string{
@@ -395,6 +440,10 @@ func TestValidateFetchURLBlocksPrivateLiterals(t *testing.T) {
 		"http://192.168.0.1/",
 		"http://[::1]/",
 		"ftp://example.com/",
+		// IANA special-purpose ranges: TEST-NET and benchmarking.
+		"http://192.0.2.1/",
+		"http://198.18.0.1/",
+		"http://203.0.113.9/",
 	} {
 		if err := validateFetchURL(ctx, u); err == nil {
 			t.Errorf("expected block for %s", u)

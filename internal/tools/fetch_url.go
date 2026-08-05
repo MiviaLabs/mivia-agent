@@ -159,6 +159,34 @@ var cgnatNet = func() *net.IPNet {
 	return n
 }()
 
+// reservedNets are IANA special-purpose IPv4 ranges that net.IP's built-in
+// predicates do not cover: this-network (0.0.0.0/8), IETF protocol
+// assignments (192.0.0.0/24), TEST-NET-1/2/3, deprecated 6to4 relay anycast
+// (192.88.99.0/24), benchmarking (198.18.0.0/15), reserved-for-future-use
+// (240.0.0.0/4) and the limited broadcast (255.255.255.255/32). Parse errors
+// are ignored at init (matching cgnatNet); TestReservedNetsAreComplete pins
+// the constants, so a broken entry fails the test suite instead of silently
+// weakening the gate.
+var reservedNets = func() []*net.IPNet {
+	cidrs := []string{
+		"0.0.0.0/8",
+		"192.0.0.0/24",
+		"192.0.2.0/24",
+		"192.88.99.0/24", // deprecated 6to4 relay anycast (RFC 7526)
+		"198.18.0.0/15",
+		"198.51.100.0/24",
+		"203.0.113.0/24",
+		"240.0.0.0/4",
+		"255.255.255.255/32",
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, _ := net.ParseCIDR(c)
+		nets = append(nets, n)
+	}
+	return nets
+}()
+
 // isBlockedFetchIP reports whether ip must not be contacted for URL fetch.
 func isBlockedFetchIP(ip net.IP) bool {
 	if ip == nil {
@@ -174,6 +202,11 @@ func isBlockedFetchIP(ip net.IP) bool {
 	}
 	if cgnatNet != nil && cgnatNet.Contains(ip) {
 		return true
+	}
+	for _, n := range reservedNets {
+		if n != nil && n.Contains(ip) {
+			return true
+		}
 	}
 	return false
 }
