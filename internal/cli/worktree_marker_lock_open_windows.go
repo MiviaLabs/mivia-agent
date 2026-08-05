@@ -16,13 +16,22 @@ func openMarkerExcludeLockFile(root *os.Root, path string) (*os.File, error) {
 		return nil, err
 	}
 	defer rootFile.Close()
-	relativeName, err := windows.NewNTUnicodeString(path)
+	anchor := windows.Handle(rootFile.Fd())
+	if dir := filepath.Dir(path); dir != "." {
+		infoHandle, err := openWindowsDirectoryNoFollow(anchor, dir)
+		if err != nil {
+			return nil, err
+		}
+		defer windows.CloseHandle(infoHandle)
+		anchor = infoHandle
+	}
+	relativeName, err := windows.NewNTUnicodeString(filepath.Base(path))
 	if err != nil {
 		return nil, err
 	}
 	var attrs windows.OBJECT_ATTRIBUTES
 	attrs.Length = uint32(unsafe.Sizeof(attrs))
-	attrs.RootDirectory = windows.Handle(rootFile.Fd())
+	attrs.RootDirectory = anchor
 	attrs.ObjectName = relativeName
 	attrs.Attributes = windows.OBJ_CASE_INSENSITIVE
 	var handle windows.Handle

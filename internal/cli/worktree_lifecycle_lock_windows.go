@@ -66,14 +66,68 @@ func openWorktreeLifecycleLockFile(root *os.Root, path string) (*os.File, func()
 	return file, func() {}, nil
 }
 
+// openWindowsDirectoryNoFollow opens one directory component relative to root
+// without following a reparse point at that component. A junction or symlink
+// at the component yields a handle to the reparse point itself, which is
+// rejected by the FILE_ATTRIBUTE_REPARSE_POINT check. The caller owns the
+// returned handle.
+func openWindowsDirectoryNoFollow(rootDir windows.Handle, name string) (windows.Handle, error) {
+	relativeName, err := windows.NewNTUnicodeString(name)
+	if err != nil {
+		return 0, err
+	}
+	var attrs windows.OBJECT_ATTRIBUTES
+	attrs.Length = uint32(unsafe.Sizeof(attrs))
+	attrs.RootDirectory = rootDir
+	attrs.ObjectName = relativeName
+	attrs.Attributes = windows.OBJ_CASE_INSENSITIVE
+	var handle windows.Handle
+	var io windows.IO_STATUS_BLOCK
+	err = windows.NtCreateFile(
+		&handle,
+		windows.GENERIC_READ,
+		&attrs,
+		&io,
+		nil,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_OPEN,
+		windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT,
+		0,
+		0,
+	)
+	if err != nil {
+		return 0, err
+	}
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+		windows.CloseHandle(handle)
+		return 0, err
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		windows.CloseHandle(handle)
+		return 0, fmt.Errorf("directory component is a reparse point")
+	}
+	return handle, nil
+}
+
 func openLifecycleLockFileIn(dirHandle windows.Handle, path string) (*os.File, error) {
-	relativeName, err := windows.NewNTUnicodeString(path)
+	anchor := dirHandle
+	if dir := filepath.Dir(path); dir != "." {
+		lockDir, err := openWindowsDirectoryNoFollow(anchor, dir)
+		if err != nil {
+			return nil, fmt.Errorf("open worktree lifecycle lock directory: %w", err)
+		}
+		defer windows.CloseHandle(lockDir)
+		anchor = lockDir
+	}
+	relativeName, err := windows.NewNTUnicodeString(filepath.Base(path))
 	if err != nil {
 		return nil, fmt.Errorf("open worktree lifecycle lock: %w", err)
 	}
 	var attrs windows.OBJECT_ATTRIBUTES
 	attrs.Length = uint32(unsafe.Sizeof(attrs))
-	attrs.RootDirectory = dirHandle
+	attrs.RootDirectory = anchor
 	attrs.ObjectName = relativeName
 	attrs.Attributes = windows.OBJ_CASE_INSENSITIVE
 	for range 100 {
