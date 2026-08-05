@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -61,6 +62,39 @@ func TestGlobMatchesMultiDoublestar(t *testing.T) {
 			t.Errorf("globMatches(%q, %q, %q) = %v, want %v",
 				tc.glob, tc.rel, tc.base, got, tc.want)
 		}
+	}
+}
+
+// TestGrepTruncationStaysValidUTF8 proves that truncating a long match line
+// never splits a multi-byte UTF-8 rune: 67 x "€" is 201 bytes, so a raw slice
+// at byte 200 lands inside the last rune and the entry becomes invalid UTF-8.
+func TestGrepTruncationStaysValidUTF8(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := ws.Abs
+
+	longLine := strings.Repeat("€", 67) // 201 bytes
+	if err := os.WriteFile(filepath.Join(root, "utf8.txt"), []byte(longLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	re := regexp.MustCompile("€")
+	matches, _, err := walkGrep(nil, ws, root, re, grepInput{}, 0, 0, nil, nil, ignoreView{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("expected at least one match")
+	}
+	for _, m := range matches {
+		if !utf8.ValidString(m) {
+			t.Errorf("match entry contains invalid UTF-8: %q", m)
+		}
+	}
+	if !strings.HasSuffix(matches[0], "...") {
+		t.Errorf("expected truncation marker, got: %q", matches[0])
 	}
 }
 
