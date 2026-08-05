@@ -87,7 +87,7 @@ func (c *coordinator) watchRecoveredRun(h *RunHandle) {
 	snap, err := c.repo.GetRun(context.Background(), h.runID)
 	result := &RunResult{Snapshot: snap, Err: err}
 	if err == nil {
-		result.Results = resultsFromSnapshots(snap.Tasks)
+		result.Results = c.resultsFromSnapshots(snap.Tasks)
 		if !isTerminalRunStatus(snap.Status) {
 			result.Err = errRecoveredRunNotResumable
 		}

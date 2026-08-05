@@ -1,0 +1,200 @@
+package controller
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+)
+
+type stepHandler struct {
+	out     json.RawMessage
+	wait    bool
+	seen    chan runtime.Request
+	started chan struct{}
+}
+
+func (h stepHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
+	if h.seen != nil {
+		h.seen <- req
+	}
+	if h.started != nil {
+		h.started <- struct{}{}
+	}
+	if h.wait {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return h.out, nil
+}
+
+func stepRunner(t *testing.T, handler runtime.Handler) *CoordinatorRunner {
+	t.Helper()
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "agent", handler); err != nil {
+		t.Fatal(err)
+	}
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	return NewCoordinatorRunner(coordinator.New(ledger.NewMemoryLedgerRepository(), p))
+}
+
+func validStepRequest() AgentStepRequest {
+	return AgentStepRequest{
+		WorkflowRunID: "wfr-run-1", StepID: "step-1", AttemptNo: 1, TaskID: "task-1",
+		AgentName: "agent", AgentDigest: "sha256:agent", Scope: "read-only",
+		Template: "task={{ inputs.task }} evidence={{ evidence.plan }}",
+		Inputs:   map[string]any{"task": "build"}, Evidence: map[string]any{"plan": map[string]any{"ok": true}},
+		MaxBindingBytes: 100, MaxContextBytes: 1000, Timeout: time.Second, Budget: 10,
+		OutputSchema: map[string]any{"type": "object", "properties": map[string]any{"ok": map[string]any{"type": "boolean"}}, "required": []any{"ok"}, "additionalProperties": false},
+	}
+}
+
+func TestCoordinatorRunnerRunsStepAndCapturesIdentity(t *testing.T) {
+	runner := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)})
+	got, err := runner.RunStep(context.Background(), validStepRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CoordinatorRunID == "" || got.TaskID != "task-1" {
+		t.Fatalf("identity = %+v", got)
+	}
+	if got.ValidatedOutput.(map[string]any)["ok"] != true {
+		t.Fatalf("output = %#v", got.ValidatedOutput)
+	}
+	if len(got.EvidenceJSON) == 0 {
+		t.Fatal("evidence selection is empty")
+	}
+}
+
+func TestCoordinatorRunnerPropagatesRoutingAndLimits(t *testing.T) {
+	seen := make(chan runtime.Request, 1)
+	runner := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`), seen: seen})
+	spec := validStepRequest()
+	spec.ProviderName = "provider-a"
+	spec.Model = "model-a"
+	spec.Skill = "skill-a"
+	spec.Timeout = 3 * time.Second
+	spec.Budget = 17
+	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session-a", TurnID: "turn-a", Role: "role-a"})
+	if _, err := runner.RunStep(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	req := <-seen
+	if req.Scope != spec.Scope || req.AgentName != spec.AgentName || req.AgentDigest != spec.AgentDigest || req.ProviderName != spec.ProviderName || req.Model != spec.Model || req.Budget != spec.Budget {
+		t.Fatalf("routing request = %+v", req)
+	}
+	if req.SessionID != "session-a" || req.TurnID != "turn-a" || req.Role != "role-a" {
+		t.Fatalf("caller identity = %q/%q/%q", req.SessionID, req.TurnID, req.Role)
+	}
+}
+
+func TestCoordinatorRunnerReturnsTypedSchemaFailure(t *testing.T) {
+	runner := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":"no"}`)})
+	_, err := runner.RunStep(context.Background(), validStepRequest())
+	var schemaErr *SchemaValidationError
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("err = %v, want SchemaValidationError", err)
+	}
+}
+
+func TestCoordinatorRunnerCancelsChild(t *testing.T) {
+	started := make(chan struct{}, 1)
+	runner := stepRunner(t, stepHandler{wait: true, started: started})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := runner.RunStep(ctx, validStepRequest()); done <- err }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("child did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("step did not stop after cancellation")
+	}
+}
+
+func TestCoordinatorRunnerUsesStableIdempotencyKey(t *testing.T) {
+	spec := validStepRequest()
+	if idempotencyKey(spec) != idempotencyKey(spec) {
+		t.Fatal("idempotency key is not stable")
+	}
+	other := spec
+	other.AttemptNo++
+	if idempotencyKey(spec) == idempotencyKey(other) {
+		t.Fatal("attempts share an idempotency key")
+	}
+}
+
+func TestCoordinatorRunnerResumesCompletedChildWithoutDuplicateDispatch(t *testing.T) {
+	seen := make(chan runtime.Request, 2)
+	runner := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`), seen: seen})
+	spec := validStepRequest()
+	first, err := runner.RunStep(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := runner.RunStep(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CoordinatorRunID != second.CoordinatorRunID || first.TaskID != second.TaskID {
+		t.Fatalf("child identity changed: first=%+v second=%+v", first, second)
+	}
+	if string(first.Output) != string(second.Output) {
+		t.Fatalf("recovered output = %q, want %q", second.Output, first.Output)
+	}
+	select {
+	case <-seen:
+	default:
+		t.Fatal("first dispatch was not observed")
+	}
+	select {
+	case req := <-seen:
+		t.Fatalf("duplicate dispatch observed: %+v", req)
+	default:
+	}
+}
+
+func TestRecordStepResultStoresChildIdentityAndEvidence(t *testing.T) {
+	runner := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)})
+	spec := validStepRequest()
+	result, err := runner.RunStep(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := workflowledger.NewMemoryRepository()
+	run := spec.WorkflowRunID
+	if err := repo.CreateRun(context.Background(), workflowledger.RunSnapshot{RunID: run, Status: workflowledger.RunStatusPending, ActiveStepID: spec.StepID}, func() []byte {
+		b, _ := workflowledger.MarshalSnapshot(workflowledger.Snapshot{SchemaVersion: 1, DefinitionTOML: []byte("x"), DefinitionDigest: "d"})
+		return b
+	}()); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{AttemptID: "attempt-1", RunID: run, StepID: spec.StepID, AttemptNo: 1}
+	if err := RecordStepResult(context.Background(), repo, attempt, result, workflowledger.AttemptStatusSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetStepAttempt(context.Background(), run, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CoordinatorRunID != result.CoordinatorRunID || got.TaskID != result.TaskID {
+		t.Fatalf("child identity = %q/%q", got.CoordinatorRunID, got.TaskID)
+	}
+	if len(got.EvidenceJSON) == 0 {
+		t.Fatal("evidence selection was not stored")
+	}
+}

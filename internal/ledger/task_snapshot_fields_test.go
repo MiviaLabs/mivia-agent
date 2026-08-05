@@ -21,6 +21,8 @@ func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 		ProviderName: "deepseek",
 		Model:        "deepseek-v4-flash",
 		Skill:        "audit",
+		Scope:        "resource-a",
+		OutputSchema: map[string]any{"type": "object", "additionalProperties": false},
 		Input:        json.RawMessage(`{"prompt":"payload"}`),
 		Timeout:      7 * time.Second,
 		Budget:       42,
@@ -75,6 +77,12 @@ func TestTaskSnapshotRoundTripsNewFields(t *testing.T) {
 			}
 			if got[0].ProviderName != want.ProviderName || got[0].Model != want.Model {
 				t.Errorf("resolved binding lost: provider=%q model=%q", got[0].ProviderName, got[0].Model)
+			}
+			if got[0].OutputSchema["type"] != "object" {
+				t.Errorf("output schema lost: %#v", got[0].OutputSchema)
+			}
+			if got[0].Scope != want.Scope {
+				t.Errorf("scope lost: %q", got[0].Scope)
 			}
 		})
 	}

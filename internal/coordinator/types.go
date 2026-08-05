@@ -162,7 +162,8 @@ type coordinator struct {
 	handlesByRun    map[string]*RunHandle // runID → handle (for messaging delivery)
 	handlesMu       sync.Mutex
 	spawnMu         sync.Mutex
-	holderID        string // random per-process ID for run execution claims
+	resumeMu        sync.Mutex // serializes resume admission within this coordinator
+	holderID        string     // random per-process ID for run execution claims
 	now             func() time.Time
 	nowMu           sync.RWMutex
 	retryMu         sync.RWMutex

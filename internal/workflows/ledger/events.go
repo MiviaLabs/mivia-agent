@@ -63,16 +63,19 @@ type attemptStartedPayload struct {
 // carries the terminal status AND the route decision + output evidence; the
 // ordered event log is the audit trail (no separate transition/audit event).
 type attemptCompletedPayload struct {
-	AttemptID       string        `json:"attempt_id"`
-	Status          AttemptStatus `json:"status"`
-	OutputRef       string        `json:"output_ref,omitempty"`
-	OutputDigest    string        `json:"output_digest,omitempty"`
-	ToStepID        string        `json:"to_step_id,omitempty"`
-	TransitionIndex int           `json:"transition_index,omitempty"`
-	MatchDigest     string        `json:"match_digest,omitempty"`
-	DecisionJSON    []byte        `json:"decision_json,omitempty"`
-	FinishedAt      time.Time     `json:"finished_at"`
-	CreatedAt       time.Time     `json:"created_at"`
+	AttemptID        string        `json:"attempt_id"`
+	Status           AttemptStatus `json:"status"`
+	CoordinatorRunID string        `json:"coordinator_run_id,omitempty"`
+	TaskID           string        `json:"task_id,omitempty"`
+	OutputRef        string        `json:"output_ref,omitempty"`
+	OutputDigest     string        `json:"output_digest,omitempty"`
+	ToStepID         string        `json:"to_step_id,omitempty"`
+	TransitionIndex  int           `json:"transition_index,omitempty"`
+	MatchDigest      string        `json:"match_digest,omitempty"`
+	DecisionJSON     []byte        `json:"decision_json,omitempty"`
+	EvidenceJSON     []byte        `json:"evidence_json,omitempty"`
+	FinishedAt       time.Time     `json:"finished_at"`
+	CreatedAt        time.Time     `json:"created_at"`
 }
 
 // loopIncrementedPayload is the wf_loop_incremented event payload.

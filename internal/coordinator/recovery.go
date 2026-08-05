@@ -86,6 +86,11 @@ func (c *coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerpr
 // Queued tasks are left as-is and will be picked up by the DAG execution.
 // Returns a RunHandle for the resumed run.
 func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*RunHandle, error) {
+	c.resumeMu.Lock()
+	defer c.resumeMu.Unlock()
+	if c.HandleForRun(runID) != nil {
+		return nil, fmt.Errorf("resume: run %q already has an execution handle", runID)
+	}
 	// Verify the run exists and is interrupted.
 	snap, err := c.repo.GetRun(ctx, runID)
 	if err != nil {
@@ -401,7 +406,7 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 		// resuming a partly-completed run destroyed the work that had not yet
 		// started. Seed its outcome instead, because collectReady requires a
 		// result for every dependency before a dependent can become ready.
-		if result, terminal := terminalTaskResult(snap); terminal {
+		if result, terminal := c.terminalTaskResult(snap); terminal {
 			done[snap.TaskID] = result
 			continue
 		}
@@ -439,6 +444,8 @@ func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagen
 			Skill:        snap.Skill,
 			ProviderName: snap.ProviderName,
 			Model:        snap.Model,
+			Scope:        snap.Scope,
+			OutputSchema: snap.OutputSchema,
 			DependsOn:    snap.DependsOn,
 			Input:        append(json.RawMessage(nil), snap.Input...),
 			Depth:        clampInt(snap.Depth, c.pool.MaxDepth()),
