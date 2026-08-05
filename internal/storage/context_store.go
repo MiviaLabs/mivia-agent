@@ -38,6 +38,12 @@ func (s *SQLite) EnsureSession(ctx context.Context, request contextstate.EnsureS
 		_ = tx.Rollback()
 		return err
 	}
+	if request.WorktreeInstance.IsZero() {
+		if err := rejectManagedCatalogKey(ctx, tx, request.Principal, request.Principal.SessionID); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
 	row, err := readContextHeadTx(ctx, tx, request.Principal)
 	if err == nil {
 		if err := requireWorktreeSessionBinding(row.contextSessionRow, request.WorktreeInstance); err != nil {
@@ -80,7 +86,12 @@ func (s *SQLite) EnsureSession(ctx context.Context, request contextstate.EnsureS
 	// Record the directory the live session lives in, keyed by session_id in
 	// the same side table that holds named-snapshot directories. The TUI
 	// restores this directory when the session is reopened.
-	if _, err := tx.ExecContext(ctx, upsertSessionDirSQL, request.Principal.WorkspaceID, request.Principal.SubjectID, request.Principal.SessionID, request.Dir, request.Worktree, nullableText(request.WorktreeInstance.ID)); err != nil {
+	result, err := tx.ExecContext(ctx, upsertSessionDirSQL, request.Principal.WorkspaceID, request.Principal.SubjectID, request.Principal.SessionID, request.Dir, request.Worktree, nullableText(request.WorktreeInstance.ID))
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := requireCatalogMutation(result); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

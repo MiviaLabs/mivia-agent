@@ -77,13 +77,6 @@ topics:
   # ADRs are prohibited in this repository. Architecture decisions belong in
   # canonical owned documentation paths.
 
-  # Research documents: standalone risk analyses, design explorations, and
-  # technology evaluations. Not shipped docs — ephemeral working papers.
-  research-search-risks:
-    path: docs/research/search-residual-risks.md
-    owner: quality
-    description: Residual risk analysis for grep/glob tool improvements
-
   workflows-product:
     path: docs/product/workflows.md
     owner: product
@@ -93,3 +86,8 @@ topics:
     path: docs/architecture/workflows.md
     owner: architecture
     description: Workflow contract schemas and templates architecture
+
+  release-readiness-v0-1-0:
+    path: docs/reports/v0.1.0-open-source-readiness.md
+    owner: quality
+    description: Open-source and binary release readiness assessment for mivia v0.1.0

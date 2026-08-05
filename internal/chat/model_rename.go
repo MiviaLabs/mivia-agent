@@ -76,13 +76,14 @@ func (s *Session) SelectModel(name string) bool {
 	}
 	contextStore := s.contextStore
 	contextPrincipal := s.contextPrincipal
+	contextWorktree := s.contextWorktree
 	contextExpected := s.contextHead
 	contextEnabled := s.contextEnabledLocked() && contextStore != nil
 	expectedBinding := captureBindingRevision(s.binding)
 	newBindingRevision := captureBindingRevision(newBinding)
 	if contextEnabled {
 		s.mu.Unlock()
-		if err := s.advanceContextHead(contextStore, contextPrincipal, contextExpected, expectedBinding, newBindingRevision, "select", false); err != nil {
+		if err := s.advanceContextHead(contextStore, contextPrincipal, contextWorktree, contextExpected, expectedBinding, newBindingRevision, "select", false); err != nil {
 			return false
 		}
 		s.mu.Lock()

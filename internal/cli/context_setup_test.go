@@ -38,6 +38,40 @@ func TestSetupSessionContextIsAlwaysEnabled(t *testing.T) {
 	}
 }
 
+func TestReactivationRejectsConcurrentlyRemovedWorktree(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	worktree, err := createManagedWorktree(repoRoot, "concurrent-remove", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := beginManagedWorktreeRemoval(repoRoot, worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, worktree.Name, "mivia/"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reactivateManagedWorktree(repoRoot, instance); err == nil {
+		t.Fatal("reactivation accepted an absent Git worktree and marker")
+	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleting, err := store.ListDeletingWorktreeInstances(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleting) != 1 || deleting[0].Instance != instance {
+		t.Fatalf("deleting rows = %+v, want exact instance %+v", deleting, instance)
+	}
+}
+
 func TestContextDispatcherUsesSessionStoreWithMemoryConfig(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {

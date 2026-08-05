@@ -2,6 +2,8 @@ package storage
 
 import "database/sql"
 
+const worktreeRoutesInstanceIndexSQL = `CREATE UNIQUE INDEX worktree_routes_instance_idx ON worktree_routes(workspace_id,subject_id,worktree,instance_id)`
+
 func applyContextSchemaV9(db *sql.DB) error {
 	if err := inMigrationTx(db, 9, "apply", func(tx *sql.Tx) error {
 		if err := ensureContextSchemaV9Tx(tx); err != nil {
@@ -38,7 +40,7 @@ func ensureContextSchemaV9Tx(tx *sql.Tx) error {
 		instance_id TEXT, PRIMARY KEY(workspace_id,subject_id,worktree,instance_id))`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO worktree_routes_v9(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id)
+	if _, err := tx.Exec(`INSERT INTO worktree_routes_v9(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id)
 		SELECT workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id FROM worktree_routes`); err != nil {
 		return err
 	}
@@ -52,7 +54,10 @@ func ensureContextSchemaV9Tx(tx *sql.Tx) error {
 }
 
 func ensureWorktreeRoutesV9Witness(tx *sql.Tx) error {
-	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS worktree_routes_instance_idx ON worktree_routes(workspace_id,subject_id,worktree,instance_id)`); err != nil {
+	if err := ensureExactContextIndex(tx, "worktree_routes_worktree_instance_idx", contextV7SecondaryIndexes["worktree_routes_worktree_instance_idx"]); err != nil {
+		return err
+	}
+	if err := ensureExactContextIndex(tx, "worktree_routes_instance_idx", worktreeRoutesInstanceIndexSQL); err != nil {
 		return err
 	}
 	_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS worktree_routes_v9_contract(ready INTEGER NOT NULL CHECK(ready = 1))`)
@@ -65,7 +70,22 @@ func worktreeRoutesV9Ready(tx *sql.Tx) (bool, error) {
 		return false, err
 	}
 	defer rows.Close()
-	primaryKey := 0
+	type columnContract struct {
+		name    string
+		typ     string
+		notNull int
+		key     int
+	}
+	want := []columnContract{
+		{name: "workspace_id", typ: "TEXT", notNull: 1, key: 1},
+		{name: "subject_id", typ: "TEXT", notNull: 1, key: 2},
+		{name: "worktree", typ: "TEXT", notNull: 1, key: 3},
+		{name: "dir", typ: "TEXT", notNull: 1},
+		{name: "created_at", typ: "TEXT", notNull: 1},
+		{name: "updated_at", typ: "TEXT", notNull: 1},
+		{name: "instance_id", typ: "TEXT", key: 4},
+	}
+	index := 0
 	for rows.Next() {
 		var cid, notNull, key int
 		var name, typ string
@@ -73,9 +93,17 @@ func worktreeRoutesV9Ready(tx *sql.Tx) (bool, error) {
 		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &key); err != nil {
 			return false, err
 		}
-		if key > primaryKey {
-			primaryKey = key
+		if index >= len(want) {
+			return false, nil
 		}
+		expected := want[index]
+		if cid != index || name != expected.name || typ != expected.typ || notNull != expected.notNull || key != expected.key || defaultValue != nil {
+			return false, nil
+		}
+		index++
 	}
-	return primaryKey == 4, rows.Err()
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return index == len(want), nil
 }

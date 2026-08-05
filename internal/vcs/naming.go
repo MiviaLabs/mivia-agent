@@ -20,7 +20,7 @@ var reservedNames = map[string]bool{
 //   - Lowercase
 //   - Replace runs of non-alphanumeric characters with a single hyphen
 //   - Strip leading/trailing hyphens
-//   - Truncate to MaxWorktreeNameLen
+//   - Reject names that require truncation
 //   - Reject if empty or reserved after sanitisation
 type InvalidNameError struct {
 	Input  string
@@ -32,7 +32,10 @@ func (e InvalidNameError) Error() string {
 }
 
 func SanitizeName(input string) (string, error) {
-	name, _, err := sanitizeName(input)
+	name, truncated, err := sanitizeName(input)
+	if err == nil && truncated {
+		return "", InvalidNameError{Input: input, Reason: "name is too long"}
+	}
 	return name, err
 }
 

@@ -186,6 +186,156 @@ func TestWorktreeCommandRemoveRecoveryKeepsSameNameReplacement(t *testing.T) {
 	}
 }
 
+func TestWorktreeCommandRemoveRecoverySanitizesOriginalName(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	storePath := filepath.Join(repoRoot, "repository.db")
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := createManagedWorktree(repoRoot, "Feature One", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := beginManagedWorktreeRemoval(repoRoot, worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, worktree.Name, "mivia/"); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := runWorktreeWithIO([]string{"remove", "Feature One", "--workspace", repoRoot}, &output); err != nil {
+		t.Fatalf("remove recovery with original name: %v", err)
+	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DeletingWorktreeInstance(context.Background(), principal, instance.Worktree); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("deleting record = %v, want ErrWorktreeDeleted", err)
+	}
+	db, err := sql.Open("sqlite", storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var routeCount int
+	if err := db.QueryRow(`SELECT count(*) FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, instance.Worktree, instance.ID).Scan(&routeCount); err != nil {
+		t.Fatal(err)
+	}
+	if routeCount != 0 {
+		t.Fatalf("exact route count = %d, want 0", routeCount)
+	}
+}
+
+func TestWorktreeCommandRemoveRecoveryRejectsTruncatedAlias(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	name := strings.Repeat("a", vcs.MaxWorktreeNameLen)
+	worktree, err := createManagedWorktree(repoRoot, name, "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := beginManagedWorktreeRemoval(repoRoot, worktree); err != nil {
+		t.Fatal(err)
+	}
+	err = runWorktreeWithIO([]string{"remove", name + "b", "--workspace", repoRoot}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("removal recovery accepted a truncated alias")
+	}
+	resolved, resolveErr := vcs.Resolve(context.Background(), repoRoot, name)
+	if resolveErr != nil || resolved == nil {
+		t.Fatalf("target worktree changed: %+v, %v", resolved, resolveErr)
+	}
+}
+
+func TestWorktreeCommandAdoptRejectsTruncatedAlias(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	name := strings.Repeat("a", vcs.MaxWorktreeNameLen)
+	worktree, err := vcs.Create(context.Background(), repoRoot, name, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.SaveWorktreeRoute(context.Background(), principal, name, worktree.Path); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = runWorktreeWithIO([]string{"adopt", name + "b", "--workspace", repoRoot}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("adopt accepted a truncated alias")
+	}
+	if _, err := readWorktreeMarker(worktree.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("truncated alias wrote marker: %v", err)
+	}
+}
+
+func TestWorktreeCommandRemoveRecoveryRejectsMalformedLiveMarker(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	storePath := filepath.Join(repoRoot, "repository.db")
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := createManagedWorktree(repoRoot, "malformed-marker", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := beginManagedWorktreeRemoval(repoRoot, worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(worktreeMarkerPath(worktree.Path), []byte("{bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = runWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &bytes.Buffer{})
+	if err == nil {
+		t.Errorf("remove recovery with malformed marker succeeds")
+	}
+	resolved, resolveErr := vcs.Resolve(context.Background(), repoRoot, worktree.Name)
+	if resolveErr != nil || resolved == nil {
+		t.Errorf("Git worktree = %v, %v; want retained worktree", resolved, resolveErr)
+	}
+
+	principal, principalErr := worktreeRoutePrincipal(repoRoot)
+	if principalErr != nil {
+		t.Fatal(principalErr)
+	}
+	db, openErr := sql.Open("sqlite", storePath)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer db.Close()
+	var routeCount int
+	if queryErr := db.QueryRow(`SELECT count(*) FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, instance.Worktree, instance.ID).Scan(&routeCount); queryErr != nil {
+		t.Fatal(queryErr)
+	}
+	if routeCount != 1 {
+		t.Errorf("exact route count = %d, want 1", routeCount)
+	}
+	store, openErr := openRepositoryContextStore(repoRoot)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer store.Close()
+	deleting, deletingErr := store.DeletingWorktreeInstance(context.Background(), principal, instance.Worktree)
+	if deletingErr != nil || deleting != instance {
+		t.Errorf("deleting instance = %+v, %v; want %+v", deleting, deletingErr, instance)
+	}
+}
+
 func TestCreateManagedWorktreeRecoversAfterGitCreateBeforeMarker(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
@@ -266,6 +416,35 @@ func TestBindManagedWorktreeSessionRejectsMismatchedCatalogPath(t *testing.T) {
 	}
 }
 
+func TestBindManagedWorktreeSessionLeavesUnmanagedWorktreeUnbound(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	worktree, err := vcs.Create(context.Background(), repoRoot, "manual", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newReadyChatModel(30, 90)
+	if err := bindManagedWorktreeSession(m.session, repoRoot, worktree.Path, filepath.Join(repoRoot, "repository.db")); err != nil {
+		t.Fatalf("bind unmanaged worktree: %v", err)
+	}
+}
+
+func TestBindManagedWorktreeSessionRejectsActiveInstanceWithoutMarker(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := createManagedWorktree(repoRoot, "missing-marker", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(worktreeMarkerPath(worktree.Path)); err != nil {
+		t.Fatal(err)
+	}
+	m := newReadyChatModel(30, 90)
+	err = bindManagedWorktreeSession(m.session, repoRoot, worktree.Path, filepath.Join(repoRoot, "repository.db"))
+	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("bind active worktree without marker = %v, want ErrWorktreeDeleted", err)
+	}
+}
+
 func TestWorktreeCommandCreateListRemove(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	storePath := filepath.Join(repoRoot, "repository.db")
@@ -324,6 +503,36 @@ func TestWorktreeCommandCreateListRemove(t *testing.T) {
 	routeStore.Close()
 	if err != nil || len(routes) != 0 {
 		t.Fatalf("routes after remove = %+v, err=%v", routes, err)
+	}
+}
+
+func TestWorktreeCommandListShowsLiveDeletingWorktreeOnceAsRecovery(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := createManagedWorktree(repoRoot, "live-delete", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := beginManagedWorktreeRemoval(repoRoot, worktree); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := runWorktreeWithIO([]string{"list", "--workspace", repoRoot}, &output); err != nil {
+		t.Fatal(err)
+	}
+	var matching []string
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		if strings.HasPrefix(line, worktree.Name+"\t") && strings.HasSuffix(line, "\t"+worktree.Path) {
+			matching = append(matching, line)
+		}
+	}
+	want := worktree.Name + "\trecovery required\t" + worktree.Path
+	if len(matching) != 1 {
+		t.Fatalf("list rows for live deleting worktree = %d, want 1; rows=%q", len(matching), matching)
+	}
+	if matching[0] != want {
+		t.Fatalf("live deleting worktree row = %q, want %q", matching[0], want)
 	}
 }
 

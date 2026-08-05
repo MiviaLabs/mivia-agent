@@ -26,6 +26,8 @@ type SessionCatalogInfo struct {
 	// WorktreeRoute marks a route that starts a new session in a worktree.
 	// It does not contain a chat transcript or model binding.
 	WorktreeRoute bool `json:"worktree_route,omitempty"`
+	// WorktreeInstance retains the exact managed worktree for picker actions.
+	WorktreeInstance WorktreeInstance `json:"worktree_instance,omitempty"`
 }
 
 // SessionSaveOptions carries the optional metadata written with a named

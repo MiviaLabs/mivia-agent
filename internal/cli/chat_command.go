@@ -52,6 +52,7 @@ func applyContextLimits(res *config.Resolved) {
 type chatInvocation struct {
 	prompt, provider, model, configPath, workspacePath, resumeSessionName, repositorySessionStorePath string
 	agent                                                                                             string
+	expectedWorktreeInstance                                                                          contextstate.WorktreeInstance
 	// staleBypass records that the removed --bypass-hook-trust flag was passed,
 	// so the session can say the flag no longer does anything.
 	staleBypass                            bool
@@ -125,8 +126,12 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		if !errors.As(err, &restart) {
 			return err
 		}
+		if err := validateWorkspaceRestart(*restart, invocation); err != nil {
+			return fmt.Errorf("validate workspace restart: %w", err)
+		}
 		invocation.workspacePath = restart.dir
 		invocation.resumeSessionName = restart.resumeSessionName
+		invocation.expectedWorktreeInstance = restart.worktreeInstance
 		if err := os.Chdir(restart.dir); err != nil {
 			return fmt.Errorf("enter restarted workspace: %w", err)
 		}
@@ -141,6 +146,29 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		}
 		res = reloaded
 	}
+}
+
+func validateWorkspaceRestart(restart workspaceRestart, invocation chatInvocation) error {
+	if restart.worktreeInstance.IsZero() {
+		return nil
+	}
+	root, err := chatRepositoryRoot(restart.dir)
+	if err != nil {
+		return contextstate.ErrWorktreeDeleted
+	}
+	storePath := invocation.repositorySessionStorePath
+	if storePath == "" {
+		storePath, err = repositorySessionStorePath(root, invocation, &config.Resolved{})
+		if err != nil {
+			return err
+		}
+	}
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return validateExpectedWorktreeInstanceInStore(store, root, restart.dir, restart.worktreeInstance)
 }
 
 func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) error {
@@ -234,7 +262,7 @@ func chatRepositoryRoot(path string) (string, error) {
 func setupChatSessionContext(sess *chat.Session, workspaceRoot string, invocation chatInvocation, res *config.Resolved) (*storage.SQLite, error) {
 	repositoryRoot, err := chatRepositoryRoot(workspaceRoot)
 	if err == nil {
-		if err := bindManagedWorktreeSession(sess, repositoryRoot, workspaceRoot, invocation.repositorySessionStorePath); err != nil {
+		if err := bindManagedWorktreeSessionExpected(sess, repositoryRoot, workspaceRoot, invocation.repositorySessionStorePath, invocation.expectedWorktreeInstance); err != nil {
 			return nil, err
 		}
 	}
@@ -245,12 +273,22 @@ func setupChatSessionContext(sess *chat.Session, workspaceRoot string, invocatio
 }
 
 func bindManagedWorktreeSession(sess *chat.Session, repositoryRoot, workspaceRoot, storePath string) error {
+	return bindManagedWorktreeSessionExpected(sess, repositoryRoot, workspaceRoot, storePath, contextstate.WorktreeInstance{})
+}
+
+func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, workspaceRoot, storePath string, expected contextstate.WorktreeInstance) error {
 	name, err := vcs.CurrentWorktreeName(context.Background(), workspaceRoot)
 	if err != nil {
 		return err
 	}
 	if name == "" {
+		if !expected.IsZero() {
+			return contextstate.ErrWorktreeDeleted
+		}
 		return nil
+	}
+	if !expected.IsZero() && expected.Worktree != name {
+		return contextstate.ErrWorktreeDeleted
 	}
 	worktree, err := vcs.Resolve(context.Background(), repositoryRoot, name)
 	if err != nil {
@@ -258,13 +296,6 @@ func bindManagedWorktreeSession(sess *chat.Session, repositoryRoot, workspaceRoo
 	}
 	if worktree == nil {
 		return fmt.Errorf("managed worktree %q is not available", name)
-	}
-	instance, err := readWorktreeMarker(worktree.Path)
-	if err != nil {
-		return fmt.Errorf("read worktree session marker: %w", err)
-	}
-	if instance.Worktree != name {
-		return fmt.Errorf("worktree session marker does not match %q", name)
 	}
 	canonicalPath, err := canonicalMarkerRoot(worktree.Path)
 	if err != nil {
@@ -285,10 +316,40 @@ func bindManagedWorktreeSession(sess *chat.Session, repositoryRoot, workspaceRoo
 	if err != nil {
 		return err
 	}
+	instance, markerErr := readWorktreeMarker(worktree.Path)
+	if errors.Is(markerErr, os.ErrNotExist) {
+		if !expected.IsZero() {
+			return contextstate.ErrWorktreeDeleted
+		}
+		info, legacy, err := classifyMissingWorktreeMarker(store, principal, name, canonicalPath)
+		if err != nil {
+			return err
+		}
+		if !info.Instance.IsZero() {
+			return fmt.Errorf("managed worktree %q has state %q but no marker: %w", name, info.State, contextstate.ErrWorktreeDeleted)
+		}
+		if legacy {
+			return fmt.Errorf("worktree %q requires adoption; run mivia worktree adopt %s", name, name)
+		}
+		return nil
+	}
+	if markerErr != nil {
+		return fmt.Errorf("read worktree session marker: %w", markerErr)
+	}
+	if instance.Worktree != name {
+		return fmt.Errorf("worktree session marker does not match %q", name)
+	}
+	if !expected.IsZero() && instance != expected {
+		return contextstate.ErrWorktreeDeleted
+	}
 	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
 		return fmt.Errorf("validate worktree session binding: %w", err)
 	}
-	return sess.SetContextWorktreeBinding(instance)
+	sessionDir, err := canonicalMarkerRoot(workspaceRoot)
+	if err != nil {
+		return err
+	}
+	return sess.SetContextWorktreeBindingAt(instance, canonicalPath, sessionDir)
 }
 
 func repositorySessionStorePath(root string, invocation chatInvocation, _ *config.Resolved) (string, error) {

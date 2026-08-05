@@ -307,6 +307,11 @@ func (m *tuiModel) openSessionByName(name string) error {
 // openSessionInfo opens the exact selected session. Routes and snapshots can
 // have the same display name, so selection cannot use a name alone.
 func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
+	if !si.WorktreeInstance.IsZero() {
+		if err := m.validateSessionWorktree(si.Dir, si.WorktreeInstance); err != nil {
+			return err
+		}
+	}
 	if si.WorktreeRoute {
 		if m.workspaceSwitchBusy() {
 			return fmt.Errorf("cannot switch while agent is running")
@@ -324,6 +329,7 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 		}
 		m.workspaceDir = dir
 		m.restartWorkspace = dir
+		m.restartWorktreeInstance = si.WorktreeInstance
 		return nil
 	}
 	if si.Dir != "" && !sameSessionWorkspace(m.resolveWorkspaceDir(), si.Dir) {
@@ -344,6 +350,7 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 		m.workspaceDir = dir
 		m.restartWorkspace = dir
 		m.resumeSessionName = si.Name
+		m.restartWorktreeInstance = si.WorktreeInstance
 		return nil
 	}
 	if err := m.session.Load(si.Name); err != nil {

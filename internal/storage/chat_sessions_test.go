@@ -46,6 +46,15 @@ func TestWorktreeSessionCatalogFencesDeletingInstance(t *testing.T) {
 	if err := store.SaveSession(context.Background(), principal, "snapshot", []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance}); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
+	infos, err := catalog.ListWorktreeSessions(context.Background(), principal, instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range infos {
+		if info.WorktreeInstance != instance {
+			t.Fatalf("picker instance = %+v, want %+v", info.WorktreeInstance, instance)
+		}
+	}
 	if err := catalog.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
 		t.Fatalf("BeginWorktreeDeletion: %v", err)
 	}
@@ -68,6 +77,94 @@ func TestWorktreeSessionCatalogFencesDeletingInstance(t *testing.T) {
 		}
 		if count != 0 {
 			t.Fatalf("%s retains %d deleted rows", table, count)
+		}
+	}
+}
+
+func TestDeleteWorktreeSessionsDeletesOnlyExactCatalogKeys(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	target, err := contextstate.NewPrincipal("workspace", "target-session", "target-subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSubject, err := contextstate.NewPrincipal("workspace", "other-session", "other-subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherWorkspace, err := contextstate.NewPrincipal("other-workspace", "other-workspace-session", "target-subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetInstance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	otherInstance := contextstate.WorktreeInstance{Worktree: "wt-b", ID: "wt_fedcba0987654321"}
+	registrations := []struct {
+		principal contextstate.Principal
+		instance  contextstate.WorktreeInstance
+		path      string
+	}{
+		{target, targetInstance, "/repo/.mivia/worktrees/wt-a"},
+		{target, otherInstance, "/repo/.mivia/worktrees/wt-b"},
+		{otherWorkspace, targetInstance, "/other-repo/.mivia/worktrees/wt-a"},
+	}
+	for _, registration := range registrations {
+		if err := store.BeginWorktreeCreation(ctx, registration.principal, registration.instance, registration.path); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RegisterWorktreeInstance(ctx, registration.principal, registration.instance, registration.path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saves := []struct {
+		principal contextstate.Principal
+		instance  contextstate.WorktreeInstance
+		name      string
+	}{
+		{target, targetInstance, "target-one"},
+		{target, targetInstance, "target-two"},
+		{otherSubject, targetInstance, "other-subject"},
+		{target, otherInstance, "other-instance"},
+		{otherWorkspace, targetInstance, "other-workspace"},
+	}
+	for _, save := range saves {
+		if err := store.SaveSession(ctx, save.principal, save.name, []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Worktree: save.instance.Worktree, WorktreeInstance: save.instance}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.BeginWorktreeDeletion(ctx, target, targetInstance); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DeleteWorktreeSessions(ctx, target, targetInstance); err != nil {
+		t.Fatal(err)
+	}
+	assertExactCatalogKeyCleanup(t, store, target, otherSubject, otherWorkspace, targetInstance, otherInstance)
+}
+
+func assertExactCatalogKeyCleanup(t *testing.T, store *SQLite, target, otherSubject, otherWorkspace contextstate.Principal, targetInstance, otherInstance contextstate.WorktreeInstance) {
+	t.Helper()
+	checks := []struct {
+		name       string
+		workspace  string
+		subject    string
+		instanceID string
+		want       int
+	}{
+		{"target", target.WorkspaceID, target.SubjectID, targetInstance.ID, 0},
+		{"other subject", otherSubject.WorkspaceID, otherSubject.SubjectID, targetInstance.ID, 1},
+		{"other instance", target.WorkspaceID, target.SubjectID, otherInstance.ID, 1},
+		{"other workspace", otherWorkspace.WorkspaceID, otherWorkspace.SubjectID, targetInstance.ID, 1},
+	}
+	for _, check := range checks {
+		var count int
+		if err := store.db.QueryRow(`SELECT count(*) FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=?`, check.workspace, check.subject, check.instanceID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != check.want {
+			t.Errorf("%s catalog keys = %d, want %d", check.name, count, check.want)
 		}
 	}
 }
@@ -158,6 +255,17 @@ func TestRegisterWorktreeInstancePreservesMatchingLegacyRoute(t *testing.T) {
 	}
 	if legacy != 1 || bound != 1 {
 		t.Fatalf("route rows = legacy %d, bound %d; want one of each", legacy, bound)
+	}
+	infos, err := store.ListSessions(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, info := range infos {
+		found = found || info.WorktreeInstance == instance
+	}
+	if !found {
+		t.Fatalf("route picker rows do not retain instance %+v: %+v", instance, infos)
 	}
 }
 
@@ -296,6 +404,49 @@ func TestPruneWorktreeSessionSnapshotsRollsBackAllNames(t *testing.T) {
 		record, err := store.LoadWorktreeSessionAdmission(context.Background(), principal, name, instance)
 		if err != nil || len(record.Names) != 1 {
 			t.Fatalf("LoadWorktreeSessionAdmission(%q) = %#v, %v", name, record, err)
+		}
+	}
+}
+
+func TestPruneWorktreeSessionSnapshotsDeletesOnlyExactCatalogKey(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	path := filepath.Join(t.TempDir(), instance.Worktree)
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, path); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"prune", "keep"} {
+		if err := store.SaveSession(context.Background(), principal, name, []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.PruneWorktreeSessionSnapshots(context.Background(), principal, []string{"prune"}, instance); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []struct {
+		name string
+		want int
+	}{{name: "prune", want: 0}, {name: "keep", want: 1}} {
+		var count int
+		if err := store.db.QueryRow(`SELECT count(*) FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity='snapshot' AND name=?`, principal.WorkspaceID, principal.SubjectID, instance.ID, check.name).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != check.want {
+			t.Errorf("catalog key %q count = %d, want %d", check.name, count, check.want)
 		}
 	}
 }

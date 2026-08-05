@@ -108,7 +108,7 @@ func (s *Session) Compact(ctx context.Context) error {
 	input := prepareInputForContext(messages, s.MaxContextTokens, s.MaxTokens, binding, cfg.principal, cfg.policy, cfg.worktree)
 	input.Revision = cfg.revision
 	input.Force = true
-	snapshot, err := store.Load(ctx, cfg.principal, cfg.principal.SessionID)
+	snapshot, err := loadBoundContextStore(ctx, store, cfg.principal, cfg.principal.SessionID, cfg.worktree)
 	if err != nil {
 		return err
 	}
@@ -165,6 +165,7 @@ func (s *Session) RotateSessionID() (string, error) {
 	workspaceID, subjectID := s.contextPrincipal.WorkspaceID, s.contextPrincipal.SubjectID
 	binding := captureBindingRevision(s.binding)
 	worktree := s.contextWorktree
+	sessionDir := s.contextSessionDir
 	oldID := s.SessionID
 	s.mu.RUnlock()
 	newID := runtime.NewSessionID()
@@ -184,7 +185,7 @@ func (s *Session) RotateSessionID() (string, error) {
 	}
 	var snapshot contextstate.Snapshot
 	if manager != nil && manager.Enabled && store != nil {
-		snapshot, err = ensureAndLoadContextStore(store, principal, binding, worktree)
+		snapshot, err = ensureAndLoadContextStore(store, principal, binding, worktree, sessionDir)
 		if err != nil {
 			return "", err
 		}

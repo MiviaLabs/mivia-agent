@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,10 +32,40 @@ func (s *SQLite) DeletingWorktreeInstance(ctx context.Context, principal context
 }
 
 func (s *SQLite) ListDeletingWorktreeInstances(ctx context.Context, principal contextstate.Principal) ([]contextstate.WorktreeInstanceInfo, error) {
+	return s.listWorktreeInstancesByState(ctx, principal, contextstate.WorktreeDeleting)
+}
+
+func (s *SQLite) ListCreatingWorktreeInstances(ctx context.Context, principal contextstate.Principal) ([]contextstate.WorktreeInstanceInfo, error) {
+	return s.listWorktreeInstancesByState(ctx, principal, contextstate.WorktreeCreating)
+}
+
+// LiveWorktreeInstance returns the one non-deleted instance for a worktree.
+func (s *SQLite) LiveWorktreeInstance(ctx context.Context, principal contextstate.Principal, worktree string) (contextstate.WorktreeInstanceInfo, error) {
+	if err := principal.Validate(); err != nil {
+		return contextstate.WorktreeInstanceInfo{}, err
+	}
+	var info contextstate.WorktreeInstanceInfo
+	info.Instance.Worktree = worktree
+	err := s.db.QueryRowContext(ctx, `SELECT instance_id,canonical_path,state FROM worktree_instances WHERE workspace_id=? AND worktree=? AND state<>?`, principal.WorkspaceID, worktree, contextstate.WorktreeDeleted).Scan(&info.Instance.ID, &info.CanonicalPath, &info.State)
+	if err == sql.ErrNoRows {
+		return contextstate.WorktreeInstanceInfo{}, contextstate.ErrWorktreeDeleted
+	}
+	if err != nil {
+		return contextstate.WorktreeInstanceInfo{}, err
+	}
+	switch info.State {
+	case contextstate.WorktreeCreating, contextstate.WorktreeActive, contextstate.WorktreeDeleting:
+	default:
+		return contextstate.WorktreeInstanceInfo{}, fmt.Errorf("%w: invalid worktree instance state", contextstate.ErrInvalidDTO)
+	}
+	return info, nil
+}
+
+func (s *SQLite) listWorktreeInstancesByState(ctx context.Context, principal contextstate.Principal, state contextstate.WorktreeInstanceState) ([]contextstate.WorktreeInstanceInfo, error) {
 	if err := principal.Validate(); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT worktree,instance_id,canonical_path,state FROM worktree_instances WHERE workspace_id=? AND state=? ORDER BY worktree`, principal.WorkspaceID, contextstate.WorktreeDeleting)
+	rows, err := s.db.QueryContext(ctx, `SELECT worktree,instance_id,canonical_path,state FROM worktree_instances WHERE workspace_id=? AND state=? ORDER BY worktree`, principal.WorkspaceID, state)
 	if err != nil {
 		return nil, err
 	}
@@ -330,6 +361,16 @@ func (s *SQLite) DeleteWorktreeSessions(ctx context.Context, principal contextst
 	defer s.writeMu.Unlock()
 	var count int
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var lifecycleState string
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM worktree_instances WHERE workspace_id=? AND worktree=? AND instance_id=?`, principal.WorkspaceID, instance.Worktree, instance.ID).Scan(&lifecycleState); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return contextstate.ErrWorktreeDeleted
+			}
+			return err
+		}
+		if lifecycleState != string(contextstate.WorktreeDeleting) && lifecycleState != string(contextstate.WorktreeDeleted) {
+			return contextstate.ErrWorktreeDeleted
+		}
 		var sessionIDs []string
 		rows, err := tx.QueryContext(ctx, `SELECT session_id FROM context_sessions WHERE workspace_id=? AND subject_id=? AND instance_id=? AND tombstoned=0`, principal.WorkspaceID, principal.SubjectID, instance.ID)
 		if err != nil {
@@ -360,6 +401,9 @@ func (s *SQLite) DeleteWorktreeSessions(ctx context.Context, principal contextst
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_session_dirs WHERE workspace_id=? AND subject_id=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, instance.ID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, instance.ID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, instance.Worktree, instance.ID); err != nil {
 			return err
 		}
@@ -369,12 +413,14 @@ func (s *SQLite) DeleteWorktreeSessions(ctx context.Context, principal contextst
 			}
 		}
 		count = int(deletedSnapshots) + len(sessionIDs)
-		result, err = tx.ExecContext(ctx, `UPDATE worktree_instances SET state=?,updated_at=? WHERE workspace_id=? AND worktree=? AND instance_id=? AND state=?`, contextstate.WorktreeDeleted, time.Now().UTC().Format(time.RFC3339Nano), principal.WorkspaceID, instance.Worktree, instance.ID, contextstate.WorktreeDeleting)
-		if err != nil {
-			return err
-		}
-		if err := requireContextRows(result, contextstate.ErrWorktreeDeleted); err != nil {
-			return err
+		if lifecycleState == string(contextstate.WorktreeDeleting) {
+			result, err = tx.ExecContext(ctx, `UPDATE worktree_instances SET state=?,updated_at=? WHERE workspace_id=? AND worktree=? AND instance_id=? AND state=?`, contextstate.WorktreeDeleted, time.Now().UTC().Format(time.RFC3339Nano), principal.WorkspaceID, instance.Worktree, instance.ID, contextstate.WorktreeDeleting)
+			if err != nil {
+				return err
+			}
+			if err := requireContextRows(result, contextstate.ErrWorktreeDeleted); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

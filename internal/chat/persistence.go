@@ -91,6 +91,8 @@ type SessionInfo struct {
 	Worktree string `json:"worktree,omitempty"`
 	// WorktreeRoute starts a new chat session in Dir. It has no transcript.
 	WorktreeRoute bool `json:"worktree_route,omitempty"`
+	// WorktreeInstance retains the exact managed worktree for picker actions.
+	WorktreeInstance contextstate.WorktreeInstance `json:"worktree_instance,omitempty"`
 }
 
 // sessionMeta is the on-disk metadata shape (extensible).

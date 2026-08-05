@@ -162,6 +162,8 @@ type Session struct {
 	contextStore         contextstate.Store
 	contextHead          contextstate.Revision
 	contextWorktree      contextstate.WorktreeInstance
+	contextWorktreeRoot  string
+	contextSessionDir    string
 	loadedContextSession bool
 	// contextPublishMu serializes context publication with clear and turn
 	// snapshot capture. Provider calls remain lock-free; only the durable
@@ -185,6 +187,7 @@ func (s *Session) resetSystem() error {
 	s.mu.Lock()
 	contextStore := s.contextStore
 	contextPrincipal := s.contextPrincipal
+	contextWorktree := s.contextWorktree
 	contextExpected := s.contextHead
 	contextBinding := captureBindingRevision(s.binding)
 	contextEnabled := s.contextEnabledLocked() && contextStore != nil
@@ -195,7 +198,7 @@ func (s *Session) resetSystem() error {
 	// the user already has, and /clear is a commit from the user's
 	// perspective.
 	if contextEnabled {
-		if err := s.advanceContextHead(contextStore, contextPrincipal, contextExpected, contextBinding, contextBinding, "clear", true); err != nil {
+		if err := s.advanceContextHead(contextStore, contextPrincipal, contextWorktree, contextExpected, contextBinding, contextBinding, "clear", true); err != nil {
 			return err
 		}
 	}

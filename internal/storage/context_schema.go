@@ -8,6 +8,9 @@ import (
 const currentContextSchemaVersion = 9
 
 func migrateContextSchema(db *sql.DB) error {
+	if err := rejectNewerContextSchema(db); err != nil {
+		return err
+	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
 		return fmt.Errorf("create context migration table: %w", err)
 	}
@@ -79,6 +82,17 @@ func migrateContextSchema(db *sql.DB) error {
 		return applyContextSchemaV9(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
+}
+
+func rejectNewerContextSchema(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read context schema version: %w", err)
+	}
+	if version > currentContextSchemaVersion {
+		return fmt.Errorf("context schema version %d is newer than supported version %d", version, currentContextSchemaVersion)
+	}
+	return nil
 }
 
 func contextSchemaState(db *sql.DB) (int, bool, error) {
@@ -468,27 +482,5 @@ func contextSchemaRevisionStatements() []string {
             PRIMARY KEY(session_id, idempotency_key),
             FOREIGN KEY(workspace_id, session_id, subject_id)
                 REFERENCES context_sessions(workspace_id, session_id, subject_id))`,
-	}
-}
-
-func contextSchemaGuardStatements() []string {
-	return []string{
-		`CREATE TRIGGER context_session_active_checkpoint_guard
-            BEFORE UPDATE OF active_checkpoint_id ON context_sessions
-            WHEN NEW.active_checkpoint_id IS NOT NULL AND NOT EXISTS(
-                SELECT 1 FROM context_checkpoints c
-                WHERE c.checkpoint_id = NEW.active_checkpoint_id
-                  AND c.workspace_id = NEW.workspace_id AND c.session_id = NEW.session_id
-                  AND c.subject_id = NEW.subject_id AND c.complete = 1
-                  AND c.source_end <= NEW.source_sequence)
-            BEGIN SELECT RAISE(ABORT, 'active checkpoint is not complete or owner scoped'); END`,
-		`CREATE TRIGGER context_source_payload_guard
-            BEFORE INSERT ON context_source_events
-            WHEN NEW.payload_ref IS NOT NULL AND NOT EXISTS(
-                SELECT 1 FROM context_payloads p
-                WHERE p.ref = NEW.payload_ref AND p.namespace = COALESCE(NEW.payload_namespace, '')
-                  AND p.workspace_id = NEW.workspace_id AND p.session_id = NEW.session_id
-                  AND p.subject_id = NEW.subject_id AND p.revoked = 0)
-            BEGIN SELECT RAISE(ABORT, 'source payload is not an active owner-scoped payload'); END`,
 	}
 }

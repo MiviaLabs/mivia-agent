@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -11,6 +12,20 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
+
+type compactPreparationCounter struct {
+	calls    int
+	delegate contextmgr.StructuralPreparationManager
+}
+
+func (p *compactPreparationCounter) Prepare(ctx context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	p.calls++
+	return p.delegate.Prepare(ctx, input)
+}
+
+func (p *compactPreparationCounter) Discard(preparation contextmgr.Preparation) {
+	p.delegate.Discard(preparation)
+}
 
 func TestFormatTokenK(t *testing.T) {
 	tests := []struct {
@@ -159,5 +174,55 @@ func TestCompactPublishesStructuralCheckpointImmediately(t *testing.T) {
 	}
 	if len(snapshot.Active.ActiveContext) == 0 {
 		t.Fatal("compact did not publish active context")
+	}
+}
+
+func TestCompactRejectsDeletingManagedWorktreeBeforePreparation(t *testing.T) {
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	canonicalPath := t.TempDir()
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, canonicalPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetContextWorktreeBinding(instance); err != nil {
+		t.Fatal(err)
+	}
+	preparation := &compactPreparationCounter{}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  preparation,
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := session.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.SendUser(context.Background(), "history", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
+		t.Fatal(err)
+	}
+	prepareCalls := preparation.calls
+	err = session.Compact(context.Background())
+	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Errorf("Compact error = %v, want ErrWorktreeDeleted", err)
+	}
+	if preparation.calls != prepareCalls {
+		t.Fatalf("Compact preparation calls = %d, want %d", preparation.calls, prepareCalls)
 	}
 }

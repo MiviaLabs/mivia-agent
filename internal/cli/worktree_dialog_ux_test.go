@@ -2,13 +2,16 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // TestWorktreeDialogNoticeRendersSingleLine ensures a multi-line git error
@@ -53,7 +56,11 @@ func TestWorktreeDialogInfoNoticeUsesInfoStyle(t *testing.T) {
 
 func TestWorktreeDialogEnterRecoveryRowShowsRecoveryNotice(t *testing.T) {
 	m := newReadyChatModel(30, 90)
-	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{{Name: "wt-a", Branch: "recovery required", Path: "/missing/wt-a"}})
+	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{{Name: "wt-a", Path: "/missing/wt-a"}})
+	m.worktreeDlg.setRecovery(contextstate.WorktreeInstanceInfo{
+		Instance:      contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"},
+		CanonicalPath: "/missing/wt-a", State: contextstate.WorktreeDeleting,
+	})
 	m.hitMap.invalidate()
 	m.handleChatKey("enter", false)
 	if m.worktreeDlg == nil {
@@ -80,12 +87,200 @@ func TestWorktreeDialogMarksLiveDeletingWorktreeForRecovery(t *testing.T) {
 	if m.worktreeDlg == nil || len(m.worktreeDlg.worktrees) != 1 {
 		t.Fatalf("dialog rows = %#v", m.worktreeDlg)
 	}
-	if m.worktreeDlg.worktrees[0].Branch != "recovery required" {
-		t.Fatalf("live deleting row = %#v", m.worktreeDlg.worktrees[0])
+	if recovery, ok := m.worktreeDlg.selectedRecovery(); !ok || recovery.Info.State != contextstate.WorktreeDeleting {
+		t.Fatalf("live deleting recovery = %#v, %v", recovery, ok)
 	}
 	m.handleChatKey("enter", false)
 	if m.worktreeDlg.notice != "remove this row to recover deletion" {
 		t.Fatalf("recovery enter notice = %q", m.worktreeDlg.notice)
+	}
+}
+
+func TestWorktreeDialogRecoversCreatingWorktreeBeforeRestart(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "recover-create", ID: "wt_1234567890abcdef"}
+	expectedPath := filepath.Join(workspace.WorktreesDir(repoRoot), instance.Worktree)
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, expectedPath); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	worktree, err := vcs.CreateWithPrefix(context.Background(), repoRoot, instance.Worktree, "HEAD", "mivia/")
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readWorktreeMarker(worktree.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker before recovery = %v, want missing marker", err)
+	}
+
+	m := newReadyChatModel(30, 90)
+	m.workspaceDir = repoRoot
+	m.openWorktreeDialog()
+	if m.worktreeDlg == nil || len(m.worktreeDlg.worktrees) != 1 {
+		t.Fatalf("dialog rows = %#v", m.worktreeDlg)
+	}
+	if recovery, ok := m.worktreeDlg.selectedRecovery(); !ok || recovery.Info != (contextstate.WorktreeInstanceInfo{Instance: instance, CanonicalPath: expectedPath, State: contextstate.WorktreeCreating}) {
+		t.Fatalf("creating recovery = %#v, %v", recovery, ok)
+	}
+	m.handleChatKey("enter", false)
+	marker, err := readWorktreeMarker(worktree.Path)
+	if err != nil {
+		t.Fatalf("marker after recovery = %v", err)
+	}
+	if marker != instance {
+		t.Fatalf("recovered marker = %+v, want %+v", marker, instance)
+	}
+	if m.restartWorkspace != worktree.Path {
+		t.Fatalf("restart workspace = %q, want %q after recovery", m.restartWorkspace, worktree.Path)
+	}
+	store, err = openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, expectedPath); err != nil {
+		t.Fatalf("stored instance was not reused: %v", err)
+	}
+}
+
+func TestWorktreeDialogRefusesCreatingRecoveryWhileWorkspaceSwitchIsBusy(t *testing.T) {
+	tests := []struct {
+		name       string
+		waiting    bool
+		cancelling bool
+	}{
+		{name: "waiting", waiting: true},
+		{name: "cancelling", cancelling: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repoRoot := newWorktreeCommandRepo(t)
+			writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+			store, err := openRepositoryContextStore(repoRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			principal, err := worktreeRoutePrincipal(repoRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instance := contextstate.WorktreeInstance{Worktree: "recover-create", ID: "wt_1234567890abcdef"}
+			expectedPath := filepath.Join(workspace.WorktreesDir(repoRoot), instance.Worktree)
+			if err := store.BeginWorktreeCreation(context.Background(), principal, instance, expectedPath); err != nil {
+				t.Fatal(err)
+			}
+			worktree, err := vcs.CreateWithPrefix(context.Background(), repoRoot, instance.Worktree, "HEAD", "mivia/")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			m := newReadyChatModel(30, 90)
+			m.workspaceDir = repoRoot
+			m.waiting = test.waiting
+			m.cancelling = test.cancelling
+			m.openWorktreeDialog()
+			m.handleChatKey("enter", false)
+
+			if _, err := readWorktreeMarker(worktree.Path); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("busy recovery marker error = %v, want missing marker", err)
+			}
+			if m.restartWorkspace != "" {
+				t.Errorf("busy recovery restart workspace = %q, want empty", m.restartWorkspace)
+			}
+			if m.worktreeDlg == nil {
+				t.Error("busy recovery closed the dialog")
+			} else if m.worktreeDlg.notice != "cannot switch while agent is running" {
+				t.Errorf("busy recovery notice = %q, want standard busy notice", m.worktreeDlg.notice)
+			}
+			store, err = openRepositoryContextStore(repoRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			creating, err := store.CreatingWorktreeInstance(context.Background(), principal, instance.Worktree)
+			if err != nil || creating.Instance != instance {
+				t.Errorf("busy recovery creation = %+v, %v", creating, err)
+			}
+		})
+	}
+}
+
+func TestWorktreeDialogRecoveryUsesBorrowedSessionStore(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	customStore, err := openContextStorePath(filepath.Join(t.TempDir(), "custom.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer customStore.Close()
+	worktree, err := createManagedWorktreeInStore(customStore, repoRoot, "custom-delete", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := beginManagedWorktreeRemovalInStore(customStore, repoRoot, worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := newReadyChatModel(30, 90)
+	if err := m.session.SetContextStore(customStore); err != nil {
+		t.Fatal(err)
+	}
+	m.workspaceDir = repoRoot
+	m.openWorktreeDialog()
+	if m.worktreeDlg == nil || len(m.worktreeDlg.worktrees) != 1 {
+		t.Fatalf("dialog rows = %#v", m.worktreeDlg)
+	}
+	if recovery, ok := m.worktreeDlg.selectedRecovery(); !ok || recovery.Info.Instance != instance || recovery.Info.State != contextstate.WorktreeDeleting {
+		t.Fatalf("custom-store deleting recovery = %#v, %v", recovery, ok)
+	}
+	m.handleChatKey("enter", false)
+	if m.restartWorkspace != "" {
+		t.Fatalf("recovery row requested restart in %q", m.restartWorkspace)
+	}
+	m.handleChatKey("d", false)
+	m.handleChatKey("y", false)
+
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleting, err := customStore.ListDeletingWorktreeInstances(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleting) != 0 {
+		t.Fatalf("borrowed store still has deleting rows: %+v", deleting)
+	}
+	if err := customStore.ValidateActiveWorktreeInstance(context.Background(), principal, instance, worktree.Path); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("custom-store instance = %v, want deleted fence", err)
+	}
+	defaultStore, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer defaultStore.Close()
+	defaultDeleting, err := defaultStore.ListDeletingWorktreeInstances(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defaultDeleting) != 0 {
+		t.Fatalf("repository default store was changed: %+v", defaultDeleting)
 	}
 }
 
@@ -108,15 +303,15 @@ func TestWorktreeDialogRecoveryKeepsSameNameReplacementRow(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 	m.workspaceDir = repoRoot
 	m.openWorktreeDialog()
-	if len(m.worktreeDlg.worktrees) != 1 || m.worktreeDlg.worktrees[0].Branch != "recovery required" {
-		t.Fatalf("recovery row = %#v", m.worktreeDlg.worktrees)
+	if recovery, ok := m.worktreeDlg.selectedRecovery(); len(m.worktreeDlg.worktrees) != 1 || !ok || recovery.Info.State != contextstate.WorktreeDeleting {
+		t.Fatalf("recovery row = %#v, recovery=%#v, ok=%v", m.worktreeDlg.worktrees, recovery, ok)
 	}
 	m.handleChatKey("d", false)
 	m.handleChatKey("y", false)
 	if m.worktreeDlg == nil || len(m.worktreeDlg.worktrees) != 1 {
 		t.Fatalf("rows after recovery = %#v", m.worktreeDlg)
 	}
-	if m.worktreeDlg.worktrees[0].Branch == "recovery required" {
+	if _, ok := m.worktreeDlg.selectedRecovery(); ok {
 		t.Fatalf("replacement row remains a recovery row: %#v", m.worktreeDlg.worktrees[0])
 	}
 }
@@ -196,8 +391,9 @@ func TestWorktreeDialogCreateCannotCloseWhileCreating(t *testing.T) {
 
 	worktreePath := t.TempDir()
 	m.applyWorktreeCreated(worktreeCreatedMsg{
-		wt:  &vcs.WorktreeInfo{Name: "wt-created", Path: worktreePath},
-		dlg: issuingDialog,
+		wt:       &vcs.WorktreeInfo{Name: "wt-created", Path: worktreePath},
+		instance: testWorktreeInstance("wt-created"),
+		dlg:      issuingDialog,
 	})
 	if m.restartWorkspace != worktreePath {
 		t.Fatalf("restart workspace = %q, want %q", m.restartWorkspace, worktreePath)
@@ -410,5 +606,181 @@ func TestWorktreeDialogRecognizesCurrentDirectoryViaSymlink(t *testing.T) {
 
 	if !worktreeContainsCurrentDir(worktreePath) {
 		t.Fatal("symbolic-link working directory must count as the current worktree")
+	}
+}
+
+func TestWorktreeDialogFailsClosedWhenBorrowedStoreQueriesFail(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	worktree, err := vcs.CreateWithPrefix(context.Background(), repoRoot, "closed-store", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := openContextStorePath(filepath.Join(t.TempDir(), "closed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newReadyChatModel(30, 90)
+	if err := m.session.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	m.workspaceDir = repoRoot
+	m.openWorktreeDialog()
+	if m.worktreeDlg == nil {
+		t.Fatal("dialog is not open")
+	}
+	if !m.worktreeDlg.noticeErr || !strings.Contains(m.worktreeDlg.notice, "closed") {
+		t.Errorf("dialog notice = %q, error = %v", m.worktreeDlg.notice, m.worktreeDlg.noticeErr)
+	}
+	for index, row := range m.worktreeDlg.worktrees {
+		if row.Name == worktree.Name {
+			m.worktreeDlg.cursor = index
+			break
+		}
+	}
+	m.handleChatKey("enter", false)
+	if m.restartWorkspace != "" {
+		t.Errorf("closed lifecycle store requested restart in %q", m.restartWorkspace)
+	}
+}
+
+func TestWorktreeDialogSwitchesToUnmanagedReplacementAfterCleanup(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	old, err := createManagedWorktree(repoRoot, "replacement", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := beginManagedWorktreeRemoval(repoRoot, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, old.Name, "mivia/"); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := vcs.Create(context.Background(), repoRoot, old.Name, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readWorktreeMarker(replacement.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replacement marker = %v, want missing marker", err)
+	}
+	recovered, err := recoverManagedWorktreeRemoval(repoRoot, old.Name, "mivia/")
+	if err != nil || !recovered {
+		t.Fatalf("recover removal = %v, %v", recovered, err)
+	}
+	m := newReadyChatModel(30, 90)
+	m.workspaceDir = repoRoot
+	m.openWorktreeDialog()
+	if m.worktreeDlg == nil {
+		t.Fatal("dialog is not open")
+	}
+	for index, row := range m.worktreeDlg.worktrees {
+		if row.Name == replacement.Name {
+			m.worktreeDlg.cursor = index
+			break
+		}
+	}
+	m.handleChatKey("enter", false)
+	if m.restartWorkspace != replacement.Path {
+		t.Errorf("restart workspace = %q, want %q", m.restartWorkspace, replacement.Path)
+	}
+	if m.worktreeDlg != nil {
+		t.Errorf("unmanaged replacement did not close the dialog: %q", m.worktreeDlg.notice)
+	}
+}
+
+func TestWorktreeDialogSwitchesToValidManagedWorktree(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := createManagedWorktree(repoRoot, "managed-switch", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newReadyChatModel(30, 90)
+	m.workspaceDir = repoRoot
+	m.openWorktreeDialog()
+	if m.worktreeDlg == nil {
+		t.Fatal("dialog is not open")
+	}
+	for index, row := range m.worktreeDlg.worktrees {
+		if row.Name == worktree.Name {
+			m.worktreeDlg.cursor = index
+			break
+		}
+	}
+	m.handleChatKey("enter", false)
+	if m.restartWorkspace != worktree.Path {
+		t.Fatalf("restart workspace = %q, want %q", m.restartWorkspace, worktree.Path)
+	}
+}
+
+func TestWorktreeDialogReactivatesBorrowedStoreAfterGitRemovalFailure(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	customStore, err := openContextStorePath(filepath.Join(t.TempDir(), "custom.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer customStore.Close()
+	worktree, err := createManagedWorktreeInStore(customStore, repoRoot, "reactivate-custom", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configText := worktreeStoreConfig("default.db") + "\n[worktrees]\nbranch_prefix = \"mivia/\"\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, ".mivia", "mivia.toml"), []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	gitWrapper := "#!/bin/sh\nif [ \"$1\" = worktree ] && [ \"$2\" = remove ]; then exit 1; fi\nexec \"" + gitPath + "\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte(gitWrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	m := newReadyChatModel(30, 90)
+	if err := m.session.SetContextStore(customStore); err != nil {
+		t.Fatal(err)
+	}
+	m.workspaceDir = repoRoot
+	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{*worktree})
+	m.worktreeDlg.confirm = wtConfirmDelete
+	m.applyWorktreeConfirm()
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleting, err := customStore.ListDeletingWorktreeInstances(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleting) != 0 {
+		t.Errorf("custom store deleting rows = %d, want 0", len(deleting))
+	}
+	instance, err := readWorktreeMarker(worktree.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := customStore.ValidateActiveWorktreeInstance(context.Background(), principal, instance, worktree.Path); err != nil {
+		t.Errorf("custom store instance is not active: %v", err)
+	}
+	defaultStore, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer defaultStore.Close()
+	defaultDeleting, err := defaultStore.ListDeletingWorktreeInstances(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultCreating, err := defaultStore.ListCreatingWorktreeInstances(context.Background(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defaultDeleting) != 0 || len(defaultCreating) != 0 {
+		t.Errorf("default store lifecycle rows = deleting %d, creating %d", len(defaultDeleting), len(defaultCreating))
 	}
 }
