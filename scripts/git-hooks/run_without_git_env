@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if (($# == 0)); then
+  printf 'run_without_git_env: command required\n' >&2
+  exit 2
+fi
+
+git_vars="$(git rev-parse --local-env-vars)"
+while IFS= read -r name; do
+  [[ -n "$name" ]] && unset "$name"
+done <<< "$git_vars"
+
+exec "$@"

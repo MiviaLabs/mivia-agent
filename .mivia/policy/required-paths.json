@@ -50,6 +50,7 @@
     "scripts/install_git_hooks.sh",
     "scripts/git-hooks/pre-commit",
     "scripts/git-hooks/pre-push",
+    "scripts/git-hooks/run_without_git_env",
     "scripts/git-hooks/commit-msg",
     "scripts/git-hooks/prepare-commit-msg",
     "scripts/git-hooks/post-commit",

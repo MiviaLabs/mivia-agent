@@ -32,6 +32,7 @@ require_cmd() {
 }
 
 require_cmd python3
+run_verify() { "$ROOT/scripts/git-hooks/run_without_git_env" "$@"; }
 
 # These checks are cheap and mutate the index (gofmt), so run them before scans.
 git diff --check --cached
@@ -53,7 +54,7 @@ cleanup() { rm -rf "$TMP_GATE_DIR"; }
 trap cleanup EXIT
 run_gate() {
   local name="$1"; shift
-  "$@" >"$TMP_GATE_DIR/$name.out" 2>&1 &
+  run_verify "$@" >"$TMP_GATE_DIR/$name.out" 2>&1 &
   printf '%s:%s\n' "$name" "$!" >>"$TMP_GATE_DIR/pids"
 }
 run_gate config python3 scripts/verify_agent_config.py
@@ -75,13 +76,13 @@ mapfile -d '' STAGED_DOCS < <(
   git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n' | grep -E '^docs/' | tr '\n' '\0' || true
 )
 if ((${#STAGED_DOCS[@]})); then
-  python3 scripts/check_docs_ownership.py --staged
+  run_verify python3 scripts/check_docs_ownership.py --staged
 fi
 
 SEMGREP_SUMMARY="semgrep skipped (not installed)"
 if command -v semgrep >/dev/null 2>&1; then
   if [[ -f semgrep/agent-standards.yml ]]; then
-    semgrep --validate --config semgrep/agent-standards.yml >/dev/null
+    run_verify semgrep --validate --config semgrep/agent-standards.yml >/dev/null
     mapfile -d '' STAGED_FILES < <(
       git diff --cached --name-only --diff-filter=ACMR -z -- ':!semgrep/agent-standards.yml'
     )
@@ -90,7 +91,7 @@ if command -v semgrep >/dev/null 2>&1; then
       # RLIMIT_MEMLOCK (containers, sandboxes) the default per-CPU worker
       # count fails io_uring_queue_init with ENOMEM. Two workers scan any
       # staged set reliably and the whole tree at an acceptable pace.
-      semgrep --config semgrep/agent-standards.yml \
+      run_verify semgrep --config semgrep/agent-standards.yml \
         --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 \
         "${STAGED_FILES[@]}"
       SEMGREP_SUMMARY="staged semgrep 0 findings"
@@ -112,23 +113,23 @@ if command -v go >/dev/null 2>&1; then
   INV_FAIL=0
   if echo "$STAGED" | grep -qE '^internal/cli/'; then
     echo " → Running TUI invariant tests..."
-    go test -run 'TestBridgePath|TestPollCmd|TestBridgeDrain|TestUIEventMsg|TestFinishStream|TestTUISmoke' ./internal/cli/ -count=1 -timeout=120s || INV_FAIL=1
+    run_verify go test -run 'TestBridgePath|TestPollCmd|TestBridgeDrain|TestUIEventMsg|TestFinishStream|TestTUISmoke' ./internal/cli/ -count=1 -timeout=120s || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/tools/'; then
     echo " → Running tool invariant tests..."
-    go test -run 'TestToolSurface|TestRedactToolInput|TestSearchLocalSkips|TestSearchOpenAI' ./internal/tools/ -count=1 -timeout=60s || INV_FAIL=1
+    run_verify go test -run 'TestToolSurface|TestRedactToolInput|TestSearchLocalSkips|TestSearchOpenAI' ./internal/tools/ -count=1 -timeout=60s || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/agent/'; then
     echo " → Running agent invariant tests..."
-    go test -run 'TestRedactToolInput|TestDelegateToolMultiStep|TestMultiStepHandler' ./internal/agent/ -count=1 -timeout=60s || INV_FAIL=1
+    run_verify go test -run 'TestRedactToolInput|TestDelegateToolMultiStep|TestMultiStepHandler' ./internal/agent/ -count=1 -timeout=60s || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/chat/'; then
     echo " → Running chat invariant tests..."
-    go test -run 'TestSessionMessages' ./internal/chat/ -count=1 -timeout=60s || INV_FAIL=1
+    run_verify go test -run 'TestSessionMessages' ./internal/chat/ -count=1 -timeout=60s || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/config/'; then
     echo " → Running config invariant tests..."
-    go test -run 'TestPrivacyRedact' ./internal/config/ -count=1 -timeout=60s || INV_FAIL=1
+    run_verify go test -run 'TestPrivacyRedact' ./internal/config/ -count=1 -timeout=60s || INV_FAIL=1
   fi
   if ((INV_FAIL)); then
     fail "one or more invariant tests failed"
