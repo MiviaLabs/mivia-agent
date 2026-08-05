@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -44,28 +46,11 @@ func TestWorkflowRunLinearTwoStepExitCriterion(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	repo := ledger.NewStorageRepository(store)
-	attempts, err := repo.ListStepAttempts(t.Context(), runID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(attempts) != 2 {
-		t.Fatalf("attempt count = %d, want 2", len(attempts))
-	}
-	seenRuns := map[string]bool{}
-	for _, attempt := range attempts {
-		if attempt.CoordinatorRunID == "" || attempt.TaskID == "" {
-			t.Fatalf("attempt lacks child identity: %+v", attempt)
-		}
-		seenRuns[attempt.CoordinatorRunID] = true
-	}
-	if len(seenRuns) != 2 {
-		t.Fatalf("child run references = %d, want one per step", len(seenRuns))
-	}
-	before, err := repo.GetRun(t.Context(), runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := assertWorkflowAdmission(t, repo, runID)
 	beforeRequests := requests.Load()
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "agents", "one.toml"), []byte("not valid toml = ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var resumed strings.Builder
 	if err := runWorkflowWithIO([]string{"resume", runID, "--workspace", root, "--config", filepath.Join(root, "config.toml")}, &resumed, io.Discard); err != nil {
 		t.Fatal(err)
@@ -80,6 +65,211 @@ func TestWorkflowRunLinearTwoStepExitCriterion(t *testing.T) {
 			_ = fresh.Close()
 		}
 		t.Fatalf("resume output=%q requests=%d before_requests=%d before=%+v attempts=%d fresh=%d", resumed.String(), requests.Load(), beforeRequests, before, len(after), freshCount)
+	}
+}
+
+func assertWorkflowAdmission(t *testing.T, repo ledger.Repository, runID string) ledger.RunSnapshot {
+	t.Helper()
+	attempts, err := repo.ListStepAttempts(t.Context(), runID)
+	if err != nil || len(attempts) != 2 {
+		t.Fatalf("attempts = %d, %v; want 2", len(attempts), err)
+	}
+	seenRuns := map[string]bool{}
+	for _, attempt := range attempts {
+		if attempt.CoordinatorRunID == "" || attempt.TaskID == "" {
+			t.Fatalf("attempt lacks child identity: %+v", attempt)
+		}
+		seenRuns[attempt.CoordinatorRunID] = true
+	}
+	if len(seenRuns) != 2 {
+		t.Fatalf("child run references = %d, want one per step", len(seenRuns))
+	}
+	run, err := repo.GetRun(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := repo.GetRunSnapshot(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := ledger.UnmarshalSnapshot(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.SnapshotDigest != ledger.SnapshotDigest(raw) || run.InputDigest != ledger.InputDigest(snapshot.Inputs) {
+		t.Fatalf("run digests do not match the immutable snapshot: %+v", run)
+	}
+	corrupt := append(append([]byte(nil), raw...), ' ')
+	if _, _, _, err := validateWorkflowResumeSnapshot(run, corrupt); err == nil || !strings.Contains(err.Error(), "snapshot digest") {
+		t.Fatalf("corrupt immutable snapshot error = %v", err)
+	}
+	for _, name := range []string{"one", "two"} {
+		binding := snapshot.Agents[name]
+		if binding.ProviderName != "openrouter" || binding.Model != "test/model" {
+			t.Fatalf("agent %q binding = %q/%q", name, binding.ProviderName, binding.Model)
+		}
+	}
+	return run
+}
+
+func TestWorkflowRunRejectsOpenSchemaBeforeProviderCall(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`)
+	}))
+	t.Cleanup(server.Close)
+
+	root := t.TempDir()
+	storePath := filepath.Join(root, "workflow.db")
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	writeWorkflowRunFixture(t, root, server.URL, storePath)
+	openSchema := `{"type":"object","properties":{"ok":{"type":"boolean"}}}`
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "workflows", "schemas", "out.json"), []byte(openSchema), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runWorkflowWithIO([]string{"run", "two-step", "--workspace", root, "--config", filepath.Join(root, "config.toml"), "--input", "task=compile"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "additionalProperties") {
+		t.Fatalf("workflow run error = %v, want closed-schema rejection", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("provider requests = %d, want 0", requests.Load())
+	}
+}
+
+func TestWorkflowRunRejectsRunCommandAuthority(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	storePath := filepath.Join(root, "workflow.db")
+	writeWorkflowRunFixture(t, root, "http://127.0.0.1:1", storePath)
+	configPath := filepath.Join(root, "config.toml")
+	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("\n[tools]\nrun_allowlist = [\"echo\"]\n"); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	agentPath := filepath.Join(root, ".mivia", "agents", "one.toml")
+	body := "name = \"one\"\ndescription = \"command agent\"\ntools = [\"run_command\"]\nmax_turns = 1\n"
+	if err := os.WriteFile(agentPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = runWorkflowWithIO([]string{"run", "two-step", "--workspace", root, "--config", configPath, "--input", "task=compile"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "run_command") {
+		t.Fatalf("workflow run error = %v, want run_command rejection", err)
+	}
+}
+
+func TestWorkflowRunCreatesWorktreeForWriteAuthority(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`)
+	}))
+	t.Cleanup(server.Close)
+	root := t.TempDir()
+	storePath := filepath.Join(root, "workflow.db")
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	writeWorkflowRunFixture(t, root, server.URL, storePath)
+	for _, name := range []string{"one", "two"} {
+		path := filepath.Join(root, ".mivia", "agents", name+".toml")
+		body := "name = \"" + name + "\"\ndescription = \"writer\"\ntools = [\"write_file\"]\nmax_turns = 1\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initWorkflowGitRepo(t, root)
+	var stdout strings.Builder
+	err := runWorkflowWithIO([]string{"run", "two-step", "--workspace", root, "--config", filepath.Join(root, "config.toml"), "--input", "task=compile"}, &stdout, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := strings.TrimPrefix(strings.Fields(stdout.String())[0], "run_id=")
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	run, err := ledger.NewStorageRepository(store).GetRun(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.WorktreeName == "" || run.BaseCommit == "" || run.BaseRef == "" {
+		t.Fatalf("workflow Git identity is incomplete: %+v", run)
+	}
+	worktree, err := vcs.Resolve(t.Context(), root, run.WorktreeName)
+	if err != nil || worktree == nil {
+		t.Fatalf("resolve workflow worktree = %+v, %v", worktree, err)
+	}
+}
+
+func TestWorkflowRunLoadsSourceHooksAndExecutesToolsInWorktree(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		call := requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if call%2 == 1 {
+			_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"write","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"generated.txt\",\"content\":\"ok\"}"}}]}}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`)
+	}))
+	t.Cleanup(server.Close)
+	root := t.TempDir()
+	storePath := filepath.Join(root, "workflow.db")
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	writeWorkflowRunFixture(t, root, server.URL, storePath)
+	setWorkflowAgentTools(t, root, "write_file")
+	initWorkflowGitRepo(t, root)
+	marker := filepath.Join(root, "hook-ran")
+	script := filepath.Join(root, "hook.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf x >> \""+marker+"\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	hookConfig := "[[hooks]]\nevent = \"PostToolUse\"\nmatcher = \"^write_file$\"\n[[hooks.handlers]]\ntype = \"command\"\nargv = [\"" + script + "\"]\n"
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(hookConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout strings.Builder
+	err := runWorkflowWithIO([]string{"run", "two-step", "--workspace", root, "--config", filepath.Join(root, "config.toml"), "--input", "task=compile"}, &stdout, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "generated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("source checkout contains generated file: %v", err)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil || string(data) != "xx" {
+		t.Fatalf("hook marker = %q, %v; want xx", data, err)
+	}
+}
+
+func setWorkflowAgentTools(t *testing.T, root, tool string) {
+	t.Helper()
+	for _, name := range []string{"one", "two"} {
+		path := filepath.Join(root, ".mivia", "agents", name+".toml")
+		body := "name = \"" + name + "\"\ndescription = \"workflow agent\"\ntools = [\"" + tool + "\"]\nmax_turns = 2\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func initWorkflowGitRepo(t *testing.T, root string) {
+	t.Helper()
+	commands := [][]string{{"init", "-b", "main"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}, {"add", "."}, {"commit", "-m", "fixture"}}
+	for _, args := range commands {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
 	}
 }
 

@@ -3,8 +3,6 @@ package controller
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,24 +18,39 @@ import (
 
 // StepRuntime contains snapshotted data required to execute one agent step.
 type StepRuntime struct {
-	Agent    agents.ResolvedAgent
-	Digest   string
-	Template string
-	Schema   map[string]any
+	Agent        agents.ResolvedAgent
+	Digest       string
+	ProviderName string
+	Model        string
+	Template     string
+	Schema       map[string]any
+}
+
+// Admission contains immutable host data for one workflow run.
+type Admission struct {
+	BaseRef      string
+	BaseCommit   string
+	WorktreeName string
+	InputDigest  string
+	DeadlineAt   *time.Time
 }
 
 // LinearController advances a workflow with one agent step at a time.
 // It deliberately rejects gates, loops, and ambiguous routes in Phase 3.
 type LinearController struct {
-	Repo     workflowledger.Repository
-	Runner   AgentStepRunner
-	Workflow *compiler.CompiledWorkflow
-	Steps    map[string]StepRuntime
-	Inputs   map[string]any
-	RunID    string
-	Snapshot []byte
-	Holder   string
-	mu       sync.Mutex
+	Repo        workflowledger.Repository
+	Runner      AgentStepRunner
+	Workflow    *compiler.CompiledWorkflow
+	Steps       map[string]StepRuntime
+	Inputs      map[string]any
+	RunID       string
+	Snapshot    []byte
+	Holder      string
+	admission   Admission
+	forceResume bool
+	now         func() time.Time
+	started     bool
+	mu          sync.Mutex
 }
 
 // NewLinearController creates a controller for an admitted workflow run.
@@ -62,7 +75,43 @@ func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner,
 	if hasCycle(wf) {
 		return nil, fmt.Errorf("phase 3 does not support cyclic workflow transitions")
 	}
-	return &LinearController{Repo: repo, Runner: runner, Workflow: wf, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder()}, nil
+	return &LinearController{Repo: repo, Runner: runner, Workflow: wf, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now}, nil
+}
+
+// SetAdmission sets immutable host admission data before Start.
+func (c *LinearController) SetAdmission(admission Admission) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	c.admission = admission
+	return nil
+}
+
+// SetTimeSource sets the immutable controller clock before Start.
+func (c *LinearController) SetTimeSource(now func() time.Time) error {
+	if now == nil {
+		return fmt.Errorf("workflow controller clock is nil")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	c.now = now
+	return nil
+}
+
+// SetForceResume sets explicit claim recovery before Start.
+func (c *LinearController) SetForceResume(force bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	c.forceResume = force
+	return nil
 }
 
 // Start admits the run. It is idempotent for the same run ID and snapshot.
@@ -72,7 +121,10 @@ func (c *LinearController) Start(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	snap := workflowledger.RunSnapshot{RunID: c.RunID, WorkflowName: c.Workflow.Name, WorkflowDigest: c.Workflow.Digest, Status: workflowledger.RunStatusPending, ActiveStepID: c.Workflow.InitialStep}
+	if c.started {
+		return nil
+	}
+	snap := c.admissionSnapshot()
 	if err := c.Repo.CreateRun(ctx, snap, c.Snapshot); err != nil {
 		if !errors.Is(err, workflowledger.ErrDuplicate) {
 			return err
@@ -84,28 +136,86 @@ func (c *LinearController) Start(ctx context.Context) error {
 		if !bytes.Equal(stored, c.Snapshot) {
 			return fmt.Errorf("workflow run %q already exists with a different snapshot", c.RunID)
 		}
+		run, getRunErr := c.Repo.GetRun(ctx, c.RunID)
+		if getRunErr != nil {
+			return getRunErr
+		}
+		if !sameAdmission(run, snap) {
+			return fmt.Errorf("workflow run %q already exists with different admission data", c.RunID)
+		}
 	}
+	c.started = true
 	return nil
+}
+
+func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
+	admittedAt := c.now()
+	snap := workflowledger.RunSnapshot{
+		RunID: c.RunID, WorkflowName: c.Workflow.Name, WorkflowDigest: c.Workflow.Digest,
+		SnapshotDigest: workflowledger.SnapshotDigest(c.Snapshot), InputDigest: c.admission.InputDigest,
+		Status: workflowledger.RunStatusPending, ActiveStepID: c.Workflow.InitialStep,
+		BaseRef: c.admission.BaseRef, BaseCommit: c.admission.BaseCommit, WorktreeName: c.admission.WorktreeName,
+		StartedAt: admittedAt,
+	}
+	if c.admission.DeadlineAt != nil {
+		deadline := *c.admission.DeadlineAt
+		snap.DeadlineAt = &deadline
+	} else if c.Workflow.Limits.MaxDurationSeconds > 0 {
+		deadline := admittedAt.Add(time.Duration(c.Workflow.Limits.MaxDurationSeconds) * time.Second)
+		snap.DeadlineAt = &deadline
+	}
+	return snap
+}
+
+func sameAdmission(stored, candidate workflowledger.RunSnapshot) bool {
+	return stored.WorkflowName == candidate.WorkflowName && stored.WorkflowDigest == candidate.WorkflowDigest &&
+		stored.SnapshotDigest == candidate.SnapshotDigest && stored.InputDigest == candidate.InputDigest &&
+		stored.BaseRef == candidate.BaseRef && stored.BaseCommit == candidate.BaseCommit &&
+		stored.WorktreeName == candidate.WorktreeName && sameDeadline(stored.DeadlineAt, candidate.DeadlineAt)
+}
+
+func sameDeadline(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
 }
 
 // Run advances until the run reaches a terminal status.
 func (c *LinearController) Run(ctx context.Context) (workflowledger.RunSnapshot, error) {
-	if c.Workflow.Limits.MaxDurationSeconds > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(c.Workflow.Limits.MaxDurationSeconds)*time.Second)
-		defer cancel()
-	}
 	if err := c.Start(ctx); err != nil {
 		return workflowledger.RunSnapshot{}, err
+	}
+	stored, err := c.Repo.GetRun(ctx, c.RunID)
+	if err != nil {
+		return workflowledger.RunSnapshot{}, err
+	}
+	if stored.DeadlineAt != nil {
+		remaining := stored.DeadlineAt.Sub(c.now())
+		if remaining <= 0 {
+			return c.timeoutExpiredRun(stored)
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, remaining)
+		defer cancel()
 	}
 	for {
 		snap, done, err := c.Advance(ctx)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				current, getErr := c.Repo.GetRun(context.Background(), c.RunID)
-				if getErr == nil && !workflowledger.IsTerminalRunStatus(current.Status) {
-					_, _, _ = c.failWithStatus(context.Background(), current, context.DeadlineExceeded, workflowledger.RunStatusTimedOut)
+				writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				current, getErr := c.Repo.GetRun(writeCtx, c.RunID)
+				if getErr == nil {
+					settled, terminal, settleErr := c.reconcileTerminalRoute(writeCtx, current)
+					if terminal {
+						cancel()
+						return settled, settleErr
+					}
+					if !workflowledger.IsTerminalRunStatus(current.Status) {
+						_, _, _ = c.failWithStatus(writeCtx, current, context.DeadlineExceeded, workflowledger.RunStatusTimedOut)
+					}
 				}
+				cancel()
 			}
 			return snap, err
 		}
@@ -139,6 +249,13 @@ func (c *LinearController) Advance(ctx context.Context) (workflowledger.RunSnaps
 			return run, false, err
 		}
 	}
+	if settled, terminal, settleErr := c.reconcileTerminalRoute(ctx, run); terminal {
+		return settled, true, settleErr
+	}
+	if run.DeadlineAt != nil && !c.now().Before(*run.DeadlineAt) {
+		settled, timeoutErr := c.timeoutExpiredRun(run)
+		return settled, true, timeoutErr
+	}
 	step, ok := c.WorkflowStep(run.ActiveStepID)
 	if !ok {
 		return c.fail(ctx, run, fmt.Errorf("workflow step %q is not declared", run.ActiveStepID))
@@ -151,128 +268,6 @@ func (c *LinearController) Advance(ctx context.Context) (workflowledger.RunSnaps
 		return c.fail(ctx, run, fmt.Errorf("step %q has no snapshotted runtime", step.ID))
 	}
 	return c.advanceAgentStep(ctx, run, step, runtime)
-}
-
-func (c *LinearController) advanceAgentStep(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, runtime StepRuntime) (workflowledger.RunSnapshot, bool, error) {
-	attempts, err := c.Repo.ListStepAttempts(ctx, c.RunID)
-	if err != nil {
-		return run, false, err
-	}
-	attempt, existing := latestAttempt(attempts, step.ID)
-	if !existing {
-		attempt = workflowledger.StepAttempt{AttemptID: fmt.Sprintf("wfa-%s-%d", step.ID, nextAttemptNo(attempts, step.ID)), RunID: c.RunID, StepID: step.ID, AttemptNo: nextAttemptNo(attempts, step.ID)}
-		attempt.Status = workflowledger.AttemptStatusRunning
-		if err := c.Repo.CreateStepAttempt(ctx, attempt); err != nil {
-			return c.fail(ctx, run, err)
-		}
-		attempt, err = c.Repo.GetStepAttempt(ctx, c.RunID, attempt.AttemptID)
-		if err != nil {
-			return c.fail(ctx, run, err)
-		}
-		existing = true
-	}
-	if workflowledger.IsTerminalAttemptStatus(attempt.Status) {
-		if c.Workflow.Limits.MaxStepAttempts > 0 && attempt.AttemptNo >= c.Workflow.Limits.MaxStepAttempts {
-			return c.fail(ctx, run, fmt.Errorf("step %q exceeded max attempts", step.ID))
-		}
-		attempt = workflowledger.StepAttempt{AttemptID: fmt.Sprintf("wfa-%s-%d", step.ID, attempt.AttemptNo+1), RunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo + 1, Status: workflowledger.AttemptStatusRunning}
-		if err := c.Repo.CreateStepAttempt(ctx, attempt); err != nil {
-			return c.fail(ctx, run, err)
-		}
-		attempt, err = c.Repo.GetStepAttempt(ctx, c.RunID, attempt.AttemptID)
-		if err != nil {
-			return c.fail(ctx, run, err)
-		}
-	}
-	return c.executeAgentAttempt(ctx, run, step, runtime, attempt, attempts, existing)
-}
-
-func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, runtime StepRuntime, attempt workflowledger.StepAttempt, attempts []workflowledger.StepAttempt, existing bool) (workflowledger.RunSnapshot, bool, error) {
-	stepInputs, evidence, err := c.contextForStep(ctx, step, attempts)
-	if err != nil {
-		return c.failAttempt(ctx, run, attempt, err)
-	}
-	if err := validateBindingLimits(step, c.Inputs, attempts, c.Repo, ctx); err != nil {
-		return c.failAttempt(ctx, run, attempt, err)
-	}
-	taskID := attempt.TaskID
-	if taskID == "" {
-		taskID = fmt.Sprintf("wft-%s-%d", step.ID, attempt.AttemptNo)
-	}
-	var timeout time.Duration
-	if runtime.Agent.TimeoutSeconds != nil {
-		timeout = time.Duration(*runtime.Agent.TimeoutSeconds) * time.Second
-	}
-	budget := 0
-	if runtime.Agent.MaxTokens != nil {
-		budget = *runtime.Agent.MaxTokens
-	}
-	req := AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: taskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, ProviderName: runtime.Agent.Provider, Model: runtime.Agent.Model, Timeout: timeout, Budget: budget, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: 32 << 10, OutputSchema: runtime.Schema}
-	result, runErr := c.Runner.RunStep(ctx, req)
-	status := workflowledger.AttemptStatusSucceeded
-	if runErr != nil {
-		status = workflowledger.AttemptStatusFailed
-		if errors.Is(runErr, context.Canceled) {
-			status = workflowledger.AttemptStatusCanceled
-		} else if errors.Is(runErr, context.DeadlineExceeded) {
-			status = workflowledger.AttemptStatusTimedOut
-		}
-	}
-	next := ""
-	if runErr == nil {
-		var routeErr error
-		next, routeErr = c.nextStep(step, result.ValidatedOutput, nil)
-		if routeErr != nil {
-			status = workflowledger.AttemptStatusFailed
-			runErr = routeErr
-		}
-	}
-	writeCtx, cancel := stepPersistenceContext(ctx)
-	defer cancel()
-	if existing {
-		err = CompleteExistingStepResult(writeCtx, c.Repo, attempt, result, status, next)
-	} else {
-		err = recordStepResult(writeCtx, c.Repo, attempt, result, status, next)
-	}
-	if err != nil {
-		return c.fail(writeCtx, run, err)
-	}
-	if runErr != nil {
-		runStatus := workflowledger.RunStatusFailed
-		if status == workflowledger.AttemptStatusCanceled {
-			runStatus = workflowledger.RunStatusCanceled
-		} else if status == workflowledger.AttemptStatusTimedOut {
-			runStatus = workflowledger.RunStatusTimedOut
-		}
-		return c.failWithStatus(writeCtx, run, runErr, runStatus)
-	}
-	if next == "success" {
-		run, err = c.Repo.GetRun(ctx, c.RunID)
-		if err != nil {
-			return run, false, err
-		}
-		if err := c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusSucceeded, nil); err != nil {
-			return run, false, err
-		}
-		run, err = c.Repo.GetRun(ctx, c.RunID)
-		return run, true, err
-	}
-	run, err = c.Repo.GetRun(ctx, c.RunID)
-	return run, false, err
-}
-
-func stepPersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if ctx.Err() == nil {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(context.Background(), 5*time.Second)
-}
-
-func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, cause error) (workflowledger.RunSnapshot, bool, error) {
-	writeCtx, cancel := stepPersistenceContext(ctx)
-	defer cancel()
-	_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{}, workflowledger.AttemptStatusFailed, "")
-	return c.fail(writeCtx, run, cause)
 }
 
 func (c *LinearController) WorkflowStep(id string) (definition.Step, bool) {
@@ -474,15 +469,4 @@ func cloneValues(values map[string]any) map[string]any {
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
 	return out
-}
-
-func newWorkflowRunID() string {
-	var b [10]byte
-	_, _ = rand.Read(b[:])
-	return "wfr-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
-}
-func newWorkflowHolder() string {
-	var b [10]byte
-	_, _ = rand.Read(b[:])
-	return "controller-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 }

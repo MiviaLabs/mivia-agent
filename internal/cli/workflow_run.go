@@ -17,13 +17,26 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
+)
+
+var (
+	workflowRunBuild        = buildWorkflowController
+	workflowRunSetAdmission = func(b workflowControllerBuild) error {
+		return b.Controller.SetAdmission(b.Admission)
+	}
+	workflowBuildLoadSkills = loadChatSkills
+	workflowBuildLoadAgents = loadAgentDefinitions
+	workflowBuildRegistry   = workflowDefaultRegistry
+	workflowBuildWorkspace  = selectWorkflowWorkspace
+	workflowBuildProvider   = provider.New
+	workflowBuildDispatcher = NewSessionDispatcher
+	workflowBuildController = controller.NewLinearController
 )
 
 func runWorkflow(args []string) error {
@@ -112,93 +125,36 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, stdou
 	if err != nil {
 		return err
 	}
-	ctrl, dispatcher, err := buildWorkflowController(work.Abs, res, store, repo, compiled, filepath.Dir(found.Path), inputs, inputSnapshot, found.Raw, "", nil)
-	if dispatcher != nil {
-		defer dispatcher.Close()
-	}
+	runID := newCLIWorkflowRunID()
+	finishExecution, err := beginWorkflowExecution(work.Abs, contextStorePath(work.Abs, res.Subagents), runID)
 	if err != nil {
 		return err
 	}
-	snap, err := ctrl.Run(context.Background())
-	fmt.Fprintf(stdout, "run_id=%s status=%s\n", ctrl.RunID, snap.Status)
+	defer finishExecution()
+	built, err := workflowRunBuild(work.Abs, res, store, repo, compiled, filepath.Dir(found.Path), inputs, inputSnapshot, found.Raw, runID, nil, nil)
+	if err != nil {
+		return err
+	}
+	defer built.Dispatcher.Close()
+	admitted := false
+	defer func() {
+		if !admitted {
+			built.Cleanup()
+		}
+	}()
+	if err := workflowRunSetAdmission(built); err != nil {
+		return err
+	}
+	if err := built.Controller.Start(context.Background()); err != nil {
+		return err
+	}
+	admitted = true
+	snap, err := built.Controller.Run(context.Background())
+	fmt.Fprintf(stdout, "run_id=%s status=%s\n", built.Controller.RunID, snap.Status)
 	if err != nil {
 		return err
 	}
 	return nil
-}
-
-func executeWorkflowResume(runID, root, configPath string, force bool, stdout, stderr io.Writer) error {
-	if strings.TrimSpace(root) == "" {
-		root = "."
-	}
-	work, err := workspace.Open(root)
-	if err != nil {
-		return err
-	}
-	configPath = workflowConfigPath(work.Abs, configPath)
-	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
-	if err != nil {
-		return err
-	}
-	applyPrivacyPolicy(res)
-	applyWorkflowStoreRoot(res, work.Abs)
-	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
-	if err != nil {
-		return err
-	}
-	defer closeFn()
-	run, err := repo.GetRun(context.Background(), runID)
-	if err != nil {
-		return err
-	}
-	if !workflowledger.IsTerminalRunStatus(run.Status) {
-		if !force {
-			return fmt.Errorf("workflow run %q is not terminal; pass --force only after the prior executor stopped", runID)
-		}
-		if err := repo.ClearRunClaim(context.Background(), runID); err != nil {
-			return fmt.Errorf("clear interrupted workflow claim: %w", err)
-		}
-	}
-	raw, err := repo.GetRunSnapshot(context.Background(), runID)
-	if err != nil {
-		return err
-	}
-	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
-	if err != nil {
-		return err
-	}
-	if err := snapshot.Validate(); err != nil {
-		return err
-	}
-	wf, _, err := definition.ParseWorkflowTOML(snapshot.DefinitionTOML, run.WorkflowName+".toml")
-	if err != nil {
-		return err
-	}
-	compiled, err := compiler.Compile(&wf)
-	if err != nil {
-		return err
-	}
-	if snapshot.DefinitionDigest != compiled.Digest || run.WorkflowDigest != compiled.Digest {
-		return fmt.Errorf("workflow snapshot digest does not match the admitted definition")
-	}
-	inputs := make(map[string]any, len(snapshot.Inputs))
-	for key, value := range snapshot.Inputs {
-		parsed, parseErr := parseWorkflowInputValue(value, compiled.Inputs[key].Type)
-		if parseErr != nil {
-			return parseErr
-		}
-		inputs[key] = parsed
-	}
-	ctrl, dispatcher, err := buildWorkflowController(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, runID, &snapshot)
-	if dispatcher != nil {
-		defer dispatcher.Close()
-	}
-	if err != nil {
-		return err
-	}
-	snap, err := ctrl.Run(context.Background())
-	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, snap.Status)
-	return err
 }
 
 func openWorkflowStore(root string, cfg config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
@@ -227,52 +183,74 @@ func applyWorkflowStoreRoot(res *config.Resolved, root string) {
 	}
 }
 
-func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot) (*controller.LinearController, interface{ Close() }, error) {
-	skills, err := loadChatSkills(root)
+type workflowControllerBuild struct {
+	Controller *controller.LinearController
+	Dispatcher interface{ Close() }
+	Admission  controller.Admission
+	Cleanup    func()
+}
+
+func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, recorded *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+	skills, err := workflowBuildLoadSkills(root)
 	if err != nil {
-		return nil, nil, err
+		return workflowControllerBuild{}, err
 	}
-	loaded, err := loadAgentDefinitions(root, "", skills)
+	loaded, err := workflowBuildLoadAgents(root, "", skills)
 	if err != nil {
-		return nil, nil, err
+		return workflowControllerBuild{}, err
 	}
-	comp, err := provider.New(res)
+	authority, err := workflowBuildRegistry(root, res)
 	if err != nil {
-		return nil, nil, err
+		return workflowControllerBuild{}, err
 	}
-	ws, err := workspace.Open(root)
+	writeCapable, err := workflowWriteAuthority(wf, loaded.Registry, authority, loaded.Global.MandatoryToolDenylistAdditions)
 	if err != nil {
-		return nil, nil, err
+		return workflowControllerBuild{}, err
 	}
-	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws, TavilyAPIKey: res.TavilyAPIKey, RunAllowlist: res.Tools.RunAllowlist, RunAllowlistOnly: res.Tools.RunAllowlistOnly, RunBlocklist: res.Tools.RunBlocklist, DisableTools: res.Tools.DisableTools, EnvAllowlist: res.Tools.EnvAllowlist, EnvAllowlistOnly: res.Tools.EnvAllowlistOnly, EnvBlocklist: res.Tools.EnvBlocklist, RunTimeoutSec: res.Tools.RunTimeoutSec, MaxReadBytes: res.Tools.MaxReadBytes, MaxWriteKB: res.Tools.MaxWriteKB, MaxOutputBytes: res.Tools.MaxOutputBytes, MaxListDirEntries: res.Tools.MaxListDirEntries, MaxToolResultBytes: res.Tools.MaxToolResultBytes})
+	identity, cleanup, err := workflowBuildWorkspace(context.Background(), root, runID, writeCapable, recorded)
+	if err != nil {
+		return workflowControllerBuild{}, err
+	}
+	authority, err = workflowBuildRegistry(identity.Root, res)
+	if err != nil {
+		cleanup()
+		return workflowControllerBuild{}, err
+	}
+	comp, err := workflowBuildProvider(res)
+	if err != nil {
+		cleanup()
+		return workflowControllerBuild{}, err
+	}
+	reg := authority
 	legacy := ledger.NewStorageLedgerRepository(store)
-	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{Registry: reg, AuthorityRegistry: reg, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, Config: res.Subagents, Repo: legacy, SharedSQLite: store, SkillReg: skills, AgentRegistry: loaded.Registry, WorkspaceRoot: root})
+	dispatcherOpts := SessionDispatcherOpts{Registry: reg, AuthorityRegistry: reg, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, ModelCatalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res), Config: res.Subagents, Repo: legacy, SharedSQLite: store, SkillReg: skills, AgentRegistry: loaded.Registry, WorkspaceRoot: identity.Root}
+	dispatcher, err := workflowBuildDispatcher(dispatcherOpts)
 	if err != nil {
-		return nil, nil, err
+		cleanup()
+		return workflowControllerBuild{}, err
 	}
-	steps, snapshot, err := loadWorkflowRuntimes(root, refBase, wf, loaded.Registry, prior)
-	if err != nil {
-		dispatcher.Close()
-		return nil, nil, err
-	}
-	if prior != nil {
-		snapshot = *prior
-	} else {
-		snapshot.DefinitionTOML = append([]byte(nil), definitionTOML...)
-		snapshot.Inputs = cloneStringMap(inputSnapshot)
-	}
-	snapshotBytes, err := workflowledger.MarshalSnapshot(snapshot)
+	runtime, err := prepareWorkflowRuntime(root, refBase, wf, loaded.Registry, prior, definitionTOML, inputSnapshot, dispatcherOpts)
 	if err != nil {
 		dispatcher.Close()
-		return nil, nil, err
+		cleanup()
+		return workflowControllerBuild{}, err
 	}
 	coord := initCoordinator(dispatcher, res.Subagents, legacy)
-	ctrl, err := controller.NewLinearController(repo, controller.NewCoordinatorRunner(coord), wf, steps, inputs, runID, snapshotBytes)
+	ctrl, err := workflowBuildController(repo, controller.NewCoordinatorRunner(coord), wf, runtime.Steps, inputs, runID, runtime.Snapshot)
 	if err != nil {
 		dispatcher.Close()
-		return nil, nil, err
+		cleanup()
+		return workflowControllerBuild{}, err
 	}
-	return ctrl, dispatcher, nil
+	admission := controller.Admission{
+		BaseRef: identity.BaseRef, BaseCommit: identity.BaseCommit, WorktreeName: identity.WorktreeName,
+		InputDigest: workflowledger.InputDigest(inputSnapshot),
+	}
+	if recorded != nil {
+		admission.InputDigest = recorded.InputDigest
+		admission.DeadlineAt = recorded.DeadlineAt
+	}
+	return workflowControllerBuild{Controller: ctrl, Dispatcher: dispatcher, Admission: admission, Cleanup: cleanup}, nil
 }
 
 func parseWorkflowInputs(raw []string, defs map[string]definition.InputDef) (map[string]any, map[string]string, error) {
@@ -348,7 +326,7 @@ func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, regi
 		base = filepath.Join(root, ".mivia", "workflows")
 	}
 	result := make(map[string]controller.StepRuntime)
-	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionDigest: wf.Digest, Agents: map[string]workflowledger.RefSnapshot{}, Schemas: map[string]workflowledger.RefSnapshot{}, Templates: map[string]workflowledger.RefSnapshot{}}
+	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionDigest: wf.Digest, Agents: map[string]workflowledger.AgentSnapshot{}, Schemas: map[string]workflowledger.RefSnapshot{}, Templates: map[string]workflowledger.RefSnapshot{}}
 	for _, step := range wf.Steps {
 		if step.Kind != "agent" {
 			return nil, snapshot, fmt.Errorf("phase 3 supports agent steps only; step %q is %q", step.ID, step.Kind)
@@ -372,7 +350,7 @@ func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, regi
 			return nil, snapshot, err
 		}
 		result[step.ID] = controller.StepRuntime{Agent: agent, Digest: digest, Template: tmpl, Schema: schema}
-		snapshot.Agents[agent.Name] = workflowledger.RefSnapshot{Digest: digest}
+		snapshot.Agents[agent.Name] = workflowledger.AgentSnapshot{Digest: digest}
 		if step.Template != "" {
 			snapshot.Templates[step.Template] = workflowledger.RefSnapshot{Digest: digestBytes(tmplBytes), Bytes: append([]byte(nil), tmplBytes...)}
 		}

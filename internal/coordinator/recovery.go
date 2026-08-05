@@ -2,12 +2,10 @@ package coordinator
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -86,6 +84,10 @@ func (c *coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerpr
 // Queued tasks are left as-is and will be picked up by the DAG execution.
 // Returns a RunHandle for the resumed run.
 func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*RunHandle, error) {
+	return c.resumeInterruptedRun(ctx, runID, nil)
+}
+
+func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, liveTasks []subagents.Task) (*RunHandle, error) {
 	c.resumeMu.Lock()
 	defer c.resumeMu.Unlock()
 	if c.HandleForRun(runID) != nil {
@@ -120,7 +122,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 		}
 	}()
 
-	originalTasks, alreadyDone, err := c.resumeValidateAndMark(ctx, runID)
+	originalTasks, alreadyDone, err := c.resumeValidateAndMark(ctx, runID, liveTasks)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +149,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 // resumeValidateAndMark reads the interrupted run's tasks, validates them,
 // marks any in-flight tasks as interrupted, and returns the prepared task
 // list plus results from already-completed tasks.
-func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string) ([]subagents.Task, map[string]subagents.Result, error) {
+func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string, liveTasks []subagents.Task) ([]subagents.Task, map[string]subagents.Result, error) {
 	tasks, err := c.repo.ListTasks(ctx, runID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
@@ -155,7 +157,7 @@ func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string) (
 
 	// Validate before mutating anything: a run that cannot be resumed must fail
 	// clean, not half-marked.
-	if _, _, err := c.tasksFromSnapshots(tasks); err != nil {
+	if _, _, err := c.tasksFromSnapshotsWithAuthority(tasks, liveTasks); err != nil {
 		return nil, nil, err
 	}
 	attempts := make(map[string]string, len(tasks))
@@ -176,7 +178,7 @@ func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string) (
 		return nil, nil, fmt.Errorf("resume: re-list tasks %q: %w", runID, err)
 	}
 
-	return c.tasksFromSnapshots(updatedTasks)
+	return c.tasksFromSnapshotsWithAuthority(updatedTasks, liveTasks)
 }
 
 func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, tasks []ledger.TaskSnapshot, attempts map[string]string) {
@@ -382,82 +384,6 @@ func (c *coordinator) rebuildTasksForResume(ctx context.Context, runID string) (
 	}
 	tasks, _, err := c.tasksFromSnapshots(snaps)
 	return tasks, err
-}
-
-// tasksFromSnapshots restores the WORK a task described and nothing else.
-//
-// Authority fields - Permission, Scope, Role, SessionID, TurnID, Owner - are
-// left zero on purpose. The ledger is a file in the workspace and the agent can
-// write it, so restoring a persisted permission would let the agent grant
-// itself one; those are re-derived by the caller performing the resume.
-// Idempotency keys are likewise not restored: reusing a persisted key would
-// make the resumed attempt dedupe against the original and never run.
-//
-// Limits are restored but clamped to the live pool policy, so a run that
-// predates a config change keeps its smaller budget while a ledger claiming a
-// larger one cannot raise the ceiling. See plan 12 §3.
-func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagents.Task, map[string]subagents.Result, error) {
-	out := make([]subagents.Task, 0, len(snaps))
-	done := make(map[string]subagents.Result)
-	for _, snap := range snaps {
-		// A task that already reached a terminal state must not be re-dispatched:
-		// its transition back to running is rejected, the DAG reports it failed,
-		// and collectReady then drives every dependent to terminal blocked - so
-		// resuming a partly-completed run destroyed the work that had not yet
-		// started. Seed its outcome instead, because collectReady requires a
-		// result for every dependency before a dependent can become ready.
-		if result, terminal := c.terminalTaskResult(snap); terminal {
-			done[snap.TaskID] = result
-			continue
-		}
-		name := snap.AgentName
-		if snap.AgentName == "" || snap.AgentDigest == "" {
-			// Runs created before agent routing - and current-version delegate
-			// runs, which route to the fixed built-in runners, not to an agent -
-			// carry no routing snapshot. HandlerName is a private runtime target,
-			// never resume authority, so only the fixed built-in runner names may
-			// be re-derived here (they are session-owned and registered in every
-			// dispatcher; agent names cannot collide with them). Any other legacy
-			// name stays fail-closed rather than routing ledger-supplied work to
-			// an arbitrary handler.
-			if !subagents.IsReservedHandler(snap.HandlerName) {
-				return nil, nil, fmt.Errorf("resume: task %q has no agent routing snapshot (created by an older mivia version or an unresolvable handler; cannot dispatch)", snap.TaskID)
-			}
-			name = snap.HandlerName
-		}
-		if len(snap.Input) == 0 {
-			return nil, nil, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
-		}
-		if (snap.ProviderName == "") != (snap.Model == "") {
-			return nil, nil, fmt.Errorf("resume: task %q has an incomplete provider/model binding", snap.TaskID)
-		}
-		task := subagents.Task{
-			ID: snap.TaskID,
-			// HandlerName is deliberately ignored for agent-routed tasks: it is
-			// a private implementation detail from the original attempt, not
-			// resume authority. It is re-derived only for the fixed built-in
-			// runner names above (legacy delegate/oneshot runs), which carry no
-			// agent definition or digest.
-			Name:         name,
-			AgentName:    snap.AgentName,
-			AgentDigest:  snap.AgentDigest,
-			Skill:        snap.Skill,
-			ProviderName: snap.ProviderName,
-			Model:        snap.Model,
-			Scope:        snap.Scope,
-			OutputSchema: snap.OutputSchema,
-			DependsOn:    snap.DependsOn,
-			Input:        append(json.RawMessage(nil), snap.Input...),
-			Depth:        clampInt(snap.Depth, c.pool.MaxDepth()),
-			Budget:       clampInt(snap.Budget, c.pool.MaxBudget()),
-			Timeout:      clampDuration(snap.Timeout, c.pool.Timeout(), time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second),
-		}
-		if err := c.pool.ValidateTask(task); err != nil {
-			return nil, nil, fmt.Errorf("resume: task %q routing authorization: %w", snap.TaskID, err)
-		}
-		out = append(out, task)
-	}
-	return out, done, nil
 }
 
 // terminalTaskResult reports the recorded outcome of a task that has already

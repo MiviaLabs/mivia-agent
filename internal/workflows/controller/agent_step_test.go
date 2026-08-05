@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,78 @@ type stepHandler struct {
 	wait    bool
 	seen    chan runtime.Request
 	started chan struct{}
+}
+
+type inspectingCoordinator struct {
+	coordinator.Coordinator
+	ensure       coordinator.EnsureRunRequest
+	badRunID     bool
+	badTask      bool
+	ensureErr    error
+	rewriteRunID bool
+	inspectErr   error
+}
+
+func (c *inspectingCoordinator) EnsureRun(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error) {
+	c.ensure = req
+	if c.ensureErr != nil {
+		return nil, c.ensureErr
+	}
+	if c.rewriteRunID {
+		req.RunID = coordinator.NewRunID()
+	}
+	return c.Coordinator.EnsureRun(ctx, req)
+}
+
+func (c *inspectingCoordinator) Inspect(ctx context.Context, handle *coordinator.RunHandle) (ledger.RunSnapshot, error) {
+	if c.inspectErr != nil {
+		return ledger.RunSnapshot{}, c.inspectErr
+	}
+	snap, err := c.Coordinator.Inspect(ctx, handle)
+	if c.badRunID {
+		snap.RunID = coordinator.NewRunID()
+	}
+	if c.badTask && len(snap.Tasks) > 0 {
+		snap.Tasks[0].TaskID = "other-task"
+	}
+	return snap, err
+}
+
+func TestCoordinatorRunnerSurfacesCoordinatorBoundaryErrors(t *testing.T) {
+	sentinel := errors.New("coordinator boundary failed")
+	base := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)}).Coordinator
+	for _, tc := range []struct {
+		name  string
+		coord *inspectingCoordinator
+		want  string
+	}{
+		{name: "ensure", coord: &inspectingCoordinator{Coordinator: base, ensureErr: sentinel}, want: sentinel.Error()},
+		{name: "returned run identity", coord: &inspectingCoordinator{Coordinator: base, rewriteRunID: true}, want: "coordinator returned run"},
+		{name: "inspect", coord: &inspectingCoordinator{Coordinator: base, inspectErr: sentinel}, want: sentinel.Error()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := validStepRequest()
+			spec.WorkflowRunID += "-" + strings.ReplaceAll(tc.name, " ", "-")
+			result, err := NewCoordinatorRunner(tc.coord).RunStep(context.Background(), spec)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("result = %+v, error = %v, want %q", result, err, tc.want)
+			}
+			if result.TaskID != "task-1" {
+				t.Fatalf("result identity = %+v", result)
+			}
+		})
+	}
+}
+
+func TestCoordinatorRunnerRejectsIncompleteIdentity(t *testing.T) {
+	spec := validStepRequest()
+	spec.CoordinatorRunID = ""
+	if _, err := stepRunner(t, stepHandler{}).RunStep(context.Background(), spec); err == nil {
+		t.Fatal("step without a coordinator run ID was accepted")
+	}
+	if _, err := (*CoordinatorRunner)(nil).RunStep(context.Background(), validStepRequest()); err == nil {
+		t.Fatal("nil runner was accepted")
+	}
 }
 
 func (h stepHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
@@ -47,7 +120,7 @@ func stepRunner(t *testing.T, handler runtime.Handler) *CoordinatorRunner {
 
 func validStepRequest() AgentStepRequest {
 	return AgentStepRequest{
-		WorkflowRunID: "wfr-run-1", StepID: "step-1", AttemptNo: 1, TaskID: "task-1",
+		WorkflowRunID: "wfr-run-1", StepID: "step-1", AttemptNo: 1, TaskID: "task-1", CoordinatorRunID: coordinator.NewRunID(),
 		AgentName: "agent", AgentDigest: "sha256:agent", Scope: "read-only",
 		Template: "task={{ inputs.task }} evidence={{ evidence.plan }}",
 		Inputs:   map[string]any{"task": "build"}, Evidence: map[string]any{"plan": map[string]any{"ok": true}},
@@ -92,6 +165,40 @@ func TestCoordinatorRunnerPropagatesRoutingAndLimits(t *testing.T) {
 	}
 	if req.SessionID != "session-a" || req.TurnID != "turn-a" || req.Role != "role-a" {
 		t.Fatalf("caller identity = %q/%q/%q", req.SessionID, req.TurnID, req.Role)
+	}
+}
+
+func TestCoordinatorRunnerPropagatesExplicitForceResume(t *testing.T) {
+	base := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)}).Coordinator
+	observed := &inspectingCoordinator{Coordinator: base}
+	runner := NewCoordinatorRunner(observed)
+	spec := validStepRequest()
+	spec.ForceResume = true
+	if _, err := runner.RunStep(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if !observed.ensure.ForceResume || observed.ensure.RunID != spec.CoordinatorRunID {
+		t.Fatalf("ensure request = %+v", observed.ensure)
+	}
+}
+
+func TestCoordinatorRunnerRejectsInspectedIdentityMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		badRunID bool
+		badTask  bool
+	}{
+		{name: "run", badRunID: true},
+		{name: "task", badTask: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)}).Coordinator
+			observed := &inspectingCoordinator{Coordinator: base, badRunID: tc.badRunID, badTask: tc.badTask}
+			_, err := NewCoordinatorRunner(observed).RunStep(context.Background(), validStepRequest())
+			if err == nil {
+				t.Fatal("identity mismatch was accepted")
+			}
+		})
 	}
 }
 

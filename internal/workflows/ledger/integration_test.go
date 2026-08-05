@@ -30,7 +30,7 @@ func TestIntegrationSnapshotDigestStability(t *testing.T) {
 	ref := func(digest string, content []byte) RefSnapshot {
 		return RefSnapshot{Digest: digest, Bytes: content}
 	}
-	mk := func(inputs map[string]string, agents, schemas, templates map[string]RefSnapshot) Snapshot {
+	mk := func(inputs map[string]string, agents map[string]AgentSnapshot, schemas, templates map[string]RefSnapshot) Snapshot {
 		return Snapshot{
 			SchemaVersion:    SnapshotSchemaVersion,
 			DefinitionTOML:   []byte("name = \"demo\"\n"),
@@ -46,13 +46,13 @@ func TestIntegrationSnapshotDigestStability(t *testing.T) {
 	// Identical content, different map insertion orders.
 	a := mk(
 		map[string]string{"task": "add retries", "branch": "main", "zeta": "last"},
-		map[string]RefSnapshot{"engineer": ref("agent-digest", nil), "reviewer": ref("reviewer-digest", nil)},
+		map[string]AgentSnapshot{"engineer": {Digest: "agent-digest"}, "reviewer": {Digest: "reviewer-digest"}},
 		map[string]RefSnapshot{"plan": ref("schema-digest", []byte(`{"type":"object"}`)), "run": ref("run-schema-digest", []byte(`{"type":"object"}`))},
 		map[string]RefSnapshot{"plan": ref("tpl-digest", []byte("{{ inputs.task }}")), "summary": ref("summary-tpl-digest", []byte("{{ inputs.branch }}"))},
 	)
 	b := mk(
 		map[string]string{"zeta": "last", "branch": "main", "task": "add retries"},
-		map[string]RefSnapshot{"reviewer": ref("reviewer-digest", nil), "engineer": ref("agent-digest", nil)},
+		map[string]AgentSnapshot{"reviewer": {Digest: "reviewer-digest"}, "engineer": {Digest: "agent-digest"}},
 		map[string]RefSnapshot{"run": ref("run-schema-digest", []byte(`{"type":"object"}`)), "plan": ref("schema-digest", []byte(`{"type":"object"}`))},
 		map[string]RefSnapshot{"summary": ref("summary-tpl-digest", []byte("{{ inputs.branch }}")), "plan": ref("tpl-digest", []byte("{{ inputs.task }}"))},
 	)
@@ -83,7 +83,7 @@ func integrationSnapshot(t *testing.T) (Snapshot, []byte) {
 		DefinitionTOML:   []byte("name = \"demo\"\n[run]\nmode = \"ci\"\n"),
 		DefinitionDigest: "compiled-digest",
 		Inputs:           map[string]string{"task": "add retries"},
-		Agents:           map[string]RefSnapshot{"engineer": {Digest: "agent-digest"}},
+		Agents:           map[string]AgentSnapshot{"engineer": {Digest: "agent-digest"}},
 		Schemas:          map[string]RefSnapshot{"plan": {Digest: "schema-digest"}},
 		Templates:        map[string]RefSnapshot{"plan": {Digest: "tpl-digest", Bytes: []byte("{{ inputs.task }}")}},
 		Delivery:         &DeliverySnapshot{Mode: "draft", Provider: "github"},

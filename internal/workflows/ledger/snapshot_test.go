@@ -9,6 +9,63 @@ import (
 	"testing"
 )
 
+func TestInputDigestMapOrder(t *testing.T) {
+	want := DigestHex([]byte(`{"alpha":"2","zeta":"1"}`))
+	first := InputDigest(map[string]string{"zeta": "1", "alpha": "2"})
+	second := InputDigest(map[string]string{"alpha": "2", "zeta": "1"})
+	if first != want || second != want {
+		t.Fatalf("InputDigest map order: first %q, second %q, want %q", first, second, want)
+	}
+}
+
+func TestInputDigestNilMatchesEmptyObject(t *testing.T) {
+	want := DigestHex([]byte(`{}`))
+	if got := InputDigest(nil); got != want {
+		t.Fatalf("InputDigest(nil) = %q, want %q", got, want)
+	}
+	if got := InputDigest(map[string]string{}); got != want {
+		t.Fatalf("InputDigest(empty) = %q, want %q", got, want)
+	}
+}
+
+func TestSnapshotAgentBindingRoundTrip(t *testing.T) {
+	data := []byte(`{"schema_version":1,"definition_toml":"bmFtZSA9IFwiZGVtb1wi","definition_digest":"digest","agents":{"worker":{"digest":"agent-digest","provider_name":"openai","model":"gpt-test"}}}`)
+	snapshot, err := UnmarshalSnapshot(data)
+	if err != nil {
+		t.Fatalf("UnmarshalSnapshot: %v", err)
+	}
+	agent := snapshot.Agents["worker"]
+	if agent.Digest != "agent-digest" || agent.ProviderName != "openai" || agent.Model != "gpt-test" {
+		t.Fatalf("agent binding = %+v", agent)
+	}
+	got, err := MarshalSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("MarshalSnapshot: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("agent binding round-trip:\ngot:  %s\nwant: %s", got, data)
+	}
+}
+
+func TestSnapshotLegacyAgentDecode(t *testing.T) {
+	data := []byte(`{"schema_version":1,"definition_toml":"bmFtZSA9IFwiZGVtb1wi","definition_digest":"digest","agents":{"worker":{"digest":"agent-digest","version":2}}}`)
+	snapshot, err := UnmarshalSnapshot(data)
+	if err != nil {
+		t.Fatalf("UnmarshalSnapshot: %v", err)
+	}
+	agent := snapshot.Agents["worker"]
+	if agent.Digest != "agent-digest" || agent.ProviderName != "" || agent.Model != "" {
+		t.Fatalf("legacy agent = %+v", agent)
+	}
+	got, err := MarshalSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("MarshalSnapshot: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("legacy agent decode:\ngot:  %s\nwant: %s", got, data)
+	}
+}
+
 // TestMarshalSnapshotRoundTrip asserts that MarshalSnapshot produces canonical
 // JSON that UnmarshalSnapshot decodes back to a byte-identical Snapshot.
 func TestMarshalSnapshotRoundTrip(t *testing.T) {
@@ -17,8 +74,8 @@ func TestMarshalSnapshotRoundTrip(t *testing.T) {
 		DefinitionTOML:   []byte("name = \"demo\"\nrun = \"ci\"\n"),
 		DefinitionDigest: "sha256:deadbeef",
 		Inputs:           map[string]string{"branch": "main", "tag": "v1.2.3"},
-		Agents: map[string]RefSnapshot{
-			"assistant": {Digest: "ad1", Version: 2},
+		Agents: map[string]AgentSnapshot{
+			"assistant": {Digest: "ad1", ProviderName: "openai", Model: "gpt-test"},
 			"worker":    {Digest: "ad2"},
 		},
 		Schemas: map[string]RefSnapshot{
@@ -58,7 +115,7 @@ func TestMarshalSnapshotCanonicalDeterminism(t *testing.T) {
 	ref := func(digest string) RefSnapshot {
 		return RefSnapshot{Digest: digest, Version: 1, Bytes: []byte("payload")}
 	}
-	mk := func(inputs map[string]string, agents, schemas, templates, verifiers map[string]RefSnapshot) Snapshot {
+	mk := func(inputs map[string]string, agents map[string]AgentSnapshot, schemas, templates, verifiers map[string]RefSnapshot) Snapshot {
 		return Snapshot{
 			SchemaVersion:    SnapshotSchemaVersion,
 			DefinitionTOML:   []byte("name = \"demo\"\n"),
@@ -74,14 +131,14 @@ func TestMarshalSnapshotCanonicalDeterminism(t *testing.T) {
 	// Same key sets, different insertion order.
 	a := mk(
 		map[string]string{"zeta": "1", "alpha": "2", "mike": "3"},
-		map[string]RefSnapshot{"z": ref("zd"), "a": ref("ad"), "m": ref("md")},
+		map[string]AgentSnapshot{"z": {Digest: "zd"}, "a": {Digest: "ad"}, "m": {Digest: "md"}},
 		map[string]RefSnapshot{"run": ref("rd"), "check": ref("cd"), "build": ref("bd")},
 		map[string]RefSnapshot{"summary": ref("td"), "pr": ref("pd"), "issue": ref("id")},
 		map[string]RefSnapshot{"policy": ref("vd"), "audit": ref("aud"), "guard": ref("gd")},
 	)
 	b := mk(
 		map[string]string{"mike": "3", "alpha": "2", "zeta": "1"},
-		map[string]RefSnapshot{"m": ref("md"), "z": ref("zd"), "a": ref("ad")},
+		map[string]AgentSnapshot{"m": {Digest: "md"}, "z": {Digest: "zd"}, "a": {Digest: "ad"}},
 		map[string]RefSnapshot{"build": ref("bd"), "run": ref("rd"), "check": ref("cd")},
 		map[string]RefSnapshot{"issue": ref("id"), "summary": ref("td"), "pr": ref("pd")},
 		map[string]RefSnapshot{"guard": ref("gd"), "policy": ref("vd"), "audit": ref("aud")},

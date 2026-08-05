@@ -91,6 +91,7 @@ type AgentStepRequest struct {
 	Permission       string
 	Timeout          time.Duration
 	Budget           int
+	ForceResume      bool
 	Template         string
 	Inputs           map[string]any
 	Evidence         map[string]any
@@ -174,22 +175,23 @@ func workflowTask(ctx context.Context, spec AgentStepRequest, prompt string) sub
 	return task
 }
 
-func (r *CoordinatorRunner) dispatch(_ context.Context, spec AgentStepRequest, task subagents.Task) (*coordinator.RunHandle, error) {
-	key := idempotencyKey(spec)
-	if spec.CoordinatorRunID == "" {
-		return r.Coordinator.Spawn(context.Background(), []subagents.Task{task}, key)
+func (r *CoordinatorRunner) dispatch(ctx context.Context, spec AgentStepRequest, task subagents.Task) (*coordinator.RunHandle, error) {
+	detached := context.Background()
+	if caller, ok := runtime.CallerFrom(ctx); ok {
+		detached = runtime.ContextWithCaller(detached, caller)
 	}
-	h, err := r.Coordinator.ResumeInterruptedRun(context.Background(), spec.CoordinatorRunID)
-	if err == nil {
-		return h, nil
+	h, err := r.Coordinator.EnsureRun(detached, coordinator.EnsureRunRequest{
+		RunID: spec.CoordinatorRunID, Tasks: []subagents.Task{task},
+		IdempotencyKey: idempotencyKey(spec), ForceResume: spec.ForceResume,
+	})
+	if err != nil {
+		return nil, err
 	}
-	resumeErr := err
-	h, err = r.Coordinator.Spawn(context.Background(), []subagents.Task{task}, key)
-	if err == nil && h.RunID() != spec.CoordinatorRunID {
+	if h.RunID() != spec.CoordinatorRunID {
 		_ = r.Coordinator.Cancel(context.Background(), h)
-		return nil, resumeErr
+		return nil, fmt.Errorf("coordinator returned run %q, want %q", h.RunID(), spec.CoordinatorRunID)
 	}
-	return h, err
+	return h, nil
 }
 
 func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h *coordinator.RunHandle, evidenceJSON []byte) (AgentStepResult, error) {
@@ -198,10 +200,15 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 		_ = r.Coordinator.Cancel(context.Background(), h)
 		return AgentStepResult{CoordinatorRunID: h.RunID(), TaskID: spec.TaskID, EvidenceJSON: evidenceJSON}, err
 	}
-	actualTaskID := spec.TaskID
-	if len(run.Tasks) == 1 {
-		actualTaskID = run.Tasks[0].TaskID
+	if run.RunID != spec.CoordinatorRunID {
+		_ = r.Coordinator.Cancel(context.Background(), h)
+		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: spec.TaskID, EvidenceJSON: evidenceJSON}, fmt.Errorf("coordinator inspected run %q, want %q", run.RunID, spec.CoordinatorRunID)
 	}
+	if len(run.Tasks) != 1 || run.Tasks[0].TaskID != spec.TaskID {
+		_ = r.Coordinator.Cancel(context.Background(), h)
+		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: spec.TaskID, EvidenceJSON: evidenceJSON}, fmt.Errorf("coordinator task identity does not match %q", spec.TaskID)
+	}
+	actualTaskID := spec.TaskID
 	joined, err := r.joinWithCancellation(ctx, h)
 	if err != nil {
 		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, EvidenceJSON: evidenceJSON}, err
@@ -253,7 +260,7 @@ func (r *CoordinatorRunner) joinWithCancellation(ctx context.Context, h *coordin
 }
 
 func validateRequest(spec AgentStepRequest) error {
-	if spec.WorkflowRunID == "" || spec.StepID == "" || spec.TaskID == "" || spec.AgentName == "" {
+	if spec.WorkflowRunID == "" || spec.StepID == "" || spec.TaskID == "" || spec.CoordinatorRunID == "" || spec.AgentName == "" {
 		return fmt.Errorf("workflow agent step identity is incomplete")
 	}
 	if spec.AttemptNo <= 0 {
