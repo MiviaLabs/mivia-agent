@@ -60,7 +60,7 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 			turns++
 		}
 	}
-	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs), sessionSaveOptions()); err != nil {
+	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs), s.sessionSaveOptions()); err != nil {
 		return err
 	}
 	return s.persistAdmission(name)
@@ -69,9 +69,15 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 // sessionSaveOptions captures the current directory context for a named
 // snapshot save. The zero value (no directory) is valid for callers that
 // cannot resolve one.
-func sessionSaveOptions() contextstate.SessionSaveOptions {
+func (s *Session) sessionSaveOptions() contextstate.SessionSaveOptions {
 	dir, worktree := currentDirContext()
-	return contextstate.SessionSaveOptions{Dir: dir, Worktree: worktree}
+	s.mu.RLock()
+	instance := s.contextWorktree
+	s.mu.RUnlock()
+	if !instance.IsZero() {
+		worktree = instance.Worktree
+	}
+	return contextstate.SessionSaveOptions{Dir: dir, Worktree: worktree, WorktreeInstance: instance}
 }
 
 func (s *Session) loadContextCatalog(name string) (bool, error) {
@@ -79,7 +85,21 @@ func (s *Session) loadContextCatalog(name string) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("context session catalog is not configured")
 	}
-	data, info, err := catalog.LoadSession(context.Background(), principal, name)
+	s.mu.RLock()
+	instance := s.contextWorktree
+	s.mu.RUnlock()
+	var data []byte
+	var info contextstate.SessionCatalogInfo
+	var err error
+	if !instance.IsZero() {
+		scoped, ok := catalog.(contextstate.WorktreeSessionCatalog)
+		if !ok {
+			return false, fmt.Errorf("worktree session catalog is not configured")
+		}
+		data, info, err = scoped.LoadWorktreeSession(context.Background(), principal, name, instance)
+	} else {
+		data, info, err = catalog.LoadSession(context.Background(), principal, name)
+	}
 	if err != nil {
 		return false, fmt.Errorf("load session %q: %w", name, err)
 	}

@@ -288,12 +288,21 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			d.setNotice("cannot delete the current worktree", true)
 			break
 		}
-		if err := vcs.RemoveWithPrefix(context.Background(), wtDir, wt.Name, worktreeConfig.BranchPrefix); err != nil {
+		instance, err := beginManagedWorktreeRemovalForSession(m.session, wtDir, &wt)
+		if err != nil {
 			d.setNotice("delete failed: "+err.Error(), true)
 			break
 		}
-		if err := removeWorktreeRouteForSession(m.session, wtDir, wt.Name); err != nil {
-			d.setNotice("deleted worktree but route cleanup failed: "+err.Error(), true)
+		if err := vcs.RemoveWithPrefix(context.Background(), wtDir, wt.Name, worktreeConfig.BranchPrefix); err != nil {
+			if reactivateErr := reactivateManagedWorktree(wtDir, instance); reactivateErr != nil {
+				d.setNotice("delete failed: "+err.Error()+"; session lifecycle recovery failed: "+reactivateErr.Error(), true)
+			} else {
+				d.setNotice("delete failed: "+err.Error(), true)
+			}
+			break
+		}
+		if err := finishManagedWorktreeRemovalForSession(m.session, wtDir, instance); err != nil {
+			d.setNotice("deleted worktree but session cleanup failed: "+err.Error(), true)
 			break
 		}
 		name := wt.Name
@@ -384,16 +393,6 @@ func (m *tuiModel) createWorktreeAsync(dir, name string, dlg *worktreeDialog) te
 // createWorktreeAsyncWithPrefix runs vcs.CreateWithPrefix in a goroutine and
 // returns a command that delivers the result as a worktreeCreatedMsg back to
 // the Update loop.
-func (m *tuiModel) createWorktreeAsyncWithPrefix(dir, name, branchPrefix string, dlg *worktreeDialog) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		wt, err := vcs.CreateWithPrefix(ctx, dir, name, "", branchPrefix)
-		if err == nil {
-			err = registerWorktreeRouteForSession(m.session, dir, wt)
-		}
-		return worktreeCreatedMsg{wt: wt, err: err, dlg: dlg}
-	}
-}
 
 // switchToWorktree changes the process working directory to the worktree,
 // updates the model's cached workspace path and git context, then closes

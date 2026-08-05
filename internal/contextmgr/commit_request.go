@@ -85,7 +85,7 @@ func BuildCommitRequest(_ context.Context, preparation Preparation, result TurnR
 		NewSourceEvents: events, Payloads: append([]contextstate.PayloadRecord(nil), preparation.Candidate.Payloads...),
 		Checkpoint: checkpoint, ActiveContext: activeContext, NewSession: expected.Session + 1,
 		NewDurable: expected.Durable + 1, NewSourceSequence: newSource, NewBinding: binding,
-		TurnID: result.TurnID, BaseDigest: baseDigest,
+		TurnID: result.TurnID, BaseDigest: baseDigest, WorktreeInstance: preparation.Token.WorktreeInstance,
 	}
 	request.Fingerprint, err = contextstate.FingerprintCommitRequest(request)
 	if err != nil {

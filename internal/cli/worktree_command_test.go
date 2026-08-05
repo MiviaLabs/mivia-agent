@@ -14,8 +14,27 @@ import (
 
 func TestExecuteWorktreeCommandIsRegistered(t *testing.T) {
 	err := Execute([]string{"worktree"})
-	if err == nil || !strings.Contains(err.Error(), "expected create, list, or remove") {
+	if err == nil || !strings.Contains(err.Error(), "expected create, list, remove, or adopt") {
 		t.Fatalf("error = %v, want worktree usage error", err)
+	}
+}
+
+func TestWorktreeCommandAdoptAddsMarker(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := vcs.Create(context.Background(), repoRoot, "legacy", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runWorktreeWithIO([]string{"adopt", "legacy", "--workspace", repoRoot}, &output); err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+	if !strings.Contains(output.String(), "adopted worktree \"legacy\"") {
+		t.Fatalf("adopt output = %q", output.String())
+	}
+	if _, err := readWorktreeMarker(worktree.Path); err != nil {
+		t.Fatalf("read adopted marker: %v", err)
 	}
 }
 

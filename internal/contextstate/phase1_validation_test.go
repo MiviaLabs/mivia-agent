@@ -40,6 +40,7 @@ func TestAdvanceRequestValidate(t *testing.T) {
 		{name: "source sequence changes", mutate: func(r *AdvanceRequest) { r.NewSourceSequence++ }},
 		{name: "clear and switch", mutate: func(r *AdvanceRequest) { r.ClearActive, r.ActiveCheckpointID = true, "checkpoint-1" }},
 		{name: "empty reason", mutate: func(r *AdvanceRequest) { r.Reason = "" }},
+		{name: "partial worktree instance", mutate: func(r *AdvanceRequest) { r.WorktreeInstance.Worktree = "wt-a" }},
 		{name: "overlong reason", mutate: func(r *AdvanceRequest) { r.Reason = strings.Repeat("x", 257) }},
 	}
 	for _, tc := range cases {

@@ -161,6 +161,7 @@ type Session struct {
 	contextRedaction     contextstate.RedactionPolicy
 	contextStore         contextstate.Store
 	contextHead          contextstate.Revision
+	contextWorktree      contextstate.WorktreeInstance
 	loadedContextSession bool
 	// contextPublishMu serializes context publication with clear and turn
 	// snapshot capture. Provider calls remain lock-free; only the durable
@@ -347,7 +348,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		RequireFinalText: true,
 	}
 	if snapshot.context.manager != nil {
-		input := prepareInputForContext(snapshot.messages, snapshot.contextBudget, snapshot.maxTokens, snapshot.binding, snapshot.context.principal, snapshot.context.policy)
+		input := prepareInputForContext(snapshot.messages, snapshot.contextBudget, snapshot.maxTokens, snapshot.binding, snapshot.context.principal, snapshot.context.policy, snapshot.context.worktree)
 		input.Revision = snapshot.context.revision
 		input.CurrentObjective = userText
 		opts.PreparationManager = snapshot.context.manager.PreparationManager

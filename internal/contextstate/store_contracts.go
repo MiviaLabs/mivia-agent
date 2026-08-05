@@ -23,6 +23,7 @@ type CommitRequest struct {
 	TurnID            uint64           `json:"turn_id"`
 	BaseDigest        string           `json:"base_digest"`
 	Fingerprint       string           `json:"fingerprint"`
+	WorktreeInstance  WorktreeInstance `json:"worktree_instance,omitempty"`
 }
 
 type EnsureSessionRequest struct {
@@ -32,6 +33,8 @@ type EnsureSessionRequest struct {
 	// once with the session row and drive TUI session restore.
 	Dir      string `json:"dir,omitempty"`
 	Worktree string `json:"worktree,omitempty"`
+	// WorktreeInstance binds this session to one physical managed worktree.
+	WorktreeInstance WorktreeInstance `json:"worktree_instance,omitempty"`
 }
 
 func NewCommitRequest(principal Principal, sessionID string, expected Revision, expectedBinding BindingRevision, events []SourceEvent, checkpoint CheckpointRecord, activeContext []byte, newBinding BindingRevision, turnID uint64) (CommitRequest, error) {
@@ -62,18 +65,19 @@ func FingerprintCommitRequest(r CommitRequest) (string, error) {
 }
 
 type AdvanceRequest struct {
-	OperationID        string          `json:"operation_id"`
-	Principal          Principal       `json:"principal"`
-	SessionID          string          `json:"session_id"`
-	Expected           Revision        `json:"expected"`
-	ExpectedBinding    BindingRevision `json:"expected_binding"`
-	NewSession         uint64          `json:"new_session"`
-	NewDurable         uint64          `json:"new_durable"`
-	NewSourceSequence  uint64          `json:"new_source_sequence"`
-	NewBinding         BindingRevision `json:"new_binding"`
-	ActiveCheckpointID string          `json:"active_checkpoint_id,omitempty"`
-	ClearActive        bool            `json:"clear_active"`
-	Reason             string          `json:"reason"`
+	OperationID        string           `json:"operation_id"`
+	Principal          Principal        `json:"principal"`
+	SessionID          string           `json:"session_id"`
+	Expected           Revision         `json:"expected"`
+	ExpectedBinding    BindingRevision  `json:"expected_binding"`
+	NewSession         uint64           `json:"new_session"`
+	NewDurable         uint64           `json:"new_durable"`
+	NewSourceSequence  uint64           `json:"new_source_sequence"`
+	NewBinding         BindingRevision  `json:"new_binding"`
+	ActiveCheckpointID string           `json:"active_checkpoint_id,omitempty"`
+	ClearActive        bool             `json:"clear_active"`
+	Reason             string           `json:"reason"`
+	WorktreeInstance   WorktreeInstance `json:"worktree_instance,omitempty"`
 }
 
 func (r AdvanceRequest) Validate() error {
@@ -95,6 +99,9 @@ func (r AdvanceRequest) Validate() error {
 	if err := r.NewBinding.Validate(); err != nil {
 		return err
 	}
+	if err := r.WorktreeInstance.Validate(); err != nil {
+		return err
+	}
 	if r.NewSession != r.Expected.Session+1 || r.NewDurable != r.Expected.Durable+1 || r.NewSourceSequence != r.Expected.Source {
 		return invalid("revision", "advance must increment session and durable revisions only")
 	}
@@ -109,6 +116,12 @@ type Store interface {
 	Commit(context.Context, CommitRequest) error
 	Advance(context.Context, AdvanceRequest) error
 	Load(context.Context, Principal, string) (Snapshot, error)
+}
+
+// WorktreeStore is the optional scoped read surface for a managed worktree.
+// Implementations reject a non-active or mismatched physical instance.
+type WorktreeStore interface {
+	LoadWorktree(context.Context, Principal, string, WorktreeInstance) (Snapshot, error)
 }
 
 type SourceReader interface {

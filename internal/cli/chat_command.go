@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -232,10 +233,40 @@ func chatRepositoryRoot(path string) (string, error) {
 
 func setupChatSessionContext(sess *chat.Session, workspaceRoot string, invocation chatInvocation, res *config.Resolved) (*storage.SQLite, error) {
 	repositoryRoot, err := chatRepositoryRoot(workspaceRoot)
+	if err == nil {
+		if err := bindManagedWorktreeSession(sess, repositoryRoot, workspaceRoot); err != nil {
+			return nil, err
+		}
+	}
 	if err != nil || invocation.repositorySessionStorePath == "" {
 		return setupSessionContext(sess, workspaceRoot, res)
 	}
 	return setupRepositorySessionContext(sess, repositoryRoot, invocation.repositorySessionStorePath, res)
+}
+
+func bindManagedWorktreeSession(sess *chat.Session, repositoryRoot, workspaceRoot string) error {
+	name, err := vcs.CurrentWorktreeName(context.Background(), workspaceRoot)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return nil
+	}
+	worktree, err := vcs.Resolve(context.Background(), repositoryRoot, name)
+	if err != nil {
+		return err
+	}
+	if worktree == nil {
+		return fmt.Errorf("managed worktree %q is not available", name)
+	}
+	instance, err := readWorktreeMarker(worktree.Path)
+	if err != nil {
+		return fmt.Errorf("read worktree session marker: %w", err)
+	}
+	if instance.Worktree != name {
+		return fmt.Errorf("worktree session marker does not match %q", name)
+	}
+	return sess.SetContextWorktreeBinding(instance)
 }
 
 func repositorySessionStorePath(root string, invocation chatInvocation, _ *config.Resolved) (string, error) {

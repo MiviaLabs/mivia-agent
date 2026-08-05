@@ -31,8 +31,9 @@ type SessionCatalogInfo struct {
 // SessionSaveOptions carries the optional metadata written with a named
 // session snapshot. The zero value is valid and records no directory.
 type SessionSaveOptions struct {
-	Dir      string
-	Worktree string
+	Dir              string
+	Worktree         string
+	WorktreeInstance WorktreeInstance
 }
 
 // MaxSessionDirBytes bounds the stored session directory string so a hostile
@@ -66,6 +67,19 @@ type WorktreeRouteCatalog interface {
 	DeleteWorktreeRoute(context.Context, Principal, string) error
 }
 
+// WorktreeSessionCatalog controls a managed worktree session lifecycle.
+// The caller supplies the immutable instance to prevent same-name reuse.
+type WorktreeSessionCatalog interface {
+	BeginWorktreeCreation(context.Context, Principal, WorktreeInstance, string) error
+	RegisterWorktreeInstance(context.Context, Principal, WorktreeInstance, string) error
+	AbandonWorktreeCreation(context.Context, Principal, WorktreeInstance) error
+	BeginWorktreeDeletion(context.Context, Principal, WorktreeInstance) error
+	DeleteWorktreeSessions(context.Context, Principal, WorktreeInstance) (int, error)
+	LoadWorktreeSession(context.Context, Principal, string, WorktreeInstance) ([]byte, SessionCatalogInfo, error)
+	ListWorktreeSessions(context.Context, Principal, WorktreeInstance) ([]SessionCatalogInfo, error)
+	DeleteWorktreeSessionSnapshot(context.Context, Principal, string, WorktreeInstance) error
+}
+
 // SessionAdmission is a named session's deferred-tool admission record (plan
 // tools/05 D3). Names are the tools admitted into the surface; Agent and Digest
 // identify the agent binding and tier split they were admitted against, so a
@@ -82,4 +96,9 @@ type SessionAdmission struct {
 type SessionAdmissionCatalog interface {
 	SaveSessionAdmission(context.Context, Principal, string, SessionAdmission) error
 	LoadSessionAdmission(context.Context, Principal, string) (SessionAdmission, error)
+}
+
+type WorktreeAdmissionCatalog interface {
+	SaveWorktreeSessionAdmission(context.Context, Principal, string, SessionAdmission, WorktreeInstance) error
+	LoadWorktreeSessionAdmission(context.Context, Principal, string, WorktreeInstance) (SessionAdmission, error)
 }

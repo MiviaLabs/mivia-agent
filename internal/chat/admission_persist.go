@@ -44,6 +44,15 @@ func (s *Session) admissionRecord() contextstate.SessionAdmission {
 func (s *Session) persistAdmission(name string) error {
 	record := s.admissionRecord()
 	if catalog, principal, ok := s.admissionCatalog(); ok {
+		s.mu.RLock()
+		instance := s.contextWorktree
+		s.mu.RUnlock()
+		if !instance.IsZero() {
+			if scoped, ok := catalog.(contextstate.WorktreeAdmissionCatalog); ok {
+				return scoped.SaveWorktreeSessionAdmission(context.Background(), principal, name, record, instance)
+			}
+			return contextstate.ErrWorktreeDeleted
+		}
 		return catalog.SaveSessionAdmission(context.Background(), principal, name, record)
 	}
 	s.mu.RLock()
@@ -64,6 +73,15 @@ func (s *Session) persistAdmission(name string) error {
 // loadAdmission reads back the persisted set from the same single source.
 func (s *Session) loadAdmission(name string) (contextstate.SessionAdmission, error) {
 	if catalog, principal, ok := s.admissionCatalog(); ok {
+		s.mu.RLock()
+		instance := s.contextWorktree
+		s.mu.RUnlock()
+		if !instance.IsZero() {
+			if scoped, ok := catalog.(contextstate.WorktreeAdmissionCatalog); ok {
+				return scoped.LoadWorktreeSessionAdmission(context.Background(), principal, name, instance)
+			}
+			return contextstate.SessionAdmission{}, contextstate.ErrWorktreeDeleted
+		}
 		return catalog.LoadSessionAdmission(context.Background(), principal, name)
 	}
 	s.mu.RLock()

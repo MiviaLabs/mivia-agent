@@ -34,8 +34,16 @@ func (s *SQLite) EnsureSession(ctx context.Context, request contextstate.EnsureS
 	if err != nil {
 		return err
 	}
+	if err := requireActiveWorktreeTx(ctx, tx, request.Principal, request.WorktreeInstance); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	row, err := readContextHeadTx(ctx, tx, request.Principal)
 	if err == nil {
+		if err := requireWorktreeSessionBinding(row.contextSessionRow, request.WorktreeInstance); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 		if row.Tombstoned {
 			_ = tx.Rollback()
 			return contextstate.ErrSessionTombstoned
@@ -61,7 +69,7 @@ func (s *SQLite) EnsureSession(ctx context.Context, request contextstate.EnsureS
 		_ = tx.Rollback()
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO context_sessions(workspace_id,subject_id,session_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation) VALUES(?,?,?,?,0,0,0,?,?,?)`, request.Principal.WorkspaceID, request.Principal.SubjectID, request.Principal.SessionID, request.Principal.CapabilityDigest(), request.Binding.Provider, request.Binding.Model, request.Binding.Generation)
+	_, err = tx.ExecContext(ctx, `INSERT INTO context_sessions(workspace_id,subject_id,session_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,instance_id) VALUES(?,?,?,?,0,0,0,?,?,?,?)`, request.Principal.WorkspaceID, request.Principal.SubjectID, request.Principal.SessionID, request.Principal.CapabilityDigest(), request.Binding.Provider, request.Binding.Model, request.Binding.Generation, nullableText(request.WorktreeInstance.ID))
 	if err != nil {
 		_ = tx.Rollback()
 		if isConstraint(err) {
@@ -72,7 +80,7 @@ func (s *SQLite) EnsureSession(ctx context.Context, request contextstate.EnsureS
 	// Record the directory the live session lives in, keyed by session_id in
 	// the same side table that holds named-snapshot directories. The TUI
 	// restores this directory when the session is reopened.
-	if _, err := tx.ExecContext(ctx, upsertSessionDirSQL, request.Principal.WorkspaceID, request.Principal.SubjectID, request.Principal.SessionID, request.Dir, request.Worktree); err != nil {
+	if _, err := tx.ExecContext(ctx, upsertSessionDirSQL, request.Principal.WorkspaceID, request.Principal.SubjectID, request.Principal.SessionID, request.Dir, request.Worktree, nullableText(request.WorktreeInstance.ID)); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -93,6 +101,9 @@ func validateEnsureRequest(request contextstate.EnsureSessionRequest) error {
 	if !contextstate.ValidSessionDir(request.Dir) || !contextstate.ValidSessionDir(request.Worktree) {
 		return fmt.Errorf("%w: invalid session directory metadata", contextstate.ErrInvalidDTO)
 	}
+	if err := request.WorktreeInstance.Validate(); err != nil {
+		return err
+	}
 	return request.Binding.Validate()
 }
 
@@ -109,6 +120,10 @@ func (s *SQLite) Commit(ctx context.Context, request contextstate.CommitRequest)
 	if err != nil {
 		return err
 	}
+	if err := requireActiveWorktreeTx(ctx, tx, request.Principal, request.WorktreeInstance); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if err := s.commitContextTx(ctx, tx, request); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -119,6 +134,9 @@ func (s *SQLite) Commit(ctx context.Context, request contextstate.CommitRequest)
 func (s *SQLite) commitContextTx(ctx context.Context, tx *sql.Tx, request contextstate.CommitRequest) error {
 	row, err := authorizeContextSessionTx(ctx, tx, request.Principal, request.SessionID)
 	if err != nil {
+		return err
+	}
+	if err := requireWorktreeSessionBinding(row, request.WorktreeInstance); err != nil {
 		return err
 	}
 	known, err := contextOperation(ctx, tx, request.SessionID, request.OperationID)
@@ -251,8 +269,16 @@ func (s *SQLite) Advance(ctx context.Context, request contextstate.AdvanceReques
 	if err != nil {
 		return err
 	}
+	if err := requireActiveWorktreeTx(ctx, tx, request.Principal, request.WorktreeInstance); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	row, err := authorizeContextSessionTx(ctx, tx, request.Principal, request.SessionID)
 	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := requireWorktreeSessionBinding(row, request.WorktreeInstance); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -348,6 +374,35 @@ func (s *SQLite) Load(ctx context.Context, principal contextstate.Principal, ses
 		return contextstate.Snapshot{}, err
 	}
 	active, found, err := recoverActive(ctx, s.db, principal, row)
+	if err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	snapshot := contextstate.Snapshot{Revision: row.Revision(), Binding: row.Binding(), Source: source, Tombstoned: false}
+	if found {
+		snapshot.Active = active
+	}
+	return snapshot, nil
+}
+
+func loadContextTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
+	if !principal.IsBound() || sessionID != principal.SessionID {
+		return contextstate.Snapshot{}, contextstate.ErrPrincipalMismatch
+	}
+	row, err := readContextHeadTx(ctx, tx, principal)
+	if err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	if err := requireWorktreeSessionBinding(row.contextSessionRow, instance); err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	if row.Tombstoned {
+		return contextstate.Snapshot{}, contextstate.ErrSessionTombstoned
+	}
+	source, err := readContextSourceEvents(ctx, tx, principal)
+	if err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	active, found, err := recoverActive(ctx, tx, principal, row)
 	if err != nil {
 		return contextstate.Snapshot{}, err
 	}

@@ -81,11 +81,52 @@ func TestBuildCommitRequestMapsCompleteTurn(t *testing.T) {
 	if request.OperationID != "operation-1" || request.TurnID != 7 || request.NewSourceSequence != 1 {
 		t.Fatalf("unexpected request mapping: %+v", request)
 	}
+	if !request.WorktreeInstance.IsZero() {
+		t.Fatalf("legacy request worktree instance = %+v, want zero value", request.WorktreeInstance)
+	}
 	if !request.Checkpoint.Complete || request.Checkpoint.SourceRange != rng {
 		t.Fatalf("checkpoint is not complete or has wrong range: %+v", request.Checkpoint)
 	}
 	if err := request.Validate(); err != nil {
 		t.Fatalf("mapped request rejected: %v", err)
+	}
+}
+
+func TestBuildCommitRequestCarriesWorktreeInstance(t *testing.T) {
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := contextstate.NewSourceID(principal.SessionID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng, err := contextstate.NewSourceRange(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "feature", ID: "wt_1234567890abcdef"}
+	preparation, err := CapturePreparation(
+		PrepareInput{Messages: []provider.Message{{Role: provider.RoleUser, Content: "old"}}, Budget: 100, Principal: principal, Binding: binding, WorktreeInstance: instance},
+		CheckpointCandidate{SourceRange: rng}, []provider.Message{{Role: provider.RoleUser, Content: "old"}}, false, "operation-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preparation.Token.WorktreeInstance != instance {
+		t.Fatalf("token worktree instance = %+v, want %+v", preparation.Token.WorktreeInstance, instance)
+	}
+	result := TurnResult{Ordered: []provider.Message{{Role: provider.RoleUser, Content: "question"}}, Active: []provider.Message{{Role: provider.RoleUser, Content: "question"}}, SourceEvents: []contextstate.SourceEvent{{ID: source, Kind: "message", Role: "user", Provenance: "host", RedactionStatus: "metadata", Size: 8}}, TurnID: 1, Outcome: OutcomeComplete}
+	request, err := BuildCommitRequest(nil, preparation, result, principal, contextstate.Revision{}, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.WorktreeInstance != instance {
+		t.Fatalf("worktree instance = %+v, want %+v", request.WorktreeInstance, instance)
 	}
 }
 

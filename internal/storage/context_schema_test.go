@@ -2,11 +2,52 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
+
+func TestMigrationV7AddsWorktreeInstanceContract(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatalf("migrateContextSchema: %v", err)
+	}
+	for _, table := range []string{"worktree_instances"} {
+		var name string
+		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {
+			t.Fatalf("%s table missing: %v", table, err)
+		}
+	}
+	for _, table := range []string{"worktree_routes", "chat_session_dirs", "chat_sessions", "context_sessions", "chat_session_admissions"} {
+		rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+		if err != nil {
+			t.Fatalf("table info %s: %v", table, err)
+		}
+		found := false
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, typ string
+			var defaultValue any
+			if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			found = found || name == "instance_id"
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if !found {
+			t.Fatalf("%s.instance_id is missing", table)
+		}
+	}
+}
 
 // TestMigrationV2AtomicDirtyClear simulates a store stuck at version=2,
 // dirty=1 (the crash window from the old code) and verifies that

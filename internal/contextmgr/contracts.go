@@ -28,6 +28,7 @@ type PrepareInput struct {
 	Principal        contextstate.Principal
 	Revision         contextstate.Revision
 	Binding          contextstate.BindingRevision
+	WorktreeInstance contextstate.WorktreeInstance
 	Policy           contextstate.PolicySnapshot
 }
 
@@ -40,11 +41,12 @@ type CheckpointCandidate struct {
 }
 
 type CommitToken struct {
-	Principal      contextstate.Principal
-	Revision       contextstate.Revision
-	Binding        contextstate.BindingRevision
-	Range          contextstate.SourceRange
-	IdempotencyKey string
+	Principal        contextstate.Principal
+	Revision         contextstate.Revision
+	Binding          contextstate.BindingRevision
+	WorktreeInstance contextstate.WorktreeInstance
+	Range            contextstate.SourceRange
+	IdempotencyKey   string
 }
 
 type Preparation struct {
@@ -250,6 +252,9 @@ func CapturePreparation(input PrepareInput, candidate CheckpointCandidate, messa
 	if err := input.Binding.Validate(); err != nil {
 		return Preparation{}, err
 	}
+	if err := input.WorktreeInstance.Validate(); err != nil {
+		return Preparation{}, err
+	}
 	if input.Budget <= 0 {
 		return Preparation{}, fmt.Errorf("%w: budget must be positive", contextstate.ErrInvalidDTO)
 	}
@@ -265,7 +270,7 @@ func CapturePreparation(input PrepareInput, candidate CheckpointCandidate, messa
 	return Preparation{
 		Messages:  cloneMessages(messages),
 		Candidate: cloneCandidate(candidate),
-		Token:     CommitToken{Principal: input.Principal, Revision: input.Revision, Binding: input.Binding, Range: candidate.SourceRange, IdempotencyKey: idempotencyKey},
+		Token:     CommitToken{Principal: input.Principal, Revision: input.Revision, Binding: input.Binding, WorktreeInstance: input.WorktreeInstance, Range: candidate.SourceRange, IdempotencyKey: idempotencyKey},
 		Compacted: compacted,
 	}, nil
 }
