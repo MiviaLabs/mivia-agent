@@ -371,12 +371,17 @@ func (s *SQLite) deleteCatalogContextSession(ctx context.Context, principal cont
 		return err
 	}
 	var revision int
-	err = tx.QueryRowContext(ctx, `SELECT session_revision FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, principal.WorkspaceID, principal.SubjectID, sessionID).Scan(&revision)
+	var instanceID sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT session_revision,instance_id FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0`, principal.WorkspaceID, principal.SubjectID, sessionID).Scan(&revision, &instanceID)
 	if err == sql.ErrNoRows {
 		_ = tx.Rollback()
 		return contextstate.ErrSessionNotFound
 	}
 	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := requireWorktreeSessionBinding(contextSessionRow{InstanceID: instanceID}, contextstate.WorktreeInstance{}); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
