@@ -27,6 +27,11 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err != nil {
 		return nil, err
 	}
+	worktreeCfg, err := loadSelectedWorktreeConfig(configPath, found)
+	if err != nil {
+		return nil, err
+	}
+	file.Worktrees = worktreeCfg
 	maxTokens := 0
 	if file.Chat.MaxTokens != nil {
 		maxTokens = *file.Chat.MaxTokens
@@ -102,6 +107,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (
 		Temperature:      file.Chat.Temperature,
 		MaxTokens:        file.Chat.MaxTokens,
 		Subagents:        subagentCfg,
+		Worktrees:        file.Worktrees,
 		StoreBackend:     storeBackend,
 		StorePath:        storePath,
 		StorePathSet:     file.Subagents.StorePath != "",
@@ -285,6 +291,15 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 		return File{}, path, false, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return file, path, true, nil
+}
+
+// loadSelectedWorktreeConfig reads the selected config file again to preserve
+// the difference between an absent branch_prefix and an explicit empty value.
+func loadSelectedWorktreeConfig(path string, found bool) (WorktreeConfig, error) {
+	if !found {
+		return resolveWorktreeConfig(WorktreeConfig{})
+	}
+	return loadWorktreeConfigPath(path)
 }
 
 func loadEnvMap(explicit string) (map[string]string, string, bool, error) {

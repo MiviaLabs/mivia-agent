@@ -2,13 +2,18 @@ package vcs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+const defaultWorktreeBranchPrefix = "mivia/"
 
 // WorktreeInfo describes a single mivia-managed worktree.
 type WorktreeInfo struct {
@@ -21,6 +26,13 @@ type WorktreeInfo struct {
 // baseRef is the branch, tag, or SHA to check out.
 // Returns the WorktreeInfo for the new worktree.
 func Create(ctx context.Context, repoRoot string, name string, baseRef string) (*WorktreeInfo, error) {
+	return CreateWithPrefix(ctx, repoRoot, name, baseRef, defaultWorktreeBranchPrefix)
+}
+
+// CreateWithPrefix adds a new worktree under workspace.WorktreesDir(repoRoot).
+// It creates the branch branchPrefix plus the sanitised worktree name.
+// baseRef is the branch, tag, or SHA to check out.
+func CreateWithPrefix(ctx context.Context, repoRoot string, name string, baseRef string, branchPrefix string) (*WorktreeInfo, error) {
 	// filepath.Abs only fails when Getwd fails (effectively never); git fails
 	// loudly instead if the root is unusable, so drop the dead error branch.
 	root, _ := filepath.Abs(repoRoot)
@@ -35,6 +47,9 @@ func Create(ctx context.Context, repoRoot string, name string, baseRef string) (
 	if truncated {
 		return nil, InvalidNameError{Input: name, Reason: "name is too long"}
 	}
+	if err := validateWorktreeBranchPrefix(branchPrefix, sanitised); err != nil {
+		return nil, err
+	}
 	if err := ensureGitRepo(root); err != nil {
 		return nil, err
 	}
@@ -46,14 +61,25 @@ func Create(ctx context.Context, repoRoot string, name string, baseRef string) (
 	if err := os.MkdirAll(wtDir, 0o755); err != nil {
 		return nil, err
 	}
-	// git worktree add <path> -b <branch> <baseRef>
-	// If baseRef is empty, use HEAD.
+	// If the managed branch exists, attach it without changing its tip. This
+	// preserves work that remains on the branch after a worktree is removed.
+	// Otherwise create the branch from baseRef, or HEAD when baseRef is empty.
 	ref := baseRef
 	if ref == "" {
 		ref = "HEAD"
 	}
-	branchName := "wt/" + sanitised
-	cmd := exec.CommandContext(ctx, "git", "worktree", "add", targetPath, "-b", branchName, ref)
+	branchName := branchPrefix + sanitised
+	branchExists, err := localBranchExists(ctx, root, branchName)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"worktree", "add", targetPath}
+	if branchExists {
+		args = append(args, branchName)
+	} else {
+		args = append(args, "-b", branchName, ref)
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, &gitCommandError{cmd: "worktree add", output: string(out), err: err}
@@ -69,8 +95,30 @@ func Create(ctx context.Context, repoRoot string, name string, baseRef string) (
 	}, nil
 }
 
+// localBranchExists reports whether branchName is an exact local branch.
+func localBranchExists(ctx context.Context, root, branchName string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
+	cmd.Dir = root
+	if err := cmd.Run(); err == nil {
+		return true, nil
+	} else {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, &gitCommandError{cmd: "show-ref", err: err}
+	}
+}
+
 // Remove deletes a worktree by name and prunes stale worktree references.
 func Remove(ctx context.Context, repoRoot string, name string) error {
+	return RemoveWithPrefix(ctx, repoRoot, name, defaultWorktreeBranchPrefix)
+}
+
+// RemoveWithPrefix deletes a worktree by name and prunes stale worktree
+// references. It preserves all branches. This avoids a race when another
+// process changes the worktree branch during removal.
+func RemoveWithPrefix(ctx context.Context, repoRoot string, name string, branchPrefix string) error {
 	root, _ := filepath.Abs(repoRoot) // Abs only fails if Getwd fails; git errors otherwise
 	sanitised, err := SanitizeName(name)
 	if err != nil {
@@ -82,6 +130,9 @@ func Remove(ctx context.Context, repoRoot string, name string) error {
 	}
 	if truncated {
 		return InvalidNameError{Input: name, Reason: "name is too long"}
+	}
+	if err := validateWorktreeBranchPrefix(branchPrefix, sanitised); err != nil {
+		return err
 	}
 	if err := ensureGitRepo(root); err != nil {
 		return err
@@ -101,12 +152,36 @@ func Remove(ctx context.Context, repoRoot string, name string) error {
 	prune.Dir = root
 	_ = prune.Run()
 
-	// Delete the mivia branch if it exists.
-	branchName := "wt/" + sanitised
-	delCmd := exec.CommandContext(ctx, "git", "branch", "-D", branchName)
-	delCmd.Dir = root
-	_ = delCmd.Run() // ignore error — branch may not exist
+	return nil
+}
 
+// validateWorktreeBranchPrefix validates the complete branch name before it
+// reaches Git. The worktree name comes from SanitizeName and only adds safe
+// letters, digits, and hyphens.
+func validateWorktreeBranchPrefix(prefix, sanitisedName string) error {
+	if prefix == "" {
+		return fmt.Errorf("worktree branch prefix must not be empty")
+	}
+	if !strings.HasSuffix(prefix, "/") {
+		return fmt.Errorf("worktree branch prefix must end with /")
+	}
+	branchName := prefix + sanitisedName
+	if strings.HasPrefix(branchName, "-") || strings.Contains(branchName, "@{") ||
+		strings.Contains(branchName, "..") || strings.Contains(branchName, "//") ||
+		strings.HasSuffix(branchName, ".") {
+		return fmt.Errorf("worktree branch prefix %q is not a valid Git ref", prefix)
+	}
+	for _, r := range branchName {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune("~^:?*[\\", r) {
+			return fmt.Errorf("worktree branch prefix %q is not a valid Git ref", prefix)
+		}
+	}
+	for _, component := range strings.Split(branchName, "/") {
+		if component == "" || component == "." || component == ".." ||
+			strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".lock") {
+			return fmt.Errorf("worktree branch prefix %q is not a valid Git ref", prefix)
+		}
+	}
 	return nil
 }
 

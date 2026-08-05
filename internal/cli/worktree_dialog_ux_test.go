@@ -234,6 +234,62 @@ func TestWorktreeCreateFullFlow(t *testing.T) {
 	_ = exec.Command("git", "-C", tmpDir, "worktree", "prune").Run()
 }
 
+// TestWorktreeDialogCreateUsesMainRootBranchPrefix verifies the normal TUI
+// create path reads [worktrees].branch_prefix from the main repository.
+func TestWorktreeDialogCreateUsesMainRootBranchPrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+	runGit(t, tmpDir, "init")
+	runGit(t, tmpDir, "config", "user.email", "test@example.com")
+	runGit(t, tmpDir, "config", "user.name", "test")
+	runGit(t, tmpDir, "commit", "--allow-empty", "-m", "initial")
+
+	configDir := filepath.Join(tmpDir, ".mivia")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create mivia config directory: %v", err)
+	}
+	configText := worktreeStoreConfig("repository.db") + "\n[worktrees]\nbranch_prefix = \"team/\"\n"
+	if err := os.WriteFile(filepath.Join(configDir, "mivia.toml"), []byte(configText), 0o600); err != nil {
+		t.Fatalf("write mivia config: %v", err)
+	}
+
+	m := newReadyChatModel(30, 90)
+	m.workspaceDir = tmpDir
+	m.openWorktreeDialog()
+	if m.worktreeDlg == nil {
+		t.Fatal("dialog must be open after openWorktreeDialog")
+	}
+
+	_, _, cmds := m.handleChatKey("c", false)
+	if len(cmds) == 0 || cmds[0] == nil {
+		t.Fatal("c key must return a non-nil cmd")
+	}
+	result := cmds[0]()
+	msg, ok := result.(worktreeCreatedMsg)
+	if !ok {
+		t.Fatalf("cmd must return worktreeCreatedMsg, got %T", result)
+	}
+	if msg.err != nil {
+		t.Fatalf("create worktree: %v", msg.err)
+	}
+	if msg.wt == nil {
+		t.Fatal("worktree must not be nil")
+	}
+	if want := "team/" + msg.wt.Name; msg.wt.Branch != want {
+		t.Fatalf("branch = %q, want %q", msg.wt.Branch, want)
+	}
+	branchOutput, err := exec.Command("git", "-C", msg.wt.Path, "branch", "--show-current").Output()
+	if err != nil {
+		t.Fatalf("read created worktree branch: %v", err)
+	}
+	wantBranch := "team/" + msg.wt.Name
+	if got := strings.TrimSpace(string(branchOutput)); got != wantBranch {
+		t.Fatalf("Git branch = %q, want %q", got, wantBranch)
+	}
+
+	_ = exec.Command("git", "-C", tmpDir, "worktree", "remove", msg.wt.Path, "--force").Run()
+	_ = exec.Command("git", "-C", tmpDir, "worktree", "prune").Run()
+}
+
 func TestWorktreeDialogRefusesToDeleteCurrentDirectory(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{{

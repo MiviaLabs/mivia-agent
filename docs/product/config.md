@@ -34,6 +34,39 @@ convention. Only the user-level env file lives inside the `~/.mivia/` namespace.
 | OpenRouter example | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
 | ZAI example | `glm-5.2` (declare it under `providers.zai`) |
 
+## Worktree branches
+
+Mivia creates linked worktree branches with the `[worktrees].branch_prefix`
+setting. The default is `"mivia/"`. For example, `mivia worktree create fix`
+creates the branch `mivia/fix`.
+
+```toml
+[worktrees]
+# Branches for linked worktrees use this prefix.
+branch_prefix = "mivia/"
+```
+
+Set a namespace prefix that ends with `/` and forms a valid Git branch name
+when Mivia adds a worktree name. The prefix must not be empty. Do not use
+spaces, control characters, Git ref characters such as `~`, `^`, `:`, `?`,
+`*`, `[`, or `\\`, or invalid ref sequences such as `..`, `//`, and `@{`.
+Each path component must be non-empty and must not start with `.` or end with
+`.lock`.
+
+The CLI and TUI always resolve this setting from
+`<main-repository>/.mivia/mivia.toml`. A command run in a linked worktree uses
+the main repository setting. It does not use a config file in the linked
+worktree or `MIVIA_CONFIG` for worktree branch operations.
+
+Mivia preserves a removed worktree branch. This policy avoids destructive
+branch deletion when other worktrees use the branch. If you create a worktree
+with the same name again, Mivia reuses the retained branch that has the current
+configured prefix. Mivia does not reset that branch.
+
+If you change the prefix, branches with the old prefix remain. Remove them
+manually only after you confirm that no worktree needs them. A worktree with a
+given name uses the branch with the current configured prefix.
+
 ## Set up a provider
 
 Set the provider API key in the process environment or an env file, then use

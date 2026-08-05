@@ -15,6 +15,7 @@ type File struct {
 	Providers    map[string]ProviderConfig `toml:"providers"`
 	Chat         ChatConfig                `toml:"chat"`
 	Subagents    SubagentConfig            `toml:"subagents"`
+	Worktrees    WorktreeConfig            `toml:"worktrees"`
 	Tools        ToolsConfig               `toml:"tools"`
 	Privacy      PrivacyConfig             `toml:"privacy"`
 	Context      ContextConfig             `toml:"context"`
@@ -174,6 +175,12 @@ type SubagentConfig struct {
 	Messaging MessagingConfig `toml:"messaging"`
 }
 
+// WorktreeConfig controls worktree branch settings.
+type WorktreeConfig struct {
+	// BranchPrefix is the prefix for branches that mivia creates for worktrees.
+	BranchPrefix string `toml:"branch_prefix"`
+}
+
 // MessagingConfig is the [subagents.messaging] surface for typed, budgeted
 // agent messages. Messaging is always on; Enabled is accepted in TOML for
 // forward compatibility but ignored (IsEnabled always returns true).
@@ -272,6 +279,7 @@ type Resolved struct {
 	Temperature      *float64
 	MaxTokens        *int
 	Subagents        SubagentConfig
+	Worktrees        WorktreeConfig
 	StoreBackend     string
 	StorePath        string
 	// StorePathSet reports whether [subagents].store_path was set in the
