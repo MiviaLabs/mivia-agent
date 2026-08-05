@@ -49,6 +49,91 @@ func TestMigrationV7AddsWorktreeInstanceContract(t *testing.T) {
 	}
 }
 
+func TestMigrationV9AddsInstanceAwareRouteContract(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query(`PRAGMA table_info(worktree_routes)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	primaryKey := 0
+	for rows.Next() {
+		var cid, notNull, key int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &key); err != nil {
+			t.Fatal(err)
+		}
+		if key > primaryKey {
+			primaryKey = key
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if primaryKey != 4 {
+		t.Fatalf("worktree_routes primary key fields = %d, want 4", primaryKey)
+	}
+	if !contextVersionTablePresent(db, 9) {
+		t.Fatal("v9 contract witness is missing")
+	}
+	if _, err := db.Exec(`DROP INDEX worktree_routes_instance_idx`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatalf("repair v9 index: %v", err)
+	}
+	var indexCount int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='worktree_routes_instance_idx'`).Scan(&indexCount); err != nil {
+		t.Fatal(err)
+	}
+	if indexCount != 1 {
+		t.Fatal("v9 route index is missing after repair")
+	}
+}
+
+func TestMigrationV9PreservesLegacyRouteWithBoundRoute(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
+		t.Fatal(err)
+	}
+	for _, apply := range []func(*sql.DB) error{applyContextSchemaV1, applyContextSchemaV2, applyContextSchemaV3, applyContextSchemaV4, applyContextSchemaV5, applyContextSchemaV6, applyContextSchemaV7, applyContextSchemaV8} {
+		if err := apply(db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES('workspace','subject','wt-a','/worktree','now','now',NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyContextSchemaV9(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES('workspace','subject','wt-a','/worktree','now','now','wt_1234567890abcdef')`); err != nil {
+		t.Fatalf("insert bound route after v9: %v", err)
+	}
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatalf("reopen after v9: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM worktree_routes WHERE workspace_id='workspace' AND subject_id='subject' AND worktree='wt-a'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("route rows = %d, want legacy and bound routes", count)
+	}
+}
+
 // TestMigrationV2AtomicDirtyClear simulates a store stuck at version=2,
 // dirty=1 (the crash window from the old code) and verifies that
 // migrateContextSchema repairs it and succeeds.

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +48,76 @@ func TestWorktreeDialogInfoNoticeUsesInfoStyle(t *testing.T) {
 	footer := d.footer()
 	if !strings.Contains(footer, tuiInfoStyle.Render(`created "wt-abc" at /tmp/project/.mivia/worktrees/wt-abc`)) {
 		t.Fatalf("info notice must render in info style: %q", footer)
+	}
+}
+
+func TestWorktreeDialogEnterRecoveryRowShowsRecoveryNotice(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{{Name: "wt-a", Branch: "recovery required", Path: "/missing/wt-a"}})
+	m.hitMap.invalidate()
+	m.handleChatKey("enter", false)
+	if m.worktreeDlg == nil {
+		t.Fatal("recovery row must keep the dialog open")
+	}
+	if m.worktreeDlg.notice != "remove this row to recover deletion" {
+		t.Fatalf("notice = %q", m.worktreeDlg.notice)
+	}
+}
+
+func TestWorktreeDialogMarksLiveDeletingWorktreeForRecovery(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	worktree, err := createManagedWorktree(repoRoot, "recover-live", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := beginManagedWorktreeRemoval(repoRoot, worktree); err != nil {
+		t.Fatal(err)
+	}
+	m := newReadyChatModel(30, 90)
+	m.workspaceDir = repoRoot
+	m.openWorktreeDialog()
+	if m.worktreeDlg == nil || len(m.worktreeDlg.worktrees) != 1 {
+		t.Fatalf("dialog rows = %#v", m.worktreeDlg)
+	}
+	if m.worktreeDlg.worktrees[0].Branch != "recovery required" {
+		t.Fatalf("live deleting row = %#v", m.worktreeDlg.worktrees[0])
+	}
+	m.handleChatKey("enter", false)
+	if m.worktreeDlg.notice != "remove this row to recover deletion" {
+		t.Fatalf("recovery enter notice = %q", m.worktreeDlg.notice)
+	}
+}
+
+func TestWorktreeDialogRecoveryKeepsSameNameReplacementRow(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
+	old, err := createManagedWorktree(repoRoot, "recover-replacement", "HEAD", "mivia/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := beginManagedWorktreeRemoval(repoRoot, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, old.Name, "mivia/"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vcs.Create(context.Background(), repoRoot, old.Name, "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	m := newReadyChatModel(30, 90)
+	m.workspaceDir = repoRoot
+	m.openWorktreeDialog()
+	if len(m.worktreeDlg.worktrees) != 1 || m.worktreeDlg.worktrees[0].Branch != "recovery required" {
+		t.Fatalf("recovery row = %#v", m.worktreeDlg.worktrees)
+	}
+	m.handleChatKey("d", false)
+	m.handleChatKey("y", false)
+	if m.worktreeDlg == nil || len(m.worktreeDlg.worktrees) != 1 {
+		t.Fatalf("rows after recovery = %#v", m.worktreeDlg)
+	}
+	if m.worktreeDlg.worktrees[0].Branch == "recovery required" {
+		t.Fatalf("replacement row remains a recovery row: %#v", m.worktreeDlg.worktrees[0])
 	}
 }
 

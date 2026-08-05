@@ -63,6 +63,41 @@ func (s *SQLite) DeleteWorktreeSessionSnapshot(ctx context.Context, p contextsta
 	})
 }
 
+func (s *SQLite) PruneWorktreeSessionSnapshots(ctx context.Context, p contextstate.Principal, names []string, i contextstate.WorktreeInstance) error {
+	if err := i.Validate(); err != nil || i.IsZero() {
+		return contextstate.ErrWorktreeDeleted
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := requireActiveWorktreeTx(ctx, tx, p, i); err != nil {
+			return err
+		}
+		for _, name := range names {
+			if err := validateSessionCatalogName(name); err != nil {
+				return err
+			}
+			key, err := loadWorktreeCatalogKeyTx(ctx, tx, p, i, "snapshot", name)
+			if err == contextstate.ErrSessionNotFound {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, p.WorkspaceID, p.SubjectID, key, i.ID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, p.WorkspaceID, p.SubjectID, key, i.ID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM chat_session_dirs WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, p.WorkspaceID, p.SubjectID, key, i.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (s *SQLite) SaveWorktreeSessionAdmission(ctx context.Context, p contextstate.Principal, n string, r contextstate.SessionAdmission, i contextstate.WorktreeInstance) error {
 	if err := i.Validate(); err != nil || i.IsZero() {
 		return contextstate.ErrWorktreeDeleted

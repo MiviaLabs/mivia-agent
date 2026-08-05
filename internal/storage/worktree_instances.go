@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -29,6 +30,26 @@ func (s *SQLite) DeletingWorktreeInstance(ctx context.Context, principal context
 	return contextstate.WorktreeInstance{Worktree: worktree, ID: id}, nil
 }
 
+func (s *SQLite) ListDeletingWorktreeInstances(ctx context.Context, principal contextstate.Principal) ([]contextstate.WorktreeInstanceInfo, error) {
+	if err := principal.Validate(); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT worktree,instance_id,canonical_path,state FROM worktree_instances WHERE workspace_id=? AND state=? ORDER BY worktree`, principal.WorkspaceID, contextstate.WorktreeDeleting)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []contextstate.WorktreeInstanceInfo
+	for rows.Next() {
+		var info contextstate.WorktreeInstanceInfo
+		if err := rows.Scan(&info.Instance.Worktree, &info.Instance.ID, &info.CanonicalPath, &info.State); err != nil {
+			return nil, err
+		}
+		out = append(out, info)
+	}
+	return out, rows.Err()
+}
+
 // CreatingWorktreeInstance returns the retained creation record for a name.
 func (s *SQLite) CreatingWorktreeInstance(ctx context.Context, principal contextstate.Principal, worktree string) (contextstate.WorktreeInstanceInfo, error) {
 	if err := principal.Validate(); err != nil {
@@ -44,6 +65,47 @@ func (s *SQLite) CreatingWorktreeInstance(ctx context.Context, principal context
 		return contextstate.WorktreeInstanceInfo{}, err
 	}
 	return info, nil
+}
+
+// ValidateActiveWorktreeInstance verifies the exact active catalog binding.
+func (s *SQLite) ValidateActiveWorktreeInstance(ctx context.Context, principal contextstate.Principal, instance contextstate.WorktreeInstance, canonicalPath string) error {
+	if err := validateWorktreeInstancePath(principal, instance, canonicalPath); err != nil {
+		return err
+	}
+	var found string
+	err := s.db.QueryRowContext(ctx, `SELECT canonical_path FROM worktree_instances WHERE workspace_id=? AND worktree=? AND instance_id=? AND state=?`, principal.WorkspaceID, instance.Worktree, instance.ID, contextstate.WorktreeActive).Scan(&found)
+	if err == sql.ErrNoRows {
+		return contextstate.ErrWorktreeDeleted
+	}
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(found) != filepath.Clean(canonicalPath) {
+		return contextstate.ErrWorktreeDeleted
+	}
+	return nil
+}
+
+// RequireLegacyWorktreeRoute verifies the exact unbound route needed for adoption.
+func (s *SQLite) RequireLegacyWorktreeRoute(ctx context.Context, principal contextstate.Principal, worktree, canonicalPath string) error {
+	if err := principal.Validate(); err != nil || !filepath.IsAbs(canonicalPath) {
+		return contextstate.ErrWorktreeDeleted
+	}
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		return requireLegacyWorktreeRouteTx(ctx, tx, principal, worktree, canonicalPath)
+	})
+}
+
+func requireLegacyWorktreeRouteTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, worktree, canonicalPath string) error {
+	var count int
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=? AND dir=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, worktree, canonicalPath).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return contextstate.ErrWorktreeDeleted
+	}
+	return nil
 }
 
 // LoadWorktree loads a durable session only while its exact instance is active.
@@ -82,6 +144,26 @@ func (s *SQLite) BeginWorktreeCreation(ctx context.Context, principal contextsta
 	return err
 }
 
+// BeginWorktreeAdoption reserves an exact legacy route for adoption.
+func (s *SQLite) BeginWorktreeAdoption(ctx context.Context, principal contextstate.Principal, instance contextstate.WorktreeInstance, canonicalPath string) error {
+	if err := validateWorktreeInstancePath(principal, instance, canonicalPath); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := requireLegacyWorktreeRouteTx(ctx, tx, principal, instance.Worktree, canonicalPath); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, principal.WorkspaceID, instance.Worktree, instance.ID, canonicalPath, contextstate.WorktreeCreating, now, now)
+		if isConstraint(err) {
+			return contextstate.ErrWorktreeDeleted
+		}
+		return err
+	})
+}
+
 // AbandonWorktreeCreation removes a reservation after Git creation fails.
 func (s *SQLite) AbandonWorktreeCreation(ctx context.Context, principal contextstate.Principal, instance contextstate.WorktreeInstance) error {
 	if err := validateWorktreeInstance(principal, instance); err != nil {
@@ -113,10 +195,35 @@ func (s *SQLite) RegisterWorktreeInstance(ctx context.Context, principal context
 		if err := requireContextRows(result, contextstate.ErrWorktreeDeleted); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES(?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,worktree) DO UPDATE SET dir=excluded.dir,updated_at=excluded.updated_at,instance_id=excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, instance.Worktree, canonicalPath, now, now, instance.ID)
+		_, err = tx.ExecContext(ctx, `INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES(?,?,?,?,?,?,?)`, principal.WorkspaceID, principal.SubjectID, instance.Worktree, canonicalPath, now, now, instance.ID)
 		return err
 	})
 	return err
+}
+
+// RegisterAdoptedWorktreeInstance activates an adoption reservation only if
+// the legacy route remains exact and unbound.
+func (s *SQLite) RegisterAdoptedWorktreeInstance(ctx context.Context, principal contextstate.Principal, instance contextstate.WorktreeInstance, canonicalPath string) error {
+	if err := validateWorktreeInstancePath(principal, instance, canonicalPath); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := requireLegacyWorktreeRouteTx(ctx, tx, principal, instance.Worktree, canonicalPath); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE worktree_instances SET state=?,updated_at=? WHERE workspace_id=? AND worktree=? AND instance_id=? AND canonical_path=? AND state=?`, contextstate.WorktreeActive, now, principal.WorkspaceID, instance.Worktree, instance.ID, canonicalPath, contextstate.WorktreeCreating)
+		if err != nil {
+			return err
+		}
+		if err := requireContextRows(result, contextstate.ErrWorktreeDeleted); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES(?,?,?,?,?,?,?)`, principal.WorkspaceID, principal.SubjectID, instance.Worktree, canonicalPath, now, now, instance.ID)
+		return err
+	})
 }
 
 func validateWorktreeInstance(principal contextstate.Principal, instance contextstate.WorktreeInstance) error {
@@ -136,7 +243,43 @@ func validateWorktreeInstancePath(principal contextstate.Principal, instance con
 	if !filepath.IsAbs(canonicalPath) || !contextstate.ValidSessionDir(canonicalPath) {
 		return fmt.Errorf("%w: invalid worktree path", contextstate.ErrInvalidDTO)
 	}
+	if filepath.Clean(canonicalPath) != canonicalPath {
+		return fmt.Errorf("%w: worktree path is not canonical", contextstate.ErrInvalidDTO)
+	}
+	resolved, err := canonicalExistingPath(canonicalPath)
+	if err != nil || resolved != canonicalPath {
+		return fmt.Errorf("%w: worktree path is not canonical", contextstate.ErrInvalidDTO)
+	}
 	return nil
+}
+
+func canonicalExistingPath(path string) (string, error) {
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		info, statErr := os.Lstat(path)
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("path contains a dangling symlink")
+		}
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return "", statErr
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(path))
+		path = parent
+	}
 }
 
 // BeginWorktreeDeletion fences the exact active physical worktree instance.

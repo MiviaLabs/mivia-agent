@@ -1,7 +1,3 @@
-// Worktree manager dialog (/worktrees).
-//
-// Lists, creates, and deletes git worktrees managed by mivia under
-// .mivia/worktrees. Follows the same structural pattern as sessions_dialog.go.
 package cli
 
 import (
@@ -41,16 +37,11 @@ func newWorktreeDialog(worktrees []vcs.WorktreeInfo) *worktreeDialog {
 	return &worktreeDialog{worktrees: append([]vcs.WorktreeInfo(nil), worktrees...)}
 }
 
-// setNotice records a footer notice and whether it reports a failure.
-// Failure notices render in the error style so a failed action is not a
-// silent flash.
 func (d *worktreeDialog) setNotice(msg string, isErr bool) {
 	d.notice = msg
 	d.noticeErr = isErr
 }
 
-// oneLineNotice flattens a notice to one line. Git error output embeds
-// newlines; a raw newline inside the footer row breaks the dialog frame.
 func oneLineNotice(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
@@ -58,7 +49,6 @@ func oneLineNotice(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// newWorktreeName returns a unique, safe worktree name.
 func newWorktreeName() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
@@ -205,22 +195,6 @@ func (d *worktreeDialog) footer() string {
 	return tuiDimStyle.Render("↑↓ move · enter switch · b back to main · c create · d delete · esc close")
 }
 
-// ─── Model wiring ─────────────────────────────────────────────────────
-
-func (m *tuiModel) openWorktreeDialog() {
-	m.closeSuggest()
-	wtDir := m.resolveRepoRoot()
-	list, err := vcs.List(context.Background(), wtDir)
-	if err != nil {
-		m.worktreeDlg = newWorktreeDialog(nil)
-		m.worktreeDlg.setNotice(err.Error(), true)
-		m.hitMap.invalidate()
-		return
-	}
-	m.worktreeDlg = newWorktreeDialog(list)
-	m.hitMap.invalidate()
-}
-
 func (m *tuiModel) handleWorktreeDialogKey(key string) (bool, bool, []tea.Cmd) {
 	d := m.worktreeDlg
 	visible := d.cursorRows(d.visibleRows(max(1, m.width), max(1, m.height)))
@@ -248,6 +222,10 @@ func (m *tuiModel) handleWorktreeDialogKey(key string) (bool, bool, []tea.Cmd) {
 		d.clampScrollTo(visible)
 	case "enter":
 		if wt, ok := d.selected(); ok {
+			if wt.Branch == "recovery required" {
+				d.setNotice("remove this row to recover deletion", true)
+				return true, true, nil
+			}
 			m.switchToWorktree(wt)
 			return true, true, nil
 		}
@@ -284,6 +262,16 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			d.setNotice("delete failed: "+err.Error(), true)
 			break
 		}
+		if wt.Branch == "recovery required" {
+			recovered, err := recoverManagedWorktreeRemoval(wtDir, wt.Name, worktreeConfig.BranchPrefix)
+			if err != nil || !recovered {
+				d.setNotice("recovery failed: "+fmt.Sprint(err), true)
+				break
+			}
+			m.openWorktreeDialog()
+			m.worktreeDlg.setNotice(fmt.Sprintf("recovered removal of %q", wt.Name), false)
+			break
+		}
 		if worktreeContainsCurrentDir(wt.Path) {
 			d.setNotice("cannot delete the current worktree", true)
 			break
@@ -313,8 +301,6 @@ func (m *tuiModel) applyWorktreeConfirm() {
 	d.confirm = wtConfirmNone
 }
 
-// applyWorktreeCreated processes the async worktree creation result on the main
-// goroutine (bubbletea Update), safely mutating dialog fields without a data race.
 func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 	d := m.worktreeDlg
 	if d == nil || msg.dlg != d {
@@ -346,7 +332,6 @@ func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 	}
 }
 
-// worktreeCreatedMsg returns asynchronous creation to the issuing dialog.
 type worktreeCreatedMsg struct {
 	wt  *vcs.WorktreeInfo
 	err error
@@ -372,8 +357,6 @@ func (m *tuiModel) createWorktreeFromDialog() tea.Cmd {
 	return m.createWorktreeAsyncWithPrefix(wtDir, newWorktreeName(), worktreeConfig.BranchPrefix, d)
 }
 
-// createWorktreeAsync runs vcs.Create in a goroutine and returns a command
-// that delivers the result as a worktreeCreatedMsg back to the Update loop.
 func (m *tuiModel) createWorktreeAsync(dir, name string, dlg *worktreeDialog) tea.Cmd {
 	repoRoot, err := vcs.MainRepoRoot(dir)
 	if err != nil {
@@ -390,13 +373,6 @@ func (m *tuiModel) createWorktreeAsync(dir, name string, dlg *worktreeDialog) te
 	return m.createWorktreeAsyncWithPrefix(repoRoot, name, worktreeConfig.BranchPrefix, dlg)
 }
 
-// createWorktreeAsyncWithPrefix runs vcs.CreateWithPrefix in a goroutine and
-// returns a command that delivers the result as a worktreeCreatedMsg back to
-// the Update loop.
-
-// switchToWorktree changes the process working directory to the worktree,
-// updates the model's cached workspace path and git context, then closes
-// the dialog so the user lands back in chat with the new context.
 func (m *tuiModel) switchToWorktree(wt vcs.WorktreeInfo) {
 	if m.workspaceSwitchBusy() {
 		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
@@ -412,7 +388,6 @@ func (m *tuiModel) switchToWorktree(wt vcs.WorktreeInfo) {
 	m.restartInWorkspace(wt.Path)
 }
 
-// switchToMainTree changes back to the repository root (main tree).
 func (m *tuiModel) switchToMainTree() {
 	if m.workspaceSwitchBusy() {
 		m.worktreeDlg.setNotice("cannot switch while agent is running", true)
@@ -431,9 +406,6 @@ func (m *tuiModel) workspaceSwitchBusy() bool {
 	return m.waiting || m.cancelling
 }
 
-// restartInWorkspace records a requested session restart. The current session
-// stays intact until the TUI stops and saves it. The next session starts with
-// fresh tools, hooks, and durable stores rooted at dir.
 func (m *tuiModel) restartInWorkspace(dir string) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -468,7 +440,6 @@ func worktreeContainsCurrentDir(path string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
-// resolveWorkspaceDir returns the absolute workspace directory path.
 func (m *tuiModel) resolveWorkspaceDir() string {
 	dir := m.workspaceDir
 	if dir != "" && strings.HasPrefix(dir, "~") {
@@ -483,10 +454,6 @@ func (m *tuiModel) resolveWorkspaceDir() string {
 	return dir
 }
 
-// resolveRepoRoot returns the main repository root directory, which
-// must be used (not the cwd) when creating/listing/removing worktrees.
-// If the cwd is already the main root, this is a no-op. If resolution
-// fails, it falls back to resolveWorkspaceDir().
 func (m *tuiModel) resolveRepoRoot() string {
 	dir := m.resolveWorkspaceDir()
 	if root, err := vcs.MainRepoRoot(dir); err == nil {

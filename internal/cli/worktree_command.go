@@ -56,10 +56,7 @@ func runWorktreeAdopt(args []string, stdout io.Writer) error {
 	if worktree == nil {
 		return fmt.Errorf("worktree adopt: worktree %q not found", args[0])
 	}
-	if _, err := readWorktreeMarker(worktree.Path); err == nil {
-		return fmt.Errorf("worktree adopt: worktree %q already has a lifecycle marker", worktree.Name)
-	}
-	if _, err := registerManagedWorktree(repoRoot, worktree); err != nil {
+	if _, err := adoptManagedWorktree(repoRoot, worktree); err != nil {
 		return fmt.Errorf("worktree adopt: %w", err)
 	}
 	fmt.Fprintf(stdout, "adopted worktree %q at %s\n", worktree.Name, worktree.Path)
@@ -118,6 +115,22 @@ func runWorktreeList(args []string, stdout io.Writer) error {
 	for _, worktree := range worktrees {
 		fmt.Fprintf(stdout, "%s\t%s\t%s\n", worktree.Name, worktree.Branch, worktree.Path)
 	}
+	store, err := openRepositoryContextStore(repoRoot)
+	if err != nil {
+		return fmt.Errorf("worktree list: %w", err)
+	}
+	defer store.Close()
+	principal, err := worktreeRoutePrincipal(repoRoot)
+	if err != nil {
+		return fmt.Errorf("worktree list: %w", err)
+	}
+	deleting, err := store.ListDeletingWorktreeInstances(context.Background(), principal)
+	if err != nil {
+		return fmt.Errorf("worktree list: %w", err)
+	}
+	for _, info := range deleting {
+		fmt.Fprintf(stdout, "%s\trecovery required\t%s\n", info.Instance.Worktree, info.CanonicalPath)
+	}
 	return nil
 }
 
@@ -138,15 +151,17 @@ func runWorktreeRemove(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
+	if recovered, err := recoverManagedWorktreeRemoval(repoRoot, args[0], worktreeConfig.BranchPrefix); err != nil {
+		return fmt.Errorf("worktree remove: recovery: %w", err)
+	} else if recovered {
+		fmt.Fprintf(stdout, "removed worktree %q\n", args[0])
+		return nil
+	}
 	worktree, err := vcs.Resolve(context.Background(), repoRoot, args[0])
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
 	if worktree == nil {
-		if err := recoverManagedWorktreeRemoval(repoRoot, args[0]); err == nil {
-			fmt.Fprintf(stdout, "removed worktree %q\n", args[0])
-			return nil
-		}
 		return fmt.Errorf("worktree remove: worktree %q not found", args[0])
 	}
 	if worktreeContainsCurrentDir(worktree.Path) {

@@ -94,7 +94,11 @@ func registerManagedWorktreeInStore(store *storage.SQLite, root string, wt *vcs.
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
-	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, wt.Path); err != nil {
+	canonicalPath, err := canonicalMarkerRoot(wt.Path)
+	if err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, canonicalPath); err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
 	if err := completeManagedWorktreeCreationInStore(store, root, wt, instance); err != nil {
@@ -123,7 +127,11 @@ func completeManagedWorktreeCreationInStore(store *storage.SQLite, root string, 
 			return err
 		}
 	}
-	return store.RegisterWorktreeInstance(context.Background(), principal, instance, wt.Path)
+	canonicalPath, err := canonicalMarkerRoot(wt.Path)
+	if err != nil {
+		return err
+	}
+	return store.RegisterWorktreeInstance(context.Background(), principal, instance, canonicalPath)
 }
 
 // createManagedWorktree reserves lifecycle state before it creates Git state.
@@ -153,7 +161,24 @@ func createManagedWorktreeInStore(store *storage.SQLite, root, name, baseRef, br
 	}
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, expectedPath); err != nil {
 		creating, findErr := store.CreatingWorktreeInstance(context.Background(), principal, sanitised)
-		if findErr != nil || filepath.Clean(creating.CanonicalPath) != filepath.Clean(expectedPath) {
+		if findErr != nil {
+			deleting, deleteErr := store.DeletingWorktreeInstance(context.Background(), principal, sanitised)
+			if deleteErr == nil {
+				live, resolveErr := vcs.Resolve(context.Background(), root, sanitised)
+				if resolveErr != nil {
+					return nil, resolveErr
+				}
+				if live != nil {
+					return nil, fmt.Errorf("worktree %q requires removal recovery", sanitised)
+				}
+				if _, cleanupErr := store.DeleteWorktreeSessions(context.Background(), principal, deleting); cleanupErr != nil {
+					return nil, cleanupErr
+				}
+				return createManagedWorktreeInStore(store, root, name, baseRef, branchPrefix)
+			}
+			return nil, err
+		}
+		if filepath.Clean(creating.CanonicalPath) != filepath.Clean(expectedPath) {
 			return nil, err
 		}
 		worktree, resolveErr := vcs.Resolve(context.Background(), root, sanitised)
@@ -244,29 +269,18 @@ func beginManagedWorktreeRemovalInStore(store *storage.SQLite, root string, wt *
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
+	canonicalPath, err := canonicalMarkerRoot(wt.Path)
+	if err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
+	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
+		return contextstate.WorktreeInstance{}, err
+	}
 	return instance, store.BeginWorktreeDeletion(context.Background(), principal, instance)
 }
 
 func finishManagedWorktreeRemoval(root string, instance contextstate.WorktreeInstance) error {
 	return finishManagedWorktreeRemovalInStore(nil, root, instance)
-}
-
-func recoverManagedWorktreeRemoval(root, name string) error {
-	store, err := openRepositoryContextStore(root)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	principal, err := worktreeRoutePrincipal(root)
-	if err != nil {
-		return err
-	}
-	instance, err := store.DeletingWorktreeInstance(context.Background(), principal, name)
-	if err != nil {
-		return err
-	}
-	_, err = store.DeleteWorktreeSessions(context.Background(), principal, instance)
-	return err
 }
 
 func finishManagedWorktreeRemovalForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
