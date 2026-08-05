@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,8 +70,8 @@ func lockWorktreeLifecycle(root, name string) (*worktreeLifecycleLock, error) {
 func ensureRegularLifecycleLockDir(root *os.Root) error {
 	info, err := lstatLifecyclePath(root, worktreeLifecycleLockDir)
 	if os.IsNotExist(err) {
-		if err := mkdirLifecycleDir(root, worktreeLifecycleLockDir, 0o700); err != nil {
-			return fmt.Errorf("create worktree lifecycle lock directory: %w", err)
+		if mkdirErr := mkdirLifecycleDir(root, worktreeLifecycleLockDir, 0o700); mkdirErr != nil && !errors.Is(mkdirErr, os.ErrExist) {
+			return fmt.Errorf("create worktree lifecycle lock directory: %w", mkdirErr)
 		}
 		info, err = lstatLifecyclePath(root, worktreeLifecycleLockDir)
 	}

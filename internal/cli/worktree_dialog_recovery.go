@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
@@ -118,6 +119,16 @@ func (m *tuiModel) recoverCreatingWorktree(wt vcs.WorktreeInfo, info contextstat
 		m.worktreeDlg.setNotice("creation recovery failed: "+err.Error(), true)
 		return
 	}
+	handled, err := m.abandonStaleWorktreeCreation(store, root, wt, info)
+	if err != nil {
+		closeStore()
+		m.worktreeDlg.setNotice("creation recovery failed: "+err.Error(), true)
+		return
+	}
+	if handled {
+		closeStore()
+		return
+	}
 	recovered, err := recoverManagedWorktreeCreationInStore(store, root, info)
 	closeStore()
 	if err != nil {
@@ -130,4 +141,25 @@ func (m *tuiModel) recoverCreatingWorktree(wt vcs.WorktreeInfo, info contextstat
 	}
 	m.restartInWorkspace(recovered.Path)
 	m.restartWorktreeInstance = info.Instance
+}
+
+// abandonStaleWorktreeCreation removes a creating instance whose Git worktree
+// never materialized. It reports handled=true when it removed the row or hit
+// an error (err non-nil). It reports handled=false when the expected worktree
+// path exists and the caller must continue with normal recovery or deletion.
+func (m *tuiModel) abandonStaleWorktreeCreation(store *storage.SQLite, root string, wt vcs.WorktreeInfo, info contextstate.WorktreeInstanceInfo) (bool, error) {
+	if _, err := os.Stat(info.CanonicalPath); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return true, fmt.Errorf("inspect expected worktree path: %w", err)
+	}
+	principal, _ := worktreeRoutePrincipal(root)
+	if err := store.AbandonWorktreeCreation(context.Background(), principal, info.Instance); err != nil {
+		return true, err
+	}
+	name := wt.Name
+	m.worktreeDlg.removeAt(m.worktreeDlg.cursor)
+	m.worktreeDlg.setNotice(fmt.Sprintf("abandoned incomplete creation of %q", name), false)
+	m.refreshGitContext()
+	return true, nil
 }
