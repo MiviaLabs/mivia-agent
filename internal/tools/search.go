@@ -204,7 +204,7 @@ func scanFile(ctx context.Context, path, rel string, re *regexp.Regexp, in grepI
 				continue
 			}
 			if len(line) > 200 {
-				line = line[:200] + "..."
+				line = truncateUTF8(line, 200) + "..."
 			}
 			entry := fmt.Sprintf("%s:%d:%s", rel, lineNo, line)
 			need := len(entry)

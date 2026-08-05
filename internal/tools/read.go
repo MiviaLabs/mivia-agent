@@ -142,7 +142,12 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	totalLines := lineNo
 	if err := sc.Err(); err != nil {
 		if err == bufio.ErrTooLong {
-			return "", fmt.Errorf("line exceeds max read size (%d bytes)", t.maxBytes)
+			// The scanner enforces the larger of max and cap(buf)
+			// (bufio.Scanner.Buffer). Report that enforced bound, not
+			// t.maxBytes: for an uncapped tool t.maxBytes is 0 while the
+			// enforced floor is 1 MiB, and for a small configured bound the
+			// 64 KiB initial buffer cap outranks the configured value.
+			return "", fmt.Errorf("line exceeds max read size (%d bytes)", max(scannerMax, cap(buf)))
 		}
 		return "", err
 	}
