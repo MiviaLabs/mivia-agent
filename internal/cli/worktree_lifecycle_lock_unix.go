@@ -10,19 +10,27 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var statLifecycleLockFile = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
+
 func openWorktreeLifecycleLockFile(root *os.Root, path string) (*os.File, func(), error) {
 	if filepath.Dir(path) != worktreeLifecycleLockDir {
 		return nil, nil, fmt.Errorf("open worktree lifecycle lock: invalid path")
 	}
-	if _, err := root.Lstat("."); err != nil {
+	rootInfo, err := root.Stat(".")
+	if err != nil {
 		return nil, nil, fmt.Errorf("open worktree lifecycle lock: %w", err)
 	}
 	rootFD, err := unix.Open(root.Name(), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open worktree lifecycle lock: %w", err)
 	}
-	defer unix.Close(rootFD)
-	dirFD, err := unix.Openat(rootFD, worktreeLifecycleLockDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	reopened := os.NewFile(uintptr(rootFD), root.Name())
+	defer reopened.Close()
+	reopenedInfo, statErr := reopened.Stat()
+	if statErr != nil || !os.SameFile(rootInfo, reopenedInfo) {
+		return nil, nil, fmt.Errorf("open worktree lifecycle lock: cannot verify Git common directory identity")
+	}
+	dirFD, err := unix.Openat(int(reopened.Fd()), worktreeLifecycleLockDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open worktree lifecycle lock directory: %w", err)
 	}
@@ -32,16 +40,13 @@ func openWorktreeLifecycleLockFile(root *os.Root, path string) (*os.File, func()
 		return nil, nil, fmt.Errorf("open worktree lifecycle lock: %w", err)
 	}
 	file := os.NewFile(uintptr(fileFD), filepath.Base(path))
-	if file == nil {
-		_ = unix.Close(fileFD)
-		return nil, nil, fmt.Errorf("open worktree lifecycle lock: invalid file descriptor")
-	}
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	info, err := statLifecycleLockFile(file)
+	if err != nil {
 		_ = file.Close()
-		if err != nil {
-			return nil, nil, fmt.Errorf("inspect worktree lifecycle lock: %w", err)
-		}
+		return nil, nil, fmt.Errorf("inspect worktree lifecycle lock: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
 		return nil, nil, fmt.Errorf("worktree lifecycle lock is not a regular file")
 	}
 	unlock, err := lockWorktreeMarkerFile(file)

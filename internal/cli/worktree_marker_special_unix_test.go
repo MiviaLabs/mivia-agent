@@ -55,3 +55,59 @@ func TestWorktreeMarkerRejectsSocket(t *testing.T) {
 		t.Fatal("socket marker was accepted")
 	}
 }
+
+func TestWorktreeMarkerExcludeLockRejectsFifo(t *testing.T) {
+	repo := newWorktreeCommandRepo(t)
+	commonDir, err := worktreeGitCommonDir(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(commonDir, "info"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(commonDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	lockPath := filepath.Join("info", "exclude.lock")
+	if err := syscall.Mkfifo(filepath.Join(commonDir, lockPath), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockWorktreeMarkerExclude(root, lockPath)
+	if unlock != nil {
+		unlock()
+	}
+	if err == nil {
+		t.Fatal("Git exclude lock opened a FIFO")
+	}
+}
+
+func TestWorktreeMarkerExcludeLockRejectsSymlinkInfoDir(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "info"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(base, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.Remove(filepath.Join(base, "info")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(base, "info")); err != nil {
+		t.Fatal(err)
+	}
+	file, err := openMarkerExcludeLock(root, filepath.Join("info", "exclude.lock"))
+	if file != nil {
+		_ = file.Close()
+	}
+	if err == nil {
+		t.Fatal("Git exclude lock opened through a symlinked info directory")
+	}
+}

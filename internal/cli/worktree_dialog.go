@@ -287,20 +287,7 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			d.setNotice("delete failed: "+err.Error(), true)
 			break
 		}
-		if recovery, found := d.selectedRecovery(); found && recovery.Info.State == contextstate.WorktreeDeleting {
-			store, closeStore, storeErr := m.worktreeLifecycleStore(wtDir)
-			if storeErr != nil {
-				d.setNotice("recovery failed: "+storeErr.Error(), true)
-				break
-			}
-			err := recoverManagedWorktreeRemovalInfoInStore(store, wtDir, recovery.Info, worktreeConfig.BranchPrefix)
-			closeStore()
-			if err != nil {
-				d.setNotice("recovery failed: "+fmt.Sprint(err), true)
-				break
-			}
-			m.openWorktreeDialog()
-			m.worktreeDlg.setNotice(fmt.Sprintf("recovered removal of %q", wt.Name), false)
+		if m.handleWorktreeDeleteRecovery(wtDir, wt, worktreeConfig.BranchPrefix) {
 			break
 		}
 		if worktreeContainsCurrentDir(wt.Path) {
@@ -351,6 +338,52 @@ func (m *tuiModel) applyWorktreeConfirm() {
 		m.refreshGitContext()
 	}
 	d.confirm = wtConfirmNone
+}
+
+// handleWorktreeDeleteRecovery resolves a recovery row during delete confirm.
+// It returns true when it handled the row and the caller must stop.
+func (m *tuiModel) handleWorktreeDeleteRecovery(wtDir string, wt vcs.WorktreeInfo, branchPrefix string) bool {
+	recovery, found := m.worktreeDlg.selectedRecovery()
+	if !found {
+		return false
+	}
+	if recovery.Info.State == contextstate.WorktreeCreating {
+		return m.abandonStaleWorktreeCreationInDialog(wtDir, wt, recovery.Info)
+	}
+	if recovery.Info.State != contextstate.WorktreeDeleting {
+		return false
+	}
+	store, closeStore, storeErr := m.worktreeLifecycleStore(wtDir)
+	if storeErr != nil {
+		m.worktreeDlg.setNotice("recovery failed: "+storeErr.Error(), true)
+		return true
+	}
+	err := recoverManagedWorktreeRemovalInfoInStore(store, wtDir, recovery.Info, branchPrefix)
+	closeStore()
+	if err != nil {
+		m.worktreeDlg.setNotice("recovery failed: "+fmt.Sprint(err), true)
+		return true
+	}
+	m.openWorktreeDialog()
+	m.worktreeDlg.setNotice(fmt.Sprintf("recovered removal of %q", wt.Name), false)
+	return true
+}
+
+// abandonStaleWorktreeCreationInDialog removes a creating instance whose Git
+// worktree never materialized. It returns true when it handled the row.
+func (m *tuiModel) abandonStaleWorktreeCreationInDialog(wtDir string, wt vcs.WorktreeInfo, info contextstate.WorktreeInstanceInfo) bool {
+	store, closeStore, storeErr := m.worktreeLifecycleStore(wtDir)
+	if storeErr != nil {
+		m.worktreeDlg.setNotice("delete failed: "+storeErr.Error(), true)
+		return true
+	}
+	handled, abandonErr := m.abandonStaleWorktreeCreation(store, wtDir, wt, info)
+	closeStore()
+	if abandonErr != nil {
+		m.worktreeDlg.setNotice("delete failed: "+abandonErr.Error(), true)
+		return true
+	}
+	return handled
 }
 
 func (m *tuiModel) applyWorktreeCreated(msg worktreeCreatedMsg) {

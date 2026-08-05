@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,6 +33,9 @@ var (
 	closeWorktreeMarkerTemp     = func(file *os.File) error { return file.Close() }
 	renameWorktreeMarker        = os.Rename
 	openWorktreeMarkerFile      = openWorktreeMarkerForRead
+	lstatGitInfoDir             = func(root *os.Root, path string) (os.FileInfo, error) { return root.Lstat(path) }
+	mkdirGitInfoDir             = func(root *os.Root, path string, mode os.FileMode) error { return root.Mkdir(path, mode) }
+	openMarkerExcludeLock       = openMarkerExcludeLockFile
 	writeWorktreeExcludeTemp    = func(file *os.File, content []byte) (int, error) { return file.Write(content) }
 	closeWorktreeExcludeTemp    = func(file *os.File) error { return file.Close() }
 	readWorktreeMarkerRandom    = rand.Read
@@ -125,12 +129,12 @@ func worktreeGitCommonDir(root string) (string, error) {
 }
 
 func ensureRegularGitInfoDir(root *os.Root) error {
-	info, err := root.Lstat("info")
+	info, err := lstatGitInfoDir(root, "info")
 	if os.IsNotExist(err) {
-		if err := root.Mkdir("info", 0700); err != nil {
-			return fmt.Errorf("create Git info directory: %w", err)
+		if mkdirErr := mkdirGitInfoDir(root, "info", 0700); mkdirErr != nil && !errors.Is(mkdirErr, os.ErrExist) {
+			return fmt.Errorf("create Git info directory: %w", mkdirErr)
 		}
-		info, err = root.Lstat("info")
+		info, err = lstatGitInfoDir(root, "info")
 	}
 	if err != nil {
 		return fmt.Errorf("inspect Git info directory: %w", err)
@@ -170,9 +174,17 @@ func lockWorktreeMarkerExclude(root *os.Root, path string) (func(), error) {
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("inspect Git exclude lock: %w", err)
 	}
-	file, err := root.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
+	file, err := openMarkerExcludeLock(root, path)
 	if err != nil {
 		return nil, fmt.Errorf("open Git exclude lock: %w", err)
+	}
+	info, err := statWorktreeMarkerFile(file)
+	if err != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+		if err != nil {
+			return nil, fmt.Errorf("inspect Git exclude lock: %w", err)
+		}
+		return nil, fmt.Errorf("Git exclude lock is not a regular file")
 	}
 	unlock, err := lockWorktreeMarkerForUpdate(file)
 	if err != nil {
