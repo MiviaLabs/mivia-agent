@@ -85,7 +85,21 @@ func (s *Session) loadContextCatalog(name string) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("context session catalog is not configured")
 	}
-	data, info, err := catalog.LoadSession(context.Background(), principal, name)
+	s.mu.RLock()
+	instance := s.contextWorktree
+	s.mu.RUnlock()
+	var data []byte
+	var info contextstate.SessionCatalogInfo
+	var err error
+	if !instance.IsZero() {
+		scoped, ok := catalog.(contextstate.WorktreeSessionCatalog)
+		if !ok {
+			return false, fmt.Errorf("worktree session catalog is not configured")
+		}
+		data, info, err = scoped.LoadWorktreeSession(context.Background(), principal, name, instance)
+	} else {
+		data, info, err = catalog.LoadSession(context.Background(), principal, name)
+	}
 	if err != nil {
 		return false, fmt.Errorf("load session %q: %w", name, err)
 	}

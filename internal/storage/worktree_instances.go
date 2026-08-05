@@ -29,51 +29,114 @@ func (s *SQLite) DeletingWorktreeInstance(ctx context.Context, principal context
 	return contextstate.WorktreeInstance{Worktree: worktree, ID: id}, nil
 }
 
+// CreatingWorktreeInstance returns the retained creation record for a name.
+func (s *SQLite) CreatingWorktreeInstance(ctx context.Context, principal contextstate.Principal, worktree string) (contextstate.WorktreeInstanceInfo, error) {
+	if err := principal.Validate(); err != nil {
+		return contextstate.WorktreeInstanceInfo{}, err
+	}
+	var info contextstate.WorktreeInstanceInfo
+	info.Instance.Worktree = worktree
+	err := s.db.QueryRowContext(ctx, `SELECT instance_id,canonical_path,state FROM worktree_instances WHERE workspace_id=? AND worktree=? AND state=?`, principal.WorkspaceID, worktree, contextstate.WorktreeCreating).Scan(&info.Instance.ID, &info.CanonicalPath, &info.State)
+	if err == sql.ErrNoRows {
+		return contextstate.WorktreeInstanceInfo{}, contextstate.ErrWorktreeDeleted
+	}
+	if err != nil {
+		return contextstate.WorktreeInstanceInfo{}, err
+	}
+	return info, nil
+}
+
 // LoadWorktree loads a durable session only while its exact instance is active.
 func (s *SQLite) LoadWorktree(ctx context.Context, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
 	if err := instance.Validate(); err != nil || instance.IsZero() {
 		return contextstate.Snapshot{}, fmt.Errorf("%w: invalid worktree instance", contextstate.ErrInvalidDTO)
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return contextstate.Snapshot{}, err
 	}
+	defer tx.Rollback()
 	if err := requireActiveWorktreeTx(ctx, tx, principal, instance); err != nil {
-		_ = tx.Rollback()
 		return contextstate.Snapshot{}, err
 	}
-	_ = tx.Rollback()
-	return s.Load(ctx, principal, sessionID)
+	snapshot, err := loadContextTx(ctx, tx, principal, sessionID, instance)
+	if err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	return snapshot, tx.Commit()
 }
 
-// RegisterWorktreeInstance creates an active catalog record for a managed
-// worktree. A live record with the same name blocks same-name reuse.
+// BeginWorktreeCreation reserves one worktree name before Git creates its
+// directory. A live record with the same name blocks same-name reuse.
+func (s *SQLite) BeginWorktreeCreation(ctx context.Context, principal contextstate.Principal, instance contextstate.WorktreeInstance, canonicalPath string) error {
+	if err := validateWorktreeInstancePath(principal, instance, canonicalPath); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, principal.WorkspaceID, instance.Worktree, instance.ID, canonicalPath, contextstate.WorktreeCreating, now, now)
+	if isConstraint(err) {
+		return fmt.Errorf("%w: worktree instance already exists", contextstate.ErrWorktreeDeleted)
+	}
+	return err
+}
+
+// AbandonWorktreeCreation removes a reservation after Git creation fails.
+func (s *SQLite) AbandonWorktreeCreation(ctx context.Context, principal contextstate.Principal, instance contextstate.WorktreeInstance) error {
+	if err := validateWorktreeInstance(principal, instance); err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	result, err := s.db.ExecContext(ctx, `DELETE FROM worktree_instances WHERE workspace_id=? AND worktree=? AND instance_id=? AND state=?`, principal.WorkspaceID, instance.Worktree, instance.ID, contextstate.WorktreeCreating)
+	if err != nil {
+		return err
+	}
+	return requireContextRows(result, contextstate.ErrWorktreeDeleted)
+}
+
+// RegisterWorktreeInstance activates a preflighted catalog record. It adds the
+// caller route in the same transaction.
 func (s *SQLite) RegisterWorktreeInstance(ctx context.Context, principal contextstate.Principal, instance contextstate.WorktreeInstance, canonicalPath string) error {
+	if err := validateWorktreeInstancePath(principal, instance, canonicalPath); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE worktree_instances SET state=?,updated_at=? WHERE workspace_id=? AND worktree=? AND instance_id=? AND canonical_path=? AND state=?`, contextstate.WorktreeActive, now, principal.WorkspaceID, instance.Worktree, instance.ID, canonicalPath, contextstate.WorktreeCreating)
+		if err != nil {
+			return err
+		}
+		if err := requireContextRows(result, contextstate.ErrWorktreeDeleted); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES(?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,worktree) DO UPDATE SET dir=excluded.dir,updated_at=excluded.updated_at,instance_id=excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, instance.Worktree, canonicalPath, now, now, instance.ID)
+		return err
+	})
+	return err
+}
+
+func validateWorktreeInstance(principal contextstate.Principal, instance contextstate.WorktreeInstance) error {
 	if err := principal.Validate(); err != nil {
 		return err
 	}
 	if err := instance.Validate(); err != nil || instance.IsZero() {
 		return fmt.Errorf("%w: invalid worktree instance", contextstate.ErrInvalidDTO)
 	}
+	return nil
+}
+
+func validateWorktreeInstancePath(principal contextstate.Principal, instance contextstate.WorktreeInstance, canonicalPath string) error {
+	if err := validateWorktreeInstance(principal, instance); err != nil {
+		return err
+	}
 	if !filepath.IsAbs(canonicalPath) || !contextstate.ValidSessionDir(canonicalPath) {
 		return fmt.Errorf("%w: invalid worktree path", contextstate.ErrInvalidDTO)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, principal.WorkspaceID, instance.Worktree, instance.ID, canonicalPath, contextstate.WorktreeActive, now, now); err != nil {
-			if isConstraint(err) {
-				return fmt.Errorf("%w: worktree instance already exists", contextstate.ErrWorktreeDeleted)
-			}
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO worktree_routes(workspace_id,subject_id,worktree,dir,created_at,updated_at,instance_id) VALUES(?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,worktree) DO UPDATE SET dir=excluded.dir,updated_at=excluded.updated_at,instance_id=excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, instance.Worktree, canonicalPath, now, now, instance.ID)
-		return err
-	})
-	return err
+	return nil
 }
 
 // BeginWorktreeDeletion fences the exact active physical worktree instance.

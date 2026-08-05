@@ -384,6 +384,35 @@ func (s *SQLite) Load(ctx context.Context, principal contextstate.Principal, ses
 	return snapshot, nil
 }
 
+func loadContextTx(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string, instance contextstate.WorktreeInstance) (contextstate.Snapshot, error) {
+	if !principal.IsBound() || sessionID != principal.SessionID {
+		return contextstate.Snapshot{}, contextstate.ErrPrincipalMismatch
+	}
+	row, err := readContextHeadTx(ctx, tx, principal)
+	if err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	if err := requireWorktreeSessionBinding(row.contextSessionRow, instance); err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	if row.Tombstoned {
+		return contextstate.Snapshot{}, contextstate.ErrSessionTombstoned
+	}
+	source, err := readContextSourceEvents(ctx, tx, principal)
+	if err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	active, found, err := recoverActive(ctx, tx, principal, row)
+	if err != nil {
+		return contextstate.Snapshot{}, err
+	}
+	snapshot := contextstate.Snapshot{Revision: row.Revision(), Binding: row.Binding(), Source: source, Tombstoned: false}
+	if found {
+		snapshot.Active = active
+	}
+	return snapshot, nil
+}
+
 type contextOperationRecord struct {
 	Fingerprint string
 	Kind        string

@@ -294,7 +294,11 @@ func (m *tuiModel) applyWorktreeConfirm() {
 			break
 		}
 		if err := vcs.RemoveWithPrefix(context.Background(), wtDir, wt.Name, worktreeConfig.BranchPrefix); err != nil {
-			d.setNotice("delete failed: "+err.Error(), true)
+			if reactivateErr := reactivateManagedWorktree(wtDir, instance); reactivateErr != nil {
+				d.setNotice("delete failed: "+err.Error()+"; session lifecycle recovery failed: "+reactivateErr.Error(), true)
+			} else {
+				d.setNotice("delete failed: "+err.Error(), true)
+			}
 			break
 		}
 		if err := finishManagedWorktreeRemovalForSession(m.session, wtDir, instance); err != nil {

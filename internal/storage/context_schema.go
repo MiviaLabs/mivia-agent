@@ -3,18 +3,9 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
-const currentContextSchemaVersion = 7
-
-func sqliteDSN(path string) string {
-	separator := "?"
-	if strings.Contains(path, "?") {
-		separator = "&"
-	}
-	return path + separator + "_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
-}
+const currentContextSchemaVersion = 8
 
 func migrateContextSchema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
@@ -34,7 +25,7 @@ func migrateContextSchema(db *sql.DB) error {
 		return fmt.Errorf("context schema version %d is newer than supported version %d", version, currentContextSchemaVersion)
 	}
 	if version == currentContextSchemaVersion {
-		return ensureContextSchemaV7(db)
+		return ensureContextSchemaV8(db)
 	}
 	if version == 0 {
 		if err := applyContextSchemaV1(db); err != nil {
@@ -73,7 +64,13 @@ func migrateContextSchema(db *sql.DB) error {
 		version = 6
 	}
 	if version == 6 {
-		return applyContextSchemaV7(db)
+		if err := applyContextSchemaV7(db); err != nil {
+			return err
+		}
+		version = 7
+	}
+	if version == 7 {
+		return applyContextSchemaV8(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
 }
@@ -130,6 +127,11 @@ func repairContextSchema(db *sql.DB) error {
 		}
 		if v == 7 {
 			if err := ensureContextSchemaV7(db); err != nil {
+				return err
+			}
+		}
+		if v == 8 {
+			if err := ensureContextSchemaV8(db); err != nil {
 				return err
 			}
 		}
@@ -197,6 +199,8 @@ func contextVersionTable(v int) string {
 		return "worktree_routes"
 	case 7:
 		return "worktree_instances"
+	case 8:
+		return "worktree_catalog_keys"
 	default:
 		return ""
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -25,6 +26,9 @@ func TestWorktreeSessionCatalogFencesDeletingInstance(t *testing.T) {
 		t.Fatal("SQLite does not implement WorktreeSessionCatalog")
 	}
 	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	if err := catalog.BeginWorktreeCreation(context.Background(), principal, instance, "/repo/.mivia/worktrees/wt-a"); err != nil {
+		t.Fatalf("BeginWorktreeCreation: %v", err)
+	}
 	if err := catalog.RegisterWorktreeInstance(context.Background(), principal, instance, "/repo/.mivia/worktrees/wt-a"); err != nil {
 		t.Fatalf("RegisterWorktreeInstance: %v", err)
 	}
@@ -63,6 +67,131 @@ func TestWorktreeSessionCatalogFencesDeletingInstance(t *testing.T) {
 		}
 		if count != 0 {
 			t.Fatalf("%s retains %d deleted rows", table, count)
+		}
+	}
+}
+
+func TestWorktreeCreationLifecycleActivatesOnlyItsCreatingInstance(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	path := "/repo/.mivia/worktrees/wt-a"
+	if _, err := store.db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES(?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, principal.WorkspaceID, instance.Worktree, instance.ID, path, contextstate.WorktreeCreating); err != nil {
+		t.Fatalf("seed creating instance: %v", err)
+	}
+	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, path); err != nil {
+		t.Fatalf("RegisterWorktreeInstance: %v", err)
+	}
+	var state string
+	if err := store.db.QueryRow(`SELECT state FROM worktree_instances WHERE workspace_id=? AND worktree=? AND instance_id=?`, principal.WorkspaceID, instance.Worktree, instance.ID).Scan(&state); err != nil {
+		t.Fatalf("select worktree instance: %v", err)
+	}
+	if state != string(contextstate.WorktreeActive) {
+		t.Fatalf("state = %q, want %q", state, contextstate.WorktreeActive)
+	}
+	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, path); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("second RegisterWorktreeInstance = %v, want ErrWorktreeDeleted", err)
+	}
+}
+
+func TestLoadWorktreeRejectsAnotherActiveInstance(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	second := contextstate.WorktreeInstance{Worktree: "wt-b", ID: "wt_fedcba0987654321"}
+	for _, instance := range []contextstate.WorktreeInstance{first, second} {
+		path := "/repo/.mivia/worktrees/" + instance.Worktree
+		if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t), WorktreeInstance: first}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadWorktree(context.Background(), principal, principal.SessionID, second); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		t.Fatalf("LoadWorktree with another instance = %v, want ErrWorktreeDeleted", err)
+	}
+}
+
+func TestWorktreeSnapshotsWithSameNameRemainSeparate(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instances := []contextstate.WorktreeInstance{{Worktree: "wt-a", ID: "wt_1234567890abcdef"}, {Worktree: "wt-b", ID: "wt_fedcba0987654321"}}
+	for _, instance := range instances {
+		path := "/repo/.mivia/worktrees/" + instance.Worktree
+		if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, path); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveSession(context.Background(), principal, "same", []byte(`[{"role":"user"}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Worktree: instance.Worktree, WorktreeInstance: instance}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, instance := range instances {
+		data, _, err := store.LoadWorktreeSession(context.Background(), principal, "same", instance)
+		if err != nil || string(data) != `[{"role":"user"}]` {
+			t.Fatalf("LoadWorktreeSession(%s) = %q, %v", instance.Worktree, data, err)
+		}
+		infos, err := store.ListWorktreeSessions(context.Background(), principal, instance)
+		if err != nil || len(infos) != 1 || infos[0].Name != "same" {
+			t.Fatalf("ListWorktreeSessions(%s) = %#v, %v", instance.Worktree, infos, err)
+		}
+	}
+}
+
+func TestWorktreeAdmissionsWithSameNameRemainSeparate(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instances := []contextstate.WorktreeInstance{{Worktree: "wt-a", ID: "wt_1234567890abcdef"}, {Worktree: "wt-b", ID: "wt_fedcba0987654321"}}
+	for index, instance := range instances {
+		path := "/repo/.mivia/worktrees/" + instance.Worktree
+		if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, path); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveWorktreeSessionAdmission(context.Background(), principal, "same", contextstate.SessionAdmission{Agent: "agent", Digest: "digest", Names: []string{fmt.Sprintf("tool-%d", index)}}, instance); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, instance := range instances {
+		record, err := store.LoadWorktreeSessionAdmission(context.Background(), principal, "same", instance)
+		if err != nil || len(record.Names) != 1 || record.Names[0] != fmt.Sprintf("tool-%d", index) {
+			t.Fatalf("LoadWorktreeSessionAdmission(%s) = %#v, %v", instance.Worktree, record, err)
 		}
 	}
 }

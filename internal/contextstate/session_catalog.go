@@ -70,9 +70,14 @@ type WorktreeRouteCatalog interface {
 // WorktreeSessionCatalog controls a managed worktree session lifecycle.
 // The caller supplies the immutable instance to prevent same-name reuse.
 type WorktreeSessionCatalog interface {
+	BeginWorktreeCreation(context.Context, Principal, WorktreeInstance, string) error
 	RegisterWorktreeInstance(context.Context, Principal, WorktreeInstance, string) error
+	AbandonWorktreeCreation(context.Context, Principal, WorktreeInstance) error
 	BeginWorktreeDeletion(context.Context, Principal, WorktreeInstance) error
 	DeleteWorktreeSessions(context.Context, Principal, WorktreeInstance) (int, error)
+	LoadWorktreeSession(context.Context, Principal, string, WorktreeInstance) ([]byte, SessionCatalogInfo, error)
+	ListWorktreeSessions(context.Context, Principal, WorktreeInstance) ([]SessionCatalogInfo, error)
+	DeleteWorktreeSessionSnapshot(context.Context, Principal, string, WorktreeInstance) error
 }
 
 // SessionAdmission is a named session's deferred-tool admission record (plan

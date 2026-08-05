@@ -83,16 +83,13 @@ func runWorktreeCreate(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree create: %w", err)
 	}
-	worktree, err := vcs.CreateWithPrefix(context.Background(), repoRoot, args[0], baseRef, worktreeConfig.BranchPrefix)
+	worktree, err := createManagedWorktree(repoRoot, args[0], baseRef, worktreeConfig.BranchPrefix)
 	if err != nil {
 		var exists vcs.WorktreeExistsError
 		if errors.As(err, &exists) {
 			return fmt.Errorf("worktree create: %w; use worktree adopt NAME for an existing worktree", err)
 		}
 		return fmt.Errorf("worktree create: %w", err)
-	}
-	if _, err := registerManagedWorktree(repoRoot, worktree); err != nil {
-		return fmt.Errorf("worktree create: created %q at %s but could not register its session lifecycle: %w", worktree.Name, worktree.Path, err)
 	}
 	fmt.Fprintf(stdout, "created worktree %q at %s\n", worktree.Name, worktree.Path)
 	return nil

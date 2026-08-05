@@ -7,13 +7,27 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 // ListSessions returns metadata for all saved sessions, sorted by most recently updated.
 func (s *Session) ListSessions() ([]SessionInfo, error) {
 	if catalog, principal, ok := s.contextCatalogState(); ok {
-		infos, err := catalog.ListSessions(context.Background(), principal)
+		s.mu.RLock()
+		instance := s.contextWorktree
+		s.mu.RUnlock()
+		var infos []contextstate.SessionCatalogInfo
+		var err error
+		if !instance.IsZero() {
+			scoped, scopedOK := catalog.(contextstate.WorktreeSessionCatalog)
+			if !scopedOK {
+				return nil, fmt.Errorf("worktree session catalog is not configured")
+			}
+			infos, err = scoped.ListWorktreeSessions(context.Background(), principal, instance)
+		} else {
+			infos, err = catalog.ListSessions(context.Background(), principal)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -61,6 +75,16 @@ func (s *Session) DeleteSession(name string) error {
 		catalog, principal, ok := s.contextCatalogState()
 		if !ok {
 			return fmt.Errorf("context session catalog is not configured")
+		}
+		s.mu.RLock()
+		instance := s.contextWorktree
+		s.mu.RUnlock()
+		if !instance.IsZero() {
+			scoped, scopedOK := catalog.(contextstate.WorktreeSessionCatalog)
+			if !scopedOK {
+				return fmt.Errorf("worktree session catalog is not configured")
+			}
+			return scoped.DeleteWorktreeSessionSnapshot(context.Background(), principal, sanitizeSessionName(name), instance)
 		}
 		return catalog.DeleteSessionSnapshot(context.Background(), principal, sanitizeSessionName(name))
 	}

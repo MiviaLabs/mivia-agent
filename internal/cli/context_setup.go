@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -92,16 +94,100 @@ func registerManagedWorktreeInStore(store *storage.SQLite, root string, wt *vcs.
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
-	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, wt.Path); err != nil {
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, wt.Path); err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
-	if err := writeWorktreeMarker(wt.Path, instance); err != nil {
-		if beginErr := store.BeginWorktreeDeletion(context.Background(), principal, instance); beginErr == nil {
-			_, _ = store.DeleteWorktreeSessions(context.Background(), principal, instance)
-		}
+	if err := completeManagedWorktreeCreationInStore(store, root, wt, instance); err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
 	return instance, nil
+}
+
+func completeManagedWorktreeCreationInStore(store *storage.SQLite, root string, wt *vcs.WorktreeInfo, instance contextstate.WorktreeInstance) error {
+	if wt == nil || wt.Name != instance.Worktree {
+		return fmt.Errorf("worktree creation does not match its instance")
+	}
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return err
+	}
+	marker, err := readWorktreeMarker(wt.Path)
+	if err == nil && marker != instance {
+		return fmt.Errorf("worktree marker does not match its creation instance")
+	}
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := writeWorktreeMarker(wt.Path, instance); err != nil {
+			return err
+		}
+	}
+	return store.RegisterWorktreeInstance(context.Background(), principal, instance, wt.Path)
+}
+
+// createManagedWorktree reserves lifecycle state before it creates Git state.
+// A retry completes a retained creation with the same instance ID.
+func createManagedWorktree(root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, error) {
+	store, err := openRepositoryContextStore(root)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	return createManagedWorktreeInStore(store, root, name, baseRef, branchPrefix)
+}
+
+func createManagedWorktreeInStore(store *storage.SQLite, root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, error) {
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return nil, err
+	}
+	sanitised, err := vcs.SanitizeName(name)
+	if err != nil {
+		return nil, err
+	}
+	expectedPath := filepath.Join(workspace.WorktreesDir(root), sanitised)
+	instance, err := newManagedWorktreeInstance(sanitised)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, expectedPath); err != nil {
+		creating, findErr := store.CreatingWorktreeInstance(context.Background(), principal, sanitised)
+		if findErr != nil || filepath.Clean(creating.CanonicalPath) != filepath.Clean(expectedPath) {
+			return nil, err
+		}
+		worktree, resolveErr := vcs.Resolve(context.Background(), root, sanitised)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if worktree == nil || filepath.Clean(worktree.Path) != filepath.Clean(expectedPath) {
+			if worktree == nil {
+				if err := store.AbandonWorktreeCreation(context.Background(), principal, creating.Instance); err != nil {
+					return nil, err
+				}
+				return createManagedWorktreeInStore(store, root, name, baseRef, branchPrefix)
+			}
+			return nil, fmt.Errorf("worktree creation recovery requires Git worktree %q", expectedPath)
+		}
+		if err := completeManagedWorktreeCreationInStore(store, root, worktree, creating.Instance); err != nil {
+			return nil, err
+		}
+		return worktree, nil
+	}
+	worktree, err := vcs.CreateWithPrefix(context.Background(), root, sanitised, baseRef, branchPrefix)
+	if err != nil {
+		if abandonErr := store.AbandonWorktreeCreation(context.Background(), principal, instance); abandonErr != nil {
+			return nil, fmt.Errorf("%w; clear creation reservation: %v", err, abandonErr)
+		}
+		return nil, err
+	}
+	if filepath.Clean(worktree.Path) != filepath.Clean(expectedPath) {
+		return nil, fmt.Errorf("created worktree path does not match its reserved path")
+	}
+	if err := completeManagedWorktreeCreationInStore(store, root, worktree, instance); err != nil {
+		return nil, err
+	}
+	return worktree, nil
 }
 
 func registerManagedWorktreeForSession(sess *chat.Session, root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {

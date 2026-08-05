@@ -271,8 +271,17 @@ func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) 
 	if !foundWorktreeSession {
 		t.Fatalf("worktree session %q is missing from shared catalog: %#v", worktreeID, infos)
 	}
-	assertRepositoryCatalogSessions(t, repoRoot, invocation, rootID, worktreeID)
-	assertSessionRestart(t, model, infos, rootID, repoRoot)
+	assertRepositoryCatalogSessions(t, repoRoot, invocation, rootID)
+	assertSessionAbsent(t, infos, rootID)
+}
+
+func assertSessionAbsent(t *testing.T, infos []chat.SessionInfo, sessionID string) {
+	t.Helper()
+	for _, info := range infos {
+		if info.Name == sessionID {
+			t.Fatalf("session %q unexpectedly appears in scoped list: %#v", sessionID, infos)
+		}
+	}
 }
 
 func assertRepositoryCatalogSessions(t *testing.T, repoRoot string, invocation chatInvocation, sessionIDs ...string) {
