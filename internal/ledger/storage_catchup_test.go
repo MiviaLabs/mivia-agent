@@ -26,6 +26,10 @@ func (c *countingStore) Append(ctx context.Context, e storage.Event) error {
 	return c.inner.Append(ctx, e)
 }
 
+func (c *countingStore) AppendClaimed(ctx context.Context, e storage.Event, holder string) error {
+	return c.inner.AppendClaimed(ctx, e, holder)
+}
+
 func (c *countingStore) Events(ctx context.Context, runID string) ([]storage.Event, error) {
 	events, err := c.inner.Events(ctx, runID)
 	c.mu.Lock()

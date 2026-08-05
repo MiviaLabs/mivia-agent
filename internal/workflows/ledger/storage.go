@@ -26,11 +26,9 @@ import (
 // watermark). During catch-up this repository reads foreign runs' events as
 // no-ops and advances its own watermark for them.
 //
-// Concurrency: every mutation is serialized per run (per-run mutex) and is
-// performed under the run's execution claim (caller-held; ClaimRun fences
-// cross-process writers). Mutations apply to the in-memory projection first,
-// append the event, and on append failure ROLL BACK the projection mutation
-// then catch up before returning.
+// Concurrency: every mutation is serialized per run. A claimed run accepts
+// writes only from its claim holder. Mutations apply to the in-memory
+// projection first, append the event, and roll back on an append failure.
 //
 // Recovery semantics: an interrupted synthetic workflow resumes with the same
 // snapshot and one complete audit trail. Recover classifies runs and clears
@@ -356,7 +354,13 @@ func (s *StorageRepository) nextSequence(runID string) uint64 {
 // runs with s.mu held) and rebuilds the run's projection from the store so
 // the in-memory state matches durable state before returning.
 func (s *StorageRepository) appendEvent(ctx context.Context, evt storage.Event, rollback func()) error {
-	err := s.store.Append(ctx, evt)
+	s.mu.RLock()
+	holder := s.claimedRuns[evt.RunID]
+	s.mu.RUnlock()
+	err := s.store.AppendClaimed(ctx, evt, holder)
+	if errors.Is(err, storage.ErrClaimHeld) {
+		err = ErrClaimHeld
+	}
 
 	s.mu.Lock()
 	if err == nil && uint64(evt.Sequence) > s.applied[evt.RunID] {
@@ -413,82 +417,3 @@ func (s *StorageRepository) rollbackAndRebuild(ctx context.Context, runID string
 	}
 	_ = s.catchUpRunLocked(ctx, runID)
 }
-
-// ClaimRun acquires the exclusive execution claim on a run. Returns
-// ErrClaimHeld if another holder owns it. Same-holder refresh succeeds.
-func (s *StorageRepository) ClaimRun(ctx context.Context, runID, holder string) error {
-	if err := s.checkOpen(); err != nil {
-		return err
-	}
-	if err := s.store.ClaimRun(ctx, runID, holder); err != nil {
-		if errors.Is(err, storage.ErrClaimHeld) {
-			return ErrClaimHeld
-		}
-		return err
-	}
-	s.mu.Lock()
-	s.claimedRuns[runID] = holder
-	s.mu.Unlock()
-	return nil
-}
-
-// ReleaseRun releases the claim; only the current holder may. Returns
-// ErrClaimNotHeld otherwise.
-func (s *StorageRepository) ReleaseRun(ctx context.Context, runID, holder string) error {
-	if err := s.checkOpen(); err != nil {
-		return err
-	}
-	if err := s.store.ReleaseClaim(ctx, runID, holder); err != nil {
-		if errors.Is(err, storage.ErrClaimNotHeld) {
-			return ErrClaimNotHeld
-		}
-		return err
-	}
-	s.mu.Lock()
-	delete(s.claimedRuns, runID)
-	s.mu.Unlock()
-	return nil
-}
-
-// ClearRunClaim force-releases any claim regardless of holder (explicit
-// operator force-release for stale claims; Recover clears claims only on
-// terminal runs).
-func (s *StorageRepository) ClearRunClaim(ctx context.Context, runID string) error {
-	if err := s.checkOpen(); err != nil {
-		return err
-	}
-	if err := s.store.ClearClaim(ctx, runID); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	delete(s.claimedRuns, runID)
-	s.mu.Unlock()
-	return nil
-}
-
-// StoreContent persists bytes under a content-addressed reference
-// (shared content store; idempotent).
-func (s *StorageRepository) StoreContent(ctx context.Context, ref string, data []byte) error {
-	if err := s.checkOpen(); err != nil {
-		return err
-	}
-	return s.store.PutContent(ctx, ref, data)
-}
-
-// LoadContent retrieves stored bytes. Returns ErrContentNotFound if absent.
-func (s *StorageRepository) LoadContent(ctx context.Context, ref string) ([]byte, error) {
-	if err := s.checkOpen(); err != nil {
-		return nil, err
-	}
-	data, err := s.store.GetContent(ctx, ref)
-	if err != nil {
-		if errors.Is(err, storage.ErrContentNotFound) {
-			return nil, ErrContentNotFound
-		}
-		return nil, err
-	}
-	return data, nil
-}
-
-// Ensure StorageRepository implements Repository at compile time.
-var _ Repository = (*StorageRepository)(nil)

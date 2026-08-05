@@ -41,6 +41,9 @@ type Event struct {
 
 type Store interface {
 	Append(context.Context, Event) error
+	// AppendClaimed appends an event when its run is unclaimed or holder owns
+	// the current claim. It returns ErrClaimHeld when another holder owns it.
+	AppendClaimed(ctx context.Context, event Event, holder string) error
 	Events(context.Context, string) ([]Event, error)
 	// EventsSince returns the events of a run whose sequence is strictly
 	// greater than afterSequence, ordered by ascending sequence. It is the
@@ -102,6 +105,20 @@ func NewMemory() *Memory {
 func (m *Memory) Append(_ context.Context, e Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.appendLocked(e)
+}
+
+// AppendClaimed atomically checks the run claim and appends the event.
+func (m *Memory) AppendClaimed(_ context.Context, e Event, holder string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if claim, ok := m.claims[e.RunID]; ok && (holder == "" || claim.Holder != holder) {
+		return ErrClaimHeld
+	}
+	return m.appendLocked(e)
+}
+
+func (m *Memory) appendLocked(e Event) error {
 	if _, ok := m.ids[e.ID]; ok {
 		return ErrDuplicate
 	}
@@ -204,6 +221,9 @@ func (m *Memory) ListRunIDs(_ context.Context) ([]string, error) {
 func (m *Memory) Close() error { return nil }
 
 func (m *Memory) ClaimRun(_ context.Context, runID, holder string) error {
+	if holder == "" {
+		return ErrClaimNotHeld
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.claims[runID]

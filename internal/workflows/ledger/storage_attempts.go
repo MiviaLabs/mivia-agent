@@ -28,7 +28,7 @@ func (s *StorageRepository) CreateStepAttempt(ctx context.Context, attempt StepA
 		return ErrNotFound
 	}
 	for _, a := range p.Attempts {
-		if a.StepID == attempt.StepID && a.AttemptNo == attempt.AttemptNo {
+		if a.AttemptID == attempt.AttemptID || (a.StepID == attempt.StepID && a.AttemptNo == attempt.AttemptNo) {
 			s.mu.Unlock()
 			return ErrDuplicate
 		}
@@ -157,6 +157,10 @@ func (s *StorageRepository) CompleteStepAttempt(ctx context.Context, runID, atte
 		s.mu.Unlock()
 		return ErrInvalidTransition
 	}
+	if outcomeHasRoute(outcome) && (outcome.Status == AttemptStatusInterrupted || outcome.Status == AttemptStatusCanceled || outcome.Status == AttemptStatusTimedOut) {
+		s.mu.Unlock()
+		return ErrInvalidTransition
+	}
 	now := s.now()
 	payload, rollback, err := s.applyAttemptCompletionLocked(&p, idx, outcome, now, runID, attemptID)
 	stepID := p.Attempts[idx].StepID
@@ -176,6 +180,10 @@ func (s *StorageRepository) CompleteStepAttempt(ctx context.Context, runID, atte
 		Payload:  payload,
 	}
 	return s.appendEvent(ctx, evt, rollback)
+}
+
+func outcomeHasRoute(outcome AttemptOutcome) bool {
+	return outcome.ToStepID != "" || outcome.TransitionIndex != 0 || outcome.MatchDigest != "" || len(outcome.DecisionJSON) != 0
 }
 
 // applyAttemptCompletionLocked applies a terminal outcome to the cached

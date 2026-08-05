@@ -64,7 +64,9 @@ func (s *StorageRepository) Recover(ctx context.Context) ([]RecoveredRun, error)
 	for _, c := range classified {
 		out = append(out, c.run)
 		if c.clearClaim {
-			_ = s.store.ClearClaim(ctx, c.run.RunID)
+			if err := s.store.ClearClaim(ctx, c.run.RunID); err != nil {
+				return out, err
+			}
 			s.mu.Lock()
 			delete(s.claimedRuns, c.run.RunID)
 			s.mu.Unlock()
