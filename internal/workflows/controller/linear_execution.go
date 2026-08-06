@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
@@ -52,6 +54,30 @@ func (c *LinearController) reconcileTerminalAttempt(ctx context.Context, run wor
 	}
 }
 
+// runStepWithTransientRetry runs the step's agent, retrying transient
+// LLM-provider failures (overload, rate limit, upstream 5xx, or a
+// prompt-too-long from accumulated child context) with a FRESH subagent run:
+// re-running the whole step resets the child's accumulated context, and the
+// coordinator dedupes on TaskID, so a new identity is minted per retry. The
+// step attempt is persisted only after the final outcome, so the retry
+// budget never leaks extra attempts into the ledger. Real agent failures
+// (schema, binding, refusal) do not match the transient markers and fail
+// immediately, preserving the "agent failures use on_failure" contract.
+func (c *LinearController) runStepWithTransientRetry(ctx context.Context, req AgentStepRequest, attempt workflowledger.StepAttempt, step definition.Step) (AgentStepResult, error) {
+	result, runErr := c.Runner.RunStep(ctx, req)
+	for i := 0; runErr != nil && i < maxTransientStepRetries && isTransientProviderError(runErr); i++ {
+		log.Printf("workflow: run %s step %s attempt %d transient provider failure: %v; retrying in %s", c.RunID, step.ID, attempt.AttemptNo, runErr, stepTransientRetryBackoff(i))
+		select {
+		case <-ctx.Done():
+			return AgentStepResult{}, ctx.Err()
+		case <-time.After(stepTransientRetryBackoff(i)):
+			req.TaskID = newWorkflowTaskID()
+			result, runErr = c.Runner.RunStep(ctx, req)
+		}
+	}
+	return result, runErr
+}
+
 func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, runtime StepRuntime, attempt workflowledger.StepAttempt, attempts []workflowledger.StepAttempt) (workflowledger.RunSnapshot, bool, error) {
 	stepInputs, evidence, err := c.contextForStep(ctx, step, attempts)
 	if err != nil {
@@ -71,7 +97,7 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 		}
 	}
 	req := AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, Skill: step.Skill, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: maxStepContextBytes, OutputSchema: runtime.Schema}
-	result, runErr := c.Runner.RunStep(ctx, req)
+	result, runErr := c.runStepWithTransientRetry(ctx, req, attempt, step)
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
 	status := classifyStepStatus(runErr, result.Status)
@@ -173,4 +199,43 @@ func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.R
 	defer cancel()
 	_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{}, workflowledger.AttemptStatusFailed, RouteDecision{})
 	return c.fail(writeCtx, run, cause)
+}
+
+// maxTransientStepRetries bounds step-level retries for transient
+// LLM-provider failures. Each retry re-runs the whole subagent step with a
+// fresh task identity and a fresh child context.
+const maxTransientStepRetries = 2
+
+// transientProviderMarkers identify retryable LLM-provider transport errors:
+// overload/rate limits, upstream 5xx, and prompt-too-long (the latter comes
+// from accumulated child context, which a fresh subagent run clears). Real
+// agent failures (schema, binding, refusal) do not match and fail
+// immediately.
+var transientProviderMarkers = []string{
+	"HTTP 429", "temporarily overloaded", "rate limited", "overloaded",
+	"HTTP 400", "prompt too long",
+	"HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504",
+	"service unavailable", "upstream", "connection reset", "EOF",
+}
+
+func isTransientProviderError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, marker := range transientProviderMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// stepTransientRetryBackoff is the backoff schedule between step-level
+// transient retries; overridable in tests.
+var stepTransientRetryBackoff = func(attempt int) time.Duration {
+	if attempt <= 0 {
+		return 5 * time.Second
+	}
+	return 20 * time.Second
 }
