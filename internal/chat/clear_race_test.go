@@ -42,8 +42,8 @@ func historyBlob(s *Session) string {
 // satisfied myTurn == s.turnID and won - restoring the whole prior
 // conversation, which SaveAfterTurn then persisted to disk and to __last__.
 //
-// The TUI makes this reachable: slash commands are dispatched before the
-// "waiting" check, so /clear runs while the agent goroutine is mid-turn.
+// The TUI now guards /clear with the same waiting check as /new and /load,
+// so this session-layer fence is defense-in-depth for direct session users.
 func TestClearIsNotUndoneByInFlightTurn(t *testing.T) {
 	sess := NewSession(&config.Resolved{Model: "m"}, &fakeCompleter{out: "reply"})
 	sess.SystemPrompt = "SYS"

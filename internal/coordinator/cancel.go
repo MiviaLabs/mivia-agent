@@ -145,28 +145,32 @@ func (c *coordinator) cancelRecoveredWithDeadline(ctx context.Context, h *RunHan
 }
 
 func (c *coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {
-	// A recovered run may still carry the crashed executor's claim row.
-	// Every mutation below is claim-fenced (AppendClaimed), so the stale
-	// claim must be taken FIRST: probe, clear only a held claim once, and
-	// refuse if another live executor holds it. A recovered run's prior
-	// owner is dead by definition, so the bounded clear is safe here.
-	probe := "wfcancel-" + newEventID()
-	if err := c.repo.ClaimRun(ctx, h.runID, probe); err != nil {
+	// A recovered run may still carry a claim row left by the executor that
+	// created or resumed it. Every mutation below is claim-fenced
+	// (AppendClaimed), so the claim must be probed FIRST with OUR holder:
+	// ClaimRun succeeds only when the run is unclaimed or already ours, and
+	// returns ErrClaimHeld when another executor holds it.
+	//
+	// A held claim is REFUSED outright - cancelRecovered never calls
+	// ClearRunClaim. The task-status discriminator is unsound: a live
+	// executor can hold the claim with all tasks still queued (e.g. during
+	// retry backoff), so clearing a held claim would fence a LIVE owner
+	// mid-flight - its next fenced append/CAS would fail with ErrClaimHeld.
+	// This is deliberately fail-closed: a crashed executor's run whose claim
+	// row survives (the process died without Close() releasing it) can no
+	// longer be cancel-recovered by a different process until a future
+	// liveness/heartbeat mechanism can distinguish a dead claim from a live
+	// one.
+	//
+	// Only a claim that is free or already ours is taken (refreshed), and it
+	// is released with our holder at the end.
+	if err := c.repo.ClaimRun(ctx, h.runID, c.holderID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
-			if err := c.repo.ClearRunClaim(ctx, h.runID); err != nil {
-				return fmt.Errorf("clear stale claim on recovered run %q: %w", h.runID, err)
-			}
-			if err := c.repo.ClaimRun(ctx, h.runID, probe); err != nil {
-				if errors.Is(err, ledger.ErrClaimHeld) {
-					return fmt.Errorf("cannot cancel recovered run %q: another executor holds it", h.runID)
-				}
-				return fmt.Errorf("re-claim recovered run %q: %w", h.runID, err)
-			}
-		} else {
-			return fmt.Errorf("claim recovered run %q: %w", h.runID, err)
+			return fmt.Errorf("cannot cancel recovered run %q: execution claim is held by another executor; refusing to clear a possibly live claim", h.runID)
 		}
+		return fmt.Errorf("claim recovered run %q: %w", h.runID, err)
 	}
-	defer func() { _ = c.repo.ReleaseRun(context.Background(), h.runID, probe) }()
+	defer func() { _ = c.repo.ReleaseRun(context.Background(), h.runID, c.holderID) }()
 	tasks, err := c.repo.ListTasks(ctx, h.runID)
 	if err != nil {
 		return fmt.Errorf("inspect recovered run for cancellation: %w", err)

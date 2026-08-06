@@ -21,9 +21,23 @@ type subscription struct {
 	cancel  context.CancelFunc
 	done    chan struct{}      // closed when delivery goroutine exits
 	flushCh chan chan struct{} // dedicated channel for flush barriers
+	// stopped is set by Delivery.Unsubscribe before cancel(). deliver() checks
+	// it at the top of every loop iteration, so a re-entrant stop makes the
+	// delivery goroutine exit promptly after the current handler returns,
+	// without re-invoking the handler for queued events. Only the Delivery
+	// path sets it: plain (external) Bus.Unsubscribe joins the goroutine, so
+	// it never needs the flag.
+	stopped atomic.Bool
+	// delivering is true while the delivery goroutine is inside handle()
+	// running a handler. Delivery.Close consults it to avoid waiting on a
+	// subscription whose delivery goroutine is running a handler: that
+	// handler may itself be parked inside a concurrent close
+	// (sync.Once.Do), so waiting on its done channel would deadlock. Such a
+	// goroutine drains and exits on its own once the handler returns.
+	delivering atomic.Bool
 }
 
-func newSubscription(ctx context.Context, h Handler, bufSize int) *subscription {
+func newSubscription(ctx context.Context, b *Bus, h Handler, bufSize int) *subscription {
 	if bufSize <= 0 {
 		bufSize = defaultBufSize
 	}
@@ -34,6 +48,12 @@ func newSubscription(ctx context.Context, h Handler, bufSize int) *subscription 
 		flushCh: make(chan chan struct{}, 1), // small buffer for flush signals
 	}
 	ctx, s.cancel = context.WithCancel(ctx)
+	if b != nil {
+		// Attach the re-entrant Delivery ticket to the handler context:
+		// handle() passes this ctx to the handler, so DeliveryFrom(ctx) can
+		// recover the handle for the subscription running the handler.
+		ctx = withDelivery(ctx, &Delivery{b: b, s: s})
+	}
 	go s.deliver(ctx)
 	return s
 }
@@ -46,6 +66,14 @@ func newSubscription(ctx context.Context, h Handler, bufSize int) *subscription 
 func (s *subscription) deliver(ctx context.Context) {
 	defer close(s.done)
 	for {
+		// A re-entrant stop (Delivery.Unsubscribe from the target's own
+		// handler) marks the subscription stopped while the delivery goroutine
+		// is busy in handle(). The current handler cannot be preempted, but
+		// once it returns this check makes the goroutine exit promptly
+		// WITHOUT re-invoking the handler for events queued behind it.
+		if s.stopped.Load() {
+			return
+		}
 		select {
 		case ev, ok := <-s.ch:
 			if !ok {
@@ -108,7 +136,12 @@ func (s *subscription) drainEvents(ctx context.Context) {
 // continues. This mirrors the codebase's own expectation (MetricsAdapter
 // recovers internally) and makes it apply to every handler uniformly.
 func (s *subscription) handle(ctx context.Context, ev Event) {
+	s.delivering.Store(true)
 	defer func() {
+		// Clear before the recover so a panicking handler also releases the
+		// delivering flag: Delivery.Close must never wait on this goroutine
+		// while it is (or was) running a handler.
+		s.delivering.Store(false)
 		if r := recover(); r != nil {
 			s.panics.Add(1)
 		}

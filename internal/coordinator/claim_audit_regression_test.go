@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,19 +31,20 @@ func auditCloseStore(t *testing.T, store *storage.SQLite) {
 	t.Cleanup(func() { _ = store.Close() })
 }
 
-// TestCancelRecoveredTakesStaleClaim pins the claim-first fix for
-// cancelRecovered: a recovered run whose claim row was left by a crashed
-// holder must be cancellable — the stale claim is probed, cleared once, and
-// re-taken before the (now claim-fenced) cancel mutations run.
-func TestCancelRecoveredTakesStaleClaim(t *testing.T) {
+// TestCancelRecoveredRefusesForeignClaim pins the fail-closed claim contract
+// for cancelRecovered: a run whose claim row is held by ANOTHER executor is
+// refused outright. The claim is never cleared (clearing it would fence a
+// possibly LIVE owner mid-flight - its fenced appends would start failing with
+// ErrClaimHeld) and the run's tasks are left untouched.
+func TestCancelRecoveredRefusesForeignClaim(t *testing.T) {
 	ctx := context.Background()
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo1 := ledger.NewBorrowedStorageLedgerRepository(store)
+	repoA := ledger.NewBorrowedStorageLedgerRepository(store)
 	now := time.Now()
-	if err := repo1.CreateRun(ctx, "K", ledger.RunSnapshot{RunID: "run-x", Status: ledger.RunStatusQueued, CreatedAt: now}); err != nil {
+	if err := repoA.CreateRun(ctx, "K", ledger.RunSnapshot{RunID: "run-x", Status: ledger.RunStatusQueued, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	task := ledger.TaskSnapshot{
@@ -50,34 +52,111 @@ func TestCancelRecoveredTakesStaleClaim(t *testing.T) {
 		Status: string(ledger.TaskStatusQueued), Version: 1, CreatedAt: now,
 		Attempts: []ledger.AttemptSnapshot{{AttemptID: "att-1", TaskID: "t1", RunID: "run-x", AttemptNum: 1, Status: string(ledger.TaskStatusQueued)}},
 	}
-	if err := repo1.CreateTask(ctx, task); err != nil {
+	if err := repoA.CreateTask(ctx, task); err != nil {
 		t.Fatal(err)
 	}
-	// Crash: the holder's claim is never released.
-	if err := store.ClaimRun(ctx, "run-x", "stale-holder"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo1.Close(); err != nil {
+	// A (holder-a) holds the execution claim - a live owner, not a crashed one.
+	if err := repoA.ClaimRun(ctx, "run-x", "holder-a"); err != nil {
 		t.Fatal(err)
 	}
 
-	repo2 := ledger.NewBorrowedStorageLedgerRepository(store)
-	c2 := coordinator.New(repo2, auditNewPool(t))
+	// B recovers the same keyed run; its Cancel must refuse the foreign claim.
+	repoB := ledger.NewBorrowedStorageLedgerRepository(store)
+	c2 := coordinator.New(repoB, auditNewPool(t))
 	h, err := c2.Spawn(ctx, []subagents.Task{{Name: "worker"}}, "K")
 	if err != nil {
-		t.Fatalf("spawn dedup onto interrupted run: %v", err)
+		t.Fatalf("spawn dedup onto claimed run: %v", err)
 	}
-	if err := c2.Cancel(ctx, h); err != nil {
-		t.Fatalf("cancelRecovered with a stale claim failed (claim-first fix): %v", err)
+	if err := c2.Cancel(ctx, h); err == nil || !strings.Contains(err.Error(), "refusing to clear a possibly live claim") {
+		t.Fatalf("cancelRecovered on a foreign claim: err = %v, want fail-closed refusal", err)
 	}
-	snap, err := c2.Inspect(ctx, h)
+	// The claim must still be held by holder-a: A's re-probe succeeds.
+	if err := repoA.ClaimRun(ctx, "run-x", "holder-a"); err != nil {
+		t.Fatalf("A claim after B's refused cancel: %v (want nil - claim still held by A)", err)
+	}
+	// The queued task is untouched.
+	taskSnap, err := repoA.GetTask(ctx, "run-x", "t1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snap.Tasks) != 1 || snap.Tasks[0].Status != string(ledger.TaskStatusCanceled) {
-		t.Fatalf("task after cancel = %+v, want canceled", snap.Tasks)
+	if taskSnap.Status != string(ledger.TaskStatusQueued) {
+		t.Fatalf("task status after refused cancel = %q, want queued", taskSnap.Status)
 	}
-	_ = repo2.Close()
+	_ = repoA.Close()
+	_ = repoB.Close()
+	auditCloseStore(t, store)
+}
+
+// TestCancelRecoveredRefusesLiveClaimOnRunningTask is the audit regression for
+// the claim-fencing fix: coordinator A holds the claim on a run whose task is
+// RUNNING (a live execution). B recovers the run via Spawn and tries to cancel
+// it. B must refuse without touching the claim or the task, and A's fenced
+// ledger operations (append/CAS) must keep working - they must NOT fail with
+// ErrClaimHeld, which is exactly what the old clear-and-retake behaviour did
+// to the live owner.
+func TestCancelRecoveredRefusesLiveClaimOnRunningTask(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoA := ledger.NewBorrowedStorageLedgerRepository(store)
+	now := time.Now()
+	if err := repoA.CreateRun(ctx, "K", ledger.RunSnapshot{RunID: "run-x", Status: ledger.RunStatusRunning, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	task := ledger.TaskSnapshot{
+		RunID: "run-x", TaskID: "t1", HandlerName: "worker", Input: json.RawMessage(`{}`),
+		Status: string(ledger.TaskStatusRunning), Version: 1, CreatedAt: now,
+		Attempts: []ledger.AttemptSnapshot{{AttemptID: "att-1", TaskID: "t1", RunID: "run-x", AttemptNum: 1, Status: string(ledger.TaskStatusRunning)}},
+	}
+	if err := repoA.CreateTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	// A holds the execution claim on a live running execution.
+	if err := repoA.ClaimRun(ctx, "run-x", "holder-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	repoB := ledger.NewBorrowedStorageLedgerRepository(store)
+	c2 := coordinator.New(repoB, auditNewPool(t))
+	h, err := c2.Spawn(ctx, []subagents.Task{{Name: "worker"}}, "K")
+	if err != nil {
+		t.Fatalf("spawn dedup onto claimed run: %v", err)
+	}
+	if err := c2.Cancel(ctx, h); err == nil || !strings.Contains(err.Error(), "refusing to clear a possibly live claim") {
+		t.Fatalf("cancelRecovered on a live claim: err = %v, want fail-closed refusal", err)
+	}
+
+	// The running task is untouched and A's claim survives B's refused cancel.
+	taskSnap, err := repoA.GetTask(ctx, "run-x", "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taskSnap.Status != string(ledger.TaskStatusRunning) {
+		t.Fatalf("task status after refused cancel = %q, want running", taskSnap.Status)
+	}
+	if err := repoA.ClaimRun(ctx, "run-x", "holder-a"); err != nil {
+		t.Fatalf("A claim after B's refused cancel: %v (want nil - claim still held by A)", err)
+	}
+	// A's fenced ledger operations still succeed: a claim-fenced append and a
+	// task CAS must NOT fail with ErrClaimHeld after B's cancel attempt (the
+	// old clear-and-retake behaviour made both fail, fencing the live owner).
+	evt := ledger.LifecycleEvent{ID: "audit-evt-1", RunID: "run-x", Kind: "task_running", TaskID: "t1", AttemptID: "att-1"}
+	if err := repoA.AppendEvent(ctx, evt); err != nil {
+		if errors.Is(err, ledger.ErrClaimHeld) {
+			t.Fatalf("A was fenced by B's cancel attempt: fenced append failed with ErrClaimHeld")
+		}
+		t.Fatalf("A fenced append after B's refused cancel: %v", err)
+	}
+	if err := repoA.CompareAndSetTaskStatus(ctx, "run-x", "t1", 1, string(ledger.TaskStatusCompleted)); err != nil {
+		if errors.Is(err, ledger.ErrClaimHeld) {
+			t.Fatalf("A was fenced by B's cancel attempt: task CAS failed with ErrClaimHeld")
+		}
+		t.Fatalf("A task CAS after B's refused cancel: %v", err)
+	}
+	_ = repoA.Close()
+	_ = repoB.Close()
 	auditCloseStore(t, store)
 }
 

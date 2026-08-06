@@ -35,11 +35,11 @@ func seededCancelRaceRun(t *testing.T, repo ledger.LedgerRepository, taskStatus 
 }
 
 // TestStartReadyCancelClaimedWithoutPoolCancel pins the startReady side of the
-// cancel race (dag.go:176-180): the queued -> running dispatch CAS loses to
+// cancel race (dag.go:205-215): the queued -> running dispatch CAS loses to
 // reconcileCancellation's queued -> cancel_requested CAS, so the task must
 // surface as canceled. Because the ledger already claimed the task while
 // poolCtx has not been canceled yet, the error falls back to context.Canceled
-// in the cancelErr == nil window (dag.go:178-179).
+// in the cancelErr == nil window (dag.go:210-212).
 func TestStartReadyCancelClaimedWithoutPoolCancel(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	c, h := seededCancelRaceRun(t, repo, string(ledger.TaskStatusCancelRequested))
@@ -69,7 +69,7 @@ func TestStartReadyCancelClaimedWithoutPoolCancel(t *testing.T) {
 }
 
 // getTaskFailingRepo fails every GetTask so isCancelClaimed's probe cannot see
-// the ledger (dag.go:197-199). It drives the unreadable-ledger branch of the
+// the ledger (dag.go:230-232). It drives the unreadable-ledger branch of the
 // cancel race: a task that cannot be proven cancel-claimed is treated as a
 // genuine failure, not silently swallowed.
 type getTaskFailingRepo struct {
@@ -80,7 +80,7 @@ func (getTaskFailingRepo) GetTask(context.Context, string, string) (ledger.TaskS
 	return ledger.TaskSnapshot{}, errors.New("simulated ledger read failure")
 }
 
-// TestIsCancelClaimedTreatsReadFailureAsNotClaimed pins dag.go:198-199: a task
+// TestIsCancelClaimedTreatsReadFailureAsNotClaimed pins dag.go:231-232: a task
 // whose current status cannot be read is NOT treated as cancel-claimed, so the
 // caller falls through to the normal failure path instead of inventing a cancel.
 func TestIsCancelClaimedTreatsReadFailureAsNotClaimed(t *testing.T) {
@@ -115,7 +115,7 @@ func TestStartReadyTreatsUnreadableLedgerAsFailure(t *testing.T) {
 	}
 }
 
-// TestMarkCanceledWithoutResultsSkipsLiveRun pins dag.go:211-212: a run whose
+// TestMarkCanceledWithoutResultsSkipsLiveRun pins dag.go:262-263: a run whose
 // context is still live is not being canceled, so markCanceledWithoutResults
 // must leave every result untouched.
 func TestMarkCanceledWithoutResultsSkipsLiveRun(t *testing.T) {
@@ -257,7 +257,7 @@ func TestMarkCanceledWithoutResultsFillsMissingResult(t *testing.T) {
 	}
 }
 
-// TestCanceledResultFallsBackToContextCanceled pins dag.go:232-233: a canceled
+// TestCanceledResultFallsBackToContextCanceled pins dag.go:306-308: a canceled
 // result carries the run's cancellation error when available and falls back to
 // context.Canceled for the window where the ledger has already claimed the task
 // but poolCtx has not been canceled yet.
@@ -298,7 +298,7 @@ func (retryCancelRaceRepo) CompareAndSetTaskStatus(context.Context, string, stri
 	return errors.New("simulated CAS loss to reconcileCancellation")
 }
 
-// TestProcessResultsCancelClaimedAfterRetryCASLoss pins dag.go:289-291: when
+// TestProcessResultsCancelClaimedAfterRetryCASLoss pins dag.go:365-367: when
 // the retry_pending CAS loses to reconcileCancellation between the initial
 // isCancelClaimed check and the CAS, the post-CAS re-check must surface the
 // task as canceled and join no spurious transition error into the run error.

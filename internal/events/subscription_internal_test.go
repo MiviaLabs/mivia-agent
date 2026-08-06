@@ -18,7 +18,7 @@ func (h *countingHandler) HandleEvent(context.Context, Event) { h.calls.Add(1) }
 func TestNewSubscriptionDefaultsTheBufferSize(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := newSubscription(ctx, &countingHandler{}, 0)
+	s := newSubscription(ctx, nil, &countingHandler{}, 0)
 	defer s.stop()
 
 	if got := cap(s.ch); got != defaultBufSize {
@@ -126,7 +126,7 @@ func TestFlushSendReturnsWhenTheGoroutineHasExited(t *testing.T) {
 	// select cases, so this used to hang about half the time.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := newSubscription(ctx, &countingHandler{}, 1)
+	s := newSubscription(ctx, nil, &countingHandler{}, 1)
 	s.stop()
 
 	assertFlushSendReturns(t, s)
@@ -176,7 +176,7 @@ func (h *panicThenCountHandler) HandleEvent(context.Context, Event) {
 // events queued after the panicking one are still delivered.
 func TestHandlerPanicIsContainedAndDeliveryContinues(t *testing.T) {
 	h := &panicThenCountHandler{}
-	s := newSubscription(context.Background(), h, 4)
+	s := newSubscription(context.Background(), nil, h, 4)
 	defer s.stop()
 
 	s.ch <- NewEvent(KindStep) // first delivery panics

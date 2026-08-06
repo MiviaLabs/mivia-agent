@@ -14,6 +14,12 @@ import (
 // Drops(). Handlers receive a cancellable context tied to bus shutdown.
 //
 // Bus is safe for concurrent use. All exported methods are goroutine-safe.
+//
+// Handlers must not call Unsubscribe, Flush, or Close directly from inside
+// HandleEvent: those methods wait on the delivery goroutine that is running
+// the handler, which deadlocks (self-join). A handler that needs to manage
+// the bus from inside HandleEvent must use the Delivery handle obtained via
+// DeliveryFrom(ctx).
 type Bus struct {
 	mu     sync.Mutex
 	subs   map[Kind][]*subscription
@@ -81,7 +87,7 @@ func (b *Bus) subscribe(kind Kind, h Handler, bufSize int) {
 	if b.closed {
 		return
 	}
-	sub := newSubscription(b.ctx, h, bufSize)
+	sub := newSubscription(b.ctx, b, h, bufSize)
 	b.subs[kind] = append(b.subs[kind], sub)
 	b.wg.Add(1)
 	go func() {
@@ -94,20 +100,30 @@ func (b *Bus) subscribe(kind Kind, h Handler, bufSize int) {
 // list. It stops the handler's delivery goroutine after draining any
 // remaining queued events. If the handler was never subscribed, this is a
 // no-op. Comparison uses pointer identity (handler == target).
+//
+// Unsubscribe blocks until the target's queued events have been drained and
+// its delivery goroutine has exited, for every caller. Handlers must NOT call
+// Unsubscribe from inside HandleEvent: joining the delivery goroutine that is
+// running the handler deadlocks. Use DeliveryFrom(ctx).Unsubscribe() instead.
 func (b *Bus) Unsubscribe(kind Kind, target Handler) {
 	if target == nil {
 		return
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	subs := b.subs[kind]
 	for i, s := range subs {
 		if s.handler == target {
-			s.stop()
 			b.subs[kind] = append(subs[:i], subs[i+1:]...)
+			b.mu.Unlock()
+			// Join outside the lock: the delivery goroutine may need to run
+			// handlers that call back into the bus, and holding b.mu across
+			// the join would deadlock them. stop() cancels the subscription
+			// context and waits for the goroutine to drain and exit.
+			s.stop()
 			return
 		}
 	}
+	b.mu.Unlock()
 }
 
 // Flush blocks until all events that were published BEFORE the Flush call
@@ -117,6 +133,13 @@ func (b *Bus) Unsubscribe(kind Kind, target Handler) {
 //
 // Use in tests and teardown paths where you need to guarantee handler state
 // reflects all prior Publish calls.
+//
+// Flush blocks for as long as a handler is still running: the barrier for a
+// subscription cannot be acknowledged until its delivery goroutine drains the
+// events published before the barrier. Handlers must NOT call Flush from
+// inside HandleEvent (the barrier waits on the handler's own goroutine, which
+// cannot ack until the handler returns). Use DeliveryFrom(ctx).Flush()
+// instead.
 func (b *Bus) Flush() {
 	b.mu.Lock()
 	seen := make(map[*subscription]struct{})
@@ -144,6 +167,18 @@ func (b *Bus) Flush() {
 // silent no-op.
 //
 // Close is idempotent and safe to call multiple times.
+//
+// Close blocks until every delivery goroutine has exited, including one that
+// is mid-handler. Handlers must NOT call Close from inside HandleEvent (the
+// wait includes the handler's own goroutine, which cannot exit until the
+// handler returns). Use DeliveryFrom(ctx).Close() instead.
+//
+// The sync.Once body only marks the bus closed and cancels the shutdown
+// context; the wait for delivery goroutines runs AFTER Do returns. Running
+// wg.Wait inside Do would let a concurrent caller parked inside Do (e.g. a
+// handler calling Delivery.Close) hold a delivery goroutine hostage: that
+// goroutine cannot exit until its handler returns, and the handler cannot
+// return until Do completes.
 func (b *Bus) Close() {
 	b.close.Do(func() {
 		b.mu.Lock()
@@ -152,10 +187,14 @@ func (b *Bus) Close() {
 		// Cancel all subscriber contexts — delivery goroutines will drain
 		// remaining queued events then exit.
 		b.cancel()
-		b.wg.Wait()
-		// Clear subscription map.
-		b.mu.Lock()
-		b.subs = nil
-		b.mu.Unlock()
 	})
+	// Drain semantics for every external caller: block until all delivery
+	// goroutines have exited. Safe to run concurrently with another Close
+	// (WaitGroup.Wait is goroutine-safe and the counter is only mutated by
+	// Subscribe, which is a no-op once b.closed is set under b.mu).
+	b.wg.Wait()
+	// Clear subscription map.
+	b.mu.Lock()
+	b.subs = nil
+	b.mu.Unlock()
 }

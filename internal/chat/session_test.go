@@ -401,7 +401,11 @@ func TestClearAndUserTurns(t *testing.T) {
 
 func TestFailedSendDropsUserTurn(t *testing.T) {
 	res := &config.Resolved{Model: "m", SystemPrompt: "sys"}
-	s := NewSession(res, &fakeCompleter{err: context.Canceled})
+	// A non-interrupted provider failure must not leave a phantom user turn in
+	// history. (context.Canceled is deliberately not used: an interrupted turn
+	// now preserves the user's message and partial answer, see
+	// TestNoMessageLossInterruptedPlainLegacyTurnIsPersisted.)
+	s := NewSession(res, &fakeCompleter{err: errors.New("provider failure")})
 	_, err := s.SendUser(context.Background(), "hi", io.Discard)
 	if err == nil {
 		t.Fatal("expected error")

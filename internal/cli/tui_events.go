@@ -55,8 +55,22 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 		if ev.TurnID != "" && m.activeTurnID != "" && ev.TurnID != m.activeTurnID {
 			return nil
 		}
-		// Prefer bridge-owned finish; only use bus if stream/tools already
-		// drained and waiting is still true after a grace path.
+		// Only finish here when the bridge is fully drained. bridge.Finish
+		// (tui_start.go) strictly precedes publishTurnEnd, so this event can
+		// arrive while the bridge still holds the final stream chunk and an
+		// unconsumed Done. Finishing now would commit only the drained prefix
+		// and lose the tail: finishStream flips waiting=false, and the later
+		// drain writes the tail into streamBuf with no one to commit it.
+		// Skip instead - the self-perpetuating pollCmd tick (80ms) drains the
+		// bridge and finishes via d.Done, so the tail lands in m.blocks.
+		// An empty/nil bridge counts as drained, keeping this as the rescue
+		// path for a lost bridge notify / bus-only TurnEnd.
+		m.mu.Lock()
+		bridge := m.bridge
+		m.mu.Unlock()
+		if bridge != nil && bridge.Pending() {
+			return nil
+		}
 		// Still finish so UI cannot stick waiting if bridge notify was lost.
 		return m.finishStream(turnEndError(ev))
 

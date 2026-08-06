@@ -59,10 +59,14 @@ func (c *LinearController) reconcileTerminalAttempt(ctx context.Context, run wor
 // prompt-too-long from accumulated child context) with a FRESH subagent run:
 // re-running the whole step resets the child's accumulated context, and the
 // coordinator dedupes on TaskID, so a new identity is minted per retry. The
-// step attempt is persisted only after the final outcome, so the retry
-// budget never leaks extra attempts into the ledger. Real agent failures
-// (schema, binding, refusal) do not match the transient markers and fail
-// immediately, preserving the "agent failures use on_failure" contract.
+// coordinator run ID is minted alongside the task ID: the idempotency key
+// encodes the TaskID (agent_step.go), so a retry with the old run ID and a
+// new key would find the key absent and collide with the existing run
+// (ErrDuplicate on the reused run ID). Real agent failures (schema, binding,
+// refusal) do not match the transient markers and fail immediately,
+// preserving the "agent failures use on_failure" contract. The step attempt
+// is persisted only after the final outcome, so the retry budget never leaks
+// extra attempts into the ledger.
 func (c *LinearController) runStepWithTransientRetry(ctx context.Context, req AgentStepRequest, attempt workflowledger.StepAttempt, step definition.Step) (AgentStepResult, error) {
 	result, runErr := c.Runner.RunStep(ctx, req)
 	for i := 0; runErr != nil && i < maxTransientStepRetries && isTransientProviderError(runErr); i++ {
@@ -72,6 +76,7 @@ func (c *LinearController) runStepWithTransientRetry(ctx context.Context, req Ag
 			return AgentStepResult{}, ctx.Err()
 		case <-time.After(stepTransientRetryBackoff(i)):
 			req.TaskID = newWorkflowTaskID()
+			req.CoordinatorRunID = coordinator.NewRunID()
 			result, runErr = c.Runner.RunStep(ctx, req)
 		}
 	}

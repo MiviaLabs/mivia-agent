@@ -403,12 +403,29 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 	if snapshot.budget > 0 && provider.MessagesTokens(prepared) > snapshot.budget {
 		return "", fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(prepared), snapshot.budget)
 	}
+	// The tee captures the already-streamed bytes: on an interrupted turn
+	// ChatStream returns "" as the reply, so the writer is the only record of
+	// the partial answer the user already read on screen. A nil caller writer
+	// (tests, headless callers) keeps the capture-only surface.
+	var captured strings.Builder
+	streamWriter := io.Writer(&captured)
+	if w != nil {
+		streamWriter = io.MultiWriter(w, &captured)
+	}
 	reply, err := snapshot.binding.Completer.ChatStream(ctx, provider.Request{
 		Model: snapshot.binding.Model, Messages: prepared, Temperature: snapshot.temperature,
 		MaxTokens: snapshot.maxTokens, Stream: true,
 		ReasoningLevel: snapshot.binding.Profile.Reasoning, ReasoningDialect: snapshot.binding.Profile.ReasoningDialect,
-	}, w)
+	}, streamWriter)
 	if err != nil {
+		// An interrupted turn (Ctrl+C / force-send / deadline) must not lose
+		// the user's message or the answer already streamed: adopt both and
+		// persist, then hand the partial back instead of the error. Only a
+		// still-current turn may persist (stale-turn fence). Non-interrupted
+		// errors keep today's drop-everything behavior.
+		if partial, ok := s.adoptInterruptedPlainTurn(ctx, err, snapshot, prepared, persistedText, captured.String()); ok {
+			return partial, nil
+		}
 		return "", err
 	}
 	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
@@ -436,50 +453,26 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 		return "", err
 	}
 	prepared := preparation.Messages
+	// The tee captures the already-streamed bytes: on an interrupted turn
+	// ChatStream returns "" as the reply, so the writer is the only record of
+	// the partial answer the user already read on screen. A nil caller writer
+	// (tests, headless callers) keeps the capture-only surface.
+	var captured strings.Builder
+	streamWriter := io.Writer(&captured)
+	if w != nil {
+		streamWriter = io.MultiWriter(w, &captured)
+	}
 	reply, err := snapshot.binding.Completer.ChatStream(ctx, provider.Request{
 		Model: snapshot.binding.Model, Messages: prepared, Temperature: snapshot.temperature,
 		MaxTokens: snapshot.maxTokens, Stream: true,
 		ReasoningLevel: snapshot.binding.Profile.Reasoning, ReasoningDialect: snapshot.binding.Profile.ReasoningDialect,
-	}, w)
+	}, streamWriter)
 	if err != nil {
-		snapshot.context.manager.PreparationManager.Discard(preparation)
-		return "", err
+		// An interrupted turn (Ctrl+C / force-send / deadline) must not lose
+		// the user's message or the answer already streamed: the interrupted
+		// branch commits the partial turn durably with OutcomeCancelled; all
+		// other errors keep today's discard-and-drop behavior.
+		return s.commitInterruptedPlainContext(ctx, err, snapshot, prepared, persistedText, captured.String(), preparation)
 	}
-	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
-		snapshot.context.manager.PreparationManager.Discard(preparation)
-		return reply, nil
-	}
-	s.contextPublishMu.Lock()
-	defer s.contextPublishMu.Unlock()
-	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
-		snapshot.context.manager.PreparationManager.Discard(preparation)
-		return reply, nil
-	}
-	candidate := cloneContextMessages(prepared)
-	userText := snapshot.messages[len(snapshot.messages)-1].Content
-	replaceNewestUserText(candidate, userText, persistedText)
-	if strings.TrimSpace(reply) != "" {
-		candidate = append(candidate, provider.Message{Role: provider.RoleAssistant, Content: reply, CreatedAt: time.Now()})
-	}
-	ordered := contextTurnMessages(candidate, userText)
-	result, err := buildContextTurnResult(ctx, snapshot.context, &preparation, candidate, ordered, snapshot.myTurn)
-	if err == nil {
-		err = snapshot.context.manager.Commit(ctx, preparation, result)
-	}
-	if err != nil {
-		snapshot.context.manager.PreparationManager.Discard(preparation)
-		return "", err
-	}
-	s.mu.Lock()
-	if !s.tokenCurrentLocked(snapshot.token) {
-		s.mu.Unlock()
-		snapshot.context.manager.PreparationManager.Discard(preparation)
-		return reply, ErrStaleOperation
-	}
-	s.Messages = candidate
-	s.contextHead = nextContextRevision(preparation, result)
-	s.mu.Unlock()
-	snapshot.context.manager.PreparationManager.Discard(preparation)
-	s.emitContextCompaction(preparation, snapshot.myTurn)
-	return reply, nil
+	return s.commitPlainContextTurn(ctx, reply, snapshot, prepared, persistedText, preparation)
 }

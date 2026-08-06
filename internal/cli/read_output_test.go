@@ -8,6 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -293,5 +294,127 @@ func TestTruncationNoticeToReadOutputRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(failOut, "truncated: kept ") {
 		t.Fatalf("failed store dropped notice: %q", failOut)
+	}
+}
+
+// TestReadOutputRedactsOutput installs a real redaction policy first: with no
+// policy configured redact.Text is the identity function, so the assertion
+// below would pass trivially and prove nothing. Mirrors
+// TestLedgerReadRedactsOutput: read_output must redact the whole spooled body
+// before paging, or a secret in the recorded remainder reaches the model
+// verbatim.
+func TestReadOutputRedactsOutput(t *testing.T) {
+	const secret = "sk-live-abcdef0123456789"
+	policy, err := redact.Compile([]string{`sk-live-[A-Za-z0-9]+`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := redact.Current()
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(previous) })
+
+	spool, tool, principal := newReadOutputFixture(t)
+	ref := spool.Spool(context.Background(), principal, []byte("the token is "+secret+" so use it"))
+	if ref == "" {
+		t.Fatal("spool returned empty ref")
+	}
+	page, raw := callReadOutput(t, tool, principal, map[string]any{"ref": ref})
+	if page.Status != "ok" {
+		t.Fatalf("status=%q error=%q raw=%s", page.Status, page.Error, raw)
+	}
+	if strings.Contains(raw, secret) {
+		t.Fatalf("secret survived redaction: %s", raw)
+	}
+	if !strings.Contains(page.Content, "[redacted]") {
+		t.Fatalf("expected redaction placeholder in %s", raw)
+	}
+	// Bytes keeps reporting the raw spooled length, matching ledger_read.
+	if page.Bytes != len("the token is "+secret+" so use it") {
+		t.Fatalf("bytes = %d, want raw spooled length", page.Bytes)
+	}
+}
+
+// TestReadOutputPagesRedactedUTF8Content paginates across a page edge through
+// a secret and asserts the placeholder survives on every page; the rebuilt
+// stream must equal the fully redacted text. Mirrors
+// TestLedgerReadPagesRedactedUTF8Content.
+func TestReadOutputPagesRedactedUTF8Content(t *testing.T) {
+	policy, err := redact.Compile([]string{`secret-[A-Z]{6}`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := redact.Current()
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(previous) })
+
+	const source = "α secret-ABCDEF ω"
+	const redacted = "α [redacted] ω"
+	spool, tool, principal := newReadOutputFixture(t)
+	ref := spool.Spool(context.Background(), principal, []byte(source))
+	if ref == "" {
+		t.Fatal("spool returned empty ref")
+	}
+
+	var rebuilt string
+	offset := 0
+	for pageNo := 0; ; pageNo++ {
+		page, raw := callReadOutput(t, tool, principal, map[string]any{
+			"ref": ref, "offset": offset, "limit": 5,
+		})
+		if page.Status != "ok" {
+			t.Fatalf("page %d status = %q error=%q raw=%s", pageNo, page.Status, page.Error, raw)
+		}
+		if page.Offset != offset || page.Limit != 5 || page.ReturnedBytes != len(page.Content) {
+			t.Fatalf("page %d metadata = %+v", pageNo, page)
+		}
+		if !page.ContentIsData || page.Note != readOutputDataNote {
+			t.Fatalf("page %d lost untrusted-data framing: %+v", pageNo, page)
+		}
+		if strings.Contains(page.Content, "secret-") {
+			t.Fatalf("page %d leaked a secret fragment: %q", pageNo, page.Content)
+		}
+		rebuilt += page.Content
+		if !page.HasMore {
+			if page.NextOffset != nil || page.Truncated {
+				t.Fatalf("final page has continuation metadata: %+v", page)
+			}
+			break
+		}
+		if !page.Truncated || page.NextOffset == nil || *page.NextOffset <= offset {
+			t.Fatalf("page %d has invalid continuation metadata: %+v", pageNo, page)
+		}
+		offset = *page.NextOffset
+		if pageNo > len(redacted) {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if rebuilt != redacted {
+		t.Fatalf("rebuilt redacted stream = %q, want %q", rebuilt, redacted)
+	}
+}
+
+// TestReadOutputNoPolicyIsIdentity pins the fail-open contract: with no
+// redaction policy installed, read_output returns the stored bytes unchanged,
+// exactly as before redaction was wired in.
+func TestReadOutputNoPolicyIsIdentity(t *testing.T) {
+	previous := redact.Current()
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(previous) })
+
+	spool, tool, principal := newReadOutputFixture(t)
+	body := []byte("identity-keeps-everything-ABCDEF")
+	ref := spool.Spool(context.Background(), principal, body)
+	if ref == "" {
+		t.Fatal("spool returned empty ref")
+	}
+	page, _ := callReadOutput(t, tool, principal, map[string]any{"ref": ref})
+	if page.Status != "ok" {
+		t.Fatalf("status=%q", page.Status)
+	}
+	if page.Content != string(body) {
+		t.Fatalf("no-policy content = %q, want %q (identity)", page.Content, body)
+	}
+	if page.Bytes != len(body) {
+		t.Fatalf("bytes = %d, want %d", page.Bytes, len(body))
 	}
 }

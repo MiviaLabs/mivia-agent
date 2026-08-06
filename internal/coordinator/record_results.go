@@ -29,62 +29,84 @@ func (c *coordinator) recordRunResults(h *RunHandle, tasks []subagents.Task, res
 			runErr = joinError(runErr, fmt.Errorf("missing result for task %q", t.ID))
 			continue
 		}
-
-		// Get current task to find version (post-pool).
-		taskSnap, err := c.repo.GetTask(persistCtx, h.runID, t.ID)
-		if err != nil {
-			runErr = joinError(runErr, fmt.Errorf("read task %q: %w", t.ID, err))
-			continue
-		}
-
-		// A task already claimed for cancellation (cancel_requested or canceled)
-		// must finalize as canceled, never as the stale pool outcome. This is the
-		// recordRunResults side of the cancel/startReady race: the pool produced a
-		// result, then reconcileCancellation's running->cancel_requested CAS won,
-		// so a CAS to completed/failed would be an invalid transition. Override
-		// both the result surface and the ledger so they agree on a clean cancel.
-		if taskSnap.Status == string(ledger.TaskStatusCancelRequested) || taskSnap.Status == string(ledger.TaskStatusCanceled) {
-			r.Status = "canceled"
-			r.Err = h.poolCtx.Err()
-			if r.Err == nil {
-				r.Err = context.Canceled
-			}
-			resultMap[t.ID] = r
-			results[i] = r
-		}
-
-		newStatus := mapStatus(r)
-		casOK := c.tryTaskStatusCAS(persistCtx, h.runID, t.ID, taskSnap, newStatus, &runErr)
-
-		if casOK {
-			// Terminal mailbox fence (plan 53.03): reject further sends without
-			// close-on-terminal. Most terminals land here, not via transitionTask.
-			if IsTaskTerminal(newStatus) {
-				h.MarkTaskMailboxTerminal(t.ID)
-			}
-			outputRef, errorRef := resultReferences(r)
-			outputRef, errorRef = c.persistResultContent(persistCtx, outputRef, errorRef, r, &runErr)
-			if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef); err != nil {
-				runErr = joinError(runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
-			}
-
-			finished := c.nowLocked()
-			if err := c.repo.SetTaskAttempt(persistCtx, h.runID, t.ID, h.getAttempt(t.ID), newStatus, &finished); err != nil {
-				runErr = joinError(runErr, fmt.Errorf("update attempt %q: %w", t.ID, err))
-			}
-			evt := ledger.LifecycleEvent{
-				ID: newEventID(), RunID: h.runID, Kind: "task_" + newStatus,
-				TaskID: t.ID, AttemptID: h.getAttempt(t.ID),
-			}
-			if err := c.repo.AppendEvent(persistCtx, evt); err != nil {
-				runErr = joinError(runErr, fmt.Errorf("append task %q event: %w", t.ID, err))
-			} else {
-				c.emitLifecycleEvent(evt)
-			}
-		}
+		r = c.recordTaskResult(h, t, r, resultMap, persistCtx, &runErr)
+		results[i] = r
 	}
 
 	return runErr
+}
+
+// recordTaskResult finalizes a single task's result in the ledger on the same
+// terms as the inline finalize in recordRunResults: it skips "missing"
+// results, applies the cancel override, CASes the status, and persists the
+// terminal mailbox fence, output content, attempt identity, and lifecycle
+// event. Errors are joined into runErr; the possibly-overridden result is
+// returned so the caller keeps its result slice in sync.
+func (c *coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagents.Result, resultMap map[string]subagents.Result, persistCtx context.Context, runErr *error) subagents.Result {
+	// Defense in depth: a "missing" result — a never-executed task on a
+	// stolen/aborted run whose claim probe failed without settling it — must
+	// never be terminalized. mapStatus's default maps a missing result (no
+	// error) to completed, which would CAS a running task running ->
+	// completed: a stale/stolen executor durably recording a task as done
+	// it never executed. Skip entirely: no CAS, no error, and the task
+	// stays non-terminal for the owner/resume to reconcile. The same skip
+	// keeps a transient probe error from completing tasks.
+	if r.Status == "missing" {
+		return r
+	}
+
+	// Get current task to find version (post-pool).
+	taskSnap, err := c.repo.GetTask(persistCtx, h.runID, t.ID)
+	if err != nil {
+		*runErr = joinError(*runErr, fmt.Errorf("read task %q: %w", t.ID, err))
+		return r
+	}
+
+	// A task already claimed for cancellation (cancel_requested or canceled)
+	// must finalize as canceled, never as the stale pool outcome. This is the
+	// recordRunResults side of the cancel/startReady race: the pool produced a
+	// result, then reconcileCancellation's running->cancel_requested CAS won,
+	// so a CAS to completed/failed would be an invalid transition. Override
+	// both the result surface and the ledger so they agree on a clean cancel.
+	if taskSnap.Status == string(ledger.TaskStatusCancelRequested) || taskSnap.Status == string(ledger.TaskStatusCanceled) {
+		r.Status = "canceled"
+		r.Err = h.poolCtx.Err()
+		if r.Err == nil {
+			r.Err = context.Canceled
+		}
+		resultMap[t.ID] = r
+	}
+
+	newStatus := mapStatus(r)
+	casOK := c.tryTaskStatusCAS(persistCtx, h.runID, t.ID, taskSnap, newStatus, runErr)
+
+	if casOK {
+		// Terminal mailbox fence (plan 53.03): reject further sends without
+		// close-on-terminal. Most terminals land here, not via transitionTask.
+		if IsTaskTerminal(newStatus) {
+			h.MarkTaskMailboxTerminal(t.ID)
+		}
+		outputRef, errorRef := resultReferences(r)
+		outputRef, errorRef = c.persistResultContent(persistCtx, outputRef, errorRef, r, runErr)
+		if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef); err != nil {
+			*runErr = joinError(*runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
+		}
+
+		finished := c.nowLocked()
+		if err := c.repo.SetTaskAttempt(persistCtx, h.runID, t.ID, h.getAttempt(t.ID), newStatus, &finished); err != nil {
+			*runErr = joinError(*runErr, fmt.Errorf("update attempt %q: %w", t.ID, err))
+		}
+		evt := ledger.LifecycleEvent{
+			ID: newEventID(), RunID: h.runID, Kind: "task_" + newStatus,
+			TaskID: t.ID, AttemptID: h.getAttempt(t.ID),
+		}
+		if err := c.repo.AppendEvent(persistCtx, evt); err != nil {
+			*runErr = joinError(*runErr, fmt.Errorf("append task %q event: %w", t.ID, err))
+		} else {
+			c.emitLifecycleEvent(evt)
+		}
+	}
+	return r
 }
 
 // persistResultContent stores the output and error bytes in the

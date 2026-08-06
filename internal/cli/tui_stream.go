@@ -250,6 +250,27 @@ func (b *streamBridge) PushStep(detail string) {
 	b.signal()
 }
 
+// Pending reports whether the bridge still holds undrained UI content
+// (stream text, tool events, thinking, interim speech, step detail, an
+// unconsumed RevokeStream directive, or a Finish that Drain has not seen).
+// Unlike Drain, it is non-consuming: the state is left intact so the next
+// pollCmd tick can still deliver it and finish via Done. An empty or nil
+// bridge counts as drained.
+func (b *streamBridge) Pending() bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.pending.Len() > 0 ||
+		len(b.tools) > 0 ||
+		b.thinking.Len() > 0 ||
+		b.interim.Len() > 0 ||
+		b.stepDetail != "" ||
+		b.resetStream ||
+		b.done
+}
+
 // Drain returns and clears pending UI state.
 func (b *streamBridge) Drain() bridgeDrain {
 	b.mu.Lock()
