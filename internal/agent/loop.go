@@ -132,9 +132,35 @@ func (l *Loop) emitStep(opts Options, step int) {
 // is still awaiting results would drop the call and orphan the results appended
 // afterwards: the request would stay valid (RepairToolPairing discards them)
 // but the model would silently lose the output it asked for.
-func (l *Loop) pruneHistory(opts Options) {
+func (l *Loop) pruneHistory(opts Options, toolSpecs []provider.ToolSpec) {
 	beforeTokens := provider.MessagesTokens(l.Messages)
-	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, opts.MaxContextTokens)
+	if opts.MaxContextTokens > 0 {
+		schemaCost := 0
+		if len(toolSpecs) > 0 {
+			if cost, err := provider.EstimateToolSchemaCost(toolSpecs); err == nil {
+				schemaCost = cost
+			}
+		}
+		// The rejection check (promptBudgetErrorWithTools) prices content,
+		// message frames, and tool schemas, while PruneMessagesKeepTurns
+		// accounts content only. Prune with the same accounting so a history
+		// at the boundary is trimmed instead of rejected: pass 1 drops old
+		// turns by content minus schema cost, pass 2 trims to the exact
+		// frame- and schema-aware target of the remaining set.
+		pass1 := opts.MaxContextTokens - schemaCost
+		if pass1 < 1 {
+			pass1 = 1
+		}
+		l.Messages = provider.PruneMessagesKeepTurns(l.Messages, pass1)
+		overhead := provider.EstimateMessagesPromptCost(l.Messages, 0) - provider.MessagesTokens(l.Messages)
+		target := opts.MaxContextTokens - schemaCost - overhead
+		if target < 1 {
+			target = 1
+		}
+		if provider.MessagesTokens(l.Messages) > target {
+			l.Messages = provider.PruneMessagesKeepTurns(l.Messages, target)
+		}
+	}
 	afterTokens := provider.MessagesTokens(l.Messages)
 	if afterTokens >= beforeTokens {
 		return
