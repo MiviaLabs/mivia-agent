@@ -103,5 +103,5 @@ func (c *LinearController) timeoutOpenHumanAttempt(ctx context.Context, run work
 	if !found || workflowledger.IsTerminalAttemptStatus(attempt.Status) {
 		return nil
 	}
-	return CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{}, workflowledger.AttemptStatusTimedOut, RouteDecision{})
+	return CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(ctx, c.Repo, context.DeadlineExceeded)}, workflowledger.AttemptStatusTimedOut, RouteDecision{})
 }

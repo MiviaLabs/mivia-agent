@@ -211,6 +211,7 @@ func (s *StorageRepository) applyAttemptCompletionLocked(p *Projection, idx int,
 	cur.TaskID = taskID
 	cur.OutputRef = outcome.OutputRef
 	cur.OutputDigest = outcome.OutputDigest
+	cur.ErrorRef = outcome.ErrorRef
 	cur.ToStepID = outcome.ToStepID
 	cur.TransitionIndex = outcome.TransitionIndex
 	cur.MatchDigest = outcome.MatchDigest
@@ -254,6 +255,7 @@ func (s *StorageRepository) applyAttemptCompletionLocked(p *Projection, idx int,
 		TaskID:           taskID,
 		OutputRef:        outcome.OutputRef,
 		OutputDigest:     outcome.OutputDigest,
+		ErrorRef:         outcome.ErrorRef,
 		ToStepID:         outcome.ToStepID,
 		TransitionIndex:  outcome.TransitionIndex,
 		MatchDigest:      outcome.MatchDigest,

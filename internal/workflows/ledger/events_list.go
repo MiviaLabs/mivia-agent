@@ -106,8 +106,8 @@ func summarizeEvent(ev storage.Event) (EventRecord, bool) {
 		if err != nil {
 			return EventRecord{}, false
 		}
-		summary = fmt.Sprintf("attempt completed: %s -> %s (transition %d, match %s, output %s)",
-			p.Status, p.ToStepID, p.TransitionIndex, shortDigest(p.MatchDigest), shortRef(p.OutputRef))
+		summary = fmt.Sprintf("attempt completed: %s -> %s (transition %d, match %s, output %s%s)",
+			p.Status, p.ToStepID, p.TransitionIndex, shortDigest(p.MatchDigest), shortRef(p.OutputRef), errorRefSummary(p.ErrorRef))
 		createdAt = p.CreatedAt
 	case eventKindLoopIncremented:
 		p, err := unmarshalLoopIncremented(ev.Payload)
@@ -155,6 +155,14 @@ func summarizeEvent(ev storage.Event) (EventRecord, bool) {
 		CreatedAt: createdAt,
 		Summary:   truncateSummary(summary),
 	}, true
+}
+
+// errorRefSummary renders the error reference suffix for an attempt summary.
+func errorRefSummary(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	return " error " + ref
 }
 
 // shortDigest renders a digest prefix for display; empty stays empty.

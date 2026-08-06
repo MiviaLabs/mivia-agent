@@ -64,7 +64,7 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 		}
 		writeCtx, cancel := stepPersistenceContext(ctx)
 		defer cancel()
-		_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, workflowledger.AttemptStatusFailed, route)
+		_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output, ErrorRef: storeErrorText(writeCtx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route)
 		return c.fail(writeCtx, run, err)
 	}
 	writeCtx, cancel := stepPersistenceContext(ctx)
@@ -83,14 +83,15 @@ func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflo
 	defer cancel()
 	if !result.Repairable() {
 		route := failureRoute(step)
-		if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, workflowledger.AttemptStatusFailed, route); err != nil {
+		hostErr := fmt.Errorf("verifier %q has a host failure", step.Verifier)
+		if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output, ErrorRef: storeErrorText(writeCtx, c.Repo, hostErr)}, workflowledger.AttemptStatusFailed, route); err != nil {
 			return c.fail(writeCtx, run, err)
 		}
-		return c.fail(writeCtx, run, fmt.Errorf("verifier %q has a host failure", step.Verifier))
+		return c.fail(writeCtx, run, hostErr)
 	}
 	route, err := c.selectEvidenceFailureRoute(ctx, step, outputMap)
 	if err != nil {
-		if completeErr := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
+		if completeErr := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output, ErrorRef: storeErrorText(writeCtx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
 			return c.fail(writeCtx, run, completeErr)
 		}
 		return c.fail(writeCtx, run, err)

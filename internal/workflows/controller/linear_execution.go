@@ -63,17 +63,31 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 	var timeout time.Duration
 	if runtime.Agent.TimeoutSeconds != nil {
 		timeout = time.Duration(*runtime.Agent.TimeoutSeconds) * time.Second
+	} else if run.DeadlineAt != nil {
+		// No per-agent timeout configured: derive one from the remaining run
+		// deadline so the agent cannot outlive the run it belongs to (D1).
+		if remaining := run.DeadlineAt.Sub(c.now()); remaining > 0 {
+			timeout = remaining
+		}
 	}
 	req := AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, Skill: step.Skill, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: 32 << 10, OutputSchema: runtime.Schema}
 	result, runErr := c.Runner.RunStep(ctx, req)
+	writeCtx, cancel := stepPersistenceContext(ctx)
+	defer cancel()
 	status := workflowledger.AttemptStatusSucceeded
 	if runErr != nil {
+		// Classify the failure: the child status (when the runner reports it)
+		// is authoritative for timeouts/cancels; otherwise map the error. A
+		// timed-out attempt is not a failed attempt (D2).
 		status = workflowledger.AttemptStatusFailed
-		if errors.Is(runErr, context.Canceled) {
-			status = workflowledger.AttemptStatusCanceled
-		} else if errors.Is(runErr, context.DeadlineExceeded) {
+		if errors.Is(runErr, context.DeadlineExceeded) || result.Status == "timed_out" {
 			status = workflowledger.AttemptStatusTimedOut
+		} else if errors.Is(runErr, context.Canceled) || result.Status == "canceled" {
+			status = workflowledger.AttemptStatusCanceled
 		}
+	}
+	if runErr != nil {
+		result.ErrorRef = storeErrorText(writeCtx, c.Repo, runErr)
 	}
 	route := RouteDecision{}
 	if runErr == nil {
@@ -94,8 +108,6 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 		// Infrastructure/schema/agent failures use on_failure, never repair loops.
 		route = failureRoute(step)
 	}
-	writeCtx, cancel := stepPersistenceContext(ctx)
-	defer cancel()
 	if status == workflowledger.AttemptStatusSucceeded {
 		if err = c.completeSucceededRoute(writeCtx, attempt, result, route); err != nil {
 			if isLoopAccountError(err) {
