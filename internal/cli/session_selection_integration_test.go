@@ -30,7 +30,7 @@ func persistedSessionForSelection(t *testing.T) (*chat.Session, *config.Resolved
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
-	if err := configureChatWorkspace(sess, root, true, "", config.ToolsConfig{}); err != nil {
+	if err := configureChatWorkspace(sess, root, true, res); err != nil {
 		t.Fatalf("configure workspace: %v", err)
 	}
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {

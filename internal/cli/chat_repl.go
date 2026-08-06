@@ -37,13 +37,22 @@ func chatFlags(args []string) (noTools, plainUI, staleBypass bool, rest []string
 	return noTools, plainUI, staleBypass, rest
 }
 
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavilyKey string, tc config.ToolsConfig) error {
+// configureChatWorkspace installs the session tool registry for chat.
+// res supplies tool policy and the subagent store path so Phase 7 workflow
+// tools open the same ledger as CLI workflow commands.
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved) error {
 	if !useTools {
 		return nil
 	}
 	ws, err := workspace.Open(root)
 	if err != nil {
 		return fmt.Errorf("workspace: %w", err)
+	}
+	var tc config.ToolsConfig
+	var tavilyKey string
+	if res != nil {
+		tc = res.Tools
+		tavilyKey = res.TavilyAPIKey
 	}
 	opts := tools.DefaultOptions{
 		Workspace:                ws,
@@ -73,7 +82,8 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		SearchIgnorePatterns: tc.SearchIgnorePatterns,
 	}
 	// Phase 7: attach in-process workflow tools when .mivia/workflows/ exists.
-	wireWorkflowToolOptions(&opts, ws.Abs, nil)
+	// Pass res so the store path matches prepareWorkflowRun / CLI commands.
+	wireWorkflowToolOptions(&opts, ws.Abs, res)
 	sess.Tools = tools.NewDefaultRegistry(opts)
 	return nil
 }

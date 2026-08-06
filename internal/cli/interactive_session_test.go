@@ -99,9 +99,8 @@ func openInteractiveAgentSession(t *testing.T, root string, comp provider.Comple
 		// empty allowlist means no program may run, so the tool is absent).
 		// Supply one so the default path mirrors a workspace that can run
 		// programs and the helper's registry includes run_command.
-		if err := configureChatWorkspace(sess, root, true, "", config.ToolsConfig{
-			RunAllowlist: []string{"sh"},
-		}); err != nil {
+		res.Tools.RunAllowlist = []string{"sh"}
+		if err := configureChatWorkspace(sess, root, true, res); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -232,7 +231,7 @@ func TestInteractiveAgentSession_DefaultWiringRegistersDelegation(t *testing.T) 
 	res := &config.Resolved{Model: "test-model", SystemPrompt: "sys", Subagents: config.DefaultSubagentConfig}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
-	if err := configureChatWorkspace(sess, root, true, "", config.ToolsConfig{}); err != nil {
+	if err := configureChatWorkspace(sess, root, true, res); err != nil {
 		t.Fatal(err)
 	}
 	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents, &agentSessionState{AllowProjectSkills: true}, nil, sessionRouting{})

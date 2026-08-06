@@ -217,7 +217,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
 	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
-	if err := configureChatWorkspace(sess, wsRoot, useTools, res.TavilyAPIKey, res.Tools); err != nil {
+	if err := configureChatWorkspace(sess, wsRoot, useTools, res); err != nil {
 		return err
 	}
 	applySelectedAgentPrompt(sess, res, agentState.Selected)

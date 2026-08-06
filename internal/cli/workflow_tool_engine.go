@@ -6,25 +6,29 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+// sessionCancelWait is how long Cancel waits for an in-process controller to
+// drop its claim after context cancel before settling the ledger.
+const sessionCancelWait = 3 * time.Second
 
 // sessionWorkflowEngine is the production Engine for chat-session workflow tools.
 // New runs use the full CLI admission path (providers, worktrees, coordinator)
 // and return the run ID without waiting for terminal state.
+// Cancel and Deliver use the same CLI ledger/worktree paths as the operator
+// commands — not localengine delivery against the caller workspace root.
 type sessionWorkflowEngine struct {
 	root       string
 	configPath string
-	// Local backs cancel/deliver ledger paths when the session store is open.
-	// It must not run agent steps without an explicit NewRunner (fail-closed).
-	Local *localengine.Engine
 
 	mu     sync.Mutex
 	active map[string]*sessionActiveRun
@@ -36,16 +40,12 @@ type sessionActiveRun struct {
 	closeFn func()
 }
 
-// newSessionWorkflowEngine builds the chat-session workflow engine over repo.
-func newSessionWorkflowEngine(root, configPath string, repo workflowledger.Repository) *sessionWorkflowEngine {
+// newSessionWorkflowEngine builds the chat-session workflow engine.
+func newSessionWorkflowEngine(root, configPath string) *sessionWorkflowEngine {
 	return &sessionWorkflowEngine{
 		root:       root,
 		configPath: configPath,
-		Local: &localengine.Engine{
-			WorkspaceRoot: root,
-			Repo:          repo,
-		},
-		active: make(map[string]*sessionActiveRun),
+		active:     make(map[string]*sessionActiveRun),
 	}
 }
 
@@ -272,23 +272,53 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 	return agenttools.StartResult{RunID: p.runID, Status: string(fresh.Status), Workflow: p.workflow, Resumed: true}, nil
 }
 
-// Cancel implements agenttools.Engine.
-func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agenttools.CancelResult, error) {
+// stopActive cancels an in-process controller for runID and waits until it
+// exits (or the wait bound fires). It must run before claim clear / CancelRun
+// so the dying controller is not racing ledger settlement.
+func (e *sessionWorkflowEngine) stopActive(ctx context.Context, runID string) {
+	if e == nil {
+		return
+	}
 	e.mu.Lock()
-	if active, ok := e.active[runID]; ok {
-		active.cancel()
-	}
+	active, ok := e.active[runID]
 	e.mu.Unlock()
-	if e.Local != nil {
-		return e.Local.Cancel(ctx, runID)
+	if !ok || active == nil {
+		return
 	}
-	repo, closeFn, err := openWorkflowReportContext(e.root, e.configPath)
+	active.cancel()
+	select {
+	case <-active.done:
+	case <-ctx.Done():
+	case <-time.After(sessionCancelWait):
+	}
+}
+
+// Cancel implements agenttools.Engine.
+// It stops any in-process controller first, then settles via the same
+// execution-lock + CancelRun path as `mivia workflow cancel`.
+func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agenttools.CancelResult, error) {
+	if e == nil {
+		return agenttools.CancelResult{}, fmt.Errorf("workflow engine is nil")
+	}
+	if strings.TrimSpace(runID) == "" {
+		return agenttools.CancelResult{}, fmt.Errorf("run_id is required")
+	}
+	e.stopActive(ctx, runID)
+	releaseExecution, repo, closeFn, err := openWorkflowResolutionContext(e.root, e.configPath, runID)
 	if err != nil {
 		return agenttools.CancelResult{}, err
 	}
 	defer closeFn()
-	_ = repo.ClearRunClaim(ctx, runID)
+	defer releaseExecution()
+	if err := repo.ClearRunClaim(ctx, runID); err != nil {
+		return agenttools.CancelResult{}, fmt.Errorf("clear workflow claim: %w", err)
+	}
 	if err := controller.CancelRun(ctx, repo, runID); err != nil {
+		// Context cancel or a prior settle may already leave the run terminal.
+		run, getErr := repo.GetRun(ctx, runID)
+		if getErr == nil && workflowledger.IsTerminalRunStatus(run.Status) {
+			return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
+		}
 		return agenttools.CancelResult{}, err
 	}
 	run, err := repo.GetRun(ctx, runID)
@@ -299,15 +329,24 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 }
 
 // Deliver implements agenttools.Engine.
+// Publication uses the CLI deliver path (run-owned worktree + execution lock).
+// It never delivers from the caller workspace root via localengine.
 func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allowPublish bool) (agenttools.DeliverResult, error) {
+	if e == nil {
+		return agenttools.DeliverResult{}, fmt.Errorf("workflow engine is nil")
+	}
+	if strings.TrimSpace(runID) == "" {
+		return agenttools.DeliverResult{}, fmt.Errorf("run_id is required")
+	}
 	if !allowPublish {
 		return agenttools.DeliverResult{RunID: runID, Refused: true, Reason: "delivery requires allow_publish=true"}, nil
 	}
-	if e.Local != nil {
-		return e.Local.Deliver(ctx, runID, allowPublish)
-	}
 	var stdout, stderr strings.Builder
 	if err := executeWorkflowDeliver(runID, e.root, e.configPath, allowPublish, &stdout, &stderr); err != nil {
+		// Prefer structured status when the ledger still opens after a refusal.
+		if result, ok := sessionDeliverResultFromLedger(ctx, e.root, e.configPath, runID, err); ok {
+			return result, nil
+		}
 		return agenttools.DeliverResult{}, err
 	}
 	repo, closeFn, err := openWorkflowReportContext(e.root, e.configPath)
@@ -315,11 +354,36 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 		return agenttools.DeliverResult{RunID: runID, Status: "unknown"}, nil
 	}
 	defer closeFn()
-	run, err := repo.GetRun(ctx, runID)
-	if err != nil {
+	run, getErr := repo.GetRun(ctx, runID)
+	if getErr != nil {
 		return agenttools.DeliverResult{RunID: runID, Status: "unknown"}, nil
 	}
-	return agenttools.DeliverResult{RunID: runID, Status: string(run.Status)}, nil
+	result := agenttools.DeliverResult{RunID: runID, Status: string(run.Status)}
+	if rec, recErr := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(run.RunID, run.WorkflowDigest)); recErr == nil {
+		result.URL = rec.URL
+		result.Mode = rec.Mode
+	}
+	return result, nil
+}
+
+func sessionDeliverResultFromLedger(ctx context.Context, root, configPath, runID string, deliverErr error) (agenttools.DeliverResult, bool) {
+	repo, closeFn, err := openWorkflowReportContext(root, configPath)
+	if err != nil {
+		return agenttools.DeliverResult{}, false
+	}
+	defer closeFn()
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return agenttools.DeliverResult{}, false
+	}
+	// delivery_failed after a host refusal is a settled outcome, not a tool error.
+	if run.Status == workflowledger.RunStatusDeliveryFailed {
+		return agenttools.DeliverResult{
+			RunID: runID, Status: string(run.Status),
+			Refused: true, Reason: deliverErr.Error(),
+		}, true
+	}
+	return agenttools.DeliverResult{}, false
 }
 
 func inputsToRawFlags(inputs map[string]any) []string {
@@ -338,34 +402,37 @@ func inputsToRawFlags(inputs map[string]any) []string {
 	return out
 }
 
+// workflowToolSubagentConfig resolves the store config used by workflow tools.
+// It matches CLI workflow commands: prefer the session Resolved config, else
+// load the workspace config, then apply the workspace store-root default.
+func workflowToolSubagentConfig(root string, res *config.Resolved) config.SubagentConfig {
+	if res != nil {
+		applyWorkflowStoreRoot(res, root)
+		return res.Subagents
+	}
+	configPath := workflowConfigPath(root, "")
+	loaded, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	if err != nil || loaded == nil {
+		return config.DefaultSubagentConfig
+	}
+	applyWorkflowStoreRoot(loaded, root)
+	return loaded.Subagents
+}
+
 // wireWorkflowToolOptions attaches Phase 7 workflow tools to DefaultOptions
-// when the workspace has .mivia/workflows/. The service opens the shared
-// workflow store for reads; the engine drives run/cancel/deliver in-process.
+// when the workspace has .mivia/workflows/. Reads open the same store path as
+// CLI workflow commands. Run/cancel/deliver use the session engine (CLI paths).
 func wireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved) {
 	if opts == nil || !agenttools.HasWorkflows(root) {
 		return
 	}
-	cfg := config.DefaultSubagentConfig
-	if res != nil {
-		applyWorkflowStoreRoot(res, root)
-		cfg = res.Subagents
-	}
+	cfg := workflowToolSubagentConfig(root, res)
 	configPath := workflowConfigPath(root, "")
 	repoFactory := func(context.Context) (workflowledger.Repository, func(), error) {
 		_, repo, closeFn, err := openWorkflowStore(root, cfg)
 		return repo, closeFn, err
 	}
-	// Open one store for the engine. Background controllers keep it for the
-	// process lifetime (same model as the session ledger). Do not close it here.
-	_, repo, _, err := openWorkflowStore(root, cfg)
-	if err != nil {
-		svc, svcErr := agenttools.NewService(agenttools.ServiceOptions{Repo: repoFactory})
-		if svcErr == nil {
-			opts.WorkflowTools = wrapWorkflowTools(svc)
-		}
-		return
-	}
-	engine := newSessionWorkflowEngine(root, configPath, repo)
+	engine := newSessionWorkflowEngine(root, configPath)
 	svc, err := agenttools.NewService(agenttools.ServiceOptions{
 		Engine: engine,
 		Repo:   repoFactory,
