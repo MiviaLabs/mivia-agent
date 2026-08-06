@@ -8,11 +8,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
-// MaxTitleBytes bounds one rendered pull-request title.
-const MaxTitleBytes = 4096
+// DefaultMaxTitleBytes is the default limit for rendered pull-request titles.
+// Zero or negative values in the workflow TOML are replaced by this default.
+const DefaultMaxTitleBytes = 65536
 
-// MaxCommitBytes bounds one rendered commit message.
-const MaxCommitBytes = 32768
+// DefaultMaxCommitMessageBytes is the default limit for rendered commit messages.
+// Zero or negative values in the workflow TOML are replaced by this default.
+const DefaultMaxCommitMessageBytes = 1048576
 
 // Policy is the snapshotted delivery policy of one workflow run. It is derived
 // from the admitted compiled workflow (snapshot DefinitionTOML), never from a
@@ -24,6 +26,16 @@ type Policy struct {
 	Base                  string
 	TitleTemplate         string
 	CommitMessageTemplate string
+	MaxTitleBytes         int
+	MaxCommitMessageBytes int
+}
+
+// clampMax returns v when positive, otherwise def.
+func clampMax(v, def int) int {
+	if v > 0 {
+		return v
+	}
+	return def
 }
 
 // FromCompiled returns the delivery policy of a compiled workflow and whether
@@ -40,6 +52,8 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		Base:                  d.Base,
 		TitleTemplate:         d.TitleTemplate,
 		CommitMessageTemplate: d.CommitMessageTemplate,
+		MaxTitleBytes:         clampMax(d.MaxTitleBytes, DefaultMaxTitleBytes),
+		MaxCommitMessageBytes: clampMax(d.MaxCommitMessageBytes, DefaultMaxCommitMessageBytes),
 	}, true
 }
 
@@ -64,26 +78,41 @@ func (p Policy) Validate() error {
 }
 
 // RenderTitle renders title_template against the admitted inputs.
+// If the rendered result exceeds MaxTitleBytes, it is truncated at a
+// word boundary (or byte boundary if no space exists near the limit).
 func (p Policy) RenderTitle(inputs map[string]string) (string, error) {
-	return renderTemplate(p.TitleTemplate, inputs, MaxTitleBytes, false)
+	max := clampMax(p.MaxTitleBytes, DefaultMaxTitleBytes)
+	return renderTemplate(p.TitleTemplate, inputs, max, false)
 }
 
 // RenderCommitMessage renders commit_message_template against the admitted inputs.
+// If the rendered result exceeds MaxCommitMessageBytes, it is truncated
+// at a byte boundary with "..." appended.
 func (p Policy) RenderCommitMessage(inputs map[string]string) (string, error) {
-	return renderTemplate(p.CommitMessageTemplate, inputs, MaxCommitBytes, true)
+	max := clampMax(p.MaxCommitMessageBytes, DefaultMaxCommitMessageBytes)
+	return renderTemplate(p.CommitMessageTemplate, inputs, max, true)
 }
 
-// renderTemplate expands the template against the admitted inputs, bounds both
-// a single binding and the full render, and rejects NUL/control characters in
-// the result (newlines are allowed only in commit messages).
+// renderTemplate expands the template against the admitted inputs, validates
+// the result for NUL/control characters (newlines allowed only in commit
+// messages), and truncates gracefully if the rendered output exceeds maxBytes.
 func renderTemplate(src string, inputs map[string]string, maxBytes int, allowNewline bool) (string, error) {
 	anyInputs := make(map[string]any, len(inputs))
 	for k, v := range inputs {
 		anyInputs[k] = v
 	}
-	rendered, err := template.Render(src, anyInputs, nil, maxBytes, maxBytes)
+	// Use a high per-binding cap (higher than any sane rendered output) so
+	// individual binding sizes never cause premature rejection. The overall
+	// maxBytes is enforced after rendering via truncation.
+	const unboundedBinding = 1 << 20 // 1 MiB per binding
+	rendered, err := template.Render(src, anyInputs, nil, unboundedBinding, maxBytes)
 	if err != nil {
-		return "", err
+		// The rendered-output cap inside template.Render is strict. Retry with
+		// unbounded output and truncate ourselves.
+		rendered, err = template.Render(src, anyInputs, nil, unboundedBinding, 0)
+		if err != nil {
+			return "", err
+		}
 	}
 	for _, r := range rendered {
 		if r == '\n' && allowNewline {
@@ -93,5 +122,53 @@ func renderTemplate(src string, inputs map[string]string, maxBytes int, allowNew
 			return "", fmt.Errorf("rendered template contains control character %q", r)
 		}
 	}
-	return rendered, nil
+	if len(rendered) <= maxBytes {
+		return rendered, nil
+	}
+	return truncateRendered(rendered, maxBytes, allowNewline)
+}
+
+// truncateRendered truncates rendered text to fit within maxBytes.
+// For titles (single-line), it truncates at the nearest word boundary.
+// For multi-line commit messages, it truncates at a byte boundary.
+func truncateRendered(rendered string, maxBytes int, allowNewline bool) (string, error) {
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxTitleBytes
+	}
+	if len(rendered) <= maxBytes {
+		return rendered, nil
+	}
+	if allowNewline {
+		// Byte-level truncation for commit messages.
+		truncated := rendered[:maxBytes]
+		if len(truncated) > 3 {
+			truncated = truncated[:len(truncated)-3] + "..."
+		}
+		return truncated, nil
+	}
+	// Word-boundary truncation for titles.
+	cut := maxBytes
+	if cut > len(rendered) {
+		cut = len(rendered)
+	}
+	// Try to break at the last space within the limit.
+	if lastSpace := findLastSpace(rendered, cut); lastSpace > 0 {
+		cut = lastSpace
+	}
+	return rendered[:cut], nil
+}
+
+// findLastSpace returns the index of the last space character within the first
+// limit bytes (inclusive), or 0 if none exists.
+func findLastSpace(s string, limit int) int {
+	end := limit + 1
+	if end > len(s) {
+		end = len(s)
+	}
+	for i := end - 1; i >= 0; i-- {
+		if s[i] == ' ' {
+			return i
+		}
+	}
+	return 0
 }
