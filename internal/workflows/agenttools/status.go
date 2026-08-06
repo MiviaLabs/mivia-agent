@@ -44,6 +44,7 @@ func buildStatusView(ctx context.Context, repo workflowledger.Repository, runID 
 			ToStep:           a.ToStepID,
 			OutputDigest:     a.OutputDigest,
 			OutputRef:        a.OutputRef,
+			ErrorRef:         a.ErrorRef,
 			CoordinatorRunID: a.CoordinatorRunID,
 			TaskID:           a.TaskID,
 			MatchDigest:      a.MatchDigest,
@@ -127,6 +128,7 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 		TaskID:           attempt.TaskID,
 		OutputRef:        attempt.OutputRef,
 		OutputDigest:     attempt.OutputDigest,
+		ErrorRef:         attempt.ErrorRef,
 	}
 	if len(attempt.EvidenceJSON) > 0 {
 		var evidence any

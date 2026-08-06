@@ -99,6 +99,7 @@ type AttemptView struct {
 	ToStep           string `json:"to_step,omitempty"`
 	OutputDigest     string `json:"output_digest,omitempty"`
 	OutputRef        string `json:"output_ref,omitempty"`
+	ErrorRef         string `json:"error_ref,omitempty"`
 	CoordinatorRunID string `json:"coordinator_run_id,omitempty"`
 	TaskID           string `json:"task_id,omitempty"`
 	Verdict          string `json:"verdict,omitempty"`
@@ -158,6 +159,7 @@ type InspectView struct {
 	Output            any             `json:"output,omitempty"`
 	OutputRef         string          `json:"output_ref,omitempty"`
 	OutputDigest      string          `json:"output_digest,omitempty"`
+	ErrorRef          string          `json:"error_ref,omitempty"`
 	EvidenceSelection any             `json:"evidence_selection,omitempty"`
 	Transition        *TransitionView `json:"transition,omitempty"`
 }

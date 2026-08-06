@@ -50,7 +50,8 @@ func (t *runTool) Description() string {
 		"Returns a durable run_id immediately; the controller advances in the background. " +
 		"Pass resume=true with run_id to resume an interrupted run from the durable snapshot. " +
 		"allow_publish defaults to false and is never implicit; without it a delivery-capable " +
-		"workflow settles at delivery_pending and never publishes."
+		"workflow settles at delivery_pending and never publishes. " +
+		"Available to agents by default when the workspace defines workflows; use it when a workflow fits the task."
 }
 func (t *runTool) Parameters() map[string]any {
 	return map[string]any{
@@ -125,7 +126,8 @@ func (t *statusTool) ResultBudgetBytes() int { return t.svc.budget("status") }
 func (t *statusTool) Description() string {
 	return "Report deep status for one workflow run from the durable ledger: " +
 		"state, active step, numbered attempts (output digests, routes, gate verdicts), " +
-		"loop counters, approvals, and delivery records. Read-only; does not mutate run state."
+		"loop counters, approvals, and delivery records. Read-only; does not mutate run state. " +
+		"Available to agents by default when the workspace defines workflows; use it to observe a run."
 }
 func (t *statusTool) Parameters() map[string]any {
 	return map[string]any{
@@ -166,7 +168,8 @@ func (t *eventsTool) ResultBudgetBytes() int { return t.svc.budget("events") }
 func (t *eventsTool) Description() string {
 	return "Return a paged, ordered audit trail for one workflow run: sequence, timestamp, " +
 		"kind, and a bounded detail summary. Summaries never include raw prompts or credentials. " +
-		"Read-only; does not mutate run state."
+		"Read-only; does not mutate run state. " +
+		"Available to agents by default when the workspace defines workflows; use it to audit a run."
 }
 func (t *eventsTool) Parameters() map[string]any {
 	return map[string]any{
@@ -219,7 +222,8 @@ func (t *inspectTool) ResultBudgetBytes() int { return t.svc.budget("inspect") }
 func (t *inspectTool) Description() string {
 	return "Inspect one workflow step attempt: validated output JSON, evidence selection, " +
 		"transition decision, and coordinator run/task references for tool-call tracing. " +
-		"Read-only; does not mutate run state."
+		"Read-only; does not mutate run state. " +
+		"Available to agents by default when the workspace defines workflows; use it to trace a step."
 }
 func (t *inspectTool) Parameters() map[string]any {
 	return map[string]any{
@@ -270,7 +274,8 @@ func (t *listRunsTool) Class() string          { return "read" }
 func (t *listRunsTool) ResultBudgetBytes() int { return t.svc.budget("list") }
 func (t *listRunsTool) Description() string {
 	return "List active and historical workflow runs with state, workflow name, and age. " +
-		"Optional status filter and paging. Read-only; does not mutate run state."
+		"Optional status filter and paging. Read-only; does not mutate run state. " +
+		"Available to agents by default when the workspace defines workflows; use it to find a run."
 }
 func (t *listRunsTool) Parameters() map[string]any {
 	return map[string]any{
@@ -324,7 +329,8 @@ func (t *deliverTool) ResultBudgetBytes() int { return DefaultDeliverBudgetBytes
 func (t *deliverTool) Description() string {
 	return "Perform host-owned delivery for a delivery_pending workflow run. " +
 		"Requires explicit allow_publish=true; without it the call refuses publication. " +
-		"Only eligible runs publish; other statuses are refused."
+		"Only eligible runs publish; other statuses are refused. " +
+		"Available to agents by default when the workspace defines workflows; use it to publish a settled run."
 }
 func (t *deliverTool) Parameters() map[string]any {
 	return map[string]any{
@@ -369,7 +375,8 @@ func (t *cancelTool) Class() string          { return "write" }
 func (t *cancelTool) ResultBudgetBytes() int { return DefaultCancelBudgetBytes }
 func (t *cancelTool) Description() string {
 	return "Cancel a running or waiting workflow run. Idempotent: canceling an already-terminal " +
-		"run is a no-op. delivery_pending runs must be delivered or cleaned up first."
+		"run is a no-op. delivery_pending runs must be delivered or cleaned up first. " +
+		"Available to agents by default when the workspace defines workflows; use it to stop a run."
 }
 func (t *cancelTool) Parameters() map[string]any {
 	return map[string]any{

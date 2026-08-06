@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
@@ -64,6 +65,7 @@ func recordStepResult(ctx context.Context, repo workflowledger.Repository, attem
 	outcome := workflowledger.AttemptOutcome{
 		Status: status, CoordinatorRunID: result.CoordinatorRunID, TaskID: result.TaskID,
 		EvidenceJSON: append([]byte(nil), result.EvidenceJSON...), OutputRef: outputRef,
+		ErrorRef: result.ErrorRef,
 		ToStepID: route.ToStepID, TransitionIndex: route.TransitionIndex,
 		MatchDigest: route.MatchDigest, DecisionJSON: append([]byte(nil), route.DecisionJSON...),
 	}
@@ -85,6 +87,7 @@ func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Reposit
 	outcome := workflowledger.AttemptOutcome{
 		Status: status, CoordinatorRunID: result.CoordinatorRunID, TaskID: result.TaskID,
 		EvidenceJSON: append([]byte(nil), result.EvidenceJSON...),
+		ErrorRef:     result.ErrorRef,
 		ToStepID:     route.ToStepID, TransitionIndex: route.TransitionIndex,
 		MatchDigest: route.MatchDigest, DecisionJSON: append([]byte(nil), route.DecisionJSON...),
 	}
@@ -130,6 +133,15 @@ type AgentStepResult struct {
 	Output           json.RawMessage
 	ValidatedOutput  any
 	EvidenceJSON     []byte
+	// Status is the child task's terminal status from the coordinator result
+	// ("completed", "failed", "timed_out", "canceled", "blocked"). It is
+	// empty when the step runner produced no child result (for example a
+	// pre-dispatch failure).
+	Status string
+	// ErrorRef names content-addressed failure detail for a failed attempt.
+	// It is set by the controller from the step error; an empty value means
+	// no error detail was persisted.
+	ErrorRef string
 }
 
 // SchemaValidationError marks output that fails the declared step schema.
@@ -234,7 +246,16 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 	actualTaskID := spec.TaskID
 	joined, err := r.joinWithCancellation(ctx, h)
 	if err != nil {
-		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, EvidenceJSON: evidenceJSON}, err
+		// A canceled or expired wait still carries the child outcome when the
+		// coordinator settled: keep the result so the attempt records output
+		// and status instead of a bare failure.
+		result := AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, EvidenceJSON: evidenceJSON}
+		if joined != nil {
+			if child, findErr := findResult(joined.Results, actualTaskID); findErr == nil {
+				applyChildResult(&result, child)
+			}
+		}
+		return result, err
 	}
 	if joined == nil {
 		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, EvidenceJSON: evidenceJSON}, fmt.Errorf("coordinator returned no result")
@@ -244,17 +265,34 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, EvidenceJSON: evidenceJSON}, err
 	}
 	if result.Err != nil {
-		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, EvidenceJSON: evidenceJSON}, result.Err
+		out := AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, EvidenceJSON: evidenceJSON}
+		applyChildResult(&out, result)
+		return out, result.Err
 	}
 	if joined.Err != nil {
-		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, EvidenceJSON: evidenceJSON}, joined.Err
+		// The child succeeded but run-level persistence failed. Keep the
+		// child's output and status so the attempt records them together
+		// with the step error (D3: no silent output loss).
+		out := AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, EvidenceJSON: evidenceJSON}
+		applyChildResult(&out, result)
+		return out, joined.Err
 	}
 	output := extractTaskOutput(result.Output)
 	validated, err := validateOutput(spec.StepID, output, spec.OutputSchema)
 	if err != nil {
-		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, EvidenceJSON: evidenceJSON}, err
+		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, EvidenceJSON: evidenceJSON, Status: result.Status}, err
 	}
-	return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, ValidatedOutput: validated, EvidenceJSON: evidenceJSON}, nil
+	return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, ValidatedOutput: validated, EvidenceJSON: evidenceJSON, Status: result.Status}, nil
+}
+
+// applyChildResult copies the child task's terminal status and output onto a
+// step result. Output is extracted from the result envelope like the success
+// path does.
+func applyChildResult(out *AgentStepResult, res subagents.Result) {
+	out.Status = res.Status
+	if len(res.Output) > 0 {
+		out.Output = extractTaskOutput(res.Output)
+	}
 }
 
 func extractTaskOutput(raw json.RawMessage) json.RawMessage {
@@ -278,8 +316,46 @@ func (r *CoordinatorRunner) joinWithCancellation(ctx context.Context, h *coordin
 	_ = r.Coordinator.Cancel(context.Background(), h)
 	cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _ = r.Coordinator.Join(cleanup, h)
-	return nil, err
+	// The canceled wait may still settle with the child outcome; keep it so
+	// the caller records output and status instead of a bare failure.
+	if settled, settleErr := r.Coordinator.Join(cleanup, h); settleErr == nil && settled != nil {
+		return settled, err
+	}
+	return result, err
+}
+
+// maxErrorTextBytes bounds stored failure detail for one attempt.
+const maxErrorTextBytes = 4096
+
+// storeErrorText persists a bounded, tail-truncated error message
+// content-addressed and returns its reference. It returns "" when the cause
+// is nil or persistence fails: a failed attempt must still complete, so
+// missing detail never fails the attempt CAS.
+func storeErrorText(ctx context.Context, repo workflowledger.Repository, cause error) string {
+	if cause == nil {
+		return ""
+	}
+	text := truncateTail(cause.Error(), maxErrorTextBytes)
+	ref := "sha256:" + workflowledger.DigestHex([]byte(text))
+	if err := repo.StoreContent(ctx, ref, []byte(text)); err != nil {
+		return ""
+	}
+	return ref
+}
+
+// truncateTail keeps the last max bytes of s without splitting a UTF-8 rune.
+// Error chains read wrapper-first and root cause last, so the tail preserves
+// the root cause. Truncation is deterministic: identical input yields
+// identical output and therefore an identical content reference.
+func truncateTail(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	start := len(s) - max
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
 }
 
 func validateRequest(spec AgentStepRequest) error {

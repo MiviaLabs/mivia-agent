@@ -47,7 +47,8 @@ func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, 
 	}
 	if decision == "rejected" {
 		route := failureRoute(step)
-		if err := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{}, workflowledger.AttemptStatusFailed, route); err != nil {
+		rejectErr := fmt.Errorf("human_gate step %q was rejected", step.ID)
+		if err := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(ctx, c.Repo, rejectErr)}, workflowledger.AttemptStatusFailed, route); err != nil {
 			return err
 		}
 		run, err = c.Repo.GetRun(ctx, c.RunID)
@@ -69,7 +70,7 @@ func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, 
 		if route.ToStepID == "" {
 			route = failureRoute(step)
 		}
-		if completeErr := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{Output: raw}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
+		if completeErr := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{Output: raw, ErrorRef: storeErrorText(ctx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
 			return completeErr
 		}
 		run, getErr := c.Repo.GetRun(ctx, c.RunID)

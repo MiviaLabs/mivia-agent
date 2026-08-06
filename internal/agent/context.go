@@ -18,7 +18,7 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 		}
 	}
 	if opts.PreparationManager == nil {
-		l.pruneHistory(opts)
+		l.pruneHistory(opts, toolSpecs)
 		return promptBudgetErrorWithTools(l.Messages, opts.MaxContextTokens, toolSpecs)
 	}
 	input := opts.PreparationInput

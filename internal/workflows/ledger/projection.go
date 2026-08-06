@@ -206,6 +206,7 @@ func applyAttemptCompleted(proj *Projection, st *rebuildState, ev storage.Event)
 	a.TaskID = p.TaskID
 	a.OutputRef = p.OutputRef
 	a.OutputDigest = p.OutputDigest
+	a.ErrorRef = p.ErrorRef
 	a.ToStepID = p.ToStepID
 	a.TransitionIndex = p.TransitionIndex
 	a.MatchDigest = p.MatchDigest

@@ -28,10 +28,8 @@ func buildWorkflowToolsForRegistry(opts tools.DefaultOptions) []tools.Tool {
 	if !agenttools.HasWorkflows(root) {
 		return nil
 	}
-	svc, err := agenttools.NewService(agenttools.ServiceOptions{
-		Repo: agenttools.UnsetRepoFactory,
-	})
-	if err != nil {
+	svc := workflowToolService(root, nil)
+	if svc == nil {
 		return nil
 	}
 	return wrapWorkflowTools(svc)

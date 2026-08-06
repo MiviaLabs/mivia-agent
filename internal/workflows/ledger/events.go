@@ -69,6 +69,7 @@ type attemptCompletedPayload struct {
 	TaskID           string        `json:"task_id,omitempty"`
 	OutputRef        string        `json:"output_ref,omitempty"`
 	OutputDigest     string        `json:"output_digest,omitempty"`
+	ErrorRef         string        `json:"error_ref,omitempty"`
 	ToStepID         string        `json:"to_step_id,omitempty"`
 	TransitionIndex  int           `json:"transition_index,omitempty"`
 	MatchDigest      string        `json:"match_digest,omitempty"`

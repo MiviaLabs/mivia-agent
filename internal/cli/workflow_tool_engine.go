@@ -452,12 +452,13 @@ func sessionEngineConfigPath(root string, res *config.Resolved) string {
 	return workflowConfigPath(root, "")
 }
 
-// wireWorkflowToolOptions attaches Phase 7 workflow tools to DefaultOptions
-// when the workspace has .mivia/workflows/. Reads and mutates share one config
-// identity (session ConfigPath or workspace project file).
-func wireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved) {
-	if opts == nil || !agenttools.HasWorkflows(root) {
-		return
+// workflowToolService builds the in-process workflow tool service for a
+// workspace. res carries the session config identity when available; nil
+// falls back to the workspace project config. Returns nil when the workspace
+// has no .mivia/workflows/ or the service cannot be built.
+func workflowToolService(root string, res *config.Resolved) *agenttools.Service {
+	if !agenttools.HasWorkflows(root) {
+		return nil
 	}
 	cfg := workflowToolSubagentConfig(root, res)
 	configPath := sessionEngineConfigPath(root, res)
@@ -465,12 +466,25 @@ func wireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *confi
 		_, repo, closeFn, err := openWorkflowStore(root, cfg)
 		return repo, closeFn, err
 	}
-	engine := newSessionWorkflowEngine(root, configPath)
 	svc, err := agenttools.NewService(agenttools.ServiceOptions{
-		Engine: engine,
+		Engine: newSessionWorkflowEngine(root, configPath),
 		Repo:   repoFactory,
 	})
 	if err != nil {
+		return nil
+	}
+	return svc
+}
+
+// wireWorkflowToolOptions attaches Phase 7 workflow tools to DefaultOptions
+// when the workspace has .mivia/workflows/. Reads and mutates share one config
+// identity (session ConfigPath or workspace project file).
+func wireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved) {
+	if opts == nil {
+		return
+	}
+	svc := workflowToolService(root, res)
+	if svc == nil {
 		return
 	}
 	opts.WorkflowTools = wrapWorkflowTools(svc)
