@@ -130,7 +130,10 @@ func (c *Compiled) ValidateJSONBytes(raw []byte) (any, error) {
 }
 
 // StripOneCodeFence removes at most one well-formed markdown code fence that
-// wraps the entire body. Nested or partial fences are left untouched.
+// wraps the entire body. Nested or partial fences are left untouched. The
+// opening and closing fences must carry the same number of backticks (>= 3),
+// so 4-backtick fences - the correct way to fence JSON containing backticks -
+// are handled as well as the conventional triple-backtick fence.
 func StripOneCodeFence(s string) string {
 	trimmed := strings.TrimSpace(s)
 	if !strings.HasPrefix(trimmed, "```") {
@@ -141,11 +144,17 @@ func StripOneCodeFence(s string) string {
 		// Single-line fenced body is not a well-formed multi-line fence wrap.
 		return s
 	}
-	if strings.TrimSpace(lines[len(lines)-1]) != "```" {
+	open := lines[0]
+	backticks := 0
+	for backticks < len(open) && open[backticks] == '`' {
+		backticks++
+	}
+	if backticks < 3 {
 		return s
 	}
-	// The opening line is ``` or ```lang by construction: trimmed starts with a
-	// fence, so its first line does too.
+	if strings.TrimSpace(lines[len(lines)-1]) != strings.Repeat("`", backticks) {
+		return s
+	}
 	body := lines[1 : len(lines)-1]
 	for _, line := range body {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
@@ -188,13 +197,36 @@ func FormatCorrective(validateErr error, redact func(string) string) string {
 // repairs its output shape blind and the retry budget is spent on the same
 // invalid shape.
 func FormatCorrectiveWithSchema(validateErr error, schema map[string]any, redact func(string) string) string {
-	msg := FormatCorrective(validateErr, nil)
+	// The restated schema is the point of this message: the model repairs
+	// against it, so it is built first and NEVER truncated. The validation
+	// detail is bounded to whatever budget remains; if the schema alone
+	// fills the budget, the detail gives way (a cut schema would make the
+	// retry repair blind, which is exactly the failure this fixes).
+	schemaSection := ""
 	if raw, err := json.Marshal(schema); err == nil {
-		msg += "\nThe required schema is:\n" + string(raw)
-		if len(msg) > MaxCorrectiveBytes {
-			msg = msg[:MaxCorrectiveBytes]
-		}
+		schemaSection = "\nThe required schema is:\n" + string(raw)
 	}
+	prefix := "Your previous reply did not match the required JSON schema. " +
+		"Reply again with ONLY valid JSON matching the schema. Errors:\n"
+	detail := "output does not match the required schema"
+	if validateErr != nil {
+		detail = strings.TrimPrefix(validateErr.Error(), ErrValidation.Error()+": ")
+	}
+	lines := strings.Split(detail, "\n")
+	if len(lines) > MaxValidationErrors {
+		lines = lines[:MaxValidationErrors]
+		lines = append(lines, "…")
+	}
+	joined := strings.Join(lines, "\n")
+	budget := MaxCorrectiveBytes - len(schemaSection)
+	room := budget - len(prefix)
+	if room < 0 {
+		room = 0
+	}
+	if len(joined) > room {
+		joined = joined[:room]
+	}
+	msg := prefix + joined + schemaSection
 	if redact != nil {
 		msg = redact(msg)
 	}

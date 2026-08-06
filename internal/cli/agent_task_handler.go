@@ -141,8 +141,14 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	disallowed := messagingDisallowed(h.definition.DisallowedTools)
 	injectBaselineMessaging(h.full, registry, h.opts.Config, disallowed)
 	noop := func() {}
+	// The resolved output schema must outrank skill report-shape text: skill
+	// instructions replace the agent system prompt, and without the schema in
+	// the system prompt a skill that demands its own report format wins over
+	// the workflow step's output contract (observed as schema_violation runs).
+	// The user-turn appendix stays too, but the system prompt is authoritative.
+	schemaBlock := schemaSystemAppendix(h.resolveOutputSchema(req))
 	if req.Skill == "" {
-		return withMessagingProtocol(systemPrompt), registry, noop, nil
+		return withMessagingProtocol(systemPrompt) + schemaBlock, registry, noop, nil
 	}
 	scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
 	if err != nil {
@@ -152,7 +158,35 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	// The skill's instructions replace the agent prompt, so the protocol block
 	// is appended to the skill-activated prompt instead of the resolved one.
 	// This keeps the child-side messaging contract in-context exactly once.
-	return withMessagingProtocol(prompt), scoped, closeActivation, nil
+	return withMessagingProtocol(prompt) + schemaBlock, scoped, closeActivation, nil
+}
+
+// resolveOutputSchema returns the output schema that will actually be enforced
+// for this invocation: task-level overrides skill, skill overrides the agent
+// definition. Only nil means "no schema": an empty object {} is a real schema
+// and must be enforced as declared.
+func (h *agentTaskHandler) resolveOutputSchema(req runtime.Request) map[string]any {
+	out := req.OutputSchema
+	if out == nil && req.Skill != "" && h.opts.SkillReg != nil {
+		if sk, ok := h.opts.SkillReg.Get(req.Skill); ok && sk.OutputSchema != nil {
+			out = sk.OutputSchema
+		}
+	}
+	if out == nil {
+		out = h.definition.OutputSchema
+	}
+	return out
+}
+
+// schemaSystemAppendix is the deterministic system-prompt block stating the
+// output contract. It mirrors the user-turn PromptAppendix wording so both
+// surfaces demand the same shape.
+func schemaSystemAppendix(schema map[string]any) string {
+	raw, err := json.Marshal(schema)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	return "\n\nReturn ONLY valid JSON matching this required output schema (no prose, no markdown fences):\n" + string(raw)
 }
 
 func messagingDisallowed(names []string) map[string]struct{} {
@@ -187,12 +221,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 	if h.definition.MaxTurns != nil {
 		maxSteps = *h.definition.MaxTurns
 	}
-	outSchema := h.definition.OutputSchema
-	if req.Skill != "" && h.opts.SkillReg != nil {
-		if sk, ok := h.opts.SkillReg.Get(req.Skill); ok && len(sk.OutputSchema) > 0 {
-			outSchema = sk.OutputSchema
-		}
-	}
+	outSchema := h.resolveOutputSchema(req)
 	// Steer watchdog (plan 54 §4.5): the [subagents.messaging]
 	// steer_watchdog_seconds knob bounds how long a pending steer may wait
 	// before the loop soft-interrupts the in-flight LLM call. nil means the

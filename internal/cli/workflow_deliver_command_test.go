@@ -283,7 +283,8 @@ func TestWorkflowRunGrantNoDiff(t *testing.T) {
 
 // TestWorkflowDeliverTimesOutHungGit: a git command that never returns must
 // be cancelled by the delivery timeout instead of blocking the CLI forever;
-// the attempt settles as a refusal and no PR is created.
+// a transient execution failure must NOT settle the run permanently - it
+// stays delivery_pending (retryable) and no PR is created.
 func TestWorkflowDeliverTimesOutHungGit(t *testing.T) {
 	root, storePath, config, prRecorder := newDeliveryFixture(t)
 	runID := runFixtureToDeliveryPending(t, root, config)
@@ -314,8 +315,11 @@ func TestWorkflowDeliverTimesOutHungGit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != workflowledger.RunStatusDeliveryFailed {
-		t.Fatalf("run status = %q, want delivery_failed after the eligibility timeout", run.Status)
+	// A hung git command is a RECOVERABLE execution failure, not a verified
+	// refusal: the run must stay delivery_pending so a later attempt can
+	// retry, never settle delivery_failed (which is irreversible).
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("run status = %q, want delivery_pending (retryable) after the eligibility timeout", run.Status)
 	}
 }
 

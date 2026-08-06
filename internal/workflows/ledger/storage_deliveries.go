@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -25,11 +26,33 @@ func (s *StorageRepository) UpsertDelivery(ctx context.Context, d DeliveryRecord
 	lock.Lock()
 	defer lock.Unlock()
 
+	// The retry loop absorbs a cross-instance ordinal collision: two
+	// instances over the same store can mint the same ordinal for a key
+	// before either sees the other's event. appendEvent rebuilds the
+	// projection and the ordinal bookkeeping from durable state on
+	// ErrConflict, so the second pass mints the next free ordinal and
+	// advances instead of returning a permanent conflict.
+	for attempt := 0; attempt < 2; attempt++ {
+		retry, err := s.upsertDeliveryOnce(ctx, d)
+		if retry {
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("marshal %s payload: %w", eventKindDeliveryUpserted, ErrConflict)
+}
+
+// upsertDeliveryOnce performs one delivery upsert pass under the run's
+// per-run lock. It returns retry=true when a concurrent writer on another
+// instance minted the same event ordinal and appendEvent already rebuilt the
+// projection and ordinal bookkeeping, so the caller re-runs with the next
+// free ordinal.
+func (s *StorageRepository) upsertDeliveryOnce(ctx context.Context, d DeliveryRecord) (retry bool, err error) {
 	s.mu.Lock()
 	p, ok := s.proj[d.RunID]
 	if !ok || !p.HasRun {
 		s.mu.Unlock()
-		return ErrNotFound
+		return false, ErrNotFound
 	}
 	// Cross-instance idempotency: a retry of the same upsert (same caller
 	// fields under the same idempotency key) must be absorbed without
@@ -57,7 +80,7 @@ func (s *StorageRepository) UpsertDelivery(ctx context.Context, d DeliveryRecord
 			existing.ErrorRef == d.ErrorRef &&
 			existing.DiffRef == d.DiffRef {
 			s.mu.Unlock()
-			return nil
+			return false, nil
 		}
 		break
 	}
@@ -68,7 +91,7 @@ func (s *StorageRepository) UpsertDelivery(ctx context.Context, d DeliveryRecord
 	s.mu.Unlock()
 	if err != nil {
 		s.rollbackAndRebuild(ctx, d.RunID, rollback)
-		return fmt.Errorf("marshal %s payload: %w", eventKindDeliveryUpserted, err)
+		return false, fmt.Errorf("marshal %s payload: %w", eventKindDeliveryUpserted, err)
 	}
 
 	evt := storage.Event{
@@ -79,7 +102,10 @@ func (s *StorageRepository) UpsertDelivery(ctx context.Context, d DeliveryRecord
 		Payload:  payload,
 	}
 	if err := s.appendEvent(ctx, evt, rollback); err != nil {
-		return err
+		if errors.Is(err, ErrConflict) {
+			return true, nil // appendEvent already rebuilt projection + ordinals
+		}
+		return false, err
 	}
 	// Record the ordinal only after the append succeeded, so a retry of the
 	// same upsert (same payload) mints the same event ID and is absorbed as
@@ -89,7 +115,7 @@ func (s *StorageRepository) UpsertDelivery(ctx context.Context, d DeliveryRecord
 		s.deliverySeqs[key] = ordinal
 	}
 	s.mu.Unlock()
-	return nil
+	return false, nil
 }
 
 // applyDeliveryUpsertLocked applies one delivery upsert to the cached

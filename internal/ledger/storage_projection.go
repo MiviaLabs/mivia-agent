@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -364,13 +365,26 @@ func (s *StorageLedgerRepository) isInflightLocked(runID string, sequence uint64
 // applied watermark past it so catch-up never re-reads this instance's own
 // writes. The caller updates the in-memory projection itself.
 //
+// The write is CLAIM-FENCED (store.AppendClaimed) with this instance's holder
+// for the run, mirroring the workflows ledger: once another host clears this
+// instance's claim (force-resume) and takes it, a stale executor's mutations
+// fail with ErrClaimHeld instead of corrupting the run's event history while
+// two hosts execute the same run. A fresh run has no claim row, so the
+// unclaimed create path (empty holder) still appends.
+//
 // The watermark advance and the release of the writer's in-flight claim happen
 // in one critical section, which is the same lock catch-up holds while it
 // applies events. Between the store append and that section the claim keeps
 // catch-up off the event; after it, the watermark does. There is no instant at
 // which both this writer and a catch-up would apply the same event.
 func (s *StorageLedgerRepository) appendStoreEvent(ctx context.Context, evt storage.Event) error {
-	err := s.store.Append(ctx, evt)
+	s.mu.Lock()
+	holder := s.claimedRuns[evt.RunID]
+	s.mu.Unlock()
+	err := s.store.AppendClaimed(ctx, evt, holder)
+	if errors.Is(err, storage.ErrClaimHeld) {
+		err = ErrClaimHeld
+	}
 
 	s.mu.Lock()
 	if err == nil && uint64(evt.Sequence) > s.applied[evt.RunID] {

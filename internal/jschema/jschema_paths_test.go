@@ -7,6 +7,7 @@ package jschema
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -169,6 +170,40 @@ func TestFormatCorrectiveIsBoundedAndRedactable(t *testing.T) {
 	}
 	if msg := FormatCorrective(nil, nil); !strings.Contains(msg, "does not match the required schema") {
 		t.Fatalf("nil error corrective = %q", msg)
+	}
+}
+
+func TestFormatCorrectiveWithSchemaNeverTruncatesTheSchema(t *testing.T) {
+	// A shipped-size schema plus a long error list must keep the ENTIRE
+	// schema (the point of the restatement) and give up error detail instead.
+	props := map[string]any{}
+	for i := 0; i < 20; i++ {
+		props[fmt.Sprintf("field_%02d", i)] = map[string]any{
+			"type": "string", "description": strings.Repeat("x", 40),
+		}
+	}
+	schema := map[string]any{"type": "object", "properties": props}
+	many := errors.New(strings.Repeat("line\n", MaxValidationErrors+3))
+	msg := FormatCorrectiveWithSchema(many, schema, nil)
+	if !strings.Contains(msg, `"field_19"`) || !strings.Contains(msg, `"type":"object"`) {
+		t.Fatalf("schema tail truncated by corrective (len=%d): %.120s…", len(msg), msg)
+	}
+	// The error detail must give way before the schema does: with the full
+	// schema at ~1.8KB the message necessarily exceeds the soft cap, but the
+	// errors list must be cut far below its raw length.
+	if strings.Contains(msg, "line\nline\nline\nline\nline") {
+		t.Fatalf("error detail was not bounded: %.160s", msg)
+	}
+}
+
+func TestStripOneCodeFenceHandlesFourBacktickFences(t *testing.T) {
+	in := "````json\n{\"a\":1,\"code\":\"```\"}\n````"
+	if got := StripOneCodeFence(in); got != "{\"a\":1,\"code\":\"```\"}" {
+		t.Fatalf("4-backtick fence not stripped: %q", got)
+	}
+	// Mismatched fence lengths are not a well-formed wrap: leave untouched.
+	if got := StripOneCodeFence("```json\n{\"a\":1}\n````"); got != "```json\n{\"a\":1}\n````" {
+		t.Fatalf("mismatched fence stripped: %q", got)
 	}
 }
 

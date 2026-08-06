@@ -39,6 +39,11 @@ type Engine struct {
 	mu     sync.Mutex
 	active map[string]*activeRun
 	fence  *abandonFence
+	// delivering tracks in-process deliveries per run so two concurrent
+	// workflow_deliver tool calls on the same run cannot both publish to the
+	// shared git workspace (a live claim must never be force-cleared by a
+	// sibling delivery in the same process).
+	delivering map[string]string
 }
 
 type activeRun struct {
@@ -141,21 +146,89 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	if !workflowledger.IsResumableRunStatus(run.Status) {
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q status %s is not resumable", req.RunID, run.Status)
 	}
+	// Never resume a run this engine is already executing: tearing the live
+	// run down to "resume" it would cancel mid-step work and corrupt the
+	// interrupted state it was supposed to recover. The caller must wait for
+	// the active run to settle first.
+	e.mu.Lock()
+	_, activeHere := e.active[req.RunID]
+	e.mu.Unlock()
+	if activeHere {
+		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is already executing in this engine; cancel it first", req.RunID)
+	}
 	raw, err := e.Repo.GetRunSnapshot(ctx, req.RunID)
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
-	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
+	ctrl, err := e.buildResumeController(ctx, req, run, raw)
 	if err != nil {
 		return agenttools.StartResult{}, err
+	}
+	// Claim-liveness probe: the run may be executing on ANOTHER host even
+	// though this engine is not its executor. Per-step claims mean the claim
+	// is only held while a step runs, so this probe is the resume-time
+	// exclusion check (see probeResumeClaim).
+	if err := e.probeResumeClaim(ctx, req.RunID, ctrl.Holder, req.Force); err != nil {
+		return agenttools.StartResult{}, err
+	}
+	// The probe claim uses the controller's own holder and is deliberately
+	// kept: the first Advance refreshes it (same-holder refresh), so the run
+	// stays exclusively ours across the Start handoff. If Start fails, the
+	// claim is released so the run is not left claimed by a dead attempt.
+	if err := ctrl.Start(ctx); err != nil {
+		_ = e.Repo.ReleaseRun(context.Background(), req.RunID, ctrl.Holder)
+		return agenttools.StartResult{}, err
+	}
+	e.launch(ctrl)
+	fresh, err := e.Repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return agenttools.StartResult{}, err
+	}
+	return agenttools.StartResult{RunID: req.RunID, Status: string(fresh.Status), Workflow: run.WorkflowName, Resumed: true}, nil
+}
+
+// probeResumeClaim acquires the run claim for resume with the controller's own
+// holder. Non-force resumes refuse a claimed run; force-resume clears only a
+// claim that is actually held, and only once - a second ErrClaimHeld means
+// another executor is mid-step right now, so it refuses too. A blind clear
+// would let two hosts execute the same run and duplicate every agent step.
+func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, force bool) error {
+	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
+		if errors.Is(err, workflowledger.ErrClaimHeld) && force {
+			if err := e.Repo.ClearRunClaim(ctx, runID); err != nil {
+				return err
+			}
+			if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
+				if errors.Is(err, workflowledger.ErrClaimHeld) {
+					return fmt.Errorf("workflow run %q is executing on another host; cannot force-resume", runID)
+				}
+				return err
+			}
+		} else if errors.Is(err, workflowledger.ErrClaimHeld) {
+			return fmt.Errorf("workflow run %q is executing on another host; cancel it there or force-resume", runID)
+		} else {
+			return err
+		}
+	}
+	return nil
+}
+
+// buildResumeController rebuilds a fresh controller for an interrupted run
+// from its durable snapshot: parse + compile the stored definition, restore
+// the admitted inputs, clear the abandon fence so the new controller may
+// write again after Interrupt, and re-apply the run's admission pins.
+func (e *Engine) buildResumeController(ctx context.Context, req agenttools.StartRequest, run workflowledger.RunSnapshot, raw []byte) (*controller.LinearController, error) {
+	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
+	if err != nil {
+		return nil, err
 	}
 	wf, _, err := definition.ParseWorkflowTOML(snapshot.DefinitionTOML, run.WorkflowName+".toml")
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return nil, err
 	}
 	compiled, err := compiler.CompileForResume(&wf)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return nil, err
 	}
 	inputs := make(map[string]any, len(snapshot.Inputs))
 	for k, v := range snapshot.Inputs {
@@ -171,32 +244,21 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	e.mu.Unlock()
 	ctrl, err := controller.NewLinearController(e.ctrlRepo(), e.runner(), compiled, buildStepRuntimes(compiled), inputs, req.RunID, raw)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return nil, err
 	}
 	admission := controller.Admission{
 		BaseRef: run.BaseRef, BaseCommit: run.BaseCommit, WorktreeName: run.WorktreeName,
 		InputDigest: run.InputDigest, DeadlineAt: run.DeadlineAt, RemoteURL: run.RemoteURL,
 	}
 	if err := ctrl.SetAdmission(admission); err != nil {
-		return agenttools.StartResult{}, err
+		return nil, err
 	}
 	if req.Force {
 		if err := ctrl.SetForceResume(true); err != nil {
-			return agenttools.StartResult{}, err
-		}
-		if err := e.Repo.ClearRunClaim(ctx, req.RunID); err != nil {
-			return agenttools.StartResult{}, err
+			return nil, err
 		}
 	}
-	if err := ctrl.Start(ctx); err != nil {
-		return agenttools.StartResult{}, err
-	}
-	e.launch(ctrl)
-	fresh, err := e.Repo.GetRun(ctx, req.RunID)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	return agenttools.StartResult{RunID: req.RunID, Status: string(fresh.Status), Workflow: run.WorkflowName, Resumed: true}, nil
+	return ctrl, nil
 }
 
 func (e *Engine) launch(ctrl *controller.LinearController) {
@@ -217,7 +279,15 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 	}
 	go func() {
 		defer close(done)
-		_, _ = ctrl.Run(runCtx)
+		_, runErr := ctrl.Run(runCtx)
+		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+			// Surface the failure instead of silently dropping it: a
+			// claim-contention or step error that stops the run must not
+			// look like a healthy no-op resume. Best-effort settle to
+			// failed so the run reaches a terminal state the operator can
+			// act on.
+			e.settleRunFailure(ctrl.RunID, runErr)
+		}
 		e.mu.Lock()
 		if cur, ok := e.active[ctrl.RunID]; ok && cur.done == done {
 			delete(e.active, ctrl.RunID)
@@ -257,126 +327,6 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelRes
 		return agenttools.CancelResult{}, err
 	}
 	return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
-}
-
-// Deliver implements agenttools.Engine.
-func (e *Engine) Deliver(ctx context.Context, runID string, allowPublish bool) (agenttools.DeliverResult, error) {
-	if e == nil || e.Repo == nil {
-		return agenttools.DeliverResult{}, fmt.Errorf("workflow engine is incomplete")
-	}
-	if !allowPublish {
-		return agenttools.DeliverResult{RunID: runID, Refused: true, Reason: "delivery requires allow_publish=true"}, nil
-	}
-	run, err := e.Repo.GetRun(ctx, runID)
-	if err != nil {
-		if errors.Is(err, workflowledger.ErrNotFound) {
-			return agenttools.DeliverResult{}, fmt.Errorf("workflow run %q not found", runID)
-		}
-		return agenttools.DeliverResult{}, err
-	}
-	if run.Status == workflowledger.RunStatusSucceeded {
-		return e.replayDelivery(ctx, run)
-	}
-	if run.Status != workflowledger.RunStatusDeliveryPending {
-		return agenttools.DeliverResult{}, fmt.Errorf("run is not waiting for delivery (status %q)", run.Status)
-	}
-	return e.deliverPending(ctx, run)
-}
-
-func (e *Engine) replayDelivery(ctx context.Context, run workflowledger.RunSnapshot) (agenttools.DeliverResult, error) {
-	rec, err := e.Repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(run.RunID, run.WorkflowDigest))
-	if err != nil {
-		return agenttools.DeliverResult{RunID: run.RunID, Status: string(run.Status)}, nil
-	}
-	return agenttools.DeliverResult{RunID: run.RunID, Status: string(run.Status), URL: rec.URL, Mode: rec.Mode}, nil
-}
-
-func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnapshot) (agenttools.DeliverResult, error) {
-	runID := run.RunID
-	raw, err := e.Repo.GetRunSnapshot(ctx, runID)
-	if err != nil {
-		return agenttools.DeliverResult{}, err
-	}
-	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
-	if err != nil {
-		return agenttools.DeliverResult{}, err
-	}
-	wf, _, err := definition.ParseWorkflowTOML(snapshot.DefinitionTOML, run.WorkflowName+".toml")
-	if err != nil {
-		return agenttools.DeliverResult{}, err
-	}
-	compiled, err := compiler.CompileForResume(&wf)
-	if err != nil {
-		return agenttools.DeliverResult{}, err
-	}
-	policy, ok := delivery.FromCompiled(compiled)
-	if !ok {
-		return agenttools.DeliverResult{}, fmt.Errorf("workflow delivery policy is not active for run %q", runID)
-	}
-	release, err := e.claimDelivery(ctx, runID)
-	if err != nil {
-		return agenttools.DeliverResult{}, err
-	}
-	defer release()
-	return e.publishDelivery(ctx, run, snapshot, policy)
-}
-
-func (e *Engine) claimDelivery(ctx context.Context, runID string) (func(), error) {
-	holder := "wfdel-" + randomToken(5)
-	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
-		if !errors.Is(err, workflowledger.ErrClaimHeld) {
-			return nil, err
-		}
-		_ = e.Repo.ClearRunClaim(ctx, runID)
-		if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
-			return nil, err
-		}
-	}
-	return func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }, nil
-}
-
-func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnapshot, snapshot workflowledger.Snapshot, policy delivery.Policy) (agenttools.DeliverResult, error) {
-	runID := run.RunID
-	git, pr := e.Git, e.PR
-	if git == nil {
-		git = delivery.RealGit{}
-	}
-	if pr == nil {
-		pr = delivery.GitHubCLI{}
-	}
-	timeout := e.DeliveryTimeout
-	if timeout <= 0 {
-		timeout = 2 * time.Minute
-	}
-	deliveryCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	dreq := delivery.Request{
-		RunID: runID, WorkflowDigest: run.WorkflowDigest, Policy: policy,
-		Inputs: snapshot.Inputs, BaseCommit: run.BaseCommit,
-		Branch: "wf/" + run.WorktreeName, GitCtx: delivery.GitContext{Dir: e.WorkspaceRoot},
-		OriginURL: run.RemoteURL,
-	}
-	result, err := delivery.Deliver(deliveryCtx, e.Repo, git, pr, dreq)
-	if err != nil {
-		if delivery.IsRefusal(err) {
-			if fresh, getErr := e.Repo.GetRun(ctx, runID); getErr == nil {
-				_ = e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
-			}
-			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
-		}
-		return agenttools.DeliverResult{}, err
-	}
-	fresh, err := e.Repo.GetRun(ctx, runID)
-	if err != nil {
-		return agenttools.DeliverResult{}, err
-	}
-	if fresh.Status == workflowledger.RunStatusDeliveryPending {
-		now := time.Now()
-		if err := e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusSucceeded, &now); err != nil {
-			return agenttools.DeliverResult{}, err
-		}
-	}
-	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
 }
 
 // Wait blocks until the background run for runID exits or ctx is done.

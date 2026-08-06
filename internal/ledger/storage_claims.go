@@ -49,7 +49,15 @@ func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, 
 }
 
 func (s *StorageLedgerRepository) ClearRunClaim(ctx context.Context, runID string) error {
-	return s.store.ClearClaim(ctx, runID)
+	if err := s.store.ClearClaim(ctx, runID); err != nil {
+		return err
+	}
+	// Mirror the workflows ledger: drop the in-memory holder so this instance
+	// stops claiming the run (its subsequent fenced writes fail closed).
+	s.mu.Lock()
+	delete(s.claimedRuns, runID)
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *StorageLedgerRepository) StoreContent(ctx context.Context, ref string, data []byte) error {
