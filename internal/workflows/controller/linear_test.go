@@ -471,6 +471,11 @@ func TestLinearControllerResumesRecordedAttemptWithoutNewAttempt(t *testing.T) {
 	if err := repo.CompareAndSetRunStatus(context.Background(), ctrl.RunID, run.Version, workflowledger.RunStatusRunning, nil); err != nil {
 		t.Fatal(err)
 	}
+	// A RUNNING attempt is a crash artifact (only a crashed or force-replaced
+	// executor leaves one). Resume must NOT re-execute the same attemptID:
+	// the stale attempt is marked interrupted and a fresh attempt No+1 is
+	// admitted, so the step's agent work cannot be double-recorded under one
+	// attempt while the old executor's fenced writes are discarded.
 	if err := repo.CreateStepAttempt(context.Background(), workflowledger.StepAttempt{
 		AttemptID: "wfa-first-1", RunID: ctrl.RunID, StepID: "first", AttemptNo: 1,
 		Status: workflowledger.AttemptStatusRunning, CoordinatorRunID: "coord-existing", TaskID: "task-existing",
@@ -482,12 +487,21 @@ func TestLinearControllerResumesRecordedAttemptWithoutNewAttempt(t *testing.T) {
 	}
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
-	if len(runner.calls) != 1 || runner.calls[0].CoordinatorRunID != "coord-existing" || runner.calls[0].TaskID != "task-existing" {
-		t.Fatalf("resume request = %+v", runner.calls)
+	if len(runner.calls) != 1 {
+		t.Fatalf("runner calls = %d, want 1", len(runner.calls))
+	}
+	if runner.calls[0].CoordinatorRunID == "coord-existing" || runner.calls[0].TaskID == "task-existing" {
+		t.Fatalf("resume re-executed the stale attempt identity: %+v", runner.calls[0])
 	}
 	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
-	if err != nil || len(attempts) != 1 {
-		t.Fatalf("attempts = %d, err=%v", len(attempts), err)
+	if err != nil || len(attempts) != 2 {
+		t.Fatalf("attempts = %d, err=%v, want 2 (interrupted stale + fresh)", len(attempts), err)
+	}
+	if attempts[0].Status != workflowledger.AttemptStatusInterrupted || attempts[0].AttemptNo != 1 {
+		t.Fatalf("stale attempt = %+v, want interrupted No 1", attempts[0])
+	}
+	if attempts[1].AttemptNo != 2 {
+		t.Fatalf("fresh attempt = %+v, want No 2", attempts[1])
 	}
 }
 

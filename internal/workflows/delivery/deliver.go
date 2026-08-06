@@ -246,13 +246,21 @@ func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, 
 		case existing.CommitSHA == "" && existing.TreeSHA != "":
 			// Crash between commit and the CommitSHA record: adopt HEAD only
 			// if it is EXACTLY the recorded delivery commit — same tree, clean
-			// worktree, and exactly one commit on top of base.
+			// worktree, and exactly one commit on top of base. Git execution
+			// failures are recoverable (plain error keeps the run
+			// delivery_pending); only a verified mismatch is a refusal.
 			headTree, terr := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD^{tree}")
-			if terr != nil || strings.TrimSpace(headTree) != existing.TreeSHA || !porcelainEmpty {
+			if terr != nil {
+				return "", "", fmt.Errorf("cannot verify recorded delivery commit: %w", terr)
+			}
+			if strings.TrimSpace(headTree) != existing.TreeSHA || !porcelainEmpty {
 				return "", "", &RefusalError{Reason: "worktree has foreign commits or uncommitted changes"}
 			}
 			count, cerr := git.Run(ctx, req.GitCtx, "rev-list", "--count", req.BaseCommit+"..HEAD")
-			if cerr != nil || strings.TrimSpace(count) != "1" {
+			if cerr != nil {
+				return "", "", fmt.Errorf("cannot count delivery commits: %w", cerr)
+			}
+			if strings.TrimSpace(count) != "1" {
 				return "", "", &RefusalError{Reason: "worktree has foreign commits or uncommitted changes"}
 			}
 		default:
@@ -332,10 +340,16 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 
 	// 13. Record the push. CommitSHA is the adopted head; TreeSHA is the
 	// recorded tree; DiffRef is this attempt's deterministic diff snapshot.
+	// A known PR identity from a previous attempt is carried over so the
+	// durable pushed record never ERASES it (the projection is latest-wins;
+	// an identity-less rewrite would make the next retry misjudge the run's
+	// own PR as foreign).
 	rec := deliveryRecord(req, key, "pushed")
 	rec.CommitSHA = head
 	rec.DiffRef = diffRef
 	rec.TreeSHA = treeSHA
+	rec.RemoteID = existing.RemoteID
+	rec.URL = existing.URL
 	if err := repo.UpsertDelivery(ctx, rec); err != nil {
 		return Result{}, err
 	}

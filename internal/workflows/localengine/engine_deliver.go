@@ -100,22 +100,17 @@ func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnaps
 
 func (e *Engine) claimDelivery(ctx context.Context, runID string) (func(), error) {
 	holder := "wfdel-" + randomToken(5)
-	// Never clear a live claim blindly: another host may be mid-delivery on
-	// the same run. Clear only after probing, and only once; a second
-	// ErrClaimHeld means that host is still publishing, so refuse.
+	// Never clear a held claim: the holder may be another host mid-publish
+	// (clearing would let both hosts publish to the same branch) or a
+	// crashed deliverer. In-process deliveries are already serialized by the
+	// delivering map, so a held claim here is cross-host: refuse and let the
+	// operator settle it (a stale delivery claim is cleared by the CLI's
+	// workflow deliver, which force-releases under the execution lock).
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
-		if !errors.Is(err, workflowledger.ErrClaimHeld) {
-			return nil, err
+		if errors.Is(err, workflowledger.ErrClaimHeld) {
+			return nil, fmt.Errorf("workflow run %q is being delivered by another host or has a stale delivery claim; retry after it settles (mivia workflow deliver clears stale claims)", runID)
 		}
-		if err := e.Repo.ClearRunClaim(ctx, runID); err != nil {
-			return nil, err
-		}
-		if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
-			if errors.Is(err, workflowledger.ErrClaimHeld) {
-				return nil, fmt.Errorf("workflow run %q is being delivered by another host", runID)
-			}
-			return nil, err
-		}
+		return nil, err
 	}
 	return func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }, nil
 }

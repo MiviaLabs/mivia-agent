@@ -288,6 +288,11 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 			// act on.
 			e.settleRunFailure(ctrl.RunID, runErr)
 		}
+		// Release the resume probe claim if it is still held (e.g. Run
+		// exited before the first Advance could claim/refresh it). No-op
+		// when the last Advance already released it or another host took
+		// the claim.
+		_ = e.Repo.ReleaseRun(context.Background(), ctrl.RunID, ctrl.Holder)
 		e.mu.Lock()
 		if cur, ok := e.active[ctrl.RunID]; ok && cur.done == done {
 			delete(e.active, ctrl.RunID)

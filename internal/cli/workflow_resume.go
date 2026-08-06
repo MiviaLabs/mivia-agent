@@ -209,7 +209,22 @@ func reconcileWorkflowTerminal(ctx context.Context, repo workflowledger.Reposito
 		if err := repo.ClearRunClaim(ctx, runID); err != nil {
 			return false, err
 		}
-		if err := repo.CompareAndSetRunStatus(ctx, runID, plan.Run.Version, plan.TerminalStatus, nil); err != nil {
+		from := plan.Run
+		// waiting_approval has no direct edge to a terminal status (the edge
+		// table only allows running/failed/canceled/timed_out); step through
+		// running first, exactly as the controller's reconcileTerminalRoute
+		// does for the approve crash window.
+		if from.Status == workflowledger.RunStatusWaitingApproval {
+			if err := repo.CompareAndSetRunStatus(ctx, runID, from.Version, workflowledger.RunStatusRunning, nil); err != nil {
+				return false, err
+			}
+			fresh, err := repo.GetRun(ctx, runID)
+			if err != nil {
+				return false, err
+			}
+			from = fresh
+		}
+		if err := repo.CompareAndSetRunStatus(ctx, runID, from.Version, plan.TerminalStatus, nil); err != nil {
 			return false, err
 		}
 		plan.Run, err = repo.GetRun(ctx, runID)

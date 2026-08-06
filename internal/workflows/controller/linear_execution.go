@@ -129,10 +129,24 @@ func classifyStepStatus(runErr error, childStatus string) workflowledger.Attempt
 		return workflowledger.AttemptStatusSucceeded
 	}
 	switch childStatus {
+	case "completed":
+		// The child's work completed; a parent ctx error racing the result
+		// (deadline/cancel at the join boundary) must not discard it.
+		return workflowledger.AttemptStatusSucceeded
 	case "timed_out":
 		return workflowledger.AttemptStatusTimedOut
 	case "canceled":
+		// A canceled child is ambiguous: joinWithCancellation cancels the
+		// child when the PARENT expires. A parent deadline means the RUN
+		// timed out (must settle timed_out, not canceled); an explicit
+		// parent cancel is a run cancel.
+		if errors.Is(runErr, context.DeadlineExceeded) {
+			return workflowledger.AttemptStatusTimedOut
+		}
 		return workflowledger.AttemptStatusCanceled
+	case "failed":
+		// A genuine child failure wins over a parent ctx error racing it.
+		return workflowledger.AttemptStatusFailed
 	default:
 		if errors.Is(runErr, context.DeadlineExceeded) {
 			return workflowledger.AttemptStatusTimedOut
@@ -144,11 +158,14 @@ func classifyStepStatus(runErr error, childStatus string) workflowledger.Attempt
 	}
 }
 
+// stepPersistenceContext bounds the writes that record a step outcome. It is
+// DETACHED from the parent (WithoutCancel) so a run deadline or cancel that
+// expires between RunStep returning and the persistence writes cannot lose
+// the step result: the 5s window is measured from this call, not inherited
+// from an already-expired parent. The abandon fence, not context, is the
+// authority for Interrupt.
 func stepPersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if ctx.Err() == nil {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(context.Background(), 5*time.Second)
+	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
 
 func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, cause error) (workflowledger.RunSnapshot, bool, error) {

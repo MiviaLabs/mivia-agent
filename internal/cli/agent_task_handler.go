@@ -180,8 +180,12 @@ func (h *agentTaskHandler) resolveOutputSchema(req runtime.Request) map[string]a
 
 // schemaSystemAppendix is the deterministic system-prompt block stating the
 // output contract. It mirrors the user-turn PromptAppendix wording so both
-// surfaces demand the same shape.
+// surfaces demand the same shape. A nil schema (no contract) emits nothing:
+// json.Marshal of a nil map would otherwise produce a bogus "null" block.
 func schemaSystemAppendix(schema map[string]any) string {
+	if schema == nil {
+		return ""
+	}
 	raw, err := json.Marshal(schema)
 	if err != nil || len(raw) == 0 {
 		return ""

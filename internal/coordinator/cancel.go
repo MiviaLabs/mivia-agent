@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -144,6 +145,28 @@ func (c *coordinator) cancelRecoveredWithDeadline(ctx context.Context, h *RunHan
 }
 
 func (c *coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {
+	// A recovered run may still carry the crashed executor's claim row.
+	// Every mutation below is claim-fenced (AppendClaimed), so the stale
+	// claim must be taken FIRST: probe, clear only a held claim once, and
+	// refuse if another live executor holds it. A recovered run's prior
+	// owner is dead by definition, so the bounded clear is safe here.
+	probe := "wfcancel-" + newEventID()
+	if err := c.repo.ClaimRun(ctx, h.runID, probe); err != nil {
+		if errors.Is(err, ledger.ErrClaimHeld) {
+			if err := c.repo.ClearRunClaim(ctx, h.runID); err != nil {
+				return fmt.Errorf("clear stale claim on recovered run %q: %w", h.runID, err)
+			}
+			if err := c.repo.ClaimRun(ctx, h.runID, probe); err != nil {
+				if errors.Is(err, ledger.ErrClaimHeld) {
+					return fmt.Errorf("cannot cancel recovered run %q: another executor holds it", h.runID)
+				}
+				return fmt.Errorf("re-claim recovered run %q: %w", h.runID, err)
+			}
+		} else {
+			return fmt.Errorf("claim recovered run %q: %w", h.runID, err)
+		}
+	}
+	defer func() { _ = c.repo.ReleaseRun(context.Background(), h.runID, probe) }()
 	tasks, err := c.repo.ListTasks(ctx, h.runID)
 	if err != nil {
 		return fmt.Errorf("inspect recovered run for cancellation: %w", err)
