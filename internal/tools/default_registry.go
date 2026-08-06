@@ -49,6 +49,12 @@ type DefaultOptions struct {
 	// It does not affect read tools.
 	WritePathDenylist    []string
 	SearchIgnorePatterns []string
+
+	// WorkflowTools are pre-built Phase 7 workflow tools. They register only
+	// when the workspace has .mivia/workflows/ and no WorkflowToolsBuilder is
+	// installed. Prefer tools.SetWorkflowToolsBuilder for production wiring so
+	// this package does not import workflow/ledger (storage test import cycle).
+	WorkflowTools []Tool
 }
 
 // defaultMemoryBackstopBytes is the OOM guard when MemoryBackstopBytes is unset.
@@ -246,6 +252,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	}
 	registerWebTools(register, opts, ws, patterns, exceptions)
 	registerCodeNavTools(register, opts, ws, patterns, exceptions)
+	registerWorkflowTools(register, opts)
 }
 
 // readClassBudgets resolves the two read-class byte budgets shared by the

@@ -16,6 +16,12 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n\ngo 1.22\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Phase 7 workflow tools register only when .mivia/workflows/ exists and a
+	// builder is installed (CLI init in production; test builder here).
+	if err := os.MkdirAll(filepath.Join(dir, ".mivia", "workflows"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	installTestWorkflowBuilder(t)
 	ws, err := workspace.Open(dir)
 	if err != nil {
 		t.Fatal(err)

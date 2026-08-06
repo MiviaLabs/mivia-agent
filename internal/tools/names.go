@@ -34,6 +34,17 @@ func AllToolNames() []string {
 		"list_symbols",
 		"go_to_definition",
 		SkillResourceToolName,
+		// Phase 7 workflow tools: registered only when the workspace has
+		// .mivia/workflows/. Names stay in the static catalogue so allowlist
+		// validation recognizes them regardless of workspace shape (same
+		// pattern as conditionally registered "extract").
+		"workflow_run",
+		"workflow_status",
+		"workflow_events",
+		"workflow_inspect",
+		"workflow_list_runs",
+		"workflow_deliver",
+		"workflow_cancel",
 	}
 	out := slices.Clone(names)
 	slices.Sort(out)
