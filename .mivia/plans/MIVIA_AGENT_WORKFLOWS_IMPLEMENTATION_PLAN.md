@@ -1,7 +1,7 @@
 # Mivia Agent Workflows v1 — Implementation Plan
 
 **Repository:** `MiviaLabs/mivia-agent`
-**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 remaining
+**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 remaining Phase 7 planned
 **Scope:** local harness only; no cloud control plane or workflow-level parallelism in v1.
 
 ---
@@ -17,6 +17,7 @@
 | Phase 4 | Transitions, loops, gates | ✅ Complete |
 | Phase 5 | PR delivery | ✅ Complete |
 | Phase 6 | Hardening and documentation | ⬜ Not started |
+| Phase 7 | Agent-facing workflow tools (parallel runs, deep observability) | ⬜ Planned |
 
 ### What is shipped (Phases 0–1)
 
@@ -122,7 +123,6 @@ The current dependency set already contains the two parsers required for the con
 
 - Workflow-level parallel branches and joins.
 - Arbitrary shell/HTTP/plugin actions from TOML.
-- Model-facing `run_workflow` tool.
 - Scheduled/automatic workflow triggers.
 - GitLab, Gitea, Bitbucket, and cloud execution providers.
 - A general expression language beyond the restricted structural transition matcher.
@@ -462,9 +462,211 @@ All nine operator commands shipped with Phases 3–5; every delivery-capable pat
 - Add race tests for controller/approval/cancel/resume interactions and failure-injection tests for SQLite, process interruption, and Git/GitHub partial failures.
 - Add property/fuzz tests for parser/compiler graphs, matcher totality, and evidence-binding shaping.
 - Document the trust model, delivery permission model, recovery semantics, evidence retention/redaction and a complete sample workflow.
-- Keep model-facing invocation and workflow parallelism behind explicit future design documents.
+- Keep workflow parallelism design in Phase 7.
 
 **Exit:** full test suite, race suite and the workflow test matrix pass; docs are sufficient for a repository owner to author a safe workflow.
+
+### Phase 7 — agent-facing workflow tools ⬜ PLANNED
+
+**Problem.** Today the orchestrator agent has no first-class workflow tools. To run a workflow it must shell out to `mivia workflow run ...` via `run_command` as a separate process. This blocks the agent loop, prevents parallel runs, gives no step-level visibility, and makes cancellation and delivery clumsy. The workflow engine, coordinator, verifier, and delivery packages are all in-process Go code — but none of them are exposed as agent tools.
+
+**Goal.** Register workflow tools in the agent tool surface so the orchestrator can start, observe, cancel, and deliver workflow runs entirely from inside the chat session — in parallel, with full observability, with no separate process.
+
+#### 7.1 Tool surface
+
+Seven tools, all project/language-generic (rule 60). No tool bakes in Go, `cmd/mivia`, or any project-specific concept.
+
+| Tool | Purpose | Blocking |
+|------|---------|----------|
+| `workflow_run` | Admit and start a workflow run. Returns the run ID immediately. The controller runs in a background goroutine. | Non-blocking |
+| `workflow_status` | Deep status of one run: state, active step, every attempt with its output digest and route, loop counters, gate results, delivery state. | Non-blocking |
+| `workflow_events` | Paged audit trail: ordered events with kind, step, attempt, timestamp, and detail. | Non-blocking |
+| `workflow_inspect` | Drill into one step attempt: load its validated output JSON, evidence selection, transition decision, and coordinator run/task references for tool-call tracing. | Non-blocking |
+| `workflow_list_runs` | List all runs (active and historical) with state, workflow name, and age. | Non-blocking |
+| `workflow_deliver` | Perform delivery for a `delivery_pending` run. Requires explicit `allow_publish`. | Blocking (delivery timeout) |
+| `workflow_cancel` | Cancel a running or waiting run. Idempotent. | Non-blocking |
+
+#### 7.2 Parallel execution model
+
+The orchestrator calls `workflow_run` N times. Each call:
+
+1. Discovers and compiles the named workflow from `.mivia/workflows/`.
+2. Validates inputs against the workflow's declared input contract.
+3. Resolves agents, skills, schemas, templates, and verifier profiles (same admission path as the CLI).
+4. Creates a run-owned Git worktree at the recorded base commit (write-capable workflows only).
+5. Opens the shared SQLite store, admits the run with an immutable snapshot, and acquires the per-run claim.
+6. Launches the controller's `Run()` in a **background goroutine** with a context that respects the workflow's deadline.
+7. Returns the run ID immediately.
+
+Each goroutine runs independently. The orchestrator polls `workflow_status` and `workflow_events` to track all active runs. It can interleave work, give the user progress updates, cancel a stuck run, and deliver a finished one — all without blocking.
+
+**Concurrency safety:**
+
+- Each run holds an exclusive claim (`ClaimRun`/`ReleaseRun`) on the shared SQLite store for the duration of each `Advance()` call. The claim is released between steps, so parallel runs do not block each other at the store level — they only contend on the per-run mutex inside their own controller.
+- The workflow execution file lock (`.mivia-workflow-locks/`) is keyed per run ID, so parallel runs do not serialize.
+- Each run gets its own isolated worktree and branch. No two runs share a worktree.
+- Each run's agent steps dispatch through their own coordinator dispatcher (created at admission, same as the CLI path). Model API calls are independent.
+- A global concurrency cap (`[workflows] max_concurrent_runs`, default 0 = unlimited) can bound the number of simultaneously active goroutines. When the cap is reached, `workflow_run` queues the run (status `pending`) and the orchestrator can poll until a slot frees.
+
+**Crash recovery:**
+
+- If the process crashes, all active runs are left in `interrupted` state in the SQLite store.
+- On restart, `Recover` classifies interrupted runs. The orchestrator can call `workflow_run` with a `resume` flag to resume an interrupted run, or `workflow_cancel` to abandon it.
+- The immutable snapshot guarantees that resume re-dispatches exactly the same agents, schemas, and inputs — no drift.
+
+#### 7.3 Deep observability
+
+The orchestrator must see everything about a run — not just a status string. The tools expose structured data at three levels:
+
+**Level 1 — Run overview (`workflow_status`):**
+
+```json
+{
+  "run_id": "wfr-ABC123",
+  "workflow": "feature-delivery",
+  "status": "running",
+  "active_step": "implement",
+  "version": 7,
+  "started_at": "2026-08-06T12:00:00Z",
+  "deadline_at": "2026-08-06T15:00:00Z",
+  "base_commit": "abc123",
+  "worktree": "workflow-wfr-abc123",
+  "attempts": [
+    {"step": "plan", "attempt": 1, "status": "succeeded", "to_step": "plan_review", "output_digest": "sha256:..."},
+    {"step": "plan_review", "attempt": 1, "status": "succeeded", "to_step": "plan_tests", "verdict": "approved"},
+    {"step": "plan_tests", "attempt": 1, "status": "succeeded", "to_step": "test_plan_review"},
+    {"step": "test_plan_review", "attempt": 1, "status": "succeeded", "to_step": "implement", "verdict": "approved"}
+  ],
+  "loops": [
+    {"name": "plan_review_repair", "iterations": 0},
+    {"name": "test_plan_review_repair", "iterations": 0}
+  ],
+  "delivery": null
+}
+```
+
+**Level 2 — Step attempt detail (`workflow_inspect`):**
+
+```json
+{
+  "run_id": "wfr-ABC123",
+  "step": "implement",
+  "attempt": 1,
+  "status": "succeeded",
+  "coordinator_run_id": "run-XYZ",
+  "task_id": "task-DEF",
+  "output": {"summary": "...", "files_changed": ["internal/foo.go"], "inspected": ["internal/foo.go"]},
+  "evidence_selection": [{"name": "task", "source": "input", "bytes": 42, "digest": "sha256:..."}],
+  "transition": {"index": 6, "to_step": "review", "match_digest": "abc", "selected": {"status": "succeeded"}}
+}
+```
+
+**Level 3 — Audit trail (`workflow_events`):**
+
+```json
+[
+  {"seq": 1, "timestamp": "...", "kind": "wf_run_created", "detail": "run created: workflow \"feature-delivery\""},
+  {"seq": 2, "timestamp": "...", "kind": "wf_attempt_started", "detail": "step \"plan\" attempt 1"},
+  {"seq": 3, "timestamp": "...", "kind": "wf_attempt_completed", "detail": "succeeded -> plan_review"},
+  ...
+]
+```
+
+**Tool-call tracing:** each attempt records its `coordinator_run_id` and `task_id`. The orchestrator can use the existing `list_run_events` and `ledger_read` tools to trace what tools the workflow's agent called during that step — the same inspection path it uses for its own spawned agents. This gives full transparency: the orchestrator sees not just what the workflow decided, but what the agent read, wrote, and searched to get there.
+
+**Evidence gate results:** the `workflow_status` output includes evidence gate attempts with their verifier check results (name, status, class, detail). The orchestrator sees which gates passed, which failed, and why — without reading a separate log file.
+
+#### 7.4 Implementation approach
+
+**New package: `internal/workflows/agenttools/`**
+
+A self-contained package that registers the seven tools with the tool registry. It holds a reference to:
+
+- The workspace root (for workflow discovery).
+- The resolved config (for provider, store path, tool policy).
+- The shared SQLite store (for the ledger repository).
+
+Each tool is a standard `tools.Tool` implementation with `Description()`, schema, and `Execute()`. The tools are registered in the default registry only when the workspace has `.mivia/workflows/` (conditional registration, like code intelligence tools).
+
+**`workflow_run` execution path:**
+
+```text
+workflow_run(workflow, inputs, allow_publish)
+  → discover + compile workflow (same as CLI)
+  → validate inputs
+  → resolve agents, schemas, templates, verifiers
+  → create worktree (write-capable) or read-only identity
+  → open SQLite store + ledger repository
+  → build controller (same wiring as CLI: dispatcher, verifiers, baseline)
+  → controller.Start() (admit)
+  → go func() { controller.Run(ctx) }() (background)
+  → return {run_id, status: "running"}
+```
+
+The controller's `Run()` goroutine handles all step advancement, model dispatch, evidence gates, and loop routing. When it reaches a terminal or `delivery_pending`, the goroutine exits and the run's status is durable in the store.
+
+**`workflow_status` execution path:**
+
+```text
+workflow_status(run_id)
+  → open ledger repository (read-only)
+  → GetRun + ListStepAttempts + GetLoopCounters + ListApprovals + ListDeliveries
+  → assemble structured status JSON
+  → return
+```
+
+No controller needed — pure ledger reads. Safe to call concurrently with a running workflow.
+
+**`workflow_deliver` execution path:**
+
+```text
+workflow_deliver(run_id, allow_publish=true)
+  → acquire workflow execution file lock (per run ID)
+  → open ledger repository
+  → verify run is delivery_pending
+  → resolve worktree identity
+  → delivery.Deliver() (same path as CLI)
+  → settle run status
+  → return {run_id, status, pr_url}
+```
+
+**No duplication of CLI logic.** The tools call the same Go packages (`controller`, `ledger`, `delivery`, `workspace`, `verifier`) that the CLI uses. The only difference is the entry point: a tool `Execute()` instead of a CLI command handler.
+
+#### 7.5 Safety rules (extend section 4 non-negotiables)
+
+9. **`allow_publish` is explicit, never defaulted.** The `workflow_run` and `workflow_deliver` tools accept an `allow_publish` boolean parameter that defaults to `false`. Without it, a delivery-capable workflow settles at `delivery_pending` and never touches Git or a remote provider.
+
+10. **Tools are read-only unless explicitly mutating.** `workflow_status`, `workflow_events`, `workflow_inspect`, and `workflow_list_runs` perform only ledger reads. They never mutate run state, dispatch agents, or touch the filesystem outside the store.
+
+11. **Parallel runs are isolated.** Each run gets its own worktree, branch, controller, and coordinator dispatcher. No two runs share mutable state. The shared SQLite store uses per-run claims and CAS versioning to prevent conflicts.
+
+12. **The orchestrator cannot widen workflow authority.** The tools discover and compile workflows from `.mivia/workflows/` using the same strict parser and compiler. They cannot inject agents, tools, providers, or commands that the workflow file does not declare. The resolved agent definitions, schemas, and templates are snapshotted at admission and never re-read from disk.
+
+13. **Cancellation is safe and immediate.** `workflow_cancel` cancels the run's context, which propagates to the controller's `Run()` goroutine and any in-flight coordinator child runs. The run settles to `canceled` with a durable attempt record. Idempotent: canceling an already-terminal run is a no-op.
+
+#### 7.6 Robustness requirements
+
+| Requirement | Mechanism |
+|-------------|-----------|
+| Parallel runs do not corrupt each other | Per-run SQLite claim + CAS versioning + per-run worktree |
+| A stuck run does not block the orchestrator | Background goroutine; `workflow_status` is non-blocking |
+| A crashed run is recoverable | Durable ledger; `Recover` on restart; `workflow_run` with `resume` flag |
+| Delivery never creates duplicate PRs | Idempotency key + find-before-create (Phase 5, unchanged) |
+| Evidence gates run in the sandbox | Same Bubblewrap sandbox as CLI (Phase 5, unchanged) |
+| Tool output is bounded | Each tool declares `ResultBudgetBytes()` (INV-AG-25) |
+| No secret leakage | Output schemas, evidence selections, and event details exclude raw prompts and credentials (same redaction model) |
+| Race-free | `go test -race` covers concurrent `workflow_run` + `workflow_status` + `workflow_cancel` |
+
+#### 7.7 Test plan
+
+- **Unit:** each tool's `Execute()` with a mock ledger/controller — validates input parsing, output shaping, and error paths.
+- **Integration:** `workflow_run` → poll `workflow_status` → `workflow_deliver` end-to-end with a real (scripted) workflow in a test repository.
+- **Parallel:** launch 3+ `workflow_run` calls concurrently; verify all runs complete independently; verify `workflow_status` reports correct state for each; verify no SQLite contention errors.
+- **Cancellation:** `workflow_run` then immediately `workflow_cancel`; verify the goroutine exits and the run settles to `canceled`.
+- **Crash recovery:** `workflow_run` then kill the controller goroutine; verify `workflow_status` shows `interrupted`; verify `workflow_run` with `resume` resumes correctly.
+- **Observability:** `workflow_inspect` on a completed step returns the validated output JSON, evidence selection, and transition decision; `workflow_events` returns the full ordered audit trail.
+
+**Exit:** the orchestrator can start multiple workflows in parallel, observe each one's state, gates, and step outputs in real time, cancel or deliver any run, and recover from crashes — all from inside the chat session with no separate process.
 
 ## 13. Verification matrix
 
@@ -481,6 +683,9 @@ All nine operator commands shipped with Phases 3–5; every delivery-capable pat
 | Idempotency | Crash/retry after push or remote PR creation locates the original PR and never duplicates it. | ✅ Tested (Phase 5) — find-before-create + delivery records |
 | Isolation | A dirty caller checkout remains byte-for-byte unchanged; agents, verifiers, and delivery operate only in the run-owned worktree. | ✅ Tested (Phase 5) — worktree run + cleanup tests |
 | Concurrency | `go test -race` covers controller claims, approval, cancel, resume and transition CAS contention. | ⬜ Needs controller implementation |
+| Agent tools | `workflow_run` starts a run in-process and returns immediately; `workflow_status` reports state, attempts, loops, gates; `workflow_inspect` loads step output and evidence; parallel runs complete independently. | ⬜ Phase 7 |
+| Parallel safety | N concurrent `workflow_run` calls do not corrupt each other; each run's worktree, claim, and dispatcher are isolated. | ⬜ Phase 7 |
+| Tool-call tracing | Each step attempt's `coordinator_run_id` resolves through `list_run_events` to the tools the workflow agent called. | ⬜ Phase 7 |
 
 ## 14. First workflow to ship
 
@@ -514,4 +719,6 @@ Key differences from the original plan:
 - `internal/storage/sqlite.go` and `docs/architecture/embedded-persistence.md` — SQLite/WAL/transaction and persistence constraints.
 - `docs/product/agent.md` — explicit-argv command safety, named-agent binding, output schemas and orchestration surface.
 - `docs/architecture/concurrency.md` — coordinator DAG/retry/cancellation requirements.
-- `internal/workflows/` — all shipped workflow packages (definition, compiler, template, presentation).
+- `internal/workflows/` — all shipped workflow packages (definition, compiler, template, presentation, controller, ledger, matcher, verifier, workspace, delivery).
+- `internal/tools/tools.go` — default tool registry; Phase 7 tools register here (conditional on `.mivia/workflows/` presence).
+- `internal/cli/workflow_run.go` — CLI workflow wiring (controller, dispatcher, verifiers, delivery); Phase 7 tools reuse the same packages.
