@@ -86,7 +86,7 @@ func TestReconcileWorkflowTerminalRepositoryFailures(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			repo, runID := newDerivedTerminalWorkflowRepo(t)
-			terminal, err := reconcileWorkflowTerminal(t.Context(), test.wrap(repo), runID, io.Discard)
+			terminal, err := reconcileWorkflowTerminal(t.Context(), test.wrap(repo), runID, false, io.Discard)
 			if err == nil || terminal {
 				t.Fatalf("reconcileWorkflowTerminal() = %v, %v; want false and an error", terminal, err)
 			}

@@ -49,11 +49,13 @@ func (s *StorageRepository) UpsertDelivery(ctx context.Context, d DeliveryRecord
 			existing.BaseRef == d.BaseRef &&
 			existing.HeadRef == d.HeadRef &&
 			existing.CommitSHA == d.CommitSHA &&
+			existing.TreeSHA == d.TreeSHA &&
 			existing.Provider == d.Provider &&
 			existing.RemoteID == d.RemoteID &&
 			existing.URL == d.URL &&
 			existing.Status == d.Status &&
-			existing.ErrorRef == d.ErrorRef {
+			existing.ErrorRef == d.ErrorRef &&
+			existing.DiffRef == d.DiffRef {
 			s.mu.Unlock()
 			return nil
 		}

@@ -196,7 +196,7 @@ func TestReconcileWorkflowTerminalRepairsDerivedStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout bytes.Buffer
-	terminal, err := reconcileWorkflowTerminal(ctx, repo, run.RunID, &stdout)
+	terminal, err := reconcileWorkflowTerminal(ctx, repo, run.RunID, false, &stdout)
 	if err != nil || !terminal {
 		t.Fatalf("reconcileWorkflowTerminal() = %v, %v", terminal, err)
 	}
@@ -252,7 +252,7 @@ func TestWorkflowExecutionLockFilesystemErrors(t *testing.T) {
 func TestExecuteWorkflowRunEarlyErrors(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MIVIA_CONFIG", "")
-	if err := executeWorkflowRun("test", filepath.Join(t.TempDir(), "missing"), "", nil, io.Discard, io.Discard); err == nil {
+	if err := executeWorkflowRun("test", filepath.Join(t.TempDir(), "missing"), "", nil, false, io.Discard, io.Discard); err == nil {
 		t.Fatal("executeWorkflowRun() error = nil for a missing workspace")
 	}
 	root := t.TempDir()
@@ -260,7 +260,7 @@ func TestExecuteWorkflowRunEarlyErrors(t *testing.T) {
 	if err := os.WriteFile(badConfig, []byte("bad = ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := executeWorkflowRun("test", root, badConfig, nil, io.Discard, io.Discard); err == nil {
+	if err := executeWorkflowRun("test", root, badConfig, nil, false, io.Discard, io.Discard); err == nil {
 		t.Fatal("executeWorkflowRun() error = nil for invalid config")
 	}
 	if err := os.MkdirAll(filepath.Join(root, ".mivia", "workflows"), 0o700); err != nil {
@@ -280,13 +280,13 @@ store_path = "` + filepath.Join(root, "store.db") + `"
 	if err := os.WriteFile(goodConfig, []byte(configBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := executeWorkflowRun("missing", root, goodConfig, nil, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "not found") {
+	if err := executeWorkflowRun("missing", root, goodConfig, nil, false, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("missing workflow error = %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".mivia", "workflows", "bad.toml"), []byte("bad = ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := executeWorkflowRun("bad", root, goodConfig, nil, io.Discard, io.Discard); err == nil {
+	if err := executeWorkflowRun("bad", root, goodConfig, nil, false, io.Discard, io.Discard); err == nil {
 		t.Fatal("executeWorkflowRun() error = nil for invalid workflow TOML")
 	}
 }

@@ -8,13 +8,28 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
+// deliveryRequired reports whether the workflow carries an active delivery
+// policy: a pull_request delivery with an explicit non-"none" mode. Runs that
+// require delivery settle at delivery_pending on their success route instead
+// of moving directly to succeeded.
+func (c *LinearController) deliveryRequired() bool {
+	return c.Workflow.DeliveryActive()
+}
+
 func (c *LinearController) reconcileTerminalRoute(ctx context.Context, run workflowledger.RunSnapshot) (workflowledger.RunSnapshot, bool, error) {
 	if !workflowledger.IsTerminalStepID(run.ActiveStepID) {
 		return run, false, nil
 	}
+	// delivery_pending is a settled pause: the run reached its terminal route
+	// and waits for the delivery phase. Never CAS onward from it.
+	if run.Status == workflowledger.RunStatusDeliveryPending {
+		return run, true, nil
+	}
 	status := workflowledger.RunStatusSucceeded
 	if run.ActiveStepID == "failure" {
 		status = workflowledger.RunStatusFailed
+	} else if c.deliveryRequired() {
+		status = workflowledger.RunStatusDeliveryPending
 	}
 	if workflowledger.IsTerminalRunStatus(run.Status) {
 		if run.Status == status {

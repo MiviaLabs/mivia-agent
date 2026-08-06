@@ -34,6 +34,7 @@ type Admission struct {
 	WorktreeName string
 	InputDigest  string
 	DeadlineAt   *time.Time
+	RemoteURL    string
 }
 
 // LinearController advances a workflow one active step at a time.
@@ -172,7 +173,7 @@ func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
 		SnapshotDigest: workflowledger.SnapshotDigest(c.Snapshot), InputDigest: c.admission.InputDigest,
 		Status: workflowledger.RunStatusPending, ActiveStepID: c.Workflow.InitialStep,
 		BaseRef: c.admission.BaseRef, BaseCommit: c.admission.BaseCommit, WorktreeName: c.admission.WorktreeName,
-		StartedAt: admittedAt,
+		RemoteURL: c.admission.RemoteURL, StartedAt: admittedAt,
 	}
 	if c.admission.DeadlineAt != nil {
 		deadline := *c.admission.DeadlineAt
@@ -188,7 +189,8 @@ func sameAdmission(stored, candidate workflowledger.RunSnapshot) bool {
 	return stored.WorkflowName == candidate.WorkflowName && stored.WorkflowDigest == candidate.WorkflowDigest &&
 		stored.SnapshotDigest == candidate.SnapshotDigest && stored.InputDigest == candidate.InputDigest &&
 		stored.BaseRef == candidate.BaseRef && stored.BaseCommit == candidate.BaseCommit &&
-		stored.WorktreeName == candidate.WorktreeName && sameDeadline(stored.DeadlineAt, candidate.DeadlineAt)
+		stored.WorktreeName == candidate.WorktreeName && stored.RemoteURL == candidate.RemoteURL &&
+		sameDeadline(stored.DeadlineAt, candidate.DeadlineAt)
 }
 
 func sameDeadline(left, right *time.Time) bool {
@@ -255,6 +257,9 @@ func (c *LinearController) Advance(ctx context.Context) (workflowledger.RunSnaps
 		return workflowledger.RunSnapshot{}, false, err
 	}
 	if workflowledger.IsTerminalRunStatus(run.Status) {
+		return run, true, nil
+	}
+	if run.Status == workflowledger.RunStatusDeliveryPending {
 		return run, true, nil
 	}
 	if run.Status == workflowledger.RunStatusPending {

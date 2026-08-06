@@ -1,0 +1,209 @@
+// Package delivery implements host-owned pull-request publication for
+// workflow runs. The GitHub CLI adapter uses fixed argv only. It never
+// passes values through a shell.
+package delivery
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+)
+
+// PRRef identifies one remote pull request.
+type PRRef struct {
+	RemoteID string
+	URL      string
+}
+
+// PRInput is the fixed set of values for PR creation. Values come from
+// host-rendered templates; they are passed as single argv elements, never
+// through a shell.
+type PRInput struct {
+	Base  string
+	Head  string
+	Title string
+	Body  string
+	Draft bool
+}
+
+// PRClient is the remote PR boundary. Implementations are host-owned.
+type PRClient interface {
+	FindByHead(ctx context.Context, repo, headBranch string) (*PRRef, error)
+	Create(ctx context.Context, repo string, in PRInput) (PRRef, error)
+}
+
+// GitHubCLI drives the operator's gh binary with fixed argv and --repo.
+type GitHubCLI struct{}
+
+// Compile-time check that GitHubCLI satisfies PRClient.
+var _ PRClient = GitHubCLI{}
+
+// ghEnv returns the environment for a gh subprocess: the process
+// environment minus the git-affecting variables that gitops.go pins for
+// git commands, plus interactive prompts disabled. gh shells out to git
+// for repository access, so a leaked repository pointer or credential
+// variable would change which repository git operates on and how it
+// authenticates.
+func ghEnv() []string {
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, kv := range os.Environ() {
+		name, _, found := strings.Cut(kv, "=")
+		if !found {
+			continue
+		}
+		if _, removed := gitEnvRemoved[name]; removed {
+			continue
+		}
+		if name == "GH_PROMPT_DISABLED" {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, "GH_PROMPT_DISABLED=1")
+}
+
+// FindByHead lists the PRs whose head branch matches and returns the
+// first match. It returns (nil, nil) when no PR exists for the branch.
+func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRef, error) {
+	args := []string{
+		"pr", "list",
+		"--repo", repo,
+		"--head", headBranch,
+		"--state", "all",
+		"--json", "number,url",
+	}
+	out, err := runGH(ctx, "pr list", args...)
+	if err != nil {
+		return nil, err
+	}
+	var prs []struct {
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+	}
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return nil, fmt.Errorf("gh pr list: parse output: %w", err)
+	}
+	if len(prs) == 0 {
+		return nil, nil
+	}
+	pr := prs[0]
+	return &PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL}, nil
+}
+
+// Create opens a pull request with the fixed input values. Title and
+// body use the --title= and --body= equals forms, so values that start
+// with '-' stay safe as single argv elements.
+func (GitHubCLI) Create(ctx context.Context, repo string, in PRInput) (PRRef, error) {
+	args := []string{
+		"pr", "create",
+		"--repo", repo,
+		"--base", in.Base,
+		"--head", in.Head,
+		"--title=" + in.Title,
+		"--body=" + in.Body,
+	}
+	if in.Draft {
+		args = append(args, "--draft")
+	}
+	args = append(args, "--json", "number,url")
+	out, err := runGH(ctx, "pr create", args...)
+	if err != nil {
+		return PRRef{}, err
+	}
+	var pr struct {
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+	}
+	if err := json.Unmarshal(out, &pr); err != nil {
+		return PRRef{}, fmt.Errorf("gh pr create: parse output: %w", err)
+	}
+	return PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL}, nil
+}
+
+// runGH runs gh with fixed argv and the pinned environment. A non-zero
+// exit is an error that includes the stderr output; it is never treated
+// as an empty result.
+func runGH(ctx context.Context, op string, args ...string) ([]byte, error) {
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Env = ghEnv()
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("gh %s: %w: %s", op, err, msg)
+		}
+		return nil, fmt.Errorf("gh %s: %w", op, err)
+	}
+	return out, nil
+}
+
+// ParseOwnerRepo normalizes a git remote URL to owner/repo. It supports
+// the https, scp-like git@, and ssh:// forms. The host must be
+// github.com (case-insensitive) and the path must be exactly owner/repo
+// with an optional trailing .git.
+func ParseOwnerRepo(url string) (string, error) {
+	raw := strings.TrimSpace(url)
+	if raw == "" {
+		return "", fmt.Errorf("parse owner/repo: empty remote URL")
+	}
+	host, path, err := splitRemote(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse owner/repo: %w", err)
+	}
+	if !strings.EqualFold(host, "github.com") {
+		return "", fmt.Errorf("parse owner/repo: host %q is not github.com", host)
+	}
+	path = strings.Trim(path, "/")
+	path = strings.TrimSuffix(path, ".git")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("parse owner/repo: path must be exactly owner/repo, got %q", path)
+	}
+	owner, repo := parts[0], parts[1]
+	if owner == "" || repo == "" {
+		return "", fmt.Errorf("parse owner/repo: owner and repo must not be empty")
+	}
+	return owner + "/" + repo, nil
+}
+
+// splitRemote splits a git remote URL into host and path.
+func splitRemote(raw string) (string, string, error) {
+	if !strings.Contains(raw, "://") {
+		// scp-like syntax: [user@]host:path
+		userHost, path, ok := strings.Cut(raw, ":")
+		if !ok {
+			return "", "", fmt.Errorf("remote %q has no host separator", raw)
+		}
+		if path == "" {
+			return "", "", fmt.Errorf("remote %q has an empty path", raw)
+		}
+		host := userHost
+		if i := strings.LastIndexByte(host, '@'); i >= 0 {
+			host = host[i+1:]
+		}
+		if host == "" {
+			return "", "", fmt.Errorf("remote %q has an empty host", raw)
+		}
+		return host, path, nil
+	}
+	rest := raw[strings.Index(raw, "://")+3:]
+	if at := strings.IndexByte(rest, '@'); at >= 0 {
+		if slash := strings.IndexByte(rest, '/'); slash < 0 || at < slash {
+			rest = rest[at+1:]
+		}
+	}
+	host, path, ok := strings.Cut(rest, "/")
+	if !ok {
+		return "", "", fmt.Errorf("remote %q has no path", raw)
+	}
+	if host == "" {
+		return "", "", fmt.Errorf("remote %q has an empty host", raw)
+	}
+	return host, "/" + path, nil
+}

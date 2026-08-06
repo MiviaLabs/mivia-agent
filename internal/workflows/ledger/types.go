@@ -128,6 +128,7 @@ type RunSnapshot struct {
 	BaseRef        string     `json:"base_ref,omitempty"`
 	BaseCommit     string     `json:"base_commit,omitempty"`
 	WorktreeName   string     `json:"worktree_name,omitempty"`
+	RemoteURL      string     `json:"remote_url,omitempty"`
 	Version        uint64     `json:"version"`
 	StartedAt      time.Time  `json:"started_at"`
 	DeadlineAt     *time.Time `json:"deadline_at,omitempty"`
@@ -224,8 +225,7 @@ type LoopCounter struct {
 	Iterations int    `json:"iterations"`
 }
 
-// ApprovalRecord is provisional: its shape will be finalised by the Phase 5
-// human-gate design. It records one human-gate request and its resolution.
+// ApprovalRecord records one human-gate request and its resolution.
 type ApprovalRecord struct {
 	ApprovalID   string     `json:"approval_id"`
 	RunID        string     `json:"run_id"`
@@ -249,8 +249,7 @@ func (a ApprovalRecord) Clone() ApprovalRecord {
 	return clone
 }
 
-// DeliveryRecord is provisional: its shape will be finalised by the Phase 5
-// delivery design. It records the retry-safe publish lifecycle for one run.
+// DeliveryRecord records the retry-safe publish lifecycle for one run.
 type DeliveryRecord struct {
 	RunID          string    `json:"run_id"`
 	IdempotencyKey string    `json:"idempotency_key"`
@@ -258,11 +257,13 @@ type DeliveryRecord struct {
 	BaseRef        string    `json:"base_ref"`
 	HeadRef        string    `json:"head_ref,omitempty"`
 	CommitSHA      string    `json:"commit_sha,omitempty"`
+	TreeSHA        string    `json:"tree_sha,omitempty"`
 	Provider       string    `json:"provider,omitempty"`
 	RemoteID       string    `json:"remote_id,omitempty"`
 	URL            string    `json:"url,omitempty"`
 	Status         string    `json:"status"`
 	ErrorRef       string    `json:"error_ref,omitempty"`
+	DiffRef        string    `json:"diff_ref,omitempty"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 

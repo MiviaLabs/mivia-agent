@@ -1,15 +1,13 @@
 package cli
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
@@ -20,8 +18,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
+	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -65,10 +65,23 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "run":
 		inputs, rest, _ := flagVar(args[1:], "--input")
+		allowPublish, rest, err := parseWorkflowBoolFlag(rest, "--allow-publish")
+		if err != nil {
+			return err
+		}
 		if len(rest) != 1 {
 			return fmt.Errorf("workflow run: expected one workflow name")
 		}
-		return executeWorkflowRun(rest[0], workspaceRoot, configPath, inputs, stdout, stderr)
+		return executeWorkflowRun(rest[0], workspaceRoot, configPath, inputs, allowPublish, stdout, stderr)
+	case "deliver":
+		allowPublish, rest, err := parseWorkflowBoolFlag(args[1:], "--allow-publish")
+		if err != nil {
+			return err
+		}
+		if len(rest) != 1 {
+			return fmt.Errorf("workflow deliver: expected one run ID")
+		}
+		return executeWorkflowDeliver(rest[0], workspaceRoot, configPath, allowPublish, stdout, stderr)
 	case "resume":
 		if len(args) != 2 {
 			return fmt.Errorf("workflow resume: expected one run ID")
@@ -79,59 +92,19 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func executeWorkflowRun(name, root, configPath string, rawInputs []string, stdout, stderr io.Writer) error {
-	if strings.TrimSpace(root) == "" {
-		root = "."
-	}
-	work, err := workspace.Open(root)
+func executeWorkflowRun(name, root, configPath string, rawInputs []string, allowPublish bool, stdout, stderr io.Writer) error {
+	prepared, err := prepareWorkflowRun(name, root, configPath, rawInputs)
 	if err != nil {
 		return err
 	}
-	configPath = workflowConfigPath(work.Abs, configPath)
-	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
-	if err != nil {
-		return err
-	}
-	applyPrivacyPolicy(res)
-	applyWorkflowStoreRoot(res, work.Abs)
-	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
-	if err != nil {
-		return err
-	}
-	defer closeFn()
-	workflows, err := definition.DiscoverWorkflows(work.Abs)
-	if err != nil {
-		return err
-	}
-	var found *definition.DiscoveredWorkflow
-	for i := range workflows {
-		if workflows[i].Name == name {
-			found = &workflows[i]
-			break
-		}
-	}
-	if found == nil {
-		return fmt.Errorf("workflow %q was not found", name)
-	}
-	wf, _, err := definition.ParseWorkflowTOML(found.Raw, found.Name+".toml")
-	if err != nil {
-		return err
-	}
-	compiled, err := compiler.Compile(&wf)
-	if err != nil {
-		return err
-	}
-	inputs, inputSnapshot, err := parseWorkflowInputs(rawInputs, compiled.Inputs)
-	if err != nil {
-		return err
-	}
+	defer prepared.closeFn()
 	runID := newCLIWorkflowRunID()
-	finishExecution, err := beginWorkflowExecution(work.Abs, contextStorePath(work.Abs, res.Subagents), runID)
+	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
 	if err != nil {
 		return err
 	}
 	defer finishExecution()
-	built, err := workflowRunBuild(work.Abs, res, store, repo, compiled, filepath.Dir(found.Path), inputs, inputSnapshot, found.Raw, runID, nil, nil)
+	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -154,6 +127,108 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, stdou
 	if err != nil {
 		return err
 	}
+	if snap.Status == workflowledger.RunStatusDeliveryPending {
+		mode := ""
+		if prepared.compiled.Delivery != nil {
+			mode = prepared.compiled.Delivery.Mode
+		}
+		return finishWorkflowRunDelivery(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, built.Controller.RunID, name, mode, allowPublish, stdout, stderr)
+	}
+	return nil
+}
+
+// preparedWorkflowRun is the immutable input of one workflow run invocation:
+// the opened workspace, store, and compiled definition.
+type preparedWorkflowRun struct {
+	root          string
+	res           *config.Resolved
+	store         *storage.SQLite
+	repo          workflowledger.Repository
+	closeFn       func()
+	compiled      *compiler.CompiledWorkflow
+	inputs        map[string]any
+	inputSnapshot map[string]string
+	refBase       string
+	raw           []byte
+}
+
+// prepareWorkflowRun opens the workspace and store and compiles the named
+// workflow with validated inputs, before any execution begins.
+func prepareWorkflowRun(name, root, configPath string, rawInputs []string) (*preparedWorkflowRun, error) {
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	work, err := workspace.Open(root)
+	if err != nil {
+		return nil, err
+	}
+	configPath = workflowConfigPath(work.Abs, configPath)
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	if err != nil {
+		return nil, err
+	}
+	applyPrivacyPolicy(res)
+	applyWorkflowStoreRoot(res, work.Abs)
+	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
+	if err != nil {
+		return nil, err
+	}
+	workflows, err := definition.DiscoverWorkflows(work.Abs)
+	if err != nil {
+		closeFn()
+		return nil, err
+	}
+	var found *definition.DiscoveredWorkflow
+	for i := range workflows {
+		if workflows[i].Name == name {
+			found = &workflows[i]
+			break
+		}
+	}
+	if found == nil {
+		closeFn()
+		return nil, fmt.Errorf("workflow %q was not found", name)
+	}
+	wf, _, err := definition.ParseWorkflowTOML(found.Raw, found.Name+".toml")
+	if err != nil {
+		closeFn()
+		return nil, err
+	}
+	compiled, err := compiler.Compile(&wf)
+	if err != nil {
+		closeFn()
+		return nil, err
+	}
+	inputs, inputSnapshot, err := parseWorkflowInputs(rawInputs, compiled.Inputs)
+	if err != nil {
+		closeFn()
+		return nil, err
+	}
+	return &preparedWorkflowRun{
+		root: work.Abs, res: res, store: store, repo: repo, closeFn: closeFn,
+		compiled: compiled, inputs: inputs, inputSnapshot: inputSnapshot,
+		refBase: filepath.Dir(found.Path), raw: found.Raw,
+	}, nil
+}
+
+// finishWorkflowRunDelivery completes a run that settled at delivery_pending:
+// with --allow-publish it performs delivery and prints the settled status;
+// without it prints the non-publication explanation.
+func finishWorkflowRunDelivery(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName, mode string, allowPublish bool, stdout, stderr io.Writer) error {
+	if allowPublish {
+		if err := deliverRunWithStore(ctx, root, res, store, repo, runID, allowPublish, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "workflow delivery failed: %v\n", err)
+			return err
+		}
+		settled, err := repo.GetRun(ctx, runID)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
+		return nil
+	}
+	fmt.Fprintf(stdout, "workflow %s reached its success terminal; delivery mode=%s requires --allow-publish\n", workflowName, mode)
+	fmt.Fprintf(stdout, "deliver with: mivia workflow deliver %s --allow-publish\n", runID)
 	return nil
 }
 
@@ -216,6 +291,15 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 		cleanup()
 		return workflowControllerBuild{}, err
 	}
+	admissionRemoteURL := ""
+	if recorded == nil && deliveryRequiresPublication(wf) {
+		remoteURL, err := workflowDeliveryAdmission(wf, identity, writeCapable)
+		if err != nil {
+			cleanup()
+			return workflowControllerBuild{}, err
+		}
+		admissionRemoteURL = remoteURL
+	}
 	comp, err := workflowBuildProvider(res)
 	if err != nil {
 		cleanup()
@@ -244,81 +328,76 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 	}
 	admission := controller.Admission{
 		BaseRef: identity.BaseRef, BaseCommit: identity.BaseCommit, WorktreeName: identity.WorktreeName,
-		InputDigest: workflowledger.InputDigest(inputSnapshot),
+		InputDigest: workflowledger.InputDigest(inputSnapshot), RemoteURL: admissionRemoteURL,
 	}
 	if recorded != nil {
 		admission.InputDigest = recorded.InputDigest
 		admission.DeadlineAt = recorded.DeadlineAt
+		admission.RemoteURL = recorded.RemoteURL
 	}
 	return workflowControllerBuild{Controller: ctrl, Dispatcher: dispatcher, Admission: admission, Cleanup: cleanup}, nil
 }
 
-func parseWorkflowInputs(raw []string, defs map[string]definition.InputDef) (map[string]any, map[string]string, error) {
-	values := make(map[string]any)
-	snapshot := make(map[string]string)
-	for _, item := range raw {
-		key, value, ok := strings.Cut(item, "=")
-		if !ok || strings.TrimSpace(key) == "" {
-			return nil, nil, fmt.Errorf("workflow input must use name=value")
-		}
-		def, exists := defs[key]
-		if !exists {
-			return nil, nil, fmt.Errorf("unknown workflow input %q", key)
-		}
-		if def.MaxBytes > 0 && len(value) > def.MaxBytes {
-			return nil, nil, fmt.Errorf("workflow input %q exceeds %d bytes", key, def.MaxBytes)
-		}
-		parsed, err := parseWorkflowInputValue(value, def.Type)
-		if err != nil {
-			return nil, nil, fmt.Errorf("workflow input %q: %w", key, err)
-		}
-		values[key] = parsed
-		snapshot[key] = value
+// workflowDeliveryAdmission verifies that a fresh delivery-required run can
+// publish: the workflow must be write-capable, the repository must have an
+// origin remote, and the delivery base must sit at the admitted base commit.
+// It returns the resolved origin URL for the immutable admission record.
+func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool) (string, error) {
+	if !writeCapable {
+		return "", fmt.Errorf("workflow %s declares delivery but its agents cannot write files; delivery requires a run worktree", wf.Name)
 	}
-	for key, def := range defs {
-		if def.Required {
-			if _, ok := values[key]; !ok {
-				return nil, nil, fmt.Errorf("required workflow input %q is missing", key)
-			}
-		}
+	policy, ok := delivery.FromCompiled(wf)
+	if !ok {
+		return "", fmt.Errorf("workflow %s delivery policy is not active", wf.Name)
 	}
-	return values, snapshot, nil
+	gitCtx := delivery.GitContext{Dir: identity.MainRoot, GitDir: filepath.Join(identity.MainRoot, ".git")}
+	originURL, err := workflowDeliverGit.Run(context.Background(), gitCtx, "remote", "get-url", "origin")
+	if err != nil {
+		return "", fmt.Errorf("workflow requires delivery but the repository has no origin remote")
+	}
+	baseCommit, err := workflowDeliverGit.Run(context.Background(), gitCtx, "rev-parse", "--verify", "--end-of-options", "refs/heads/"+policy.Base+"^{commit}")
+	if err != nil || strings.TrimSpace(baseCommit) != identity.BaseCommit {
+		return "", fmt.Errorf("delivery base %q is not at the admitted base commit", policy.Base)
+	}
+	return strings.TrimSpace(originURL), nil
 }
 
-func parseWorkflowInputValue(value, typ string) (any, error) {
-	if typ == "string" {
-		return value, nil
+// parseWorkflowBoolFlag parses a boolean workflow flag in bare (--name) or
+// --name=true|false form, removing it from args. It reports an error for a
+// malformed value or a duplicate occurrence. It does not reuse flagValue
+// because that helper only handles string-valued flags.
+func parseWorkflowBoolFlag(args []string, name string) (bool, []string, error) {
+	rest := make([]string, 0, len(args))
+	value := false
+	found := false
+	for _, arg := range args {
+		switch {
+		case arg == name:
+			if found {
+				return false, nil, fmt.Errorf("workflow flag %s may only be given once", name)
+			}
+			value, found = true, true
+		case strings.HasPrefix(arg, name+"="):
+			if found {
+				return false, nil, fmt.Errorf("workflow flag %s may only be given once", name)
+			}
+			raw := strings.TrimPrefix(arg, name+"=")
+			parsed, err := strconv.ParseBool(raw)
+			if err != nil {
+				return false, nil, fmt.Errorf("workflow flag %s expects true or false, got %q", name, raw)
+			}
+			value, found = parsed, true
+		default:
+			rest = append(rest, arg)
+		}
 	}
-	decoder := json.NewDecoder(bytes.NewReader([]byte(value)))
-	decoder.UseNumber()
-	var parsed any
-	if err := decoder.Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("value is not valid %s JSON", typ)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return nil, fmt.Errorf("value contains more than one JSON value")
-	}
-	valid := false
-	switch typ {
-	case "boolean":
-		_, valid = parsed.(bool)
-	case "integer":
-		number, ok := parsed.(json.Number)
-		valid = ok && !strings.ContainsAny(number.String(), ".eE")
-	case "number":
-		_, valid = parsed.(json.Number)
-	case "object":
-		_, valid = parsed.(map[string]any)
-	case "array":
-		_, valid = parsed.([]any)
-	default:
-		return nil, fmt.Errorf("unsupported input type %q", typ)
-	}
-	if !valid {
-		return nil, fmt.Errorf("value does not match type %q", typ)
-	}
-	return parsed, nil
+	return value, rest, nil
+}
+
+// deliveryRequiresPublication reports whether the workflow's delivery policy
+// must publish a pull request when the run settles at its success terminal.
+func deliveryRequiresPublication(wf *compiler.CompiledWorkflow) bool {
+	return wf.DeliveryActive()
 }
 
 func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot) (map[string]controller.StepRuntime, workflowledger.Snapshot, error) {
@@ -356,6 +435,11 @@ func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, regi
 		}
 		if step.OutputSchema != "" {
 			snapshot.Schemas[step.OutputSchema] = workflowledger.RefSnapshot{Digest: digestBytes(schemaBytes), Bytes: append([]byte(nil), schemaBytes...)}
+		}
+	}
+	if prior == nil && wf.DeliveryActive() {
+		snapshot.Delivery = &workflowledger.DeliverySnapshot{
+			Mode: wf.Delivery.Mode, Provider: wf.Delivery.Provider, Base: wf.Delivery.Base,
 		}
 	}
 	return result, snapshot, nil
@@ -397,46 +481,4 @@ func loadStepReferences(base string, step definition.Step, prior *workflowledger
 		return string(templateBytes), schema, templateBytes, data, nil
 	}
 	return string(templateBytes), schema, templateBytes, nil, nil
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	out := make(map[string]string, len(values))
-	for key, value := range values {
-		out[key] = value
-	}
-	return out
-}
-
-func readWorkflowRef(base, ref string, max int) ([]byte, error) {
-	clean := filepath.Clean(ref)
-	if clean == "." || filepath.IsAbs(ref) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
-		return nil, fmt.Errorf("workflow reference %q escapes its directory", ref)
-	}
-	root, err := os.OpenRoot(base)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	info, err := root.Lstat(clean)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("workflow reference %q is not a regular file", ref)
-	}
-	file, err := root.Open(clean)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, int64(max)+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > max {
-		return nil, fmt.Errorf("workflow reference %q exceeds %d bytes", ref, max)
-	}
-	return data, nil
-}
-
-func digestBytes(data []byte) string {
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
 }

@@ -375,6 +375,9 @@ func (c *LinearController) finishHumanRunStatus(ctx context.Context, run workflo
 		if attempt.ToStepID == "failure" {
 			status = workflowledger.RunStatusFailed
 		}
+		if c.deliveryRequired() && attempt.ToStepID == "success" {
+			status = workflowledger.RunStatusDeliveryPending
+		}
 		if workflowledger.IsTerminalRunStatus(run.Status) {
 			return nil
 		}

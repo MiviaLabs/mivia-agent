@@ -193,14 +193,14 @@ func TestValidateWorkflowSnapshotReferences(t *testing.T) {
 func TestReconcileWorkflowTerminalStates(t *testing.T) {
 	ctx := context.Background()
 	repo := workflowledger.NewMemoryRepository()
-	if _, err := reconcileWorkflowTerminal(ctx, repo, "wfr-missing", &bytes.Buffer{}); err == nil {
+	if _, err := reconcileWorkflowTerminal(ctx, repo, "wfr-missing", false, &bytes.Buffer{}); err == nil {
 		t.Fatal("reconcileWorkflowTerminal() error = nil for a missing run")
 	}
 	run := workflowledger.RunSnapshot{RunID: "wfr-pending", Status: workflowledger.RunStatusPending, ActiveStepID: "one"}
 	if err := repo.CreateRun(ctx, run, []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
-	terminal, err := reconcileWorkflowTerminal(ctx, repo, run.RunID, &bytes.Buffer{})
+	terminal, err := reconcileWorkflowTerminal(ctx, repo, run.RunID, false, &bytes.Buffer{})
 	if err != nil || terminal {
 		t.Fatalf("reconcileWorkflowTerminal() = %v, %v; want false, nil", terminal, err)
 	}

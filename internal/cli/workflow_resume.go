@@ -59,6 +59,14 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	if err != nil {
 		return err
 	}
+	// A delivery_pending run is settled: the workflow body is complete and the
+	// result is waiting for publication. Resume must refuse BEFORE any terminal
+	// reconciliation — delivery is a separate host-owned step, and reconciling
+	// here would CAS delivery_pending->delivery_pending (invalid) or, under an
+	// older classification, delivery_pending->succeeded (skipping delivery).
+	if run.Status == workflowledger.RunStatusDeliveryPending {
+		return fmt.Errorf("workflow run %q is waiting for delivery; deliver with: mivia workflow deliver %s --allow-publish", runID, runID)
+	}
 	raw, err := repo.GetRunSnapshot(ctx, runID)
 	if err != nil {
 		return err
@@ -67,7 +75,7 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	if err != nil {
 		return err
 	}
-	terminal, err := reconcileWorkflowTerminal(ctx, repo, runID, stdout)
+	terminal, err := reconcileWorkflowTerminal(ctx, repo, runID, compiled.DeliveryActive(), stdout)
 	if err != nil || terminal {
 		return err
 	}
@@ -129,6 +137,14 @@ func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) 
 	if err := validateWorkflowSnapshotReferences(compiled, snapshot); err != nil {
 		return workflowledger.Snapshot{}, nil, nil, err
 	}
+	if snapshot.Delivery != nil {
+		if compiled.Delivery == nil ||
+			compiled.Delivery.Mode != snapshot.Delivery.Mode ||
+			compiled.Delivery.Provider != snapshot.Delivery.Provider ||
+			compiled.Delivery.Base != snapshot.Delivery.Base {
+			return workflowledger.Snapshot{}, nil, nil, fmt.Errorf("snapshot delivery policy does not match the admitted definition")
+		}
+	}
 	inputs := make(map[string]any, len(snapshot.Inputs))
 	for key, value := range snapshot.Inputs {
 		def, ok := compiled.Inputs[key]
@@ -167,7 +183,7 @@ func validateWorkflowSnapshotReferences(wf *compiler.CompiledWorkflow, snapshot 
 	return compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas)
 }
 
-func reconcileWorkflowTerminal(ctx context.Context, repo workflowledger.Repository, runID string, stdout io.Writer) (bool, error) {
+func reconcileWorkflowTerminal(ctx context.Context, repo workflowledger.Repository, runID string, deliveryActive bool, stdout io.Writer) (bool, error) {
 	plan, err := workflowledger.PlanResume(ctx, repo, runID)
 	if err != nil {
 		return false, err
@@ -175,7 +191,16 @@ func reconcileWorkflowTerminal(ctx context.Context, repo workflowledger.Reposito
 	if !plan.Terminal {
 		return false, nil
 	}
-	if !workflowledger.IsTerminalRunStatus(plan.Run.Status) {
+	// A run whose derived route reached the success terminal under an active
+	// delivery policy must settle at delivery_pending, never succeeded: the
+	// delivery phase still has to publish. This mirrors the controller's
+	// terminal-route routing for the crash window where the route is durable
+	// but the delivery_pending CAS was never recorded.
+	if deliveryActive && plan.TerminalStatus == workflowledger.RunStatusSucceeded &&
+		plan.Run.Status != workflowledger.RunStatusDeliveryPending {
+		plan.TerminalStatus = workflowledger.RunStatusDeliveryPending
+	}
+	if !workflowledger.IsTerminalRunStatus(plan.Run.Status) && plan.TerminalStatus != plan.Run.Status {
 		if err := repo.ClearRunClaim(ctx, runID); err != nil {
 			return false, err
 		}

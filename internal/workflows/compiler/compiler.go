@@ -28,6 +28,16 @@ type CompiledWorkflow struct {
 	LoopNames map[string]bool
 }
 
+// DeliveryActive reports whether the workflow declares an active pull_request
+// delivery policy: kind "pull_request" with an explicit mode other than
+// "none". Runs with an active policy settle at delivery_pending on their
+// success route instead of moving directly to succeeded.
+func (c *CompiledWorkflow) DeliveryActive() bool {
+	return c != nil && c.Delivery != nil &&
+		c.Delivery.Kind == "pull_request" &&
+		c.Delivery.Mode != "" && c.Delivery.Mode != "none"
+}
+
 // Compile validates a workflow definition and returns an immutable compiled
 // workflow. It applies the full admission policy, including the
 // unbounded-cycle check.
@@ -267,6 +277,9 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 	}
 	switch wf.Delivery.Kind {
 	case "":
+		if wf.Delivery.Mode != "" && wf.Delivery.Mode != "none" {
+			return fmt.Errorf("delivery: kind is empty but mode %q is set; use kind = \"pull_request\" or mode = \"none\"", wf.Delivery.Mode)
+		}
 		return nil
 	case "pull_request":
 		switch wf.Delivery.Mode {

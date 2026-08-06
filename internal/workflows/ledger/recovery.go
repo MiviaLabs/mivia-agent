@@ -56,7 +56,10 @@ func derivedActiveStep(initial string, attempts []StepAttempt) string {
 // requires. Rules: (1) every recorded attempt with a non-terminal status is
 // returned in AttemptsInFlight to be JOINED, never re-dispatched; (2) a run
 // whose derived active step is a reserved terminal step is Terminal even
-// without a recorded status CAS; (3) a terminal run yields Terminal.
+// without a recorded status CAS; (3) a terminal run yields Terminal; (4) a
+// delivery_pending run is settled (Terminal) with TerminalStatus
+// delivery_pending — never succeeded, so the resume path cannot CAS it to
+// succeeded and skip delivery.
 // Returns ErrNotFound if the run is absent.
 func PlanResume(ctx context.Context, repo Repository, runID string) (RecoveryPlan, error) {
 	run, err := repo.GetRun(ctx, runID)
@@ -71,6 +74,19 @@ func PlanResume(ctx context.Context, repo Repository, runID string) (RecoveryPla
 		plan.Terminal = true
 		plan.TerminalStatus = run.Status
 		plan.Reason = fmt.Sprintf("run %s already reached terminal status %q; nothing to resume", runID, run.Status)
+		return plan, nil
+	}
+
+	// Rule (4): a delivery_pending run is settled — the workflow body is
+	// complete and the result is waiting for publication — but it is NOT
+	// succeeded. It must never be classified as such, or the resume path
+	// would CAS delivery_pending->succeeded and skip delivery. Delivery is a
+	// separate host-owned step, so the plan stays delivery_pending and points
+	// at `workflow deliver --allow-publish`.
+	if run.Status == RunStatusDeliveryPending {
+		plan.Terminal = true
+		plan.TerminalStatus = RunStatusDeliveryPending
+		plan.Reason = fmt.Sprintf("run %s is waiting for publication; deliver with workflow deliver --allow-publish", runID)
 		return plan, nil
 	}
 
