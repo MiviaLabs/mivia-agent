@@ -168,6 +168,10 @@ handlers and prompt turns; those surfaces do not turn an agent file's
 Mivia supports an async subagent orchestration model - the model can spawn multiple sub-agents
 that run concurrently as DAGs, inspect their progress, block on results, or cancel them.
 
+For the workflow agent tools (`workflow_run`, `workflow_status`, `workflow_events`,
+`workflow_inspect`, `workflow_list_runs`, `workflow_deliver`, `workflow_cancel`),
+see the [Workflow Guide](workflows-guide.md).
+
 ```mermaid
 flowchart LR
     spawn_agent -->|"tasks (DAG)"| run_handle["run handle"]

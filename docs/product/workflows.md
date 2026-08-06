@@ -4,6 +4,12 @@ Workflows make the Mivia Agent harness repeatable without turning repository con
 
 A workflow is a repository-authored TOML definition in `.mivia/workflows/`. It selects already-resolved agents and registered host capabilities, then declares a bounded, sequential state machine. The host controls credentials, tools, commands, Git state, and publication.
 
+## See also
+
+- [Workflow user guide](../product/workflows-guide.md)
+- [Workflow architecture](../architecture/workflows.md)
+- [Security and privacy](../security/overview.md)
+
 ## v1 scope
 
 Workflows v1 supports:

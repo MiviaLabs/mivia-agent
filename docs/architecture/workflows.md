@@ -46,6 +46,12 @@ Agent steps are adapted to one existing coordinator task. The adapter preserves 
 
 Delivery lives outside both the workflow TOML and agent tools. A host-owned provider implementation creates a branch in the run worktree, commits, pushes, and creates or finds one GitHub PR using a persisted idempotency key. It receives a runtime publication grant, never an agent instruction.
 
+## See also
+
+- [Workflow user guide](../product/workflows-guide.md)
+- [Workflow product overview](../product/workflows.md)
+- [Security and privacy](../security/overview.md)
+
 ## Phase ordering
 
 1. Contract, docs, schemas, and fixtures.
