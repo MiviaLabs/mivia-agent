@@ -203,8 +203,10 @@ func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.R
 
 // maxTransientStepRetries bounds step-level retries for transient
 // LLM-provider failures. Each retry re-runs the whole subagent step with a
-// fresh task identity and a fresh child context.
-const maxTransientStepRetries = 2
+// fresh task identity and a fresh child context. Three retries with the
+// 10/30/60s backoff give a flaky provider roughly two minutes to recover
+// before the step fails.
+const maxTransientStepRetries = 3
 
 // transientProviderMarkers identify retryable LLM-provider transport errors:
 // overload/rate limits, upstream 5xx, and prompt-too-long (the latter comes
@@ -234,8 +236,12 @@ func isTransientProviderError(err error) bool {
 // stepTransientRetryBackoff is the backoff schedule between step-level
 // transient retries; overridable in tests.
 var stepTransientRetryBackoff = func(attempt int) time.Duration {
-	if attempt <= 0 {
-		return 5 * time.Second
+	switch attempt {
+	case 0:
+		return 10 * time.Second
+	case 1:
+		return 30 * time.Second
+	default:
+		return 60 * time.Second
 	}
-	return 20 * time.Second
 }

@@ -73,6 +73,40 @@ func TestAgentStepRetriesTransientProviderError(t *testing.T) {
 	}
 }
 
+// TestAgentStepTransientRetryStopsAtCap pins the bound: after the retry
+// budget is exhausted the step fails (no infinite retry), and the failed
+// attempt is persisted exactly once.
+func TestAgentStepTransientRetryStopsAtCap(t *testing.T) {
+	orig := stepTransientRetryBackoff
+	stepTransientRetryBackoff = func(int) time.Duration { return 0 }
+	t.Cleanup(func() { stepTransientRetryBackoff = orig })
+
+	runner := &transientFailRunner{
+		failures: 10, // exceed the cap
+		err:      errors.New("zai: provider error (HTTP 503, code 1305: service temporarily overloaded)"),
+	}
+	ctrl, repo := newErrorController(t, runner, "wfr-transient-cap")
+	got, err := ctrl.Run(context.Background())
+	if err == nil {
+		t.Fatalf("run succeeded = %+v; want failure after retry budget exhausted", got)
+	}
+	if got.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("status = %q, want failed", got.Status)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) != maxTransientStepRetries+1 {
+		t.Fatalf("RunStep calls = %d, want %d (initial + retries)", len(runner.calls), maxTransientStepRetries+1)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != workflowledger.AttemptStatusFailed {
+		t.Fatalf("attempts = %+v, want exactly one failed attempt", attempts)
+	}
+}
+
 // TestAgentStepDoesNotRetryNonTransientFailure pins the contract: a real
 // agent failure (schema/binding/refusal) does not match the transient markers
 // and is NOT retried — it fails immediately through on_failure.
