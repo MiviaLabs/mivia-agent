@@ -15,12 +15,15 @@ import (
 
 // compileOutputSchema resolves task > handler schema and compiles it.
 // On success with a schema, promptAppendix is the host instruction to append.
+// Only a nil schema means "no schema": an empty object {} is a valid JSON
+// Schema (match anything) and must be enforced as declared, not silently
+// replaced by the handler's fallback.
 func (h *MultiStepHandler) compileOutputSchema(req runtime.Request) (compiled *jschema.Compiled, promptAppendix string, err error) {
 	schemaMap := req.OutputSchema
-	if len(schemaMap) == 0 {
+	if schemaMap == nil {
 		schemaMap = h.OutputSchema
 	}
-	if len(schemaMap) == 0 {
+	if schemaMap == nil {
 		return nil, "", nil
 	}
 	compiled, err = jschema.Compile(schemaMap)

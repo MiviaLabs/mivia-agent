@@ -499,10 +499,7 @@ func TestDeliverPostCommitCrashResume(t *testing.T) {
 
 // TestDeliverRetryPathWritesNoStageRecord seeds a post-commit-crash record
 // (CommitSHA == head) and delivers. The retry path must reuse the existing
-// record as the stage state instead of rewriting it: the only delivery
-// upserts this attempt mints are pushed and succeeded, so the key's
-// wf_delivery_upserted log stays seed(pending) + pushed + succeeded = 3
-// events with no extra pending stage upsert.
+// events with no extra pending stage upsert (the PR-identity record is the only extra push).
 func TestDeliverRetryPathWritesNoStageRecord(t *testing.T) {
 	ctx := context.Background()
 	_, worktreeRoot, gc, baseCommit, originURL, run, repo, store := newDeliveryFixtureStatusStore(t, workflowledger.RunStatusDeliveryPending, nil)
@@ -535,8 +532,10 @@ func TestDeliverRetryPathWritesNoStageRecord(t *testing.T) {
 	}
 
 	// Count the key's wf_delivery_upserted events by status: exactly the
-	// seed's pending, plus the attempt's pushed and succeeded. Any extra
-	// pending event would mean the retry path rewrote the stage record.
+	// seed's pending, the attempt's push record, the PR-identity record
+	// (pushed again with RemoteID/URL, only when newly learned), and
+	// succeeded. Any extra pending event would mean the retry rewrote the
+	// stage record.
 	events, err := store.Events(ctx, run.RunID)
 	if err != nil {
 		t.Fatalf("store.Events: %v", err)
@@ -566,8 +565,8 @@ func TestDeliverRetryPathWritesNoStageRecord(t *testing.T) {
 			t.Fatalf("event %s carries unexpected status %q", ev.ID, payload.Delivery.Status)
 		}
 	}
-	if pending != 1 || pushed != 1 || succeeded != 1 {
-		t.Fatalf("wf_delivery_upserted for key: pending=%d pushed=%d succeeded=%d, want 1/1/1 (seed + pushed + succeeded; no extra stage upsert)", pending, pushed, succeeded)
+	if pending != 1 || pushed != 2 || succeeded != 1 {
+		t.Fatalf("wf_delivery_upserted for key: pending=%d pushed=%d succeeded=%d, want 1/2/1 (seed + push record + PR-identity record + succeeded)", pending, pushed, succeeded)
 	}
 }
 
@@ -611,8 +610,7 @@ func TestDeliverRetryDetectsForeignCommit(t *testing.T) {
 	}
 }
 
-// failOncePRClient fails the first Create call, then delegates to a fake.
-// It simulates a transient PR-API failure after the commit was pushed.
+// failOncePRClient fails the first Create call (transient PR-API failure), then delegates.
 type failOncePRClient struct {
 	fake   *fakePRClient
 	mu     sync.Mutex

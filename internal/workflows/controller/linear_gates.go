@@ -410,13 +410,24 @@ func (c *LinearController) reconcileWaitingApproval(ctx context.Context, run wor
 // Re-entry (repair loops): when the latest attempt already succeeded and
 // recorded a route (ToStepID set), create attempt max+1 instead of treating
 // the prior completion as a stuck success.
+//
+// A NON-terminal latest attempt is a crash artifact: only a crashed or
+// force-replaced executor leaves an attempt RUNNING (the controller is
+// single-threaded per run and completes each attempt before advancing). The
+// old executor's writes are claim-fenced and discarded, so re-executing the
+// same attemptID would double-run the step's agent work while the ledger
+// keeps one attempt. Mark the stale attempt interrupted and admit a fresh
+// attempt (No+1) instead.
 func (c *LinearController) admitAttempt(ctx context.Context, _ workflowledger.RunSnapshot, stepID string, attempts []workflowledger.StepAttempt) (workflowledger.StepAttempt, bool, error) {
 	attempt, found := latestAttempt(attempts, stepID)
 	if !found {
 		return c.createAdmittedAttempt(ctx, stepID, nextAttemptNo(attempts, stepID), attempts)
 	}
 	if !workflowledger.IsTerminalAttemptStatus(attempt.Status) {
-		return attempt, true, nil
+		if err := c.Repo.CompleteStepAttempt(ctx, c.RunID, attempt.AttemptID, attempt.Version, workflowledger.AttemptOutcome{Status: workflowledger.AttemptStatusInterrupted}); err != nil {
+			return workflowledger.StepAttempt{}, false, err
+		}
+		return c.createAdmittedAttempt(ctx, stepID, attempt.AttemptNo+1, attempts)
 	}
 	reenter := attempt.Status == workflowledger.AttemptStatusInterrupted ||
 		(attempt.Status == workflowledger.AttemptStatusSucceeded && attempt.ToStepID != "") ||

@@ -9,32 +9,33 @@ import (
 )
 
 // resolveTaskSchemas picks task > skill > agent > none and admits each schema
-// (compile caps, no remote $ref) before spawn cost.
+// (compile caps, no remote $ref) before spawn cost. Only nil means "absent":
+// an empty object {} is a valid schema and must survive the resolution chain.
 func resolveTaskSchemas(taskOut, taskIn map[string]any, route taskRoute, skillReg *skills.Registry) (out, in map[string]any, err error) {
 	out = taskOut
 	in = taskIn
-	if len(out) == 0 && route.skill != "" && skillReg != nil {
-		if def, ok := skillReg.Get(route.skill); ok && len(def.OutputSchema) > 0 {
+	if out == nil && route.skill != "" && skillReg != nil {
+		if def, ok := skillReg.Get(route.skill); ok && def.OutputSchema != nil {
 			out = def.OutputSchema
 		}
 	}
-	if len(out) == 0 && len(route.agent.OutputSchema) > 0 {
+	if out == nil && route.agent.OutputSchema != nil {
 		out = route.agent.OutputSchema
 	}
-	if len(in) == 0 && route.skill != "" && skillReg != nil {
-		if def, ok := skillReg.Get(route.skill); ok && len(def.InputSchema) > 0 {
+	if in == nil && route.skill != "" && skillReg != nil {
+		if def, ok := skillReg.Get(route.skill); ok && def.InputSchema != nil {
 			in = def.InputSchema
 		}
 	}
-	if len(in) == 0 && len(route.agent.InputSchema) > 0 {
+	if in == nil && route.agent.InputSchema != nil {
 		in = route.agent.InputSchema
 	}
-	if len(out) > 0 {
+	if out != nil {
 		if _, err := jschema.Compile(out); err != nil {
 			return nil, nil, fmt.Errorf("output_schema: %w", err)
 		}
 	}
-	if len(in) > 0 {
+	if in != nil {
 		if _, err := jschema.Compile(in); err != nil {
 			return nil, nil, fmt.Errorf("input_schema: %w", err)
 		}

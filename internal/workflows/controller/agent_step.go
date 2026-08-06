@@ -91,6 +91,11 @@ func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Reposit
 		ToStepID:     route.ToStepID, TransitionIndex: route.TransitionIndex,
 		MatchDigest: route.MatchDigest, DecisionJSON: append([]byte(nil), route.DecisionJSON...),
 	}
+	// Output is stored for every status: evidence-gate repair steps bind the
+	// failed gate's verification output (pinned by phase4 tests), and a
+	// succeeded child whose step errored keeps its output (D3). Agent steps
+	// that genuinely fail route to on_failure, never repair, so partial agent
+	// output is not injected into repair context.
 	if len(result.Output) > 0 {
 		outcome.OutputDigest = workflowledger.DigestHex(result.Output)
 		outcome.OutputRef = "sha256:" + outcome.OutputDigest

@@ -78,8 +78,8 @@ func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*Run
 		return c.resumeEmptyRun(ctx, snap.RunID, key, fingerprint, req)
 	}
 	if req.ForceResume {
-		if err := c.repo.ClearRunClaim(ctx, snap.RunID); err != nil {
-			return nil, fmt.Errorf("ensure run: clear run claim: %w", err)
+		if err := c.claimForResume(ctx, snap.RunID, true); err != nil {
+			return nil, err
 		}
 	}
 	h, err := c.resumeInterruptedRun(ctx, snap.RunID, req.Tasks)
@@ -172,16 +172,10 @@ func latestAttempts(tasks []ledger.TaskSnapshot) map[string]string {
 }
 
 func (c *coordinator) resumeEmptyRun(ctx context.Context, runID, key, fingerprint string, req EnsureRunRequest) (*RunHandle, error) {
-	if req.ForceResume {
-		if err := c.repo.ClearRunClaim(ctx, runID); err != nil {
-			return nil, fmt.Errorf("ensure run: clear run claim: %w", err)
-		}
-	}
-	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
-		if errors.Is(err, ledger.ErrClaimHeld) {
-			return nil, ErrRunHeldByAnotherExecutor
-		}
-		return nil, fmt.Errorf("ensure run: claim empty run: %w", err)
+	// Claim first; only a held claim is ever cleared, and only once, so a
+	// force resume cannot wipe a live claim held by another executor.
+	if err := c.claimForResume(ctx, runID, req.ForceResume); err != nil {
+		return nil, err
 	}
 	named, err := c.createTasks(ctx, runID, req.Tasks, c.nowLocked())
 	if err != nil {
@@ -200,6 +194,37 @@ func (c *coordinator) resumeEmptyRun(ctx context.Context, runID, key, fingerprin
 	return h, nil
 }
 
+// claimForResume acquires the execution claim for a (force-)resume without
+// ever wiping a LIVE claim blindly. ClaimRun is probed first; only a claim
+// that is actually held is cleared, and only once - a second ErrClaimHeld
+// means another executor holds the run right now, so force-resume refuses
+// too. The probe claim (same holder) is kept where the caller executes the
+// run itself; the interrupted-run path's own ClaimRun is a same-holder
+// refresh, so the run stays exclusively ours across the resume handoff.
+func (c *coordinator) claimForResume(ctx context.Context, runID string, force bool) error {
+	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
+		if errors.Is(err, ledger.ErrClaimHeld) && force {
+			if err := c.repo.ClearRunClaim(ctx, runID); err != nil {
+				return fmt.Errorf("ensure run: clear run claim: %w", err)
+			}
+			if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
+				if errors.Is(err, ledger.ErrClaimHeld) {
+					return ErrRunHeldByAnotherExecutor
+				}
+				return fmt.Errorf("ensure run: reclaim run: %w", err)
+			}
+		} else if errors.Is(err, ledger.ErrClaimHeld) {
+			return ErrRunHeldByAnotherExecutor
+		} else {
+			return fmt.Errorf("ensure run: claim run: %w", err)
+		}
+	}
+	return nil
+}
+
+// registerEnsuredHandle stores the run handle under its idempotency key so a
+// repeat EnsureRun for the same key returns the same handle, then evicts it
+// once the run reaches a terminal state.
 func (c *coordinator) registerEnsuredHandle(key string, h *RunHandle) {
 	c.handlesMu.Lock()
 	c.handles[key] = h

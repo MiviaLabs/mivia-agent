@@ -189,20 +189,28 @@ func TestEnsureRunSurfacesRepositoryFailures(t *testing.T) {
 		name     string
 		admitted int
 		force    bool
-		set      func(*ensureFailingRepository)
+		set      func(*ensureFailingRepository, string)
 	}{
-		{"list tasks", 1, false, func(r *ensureFailingRepository) { r.listErr = want }},
-		{"clear full claim", 1, true, func(r *ensureFailingRepository) { r.clearErr = want }},
-		{"clear empty claim", 0, true, func(r *ensureFailingRepository) { r.clearErr = want }},
-		{"claim empty run", 0, false, func(r *ensureFailingRepository) { r.claimErr = want }},
-		{"repair task", 0, false, func(r *ensureFailingRepository) { r.createTaskErr = want }},
+		{"list tasks", 1, false, func(r *ensureFailingRepository, _ string) { r.listErr = want }},
+		// Clear is only attempted when a claim is actually held (probe-first
+		// discipline); seed a stale claim so the clear path is exercised.
+		{"clear full claim", 1, true, func(r *ensureFailingRepository, runID string) {
+			_ = r.ClaimRun(context.Background(), runID, "stale-holder")
+			r.clearErr = want
+		}},
+		{"clear empty claim", 0, true, func(r *ensureFailingRepository, runID string) {
+			_ = r.ClaimRun(context.Background(), runID, "stale-holder")
+			r.clearErr = want
+		}},
+		{"claim empty run", 0, false, func(r *ensureFailingRepository, _ string) { r.claimErr = want }},
+		{"repair task", 0, false, func(r *ensureFailingRepository, _ string) { r.createTaskErr = want }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			base := ledger.NewMemoryLedgerRepository()
 			runID := NewRunID()
 			seedEnsuredRun(t, base, context.Background(), runID, "step", []subagents.Task{task}, tc.admitted)
 			repo := &ensureFailingRepository{LedgerRepository: base}
-			tc.set(repo)
+			tc.set(repo, runID)
 			_, err := newIdempotencyCoordinator(repo).EnsureRun(context.Background(), request(runID, tc.force))
 			if !errors.Is(err, want) {
 				t.Fatalf("error = %v", err)
