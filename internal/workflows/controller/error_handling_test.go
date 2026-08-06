@@ -123,6 +123,9 @@ func TestAttemptTimeoutDerivedFromRunDeadline(t *testing.T) {
 	if want := 30 * time.Minute; runner.calls[0].Timeout != want {
 		t.Fatalf("child timeout = %s, want %s", runner.calls[0].Timeout, want)
 	}
+	if want := int((30 * time.Minute).Seconds()); runner.calls[0].Budget != want {
+		t.Fatalf("child budget = %d, want %d (matches the step timeout so a long step is not killed by a shorter orchestration default)", runner.calls[0].Budget, want)
+	}
 }
 
 // TestChildTimedOutStatusUpgradesFailure pins that a plain child error whose

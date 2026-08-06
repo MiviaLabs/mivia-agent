@@ -9,8 +9,10 @@ required = true
 max_bytes = 12000
 
 [limits]
+# Up to the system cap (24h) so delivery workflows can host very long-running
+# agent tasks end to end.
 max_step_attempts = 64
-max_duration_seconds = 10800
+max_duration_seconds = 86400
 
 [[steps]]
 id = "plan"
