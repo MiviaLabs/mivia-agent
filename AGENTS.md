@@ -119,6 +119,16 @@ Repo-native:
 | `architecture-review` | Boundaries, abstraction level, over-engineering (ADLC Step 0) |
 | `feature-delivery` | Bounded feature slice delivery |
 
+## Workflows
+
+When the workspace has `.mivia/workflows/`, the root agent has the workflow
+tools by default. `workflow_run` admits and starts a named workflow.
+`workflow_status`, `workflow_events`, `workflow_inspect`, and
+`workflow_list_runs` observe runs. `workflow_deliver` publishes a
+delivery-pending run, but only with `allow_publish=true`. `workflow_cancel`
+stops a run. Use the workflow engine when a task fits an existing workflow
+definition.
+
 ## Doctrines
 
 - `.mivia/doctrines/engineering-working-contract.md` - standing engineering contract

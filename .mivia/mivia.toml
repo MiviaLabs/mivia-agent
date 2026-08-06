@@ -346,6 +346,16 @@ core = [
     "search",
     "fetch_url",
     "extract",
+    # Phase 7 workflow tools are default for the root session: the root
+    # prompt names them as required process, so their schemas must ship
+    # always, never deferred (check_core_tier_covers_prompted_tools).
+    "workflow_run",
+    "workflow_status",
+    "workflow_events",
+    "workflow_inspect",
+    "workflow_list_runs",
+    "workflow_deliver",
+    "workflow_cancel",
 ]
 
 
