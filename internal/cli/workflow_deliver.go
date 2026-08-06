@@ -19,10 +19,11 @@ import (
 )
 
 var (
-	workflowDeliverGit    = delivery.RealGit{}
-	workflowDeliverNewPR  = func() delivery.PRClient { return delivery.GitHubCLI{} }
-	workflowDeliverNow    = time.Now
-	workflowDeliverRandom = rand.Read
+	workflowDeliverGit      delivery.GitRunner = delivery.RealGit{}
+	workflowDeliverNewPR                       = func() delivery.PRClient { return delivery.GitHubCLI{} }
+	workflowDeliverNow                         = time.Now
+	workflowDeliverRandom                      = rand.Read
+	workflowDeliveryTimeout                    = 10 * time.Minute
 )
 
 // executeWorkflowDeliver publishes the result of one delivery_pending run via
@@ -120,7 +121,11 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 		GitCtx:    delivery.GitContext{Dir: identity.Root, GitDir: gitDir},
 		OriginURL: run.RemoteURL,
 	}
-	result, err := delivery.Deliver(ctx, repo, &workflowDeliverGit, workflowDeliverNewPR(), req)
+	// Bound one delivery attempt: a hung git push or gh call must not block
+	// the CLI forever. The claim and status CAS stay on the caller's context.
+	deliveryCtx, cancel := context.WithTimeout(ctx, workflowDeliveryTimeout)
+	defer cancel()
+	result, err := delivery.Deliver(deliveryCtx, repo, workflowDeliverGit, workflowDeliverNewPR(), req)
 	if err != nil {
 		fmt.Fprintln(stdout, delivery.FormatOutcome(result, err))
 		if delivery.IsRefusal(err) {

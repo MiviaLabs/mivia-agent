@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -278,6 +279,53 @@ func TestWorkflowRunGrantNoDiff(t *testing.T) {
 	if rec.Status != "no_diff" {
 		t.Fatalf("delivery record status = %q, want no_diff", rec.Status)
 	}
+}
+
+// TestWorkflowDeliverTimesOutHungGit: a git command that never returns must
+// be cancelled by the delivery timeout instead of blocking the CLI forever;
+// the attempt settles as a refusal and no PR is created.
+func TestWorkflowDeliverTimesOutHungGit(t *testing.T) {
+	root, storePath, config, prRecorder := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, runID, repo)
+
+	originalGit := workflowDeliverGit
+	originalTimeout := workflowDeliveryTimeout
+	workflowDeliverGit = blockingGitRunner{}
+	workflowDeliveryTimeout = 100 * time.Millisecond
+	t.Cleanup(func() {
+		workflowDeliverGit = originalGit
+		workflowDeliveryTimeout = originalTimeout
+	})
+
+	start := time.Now()
+	err := runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, io.Discard, io.Discard)
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("deliver blocked for %v, want the delivery timeout to cancel hung git", elapsed)
+	}
+	if err == nil {
+		t.Fatal("deliver error = nil, want a timeout failure")
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero", creates, finds)
+	}
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryFailed {
+		t.Fatalf("run status = %q, want delivery_failed after the eligibility timeout", run.Status)
+	}
+}
+
+// blockingGitRunner is a GitRunner whose commands never return until the
+// context is cancelled.
+type blockingGitRunner struct{ delivery.GitRunner }
+
+func (blockingGitRunner) Run(ctx context.Context, _ delivery.GitContext, _ ...string) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
 }
 
 // TestWorkflowDeliverRefusalPrintsDeliveryFailedStatus: a permanent refusal
