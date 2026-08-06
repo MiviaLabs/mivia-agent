@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -54,6 +55,23 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 		batch := buildBatch(ready, pending, results, retryQueue)
 		if len(batch) == 0 {
 			continue
+		}
+		// Claim liveness before dispatch: a force-resume on another host
+		// steals this run's execution claim. Ledger writes are claim-fenced
+		// already, but without a liveness check the STALE executor would
+		// keep firing subagent calls for every remaining DAG batch (side
+		// effects duplicated) while only its writes failed. A same-holder
+		// ClaimRun refresh is the probe: it succeeds while we own the run
+		// and returns ErrClaimHeld once another holder took it. On theft,
+		// stop dispatching and leave the run to the new owner (do not
+		// settle — the run is not ours anymore).
+		if err := c.repo.ClaimRun(h.poolCtx, h.runID, c.holderID); err != nil {
+			if errors.Is(err, ledger.ErrClaimHeld) {
+				runErr = joinError(runErr, fmt.Errorf("run %q execution claim was taken by another executor; dispatching stopped", h.runID))
+			} else {
+				runErr = joinError(runErr, fmt.Errorf("probe run %q execution claim: %w", h.runID, err))
+			}
+			break
 		}
 		batchResults, err := c.pool.Run(h.poolCtx, batch)
 		runErr = joinError(runErr, err)
