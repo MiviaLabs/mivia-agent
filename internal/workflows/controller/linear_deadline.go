@@ -47,6 +47,9 @@ func (c *LinearController) reconcileTerminalRoute(ctx context.Context, run workf
 		if err != nil {
 			return run, true, err
 		}
+		if run.RunID == "" {
+			return run, true, fmt.Errorf("run %q not found after status transition", c.RunID)
+		}
 	}
 	if err := c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, status, nil); err != nil {
 		return run, true, err

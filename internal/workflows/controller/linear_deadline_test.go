@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -134,5 +135,106 @@ func TestRunDeadlineErrorPreservesRoutePersistedByAttempt(t *testing.T) {
 	got, err := ctrl.Run(context.Background())
 	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
 		t.Fatalf("run = %+v, err=%v", got, err)
+	}
+}
+
+// vanishingRunRepo wraps a repository to simulate GetRun returning a
+// zero-value RunSnapshot without an error on a specific call, modelling a
+// future repository implementation that may not return ErrNotFound.
+type vanishingRunRepo struct {
+	workflowledger.Repository
+	mu         sync.Mutex
+	getRunCall int
+	vanishAt   int // GetRun call number that returns a zero-value snapshot
+	runID      string
+}
+
+func (r *vanishingRunRepo) GetRun(ctx context.Context, id string) (workflowledger.RunSnapshot, error) {
+	r.mu.Lock()
+	r.getRunCall++
+	vanish := id == r.runID && r.getRunCall == r.vanishAt
+	r.mu.Unlock()
+	if vanish {
+		return workflowledger.RunSnapshot{}, nil
+	}
+	return r.Repository.GetRun(ctx, id)
+}
+
+// TestReconcileTerminalRouteVanishingRun verifies that reconcileTerminalRoute
+// guards against a repository that returns a zero-value RunSnapshot (with no
+// error) after the waiting_approval → running CAS, producing a clear "not found"
+// error instead of proceeding with a zero version.
+func TestReconcileTerminalRouteVanishingRun(t *testing.T) {
+	ctx := context.Background()
+	base := workflowledger.NewMemoryRepository()
+	wf := humanDeliveryWorkflow(t, false)
+	runID := "wfr-vanishing"
+
+	// Start the run and advance it to waiting_approval.
+	ctrl, err := NewLinearController(base, &linearRunner{}, wf, nil, map[string]any{"task": "x"}, runID, []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctrl.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != workflowledger.RunStatusWaitingApproval {
+		t.Fatalf("status = %q, want waiting_approval", got.Status)
+	}
+
+	// Simulate a partial crash recovery: the approval was processed (the
+	// attempt routes to "success", moving ActiveStepID to the terminal), but
+	// the final status transition never completed, leaving the run in
+	// waiting_approval at the "success" terminal step.
+	attempts, err := base.ListStepAttempts(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvalAttempt, ok := latestAttempt(attempts, "approve_me")
+	if !ok {
+		t.Fatal("missing approval attempt")
+	}
+	output := map[string]any{"decision": "approved"}
+	raw, _ := json.Marshal(output)
+	route := RouteDecision{ToStepID: "success", MatchDigest: "d", DecisionJSON: raw}
+	if err := CompleteExistingStepResult(ctx, base, approvalAttempt, AgentStepResult{Output: raw, ValidatedOutput: output}, workflowledger.AttemptStatusSucceeded, route); err != nil {
+		t.Fatal(err)
+	}
+
+	// After completing the attempt, the derived ActiveStepID should be "success".
+	run, err := base.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ActiveStepID != "success" {
+		t.Fatalf("active step = %q, want success", run.ActiveStepID)
+	}
+	if run.Status != workflowledger.RunStatusWaitingApproval {
+		t.Fatalf("status = %q, want waiting_approval", run.Status)
+	}
+
+	// Wrap the repo so that the GetRun call inside reconcileTerminalRoute's
+	// waiting_approval block returns a zero-value snapshot without an error.
+	repo := &vanishingRunRepo{Repository: base, vanishAt: 1, runID: runID}
+
+	ctrl2, err := NewLinearController(repo, &linearRunner{}, wf, nil, map[string]any{"task": "x"}, runID, []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Call reconcileTerminalRoute with the run in waiting_approval at "success".
+	_, terminal, err := ctrl2.reconcileTerminalRoute(ctx, run)
+	if err == nil {
+		t.Fatal("expected an error for vanishing run, got nil")
+	}
+	if !terminal {
+		t.Fatal("expected terminal=true")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("error = %v, want error containing 'not found'", err)
 	}
 }

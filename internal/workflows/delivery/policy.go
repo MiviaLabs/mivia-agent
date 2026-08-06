@@ -152,7 +152,7 @@ func truncateRendered(rendered string, maxBytes int, allowNewline bool) (string,
 		cut = len(rendered)
 	}
 	// Try to break at the last space within the limit.
-	if lastSpace := findLastSpace(rendered, cut); lastSpace > 0 {
+	if lastSpace := findLastSpace(rendered, cut-1); lastSpace > 0 {
 		cut = lastSpace
 	}
 	return rendered[:cut], nil

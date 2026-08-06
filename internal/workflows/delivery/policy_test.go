@@ -334,6 +334,68 @@ func TestRenderCommitMessage(t *testing.T) {
 	})
 }
 
+func TestTruncateRenderedWordBoundary(t *testing.T) {
+	t.Run("space at exact cutoff is excluded from scan", func(t *testing.T) {
+		// "abc def " = 8 bytes: a(0) b(1) c(2) (3) d(4) e(5) f(6) (7)
+		// maxBytes=7 → cut=7 → findLastSpace scans 0-6 (inclusive).
+		// Space at index 3 is found within the scan range.
+		// Before the fix (passing cut=7 to findLastSpace), it would scan 0-7
+		// and find the trailing space at index 7, cutting to "abc def " (8 bytes)
+		// which exceeds maxBytes=7.
+		s := "abc def "
+		got, err := truncateRendered(s, 7, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := "abc"; got != want {
+			t.Errorf("got %q (%d bytes), want %q (%d bytes)", got, len(got), want, len(want))
+		}
+		if len(got) > 7 {
+			t.Errorf("result %d bytes exceeds maxBytes 7", len(got))
+		}
+	})
+
+	t.Run("non-space at limit with space one byte before", func(t *testing.T) {
+		// "hello worlx" = 11 bytes. maxBytes=10: bytes 0-9 included, byte 10 excluded.
+		// The space at index 5 is the last space within bytes 0-9.
+		s := "hello worlx"
+		got, err := truncateRendered(s, 10, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := "hello"; got != want {
+			t.Errorf("got %q (%d bytes), want %q (%d bytes)", got, len(got), want, len(want))
+		}
+		if len(got) > 10 {
+			t.Errorf("result %d bytes exceeds maxBytes 10", len(got))
+		}
+	})
+
+	t.Run("no space in range uses byte boundary", func(t *testing.T) {
+		// "abcdefghijk" = 11 bytes, no spaces. maxBytes=10.
+		// No space to break at, so it should cut at byte 10.
+		s := "abcdefghijk"
+		got, err := truncateRendered(s, 10, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := "abcdefghij"; got != want {
+			t.Errorf("got %q (%d bytes), want %q (%d bytes)", got, len(got), want, len(want))
+		}
+	})
+
+	t.Run("under limit returns unchanged", func(t *testing.T) {
+		s := "hello"
+		got, err := truncateRendered(s, 10, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != s {
+			t.Errorf("got %q, want %q", got, s)
+		}
+	})
+}
+
 // assertRejectedInput verifies that each bad input value is rejected by
 // RenderTitle or RenderCommitMessage.
 func assertRejectedInput(t *testing.T, label, tmpl string, bad []string) {
