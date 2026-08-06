@@ -23,12 +23,14 @@ var exampleSecretExceptions = []string{".env.example"}
 func TestIsSecretPath(t *testing.T) {
 	cases := map[string]bool{
 		// Blocked: actual secret files
-		".env":            true,
-		"cfg/.env":        true,
-		".env.local":      true,
-		".env.production": true,
-		"id_rsa":          true,
-		"certs/key.pem":   true,
+		".env":                    true,
+		"cfg/.env":                true,
+		".env.local":              true,
+		".env.production":         true,
+		".env.example.production": true,
+		"id_rsa":                  true,
+		"keys/ID_RSA.pub":         true,
+		"certs/key.pem":           true,
 		// Allowed: templates and non-secret files
 		".env.example":   false,
 		"main.go":        false,
@@ -39,6 +41,15 @@ func TestIsSecretPath(t *testing.T) {
 		if got := isSecretPath(path, exampleSecretExceptions, exampleSecretPatterns); got != want {
 			t.Errorf("isSecretPath(%q)=%v want %v", path, got, want)
 		}
+	}
+}
+
+func TestIsSecretPathExceptionIsExact(t *testing.T) {
+	if !isSecretPath("nested/.env.example", exampleSecretExceptions, exampleSecretPatterns) {
+		t.Fatal("root exception allowed nested template")
+	}
+	if !isSecretPath(".env.example.production", exampleSecretExceptions, exampleSecretPatterns) {
+		t.Fatal("exception allowed secret extension")
 	}
 }
 

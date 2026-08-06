@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -249,7 +250,7 @@ func validateWorkflowTemplateBindings(step definition.Step, source string) error
 }
 
 func validateWorkflowVerifiers(wf *compiler.CompiledWorkflow) error {
-	catalogue := verifier.DefaultCatalogue()
+	catalogue := verifier.DefaultCatalogue(secretpath.Policy{})
 	for _, step := range wf.Steps {
 		if step.Kind != "evidence_gate" {
 			continue

@@ -25,6 +25,14 @@ func TestResolvedValidateRejectsUnsafeAPIKeyEnvironmentName(t *testing.T) {
 	}
 }
 
+func TestResolvedValidateRejectsUnsafeSecretPathException(t *testing.T) {
+	res := &Resolved{ProviderName: "deepseek", Model: "model", BaseURL: "https://example.test", APIKeyEnv: "KEY", Tools: ToolsConfig{SecretPathPatterns: []string{".env"}, SecretPathExceptions: []string{"../.env.example"}}}
+	err := res.Validate()
+	if err == nil || !strings.Contains(err.Error(), "secret path") {
+		t.Fatalf("Validate() error = %v, want secret path error", err)
+	}
+}
+
 func TestLoadTOMLAndEnv(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "mivia.toml")

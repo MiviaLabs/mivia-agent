@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 )
 
 const (
@@ -28,23 +30,28 @@ type goProfile struct {
 	name     string
 	commands []commandSpec
 	run      commandRunner
+	policy   secretpath.Policy
 }
 
-func defaultGoProfiles() []Profile {
+func defaultGoProfiles(policy secretpath.Policy) []Profile {
 	return []Profile{
-		newGoProfile(GoTestName, []commandSpec{{check: "go-test", program: "go", args: []string{"test", "./..."}}}, nil),
+		newGoProfile(GoTestName, []commandSpec{{check: "go-test", program: "go", args: []string{"test", "./..."}}}, nil, policy),
 		newGoProfile(GoVerifyName, []commandSpec{
 			{check: "go-vet", program: "go", args: []string{"vet", "./..."}},
 			{check: "go-build", program: "go", args: []string{"build", "./cmd/mivia"}},
-		}, nil),
+		}, nil, policy),
 		newGoProfile(GoFinalName, []commandSpec{
 			{check: "go-test-race", program: "go", args: []string{"test", "-race", "./..."}},
-		}, nil),
+		}, nil, policy),
 	}
 }
 
-func newGoProfile(name string, commands []commandSpec, run commandRunner) *goProfile {
-	return &goProfile{name: name, commands: commands, run: run}
+func newGoProfile(name string, commands []commandSpec, run commandRunner, policy ...secretpath.Policy) *goProfile {
+	p := goProfile{name: name, commands: commands, run: run}
+	if len(policy) > 0 {
+		p.policy = policy[0]
+	}
+	return &p
 }
 
 func (p *goProfile) Name() string {
@@ -73,7 +80,7 @@ func (p *goProfile) Verify(ctx context.Context, req Request) (Result, error) {
 		if p.run != nil {
 			runErr = p.run(ctx, workDir, command.program, command.args...)
 		} else {
-			runErr = runSandboxedCommand(ctx, workDir, req.ModuleBaseline, command.program, command.args...)
+			runErr = runSandboxedCommand(ctx, workDir, req.ModuleBaseline, p.policy, command.program, command.args...)
 		}
 		if runErr != nil {
 			check.Status = "failed"
@@ -109,5 +116,5 @@ func runFixedCommand(ctx context.Context, workDir, program string, args ...strin
 	if err != nil {
 		return err
 	}
-	return runSandboxedCommand(ctx, workDir, baseline, program, args...)
+	return runSandboxedCommand(ctx, workDir, baseline, secretpath.Policy{}, program, args...)
 }

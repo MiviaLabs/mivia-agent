@@ -20,7 +20,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test structure-check commit-check go-check test race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation-coverage diff-coverage
+	validate-invariants invariants mutation-coverage diff-coverage verifier-integration
 
 help:
 	@printf '%s\n' \
@@ -57,7 +57,7 @@ install-hooks hooks:
 # Offline gates only - no network required beyond local tool installs.
 verify: verify-agent docs-check secret-scan structure-check \
 	semgrep-validate semgrep-test hook-test agent-hook-test \
-	validate-invariants semgrep go-check diff-coverage
+	validate-invariants semgrep go-check verifier-integration diff-coverage
 
 verify-agent:
 	@python3 scripts/verify_agent_config.py
@@ -142,6 +142,9 @@ go-check: fmt-check
 
 test:
 	@go test ./...
+
+verifier-integration:
+	@go test -tags=integration ./internal/workflows/verifier
 
 invariants:
 	@echo "Running all invariant tests..."

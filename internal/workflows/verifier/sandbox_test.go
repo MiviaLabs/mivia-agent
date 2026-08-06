@@ -2,11 +2,12 @@ package verifier
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 )
 
 func TestSandboxCopiesRegularFilesAndRejectsSymlinks(t *testing.T) {
@@ -17,32 +18,58 @@ func TestSandboxCopiesRegularFilesAndRejectsSymlinks(t *testing.T) {
 	if err := os.Symlink("go.mod", filepath.Join(source, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	_, err := copySandboxWorktree(source, t.TempDir())
+	_, err := copySandboxWorktree(source, t.TempDir(), secretPolicy(t))
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("copySandboxWorktree() error = %v", err)
 	}
 }
 
-func TestSandboxRefusesSecretLikeFiles(t *testing.T) {
+func TestSandboxPreservesExecutableFiles(t *testing.T) {
+	source := t.TempDir()
+	path := filepath.Join(source, "hook.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if _, err := copySandboxWorktree(source, destination, secretPolicy(t)); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(destination, "hook.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatalf("sandbox copied non-executable file mode %v", info.Mode())
+	}
+}
+
+func TestSandboxOmitsSecretLikeFiles(t *testing.T) {
 	source := t.TempDir()
 	if err := os.WriteFile(filepath.Join(source, ".env.production"), []byte("KEY=value"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := copySandboxWorktree(source, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "secret-like") {
-		t.Fatalf("copySandboxWorktree() error = %v", err)
+	destination := t.TempDir()
+	if _, err := copySandboxWorktree(source, destination, secretPolicy(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, ".env.production")); !os.IsNotExist(err) {
+		t.Fatalf("sandbox retained secret file: %v", err)
 	}
 }
 
-func TestSandboxRefusesCredentialFiles(t *testing.T) {
+func TestSandboxOmitsCredentialFiles(t *testing.T) {
 	for _, name := range []string{".npmrc", ".netrc", "credentials.json"} {
 		t.Run(name, func(t *testing.T) {
 			source := t.TempDir()
 			if err := os.WriteFile(filepath.Join(source, name), []byte("credential"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := copySandboxWorktree(source, t.TempDir()); err == nil || !strings.Contains(err.Error(), "secret-like") {
-				t.Fatalf("copySandboxWorktree() error = %v", err)
+			destination := t.TempDir()
+			if _, err := copySandboxWorktree(source, destination, secretPolicy(t)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(destination, name)); !os.IsNotExist(err) {
+				t.Fatalf("sandbox retained secret file: %v", err)
 			}
 		})
 	}
@@ -65,11 +92,47 @@ func TestSandboxDoesNotCopyGitWorktreeLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	destination := t.TempDir()
-	if _, err := copySandboxWorktree(source, destination); err != nil {
+	if _, err := copySandboxWorktree(source, destination, secretPolicy(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(destination, ".git")); !os.IsNotExist(err) {
 		t.Fatalf("sandbox copy retained .git link: %v", err)
+	}
+}
+
+func TestSandboxDoesNotCopyNestedGitWorktreeLink(t *testing.T) {
+	source := t.TempDir()
+	nested := filepath.Join(source, ".mivia", "worktrees", "child")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, ".git"), []byte("gitdir: /host/path"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if _, err := copySandboxWorktree(source, destination, secretPolicy(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, ".mivia", "worktrees", "child", ".git")); !os.IsNotExist(err) {
+		t.Fatalf("sandbox copied nested git link: %v", err)
+	}
+}
+
+func TestSandboxDoesNotCopyManagedWorktrees(t *testing.T) {
+	source := t.TempDir()
+	path := filepath.Join(source, ".mivia", "worktrees", "child", "source.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package child\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if _, err := copySandboxWorktree(source, destination, secretPolicy(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, ".mivia", "worktrees")); !os.IsNotExist(err) {
+		t.Fatalf("sandbox copied managed worktrees: %v", err)
 	}
 }
 
@@ -87,42 +150,33 @@ func TestSandboxRejectsUnavailableBubblewrapBeforeCommand(t *testing.T) {
 	}
 }
 
+func TestVerifierGoToolchainRejectsHostHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rejectHostHomePath(home); err == nil || !strings.Contains(err.Error(), "host home") {
+		t.Fatalf("rejectHostHomePath() error = %v, want host home error", err)
+	}
+}
+
 func TestSandboxModuleCopyAllowsNonCredentialTokenNames(t *testing.T) {
 	source := t.TempDir()
 	if err := os.WriteFile(filepath.Join(source, "token.go"), []byte("package token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := copySandboxTree(source, t.TempDir(), false); err != nil {
+	if _, err := copySandboxTree(source, t.TempDir(), secretpath.Policy{}); err != nil {
 		t.Fatalf("copySandboxTree() error = %v", err)
 	}
 }
 
-func TestProvisionModuleCacheForRepositoryModule(t *testing.T) {
-	root := sandboxRepositoryRoot(t)
-	baseline, err := CaptureGoModuleBaseline(root)
+func secretPolicy(t *testing.T) secretpath.Policy {
+	t.Helper()
+	policy, err := secretpath.New([]string{".env", ".pem", ".key", "id_rsa", "id_ed25519", ".npmrc", ".netrc", "credentials"}, []string{".env.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := provisionModuleCache(root, t.TempDir(), baseline); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestSandboxRunsRepositoryModule(t *testing.T) {
-	root := sandboxRepositoryRoot(t)
-	baseline, err := CaptureGoModuleBaseline(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = runSandboxedCommand(context.Background(), root, baseline, "go", "test", "./internal/workflows/verifier")
-	if err == nil {
-		return
-	}
-	var failure *commandFailure
-	if errors.As(err, &failure) {
-		t.Fatalf("sandbox error = %v; detail = %q", err, failure.detail)
-	}
-	t.Fatal(err)
+	return policy
 }
 
 func sandboxRepositoryRoot(t *testing.T) string {
@@ -164,34 +218,16 @@ func TestGoProfileReportsHostFailureWithoutRepairEvidence(t *testing.T) {
 	}
 }
 
-func TestSandboxDoesNotExposeParentEnvironment(t *testing.T) {
-	if _, err := sandboxBubblewrapPath(); err != nil {
-		t.Skipf("bubblewrap is unavailable: %v", err)
-	}
-	workDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workDir, "go.mod"), []byte("module example.com/test\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	testSource := `package test
-import ("os"; "testing")
-func TestSecret(t *testing.T) { if os.Getenv("MIVIA_VERIFIER_SENTINEL") != "" { t.Fatal("secret exposed") } }
-`
-	if err := os.WriteFile(filepath.Join(workDir, "environment_test.go"), []byte(testSource), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("MIVIA_VERIFIER_SENTINEL", "must-not-reach-workflow-code")
-	if err := runFixedCommand(context.Background(), workDir, "go", "test", "./..."); err != nil {
-		t.Fatalf("sandboxed Go test failed: %v", err)
-	}
-}
-
 func TestSandboxDisablesGoWorkspaceMode(t *testing.T) {
-	args := sandboxArgs("/tmp/work", "/tmp/modules", "/tmp/home", "go", "test", "./...")
+	args := sandboxArgs("/tmp/work", "/tmp/modules", "/tmp/home", "/opt/go", "/opt/go/bin/go", "test", "./...")
 	joined := strings.Join(args, "\x00")
 	if !strings.Contains(joined, "GOWORK\x00off") {
 		t.Fatalf("sandbox arguments do not disable Go workspace mode: %q", joined)
 	}
-	if !strings.Contains(joined, "--tmpfs\x00/home\x00--ro-bind\x00/tmp/home\x00/home/sandbox") {
+	if !strings.Contains(joined, "--tmpfs\x00/home\x00--bind\x00/tmp/home\x00/home/sandbox") {
 		t.Fatalf("sandbox arguments do not create the isolated home parent: %q", joined)
+	}
+	if !strings.Contains(joined, "--ro-bind\x00/opt/go\x00/opt/go") || !strings.HasSuffix(joined, "--\x00/opt/go/bin/go\x00test\x00./...") {
+		t.Fatalf("sandbox arguments do not mount and run the Go toolchain: %q", joined)
 	}
 }
