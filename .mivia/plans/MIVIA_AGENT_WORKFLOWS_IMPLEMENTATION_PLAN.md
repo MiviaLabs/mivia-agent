@@ -1,7 +1,7 @@
 # Mivia Agent Workflows v1 — Implementation Plan
 
 **Repository:** `MiviaLabs/mivia-agent`
-**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 remaining Phase 7 planned
+**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 remaining Phase 7 ✅
 **Scope:** local harness only; no cloud control plane or workflow-level parallelism in v1.
 
 ---
@@ -17,7 +17,7 @@
 | Phase 4 | Transitions, loops, gates | ✅ Complete |
 | Phase 5 | PR delivery | ✅ Complete |
 | Phase 6 | Hardening and documentation | ⬜ Not started |
-| Phase 7 | Agent-facing workflow tools (parallel runs, deep observability) | ⬜ Planned |
+| Phase 7 | Agent-facing workflow tools (parallel runs, deep observability) | ✅ Complete |
 
 ### What is shipped (Phases 0–1)
 
@@ -466,7 +466,7 @@ All nine operator commands shipped with Phases 3–5; every delivery-capable pat
 
 **Exit:** full test suite, race suite and the workflow test matrix pass; docs are sufficient for a repository owner to author a safe workflow.
 
-### Phase 7 — agent-facing workflow tools ⬜ PLANNED
+### Phase 7 — agent-facing workflow tools ✅ Complete
 
 **Problem.** Today the orchestrator agent has no first-class workflow tools. To run a workflow it must shell out to `mivia workflow run ...` via `run_command` as a separate process. This blocks the agent loop, prevents parallel runs, gives no step-level visibility, and makes cancellation and delivery clumsy. The workflow engine, coordinator, verifier, and delivery packages are all in-process Go code — but none of them are exposed as agent tools.
 
@@ -683,9 +683,9 @@ workflow_deliver(run_id, allow_publish=true)
 | Idempotency | Crash/retry after push or remote PR creation locates the original PR and never duplicates it. | ✅ Tested (Phase 5) — find-before-create + delivery records |
 | Isolation | A dirty caller checkout remains byte-for-byte unchanged; agents, verifiers, and delivery operate only in the run-owned worktree. | ✅ Tested (Phase 5) — worktree run + cleanup tests |
 | Concurrency | `go test -race` covers controller claims, approval, cancel, resume and transition CAS contention. | ⬜ Needs controller implementation |
-| Agent tools | `workflow_run` starts a run in-process and returns immediately; `workflow_status` reports state, attempts, loops, gates; `workflow_inspect` loads step output and evidence; parallel runs complete independently. | ⬜ Phase 7 |
-| Parallel safety | N concurrent `workflow_run` calls do not corrupt each other; each run's worktree, claim, and dispatcher are isolated. | ⬜ Phase 7 |
-| Tool-call tracing | Each step attempt's `coordinator_run_id` resolves through `list_run_events` to the tools the workflow agent called. | ⬜ Phase 7 |
+| Agent tools | `workflow_run` starts a run in-process and returns immediately; `workflow_status` reports state, attempts, loops, gates; `workflow_inspect` loads step output and evidence; parallel runs complete independently. | ✅ Phase 7 — `internal/workflows/agenttools` + `localengine` integration tests |
+| Parallel safety | N concurrent `workflow_run` calls do not corrupt each other; each run's worktree, claim, and dispatcher are isolated. | ✅ Phase 7 — concurrent tool + race tests |
+| Tool-call tracing | Each step attempt's `coordinator_run_id` resolves through `list_run_events` to the tools the workflow agent called. | ✅ Phase 7 — inspect returns coordinator_run_id/task_id; list_run_events is existing path |
 
 ## 14. First workflow to ship
 

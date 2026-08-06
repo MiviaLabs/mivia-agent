@@ -72,6 +72,8 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, tavi
 		SecretPathExceptions: tc.SecretPathExceptions,
 		SearchIgnorePatterns: tc.SearchIgnorePatterns,
 	}
+	// Phase 7: attach in-process workflow tools when .mivia/workflows/ exists.
+	wireWorkflowToolOptions(&opts, ws.Abs, nil)
 	sess.Tools = tools.NewDefaultRegistry(opts)
 	return nil
 }
