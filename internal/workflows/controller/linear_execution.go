@@ -70,7 +70,7 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 			timeout = remaining
 		}
 	}
-	req := AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, Skill: step.Skill, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, Budget: stepBudget(timeout), ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: maxStepContextBytes, OutputSchema: runtime.Schema}
+	req := AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, Skill: step.Skill, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: maxStepContextBytes, OutputSchema: runtime.Schema}
 	result, runErr := c.Runner.RunStep(ctx, req)
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
@@ -135,19 +135,6 @@ func stepPersistenceContext(ctx context.Context) (context.Context, context.Cance
 		return ctx, func() {}
 	}
 	return context.WithTimeout(context.Background(), 5*time.Second)
-}
-
-// stepBudget converts a step timeout into the coordinator run budget in
-// seconds. Zero keeps the coordinator's default orchestration budget (the
-// 12-hour floor), which matches the historical unlimited-step behavior; a
-// positive timeout (per-agent or deadline-derived) bounds the step's
-// orchestration run to the same duration so a very long step (up to the 24h
-// run deadline) is not killed earlier by a shorter default budget.
-func stepBudget(timeout time.Duration) int {
-	if timeout <= 0 {
-		return 0
-	}
-	return int(timeout.Seconds())
 }
 
 func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, cause error) (workflowledger.RunSnapshot, bool, error) {

@@ -123,8 +123,12 @@ func TestAttemptTimeoutDerivedFromRunDeadline(t *testing.T) {
 	if want := 30 * time.Minute; runner.calls[0].Timeout != want {
 		t.Fatalf("child timeout = %s, want %s", runner.calls[0].Timeout, want)
 	}
-	if want := int((30 * time.Minute).Seconds()); runner.calls[0].Budget != want {
-		t.Fatalf("child budget = %d, want %d (matches the step timeout so a long step is not killed by a shorter orchestration default)", runner.calls[0].Budget, want)
+	// Budget stays 0: the coordinator pool's MaxBudget is a step-weight bound
+	// (default 1000), not a seconds budget, and Task.Timeout carries the step
+	// duration. Setting Budget to timeout-seconds rejected every step longer
+	// than the pool cap at dispatch ("budget limit exceeded").
+	if runner.calls[0].Budget != 0 {
+		t.Fatalf("child budget = %d, want 0 (step duration is enforced by Timeout, not the pool Budget)", runner.calls[0].Budget)
 	}
 }
 
