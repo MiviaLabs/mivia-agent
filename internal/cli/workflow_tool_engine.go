@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // sessionWorkflowEngine is the production Engine for chat-session workflow tools.
@@ -21,7 +22,8 @@ import (
 type sessionWorkflowEngine struct {
 	root       string
 	configPath string
-	// Local backs resume/cancel/deliver and scripted fallbacks.
+	// Local backs cancel/deliver ledger paths when the session store is open.
+	// It must not run agent steps without an explicit NewRunner (fail-closed).
 	Local *localengine.Engine
 
 	mu     sync.Mutex
@@ -48,21 +50,16 @@ func newSessionWorkflowEngine(root, configPath string, repo workflowledger.Repos
 }
 
 // Start implements agenttools.Engine.
+// New runs and resumes use the full CLI admission path only. There is no
+// silent fallback to a scripted local runner: missing provider config fails.
 func (e *sessionWorkflowEngine) Start(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
 	if e == nil {
 		return agenttools.StartResult{}, fmt.Errorf("workflow engine is nil")
 	}
 	if req.Resume {
-		if e.Local != nil {
-			return e.Local.Start(ctx, req)
-		}
-		return agenttools.StartResult{}, fmt.Errorf("resume requires a workflow ledger")
+		return e.resumeCLI(ctx, req)
 	}
-	result, err := e.startCLI(ctx, req)
-	if err != nil && e.Local != nil && e.Local.Repo != nil && shouldFallbackLocal(err) {
-		return e.Local.Start(ctx, req)
-	}
-	return result, err
+	return e.startCLI(ctx, req)
 }
 
 func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
@@ -134,6 +131,147 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 	return agenttools.StartResult{RunID: runID, Status: string(run.Status), Workflow: req.Workflow}, nil
 }
 
+// resumeCLI resumes a non-terminal run through the real CLI controller path
+// (same admission wiring as `mivia workflow resume --force`). It never falls
+// back to a scripted step runner.
+func (e *sessionWorkflowEngine) resumeCLI(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+	prepared, err := e.prepareResume(ctx, req)
+	if err != nil {
+		return agenttools.StartResult{}, err
+	}
+	return e.launchResume(ctx, prepared)
+}
+
+type resumePrepared struct {
+	runID      string
+	workflow   string
+	built      workflowControllerBuild
+	closeFn    func()
+	finishExec func()
+	repo       workflowledger.Repository
+}
+
+func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttools.StartRequest) (resumePrepared, error) {
+	if strings.TrimSpace(req.RunID) == "" {
+		return resumePrepared{}, fmt.Errorf("resume requires run_id")
+	}
+	if !req.Force {
+		return resumePrepared{}, fmt.Errorf("workflow run %q is not terminal; set force=true only after the prior executor stopped", req.RunID)
+	}
+	root := e.root
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	work, err := workspace.Open(root)
+	if err != nil {
+		return resumePrepared{}, err
+	}
+	configPath := workflowConfigPath(work.Abs, e.configPath)
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	if err != nil {
+		return resumePrepared{}, err
+	}
+	applyPrivacyPolicy(res)
+	applyWorkflowStoreRoot(res, work.Abs)
+	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
+	if err != nil {
+		return resumePrepared{}, err
+	}
+	run, err := repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		closeFn()
+		return resumePrepared{}, err
+	}
+	if err := refuseNonResumable(run); err != nil {
+		closeFn()
+		return resumePrepared{}, err
+	}
+	raw, err := repo.GetRunSnapshot(ctx, req.RunID)
+	if err != nil {
+		closeFn()
+		return resumePrepared{}, err
+	}
+	snapshot, compiled, inputs, err := validateWorkflowResumeSnapshot(run, raw)
+	if err != nil {
+		closeFn()
+		return resumePrepared{}, err
+	}
+	finishExecution, err := beginWorkflowExecution(work.Abs, contextStorePath(work.Abs, res.Subagents), req.RunID)
+	if err != nil {
+		closeFn()
+		return resumePrepared{}, err
+	}
+	built, err := workflowResumeBuild(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, req.RunID, &snapshot, &run)
+	if err != nil {
+		finishExecution()
+		closeFn()
+		return resumePrepared{}, err
+	}
+	if err := workflowResumeSetAdmission(built); err != nil {
+		built.Dispatcher.Close()
+		finishExecution()
+		closeFn()
+		return resumePrepared{}, err
+	}
+	if err := workflowResumeSetForce(built); err != nil {
+		built.Dispatcher.Close()
+		finishExecution()
+		closeFn()
+		return resumePrepared{}, err
+	}
+	if err := repo.ClearRunClaim(ctx, req.RunID); err != nil {
+		built.Dispatcher.Close()
+		finishExecution()
+		closeFn()
+		return resumePrepared{}, fmt.Errorf("clear interrupted workflow claim: %w", err)
+	}
+	return resumePrepared{runID: req.RunID, workflow: run.WorkflowName, built: built, closeFn: closeFn, finishExec: finishExecution, repo: repo}, nil
+}
+
+func refuseNonResumable(run workflowledger.RunSnapshot) error {
+	if run.Status == workflowledger.RunStatusDeliveryPending {
+		return fmt.Errorf("workflow run %q is waiting for delivery; call workflow_deliver", run.RunID)
+	}
+	if workflowledger.IsTerminalRunStatus(run.Status) {
+		return fmt.Errorf("workflow run %q is terminal (status %s); resume requires a non-terminal run", run.RunID, run.Status)
+	}
+	return nil
+}
+
+func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepared) (agenttools.StartResult, error) {
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	e.mu.Lock()
+	if e.active == nil {
+		e.active = make(map[string]*sessionActiveRun)
+	}
+	e.active[p.runID] = &sessionActiveRun{
+		cancel: cancel, done: done,
+		closeFn: func() {
+			p.finishExec()
+			p.built.Dispatcher.Close()
+			p.closeFn()
+		},
+	}
+	e.mu.Unlock()
+	go func() {
+		defer close(done)
+		_, _ = workflowResumeRun(runCtx, p.built)
+		e.mu.Lock()
+		active := e.active[p.runID]
+		delete(e.active, p.runID)
+		e.mu.Unlock()
+		if active != nil {
+			active.closeFn()
+		}
+	}()
+	fresh, err := p.repo.GetRun(ctx, p.runID)
+	if err != nil {
+		return agenttools.StartResult{}, err
+	}
+	return agenttools.StartResult{RunID: p.runID, Status: string(fresh.Status), Workflow: p.workflow, Resumed: true}, nil
+}
+
 // Cancel implements agenttools.Engine.
 func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agenttools.CancelResult, error) {
 	e.mu.Lock()
@@ -198,17 +336,6 @@ func inputsToRawFlags(inputs map[string]any) []string {
 		}
 	}
 	return out
-}
-
-func shouldFallbackLocal(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "provider") ||
-		strings.Contains(msg, "api_key") ||
-		strings.Contains(msg, "completer") ||
-		strings.Contains(msg, "no such file")
 }
 
 // wireWorkflowToolOptions attaches Phase 7 workflow tools to DefaultOptions

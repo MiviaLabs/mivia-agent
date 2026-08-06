@@ -6,7 +6,6 @@ package localengine
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -29,6 +28,7 @@ type Engine struct {
 	// Repo is the shared workflow ledger. Required.
 	Repo workflowledger.Repository
 	// NewRunner builds the agent-step runner for one admitted run.
+	// Required for agent steps; a nil NewRunner fails closed (no fake success).
 	NewRunner func() controller.AgentStepRunner
 	// NewRunID mints run IDs. Nil uses a secure random wfr- id.
 	NewRunID func() string
@@ -40,12 +40,24 @@ type Engine struct {
 
 	mu     sync.Mutex
 	active map[string]*activeRun
+	fence  *abandonFence
 }
 
 type activeRun struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	ctrl   *controller.LinearController
+}
+
+// ctrlRepo returns the fenced repository used by controllers so Interrupt can
+// abandon a run without the dying goroutine settling it to canceled/failed.
+func (e *Engine) ctrlRepo() workflowledger.Repository {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.fence == nil {
+		e.fence = newAbandonFence(e.Repo)
+	}
+	return e.fence
 }
 
 // Start implements agenttools.Engine.
@@ -85,7 +97,7 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
-	ctrl, err := controller.NewLinearController(e.Repo, e.runner(), compiled, steps, inputs, runID, snapshot)
+	ctrl, err := controller.NewLinearController(e.ctrlRepo(), e.runner(), compiled, steps, inputs, runID, snapshot)
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
@@ -125,7 +137,11 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is waiting for delivery; call workflow_deliver", req.RunID)
 	}
 	if workflowledger.IsTerminalRunStatus(run.Status) {
-		return agenttools.StartResult{RunID: run.RunID, Status: string(run.Status), Workflow: run.WorkflowName, Resumed: true}, nil
+		// Terminal runs are not resumed. Callers must start a new run or deliver.
+		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is terminal (status %s); resume requires a non-terminal run", req.RunID, run.Status)
+	}
+	if !workflowledger.IsResumableRunStatus(run.Status) {
+		return agenttools.StartResult{}, fmt.Errorf("workflow run %q status %s is not resumable", req.RunID, run.Status)
 	}
 	raw, err := e.Repo.GetRunSnapshot(ctx, req.RunID)
 	if err != nil {
@@ -147,7 +163,13 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	for k, v := range snapshot.Inputs {
 		inputs[k] = v
 	}
-	ctrl, err := controller.NewLinearController(e.Repo, e.runner(), compiled, buildStepRuntimes(compiled), inputs, req.RunID, raw)
+	// Clear abandon fence so a fresh controller may write again after Interrupt.
+	e.mu.Lock()
+	if e.fence != nil {
+		delete(e.fence.abandoned, req.RunID)
+	}
+	e.mu.Unlock()
+	ctrl, err := controller.NewLinearController(e.ctrlRepo(), e.runner(), compiled, buildStepRuntimes(compiled), inputs, req.RunID, raw)
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
@@ -370,23 +392,68 @@ func (e *Engine) Wait(ctx context.Context, runID string) error {
 	}
 }
 
-// Interrupt cancels the in-process controller without settling the ledger.
-func (e *Engine) Interrupt(runID string) {
-	e.mu.Lock()
-	active, ok := e.active[runID]
-	e.mu.Unlock()
-	if !ok {
-		return
+// Interrupt abandons an in-process controller as if the host process died:
+// open attempts become interrupted, the run stays non-terminal (running),
+// the claim is cleared, and the dying goroutine cannot settle the run.
+func (e *Engine) Interrupt(runID string) error {
+	if e == nil || e.Repo == nil {
+		return fmt.Errorf("workflow engine is incomplete")
 	}
-	active.cancel()
-	<-active.done
+	ctx := context.Background()
+	// Mark open attempts interrupted before the dying controller can cancel them.
+	if err := e.markOpenAttemptsInterrupted(ctx, runID); err != nil {
+		return err
+	}
+	// Fence terminal writes from the dying controller.
+	_ = e.ctrlRepo()
+	e.mu.Lock()
+	if e.fence != nil {
+		e.fence.abandon(runID)
+	}
+	active, ok := e.active[runID]
+	if ok {
+		delete(e.active, runID)
+	}
+	e.mu.Unlock()
+	_ = e.Repo.ClearRunClaim(ctx, runID)
+	if ok {
+		active.cancel()
+		<-active.done
+	}
+	run, err := e.Repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if workflowledger.IsTerminalRunStatus(run.Status) {
+		return fmt.Errorf("interrupt left run %q terminal (%s); want non-terminal for resume", runID, run.Status)
+	}
+	return nil
+}
+
+func (e *Engine) markOpenAttemptsInterrupted(ctx context.Context, runID string) error {
+	attempts, err := e.Repo.ListStepAttempts(ctx, runID)
+	if err != nil {
+		return err
+	}
+	for _, attempt := range attempts {
+		if workflowledger.IsTerminalAttemptStatus(attempt.Status) {
+			continue
+		}
+		if err := e.Repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, attempt.Version, workflowledger.AttemptOutcome{
+			Status: workflowledger.AttemptStatusInterrupted,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *Engine) runner() controller.AgentStepRunner {
 	if e.NewRunner != nil {
 		return e.NewRunner()
 	}
-	return &StaticStepRunner{Output: json.RawMessage(`{"ok":true}`)}
+	// Fail closed: never invent successful agent output.
+	return &StaticStepRunner{Err: fmt.Errorf("workflow agent step runner is not configured")}
 }
 
 func (e *Engine) newRunID() string {

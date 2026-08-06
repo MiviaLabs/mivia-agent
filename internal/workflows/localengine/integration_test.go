@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -357,20 +358,50 @@ func TestIntegrationDeliverAllowPublishRefusalAndSuccess(t *testing.T) {
 	}
 }
 
-// TestIntegrationInterruptAndResume proves resume after controlled interruption.
+// TestIntegrationInterruptAndResume proves resume after process-style abandon:
+// the ledger stays non-terminal with an interrupted attempt; resume re-drives
+// the controller and completes a second step execution to succeeded.
 func TestIntegrationInterruptAndResume(t *testing.T) {
+	engine, repo, svc, started, block, entered, calls, stepCalls := startBlockedTwoStep(t)
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("step did not start")
+	}
+	if err := engine.Interrupt(started.RunID); err != nil {
+		t.Fatal(err)
+	}
+	close(block)
+	assertInterruptedNonTerminal(t, repo, started.RunID)
+	stepCalls.Lock()
+	before := *calls
+	stepCalls.Unlock()
+	resumeAndAssertSucceeded(t, engine, svc, started.RunID)
+	stepCalls.Lock()
+	after := *calls
+	stepCalls.Unlock()
+	if after <= before {
+		t.Fatalf("resume did not re-dispatch a step: before=%d after=%d", before, after)
+	}
+}
+
+func startBlockedTwoStep(t *testing.T) (*localengine.Engine, workflowledger.Repository, *agenttools.Service, agenttools.StartResult, chan struct{}, chan struct{}, *int, *sync.Mutex) {
+	t.Helper()
 	root := writeTwoStepWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()
 	block := make(chan struct{})
 	entered := make(chan struct{}, 1)
+	stepCalls := &sync.Mutex{}
+	calls := 0
 	engine := &localengine.Engine{
-		WorkspaceRoot: root,
-		Repo:          repo,
+		WorkspaceRoot: root, Repo: repo,
 		NewRunner: func() controller.AgentStepRunner {
 			return &localengine.StaticStepRunner{
-				Output:     json.RawMessage(`{"ok":true}`),
-				BlockUntil: block,
+				Output: json.RawMessage(`{"ok":true}`), BlockUntil: block,
 				OnStep: func(controller.AgentStepRequest) {
+					stepCalls.Lock()
+					calls++
+					stepCalls.Unlock()
 					select {
 					case entered <- struct{}{}:
 					default:
@@ -389,17 +420,35 @@ func TestIntegrationInterruptAndResume(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &started); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-entered:
-	case <-time.After(3 * time.Second):
-		t.Fatal("step did not start")
-	}
-	engine.Interrupt(started.RunID)
-	close(block)
+	return engine, repo, svc, started, block, entered, &calls, stepCalls
+}
 
+func assertInterruptedNonTerminal(t *testing.T, repo workflowledger.Repository, runID string) {
+	t.Helper()
+	pre, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflowledger.IsTerminalRunStatus(pre.Status) {
+		t.Fatalf("after interrupt status = %q, want non-terminal", pre.Status)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), runID)
+	if err != nil || len(attempts) == 0 {
+		t.Fatalf("attempts after interrupt: %v len=%d", err, len(attempts))
+	}
+	for _, a := range attempts {
+		if a.Status == workflowledger.AttemptStatusInterrupted {
+			return
+		}
+	}
+	t.Fatalf("expected an interrupted attempt after Interrupt: %+v", attempts)
+}
+
+func resumeAndAssertSucceeded(t *testing.T, engine *localengine.Engine, svc *agenttools.Service, runID string) {
+	t.Helper()
 	resOut, err := mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(
-			`{"resume":true,"run_id":%q,"force":true}`, started.RunID)))
+			`{"resume":true,"run_id":%q,"force":true}`, runID)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,12 +456,12 @@ func TestIntegrationInterruptAndResume(t *testing.T) {
 	if err := json.Unmarshal([]byte(resOut), &resumed); err != nil {
 		t.Fatal(err)
 	}
-	if !resumed.Resumed || resumed.RunID != started.RunID {
+	if !resumed.Resumed || resumed.RunID != runID {
 		t.Fatalf("resume = %+v", resumed)
 	}
-	waitRun(t, engine, started.RunID)
+	waitRun(t, engine, runID)
 	statusOut, err := mustTool(t, svc, agenttools.ToolWorkflowStatus).Execute(
-		context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, started.RunID)))
+		context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, runID)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,8 +469,24 @@ func TestIntegrationInterruptAndResume(t *testing.T) {
 	if err := json.Unmarshal([]byte(statusOut), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status.Status != "succeeded" && status.Status != "canceled" && status.Status != "failed" {
-		t.Fatalf("after resume status = %q body=%s", status.Status, statusOut)
+	if status.Status != "succeeded" {
+		t.Fatalf("after resume status = %q, want succeeded; body=%s", status.Status, statusOut)
+	}
+	if len(status.Attempts) < 2 {
+		t.Fatalf("attempts after resume = %d, want >= 2", len(status.Attempts))
+	}
+}
+
+// TestResumeTerminalRunRefused proves resume does not claim success on terminals.
+func TestResumeTerminalRunRefused(t *testing.T) {
+	engine, svc := scriptedTwoStep(t)
+	started := startTwoStep(t, svc)
+	waitRun(t, engine, started.RunID)
+	_, err := mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
+		context.Background(), json.RawMessage(fmt.Sprintf(
+			`{"resume":true,"run_id":%q,"force":true}`, started.RunID)))
+	if err == nil || !strings.Contains(err.Error(), "terminal") {
+		t.Fatalf("resume terminal error = %v, want terminal refusal", err)
 	}
 }
 

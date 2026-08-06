@@ -9,17 +9,22 @@ import (
 )
 
 // StaticStepRunner returns fixed JSON for every agent step (scripted tests).
+// When Err is set, every step fails with that error (used for fail-closed defaults).
 type StaticStepRunner struct {
 	Output     json.RawMessage
 	ByStep     map[string]json.RawMessage
 	BlockUntil <-chan struct{}
 	OnStep     func(controller.AgentStepRequest)
+	Err        error
 }
 
 // RunStep implements controller.AgentStepRunner.
 func (r *StaticStepRunner) RunStep(ctx context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, error) {
 	if r.OnStep != nil {
 		r.OnStep(req)
+	}
+	if r.Err != nil {
+		return controller.AgentStepResult{}, r.Err
 	}
 	if r.BlockUntil != nil {
 		select {
