@@ -110,7 +110,9 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 
 // Create opens a pull request with the fixed input values. Title and
 // body use the --title= and --body= equals forms, so values that start
-// with '-' stay safe as single argv elements.
+// with '-' stay safe as single argv elements. The PR URL is parsed from
+// stdout (gh pr create prints it on success); --json is not used because
+// older gh versions do not support it on pr create.
 func (GitHubCLI) Create(ctx context.Context, repo string, in PRInput) (PRRef, error) {
 	args := []string{
 		"pr", "create",
@@ -123,19 +125,33 @@ func (GitHubCLI) Create(ctx context.Context, repo string, in PRInput) (PRRef, er
 	if in.Draft {
 		args = append(args, "--draft")
 	}
-	args = append(args, "--json", "number,url")
 	out, err := runGH(ctx, "pr create", args...)
 	if err != nil {
 		return PRRef{}, err
 	}
-	var pr struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
+	url := strings.TrimSpace(string(out))
+	if url == "" {
+		return PRRef{}, fmt.Errorf("gh pr create: no URL in output")
 	}
-	if err := json.Unmarshal(out, &pr); err != nil {
-		return PRRef{}, fmt.Errorf("gh pr create: parse output: %w", err)
+	number, err := prNumberFromURL(url)
+	if err != nil {
+		return PRRef{}, fmt.Errorf("gh pr create: %w", err)
 	}
-	return PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL}, nil
+	return PRRef{RemoteID: number, URL: url}, nil
+}
+
+// prNumberFromURL extracts the numeric PR identifier from a GitHub pull
+// request URL of the form .../pull/<number>.
+func prNumberFromURL(url string) (string, error) {
+	idx := strings.LastIndex(url, "/pull/")
+	if idx < 0 {
+		return "", fmt.Errorf("parse PR number: URL %q has no /pull/ segment", url)
+	}
+	number := strings.TrimSpace(url[idx+len("/pull/"):])
+	if _, err := strconv.Atoi(number); err != nil {
+		return "", fmt.Errorf("parse PR number: %q is not numeric", number)
+	}
+	return number, nil
 }
 
 // runGH runs gh with fixed argv and the pinned environment. A non-zero

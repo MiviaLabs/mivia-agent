@@ -224,7 +224,7 @@ func TestGitHubCLICreate(t *testing.T) {
 	writeFakeGH(t)
 	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
 	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
-	t.Setenv("GH_STDOUT", `{"number":7,"url":"https://github.com/o/r/pull/7"}`)
+	t.Setenv("GH_STDOUT", `https://github.com/owner/repo/pull/7`+"\n")
 
 	t.Run("draft", func(t *testing.T) {
 		in := PRInput{
@@ -238,7 +238,7 @@ func TestGitHubCLICreate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Create error: %v", err)
 		}
-		if got.RemoteID != "7" || got.URL != "https://github.com/o/r/pull/7" {
+		if got.RemoteID != "7" || got.URL != "https://github.com/owner/repo/pull/7" {
 			t.Errorf("Create = %+v, want RemoteID 7 with PR url", got)
 		}
 		want := []string{
@@ -249,7 +249,6 @@ func TestGitHubCLICreate(t *testing.T) {
 			"--title=-fix: add tests",
 			"--body=-body starts with a dash",
 			"--draft",
-			"--json", "number,url",
 		}
 		if gotArgs := readRecordedArgs(t); !slices.Equal(gotArgs, want) {
 			t.Errorf("argv = %q, want %q", gotArgs, want)
@@ -267,11 +266,29 @@ func TestGitHubCLICreate(t *testing.T) {
 		}
 	})
 
-	t.Run("malformed json", func(t *testing.T) {
+	t.Run("no --json flag in argv", func(t *testing.T) {
+		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
+		if _, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in); err != nil {
+			t.Fatalf("Create error: %v", err)
+		}
+		if gotArgs := readRecordedArgs(t); slices.Contains(gotArgs, "--json") {
+			t.Errorf("argv contains --json; older gh rejects it on pr create: %q", gotArgs)
+		}
+	})
+
+	t.Run("malformed url", func(t *testing.T) {
 		t.Setenv("GH_STDOUT", "oops")
 		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
 		if _, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in); err == nil {
-			t.Fatal("Create error = nil, want malformed JSON error")
+			t.Fatal("Create error = nil, want URL parse error")
+		}
+	})
+
+	t.Run("empty output", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", "")
+		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
+		if _, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in); err == nil {
+			t.Fatal("Create error = nil, want empty-output error")
 		}
 	})
 }
