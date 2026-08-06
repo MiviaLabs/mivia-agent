@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -442,30 +443,19 @@ func decodeArgs[T any](raw json.RawMessage, dst *T) error {
 // context, not as enforcement.
 
 func isSecretPath(rel string, exceptions, patterns []string) bool {
-	base := strings.ToLower(filepath.ToSlash(strings.TrimSpace(rel)))
-	if base == "" {
-		return false
+	policy, err := secretpath.New(patterns, exceptions)
+	if err != nil {
+		return true
 	}
-	// Check exceptions first (allowlist overrides blocklist).
-	for _, ex := range exceptions {
-		if strings.Contains(base, ex) {
-			return false
-		}
-	}
-	// Apply blocklist patterns.
-	return isSecretPathMatch(base, patterns)
+	return policy.Match(rel)
 }
 
 // isSecretPathMatch checks whether path matches any of the given patterns.
 // A pattern like ".pem" matches any path ending in ".pem".
 // A pattern like ".env" matches any path containing ".env" (catches .env, .env.local, etc.).
 func isSecretPathMatch(path string, patterns []string) bool {
-	for _, pat := range patterns {
-		if strings.Contains(path, pat) {
-			return true
-		}
-	}
-	return false
+	policy, err := secretpath.New(patterns, nil)
+	return err == nil && policy.Match(path)
 }
 
 // secretPathInArgv returns the first argv element that looks like a secret path

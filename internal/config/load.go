@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/envfile"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -397,6 +398,9 @@ func (r *Resolved) Validate() error {
 		return fmt.Errorf("api_key_env is invalid")
 	}
 	if err := validateBaseURL(r.BaseURL); err != nil {
+		return err
+	}
+	if _, err := secretpath.New(r.Tools.SecretPathPatterns, r.Tools.SecretPathExceptions); err != nil {
 		return err
 	}
 	if err := validateToolResultBudgets(r.Tools); err != nil {

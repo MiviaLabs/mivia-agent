@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -112,7 +113,7 @@ func assertFeatureDeliveryEvidenceGates(t *testing.T, workflow definition.Workfl
 		"verify":        "go-verify",
 		"code_validate": "go-final",
 	}
-	catalogue := verifier.DefaultCatalogue()
+	catalogue := verifier.DefaultCatalogue(secretpath.Policy{})
 	for id, verifierName := range want {
 		step := featureDeliveryStep(t, workflow, id)
 		if step.Kind != "evidence_gate" || step.Verifier != verifierName {

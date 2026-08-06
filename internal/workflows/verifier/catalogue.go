@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 )
 
 // Check is one named host verification check result.
@@ -74,9 +76,9 @@ func NewCatalogue() *Catalogue {
 }
 
 // DefaultCatalogue returns a catalogue with fixed host-owned Go profiles.
-func DefaultCatalogue() *Catalogue {
+func DefaultCatalogue(policy secretpath.Policy) *Catalogue {
 	c := NewCatalogue()
-	for _, profile := range defaultGoProfiles() {
+	for _, profile := range defaultGoProfiles(policy) {
 		c.profiles[profile.Name()] = profile
 	}
 	return c

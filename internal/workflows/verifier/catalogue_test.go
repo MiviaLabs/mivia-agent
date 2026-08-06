@@ -15,7 +15,7 @@ import (
 )
 
 func TestDefaultCatalogueRegistersFixedGoProfiles(t *testing.T) {
-	c := DefaultCatalogue()
+	c := DefaultCatalogue(secretPolicy(t))
 	wantNames := []string{GoFinalName, GoTestName, GoVerifyName}
 	gotNames := c.Names()
 	sort.Strings(gotNames)
@@ -34,7 +34,7 @@ func TestDefaultCatalogueRegistersFixedGoProfiles(t *testing.T) {
 }
 
 func TestLookupUnknownFailsClosed(t *testing.T) {
-	c := DefaultCatalogue()
+	c := DefaultCatalogue(secretPolicy(t))
 	_, err := c.Lookup("shell-from-toml")
 	if err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("err = %v", err)
@@ -58,7 +58,7 @@ func TestDefaultGoProfilesUseFixedHostCommands(t *testing.T) {
 			{check: "go-test-race", program: "go", args: []string{"test", "-race", "./..."}},
 		},
 	}
-	for _, profile := range defaultGoProfiles() {
+	for _, profile := range defaultGoProfiles(secretPolicy(t)) {
 		goProfile, ok := profile.(*goProfile)
 		if !ok {
 			t.Fatalf("profile %q type = %T", profile.Name(), profile)

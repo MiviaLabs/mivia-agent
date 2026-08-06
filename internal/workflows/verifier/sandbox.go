@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 )
@@ -34,12 +36,18 @@ const (
 )
 
 var sandboxBubblewrapPath = func() (string, error) {
-	return exec.LookPath(sandboxBubblewrap)
+	return trustedSystemExecutable(sandboxBubblewrap)
 }
+
+var sandboxGitPath = func() (string, error) {
+	return trustedSystemExecutable("git")
+}
+
+var verifierGoRoot = runtime.GOROOT
 
 // runSandboxedCommand runs a fixed host check in an isolated filesystem and
 // network namespace. It never inherits the host environment or home directory.
-func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModuleBaseline, program string, args ...string) error {
+func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModuleBaseline, policy secretpath.Policy, program string, args ...string) error {
 	if program != "go" {
 		return hostFailure(fmt.Errorf("sandbox rejects fixed program %q", program))
 	}
@@ -47,27 +55,34 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 	if err != nil {
 		return hostFailure(fmt.Errorf("bubblewrap is required for workflow verification: %w", err))
 	}
+	goPath, goRoot, err := verifierGoToolchain()
+	if err != nil {
+		return hostFailure(err)
+	}
 	tempRoot, err := os.MkdirTemp("", "mivia-verifier-")
 	if err != nil {
 		return hostFailure(fmt.Errorf("create verifier sandbox: %w", err))
 	}
 	defer os.RemoveAll(tempRoot)
 	copyRoot := filepath.Join(tempRoot, "work")
-	if _, err := copySandboxWorktree(workDir, copyRoot); err != nil {
+	if _, err := copySandboxWorktree(workDir, copyRoot, policy); err != nil {
 		return hostFailure(err)
 	}
 	modulesRoot := filepath.Join(tempRoot, "modules")
 	if err := applyGoModuleBaseline(copyRoot, baseline); err != nil {
 		return hostFailure(err)
 	}
-	if err := provisionModuleCache(copyRoot, modulesRoot, baseline); err != nil {
+	if err := initializeSandboxGit(ctx, copyRoot); err != nil {
+		return hostFailure(err)
+	}
+	if err := provisionModuleCache(copyRoot, modulesRoot, baseline, goPath); err != nil {
 		return hostFailure(err)
 	}
 	homeRoot, err := createSandboxHome(tempRoot)
 	if err != nil {
 		return hostFailure(err)
 	}
-	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, homeRoot, program, args...)...)
+	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, homeRoot, goRoot, goPath, args...)...)
 	command.Env = []string{"PATH=/usr/bin:/bin"}
 	output, err := command.CombinedOutput()
 	if err == nil {
@@ -81,6 +96,67 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 		return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
 	}
 	return &commandFailure{class: "source", detail: detail, err: fmt.Errorf("source check failed: %w", err)}
+}
+
+func verifierGoToolchain() (string, string, error) {
+	root := verifierGoRoot()
+	if root == "" || !filepath.IsAbs(root) {
+		return "", "", fmt.Errorf("resolve verifier Go root")
+	}
+	if err := rejectHostHomePath(root); err != nil {
+		return "", "", err
+	}
+	goPath := filepath.Join(root, "bin", "go")
+	info, err := os.Stat(goPath)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		return "", "", fmt.Errorf("resolve verifier Go executable")
+	}
+	return goPath, root, nil
+}
+
+func rejectHostHomePath(path string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve verifier host home: %w", err)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("resolve verifier Go root: %w", err)
+	}
+	resolvedHome, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		return fmt.Errorf("resolve verifier host home: %w", err)
+	}
+	rel, err := filepath.Rel(resolvedHome, resolvedPath)
+	if err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+		return fmt.Errorf("verifier Go root must not be inside the host home")
+	}
+	return nil
+}
+
+func initializeSandboxGit(ctx context.Context, workRoot string) error {
+	git, err := sandboxGitPath()
+	if err != nil {
+		return fmt.Errorf("resolve verifier Git executable: %w", err)
+	}
+	command := exec.CommandContext(ctx, git, "-c", "init.templateDir=", "init", "--quiet", workRoot)
+	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("initialize verifier Git worktree: %w: %s", err, boundedDiagnostic(output))
+	}
+	return nil
+}
+
+func trustedSystemExecutable(name string) (string, error) {
+	for _, directory := range []string{"/usr/bin", "/bin"} {
+		path := filepath.Join(directory, name)
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+			continue
+		}
+		return path, nil
+	}
+	return "", fmt.Errorf("trusted system executable %q is unavailable", name)
 }
 
 func hostFailure(err error) *commandFailure {
@@ -98,16 +174,21 @@ func boundedDiagnostic(output []byte) string {
 	return text
 }
 
-func sandboxArgs(workRoot, modulesRoot, homeRoot, program string, args ...string) []string {
+func sandboxArgs(workRoot, modulesRoot, homeRoot, goRoot, goPath string, args ...string) []string {
 	result := []string{
 		"--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/bin", "/bin",
 		"--ro-bind", "/lib", "/lib",
 		"--ro-bind", "/lib64", "/lib64",
+	}
+	if !strings.HasPrefix(goRoot, "/usr/") && goRoot != "/usr" {
+		result = append(result, "--ro-bind", goRoot, goRoot)
+	}
+	result = append(result,
 		"--bind", workRoot, sandboxWorkDir,
 		"--ro-bind", modulesRoot, sandboxModules,
-		"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--ro-bind", homeRoot, "/home/sandbox",
+		"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home", "--bind", homeRoot, "/home/sandbox",
 		"--chdir", sandboxWorkDir,
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "HOME", "/home/sandbox",
@@ -119,8 +200,8 @@ func sandboxArgs(workRoot, modulesRoot, homeRoot, program string, args ...string
 		"--setenv", "GOSUMDB", "off",
 		"--setenv", "GIT_CONFIG_NOSYSTEM", "1",
 		"--setenv", "GIT_CONFIG_GLOBAL", "/dev/null",
-		"--", program,
-	}
+		"--", goPath,
+	)
 	return append(result, args...)
 }
 
@@ -136,11 +217,11 @@ func createSandboxHome(tempRoot string) (string, error) {
 	return homeRoot, nil
 }
 
-func copySandboxWorktree(source, destination string) (string, error) {
-	return copySandboxTree(source, destination, true)
+func copySandboxWorktree(source, destination string, policy secretpath.Policy) (string, error) {
+	return copySandboxTree(source, destination, policy)
 }
 
-func copySandboxTree(source, destination string, rejectSecrets bool) (string, error) {
+func copySandboxTree(source, destination string, policy secretpath.Policy) (string, error) {
 	info, err := os.Stat(source)
 	if err != nil {
 		return "", fmt.Errorf("inspect verifier worktree: %w", err)
@@ -159,14 +240,17 @@ func copySandboxTree(source, destination string, rejectSecrets bool) (string, er
 		if rel == "." {
 			return os.MkdirAll(destination, 0o700)
 		}
-		if rel == ".git" {
+		if filepath.Base(rel) == ".git" || sandboxControlDirectory(rel) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if rejectSecrets && sandboxSecretPath(rel) {
-			return fmt.Errorf("verifier worktree contains a secret-like file")
+		if policy.Match(rel) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		target := filepath.Join(destination, rel)
 		if entry.Type()&fs.ModeSymlink != 0 {
@@ -185,18 +269,17 @@ func copySandboxTree(source, destination string, rejectSecrets bool) (string, er
 	return destination, nil
 }
 
-func sandboxSecretPath(rel string) bool {
-	base := strings.ToLower(filepath.Base(rel))
-	if base == ".env" || strings.HasPrefix(base, ".env.") {
-		return base != ".env.example"
+func sandboxControlDirectory(rel string) bool {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) != 2 || parts[1] != "worktrees" {
+		return false
 	}
-	if base == ".npmrc" || base == ".netrc" || base == ".pypirc" || base == ".dockercfg" || base == "credentials.json" {
+	switch parts[0] {
+	case ".agents", ".claude", ".codex", ".mivia":
 		return true
+	default:
+		return false
 	}
-	if strings.Contains(base, "credential") || strings.Contains(base, "secret") || strings.Contains(base, "token") || strings.Contains(base, "password") || strings.Contains(base, "passwd") {
-		return true
-	}
-	return strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") || strings.HasSuffix(base, ".p12") || strings.HasSuffix(base, ".pfx") || strings.HasSuffix(base, ".jks") || base == "id_rsa" || base == "id_ed25519"
 }
 
 // CaptureGoModuleBaseline reads the module inputs before workflow execution.
@@ -243,7 +326,7 @@ func applyGoModuleBaseline(workRoot string, baseline *GoModuleBaseline) error {
 	return nil
 }
 
-func provisionModuleCache(workRoot, destination string, baseline *GoModuleBaseline) error {
+func provisionModuleCache(workRoot, destination string, baseline *GoModuleBaseline, goPath string) error {
 	if baseline == nil {
 		return fmt.Errorf("workflow verifier module baseline is missing")
 	}
@@ -254,7 +337,7 @@ func provisionModuleCache(workRoot, destination string, baseline *GoModuleBaseli
 	if len(parsed.Replace) != 0 {
 		return fmt.Errorf("verifier rejects Go module replacements")
 	}
-	cacheRoot, err := hostModuleCache()
+	cacheRoot, err := hostModuleCache(goPath)
 	if err != nil {
 		return err
 	}
@@ -269,12 +352,12 @@ func provisionModuleCache(workRoot, destination string, baseline *GoModuleBaseli
 	return nil
 }
 
-func hostModuleCache() (string, error) {
+func hostModuleCache(goPath string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve host home for Go module cache: %w", err)
 	}
-	command := exec.Command("go", "env", "GOMODCACHE")
+	command := exec.Command(goPath, "env", "GOMODCACHE")
 	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home}
 	output, err := command.Output()
 	if err != nil {
@@ -298,7 +381,7 @@ func copyRequiredModule(cacheRoot, destination, modulePath, version string) erro
 	}
 	source := filepath.Join(cacheRoot, escapedPath+"@"+escapedVersion)
 	target := filepath.Join(destination, escapedPath+"@"+escapedVersion)
-	if _, err := copySandboxTree(source, target, false); err != nil {
+	if _, err := copySandboxTree(source, target, secretpath.Policy{}); err != nil {
 		return fmt.Errorf("provision module %s@%s: %w", modulePath, version, err)
 	}
 	return copyRequiredModuleMetadata(cacheRoot, destination, escapedPath, escapedVersion)
@@ -319,12 +402,16 @@ func copyRequiredModuleMetadata(cacheRoot, destination, escapedPath, escapedVers
 }
 
 func copyRegularFile(source, destination string) error {
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
 	in, err := os.Open(source)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	out, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
 	if err != nil {
 		return err
 	}

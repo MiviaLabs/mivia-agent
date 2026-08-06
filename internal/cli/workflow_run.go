@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -391,7 +392,11 @@ func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.D
 	if err != nil {
 		return nil, err
 	}
-	if err := ctrl.SetVerifiers(verifier.DefaultCatalogue()); err != nil {
+	policy, err := secretpath.New(res.Tools.SecretPathPatterns, res.Tools.SecretPathExceptions)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctrl.SetVerifiers(verifier.DefaultCatalogue(policy)); err != nil {
 		return nil, err
 	}
 	if err := ctrl.SetWorkDir(identity.Root); err != nil {
