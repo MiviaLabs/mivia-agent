@@ -15,7 +15,7 @@ max_duration_seconds = 10800
 [[steps]]
 id = "plan"
 kind = "agent"
-agent = "planner"
+agent = "go-engineer"
 template = "templates/plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [{ from = "inputs.task", as = "task", max_bytes = 12000 }]
@@ -187,6 +187,6 @@ match = { status = "succeeded", output = { status = "passed" } }
 kind = "pull_request"
 mode = "draft"
 provider = "github"
-base = "main"
+base = "master"
 title_template = "feat: {{ inputs.task }}"
-commit_message_template = "feat: {{ inputs.task }}"
+commit_message_template = "feat(agent): {{ inputs.task }}"
