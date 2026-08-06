@@ -63,7 +63,11 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 	if err := provisionModuleCache(copyRoot, modulesRoot, baseline); err != nil {
 		return hostFailure(err)
 	}
-	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, program, args...)...)
+	homeRoot, err := createSandboxHome(tempRoot)
+	if err != nil {
+		return hostFailure(err)
+	}
+	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, homeRoot, program, args...)...)
 	command.Env = []string{"PATH=/usr/bin:/bin"}
 	output, err := command.CombinedOutput()
 	if err == nil {
@@ -94,7 +98,7 @@ func boundedDiagnostic(output []byte) string {
 	return text
 }
 
-func sandboxArgs(workRoot, modulesRoot, program string, args ...string) []string {
+func sandboxArgs(workRoot, modulesRoot, homeRoot, program string, args ...string) []string {
 	result := []string{
 		"--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
 		"--ro-bind", "/usr", "/usr",
@@ -103,7 +107,7 @@ func sandboxArgs(workRoot, modulesRoot, program string, args ...string) []string
 		"--ro-bind", "/lib64", "/lib64",
 		"--bind", workRoot, sandboxWorkDir,
 		"--ro-bind", modulesRoot, sandboxModules,
-		"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home",
+		"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--ro-bind", homeRoot, "/home/sandbox",
 		"--chdir", sandboxWorkDir,
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "HOME", "/home/sandbox",
@@ -120,7 +124,23 @@ func sandboxArgs(workRoot, modulesRoot, program string, args ...string) []string
 	return append(result, args...)
 }
 
+func createSandboxHome(tempRoot string) (string, error) {
+	homeRoot := filepath.Join(tempRoot, "home")
+	configDir := filepath.Join(homeRoot, ".mivia")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return "", fmt.Errorf("create verifier home: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, ".env"), nil, 0o600); err != nil {
+		return "", fmt.Errorf("create verifier env file: %w", err)
+	}
+	return homeRoot, nil
+}
+
 func copySandboxWorktree(source, destination string) (string, error) {
+	return copySandboxTree(source, destination, true)
+}
+
+func copySandboxTree(source, destination string, rejectSecrets bool) (string, error) {
 	info, err := os.Stat(source)
 	if err != nil {
 		return "", fmt.Errorf("inspect verifier worktree: %w", err)
@@ -145,7 +165,7 @@ func copySandboxWorktree(source, destination string) (string, error) {
 			}
 			return nil
 		}
-		if sandboxSecretPath(rel) {
+		if rejectSecrets && sandboxSecretPath(rel) {
 			return fmt.Errorf("verifier worktree contains a secret-like file")
 		}
 		target := filepath.Join(destination, rel)
@@ -278,7 +298,7 @@ func copyRequiredModule(cacheRoot, destination, modulePath, version string) erro
 	}
 	source := filepath.Join(cacheRoot, escapedPath+"@"+escapedVersion)
 	target := filepath.Join(destination, escapedPath+"@"+escapedVersion)
-	if _, err := copySandboxWorktree(source, target); err != nil {
+	if _, err := copySandboxTree(source, target, false); err != nil {
 		return fmt.Errorf("provision module %s@%s: %w", modulePath, version, err)
 	}
 	return nil

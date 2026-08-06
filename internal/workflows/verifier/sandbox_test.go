@@ -86,6 +86,16 @@ func TestSandboxRejectsUnavailableBubblewrapBeforeCommand(t *testing.T) {
 	}
 }
 
+func TestSandboxModuleCopyAllowsNonCredentialTokenNames(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "token.go"), []byte("package token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := copySandboxTree(source, t.TempDir(), false); err != nil {
+		t.Fatalf("copySandboxTree() error = %v", err)
+	}
+}
+
 func TestGoProfileReportsHostFailureWithoutRepairEvidence(t *testing.T) {
 	original := sandboxBubblewrapPath
 	sandboxBubblewrapPath = func() (string, error) { return "", os.ErrNotExist }
@@ -129,7 +139,7 @@ func TestSecret(t *testing.T) { if os.Getenv("MIVIA_VERIFIER_SENTINEL") != "" { 
 }
 
 func TestSandboxDisablesGoWorkspaceMode(t *testing.T) {
-	args := sandboxArgs("/tmp/work", "/tmp/modules", "go", "test", "./...")
+	args := sandboxArgs("/tmp/work", "/tmp/modules", "/tmp/home", "go", "test", "./...")
 	joined := strings.Join(args, "\x00")
 	if !strings.Contains(joined, "GOWORK\x00off") {
 		t.Fatalf("sandbox arguments do not disable Go workspace mode: %q", joined)
