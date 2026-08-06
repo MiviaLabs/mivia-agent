@@ -217,6 +217,23 @@ func (c *LinearController) resolveHumanGate(ctx context.Context, approvalID, act
 	if !ok {
 		return fmt.Errorf("approval step %q is not declared", approval.StepID)
 	}
+	// The approval must belong to the run's CURRENT active gate. Replaying an
+	// already-resolved approval for an earlier gate must never touch the run
+	// status of a run parked at a different gate (a stale replay would flip
+	// waiting_approval to running and make the current approval un-actionable).
+	// A same-gate replay whose route already advanced the derived active step
+	// (e.g. an approval that routed to the success terminal) is allowed: the
+	// approval's step must then carry a terminal attempt routed to the run's
+	// current active step.
+	if approval.StepID != run.ActiveStepID {
+		routed, err := c.approvalRoutedToActiveStep(ctx, approval, run.ActiveStepID)
+		if err != nil {
+			return err
+		}
+		if !routed {
+			return fmt.Errorf("approval %q targets step %q, but the run is waiting on step %q", approvalID, approval.StepID, run.ActiveStepID)
+		}
+	}
 	wantStatus := "approved"
 	if decision == "rejected" {
 		wantStatus = "rejected"
@@ -251,6 +268,22 @@ func findApproval(approvals []workflowledger.ApprovalRecord, id string) (workflo
 	return workflowledger.ApprovalRecord{}, false
 }
 
+// approvalRoutedToActiveStep reports whether the approval's step already has
+// a terminal attempt whose durable route leads to activeStep — the signature
+// of a same-gate replay whose route advanced the derived active step.
+func (c *LinearController) approvalRoutedToActiveStep(ctx context.Context, approval workflowledger.ApprovalRecord, activeStep string) (bool, error) {
+	attempts, err := c.Repo.ListStepAttempts(ctx, c.RunID)
+	if err != nil {
+		return false, err
+	}
+	for _, attempt := range attempts {
+		if attempt.StepID == approval.StepID && attempt.ToStepID == activeStep && workflowledger.IsTerminalAttemptStatus(attempt.Status) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func attemptNoFromApprovalID(approvalID, stepID string) (int, bool) {
 	prefix := "wfa-approval-" + stepID + "-"
 	if !strings.HasPrefix(approvalID, prefix) {
@@ -261,129 +294,6 @@ func attemptNoFromApprovalID(approvalID, stepID string) (int, bool) {
 		return 0, false
 	}
 	return n, true
-}
-
-func attemptByNo(attempts []workflowledger.StepAttempt, stepID string, attemptNo int) (workflowledger.StepAttempt, bool) {
-	for _, a := range attempts {
-		if a.StepID == stepID && a.AttemptNo == attemptNo {
-			return a, true
-		}
-	}
-	return workflowledger.StepAttempt{}, false
-}
-
-func (c *LinearController) finishHumanResolution(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, decision string) error {
-	return c.finishHumanResolutionForAttempt(ctx, run, step, decision, 0)
-}
-
-// finishHumanResolutionForAttempt completes the human resolution for a specific
-// attempt number when attemptNo > 0. attemptNo 0 means latest attempt (legacy).
-func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, decision string, attemptNo int) error {
-	attempts, err := c.Repo.ListStepAttempts(ctx, c.RunID)
-	if err != nil {
-		return err
-	}
-	var attempt workflowledger.StepAttempt
-	var ok bool
-	if attemptNo > 0 {
-		attempt, ok = attemptByNo(attempts, step.ID, attemptNo)
-	} else {
-		attempt, ok = latestAttempt(attempts, step.ID)
-	}
-	if !ok {
-		return fmt.Errorf("human_gate attempt for step %q is missing", step.ID)
-	}
-	// Stale approval for an older attempt must not affect a newer re-entry.
-	if attemptNo > 0 {
-		if latest, found := latestAttempt(attempts, step.ID); found && latest.AttemptNo > attemptNo {
-			return fmt.Errorf("approval targets attempt %d but latest is %d; use the current pending approval", attemptNo, latest.AttemptNo)
-		}
-	}
-	// Attempt already terminal: only finish run status edges for that attempt.
-	if workflowledger.IsTerminalAttemptStatus(attempt.Status) {
-		return c.finishHumanRunStatus(ctx, run, attempt, decision)
-	}
-	if decision == "rejected" {
-		route := failureRoute(step)
-		if err := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{}, workflowledger.AttemptStatusFailed, route); err != nil {
-			return err
-		}
-		run, err = c.Repo.GetRun(ctx, c.RunID)
-		if err != nil {
-			return err
-		}
-		if run.Status == workflowledger.RunStatusWaitingApproval {
-			return c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusFailed, nil)
-		}
-		return nil
-	}
-	output := map[string]any{"decision": "approved"}
-	raw, err := json.Marshal(output)
-	if err != nil {
-		return err
-	}
-	route, err := c.selectRoute(ctx, step, workflowledger.AttemptStatusSucceeded, output)
-	if err != nil {
-		if route.ToStepID == "" {
-			route = failureRoute(step)
-		}
-		if completeErr := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{Output: raw}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
-			return completeErr
-		}
-		run, getErr := c.Repo.GetRun(ctx, c.RunID)
-		if getErr != nil {
-			return getErr
-		}
-		if run.Status == workflowledger.RunStatusWaitingApproval {
-			_ = c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusFailed, nil)
-		}
-		return err
-	}
-	if err := c.completeSucceededRoute(ctx, attempt, AgentStepResult{Output: raw, ValidatedOutput: output}, route); err != nil {
-		return err
-	}
-	return c.finishHumanRunStatus(ctx, run, workflowledger.StepAttempt{ToStepID: route.ToStepID, Status: workflowledger.AttemptStatusSucceeded}, decision)
-}
-
-func (c *LinearController) finishHumanRunStatus(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, decision string) error {
-	// Refresh version after prior writes.
-	current, err := c.Repo.GetRun(ctx, c.RunID)
-	if err != nil {
-		return err
-	}
-	run = current
-	if workflowledger.IsTerminalRunStatus(run.Status) {
-		return nil
-	}
-	if decision == "rejected" || attempt.Status == workflowledger.AttemptStatusFailed {
-		if run.Status == workflowledger.RunStatusWaitingApproval {
-			return c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusFailed, nil)
-		}
-		return nil
-	}
-	if run.Status == workflowledger.RunStatusWaitingApproval {
-		if err := c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusRunning, nil); err != nil {
-			return err
-		}
-		run, err = c.Repo.GetRun(ctx, c.RunID)
-		if err != nil {
-			return err
-		}
-	}
-	if workflowledger.IsTerminalStepID(attempt.ToStepID) {
-		status := workflowledger.RunStatusSucceeded
-		if attempt.ToStepID == "failure" {
-			status = workflowledger.RunStatusFailed
-		}
-		if c.deliveryRequired() && attempt.ToStepID == "success" {
-			status = workflowledger.RunStatusDeliveryPending
-		}
-		if workflowledger.IsTerminalRunStatus(run.Status) {
-			return nil
-		}
-		return c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, status, nil)
-	}
-	return nil
 }
 
 // reconcileWaitingApproval finishes partial Approve/Reject sequences and

@@ -108,6 +108,13 @@ type Repository interface {
 	// ListDeliveries returns the run's delivery records.
 	ListDeliveries(ctx context.Context, runID string) ([]DeliveryRecord, error)
 
+	// ListEvents returns the run's audit trail, ordered by event sequence,
+	// paged (limit <= 0 means DefaultEventPageSize, offset skips events).
+	// Summaries are bounded and never contain raw payloads. Unknown kinds
+	// and undecodable payloads are skipped. Returns ErrNotFound when the
+	// run is absent.
+	ListEvents(ctx context.Context, runID string, limit, offset int) ([]EventRecord, error)
+
 	// ClaimRun acquires the exclusive execution claim on a run. Returns
 	// ErrClaimHeld if another holder owns it. Same-holder refresh succeeds.
 	ClaimRun(ctx context.Context, runID, holder string) error

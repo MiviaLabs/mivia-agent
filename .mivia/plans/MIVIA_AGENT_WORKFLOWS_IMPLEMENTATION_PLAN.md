@@ -1,7 +1,7 @@
 # Mivia Agent Workflows v1 — Implementation Plan
 
 **Repository:** `MiviaLabs/mivia-agent`
-**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phases 5–6 remaining
+**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 remaining
 **Scope:** local harness only; no cloud control plane or workflow-level parallelism in v1.
 
 ---
@@ -15,7 +15,7 @@
 | Phase 2 | Ledger, isolated worktree, lifecycle | ✅ Complete — durable ledger + recovery rules shipped (commit `f17969e`); worktree infra stayed as shipped, no new worktree code (owner scope) |
 | Phase 3 | Agent step adapter | ✅ Complete |
 | Phase 4 | Transitions, loops, gates | ✅ Complete |
-| Phase 5 | PR delivery | ⬜ Not started |
+| Phase 5 | PR delivery | ✅ Complete |
 | Phase 6 | Hardening and documentation | ⬜ Not started |
 
 ### What is shipped (Phases 0–1)
@@ -47,7 +47,7 @@
 
 ### What remains (Phases 2–6)
 
-**6 of 10 planned packages are not yet started:**
+**1 of 10 planned packages is deferred (owner-scoped worktree infra); all others shipped with Phases 2–5:**
 
 | Package | Purpose | Status |
 |---------|---------|--------|
@@ -55,8 +55,8 @@
 | `internal/workflows/controller/` | Durable sequential state machine | ✅ Complete (Phase 3 linear + Phase 4 gates/loops) |
 | `internal/workflows/ledger/` | Workflow-specific run state persistence (event-sourced projections over the shared `storage.Store`) | ✅ Complete |
 | `internal/workflows/verifier/` | Registered deterministic verifier profiles (e.g. `go-default`) | ✅ Complete |
-| `internal/workflows/workspace/` | Git worktree lifecycle (base commit, branch, cleanup) | ⏸ Deferred — worktree infra shipped and frozen by owner decision; wrapper not built |
-| `internal/workflows/delivery/` | Git commit + GitHub PR publication | ⬜ Not started |
+| `internal/workflows/workspace/` | Git worktree lifecycle (base commit, branch, cleanup) | ✅ Complete (Phase 5) — run-owned worktree wrapper (`Resolve`/`Ensure`) used by run, delivery, and cleanup |
+| `internal/workflows/delivery/` | Git commit + GitHub PR publication | ✅ Complete (Phase 5) — pinned Git runner, GitHub CLI PR client, idempotency, refusal paths |
 
 ---
 
@@ -195,8 +195,8 @@ internal/workflows/
   controller/       # ✅ DONE — durable sequential state machine (gates + loops)
   ledger/           # ✅ DONE — event-sourced repository, snapshots, recovery
   verifier/         # ✅ DONE — registered deterministic verifier profiles
-  workspace/        # ⏸ DEFERRED — owner-scoped; vcs infra shipped as-is
-  delivery/         # ⬜ TODO — git + GitHub PR publication and idempotency
+  workspace/        # ✅ DONE — run-owned worktree wrapper (Resolve/Ensure); used by run/deliver/cleanup
+  delivery/         # ✅ DONE — git + GitHub PR publication and idempotency
   presentation/     # ✅ DONE — CLI-safe status/event/explain view models
 ```
 
@@ -336,6 +336,13 @@ Before running delivery commands, inspect the run worktree and snapshot the inte
 
 Keep an internal `DeliveryProvider` interface so a future GitHub API client, Gitea, GitLab, and cloud service can be added without changing workflow semantics. Do not add a Go GitHub SDK in phase one unless it removes a demonstrated `gh` limitation; it increases auth and token-storage scope that the harness does not yet own.
 
+### 10.4 Shipped (Phase 5)
+
+- Eligibility is host-enforced: success terminal reached, immutable `pull_request` policy still active, explicit `--allow-publish` on the invoking command, run worktree still at the admitted base ancestry, non-empty diff, and no prior successful delivery for the run's idempotency key. Every refusal settles the run to `delivery_failed` with a durable error record instead of touching Git or the provider.
+- The provider is a `GitHubCLI` PR client (find-before-create with an owner-scoped repo pattern) plus a pinned `RealGit` runner (fixed argv, `GIT_*` and identity env stripped, `GIT_DIR`/`GIT_WORK_TREE` forced, no shell).
+- The delivery record (`workflow_deliveries`) is the retry-safe lifecycle: a resumed `workflow deliver` locates the original PR before creating anything, so a crash after push or PR creation never duplicates.
+- Delivery-pending runs are the only runs that may still publish; succeeded runs replay their durable outcome without touching the provider.
+
 ## 11. CLI and user-facing surfaces
 
 ### 11.1 Shipped (Phase 1)
@@ -347,19 +354,21 @@ mivia workflows validate      ✅
 mivia workflows explain <name> ✅
 ```
 
-### 11.2 Remaining (Phases 2–5)
+### 11.2 Shipped (Phases 2–5)
 
 ```text
-mivia workflow run <name> --input key=value [--allow-publish]
-mivia workflow status <run-id>
-mivia workflow events <run-id>
-mivia workflow resume <run-id> [--allow-publish]
-mivia workflow approve <run-id> <approval-id>
-mivia workflow reject <run-id> <approval-id> [--reason text]
-mivia workflow cancel <run-id>
-mivia workflow deliver <run-id> --allow-publish
-mivia workflow cleanup <run-id>
+mivia workflow run <name> --input key=value [--allow-publish]   ✅
+mivia workflow status <run-id>                                  ✅
+mivia workflow events <run-id> [--limit N] [--offset N]         ✅
+mivia workflow resume <run-id> [--force]                        ✅
+mivia workflow approve <run-id> <approval-id> [--actor]         ✅
+mivia workflow reject <run-id> <approval-id> [--actor] [--reason text] ✅
+mivia workflow cancel <run-id>                                  ✅
+mivia workflow deliver <run-id> --allow-publish                 ✅
+mivia workflow cleanup <run-id>                                 ✅
 ```
+
+All nine operator commands shipped with Phases 3–5; every delivery-capable path requires explicit `--allow-publish`.
 
 `validate` performs discovery, strict parsing, semantic compilation, agent/schema/template/verifier resolution, and diagnostics without contacting a provider or changing the workspace. `explain` shows the compiled state graph, loop caps, declared authority, delivery policy, and resolved references, with no secret values.
 
@@ -439,13 +448,14 @@ mivia workflow cleanup <run-id>
 
 **Exit:** the feature-delivery repair loop produces `implement#2` / `review#2` history and terminates within global limits. ✅
 
-### Phase 5 — PR delivery ⬜ TODO
+### Phase 5 — PR delivery ✅ Complete
 
-- Implement delivery eligibility checks, workspace Git inspection, Mivia branch naming, snapshotting, explicit-argv Git/GitHub CLI provider, remote idempotency lookup, and durable delivery records.
-- Add `--allow-publish`, `delivery_pending`, `workflow deliver`, and clear non-publication explanations.
-- Exercise `none`, `draft`, ready-PR, no-diff, failed verification, and duplicate-resume scenarios in an isolated test repository.
+- ✅ `internal/workflows/delivery/`: eligibility checks and refusal paths (`RefusalError`), pinned fixed-argv Git runner (`RealGit` strips all `GIT_*`/identity env and forces `GIT_DIR`/`GIT_WORK_TREE`, no shell), GitHub CLI PR client (`GitHubCLI`: find-before-create, draft flag, owner-scoped reuse), idempotency keys derived from run + workflow digest, and durable `workflow_deliveries` records with no-diff handling.
+- ✅ CLI: `workflow run --allow-publish`, `delivery_pending` settlement with clear non-publication explanations, and `workflow deliver <run-id> --allow-publish` under the workflow execution file lock with a run claim and a bounded delivery timeout.
+- ✅ Operator surfaces: `workflow status`, `workflow events` (paged audit trail), `workflow approve`/`reject` (human gates with recorded actor/reason), `workflow cancel` (idempotent `CancelRun`; refuses `delivery_pending`), and `workflow cleanup` (removes the run worktree and its `wf/` branch, idempotent).
+- ✅ Exercised `draft`, no-diff, base mismatch, missing permission, non-write-capable, and duplicate-resume scenarios in isolated test repositories.
 
-**Exit:** a successful approved fixture opens exactly one draft PR; every unsuccessful/no-permission path opens zero.
+**Exit:** a successful approved fixture opens exactly one draft PR; every unsuccessful/no-permission path opens zero. ✅
 
 ### Phase 6 — hardening and documentation ⬜ TODO
 
@@ -467,9 +477,9 @@ mivia workflow cleanup <run-id>
 | Loops | Back-edge creates a fresh numbered attempt; per-loop caps or global caps terminate deterministically. Compiler rejects uncapped cycles with no global limit. | ✅ Runtime loop counters + global max_step_attempts + validateCycles |
 | Persistence | Crash before/after every state write resumes without duplicate agent dispatch or duplicate transition. | ✅ Ledger (Phase 2); controller uses claim + CAS |
 | Cancellation | Cancel wins safely against an in-flight child/approval/delivery attempt and leaves explainable status. | ✅ Partial — cancel/timeout attempt statuses; Phase 6 race matrix remains |
-| Delivery | Missing `--allow-publish`, no diff, failed gate, or exhausted loop creates no PR. | ⬜ Needs delivery implementation |
-| Idempotency | Crash/retry after push or remote PR creation locates the original PR and never duplicates it. | ⬜ Needs delivery implementation |
-| Isolation | A dirty caller checkout remains byte-for-byte unchanged; agents, verifiers, and delivery operate only in the run-owned worktree. | ⬜ Needs workspace implementation |
+| Delivery | Missing `--allow-publish`, no diff, failed gate, or exhausted loop creates no PR. | ✅ Tested (Phase 5) — CLI + delivery refusal paths |
+| Idempotency | Crash/retry after push or remote PR creation locates the original PR and never duplicates it. | ✅ Tested (Phase 5) — find-before-create + delivery records |
+| Isolation | A dirty caller checkout remains byte-for-byte unchanged; agents, verifiers, and delivery operate only in the run-owned worktree. | ✅ Tested (Phase 5) — worktree run + cleanup tests |
 | Concurrency | `go test -race` covers controller claims, approval, cancel, resume and transition CAS contention. | ⬜ Needs controller implementation |
 
 ## 14. First workflow to ship
