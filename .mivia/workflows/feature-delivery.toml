@@ -10,8 +10,9 @@ max_bytes = 12000
 
 [limits]
 # Up to the system cap (24h) so delivery workflows can host very long-running
-# agent tasks end to end.
-max_step_attempts = 64
+# agent tasks end to end. Attempt and loop caps are generous so the 24h
+# duration bound, not iteration counts, governs long repair cycles.
+max_step_attempts = 5000
 max_duration_seconds = 86400
 
 [[steps]]
@@ -182,7 +183,7 @@ from = "plan_review"
 to = "plan"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "plan_review_repair"
-max_iterations = 8
+max_iterations = 500
 
 # plan_tests → test_plan_review (test plan ready, review it)
 [[transitions]]
@@ -202,7 +203,7 @@ from = "test_plan_review"
 to = "plan_tests"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "test_plan_review_repair"
-max_iterations = 8
+max_iterations = 500
 
 # implement → review (implementation + tests ready for review)
 [[transitions]]
@@ -222,7 +223,7 @@ from = "review"
 to = "implement"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "review_repair"
-max_iterations = 8
+max_iterations = 500
 
 # test_validate → verify (tests pass, verify code quality)
 [[transitions]]
@@ -235,7 +236,7 @@ from = "test_validate"
 to = "repair_tests"
 match = { status = "failed" }
 loop = "test_repair"
-max_iterations = 8
+max_iterations = 500
 
 [[transitions]]
 from = "repair_tests"
@@ -253,7 +254,7 @@ from = "verify"
 to = "repair_verify"
 match = { status = "failed" }
 loop = "verify_repair"
-max_iterations = 8
+max_iterations = 500
 
 [[transitions]]
 from = "repair_verify"
@@ -271,7 +272,7 @@ from = "code_validate"
 to = "repair_final"
 match = { status = "failed" }
 loop = "final_repair"
-max_iterations = 8
+max_iterations = 500
 
 [[transitions]]
 from = "repair_final"
