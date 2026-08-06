@@ -7,11 +7,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 func seedRunningAttempt(t *testing.T, repo workflowledger.Repository, runID string) {
+	seedRunningAttemptWithOutput(t, repo, runID, []byte(`{"ok":true,"verdict":"approved"}`))
+}
+
+func seedRunningAttemptWithOutput(t *testing.T, repo workflowledger.Repository, runID string, out []byte) {
 	t.Helper()
 	ctx := context.Background()
 	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
@@ -40,7 +45,6 @@ func seedRunningAttempt(t *testing.T, repo workflowledger.Repository, runID stri
 	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
-	out := []byte(`{"ok":true,"verdict":"approved"}`)
 	ref := "sha256:" + workflowledger.DigestHex(out)
 	if err := repo.StoreContent(ctx, ref, out); err != nil {
 		t.Fatal(err)
@@ -135,6 +139,40 @@ func TestInspectFromLedger(t *testing.T) {
 	}
 	if inspect.Output == nil || inspect.Transition == nil || inspect.Transition.ToStep != "two" {
 		t.Fatalf("inspect detail = %+v", inspect)
+	}
+}
+
+func TestInspectRedactsConfiguredOutput(t *testing.T) {
+	policy, err := redact.Compile([]string{`secret-[a-z0-9]+`}, []string{"api_key"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := redact.Current()
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(previous) })
+
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-inspect-redaction-1"
+	seedRunningAttemptWithOutput(t, repo, runID, []byte(`{"api_key":"test-secret-placeholder","note":"secret-abc123"}`))
+	svc := testService(t, repo, nil)
+	insOut, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
+		context.Background(), json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inspect agenttools.InspectView
+	if err := json.Unmarshal([]byte(insOut), &inspect); err != nil {
+		t.Fatal(err)
+	}
+	output, ok := inspect.Output.(map[string]any)
+	if !ok {
+		t.Fatalf("inspect output type = %T, want object", inspect.Output)
+	}
+	if output["api_key"] != "[redacted]" || output["note"] != "[redacted]" {
+		t.Fatalf("inspect output = %#v, want configured redaction", output)
+	}
+	if strings.Contains(insOut, "test-secret-placeholder") || strings.Contains(insOut, "secret-abc123") {
+		t.Fatalf("inspect result contains unredacted output: %s", insOut)
 	}
 }
 
