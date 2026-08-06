@@ -179,7 +179,10 @@ func resultOutputMap(result AgentStepResult) (map[string]any, error) {
 	}
 	var m map[string]any
 	if err := json.Unmarshal(result.Output, &m); err != nil {
-		return nil, fmt.Errorf("decode step output for matching: %w", err)
+		// Non-object output (scalar, array, null) is a valid child result when
+		// no output schema is in force; status-only transitions still route on
+		// an empty map instead of failing the whole run.
+		return map[string]any{}, nil
 	}
 	return m, nil
 }

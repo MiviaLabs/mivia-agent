@@ -74,18 +74,7 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 	result, runErr := c.Runner.RunStep(ctx, req)
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
-	status := workflowledger.AttemptStatusSucceeded
-	if runErr != nil {
-		// Classify the failure: the child status (when the runner reports it)
-		// is authoritative for timeouts/cancels; otherwise map the error. A
-		// timed-out attempt is not a failed attempt (D2).
-		status = workflowledger.AttemptStatusFailed
-		if errors.Is(runErr, context.DeadlineExceeded) || result.Status == "timed_out" {
-			status = workflowledger.AttemptStatusTimedOut
-		} else if errors.Is(runErr, context.Canceled) || result.Status == "canceled" {
-			status = workflowledger.AttemptStatusCanceled
-		}
-	}
+	status := classifyStepStatus(runErr, result.Status)
 	if runErr != nil {
 		result.ErrorRef = storeErrorText(writeCtx, c.Repo, runErr)
 	}
@@ -128,6 +117,31 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 		runStatus = workflowledger.RunStatusTimedOut
 	}
 	return c.failWithStatus(writeCtx, run, runErr, runStatus)
+}
+
+// classifyStepStatus maps a runner error and the child's reported status to
+// the attempt terminal status. The child's own status is authoritative for
+// timeouts/cancels: joinWithCancellation can pair a child timed_out/canceled
+// status with a parent ctx error, and the child's terminal status must win.
+// The error type is the fallback when the runner reports no status.
+func classifyStepStatus(runErr error, childStatus string) workflowledger.AttemptStatus {
+	if runErr == nil {
+		return workflowledger.AttemptStatusSucceeded
+	}
+	switch childStatus {
+	case "timed_out":
+		return workflowledger.AttemptStatusTimedOut
+	case "canceled":
+		return workflowledger.AttemptStatusCanceled
+	default:
+		if errors.Is(runErr, context.DeadlineExceeded) {
+			return workflowledger.AttemptStatusTimedOut
+		}
+		if errors.Is(runErr, context.Canceled) {
+			return workflowledger.AttemptStatusCanceled
+		}
+		return workflowledger.AttemptStatusFailed
+	}
 }
 
 func stepPersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
