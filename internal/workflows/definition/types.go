@@ -24,6 +24,12 @@ type Limits struct {
 	MaxDurationSeconds int `toml:"max_duration_seconds"`
 }
 
+// IsEmpty reports true when both MaxStepAttempts and MaxDurationSeconds are zero,
+// which is the state when the [limits] TOML section is omitted.
+func (l Limits) IsEmpty() bool {
+	return l.MaxStepAttempts == 0 && l.MaxDurationSeconds == 0
+}
+
 type Step struct {
 	ID    string `toml:"id"`
 	Kind  string `toml:"kind"`

@@ -290,6 +290,27 @@ func TestParseWorkflowTOML_TransitionValidation(t *testing.T) {
 	}
 }
 
+func TestLimitsIsEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		l    Limits
+		want bool
+	}{
+		{"zero/zero", Limits{}, true},
+		{"nonzero MaxStepAttempts/zero MaxDurationSeconds", Limits{MaxStepAttempts: 1, MaxDurationSeconds: 0}, false},
+		{"zero MaxStepAttempts/nonzero MaxDurationSeconds", Limits{MaxStepAttempts: 0, MaxDurationSeconds: 1}, false},
+		{"nonzero/nonzero", Limits{MaxStepAttempts: 3, MaxDurationSeconds: 60}, false},
+		{"boundary max values", Limits{MaxStepAttempts: 100, MaxDurationSeconds: 86400}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.l.IsEmpty(); got != tc.want {
+				t.Errorf("Limits.IsEmpty() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseWorkflowTOML_InputValidation(t *testing.T) {
 	base := func(inputs string) string {
 		return "version = 1\nname = \"input-validation\"\ninitial_step = \"plan\"\n\n" +
