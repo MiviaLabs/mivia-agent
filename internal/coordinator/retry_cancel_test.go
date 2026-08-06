@@ -327,7 +327,7 @@ func TestCoordinator_CancelDuringRetry(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mintRetryAttempt error path (dag.go:278-279)
+// mintRetryAttempt error path (dag.go:451-452)
 // ---------------------------------------------------------------------------
 
 // erroringSetTaskAttemptRepo wraps a LedgerRepository and returns an error on
@@ -347,7 +347,7 @@ func (r *erroringSetTaskAttemptRepo) SetTaskAttempt(ctx context.Context, runID, 
 }
 
 func TestCoordinator_MintRetryAttemptLedgerError(t *testing.T) {
-	// Exercises dag.go:278-279: when SetTaskAttempt fails during retry,
+	// Exercises dag.go:451-452: when SetTaskAttempt fails during retry,
 	// the error propagates without panic.
 	repo := ledger.NewMemoryLedgerRepository()
 	fixedTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)

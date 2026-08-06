@@ -395,7 +395,7 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 		return full.String(), fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
 	if full.Len() == 0 && !received {
-		return c.retryWithoutStreaming(ctx, req)
+		return c.retryWithoutStreaming(ctx, req, w)
 	}
 	return full.String(), nil
 }
@@ -406,8 +406,8 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 // request-shaping field has to be repeated here. Omitting the reasoning pair
 // would silently downgrade the model on exactly the turn that already produced
 // nothing.
-func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request) (string, error) {
-	return c.Chat(ctx, Request{
+func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w io.Writer) (string, error) {
+	content, err := c.Chat(ctx, Request{
 		Model:            req.Model,
 		Messages:         req.Messages,
 		Temperature:      req.Temperature,
@@ -417,6 +417,18 @@ func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request) (
 		ReasoningLevel:   req.ReasoningLevel,
 		ReasoningDialect: req.ReasoningDialect,
 	})
+	if err != nil {
+		return content, err
+	}
+	// The fallback fires only when nothing was live-written, so writing the
+	// answer here delivers it exactly once. Mirrors the tool-capable path in
+	// chatTurnStream. Nil-safe: ChatStream allows a nil writer.
+	if w != nil {
+		if _, werr := io.WriteString(w, content); werr != nil {
+			return content, werr
+		}
+	}
+	return content, nil
 }
 
 func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBody, error) {

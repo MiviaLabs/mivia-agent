@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contentref"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -75,7 +76,7 @@ func (t *readOutputTool) Parameters() map[string]any {
 			"offset": map[string]any{
 				"type":        "integer",
 				"minimum":     0,
-				"description": "Optional byte offset returned by next_offset; omit to start at the beginning",
+				"description": "Optional byte offset returned by next_offset; omit to start at the beginning of the redacted content",
 			},
 			"limit": map[string]any{
 				"type":        "integer",
@@ -143,9 +144,11 @@ func (t *readOutputTool) Execute(ctx context.Context, args json.RawMessage) (str
 			return "", fmt.Errorf("read_output: %w", err)
 		}
 	}
-	// Stored remainders are raw tool output; treat as opaque bytes. Normalize
-	// only invalid UTF-8 so JSON encoding stays well-formed.
-	content := strings.ToValidUTF8(string(data), "\uFFFD")
+	// The model-visible stream must be redacted as a whole before it is
+	// paged: a page edge through a secret would otherwise expose a surviving
+	// prefix. Normalize invalid UTF-8 so JSON encoding stays well-formed, then
+	// apply the process-wide policy (identity when none is configured).
+	content := redact.Text(strings.ToValidUTF8(string(data), "\uFFFD"))
 	if params.Offset > len(content) {
 		return "", fmt.Errorf("read_output: offset %d exceeds content length %d", params.Offset, len(content))
 	}

@@ -11,10 +11,10 @@ import (
 )
 
 // TestRecordRunResultsCancelOverrideWithoutPoolCancel pins the recordRunResults
-// side of the cancel/startReady race (record_results.go:41-48): when a task is
+// side of the cancel/startReady race (record_results.go:71-78): when a task is
 // already claimed for cancellation (cancel_requested or canceled) but poolCtx
 // has not been canceled yet, the stale pool outcome must be overridden to
-// canceled with the context.Canceled fallback (record_results.go:45-46), and
+// canceled with the context.Canceled fallback (record_results.go:74-76), and
 // the ledger must agree on the clean cancel instead of attempting an invalid
 // running/queued -> completed/failed CAS.
 func TestRecordRunResultsCancelOverrideWithoutPoolCancel(t *testing.T) {

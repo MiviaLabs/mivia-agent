@@ -36,7 +36,10 @@ models = [
   { name = "openai/gpt-4o-mini", context_window_tokens = 128000 },
   # gpt-oss-20b supports reasoning_effort (low/medium/high); OpenRouter
   # normalizes it per upstream model, so no reasoning_dialect is needed.
-  { name = "openai/gpt-oss-20b", context_window_tokens = 131000, reasoning_efforts = ["low", "medium", "high"], reasoning = "medium" }
+  { name = "openai/gpt-oss-20b", context_window_tokens = 131000, reasoning_efforts = ["low", "medium", "high"], reasoning = "medium" },
+  # Ling-3.0-flash supports text, tools, and OpenRouter reasoning. Its current
+  # routed provider reports 131072 context tokens and 32768 output tokens.
+  { name = "inclusionai/ling-3.0-flash", context_window_tokens = 131072, max_output_tokens = 32768, reasoning_efforts = ["off", "medium"], reasoning = "off", reasoning_dialect = "openrouter" }
 ]
 default_model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"

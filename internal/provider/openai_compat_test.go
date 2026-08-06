@@ -707,4 +707,40 @@ func TestChatStreamEmptyStreamFallback(t *testing.T) {
 	if out != "fallback response" {
 		t.Fatalf("got %q, want 'fallback response'", out)
 	}
+	// Regression: the fallback answer must also reach the stream writer w, or a
+	// plain (no-tools) chat turn completes with no visible answer.
+	if buf.String() != "fallback response" {
+		t.Fatalf("stream writer got %q, want 'fallback response'", buf.String())
+	}
+}
+
+// TestChatStreamEmptyStreamFallbackNilWriter locks the nil-writer variant of
+// the empty-stream fallback: ChatStream must return the fallback content
+// without panicking when no writer is supplied.
+func TestChatStreamEmptyStreamFallbackNilWriter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]string{"content": "fallback response"}, "finish_reason": "stop"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+	out, err := c.ChatStream(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "fallback response" {
+		t.Fatalf("got %q, want 'fallback response'", out)
+	}
 }

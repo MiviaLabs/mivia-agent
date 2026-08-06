@@ -163,6 +163,61 @@ func TestUIEventMsgTurnEndCancelShowsCancelFooter(t *testing.T) {
 	}
 }
 
+// TestUIEventTurnEndBeforeFinalDrainKeepsTail is the M3 regression: a bus
+// KindTurnEnd published BEFORE the bridge's final drain (bridge.Finish
+// strictly precedes publishTurnEnd, so the event can win the race) must NOT
+// trigger a prefix-only backup finish. The final stream chunk still lands in
+// m.blocks via the pollCmd tick drain + Done finish.
+func TestUIEventTurnEndBeforeFinalDrainKeepsTail(t *testing.T) {
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.waiting = true
+	m.turnStart = time.Now()
+	m.activeTurnID = "1"
+	m.uiAdapter = NewUIAdapter(events.New(), m.bridge)
+
+	// A prefix was already drained into streamBuf (committed view)...
+	m.streamBuf.WriteString("drained prefix")
+	// ...and the bridge now holds the FINAL chunk that no tick has drained yet.
+	_, _ = m.bridge.Write([]byte("final tail"))
+	m.bridge.Finish(nil)
+
+	// Bus KindTurnEnd arrives BEFORE the tuiTickMsg that drains the tail.
+	ev := events.Event{
+		Kind:      events.KindTurnEnd,
+		Timestamp: time.Now(),
+		TurnID:    "1",
+	}
+	model, _ := m.Update(uiEventMsg{event: ev})
+	got := model.(*tuiModel)
+
+	// The backup finish must not run while the bridge is undrained: finishing
+	// now would commit only the prefix and strand the tail.
+	if !got.waiting {
+		t.Fatal("KindTurnEnd must not finish while the bridge still holds the final chunk")
+	}
+
+	// Now the 80ms pollCmd tick delivers the drain + Done (the normal path).
+	model2, _ := m.Update(tuiTickMsg{bridge: m.bridge})
+	got2 := model2.(*tuiModel)
+
+	if got2.waiting {
+		t.Fatal("expected waiting=false after bridge drain finish")
+	}
+	var asst string
+	for _, blk := range got2.blocks {
+		if blk.Kind == ChatBlockAssistant {
+			asst = blk.Text
+		}
+	}
+	if !strings.Contains(asst, "final tail") {
+		t.Fatalf("final stream chunk lost: assistant block %q", asst)
+	}
+	if got2.streamBuf.Len() != 0 {
+		t.Fatalf("streamBuf must be empty after finish, got %q", got2.streamBuf.String())
+	}
+}
+
 // TestUIEventMsgStaleTurnEndIgnored verifies force-send fencing.
 func TestUIEventMsgStaleTurnEndIgnored(t *testing.T) {
 	m := newSmokeModel(t)

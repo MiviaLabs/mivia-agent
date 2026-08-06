@@ -7,6 +7,46 @@ import (
 	"time"
 )
 
+func TestStreamBridgePendingReportsUndrainedWithoutConsuming(t *testing.T) {
+	b := newStreamBridge()
+	if b.Pending() {
+		t.Fatal("empty bridge must count as drained")
+	}
+	if _, err := b.Write([]byte("tail")); err != nil {
+		t.Fatal(err)
+	}
+	if !b.Pending() {
+		t.Fatal("bridge with undrained stream must report pending")
+	}
+	// Pending must not consume: the content survives a following Drain.
+	if !b.Pending() {
+		t.Fatal("Pending consumed the stream")
+	}
+	d := b.Drain()
+	if d.Stream != "tail" {
+		t.Fatalf("drain after Pending lost content: %q", d.Stream)
+	}
+	if b.Pending() {
+		t.Fatal("drained bridge must not report pending")
+	}
+	// An unconsumed Finish counts as pending: the tick must still see Done.
+	b.Finish(nil)
+	if !b.Pending() {
+		t.Fatal("unconsumed Finish must report pending")
+	}
+	d = b.Drain()
+	if !d.Done {
+		t.Fatal("expected Done after Finish drain")
+	}
+	if b.Pending() {
+		t.Fatal("fully drained bridge (Done consumed) must not report pending")
+	}
+	var nilBridge *streamBridge
+	if nilBridge.Pending() {
+		t.Fatal("nil bridge must count as drained")
+	}
+}
+
 func TestStreamBridgeRevokeStreamClearsPendingAndFlagsReset(t *testing.T) {
 	b := newStreamBridge()
 	if _, err := b.Write([]byte("partial answer before tools")); err != nil {

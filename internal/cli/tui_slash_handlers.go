@@ -186,6 +186,13 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 	_ = cmd
 	switch strings.ToLower(fields[0]) {
 	case "/clear":
+		// /clear saves then wipes the transcript, so it would silently discard
+		// a turn still in flight while the transcript keeps rendering it as
+		// completed. Same guard as /new: block it while busy.
+		if m.waiting {
+			m.appendInfo("(finish the current turn before /clear)")
+			return true
+		}
 		// Save the conversation before clearing so it's recoverable.
 		m.session.SaveAfterTurn()
 		m.messages = nil
