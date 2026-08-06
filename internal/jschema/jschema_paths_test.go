@@ -132,6 +132,27 @@ func TestStripOneCodeFenceLeavesEverythingItCannotSafelyStrip(t *testing.T) {
 	}
 }
 
+func TestFormatCorrectiveWithSchemaRestatesSchema(t *testing.T) {
+	schema := map[string]any{
+		"type":       "object",
+		"required":   []any{"verdict", "findings", "inspected"},
+		"properties": map[string]any{"verdict": map[string]any{"type": "string"}},
+	}
+	msg := FormatCorrectiveWithSchema(errors.New("missing properties 'verdict'"), schema, nil)
+	if !strings.Contains(msg, `"required"`) || !strings.Contains(msg, "verdict") {
+		t.Fatalf("corrective message should restate the schema: %s", msg)
+	}
+	if !strings.Contains(msg, "did not match") {
+		t.Fatalf("corrective message should keep the validation detail: %s", msg)
+	}
+	if len(msg) > MaxCorrectiveBytes {
+		t.Fatalf("corrective message %d bytes exceeds %d", len(msg), MaxCorrectiveBytes)
+	}
+	if got := FormatCorrectiveWithSchema(errors.New("secret"), schema, func(string) string { return "[r]" }); !strings.Contains(got, "[r]") {
+		t.Fatalf("redaction not applied: %s", got)
+	}
+}
+
 func TestFormatCorrectiveIsBoundedAndRedactable(t *testing.T) {
 	many := errors.New(strings.Repeat("line\n", MaxValidationErrors+3))
 	msg := FormatCorrective(many, nil)

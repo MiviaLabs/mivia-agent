@@ -259,8 +259,8 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool) e
 			if t.MaxIterations == 0 {
 				return fmt.Errorf("loop %q: max_iterations must be > 0, or -1 for unlimited (got 0); omitting the field does not default to unlimited", t.Loop)
 			}
-			if t.MaxIterations > 100 {
-				return fmt.Errorf("loop %q: max_iterations %d exceeds maximum of 100", t.Loop, t.MaxIterations)
+			if t.MaxIterations > 1000 {
+				return fmt.Errorf("loop %q: max_iterations %d exceeds maximum of 1000", t.Loop, t.MaxIterations)
 			}
 		}
 	}
@@ -307,8 +307,8 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 
 // validateLimits checks that the limits configuration is within acceptable bounds.
 func validateLimits(limits definition.Limits) error {
-	if limits.MaxStepAttempts < 0 || limits.MaxStepAttempts > 100 {
-		return fmt.Errorf("limits: max_step_attempts must be in range [0, 100] (got %d)", limits.MaxStepAttempts)
+	if limits.MaxStepAttempts < 0 || limits.MaxStepAttempts > 10000 {
+		return fmt.Errorf("limits: max_step_attempts must be in range [0, 10000] (got %d)", limits.MaxStepAttempts)
 	}
 	if limits.MaxDurationSeconds < 0 || limits.MaxDurationSeconds > 86400 {
 		return fmt.Errorf("limits: max_duration_seconds must be in range [0, 86400] (got %d)", limits.MaxDurationSeconds)

@@ -463,8 +463,8 @@ func TestCompile_LimitsValidation(t *testing.T) {
 	}{
 		{"negative max_step_attempts", "test-limits-neg-attempts", "max_step_attempts",
 			definition.Limits{MaxStepAttempts: -1}},
-		{"max_step_attempts exceeds 100", "test-limits-high-attempts", "max_step_attempts",
-			definition.Limits{MaxStepAttempts: 200}},
+		{"max_step_attempts exceeds 10000", "test-limits-high-attempts", "max_step_attempts",
+			definition.Limits{MaxStepAttempts: 20000}},
 		{"negative max_duration_seconds", "test-limits-neg-duration", "max_duration_seconds",
 			definition.Limits{MaxDurationSeconds: -1}},
 		{"max_duration_seconds exceeds 86400", "test-limits-high-duration", "max_duration_seconds",
@@ -596,13 +596,13 @@ func TestCompile_LoopMaxIterationsBoundary(t *testing.T) {
 			},
 		}
 	}
-	// 100 should compile
-	if _, err := Compile(makeWF(100)); err != nil {
-		t.Errorf("max_iterations=100 should compile: %v", err)
+	// 1000 should compile
+	if _, err := Compile(makeWF(1000)); err != nil {
+		t.Errorf("max_iterations=1000 should compile: %v", err)
 	}
-	// 101 should be rejected
-	if _, err := Compile(makeWF(101)); err == nil {
-		t.Error("max_iterations=101 should be rejected")
+	// 1001 should be rejected
+	if _, err := Compile(makeWF(1001)); err == nil {
+		t.Error("max_iterations=1001 should be rejected")
 	}
 }
 

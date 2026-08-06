@@ -30,3 +30,9 @@ Return only the declared structured output. List every workspace path you inspec
 directories, or search patterns) in `inspected`. Do not make a claim about source you did not
 read. Put the locked scope, test plan outline, security checks, fuzz decision, and requested
 host gates in `summary`. Put ordered actions in `steps`.
+
+## Output contract
+
+Reply with only a JSON object that satisfies the output schema appended to this task. Do not
+use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
+An invalid shape is rejected and you will be asked again with the schema.

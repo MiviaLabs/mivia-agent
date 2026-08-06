@@ -182,6 +182,25 @@ func FormatCorrective(validateErr error, redact func(string) string) string {
 	return msg
 }
 
+// FormatCorrectiveWithSchema builds the corrective user message with the
+// required schema restated inline. The retry turn replaces the task prompt,
+// which carried the schema appendix, so without a restated schema the model
+// repairs its output shape blind and the retry budget is spent on the same
+// invalid shape.
+func FormatCorrectiveWithSchema(validateErr error, schema map[string]any, redact func(string) string) string {
+	msg := FormatCorrective(validateErr, nil)
+	if raw, err := json.Marshal(schema); err == nil {
+		msg += "\nThe required schema is:\n" + string(raw)
+		if len(msg) > MaxCorrectiveBytes {
+			msg = msg[:MaxCorrectiveBytes]
+		}
+	}
+	if redact != nil {
+		msg = redact(msg)
+	}
+	return msg
+}
+
 // PromptAppendix is the deterministic host instruction appended when a schema
 // is in force.
 func PromptAppendix(schema map[string]any) string {
