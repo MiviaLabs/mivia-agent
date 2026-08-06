@@ -30,7 +30,11 @@ import (
 // read_skill_resource tool (injected by activateSkill/injectSkillResourceTool).
 func resourceSkillRegistry(t *testing.T) *skills.Registry {
 	t.Helper()
-	root := t.TempDir()
+	return resourceSkillRegistryAt(t, t.TempDir())
+}
+
+func resourceSkillRegistryAt(t *testing.T, root string) *skills.Registry {
+	t.Helper()
 	dir := filepath.Join(root, "review")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)

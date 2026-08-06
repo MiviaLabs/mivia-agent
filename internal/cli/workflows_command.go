@@ -8,9 +8,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/presentation"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // runWorkflows handles the workflow CLI commands.
@@ -137,6 +142,9 @@ func runWorkflowsValidate(args []string, stdout, stderr io.Writer) error {
 			continue
 		}
 		compiled, err := compiler.Compile(&parsed)
+		if err == nil {
+			err = validateWorkflowReferences(workspaceRoot, filepath.Dir(wf.Path), compiled)
+		}
 		fmt.Fprint(stdout, presentation.FormatWorkflowValidate(wf.Name, compiled, err))
 		if err != nil {
 			hasError = true
@@ -149,6 +157,106 @@ func runWorkflowsValidate(args []string, stdout, stderr io.Writer) error {
 
 	if hasError {
 		return fmt.Errorf("workflows validate: one or more workflows are invalid")
+	}
+	return nil
+}
+
+// validateWorkflowReferences checks every external dependency that a workflow
+// needs at admission. It never creates a run, worktree, provider, or command.
+func validateWorkflowReferences(root, base string, wf *compiler.CompiledWorkflow) error {
+	skillRegistry, err := loadChatSkills(root)
+	if err != nil {
+		return fmt.Errorf("load workflow skills: %w", err)
+	}
+	loaded, err := loadAgentDefinitions(root, "", skillRegistry)
+	if err != nil {
+		return fmt.Errorf("load workflow agents: %w", err)
+	}
+	if err := compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skillRegistry); err != nil {
+		return err
+	}
+	if err := validateWorkflowSkillTools(wf, loaded.Registry, skillRegistry); err != nil {
+		return err
+	}
+	if err := validateWorkflowFiles(base, wf); err != nil {
+		return err
+	}
+	if err := validateWorkflowVerifiers(wf); err != nil {
+		return err
+	}
+	if policy, active := delivery.FromCompiled(wf); active {
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateWorkflowSkillTools(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, skillRegistry *skills.Registry) error {
+	for _, step := range wf.Steps {
+		if step.Skill == "" {
+			continue
+		}
+		agent, _ := registry.Get(step.Agent)
+		skill, _ := skillRegistry.Get(step.Skill)
+		if err := agents.CheckSkillInvocation(&agent, skill.Name, skill.Tools); err != nil {
+			return fmt.Errorf("step %q: %w", step.ID, err)
+		}
+	}
+	return nil
+}
+
+func validateWorkflowFiles(base string, wf *compiler.CompiledWorkflow) error {
+	schemas := make(map[string][]byte)
+	for _, step := range wf.Steps {
+		if step.Template != "" {
+			data, err := readWorkflowRef(base, step.Template, template.MaxTemplateBytes)
+			if err != nil {
+				return fmt.Errorf("step %q: template %q: %w", step.ID, step.Template, err)
+			}
+			if err := validateWorkflowTemplateBindings(step, string(data)); err != nil {
+				return fmt.Errorf("step %q: template %q: %w", step.ID, step.Template, err)
+			}
+		}
+		if step.OutputSchema != "" {
+			data, err := readWorkflowRef(base, step.OutputSchema, compiler.MaxSchemaBytes)
+			if err != nil {
+				return fmt.Errorf("step %q: output_schema %q: %w", step.ID, step.OutputSchema, err)
+			}
+			schemas[step.OutputSchema] = data
+		}
+	}
+	return compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas)
+}
+
+// validateWorkflowTemplateBindings verifies that each template reads only a
+// value declared by its step context. It uses empty values because this check
+// validates binding names, not runtime output.
+func validateWorkflowTemplateBindings(step definition.Step, source string) error {
+	inputs := make(map[string]any)
+	evidence := make(map[string]any)
+	for _, binding := range step.Context {
+		if strings.HasPrefix(binding.From, "inputs.") {
+			inputs[binding.As] = ""
+			continue
+		}
+		if strings.HasPrefix(binding.From, "steps.") {
+			evidence[binding.As] = ""
+		}
+	}
+	_, err := template.Render(source, inputs, evidence, template.MaxTemplateBytes, template.MaxTemplateBytes)
+	return err
+}
+
+func validateWorkflowVerifiers(wf *compiler.CompiledWorkflow) error {
+	catalogue := verifier.DefaultCatalogue()
+	for _, step := range wf.Steps {
+		if step.Kind != "evidence_gate" {
+			continue
+		}
+		if _, err := catalogue.Lookup(step.Verifier); err != nil {
+			return fmt.Errorf("step %q: %w", step.ID, err)
+		}
 	}
 	return nil
 }

@@ -45,7 +45,10 @@ type DefaultOptions struct {
 	EnvAllowlist, EnvAllowlistOnly, EnvBlocklist []string
 	EnvAllowKeywordBlocklist                     []string
 	SecretPathPatterns, SecretPathExceptions     []string
-	SearchIgnorePatterns                         []string
+	// WritePathDenylist blocks writes to workspace-relative files or directories.
+	// It does not affect read tools.
+	WritePathDenylist    []string
+	SearchIgnorePatterns []string
 }
 
 // defaultMemoryBackstopBytes is the OOM guard when MemoryBackstopBytes is unset.
@@ -181,7 +184,7 @@ func disabledToolNames(names []string) map[string]bool {
 //   - the result budget is sized by the edit, not by the file: a header plus a
 //     unified diff, so the compiled-in bound holds unless the operator's
 //     result cap is tighter still.
-func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
+func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions, writeDenylist []string) {
 	maxFileBytes := opts.MaxReadBytes
 	if maxFileBytes <= 0 {
 		maxFileBytes = effectiveMemoryBackstop(opts)
@@ -190,8 +193,8 @@ func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.R
 	if opts.MaxToolResultBytes > 0 {
 		maxResultBytes = min(maxResultBytes, opts.MaxToolResultBytes)
 	}
-	register(&searchReplaceTool{ws: ws, maxFileBytes: maxFileBytes, maxBytes: maxResultBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	register(&multiEditTool{ws: ws, maxFileBytes: maxFileBytes, maxBytes: maxResultBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
+	register(&searchReplaceTool{ws: ws, maxFileBytes: maxFileBytes, maxBytes: maxResultBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, writePathDenylist: writeDenylist})
+	register(&multiEditTool{ws: ws, maxFileBytes: maxFileBytes, maxBytes: maxResultBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, writePathDenylist: writeDenylist})
 }
 
 // composeIgnoreSource builds the shared ignore decision (built-in floor +
@@ -226,8 +229,8 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignore: ignore})
 	registerSearchTools(register, ws, readClassMaxBytes, patterns, exceptions, ignore)
-	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
-	registerEditTools(register, opts, ws, patterns, exceptions)
+	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, writePathDenylist: opts.WritePathDenylist})
+	registerEditTools(register, opts, ws, patterns, exceptions, opts.WritePathDenylist)
 	// run_command is advertised only when the allowlist is non-empty: an empty
 	// allowlist means no program may run, so the tool cannot succeed and is
 	// absent from the registry, not present and error-returning at Execute time.

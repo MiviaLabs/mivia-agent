@@ -233,6 +233,19 @@ func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) 
 	if !ok {
 		return nil, "", noop, fmt.Errorf("unknown skill %q", name)
 	}
+	if snapshots := h.opts.WorkflowSkillSnapshots; snapshots != nil {
+		pinned, ok := snapshots[name]
+		if !ok {
+			return nil, "", noop, fmt.Errorf("workflow skill %q is not admitted", name)
+		}
+		current, err := workflowSkillBytes(skill)
+		if err != nil {
+			return nil, "", noop, err
+		}
+		if pinned.Digest != digestBytes(current) || string(pinned.Bytes) != string(current) {
+			return nil, "", noop, fmt.Errorf("workflow skill %q changed after admission", name)
+		}
+	}
 	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
 		return nil, "", noop, err
 	}

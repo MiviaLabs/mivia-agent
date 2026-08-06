@@ -2,6 +2,8 @@ package skills
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,6 +22,22 @@ func TestParseResourceManifestRejectsUnsafeDeclarations(t *testing.T) {
 				t.Fatal("unsafe manifest was accepted")
 			}
 		})
+	}
+}
+
+func TestDefinitionSnapshotResourcesUsesOnlySafeResourceFields(t *testing.T) {
+	definition := loadResourceTestDefinition(t, []byte("resource body"))
+	snapshots, err := definition.SnapshotResources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshot count = %d", len(snapshots))
+	}
+	wantDigest := sha256.Sum256([]byte("resource body"))
+	got := snapshots[0]
+	if got.ID != "template" || got.Text != "resource body" || got.Digest != hex.EncodeToString(wantDigest[:]) {
+		t.Fatalf("snapshot = %+v", got)
 	}
 }
 

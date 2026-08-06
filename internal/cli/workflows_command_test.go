@@ -176,6 +176,202 @@ func TestWorkflowsValidateEmptyWorkspace(t *testing.T) {
 	}
 }
 
+func TestWorkflowsValidateLoadsWorkflowReferences(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(t *testing.T, root string)
+		wantError string
+	}{
+		{
+			name: "template",
+			mutate: func(t *testing.T, root string) {
+				t.Helper()
+				writeWorkflowFixture(t, root, "delivery", workflowValidationFixture("missing.md", "schemas/result.json", "worker", "delivery-skill", "go-test"))
+			},
+			wantError: "template",
+		},
+		{
+			name: "schema",
+			mutate: func(t *testing.T, root string) {
+				t.Helper()
+				writeWorkflowFixture(t, root, "delivery", workflowValidationFixture("templates/plan.md", "schemas/missing.json", "worker", "delivery-skill", "go-test"))
+			},
+			wantError: "output_schema",
+		},
+		{
+			name: "agent",
+			mutate: func(t *testing.T, root string) {
+				t.Helper()
+				writeWorkflowFixture(t, root, "delivery", workflowValidationFixture("templates/plan.md", "schemas/result.json", "missing", "", "go-test"))
+			},
+			wantError: "agent \"missing\"",
+		},
+		{
+			name: "skill",
+			mutate: func(t *testing.T, root string) {
+				t.Helper()
+				writeWorkflowFixture(t, root, "delivery", workflowValidationFixture("templates/plan.md", "schemas/result.json", "worker", "missing-skill", "go-test"))
+			},
+			wantError: "skill \"missing-skill\"",
+		},
+		{
+			name: "skill tools",
+			mutate: func(t *testing.T, root string) {
+				t.Helper()
+				path := filepath.Join(root, ".mivia", "skills", "delivery-skill", "SKILL.md")
+				if err := os.WriteFile(path, []byte("---\nname: delivery-skill\ntools: [write_file]\n---\nDeliver the task.\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError: "requires tool \"write_file\"",
+		},
+		{
+			name: "verifier",
+			mutate: func(t *testing.T, root string) {
+				t.Helper()
+				writeWorkflowFixture(t, root, "delivery", workflowValidationFixture("templates/plan.md", "schemas/result.json", "worker", "delivery-skill", "missing-profile"))
+			},
+			wantError: "verifier \"missing-profile\"",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newWorkflowValidationFixture(t)
+			tc.mutate(t, root)
+			var out, errOut strings.Builder
+			err := runWorkflowsWithIO([]string{"validate", "delivery", "--workspace", root}, &out, &errOut)
+			if err == nil {
+				t.Fatal("validate accepted a missing workflow reference")
+			}
+			if !strings.Contains(out.String(), tc.wantError) {
+				t.Fatalf("validate output = %q, want %q", out.String(), tc.wantError)
+			}
+		})
+	}
+}
+
+func TestWorkflowsValidateRejectsTemplateBindingOutsideStepContext(t *testing.T) {
+	root := newWorkflowValidationFixture(t)
+	path := filepath.Join(root, ".mivia", "workflows", "templates", "plan.md")
+	if err := os.WriteFile(path, []byte("Task: {{ inputs.task }}\nPlan: {{ evidence.plan }}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut strings.Builder
+	err := runWorkflowsWithIO([]string{"validate", "delivery", "--workspace", root}, &out, &errOut)
+	if err == nil {
+		t.Fatal("validate accepted a template binding outside the step context")
+	}
+	if !strings.Contains(out.String(), `template binding "evidence.plan" is missing`) {
+		t.Fatalf("validate output = %q, want missing evidence binding", out.String())
+	}
+}
+
+func TestWorkflowsValidateAcceptsDeclaredTemplateBindings(t *testing.T) {
+	root := newWorkflowValidationFixture(t)
+	writeWorkflowFixture(t, root, "delivery", `version = 1
+name = "delivery"
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 100
+
+[limits]
+max_step_attempts = 2
+max_duration_seconds = 60
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "worker"
+skill = "delivery-skill"
+template = "templates/plan.md"
+output_schema = "schemas/result.json"
+context = [{ from = "inputs.task", as = "task", max_bytes = 100 }]
+
+[[steps]]
+id = "review"
+kind = "agent_gate"
+agent = "worker"
+template = "templates/review.md"
+output_schema = "schemas/result.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 100 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 100 },
+]
+
+[[transitions]]
+from = "plan"
+to = "review"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "review"
+to = "success"
+match = { status = "succeeded" }
+`)
+	path := filepath.Join(root, ".mivia", "workflows", "templates", "review.md")
+	if err := os.WriteFile(path, []byte("Task: {{ inputs.task }}\nPlan: {{ evidence.plan }}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut strings.Builder
+	if err := runWorkflowsWithIO([]string{"validate", "delivery", "--workspace", root}, &out, &errOut); err != nil {
+		t.Fatalf("validate declared template bindings: %v\n%s", err, out.String())
+	}
+}
+
+func newWorkflowValidationFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for path, body := range map[string]string{
+		".mivia/agents/worker.toml":             "name = \"worker\"\ntools = [\"read_file\"]\nskills = [\"delivery-skill\"]\n",
+		".mivia/skills/delivery-skill/SKILL.md": "---\nname: delivery-skill\ntools: [read_file]\n---\nDeliver the task.\n",
+		".mivia/workflows/templates/plan.md":    "Task: {{ inputs.task }}\n",
+		".mivia/workflows/schemas/result.json":  `{"type":"object","additionalProperties":false}`,
+	} {
+		path = filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeWorkflowFixture(t, root, "delivery", workflowValidationFixture("templates/plan.md", "schemas/result.json", "worker", "delivery-skill", "go-test"))
+	return root
+}
+
+func writeWorkflowValidationAgent(t *testing.T, root, name string) {
+	t.Helper()
+	dir := filepath.Join(root, ".mivia", "agents")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte("name = \""+name+"\"\ntools = [\"read_file\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func workflowValidationFixture(templateRef, schemaRef, agent, skill, verifier string) string {
+	skillLine := ""
+	if skill != "" {
+		skillLine = "skill = \"" + skill + "\"\n"
+	}
+	return "version = 1\nname = \"delivery\"\ninitial_step = \"plan\"\n" +
+		"[inputs.task]\ntype = \"string\"\nrequired = true\nmax_bytes = 100\n" +
+		"[limits]\nmax_step_attempts = 2\nmax_duration_seconds = 60\n" +
+		"[[steps]]\nid = \"plan\"\nkind = \"agent\"\nagent = \"" + agent + "\"\n" + skillLine +
+		"template = \"" + templateRef + "\"\noutput_schema = \"" + schemaRef + "\"\n" +
+		"context = [{ from = \"inputs.task\", as = \"task\", max_bytes = 100 }]\n" +
+		"[[steps]]\nid = \"verify\"\nkind = \"evidence_gate\"\nverifier = \"" + verifier + "\"\n" +
+		"[[transitions]]\nfrom = \"plan\"\nto = \"verify\"\nmatch = { status = \"succeeded\" }\n" +
+		"[[transitions]]\nfrom = \"verify\"\nto = \"success\"\nmatch = { status = \"succeeded\" }\n" +
+		"[delivery]\nkind = \"pull_request\"\nmode = \"draft\"\nprovider = \"github\"\nbase = \"master\"\n"
+}
+
 func TestWorkflowsListShowsDiscoveredWorkflows(t *testing.T) {
 	workspace := t.TempDir()
 	writeWorkflowFixture(t, workspace, "alpha", `version = 1
@@ -284,6 +480,7 @@ base = "main"
 
 func TestWorkflowsValidateAllValid(t *testing.T) {
 	workspace := t.TempDir()
+	writeWorkflowValidationAgent(t, workspace, "worker")
 	writeWorkflowFixture(t, workspace, "simple", `version = 1
 name = "simple"
 description = "A simple workflow"
@@ -312,6 +509,7 @@ match = { status = "succeeded" }
 
 func TestWorkflowsValidateByName(t *testing.T) {
 	workspace := t.TempDir()
+	writeWorkflowValidationAgent(t, workspace, "worker")
 	writeWorkflowFixture(t, workspace, "good", `version = 1
 name = "good"
 description = "Valid workflow"

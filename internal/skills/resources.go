@@ -54,6 +54,36 @@ type ResourceContent struct {
 	Digest string
 }
 
+// ResourceSnapshot is the durable, path-free value of one declared resource.
+// It contains only the model-safe identifier, body, and content digest.
+type ResourceSnapshot struct {
+	ID     string
+	Text   string
+	Digest string
+}
+
+// SnapshotResources returns durable values for all declared resources. It
+// reads them through an activation so the resource path stays private.
+func (d Definition) SnapshotResources(ctx context.Context) ([]ResourceSnapshot, error) {
+	if len(d.Resources) == 0 {
+		return nil, nil
+	}
+	activation, err := d.Activate()
+	if err != nil {
+		return nil, err
+	}
+	defer activation.Close()
+	snapshots := make([]ResourceSnapshot, 0, len(d.Resources))
+	for _, resource := range d.Resources {
+		content, err := activation.Read(ctx, resource.ID)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, ResourceSnapshot{ID: content.ID, Text: content.Text, Digest: content.Digest})
+	}
+	return snapshots, nil
+}
+
 // SkillActivation is an opaque, per-invocation capability for one selected
 // skill. It owns the pinned resource root, cache, and aggregate byte budget.
 type SkillActivation struct {

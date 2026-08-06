@@ -32,62 +32,86 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 		return c.reconcileTerminalAttempt(ctx, run, attempt)
 	}
 	result, verifyErr := profile.Verify(ctx, verifier.Request{
-		WorkDir: c.WorkDir,
-		StepID:  step.ID,
-		RunID:   c.RunID,
+		WorkDir:        c.WorkDir,
+		StepID:         step.ID,
+		RunID:          c.RunID,
+		ModuleBaseline: c.ModuleBaseline,
 	})
 	status := workflowledger.AttemptStatusSucceeded
-	var output []byte
-	var outputMap map[string]any
-	if verifyErr != nil {
+	if verifyErr != nil || result.Status == "failed" {
 		status = workflowledger.AttemptStatusFailed
-	} else {
-		output, err = json.Marshal(result)
-		if err != nil {
-			return c.failAttempt(ctx, run, attempt, err)
-		}
-		outputMap = map[string]any{
-			"status": result.Status,
-			"checks": checksAsAny(result.Checks),
+		result.Status = "failed"
+		if verifyErr == nil {
+			verifyErr = fmt.Errorf("verifier %q reported failed checks", step.Verifier)
 		}
 	}
+	output, err := json.Marshal(result)
+	if err != nil {
+		return c.failAttempt(ctx, run, attempt, err)
+	}
+	outputMap := map[string]any{
+		"status": result.Status,
+		"checks": checksAsAny(result.Checks),
+	}
+	if status == workflowledger.AttemptStatusFailed {
+		return c.routeEvidenceFailure(ctx, run, attempt, step, result, output, outputMap)
+	}
 	route := RouteDecision{}
-	if status == workflowledger.AttemptStatusSucceeded {
-		route, err = c.selectRoute(ctx, step, status, outputMap)
-		if err != nil {
-			status = workflowledger.AttemptStatusFailed
-			if route.ToStepID == "" {
-				route = failureRoute(step)
-			}
-			writeCtx, cancel := stepPersistenceContext(ctx)
-			defer cancel()
-			_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, status, route)
-			return c.fail(writeCtx, run, err)
+	route, err = c.selectRoute(ctx, step, status, outputMap)
+	if err != nil {
+		if route.ToStepID == "" {
+			route = failureRoute(step)
 		}
-	} else {
-		route = failureRoute(step)
+		writeCtx, cancel := stepPersistenceContext(ctx)
+		defer cancel()
+		_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, workflowledger.AttemptStatusFailed, route)
+		return c.fail(writeCtx, run, err)
 	}
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
-	if status == workflowledger.AttemptStatusSucceeded {
-		if err := c.completeSucceededRoute(writeCtx, attempt, AgentStepResult{Output: output}, route); err != nil {
-			if isLoopAccountError(err) {
-				return settleAfterRoute(ctx, c, run, route)
-			}
-			return c.fail(writeCtx, run, err)
+	if err := c.completeSucceededRoute(writeCtx, attempt, AgentStepResult{Output: output}, route); err != nil {
+		if isLoopAccountError(err) {
+			return settleAfterRoute(ctx, c, run, route)
 		}
-		return settleAfterRoute(ctx, c, run, route)
-	}
-	if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, status, route); err != nil {
 		return c.fail(writeCtx, run, err)
 	}
-	return c.fail(writeCtx, run, verifyErr)
+	return settleAfterRoute(ctx, c, run, route)
+}
+
+func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, step definition.Step, result verifier.Result, output []byte, outputMap map[string]any) (workflowledger.RunSnapshot, bool, error) {
+	writeCtx, cancel := stepPersistenceContext(ctx)
+	defer cancel()
+	if !result.Repairable() {
+		route := failureRoute(step)
+		if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, workflowledger.AttemptStatusFailed, route); err != nil {
+			return c.fail(writeCtx, run, err)
+		}
+		return c.fail(writeCtx, run, fmt.Errorf("verifier %q has a host failure", step.Verifier))
+	}
+	route, err := c.selectEvidenceFailureRoute(ctx, step, outputMap)
+	if err != nil {
+		if completeErr := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
+			return c.fail(writeCtx, run, completeErr)
+		}
+		return c.fail(writeCtx, run, err)
+	}
+	if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, workflowledger.AttemptStatusFailed, route); err != nil {
+		return c.fail(writeCtx, run, err)
+	}
+	return settleAfterRoute(ctx, c, run, route)
 }
 
 func checksAsAny(checks []verifier.Check) []any {
 	out := make([]any, len(checks))
 	for i, c := range checks {
-		out[i] = map[string]any{"name": c.Name, "status": c.Status}
+		item := map[string]any{"name": c.Name, "status": c.Status}
+		if c.Class != "" {
+			item["class"] = c.Class
+		}
+		if c.Detail != "" {
+			item["detail"] = c.Detail
+		}
+		out[i] = item
 	}
 	return out
 }
@@ -384,7 +408,8 @@ func (c *LinearController) admitAttempt(ctx context.Context, _ workflowledger.Ru
 		return attempt, true, nil
 	}
 	reenter := attempt.Status == workflowledger.AttemptStatusInterrupted ||
-		(attempt.Status == workflowledger.AttemptStatusSucceeded && attempt.ToStepID != "")
+		(attempt.Status == workflowledger.AttemptStatusSucceeded && attempt.ToStepID != "") ||
+		(attempt.Status == workflowledger.AttemptStatusFailed && attempt.ToStepID != "")
 	if !reenter {
 		return attempt, false, nil
 	}

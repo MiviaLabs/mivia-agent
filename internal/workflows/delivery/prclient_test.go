@@ -122,7 +122,7 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 	t.Setenv("GIT_TERMINAL_PROMPT", "0")
 
 	t.Run("found", func(t *testing.T) {
-		t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","headRepositoryOwner":{"login":"owner"}}]`)
+		t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":true,"headRepositoryOwner":{"login":"owner"}}]`)
 		got, err := (GitHubCLI{}).FindByHead(context.Background(), "owner/repo", "feature/x")
 		if err != nil {
 			t.Fatalf("FindByHead error: %v", err)
@@ -130,10 +130,10 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 		if got == nil {
 			t.Fatal("FindByHead = nil, want PRRef")
 		}
-		if got.RemoteID != "12" || got.URL != "https://github.com/o/r/pull/12" {
-			t.Errorf("FindByHead = %+v, want RemoteID 12 with PR url", got)
+		if got.RemoteID != "12" || got.URL != "https://github.com/o/r/pull/12" || !got.Draft {
+			t.Errorf("FindByHead = %+v, want RemoteID 12 with PR url and Draft=true", got)
 		}
-		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "all", "--json", "number,url,headRepositoryOwner"}
+		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "open", "--json", "number,url,isDraft,headRepositoryOwner"}
 		if gotArgs := readRecordedArgs(t); !slices.Equal(gotArgs, want) {
 			t.Errorf("argv = %q, want %q", gotArgs, want)
 		}
@@ -148,6 +148,17 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 		}
 		if got != nil {
 			t.Errorf("FindByHead = %+v, want nil", got)
+		}
+	})
+
+	t.Run("ready PR returned", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":false,"headRepositoryOwner":{"login":"owner"}}]`)
+		got, err := (GitHubCLI{}).FindByHead(context.Background(), "owner/repo", "feature/x")
+		if err != nil {
+			t.Fatalf("FindByHead error: %v", err)
+		}
+		if got == nil || got.Draft {
+			t.Errorf("FindByHead = %+v, want ready PR", got)
 		}
 	})
 
@@ -184,7 +195,7 @@ func TestGitHubCLIFindByHeadScopesToRepoOwner(t *testing.T) {
 	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
 
 	t.Run("fork PR with same branch is skipped", func(t *testing.T) {
-		t.Setenv("GH_STDOUT", `[{"number":1,"url":"https://github.com/other/repo/pull/1","headRepositoryOwner":{"login":"other"}},{"number":2,"url":"https://github.com/o/r/pull/2","headRepositoryOwner":{"login":"owner"}}]`)
+		t.Setenv("GH_STDOUT", `[{"number":1,"url":"https://github.com/other/repo/pull/1","isDraft":true,"headRepositoryOwner":{"login":"other"}},{"number":2,"url":"https://github.com/o/r/pull/2","isDraft":true,"headRepositoryOwner":{"login":"owner"}}]`)
 		got, err := (GitHubCLI{}).FindByHead(context.Background(), "owner/repo", "feature/x")
 		if err != nil {
 			t.Fatalf("FindByHead error: %v", err)

@@ -144,11 +144,16 @@ func newRequest(run workflowledger.RunSnapshot, gc GitContext, baseCommit, origi
 // fakePRClient records PR boundary calls; Create always succeeds.
 type fakePRClient struct {
 	mu      sync.Mutex
+	found   *PRRef
 	repos   []string
 	created []PRInput
 }
 
-func (f *fakePRClient) FindByHead(context.Context, string, string) (*PRRef, error) { return nil, nil }
+func (f *fakePRClient) FindByHead(context.Context, string, string) (*PRRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.found, nil
+}
 
 func (f *fakePRClient) Create(_ context.Context, repo string, in PRInput) (PRRef, error) {
 	f.mu.Lock()
@@ -248,6 +253,39 @@ func TestDeliverReadyNotDraft(t *testing.T) {
 	if pr.created[0].Draft {
 		t.Fatal("Create Draft = true, want false for mode ready")
 	}
+}
+
+func TestDeliverDraftRefusesReadyExistingPR(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	pr := &fakePRClient{found: &PRRef{RemoteID: "12", URL: "https://example.com/pull/12", Draft: false}}
+
+	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+	if err == nil {
+		t.Fatal("Deliver error = nil, want refusal for a ready existing PR")
+	}
+	assertZeroCreates(t, pr)
+	rec := deliveryRecordByKey(t, repo, run)
+	if rec.Status != "failed" {
+		t.Fatalf("record status = %q, want failed", rec.Status)
+	}
+}
+
+func TestDeliverDraftReusesDraftExistingPR(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	pr := &fakePRClient{found: &PRRef{RemoteID: "12", URL: "https://example.com/pull/12", Draft: true}}
+
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("Deliver error: %v", err)
+	}
+	if res.RemoteID != "12" || res.URL != "https://example.com/pull/12" {
+		t.Fatalf("Result = %+v, want existing draft PR", res)
+	}
+	assertZeroCreates(t, pr)
 }
 
 func TestDeliverDuplicateResume(t *testing.T) {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -102,6 +104,20 @@ func TestValidateAgentReferences_YamlExtension(t *testing.T) {
 	err := ValidateAgentReferences(wf, tmpDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAgentReferences_TOMLExtension(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "worker.toml"), []byte("name = \"worker\""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAgentReferences(agentTestWorkflow("do-work", "agent", "worker"), tmpDir); err != nil {
+		t.Fatalf("toml agent reference: %v", err)
 	}
 }
 
@@ -221,5 +237,56 @@ func TestValidateAgentReferences_InfoErrorSkipsEntry(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("error %q should mention not found", err.Error())
+	}
+}
+
+func TestValidateAgentSkillReferences(t *testing.T) {
+	allowed := []string{"allowed"}
+	agentRegistry := agents.NewRegistry()
+	if err := agentRegistry.Publish(agents.ResolvedAgent{Name: "worker", Skills: &allowed}); err != nil {
+		t.Fatal(err)
+	}
+	skillRegistry := skills.NewRegistry()
+	if err := skillRegistry.Register(skills.Definition{Name: "allowed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := skillRegistry.Register(skills.Definition{Name: "denied"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		agent   string
+		skill   string
+		wantErr string
+	}{
+		{name: "legacy unbound"},
+		{name: "allowed", skill: "allowed"},
+		{name: "unknown agent", agent: "unknown", skill: "allowed", wantErr: `step "do-thing": agent "unknown" not found`},
+		{name: "unknown skill", skill: "unknown", wantErr: `step "do-thing": skill "unknown" not found`},
+		{name: "not allowed", skill: "denied", wantErr: `step "do-thing": agent "worker" may not use skill "denied"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agentName := tc.agent
+			if agentName == "" {
+				agentName = "worker"
+			}
+			wf := agentTestWorkflow("do-thing", "agent", agentName)
+			wf.Steps[0].Skill = tc.skill
+			compiled, err := Compile(wf)
+			if err != nil {
+				t.Fatalf("Compile() error = %v", err)
+			}
+			err = ValidateAgentSkillReferences(compiled, agentRegistry, skillRegistry)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateAgentSkillReferences() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("ValidateAgentSkillReferences() error = %v, want %q", err, tc.wantErr)
+			}
+		})
 	}
 }

@@ -10,6 +10,19 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
+var workflowWritePathDenylist = []string{
+	".mivia/mivia.toml",
+	".mivia/agents",
+	".mivia/policy",
+	".mivia/rules",
+	".mivia/skills",
+	".mivia/workflows",
+	".git",
+	"go.mod",
+	"go.sum",
+	"go.work",
+}
+
 func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry, error) {
 	ws, err := workspace.Open(root)
 	if err != nil {
@@ -28,6 +41,7 @@ func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry
 		MaxTavilyResponseBytes: tc.MaxTavilyResponseBytes, MaxFetchKB: tc.MaxFetchKB,
 		MemoryBackstopBytes: tc.MemoryBackstopMB << 20,
 		SecretPathPatterns:  tc.SecretPathPatterns, SecretPathExceptions: tc.SecretPathExceptions,
+		WritePathDenylist:    workflowWritePathDenylist,
 		SearchIgnorePatterns: tc.SearchIgnorePatterns,
 	}), nil
 }
@@ -36,6 +50,9 @@ func workflowWriteAuthority(wf *compiler.CompiledWorkflow, registry *agents.Agen
 	writeCapable := false
 	seen := make(map[string]bool)
 	for _, step := range wf.Steps {
+		if step.Kind != "agent" && step.Kind != "agent_gate" {
+			continue
+		}
 		if seen[step.Agent] {
 			continue
 		}

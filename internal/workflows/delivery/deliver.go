@@ -256,7 +256,7 @@ func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	}
 
 	// Fresh: stage the intended change (idempotent on retry).
-	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.hooksPath=", "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
+	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
 	}
@@ -267,6 +267,9 @@ func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, 
 		return "", "", err
 	}
 	treeSHA = strings.TrimSpace(treeOut)
+	if _, err := git.Run(ctx, req.GitCtx, "diff", "--quiet", "--cached", treeSHA); err != nil {
+		return "", "", &RefusalError{Reason: "staged tree changed before commit"}
+	}
 	// Render the commit message.
 	msg, err := req.Policy.RenderCommitMessage(req.Inputs)
 	if err != nil {
@@ -282,28 +285,40 @@ func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	if err := repo.UpsertDelivery(ctx, stage); err != nil {
 		return "", "", err
 	}
-	// Create the commit object from the recorded tree.
-	shaOut, err := git.Run(ctx, req.GitCtx, "-c", "core.hooksPath=", "-c", "core.fsmonitor=false",
-		"-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
-		"commit-tree", treeSHA, "-p", req.BaseCommit, "-m", msg)
+	sha, err := commitStagedTree(ctx, git, req, treeSHA, msg)
 	if err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", err
-	}
-	sha := strings.TrimSpace(shaOut)
-	// Point the branch at the new commit (the only HEAD mutation).
-	if _, err := git.Run(ctx, req.GitCtx, "update-ref", "refs/heads/"+req.Branch, sha); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
 	}
 	return sha, treeSHA, nil
 }
 
+func commitStagedTree(ctx context.Context, git GitRunner, req Request, treeSHA, msg string) (string, error) {
+	// Commit through Git so pre-commit and commit-msg hooks can reject it.
+	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
+		"-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
+		"commit", "--allow-empty-message", "-m", msg); err != nil {
+		return "", err
+	}
+	committedTree, err := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(committedTree) != treeSHA {
+		return "", fmt.Errorf("commit hooks changed the staged tree")
+	}
+	shaOut, err := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(shaOut), nil
+}
+
 // pushAndPublish pushes the delivery commit and finds or creates exactly one
 // PR, recording each stage durably.
 func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, head, treeSHA, diffRef string) (Result, error) {
 	// 12. Push the branch to origin.
-	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.hooksPath=", "-c", "core.fsmonitor=false",
+	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
 		"push", "origin", "HEAD:refs/heads/"+req.Branch); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return Result{}, err
@@ -335,6 +350,11 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	}
 	var remoteID, url string
 	if found != nil {
+		if !found.Draft {
+			err := fmt.Errorf("existing PR %s is not an open draft", found.RemoteID)
+			markFailed(ctx, repo, key, req, err)
+			return Result{}, err
+		}
 		remoteID, url = found.RemoteID, found.URL
 	} else {
 		created, cerr := pr.Create(ctx, repoSlug, PRInput{

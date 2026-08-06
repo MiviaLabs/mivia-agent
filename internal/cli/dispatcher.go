@@ -16,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // SessionDispatcherOpts carries every input the session dispatcher needs.
@@ -88,6 +89,9 @@ type SessionDispatcherOpts struct {
 
 	// SkillReg, if non-nil, registers each skill as a Subagent handler.
 	SkillReg *skills.Registry
+	// WorkflowSkillSnapshots pins workflow skill content for every workflow
+	// invocation. A nil map means this is not a workflow dispatcher.
+	WorkflowSkillSnapshots map[string]workflowledger.RefSnapshot
 
 	// SkillScope is the immutable per-instance skill policy for the selected
 	// root agent (plan 06). Zero value allows all skills (no agent selected).

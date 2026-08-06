@@ -12,13 +12,30 @@ import (
 // Check is one named host verification check result.
 type Check struct {
 	Name   string `json:"name"`
-	Status string `json:"status"` // passed | failed | skipped
+	Status string `json:"status"`          // passed | failed | skipped
+	Class  string `json:"class,omitempty"` // source | host
+	Detail string `json:"detail,omitempty"`
 }
 
 // Result is schema-shaped verification evidence (verification-v1).
 type Result struct {
 	Status string  `json:"status"` // passed | failed
 	Checks []Check `json:"checks"`
+}
+
+// Repairable reports whether all failed checks come from the delivered source.
+func (r Result) Repairable() bool {
+	failed := false
+	for _, check := range r.Checks {
+		if check.Status != "failed" {
+			continue
+		}
+		failed = true
+		if check.Class == "host" {
+			return false
+		}
+	}
+	return failed
 }
 
 // Request is the fixed host context for one verifier invocation.
@@ -29,6 +46,14 @@ type Request struct {
 	StepID string
 	// RunID is the workflow run identity (for diagnostics only).
 	RunID string
+	// ModuleBaseline pins Go module inputs from workflow admission.
+	ModuleBaseline *GoModuleBaseline
+}
+
+// GoModuleBaseline pins module files before a workflow agent can edit them.
+type GoModuleBaseline struct {
+	GoMod []byte
+	GoSum []byte
 }
 
 // Profile is one registered host verifier implementation.
@@ -48,10 +73,12 @@ func NewCatalogue() *Catalogue {
 	return &Catalogue{profiles: make(map[string]Profile)}
 }
 
-// DefaultCatalogue returns a catalogue with the built-in go-default profile.
+// DefaultCatalogue returns a catalogue with fixed host-owned Go profiles.
 func DefaultCatalogue() *Catalogue {
 	c := NewCatalogue()
-	_ = c.Register(NewGoDefault(nil))
+	for _, profile := range defaultGoProfiles() {
+		c.profiles[profile.Name()] = profile
+	}
 	return c
 }
 

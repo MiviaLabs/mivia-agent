@@ -40,21 +40,22 @@ type Admission struct {
 // LinearController advances a workflow one active step at a time.
 // Phase 4 supports agent, agent_gate, evidence_gate, human_gate, and loops.
 type LinearController struct {
-	Repo        workflowledger.Repository
-	Runner      AgentStepRunner
-	Workflow    *compiler.CompiledWorkflow
-	Steps       map[string]StepRuntime
-	Inputs      map[string]any
-	RunID       string
-	Snapshot    []byte
-	Holder      string
-	Verifiers   *verifier.Catalogue
-	WorkDir     string
-	admission   Admission
-	forceResume bool
-	now         func() time.Time
-	started     bool
-	mu          sync.Mutex
+	Repo           workflowledger.Repository
+	Runner         AgentStepRunner
+	Workflow       *compiler.CompiledWorkflow
+	Steps          map[string]StepRuntime
+	Inputs         map[string]any
+	RunID          string
+	Snapshot       []byte
+	Holder         string
+	Verifiers      *verifier.Catalogue
+	WorkDir        string
+	ModuleBaseline *verifier.GoModuleBaseline
+	admission      Admission
+	forceResume    bool
+	now            func() time.Time
+	started        bool
+	mu             sync.Mutex
 }
 
 // NewLinearController creates a controller for an admitted workflow run.
@@ -93,6 +94,20 @@ func (c *LinearController) SetWorkDir(dir string) error {
 		return fmt.Errorf("workflow run already started")
 	}
 	c.WorkDir = dir
+	return nil
+}
+
+// SetModuleBaseline sets immutable Go module inputs before Start.
+func (c *LinearController) SetModuleBaseline(baseline *verifier.GoModuleBaseline) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	if baseline == nil || len(baseline.GoMod) == 0 {
+		return fmt.Errorf("workflow verifier module baseline is empty")
+	}
+	c.ModuleBaseline = &verifier.GoModuleBaseline{GoMod: append([]byte(nil), baseline.GoMod...), GoSum: append([]byte(nil), baseline.GoSum...)}
 	return nil
 }
 
