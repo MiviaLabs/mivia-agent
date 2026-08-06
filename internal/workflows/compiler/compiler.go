@@ -28,54 +28,41 @@ type CompiledWorkflow struct {
 	LoopNames map[string]bool
 }
 
-// Compile performs semantic validation on a decoded workflow definition and
-// returns an immutable compiled workflow, or a structured error.
+// DeliveryActive reports whether the workflow declares an active pull_request
+// delivery policy: kind "pull_request" with an explicit mode other than
+// "none". Runs with an active policy settle at delivery_pending on their
+// success route instead of moving directly to succeeded.
+func (c *CompiledWorkflow) DeliveryActive() bool {
+	return c != nil && c.Delivery != nil &&
+		c.Delivery.Kind == "pull_request" &&
+		c.Delivery.Mode != "" && c.Delivery.Mode != "none"
+}
+
+// Compile validates a workflow definition and returns an immutable compiled
+// workflow. It applies the full admission policy, including the
+// unbounded-cycle check.
 func Compile(wf *definition.WorkflowFile) (*CompiledWorkflow, error) {
-	var errs []string
+	return compile(wf, false)
+}
+
+// CompileForResume compiles a definition that was already admitted in a run
+// snapshot. It skips the unbounded-cycle admission check so an in-flight run
+// admitted under an earlier policy can still resume. All other validators
+// still run.
+func CompileForResume(wf *definition.WorkflowFile) (*CompiledWorkflow, error) {
+	return compile(wf, true)
+}
+
+func compile(wf *definition.WorkflowFile, skipCycleValidation bool) (*CompiledWorkflow, error) {
+	errs := validateWorkflow(wf, skipCycleValidation)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("compilation failed:\n  - %s", strings.Join(errs, "\n  - "))
+	}
 
 	// Build step ID set
 	stepIDs := make(map[string]bool, len(wf.Steps))
 	for _, s := range wf.Steps {
 		stepIDs[s.ID] = true
-	}
-
-	// Graph checks
-	if err := validateGraph(wf, stepIDs); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	// Transition checks
-	if err := validateTransitions(wf, stepIDs); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	// Context binding checks
-	if err := validateContextBindings(wf, stepIDs); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	// Verifier name checks
-	if err := validateVerifierNames(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	// On-failure target checks
-	if err := validateOnFailure(wf, stepIDs); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	// Delivery config validation
-	if err := validateDelivery(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	// Limits validation
-	if err := validateLimits(wf.Limits); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("compilation failed:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 
 	// Build loop name set
@@ -105,6 +92,62 @@ func Compile(wf *definition.WorkflowFile) (*CompiledWorkflow, error) {
 		StepIDs:     stepIDs,
 		LoopNames:   loopNames,
 	}, nil
+}
+
+// validateWorkflow runs every semantic validator and returns the collected
+// errors. skipCycleValidation is true only for resume of an admitted snapshot.
+func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []string {
+	var errs []string
+
+	// Build step ID set
+	stepIDs := make(map[string]bool, len(wf.Steps))
+	for _, s := range wf.Steps {
+		stepIDs[s.ID] = true
+	}
+
+	// Graph checks
+	if err := validateGraph(wf, stepIDs); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	// Transition checks
+	if err := validateTransitions(wf, stepIDs); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	// Cycle checks (admission policy; resume of an admitted snapshot skips them)
+	if !skipCycleValidation {
+		if err := validateCycles(wf); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+
+	// Context binding checks
+	if err := validateContextBindings(wf, stepIDs); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	// Verifier name checks
+	if err := validateVerifierNames(wf); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	// On-failure target checks
+	if err := validateOnFailure(wf, stepIDs); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	// Delivery config validation
+	if err := validateDelivery(wf); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	// Limits validation
+	if err := validateLimits(wf.Limits); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	return errs
 }
 
 // validateOnFailure checks that all on_failure targets reference existing steps or terminals.
@@ -234,6 +277,9 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 	}
 	switch wf.Delivery.Kind {
 	case "":
+		if wf.Delivery.Mode != "" && wf.Delivery.Mode != "none" {
+			return fmt.Errorf("delivery: kind is empty but mode %q is set; use kind = \"pull_request\" or mode = \"none\"", wf.Delivery.Mode)
+		}
 		return nil
 	case "pull_request":
 		switch wf.Delivery.Mode {

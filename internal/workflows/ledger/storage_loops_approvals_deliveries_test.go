@@ -150,6 +150,8 @@ func TestStorageRepository_Deliveries(t *testing.T) {
 				Mode:           "pr",
 				BaseRef:        "main",
 				HeadRef:        "feature-x",
+				DiffRef:        "diff-1",
+				TreeSHA:        "tree-1",
 				Status:         "pending",
 			}
 			requireErr(t, repo.UpsertDelivery(ctx, d), nil, "upsert delivery")
@@ -159,8 +161,9 @@ func TestStorageRepository_Deliveries(t *testing.T) {
 				t.Fatalf("GetDeliveryByIdempotencyKey: %v", err)
 			}
 			if got.RunID != run || got.IdempotencyKey != "dlv-1" || got.Mode != "pr" ||
-				got.BaseRef != "main" || got.HeadRef != "feature-x" || got.Status != "pending" {
-				t.Fatalf("delivery = %+v, want pending pr delivery", got)
+				got.BaseRef != "main" || got.HeadRef != "feature-x" || got.DiffRef != "diff-1" ||
+				got.TreeSHA != "tree-1" || got.Status != "pending" {
+				t.Fatalf("delivery = %+v, want pending pr delivery with DiffRef diff-1 and TreeSHA tree-1", got)
 			}
 
 			// Re-upserting the same key replaces the record (upsert semantics).
@@ -187,11 +190,76 @@ func TestStorageRepository_Deliveries(t *testing.T) {
 				t.Fatalf("ListDeliveries[0].IdempotencyKey = %q, want dlv-1", list[0].IdempotencyKey)
 			}
 
+			// Re-upserting the SAME caller-owned fields (DiffRef/TreeSHA
+			// unchanged) is ABSORBED: nil, and no duplicate
+			// wf_delivery_upserted event.
+			requireErr(t, repo.UpsertDelivery(ctx, d), nil, "idempotent re-upsert")
+			if n := countDeliveryUpserts(t, repo, run, "dlv-1"); n != 2 {
+				t.Fatalf("wf_delivery_upserted events for dlv-1 = %d, want exactly 2 after absorbed retry", n)
+			}
+
 			// Unknown idempotency key -> ErrNotFound.
 			_, err = repo.GetDeliveryByIdempotencyKey(ctx, "dlv-missing")
 			requireErr(t, err, ErrNotFound, "GetDeliveryByIdempotencyKey unknown")
 		})
 	}
+}
+
+// TestStorageRepository_DeliveryChangedFieldMintsEvent: changing a caller
+// field (DiffRef) on the same idempotency key mints a new event; the
+// projection's latest-wins merge surfaces the new diff ref while the
+// unchanged TreeSHA is kept.
+func TestStorageRepository_DeliveryChangedFieldMintsEvent(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, json := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, json), nil, "CreateRun")
+
+			d := DeliveryRecord{
+				RunID: run, IdempotencyKey: "dlv-1", Mode: "pr", BaseRef: "main",
+				HeadRef: "feature-x", DiffRef: "diff-1", TreeSHA: "tree-1", Status: "pending",
+			}
+			requireErr(t, repo.UpsertDelivery(ctx, d), nil, "upsert delivery")
+			d.DiffRef = "diff-2"
+			requireErr(t, repo.UpsertDelivery(ctx, d), nil, "diff-ref change upsert")
+			if n := countDeliveryUpserts(t, repo, run, "dlv-1"); n != 2 {
+				t.Fatalf("wf_delivery_upserted events for dlv-1 = %d, want exactly 2 after DiffRef change", n)
+			}
+			got, err := repo.GetDeliveryByIdempotencyKey(ctx, "dlv-1")
+			if err != nil {
+				t.Fatalf("GetDeliveryByIdempotencyKey after DiffRef change: %v", err)
+			}
+			if got.DiffRef != "diff-2" || got.TreeSHA != "tree-1" {
+				t.Fatalf("delivery DiffRef/TreeSHA = (%q, %q), want (diff-2, tree-1) (latest wins, TreeSHA kept)", got.DiffRef, got.TreeSHA)
+			}
+		})
+	}
+}
+
+// countDeliveryUpserts counts the wf_delivery_upserted events for one
+// idempotency key in a run's event log.
+func countDeliveryUpserts(t *testing.T, repo *StorageRepository, run, key string) int {
+	t.Helper()
+	events, err := repo.store.Events(context.Background(), run)
+	if err != nil {
+		t.Fatalf("store.Events: %v", err)
+	}
+	n := 0
+	for _, e := range events {
+		if e.Kind != eventKindDeliveryUpserted {
+			continue
+		}
+		p, err := unmarshalDeliveryUpserted(e.Payload)
+		if err != nil {
+			t.Fatalf("decode wf_delivery_upserted: %v", err)
+		}
+		if p.Delivery.IdempotencyKey == key {
+			n++
+		}
+	}
+	return n
 }
 
 // ---------------------------------------------------------------------------
@@ -215,9 +283,11 @@ func TestStorageRepository_DeliveryUpsertIdempotent(t *testing.T) {
 		BaseRef:        "main",
 		HeadRef:        "feature-x",
 		CommitSHA:      "abc123",
+		TreeSHA:        "tree-idem-1",
 		Provider:       "github",
 		RemoteID:       "remote-1",
 		URL:            "https://example.com/pr/1",
+		DiffRef:        "diff-idem-1",
 		Status:         "pending",
 	}
 	requireErr(t, repoA.UpsertDelivery(ctx, rec), nil, "repoA upsert")
@@ -266,5 +336,8 @@ func TestStorageRepository_DeliveryUpsertIdempotent(t *testing.T) {
 	}
 	if got.Status != "pushed" {
 		t.Fatalf("delivery Status = %q, want %q (latest wins)", got.Status, "pushed")
+	}
+	if got.TreeSHA != "tree-idem-1" {
+		t.Fatalf("delivery TreeSHA = %q, want %q (latest wins keeps TreeSHA)", got.TreeSHA, "tree-idem-1")
 	}
 }

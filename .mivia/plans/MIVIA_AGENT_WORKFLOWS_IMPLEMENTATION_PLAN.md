@@ -1,7 +1,7 @@
 # Mivia Agent Workflows v1 — Implementation Plan
 
 **Repository:** `MiviaLabs/mivia-agent`
-**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phases 4–6 remaining
+**Status:** in-progress — Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phases 5–6 remaining
 **Scope:** local harness only; no cloud control plane or workflow-level parallelism in v1.
 
 ---
@@ -14,7 +14,7 @@
 | Phase 1 | Discovery, strict parsing, compiler | ✅ Complete |
 | Phase 2 | Ledger, isolated worktree, lifecycle | ✅ Complete — durable ledger + recovery rules shipped (commit `f17969e`); worktree infra stayed as shipped, no new worktree code (owner scope) |
 | Phase 3 | Agent step adapter | ✅ Complete |
-| Phase 4 | Transitions, loops, gates | ⬜ Not started |
+| Phase 4 | Transitions, loops, gates | ✅ Complete |
 | Phase 5 | PR delivery | ⬜ Not started |
 | Phase 6 | Hardening and documentation | ⬜ Not started |
 
@@ -51,10 +51,10 @@
 
 | Package | Purpose | Status |
 |---------|---------|--------|
-| `internal/workflows/matcher/` | Runtime structural transition matching | ⬜ Not started |
-| `internal/workflows/controller/` | Durable sequential state machine | ⬜ Not started |
+| `internal/workflows/matcher/` | Runtime structural transition matching | ✅ Complete |
+| `internal/workflows/controller/` | Durable sequential state machine | ✅ Complete (Phase 3 linear + Phase 4 gates/loops) |
 | `internal/workflows/ledger/` | Workflow-specific run state persistence (event-sourced projections over the shared `storage.Store`) | ✅ Complete |
-| `internal/workflows/verifier/` | Registered deterministic verifier profiles (e.g. `go-default`) | ⬜ Not started |
+| `internal/workflows/verifier/` | Registered deterministic verifier profiles (e.g. `go-default`) | ✅ Complete |
 | `internal/workflows/workspace/` | Git worktree lifecycle (base commit, branch, cleanup) | ⏸ Deferred — worktree infra shipped and frozen by owner decision; wrapper not built |
 | `internal/workflows/delivery/` | Git commit + GitHub PR publication | ⬜ Not started |
 
@@ -191,10 +191,10 @@ internal/workflows/
   definition/       # ✅ DONE — TOML types, strict decode, safe discovery
   compiler/         # ✅ DONE — semantic validation and immutable compiled definition
   template/         # ✅ DONE — restricted loading and reference validation (no rendering yet)
-  matcher/          # ⬜ TODO — structural transition matching and decision explanation
-  controller/       # ⬜ TODO — durable sequential state machine (Phase 3 linear driver)
+  matcher/          # ✅ DONE — structural transition matching and decision explanation
+  controller/       # ✅ DONE — durable sequential state machine (gates + loops)
   ledger/           # ✅ DONE — event-sourced repository, snapshots, recovery
-  verifier/         # ⬜ TODO — registered deterministic verifier profiles
+  verifier/         # ✅ DONE — registered deterministic verifier profiles
   workspace/        # ⏸ DEFERRED — owner-scoped; vcs infra shipped as-is
   delivery/         # ⬜ TODO — git + GitHub PR publication and idempotency
   presentation/     # ✅ DONE — CLI-safe status/event/explain view models
@@ -428,14 +428,16 @@ mivia workflow cleanup <run-id>
 
 **Exit:** a linear two-step workflow runs with `mivia workflow run`, survives an interruption, and records individual coordinator child-run references.
 
-### Phase 4 — transitions, loops, and gates ⬜ TODO
+### Phase 4 — transitions, loops, and gates ✅ Complete
 
-- Add the structural transition matcher and persist decision explanations.
-- Add `agent_gate`, `evidence_gate`, and `human_gate` implementations.
-- Register a small verifier catalogue; first profile `go-default` should use host-owned, explicit verification logic rather than arbitrary TOML command strings.
-- Enforce global attempt/duration and per-loop caps atomically before dispatching a back-edge (respecting `max_iterations = -1`).
+- ✅ Structural transition matcher (`internal/workflows/matcher`) with fail-closed zero/multi match and durable decision digests.
+- ✅ `agent_gate`, `evidence_gate`, and `human_gate` on `LinearController` (Approve/Reject for human gates).
+- ✅ Host verifier catalogue with `go-default` fixed host logic; unknown verifiers fail closed.
+- ✅ Per-loop caps (`max_iterations`, including `-1`) and global `max_step_attempts` before back-edge / new attempt dispatch; transition decisions persisted on attempts.
+- ✅ Repair-loop history test: `implement#2` / `review#2` after `changes_requested`, terminates within limits; infra failures use `on_failure` only.
+- ✅ Unbounded-cycle admission guard: the compiler rejects a workflow whose graph contains a cycle with no finite-capped loop edge (`max_iterations > 0`) when both `max_step_attempts` and `max_duration_seconds` are 0. Unlimited loops (`max_iterations = -1`) and unlimited `max_step_attempts` (0) remain legal whenever at least one global limit is set. `CompileForResume` skips the admission check so an in-flight run admitted under an earlier policy still resumes; other validators still run.
 
-**Exit:** the feature-delivery repair loop produces `implement#2` / `review#2` history and terminates within global limits.
+**Exit:** the feature-delivery repair loop produces `implement#2` / `review#2` history and terminates within global limits. ✅
 
 ### Phase 5 — PR delivery ⬜ TODO
 
@@ -459,12 +461,12 @@ mivia workflow cleanup <run-id>
 | Area | Required proof | Status |
 |---|---|---|
 | Parsing | Unknown TOML fields, duplicate IDs, invalid names/path escapes and oversized files fail before execution. | ✅ Tested |
-| Compilation | All routes resolve; structural match cases are deterministic or have an explicit fallback; all cycles are bounded. | ✅ Tested |
+| Compilation | All routes resolve; structural match cases are deterministic or have an explicit fallback; every cycle is self-bounded (contains a loop with `max_iterations > 0`) or a global limit exists. | ✅ Tested |
 | Authority | A workspace workflow cannot alter agent tool/model/provider authority or invoke raw commands. | ✅ Enforced by design (no runtime yet) |
-| Evidence | A review cannot route on free-form prose; invalid schema output is not accepted as approval. | ⬜ Needs runtime enforcement |
-| Loops | Back-edge creates a fresh numbered attempt; per-loop caps or global caps terminate deterministically. | ⬜ Needs runtime enforcement |
-| Persistence | Crash before/after every state write resumes without duplicate agent dispatch or duplicate transition. | ⬜ Needs ledger implementation |
-| Cancellation | Cancel wins safely against an in-flight child/approval/delivery attempt and leaves explainable status. | ⬜ Needs controller implementation |
+| Evidence | A review cannot route on free-form prose; invalid schema output is not accepted as approval. | ✅ Matcher + agent_gate route on schema fields only |
+| Loops | Back-edge creates a fresh numbered attempt; per-loop caps or global caps terminate deterministically. Compiler rejects uncapped cycles with no global limit. | ✅ Runtime loop counters + global max_step_attempts + validateCycles |
+| Persistence | Crash before/after every state write resumes without duplicate agent dispatch or duplicate transition. | ✅ Ledger (Phase 2); controller uses claim + CAS |
+| Cancellation | Cancel wins safely against an in-flight child/approval/delivery attempt and leaves explainable status. | ✅ Partial — cancel/timeout attempt statuses; Phase 6 race matrix remains |
 | Delivery | Missing `--allow-publish`, no diff, failed gate, or exhausted loop creates no PR. | ⬜ Needs delivery implementation |
 | Idempotency | Crash/retry after push or remote PR creation locates the original PR and never duplicates it. | ⬜ Needs delivery implementation |
 | Isolation | A dirty caller checkout remains byte-for-byte unchanged; agents, verifiers, and delivery operate only in the run-owned worktree. | ⬜ Needs workspace implementation |

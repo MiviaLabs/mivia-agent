@@ -466,6 +466,7 @@ func TestFormatWorkflowShow_UnlimitedLoop(t *testing.T) {
 		Name:        "unlimited-loop-show",
 		Version:     1,
 		InitialStep: "implement",
+		Limits:      definition.Limits{MaxStepAttempts: 16},
 		Steps: []definition.Step{
 			{ID: "implement", Kind: "agent", Agent: "go-engineer"},
 		},

@@ -382,7 +382,7 @@ func TestExecuteWorkflowRunCleansFailedAdmission(t *testing.T) {
 		workflowRunBuild = originalBuild
 		workflowRunSetAdmission = originalAdmission
 	})
-	err := executeWorkflowRun("two-step", root, filepath.Join(root, "config.toml"), []string{"task=test"}, io.Discard, io.Discard)
+	err := executeWorkflowRun("two-step", root, filepath.Join(root, "config.toml"), []string{"task=test"}, false, io.Discard, io.Discard)
 	if !errors.Is(err, sentinel) || !cleaned {
 		t.Fatalf("executeWorkflowRun() error = %v, cleaned = %v", err, cleaned)
 	}

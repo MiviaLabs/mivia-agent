@@ -363,12 +363,81 @@ func TestCompile_DeliveryValidation(t *testing.T) {
 			}},
 		{"unknown kind", "test-delivery-unknown-kind", "kind",
 			func(wf *definition.WorkflowFile) { wf.Delivery = &definition.Delivery{Kind: "unknown"} }},
+		{"kind empty with draft mode", "test-delivery-kind-empty-draft-mode", "mode",
+			func(wf *definition.WorkflowFile) {
+				wf.Delivery = &definition.Delivery{Kind: "", Mode: "draft"}
+			}},
 	}
 	for _, tc := range wantErr {
 		t.Run(tc.name, func(t *testing.T) {
 			wf := newMinimalWorkflow(tc.desc)
 			tc.modify(wf)
 			assertCompileError(t, wf, tc.desc, tc.substr)
+		})
+	}
+
+	t.Run("kind empty with none mode", func(t *testing.T) {
+		wf := newMinimalWorkflow("test-delivery-kind-empty-none-mode")
+		wf.Delivery = &definition.Delivery{Kind: "", Mode: "none"}
+		cw, err := Compile(wf)
+		if err != nil {
+			t.Fatalf("unexpected compile error: %v", err)
+		}
+		if cw.Digest == "" {
+			t.Error("Digest is empty, want non-empty")
+		}
+	})
+
+	t.Run("kind empty with empty mode", func(t *testing.T) {
+		wf := newMinimalWorkflow("test-delivery-kind-empty-empty-mode")
+		wf.Delivery = &definition.Delivery{Kind: ""}
+		cw, err := Compile(wf)
+		if err != nil {
+			t.Fatalf("unexpected compile error: %v", err)
+		}
+		if cw.Digest == "" {
+			t.Error("Digest is empty, want non-empty")
+		}
+	})
+}
+
+// --- Delivery validation tests ---
+
+// TestCompiledWorkflowDeliveryActive covers the single predicate every layer
+// uses to decide whether a success route must settle at delivery_pending.
+func TestCompiledWorkflowDeliveryActive(t *testing.T) {
+	base := func() *definition.WorkflowFile {
+		wf := newMinimalWorkflow("delivery-active")
+		wf.Delivery = &definition.Delivery{Kind: "pull_request", Mode: "draft", Provider: "github", Base: "main"}
+		return wf
+	}
+	cases := []struct {
+		name string
+		want bool
+		wf   *definition.WorkflowFile
+	}{
+		{"nil workflow", false, nil},
+		{"nil delivery", false, func() *definition.WorkflowFile { w := base(); w.Delivery = nil; return w }()},
+		{"empty kind and mode", false, func() *definition.WorkflowFile { w := base(); w.Delivery.Kind = ""; w.Delivery.Mode = ""; return w }()},
+		{"mode none", false, func() *definition.WorkflowFile { w := base(); w.Delivery.Mode = "none"; return w }()},
+		{"mode draft", true, base()},
+		{"mode ready", true, func() *definition.WorkflowFile { w := base(); w.Delivery.Mode = "ready"; return w }()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.wf == nil {
+				if (*CompiledWorkflow)(nil).DeliveryActive() {
+					t.Fatal("nil compiled workflow is delivery active")
+				}
+				return
+			}
+			cw, err := Compile(tc.wf)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			if got := cw.DeliveryActive(); got != tc.want {
+				t.Fatalf("DeliveryActive() = %v, want %v", got, tc.want)
+			}
 		})
 	}
 }
@@ -482,10 +551,13 @@ func TestCompile_VerifierNameValidation(t *testing.T) {
 // --- Digest stability tests ---
 
 func TestCompile_UnlimitedLoop(t *testing.T) {
+	// STE: an unlimited loop (max_iterations=-1) needs at least one global limit
+	// (max_duration_seconds or max_step_attempts) so execution can always terminate.
 	wf := &definition.WorkflowFile{
 		Name:        "unlimited-loop-test",
 		Version:     1,
 		InitialStep: "implement",
+		Limits:      definition.Limits{MaxDurationSeconds: 3600},
 		Steps: []definition.Step{
 			{ID: "implement", Kind: "agent", Agent: "go-engineer"},
 		},

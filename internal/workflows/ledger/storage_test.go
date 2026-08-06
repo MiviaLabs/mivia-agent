@@ -630,6 +630,44 @@ func TestStorageRepository_TwoRepositoriesOneStore(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// 18. RunSnapshot.RemoteURL round-trip and rebuild survival
+// ---------------------------------------------------------------------------
+
+func TestStorageRepository_RunSnapshotRemoteURL(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo(t)
+
+	run := runID(t)
+	snap, json := newRun(t, run)
+	snap.RemoteURL = "https://example.com/mivia/workflows.git"
+	requireErr(t, repo.CreateRun(ctx, snap, json), nil, "CreateRun")
+
+	got, err := repo.GetRun(ctx, run)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if got.RemoteURL != snap.RemoteURL {
+		t.Fatalf("GetRun.RemoteURL = %q, want %q (CreateRun/GetRun round-trip)", got.RemoteURL, snap.RemoteURL)
+	}
+
+	// RemoteURL survives a projection rebuild: the store holds the
+	// wf_run_created event carrying the field, and RebuildProjection replays
+	// it into the snapshot.
+	events, err := repo.store.Events(ctx, run)
+	if err != nil {
+		t.Fatalf("store.Events: %v", err)
+	}
+	proj, err := RebuildProjection(events)
+	if err != nil {
+		t.Fatalf("RebuildProjection: %v", err)
+	}
+	rebuilt := requireRun(t, proj)
+	if rebuilt.RemoteURL != snap.RemoteURL {
+		t.Fatalf("rebuilt RemoteURL = %q, want %q (rebuild survival)", rebuilt.RemoteURL, snap.RemoteURL)
+	}
+}
+
 // errAppendSentinel is the sentinel error the failingStore returns from Append.
 var errAppendSentinel = errors.New("sentinel append failure")
 

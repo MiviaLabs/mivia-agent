@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -262,6 +263,45 @@ func TestPlanResumeRouteToTerminalWithoutStatusCAS(t *testing.T) {
 				t.Errorf("Reason is empty, want a non-empty explanation")
 			}
 		})
+	}
+}
+
+// TestPlanResumeDeliveryPendingRoutedToSuccess: a delivery_pending run whose
+// derived active step is the reserved "success" terminal is settled (Terminal)
+// but must NEVER be classified as succeeded. TerminalStatus stays
+// delivery_pending so the resume path cannot CAS delivery_pending->succeeded
+// and skip delivery; the plan points at the delivery step instead.
+func TestPlanResumeDeliveryPendingRoutedToSuccess(t *testing.T) {
+	repo := newTestRepo(t)
+	runID := "wfr-delivery-pending-1"
+	createRun(t, repo, runID)
+	casRunStatus(t, repo, runID, RunStatusRunning)
+	casRunStatus(t, repo, runID, RunStatusDeliveryPending)
+
+	attempt := createAttempt(t, repo, runID, "plan", 1, "run-abc", "task-1")
+	completeAttempt(t, repo, runID, attempt, AttemptOutcome{
+		Status:   AttemptStatusSucceeded,
+		ToStepID: "success",
+	})
+
+	plan, err := PlanResume(context.Background(), repo, runID)
+	if err != nil {
+		t.Fatalf("PlanResume(%q): %v", runID, err)
+	}
+	if plan.Run.Status != RunStatusDeliveryPending {
+		t.Fatalf("Run.Status = %q, want %q", plan.Run.Status, RunStatusDeliveryPending)
+	}
+	if !plan.Terminal {
+		t.Errorf("Terminal = false, want true (delivery_pending run is settled)")
+	}
+	if plan.TerminalStatus != RunStatusDeliveryPending {
+		t.Errorf("TerminalStatus = %q, want %q (NOT %q)", plan.TerminalStatus, RunStatusDeliveryPending, RunStatusSucceeded)
+	}
+	if plan.TerminalStatus == RunStatusSucceeded {
+		t.Errorf("TerminalStatus = %q, must never be %q for a delivery_pending run", plan.TerminalStatus, RunStatusSucceeded)
+	}
+	if !strings.Contains(plan.Reason, "delivery") {
+		t.Errorf("Reason = %q, want a mention of delivery", plan.Reason)
 	}
 }
 
