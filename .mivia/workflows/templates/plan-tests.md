@@ -4,6 +4,12 @@ Create a test plan for `{{ inputs.task }}` from this approved delivery plan:
 
 {{ evidence.plan }}
 
+Prior review findings (present on repair iterations only):
+
+{{ evidence.review_findings }}
+
+When review findings are present, address each finding before you resubmit.
+
 Read the relevant production code and tests. Do not edit files in this step. Do not run
 commands, commit, push, publish, or read secret-like files.
 
@@ -13,5 +19,6 @@ duplicate input. Include security and hook-policy regression tests when the scop
 State the focused and full host evidence gates that must prove the change. State the fuzz decision
 and the requested bounded host fuzz gate when practical.
 
-Return only the declared structured output. Put the test cases, security cases, fuzz decision,
+Return only the declared structured output. List every workspace path you inspected in `inspected`.
+Do not make a claim about source you did not read. Put the test cases, security cases, fuzz decision,
 and required host evidence gates in `summary`. Put the test-first actions in `steps`.

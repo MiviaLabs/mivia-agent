@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -68,6 +69,9 @@ func TestCommittedFeatureDeliveryWorkflowContract(t *testing.T) {
 	if workflow.Delivery == nil || workflow.Delivery.Base != "master" {
 		t.Fatalf("feature-delivery base = %#v, want master", workflow.Delivery)
 	}
+
+	assertFeatureDeliveryReviewFeedbackChannel(t, workflow)
+	assertFeatureDeliverySchemasRequireInspected(t, base)
 }
 
 func committedWorkflowRoot(t *testing.T) string {
@@ -143,4 +147,70 @@ func hasEffectiveTool(agent agents.ResolvedAgent, want string) bool {
 		}
 	}
 	return false
+}
+
+// assertFeatureDeliveryReviewFeedbackChannel verifies that the three
+// review-repair loops feed the rejecting reviewer's output back to the
+// re-invoked agent step. Without this binding the agent regenerates from
+// identical context with no memory of the rejection, so it cannot correct
+// false claims and the loop diverges.
+func assertFeatureDeliveryReviewFeedbackChannel(t *testing.T, workflow definition.WorkflowFile) {
+	t.Helper()
+	wantBindings := map[string]string{
+		// step ID -> the reviewer step whose output must reach the agent.
+		"plan":       "steps.plan_review.output",
+		"plan_tests": "steps.test_plan_review.output",
+		"implement":  "steps.review.output",
+	}
+	for stepID, reviewerOutput := range wantBindings {
+		step := featureDeliveryStep(t, workflow, stepID)
+		found := false
+		for _, cb := range step.Context {
+			if cb.From == reviewerOutput && cb.As == "review_findings" && cb.Optional {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("step %q must bind %q as review_findings (optional); "+
+				"without it the review-repair loop is blind", stepID, reviewerOutput)
+		}
+	}
+}
+
+// assertFeatureDeliverySchemasRequireInspected verifies that the three
+// output schemas require an inspected array with at least one entry. This
+// forces the agent and reviewer to cite workspace paths they read before
+// making claims about the source.
+func assertFeatureDeliverySchemasRequireInspected(t *testing.T, base string) {
+	t.Helper()
+	for _, name := range []string{"plan-v1.json", "review-v1.json", "change-summary-v1.json"} {
+		raw, err := os.ReadFile(filepath.Join(base, "schemas", name))
+		if err != nil {
+			t.Fatalf("read schema %q: %v", name, err)
+		}
+		var schema struct {
+			Required   []string `json:"required"`
+			Properties map[string]struct {
+				MinItems int    `json:"minItems"`
+				Type     string `json:"type"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("parse schema %q: %v", name, err)
+		}
+		required := false
+		for _, r := range schema.Required {
+			if r == "inspected" {
+				required = true
+			}
+		}
+		if !required {
+			t.Fatalf("schema %q must require inspected", name)
+		}
+		prop, ok := schema.Properties["inspected"]
+		if !ok || prop.Type != "array" || prop.MinItems < 1 {
+			t.Fatalf("schema %q inspected must be an array with minItems >= 1", name)
+		}
+	}
 }

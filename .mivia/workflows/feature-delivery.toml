@@ -19,7 +19,10 @@ agent = "workflow-engineer"
 skill = "workflow-feature-delivery"
 template = "templates/plan.md"
 output_schema = "schemas/plan-v1.json"
-context = [{ from = "inputs.task", as = "task", max_bytes = 12000 }]
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan_review.output", as = "review_findings", max_bytes = 16000, optional = true },
+]
 on_failure = "failure"
 
 [[steps]]
@@ -45,6 +48,7 @@ output_schema = "schemas/plan-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.test_plan_review.output", as = "review_findings", max_bytes = 16000, optional = true },
 ]
 on_failure = "failure"
 
@@ -73,6 +77,7 @@ context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.review.output", as = "review_findings", max_bytes = 16000, optional = true },
 ]
 on_failure = "failure"
 
@@ -277,4 +282,4 @@ mode = "draft"
 provider = "github"
 base = "master"
 title_template = "feat: {{ inputs.task }}"
-commit_message_template = "feat(agent): {{ inputs.task }}"
+commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs.task }}"

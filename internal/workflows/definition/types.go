@@ -43,6 +43,12 @@ type ContextBinding struct {
 	From     string `toml:"from"`
 	As       string `toml:"as"`
 	MaxBytes int    `toml:"max_bytes"`
+	// Optional is true for a steps.<id>.output binding whose prior output may
+	// not exist on the first attempt (for example a reviewer step that has not
+	// run yet). When the prior output is absent, the controller resolves the
+	// binding to an empty string instead of failing. It has no effect on
+	// inputs.<name> bindings, which are always present after admission.
+	Optional bool `toml:"optional"`
 }
 
 type Transition struct {

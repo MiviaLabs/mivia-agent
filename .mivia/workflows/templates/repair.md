@@ -8,7 +8,7 @@ Use this approved delivery plan:
 
 {{ evidence.plan }}
 
-Use this approved test plan:
+Use this approved test plan when it is available:
 
 {{ evidence.test_plan }}
 
@@ -20,6 +20,7 @@ and hook policy.
 Do not run commands, commit, push, publish, bypass hooks, or read secret-like files. Do not
 claim a host check passed unless the workflow context gives its result.
 
-Return only the declared structured output. In `summary`, state the repair, tests changed,
-security checks, fuzz decision, requested host gates, and known gaps. List every changed file in
-`files_changed`.
+Return only the declared structured output. List every workspace path you inspected in
+`inspected`. Do not make a claim about source you did not read. In `summary`, state the repair,
+tests changed, security checks, fuzz decision, requested host gates, and known gaps. List every
+changed file in `files_changed`.

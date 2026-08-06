@@ -9,7 +9,10 @@ publish, or read secret-like files.
 
 Check the scope, acceptance criteria, affected interfaces, compatibility risks, security and
 hook boundaries, negative paths, structured-input cases, fuzz decision, and requested host
-evidence gates. Request changes for each missing requirement or unsupported claim.
+evidence gates. Independently verify each claim the plan makes by reading the cited source
+paths. Request changes for each missing requirement or unsupported claim.
 
-Return only the declared structured output. Use `approved` only when no finding remains.
-Otherwise use `changes_requested` and list each finding with severity and a concrete reason.
+Return only the declared structured output. List every workspace path you independently
+inspected in `inspected`. Do not make a finding about source you did not read. Use `approved`
+only when no finding remains. Otherwise use `changes_requested` and list each finding with
+severity and a concrete reason that cites the evidence.

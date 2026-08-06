@@ -6,6 +6,13 @@ Read the workspace instructions and the relevant source, interfaces, tests, conf
 and security boundaries. Do not edit files in this step. Do not run commands, commit, push,
 publish, or read secret-like files.
 
+Prior review findings (present on repair iterations only):
+
+{{ evidence.review_findings }}
+
+When review findings are present, address each finding before you resubmit. Do not ignore a
+finding or repeat a claim the reviewer rejected.
+
 Lock the scope. Identify:
 
 - the requested behavior and acceptance criteria;
@@ -19,5 +26,7 @@ input cases when they apply: empty, malformed, oversized, and duplicate input. S
 deterministic fuzz target is practical. If it is practical, request a bounded host fuzz gate.
 Otherwise state why it is not practical.
 
-Return only the declared structured output. Put the locked scope, test plan outline, security
-checks, fuzz decision, and requested host gates in `summary`. Put ordered actions in `steps`.
+Return only the declared structured output. List every workspace path you inspected (files,
+directories, or search patterns) in `inspected`. Do not make a claim about source you did not
+read. Put the locked scope, test plan outline, security checks, fuzz decision, and requested
+host gates in `summary`. Put ordered actions in `steps`.

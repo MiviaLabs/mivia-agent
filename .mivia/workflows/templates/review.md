@@ -21,9 +21,12 @@ Check that the work stays within scope. Check that tests cover success and reach
 paths. When untrusted structured input applies, check empty, malformed, oversized, and duplicate
 input coverage. Check security, privacy, safe paths, fail-closed behavior, and hook policy.
 Check that the fuzz decision is explicit. Check that the report does not claim host evidence that
-the workflow context does not provide.
+the workflow context does not provide. Independently verify each claim by reading the cited
+source paths and the changed files.
 
 Request changes for any missing requirement, unsafe behavior, missing host gate, or unsupported
-claim. Do not approve a step only because it has a low-severity finding. Return only the declared
-structured output. Use `approved` only when no finding remains. Otherwise use
-`changes_requested` and list each finding with severity and a concrete reason.
+claim. Do not approve a step only because it has a low-severity finding. Do not request changes
+based on source you did not inspect. Return only the declared structured output. List every
+workspace path you independently inspected in `inspected`. Do not make a finding about source you
+did not read. Use `approved` only when no finding remains. Otherwise use `changes_requested` and
+list each finding with severity and a concrete reason that cites the evidence.

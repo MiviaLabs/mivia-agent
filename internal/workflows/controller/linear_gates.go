@@ -98,6 +98,13 @@ func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflo
 	if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, workflowledger.AttemptStatusFailed, route); err != nil {
 		return c.fail(writeCtx, run, err)
 	}
+	// Increment the loop counter after the repair route is durable. A failed
+	// increment under-counts (one extra allowed iteration) rather than blocking
+	// repair. This mirrors the crash-after-complete policy in
+	// completeSucceededRoute. Without this call, checkLoopCap always reads
+	// zero for evidence-gate repair routes and a finite max_iterations cap is
+	// a no-op.
+	_ = c.recordLoopAfterComplete(writeCtx, route)
 	return settleAfterRoute(ctx, c, run, route)
 }
 
