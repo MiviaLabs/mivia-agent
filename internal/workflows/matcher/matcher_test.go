@@ -107,6 +107,59 @@ func TestMatchMultiMatchFailClosed(t *testing.T) {
 	}
 }
 
+func TestMatchPrefersStrictlyMostSpecific(t *testing.T) {
+	// A status-only fallback plus a status+output special case: the specific
+	// transition must win on its own output instead of multi-match failing.
+	transitions := []definition.Transition{
+		{From: "a", To: "fallback", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "a", To: "specific", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}}},
+	}
+	d, err := Match("a", "succeeded", map[string]any{"verdict": "approved"}, transitions)
+	if err != nil {
+		t.Fatalf("specific match must win over the fallback: %v", err)
+	}
+	if d.Outcome != "matched" || d.ToStepID != "specific" {
+		t.Fatalf("decision = %+v, want matched -> specific", d)
+	}
+	// A different output value takes the fallback.
+	d, err = Match("a", "succeeded", map[string]any{"verdict": "changes_requested"}, transitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ToStepID != "fallback" {
+		t.Fatalf("decision = %+v, want fallback", d)
+	}
+}
+
+func TestMatchPrefersStrictSuperset(t *testing.T) {
+	// A strictly more specific transition (superset output keys) wins over a
+	// less specific one that also matches.
+	transitions := []definition.Transition{
+		{From: "a", To: "specific", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"a": "1", "b": "2"}}},
+		{From: "a", To: "fallback", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"a": "1"}}},
+	}
+	d, err := Match("a", "succeeded", map[string]any{"a": "1", "b": "2"}, transitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ToStepID != "specific" {
+		t.Fatalf("decision = %+v, want specific", d)
+	}
+}
+
+func TestMatchSameSpecificityTieFailsClosed(t *testing.T) {
+	// Same-size, non-comparable criteria (disjoint keys) cannot be
+	// disambiguated by specificity and must fail closed.
+	transitions := []definition.Transition{
+		{From: "a", To: "b", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"a": "1"}}},
+		{From: "a", To: "c", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"b": "2"}}},
+	}
+	_, err := Match("a", "succeeded", map[string]any{"a": "1", "b": "2"}, transitions)
+	if err == nil {
+		t.Fatal("expected multi-match error for non-comparable same-size criteria")
+	}
+}
+
 func TestMatchIgnoresOtherFromSteps(t *testing.T) {
 	transitions := []definition.Transition{
 		{From: "other", To: "x", Match: definition.MatchCriteria{Status: "succeeded"}},
