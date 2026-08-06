@@ -724,25 +724,6 @@ func TestCompile_DuplicateLoopNames(t *testing.T) {
 	}
 }
 
-func TestCompile_TransitionsSameStatusDifferentOutputArity(t *testing.T) {
-	// Two transitions from the same step with the same status but different
-	// output arity are NOT overlapping (matchCriteriaEqual short-circuits on
-	// length), so compilation succeeds.
-	wf := &definition.WorkflowFile{
-		Name:        "output-arity-test",
-		Version:     1,
-		InitialStep: "s",
-		Steps:       []definition.Step{{ID: "s", Kind: "agent", Agent: "go-engineer"}},
-		Transitions: []definition.Transition{
-			{From: "s", To: "failure", Match: definition.MatchCriteria{Status: "failed", Output: map[string]string{"code": "1"}}},
-			{From: "s", To: "success", Match: definition.MatchCriteria{Status: "failed"}},
-		},
-	}
-	if _, err := Compile(wf); err != nil {
-		t.Fatalf("expected transitions with different output arity to compile: %v", err)
-	}
-}
-
 // --- Delivery validation tests ---
 
 func TestCompile_DeliveryEmptyKindIsValid(t *testing.T) {

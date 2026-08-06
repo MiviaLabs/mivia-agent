@@ -288,6 +288,38 @@ func TestDeliverDraftReusesDraftExistingPR(t *testing.T) {
 	assertZeroCreates(t, pr)
 }
 
+func TestDeliverReadyReusesReadyExistingPR(t *testing.T) {
+	// A ready-mode run that created a ready PR on a failed earlier attempt
+	// must resume it on retry instead of refusing its own PR.
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	pr := &fakePRClient{found: &PRRef{RemoteID: "13", URL: "https://example.com/pull/13", Draft: false}}
+
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("ready"), map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("Deliver error: %v", err)
+	}
+	if res.RemoteID != "13" || res.URL != "https://example.com/pull/13" {
+		t.Fatalf("Result = %+v, want existing ready PR", res)
+	}
+	assertZeroCreates(t, pr)
+}
+
+func TestDeliverReadyRefusesDraftExistingPR(t *testing.T) {
+	// A ready-mode run must not repurpose a draft PR it does not own.
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	pr := &fakePRClient{found: &PRRef{RemoteID: "14", URL: "https://example.com/pull/14", Draft: true}}
+
+	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("ready"), map[string]string{"task": "x"}))
+	if err == nil {
+		t.Fatal("Deliver error = nil, want refusal for a draft existing PR in ready mode")
+	}
+	assertZeroCreates(t, pr)
+}
+
 func TestDeliverDuplicateResume(t *testing.T) {
 	ctx := context.Background()
 	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)

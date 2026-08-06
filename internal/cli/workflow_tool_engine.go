@@ -23,6 +23,12 @@ import (
 // drop its claim after context cancel before settling the ledger.
 const sessionCancelWait = 3 * time.Second
 
+// workflowResolutionLockWait bounds the execution-lock wait for cancel after
+// stopActive: a settling controller can hold the flock past the cancel wait
+// bound, and a non-blocking acquire would surface as an opaque lock error
+// while the run keeps running.
+const workflowResolutionLockWait = 5 * time.Second
+
 // sessionWorkflowEngine is the production Engine for chat-session workflow tools.
 // New runs use the full CLI admission path (providers, worktrees, coordinator)
 // and return the run ID without waiting for terminal state.
@@ -322,7 +328,7 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 		return agenttools.CancelResult{}, fmt.Errorf("run_id is required")
 	}
 	e.stopActive(ctx, runID)
-	releaseExecution, repo, closeFn, err := openWorkflowResolutionContext(e.root, e.configPath, runID)
+	releaseExecution, repo, closeFn, err := openWorkflowResolutionContextBounded(e.root, e.configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return agenttools.CancelResult{}, err
 	}

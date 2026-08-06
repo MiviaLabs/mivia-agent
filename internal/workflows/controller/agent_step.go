@@ -101,6 +101,18 @@ func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Reposit
 	return repo.CompleteStepAttempt(ctx, attempt.RunID, attempt.AttemptID, attempt.Version, outcome)
 }
 
+// maxEvidenceBindingBytes bounds one prior-step evidence value bound into a
+// template (contextForStep in linear.go).
+const maxEvidenceBindingBytes = 32 << 10
+
+// maxStepContextBytes bounds the rendered agent prompt and the aggregate
+// evidence selection for one workflow step. It is deliberately larger than
+// one evidence binding so a step that binds several legal values renders
+// successfully: the template file itself is bounded by MaxTemplateBytes, and
+// the routed model budget (~72k tokens) plus the schema-aware prune guard
+// the actual request.
+const maxStepContextBytes = 256 << 10
+
 // AgentStepRequest contains only the explicit, bounded step inputs.
 type AgentStepRequest struct {
 	WorkflowRunID    string

@@ -352,8 +352,8 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 			if err != nil {
 				return nil, nil, err
 			}
-			if len(raw) > 32<<10 {
-				return nil, nil, fmt.Errorf("prior output %q exceeds 32768 bytes", binding.From)
+			if len(raw) > maxEvidenceBindingBytes {
+				return nil, nil, fmt.Errorf("prior output %q exceeds %d bytes", binding.From, maxEvidenceBindingBytes)
 			}
 			var value any
 			if err := json.Unmarshal(raw, &value); err != nil {

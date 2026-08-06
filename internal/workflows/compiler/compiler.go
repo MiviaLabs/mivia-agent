@@ -220,15 +220,20 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool) e
 	}
 
 	for from, transitions := range fromTransitions {
-		// Check for overlapping match criteria
+		// Check for ambiguous overlapping match criteria. Two criteria from the
+		// same step that one outcome can satisfy are fine when one is strictly
+		// more specific (status-only fallback plus a status+output special
+		// case): the matcher prefers the specific one. A jointly satisfiable
+		// pair where neither is strictly more specific has no safe winner and
+		// fails the run with multi_match at runtime.
 		for i, ti := range transitions {
 			for j := range transitions {
 				if j <= i {
 					continue
 				}
 				tj := transitions[j]
-				if matchCriteriaEqual(ti.Match, tj.Match) {
-					return fmt.Errorf("step %q: transitions to %q and %q have overlapping match criteria", from, ti.To, tj.To)
+				if transitionCriteriaHazard(ti.Match, tj.Match) {
+					return fmt.Errorf("step %q: transitions to %q and %q have ambiguous overlapping match criteria (add a distinguishing output field)", from, ti.To, tj.To)
 				}
 			}
 		}
@@ -342,6 +347,48 @@ func matchCriteriaEqual(a, b definition.MatchCriteria) bool {
 	}
 	for k, v := range a.Output {
 		if bv, ok := b.Output[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
+}
+
+// transitionCriteriaOverlap reports whether two match criteria from the same
+// source step are jointly satisfiable: one outcome can match both. Criteria
+// overlap when their statuses match and no output key carries conflicting
+// values (an empty output map satisfies any output).
+func transitionCriteriaOverlap(a, b definition.MatchCriteria) bool {
+	if a.Status != b.Status {
+		return false
+	}
+	for key, av := range a.Output {
+		if bv, ok := b.Output[key]; ok && bv != av {
+			return false
+		}
+	}
+	return true
+}
+
+// transitionCriteriaHazard reports whether two match criteria from the same
+// source step are jointly satisfiable AND neither is strictly more specific
+// than the other. The matcher prefers the strictly most specific match, so a
+// strict-superset pair routes correctly; a non-comparable pair fails the run
+// with multi_match and must be rejected at admission.
+func transitionCriteriaHazard(a, b definition.MatchCriteria) bool {
+	if !transitionCriteriaOverlap(a, b) {
+		return false
+	}
+	return !strictOutputSuperset(a.Output, b.Output) && !strictOutputSuperset(b.Output, a.Output)
+}
+
+// strictOutputSuperset reports whether x contains every key of y with the
+// same value and at least one additional key.
+func strictOutputSuperset(x, y map[string]string) bool {
+	if len(x) <= len(y) {
+		return false
+	}
+	for key, yv := range y {
+		if xv, ok := x[key]; !ok || xv != yv {
 			return false
 		}
 	}

@@ -8,15 +8,20 @@ import (
 	"testing"
 )
 
-func TestDeliverRefusesReadyExistingPRForReadyDelivery(t *testing.T) {
+func TestDeliverReadyReusesReadyExistingPRForReadyDelivery(t *testing.T) {
+	// A ready-mode delivery that already created a ready PR (earlier attempt
+	// failed after publication) must resume it, not refuse its own PR.
 	ctx := context.Background()
 	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
 	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
 	pr := &fakePRClient{found: &PRRef{RemoteID: "12", URL: "https://example.com/pull/12"}}
 
-	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("ready"), map[string]string{"task": "x"}))
-	if err == nil {
-		t.Fatal("Deliver error = nil, want refusal for a ready existing PR")
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("ready"), map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("ready delivery must resume its own ready PR: %v", err)
+	}
+	if res.RemoteID != "12" {
+		t.Fatalf("Result = %+v, want existing ready PR reuse", res)
 	}
 	assertZeroCreates(t, pr)
 }

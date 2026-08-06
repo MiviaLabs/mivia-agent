@@ -1,6 +1,7 @@
 package agenttools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -96,7 +97,13 @@ func (t *runTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		Force        bool           `json:"force"`
 	}
 	if len(args) > 0 && string(args) != "null" {
-		if err := json.Unmarshal(args, &in); err != nil {
+		// Decode with UseNumber so integer inputs ≥ 2^53 stay exact: the plain
+		// float64 decode rounds them, and the admitted run would execute with
+		// different input than requested (silent corruption). json.Number
+		// re-marshals verbatim downstream.
+		dec := json.NewDecoder(bytes.NewReader(args))
+		dec.UseNumber()
+		if err := dec.Decode(&in); err != nil {
 			return "", fmt.Errorf("%s: invalid arguments: %w", ToolWorkflowRun, err)
 		}
 	}

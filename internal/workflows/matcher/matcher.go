@@ -31,6 +31,13 @@ type Decision struct {
 	DecisionJSON []byte
 }
 
+type matchCandidate struct {
+	index  int
+	tr     definition.Transition
+	sel    map[string]string
+	digest string
+}
+
 // Match selects exactly one transition for fromStep against status and output.
 // Zero-match and multi-match fail closed. Output leaves must be scalar or enum
 // string values when compared; non-scalar values never match an output key.
@@ -41,13 +48,7 @@ func Match(fromStep, status string, output map[string]any, transitions []definit
 	if strings.TrimSpace(status) == "" {
 		return failDecision("invalid_output", nil, fmt.Errorf("match status is empty"))
 	}
-	type candidate struct {
-		index  int
-		tr     definition.Transition
-		sel    map[string]string
-		digest string
-	}
-	var hits []candidate
+	var hits []matchCandidate
 	for i, tr := range transitions {
 		if tr.From != fromStep {
 			continue
@@ -56,7 +57,7 @@ func Match(fromStep, status string, output map[string]any, transitions []definit
 		if !ok {
 			continue
 		}
-		hits = append(hits, candidate{
+		hits = append(hits, matchCandidate{
 			index:  i,
 			tr:     tr,
 			sel:    sel,
@@ -86,6 +87,29 @@ func Match(fromStep, status string, output map[string]any, transitions []definit
 		d.DecisionJSON = raw
 		return d, nil
 	default:
+		// Prefer the strictly most specific transition when exactly one
+		// candidate has more output keys than every other: a status-only
+		// fallback plus a status+output special case is a natural workflow
+		// shape, and the specific route must win on its own output. Genuine
+		// ties (identical criteria, or same-size non-comparable criteria)
+		// still fail closed.
+		if best := selectMostSpecific(hits); best != nil {
+			d := Decision{
+				TransitionIndex: best.index,
+				ToStepID:        best.tr.To,
+				Loop:            best.tr.Loop,
+				MaxIterations:   best.tr.MaxIterations,
+				MatchDigest:     best.digest,
+				Selected:        best.sel,
+				Outcome:         "matched",
+			}
+			raw, err := marshalDecision(d)
+			if err != nil {
+				return Decision{}, err
+			}
+			d.DecisionJSON = raw
+			return d, nil
+		}
 		indices := make([]string, len(hits))
 		for i, h := range hits {
 			indices[i] = strconv.Itoa(h.index)
@@ -225,4 +249,28 @@ func failDecision(outcome string, selected map[string]string, err error) (Decisi
 		d.DecisionJSON = raw
 	}
 	return d, err
+}
+
+// selectMostSpecific returns the single hit with strictly more output keys
+// than every other hit, or nil when no such candidate exists (identical
+// criteria, or same-size non-comparable criteria). Match uses it to let a
+// status-only fallback plus a status+output special case route to the
+// specific transition instead of failing with multi_match.
+func selectMostSpecific(hits []matchCandidate) *matchCandidate {
+	var best *matchCandidate
+	maxKeys := -1
+	unique := true
+	for i := range hits {
+		h := &hits[i]
+		keys := len(h.tr.Match.Output)
+		if keys > maxKeys {
+			maxKeys, best, unique = keys, h, true
+		} else if keys == maxKeys {
+			unique = false
+		}
+	}
+	if unique && best != nil {
+		return best
+	}
+	return nil
 }
