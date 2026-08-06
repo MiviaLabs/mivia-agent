@@ -193,7 +193,7 @@ func sandboxSecretPath(rel string) bool {
 	if base == ".npmrc" || base == ".netrc" || base == ".pypirc" || base == ".dockercfg" || base == "credentials.json" {
 		return true
 	}
-	if strings.Contains(base, "credential") || strings.Contains(base, "secret") || strings.Contains(base, "token") || strings.Contains(base, "password") || strings.Contains(base, "passwd") {
+	if base == "credential" || base == "credentials" || base == "secret" || base == "secrets" || base == "token" || base == "password" || base == "passwd" {
 		return true
 	}
 	return strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") || strings.HasSuffix(base, ".p12") || strings.HasSuffix(base, ".pfx") || strings.HasSuffix(base, ".jks") || base == "id_rsa" || base == "id_ed25519"

@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,6 +106,23 @@ func TestProvisionModuleCacheForRepositoryModule(t *testing.T) {
 	if err := provisionModuleCache(root, t.TempDir(), baseline); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestSandboxRunsRepositoryModule(t *testing.T) {
+	root := sandboxRepositoryRoot(t)
+	baseline, err := CaptureGoModuleBaseline(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runSandboxedCommand(context.Background(), root, baseline, "go", "test", "./internal/workflows/verifier")
+	if err == nil {
+		return
+	}
+	var failure *commandFailure
+	if errors.As(err, &failure) {
+		t.Fatalf("sandbox error = %v; detail = %q", err, failure.detail)
+	}
+	t.Fatal(err)
 }
 
 func sandboxRepositoryRoot(t *testing.T) string {
