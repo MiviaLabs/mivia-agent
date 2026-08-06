@@ -24,3 +24,9 @@ Return only the declared structured output. List every workspace path you inspec
 `inspected`. Do not make a claim about source you did not read. In `summary`, state the repair,
 tests changed, security checks, fuzz decision, requested host gates, and known gaps. List every
 changed file in `files_changed`.
+
+## Output contract
+
+Reply with only a JSON object that satisfies the output schema appended to this task. Do not
+use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
+An invalid shape is rejected and you will be asked again with the schema.

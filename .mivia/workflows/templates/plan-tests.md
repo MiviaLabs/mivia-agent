@@ -22,3 +22,9 @@ and the requested bounded host fuzz gate when practical.
 Return only the declared structured output. List every workspace path you inspected in `inspected`.
 Do not make a claim about source you did not read. Put the test cases, security cases, fuzz decision,
 and required host evidence gates in `summary`. Put the test-first actions in `steps`.
+
+## Output contract
+
+Reply with only a JSON object that satisfies the output schema appended to this task. Do not
+use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
+An invalid shape is rejected and you will be asked again with the schema.

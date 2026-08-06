@@ -30,3 +30,9 @@ based on source you did not inspect. Return only the declared structured output.
 workspace path you independently inspected in `inspected`. Do not make a finding about source you
 did not read. Use `approved` only when no finding remains. Otherwise use `changes_requested` and
 list each finding with severity and a concrete reason that cites the evidence.
+
+## Output contract
+
+Reply with only a JSON object that satisfies the output schema appended to this task. Do not
+use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
+An invalid shape is rejected and you will be asked again with the schema.

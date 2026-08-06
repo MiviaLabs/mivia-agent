@@ -77,7 +77,7 @@ func (h *MultiStepHandler) runValidatedReply(
 			// Never inline known-malformed output.
 			return "", nil, fmt.Errorf("%w: %v", ErrSchemaViolation, vErr)
 		}
-		userTurn = jschema.FormatCorrective(vErr, redact.Text)
+		userTurn = jschema.FormatCorrectiveWithSchema(vErr, compiled.Raw(), redact.Text)
 	}
 }
 
