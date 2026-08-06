@@ -27,6 +27,14 @@ func (f *abandonFence) abandon(runID string) {
 	f.mu.Unlock()
 }
 
+// clearAbandon allows a resumed controller to write again after Interrupt.
+// Callers must use this method; never mutate abandoned without f.mu.
+func (f *abandonFence) clearAbandon(runID string) {
+	f.mu.Lock()
+	delete(f.abandoned, runID)
+	f.mu.Unlock()
+}
+
 func (f *abandonFence) isAbandoned(runID string) bool {
 	f.mu.Lock()
 	_, ok := f.abandoned[runID]

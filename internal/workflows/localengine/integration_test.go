@@ -534,6 +534,64 @@ func TestIntegrationRaceConcurrentTools(t *testing.T) {
 	wg.Wait()
 }
 
+// TestIntegrationRaceInterruptResume races Interrupt with resume and status on
+// the shipped tool Execute path. Under go test -race this covers abandonFence
+// map access (abandon vs clearAbandon vs isAbandoned) during concurrent tools.
+func TestIntegrationRaceInterruptResume(t *testing.T) {
+	// Sequential setup (t.Fatal-safe); concurrent only on the race surface.
+	const n = 4
+	type runCase struct {
+		engine  *localengine.Engine
+		svc     *agenttools.Service
+		runID   string
+		block   chan struct{}
+		entered chan struct{}
+	}
+	cases := make([]runCase, 0, n)
+	for i := 0; i < n; i++ {
+		engine, _, svc, started, block, entered, _, _ := startBlockedTwoStep(t)
+		select {
+		case <-entered:
+		case <-time.After(3 * time.Second):
+			t.Fatal("step did not start")
+		}
+		cases = append(cases, runCase{engine: engine, svc: svc, runID: started.RunID, block: block, entered: entered})
+	}
+	var wg sync.WaitGroup
+	for _, c := range cases {
+		c := c
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var inner sync.WaitGroup
+			inner.Add(3)
+			go func() {
+				defer inner.Done()
+				_ = c.engine.Interrupt(c.runID)
+			}()
+			go func() {
+				defer inner.Done()
+				_, _ = mustTool(t, c.svc, agenttools.ToolWorkflowStatus).Execute(
+					context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, c.runID)))
+			}()
+			go func() {
+				defer inner.Done()
+				// Resume may fail if Interrupt has not finished; that is fine.
+				// The race detector must not fire on the fence map either way.
+				_, _ = mustTool(t, c.svc, agenttools.ToolWorkflowRun).Execute(
+					context.Background(), json.RawMessage(fmt.Sprintf(
+						`{"resume":true,"run_id":%q,"force":true}`, c.runID)))
+			}()
+			inner.Wait()
+			close(c.block)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = c.engine.Wait(ctx, c.runID)
+		}()
+	}
+	wg.Wait()
+}
+
 // --- helpers ---
 
 func mustService(t *testing.T, engine agenttools.Engine, repo workflowledger.Repository) *agenttools.Service {
