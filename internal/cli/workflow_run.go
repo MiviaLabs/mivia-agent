@@ -45,7 +45,7 @@ func runWorkflow(args []string) error {
 
 func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("workflow: expected run or resume")
+		return fmt.Errorf("workflow: expected run, resume, deliver, status, events, approve, reject, cancel, or cleanup")
 	}
 	var workspaceRoot, configPath string
 	var found bool
@@ -62,31 +62,28 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 		filtered = append(filtered, arg)
 	}
 	args = filtered
+	if len(args) == 0 {
+		return fmt.Errorf("workflow: expected run, resume, deliver, status, events, approve, reject, cancel, or cleanup")
+	}
 	switch args[0] {
 	case "run":
-		inputs, rest, _ := flagVar(args[1:], "--input")
-		allowPublish, rest, err := parseWorkflowBoolFlag(rest, "--allow-publish")
-		if err != nil {
-			return err
-		}
-		if len(rest) != 1 {
-			return fmt.Errorf("workflow run: expected one workflow name")
-		}
-		return executeWorkflowRun(rest[0], workspaceRoot, configPath, inputs, allowPublish, stdout, stderr)
+		return runWorkflowCommandRun(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "deliver":
-		allowPublish, rest, err := parseWorkflowBoolFlag(args[1:], "--allow-publish")
-		if err != nil {
-			return err
-		}
-		if len(rest) != 1 {
-			return fmt.Errorf("workflow deliver: expected one run ID")
-		}
-		return executeWorkflowDeliver(rest[0], workspaceRoot, configPath, allowPublish, stdout, stderr)
+		return runWorkflowCommandDeliver(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "resume":
-		if len(args) != 2 {
-			return fmt.Errorf("workflow resume: expected one run ID")
-		}
-		return executeWorkflowResume(args[1], workspaceRoot, configPath, force, stdout, stderr)
+		return runWorkflowCommandResume(args[1:], workspaceRoot, configPath, force, stdout, stderr)
+	case "status":
+		return runWorkflowCommandStatus(args[1:], workspaceRoot, configPath, stdout, stderr)
+	case "events":
+		return runWorkflowCommandEvents(args[1:], workspaceRoot, configPath, stdout, stderr)
+	case "approve":
+		return runWorkflowCommandApprove(args[1:], workspaceRoot, configPath, stdout, stderr)
+	case "reject":
+		return runWorkflowCommandReject(args[1:], workspaceRoot, configPath, stdout, stderr)
+	case "cancel":
+		return runWorkflowCommandCancel(args[1:], workspaceRoot, configPath, stdout, stderr)
+	case "cleanup":
+		return runWorkflowCommandCleanup(args[1:], workspaceRoot, configPath, stdout, stderr)
 	default:
 		return fmt.Errorf("workflow: unknown subcommand %q", args[0])
 	}

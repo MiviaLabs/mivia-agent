@@ -169,6 +169,11 @@ func validateWorkflowSnapshotReferences(wf *compiler.CompiledWorkflow, snapshot 
 		schemas[name] = ref.Bytes
 	}
 	for _, step := range wf.Steps {
+		// Agent-less steps (human_gate, evidence_gate) have no agent
+		// admission to pin; only agent-bearing steps are checked.
+		if step.Agent == "" {
+			continue
+		}
 		agent, ok := snapshot.Agents[step.Agent]
 		if !ok || agent.Digest == "" {
 			return fmt.Errorf("snapshot agent %q admission is incomplete", step.Agent)

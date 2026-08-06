@@ -67,32 +67,43 @@ func ghEnv() []string {
 	return append(env, "GH_PROMPT_DISABLED=1")
 }
 
-// FindByHead lists the PRs whose head branch matches and returns the
-// first match. It returns (nil, nil) when no PR exists for the branch.
+// FindByHead lists the PRs whose head branch matches and returns the first
+// PR whose head repository belongs to the target repository's owner. A fork
+// PR with the same branch name must never be reused as this delivery's PR.
+// It returns (nil, nil) when no matching PR exists for the branch.
 func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRef, error) {
 	args := []string{
 		"pr", "list",
 		"--repo", repo,
 		"--head", headBranch,
 		"--state", "all",
-		"--json", "number,url",
+		"--json", "number,url,headRepositoryOwner",
 	}
 	out, err := runGH(ctx, "pr list", args...)
 	if err != nil {
 		return nil, err
 	}
 	var prs []struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
+		Number              int    `json:"number"`
+		URL                 string `json:"url"`
+		HeadRepositoryOwner struct {
+			Login string `json:"login"`
+		} `json:"headRepositoryOwner"`
 	}
 	if err := json.Unmarshal(out, &prs); err != nil {
 		return nil, fmt.Errorf("gh pr list: parse output: %w", err)
 	}
-	if len(prs) == 0 {
-		return nil, nil
+	owner, _, ok := strings.Cut(repo, "/")
+	if !ok {
+		return nil, fmt.Errorf("gh pr list: repo %q is not owner/repo", repo)
 	}
-	pr := prs[0]
-	return &PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL}, nil
+	for _, pr := range prs {
+		if pr.HeadRepositoryOwner.Login != owner {
+			continue
+		}
+		return &PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL}, nil
+	}
+	return nil, nil
 }
 
 // Create opens a pull request with the fixed input values. Title and
