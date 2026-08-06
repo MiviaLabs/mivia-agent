@@ -77,6 +77,8 @@ type Delivery struct {
 	Base                  string `toml:"base"`
 	TitleTemplate         string `toml:"title_template"`
 	CommitMessageTemplate string `toml:"commit_message_template"`
+	MaxTitleBytes         int    `toml:"max_title_bytes"`
+	MaxCommitMessageBytes int    `toml:"max_commit_message_bytes"`
 }
 
 // DiscoveredWorkflow is the result of discovering a workflow file.
