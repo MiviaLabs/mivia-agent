@@ -342,6 +342,10 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 		if len(parts) == 3 && parts[0] == "steps" && parts[2] == "output" {
 			prior, ok := latestAttempt(attempts, parts[1])
 			if !ok || prior.OutputRef == "" {
+				if binding.Optional {
+					evidence[binding.As] = ""
+					continue
+				}
 				return nil, nil, fmt.Errorf("missing prior output %q", binding.From)
 			}
 			raw, err := c.Repo.LoadContent(ctx, prior.OutputRef)
@@ -421,6 +425,9 @@ func validateBindingLimits(step definition.Step, inputs map[string]any, attempts
 		} else {
 			prior, ok := latestAttempt(attempts, parts[1])
 			if !ok || prior.OutputRef == "" {
+				if binding.Optional {
+					continue
+				}
 				return fmt.Errorf("missing prior output %q", binding.From)
 			}
 			raw, err := repo.LoadContent(ctx, prior.OutputRef)

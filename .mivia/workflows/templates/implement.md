@@ -10,6 +10,13 @@ Use this approved test plan when it is available:
 
 {{ evidence.test_plan }}
 
+Prior review findings (present on repair iterations only):
+
+{{ evidence.review_findings }}
+
+When review findings are present, address each finding before you resubmit. Do not repeat a
+change the reviewer rejected.
+
 Read the relevant source and tests. Edit only files required by the approved scope. Write or
 update tests before or with the implementation. Cover success behavior and negative paths. For
 parsed or decoded untrusted structured input, cover empty, malformed, oversized, and duplicate
@@ -23,7 +30,8 @@ Do not run commands, commit, push, publish, bypass hooks, or read secret-like fi
 evidence gates run commands. If prior host evidence reports a failure, repair the reported issue
 only, preserve approved scope, and request the required evidence again.
 
-Return only the declared structured output. In `summary`, state changed behavior, tests added or
+Return only the declared structured output. List every workspace path you inspected in `inspected`.
+Do not make a claim about source you did not read. In `summary`, state changed behavior, tests added or
 updated, security checks, fuzz decision, requested host gates, and known gaps. Do not claim a
 host check passed unless its result is present in the workflow context. List every changed file in
 `files_changed`.
