@@ -13,7 +13,9 @@
         "required": ["name", "status"],
         "properties": {
           "name": { "type": "string", "minLength": 1 },
-          "status": { "type": "string", "enum": ["passed", "failed", "skipped"] }
+          "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
+          "class": { "type": "string", "enum": ["source", "host"] },
+          "detail": { "type": "string", "maxLength": 16384 }
         }
       }
     }

@@ -88,7 +88,7 @@ func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Reposit
 		ToStepID:     route.ToStepID, TransitionIndex: route.TransitionIndex,
 		MatchDigest: route.MatchDigest, DecisionJSON: append([]byte(nil), route.DecisionJSON...),
 	}
-	if len(result.Output) > 0 && status == workflowledger.AttemptStatusSucceeded {
+	if len(result.Output) > 0 {
 		outcome.OutputDigest = workflowledger.DigestHex(result.Output)
 		outcome.OutputRef = "sha256:" + outcome.OutputDigest
 		if err := repo.StoreContent(ctx, outcome.OutputRef, result.Output); err != nil {

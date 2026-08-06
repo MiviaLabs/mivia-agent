@@ -18,6 +18,7 @@ import (
 type PRRef struct {
 	RemoteID string
 	URL      string
+	Draft    bool
 }
 
 // PRInput is the fixed set of values for PR creation. Values come from
@@ -67,17 +68,17 @@ func ghEnv() []string {
 	return append(env, "GH_PROMPT_DISABLED=1")
 }
 
-// FindByHead lists the PRs whose head branch matches and returns the first
-// PR whose head repository belongs to the target repository's owner. A fork
-// PR with the same branch name must never be reused as this delivery's PR.
-// It returns (nil, nil) when no matching PR exists for the branch.
+// FindByHead lists open PRs whose head branch matches and returns the
+// first PR whose head repository belongs to the target repository's owner. A
+// fork PR with the same branch name must never be reused as this delivery's
+// PR. It returns (nil, nil) when no matching open PR exists.
 func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRef, error) {
 	args := []string{
 		"pr", "list",
 		"--repo", repo,
 		"--head", headBranch,
-		"--state", "all",
-		"--json", "number,url,headRepositoryOwner",
+		"--state", "open",
+		"--json", "number,url,isDraft,headRepositoryOwner",
 	}
 	out, err := runGH(ctx, "pr list", args...)
 	if err != nil {
@@ -86,6 +87,7 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 	var prs []struct {
 		Number              int    `json:"number"`
 		URL                 string `json:"url"`
+		Draft               bool   `json:"isDraft"`
 		HeadRepositoryOwner struct {
 			Login string `json:"login"`
 		} `json:"headRepositoryOwner"`
@@ -101,7 +103,7 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		if pr.HeadRepositoryOwner.Login != owner {
 			continue
 		}
-		return &PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL}, nil
+		return &PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL, Draft: pr.Draft}, nil
 	}
 	return nil, nil
 }

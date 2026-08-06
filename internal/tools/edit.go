@@ -26,6 +26,7 @@ type multiEditTool struct {
 	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
+	writePathDenylist    []string
 }
 
 func (t *multiEditTool) Capability(args json.RawMessage) Capability {
@@ -97,6 +98,9 @@ func (t *multiEditTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", err
 	}
 	rel := t.ws.Rel(abs)
+	if isWriteDeniedPath(rel, t.writePathDenylist) {
+		return "", fmt.Errorf("writing protected path is blocked")
+	}
 	if isSecretPath(rel, t.secretPathExceptions, t.secretPathPatterns) {
 		return "", fmt.Errorf("editing secret-like path is blocked")
 	}

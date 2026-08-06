@@ -416,6 +416,41 @@ func TestBuildWorkflowControllerDependencyFailures(t *testing.T) {
 	runLateWorkflowBuildFailureTests(t, sentinel, reset, call, originalRegistry)
 }
 
+func TestBuildWorkflowControllerConfiguresEvidenceInIsolatedWorktree(t *testing.T) {
+	root, res, store, repo, wf := newWorkflowBuildFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/workflow-test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initWorkflowGitRepo(t, root)
+	writer := `name = "writer"
+description = "workflow test writer"
+tools = ["write_file"]
+max_turns = 1
+`
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "agents", "writer.toml"), []byte(writer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wf.Steps[0].Agent = "writer"
+	wf.Steps = append(wf.Steps,
+		definition.Step{ID: "review", Kind: "agent_gate", Agent: "two", Template: "templates/two.md", OutputSchema: "schemas/out.json"},
+		definition.Step{ID: "verify", Kind: "evidence_gate", Verifier: "go-test", OutputSchema: "schemas/out.json"},
+	)
+	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-evidence-wiring", nil, nil)
+	if err != nil {
+		t.Fatalf("buildWorkflowController() error = %v", err)
+	}
+	t.Cleanup(func() {
+		built.Dispatcher.Close()
+		built.Cleanup()
+	})
+	if _, err := built.Controller.Verifiers.Lookup("go-test"); err != nil {
+		t.Fatalf("controller verifier catalogue = %v", err)
+	}
+	if built.Controller.WorkDir == "" || built.Controller.WorkDir == root {
+		t.Fatalf("controller work directory = %q; want isolated worktree", built.Controller.WorkDir)
+	}
+}
+
 func runEarlyWorkflowBuildFailureTests(t *testing.T, sentinel error, reset func(), call func() error) {
 	t.Helper()
 	check := func(t *testing.T) {

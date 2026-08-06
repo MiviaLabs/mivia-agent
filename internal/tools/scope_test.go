@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 type plainTool struct{ name string }
@@ -71,6 +72,18 @@ func TestScopedRegistry(t *testing.T) {
 	}
 	if gotPriv != priv {
 		t.Fatal("root must preserve privileged tool object identity")
+	}
+}
+
+func TestDefaultRegistryDoesNotDenyWritePaths(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	_, err = registry.Execute(context.Background(), "write_file", json.RawMessage(`{"path":".mivia/mivia.toml","content":"ok"}`))
+	if err != nil {
+		t.Fatalf("default write_file() error = %v", err)
 	}
 }
 

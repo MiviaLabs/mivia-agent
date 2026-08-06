@@ -25,9 +25,13 @@ type Limits struct {
 }
 
 type Step struct {
-	ID           string           `toml:"id"`
-	Kind         string           `toml:"kind"`
-	Agent        string           `toml:"agent"`
+	ID    string `toml:"id"`
+	Kind  string `toml:"kind"`
+	Agent string `toml:"agent"`
+	// Skill binds an agent step to one named, policy-checked skill.
+	// An empty value preserves compatibility with workflows admitted before
+	// explicit workflow skill binding.
+	Skill        string           `toml:"skill"`
 	Verifier     string           `toml:"verifier"`
 	Template     string           `toml:"template"`
 	OutputSchema string           `toml:"output_schema"`

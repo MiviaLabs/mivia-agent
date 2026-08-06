@@ -64,7 +64,7 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 	if runtime.Agent.TimeoutSeconds != nil {
 		timeout = time.Duration(*runtime.Agent.TimeoutSeconds) * time.Second
 	}
-	req := AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: 32 << 10, OutputSchema: runtime.Schema}
+	req := AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, Skill: step.Skill, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: 32 << 10, OutputSchema: runtime.Schema}
 	result, runErr := c.Runner.RunStep(ctx, req)
 	status := workflowledger.AttemptStatusSucceeded
 	if runErr != nil {

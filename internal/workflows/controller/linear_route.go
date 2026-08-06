@@ -46,6 +46,38 @@ func (c *LinearController) selectRoute(ctx context.Context, step definition.Step
 	return route, nil
 }
 
+// selectEvidenceFailureRoute selects an explicit failed transition for an
+// evidence gate. A verifier result can fail a check without an infrastructure
+// error. That result is repairable only when the workflow declares one exact
+// failed transition. Missing or ambiguous transitions fail closed.
+func (c *LinearController) selectEvidenceFailureRoute(ctx context.Context, step definition.Step, output map[string]any) (RouteDecision, error) {
+	decision, err := matcher.Match(step.ID, "failed", output, c.Workflow.Transitions)
+	if err != nil {
+		route := RouteDecision{
+			ToStepID:        failureTarget(step),
+			TransitionIndex: decision.TransitionIndex,
+			MatchDigest:     decision.MatchDigest,
+			DecisionJSON:    append([]byte(nil), decision.DecisionJSON...),
+		}
+		return route, fmt.Errorf("failed evidence transition match failed: %w", err)
+	}
+	route := RouteDecision{
+		ToStepID:        decision.ToStepID,
+		TransitionIndex: decision.TransitionIndex,
+		MatchDigest:     decision.MatchDigest,
+		DecisionJSON:    append([]byte(nil), decision.DecisionJSON...),
+		Loop:            decision.Loop,
+		MaxIterations:   decision.MaxIterations,
+	}
+	if decision.Loop != "" {
+		if err := c.checkLoopCap(ctx, decision.Loop, decision.MaxIterations); err != nil {
+			route.ToStepID = failureTarget(step)
+			return route, err
+		}
+	}
+	return route, nil
+}
+
 func failureRoute(step definition.Step) RouteDecision {
 	return RouteDecision{ToStepID: failureTarget(step), TransitionIndex: -1}
 }

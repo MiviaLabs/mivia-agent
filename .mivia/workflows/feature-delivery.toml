@@ -16,6 +16,7 @@ max_duration_seconds = 10800
 id = "plan"
 kind = "agent"
 agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
 template = "templates/plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [{ from = "inputs.task", as = "task", max_bytes = 12000 }]
@@ -25,7 +26,8 @@ on_failure = "failure"
 id = "plan_review"
 kind = "agent_gate"
 agent = "reviewer"
-template = "templates/review.md"
+skill = "secure-change"
+template = "templates/plan-review.md"
 output_schema = "schemas/review-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
@@ -37,8 +39,9 @@ on_failure = "failure"
 id = "plan_tests"
 kind = "agent"
 agent = "workflow-engineer"
-template = "templates/implement.md"
-output_schema = "schemas/change-summary-v1.json"
+skill = "workflow-feature-delivery"
+template = "templates/plan-tests.md"
+output_schema = "schemas/plan-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
@@ -49,7 +52,8 @@ on_failure = "failure"
 id = "test_plan_review"
 kind = "agent_gate"
 agent = "reviewer"
-template = "templates/review.md"
+skill = "secure-change"
+template = "templates/plan-tests-review.md"
 output_schema = "schemas/review-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
@@ -62,6 +66,7 @@ on_failure = "failure"
 id = "implement"
 kind = "agent"
 agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
 template = "templates/implement.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
@@ -75,33 +80,80 @@ on_failure = "failure"
 id = "review"
 kind = "agent_gate"
 agent = "reviewer"
+skill = "secure-change"
 template = "templates/review.md"
 output_schema = "schemas/review-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
 ]
 on_failure = "failure"
 
 [[steps]]
+id = "repair_tests"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.test_validate.output", as = "failed_evidence", max_bytes = 16000 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "repair_verify"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.verify.output", as = "failed_evidence", max_bytes = 16000 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "repair_final"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.code_validate.output", as = "failed_evidence", max_bytes = 16000 },
+]
+on_failure = "failure"
+
+[[steps]]
 id = "test_validate"
 kind = "evidence_gate"
-verifier = "go-default"
+verifier = "go-test"
 output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
 [[steps]]
 id = "verify"
 kind = "evidence_gate"
-verifier = "go-default"
+verifier = "go-verify"
 output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
 [[steps]]
 id = "code_validate"
 kind = "evidence_gate"
-verifier = "go-default"
+verifier = "go-final"
 output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
@@ -171,17 +223,53 @@ from = "test_validate"
 to = "verify"
 match = { status = "succeeded", output = { status = "passed" } }
 
+[[transitions]]
+from = "test_validate"
+to = "repair_tests"
+match = { status = "failed" }
+loop = "test_repair"
+max_iterations = -1
+
+[[transitions]]
+from = "repair_tests"
+to = "review"
+match = { status = "succeeded" }
+
 # verify → code_validate (verification passed, final validation gate)
 [[transitions]]
 from = "verify"
 to = "code_validate"
 match = { status = "succeeded", output = { status = "passed" } }
 
+[[transitions]]
+from = "verify"
+to = "repair_verify"
+match = { status = "failed" }
+loop = "verify_repair"
+max_iterations = -1
+
+[[transitions]]
+from = "repair_verify"
+to = "review"
+match = { status = "succeeded" }
+
 # code_validate → success (all gates passed)
 [[transitions]]
 from = "code_validate"
 to = "success"
 match = { status = "succeeded", output = { status = "passed" } }
+
+[[transitions]]
+from = "code_validate"
+to = "repair_final"
+match = { status = "failed" }
+loop = "final_repair"
+max_iterations = -1
+
+[[transitions]]
+from = "repair_final"
+to = "review"
+match = { status = "succeeded" }
 
 [delivery]
 kind = "pull_request"

@@ -38,6 +38,32 @@ func TestParseWorkflowTOML_ValidFixture(t *testing.T) {
 	}
 }
 
+func TestParseWorkflowTOML_AgentStepSkill(t *testing.T) {
+	data := []byte(`
+version = 1
+name = "skill-binding"
+initial_step = "plan"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "worker"
+skill = "workflow-delivery"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }
+`)
+	wf, _, err := ParseWorkflowTOML(data, "skill-binding.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wf.Steps[0].Skill; got != "workflow-delivery" {
+		t.Fatalf("skill = %q, want workflow-delivery", got)
+	}
+}
+
 func TestParseWorkflowTOML_UnknownField(t *testing.T) {
 	data, err := os.ReadFile("../testdata/invalid/unknown-field.toml")
 	if err != nil {

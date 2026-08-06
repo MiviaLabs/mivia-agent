@@ -26,21 +26,25 @@ func TestWorkflowAuthorityHelpers(t *testing.T) {
 		t.Fatalf("workflowDefaultRegistry() error = %v", err)
 	}
 	registry := agents.NewRegistry()
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "one", Agent: "missing"}}}
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "one", Kind: "agent", Agent: "missing"}}}
 	if _, err := workflowWriteAuthority(wf, registry, authority, nil); err == nil {
 		t.Fatal("workflowWriteAuthority() error = nil for an unknown agent")
 	}
 	if err := registry.Publish(agents.ResolvedAgent{Name: "reader", EffectiveTools: []string{"read_file"}}); err != nil {
 		t.Fatal(err)
 	}
-	wf.Steps = []definition.Step{{ID: "one", Agent: "reader"}, {ID: "two", Agent: "reader"}}
+	wf.Steps = []definition.Step{
+		{ID: "one", Kind: "agent", Agent: "reader"},
+		{ID: "two", Kind: "agent_gate", Agent: "reader"},
+		{ID: "three", Kind: "evidence_gate", Verifier: "go-test"},
+	}
 	if got, err := workflowWriteAuthority(wf, registry, authority, nil); err != nil || got {
 		t.Fatalf("workflowWriteAuthority() = %v, %v; want false, nil", got, err)
 	}
 	if err := registry.Publish(agents.ResolvedAgent{Name: "writer", EffectiveTools: []string{"write_file"}}); err != nil {
 		t.Fatal(err)
 	}
-	wf.Steps = []definition.Step{{ID: "write", Agent: "writer"}}
+	wf.Steps = []definition.Step{{ID: "write", Kind: "agent", Agent: "writer"}}
 	if got, err := workflowWriteAuthority(wf, registry, authority, nil); err != nil || !got {
 		t.Fatalf("workflowWriteAuthority() = %v, %v; want true, nil", got, err)
 	}
@@ -335,9 +339,9 @@ func TestLoadWorkflowReferencesRejectsInvalidFiles(t *testing.T) {
 }
 
 func TestWorkflowRuntimeAndWorkspaceErrors(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "gate", Kind: "human_gate"}}}
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "gate", Kind: "unsupported"}}}
 	if _, _, err := loadWorkflowRuntimes(t.TempDir(), "", wf, agents.NewRegistry(), nil); err == nil {
-		t.Fatal("loadWorkflowRuntimes() accepted a non-agent step")
+		t.Fatal("loadWorkflowRuntimes() accepted an unsupported step")
 	}
 	wf.Steps[0] = definition.Step{ID: "one", Kind: "agent", Agent: "missing"}
 	if _, _, err := loadWorkflowRuntimes(t.TempDir(), "", wf, agents.NewRegistry(), nil); err == nil {
@@ -361,5 +365,45 @@ func TestWorkflowRuntimeAndWorkspaceErrors(t *testing.T) {
 	}
 	if _, _, err := selectWorkflowWorkspace(context.Background(), root, strings.Repeat("x", 300), true, nil); err == nil {
 		t.Fatal("selectWorkflowWorkspace() accepted an invalid run ID")
+	}
+}
+
+func TestLoadWorkflowRuntimesAcceptsAgentAndHostSteps(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, ".mivia", "workflows")
+	if err := os.MkdirAll(filepath.Join(base, "templates"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "schemas"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "templates", "agent.md"), []byte("agent"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "schemas", "result.json"), []byte(`{"type":"object"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry := agents.NewRegistry()
+	if err := registry.Publish(agents.ResolvedAgent{Name: "worker", EffectiveTools: []string{"read_file"}}); err != nil {
+		t.Fatal(err)
+	}
+	wf := &compiler.CompiledWorkflow{
+		Digest: "digest",
+		Steps: []definition.Step{
+			{ID: "agent", Kind: "agent", Agent: "worker", Template: "templates/agent.md", OutputSchema: "schemas/result.json"},
+			{ID: "review", Kind: "agent_gate", Agent: "worker", Template: "templates/agent.md", OutputSchema: "schemas/result.json"},
+			{ID: "verify", Kind: "evidence_gate", Verifier: "go-test", OutputSchema: "schemas/result.json"},
+			{ID: "approval", Kind: "human_gate"},
+		},
+	}
+	runtimes, snapshot, err := loadWorkflowRuntimes(root, base, wf, registry, nil)
+	if err != nil {
+		t.Fatalf("loadWorkflowRuntimes() error = %v", err)
+	}
+	if len(runtimes) != 2 || runtimes["agent"].Agent.Name != "worker" || runtimes["review"].Agent.Name != "worker" {
+		t.Fatalf("runtimes = %+v; want agent runtimes only", runtimes)
+	}
+	if _, ok := snapshot.Schemas["schemas/result.json"]; !ok {
+		t.Fatal("snapshot does not retain the evidence-gate schema")
 	}
 }

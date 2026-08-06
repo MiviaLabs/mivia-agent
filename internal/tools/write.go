@@ -19,6 +19,7 @@ type writeFileTool struct {
 	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
+	writePathDenylist    []string
 }
 
 func (t *writeFileTool) Capability(args json.RawMessage) Capability {
@@ -77,7 +78,11 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err != nil {
 		return "", err
 	}
-	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
+	rel := t.ws.Rel(abs)
+	if isWriteDeniedPath(rel, t.writePathDenylist) {
+		return "", fmt.Errorf("writing protected path is blocked")
+	}
+	if isSecretPath(rel, t.secretPathExceptions, t.secretPathPatterns) {
 		return "", fmt.Errorf("writing secret-like path is blocked")
 	}
 	// Enforce max write size at runtime to prevent agent from writing oversized files.
@@ -122,7 +127,6 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := writeRegularFileContents(abs, in.Content); err != nil {
 		return "", err
 	}
-	rel := t.ws.Rel(abs)
 	newLines := countLines(in.Content)
 	if !existed {
 		return fmt.Sprintf("wrote %s (%d bytes, create +%d)", rel, len(in.Content), newLines), nil
@@ -170,6 +174,7 @@ type searchReplaceTool struct {
 	maxBytes             int
 	secretPathExceptions []string
 	secretPathPatterns   []string
+	writePathDenylist    []string
 }
 
 func (t *searchReplaceTool) Capability(args json.RawMessage) Capability {
@@ -227,7 +232,11 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	if err != nil {
 		return "", err
 	}
-	if isSecretPath(t.ws.Rel(abs), t.secretPathExceptions, t.secretPathPatterns) {
+	rel := t.ws.Rel(abs)
+	if isWriteDeniedPath(rel, t.writePathDenylist) {
+		return "", fmt.Errorf("writing protected path is blocked")
+	}
+	if isSecretPath(rel, t.secretPathExceptions, t.secretPathPatterns) {
 		return "", fmt.Errorf("editing secret-like path is blocked")
 	}
 	st, err := requireRegularFile(abs)

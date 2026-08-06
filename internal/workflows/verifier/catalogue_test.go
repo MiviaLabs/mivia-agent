@@ -3,22 +3,33 @@ package verifier
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 )
 
-func TestDefaultCatalogueRegistersGoDefault(t *testing.T) {
+func TestDefaultCatalogueRegistersFixedGoProfiles(t *testing.T) {
 	c := DefaultCatalogue()
-	p, err := c.Lookup(GoDefaultName)
-	if err != nil {
-		t.Fatal(err)
+	wantNames := []string{GoFinalName, GoTestName, GoVerifyName}
+	gotNames := c.Names()
+	sort.Strings(gotNames)
+	if !reflect.DeepEqual(gotNames, wantNames) {
+		t.Fatalf("names = %#v, want %#v", gotNames, wantNames)
 	}
-	if p.Name() != GoDefaultName {
-		t.Fatalf("name = %q", p.Name())
+	for _, name := range wantNames {
+		p, err := c.Lookup(name)
+		if err != nil {
+			t.Fatalf("lookup %q: %v", name, err)
+		}
+		if p.Name() != name {
+			t.Fatalf("name = %q, want %q", p.Name(), name)
+		}
 	}
 }
 
@@ -31,6 +42,79 @@ func TestLookupUnknownFailsClosed(t *testing.T) {
 	_, err = c.Lookup("")
 	if err == nil {
 		t.Fatal("empty name accepted")
+	}
+}
+
+func TestDefaultGoProfilesUseFixedHostCommands(t *testing.T) {
+	want := map[string][]commandSpec{
+		GoTestName: {
+			{check: "go-test", program: "go", args: []string{"test", "./..."}},
+		},
+		GoVerifyName: {
+			{check: "go-vet", program: "go", args: []string{"vet", "./..."}},
+			{check: "go-build", program: "go", args: []string{"build", "./cmd/mivia"}},
+		},
+		GoFinalName: {
+			{check: "go-test-race", program: "go", args: []string{"test", "-race", "./..."}},
+		},
+	}
+	for _, profile := range defaultGoProfiles() {
+		goProfile, ok := profile.(*goProfile)
+		if !ok {
+			t.Fatalf("profile %q type = %T", profile.Name(), profile)
+		}
+		if !reflect.DeepEqual(goProfile.commands, want[goProfile.name]) {
+			t.Fatalf("commands for %q = %#v, want %#v", goProfile.name, goProfile.commands, want[goProfile.name])
+		}
+	}
+}
+
+func TestGoProfileReportsEveryCommandResult(t *testing.T) {
+	workDir := t.TempDir()
+	var calls []string
+	profile := newGoProfile(GoVerifyName, []commandSpec{
+		{check: "go-vet", program: "go", args: []string{"vet", "./..."}},
+		{check: "go-build", program: "go", args: []string{"build", "./cmd/mivia"}},
+	}, func(_ context.Context, gotDir, program string, args ...string) error {
+		if gotDir != workDir {
+			t.Fatalf("work dir = %q, want %q", gotDir, workDir)
+		}
+		calls = append(calls, program+" "+strings.Join(args, " "))
+		if program == "go" && len(args) > 0 && args[0] == "vet" {
+			return errors.New("test failure")
+		}
+		return nil
+	})
+
+	result, err := profile.Verify(context.Background(), Request{WorkDir: workDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("status = %q", result.Status)
+	}
+	if want := []string{"go vet ./...", "go build ./cmd/mivia"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	if want := []Check{{Name: "go-vet", Status: "failed", Class: "source", Detail: "host verifier command failed"}, {Name: "go-build", Status: "passed"}}; !reflect.DeepEqual(result.Checks, want) {
+		t.Fatalf("checks = %#v, want %#v", result.Checks, want)
+	}
+}
+
+func TestGoProfileStopsOnCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	profile := newGoProfile(GoTestName, []commandSpec{{check: "go-test", program: "go", args: []string{"test", "./..."}}}, func(context.Context, string, string, ...string) error {
+		called = true
+		return nil
+	})
+	_, err := profile.Verify(ctx, Request{WorkDir: t.TempDir()})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if called {
+		t.Fatal("runner was called after context cancellation")
 	}
 }
 

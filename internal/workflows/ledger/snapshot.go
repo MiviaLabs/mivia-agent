@@ -45,6 +45,7 @@ type Snapshot struct {
 	Agents           map[string]AgentSnapshot `json:"agents,omitempty"`
 	Schemas          map[string]RefSnapshot   `json:"schemas,omitempty"`
 	Templates        map[string]RefSnapshot   `json:"templates,omitempty"`
+	Skills           map[string]RefSnapshot   `json:"skills,omitempty"`
 	Verifiers        map[string]RefSnapshot   `json:"verifiers,omitempty"`
 	Delivery         *DeliverySnapshot        `json:"delivery,omitempty"`
 }

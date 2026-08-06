@@ -216,6 +216,28 @@ func TestLinearControllerRetriesOnlyInterruptedAttempt(t *testing.T) {
 	}
 }
 
+func TestLinearControllerPropagatesStepSkill(t *testing.T) {
+	wf := linearWorkflow(t)
+	wf.Steps[0].Skill = "workflow-delivery"
+	repo := workflowledger.NewMemoryRepository()
+	runner := &linearRunner{outputs: map[string]json.RawMessage{"first": json.RawMessage(`{"ok":true}`)}}
+	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
+		"first": {Agent: agents.ResolvedAgent{Name: "one"}},
+	}, map[string]any{"task": "build"}, "wfr-step-skill", []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ctrl.Advance(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 1 || runner.calls[0].Skill != "workflow-delivery" {
+		t.Fatalf("step request = %+v, want workflow-delivery skill", runner.calls)
+	}
+}
+
 type blockingIdentityRunner struct {
 	started chan AgentStepRequest
 	release chan struct{}

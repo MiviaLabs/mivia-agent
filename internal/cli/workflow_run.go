@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,17 +9,19 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -263,76 +264,153 @@ type workflowControllerBuild struct {
 }
 
 func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, recorded *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
-	skills, err := workflowBuildLoadSkills(root)
+	setup, err := prepareWorkflowBuild(root, res, wf, runID, recorded)
 	if err != nil {
 		return workflowControllerBuild{}, err
+	}
+	dispatcher, opts, legacy, err := newWorkflowDispatcher(res, store, setup)
+	if err != nil {
+		setup.cleanup()
+		return workflowControllerBuild{}, err
+	}
+	runtime, baseline, err := prepareWorkflowBuildRuntime(root, refBase, wf, inputSnapshot, definitionTOML, prior, setup, opts)
+	if err != nil {
+		dispatcher.Close()
+		setup.cleanup()
+		return workflowControllerBuild{}, err
+	}
+	ctrl, err := newWorkflowController(repo, dispatcher, legacy, res, wf, inputs, runID, runtime, setup.identity, baseline)
+	if err != nil {
+		dispatcher.Close()
+		setup.cleanup()
+		return workflowControllerBuild{}, err
+	}
+	return workflowControllerBuild{Controller: ctrl, Dispatcher: dispatcher, Admission: workflowAdmission(setup, inputSnapshot, recorded), Cleanup: setup.cleanup}, nil
+}
+
+type workflowBuildSetup struct {
+	skills    *skills.Registry
+	loaded    agentLoadResult
+	authority *tools.Registry
+	identity  workflowspace.Identity
+	cleanup   func()
+	remoteURL string
+}
+
+func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.CompiledWorkflow, runID string, recorded *workflowledger.RunSnapshot) (workflowBuildSetup, error) {
+	skills, err := workflowBuildLoadSkills(root)
+	if err != nil {
+		return workflowBuildSetup{}, err
 	}
 	loaded, err := workflowBuildLoadAgents(root, "", skills)
 	if err != nil {
-		return workflowControllerBuild{}, err
+		return workflowBuildSetup{}, err
+	}
+	if err := compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skills); err != nil {
+		return workflowBuildSetup{}, err
 	}
 	authority, err := workflowBuildRegistry(root, res)
 	if err != nil {
-		return workflowControllerBuild{}, err
+		return workflowBuildSetup{}, err
 	}
 	writeCapable, err := workflowWriteAuthority(wf, loaded.Registry, authority, loaded.Global.MandatoryToolDenylistAdditions)
 	if err != nil {
-		return workflowControllerBuild{}, err
+		return workflowBuildSetup{}, err
 	}
 	identity, cleanup, err := workflowBuildWorkspace(context.Background(), root, runID, writeCapable, recorded)
 	if err != nil {
-		return workflowControllerBuild{}, err
+		return workflowBuildSetup{}, err
 	}
 	authority, err = workflowBuildRegistry(identity.Root, res)
 	if err != nil {
 		cleanup()
-		return workflowControllerBuild{}, err
+		return workflowBuildSetup{}, err
 	}
-	admissionRemoteURL := ""
-	if recorded == nil && deliveryRequiresPublication(wf) {
-		remoteURL, err := workflowDeliveryAdmission(wf, identity, writeCapable)
-		if err != nil {
-			cleanup()
-			return workflowControllerBuild{}, err
-		}
-		admissionRemoteURL = remoteURL
+	remoteURL, err := workflowBuildRemoteURL(wf, identity, writeCapable, recorded)
+	if err != nil {
+		cleanup()
+		return workflowBuildSetup{}, err
 	}
+	return workflowBuildSetup{skills: skills, loaded: loaded, authority: authority, identity: identity, cleanup: cleanup, remoteURL: remoteURL}, nil
+}
+
+func workflowBuildRemoteURL(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, recorded *workflowledger.RunSnapshot) (string, error) {
+	if recorded != nil || !deliveryRequiresPublication(wf) {
+		return "", nil
+	}
+	return workflowDeliveryAdmission(wf, identity, writeCapable)
+}
+
+func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup workflowBuildSetup) (*runtime.Dispatcher, SessionDispatcherOpts, ledger.LedgerRepository, error) {
 	comp, err := workflowBuildProvider(res)
 	if err != nil {
-		cleanup()
-		return workflowControllerBuild{}, err
+		return nil, SessionDispatcherOpts{}, nil, err
 	}
-	reg := authority
 	legacy := ledger.NewStorageLedgerRepository(store)
-	dispatcherOpts := SessionDispatcherOpts{Registry: reg, AuthorityRegistry: reg, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, ModelCatalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res), Config: res.Subagents, Repo: legacy, SharedSQLite: store, SkillReg: skills, AgentRegistry: loaded.Registry, WorkspaceRoot: identity.Root}
-	dispatcher, err := workflowBuildDispatcher(dispatcherOpts)
+	opts := SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, ModelCatalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res), Config: res.Subagents, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root}
+	dispatcher, err := workflowBuildDispatcher(opts)
 	if err != nil {
-		cleanup()
-		return workflowControllerBuild{}, err
+		return nil, SessionDispatcherOpts{}, nil, err
 	}
-	runtime, err := prepareWorkflowRuntime(root, refBase, wf, loaded.Registry, prior, definitionTOML, inputSnapshot, dispatcherOpts)
+	return dispatcher, opts, legacy, nil
+}
+
+func prepareWorkflowBuildRuntime(root, refBase string, wf *compiler.CompiledWorkflow, inputs map[string]string, definition []byte, prior *workflowledger.Snapshot, setup workflowBuildSetup, opts SessionDispatcherOpts) (preparedWorkflowRuntime, *verifier.GoModuleBaseline, error) {
+	runtime, err := prepareWorkflowRuntime(root, refBase, wf, setup.loaded.Registry, prior, definition, inputs, opts)
 	if err != nil {
-		dispatcher.Close()
-		cleanup()
-		return workflowControllerBuild{}, err
+		return preparedWorkflowRuntime{}, nil, err
 	}
+	if err := verifyWorkflowSkillSnapshot(wf, setup.skills, prior); err != nil {
+		return preparedWorkflowRuntime{}, nil, err
+	}
+	if prior == nil {
+		runtime.Snapshot, err = pinWorkflowSkills(runtime.Snapshot, wf, setup.skills)
+		if err != nil {
+			return preparedWorkflowRuntime{}, nil, err
+		}
+	}
+	if err := installWorkflowSkillSnapshots(opts.WorkflowSkillSnapshots, runtime.Snapshot); err != nil {
+		return preparedWorkflowRuntime{}, nil, err
+	}
+	baseline, err := workflowModuleBaseline(wf, setup.identity.Root, prior)
+	if err != nil {
+		return preparedWorkflowRuntime{}, nil, err
+	}
+	if baseline != nil && prior == nil {
+		runtime.Snapshot, err = pinWorkflowModuleBaseline(runtime.Snapshot, baseline)
+		if err != nil {
+			return preparedWorkflowRuntime{}, nil, err
+		}
+	}
+	return runtime, baseline, nil
+}
+
+func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.Dispatcher, legacy ledger.LedgerRepository, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]any, runID string, runtime preparedWorkflowRuntime, identity workflowspace.Identity, baseline *verifier.GoModuleBaseline) (*controller.LinearController, error) {
 	coord := initCoordinator(dispatcher, res.Subagents, legacy)
 	ctrl, err := workflowBuildController(repo, controller.NewCoordinatorRunner(coord), wf, runtime.Steps, inputs, runID, runtime.Snapshot)
 	if err != nil {
-		dispatcher.Close()
-		cleanup()
-		return workflowControllerBuild{}, err
+		return nil, err
 	}
-	admission := controller.Admission{
-		BaseRef: identity.BaseRef, BaseCommit: identity.BaseCommit, WorktreeName: identity.WorktreeName,
-		InputDigest: workflowledger.InputDigest(inputSnapshot), RemoteURL: admissionRemoteURL,
+	if err := ctrl.SetVerifiers(verifier.DefaultCatalogue()); err != nil {
+		return nil, err
 	}
+	if err := ctrl.SetWorkDir(identity.Root); err != nil {
+		return nil, err
+	}
+	if baseline != nil {
+		if err := ctrl.SetModuleBaseline(baseline); err != nil {
+			return nil, err
+		}
+	}
+	return ctrl, nil
+}
+
+func workflowAdmission(setup workflowBuildSetup, inputs map[string]string, recorded *workflowledger.RunSnapshot) controller.Admission {
+	admission := controller.Admission{BaseRef: setup.identity.BaseRef, BaseCommit: setup.identity.BaseCommit, WorktreeName: setup.identity.WorktreeName, InputDigest: workflowledger.InputDigest(inputs), RemoteURL: setup.remoteURL}
 	if recorded != nil {
-		admission.InputDigest = recorded.InputDigest
-		admission.DeadlineAt = recorded.DeadlineAt
-		admission.RemoteURL = recorded.RemoteURL
+		admission.InputDigest, admission.DeadlineAt, admission.RemoteURL = recorded.InputDigest, recorded.DeadlineAt, recorded.RemoteURL
 	}
-	return workflowControllerBuild{Controller: ctrl, Dispatcher: dispatcher, Admission: admission, Cleanup: cleanup}, nil
+	return admission
 }
 
 // workflowDeliveryAdmission verifies that a fresh delivery-required run can
@@ -395,87 +473,4 @@ func parseWorkflowBoolFlag(args []string, name string) (bool, []string, error) {
 // must publish a pull request when the run settles at its success terminal.
 func deliveryRequiresPublication(wf *compiler.CompiledWorkflow) bool {
 	return wf.DeliveryActive()
-}
-
-func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot) (map[string]controller.StepRuntime, workflowledger.Snapshot, error) {
-	if base == "" {
-		base = filepath.Join(root, ".mivia", "workflows")
-	}
-	result := make(map[string]controller.StepRuntime)
-	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionDigest: wf.Digest, Agents: map[string]workflowledger.AgentSnapshot{}, Schemas: map[string]workflowledger.RefSnapshot{}, Templates: map[string]workflowledger.RefSnapshot{}}
-	for _, step := range wf.Steps {
-		if step.Kind != "agent" {
-			return nil, snapshot, fmt.Errorf("phase 3 supports agent steps only; step %q is %q", step.ID, step.Kind)
-		}
-		agent, ok := registry.Get(step.Agent)
-		if !ok {
-			return nil, snapshot, fmt.Errorf("workflow step %q references unknown agent %q", step.ID, step.Agent)
-		}
-		digest, err := agent.DefinitionDigest()
-		if err != nil {
-			return nil, snapshot, err
-		}
-		if prior != nil {
-			pinned, ok := prior.Agents[agent.Name]
-			if !ok || pinned.Digest != digest {
-				return nil, snapshot, fmt.Errorf("agent %q changed since workflow admission", agent.Name)
-			}
-		}
-		tmpl, schema, tmplBytes, schemaBytes, err := loadStepReferences(base, step, prior)
-		if err != nil {
-			return nil, snapshot, err
-		}
-		result[step.ID] = controller.StepRuntime{Agent: agent, Digest: digest, Template: tmpl, Schema: schema}
-		snapshot.Agents[agent.Name] = workflowledger.AgentSnapshot{Digest: digest}
-		if step.Template != "" {
-			snapshot.Templates[step.Template] = workflowledger.RefSnapshot{Digest: digestBytes(tmplBytes), Bytes: append([]byte(nil), tmplBytes...)}
-		}
-		if step.OutputSchema != "" {
-			snapshot.Schemas[step.OutputSchema] = workflowledger.RefSnapshot{Digest: digestBytes(schemaBytes), Bytes: append([]byte(nil), schemaBytes...)}
-		}
-	}
-	if prior == nil && wf.DeliveryActive() {
-		snapshot.Delivery = &workflowledger.DeliverySnapshot{
-			Mode: wf.Delivery.Mode, Provider: wf.Delivery.Provider, Base: wf.Delivery.Base,
-		}
-	}
-	return result, snapshot, nil
-}
-
-func loadStepReferences(base string, step definition.Step, prior *workflowledger.Snapshot) (string, map[string]any, []byte, []byte, error) {
-	if prior != nil {
-		t := prior.Templates[step.Template]
-		s := prior.Schemas[step.OutputSchema]
-		if step.Template != "" && (t.Digest == "" || digestBytes(t.Bytes) != t.Digest) {
-			return "", nil, nil, nil, fmt.Errorf("snapshot template %q digest is invalid", step.Template)
-		}
-		if step.OutputSchema != "" && (s.Digest == "" || digestBytes(s.Bytes) != s.Digest) {
-			return "", nil, nil, nil, fmt.Errorf("snapshot schema %q digest is invalid", step.OutputSchema)
-		}
-		var schema map[string]any
-		if len(s.Bytes) > 0 && json.Unmarshal(s.Bytes, &schema) != nil {
-			return "", nil, nil, nil, fmt.Errorf("snapshot schema %q is invalid", step.OutputSchema)
-		}
-		return string(t.Bytes), schema, t.Bytes, s.Bytes, nil
-	}
-	var templateBytes []byte
-	var err error
-	if step.Template != "" {
-		templateBytes, err = readWorkflowRef(base, step.Template, template.MaxTemplateBytes)
-		if err != nil {
-			return "", nil, nil, nil, err
-		}
-	}
-	var schema map[string]any
-	if step.OutputSchema != "" {
-		data, err := readWorkflowRef(base, step.OutputSchema, definition.MaxWorkflowFileBytes)
-		if err != nil {
-			return "", nil, nil, nil, err
-		}
-		if err := json.Unmarshal(data, &schema); err != nil {
-			return "", nil, nil, nil, fmt.Errorf("schema %q is invalid: %w", step.OutputSchema, err)
-		}
-		return string(templateBytes), schema, templateBytes, data, nil
-	}
-	return string(templateBytes), schema, templateBytes, nil, nil
 }

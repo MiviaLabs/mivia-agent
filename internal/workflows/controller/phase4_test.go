@@ -192,6 +192,177 @@ func TestEvidenceGateGoDefaultAndUnknownFailsClosed(t *testing.T) {
 	}
 }
 
+type fixedVerifierProfile struct {
+	name   string
+	result verifier.Result
+	err    error
+}
+
+func (p fixedVerifierProfile) Name() string { return p.name }
+
+func (p fixedVerifierProfile) Verify(context.Context, verifier.Request) (verifier.Result, error) {
+	return p.result, p.err
+}
+
+func TestEvidenceGateReadmitsFailedAttemptAfterRepairRoute(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	ctrl := &LinearController{Repo: repo, RunID: "wfr-readmit", Workflow: &compiler.CompiledWorkflow{}}
+	if err := repo.CreateRun(context.Background(), workflowledger.RunSnapshot{RunID: ctrl.RunID, WorkflowName: "test", WorkflowDigest: "digest", ActiveStepID: "verify", Status: workflowledger.RunStatusPending}, []byte("snapshot")); err != nil {
+		t.Fatal(err)
+	}
+	prior := workflowledger.StepAttempt{AttemptID: "wfa-verify-1", RunID: ctrl.RunID, StepID: "verify", AttemptNo: 1, Status: workflowledger.AttemptStatusFailed, ToStepID: "repair"}
+	if err := repo.CreateStepAttempt(context.Background(), prior); err != nil {
+		t.Fatal(err)
+	}
+	attempt, ok, err := ctrl.admitAttempt(context.Background(), workflowledger.RunSnapshot{}, "verify", []workflowledger.StepAttempt{prior})
+	if err != nil || !ok || attempt.AttemptNo != 2 {
+		t.Fatalf("admitAttempt() = %+v, %t, %v; want attempt 2", attempt, ok, err)
+	}
+}
+
+func TestEvidenceGateFailureRoutesToRepairWithPersistedResult(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "evidence-repair", InitialStep: "verify",
+		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits: definition.Limits{MaxStepAttempts: 4},
+		Steps: []definition.Step{
+			{ID: "verify", Kind: "evidence_gate", Verifier: "failing-check", OnFailure: "failure"},
+			{ID: "repair", Kind: "agent", Agent: "dev", Context: []definition.ContextBinding{{From: "steps.verify.output", As: "verification"}}},
+		},
+		Transitions: []definition.Transition{
+			{From: "verify", To: "repair", Match: definition.MatchCriteria{Status: "failed"}},
+			{From: "repair", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+		},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := verifier.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{
+		name:   "failing-check",
+		result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "go test ./...", Status: "failed"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"repair#1": json.RawMessage(`{"summary":"fixed"}`),
+	}}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, runner, compiled, map[string]StepRuntime{
+		"repair": {Agent: agents.ResolvedAgent{Name: "dev"}},
+	}, map[string]any{"task": "x"}, "wfr-evidence-repair", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetVerifiers(cat); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctrl.Run(context.Background())
+	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run = %+v err=%v", got, err)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify, ok := latestAttempt(attempts, "verify")
+	if !ok || verify.Status != workflowledger.AttemptStatusFailed || verify.ToStepID != "repair" || verify.OutputRef == "" {
+		t.Fatalf("verify attempt = %+v", verify)
+	}
+	raw, err := repo.LoadContent(context.Background(), verify.OutputRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"go test ./..."`) || !strings.Contains(string(raw), `"failed"`) {
+		t.Fatalf("failure evidence = %s", raw)
+	}
+	if len(runner.calls) != 1 || runner.calls[0].StepID != "repair" {
+		t.Fatalf("repair calls = %+v", runner.calls)
+	}
+	if got := runner.calls[0].Evidence["verification"]; got == nil {
+		t.Fatal("repair did not receive failure evidence")
+	}
+}
+
+func TestEvidenceGateHostFailureDoesNotRouteToRepair(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "evidence-host-failure", InitialStep: "verify",
+		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits: definition.Limits{MaxStepAttempts: 4},
+		Steps: []definition.Step{
+			{ID: "verify", Kind: "evidence_gate", Verifier: "host-failure", OnFailure: "failure"},
+			{ID: "repair", Kind: "agent", Agent: "dev"},
+		},
+		Transitions: []definition.Transition{
+			{From: "verify", To: "repair", Match: definition.MatchCriteria{Status: "failed"}},
+			{From: "repair", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+		},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := verifier.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "host-failure", result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "sandbox unavailable"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{"repair#1": json.RawMessage(`{"summary":"must not run"}`)}}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, runner, compiled, map[string]StepRuntime{"repair": {Agent: agents.ResolvedAgent{Name: "dev"}}}, map[string]any{"task": "x"}, "wfr-evidence-host-failure", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetVerifiers(cat); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctrl.Run(context.Background())
+	if err == nil || got.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("run = %+v err=%v", got, err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("host failure routed to repair: %+v", runner.calls)
+	}
+}
+
+func TestEvidenceGateFailureWithoutTransitionFailsClosed(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "evidence-no-repair", InitialStep: "verify",
+		Inputs:      map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits:      definition.Limits{MaxStepAttempts: 4},
+		Steps:       []definition.Step{{ID: "verify", Kind: "evidence_gate", Verifier: "failing-check", OnFailure: "failure"}},
+		Transitions: []definition.Transition{{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}}},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := verifier.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "failing-check", result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "go test ./...", Status: "failed"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, &linearRunner{}, compiled, nil, map[string]any{"task": "x"}, "wfr-evidence-no-repair", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetVerifiers(cat); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctrl.Run(context.Background())
+	if err == nil || got.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("run = %+v err=%v", got, err)
+	}
+	attempts, listErr := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	verify, ok := latestAttempt(attempts, "verify")
+	if !ok || verify.Status != workflowledger.AttemptStatusFailed || verify.ToStepID != "failure" || verify.OutputRef == "" {
+		t.Fatalf("verify attempt = %+v", verify)
+	}
+}
+
 func TestHumanGateWaitingApprovalAndApproveReject(t *testing.T) {
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "human", InitialStep: "approve_me",
