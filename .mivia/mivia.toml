@@ -149,7 +149,7 @@ run_allowlist = [
     # Go ecosystem
     "go", "gofmt", "goimports", "govulncheck",
     # Build & VCS
-    "make", "cmake", "ninja", "git",
+    "make", "cmake", "ninja", "git", "gh",
     # Shell / scripting
     "sh", "bash", "dash",
     # JavaScript / TypeScript
