@@ -107,7 +107,7 @@ func sandboxArgs(workRoot, modulesRoot, homeRoot, program string, args ...string
 		"--ro-bind", "/lib64", "/lib64",
 		"--bind", workRoot, sandboxWorkDir,
 		"--ro-bind", modulesRoot, sandboxModules,
-		"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--ro-bind", homeRoot, "/home/sandbox",
+		"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home", "--ro-bind", homeRoot, "/home/sandbox",
 		"--chdir", sandboxWorkDir,
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "HOME", "/home/sandbox",

@@ -96,6 +96,35 @@ func TestSandboxModuleCopyAllowsNonCredentialTokenNames(t *testing.T) {
 	}
 }
 
+func TestProvisionModuleCacheForRepositoryModule(t *testing.T) {
+	root := sandboxRepositoryRoot(t)
+	baseline, err := CaptureGoModuleBaseline(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provisionModuleCache(root, t.TempDir(), baseline); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sandboxRepositoryRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("repository go.mod is missing")
+		}
+		dir = parent
+	}
+}
+
 func TestGoProfileReportsHostFailureWithoutRepairEvidence(t *testing.T) {
 	original := sandboxBubblewrapPath
 	sandboxBubblewrapPath = func() (string, error) { return "", os.ErrNotExist }
@@ -143,5 +172,8 @@ func TestSandboxDisablesGoWorkspaceMode(t *testing.T) {
 	joined := strings.Join(args, "\x00")
 	if !strings.Contains(joined, "GOWORK\x00off") {
 		t.Fatalf("sandbox arguments do not disable Go workspace mode: %q", joined)
+	}
+	if !strings.Contains(joined, "--tmpfs\x00/home\x00--ro-bind\x00/tmp/home\x00/home/sandbox") {
+		t.Fatalf("sandbox arguments do not create the isolated home parent: %q", joined)
 	}
 }
