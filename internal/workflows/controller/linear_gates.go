@@ -104,7 +104,10 @@ func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflo
 	// completeSucceededRoute. Without this call, checkLoopCap always reads
 	// zero for evidence-gate repair routes and a finite max_iterations cap is
 	// a no-op.
-	_ = c.recordLoopAfterComplete(writeCtx, route)
+	if err := c.recordLoopAfterComplete(writeCtx, route); err != nil {
+		// Loop counter write failed (e.g. abandon fence) but the route is
+		// durable; under-count and continue rather than fail the run.
+	}
 	return settleAfterRoute(ctx, c, run, route)
 }
 

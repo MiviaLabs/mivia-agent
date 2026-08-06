@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -130,7 +131,7 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 	if len(attempt.EvidenceJSON) > 0 {
 		var evidence any
 		if err := json.Unmarshal(attempt.EvidenceJSON, &evidence); err == nil {
-			view.EvidenceSelection = evidence
+			view.EvidenceSelection = redact.JSONValue(evidence)
 		}
 	}
 	if attempt.ToStepID != "" || attempt.MatchDigest != "" || len(attempt.DecisionJSON) > 0 {
@@ -143,9 +144,9 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 			var decision map[string]any
 			if err := json.Unmarshal(attempt.DecisionJSON, &decision); err == nil {
 				if selected, ok := decision["selected"].(map[string]any); ok {
-					tv.Selected = selected
+					tv.Selected, _ = redact.JSONValue(selected).(map[string]any)
 				} else {
-					tv.Selected = decision
+					tv.Selected, _ = redact.JSONValue(decision).(map[string]any)
 				}
 			}
 		}
@@ -159,11 +160,9 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 		if err == nil && len(data) > 0 {
 			var output any
 			if json.Unmarshal(data, &output) == nil {
-				view.Output = output
+				view.Output = redact.JSONValue(output)
 			} else {
-				// Non-JSON output is returned as a string; raw prompts stay out
-				// by construction (attempt outputs are schema-validated JSON).
-				view.Output = string(data)
+				view.Output = redact.Text(string(data))
 			}
 		}
 	}
