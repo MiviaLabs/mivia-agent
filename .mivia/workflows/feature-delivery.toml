@@ -15,7 +15,7 @@ max_duration_seconds = 10800
 [[steps]]
 id = "plan"
 kind = "agent"
-agent = "planner"
+agent = "go-engineer"
 template = "templates/plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [{ from = "inputs.task", as = "task", max_bytes = 12000 }]
