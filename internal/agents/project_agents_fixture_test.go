@@ -34,15 +34,16 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantNames := map[string]bool{
-		"auditor":     true,
-		"docs":        true,
-		"go-engineer": true,
-		"mivia":       true,
-		"performance": true,
-		"researcher":  true,
-		"reviewer":    true,
-		"security":    true,
-		"verifier":    true,
+		"auditor":           true,
+		"docs":              true,
+		"go-engineer":       true,
+		"mivia":             true,
+		"performance":       true,
+		"researcher":        true,
+		"reviewer":          true,
+		"security":          true,
+		"verifier":          true,
+		"workflow-engineer": true,
 	}
 	var inputs []ResolveInput
 	seen := make(map[string]bool, len(entries))
