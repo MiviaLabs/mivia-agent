@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const workflowExecutionLockDir = ".mivia-workflow-locks"
@@ -34,6 +35,27 @@ func beginWorkflowExecution(workspaceRoot, storePath, runID string) (func(), err
 		uninstall()
 		release()
 	}, nil
+}
+
+// acquireWorkflowExecutionLockBounded acquires the execution lock with a
+// bounded wait for a concurrent holder (a settling controller) to release it.
+// Cancel and deliver use it because the non-blocking admission lock fails
+// with an opaque "lock is busy" error while the in-process controller is
+// still releasing the flock after the cancel wait bound.
+func acquireWorkflowExecutionLockBounded(storePath, runID string, maxWait time.Duration) (func(), error) {
+	deadline := time.Now().Add(maxWait)
+	var lastErr error
+	for {
+		release, err := acquireWorkflowExecutionLock(storePath, runID)
+		if err == nil {
+			return release, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("acquire workflow execution lock: %w (still held after %s; the run may still be settling - retry shortly)", lastErr, maxWait)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func acquireWorkflowExecutionLock(storePath, runID string) (func(), error) {

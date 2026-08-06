@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -85,9 +86,29 @@ func resolveLocalIdentity(root, runID string) (baseRef, baseCommit, worktree str
 		return "", "", "", fmt.Errorf("no workspace")
 	}
 	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
-		return "", "", "", err
+		return "", "", "", fmt.Errorf("no git repository at %s", root)
 	}
-	return "main", "local-base", "workflow-" + runID, nil
+	git := func(args ...string) (string, error) {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		out, err := cmd.Output()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	// Resolve the real default branch and HEAD commit. Fabricating
+	// "main"/"local-base" stamped delivery runs with a non-existent base
+	// commit, so every delivery attempt refused with "base commit ... is not
+	// an ancestor of HEAD".
+	baseRef, err = git("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", "", "", fmt.Errorf("resolve default branch: %w", err)
+	}
+	baseCommit, err = git("rev-parse", "HEAD")
+	if err != nil {
+		return "", "", "", fmt.Errorf("resolve HEAD commit: %w", err)
+	}
+	return baseRef, baseCommit, "workflow-" + runID, nil
 }
 
 func randomToken(n int) string {

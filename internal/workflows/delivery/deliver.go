@@ -350,8 +350,13 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	}
 	var remoteID, url string
 	if found != nil {
-		if !found.Draft {
-			err := fmt.Errorf("existing PR %s is not an open draft", found.RemoteID)
+		// Reuse the run's own PR across retries. The guard is the intended
+		// draft state, not "must be a draft": a ready-mode run that created a
+		// ready PR on a failed earlier attempt must resume it, while a draft
+		// run must never repurpose a ready PR it does not own.
+		wantDraft := req.Policy.Mode == "draft"
+		if found.Draft != wantDraft {
+			err := fmt.Errorf("existing PR %s draft state does not match delivery mode %q", found.RemoteID, req.Policy.Mode)
 			markFailed(ctx, repo, key, req, err)
 			return Result{}, err
 		}

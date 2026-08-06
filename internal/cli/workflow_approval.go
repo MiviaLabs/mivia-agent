@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -126,6 +127,36 @@ func openWorkflowResolutionContext(root, configPath, runID string) (func(), work
 		return nil, nil, nil, err
 	}
 	releaseExecution, err := acquireWorkflowExecutionLock(contextStorePath(work.Abs, res.Subagents), runID)
+	if err != nil {
+		closeFn()
+		return nil, nil, nil, err
+	}
+	return releaseExecution, repo, closeFn, nil
+}
+
+// openWorkflowResolutionContextBounded is openWorkflowResolutionContext with a
+// bounded wait for the execution lock: cancel and deliver call it so a still-
+// settling controller does not surface as an opaque lock error.
+func openWorkflowResolutionContextBounded(root, configPath, runID string, lockWait time.Duration) (func(), workflowledger.Repository, func(), error) {
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	work, err := workspace.Open(root)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	configPath = workflowConfigPath(work.Abs, configPath)
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	applyPrivacyPolicy(res)
+	applyWorkflowStoreRoot(res, work.Abs)
+	_, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	releaseExecution, err := acquireWorkflowExecutionLockBounded(contextStorePath(work.Abs, res.Subagents), runID, lockWait)
 	if err != nil {
 		closeFn()
 		return nil, nil, nil, err
