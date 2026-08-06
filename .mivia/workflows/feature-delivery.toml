@@ -15,7 +15,7 @@ max_duration_seconds = 10800
 [[steps]]
 id = "plan"
 kind = "agent"
-agent = "go-engineer"
+agent = "workflow-engineer"
 template = "templates/plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [{ from = "inputs.task", as = "task", max_bytes = 12000 }]
@@ -36,7 +36,7 @@ on_failure = "failure"
 [[steps]]
 id = "plan_tests"
 kind = "agent"
-agent = "go-engineer"
+agent = "workflow-engineer"
 template = "templates/implement.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
@@ -61,7 +61,7 @@ on_failure = "failure"
 [[steps]]
 id = "implement"
 kind = "agent"
-agent = "go-engineer"
+agent = "workflow-engineer"
 template = "templates/implement.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [

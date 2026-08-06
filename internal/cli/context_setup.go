@@ -25,7 +25,7 @@ var abandonContextWorktreeCreation = func(store *storage.SQLite, principal conte
 
 func contextStorePath(root string, cfg config.SubagentConfig) string {
 	if cfg.StoreBackend == "sqlite" && cfg.StorePath != "" {
-		return cfg.StorePath
+		return config.ExpandPath(cfg.StorePath)
 	}
 	return workspace.ContextStorePath(root)
 }

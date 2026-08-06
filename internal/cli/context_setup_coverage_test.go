@@ -39,6 +39,17 @@ func TestContextSetupCoverageOpenErrors(t *testing.T) {
 	}
 }
 
+func TestContextStorePathExpandsTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.SubagentConfig{StoreBackend: "sqlite", StorePath: "~/.mivia/test-context.db"}
+	if got, want := contextStorePath(t.TempDir(), cfg), filepath.Join(home, ".mivia", "test-context.db"); got != want {
+		t.Fatalf("contextStorePath() = %q, want %q", got, want)
+	}
+}
+
 func TestContextSetupCoverageConfigureErrorsAndZeroPolicy(t *testing.T) {
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
