@@ -301,6 +301,20 @@ func copyRequiredModule(cacheRoot, destination, modulePath, version string) erro
 	if _, err := copySandboxTree(source, target, false); err != nil {
 		return fmt.Errorf("provision module %s@%s: %w", modulePath, version, err)
 	}
+	return copyRequiredModuleMetadata(cacheRoot, destination, escapedPath, escapedVersion)
+}
+
+func copyRequiredModuleMetadata(cacheRoot, destination, escapedPath, escapedVersion string) error {
+	sourceBase := filepath.Join(cacheRoot, "cache", "download", escapedPath, "@v", escapedVersion)
+	targetBase := filepath.Join(destination, "cache", "download", escapedPath, "@v", escapedVersion)
+	if err := os.MkdirAll(filepath.Dir(targetBase), 0o700); err != nil {
+		return fmt.Errorf("create verifier module metadata: %w", err)
+	}
+	for _, suffix := range []string{".info", ".mod", ".zip", ".ziphash"} {
+		if err := copyRegularFile(sourceBase+suffix, targetBase+suffix); err != nil {
+			return fmt.Errorf("copy verifier module metadata %s: %w", suffix, err)
+		}
+	}
 	return nil
 }
 
