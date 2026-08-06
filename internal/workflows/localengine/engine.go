@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
