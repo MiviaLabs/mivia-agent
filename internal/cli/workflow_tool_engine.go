@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -63,7 +65,10 @@ func (e *sessionWorkflowEngine) Start(ctx context.Context, req agenttools.StartR
 }
 
 func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
-	rawInputs := inputsToRawFlags(req.Inputs)
+	rawInputs, err := inputsToRawFlags(req.Inputs)
+	if err != nil {
+		return agenttools.StartResult{}, err
+	}
 	prepared, err := prepareWorkflowRun(req.Workflow, e.root, e.configPath, rawInputs)
 	if err != nil {
 		return agenttools.StartResult{}, err
@@ -139,16 +144,19 @@ func (e *sessionWorkflowEngine) resumeCLI(ctx context.Context, req agenttools.St
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
-	return e.launchResume(ctx, prepared)
+	return e.launchResume(ctx, prepared, req.AllowPublish)
 }
 
 type resumePrepared struct {
 	runID      string
 	workflow   string
+	root       string
 	built      workflowControllerBuild
 	closeFn    func()
 	finishExec func()
 	repo       workflowledger.Repository
+	store      *storage.SQLite
+	res        *config.Resolved
 }
 
 func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttools.StartRequest) (resumePrepared, error) {
@@ -225,7 +233,11 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttool
 		closeFn()
 		return resumePrepared{}, fmt.Errorf("clear interrupted workflow claim: %w", err)
 	}
-	return resumePrepared{runID: req.RunID, workflow: run.WorkflowName, built: built, closeFn: closeFn, finishExec: finishExecution, repo: repo}, nil
+	return resumePrepared{
+		runID: req.RunID, workflow: run.WorkflowName, root: work.Abs,
+		built: built, closeFn: closeFn, finishExec: finishExecution,
+		repo: repo, store: store, res: res,
+	}, nil
 }
 
 func refuseNonResumable(run workflowledger.RunSnapshot) error {
@@ -238,7 +250,7 @@ func refuseNonResumable(run workflowledger.RunSnapshot) error {
 	return nil
 }
 
-func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepared) (agenttools.StartResult, error) {
+func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepared, allowPublish bool) (agenttools.StartResult, error) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	e.mu.Lock()
@@ -249,14 +261,20 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 		cancel: cancel, done: done,
 		closeFn: func() {
 			p.finishExec()
-			p.built.Dispatcher.Close()
+			if p.built.Dispatcher != nil {
+				p.built.Dispatcher.Close()
+			}
 			p.closeFn()
 		},
 	}
 	e.mu.Unlock()
 	go func() {
 		defer close(done)
-		_, _ = workflowResumeRun(runCtx, p.built)
+		snap, err := workflowResumeRun(runCtx, p.built)
+		// Same grant rule as startCLI: allow_publish permits end-of-run publication.
+		if err == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
+			_ = deliverRunWithStore(context.Background(), p.root, p.res, p.store, p.repo, p.runID, true, io.Discard, io.Discard)
+		}
 		e.mu.Lock()
 		active := e.active[p.runID]
 		delete(e.active, p.runID)
@@ -386,9 +404,9 @@ func sessionDeliverResultFromLedger(ctx context.Context, root, configPath, runID
 	return agenttools.DeliverResult{}, false
 }
 
-func inputsToRawFlags(inputs map[string]any) []string {
+func inputsToRawFlags(inputs map[string]any) ([]string, error) {
 	if len(inputs) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]string, 0, len(inputs))
 	for k, v := range inputs {
@@ -396,10 +414,14 @@ func inputsToRawFlags(inputs map[string]any) []string {
 		case string:
 			out = append(out, k+"="+x)
 		default:
-			out = append(out, fmt.Sprintf("%s=%v", k, v))
+			raw, err := json.Marshal(x)
+			if err != nil {
+				return nil, fmt.Errorf("workflow input %q: encode JSON: %w", k, err)
+			}
+			out = append(out, k+"="+string(raw))
 		}
 	}
-	return out
+	return out, nil
 }
 
 // workflowToolSubagentConfig resolves the store config used by workflow tools.
@@ -410,7 +432,7 @@ func workflowToolSubagentConfig(root string, res *config.Resolved) config.Subage
 		applyWorkflowStoreRoot(res, root)
 		return res.Subagents
 	}
-	configPath := workflowConfigPath(root, "")
+	configPath := sessionEngineConfigPath(root, nil)
 	loaded, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
 	if err != nil || loaded == nil {
 		return config.DefaultSubagentConfig
@@ -419,15 +441,26 @@ func workflowToolSubagentConfig(root string, res *config.Resolved) config.Subage
 	return loaded.Subagents
 }
 
+// sessionEngineConfigPath is the config file identity for session workflow
+// tools. Prefer the session Resolved.ConfigPath (covers --config / MIVIA_CONFIG)
+// so read and mutate paths open the same store. Fall back to the workspace
+// project file when no session config is available.
+func sessionEngineConfigPath(root string, res *config.Resolved) string {
+	if res != nil && strings.TrimSpace(res.ConfigPath) != "" {
+		return res.ConfigPath
+	}
+	return workflowConfigPath(root, "")
+}
+
 // wireWorkflowToolOptions attaches Phase 7 workflow tools to DefaultOptions
-// when the workspace has .mivia/workflows/. Reads open the same store path as
-// CLI workflow commands. Run/cancel/deliver use the session engine (CLI paths).
+// when the workspace has .mivia/workflows/. Reads and mutates share one config
+// identity (session ConfigPath or workspace project file).
 func wireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved) {
 	if opts == nil || !agenttools.HasWorkflows(root) {
 		return
 	}
 	cfg := workflowToolSubagentConfig(root, res)
-	configPath := workflowConfigPath(root, "")
+	configPath := sessionEngineConfigPath(root, res)
 	repoFactory := func(context.Context) (workflowledger.Repository, func(), error) {
 		_, repo, closeFn, err := openWorkflowStore(root, cfg)
 		return repo, closeFn, err
