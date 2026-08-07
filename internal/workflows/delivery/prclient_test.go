@@ -57,13 +57,24 @@ func TestParseOwnerRepo(t *testing.T) {
 }
 
 // writeFakeGH installs a fake gh executable on PATH. The script records
-// its argv to $GH_ARGS_FILE and its environment to $GH_ENV_FILE. When
-// $GH_EXIT is set, the script prints $GH_EXIT_MSG to stderr and exits
-// with that code. Otherwise it prints $GH_STDOUT.
+// its argv to $GH_ARGS_FILE (pr create/list) or $GH_VIEW_ARGS_FILE
+// (pr view) and its environment to $GH_ENV_FILE. When $GH_EXIT is set, the
+// script prints $GH_EXIT_MSG to stderr and exits with that code. Otherwise
+// it prints $GH_STDOUT, except for `pr view` which prints $GH_STDOUT_VIEW
+// (default: a baseRefOid JSON envelope).
 func writeFakeGH(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	script := `#!/bin/sh
+	scheme := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' "$@" > "$GH_VIEW_ARGS_FILE"
+  if [ -n "$GH_STDOUT_VIEW" ]; then
+    printf '%s' "$GH_STDOUT_VIEW"
+  else
+    printf '%s' '{"baseRefOid":"1111111111111111111111111111111111111111"}'
+  fi
+  exit 0
+fi
 printf '%s\n' "$@" > "$GH_ARGS_FILE"
 env | sort > "$GH_ENV_FILE"
 if [ -n "$GH_EXIT" ]; then
@@ -73,7 +84,7 @@ fi
 printf '%s' "$GH_STDOUT"
 `
 	path := filepath.Join(dir, "gh")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(scheme), 0o755); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -81,9 +92,19 @@ printf '%s' "$GH_STDOUT"
 
 func readRecordedArgs(t *testing.T) []string {
 	t.Helper()
-	data, err := os.ReadFile(os.Getenv("GH_ARGS_FILE"))
+	return readRecordedFileArgs(t, "GH_ARGS_FILE")
+}
+
+func readRecordedViewArgs(t *testing.T) []string {
+	t.Helper()
+	return readRecordedFileArgs(t, "GH_VIEW_ARGS_FILE")
+}
+
+func readRecordedFileArgs(t *testing.T, envName string) []string {
+	t.Helper()
+	data, err := os.ReadFile(os.Getenv(envName))
 	if err != nil {
-		t.Fatalf("read recorded args: %v", err)
+		t.Fatalf("read recorded args (%s): %v", envName, err)
 	}
 	text := strings.TrimSuffix(string(data), "\n")
 	if text == "" {
@@ -122,7 +143,7 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 	t.Setenv("GIT_TERMINAL_PROMPT", "0")
 
 	t.Run("found", func(t *testing.T) {
-		t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":true,"headRepositoryOwner":{"login":"owner"}}]`)
+		t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":true,"baseRefOid":"aaa111","headRepositoryOwner":{"login":"owner"}}]`)
 		got, err := (GitHubCLI{}).FindByHead(context.Background(), "owner/repo", "feature/x")
 		if err != nil {
 			t.Fatalf("FindByHead error: %v", err)
@@ -130,10 +151,10 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 		if got == nil {
 			t.Fatal("FindByHead = nil, want PRRef")
 		}
-		if got.RemoteID != "12" || got.URL != "https://github.com/o/r/pull/12" || !got.Draft {
-			t.Errorf("FindByHead = %+v, want RemoteID 12 with PR url and Draft=true", got)
+		if got.RemoteID != "12" || got.URL != "https://github.com/o/r/pull/12" || !got.Draft || got.BaseRefOID != "aaa111" {
+			t.Errorf("FindByHead = %+v, want RemoteID 12 with PR url, Draft=true, BaseRefOID aaa111", got)
 		}
-		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "open", "--json", "number,url,isDraft,headRepositoryOwner"}
+		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "open", "--json", "number,url,isDraft,baseRefOid,headRepositoryOwner"}
 		if gotArgs := readRecordedArgs(t); !slices.Equal(gotArgs, want) {
 			t.Errorf("argv = %q, want %q", gotArgs, want)
 		}
@@ -260,8 +281,8 @@ func TestGitHubCLICreate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Create error: %v", err)
 		}
-		if got.RemoteID != "7" || got.URL != "https://github.com/owner/repo/pull/7" {
-			t.Errorf("Create = %+v, want RemoteID 7 with PR url", got)
+		if got.RemoteID != "7" || got.URL != "https://github.com/owner/repo/pull/7" || got.BaseRefOID != "1111111111111111111111111111111111111111" {
+			t.Errorf("Create = %+v, want RemoteID 7 with PR url and the baseRefOid from pr view", got)
 		}
 		want := []string{
 			"pr", "create",
@@ -311,6 +332,42 @@ func TestGitHubCLICreate(t *testing.T) {
 		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
 		if _, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in); err == nil {
 			t.Fatal("Create error = nil, want empty-output error")
+		}
+	})
+}
+
+// TestGitHubCLICreateBaseRefOID pins the AR-7 base-read: after creating a PR,
+// Create resolves the PR's actual base commit via `gh pr view --json
+// baseRefOid` so delivery can verify the base still contains the admitted
+// commit.
+func TestGitHubCLICreateBaseRefOID(t *testing.T) {
+	writeFakeGH(t)
+	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("GH_VIEW_ARGS_FILE", filepath.Join(t.TempDir(), "view-args.txt"))
+	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
+	t.Setenv("GH_STDOUT", `https://github.com/owner/repo/pull/7`+"\n")
+
+	t.Run("pr view resolves the base oid", func(t *testing.T) {
+		t.Setenv("GH_STDOUT_VIEW", `{"baseRefOid":"beef123"}`)
+		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
+		got, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in)
+		if err != nil {
+			t.Fatalf("Create error: %v", err)
+		}
+		if got.BaseRefOID != "beef123" {
+			t.Errorf("BaseRefOID = %q, want beef123 from pr view", got.BaseRefOID)
+		}
+		wantView := []string{"pr", "view", "7", "--repo", "owner/repo", "--json", "baseRefOid"}
+		if gotArgs := readRecordedViewArgs(t); !slices.Equal(gotArgs, wantView) {
+			t.Errorf("pr view argv = %q, want %q", gotArgs, wantView)
+		}
+	})
+
+	t.Run("malformed pr view output", func(t *testing.T) {
+		t.Setenv("GH_STDOUT_VIEW", "not json")
+		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
+		if _, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in); err == nil {
+			t.Fatal("Create error = nil, want a pr view parse error")
 		}
 	})
 }

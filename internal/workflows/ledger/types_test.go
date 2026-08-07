@@ -35,6 +35,10 @@ func TestValidRunTransition(t *testing.T) {
 		{RunStatusWaitingApproval, RunStatusTimedOut},
 		{RunStatusDeliveryPending, RunStatusSucceeded},
 		{RunStatusDeliveryPending, RunStatusDeliveryFailed},
+		// Recovery carve-out: a refused run re-opens for delivery retry, and
+		// a still-refused re-eligibility settles via the self-loop.
+		{RunStatusDeliveryFailed, RunStatusDeliveryPending},
+		{RunStatusDeliveryFailed, RunStatusDeliveryFailed},
 	}
 	for _, tc := range accept {
 		t.Run(fmt.Sprintf("accept %s->%s", tc.from, tc.to), func(t *testing.T) {
@@ -56,13 +60,16 @@ func TestValidRunTransition(t *testing.T) {
 			}
 		})
 	}
-	// Terminal statuses reject every destination, including reflexive edges.
+	// Terminal statuses reject every destination, including reflexive edges,
+	// EXCEPT the delivery recovery carve-out: delivery_failed may re-open to
+	// delivery_pending (retry) or settle via its self-loop. Those two edges
+	// are pinned in the accept list above; every other destination is
+	// rejected, and the other terminal statuses reject everything.
 	terminals := []RunStatus{
 		RunStatusSucceeded,
 		RunStatusFailed,
 		RunStatusCanceled,
 		RunStatusTimedOut,
-		RunStatusDeliveryFailed,
 	}
 	for _, term := range terminals {
 		for _, to := range all {
@@ -630,5 +637,23 @@ func TestSnapshotJSONStepAttempt(t *testing.T) {
 		if _, ok := keys[want]; !ok {
 			t.Errorf("StepAttempt JSON missing key %q: %s", want, data)
 		}
+	}
+}
+
+// TestValidRunTransitionDeliveryCarveOut pins the delivery recovery carve-out:
+// delivery_failed may re-open to delivery_pending (retry) or settle via its
+// self-loop; every other destination stays rejected.
+func TestValidRunTransitionDeliveryCarveOut(t *testing.T) {
+	all := []RunStatus{
+		RunStatusPending, RunStatusRunning, RunStatusWaitingApproval,
+		RunStatusDeliveryPending, RunStatusSucceeded, RunStatusFailed,
+		RunStatusCanceled, RunStatusTimedOut, RunStatusDeliveryFailed,
+	}
+	for _, to := range all {
+		t.Run(fmt.Sprintf("reject delivery_failed->%s", to), func(t *testing.T) {
+			if to != RunStatusDeliveryPending && to != RunStatusDeliveryFailed && ValidRunTransition(RunStatusDeliveryFailed, to) {
+				t.Errorf("ValidRunTransition(%q, %q) = true, want false", RunStatusDeliveryFailed, to)
+			}
+		})
 	}
 }

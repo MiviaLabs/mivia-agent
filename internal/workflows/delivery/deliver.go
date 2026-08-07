@@ -53,13 +53,11 @@ const maxDiffBytes = 64 << 10
 // with the record marked failed, so the run stays delivery_pending for a
 // retry.
 func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request) (Result, error) {
-	// 1. Only a delivery_pending run may be delivered.
-	run, err := repo.GetRun(ctx, req.RunID)
+	// 1. Only a delivery_pending run may be delivered; a delivery_failed run
+	// is re-opened for re-eligibility via the single enforcing CAS.
+	run, err := deliveryRunGuard(ctx, repo, req)
 	if err != nil {
 		return Result{}, err
-	}
-	if run.Status != ledger.RunStatusDeliveryPending {
-		return Result{}, &RefusalError{Reason: fmt.Sprintf("delivery requires delivery_pending status, run is %q", run.Status)}
 	}
 
 	// 2. Policy shape must be supported and active.
@@ -106,12 +104,8 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 
 	// 10b. Optional workspace commit-message policy: validate the rendered
 	// subject ONLY when a commit will actually be created (a diff exists, so
-	// the repo's commit-msg hook would fire). A no_diff run never fires the
-	// hook, so a present policy must not refuse it. The check stays BEFORE
-	// commitOrResume, so a subject the hook would reject mid-flight becomes
-	// a permanent refusal instead of a delivery_pending retry loop; a refusal
-	// here writes no delivery record, commits nothing, and pushes nothing.
-	if err := req.Policy.ValidateCommitMessage(req.GitCtx.Dir, req.Inputs); err != nil {
+	// the repo's commit-msg hook would fire).
+	if err := validateDeliveryCommitMessage(req); err != nil {
 		return Result{}, err
 	}
 
@@ -123,11 +117,88 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 		return Result{}, err
 	}
 
-	// 12-16. Push the branch, then find or create one PR.
-	return pushAndPublish(ctx, repo, git, pr, req, key, repoSlug, head, treeSHA, diffRef, existing)
+	// 12-16. Push the branch, then find or create one PR. The admitted base
+	// pin travels with the publish so the post-create base check (AR-7) can
+	// verify the PR's base still contains the admitted commit.
+	return pushAndPublish(ctx, repo, git, pr, req, key, repoSlug, head, treeSHA, diffRef, originBase, existing)
 }
 
-// replayResult maps a durable succeeded/no_diff record back to a Result.
+// deliveryRunGuard enforces the entry status: only a delivery_pending run may
+// be delivered, and a delivery_failed run is re-opened for re-eligibility via
+// the single enforcing CAS (promoteToDeliveryPending), so every entry path
+// (delivery.Deliver, engine.Deliver, CLI deliverRunWithStore) shares one
+// recovery transition and cannot diverge. A CAS failure means another
+// deliverer raced us; the attempt is a recoverable error.
+func deliveryRunGuard(ctx context.Context, repo ledger.Repository, req Request) (ledger.RunSnapshot, error) {
+	run, err := repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return ledger.RunSnapshot{}, err
+	}
+	if run.Status == ledger.RunStatusDeliveryFailed {
+		run, err = promoteToDeliveryPending(ctx, repo, req.RunID, run)
+		if err != nil {
+			return ledger.RunSnapshot{}, err
+		}
+	}
+	if run.Status != ledger.RunStatusDeliveryPending {
+		return ledger.RunSnapshot{}, &RefusalError{Reason: fmt.Sprintf("delivery requires delivery_pending status, run is %q", run.Status)}
+	}
+	return run, nil
+}
+
+// validateDeliveryCommitMessage checks the optional workspace commit-message
+// policy. It runs only when a commit will actually be created (a diff exists,
+// so the repo's commit-msg hook would fire): a no_diff run never fires the
+// hook, so a present policy must not refuse it. The check stays BEFORE
+// commitOrResume, so a subject the hook would reject mid-flight becomes a
+// permanent refusal instead of a delivery_pending retry loop; a refusal here
+// writes no delivery record, commits nothing, and pushes nothing.
+func validateDeliveryCommitMessage(req Request) error {
+	return req.Policy.ValidateCommitMessage(req.GitCtx.Dir, req.Inputs)
+}
+
+// promoteToDeliveryPending is the single enforcing re-eligibility transition
+// for a delivery_failed run (F-4): it CASes the run back to delivery_pending
+// so every entry path shares one recovery edge and cannot diverge. A CAS
+// failure means another deliverer raced us; the attempt is a recoverable
+// error.
+func promoteToDeliveryPending(ctx context.Context, repo ledger.Repository, runID string, run ledger.RunSnapshot) (ledger.RunSnapshot, error) {
+	if err := repo.CompareAndSetRunStatus(ctx, runID, run.Version, ledger.RunStatusDeliveryPending, nil); err != nil {
+		return ledger.RunSnapshot{}, fmt.Errorf("delivery re-eligibility: promote %s to delivery_pending: %w", run.Status, err)
+	}
+	return repo.GetRun(ctx, runID)
+}
+
+// verifyRemoteBaseAncestry refreshes the remote base from the ADMITTED URL
+// (never the mutable `origin` name) and verifies it still CONTAINS the
+// admitted origin base commit (originBase: OriginBaseCommit at admission,
+// falling back to the admitted local BaseCommit). Forward advancement is a
+// normal condition (Dependabot/Renovate behavior): the PR is created against
+// the current base and GitHub computes the diff. Only a REWRITE that drops
+// the admitted commit (or a deleted base branch) is a permanent refusal;
+// transport failures are recoverable and keep the run delivery_pending.
+func verifyRemoteBaseAncestry(ctx context.Context, git GitRunner, req Request, originBase string) error {
+	// Unconditional single-ref fetch: staleness is undetectable without
+	// fetching, and a rewritten base would otherwise leave the tracking ref
+	// at the old tip and pass the ancestry check. The refspec is
+	// force-updating on purpose; the rewrite is detected by ancestry.
+	if _, err := git.Run(ctx, req.GitCtx, "fetch", "--no-tags", req.OriginURL,
+		"+refs/heads/"+req.Policy.Base+":refs/remotes/origin/"+req.Policy.Base); err != nil {
+		if strings.Contains(err.Error(), "couldn't find remote ref") {
+			return &RefusalError{Reason: fmt.Sprintf("remote delivery base %q does not exist on the admitted remote", req.Policy.Base)}
+		}
+		return fmt.Errorf("cannot fetch remote delivery base %q (fetch and retry): %w", req.Policy.Base, err)
+	}
+	out, err := git.Run(ctx, req.GitCtx, "rev-parse", "--verify", "--end-of-options", "refs/remotes/origin/"+req.Policy.Base+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("cannot resolve fetched remote delivery base %q: %w", req.Policy.Base, err)
+	}
+	fetchedBase := strings.TrimSpace(out)
+	if _, err := git.Run(ctx, req.GitCtx, "merge-base", "--is-ancestor", originBase, fetchedBase); err != nil {
+		return &RefusalError{Reason: fmt.Sprintf("remote delivery base %q was rewritten since admission: it no longer contains the admitted commit %s", req.Policy.Base, originBase)}
+	}
+	return nil
+}
 func replayResult(existing ledger.DeliveryRecord) Result {
 	return Result{
 		Mode: existing.Mode, BaseRef: existing.BaseRef, HeadRef: existing.HeadRef,
@@ -160,32 +231,13 @@ func verifyEligibility(ctx context.Context, repo ledger.Repository, git GitRunne
 		return "", false, "", "", fmt.Errorf("cannot verify base commit %s ancestry: %w", req.BaseCommit, err)
 	}
 
-	// 6. The base target must still point at the admitted commit.
-	out, err = git.Run(ctx, req.GitCtx, "rev-parse", "--verify", "--end-of-options", "refs/heads/"+req.Policy.Base+"^{commit}")
-	if err != nil {
-		return "", false, "", "", fmt.Errorf("cannot resolve delivery base %q: %w", req.Policy.Base, err)
-	}
-	if strings.TrimSpace(out) != req.BaseCommit {
-		return "", false, "", "", &RefusalError{Reason: fmt.Sprintf("delivery base %q moved since admission", req.Policy.Base)}
-	}
+	// 6. (removed) The local refs/heads/<base> equality check was invalid in
+	// linked worktrees: workflow runs share refs/heads/* with the main repo,
+	// whose live base branch legitimately advances while a run is in flight.
+	// The real invariant is the REMOTE base, checked at 6b below.
 
-	// 6b. The PR is created against the REMOTE base, so the origin's base
-	// must still point at the commit recorded at admission: a locally pinned
-	// base must not mask a remote base that diverged after admission.
-	// originBase is the origin base commit recorded at admission
-	// (OriginBaseCommit), falling back to the admitted local BaseCommit.
-	out, err = git.Run(ctx, req.GitCtx, "rev-parse", "--verify", "--end-of-options", "refs/remotes/origin/"+req.Policy.Base+"^{commit}")
-	if err != nil {
-		// The remote-tracking ref is absent (never fetched after admission):
-		// recoverable — fetching and retrying fixes it, so keep the run
-		// delivery_pending instead of refusing.
-		return "", false, "", "", fmt.Errorf("cannot resolve remote delivery base %q (fetch and retry): %w", req.Policy.Base, err)
-	}
-	if strings.TrimSpace(out) != originBase {
-		return "", false, "", "", &RefusalError{Reason: fmt.Sprintf("remote delivery base %q diverged since admission", req.Policy.Base)}
-	}
-
-	// 7. The origin remote must match the admitted URL.
+	// 7. The origin remote must match the admitted URL. This runs BEFORE the
+	// fetch so a fetch never contacts a changed origin.
 	out, err = git.Run(ctx, req.GitCtx, "remote", "get-url", "origin")
 	if err != nil {
 		return "", false, "", "", fmt.Errorf("cannot read origin remote: %w", err)
@@ -199,6 +251,12 @@ func verifyEligibility(ctx context.Context, repo ledger.Repository, git GitRunne
 		// A local or non-github remote cannot be parsed to owner/repo; use
 		// the normalized URL so the PR client still addresses the same remote.
 		repoSlug = normalizeURL(remoteURL)
+	}
+
+	// 7a+6b. Refresh the remote base from the ADMITTED URL and verify it
+	// still contains the admitted origin base commit (ancestry, not equality).
+	if err := verifyRemoteBaseAncestry(ctx, git, req, originBase); err != nil {
+		return "", false, "", "", err
 	}
 
 	// 8-9. HEAD commit, intended diff, and the diff snapshot.
@@ -261,8 +319,9 @@ func intendedDiff(ctx context.Context, repo ledger.Repository, git GitRunner, re
 }
 
 // pushAndPublish pushes the delivery commit and finds or creates exactly one
-// PR, recording each stage durably.
-func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, head, treeSHA, diffRef string, existing ledger.DeliveryRecord) (Result, error) {
+// PR, recording each stage durably. originBase is the admitted remote base
+// pin used by the post-create base verification (AR-7).
+func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, head, treeSHA, diffRef, originBase string, existing ledger.DeliveryRecord) (Result, error) {
 	// 12. Push the branch to origin.
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
 		"push", "origin", "HEAD:refs/heads/"+req.Branch); err != nil {
@@ -287,9 +346,23 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	}
 
 	// 14-15. Find or create the PR (ownership-aware reuse).
-	remoteID, url, err := findOrCreatePR(ctx, repo, pr, req, key, repoSlug, existing)
+	ref, err := findOrCreatePR(ctx, repo, pr, req, key, repoSlug, existing)
 	if err != nil {
 		return Result{}, err
+	}
+	remoteID, url := ref.RemoteID, ref.URL
+
+	// 15a. AR-7: close the TOCTOU between eligibility and PR creation. The
+	// PR's actual base must still contain the admitted origin base; a remote
+	// rewrite in that window must not settle succeeded. The PR may already
+	// exist; this check only prevents the success settle. Skipped when the
+	// client reports no base OID (fake/unknown).
+	if ref.BaseRefOID != "" {
+		if _, aerr := git.Run(ctx, req.GitCtx, "merge-base", "--is-ancestor", originBase, ref.BaseRefOID); aerr != nil {
+			rerr := &RefusalError{Reason: fmt.Sprintf("PR %s base %s does not contain the admitted base commit %s (remote base rewritten during delivery)", ref.RemoteID, ref.BaseRefOID, originBase)}
+			markFailed(ctx, repo, key, req, rerr)
+			return Result{}, rerr
+		}
 	}
 
 	// 15b. Persist the PR identity in a pushed record when it is newly
@@ -333,18 +406,18 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 // reviewer flipped its draft state, while a genuinely foreign PR with the
 // wrong draft state is a permanent condition and settles as a refusal instead
 // of deadlocking the run in delivery_pending forever.
-func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, req Request, key, repoSlug string, existing ledger.DeliveryRecord) (remoteID, url string, err error) {
+func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, req Request, key, repoSlug string, existing ledger.DeliveryRecord) (*PRRef, error) {
 	title, err := req.Policy.RenderTitle(req.Inputs)
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
-		return "", "", err
+		return nil, err
 	}
 	body := "Automated workflow delivery from Mivia.\n\nRun: " + req.RunID + "\nWorkflow digest: " + req.WorkflowDigest
 
 	found, err := pr.FindByHead(ctx, repoSlug, req.Branch)
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
-		return "", "", err
+		return nil, err
 	}
 	if found == nil {
 		created, cerr := pr.Create(ctx, repoSlug, PRInput{
@@ -353,21 +426,21 @@ func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, re
 		})
 		if cerr != nil {
 			markFailed(ctx, repo, key, req, cerr)
-			return "", "", cerr
+			return nil, cerr
 		}
-		return created.RemoteID, created.URL, nil
+		return &created, nil
 	}
 	wantDraft := req.Policy.Mode == "draft"
 	switch {
 	case existing.RemoteID != "" && existing.RemoteID == found.RemoteID:
 		// Our own PR from a previous attempt: reuse regardless of draft.
-		return found.RemoteID, found.URL, nil
+		return found, nil
 	case found.Draft != wantDraft:
 		rerr := &RefusalError{Reason: fmt.Sprintf("existing PR %s draft state does not match delivery mode %q and is not this run's PR", found.RemoteID, req.Policy.Mode)}
 		markFailed(ctx, repo, key, req, rerr)
-		return "", "", rerr
+		return nil, rerr
 	default:
-		return found.RemoteID, found.URL, nil
+		return found, nil
 	}
 }
 

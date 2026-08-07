@@ -112,11 +112,14 @@ func newRequest(run workflowledger.RunSnapshot, gc GitContext, baseCommit, origi
 }
 
 // fakePRClient records PR boundary calls; Create always succeeds.
+// baseRefOID is attached to created PRs so tests can exercise the post-create
+// base verification (AR-7).
 type fakePRClient struct {
-	mu      sync.Mutex
-	found   *PRRef
-	repos   []string
-	created []PRInput
+	mu         sync.Mutex
+	found      *PRRef
+	repos      []string
+	created    []PRInput
+	baseRefOID string
 }
 
 func (f *fakePRClient) FindByHead(context.Context, string, string) (*PRRef, error) {
@@ -130,7 +133,7 @@ func (f *fakePRClient) Create(_ context.Context, repo string, in PRInput) (PRRef
 	defer f.mu.Unlock()
 	f.repos = append(f.repos, repo)
 	f.created = append(f.created, in)
-	return PRRef{RemoteID: strconv.Itoa(len(f.created)), URL: "https://example.com/pull/" + strconv.Itoa(len(f.created))}, nil
+	return PRRef{RemoteID: strconv.Itoa(len(f.created)), URL: "https://example.com/pull/" + strconv.Itoa(len(f.created)), BaseRefOID: f.baseRefOID}, nil
 }
 
 func (f *fakePRClient) createdCount() int {
@@ -397,21 +400,6 @@ func TestDeliverBranchMismatch(t *testing.T) {
 	assertZeroCreates(t, pr)
 }
 
-func TestDeliverBaseMoved(t *testing.T) {
-	ctx := context.Background()
-	repoRoot, _, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
-	writeWorktreeFile(t, repoRoot, "a2.txt", "x\n")
-	runGit(t, repoRoot, "add", "a2.txt")
-	runGit(t, repoRoot, "commit", "-m", "advance main")
-	pr := &fakePRClient{}
-	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
-	if err == nil || !IsRefusal(err) {
-		t.Fatalf("Deliver err = %v, want RefusalError for moved base", err)
-	}
-	assertNoRecord(t, repo, run)
-	assertZeroCreates(t, pr)
-}
-
 func TestDeliverOriginMismatch(t *testing.T) {
 	ctx := context.Background()
 	_, _, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
@@ -666,7 +654,10 @@ func TestDeliverDeterministicCommitSHA(t *testing.T) {
 	}
 }
 
-func TestDeliverPushFailureIsTransient(t *testing.T) {
+// TestDeliverFetchFailureIsTransient: an unreachable origin at fetch time is a
+// recoverable transport failure - the run stays delivery_pending, no PR is
+// created, and (pre-stage) no delivery record is written.
+func TestDeliverFetchFailureIsTransient(t *testing.T) {
 	ctx := context.Background()
 	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
 	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
@@ -681,10 +672,7 @@ func TestDeliverPushFailureIsTransient(t *testing.T) {
 	if n := pr.createdCount(); n != 0 {
 		t.Fatalf("Create calls = %d, want 0", n)
 	}
-	rec := deliveryRecordByKey(t, repo, run)
-	if rec.Status != "failed" || rec.ErrorRef == "" {
-		t.Fatalf("record = %+v, want failed with ErrorRef", rec)
-	}
+	assertNoRecord(t, repo, run)
 	if stored, err := repo.GetRun(ctx, run.RunID); err != nil {
 		t.Fatal(err)
 	} else if stored.Status != workflowledger.RunStatusDeliveryPending {
