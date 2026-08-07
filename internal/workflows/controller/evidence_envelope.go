@@ -42,13 +42,16 @@ const maxEnvelopeFitIterations = 8
 // historical size-reject as defense-in-depth for those pathological caps.
 func buildEvidenceEnvelope(runID string, prior workflowledger.StepAttempt, raw []byte, cap int) (map[string]any, error) {
 	note := "full artifact is in the workflow ledger; read it with workflow_inspect(run_id=" + runID + ", step=<step>, attempt=<attempt>)"
+	// The preview key is added only after the skeleton is measured, so the
+	// measured skeleton IS the true no-preview size (a "preview":"" entry
+	// would overstate it by 12 bytes and reject caps that fit the ref-only
+	// envelope).
 	artifact := map[string]any{
 		"step":    prior.StepID,
 		"attempt": prior.AttemptNo,
 		"ref":     prior.OutputRef,
 		"bytes":   len(raw),
 		"digest":  prior.OutputDigest,
-		"preview": "",
 	}
 	envelope := map[string]any{"artifact": artifact, "note": note}
 	skeleton, err := json.Marshal(envelope)
@@ -60,9 +63,8 @@ func buildEvidenceEnvelope(runID string, prior workflowledger.StepAttempt, raw [
 	}
 	budget := min(evidencePreviewBytes, cap-len(skeleton)-envelopeFitSlack)
 	if budget <= 0 {
-		// No room for a preview: omit the field entirely rather than emit an
-		// empty one, keeping the marshaled envelope as small as possible.
-		delete(artifact, "preview")
+		// No room for a preview: keep the preview key absent, so the marshaled
+		// envelope stays exactly the skeleton size (<= cap by the check above).
 		return envelope, nil
 	}
 	artifact["preview"] = evidencePreview(raw, budget)

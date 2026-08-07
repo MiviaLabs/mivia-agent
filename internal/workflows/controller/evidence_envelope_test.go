@@ -383,10 +383,13 @@ func TestBuildEvidenceEnvelopeNoPreviewFallback(t *testing.T) {
 		StepID: "first", AttemptNo: 1, OutputRef: "sha256:abc", OutputDigest: "sha256:def",
 	}
 	const runID = "wfr-nopreview"
+	// The skeleton is the TRUE no-preview size: the preview key is absent (audit
+	// fix: measuring it with "preview":"" overstated the size by 12 bytes and
+	// rejected caps that fit the ref-only envelope).
 	skeleton, err := json.Marshal(map[string]any{
 		"artifact": map[string]any{
 			"step": "first", "attempt": 1, "ref": "sha256:abc",
-			"bytes": len(raw), "digest": "sha256:def", "preview": "",
+			"bytes": len(raw), "digest": "sha256:def",
 		},
 		"note": "full artifact is in the workflow ledger; read it with workflow_inspect(run_id=" + runID + ", step=<step>, attempt=<attempt>)",
 	})
@@ -394,26 +397,28 @@ func TestBuildEvidenceEnvelopeNoPreviewFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env, err := buildEvidenceEnvelope(runID, prior, raw, len(skeleton)+1)
-	if err != nil {
-		t.Fatalf("cap slightly above the skeleton must not error: %v", err)
-	}
-	artifact, ok := env["artifact"].(map[string]any)
-	if !ok {
-		t.Fatalf("envelope = %#v, want an artifact key", env)
-	}
-	if _, hasPreview := artifact["preview"]; hasPreview {
-		t.Fatalf("artifact = %#v, want the preview omitted when the budget is exhausted", artifact)
-	}
-	marshaled, err := json.Marshal(env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(marshaled) > len(skeleton)+1 {
-		t.Fatalf("no-preview envelope = %d bytes, want <= %d", len(marshaled), len(skeleton)+1)
+	for _, cap := range []int{len(skeleton) + 1, len(skeleton)} {
+		env, err := buildEvidenceEnvelope(runID, prior, raw, cap)
+		if err != nil {
+			t.Fatalf("cap %d (>= true no-preview size %d) must not error: %v", cap, len(skeleton), err)
+		}
+		artifact, ok := env["artifact"].(map[string]any)
+		if !ok {
+			t.Fatalf("envelope = %#v, want an artifact key", env)
+		}
+		if _, hasPreview := artifact["preview"]; hasPreview {
+			t.Fatalf("artifact = %#v, want the preview omitted when the budget is exhausted", artifact)
+		}
+		marshaled, err := json.Marshal(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(marshaled) > cap {
+			t.Fatalf("no-preview envelope = %d bytes, want <= cap %d", len(marshaled), cap)
+		}
 	}
 
 	if _, err := buildEvidenceEnvelope(runID, prior, raw, len(skeleton)-1); err == nil {
-		t.Fatalf("cap below the skeleton must error, got nil")
+		t.Fatalf("cap below the true no-preview size must error, got nil")
 	}
 }

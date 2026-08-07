@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -18,12 +19,13 @@ type agentCatalogView struct {
 }
 
 type agentCatalogRow struct {
-	Name   string
-	Source string
-	State  string
-	Tools  string
-	Model  string
-	Turns  string
+	Name        string
+	Source      string
+	State       string
+	Tools       string
+	Model       string
+	Turns       string
+	Description string
 	// Limits renders the per-agent resource ceilings that bound an agent even
 	// when its turns are unlimited.
 	Limits string
@@ -55,6 +57,7 @@ func loadAgentCatalog(workspaceRoot string) (agentCatalogView, error) {
 		view.Rows = append(view.Rows, agentCatalogRow{
 			Name: name, Source: string(a.Provenance.Source), State: "selectable",
 			Tools: formatAgentTools(a.EffectiveTools), Model: formatAgentModel(a.Provider, a.Model), Turns: formatAgentTurns(a.MaxTurns), Limits: formatAgentLimits(a.TimeoutSeconds, a.MaxTokens),
+			Description: agents.SanitizeDescription(a.Description),
 		})
 	}
 	sort.Slice(view.Rows, func(i, j int) bool { return view.Rows[i].Name < view.Rows[j].Name })
@@ -165,6 +168,52 @@ func enabledDisabled(enabled bool) string {
 		return "enabled"
 	}
 	return "disabled"
+}
+
+// agentJSONEntry is a JSON-serializable agent entry for the --json flag.
+// Only safe, selectable fields are included.
+type agentJSONEntry struct {
+	Name        string `json:"name"`
+	Source      string `json:"source"`
+	State       string `json:"state"`
+	Tools       string `json:"tools"`
+	Model       string `json:"model"`
+	Turns       string `json:"turns"`
+	Limits      string `json:"limits"`
+	Description string `json:"description"`
+}
+
+// writeAgentCatalogJSON encodes the selectable agent rows as a JSON array.
+// Description is sourced from the resolved agent (pre-sanitized at resolve time
+// by SanitizeDescription). All other fields use pre-formatted row strings from
+// view.Rows (already processed through safeCatalogText). Returns nil error on
+// success; caller should NOT emit partial output on error.
+func writeAgentCatalogJSON(w io.Writer, view agentCatalogView) error {
+	entries := make([]agentJSONEntry, 0, len(view.Rows))
+	for _, row := range view.Rows {
+		desc := ""
+		if view.Report.Registry != nil {
+			if a, ok := view.Report.Registry.Get(row.Name); ok {
+				desc = a.Description
+			}
+		}
+		entries = append(entries, agentJSONEntry{
+			Name:        row.Name,
+			Source:      row.Source,
+			State:       row.State,
+			Tools:       row.Tools,
+			Model:       row.Model,
+			Turns:       row.Turns,
+			Limits:      row.Limits,
+			Description: desc,
+		})
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(entries); err != nil {
+		return fmt.Errorf("json encode failed: %w", err)
+	}
+	return nil
 }
 
 func findCatalogAgent(view agentCatalogView, name string) (agents.ResolvedAgent, bool) {

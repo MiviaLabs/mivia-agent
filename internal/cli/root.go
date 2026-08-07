@@ -74,7 +74,7 @@ Usage:
          [--allow-program name]... [--deny-program name]...
          [--disable-tool name]... [--allow-env-var name]... [--deny-env-var name]...
   %s config show [--config path]
-  %s doctor [--config path]
+  %s doctor [--config path] [--json] [--workspace dir]
   %s agents list [--workspace dir]
   %s agents explain <name> [--workspace dir]
   %s workflows list [--workspace dir]

@@ -203,13 +203,6 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 // already-redacted artifact. Pages always slice the redacted text; the text is
 // never redacted per page, so redaction parity holds across page boundaries.
 func fillInspectOutput(view *InspectView, raw []byte, offset, limit int) {
-	total := len(raw)
-	if offset >= total {
-		// Empty page past the end of the artifact: metadata only, no error.
-		view.OutputBytes = total
-		view.OutputOffset = offset
-		return
-	}
 	var redactedText string
 	var output any
 	if json.Unmarshal(raw, &output) == nil {
@@ -223,7 +216,21 @@ func fillInspectOutput(view *InspectView, raw []byte, offset, limit int) {
 	} else {
 		redactedText = redact.Text(string(raw))
 	}
-	if offset == 0 && total <= limit {
+	// The paging chain lives in the REDACTED text space: pages slice
+	// redactedText, so the empty-page guard must compare against its length.
+	// Comparing against the raw byte count would terminate the chain early
+	// when the redaction policy expands text (placeholder growth), silently
+	// dropping the artifact tail. OutputBytes stays the RAW artifact size: it
+	// is metadata about the underlying artifact, not a page coordinate.
+	rawTotal := len(raw)
+	if offset >= len(redactedText) {
+		// Empty page past the end of the redacted artifact: metadata only, no
+		// error.
+		view.OutputBytes = rawTotal
+		view.OutputOffset = offset
+		return
+	}
+	if offset == 0 && rawTotal <= limit {
 		// Backward-compatible small page: the parsed/redacted value, no text
 		// page and no paging metadata.
 		if view.Output == nil {
@@ -234,7 +241,7 @@ func fillInspectOutput(view *InspectView, raw []byte, offset, limit int) {
 	// Paginated page of the whole-artifact redacted text.
 	view.Output = nil
 	view.OutputText, view.OutputNextOffset = inspectTextPage(redactedText, offset, limit)
-	view.OutputBytes = total
+	view.OutputBytes = rawTotal
 	view.OutputOffset = offset
 }
 
