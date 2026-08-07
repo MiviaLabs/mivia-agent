@@ -181,6 +181,21 @@ context = [
 on_failure = "failure"
 
 [[steps]]
+id = "repair_preflight_structure"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.preflight_structure.output", as = "failed_evidence", max_bytes = 16000 },
+]
+on_failure = "failure"
+
+[[steps]]
 id = "test_validate"
 kind = "evidence_gate"
 verifier = "go-test"
@@ -209,6 +224,18 @@ on_failure = "failure"
 id = "preflight_validate"
 kind = "evidence_gate"
 command = { check = "invariants", program = "python3", args = ["scripts/validate_invariants.py"] }
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+# preflight_structure runs the repository's structure gate (check_go_structure
+# --strict) inside the sandbox so a change that passes go test/vet/race but
+# violates the project's own layout policy is caught in-loop: the failed
+# evidence routes to repair_preflight_structure and the agent fixes it before
+# delivery, instead of the delivery pre-commit hook hard-failing publication.
+[[steps]]
+id = "preflight_structure"
+kind = "evidence_gate"
+command = { check = "go-structure", program = "python3", args = ["scripts/check_go_structure.py", "--strict", "--all"] }
 output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
@@ -340,10 +367,10 @@ from = "repair_final"
 to = "review"
 match = { status = "succeeded" }
 
-# preflight_validate → success (project gate passed, deliver)
+# preflight_validate → preflight_structure (invariants gate passed, run structure gate)
 [[transitions]]
 from = "preflight_validate"
-to = "success"
+to = "preflight_structure"
 match = { status = "succeeded", output = { status = "passed" } }
 
 [[transitions]]
@@ -355,6 +382,24 @@ max_iterations = 500
 
 [[transitions]]
 from = "repair_preflight"
+to = "review"
+match = { status = "succeeded" }
+
+# preflight_structure → success (structure gate passed, deliver)
+[[transitions]]
+from = "preflight_structure"
+to = "success"
+match = { status = "succeeded", output = { status = "passed" } }
+
+[[transitions]]
+from = "preflight_structure"
+to = "repair_preflight_structure"
+match = { status = "failed" }
+loop = "preflight_structure_repair"
+max_iterations = 500
+
+[[transitions]]
+from = "repair_preflight_structure"
 to = "review"
 match = { status = "succeeded" }
 
