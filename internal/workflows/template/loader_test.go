@@ -52,6 +52,30 @@ func TestLoadTemplates_PathTraversal(t *testing.T) {
 	}
 }
 
+func TestLoadTemplates_DoubleDotInName(t *testing.T) {
+	// A directory name containing ".." as a literal substring is safe.
+	dir := filepath.Join(t.TempDir(), "v1..2")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("# plan"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m, err := LoadTemplates(dir)
+	if err != nil {
+		t.Fatalf("expected no error for directory with .. in name, got: %v", err)
+	}
+	if m["plan.md"] != "# plan" {
+		t.Errorf("expected plan.md content, got %v", m)
+	}
+
+	// Real traversal still fails.
+	if _, err := LoadTemplates("../etc/passwd"); err == nil {
+		t.Fatal("expected error for path traversal, got nil")
+	}
+}
+
 func TestLoadTemplates_ReadsMdFiles(t *testing.T) {
 	td := templatesDir(t)
 	m, err := LoadTemplates(td)

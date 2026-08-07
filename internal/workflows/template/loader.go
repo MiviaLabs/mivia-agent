@@ -20,7 +20,7 @@ func LoadTemplates(baseDir string) (map[string]string, error) {
 		return nil, fmt.Errorf("template directory is empty")
 	}
 	clean := filepath.Clean(baseDir)
-	if strings.Contains(clean, "..") {
+	if !filepath.IsAbs(clean) && filepath.VolumeName(clean) == "" && strings.HasPrefix(clean, "..") {
 		return nil, fmt.Errorf("template directory path contains traversal")
 	}
 
