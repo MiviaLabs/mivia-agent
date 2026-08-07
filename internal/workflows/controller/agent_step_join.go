@@ -9,14 +9,17 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 )
 
-// defaultJoinWatchdog bounds a coordinator join from the controller side when
-// neither the step/run context deadline nor the task timeout is earlier. The
-// coordinator's own Join (internal/coordinator/coordinator.go) waits on the
-// child run's done channel with no bound of its own; a child that never
-// settles (hung pool worker, stuck referral wait, dead executor) would
-// otherwise park the controller forever: no wf_attempt_completed, no
-// re-dispatch, no failure transition — the run stays 'running' at the current
-// attempt until canceled.
+// defaultJoinWatchdog bounds a coordinator join from the controller side ONLY
+// when neither the step/run context deadline nor the task timeout bounds the
+// join. The coordinator's own Join (internal/coordinator/coordinator.go) waits
+// on the child run's done channel with no bound of its own; a child that never
+// settles with no timeout and no deadline (hung pool worker, stuck referral
+// wait, dead executor) would otherwise park the controller forever: no
+// wf_attempt_completed, no re-dispatch, no failure transition — the run stays
+// 'running' at the current attempt until canceled. The watchdog is a
+// last-resort bound for that case only: it must NOT truncate a longer task
+// timeout or run deadline (workflow runs are designed to host steps up to the
+// full run deadline, e.g. 24h).
 const defaultJoinWatchdog = 10 * time.Minute
 
 // joinWatchdog returns the effective controller-side join bound.
@@ -28,17 +31,21 @@ func (r *CoordinatorRunner) joinWatchdog() time.Duration {
 }
 
 // joinBound returns the controller-side bound for one coordinator join: the
-// earliest of the remaining step/run deadline (parent ctx), the task timeout
-// (spec.Timeout, when set), and the fixed join watchdog. The parent deadline
-// can arrive first even when the step has its own timeout because the run-loop
-// ctx carries the run deadline (linear.go), so all three are raced together.
+// earliest of the remaining step/run deadline (parent ctx) and the task
+// timeout (spec.Timeout, when set). The parent deadline can arrive first even
+// when the step has its own timeout because the run-loop ctx carries the run
+// deadline (linear.go). The fixed join watchdog applies ONLY when neither
+// bounds the join (no task timeout, no parent deadline): a long task timeout
+// (e.g. one derived from a 24h run deadline) must be honored, never truncated
+// by the watchdog.
 func joinBound(ctx context.Context, taskTimeout, watchdog time.Duration) time.Duration {
-	bound := watchdog
-	if taskTimeout > 0 && taskTimeout < bound {
+	bound := time.Duration(0)
+	if taskTimeout > 0 {
 		bound = taskTimeout
 	}
 	if parent, ok := ctx.Deadline(); ok {
-		if remaining := time.Until(parent); remaining < bound {
+		remaining := time.Until(parent)
+		if remaining < bound || bound <= 0 {
 			bound = remaining
 		}
 	}

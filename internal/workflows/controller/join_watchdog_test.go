@@ -41,6 +41,29 @@ func (h *neverSettlingHandler) count() int {
 	return h.invoked
 }
 
+// TestJoinBoundHonorsTaskTimeoutOverWatchdog pins that the 10-minute join
+// watchdog is a last-resort bound ONLY when nothing else bounds the join: a
+// long task timeout (e.g. one derived from a 24h run deadline) must be
+// honored, never truncated by the watchdog. A workflow step with a 24h task
+// timeout must be able to run for 24h, not be killed after 10 minutes.
+func TestJoinBoundHonorsTaskTimeoutOverWatchdog(t *testing.T) {
+	// A 24h task timeout governs over the 10-minute default watchdog.
+	if got := joinBound(context.Background(), 24*time.Hour, 10*time.Minute); got != 24*time.Hour {
+		t.Fatalf("joinBound = %s, want 24h (task timeout governs, watchdog must not truncate)", got)
+	}
+	// With no task timeout and no parent deadline the watchdog still applies:
+	// a child that never settles must not park the controller forever.
+	if got := joinBound(context.Background(), 0, 10*time.Minute); got != 10*time.Minute {
+		t.Fatalf("joinBound = %s, want the watchdog when nothing else bounds the join", got)
+	}
+	// A parent (run) deadline sooner than the task timeout wins.
+	parent, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if got := joinBound(parent, 24*time.Hour, 10*time.Minute); got <= 0 || got > 5*time.Minute {
+		t.Fatalf("joinBound = %s, want the ~5m parent deadline (<= 5m, > 0)", got)
+	}
+}
+
 // TestAgentStepJoinWatchdogSettlesNeverSettlingChild pins the controller-side
 // join bound: a child that never settles (no task timeout, no parent deadline,
 // so coordinator.Join has no bound of its own) must not park the controller
