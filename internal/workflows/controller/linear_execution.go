@@ -316,14 +316,18 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 			result.ErrorRef = storeErrorText(writeCtx, c.Repo, mapErr)
 			route = failureRoute(step)
 		} else {
-			route, err = c.selectRoute(ctx, step, status, outMap)
+			// Route computation reads the ledger (loop counters, prior review
+			// output). Use the detached writeCtx, not ctx: at the run deadline
+			// ctx is already expired, and a context.DeadlineExceeded from those
+			// reads would mis-record a completed child as Failed on on_failure.
+			route, err = c.selectRoute(writeCtx, step, status, outMap)
 			if err != nil {
 				status, runErr = workflowledger.AttemptStatusFailed, err
 				result.ErrorRef = storeErrorText(writeCtx, c.Repo, err)
 				if route.ToStepID == "" {
 					route = failureRoute(step)
 				}
-			} else if noProgress, zpErr := c.reviewMadeNoProgress(ctx, step, route, outMap); zpErr != nil {
+			} else if noProgress, zpErr := c.reviewMadeNoProgress(writeCtx, step, route, outMap); zpErr != nil {
 				// A ledger-read failure inside the zero-progress check is a HARD
 				// step failure: the controller cannot safely route a review
 				// whose prior findings it could not read, so it must not take

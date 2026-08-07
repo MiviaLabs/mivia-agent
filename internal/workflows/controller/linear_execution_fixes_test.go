@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -152,5 +155,86 @@ func TestClassifyStepStatusSchemaValidationErrorFailsClosed(t *testing.T) {
 				t.Fatalf("classifyStepStatus(%v, %q) = %q, want failed", tc.err, tc.child, got)
 			}
 		})
+	}
+}
+
+// expiringChildRunner waits for the step context to expire, then reports the
+// child "completed" paired with the context error. It models a child whose
+// work finishes exactly as the run deadline fires.
+type expiringChildRunner struct{}
+
+func (r *expiringChildRunner) RunStep(ctx context.Context, req AgentStepRequest) (AgentStepResult, error) {
+	<-ctx.Done()
+	return AgentStepResult{CoordinatorRunID: req.CoordinatorRunID, TaskID: req.TaskID, Status: "completed", Output: json.RawMessage(`{"ok":true}`)}, ctx.Err()
+}
+
+// ctxAwareLoopRepository mimics the production store, whose reads honor the
+// caller context. The in-memory store ignores ctx, so without this wrapper a
+// loop-counter read would never surface an expired run deadline in a test.
+type ctxAwareLoopRepository struct {
+	workflowledger.Repository
+}
+
+func (r *ctxAwareLoopRepository) GetLoopCounters(ctx context.Context, runID string) ([]workflowledger.LoopCounter, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.Repository.GetLoopCounters(ctx, runID)
+}
+
+// TestSettleAgentAttemptRoutesBackEdgeWithExpiredRunDeadline pins the route
+// computation context in settleAgentAttempt: when the run deadline expires
+// while a completed child settles, route selection must read the ledger under
+// the detached stepPersistenceContext, not the expired caller ctx. With the
+// caller ctx, GetLoopCounters fails with context.DeadlineExceeded, the attempt
+// is recorded Failed on the on_failure route, and the run settles failed
+// instead of timed_out, discarding the completed child's success.
+func TestSettleAgentAttemptRoutesBackEdgeWithExpiredRunDeadline(t *testing.T) {
+	wf, err := compiler.Compile(&definition.WorkflowFile{
+		Version: 1, Name: "deadline-loop", InitialStep: "work",
+		Steps: []definition.Step{{ID: "work", Kind: "agent", Agent: "worker"}},
+		Transitions: []definition.Transition{
+			{From: "work", To: "work", Match: definition.MatchCriteria{Status: "succeeded"}, Loop: "retry", MaxIterations: 5},
+			// Satisfies the compiler's success-terminal rule; the output gate
+			// never matches the child's output, so the back-edge always routes.
+			{From: "work", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}}},
+		},
+		Limits: definition.Limits{MaxDurationSeconds: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := workflowledger.NewMemoryRepository()
+	repo := &ctxAwareLoopRepository{Repository: base}
+	ctrl, err := NewLinearController(repo, &expiringChildRunner{}, wf, map[string]StepRuntime{
+		"work": {Agent: agents.ResolvedAgent{Name: "worker"}},
+	}, nil, "wfr-deadline-loop-route", []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ctrl.Run(context.Background())
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("run error = %v, want context.DeadlineExceeded", err)
+	}
+	stored, err := base.GetRun(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != workflowledger.RunStatusTimedOut {
+		t.Fatalf("run status = %q, want timed_out", stored.Status)
+	}
+	attempts, err := base.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want exactly 1", len(attempts))
+	}
+	attempt := attempts[0]
+	if attempt.Status != workflowledger.AttemptStatusSucceeded {
+		t.Fatalf("attempt status = %q, want succeeded (the completed child must not be discarded)", attempt.Status)
+	}
+	if attempt.ToStepID != "work" {
+		t.Fatalf("attempt route = %q, want the loop back-edge %q, not the on_failure route", attempt.ToStepID, "work")
 	}
 }
