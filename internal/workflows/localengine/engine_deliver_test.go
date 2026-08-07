@@ -3,6 +3,7 @@ package localengine_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -209,6 +210,36 @@ func TestEngineStartCreatesRunWorktreeAndDelivers(t *testing.T) {
 	}
 }
 
+// TestEngineStartRejectsDeliveryWithoutOrigin pins that startNew fails a
+// delivery-active workflow when the workspace git repository has no origin
+// remote. The run must not be created and must not reach delivery_pending.
+func TestEngineStartRejectsDeliveryWithoutOrigin(t *testing.T) {
+	repoRoot := newLocalRepoNoOrigin(t)
+	writeFileT(t, filepath.Join(repoRoot, ".mivia", "workflows", "deliver-me.toml"), deliverMeTOML)
+
+	repo := workflowledger.NewMemoryRepository()
+	engine := &localengine.Engine{
+		WorkspaceRoot: repoRoot,
+		Repo:          repo,
+		NewRunner: func() controller.AgentStepRunner {
+			return &localengine.StaticStepRunner{Output: json.RawMessage(`{"ok":true}`)}
+		},
+		NewRunID: func() string { return "wfr-no-origin" },
+	}
+	_, err := engine.Start(context.Background(), agenttools.StartRequest{
+		Workflow: "deliver-me", Inputs: map[string]any{"task": "build"},
+	})
+	if err == nil {
+		t.Fatal("expected Start to fail without an origin remote")
+	}
+	if !strings.Contains(err.Error(), "origin remote") {
+		t.Fatalf("error = %q, want origin remote mention", err.Error())
+	}
+	if _, err := repo.GetRun(context.Background(), "wfr-no-origin"); !errors.Is(err, workflowledger.ErrNotFound) {
+		t.Fatalf("expected no run record, got err=%v", err)
+	}
+}
+
 // TestEngineResumeRecreatesRunWorktree pins that the resume path re-ensures
 // the run worktree (validating or recreating it) so an interrupted run that
 // lost its worktree can still resume and later deliver.
@@ -329,6 +360,20 @@ func assertWorktreeHEAD(t *testing.T, root, want string) {
 }
 
 // --- fixtures and helpers ---
+
+// newLocalRepoNoOrigin builds a git repository with one commit on main and no
+// origin remote, so delivery-active workflows cannot resolve a remote URL.
+func newLocalRepoNoOrigin(t *testing.T) string {
+	t.Helper()
+	repoRoot := t.TempDir()
+	runGitT(t, repoRoot, "init", "-b", "main")
+	runGitT(t, repoRoot, "config", "user.email", "test@example.com")
+	runGitT(t, repoRoot, "config", "user.name", "Test")
+	writeFileT(t, filepath.Join(repoRoot, "a.txt"), "base\n")
+	runGitT(t, repoRoot, "add", "a.txt")
+	runGitT(t, repoRoot, "commit", "-m", "base")
+	return repoRoot
+}
 
 // newRealDeliveryRepo builds a main repo with one base commit on main, a bare
 // origin remote, and the base pushed to origin.
