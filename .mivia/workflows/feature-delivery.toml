@@ -81,6 +81,7 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.review.output", as = "review_findings", max_bytes = 16000, optional = true },
+  { from = "steps.review_integration.output", as = "integration_findings", max_bytes = 16000, optional = true },
 ]
 on_failure = "failure"
 
@@ -96,6 +97,22 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "review_integration"
+kind = "agent_gate"
+agent = "reviewer"
+skill = "secure-change"
+template = "templates/review-integration.md"
+output_schema = "schemas/review-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.review.output", as = "review", max_bytes = 16000, optional = true },
 ]
 on_failure = "failure"
 
@@ -211,11 +228,25 @@ from = "implement"
 to = "review"
 match = { status = "succeeded" }
 
-# review → test_validate (code review approved, validate tests pass)
+# review → review_integration (code review approved, cross-layer gate next)
 [[transitions]]
 from = "review"
+to = "review_integration"
+match = { status = "succeeded", output = { verdict = "approved" } }
+
+# review_integration → test_validate (cross-layer review approved, validate tests pass)
+[[transitions]]
+from = "review_integration"
 to = "test_validate"
 match = { status = "succeeded", output = { verdict = "approved" } }
+
+# review_integration → implement (cross-layer changes requested, repair loop)
+[[transitions]]
+from = "review_integration"
+to = "implement"
+match = { status = "succeeded", output = { verdict = "changes_requested" } }
+loop = "integration_repair"
+max_iterations = 500
 
 # review → implement (code review changes requested, unbounded repair loop)
 [[transitions]]

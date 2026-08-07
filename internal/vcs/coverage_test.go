@@ -272,6 +272,90 @@ func TestRemoveGitCommandFailure(t *testing.T) {
 	}
 }
 
+// TestParseWorktreeListFlushesLastBlock confirms that parseWorktreeList includes
+// the final worktree block when the input does not end with a trailing blank line.
+// This is the regression test for the bug where the last block was silently dropped.
+func TestParseWorktreeListFlushesLastBlock(t *testing.T) {
+	prefix := "/repo/.mivia/worktrees/"
+
+	// (a) Single block with no trailing newline at all.
+	a := "worktree /repo/.mivia/worktrees/wt-a\nbranch refs/heads/wt/wt-a\nHEAD abc1234"
+	got, err := parseWorktreeList(a, prefix)
+	if err != nil {
+		t.Fatalf("case a: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("case a: len = %d, want 1 (last block dropped)", len(got))
+	}
+	if got[0].Name != "wt-a" || got[0].Branch != "wt/wt-a" {
+		t.Errorf("case a: got %+v, want wt-a on wt/wt-a", got[0])
+	}
+
+	// (b) Two blocks where the second lacks a trailing blank line.
+	b := "worktree /repo/.mivia/worktrees/wt-a\nbranch refs/heads/wt/wt-a\n\nworktree /repo/.mivia/worktrees/wt-b\nbranch refs/heads/wt/wt-b"
+	got, err = parseWorktreeList(b, prefix)
+	if err != nil {
+		t.Fatalf("case b: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("case b: len = %d, want 2 (last block dropped)", len(got))
+	}
+	if got[1].Name != "wt-b" || got[1].Branch != "wt/wt-b" {
+		t.Errorf("case b: second = %+v, want wt-b on wt/wt-b", got[1])
+	}
+
+	// (c) Single trailing newline (no blank terminator line) — realistic git output.
+	c := "worktree /repo/.mivia/worktrees/wt-c\nbranch refs/heads/wt/wt-c\n"
+	got, err = parseWorktreeList(c, prefix)
+	if err != nil {
+		t.Fatalf("case c: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("case c: len = %d, want 1 (last block dropped)", len(got))
+	}
+	if got[0].Name != "wt-c" || got[0].Branch != "wt/wt-c" {
+		t.Errorf("case c: got %+v, want wt-c on wt/wt-c", got[0])
+	}
+}
+
+// TestParseWorktreeListEmptyInput verifies that empty input does not panic and
+// returns an empty slice.
+func TestParseWorktreeListEmptyInput(t *testing.T) {
+	got, err := parseWorktreeList("", "/prefix/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("len = %d, want 0", len(got))
+	}
+}
+
+// TestParseWorktreeListMalformedKeys verifies that lines with unknown keys
+// (e.g. bare, locked, prunable) are silently ignored without corrupting the
+// current block. A valid block following malformed lines must still parse
+// correctly.
+func TestParseWorktreeListMalformedKeys(t *testing.T) {
+	prefix := "/repo/.mivia/worktrees/"
+	out := `bare
+locked reason
+worktree /repo/.mivia/worktrees/wt-x
+prunable gitdir file points to non-existent location
+branch refs/heads/wt/wt-x
+HEAD 1234567
+
+`
+	got, err := parseWorktreeList(out, prefix)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1 (malformed keys corrupted parsing)", len(got))
+	}
+	if got[0].Name != "wt-x" || got[0].Branch != "wt/wt-x" {
+		t.Errorf("got %+v, want wt-x on wt/wt-x", got[0])
+	}
+}
+
 func TestRunGitMutationReportsStartFailure(t *testing.T) {
 	cmd := exec.Command(filepath.Join(t.TempDir(), "missing-command"))
 	output, err := runGitMutation(cmd, nil)
