@@ -54,20 +54,33 @@ func openaiErrorParser(statusCode int, body []byte) error {
 
 	// An error field is present — report it as a provider error with only the
 	// status code and, if available, the error type (a classification string,
-	// not request content). The message is deliberately excluded.
+	// not request content). The message is deliberately excluded: it is read
+	// only to classify a prompt-too-long rejection (attaching the
+	// ErrPromptTooLong sentinel for the agent loop's compact-and-retry), and
+	// its text never appears in the surfaced error.
 	errType := ""
-	if envelope.Error != nil && envelope.Error.Type != "" {
-		errType = ", type " + envelope.Error.Type
+	promptTooLong := false
+	if envelope.Error != nil {
+		if envelope.Error.Type != "" {
+			errType = ", type " + envelope.Error.Type
+		}
+		promptTooLong = isPromptTooLongMessage(envelope.Error.Message)
 	}
 
 	switch {
 	case statusCode == http.StatusOK:
+		if promptTooLong {
+			return fmt.Errorf("%s: provider error (HTTP 200%s): %w", "openai", errType, ErrPromptTooLong)
+		}
 		return fmt.Errorf("%s: provider error (HTTP 200%s)", "openai", errType)
 	case statusCode == http.StatusTooManyRequests:
 		return fmt.Errorf("%s: rate limited (HTTP 429)", "openai")
 	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
 		return fmt.Errorf("%s: auth failed (HTTP %d)", "openai", statusCode)
 	default:
+		if promptTooLong {
+			return fmt.Errorf("%s: provider error (HTTP %d%s): %w", "openai", statusCode, errType, ErrPromptTooLong)
+		}
 		return fmt.Errorf("%s: provider error (HTTP %d%s)", "openai", statusCode, errType)
 	}
 }

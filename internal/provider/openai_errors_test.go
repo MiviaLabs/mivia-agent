@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -123,6 +124,56 @@ func TestOpenAIErrorParserReportsErrorsWithoutMessage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A prompt-too-long rejection must wrap ErrPromptTooLong so the agent loop can
+// compact and retry once. The provider's message is read ONLY to classify (via
+// isPromptTooLongMessage); its text must never appear in err.Error().
+func TestOpenAIErrorParserWrapsPromptTooLongSentinel(t *testing.T) {
+	body := `{"error":{"message":"This model's maximum context length is 128000 tokens. You requested 612000 tokens. Please reduce the length...","type":"invalid_request_error"}}`
+	err := openaiErrorParser(http.StatusBadRequest, []byte(body))
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("expected ErrPromptTooLong, got: %v", err)
+	}
+	for _, banned := range []string{"maximum context length", "128000", "612000", "Please reduce"} {
+		if strings.Contains(err.Error(), banned) {
+			t.Fatalf("provider message %q leaked in error: %v", banned, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), "invalid_request_error") {
+		t.Fatalf("content-free classification missing: %v", err)
+	}
+}
+
+// The HTTP-200 in-band error branch classifies the same way, still without
+// leaking the provider's message text.
+func TestOpenAIErrorParserInBandPromptTooLongWrapsSentinel(t *testing.T) {
+	body := `{"error":{"type":"invalid_request_error","message":"your prompt exceeds the context length limit, reduce the prompt"}}`
+	err := openaiErrorParser(http.StatusOK, []byte(body))
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("expected ErrPromptTooLong, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "exceeds the context length limit") {
+		t.Fatalf("provider message leaked: %v", err)
+	}
+}
+
+// A plain bad request (e.g. an unknown parameter) must NOT wrap the sentinel:
+// only a classified prompt-too-long message earns the compact-and-retry path.
+func TestOpenAIErrorParserPlainBadRequestDoesNotWrapPromptTooLong(t *testing.T) {
+	err := openaiErrorParser(http.StatusBadRequest, []byte(`{"error":{"message":"unknown parameter","type":"invalid_request_error"}}`))
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("plain bad request must not wrap ErrPromptTooLong: %v", err)
 	}
 }
 
