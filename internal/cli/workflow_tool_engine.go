@@ -83,6 +83,14 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 		runID = agenttools.InvocationRunID(key)
 		if existing, getErr := prepared.repo.GetRun(ctx, runID); getErr == nil {
 			prepared.closeFn()
+			if !workflowledger.IsTerminalRunStatus(existing.Status) && existing.Status != workflowledger.RunStatusDeliveryPending {
+				e.mu.Lock()
+				_, active := e.active[runID]
+				e.mu.Unlock()
+				if !active {
+					return e.resumeCLI(ctx, agenttools.StartRequest{Resume: true, RunID: runID, Force: req.Force, AllowPublish: req.AllowPublish})
+				}
+			}
 			return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 		} else if !errors.Is(getErr, workflowledger.ErrNotFound) {
 			prepared.closeFn()
