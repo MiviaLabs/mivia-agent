@@ -81,6 +81,10 @@ for arg in "$@"; do
 done
 if [ "$1" = "api" ]; then
   printf '%s\n' "$@" > "${GH_API_ARGS_FILE:-/dev/null}"
+  if [ -n "$GH_API_EXIT" ]; then
+    printf '%s\n' "${GH_API_EXIT_MSG:-gh api failed}" >&2
+    exit "$GH_API_EXIT"
+  fi
   if [ -n "$GH_STDOUT_API" ]; then
     printf '%s' "$GH_STDOUT_API"
   else
@@ -224,6 +228,30 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 // branch name across head repositories, so a fork PR with the same branch
 // name must be skipped; only a PR whose head repository belongs to the
 // target repository's owner may be reused as this delivery's PR.
+// TestGitHubCLIFindByHeadBaseOIDFailureSurfaces covers the base-commit lookup
+// error path. A matching PR whose base commit cannot be resolved must surface
+// the failure: returning the PR with an empty BaseRefOID would let delivery
+// proceed against an unknown base, which is the condition INV-DUR-1 pins.
+func TestGitHubCLIFindByHeadBaseOIDFailureSurfaces(t *testing.T) {
+	writeFakeGH(t)
+	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
+	t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":true,"headRepositoryOwner":{"login":"owner"}}]`)
+	t.Setenv("GH_API_EXIT", "1")
+	t.Setenv("GH_API_EXIT_MSG", "gh api: rate limited")
+
+	got, err := (GitHubCLI{}).FindByHead(context.Background(), "owner/repo", "feature/x")
+	if err == nil {
+		t.Fatalf("FindByHead = %+v, want the base OID error", got)
+	}
+	if got != nil {
+		t.Errorf("FindByHead returned %+v alongside an error, want nil", got)
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("error = %v, want it to carry the gh api failure", err)
+	}
+}
+
 func TestGitHubCLIFindByHeadScopesToRepoOwner(t *testing.T) {
 	writeFakeGH(t)
 	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
