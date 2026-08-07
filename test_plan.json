@@ -1,0 +1,33 @@
+{
+  "inspected": [
+    "internal/codeintel/roles.go",
+    "internal/codeintel/analyzer.go",
+    "internal/codeintel/roles_test.go",
+    "internal/codeintel/explicit_methods_test.go",
+    "internal/codeintel/bug_audit_test.go",
+    "internal/codeintel/codeintel_test.go",
+    "internal/codeintel/codeintel.go",
+    "internal/codeintel/cache.go",
+    "internal/codeintel/coverage_test.go",
+    "internal/codeintel/definition.go",
+    "internal/codeintel/definition_test.go",
+    "internal/codeintel/outline.go",
+    "internal/codeintel/outline_test.go",
+    "internal/codeintel/symbols.go",
+    "internal/codeintel/symbols_test.go",
+    "internal/codeintel/span.go",
+    "internal/codeintel/analyzer_test.go",
+    "go.mod"
+  ],
+  "steps": [
+    "1. Add TestFindImplementationsEmbeddedInterface to internal/codeintel/roles_test.go (success case). Type-check source with 'type WrappedReader interface { io.Reader }' and 'type myReader struct{}' with a Read method, build a packages.Package with non-nil Types, TypesInfo (populated Defs and Uses maps), and Fset to bypass the nil guard at roles.go:124 (which checks pkg==nil || pkg.Types==nil || pkg.TypesInfo==nil || targetObj==nil). Call findImplementations targeting WrappedReader (NumExplicitMethods==0, NumMethods==1) and assert at least one implementation (myReader) is found via the addLoc callback. Uses importer.For(\"compiler\", nil) for CGo-free portability (noted inconsistency with existing tests that use importer.Default()).",
+    "2. Add TestFindImplementationsEmptyInterfaceReturnsNone to internal/codeintel/roles_test.go (negative case for empty interface). Type-check source with 'type Empty interface {}' (NumMethods==0). Call findImplementations targeting Empty and assert zero results are reported via addLoc, confirming the guard at roles.go:128 correctly skips truly empty interfaces.",
+    "3. Add TestFindImplementationsNilInputs to internal/codeintel/roles_test.go (negative case for nil guards). Call findImplementations with nil pkg, nil targetObj, and pkg with nil Types/TypesInfo in three subtests. Assert addLoc is never called for each. Confirms the nil guard at roles.go:124 (pkg==nil || pkg.Types==nil || pkg.TypesInfo==nil || targetObj==nil) returns early without panicking.",
+    "4. Verify production code at roles.go line 128 already reads iface.NumMethods() == 0 (correct guard) and analyzer.go line 268 already reads iface.NumMethods() > 0 (correct guard). Confirm no production code change is needed.",
+    "5. Verify no new TODO/FIXME/HACK/XXX markers in changed files.",
+    "6. Request host evidence gate: go test ./internal/codeintel/... -count=1 -race",
+    "7. Request host evidence gate: go vet ./internal/codeintel/...",
+    "8. Write honest completion report."
+  ],
+  "summary": "SCOPE: Regression tests for the fixed bug in internal/codeintel/findImplementations (roles.go:128) which historically used NumExplicitMethods instead of NumMethods, silently returning no results for interfaces composed entirely of embedded methods. The production fix is already present (roles.go:128 uses iface.NumMethods()==0, analyzer.go:268 uses iface.NumMethods()>0). No existing test calls findImplementations end-to-end. The existing explicit_methods_test.go checks preconditions and calls types.Implements directly but never exercises findImplementations. FILES CHANGING: internal/codeintel/roles_test.go only (add 3 test functions). No production code changes. TEST PLAN (test-first order): (1) success case TestFindImplementationsEmbeddedInterface: type-check a package containing 'type WrappedReader interface { io.Reader }' (NumExplicitMethods==0, NumMethods==1) and 'type myReader struct{}' with Read method. Build packages.Package with non-nil Types, non-nil TypesInfo with populated Defs/Uses maps, and non-nil Fset to bypass the nil guard at roles.go:124 which checks (pkg==nil || pkg.Types==nil || pkg.TypesInfo==nil || targetObj==nil). Call findImplementations targeting WrappedReader and assert addLoc fires at least once for myReader. Uses importer.For(\"compiler\", nil) for CGo-free CI portability (acknowledged inconsistency with existing tests using importer.Default()). (2) negative case TestFindImplementationsEmptyInterfaceReturnsNone: type-check 'type Empty interface {}' (NumMethods==0), call findImplementations targeting Empty, assert addLoc is never called. Confirms roles.go:128 guard correctly skips truly empty interfaces. (3) negative case TestFindImplementationsNilInputs: call findImplementations with nil pkg, nil targetObj, and pkg with nil Types/nil TypesInfo in three subtests. Assert addLoc is never called. Confirms roles.go:124 nil guard returns early safely. SECURITY: No secrets, no file-path manipulation, no external input. findImplementations only reads go/types metadata from an in-process type-checked package. No new attack surface. FUZZ: Not practical -- findImplementations operates on go/types objects requiring a full type-check of syntactically valid Go source. Generating bounded valid packages for fuzzing is infeasible; the function has no raw byte input. HOST EVIDENCE GATES: (1) go test ./internal/codeintel/... -count=1 -race, (2) go vet ./internal/codeintel/..., (3) verify no new TODO/FIXME/HACK/XXX in changed files."
+}
