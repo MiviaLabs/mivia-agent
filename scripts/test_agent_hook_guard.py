@@ -609,6 +609,158 @@ def test_run_command_guard_blocks_dash_n_after_message_value() -> None:
     assert "agent-hook-bypass.json" in proc.stderr
 
 
+# ---------------------------------------------------------------------------
+# Pipe-as-separator correctness regression:
+#   SHELL_SEPARATORS must only contain tokens that are actual shell operators
+#   in the parsing context where they are used. Structured argv lists from tool
+#   inputs have already been shell-parsed, so '|' is data, not a shell operator.
+#   Before the fix, '|' in SHELL_SEPARATORS caused _split_shell_segments to
+#   incorrectly split structured argv at standalone '|' tokens, which could
+#   cause false negatives when -m value consumption was disrupted.
+# ---------------------------------------------------------------------------
+
+
+def _option_vector(argv: list[str]) -> list[str]:
+    """Import and call option_vector from agent_hook_guard for unit testing."""
+    import importlib.util
+    guard_path = ROOT / "scripts" / "agent_hook_guard.py"
+    spec = importlib.util.spec_from_file_location("agent_hook_guard", str(guard_path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.option_vector(argv)
+
+
+def _rc_guard_option_vector(argv: list[str]) -> list[str]:
+    """Import and call option_vector from run-command-guard for unit testing."""
+    import importlib.util
+    guard_path = RC_GUARD
+    spec = importlib.util.spec_from_file_location("run_command_guard", str(guard_path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.option_vector(argv)
+
+
+def test_option_vector_pipe_is_not_a_shell_separator() -> None:
+    # Standalone '|' in a structured argv is data, not a shell operator.
+    # The option vector must NOT split at '|' tokens.
+    vec = _option_vector(["git", "commit", "-m", "x", "|", "head", "-1"])
+    assert "|" in vec, (
+        "standalone '|' must be preserved in the option vector; "
+        "it is not a shell separator in structured argv context"
+    )
+    # Verify the vector contains tokens from both sides of the pipe.
+    assert "git" in vec
+    assert "commit" in vec
+    assert "head" in vec
+
+
+def test_option_vector_preserves_m_value_across_pipe() -> None:
+    # The -m value 'x' must be consumed even when '|' follows.
+    vec = _option_vector(["git", "commit", "-m", "x", "|", "git", "commit", "-m", "y"])
+    assert "x" not in vec, "-m value 'x' must be consumed from the option vector"
+    assert "y" not in vec, "-m value 'y' must be consumed from the option vector"
+    assert "|" in vec, "standalone '|' must remain in the option vector"
+
+
+def test_option_vector_ampersand_ampersand_still_splits() -> None:
+    # '&&' IS a real shell operator and must still cause a segment split.
+    vec = _option_vector(["git", "commit", "-m", "x", "&&", "git", "commit", "-n"])
+    # The -n from the second segment must be in the vector.
+    assert "-n" in vec, "-n from second command after && must be detected"
+    # The -m value 'x' must be consumed.
+    assert "x" not in vec
+
+
+def test_option_vector_semicolon_still_splits() -> None:
+    # ';' IS a real shell operator and must still cause a segment split.
+    vec = _option_vector(["git", "commit", "-m", "x", ";", "git", "commit", "-n"])
+    assert "-n" in vec
+    assert "x" not in vec
+
+
+def test_option_vector_or_or_still_splits() -> None:
+    # '||' IS a real shell operator and must still cause a segment split.
+    vec = _option_vector(["git", "commit", "-m", "x", "||", "git", "commit", "-n"])
+    assert "-n" in vec
+    assert "x" not in vec
+
+
+def test_run_command_guard_blocks_compound_hooks_path_pipe() -> None:
+    proc = run_command_guard(
+        [
+            "git",
+            "commit",
+            "-m",
+            "x",
+            "|",
+            "git",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-m",
+            "y",
+        ]
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "agent-hook-bypass.json" in proc.stderr
+
+
+def test_run_command_guard_blocks_compound_husky_pipe() -> None:
+    proc = run_command_guard(
+        [
+            "git",
+            "commit",
+            "-m",
+            "x",
+            "|",
+            "HUSKY=0",
+            "git",
+            "commit",
+            "-m",
+            "y",
+        ]
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "agent-hook-bypass.json" in proc.stderr
+
+
+def test_run_command_guard_blocks_compound_dash_n_pipe() -> None:
+    proc = run_command_guard(
+        [
+            "git",
+            "commit",
+            "-m",
+            "x",
+            "|",
+            "git",
+            "commit",
+            "-n",
+            "-m",
+            "y",
+        ]
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "agent-hook-bypass.json" in proc.stderr
+
+
+def test_rc_guard_option_vector_pipe_is_not_a_shell_separator() -> None:
+    # Regression: run-command-guard SHELL_SEPARATORS must match agent_hook_guard.
+    # Standalone '|' must NOT cause a segment split in the sibling guard.
+    vec = _rc_guard_option_vector(["git", "commit", "-m", "x", "|", "head", "-1"])
+    assert "|" in vec, (
+        "run-command-guard: standalone '|' must be preserved in the option vector; "
+        "it is not a shell separator in structured argv context"
+    )
+
+
+def test_rc_guard_option_vector_preserves_m_value_across_pipe() -> None:
+    # -m values on both sides of '|' must be consumed without segment splitting.
+    vec = _rc_guard_option_vector(["git", "commit", "-m", "x", "|", "git", "commit", "-m", "y"])
+    assert "x" not in vec, "run-command-guard: -m value 'x' must be consumed"
+    assert "y" not in vec, "run-command-guard: -m value 'y' must be consumed"
+    assert "|" in vec, "run-command-guard: standalone '|' must remain in the vector"
+
+
 def main() -> None:
     test_blocks_no_verify_shell()
     test_allows_clean_shell()
@@ -642,6 +794,16 @@ def main() -> None:
     test_run_command_guard_allows_message_dash_n_value()
     test_run_command_guard_allows_message_no_verify_value()
     test_run_command_guard_blocks_dash_n_after_message_value()
+    test_option_vector_pipe_is_not_a_shell_separator()
+    test_option_vector_preserves_m_value_across_pipe()
+    test_option_vector_ampersand_ampersand_still_splits()
+    test_option_vector_semicolon_still_splits()
+    test_option_vector_or_or_still_splits()
+    test_run_command_guard_blocks_compound_hooks_path_pipe()
+    test_run_command_guard_blocks_compound_husky_pipe()
+    test_run_command_guard_blocks_compound_dash_n_pipe()
+    test_rc_guard_option_vector_pipe_is_not_a_shell_separator()
+    test_rc_guard_option_vector_preserves_m_value_across_pipe()
     print("test_agent_hook_guard: ok")
 
 
