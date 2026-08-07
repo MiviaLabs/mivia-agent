@@ -240,10 +240,9 @@ func TestEngineStartRejectsDeliveryWithoutOrigin(t *testing.T) {
 	}
 }
 
-// TestEngineResumeRecreatesRunWorktree pins that the resume path re-ensures
-// the run worktree (validating or recreating it) so an interrupted run that
-// lost its worktree can still resume and later deliver.
-func TestEngineResumeRecreatesRunWorktree(t *testing.T) {
+// TestEngineResumeRefusesMissingRunWorktree prevents resume from replacing a
+// lost worktree with a clean base checkout and discarding unfinished edits.
+func TestEngineResumeRefusesMissingRunWorktree(t *testing.T) {
 	repoRoot, _ := newRealDeliveryRepo(t)
 	writeFileT(t, filepath.Join(repoRoot, ".mivia", "workflows", "two-step.toml"), twoStepTOML)
 
@@ -291,35 +290,11 @@ func TestEngineResumeRecreatesRunWorktree(t *testing.T) {
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, "workflow-wfr-test", "wf/"); err != nil {
 		t.Fatal(err)
 	}
-	admittedBase := runGitOutT(t, repoRoot, "rev-parse", "HEAD")
-	writeFileT(t, filepath.Join(repoRoot, "after-admission.txt"), "new base\n")
-	runGitT(t, repoRoot, "add", "after-admission.txt")
-	runGitT(t, repoRoot, "commit", "-m", "advance source checkout")
-
-	resumed, err := engine.Start(context.Background(), agenttools.StartRequest{
+	_, err = engine.Start(context.Background(), agenttools.StartRequest{
 		Resume: true, RunID: started.RunID, Force: true,
 	})
-	if err != nil {
-		t.Fatalf("resume: %v", err)
-	}
-	if !resumed.Resumed {
-		t.Fatalf("resume result = %+v", resumed)
-	}
-	if _, err := os.Stat(worktreeRoot); err != nil {
-		t.Fatalf("resume did not recreate run worktree %s: %v", worktreeRoot, err)
-	}
-	assertWorktreeHEAD(t, worktreeRoot, admittedBase)
-	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := engine.Wait(waitCtx, started.RunID); err != nil {
-		t.Fatal(err)
-	}
-	run, err := repo.GetRun(context.Background(), started.RunID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if run.Status != workflowledger.RunStatusSucceeded {
-		t.Fatalf("after resume status = %q, want succeeded", run.Status)
+	if err == nil || !strings.Contains(err.Error(), "unfinished edits cannot be recovered") {
+		t.Fatalf("resume error = %v, want missing-worktree refusal", err)
 	}
 }
 

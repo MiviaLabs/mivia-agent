@@ -214,11 +214,8 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	if activeHere {
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is already executing in this engine; cancel it first", req.RunID)
 	}
-	// Re-ensure the run worktree: validate the recorded worktree or recreate it
-	// when missing, and record the identity for a later delivery. Non-fatal:
-	// execution resumes with the recorded admission either way.
-	if identity, ok := e.ensureRunWorktree(ctx, req.RunID, &run); ok {
-		e.recordWorktree(req.RunID, identity)
+	if err := e.prepareResumeWorktree(ctx, run); err != nil {
+		return agenttools.StartResult{}, err
 	}
 	raw, err := e.Repo.GetRunSnapshot(ctx, req.RunID)
 	if err != nil {
