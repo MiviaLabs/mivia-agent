@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -115,14 +116,25 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 // every recorded child before the controller starts a replacement step.
 func prepareWorkflowResumeExecution(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID string, force bool, stdout io.Writer) error {
 	if !force {
-		if err := repo.TakeoverExpiredRunClaim(ctx, runID, "", workflowledger.DefaultClaimLease); err != nil {
+		err := repo.TakeoverExpiredRunClaim(ctx, runID, "", workflowledger.DefaultClaimLease)
+		if err != nil && !errors.Is(err, workflowledger.ErrClaimNotHeld) {
 			return fmt.Errorf("workflow run %q is still active; retry after the claim lease expires or pass --force after the prior executor stopped", runID)
 		}
 	}
 	if err := repo.ClearRunClaim(ctx, runID); err != nil {
 		return fmt.Errorf("clear interrupted workflow claim: %w", err)
 	}
-	return joinInFlightAttempts(ctx, built, repo, runID, stdout)
+	if built.Controller == nil {
+		return joinInFlightAttempts(ctx, built, repo, runID, stdout)
+	}
+	if err := repo.ClaimRun(ctx, runID, built.Controller.Holder); err != nil {
+		return fmt.Errorf("claim workflow resume handoff: %w", err)
+	}
+	if err := joinInFlightAttempts(ctx, built, repo, runID, stdout); err != nil {
+		_ = repo.ReleaseRun(context.Background(), runID, built.Controller.Holder)
+		return err
+	}
+	return nil
 }
 
 // joinInFlightAttempts consumes PlanResume.AttemptsInFlight: it joins each
