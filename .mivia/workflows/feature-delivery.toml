@@ -166,6 +166,21 @@ context = [
 on_failure = "failure"
 
 [[steps]]
+id = "repair_preflight"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.preflight_validate.output", as = "failed_evidence", max_bytes = 16000 },
+]
+on_failure = "failure"
+
+[[steps]]
 id = "test_validate"
 kind = "evidence_gate"
 verifier = "go-test"
@@ -183,6 +198,17 @@ on_failure = "failure"
 id = "code_validate"
 kind = "evidence_gate"
 verifier = "go-final"
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+# preflight_validate runs the project's own final gate inside the verifier
+# sandbox (bare executable + argv, never a shell string). This is what makes
+# the workflow project-agnostic: any repository declares its real pre-push
+# gate here, and a failure routes to repair_preflight with the evidence.
+[[steps]]
+id = "preflight_validate"
+kind = "evidence_gate"
+command = { check = "invariants", program = "python3", args = ["scripts/validate_invariants.py"] }
 output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
@@ -296,10 +322,10 @@ from = "repair_verify"
 to = "review"
 match = { status = "succeeded" }
 
-# code_validate → success (all gates passed)
+# code_validate → preflight_validate (final Go gate passed, run the project gate)
 [[transitions]]
 from = "code_validate"
-to = "success"
+to = "preflight_validate"
 match = { status = "succeeded", output = { status = "passed" } }
 
 [[transitions]]
@@ -311,6 +337,24 @@ max_iterations = 500
 
 [[transitions]]
 from = "repair_final"
+to = "review"
+match = { status = "succeeded" }
+
+# preflight_validate → success (project gate passed, deliver)
+[[transitions]]
+from = "preflight_validate"
+to = "success"
+match = { status = "succeeded", output = { status = "passed" } }
+
+[[transitions]]
+from = "preflight_validate"
+to = "repair_preflight"
+match = { status = "failed" }
+loop = "preflight_repair"
+max_iterations = 500
+
+[[transitions]]
+from = "repair_preflight"
 to = "review"
 match = { status = "succeeded" }
 

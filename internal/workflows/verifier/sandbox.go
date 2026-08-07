@@ -46,19 +46,46 @@ var sandboxGitPath = func() (string, error) {
 
 var verifierGoRoot = runtime.GOROOT
 
-// runSandboxedCommand runs a fixed host check in an isolated filesystem and
+// runSandboxedCommand runs one host check in an isolated filesystem and
 // network namespace. It never inherits the host environment or home directory.
+// The program "go" runs the pinned Go toolchain with the module baseline; any
+// other bare executable name is resolved from the trusted system directories
+// and runs with the same isolation (the pinned module inputs are still
+// provisioned when present, so a project Makefile that calls the Go toolchain
+// keeps working offline).
 func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModuleBaseline, policy secretpath.Policy, program string, args ...string) error {
-	if program != "go" {
-		return hostFailure(fmt.Errorf("sandbox rejects fixed program %q", program))
-	}
 	bwrap, err := sandboxBubblewrapPath()
 	if err != nil {
 		return hostFailure(fmt.Errorf("bubblewrap is required for workflow verification: %w", err))
 	}
-	goPath, goRoot, err := verifierGoToolchain()
-	if err != nil {
-		return hostFailure(err)
+	goMode := program == "go"
+	if goMode && (baseline == nil || len(baseline.GoMod) == 0) {
+		return hostFailure(fmt.Errorf("workflow verifier module baseline is missing"))
+	}
+	if !goMode && !IsBareProgramName(program) {
+		return hostFailure(fmt.Errorf("sandbox rejects non-bare program %q", program))
+	}
+	// Resolve the executable that runs inside the sandbox and, when the pinned
+	// Go module inputs are available, the toolchain used to provision the
+	// module cache on the host.
+	var exePath, toolchainPath, goRoot string
+	if goMode {
+		toolchainPath, goRoot, err = verifierGoToolchain()
+		if err != nil {
+			return hostFailure(err)
+		}
+		exePath = toolchainPath
+	} else {
+		exePath, err = trustedSystemExecutable(program)
+		if err != nil {
+			return hostFailure(err)
+		}
+		if baseline != nil {
+			toolchainPath, goRoot, err = verifierGoToolchain()
+			if err != nil {
+				return hostFailure(err)
+			}
+		}
 	}
 	tempRoot, err := os.MkdirTemp("", "mivia-verifier-")
 	if err != nil {
@@ -70,20 +97,22 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 		return hostFailure(err)
 	}
 	modulesRoot := filepath.Join(tempRoot, "modules")
-	if err := applyGoModuleBaseline(copyRoot, baseline); err != nil {
-		return hostFailure(err)
+	if baseline != nil {
+		if err := applyGoModuleBaseline(copyRoot, baseline); err != nil {
+			return hostFailure(err)
+		}
+		if err := provisionModuleCache(copyRoot, modulesRoot, baseline, toolchainPath); err != nil {
+			return hostFailure(err)
+		}
 	}
 	if err := initializeSandboxGit(ctx, copyRoot); err != nil {
-		return hostFailure(err)
-	}
-	if err := provisionModuleCache(copyRoot, modulesRoot, baseline, goPath); err != nil {
 		return hostFailure(err)
 	}
 	homeRoot, err := createSandboxHome(tempRoot)
 	if err != nil {
 		return hostFailure(err)
 	}
-	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, homeRoot, goRoot, goPath, args...)...)
+	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, homeRoot, goRoot, exePath, baseline != nil, args...)...)
 	command.Env = []string{"PATH=/usr/bin:/bin"}
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
@@ -181,7 +210,7 @@ func boundedDiagnostic(output []byte) string {
 	return text
 }
 
-func sandboxArgs(workRoot, modulesRoot, homeRoot, goRoot, goPath string, args ...string) []string {
+func sandboxArgs(workRoot, modulesRoot, homeRoot, goRoot, exePath string, goEnv bool, args ...string) []string {
 	result := []string{
 		"--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
 		"--ro-bind", "/usr", "/usr",
@@ -189,25 +218,33 @@ func sandboxArgs(workRoot, modulesRoot, homeRoot, goRoot, goPath string, args ..
 		"--ro-bind", "/lib", "/lib",
 		"--ro-bind", "/lib64", "/lib64",
 	}
-	if !strings.HasPrefix(goRoot, "/usr/") && goRoot != "/usr" {
-		result = append(result, "--ro-bind", goRoot, goRoot)
+	if goEnv {
+		if !strings.HasPrefix(goRoot, "/usr/") && goRoot != "/usr" {
+			result = append(result, "--ro-bind", goRoot, goRoot)
+		}
 	}
 	result = append(result,
 		"--bind", workRoot, sandboxWorkDir,
-		"--ro-bind", modulesRoot, sandboxModules,
 		"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/home", "--bind", homeRoot, "/home/sandbox",
 		"--chdir", sandboxWorkDir,
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "HOME", "/home/sandbox",
 		"--setenv", "TMPDIR", "/tmp",
-		"--setenv", "GOCACHE", "/tmp/go-cache",
-		"--setenv", "GOMODCACHE", sandboxModules,
-		"--setenv", "GOWORK", "off",
-		"--setenv", "GOPROXY", "off",
-		"--setenv", "GOSUMDB", "off",
-		"--setenv", "GIT_CONFIG_NOSYSTEM", "1",
-		"--setenv", "GIT_CONFIG_GLOBAL", "/dev/null",
-		"--", goPath,
+	)
+	if goEnv {
+		result = append(result,
+			"--ro-bind", modulesRoot, sandboxModules,
+			"--setenv", "GOCACHE", "/tmp/go-cache",
+			"--setenv", "GOMODCACHE", sandboxModules,
+			"--setenv", "GOWORK", "off",
+			"--setenv", "GOPROXY", "off",
+			"--setenv", "GOSUMDB", "off",
+			"--setenv", "GIT_CONFIG_NOSYSTEM", "1",
+			"--setenv", "GIT_CONFIG_GLOBAL", "/dev/null",
+		)
+	}
+	result = append(result,
+		"--", exePath,
 	)
 	return append(result, args...)
 }

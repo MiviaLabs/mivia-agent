@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -122,10 +123,23 @@ func validateStep(index int, s *Step) error {
 			return fmt.Errorf("step %q: agent is required for kind %q", s.ID, s.Kind)
 		}
 	}
-	// Evidence gates require a verifier field.
+	// Evidence gates require a verifier field or a sandboxed command, never both.
 	if s.Kind == "evidence_gate" {
-		if strings.TrimSpace(s.Verifier) == "" {
-			return fmt.Errorf("step %q: verifier is required for kind %q", s.ID, s.Kind)
+		hasVerifier := strings.TrimSpace(s.Verifier) != ""
+		hasCommand := s.Command != nil
+		switch {
+		case hasVerifier && hasCommand:
+			return fmt.Errorf("step %q: evidence_gate must not declare both verifier and command", s.ID)
+		case !hasVerifier && !hasCommand:
+			return fmt.Errorf("step %q: verifier or command is required for kind %q", s.ID, s.Kind)
+		}
+		if hasCommand {
+			if strings.TrimSpace(s.Command.Check) == "" {
+				return fmt.Errorf("step %q: command.check is required", s.ID)
+			}
+			if !verifier.IsBareProgramName(s.Command.Program) {
+				return fmt.Errorf("step %q: command.program %q must be a bare executable name", s.ID, s.Command.Program)
+			}
 		}
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // CompiledWorkflow is the immutable result of successful compilation.
@@ -343,18 +344,24 @@ func validateLimits(limits definition.Limits) error {
 // but the name must not start with a hyphen.
 var verifierNameRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-// validateVerifierNames checks that evidence_gate steps have a non-empty verifier
-// and that the verifier name matches the allowed format.
+// validateVerifierNames checks that evidence_gate steps have a verifier name
+// or a sandboxed command, and that either is well-formed.
 func validateVerifierNames(wf *definition.WorkflowFile) error {
 	for _, s := range wf.Steps {
 		if s.Kind != "evidence_gate" {
 			continue
 		}
-		if s.Verifier == "" {
-			return fmt.Errorf("step %q: evidence_gate requires a verifier", s.ID)
+		if s.Verifier != "" {
+			if !verifierNameRegex.MatchString(s.Verifier) {
+				return fmt.Errorf("step %q: verifier name %q must be lowercase alphanumeric with hyphens", s.ID, s.Verifier)
+			}
+			continue
 		}
-		if !verifierNameRegex.MatchString(s.Verifier) {
-			return fmt.Errorf("step %q: verifier name %q must be lowercase alphanumeric with hyphens", s.ID, s.Verifier)
+		if s.Command == nil {
+			return fmt.Errorf("step %q: evidence_gate requires a verifier or command", s.ID)
+		}
+		if !verifier.IsBareProgramName(s.Command.Program) {
+			return fmt.Errorf("step %q: command program %q must be a bare executable name", s.ID, s.Command.Program)
 		}
 	}
 	return nil

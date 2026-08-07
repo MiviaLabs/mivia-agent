@@ -1,6 +1,10 @@
 // Package verifier provides a host-owned catalogue of deterministic verifier
 // profiles for evidence_gate steps. Workflow files may name a registered
-// profile only; they cannot supply shell or command strings.
+// profile only; they cannot supply shell or command strings. One exception:
+// an evidence_gate step may declare a sandboxed command (a bare executable
+// name plus argv, never a shell string) that runs inside the same isolation
+// as the fixed profiles — a copied worktree without secrets, no network, no
+// host home, and an empty environment.
 package verifier
 
 import (

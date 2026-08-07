@@ -39,10 +39,21 @@ type Step struct {
 	// explicit workflow skill binding.
 	Skill        string           `toml:"skill"`
 	Verifier     string           `toml:"verifier"`
+	Command      *StepCommand     `toml:"command"`
 	Template     string           `toml:"template"`
 	OutputSchema string           `toml:"output_schema"`
 	Context      []ContextBinding `toml:"context"`
 	OnFailure    string           `toml:"on_failure"`
+}
+
+// StepCommand declares one sandboxed command for an evidence_gate step that
+// has no named verifier profile. Program must be a bare executable name
+// resolved from the trusted system directories; Args are argv passed verbatim
+// to the program, never a shell string.
+type StepCommand struct {
+	Check   string   `toml:"check"`
+	Program string   `toml:"program"`
+	Args    []string `toml:"args"`
 }
 
 type ContextBinding struct {
