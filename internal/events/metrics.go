@@ -47,10 +47,10 @@ func (m *MetricsAdapter) HandleEvent(ctx context.Context, ev Event) {
 var allKnownKinds = []Kind{
 	KindAssistant, KindToolStart, KindToolEnd, KindStep, KindPrune,
 	KindToolParallel, KindSubagentStart, KindSubagentEnd, KindSubagentHeartbeat,
-	KindSubagentDone,
+	KindSubagentDone, KindThinking, KindCompaction,
 	KindSessionStart, KindSessionEnd, KindTurnStart, KindTurnEnd,
 	KindUIResize, KindUserInput, KindUIReady, KindConfigChange,
-	KindError, KindCacheUsage,
+	KindError, KindCacheUsage, KindTokenUsage,
 }
 
 // Subscribe subscribes the adapter to all known event kinds on the given Bus.
