@@ -414,3 +414,38 @@ func TestParseFrontmatterKnownWithClosingNoFrontmatter(t *testing.T) {
 		t.Fatalf("closing = %d, want -1", closing)
 	}
 }
+
+// §6: a scalar value that unquotes to the empty string is malformed.
+// Rejecting beats guessing: an author writing name: "" or description: ”
+// produced a silent empty-string value instead of an error.
+func TestParseFrontmatterRejectsScalarEmptyAfterUnquote(t *testing.T) {
+	for name, in := range map[string]string{
+		"double-quoted empty":             "---\nname: \"\"\n---\nbody\n",
+		"single-quoted empty":             "---\nname: ''\n---\nbody\n",
+		"double-quoted empty description": "---\nname: x\ndescription: \"\"\n---\nbody\n",
+		"single-quoted empty description": "---\nname: x\ndescription: ''\n---\nbody\n",
+		"double-quoted empty tools value": "---\nname: x\ntools: \"\"\n---\nbody\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseFrontmatter([]byte(in))
+			if err == nil {
+				t.Fatal("expected error for empty scalar after unquote")
+			}
+		})
+	}
+}
+
+// An omitted key must NOT produce an error. Distinguish omitted from empty.
+func TestParseFrontmatterAcceptsOmittedKey(t *testing.T) {
+	input := []byte("---\nname: x\n---\nbody\n")
+	m, err := ParseFrontmatter(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["description"]; ok {
+		t.Fatal("omitted description should not appear in result")
+	}
+	if m["name"] != "x" {
+		t.Fatalf("name = %v, want x", m["name"])
+	}
+}

@@ -211,7 +211,11 @@ func (p *fmParser) keyLine(trimmed string, lineNum int, front []string, idx int)
 			p.result[key] = ""
 		}
 	default:
-		p.result[key] = unquote(rest)
+		val := unquote(rest)
+		if val == "" {
+			return fmt.Errorf("line %d: empty scalar value for key %q", lineNum, key)
+		}
+		p.result[key] = val
 	}
 	return nil
 }
