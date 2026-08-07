@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,27 @@ func recoverFixture(t *testing.T, ctx context.Context, repoA *StorageRepository)
 		nil, "completed -> succeeded")
 	requireErr(t, repoA.ClaimRun(ctx, completed, "repoA"), nil, "claim completed run")
 	return interrupted, completed
+}
+
+func TestStorageRepository_TakeoverExpiredRunClaim(t *testing.T) {
+	ctx := context.Background()
+	for _, p := range repoPairs() {
+		t.Run(p.name, func(t *testing.T) {
+			repoA, repoB, done := p.new(t)
+			defer done()
+			run := runID(t, "lease")
+			snap, raw := newRun(t, run)
+			requireErr(t, repoA.CreateRun(ctx, snap, raw), nil, "CreateRun")
+			requireErr(t, repoA.ClaimRun(ctx, run, "holder-a"), nil, "ClaimRun")
+			if err := repoB.TakeoverExpiredRunClaim(ctx, run, "holder-b", time.Hour); err != ErrClaimHeld {
+				t.Fatalf("fresh claim takeover = %v, want ErrClaimHeld", err)
+			}
+			requireErr(t, repoB.TakeoverExpiredRunClaim(ctx, run, "holder-b", 0), nil, "expired claim takeover")
+			if err := repoA.ClaimRun(ctx, run, "holder-a"); err != ErrClaimHeld {
+				t.Fatalf("old holder refresh = %v, want ErrClaimHeld", err)
+			}
+		})
+	}
 }
 
 // TestStorageRepository_RecoverClassifiesAndClearsTerminalClaims covers the

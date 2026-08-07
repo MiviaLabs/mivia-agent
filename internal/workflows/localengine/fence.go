@@ -94,6 +94,13 @@ func (f *abandonFence) SetStepAttemptPrompt(ctx context.Context, runID, attemptI
 	return f.inner.SetStepAttemptPrompt(ctx, runID, attemptID, promptRef)
 }
 
+func (f *abandonFence) SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID string) error {
+	if f.isAbandoned(runID) {
+		return workflowledger.ErrConflict
+	}
+	return f.inner.SetStepAttemptExecution(ctx, runID, attemptID, coordinatorRunID, taskID)
+}
+
 func (f *abandonFence) ListTransitions(ctx context.Context, runID string) ([]workflowledger.TransitionRecord, error) {
 	return f.inner.ListTransitions(ctx, runID)
 }
@@ -155,6 +162,10 @@ func (f *abandonFence) TakeoverRunClaim(ctx context.Context, runID, holder strin
 		return workflowledger.ErrClaimHeld
 	}
 	return f.inner.TakeoverRunClaim(ctx, runID, holder)
+}
+
+func (f *abandonFence) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
+	return f.inner.TakeoverExpiredRunClaim(ctx, runID, holder, maxAge)
 }
 
 func (f *abandonFence) ReleaseRun(ctx context.Context, runID, holder string) error {

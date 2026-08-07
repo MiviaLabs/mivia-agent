@@ -72,6 +72,26 @@ func TestStorageRepository_CreateStepAttempt(t *testing.T) {
 	}
 }
 
+func TestStorageRepository_SetStepAttemptExecutionPersistsRetryIdentity(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, raw := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, raw), nil, "CreateRun")
+			requireErr(t, repo.CreateStepAttempt(ctx, StepAttempt{AttemptID: "att-1", RunID: run, StepID: "plan", AttemptNo: 1}), nil, "CreateStepAttempt")
+			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-retry", "task-retry"), nil, "SetStepAttemptExecution")
+			got, err := repo.GetStepAttempt(ctx, run, "att-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.CoordinatorRunID != "coord-retry" || got.TaskID != "task-retry" {
+				t.Fatalf("execution identity = %q/%q, want coord-retry/task-retry", got.CoordinatorRunID, got.TaskID)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 6. CompleteStepAttempt
 // ---------------------------------------------------------------------------

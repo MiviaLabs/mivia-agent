@@ -220,6 +220,28 @@ func TestGitHubCLIFindByHeadScopesToRepoOwner(t *testing.T) {
 	})
 }
 
+// TestGitHubCLIFindByHeadCaseInsensitiveOwner: GitHub owner names are
+// case-insensitive. The remote slug may be lower-case while the API returns
+// mixed case. The PR must still be found so delivery does not try to create a
+// duplicate.
+func TestGitHubCLIFindByHeadCaseInsensitiveOwner(t *testing.T) {
+	writeFakeGH(t)
+	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
+	t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/MiviaLabs/mivia-agent/pull/12","isDraft":false,"headRepositoryOwner":{"login":"MiviaLabs"}}]`)
+
+	got, err := (GitHubCLI{}).FindByHead(context.Background(), "mivialabs/mivia-agent", "feature/x")
+	if err != nil {
+		t.Fatalf("FindByHead error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindByHead = nil, want PRRef")
+	}
+	if got.RemoteID != "12" || got.URL != "https://github.com/MiviaLabs/mivia-agent/pull/12" {
+		t.Errorf("FindByHead = %+v, want RemoteID 12 with PR url", got)
+	}
+}
+
 func TestGitHubCLICreate(t *testing.T) {
 	writeFakeGH(t)
 	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))

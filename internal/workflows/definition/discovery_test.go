@@ -68,6 +68,35 @@ match = { status = "approved" }
 	}
 }
 
+func TestDiscoverWorkflows_ReadsCompleteFile(t *testing.T) {
+	// Regression: io.ReadAll errors must propagate; a successful read must
+	// return the full on-disk bytes in Raw.
+	tmp := t.TempDir()
+	wfDir := workspace.NamespacePath(tmp, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	content := []byte("version = 1\nname = \"complete\"\n")
+	if err := os.WriteFile(filepath.Join(wfDir, "complete.toml"), content, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	result, err := DiscoverWorkflows(tmp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result))
+	}
+	if len(result[0].Raw) != len(content) {
+		t.Errorf("raw length = %d, want %d", len(result[0].Raw), len(content))
+	}
+	if string(result[0].Raw) != string(content) {
+		t.Error("raw content mismatch")
+	}
+}
+
 func TestDiscoverWorkflows_SkipsNonTOML(t *testing.T) {
 	tmp := t.TempDir()
 	wfDir := workspace.NamespacePath(tmp, "workflows")

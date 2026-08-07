@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -210,6 +211,22 @@ func (s *SQLite) TakeoverClaim(ctx context.Context, id, h string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO run_claims(run_id, holder, acquired_at) VALUES(?, ?, datetime('now')) ON CONFLICT(run_id) DO UPDATE SET holder=excluded.holder, acquired_at=excluded.acquired_at`, id, h)
 	if err != nil {
 		return fmt.Errorf("take over claim %q: %w", id, err)
+	}
+	return nil
+}
+
+func (s *SQLite) TakeoverExpiredClaim(ctx context.Context, id, h string, maxAge time.Duration) error {
+	if h == "" {
+		return ErrClaimNotHeld
+	}
+	seconds := int64(maxAge / time.Second)
+	res, err := s.db.ExecContext(ctx, `UPDATE run_claims SET holder = ?, acquired_at = datetime('now') WHERE run_id = ? AND unixepoch(acquired_at) <= unixepoch('now') - ?`, h, id, seconds)
+	if err != nil {
+		return fmt.Errorf("take over expired claim %q: %w", id, err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrClaimHeld
 	}
 	return nil
 }

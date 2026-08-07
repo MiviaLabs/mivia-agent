@@ -285,12 +285,50 @@ func TestParseWorkflowTOML_StepValidation(t *testing.T) {
 		{"reserved step id", "[[steps]]\nid = \"success\"\nkind = \"agent\"\nagent = \"planner\"", "reserved"},
 		{"unknown step kind", "[[steps]]\nid = \"plan\"\nkind = \"bogus\"", "unknown kind"},
 		{"agent without agent field", "[[steps]]\nid = \"plan\"\nkind = \"agent\"", "agent is required"},
-		{"evidence gate without verifier", "[[steps]]\nid = \"plan\"\nkind = \"evidence_gate\"", "verifier is required"},
+		{"evidence gate without verifier or command", "[[steps]]\nid = \"plan\"\nkind = \"evidence_gate\"", "verifier or command is required"},
+		{"evidence gate with both verifier and command", "[[steps]]\nid = \"plan\"\nkind = \"evidence_gate\"\nverifier = \"go-test\"\ncommand = { check = \"c\", program = \"make\" }", "must not declare both"},
+		{"command without check", "[[steps]]\nid = \"plan\"\nkind = \"evidence_gate\"\ncommand = { program = \"make\" }", "command.check is required"},
+		{"command with path program", "[[steps]]\nid = \"plan\"\nkind = \"evidence_gate\"\ncommand = { check = \"c\", program = \"/usr/bin/make\" }", "must be a bare executable name"},
+		{"command with shell metachar program", "[[steps]]\nid = \"plan\"\nkind = \"evidence_gate\"\ncommand = { check = \"c\", program = \"make; rm -rf /\" }", "must be a bare executable name"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assertParseError(t, base(tc.step), "step-validation.toml", tc.substr)
 		})
+	}
+}
+
+func TestParseWorkflowTOML_CommandGateParses(t *testing.T) {
+	body := `version = 1
+name = "command-gate"
+initial_step = "gate"
+
+[[steps]]
+id = "gate"
+kind = "evidence_gate"
+command = { check = "invariants", program = "python3", args = ["scripts/validate_invariants.py", "--strict"] }
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+[[transitions]]
+from = "gate"
+to = "success"
+match = { status = "succeeded", output = { status = "passed" } }
+`
+	wf, canonical, err := ParseWorkflowTOML([]byte(body), "command-gate.toml")
+	if err != nil {
+		t.Fatalf("parse command gate workflow: %v", err)
+	}
+	if canonical != "command-gate" {
+		t.Fatalf("canonical name = %q, want command-gate", canonical)
+	}
+	step := wf.Steps[0]
+	if step.Command == nil {
+		t.Fatal("command gate parsed with nil Command")
+	}
+	if step.Command.Check != "invariants" || step.Command.Program != "python3" ||
+		len(step.Command.Args) != 2 || step.Command.Args[0] != "scripts/validate_invariants.py" || step.Command.Args[1] != "--strict" {
+		t.Fatalf("command = %#v, want check=invariants program=python3 args=[scripts/validate_invariants.py --strict]", step.Command)
 	}
 }
 

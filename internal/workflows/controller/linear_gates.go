@@ -13,10 +13,7 @@ import (
 )
 
 func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step) (workflowledger.RunSnapshot, bool, error) {
-	if c.Verifiers == nil {
-		return c.fail(ctx, run, fmt.Errorf("step %q requires a verifier catalogue", step.ID))
-	}
-	profile, err := c.Verifiers.Lookup(step.Verifier)
+	profile, err := c.verifierProfile(step)
 	if err != nil {
 		return c.fail(ctx, run, err)
 	}
@@ -80,6 +77,18 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 		return c.fail(writeCtx, run, err)
 	}
 	return settleAfterRoute(ctx, c, run, route)
+}
+
+// verifierProfile resolves the evidence gate's verifier: a named catalogue
+// profile, or a sandboxed command profile built from the step declaration.
+func (c *LinearController) verifierProfile(step definition.Step) (verifier.Profile, error) {
+	if step.Command != nil {
+		return verifier.NewCommandProfile(step.Command.Check, step.Command.Program, step.Command.Args, c.SecretPolicy)
+	}
+	if c.Verifiers == nil {
+		return nil, fmt.Errorf("step %q requires a verifier catalogue", step.ID)
+	}
+	return c.Verifiers.Lookup(step.Verifier)
 }
 
 func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, step definition.Step, result verifier.Result, output []byte, outputMap map[string]any) (workflowledger.RunSnapshot, bool, error) {

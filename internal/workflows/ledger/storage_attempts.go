@@ -335,6 +335,65 @@ func (s *StorageRepository) SetStepAttemptPrompt(ctx context.Context, runID, att
 	return s.appendEvent(ctx, evt, rollback)
 }
 
+// SetStepAttemptExecution records the active child identity before dispatch.
+// This closes the crash window where a transient retry has a new child in
+// memory but the ledger still points at the old child.
+func (s *StorageRepository) SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID string) error {
+	if coordinatorRunID == "" || taskID == "" {
+		return fmt.Errorf("execution identity is incomplete")
+	}
+	if err := s.ensureBuilt(ctx); err != nil {
+		return err
+	}
+	lock := s.runLock(runID)
+	lock.Lock()
+	defer lock.Unlock()
+	s.mu.Lock()
+	p, ok := s.proj[runID]
+	if !ok || !p.HasRun {
+		s.mu.Unlock()
+		return ErrNotFound
+	}
+	idx := -1
+	for i := range p.Attempts {
+		if p.Attempts[i].AttemptID == attemptID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		s.mu.Unlock()
+		return ErrNotFound
+	}
+	cur := p.Attempts[idx]
+	if cur.CoordinatorRunID == coordinatorRunID && cur.TaskID == taskID {
+		s.mu.Unlock()
+		return nil
+	}
+	prevRun, prevTask := cur.CoordinatorRunID, cur.TaskID
+	p.Attempts[idx].CoordinatorRunID = coordinatorRunID
+	p.Attempts[idx].TaskID = taskID
+	s.proj[runID] = p
+	s.mu.Unlock()
+	now := s.now()
+	payload, err := marshalAttemptExecution(attemptExecutionPayload{AttemptID: attemptID, CoordinatorRunID: coordinatorRunID, TaskID: taskID, CreatedAt: now})
+	if err != nil {
+		s.rollbackAndRebuild(ctx, runID, func() {
+			q := s.proj[runID]
+			q.Attempts[idx].CoordinatorRunID, q.Attempts[idx].TaskID = prevRun, prevTask
+			s.proj[runID] = q
+		})
+		return err
+	}
+	evt := storage.Event{ID: EventID(runID, eventKindAttemptExecution, attemptID, coordinatorRunID, taskID), RunID: runID, Sequence: int(s.nextSequence(runID)), Kind: eventKindAttemptExecution, Payload: payload}
+	rollback := func() {
+		q := s.proj[runID]
+		q.Attempts[idx].CoordinatorRunID, q.Attempts[idx].TaskID = prevRun, prevTask
+		s.proj[runID] = q
+	}
+	return s.appendEvent(ctx, evt, rollback)
+}
+
 // applyAttemptPromptLocked records the prompt ref on the cached projection and
 // builds the wf_attempt_prompt payload. It must be called with the run's
 // per-run mutex held (the caller holds s.mu while mutating); the returned

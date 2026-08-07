@@ -15,6 +15,7 @@ const (
 	eventKindRunCreated       = "wf_run_created"
 	eventKindRunStatusChanged = "wf_run_status_changed"
 	eventKindAttemptStarted   = "wf_attempt_started"
+	eventKindAttemptExecution = "wf_attempt_execution"
 	eventKindAttemptCompleted = "wf_attempt_completed"
 	eventKindLoopIncremented  = "wf_loop_incremented"
 	eventKindApprovalCreated  = "wf_approval_created"
@@ -90,6 +91,13 @@ type attemptPromptPayload struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type attemptExecutionPayload struct {
+	AttemptID        string    `json:"attempt_id"`
+	CoordinatorRunID string    `json:"coordinator_run_id"`
+	TaskID           string    `json:"task_id"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
 // loopIncrementedPayload is the wf_loop_incremented event payload.
 type loopIncrementedPayload struct {
 	LoopName   string    `json:"loop_name"`
@@ -163,6 +171,13 @@ func marshalAttemptPrompt(p attemptPromptPayload) ([]byte, error) {
 }
 func unmarshalAttemptPrompt(data []byte) (attemptPromptPayload, error) {
 	var p attemptPromptPayload
+	err := json.Unmarshal(data, &p)
+	return p, err
+}
+
+func marshalAttemptExecution(p attemptExecutionPayload) ([]byte, error) { return json.Marshal(p) }
+func unmarshalAttemptExecution(data []byte) (attemptExecutionPayload, error) {
+	var p attemptExecutionPayload
 	err := json.Unmarshal(data, &p)
 	return p, err
 }

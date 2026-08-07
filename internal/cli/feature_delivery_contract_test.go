@@ -69,6 +69,7 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 
 	assertFeatureDeliveryAgentSteps(t, workflow)
 	assertFeatureDeliveryEvidenceGates(t, workflow)
+	assertFeatureDeliveryPreflightGate(t, workflow)
 	if workflow.Delivery == nil || workflow.Delivery.Base != "master" {
 		t.Fatalf("feature-delivery base = %#v, want master", workflow.Delivery)
 	}
@@ -144,6 +145,63 @@ func featureDeliveryStep(t *testing.T, workflow definition.WorkflowFile, id stri
 	}
 	t.Fatalf("feature-delivery step %q is missing", id)
 	return definition.Step{}
+}
+
+// assertFeatureDeliveryPreflightGate pins the project-agnostic final gate:
+// preflight_validate runs the repository's own gate command inside the
+// verifier sandbox (bare executable + argv, never a shell string), its
+// failure routes to a dedicated repair agent that receives the failed
+// evidence, and the repair feeds back through review so the run converges.
+// Without it the workflow's final gate is a fixed Go-only check that cannot
+// see the project's real pre-push gate.
+func assertFeatureDeliveryPreflightGate(t *testing.T, workflow definition.WorkflowFile) {
+	t.Helper()
+	gate := featureDeliveryStep(t, workflow, "preflight_validate")
+	if gate.Kind != "evidence_gate" {
+		t.Fatalf("step preflight_validate kind = %q, want evidence_gate", gate.Kind)
+	}
+	if gate.Verifier != "" {
+		t.Fatalf("step preflight_validate must declare a command, not verifier %q", gate.Verifier)
+	}
+	if gate.Command == nil {
+		t.Fatal("step preflight_validate must declare a sandboxed command")
+	}
+	if gate.Command.Check != "invariants" || gate.Command.Program != "python3" ||
+		len(gate.Command.Args) != 1 || gate.Command.Args[0] != "scripts/validate_invariants.py" {
+		t.Fatalf("step preflight_validate command = %#v; want check=invariants, program=python3, args=[scripts/validate_invariants.py]", gate.Command)
+	}
+
+	repair := featureDeliveryStep(t, workflow, "repair_preflight")
+	if repair.Kind != "agent" || repair.Agent != "workflow-engineer" || repair.Skill != "workflow-feature-delivery" {
+		t.Fatalf("step repair_preflight = kind %q agent %q skill %q; want agent workflow-engineer workflow-feature-delivery", repair.Kind, repair.Agent, repair.Skill)
+	}
+	foundEvidence := false
+	for _, cb := range repair.Context {
+		if cb.From == "steps.preflight_validate.output" && cb.As == "failed_evidence" && cb.MaxBytes == 16000 {
+			foundEvidence = true
+			break
+		}
+	}
+	if !foundEvidence {
+		t.Fatal("step repair_preflight must bind steps.preflight_validate.output as failed_evidence")
+	}
+
+	assertTransition(t, workflow, "code_validate", "preflight_validate", "succeeded")
+	assertTransition(t, workflow, "preflight_validate", "success", "succeeded")
+	assertTransition(t, workflow, "preflight_validate", "repair_preflight", "failed")
+	assertTransition(t, workflow, "repair_preflight", "review", "succeeded")
+}
+
+// assertTransition reports a failure when the workflow lacks a transition
+// from step fromID to step toID whose match status is status.
+func assertTransition(t *testing.T, workflow definition.WorkflowFile, fromID, toID, status string) {
+	t.Helper()
+	for _, tr := range workflow.Transitions {
+		if tr.From == fromID && tr.To == toID && tr.Match.Status == status {
+			return
+		}
+	}
+	t.Fatalf("transition %s → %s (status %q) is missing", fromID, toID, status)
 }
 
 func hasEffectiveTool(agent agents.ResolvedAgent, want string) bool {

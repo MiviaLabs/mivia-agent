@@ -86,9 +86,6 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	if err != nil || terminal {
 		return err
 	}
-	if !force {
-		return fmt.Errorf("workflow run %q is not terminal; pass --force only after the prior executor stopped", runID)
-	}
 	uninstallHooks, err := workflowResumeInstallHooks(work.Abs, false)
 	if err != nil {
 		return err
@@ -105,15 +102,27 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	if err := workflowResumeSetForce(built); err != nil {
 		return err
 	}
-	if err := repo.ClearRunClaim(ctx, runID); err != nil {
-		return fmt.Errorf("clear interrupted workflow claim: %w", err)
-	}
-	if err := joinInFlightAttempts(ctx, built, repo, runID, stdout); err != nil {
+	if err := prepareWorkflowResumeExecution(ctx, built, repo, runID, force, stdout); err != nil {
 		return err
 	}
 	snap, err := workflowResumeRun(ctx, built)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, snap.Status)
 	return err
+}
+
+// prepareWorkflowResumeExecution handles the shared resume handoff. It takes
+// an expired lease when needed, clears the temporary handoff claim, and joins
+// every recorded child before the controller starts a replacement step.
+func prepareWorkflowResumeExecution(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID string, force bool, stdout io.Writer) error {
+	if !force {
+		if err := repo.TakeoverExpiredRunClaim(ctx, runID, "", workflowledger.DefaultClaimLease); err != nil {
+			return fmt.Errorf("workflow run %q is still active; retry after the claim lease expires or pass --force after the prior executor stopped", runID)
+		}
+	}
+	if err := repo.ClearRunClaim(ctx, runID); err != nil {
+		return fmt.Errorf("clear interrupted workflow claim: %w", err)
+	}
+	return joinInFlightAttempts(ctx, built, repo, runID, stdout)
 }
 
 // joinInFlightAttempts consumes PlanResume.AttemptsInFlight: it joins each

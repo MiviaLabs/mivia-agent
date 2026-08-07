@@ -237,7 +237,7 @@ func TestGoProfileReportsHostFailureWithoutRepairEvidence(t *testing.T) {
 }
 
 func TestSandboxDisablesGoWorkspaceMode(t *testing.T) {
-	args := sandboxArgs("/tmp/work", "/tmp/modules", "/tmp/home", "/opt/go", "/opt/go/bin/go", "test", "./...")
+	args := sandboxArgs("/tmp/work", "/tmp/modules", "/tmp/home", "/opt/go", "/opt/go/bin/go", true, "test", "./...")
 	joined := strings.Join(args, "\x00")
 	if !strings.Contains(joined, "GOWORK\x00off") {
 		t.Fatalf("sandbox arguments do not disable Go workspace mode: %q", joined)
@@ -248,4 +248,156 @@ func TestSandboxDisablesGoWorkspaceMode(t *testing.T) {
 	if !strings.Contains(joined, "--ro-bind\x00/opt/go\x00/opt/go") || !strings.HasSuffix(joined, "--\x00/opt/go/bin/go\x00test\x00./...") {
 		t.Fatalf("sandbox arguments do not mount and run the Go toolchain: %q", joined)
 	}
+}
+
+func TestSandboxedCommandClassifiesStdoutBwrapPrefixAsSource(t *testing.T) {
+	stubBubblewrapPath(t, writeFakeBwrapPassthrough(t))
+	stubGitPath(t, writeFakeGit(t))
+
+	workDir := t.TempDir()
+	writeGoMod(t, workDir)
+	mainPath := filepath.Join(workDir, "main.go")
+	program := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	fmt.Println("bwrap: this is workspace output, not a host failure")
+	os.Exit(1)
+}
+`
+	if err := os.WriteFile(mainPath, []byte(program), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	baseline, err := CaptureGoModuleBaseline(workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := newGoProfile("bwrap-stdout-test", []commandSpec{{check: "bwrap-stdout", program: "go", args: []string{"run", mainPath}}}, nil, secretpath.Policy{})
+	result, err := profile.Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %#v", result.Checks)
+	}
+	check := result.Checks[0]
+	if check.Class != "source" {
+		t.Fatalf("expected source class, got class=%q detail=%q", check.Class, check.Detail)
+	}
+	if !result.Repairable() {
+		t.Fatalf("expected repairable source result, got %#v", result)
+	}
+}
+
+func TestSandboxedCommandClassifiesStderrBwrapPrefixAsHost(t *testing.T) {
+	stubBubblewrapPath(t, writeFakeBwrapUnavailable(t))
+	stubGitPath(t, writeFakeGit(t))
+
+	workDir := t.TempDir()
+	writeGoMod(t, workDir)
+	baseline, err := CaptureGoModuleBaseline(workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := newGoProfile("bwrap-stderr-test", []commandSpec{{check: "bwrap-stderr", program: "go", args: []string{"version"}}}, nil, secretpath.Policy{})
+	result, err := profile.Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %#v", result.Checks)
+	}
+	check := result.Checks[0]
+	if check.Class != "host" {
+		t.Fatalf("expected host class, got class=%q detail=%q", check.Class, check.Detail)
+	}
+	if result.Repairable() {
+		t.Fatalf("expected non-repairable host result, got %#v", result)
+	}
+}
+
+func TestSandboxedCommandClassifiesMissingBwrapAsHost(t *testing.T) {
+	stubBubblewrapPath(t, filepath.Join(t.TempDir(), "missing-bwrap"))
+	stubGitPath(t, writeFakeGit(t))
+
+	workDir := t.TempDir()
+	writeGoMod(t, workDir)
+	baseline, err := CaptureGoModuleBaseline(workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := newGoProfile("missing-bwrap-test", []commandSpec{{check: "missing-bwrap", program: "go", args: []string{"version"}}}, nil, secretpath.Policy{})
+	result, err := profile.Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %#v", result.Checks)
+	}
+	check := result.Checks[0]
+	if check.Class != "host" {
+		t.Fatalf("expected host class, got class=%q detail=%q", check.Class, check.Detail)
+	}
+	if result.Repairable() {
+		t.Fatalf("expected non-repairable host result, got %#v", result)
+	}
+}
+
+func writeGoMod(t *testing.T, workDir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(workDir, "go.mod"), []byte("module example.com/test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFakeBwrapPassthrough(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bwrap")
+	script := "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do\n    shift\ndone\nshift\nexec \"$@\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeFakeBwrapUnavailable(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bwrap")
+	script := "#!/bin/sh\necho \"bwrap: command not found\" >&2\nexit 1\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeFakeGit(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "git")
+	script := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func stubBubblewrapPath(t *testing.T, path string) {
+	t.Helper()
+	original := sandboxBubblewrapPath
+	sandboxBubblewrapPath = func() (string, error) { return path, nil }
+	t.Cleanup(func() { sandboxBubblewrapPath = original })
+}
+
+func stubGitPath(t *testing.T, path string) {
+	t.Helper()
+	original := sandboxGitPath
+	sandboxGitPath = func() (string, error) { return path, nil }
+	t.Cleanup(func() { sandboxGitPath = original })
 }

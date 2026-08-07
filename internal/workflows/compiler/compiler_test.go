@@ -548,6 +548,8 @@ func TestCompile_VerifierNameValidation(t *testing.T) {
 	})
 }
 
+// --- Command gate (sandboxed evidence gate) tests ---
+
 // --- Digest stability tests ---
 
 func TestCompile_UnlimitedLoop(t *testing.T) {

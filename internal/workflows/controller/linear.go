@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -29,6 +30,7 @@ type StepRuntime struct {
 
 // Admission contains immutable host data for one workflow run.
 type Admission struct {
+	InvocationKey    string
 	BaseRef          string
 	BaseCommit       string
 	OriginBaseCommit string
@@ -52,6 +54,7 @@ type LinearController struct {
 	Verifiers      *verifier.Catalogue
 	WorkDir        string
 	ModuleBaseline *verifier.GoModuleBaseline
+	SecretPolicy   secretpath.Policy
 	admission      Admission
 	forceResume    bool
 	now            func() time.Time
@@ -84,6 +87,18 @@ func (c *LinearController) SetVerifiers(cat *verifier.Catalogue) error {
 		return fmt.Errorf("workflow run already started")
 	}
 	c.Verifiers = cat
+	return nil
+}
+
+// SetSecretPolicy sets the secret-exclusion policy for sandboxed evidence
+// gate commands before Start.
+func (c *LinearController) SetSecretPolicy(policy secretpath.Policy) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	c.SecretPolicy = policy
 	return nil
 }
 
@@ -185,7 +200,7 @@ func (c *LinearController) Start(ctx context.Context) error {
 func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
 	admittedAt := c.now()
 	snap := workflowledger.RunSnapshot{
-		RunID: c.RunID, WorkflowName: c.Workflow.Name, WorkflowDigest: c.Workflow.Digest,
+		RunID: c.RunID, InvocationKey: c.admission.InvocationKey, WorkflowName: c.Workflow.Name, WorkflowDigest: c.Workflow.Digest,
 		SnapshotDigest: workflowledger.SnapshotDigest(c.Snapshot), InputDigest: c.admission.InputDigest,
 		Status: workflowledger.RunStatusPending, ActiveStepID: c.Workflow.InitialStep,
 		BaseRef: c.admission.BaseRef, BaseCommit: c.admission.BaseCommit,
@@ -203,7 +218,7 @@ func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
 }
 
 func sameAdmission(stored, candidate workflowledger.RunSnapshot) bool {
-	return stored.WorkflowName == candidate.WorkflowName && stored.WorkflowDigest == candidate.WorkflowDigest &&
+	return stored.InvocationKey == candidate.InvocationKey && stored.WorkflowName == candidate.WorkflowName && stored.WorkflowDigest == candidate.WorkflowDigest &&
 		stored.SnapshotDigest == candidate.SnapshotDigest && stored.InputDigest == candidate.InputDigest &&
 		stored.BaseRef == candidate.BaseRef && stored.BaseCommit == candidate.BaseCommit &&
 		stored.OriginBaseCommit == candidate.OriginBaseCommit &&
@@ -277,6 +292,10 @@ func (c *LinearController) Advance(ctx context.Context) (workflowledger.RunSnaps
 		return workflowledger.RunSnapshot{}, false, err
 	}
 	defer func() { _ = c.Repo.ReleaseRun(context.Background(), c.RunID, c.Holder) }()
+	stepCtx, cancelStep := context.WithCancel(ctx)
+	defer cancelStep()
+	defer c.startClaimHeartbeat(cancelStep)()
+	ctx = stepCtx
 	run, err := c.Repo.GetRun(ctx, c.RunID)
 	if err != nil {
 		return workflowledger.RunSnapshot{}, false, err

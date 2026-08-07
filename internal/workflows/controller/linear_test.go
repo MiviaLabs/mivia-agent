@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -241,6 +242,52 @@ func TestLinearControllerPropagatesStepSkill(t *testing.T) {
 type blockingIdentityRunner struct {
 	started chan AgentStepRequest
 	release chan struct{}
+}
+
+type claimCountingRepository struct {
+	workflowledger.Repository
+	claims  atomic.Int32
+	renewed chan struct{}
+	once    sync.Once
+}
+
+func (r *claimCountingRepository) ClaimRun(ctx context.Context, runID, holder string) error {
+	if r.claims.Add(1) >= 2 && r.renewed != nil {
+		r.once.Do(func() { close(r.renewed) })
+	}
+	return r.Repository.ClaimRun(ctx, runID, holder)
+}
+
+func TestLinearControllerRenewsClaimDuringStep(t *testing.T) {
+	old := claimHeartbeatInterval
+	claimHeartbeatInterval = time.Millisecond
+	t.Cleanup(func() { claimHeartbeatInterval = old })
+
+	wf := linearWorkflow(t)
+	base := workflowledger.NewMemoryRepository()
+	repo := &claimCountingRepository{Repository: base, renewed: make(chan struct{})}
+	runner := &blockingIdentityRunner{started: make(chan AgentStepRequest, 1), release: make(chan struct{})}
+	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{"first": {Agent: agents.ResolvedAgent{Name: "one"}}}, map[string]any{"task": "build"}, "wfr-heartbeat", []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, _, runErr := ctrl.Advance(context.Background()); done <- runErr }()
+	<-runner.started
+	select {
+	case <-repo.renewed:
+	case <-time.After(time.Second):
+		close(runner.release)
+		<-done
+		t.Fatalf("ClaimRun calls = %d, want initial claim plus heartbeat", repo.claims.Load())
+	}
+	close(runner.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (r *blockingIdentityRunner) RunStep(_ context.Context, req AgentStepRequest) (AgentStepResult, error) {

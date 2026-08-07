@@ -6,10 +6,18 @@ package agenttools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
+
+// InvocationRunID returns the stable workflow run ID for a caller key.
+func InvocationRunID(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return "wfr-inv-" + hex.EncodeToString(sum[:])
+}
 
 // Tool names are model-facing and project/language-generic (rule 60).
 const (
@@ -61,6 +69,9 @@ type StartRequest struct {
 	Workflow string
 	// Inputs are validated name→value pairs from the tool call.
 	Inputs map[string]any
+	// InvocationKey identifies one caller request across retries. When set for
+	// a new run, the engine derives a stable run ID and admits it once.
+	InvocationKey string
 	// AllowPublish defaults false. It is never implicit.
 	AllowPublish bool
 	// Resume, when true, resumes RunID from the durable ledger snapshot.

@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+const DefaultClaimLease = 5 * time.Minute
+
 type RunStatus string
 
 const (
@@ -119,6 +121,7 @@ func IsTerminalStepID(stepID string) bool {
 
 type RunSnapshot struct {
 	RunID            string     `json:"run_id"`
+	InvocationKey    string     `json:"invocation_key,omitempty"`
 	WorkflowName     string     `json:"workflow_name"`
 	WorkflowDigest   string     `json:"workflow_digest"`
 	SnapshotDigest   string     `json:"snapshot_digest"`

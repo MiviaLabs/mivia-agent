@@ -198,13 +198,18 @@ func (c *LinearController) reconcileTerminalAttempt(ctx context.Context, run wor
 func (c *LinearController) runStepWithTransientRetry(ctx context.Context, req AgentStepRequest, attempt workflowledger.StepAttempt, step definition.Step) (AgentStepResult, error) {
 	result, runErr := c.Runner.RunStep(ctx, req)
 	for i := 0; runErr != nil && i < maxTransientStepRetries && isTransientProviderError(runErr); i++ {
+		retryTaskID := newWorkflowTaskID()
+		retryRunID := coordinator.NewRunID()
+		if err := c.Repo.SetStepAttemptExecution(ctx, c.RunID, attempt.AttemptID, retryRunID, retryTaskID); err != nil {
+			return AgentStepResult{}, fmt.Errorf("persist transient retry identity: %w", err)
+		}
 		log.Printf("workflow: run %s step %s attempt %d transient provider failure: %v; retrying in %s", c.RunID, step.ID, attempt.AttemptNo, runErr, stepTransientRetryBackoff(i))
 		select {
 		case <-ctx.Done():
 			return AgentStepResult{}, ctx.Err()
 		case <-time.After(stepTransientRetryBackoff(i)):
-			req.TaskID = newWorkflowTaskID()
-			req.CoordinatorRunID = coordinator.NewRunID()
+			req.TaskID = retryTaskID
+			req.CoordinatorRunID = retryRunID
 			result, runErr = c.Runner.RunStep(ctx, req)
 		}
 	}
