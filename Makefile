@@ -20,7 +20,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test structure-check commit-check go-check test race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation-coverage diff-coverage verifier-integration
+	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke
 
 help:
 	@printf '%s\n' \
@@ -49,7 +49,8 @@ help:
 		'  make vet               go vet ./...' \
 		'  make build             Build binary $(BINARY) from $(CMD_PKG)' \
 		'  make tidy              go mod tidy' \
-		'  make fmt               gofmt -w tracked Go files'
+		'  make fmt               gofmt -w tracked Go files' \
+		'  make smoke             Fast workflow-engine smoke suite'
 
 install-hooks hooks:
 	@scripts/install_git_hooks.sh
@@ -142,6 +143,9 @@ go-check: fmt-check
 
 test:
 	@go test ./...
+
+smoke:
+	@go test ./internal/workflows/... -count=1 && go test ./internal/cli -run 'Workflow' -count=1
 
 verifier-integration:
 	@go test -tags=integration ./internal/workflows/verifier
