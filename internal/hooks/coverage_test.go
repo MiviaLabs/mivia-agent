@@ -63,6 +63,22 @@ func TestHookParserDirectInputShapes(t *testing.T) {
 	if _, err := parseTimeout("10", time.Second); err == nil {
 		t.Fatal("non-integer timeout must fail")
 	}
+	// float64 whole numbers are accepted by parseTimeout.
+	if d, err := parseTimeout(float64(10), 0); err != nil || d != 10*time.Second {
+		t.Fatalf("float64 10.0 timeout: %v, %v", d, err)
+	}
+	// float64 non-integers are rejected.
+	if _, err := parseTimeout(float64(10.5), 0); err == nil {
+		t.Fatal("non-integer float64 timeout must fail")
+	}
+	// float64 edge: 0 is below MinTimeout (1s).
+	if _, err := parseTimeout(float64(0), 0); err == nil {
+		t.Fatal("float64 0.0 timeout must fail (below MinTimeout)")
+	}
+	// int64 is still accepted.
+	if d, err := parseTimeout(int64(10), 0); err != nil || d != 10*time.Second {
+		t.Fatalf("int64 10 timeout: %v, %v", d, err)
+	}
 	if _, err := parseOnTimeout(true, OnTimeoutBlock); err == nil {
 		t.Fatal("non-string on_timeout must fail")
 	}

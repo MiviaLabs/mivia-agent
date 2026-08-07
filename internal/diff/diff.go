@@ -116,7 +116,7 @@ func FormatUnifiedAt(path string, r Result, oldStart, newStart, context int) str
 	var b strings.Builder
 	fmt.Fprintf(&b, "--- a/%s\n+++ b/%s\n", path, path)
 	hunks := []diffHunk{{ops: flattenOps(r.Ops), oldStart: oldStart, newStart: newStart}}
-	if context >= 0 {
+	if context > 0 {
 		hunks = contextHunks(r.Ops, context, oldStart, newStart)
 	}
 	for i, h := range hunks {
@@ -125,7 +125,31 @@ func FormatUnifiedAt(path string, r Result, oldStart, newStart, context int) str
 		}
 		writeHunk(&b, h)
 	}
-	return strings.TrimSuffix(b.String(), "\n")
+	s := b.String()
+	// Trim the trailing newline that writeHunk appends after every line,
+	// UNLESS the last line in the final hunk is an insertion or deletion.
+	// In unified diff format, context/equal lines represent actual file
+	// content and traditionally omit the trailing newline at the very end.
+	// Insertions and deletions must retain their trailing newline to avoid
+	// ambiguity.
+	if strings.HasSuffix(s, "\n") {
+		lastHunk := hunks[len(hunks)-1]
+		lastOp := lastOpOf(lastHunk.ops)
+		if lastOp != nil && lastOp.Kind == Equal {
+			s = s[:len(s)-1]
+		}
+	}
+	return s
+}
+
+// lastOpOf returns the last Op in a slice, or nil.
+func lastOpOf(ops []Op) *Op {
+	for i := range ops {
+		if i == len(ops)-1 {
+			return &ops[i]
+		}
+	}
+	return nil
 }
 
 type diffHunk struct {
@@ -172,6 +196,12 @@ func flattenOps(ops []Op) []Op {
 }
 
 func contextHunks(ops []Op, context, oldStart, newStart int) []diffHunk {
+	// context=0 with no surrounding context is degenerate: every change
+	// becomes a separate hunk with no leading/trailing equal lines, producing
+	// confusing empty-content hunks. Treat it as "no hunking" (show full diff).
+	if context <= 0 {
+		return []diffHunk{{ops: flattenOps(ops), oldStart: oldStart, newStart: newStart}}
+	}
 	flat := flattenOps(ops)
 	if len(flat) == 0 {
 		return []diffHunk{{ops: flat, oldStart: oldStart, newStart: newStart}}
