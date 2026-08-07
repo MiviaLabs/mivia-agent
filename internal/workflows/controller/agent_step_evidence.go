@@ -18,6 +18,12 @@ type evidenceSelection struct {
 	Source string `json:"source"`
 	Bytes  int    `json:"bytes"`
 	Digest string `json:"digest"`
+	// ArtifactDigest names the ledger content digest embedded in a reference
+	// envelope evidence value, pointing the selection metadata at the
+	// underlying artifact without re-reading it. Empty for inline values;
+	// omitempty keeps inline-only selections byte-identical to the
+	// pre-envelope shape.
+	ArtifactDigest string `json:"artifact_digest,omitempty"`
 }
 
 // marshalEvidenceSelection renders the bounded evidence-selection metadata for
@@ -49,7 +55,11 @@ func marshalEvidenceSelection(spec AgentStepRequest) ([]byte, error) {
 				return fmt.Errorf("%s binding %q exceeds %d bytes", source, key, bindingCap)
 			}
 			sum := sha256.Sum256(raw)
-			items = append(items, evidenceSelection{Name: key, Source: source, Bytes: len(raw), Digest: "sha256:" + hex.EncodeToString(sum[:])})
+			item := evidenceSelection{Name: key, Source: source, Bytes: len(raw), Digest: "sha256:" + hex.EncodeToString(sum[:])}
+			if source == "evidence" {
+				item.ArtifactDigest = envelopeArtifactDigest(values[key])
+			}
+			items = append(items, item)
 		}
 		return nil
 	}
@@ -76,4 +86,21 @@ func marshalEvidenceSelection(spec AgentStepRequest) ([]byte, error) {
 		return nil, fmt.Errorf("evidence selection exceeds %d bytes", workflowledger.MaxEvidenceBytes)
 	}
 	return raw, nil
+}
+
+// envelopeArtifactDigest extracts the artifact digest embedded in a reference
+// envelope evidence value, or "" when the value is not an envelope. It is
+// cheap: the envelope is already in memory, and only envelope values carry the
+// artifact key.
+func envelopeArtifactDigest(value any) string {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	artifact, ok := m["artifact"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	digest, _ := artifact["digest"].(string)
+	return digest
 }

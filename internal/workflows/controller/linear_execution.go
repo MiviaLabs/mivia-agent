@@ -230,7 +230,7 @@ func (c *LinearController) agentStepRequest(ctx context.Context, run workflowled
 	if err != nil {
 		return AgentStepRequest{}, err
 	}
-	if err := validateBindingLimits(step, c.Inputs, attempts, c.Repo, ctx); err != nil {
+	if err := validateBindingLimits(step, c.Inputs, evidence); err != nil {
 		return AgentStepRequest{}, err
 	}
 	var timeout time.Duration
@@ -274,11 +274,16 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 		outMap, mapErr := resultOutputMap(result)
 		if mapErr != nil {
 			status, runErr = workflowledger.AttemptStatusFailed, mapErr
+			// Defect 2: a succeeded child whose route selection fails flips to
+			// Failed here; persist the route-selection cause so the attempt's
+			// ErrorRef is never empty (storeErrorText stays fail-soft).
+			result.ErrorRef = storeErrorText(writeCtx, c.Repo, mapErr)
 			route = failureRoute(step)
 		} else {
 			route, err = c.selectRoute(ctx, step, status, outMap)
 			if err != nil {
 				status, runErr = workflowledger.AttemptStatusFailed, err
+				result.ErrorRef = storeErrorText(writeCtx, c.Repo, err)
 				if route.ToStepID == "" {
 					route = failureRoute(step)
 				}
@@ -373,7 +378,10 @@ func stepPersistenceContext(ctx context.Context) (context.Context, context.Cance
 func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, cause error) (workflowledger.RunSnapshot, bool, error) {
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
-	_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{}, workflowledger.AttemptStatusFailed, RouteDecision{})
+	// Defect 2: a failed attempt must persist its cause. storeErrorText is
+	// fail-soft: a store failure returns "" and never masks the cause.
+	result := AgentStepResult{ErrorRef: storeErrorText(writeCtx, c.Repo, cause)}
+	_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, result, workflowledger.AttemptStatusFailed, RouteDecision{})
 	return c.fail(writeCtx, run, cause)
 }
 
