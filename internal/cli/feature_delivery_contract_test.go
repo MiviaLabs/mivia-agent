@@ -187,9 +187,37 @@ func assertFeatureDeliveryPreflightGate(t *testing.T, workflow definition.Workfl
 	}
 
 	assertTransition(t, workflow, "code_validate", "preflight_validate", "succeeded")
-	assertTransition(t, workflow, "preflight_validate", "success", "succeeded")
+	assertTransition(t, workflow, "preflight_validate", "preflight_structure", "succeeded")
 	assertTransition(t, workflow, "preflight_validate", "repair_preflight", "failed")
 	assertTransition(t, workflow, "repair_preflight", "review", "succeeded")
+
+	// preflight_structure runs the repository's own layout gate (check_go_structure
+	// --strict) inside the sandbox so a change that violates the project's
+	// structure policy is caught in-loop with a repair agent, not by the
+	// delivery pre-commit hook hard-failing publication.
+	structure := featureDeliveryStep(t, workflow, "preflight_structure")
+	if structure.Kind != "evidence_gate" || structure.Verifier != "" || structure.Command == nil {
+		t.Fatalf("step preflight_structure = kind %q verifier %q command %#v; want evidence_gate with a sandboxed command", structure.Kind, structure.Verifier, structure.Command)
+	}
+	if structure.Command.Check != "go-structure" || structure.Command.Program != "python3" ||
+		len(structure.Command.Args) != 3 || structure.Command.Args[0] != "scripts/check_go_structure.py" ||
+		structure.Command.Args[1] != "--strict" || structure.Command.Args[2] != "--all" {
+		t.Fatalf("step preflight_structure command = %#v; want check=go-structure, program=python3, args=[scripts/check_go_structure.py --strict --all]", structure.Command)
+	}
+	structureRepair := featureDeliveryStep(t, workflow, "repair_preflight_structure")
+	foundStructureEvidence := false
+	for _, cb := range structureRepair.Context {
+		if cb.From == "steps.preflight_structure.output" && cb.As == "failed_evidence" && cb.MaxBytes == 16000 {
+			foundStructureEvidence = true
+			break
+		}
+	}
+	if !foundStructureEvidence {
+		t.Fatal("step repair_preflight_structure must bind steps.preflight_structure.output as failed_evidence")
+	}
+	assertTransition(t, workflow, "preflight_structure", "success", "succeeded")
+	assertTransition(t, workflow, "preflight_structure", "repair_preflight_structure", "failed")
+	assertTransition(t, workflow, "repair_preflight_structure", "review", "succeeded")
 }
 
 // assertTransition reports a failure when the workflow lacks a transition
