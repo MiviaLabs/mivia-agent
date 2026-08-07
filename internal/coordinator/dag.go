@@ -124,9 +124,10 @@ func (c *coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending
 			runErr = joinError(runErr, fmt.Errorf("re-queue retry task %q: %w", taskID, err))
 			continue
 		}
-		// Mint a fresh attempt identity for this retry so per-attempt
-		// telemetry is distinct across attempts.
-		runErr = joinError(runErr, c.mintRetryAttempt(h, taskID))
+		// The retry attempt was already minted by processResults when the task
+		// was moved to retry_pending. Do not mint a second attempt here — the
+		// processResults mintRetryAttempt is the single source of retry attempt
+		// identity and quota reset.
 		event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued", TaskID: taskID, AttemptID: h.getAttempt(taskID)}
 		if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
 			runErr = joinError(runErr, fmt.Errorf("append retry event %q: %w", taskID, err))
@@ -369,6 +370,16 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 			runErr = joinError(runErr, fmt.Errorf("retry_pending %q: %w", result.TaskID, err))
 			results[result.TaskID] = result
 			continue
+		}
+		// Finalize the original attempt with its terminal status BEFORE
+		// mintRetryAttempt overwrites h.attempts[taskID] with the new retry
+		// attempt ID. Without this, the original attempt stays at 'queued'
+		// forever because recordTaskResult only calls SetTaskAttempt for
+		// h.getAttempt (the latest attempt).
+		origAttemptID := h.getAttempt(result.TaskID)
+		now := c.nowLocked()
+		if err := c.repo.SetTaskAttempt(h.poolContext(), h.runID, result.TaskID, origAttemptID, mapStatus(result), &now); err != nil {
+			runErr = joinError(runErr, fmt.Errorf("finalize original attempt %q: %w", result.TaskID, err))
 		}
 		runErr = joinError(runErr, c.mintRetryAttempt(h, result.TaskID))
 		state := retryState(result.TaskID, states, c.retryPolicyLocked())

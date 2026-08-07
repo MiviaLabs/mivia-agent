@@ -101,8 +101,8 @@ func addMethods(tn *types.TypeName, pkgPath string, add func(types.Object, strin
 		add(named.Method(i), pkgPath)
 	}
 	if iface, ok := named.Underlying().(*types.Interface); ok {
-		for i := 0; i < iface.NumExplicitMethods(); i++ {
-			add(iface.ExplicitMethod(i), pkgPath)
+		for i := 0; i < iface.NumMethods(); i++ {
+			add(iface.Method(i), pkgPath)
 		}
 	}
 }

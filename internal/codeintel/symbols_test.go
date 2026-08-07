@@ -189,3 +189,91 @@ func TestSymbolsUnavailableWithoutModule(t *testing.T) {
 		t.Fatalf("error = %v, want the shared analysis-unavailable shape", err)
 	}
 }
+
+// embeddedInterfaceFixture writes a two-package module with an interface that
+// embeds another locally-defined interface (NumExplicitMethods==0, NumMethods>0)
+// and a concrete implementor.
+func embeddedInterfaceFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"), "module example.com/embed\n\ngo 1.22\n")
+	write(t, filepath.Join(dir, "types.go"), `package embed
+
+// Readable declares a single method.
+type Readable interface {
+	Read([]byte) (int, error)
+}
+
+// Labeler embeds Readable and adds no explicit methods.
+type Labeler interface {
+	Readable
+}
+
+// myReader implements Readable and therefore Labeler.
+type myReader struct{}
+
+func (myReader) Read([]byte) (int, error) { return 0, nil }
+`)
+	return dir
+}
+
+// TestAddMethodsFindsEmbeddedInterfaceMethods is a regression test for the
+// bug where addMethods iterated iface.NumExplicitMethods() instead of
+// iface.NumMethods(). For an interface composed entirely of embedded methods
+// (e.g. Labeler embeds Readable), NumExplicitMethods() is 0, so the loop never
+// executed and no methods were reported. Searching with prefix "Read" should
+// find the Read method on the Labeler interface via embedding.
+func TestAddMethodsFindsEmbeddedInterfaceMethods(t *testing.T) {
+	a := NewAnalyzer(embeddedInterfaceFixture(t))
+	res, err := a.Symbols(context.Background(), "Read", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := findSymbol(res.Symbols, "Read", KindMethod)
+	if !ok {
+		t.Fatalf("method Read not found among symbols; got: %+v", res.Symbols)
+	}
+	if m.Receiver == "" {
+		t.Errorf("Read should have a receiver (interface method), got empty receiver")
+	}
+}
+
+// TestAddMethodsReportsAllEmbeddedMethods verifies that searching with prefix
+// "Label" finds the Labeler type. The Read method (embedded from Readable) is
+// found separately by searching with prefix "Read". Before the fix, only the
+// Labeler type was found because addMethods reported zero methods for
+// purely-embedded interfaces, so the embedded Read method was invisible to
+// any prefix query.
+func TestAddMethodsReportsAllEmbeddedMethods(t *testing.T) {
+	a := NewAnalyzer(embeddedInterfaceFixture(t))
+	res, err := a.Symbols(context.Background(), "Label", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findSymbol(res.Symbols, "Labeler", KindType); !ok {
+		t.Fatalf("Labeler type not found; got: %+v", res.Symbols)
+	}
+	// The Read method should NOT appear under "Label" prefix since "Read" does
+	// not start with "Label". But searching with prefix "Read" should find it.
+	resRead, err := a.Symbols(context.Background(), "Read", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findSymbol(resRead.Symbols, "Read", KindMethod); !ok {
+		t.Fatalf("Read method not found under Read prefix; got: %+v", resRead.Symbols)
+	}
+}
+
+// TestSymbolsSkipsEmptyPrefixOnNonModule confirms that Symbols returns
+// ErrUnavailable when called on a directory without a go.mod, even with an
+// empty prefix (which normally matches everything).
+func TestSymbolsSkipsEmptyPrefixOnNonModule(t *testing.T) {
+	a := NewAnalyzer(t.TempDir())
+	_, err := a.Symbols(context.Background(), "", 0)
+	if err == nil {
+		t.Fatal("expected ErrUnavailable for workspace without go.mod")
+	}
+	if !strings.Contains(err.Error(), "analysis unavailable") {
+		t.Fatalf("error = %v, want analysis unavailable", err)
+	}
+}
