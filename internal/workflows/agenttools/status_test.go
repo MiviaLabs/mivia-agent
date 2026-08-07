@@ -406,3 +406,47 @@ func TestBuildInspectViewRefusesOversizedArtifact(t *testing.T) {
 		t.Fatalf("refusal error = %q, want paging ceiling mention", err.Error())
 	}
 }
+
+// TestInspectPagingExpandingRedactionReachesTail pins the audit fix for the
+// paging chain: pages slice the REDACTED text, so the empty-page guard must
+// compare against the redacted length. With an expanding redaction policy the
+// raw and redacted lengths differ; following OutputNextOffset must reconstruct
+// the FULL redacted artifact, never terminate early and silently drop the tail.
+func TestInspectPagingExpandingRedactionReachesTail(t *testing.T) {
+	policy, err := redact.Compile([]string{`\b\d{4}\b`}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := redact.Current()
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(previous) })
+
+	// Non-JSON artifact whose redaction EXPANDS: every 4-digit group becomes
+	// the 11-byte placeholder, so redacted length > raw length.
+	raw := []byte(strings.Repeat("1234 ", 30<<10))
+	expected := redact.Text(string(raw))
+	if len(expected) <= len(raw) {
+		t.Fatalf("test policy must expand the text (raw %d, redacted %d)", len(raw), len(expected))
+	}
+
+	const limit = 64 << 10
+	var builder strings.Builder
+	offset := 0
+	pages := 0
+	for {
+		var view InspectView
+		fillInspectOutput(&view, raw, offset, limit)
+		builder.WriteString(view.OutputText)
+		pages++
+		if view.OutputNextOffset == 0 {
+			break
+		}
+		if pages > 100 {
+			t.Fatal("paging chain did not terminate")
+		}
+		offset = view.OutputNextOffset
+	}
+	if builder.String() != expected {
+		t.Fatalf("paged redacted text (%d bytes) differs from the full redacted artifact (%d bytes)", builder.Len(), len(expected))
+	}
+}
