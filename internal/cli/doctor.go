@@ -16,7 +16,7 @@ func runDoctor(args []string) error {
 }
 
 func runDoctorWithIO(args []string, stdout, stderr io.Writer) error {
-	cfgPath, workspaceRoot, err := parseDoctorArgs(args)
+	cfgPath, workspaceRoot, jsonMode, err := parseDoctorArgs(args)
 	if err != nil {
 		return err
 	}
@@ -26,17 +26,74 @@ func runDoctorWithIO(args []string, stdout, stderr io.Writer) error {
 		AllowMissingConfig: true,
 	})
 	if err != nil {
-		fmt.Fprintln(stdout, "mivia doctor")
-		fmt.Fprintln(stdout, "  config:     unavailable")
-		if catalogErr == nil {
-			writeAgentCatalog(stdout, view, stderr)
+		if jsonMode {
+			writeDoctorJSONLoadError(stdout)
 		} else {
-			fmt.Fprintln(stdout, "agents:")
-			fmt.Fprintln(stdout, "  state: unavailable")
+			writeDoctorHumanLoadError(stdout, stderr, view, catalogErr)
 		}
 		return fmt.Errorf("configuration diagnostics unavailable")
 	}
 
+	statusErr := doctorStatusErr(res, view, catalogErr)
+	if jsonMode {
+		writeDoctorJSON(stdout, res, view, catalogErr, statusErr)
+		writeDoctorDiagnostics(stderr, catalogErr, view, res)
+		return statusErr
+	}
+	writeDoctorHuman(stdout, stderr, res, view, catalogErr, statusErr)
+	return statusErr
+}
+
+// doctorStatusErr computes the doctor exit-status error: nil means "ok".
+func doctorStatusErr(res *config.Resolved, view agentCatalogView, catalogErr error) error {
+	var diagnostics string
+	if catalogErr == nil {
+		diagnostics = view.Report.DiagnosticSummary()
+	}
+	if res.APIKeySet {
+		if diagnostics != "" && diagnostics != "none" {
+			return fmt.Errorf("agent diagnostics: %s", diagnostics)
+		}
+		return nil
+	}
+	if diagnostics != "" && diagnostics != "none" {
+		return fmt.Errorf("agent diagnostics: %s; missing %s", diagnostics, res.APIKeyEnv)
+	}
+	return fmt.Errorf("missing %s", res.APIKeyEnv)
+}
+
+// writeDoctorHumanLoadError prints the load-failure screen (human path).
+func writeDoctorHumanLoadError(stdout, stderr io.Writer, view agentCatalogView, catalogErr error) {
+	fmt.Fprintln(stdout, "mivia doctor")
+	fmt.Fprintln(stdout, "  config:     unavailable")
+	if catalogErr == nil {
+		writeAgentCatalog(stdout, view, stderr)
+	} else {
+		fmt.Fprintln(stdout, "agents:")
+		fmt.Fprintln(stdout, "  state: unavailable")
+	}
+}
+
+// writeDoctorDiagnostics writes the stderr side-effects shared by both paths:
+// catalog warnings, agent diagnostics, and the not-ready notice.
+func writeDoctorDiagnostics(stderr io.Writer, catalogErr error, view agentCatalogView, res *config.Resolved) {
+	if catalogErr != nil {
+		fmt.Fprintln(stderr, "doctor: agent diagnostics unavailable")
+		return
+	}
+	for _, warning := range view.Report.Warnings {
+		fmt.Fprintln(stderr, "warning:", warning)
+	}
+	if diagnostics := view.Report.DiagnosticSummary(); diagnostics != "" && diagnostics != "none" {
+		fmt.Fprintf(stderr, "doctor: agent diagnostics: %s\n", diagnostics)
+	}
+	if !res.APIKeySet {
+		fmt.Fprintln(stderr, "doctor: not ready for chat")
+	}
+}
+
+// writeDoctorHuman prints the byte-identical human diagnostics screen.
+func writeDoctorHuman(stdout, stderr io.Writer, res *config.Resolved, view agentCatalogView, catalogErr error, statusErr error) {
 	fmt.Fprintln(stdout, "mivia doctor")
 	fmt.Fprintf(stdout, "  config:     %s\n", displayPath(res.ConfigPath))
 	if res.EnvFileUsed {
@@ -61,28 +118,18 @@ func runDoctorWithIO(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	var diagnostics string
-	if catalogErr == nil {
-		diagnostics = view.Report.DiagnosticSummary()
-		if diagnostics != "none" {
-			fmt.Fprintf(stderr, "doctor: agent diagnostics: %s\n", diagnostics)
-		}
+	if diagnostics := view.Report.DiagnosticSummary(); diagnostics != "" && diagnostics != "none" {
+		fmt.Fprintf(stderr, "doctor: agent diagnostics: %s\n", diagnostics)
 	}
 	if res.APIKeySet {
 		fmt.Fprintln(stdout, "  api_key:    set (value redacted)")
 	} else {
 		fmt.Fprintf(stdout, "  api_key:    MISSING - set %s in environment or env file\n", res.APIKeyEnv)
 		fmt.Fprintln(stderr, "doctor: not ready for chat")
-		if diagnostics != "" && diagnostics != "none" {
-			return fmt.Errorf("agent diagnostics: %s; missing %s", diagnostics, res.APIKeyEnv)
-		}
-		return fmt.Errorf("missing %s", res.APIKeyEnv)
 	}
-	if diagnostics != "" && diagnostics != "none" {
-		return fmt.Errorf("agent diagnostics: %s", diagnostics)
+	if statusErr == nil {
+		fmt.Fprintln(stdout, "  status:     ok")
 	}
-	fmt.Fprintln(stdout, "  status:     ok")
-	return nil
 }
 
 func safeDoctorURL(raw string) string {
@@ -97,38 +144,40 @@ func safeDoctorURL(raw string) string {
 	return safeCatalogText(value, 240)
 }
 
-func parseDoctorArgs(args []string) (configPath, workspaceRoot string, err error) {
+func parseDoctorArgs(args []string) (configPath, workspaceRoot string, jsonMode bool, err error) {
 	for i := 0; i < len(args); i++ {
 		switch {
+		case args[i] == "--json":
+			jsonMode = true
 		case args[i] == "--config":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" || strings.HasPrefix(args[i+1], "-") {
-				return "", "", fmt.Errorf("doctor: --config requires a path")
+				return "", "", false, fmt.Errorf("doctor: --config requires a path")
 			}
 			configPath = args[i+1]
 			i++
 		case strings.HasPrefix(args[i], "--config="):
 			configPath = strings.TrimPrefix(args[i], "--config=")
 			if strings.TrimSpace(configPath) == "" || strings.HasPrefix(configPath, "-") {
-				return "", "", fmt.Errorf("doctor: --config requires a path")
+				return "", "", false, fmt.Errorf("doctor: --config requires a path")
 			}
 		case args[i] == "--workspace":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" || strings.HasPrefix(args[i+1], "-") {
-				return "", "", fmt.Errorf("doctor: --workspace requires a directory")
+				return "", "", false, fmt.Errorf("doctor: --workspace requires a directory")
 			}
 			workspaceRoot = args[i+1]
 			i++
 		case strings.HasPrefix(args[i], "--workspace="):
 			workspaceRoot = strings.TrimPrefix(args[i], "--workspace=")
 			if strings.TrimSpace(workspaceRoot) == "" || strings.HasPrefix(workspaceRoot, "-") {
-				return "", "", fmt.Errorf("doctor: --workspace requires a directory")
+				return "", "", false, fmt.Errorf("doctor: --workspace requires a directory")
 			}
 		case strings.HasPrefix(args[i], "-"):
-			return "", "", fmt.Errorf("doctor: unknown flag %q", safeCatalogText(args[i], 80))
+			return "", "", false, fmt.Errorf("doctor: unknown flag %q", safeCatalogText(args[i], 80))
 		default:
-			return "", "", fmt.Errorf("doctor: unexpected arguments (%d)", len(args)-i)
+			return "", "", false, fmt.Errorf("doctor: unexpected arguments (%d)", len(args)-i)
 		}
 	}
-	return configPath, workspaceRoot, nil
+	return configPath, workspaceRoot, jsonMode, nil
 }
 
 func formatDoctorModelInfo(res *config.Resolved) string {

@@ -18,12 +18,13 @@ type agentCatalogView struct {
 }
 
 type agentCatalogRow struct {
-	Name   string
-	Source string
-	State  string
-	Tools  string
-	Model  string
-	Turns  string
+	Name        string
+	Source      string
+	State       string
+	Tools       string
+	Model       string
+	Turns       string
+	Description string
 	// Limits renders the per-agent resource ceilings that bound an agent even
 	// when its turns are unlimited.
 	Limits string
@@ -55,6 +56,7 @@ func loadAgentCatalog(workspaceRoot string) (agentCatalogView, error) {
 		view.Rows = append(view.Rows, agentCatalogRow{
 			Name: name, Source: string(a.Provenance.Source), State: "selectable",
 			Tools: formatAgentTools(a.EffectiveTools), Model: formatAgentModel(a.Provider, a.Model), Turns: formatAgentTurns(a.MaxTurns), Limits: formatAgentLimits(a.TimeoutSeconds, a.MaxTokens),
+			Description: agents.SanitizeDescription(a.Description),
 		})
 	}
 	sort.Slice(view.Rows, func(i, j int) bool { return view.Rows[i].Name < view.Rows[j].Name })
