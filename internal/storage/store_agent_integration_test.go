@@ -265,6 +265,14 @@ func (f *flushSQLite) ClaimRun(ctx context.Context, runID, holder string) error 
 	return f.store.ClaimRun(ctx, runID, holder)
 }
 
+func (f *flushSQLite) TakeoverClaim(ctx context.Context, runID, holder string) error {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return f.err
+	}
+	return f.store.TakeoverClaim(ctx, runID, holder)
+}
+
 func (f *flushSQLite) ReleaseClaim(ctx context.Context, runID, holder string) error {
 	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
 	if f.err != nil {

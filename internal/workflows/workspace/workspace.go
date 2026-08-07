@@ -67,6 +67,26 @@ func Ensure(ctx context.Context, sourceRoot, runID string, isolation Isolation) 
 	return ensureWorktree(ctx, identity)
 }
 
+// EnsureRecorded recreates a worktree from its immutable admission identity.
+// It never derives a base from the current checkout.
+func EnsureRecorded(ctx context.Context, sourceRoot string, recorded Identity) (Identity, error) {
+	if recorded.WorktreeName == "" {
+		return readOnlyIdentity(sourceRoot)
+	}
+	mainRoot, err := vcs.MainRepoRoot(sourceRoot)
+	if err != nil {
+		return Identity{}, err
+	}
+	if recorded.MainRoot != "" && filepath.Clean(recorded.MainRoot) != filepath.Clean(mainRoot) {
+		return Identity{}, fmt.Errorf("workflow main root is %q, want %q", mainRoot, recorded.MainRoot)
+	}
+	recorded.MainRoot = mainRoot
+	if recorded.BaseCommit == "" {
+		return Identity{}, fmt.Errorf("workflow base commit must not be empty")
+	}
+	return ensureWorktree(ctx, recorded)
+}
+
 // Resolve validates and returns a recorded workflow workspace.
 func Resolve(ctx context.Context, sourceRoot string, recorded Identity) (Identity, error) {
 	if recorded.WorktreeName == "" {

@@ -354,9 +354,12 @@ func (s *StorageRepository) nextSequence(runID string) uint64 {
 // runs with s.mu held) and rebuilds the run's projection from the store so
 // the in-memory state matches durable state before returning.
 func (s *StorageRepository) appendEvent(ctx context.Context, evt storage.Event, rollback func()) error {
-	s.mu.RLock()
-	holder := s.claimedRuns[evt.RunID]
-	s.mu.RUnlock()
+	holder, bound := claimHolderFromContext(ctx)
+	if !bound {
+		s.mu.RLock()
+		holder = s.claimedRuns[evt.RunID]
+		s.mu.RUnlock()
+	}
 	err := s.store.AppendClaimed(ctx, evt, holder)
 	if errors.Is(err, storage.ErrClaimHeld) {
 		err = ErrClaimHeld

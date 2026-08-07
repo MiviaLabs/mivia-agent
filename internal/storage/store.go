@@ -65,6 +65,8 @@ type Store interface {
 	// already holds the claim. The same holder calling ClaimRun again
 	// refreshes the claim successfully.
 	ClaimRun(ctx context.Context, runID, holder string) error
+	// TakeoverClaim atomically replaces any existing claim with holder.
+	TakeoverClaim(ctx context.Context, runID, holder string) error
 	// ReleaseClaim releases the claim on a run. Only the current holder may
 	// release. Returns ErrClaimNotHeld if the caller does not hold the claim.
 	ReleaseClaim(ctx context.Context, runID, holder string) error
@@ -230,6 +232,16 @@ func (m *Memory) ClaimRun(_ context.Context, runID, holder string) error {
 	if ok && existing.Holder != holder {
 		return ErrClaimHeld
 	}
+	m.claims[runID] = Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339)}
+	return nil
+}
+
+func (m *Memory) TakeoverClaim(_ context.Context, runID, holder string) error {
+	if holder == "" {
+		return ErrClaimNotHeld
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.claims[runID] = Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339)}
 	return nil
 }

@@ -58,8 +58,8 @@ func (c *LinearController) reconcileTerminalRoute(ctx context.Context, run workf
 	return settled, true, err
 }
 
-func (c *LinearController) timeoutExpiredRun(run workflowledger.RunSnapshot) (workflowledger.RunSnapshot, error) {
-	writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (c *LinearController) timeoutExpiredRun(ctx context.Context, run workflowledger.RunSnapshot) (workflowledger.RunSnapshot, error) {
+	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if settled, terminal, err := c.reconcileTerminalRoute(writeCtx, run); terminal {
 		return settled, err

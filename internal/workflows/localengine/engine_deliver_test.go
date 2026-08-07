@@ -260,6 +260,10 @@ func TestEngineResumeRecreatesRunWorktree(t *testing.T) {
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, "workflow-wfr-test", "wf/"); err != nil {
 		t.Fatal(err)
 	}
+	admittedBase := runGitOutT(t, repoRoot, "rev-parse", "HEAD")
+	writeFileT(t, filepath.Join(repoRoot, "after-admission.txt"), "new base\n")
+	runGitT(t, repoRoot, "add", "after-admission.txt")
+	runGitT(t, repoRoot, "commit", "-m", "advance source checkout")
 
 	resumed, err := engine.Start(context.Background(), agenttools.StartRequest{
 		Resume: true, RunID: started.RunID, Force: true,
@@ -273,6 +277,7 @@ func TestEngineResumeRecreatesRunWorktree(t *testing.T) {
 	if _, err := os.Stat(worktreeRoot); err != nil {
 		t.Fatalf("resume did not recreate run worktree %s: %v", worktreeRoot, err)
 	}
+	assertWorktreeHEAD(t, worktreeRoot, admittedBase)
 	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := engine.Wait(waitCtx, started.RunID); err != nil {
@@ -284,6 +289,13 @@ func TestEngineResumeRecreatesRunWorktree(t *testing.T) {
 	}
 	if run.Status != workflowledger.RunStatusSucceeded {
 		t.Fatalf("after resume status = %q, want succeeded", run.Status)
+	}
+}
+
+func assertWorktreeHEAD(t *testing.T, root, want string) {
+	t.Helper()
+	if got := runGitOutT(t, root, "rev-parse", "HEAD"); got != want {
+		t.Fatalf("recreated worktree HEAD = %q, want admitted base %q", got, want)
 	}
 }
 

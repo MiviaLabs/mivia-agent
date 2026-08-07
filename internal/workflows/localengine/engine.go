@@ -232,13 +232,7 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, force bool) error {
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) && force {
-			if err := e.Repo.ClearRunClaim(ctx, runID); err != nil {
-				return err
-			}
-			if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
-				if errors.Is(err, workflowledger.ErrClaimHeld) {
-					return fmt.Errorf("workflow run %q is executing on another host; cannot force-resume", runID)
-				}
+			if err := e.Repo.TakeoverRunClaim(ctx, runID, holder); err != nil {
 				return err
 			}
 		} else if errors.Is(err, workflowledger.ErrClaimHeld) {
@@ -414,7 +408,11 @@ func (e *Engine) ensureRunWorktree(ctx context.Context, runID string, recorded *
 		if identity, err := workflowspace.Resolve(ctx, e.WorkspaceRoot, recordedIdentity); err == nil {
 			return identity, true
 		}
-		// The recorded worktree is missing; fall through and recreate it.
+		identity, err := workflowspace.EnsureRecorded(ctx, e.WorkspaceRoot, recordedIdentity)
+		if err != nil {
+			return workflowspace.Identity{}, false
+		}
+		return identity, true
 	}
 	identity, err := workflowspace.Ensure(ctx, e.WorkspaceRoot, runID, workflowspace.IsolationWorktree)
 	if err != nil {

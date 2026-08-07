@@ -203,6 +203,16 @@ func (s *SQLite) ClaimRun(ctx context.Context, id, h string) error {
 	}
 	return nil
 }
+func (s *SQLite) TakeoverClaim(ctx context.Context, id, h string) error {
+	if h == "" {
+		return ErrClaimNotHeld
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO run_claims(run_id, holder, acquired_at) VALUES(?, ?, datetime('now')) ON CONFLICT(run_id) DO UPDATE SET holder=excluded.holder, acquired_at=excluded.acquired_at`, id, h)
+	if err != nil {
+		return fmt.Errorf("take over claim %q: %w", id, err)
+	}
+	return nil
+}
 func (s *SQLite) ReleaseClaim(ctx context.Context, id, h string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM run_claims WHERE run_id = ? AND holder = ?`, id, h)
 	if err != nil {

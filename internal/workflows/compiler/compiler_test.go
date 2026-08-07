@@ -697,6 +697,19 @@ func TestCompile_ContextBindingValidation(t *testing.T) {
 	}
 }
 
+func TestCompile_RejectsMandatorySelfOutputBinding(t *testing.T) {
+	wf := newMinimalWorkflow("self-output")
+	wf.Steps[0].Context = []definition.ContextBinding{{From: "steps.plan.output", As: "prior"}}
+	assertCompileError(t, wf, "mandatory self output", "mandatory self-output")
+	if _, err := CompileForResume(wf); err != nil {
+		t.Fatalf("CompileForResume rejected an admitted self-output binding: %v", err)
+	}
+	wf.Steps[0].Context[0].Optional = true
+	if _, err := Compile(wf); err != nil {
+		t.Fatalf("Compile rejected optional self-output binding: %v", err)
+	}
+}
+
 // --- Loop and transition validation tests ---
 
 func TestCompile_DuplicateLoopNames(t *testing.T) {
@@ -721,6 +734,19 @@ func TestCompile_DuplicateLoopNames(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `loop name "shared" is used by multiple transitions`) {
 		t.Errorf("error %q should mention duplicate loop name", err.Error())
+	}
+}
+
+func TestCompile_RejectsMultipleNamedLoopsFromOneStep(t *testing.T) {
+	wf := newMinimalWorkflow("multi-loop-source")
+	wf.Transitions = []definition.Transition{
+		{From: "plan", To: "plan", Match: definition.MatchCriteria{Status: "failed", Output: map[string]string{"class": "a"}}, Loop: "retry-a", MaxIterations: 2},
+		{From: "plan", To: "plan", Match: definition.MatchCriteria{Status: "failed", Output: map[string]string{"class": "b"}}, Loop: "retry-b", MaxIterations: 2},
+		{From: "plan", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+	}
+	assertCompileError(t, wf, "multiple named loops from one step", "multiple named loops")
+	if _, err := CompileForResume(wf); err != nil {
+		t.Fatalf("CompileForResume rejected an admitted multi-loop workflow: %v", err)
 	}
 }
 

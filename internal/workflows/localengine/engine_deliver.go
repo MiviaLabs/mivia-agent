@@ -91,15 +91,16 @@ func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnaps
 		delete(e.delivering, runID)
 		e.mu.Unlock()
 	}()
-	release, err := e.claimDelivery(ctx, runID)
+	holder, release, err := e.claimDelivery(ctx, runID)
 	if err != nil {
 		return agenttools.DeliverResult{}, err
 	}
 	defer release()
+	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 	return e.publishDelivery(ctx, run, snapshot, policy)
 }
 
-func (e *Engine) claimDelivery(ctx context.Context, runID string) (func(), error) {
+func (e *Engine) claimDelivery(ctx context.Context, runID string) (string, func(), error) {
 	holder := "wfdel-" + randomToken(5)
 	// Never clear a held claim: the holder may be another host mid-publish
 	// (clearing would let both hosts publish to the same branch) or a
@@ -109,11 +110,11 @@ func (e *Engine) claimDelivery(ctx context.Context, runID string) (func(), error
 	// workflow deliver, which force-releases under the execution lock).
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) {
-			return nil, fmt.Errorf("workflow run %q is being delivered by another host or has a stale delivery claim; retry after it settles (mivia workflow deliver clears stale claims)", runID)
+			return "", nil, fmt.Errorf("workflow run %q is being delivered by another host or has a stale delivery claim; retry after it settles (mivia workflow deliver clears stale claims)", runID)
 		}
-		return nil, err
+		return "", nil, err
 	}
-	return func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }, nil
+	return holder, func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }, nil
 }
 
 func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnapshot, snapshot workflowledger.Snapshot, policy delivery.Policy) (agenttools.DeliverResult, error) {

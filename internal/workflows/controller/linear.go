@@ -230,7 +230,7 @@ func (c *LinearController) Run(ctx context.Context) (workflowledger.RunSnapshot,
 	if stored.DeadlineAt != nil {
 		remaining := stored.DeadlineAt.Sub(c.now())
 		if remaining <= 0 {
-			return c.timeoutExpiredRun(stored)
+			return c.timeoutExpiredRun(ctx, stored)
 		}
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, remaining)
@@ -241,6 +241,12 @@ func (c *LinearController) Run(ctx context.Context) (workflowledger.RunSnapshot,
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				writeCtx = workflowledger.ContextWithClaimHolder(writeCtx, c.Holder)
+				if claimErr := c.Repo.ClaimRun(writeCtx, c.RunID, c.Holder); claimErr != nil {
+					cancel()
+					return snap, err
+				}
+				defer func() { _ = c.Repo.ReleaseRun(context.Background(), c.RunID, c.Holder) }()
 				current, getErr := c.Repo.GetRun(writeCtx, c.RunID)
 				if getErr == nil {
 					settled, terminal, settleErr := c.reconcileTerminalRoute(writeCtx, current)
@@ -266,6 +272,7 @@ func (c *LinearController) Run(ctx context.Context) (workflowledger.RunSnapshot,
 func (c *LinearController) Advance(ctx context.Context) (workflowledger.RunSnapshot, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	ctx = workflowledger.ContextWithClaimHolder(ctx, c.Holder)
 	if err := c.Repo.ClaimRun(ctx, c.RunID, c.Holder); err != nil {
 		return workflowledger.RunSnapshot{}, false, err
 	}
@@ -293,7 +300,7 @@ func (c *LinearController) Advance(ctx context.Context) (workflowledger.RunSnaps
 		return settled, true, settleErr
 	}
 	if run.DeadlineAt != nil && !c.now().Before(*run.DeadlineAt) {
-		settled, timeoutErr := c.timeoutExpiredRun(run)
+		settled, timeoutErr := c.timeoutExpiredRun(ctx, run)
 		return settled, true, timeoutErr
 	}
 	if run.Status == workflowledger.RunStatusWaitingApproval {

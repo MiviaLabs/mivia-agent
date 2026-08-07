@@ -32,6 +32,23 @@ func (s *StorageRepository) ClaimRun(ctx context.Context, runID, holder string) 
 	return nil
 }
 
+// TakeoverRunClaim atomically replaces any existing execution claim.
+func (s *StorageRepository) TakeoverRunClaim(ctx context.Context, runID, holder string) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
+	if holder == "" {
+		return ErrClaimNotHeld
+	}
+	if err := s.store.TakeoverClaim(ctx, runID, holder); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.claimedRuns[runID] = holder
+	s.mu.Unlock()
+	return nil
+}
+
 // ReleaseRun releases the claim. Only the current holder may release it.
 func (s *StorageRepository) ReleaseRun(ctx context.Context, runID, holder string) error {
 	if err := s.checkOpen(); err != nil {

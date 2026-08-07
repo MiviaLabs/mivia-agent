@@ -379,6 +379,36 @@ func TestStorageRepository_Claims(t *testing.T) {
 	}
 }
 
+func TestStorageRepository_TakeoverRunClaim(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			requireErr(t, repo.ClaimRun(ctx, run, "old"), nil, "claim by old holder")
+			requireErr(t, repo.TakeoverRunClaim(ctx, run, "new"), nil, "atomic takeover")
+			requireErr(t, repo.ClaimRun(ctx, run, "old"), ErrClaimHeld, "old holder is fenced")
+			requireErr(t, repo.ClaimRun(ctx, run, "new"), nil, "new holder refresh")
+		})
+	}
+}
+
+func TestStorageRepository_TakeoverFencesBoundOldWriter(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	old := NewStorageRepository(store)
+	newer := NewStorageRepository(store)
+	run := runID(t, "takeover-fence")
+	if err := old.CreateRun(ctx, RunSnapshot{RunID: run, WorkflowName: "test", WorkflowDigest: "digest", ActiveStepID: "step", Status: RunStatusPending}, []byte("snapshot")); err != nil {
+		t.Fatal(err)
+	}
+	requireErr(t, old.ClaimRun(ctx, run, "old"), nil, "claim old")
+	requireErr(t, newer.TakeoverRunClaim(ctx, run, "new"), nil, "take over")
+	oldCtx := ContextWithClaimHolder(ctx, "old")
+	requireErr(t, old.CompareAndSetRunStatus(oldCtx, run, 1, RunStatusRunning, nil), ErrClaimHeld, "old writer is fenced")
+	newCtx := ContextWithClaimHolder(ctx, "new")
+	requireErr(t, newer.CompareAndSetRunStatus(newCtx, run, 1, RunStatusRunning, nil), nil, "new writer proceeds")
+}
+
 // ---------------------------------------------------------------------------
 // 12. Content
 // ---------------------------------------------------------------------------

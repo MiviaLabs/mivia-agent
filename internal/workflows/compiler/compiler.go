@@ -111,7 +111,7 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 	}
 
 	// Transition checks
-	if err := validateTransitions(wf, stepIDs); err != nil {
+	if err := validateTransitions(wf, stepIDs, skipCycleValidation); err != nil {
 		errs = append(errs, err.Error())
 	}
 
@@ -197,6 +197,9 @@ func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]boo
 				if !stepIDs[stepID] {
 					return fmt.Errorf("step %q: context from %q references unknown step %q", s.ID, cb.From, stepID)
 				}
+				if !skipCycleValidation && stepID == s.ID && !cb.Optional {
+					return fmt.Errorf("step %q: mandatory self-output context binding %q is impossible on its first attempt", s.ID, cb.From)
+				}
 				// The executor caps a prior step output bound into context at
 				// MaxEvidenceBindingBytes, so reject larger requests at admission.
 				// Admission-only: a run admitted under an earlier policy whose
@@ -223,7 +226,7 @@ func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]boo
 }
 
 // validateTransitions checks for overlapping transitions and loop constraints.
-func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
+func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool, skipCycleValidation bool) error {
 	// Group transitions by source step
 	fromTransitions := make(map[string][]definition.Transition)
 	for _, t := range wf.Transitions {
@@ -252,9 +255,11 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool) e
 
 	// Check loop constraints
 	seenLoops := make(map[string]int)
+	loopsBySource := make(map[string][]string)
 	for _, t := range wf.Transitions {
 		if t.Loop != "" {
 			seenLoops[t.Loop]++
+			loopsBySource[t.From] = append(loopsBySource[t.From], t.Loop)
 		}
 		if t.Loop == "" && t.MaxIterations != 0 {
 			return fmt.Errorf("transition %s → %s: max_iterations requires a loop name", t.From, t.To)
@@ -280,6 +285,13 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool) e
 	for name, count := range seenLoops {
 		if count > 1 {
 			return fmt.Errorf("loop name %q is used by multiple transitions", name)
+		}
+	}
+	if !skipCycleValidation {
+		for source, names := range loopsBySource {
+			if len(names) > 1 {
+				return fmt.Errorf("step %q has multiple named loops (%s); a step may have at most one named loop transition", source, strings.Join(names, ", "))
+			}
 		}
 	}
 

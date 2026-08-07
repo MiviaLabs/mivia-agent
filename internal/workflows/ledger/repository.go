@@ -131,6 +131,9 @@ type Repository interface {
 	// ErrClaimHeld if another holder owns it. Same-holder refresh succeeds.
 	ClaimRun(ctx context.Context, runID, holder string) error
 
+	// TakeoverRunClaim atomically replaces any existing claim with holder.
+	TakeoverRunClaim(ctx context.Context, runID, holder string) error
+
 	// ReleaseRun releases the claim; only the current holder may. Returns
 	// ErrClaimNotHeld otherwise.
 	ReleaseRun(ctx context.Context, runID, holder string) error
