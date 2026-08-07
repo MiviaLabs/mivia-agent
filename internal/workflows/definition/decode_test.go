@@ -64,6 +64,50 @@ match = { status = "succeeded" }
 	}
 }
 
+// TestParseWorkflowTOML_EnvelopeOnlyBinding pins the Step-5 audit fix: the
+// strict TOML decoder (DisallowUnknownFields) must ACCEPT the envelope_only
+// key on a context binding and decode it onto ContextBinding.EnvelopeOnly,
+// alongside the other binding fields.
+func TestParseWorkflowTOML_EnvelopeOnlyBinding(t *testing.T) {
+	data := []byte(`
+version = 1
+name = "env-only"
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "eng"
+context = [
+  { from = "steps.plan_review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
+]
+on_failure = "failure"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }
+`)
+	wf, _, err := ParseWorkflowTOML(data, "env-only.toml")
+	if err != nil {
+		t.Fatalf("ParseWorkflowTOML must accept envelope_only: %v", err)
+	}
+	if len(wf.Steps) != 1 || len(wf.Steps[0].Context) != 1 {
+		t.Fatalf("steps = %+v, want one step with one context binding", wf.Steps)
+	}
+	cb := wf.Steps[0].Context[0]
+	if !cb.EnvelopeOnly {
+		t.Fatalf("binding = %+v, want EnvelopeOnly true", cb)
+	}
+	if cb.MaxBytes != 4096 || !cb.Optional || cb.As != "review_findings" || cb.From != "steps.plan_review.output" {
+		t.Fatalf("binding = %+v, want max_bytes=4096 optional=true from/as preserved", cb)
+	}
+}
+
 func TestParseWorkflowTOML_UnknownField(t *testing.T) {
 	data, err := os.ReadFile("../testdata/invalid/unknown-field.toml")
 	if err != nil {

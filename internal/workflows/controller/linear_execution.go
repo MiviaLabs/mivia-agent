@@ -220,6 +220,25 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 	return c.settleAgentAttempt(ctx, run, step, attempt, result, runErr)
 }
 
+// stepLoopName returns the loop name declared on the step's own outgoing
+// back-edge transition, or "" when the step is not in a loop. The controller
+// routes and counts loops on the step's outgoing transitions (selectRoute,
+// recordLoopAfterComplete), so the step's loop is the Loop field of its
+// outgoing transition. The compiler allows each loop name on exactly one
+// transition, so a step names at most one loop in practice; the first match
+// is authoritative.
+func (c *LinearController) stepLoopName(step definition.Step) string {
+	if c == nil || c.Workflow == nil {
+		return ""
+	}
+	for _, t := range c.Workflow.Transitions {
+		if t.From == step.ID && t.Loop != "" {
+			return t.Loop
+		}
+	}
+	return ""
+}
+
 // agentStepRequest builds the bounded dispatch request for one attempt from
 // the step's snapshotted runtime and the current context, using the attempt's
 // recorded coordinator identity. On a resume join the identity is the
@@ -235,6 +254,16 @@ func (c *LinearController) agentStepRequest(ctx context.Context, run workflowled
 	}
 	if err := validateBindingLimits(step, c.Inputs, evidence); err != nil {
 		return AgentStepRequest{}, err
+	}
+	// Synthetic round input (workflow-convergence plan v3): a step whose own
+	// outgoing transition is a named loop back-edge gets inputs.round = the
+	// loop's durable iteration counter (0 before the first back-edge). Review
+	// templates use the round to mint stable finding ids (R<N>-...). Steps
+	// outside a loop omit the input.
+	if round, inLoop, err := c.roundInputForStep(ctx, step); err != nil {
+		return AgentStepRequest{}, err
+	} else if inLoop {
+		stepInputs["round"] = round
 	}
 	prompt, err := c.renderStepPrompt(ctx, attempt, runtime, step, stepInputs, evidence, refs)
 	if err != nil {
@@ -294,6 +323,24 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 				if route.ToStepID == "" {
 					route = failureRoute(step)
 				}
+			} else if noProgress, zpErr := c.reviewMadeNoProgress(ctx, step, route, outMap); zpErr != nil {
+				// A ledger-read failure inside the zero-progress check is a HARD
+				// step failure: the controller cannot safely route a review
+				// whose prior findings it could not read, so it must not take
+				// the loop back-edge on a guess. This matches agentStepRequest's
+				// GetLoopCounters error behavior — a loop-bound step whose
+				// counters cannot be read fails hard instead of proceeding with
+				// a fabricated round. The durable cause is persisted so the
+				// attempt carries the exact failure.
+				readErr := fmt.Errorf("zero-progress check failed to read prior review output: %w", zpErr)
+				status, runErr, route = c.failReviewNoProgress(writeCtx, &result, step, readErr)
+			} else if noProgress {
+				// Zero progress across rounds: a review that repeats the
+				// previous round's findings must NOT take the loop back-edge.
+				// Treat the review as failed with the durable cause so the run
+				// stops instead of spinning identical findings.
+				noProgressErr := errors.New("review made no progress across rounds (identical findings set); run failed")
+				status, runErr, route = c.failReviewNoProgress(writeCtx, &result, step, noProgressErr)
 			}
 		}
 	} else if status == workflowledger.AttemptStatusFailed {

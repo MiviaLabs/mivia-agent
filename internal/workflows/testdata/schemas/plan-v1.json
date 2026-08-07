@@ -2,12 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "steps", "inspected"],
+  "required": ["summary", "steps", "inspected", "addressed_findings"],
   "properties": {
     "summary": { "type": "string", "minLength": 1 },
     "steps": {
       "type": "array",
       "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "addressed_findings": {
+      "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
     "inspected": {

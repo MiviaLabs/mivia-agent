@@ -416,6 +416,61 @@ func TestStorageRepository_Content(t *testing.T) {
 	}
 }
 
+// TestStorageRepository_LoadContentVerifiesSha256Digest pins the Step-5 audit
+// fix: LoadContent verifies sha256(data) against the ref's hex digest when the
+// ref carries the "sha256:" prefix, so a bare ref lookup can no longer return
+// bytes that do not hash to the ref (content corruption or ref mix-ups fail
+// loudly). Other ref shapes (e.g. contentref "ref:output:<hex>") skip digest
+// verification and load verbatim.
+func TestStorageRepository_LoadContentVerifiesSha256Digest(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			data := []byte("evidence payload")
+			ref := "sha256:" + DigestHex(data)
+			requireErr(t, repo.StoreContent(ctx, ref, data), nil, "store content under sha256 ref")
+
+			// Matching digest: LoadContent succeeds.
+			got, err := repo.LoadContent(ctx, ref)
+			if err != nil {
+				t.Fatalf("LoadContent with matching digest: %v", err)
+			}
+			if !bytes.Equal(got, data) {
+				t.Fatalf("LoadContent = %q, want %q", got, data)
+			}
+
+			// Corrupted bytes under a sha256 ref: the digest no longer matches,
+			// so LoadContent must fail with a digest-mismatch error instead of
+			// returning the bytes. The ref claims a digest for bytes that were
+			// NOT stored under it, so the lookup succeeds but the verification
+			// must reject the mismatched content.
+			corrupt := []byte("corrupted bytes")
+			claimed := []byte("the bytes this ref claims to address")
+			corruptRef := "sha256:" + DigestHex(claimed) // ref names a digest that corrupt does NOT match
+			requireErr(t, repo.StoreContent(ctx, corruptRef, corrupt), nil, "store corrupted content under a mismatched sha256 ref")
+			_, err = repo.LoadContent(ctx, corruptRef)
+			if err == nil {
+				t.Fatal("LoadContent of corrupted bytes under a sha256 ref must error")
+			}
+			if !strings.Contains(err.Error(), "digest mismatch") {
+				t.Fatalf("corruption error = %v, want a digest-mismatch message", err)
+			}
+
+			// Non-sha256 ref shapes (contentref) skip digest verification: bytes
+			// that do not hash to the ref's hex still load verbatim.
+			plainRef := "ref:output:" + strings.Repeat("0", 64)
+			requireErr(t, repo.StoreContent(ctx, plainRef, data), nil, "store content under a contentref shape")
+			got, err = repo.LoadContent(ctx, plainRef)
+			if err != nil {
+				t.Fatalf("LoadContent of a non-sha256 ref must skip verification: %v", err)
+			}
+			if !bytes.Equal(got, data) {
+				t.Fatalf("LoadContent = %q, want %q", got, data)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 13. Close
 // ---------------------------------------------------------------------------

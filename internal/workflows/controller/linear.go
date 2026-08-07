@@ -344,61 +344,17 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 			continue
 		}
 		if len(parts) == 3 && parts[0] == "steps" && parts[2] == "output" {
-			prior, ok := latestAttempt(attempts, parts[1])
-			if !ok || prior.OutputRef == "" {
-				if binding.Optional {
-					evidence[binding.As] = ""
-					continue
-				}
-				return nil, nil, nil, fmt.Errorf("missing prior output %q", binding.From)
-			}
-			raw, err := c.Repo.LoadContent(ctx, prior.OutputRef)
+			value, ref, ok, err := c.resolveBindingOutput(ctx, binding, attempts)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			threshold := binding.MaxBytes
-			if threshold <= 0 {
-				threshold = definition.MaxEvidenceBindingBytes
-			}
-			// Every resolved steps.X.output binding records its artifact
-			// reference; the controller renders them into the prompt's
-			// evidence-refs block. Optional-absent bindings resolve to ""
-			// above and are skipped here (they have no artifact to address).
-			refs[binding.As] = ArtifactRef{
-				Step: prior.StepID, Attempt: prior.AttemptNo, Ref: prior.OutputRef,
-				Bytes: len(raw), Digest: prior.OutputDigest,
-			}
-			if len(raw) > threshold {
-				// Size check runs BEFORE json.Unmarshal: an oversized prior
-				// output — JSON or not — substitutes a compact ledger-backed
-				// reference envelope instead of failing the run. The full
-				// artifact stays content-addressed in the workflow ledger and
-				// is read back with workflow_inspect. The builder measures the
-				// envelope skeleton exactly and budgets/halves the preview so
-				// the marshaled envelope always fits the binding cap; it errors
-				// only for a cap that cannot fit even the no-preview envelope
-				// (the historical reject, defense-in-depth).
-				envelope, err := buildEvidenceEnvelope(c.RunID, prior, raw, threshold)
-				if err != nil {
-					return nil, nil, nil, fmt.Errorf("context binding %q exceeds %d bytes", binding.From, threshold)
-				}
-				evidence[binding.As] = envelope
+			if !ok {
+				// Optional-absent binding: resolve to "" with no artifact to
+				// reference (the evidence-refs block skips it).
+				evidence[binding.As] = ""
 				continue
 			}
-			var value any
-			if err := json.Unmarshal(raw, &value); err != nil {
-				// A SMALL prior output that is not valid JSON (e.g. prose or
-				// binary) also degrades to the ledger-backed reference envelope
-				// instead of rejecting the run: the child reads the full
-				// artifact with workflow_inspect. Reject only when even the
-				// no-preview envelope cannot fit the binding cap.
-				envelope, err := buildEvidenceEnvelope(c.RunID, prior, raw, threshold)
-				if err != nil {
-					return nil, nil, nil, fmt.Errorf("context binding %q exceeds %d bytes", binding.From, threshold)
-				}
-				evidence[binding.As] = envelope
-				continue
-			}
+			refs[binding.As] = ref
 			evidence[binding.As] = value
 			continue
 		}
@@ -422,25 +378,6 @@ func (c *LinearController) failWithStatus(ctx context.Context, run workflowledge
 		return run, false, fmt.Errorf("workflow failed: %v: %w", cause, err)
 	}
 	return failed, true, fmt.Errorf("workflow step failed: %w", cause)
-}
-
-func latestAttempt(attempts []workflowledger.StepAttempt, step string) (workflowledger.StepAttempt, bool) {
-	var latest workflowledger.StepAttempt
-	found := false
-	for _, attempt := range attempts {
-		if attempt.StepID == step && (!found || attempt.AttemptNo > latest.AttemptNo) {
-			latest, found = attempt, true
-		}
-	}
-	return latest, found
-}
-
-func nextAttemptNo(attempts []workflowledger.StepAttempt, step string) int {
-	latest, ok := latestAttempt(attempts, step)
-	if !ok {
-		return 1
-	}
-	return latest.AttemptNo + 1
 }
 
 func maxBinding(step definition.Step) int {

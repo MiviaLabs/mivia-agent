@@ -24,7 +24,7 @@ template = "templates/plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
-  { from = "steps.plan_review.output", as = "review_findings", max_bytes = 16000, optional = true },
+  { from = "steps.plan_review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
 
@@ -38,6 +38,7 @@ output_schema = "schemas/review-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_review.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
 
@@ -51,7 +52,7 @@ output_schema = "schemas/plan-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
-  { from = "steps.test_plan_review.output", as = "review_findings", max_bytes = 16000, optional = true },
+  { from = "steps.test_plan_review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
 
@@ -66,6 +67,7 @@ context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.test_plan_review.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
 
@@ -80,8 +82,8 @@ context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
-  { from = "steps.review.output", as = "review_findings", max_bytes = 16000, optional = true },
-  { from = "steps.review_integration.output", as = "integration_findings", max_bytes = 16000, optional = true },
+  { from = "steps.review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  { from = "steps.review_integration.output", as = "integration_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
 
@@ -97,6 +99,7 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.review.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
 
@@ -113,6 +116,7 @@ context = [
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
   { from = "steps.review.output", as = "review", max_bytes = 16000, optional = true },
+  { from = "steps.review_integration.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
 

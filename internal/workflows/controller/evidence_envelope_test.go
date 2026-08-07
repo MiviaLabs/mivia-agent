@@ -222,6 +222,95 @@ func TestContextForStepKeepsInlineValuesByteIdentical(t *testing.T) {
 	}
 }
 
+// TestContextForStepEnvelopeOnlyAlwaysEnvelopes pins the Step-5 audit fix: an
+// envelope_only steps.<id>.output binding ALWAYS resolves to a ledger-backed
+// reference envelope when the prior output is non-empty — even when the content
+// is small enough to inline under the binding cap (the operator directive that
+// findings always pass as ledger refs). The cap applies to the MARSHALED
+// envelope (the existing fit invariant), and the test uses production-sized
+// run_id/ref/digest values so the reference envelope skeleton must fit under
+// the 4096 cap. The same payload under a plain (non-envelope_only) binding must
+// still inline — the flag is opt-in, default false.
+func TestContextForStepEnvelopeOnlyAlwaysEnvelopes(t *testing.T) {
+	// A SMALL findings payload: comfortably under the 4096 cap, so without the
+	// flag it would inline verbatim (the pre-fix contradiction of the operator
+	// directive that findings always pass as ledger refs).
+	payload := json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-f1","severity":"high","reason":"x"},{"id":"R0-f2","severity":"medium","reason":"y"}]}`)
+	if len(payload) > 4096 {
+		t.Fatalf("payload = %d bytes, want a small findings payload under the 4096 cap", len(payload))
+	}
+	// Production-sized identifiers: ref/digest "sha256:" + 64 hex chars.
+	ref := "sha256:" + workflowledger.DigestHex(payload)
+	repo := workflowledger.NewMemoryRepository()
+	if err := repo.StoreContent(context.Background(), ref, payload); err != nil {
+		t.Fatal(err)
+	}
+	attempts := []workflowledger.StepAttempt{{
+		AttemptID: "wfa-plan_review-1", RunID: "wfr-envelope-only", StepID: "plan_review", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusSucceeded, OutputRef: ref, OutputDigest: workflowledger.DigestHex(payload),
+	}}
+	// Production-sized run_id: "wfr-" + 16 base32 chars (see linear_ids.go).
+	ctrl, err := NewLinearController(repo, &linearRunner{}, linearWorkflow(t), nil, nil, newWorkflowRunID(), []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envStep := definition.Step{ID: "plan", Kind: "agent", Context: []definition.ContextBinding{
+		{From: "steps.plan_review.output", As: "review_findings", MaxBytes: 4096, Optional: true, EnvelopeOnly: true},
+	}}
+	_, evidence, refs, err := ctrl.contextForStep(context.Background(), envStep, attempts)
+	if err != nil {
+		t.Fatalf("envelope_only binding must not error: %v", err)
+	}
+	env, ok := evidence["review_findings"].(map[string]any)
+	if !ok {
+		t.Fatalf("evidence[review_findings] = %#v (%T), want a reference envelope, NOT the inline payload", evidence["review_findings"], evidence["review_findings"])
+	}
+	artifact, ok := env["artifact"].(map[string]any)
+	if !ok {
+		t.Fatalf("envelope = %#v, want an artifact key", env)
+	}
+	if artifact["step"] != "plan_review" || artifact["attempt"] != 1 || artifact["ref"] != ref ||
+		artifact["bytes"] != len(payload) || artifact["digest"] != workflowledger.DigestHex(payload) {
+		t.Fatalf("artifact = %#v, want step=plan_review attempt=1 ref=%q bytes=%d digest=%q", artifact, ref, len(payload), workflowledger.DigestHex(payload))
+	}
+	marshaled, err := json.Marshal(env)
+	if err != nil || len(marshaled) > 4096 {
+		t.Fatalf("marshaled envelope = %d bytes, want <= 4096 (err=%v)", len(marshaled), err)
+	}
+	if entry, ok := refs["review_findings"]; !ok || entry.Ref != ref || entry.Step != "plan_review" || entry.Attempt != 1 {
+		t.Fatalf("refs[review_findings] = %+v (ok=%v), want the plan_review artifact ref", entry, ok)
+	}
+	// Contrast: the SAME payload under a plain binding (EnvelopeOnly false) must
+	// inline — the flag is opt-in and every other binding is unchanged.
+	plainStep := definition.Step{ID: "plan", Kind: "agent", Context: []definition.ContextBinding{
+		{From: "steps.plan_review.output", As: "review_findings", MaxBytes: 4096, Optional: true},
+	}}
+	_, plainEvidence, _, err := ctrl.contextForStep(context.Background(), plainStep, attempts)
+	if err != nil {
+		t.Fatalf("plain binding must not error: %v", err)
+	}
+	if m, isMap := plainEvidence["review_findings"].(map[string]any); isMap {
+		if _, hasArtifact := m["artifact"]; hasArtifact {
+			t.Fatalf("plain binding enveloped a payload that fits its cap: %#v", m)
+		}
+	}
+	var parsed any
+	if err := json.Unmarshal(payload, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	want, err := json.Marshal(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(plainEvidence["review_findings"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("plain binding evidence = %s, want the inline payload %s", got, want)
+	}
+}
+
 // TestValidateBindingLimitsMeasuresEnvelope pins the challenge-adopted
 // threshold fix: validateBindingLimits measures the EVIDENCE VALUE (the
 // reference envelope substituted by contextForStep) instead of re-loading the

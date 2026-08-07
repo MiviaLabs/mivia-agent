@@ -55,6 +55,11 @@ type ContextBinding struct {
 	// binding to an empty string instead of failing. It has no effect on
 	// inputs.<name> bindings, which are always present after admission.
 	Optional bool `toml:"optional"`
+	// EnvelopeOnly is true when the bound prior output must reach the step as a
+	// ledger reference envelope (artifact pointer + short note) instead of the
+	// full inline payload. The controller resolves envelope-only bindings; a
+	// step that needs the full artifact must read it back with workflow_inspect.
+	EnvelopeOnly bool `toml:"envelope_only"`
 }
 
 type Transition struct {
