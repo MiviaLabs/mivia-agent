@@ -8,10 +8,10 @@ Branch: `master` (HEAD `6403d35`). All convergence work is **uncommitted in the 
 
 The feature-delivery workflow's review loops used to churn (5–7 rounds, reviewers re-raising
 vague findings). The fix — **workflow-convergence plan v3** — makes loops converge through
-*reviewer feedback quality*, not through loop caps. It is **fully implemented and Step-5
-audit-fixed in the working tree**, but **not yet committed**. The race-test gate was still
-running when this handoff was written; confirm it is green, then commit (Step 6 of the ADLC)
-and report to the operator so they can rebuild and restart.
+*reviewer feedback quality*, not through loop caps. It is **fully implemented, Step-5
+audit-fixed, and committed** as `2faea5a` (master, not pushed). All gates green: build, vet,
+full `-race` test suite (13 packages), and the pre-commit gates (check_go_structure,
+Semgrep 0 findings, TUI invariants).
 
 ## Operator decisions (do not reverse without asking)
 
@@ -92,13 +92,11 @@ Already green (run by root, this session):
 
 ## Remaining steps for the takeover agent
 
-1. Re-run the gate if needed:
-   `go build ./... && go vet ./internal/workflows/... && go test -race ./internal/workflows/... ./internal/cli -count=1 && go test ./internal/workflows/verifier -count=1`
-2. If green, commit all work (do NOT commit `.codegraph/` — it is self-ignored):
-   `git add -A && git commit -m "feat(workflows): convergent review loops - rich findings, ledger-ref bindings, round wiring"`
-   (or a similar message summarizing plan v3).
-3. Push **only if the operator asks** (they said "commit all"; rebuilding happens on their side).
-4. Tell the operator it is committed so they can rebuild and restart.
+1. Optional: re-run the gate for confidence —
+   `go build ./... && go vet ./internal/workflows/... && go test -race ./internal/workflows/... ./internal/cli -count=1`
+2. Push **only if the operator asks** (rebuilding happens on their side).
+3. Tell the operator it is committed (`2faea5a`) so they can rebuild and restart.
+4. This doc is committed too; keep it accurate when the state changes.
 
 ## Residual risks / future hardening (audit findings accepted as-is)
 
