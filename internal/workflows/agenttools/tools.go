@@ -67,6 +67,10 @@ func (t *runTool) Parameters() map[string]any {
 				"description":          "Validated input map for the workflow (name to value); required keys come from the workflow definition",
 				"additionalProperties": true,
 			},
+			"invocation_key": map[string]any{
+				"type":        "string",
+				"description": "Stable caller key for retrying the same workflow request without creating a second run",
+			},
 			"allow_publish": map[string]any{
 				"type":        "boolean",
 				"description": "When true, permit end-of-run publication for delivery-capable workflows; defaults to false",
@@ -89,12 +93,13 @@ func (t *runTool) Parameters() map[string]any {
 }
 func (t *runTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
-		Workflow     string         `json:"workflow"`
-		Inputs       map[string]any `json:"inputs"`
-		AllowPublish bool           `json:"allow_publish"`
-		Resume       bool           `json:"resume"`
-		RunID        string         `json:"run_id"`
-		Force        bool           `json:"force"`
+		Workflow      string         `json:"workflow"`
+		Inputs        map[string]any `json:"inputs"`
+		InvocationKey string         `json:"invocation_key"`
+		AllowPublish  bool           `json:"allow_publish"`
+		Resume        bool           `json:"resume"`
+		RunID         string         `json:"run_id"`
+		Force         bool           `json:"force"`
 	}
 	if len(args) > 0 && string(args) != "null" {
 		// Decode with UseNumber so integer inputs ≥ 2^53 stay exact: the plain
@@ -108,12 +113,13 @@ func (t *runTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		}
 	}
 	result, err := t.svc.Run(ctx, StartRequest{
-		Workflow:     strings.TrimSpace(in.Workflow),
-		Inputs:       in.Inputs,
-		AllowPublish: in.AllowPublish,
-		Resume:       in.Resume,
-		RunID:        strings.TrimSpace(in.RunID),
-		Force:        in.Force,
+		Workflow:      strings.TrimSpace(in.Workflow),
+		Inputs:        in.Inputs,
+		InvocationKey: strings.TrimSpace(in.InvocationKey),
+		AllowPublish:  in.AllowPublish,
+		Resume:        in.Resume,
+		RunID:         strings.TrimSpace(in.RunID),
+		Force:         in.Force,
 	})
 	if err != nil {
 		return "", err

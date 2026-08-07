@@ -54,6 +54,10 @@ type Engine struct {
 	delivering map[string]string
 }
 
+const (
+	runClaimLease = workflowledger.DefaultClaimLease
+)
+
 type activeRun struct {
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -92,42 +96,17 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 		return agenttools.StartResult{}, err
 	}
 	runID := e.newRunID()
-	// Admission reads output_schema refs from the workspace (that IS admission)
-	// and pins the resolved bytes + digest into the run snapshot, so resume can
-	// rebuild step runtimes without touching the live filesystem.
-	schemas, err := loadOutputSchemas(baseDir, compiled)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	steps, err := buildStepRuntimesFromSnapshot(compiled, schemas)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	snap := workflowledger.Snapshot{
-		SchemaVersion:    workflowledger.SnapshotSchemaVersion,
-		DefinitionTOML:   append([]byte(nil), raw...),
-		DefinitionDigest: compiled.Digest,
-		Inputs:           inputSnapshot,
-		Schemas:          schemas,
-	}
-	if compiled.Delivery != nil && compiled.DeliveryActive() {
-		snap.Delivery = &workflowledger.DeliverySnapshot{
-			Mode: compiled.Delivery.Mode, Provider: compiled.Delivery.Provider, Base: compiled.Delivery.Base,
+	if key := strings.TrimSpace(req.InvocationKey); key != "" {
+		runID = agenttools.InvocationRunID(key)
+		if existing, getErr := e.Repo.GetRun(ctx, runID); getErr == nil {
+			return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
+		} else if !errors.Is(getErr, workflowledger.ErrNotFound) {
+			return agenttools.StartResult{}, getErr
 		}
 	}
-	snapshot, err := workflowledger.MarshalSnapshot(snap)
+	ctrl, admission, err := e.newRunController(compiled, raw, baseDir, inputs, inputSnapshot, runID, req.InvocationKey)
 	if err != nil {
 		return agenttools.StartResult{}, err
-	}
-	ctrl, err := controller.NewLinearController(e.ctrlRepo(), e.runner(), compiled, steps, inputs, runID, snapshot)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	admission := controller.Admission{
-		BaseRef:      "main",
-		BaseCommit:   "test-base",
-		WorktreeName: "workflow-" + runID,
-		InputDigest:  workflowledger.InputDigest(inputSnapshot),
 	}
 	// Create (or validate) the run's git worktree like the CLI does and record
 	// the resulting identity on the engine, so a later workflow_deliver can
@@ -238,7 +217,10 @@ func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, for
 				return err
 			}
 		} else if errors.Is(err, workflowledger.ErrClaimHeld) {
-			return fmt.Errorf("workflow run %q is executing on another host; cancel it there or force-resume", runID)
+			if takeoverErr := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); takeoverErr == nil {
+				return nil
+			}
+			return fmt.Errorf("workflow run %q is executing on another host; wait for its lease to expire or force-resume", runID)
 		} else {
 			return err
 		}

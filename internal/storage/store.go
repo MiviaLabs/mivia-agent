@@ -85,6 +85,11 @@ type Store interface {
 	Close() error
 }
 
+// LeaseStore is the optional extension used by workflow recovery.
+type LeaseStore interface {
+	TakeoverExpiredClaim(context.Context, string, string, time.Duration) error
+}
+
 type Memory struct {
 	mu     sync.RWMutex
 	events map[string][]Event
@@ -242,6 +247,26 @@ func (m *Memory) TakeoverClaim(_ context.Context, runID, holder string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.claims[runID] = Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339)}
+	return nil
+}
+
+func (m *Memory) TakeoverExpiredClaim(_ context.Context, runID, holder string, maxAge time.Duration) error {
+	if holder == "" {
+		return ErrClaimNotHeld
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.claims[runID]
+	if !ok {
+		return ErrClaimNotHeld
+	}
+	if ok {
+		when, err := time.Parse(time.RFC3339, existing.AcquiredAt)
+		if err != nil || time.Since(when) < maxAge {
+			return ErrClaimHeld
+		}
+	}
 	m.claims[runID] = Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339)}
 	return nil
 }

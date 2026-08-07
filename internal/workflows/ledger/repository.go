@@ -88,6 +88,10 @@ type Repository interface {
 	// different payload.
 	SetStepAttemptPrompt(ctx context.Context, runID, attemptID, promptRef string) error
 
+	// SetStepAttemptExecution durably records the child identity used by the
+	// current execution of an attempt. It is idempotent for the same identity.
+	SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID string) error
+
 	// ListTransitions returns the route decisions derived from completed
 	// attempts, ordered by event sequence.
 	ListTransitions(ctx context.Context, runID string) ([]TransitionRecord, error)
@@ -133,6 +137,7 @@ type Repository interface {
 
 	// TakeoverRunClaim atomically replaces any existing claim with holder.
 	TakeoverRunClaim(ctx context.Context, runID, holder string) error
+	TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error
 
 	// ReleaseRun releases the claim; only the current holder may. Returns
 	// ErrClaimNotHeld otherwise.

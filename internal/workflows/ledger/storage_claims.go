@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -41,6 +42,30 @@ func (s *StorageRepository) TakeoverRunClaim(ctx context.Context, runID, holder 
 		return ErrClaimNotHeld
 	}
 	if err := s.store.TakeoverClaim(ctx, runID, holder); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.claimedRuns[runID] = holder
+	s.mu.Unlock()
+	return nil
+}
+
+// TakeoverExpiredRunClaim replaces a claim only when its age exceeds maxAge.
+func (s *StorageRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
+	if holder == "" {
+		holder = s.holder
+	}
+	lease, ok := s.store.(storage.LeaseStore)
+	if !ok {
+		return ErrClaimHeld
+	}
+	if err := lease.TakeoverExpiredClaim(ctx, runID, holder, maxAge); err != nil {
+		if errors.Is(err, storage.ErrClaimHeld) {
+			return ErrClaimHeld
+		}
 		return err
 	}
 	s.mu.Lock()

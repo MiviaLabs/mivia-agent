@@ -107,6 +107,8 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 			err = applyAttemptStarted(&proj, st, ev)
 		case eventKindAttemptPrompt:
 			err = applyAttemptPrompt(&proj, ev)
+		case eventKindAttemptExecution:
+			err = applyAttemptExecution(&proj, ev)
 		case eventKindAttemptCompleted:
 			err = applyAttemptCompleted(&proj, st, ev)
 		case eventKindLoopIncremented:
@@ -129,6 +131,21 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 		proj.ActiveStepID = st.initialStep
 	}
 	return proj, nil
+}
+
+func applyAttemptExecution(proj *Projection, ev storage.Event) error {
+	p, err := unmarshalAttemptExecution(ev.Payload)
+	if err != nil {
+		return fmt.Errorf("decode %s payload: %w", ev.Kind, err)
+	}
+	for i := range proj.Attempts {
+		if proj.Attempts[i].AttemptID == p.AttemptID {
+			proj.Attempts[i].CoordinatorRunID = p.CoordinatorRunID
+			proj.Attempts[i].TaskID = p.TaskID
+			return nil
+		}
+	}
+	return nil
 }
 
 // applyRunCreated folds one wf_run_created event into the projection. The

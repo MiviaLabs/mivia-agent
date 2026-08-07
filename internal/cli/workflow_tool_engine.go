@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -10,13 +11,11 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // sessionCancelWait is how long Cancel waits for an in-process controller to
@@ -80,6 +79,16 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 		return agenttools.StartResult{}, err
 	}
 	runID := newCLIWorkflowRunID()
+	if key := strings.TrimSpace(req.InvocationKey); key != "" {
+		runID = agenttools.InvocationRunID(key)
+		if existing, getErr := prepared.repo.GetRun(ctx, runID); getErr == nil {
+			prepared.closeFn()
+			return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
+		} else if !errors.Is(getErr, workflowledger.ErrNotFound) {
+			prepared.closeFn()
+			return agenttools.StartResult{}, getErr
+		}
+	}
 	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
 	if err != nil {
 		prepared.closeFn()
@@ -91,6 +100,7 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 		prepared.closeFn()
 		return agenttools.StartResult{}, err
 	}
+	built.Admission.InvocationKey = strings.TrimSpace(req.InvocationKey)
 	if err := workflowRunSetAdmission(built); err != nil {
 		built.Cleanup()
 		built.Dispatcher.Close()
@@ -105,28 +115,24 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 		prepared.closeFn()
 		return agenttools.StartResult{}, err
 	}
+	return e.launchStartedWorkflow(ctx, prepared, built, runID, req.Workflow, req.AllowPublish, finishExecution)
+}
+
+func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepared *preparedWorkflowRun, built workflowControllerBuild, runID, workflow string, allowPublish bool, finishExecution func()) (agenttools.StartResult, error) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	e.mu.Lock()
 	if e.active == nil {
 		e.active = make(map[string]*sessionActiveRun)
 	}
-	e.active[runID] = &sessionActiveRun{
-		cancel: cancel, done: done,
-		closeFn: func() {
-			finishExecution()
-			built.Dispatcher.Close()
-			prepared.closeFn()
-		},
-	}
+	e.active[runID] = &sessionActiveRun{cancel: cancel, done: done, closeFn: func() { finishExecution(); built.Dispatcher.Close(); prepared.closeFn() }}
 	e.mu.Unlock()
-	allowPublish := req.AllowPublish
 	go func() {
 		defer close(done)
-		snap, err := built.Controller.Run(runCtx)
-		if err == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
-			if derr := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, runID, true, io.Discard, io.Discard); derr != nil {
-				recordAutoDeliveryFailure(context.Background(), prepared.repo, runID, derr)
+		snap, runErr := built.Controller.Run(runCtx)
+		if runErr == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
+			if err := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, runID, true, io.Discard, io.Discard); err != nil {
+				recordAutoDeliveryFailure(context.Background(), prepared.repo, runID, err)
 			}
 		}
 		e.mu.Lock()
@@ -141,163 +147,7 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
-	return agenttools.StartResult{RunID: runID, Status: string(run.Status), Workflow: req.Workflow}, nil
-}
-
-// resumeCLI resumes a non-terminal run through the real CLI controller path
-// (same admission wiring as `mivia workflow resume --force`). It never falls
-// back to a scripted step runner.
-func (e *sessionWorkflowEngine) resumeCLI(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
-	prepared, err := e.prepareResume(ctx, req)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	return e.launchResume(ctx, prepared, req.AllowPublish)
-}
-
-type resumePrepared struct {
-	runID      string
-	workflow   string
-	root       string
-	built      workflowControllerBuild
-	closeFn    func()
-	finishExec func()
-	repo       workflowledger.Repository
-	store      *storage.SQLite
-	res        *config.Resolved
-}
-
-func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttools.StartRequest) (resumePrepared, error) {
-	if strings.TrimSpace(req.RunID) == "" {
-		return resumePrepared{}, fmt.Errorf("resume requires run_id")
-	}
-	if !req.Force {
-		return resumePrepared{}, fmt.Errorf("workflow run %q is not terminal; set force=true only after the prior executor stopped", req.RunID)
-	}
-	root := e.root
-	if strings.TrimSpace(root) == "" {
-		root = "."
-	}
-	work, err := workspace.Open(root)
-	if err != nil {
-		return resumePrepared{}, err
-	}
-	configPath := workflowConfigPath(work.Abs, e.configPath)
-	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
-	if err != nil {
-		return resumePrepared{}, err
-	}
-	applyPrivacyPolicy(res)
-	applyWorkflowStoreRoot(res, work.Abs)
-	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
-	if err != nil {
-		return resumePrepared{}, err
-	}
-	run, err := repo.GetRun(ctx, req.RunID)
-	if err != nil {
-		closeFn()
-		return resumePrepared{}, err
-	}
-	if err := refuseNonResumable(run); err != nil {
-		closeFn()
-		return resumePrepared{}, err
-	}
-	raw, err := repo.GetRunSnapshot(ctx, req.RunID)
-	if err != nil {
-		closeFn()
-		return resumePrepared{}, err
-	}
-	snapshot, compiled, inputs, err := validateWorkflowResumeSnapshot(run, raw)
-	if err != nil {
-		closeFn()
-		return resumePrepared{}, err
-	}
-	finishExecution, err := beginWorkflowExecution(work.Abs, contextStorePath(work.Abs, res.Subagents), req.RunID)
-	if err != nil {
-		closeFn()
-		return resumePrepared{}, err
-	}
-	built, err := workflowResumeBuild(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, req.RunID, &snapshot, &run)
-	if err != nil {
-		finishExecution()
-		closeFn()
-		return resumePrepared{}, err
-	}
-	if err := workflowResumeSetAdmission(built); err != nil {
-		built.Dispatcher.Close()
-		finishExecution()
-		closeFn()
-		return resumePrepared{}, err
-	}
-	if err := workflowResumeSetForce(built); err != nil {
-		built.Dispatcher.Close()
-		finishExecution()
-		closeFn()
-		return resumePrepared{}, err
-	}
-	if err := repo.ClearRunClaim(ctx, req.RunID); err != nil {
-		built.Dispatcher.Close()
-		finishExecution()
-		closeFn()
-		return resumePrepared{}, fmt.Errorf("clear interrupted workflow claim: %w", err)
-	}
-	return resumePrepared{
-		runID: req.RunID, workflow: run.WorkflowName, root: work.Abs,
-		built: built, closeFn: closeFn, finishExec: finishExecution,
-		repo: repo, store: store, res: res,
-	}, nil
-}
-
-func refuseNonResumable(run workflowledger.RunSnapshot) error {
-	if run.Status == workflowledger.RunStatusDeliveryPending {
-		return fmt.Errorf("workflow run %q is waiting for delivery; call workflow_deliver", run.RunID)
-	}
-	if workflowledger.IsTerminalRunStatus(run.Status) {
-		return fmt.Errorf("workflow run %q is terminal (status %s); resume requires a non-terminal run", run.RunID, run.Status)
-	}
-	return nil
-}
-
-func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepared, allowPublish bool) (agenttools.StartResult, error) {
-	runCtx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	e.mu.Lock()
-	if e.active == nil {
-		e.active = make(map[string]*sessionActiveRun)
-	}
-	e.active[p.runID] = &sessionActiveRun{
-		cancel: cancel, done: done,
-		closeFn: func() {
-			p.finishExec()
-			if p.built.Dispatcher != nil {
-				p.built.Dispatcher.Close()
-			}
-			p.closeFn()
-		},
-	}
-	e.mu.Unlock()
-	go func() {
-		defer close(done)
-		snap, err := workflowResumeRun(runCtx, p.built)
-		// Same grant rule as startCLI: allow_publish permits end-of-run publication.
-		if err == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
-			if derr := deliverRunWithStore(context.Background(), p.root, p.res, p.store, p.repo, p.runID, true, io.Discard, io.Discard); derr != nil {
-				recordAutoDeliveryFailure(context.Background(), p.repo, p.runID, derr)
-			}
-		}
-		e.mu.Lock()
-		active := e.active[p.runID]
-		delete(e.active, p.runID)
-		e.mu.Unlock()
-		if active != nil {
-			active.closeFn()
-		}
-	}()
-	fresh, err := p.repo.GetRun(ctx, p.runID)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	return agenttools.StartResult{RunID: p.runID, Status: string(fresh.Status), Workflow: p.workflow, Resumed: true}, nil
+	return agenttools.StartResult{RunID: runID, Status: string(run.Status), Workflow: workflow}, nil
 }
 
 // stopActive cancels an in-process controller for runID and waits until it
