@@ -203,6 +203,43 @@ func TestFindReferencesBudgetOnOversizedSuccessSymbol(t *testing.T) {
 	}
 }
 
+// TestFindReferencesBudgetFallbackLocationsIsArray confirms the fix for the
+// bug where the minimal fallback struct literal in marshalBudgeted omitted
+// the Locations field, producing "locations":null instead of "locations":[].
+// This path is reached when even zero Locations would exceed the budget
+// (oversized Symbol or Error text).
+func TestFindReferencesBudgetFallbackLocationsIsArray(t *testing.T) {
+	hugeSymbol := strings.Repeat("z", 500_000)
+	fake := &fakeReferenceFinder{err: fmt.Errorf("symbol %q not found in workspace packages", hugeSymbol)}
+	tool := &findReferencesTool{finder: fake, maxBytes: 1000, limit: 50}
+
+	in, err := json.Marshal(map[string]string{"symbol": hugeSymbol})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(out) > 1000 {
+		t.Errorf("output len = %d, want <= 1000 (maxBytes)", len(out))
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("output must be valid JSON: %v\noutput: %s", err, out)
+	}
+	locVal, ok := result["locations"]
+	if !ok {
+		t.Fatal("output must contain 'locations' key")
+	}
+	if locVal == nil {
+		t.Fatal("locations is null; want an empty JSON array []")
+	}
+	if _, isArray := locVal.([]interface{}); !isArray {
+		t.Fatalf("locations is %T; want []interface{} (JSON array)", locVal)
+	}
+}
+
 // TestFindReferencesBudgetConvergesWithManyLocations exercises the ordinary
 // degrade-gracefully path: enough locations that dropping them one at a time
 // must actually bring the payload under budget.

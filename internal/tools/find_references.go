@@ -178,6 +178,7 @@ func (t *findReferencesTool) marshalBudgeted(r findReferencesResult) string {
 	// than the declared budget.
 	minimal := findReferencesResult{
 		Symbol:    truncateToBytes(r.Symbol, t.maxBytes/4),
+		Locations: []codeintel.Location{},
 		Complete:  r.Complete,
 		Errors:    r.Errors,
 		Truncated: true,
