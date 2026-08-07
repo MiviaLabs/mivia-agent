@@ -3,6 +3,7 @@ package verifier
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -84,18 +85,24 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 	}
 	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, homeRoot, goRoot, goPath, args...)...)
 	command.Env = []string{"PATH=/usr/bin:/bin"}
-	output, err := command.CombinedOutput()
-	if err == nil {
-		return nil
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			return hostFailure(ctx.Err())
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
+		}
+		if strings.HasPrefix(strings.TrimSpace(stderr.String()), "bwrap:") {
+			return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
+		}
+		detail := boundedDiagnostic([]byte(stdout.String() + stderr.String()))
+		return &commandFailure{class: "source", detail: detail, err: fmt.Errorf("source check failed: %w", err)}
 	}
-	if ctx.Err() != nil {
-		return hostFailure(ctx.Err())
-	}
-	detail := boundedDiagnostic(output)
-	if strings.HasPrefix(strings.TrimSpace(detail), "bwrap:") {
-		return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
-	}
-	return &commandFailure{class: "source", detail: detail, err: fmt.Errorf("source check failed: %w", err)}
+	return nil
 }
 
 func verifierGoToolchain() (string, string, error) {
