@@ -17,7 +17,7 @@ func runAgentsWithIO(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("agents: expected list or explain")
 	}
 	subcommand := args[0]
-	workspaceRoot, name, err := parseAgentsArgs(subcommand, args[1:])
+	workspaceRoot, name, jsonFlag, err := parseAgentsArgs(subcommand, args[1:])
 	if err != nil {
 		return err
 	}
@@ -30,7 +30,13 @@ func runAgentsWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 	switch subcommand {
 	case "list":
-		writeAgentCatalog(stdout, view, stderr)
+		if jsonFlag {
+			if encErr := writeAgentCatalogJSON(stdout, view); encErr != nil {
+				return fmt.Errorf("agents: %w", encErr)
+			}
+		} else {
+			writeAgentCatalog(stdout, view, stderr)
+		}
 		if summary := view.Report.DiagnosticSummary(); summary != "none" {
 			return fmt.Errorf("agents: %s", summary)
 		}
@@ -51,9 +57,9 @@ func runAgentsWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func parseAgentsArgs(subcommand string, args []string) (workspaceRoot, name string, err error) {
+func parseAgentsArgs(subcommand string, args []string) (workspaceRoot, name string, jsonFlag bool, err error) {
 	if subcommand != "list" && subcommand != "explain" {
-		return "", "", fmt.Errorf("agents: unknown subcommand %q", safeCatalogText(subcommand, 80))
+		return "", "", false, fmt.Errorf("agents: unknown subcommand %q", safeCatalogText(subcommand, 80))
 	}
 	var positional []string
 	for i := 0; i < len(args); i++ {
@@ -61,29 +67,37 @@ func parseAgentsArgs(subcommand string, args []string) (workspaceRoot, name stri
 		switch {
 		case arg == "--workspace":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" || strings.HasPrefix(args[i+1], "-") {
-				return "", "", fmt.Errorf("agents: --workspace requires a directory")
+				return "", "", false, fmt.Errorf("agents: --workspace requires a directory")
 			}
 			workspaceRoot = args[i+1]
 			i++
 		case strings.HasPrefix(arg, "--workspace="):
 			workspaceRoot = strings.TrimPrefix(arg, "--workspace=")
 			if strings.TrimSpace(workspaceRoot) == "" || strings.HasPrefix(workspaceRoot, "-") {
-				return "", "", fmt.Errorf("agents: --workspace requires a directory")
+				return "", "", false, fmt.Errorf("agents: --workspace requires a directory")
 			}
+		case arg == "--json":
+			if subcommand == "explain" {
+				return "", "", false, fmt.Errorf("agents explain: --json is not supported for explain")
+			}
+			if jsonFlag {
+				return "", "", false, fmt.Errorf("agents list: duplicate --json flag")
+			}
+			jsonFlag = true
 		case strings.HasPrefix(arg, "-"):
-			return "", "", fmt.Errorf("agents: unknown flag %q", safeCatalogText(arg, 80))
+			return "", "", false, fmt.Errorf("agents: unknown flag %q", safeCatalogText(arg, 80))
 		default:
 			positional = append(positional, arg)
 		}
 	}
 	if subcommand == "list" {
 		if len(positional) != 0 {
-			return "", "", fmt.Errorf("agents list: unexpected arguments (%d)", len(positional))
+			return "", "", false, fmt.Errorf("agents list: unexpected arguments (%d)", len(positional))
 		}
-		return workspaceRoot, "", nil
+		return workspaceRoot, "", jsonFlag, nil
 	}
 	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
-		return "", "", fmt.Errorf("agents explain: expected exactly one agent name")
+		return "", "", false, fmt.Errorf("agents explain: expected exactly one agent name")
 	}
-	return workspaceRoot, positional[0], nil
+	return workspaceRoot, positional[0], false, nil
 }

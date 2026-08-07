@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -167,6 +168,52 @@ func enabledDisabled(enabled bool) string {
 		return "enabled"
 	}
 	return "disabled"
+}
+
+// agentJSONEntry is a JSON-serializable agent entry for the --json flag.
+// Only safe, selectable fields are included.
+type agentJSONEntry struct {
+	Name        string `json:"name"`
+	Source      string `json:"source"`
+	State       string `json:"state"`
+	Tools       string `json:"tools"`
+	Model       string `json:"model"`
+	Turns       string `json:"turns"`
+	Limits      string `json:"limits"`
+	Description string `json:"description"`
+}
+
+// writeAgentCatalogJSON encodes the selectable agent rows as a JSON array.
+// Description is sourced from the resolved agent (pre-sanitized at resolve time
+// by SanitizeDescription). All other fields use pre-formatted row strings from
+// view.Rows (already processed through safeCatalogText). Returns nil error on
+// success; caller should NOT emit partial output on error.
+func writeAgentCatalogJSON(w io.Writer, view agentCatalogView) error {
+	entries := make([]agentJSONEntry, 0, len(view.Rows))
+	for _, row := range view.Rows {
+		desc := ""
+		if view.Report.Registry != nil {
+			if a, ok := view.Report.Registry.Get(row.Name); ok {
+				desc = a.Description
+			}
+		}
+		entries = append(entries, agentJSONEntry{
+			Name:        row.Name,
+			Source:      row.Source,
+			State:       row.State,
+			Tools:       row.Tools,
+			Model:       row.Model,
+			Turns:       row.Turns,
+			Limits:      row.Limits,
+			Description: desc,
+		})
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(entries); err != nil {
+		return fmt.Errorf("json encode failed: %w", err)
+	}
+	return nil
 }
 
 func findCatalogAgent(view agentCatalogView, name string) (agents.ResolvedAgent, bool) {
