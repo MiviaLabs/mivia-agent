@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -12,11 +13,11 @@ import (
 
 // tasksFromSnapshots restores task work without persisted authority.
 // The ledger is workspace data. It cannot grant permission or caller identity.
-func (c *coordinator) tasksFromSnapshots(snaps []ledger.TaskSnapshot) ([]subagents.Task, map[string]subagents.Result, error) {
-	return c.tasksFromSnapshotsWithAuthority(snaps, nil)
+func (c *coordinator) tasksFromSnapshots(ctx context.Context, snaps []ledger.TaskSnapshot) ([]subagents.Task, map[string]subagents.Result, error) {
+	return c.tasksFromSnapshotsWithAuthority(ctx, snaps, nil)
 }
 
-func (c *coordinator) tasksFromSnapshotsWithAuthority(snaps []ledger.TaskSnapshot, liveTasks []subagents.Task) ([]subagents.Task, map[string]subagents.Result, error) {
+func (c *coordinator) tasksFromSnapshotsWithAuthority(ctx context.Context, snaps []ledger.TaskSnapshot, liveTasks []subagents.Task) ([]subagents.Task, map[string]subagents.Result, error) {
 	out := make([]subagents.Task, 0, len(snaps))
 	done := make(map[string]subagents.Result)
 	liveByID := make(map[string]subagents.Task, len(liveTasks))
@@ -24,7 +25,7 @@ func (c *coordinator) tasksFromSnapshotsWithAuthority(snaps []ledger.TaskSnapsho
 		liveByID[task.ID] = task
 	}
 	for _, snap := range snaps {
-		if result, terminal := c.terminalTaskResult(snap); terminal {
+		if result, terminal := c.terminalTaskResultWithOutput(ctx, snap); terminal {
 			done[snap.TaskID] = result
 			continue
 		}

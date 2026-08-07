@@ -157,7 +157,7 @@ func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string, l
 
 	// Validate before mutating anything: a run that cannot be resumed must fail
 	// clean, not half-marked.
-	if _, _, err := c.tasksFromSnapshotsWithAuthority(tasks, liveTasks); err != nil {
+	if _, _, err := c.tasksFromSnapshotsWithAuthority(ctx, tasks, liveTasks); err != nil {
 		return nil, nil, err
 	}
 	attempts := make(map[string]string, len(tasks))
@@ -178,7 +178,7 @@ func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string, l
 		return nil, nil, fmt.Errorf("resume: re-list tasks %q: %w", runID, err)
 	}
 
-	return c.tasksFromSnapshotsWithAuthority(updatedTasks, liveTasks)
+	return c.tasksFromSnapshotsWithAuthority(ctx, updatedTasks, liveTasks)
 }
 
 func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, tasks []ledger.TaskSnapshot, attempts map[string]string) {
@@ -382,7 +382,7 @@ func (c *coordinator) rebuildTasksForResume(ctx context.Context, runID string) (
 	if err != nil {
 		return nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
 	}
-	tasks, _, err := c.tasksFromSnapshots(snaps)
+	tasks, _, err := c.tasksFromSnapshots(ctx, snaps)
 	return tasks, err
 }
 
