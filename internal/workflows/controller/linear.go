@@ -183,7 +183,7 @@ func (c *LinearController) StartNew(ctx context.Context) (bool, error) {
 	snap := c.admissionSnapshot()
 	created := true
 	if err := c.Repo.CreateRun(ctx, snap, c.Snapshot); err != nil {
-		if !errors.Is(err, workflowledger.ErrDuplicate) {
+		if !errors.Is(err, workflowledger.ErrDuplicate) && !errors.Is(err, workflowledger.ErrConflict) && !errors.Is(err, workflowledger.ErrClaimHeld) {
 			return false, err
 		}
 		created = false
