@@ -121,13 +121,11 @@ func commitStagedTree(ctx context.Context, repo ledger.Repository, git GitRunner
 	}
 	head := strings.TrimSpace(shaOut)
 	adoptedTree := strings.TrimSpace(committedTree)
-	if adoptedTree != treeSHA {
-		rec := stage
-		rec.TreeSHA = adoptedTree
-		rec.CommitSHA = head
-		if err := repo.UpsertDelivery(ctx, rec); err != nil {
-			return "", "", err
-		}
+	rec := stage
+	rec.TreeSHA = adoptedTree
+	rec.CommitSHA = head
+	if err := repo.UpsertDelivery(ctx, rec); err != nil {
+		return "", "", err
 	}
 	return head, adoptedTree, nil
 }
