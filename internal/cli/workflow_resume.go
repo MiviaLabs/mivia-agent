@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -106,6 +107,7 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	if err := prepareWorkflowResumeExecution(ctx, built, repo, runID, force, stdout); err != nil {
 		return err
 	}
+	defer releaseWorkflowResumeHandoff(repo, runID, built.Controller)
 	snap, err := workflowResumeRun(ctx, built)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, snap.Status)
 	return err
@@ -141,6 +143,14 @@ func claimWorkflowResumeHandoff(ctx context.Context, repo workflowledger.Reposit
 		return fmt.Errorf("workflow run %q is still active; retry after the claim lease expires or pass --force after the prior executor stopped", runID)
 	}
 	return err
+}
+
+// releaseWorkflowResumeHandoff clears a preflight claim when controller startup
+// or execution returns before Advance releases its own claim.
+func releaseWorkflowResumeHandoff(repo workflowledger.Repository, runID string, controller *controller.LinearController) {
+	if controller != nil {
+		_ = repo.ReleaseRun(context.Background(), runID, controller.Holder)
+	}
 }
 
 // joinInFlightAttempts consumes PlanResume.AttemptsInFlight: it joins each

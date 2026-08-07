@@ -152,6 +152,22 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 			t.Fatalf("claim error = %v", err)
 		}
 	})
+	t.Run("run releases handoff claim", func(t *testing.T) {
+		reset(repo)
+		workflowResumeRun = func(context.Context, workflowControllerBuild) (workflowledger.RunSnapshot, error) {
+			return workflowledger.RunSnapshot{}, sentinel
+		}
+		err := executeWorkflowResume(run.RunID, root, configPath, true, io.Discard, io.Discard)
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("run error = %v", err)
+		}
+		if err := repo.ClaimRun(t.Context(), run.RunID, "next-resumer"); err != nil {
+			t.Fatalf("claim after failed resume = %v", err)
+		}
+		if err := repo.ReleaseRun(t.Context(), run.RunID, "next-resumer"); err != nil {
+			t.Fatalf("release after failed resume = %v", err)
+		}
+	})
 }
 
 func newResumeFailureFixture(t *testing.T) (string, string, *workflowledger.StorageRepository, workflowledger.RunSnapshot) {
