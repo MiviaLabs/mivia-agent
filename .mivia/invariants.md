@@ -139,6 +139,18 @@ test(s) and confirm they pass.
 | INV-ADM-4 | Safety | Name cap allows a fresh stage after a reset | `TestNameCapAllowsFreshStageAfterReset` | |
 | INV-ADM-5 | Safety | Perpetual deferral accumulation is capped to prevent unbounded growth | `TestPerpetualDeferralAccumulationCapped` | |
 
+## Durable execution invariants
+
+These two rows pin the classes with the worst repeat-fix chains in this repository:
+`DC-1` and `DC-2` in `.mivia/quality/defect-taxonomy.md`. Both are invisible to the
+race detector, because the interleaving happens between transactions and the writers
+may be separate processes or hosts.
+
+| ID | Category | Invariant | Test(s) | Last Verified |
+|----|----------|-----------|---------|---------------|
+| INV-DUR-1 | Safety | Every terminal run state has an enumerated re-entry rule. A transient condition never reaches a terminal state without one: a forward-advanced base is a normal condition that still delivers, a rewritten or deleted base is the only permanent refusal, and `delivery_failed` is re-enterable through a single enforcing CAS while the terminal invariant holds | `TestDeliverRemoteBaseForwardAdvanced`, `TestDeliverRemoteBaseRewrittenRefused`, `TestDeliverDeliveryFailedReentry`, `TestWorkflowDeliverReopensDeliveryFailed` | 2026-08-08 (registered from the `b977729` fix chain) |
+| INV-DUR-2 | Safety | A durable owner's write is fenced. After a takeover the previous owner's next mutation fails instead of winning, a claim is exclusive across repositories and processes, and one invocation key admits exactly one run | `TestStorageRepository_TakeoverFencesBoundOldWriter`, `TestIntegrationClaimFencesWorkflowMutation`, `TestWorkflowDeliverClaimFencing`, `TestMemoryBackendClaimIsExclusive`, `TestResumeRefusesRunHeldByAnotherExecutor`, `TestInvocationKeyAdmitsOneRunAcrossSQLiteRepositories` | 2026-08-08 (registered from the claim/fence fix chain) |
+
 ## Liveness Gap Notes
 
 | ID | Gap | Mitigation | Feasibility |
