@@ -70,3 +70,66 @@ func TestHookParserDirectInputShapes(t *testing.T) {
 		t.Fatal("non-string matcher must fail")
 	}
 }
+
+// Unit-level tests for parseReactive PreToolUse shape detection.
+func TestParseReactiveDetectsPreToolUseShape(t *testing.T) {
+	t.Run("deny", func(t *testing.T) {
+		v := parseReactive(execution{program: "/tmp/h.sh"}, `{"hookSpecificOutput":{"permissionDecision":"deny"}}`)
+		if v.denied {
+			t.Fatal("reactive must never set denied")
+		}
+		found := false
+		for _, w := range v.warnings {
+			if strings.Contains(w, "PreToolUse") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected warning naming PreToolUse shape, got %v", v.warnings)
+		}
+		if !strings.Contains(v.context, "hookSpecificOutput") {
+			t.Fatalf("raw body must be preserved as context, got %q", v.context)
+		}
+	})
+	t.Run("allow", func(t *testing.T) {
+		v := parseReactive(execution{program: "/tmp/h.sh"}, `{"hookSpecificOutput":{"permissionDecision":"allow"}}`)
+		if v.denied {
+			t.Fatal("reactive must never set denied")
+		}
+		found := false
+		for _, w := range v.warnings {
+			if strings.Contains(w, "PreToolUse") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected warning naming PreToolUse shape, got %v", v.warnings)
+		}
+	})
+	t.Run("empty_hook_specific_output", func(t *testing.T) {
+		v := parseReactive(execution{program: "/tmp/h.sh"}, `{"hookSpecificOutput":{}}`)
+		// HookSpecificOutput present but empty is not a decision shape, so
+		// no PreToolUse-shape warning. It falls through as unrecognized JSON.
+		for _, w := range v.warnings {
+			if strings.Contains(w, "PreToolUse") {
+				t.Fatalf("empty hookSpecificOutput must not trigger PreToolUse warning, got %v", v.warnings)
+			}
+		}
+	})
+}
+
+// Correct reactive shape must produce no warning at the unit level.
+func TestParseReactiveCorrectShapeNoWarning(t *testing.T) {
+	v := parseReactive(execution{program: "/tmp/h.sh"}, `{"decision":"block","reason":"x"}`)
+	if v.denied {
+		t.Fatal("reactive must never set denied")
+	}
+	for _, w := range v.warnings {
+		if strings.Contains(w, "PreToolUse") {
+			t.Fatalf("correct reactive shape must not warn about PreToolUse, got %v", v.warnings)
+		}
+	}
+	if !strings.Contains(v.context, "x") {
+		t.Fatalf("context must contain the reason, got %q", v.context)
+	}
+}

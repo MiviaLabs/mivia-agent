@@ -222,6 +222,18 @@ func parseReactive(result execution, body string) verdict {
 			"hook %s printed JSON that did not parse (%v); its output was discarded", result.program, err)}}
 	}
 	var out verdict
+	// A hook author who attached a PreToolUse script to a reactive event
+	// gets no diagnostic that their decision shape was wrong unless we detect
+	// it here. Unmarshal the same body against the PreToolUse shape; if
+	// hookSpecificOutput is present with a non-empty permissionDecision, the
+	// script used the wrong contract. An empty wrapper (no decision field) is
+	// treated as unrecognized JSON rather than a shape mismatch.
+	var ptu preToolUseOutput
+	if json.Unmarshal([]byte(body), &ptu) == nil && ptu.HookSpecificOutput != nil && ptu.HookSpecificOutput.PermissionDecision != "" {
+		out.warnings = append(out.warnings, fmt.Sprintf(
+			"hook %s returned the PreToolUse nested JSON shape {\"hookSpecificOutput\":{...}}, "+
+				"which belongs to PreToolUse; PostToolUse and Stop use the flat {\"decision\":...} shape", result.program))
+	}
 	if len(parsed.UpdatedInput) > 0 {
 		out.warnings = append(out.warnings, fmt.Sprintf(
 			"hook %s returned updatedInput, which mivia does not support; it was ignored", result.program))
