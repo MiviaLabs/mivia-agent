@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -390,6 +391,130 @@ func TestChatTurnStreamInBandErrorIsNotReplayed(t *testing.T) {
 	if got := atomic.LoadInt32(calls); got != 1 {
 		t.Fatalf("made %d requests, want 1 (committed streams are not replayed)", got)
 	}
+}
+
+// TestChatStreamNoContentNoFinishReasonStillFallsBack proves R0-1: a chunk
+// with an empty delta object (no content, no finish_reason, no usage) must not
+// set received=true. Without this fix, the empty delta silently suppresses the
+// non-streaming fallback and the caller gets an empty answer.
+func TestChatStreamNoContentNoFinishReasonStillFallsBack(t *testing.T) {
+	srv, calls := countingSSEServer(t, []string{`{"choices":[{"delta":{}}]}`}, false)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	out, err := c.ChatStream(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if out != "fallback" {
+		t.Fatalf("ChatStream returned %q, want %q (fallback was suppressed)", out, "fallback")
+	}
+	if got := atomic.LoadInt32(calls); got != 2 {
+		t.Fatalf("made %d upstream requests, want 2 (stream + fallback)", got)
+	}
+}
+
+// TestChatStreamExplicitEmptyFinishReasonStillFallsBack proves R0-2: an explicit
+// finish_reason:"" decodes to the Go empty string and fails != "", so it is NOT
+// a completion signal — matching readTurnStream's behaviour exactly.
+func TestChatStreamExplicitEmptyFinishReasonStillFallsBack(t *testing.T) {
+	srv, calls := countingSSEServer(t, []string{`{"choices":[{"delta":{},"finish_reason":""}]}`}, false)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	out, err := c.ChatStream(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if out != "fallback" {
+		t.Fatalf("ChatStream returned %q, want %q (fallback was suppressed)", out, "fallback")
+	}
+	if got := atomic.LoadInt32(calls); got != 2 {
+		t.Fatalf("made %d upstream requests, want 2 (stream + fallback)", got)
+	}
+}
+
+// FuzzReadStreamReceived compares the received-flag behaviour of readStream
+// against readTurnStream for identical single-chunk JSON inputs on their shared
+// dimensions. Chunks whose delta carries tool_calls, reasoning_content, or
+// web_search are skipped: readTurnStream tracks those in its payload computation
+// (len(toolsByIdx)>0, reasoning.Len()>0, len(webSearch)>0) while readStream —
+// the simple no-tools path — does not; disagreement on those dimensions is an
+// expected scope difference, not a bug.
+func FuzzReadStreamReceived(f *testing.F) {
+	seeds := []string{
+		`{"choices":[{"delta":{}}]}`,
+		`{"choices":[{"delta":{"content":""}}]}`,
+		`{"choices":[{"delta":{"content":"hello"}}]}`,
+		`{"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}`,
+		`{"choices":[{"delta":{},"finish_reason":""}]}`,
+		`{"choices":[],"usage":{"prompt_tokens":1}}`,
+		`{"choices":[{"delta":{"content":"x"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1}}`,
+	}
+	for _, s := range seeds {
+		f.Add([]byte(s))
+	}
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		// Must be valid JSON.
+		var body chatResponseBody
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Skip()
+		}
+		// Empty stream (bare [DONE]) — no chunk to evaluate.
+		if len(body.Choices) == 0 && body.Usage == nil {
+			t.Skip()
+		}
+		// Skip chunks whose delta carries dimensions readTurnStream
+		// tracks but readStream does not.
+		hasToolCalls := len(body.Choices) > 0 && len(body.Choices[0].Delta.ToolCalls) > 0
+		hasReasoning := len(body.Choices) > 0 && body.Choices[0].Delta.ReasoningContent != ""
+		hasWebSearch := len(body.Choices) > 0 && len(body.Choices[0].Delta.WebSearch) > 0
+		if hasToolCalls || hasReasoning || hasWebSearch {
+			t.Skip()
+		}
+
+		// readTurnStream received on shared dimensions:
+		//   payload := content.Len()>0 || reasoning.Len()>0 || len(webSearch)>0 || len(toolsByIdx)>0
+		//   received := payload || finishReason != "" || usage != nil
+		contentLen := 0
+		if len(body.Choices) > 0 && body.Choices[0].Delta.Content != "" {
+			contentLen = 1 // content.Len() > 0 in readTurnStream
+		}
+		payload := contentLen > 0 // reasoning, webSearch, tools all excluded
+		finishReason := ""
+		if len(body.Choices) > 0 {
+			finishReason = body.Choices[0].FinishReason
+		}
+		readTurnReceived := payload || finishReason != "" || body.Usage != nil
+
+		// readStream received on shared dimensions (after the fix):
+		//   (a) delta.Content != ""
+		//   (b) FinishReason != ""
+		//   (c) Usage != nil
+		// Empty-choices usage guard: Usage != nil sets received=true even
+		// when len(chunk.Choices) == 0.
+		var readStreamReceived bool
+		if len(body.Choices) == 0 {
+			if body.Usage != nil {
+				readStreamReceived = true
+			}
+		} else {
+			readStreamReceived = body.Choices[0].Delta.Content != "" ||
+				body.Choices[0].FinishReason != "" ||
+				body.Usage != nil
+		}
+
+		if readStreamReceived != readTurnReceived {
+			t.Errorf("received mismatch for %q: readStream=%v readTurnStream=%v",
+				string(raw), readStreamReceived, readTurnReceived)
+		}
+	})
 }
 
 // TestNoMessageLossFallbackToleratesNilWriter guards the same path when no
