@@ -136,6 +136,24 @@ func TestSandboxDoesNotCopyManagedWorktrees(t *testing.T) {
 	}
 }
 
+func TestSandboxDoesNotCopyCodeGraphCache(t *testing.T) {
+	source := t.TempDir()
+	path := filepath.Join(source, ".codegraph", "cache.db")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if _, err := copySandboxWorktree(source, destination, secretPolicy(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, ".codegraph")); !os.IsNotExist(err) {
+		t.Fatalf("sandbox copied CodeGraph cache: %v", err)
+	}
+}
+
 func TestSandboxRejectsUnavailableBubblewrapBeforeCommand(t *testing.T) {
 	original := sandboxBubblewrapPath
 	sandboxBubblewrapPath = func() (string, error) { return "", os.ErrNotExist }

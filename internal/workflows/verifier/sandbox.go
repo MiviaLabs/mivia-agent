@@ -240,7 +240,7 @@ func copySandboxTree(source, destination string, policy secretpath.Policy) (stri
 		if rel == "." {
 			return os.MkdirAll(destination, 0o700)
 		}
-		if filepath.Base(rel) == ".git" || sandboxControlDirectory(rel) {
+		if filepath.Base(rel) == ".git" || filepath.Base(rel) == ".codegraph" || sandboxControlDirectory(rel) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}

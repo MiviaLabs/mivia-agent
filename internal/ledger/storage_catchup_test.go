@@ -39,6 +39,10 @@ func (c *countingStore) Events(ctx context.Context, runID string) ([]storage.Eve
 	return events, err
 }
 
+func (c *countingStore) TakeoverClaim(ctx context.Context, runID, holder string) error {
+	return c.inner.TakeoverClaim(ctx, runID, holder)
+}
+
 func (c *countingStore) EventsSince(ctx context.Context, runID string, afterSequence int) ([]storage.Event, error) {
 	events, err := c.inner.EventsSince(ctx, runID, afterSequence)
 	c.mu.Lock()

@@ -13,10 +13,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["severity", "reason"],
+        "required": ["id", "severity", "reason", "claim", "evidence", "required"],
         "properties": {
+          "id": { "type": "string", "minLength": 1 },
           "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
-          "reason": { "type": "string", "minLength": 1 }
+          "reason": { "type": "string", "minLength": 1 },
+          "claim": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 },
+          "required": { "type": "string", "minLength": 1 }
         }
       }
     },

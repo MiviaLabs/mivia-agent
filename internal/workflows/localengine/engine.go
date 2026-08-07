@@ -83,7 +83,7 @@ func (e *Engine) Start(ctx context.Context, req agenttools.StartRequest) (agentt
 }
 
 func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
-	compiled, raw, _, err := e.loadWorkflow(req.Workflow)
+	compiled, raw, baseDir, err := e.loadWorkflow(req.Workflow)
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
@@ -92,12 +92,23 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 		return agenttools.StartResult{}, err
 	}
 	runID := e.newRunID()
-	steps := buildStepRuntimes(compiled)
+	// Admission reads output_schema refs from the workspace (that IS admission)
+	// and pins the resolved bytes + digest into the run snapshot, so resume can
+	// rebuild step runtimes without touching the live filesystem.
+	schemas, err := loadOutputSchemas(baseDir, compiled)
+	if err != nil {
+		return agenttools.StartResult{}, err
+	}
+	steps, err := buildStepRuntimesFromSnapshot(compiled, schemas)
+	if err != nil {
+		return agenttools.StartResult{}, err
+	}
 	snap := workflowledger.Snapshot{
 		SchemaVersion:    workflowledger.SnapshotSchemaVersion,
 		DefinitionTOML:   append([]byte(nil), raw...),
 		DefinitionDigest: compiled.Digest,
 		Inputs:           inputSnapshot,
+		Schemas:          schemas,
 	}
 	if compiled.Delivery != nil && compiled.DeliveryActive() {
 		snap.Delivery = &workflowledger.DeliverySnapshot{
@@ -221,13 +232,7 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, force bool) error {
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) && force {
-			if err := e.Repo.ClearRunClaim(ctx, runID); err != nil {
-				return err
-			}
-			if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
-				if errors.Is(err, workflowledger.ErrClaimHeld) {
-					return fmt.Errorf("workflow run %q is executing on another host; cannot force-resume", runID)
-				}
+			if err := e.Repo.TakeoverRunClaim(ctx, runID, holder); err != nil {
 				return err
 			}
 		} else if errors.Is(err, workflowledger.ErrClaimHeld) {
@@ -268,7 +273,16 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 		e.fence.clearAbandon(req.RunID)
 	}
 	e.mu.Unlock()
-	ctrl, err := controller.NewLinearController(e.ctrlRepo(), e.runner(), compiled, buildStepRuntimes(compiled), inputs, req.RunID, raw)
+	// Step schemas are pinned in the admitted snapshot (SchemaVersion 1 carries
+	// them as snapshot.Schemas); rebuild the runtimes from those bytes so a
+	// resumed run enforces the output_schema admitted at start, never a schema
+	// changed, deleted, or renamed on disk after admission (CLI parity with
+	// loadStepReferences' prior-snapshot path). No filesystem reads on resume.
+	steps, err := buildStepRuntimesFromSnapshot(compiled, snapshot.Schemas)
+	if err != nil {
+		return nil, err
+	}
+	ctrl, err := controller.NewLinearController(e.ctrlRepo(), e.runner(), compiled, steps, inputs, req.RunID, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +408,11 @@ func (e *Engine) ensureRunWorktree(ctx context.Context, runID string, recorded *
 		if identity, err := workflowspace.Resolve(ctx, e.WorkspaceRoot, recordedIdentity); err == nil {
 			return identity, true
 		}
-		// The recorded worktree is missing; fall through and recreate it.
+		identity, err := workflowspace.EnsureRecorded(ctx, e.WorkspaceRoot, recordedIdentity)
+		if err != nil {
+			return workflowspace.Identity{}, false
+		}
+		return identity, true
 	}
 	identity, err := workflowspace.Ensure(ctx, e.WorkspaceRoot, runID, workflowspace.IsolationWorktree)
 	if err != nil {

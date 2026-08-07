@@ -325,7 +325,7 @@ func TestLinearControllerTerminalReconciliationConflictAndTimeoutNoop(t *testing
 	if _, terminal, err := ctrl.reconcileTerminalRoute(context.Background(), conflict); !terminal || err == nil {
 		t.Fatalf("terminal = %v, error = %v", terminal, err)
 	}
-	settled, err := ctrl.timeoutExpiredRun(workflowledger.RunSnapshot{RunID: ctrl.RunID, ActiveStepID: "first", Status: workflowledger.RunStatusSucceeded})
+	settled, err := ctrl.timeoutExpiredRun(context.Background(), workflowledger.RunSnapshot{RunID: ctrl.RunID, ActiveStepID: "first", Status: workflowledger.RunStatusSucceeded})
 	if err != nil || settled.Status != workflowledger.RunStatusSucceeded {
 		t.Fatalf("settled = %+v, error = %v", settled, err)
 	}
@@ -351,7 +351,7 @@ func TestLinearDeadlineHelpersSurfaceRepositoryErrors(t *testing.T) {
 			name: "pending timeout compare", run: workflowledger.RunSnapshot{RunID: "wfr-timeout-compare", ActiveStepID: "first", Status: workflowledger.RunStatusPending, Version: 1},
 			set: func(repo *faultWorkflowRepository) { repo.compareErr = sentinel },
 			call: func(ctrl *LinearController, run workflowledger.RunSnapshot) error {
-				_, err := ctrl.timeoutExpiredRun(run)
+				_, err := ctrl.timeoutExpiredRun(context.Background(), run)
 				return err
 			},
 		},
@@ -359,7 +359,7 @@ func TestLinearDeadlineHelpersSurfaceRepositoryErrors(t *testing.T) {
 			name: "pending timeout read", run: workflowledger.RunSnapshot{RunID: "wfr-timeout-read", ActiveStepID: "first", Status: workflowledger.RunStatusPending, Version: 1},
 			set: func(repo *faultWorkflowRepository) { repo.getRunErr = sentinel },
 			call: func(ctrl *LinearController, run workflowledger.RunSnapshot) error {
-				_, err := ctrl.timeoutExpiredRun(run)
+				_, err := ctrl.timeoutExpiredRun(context.Background(), run)
 				return err
 			},
 		},
@@ -411,7 +411,7 @@ func TestLinearTimeoutReconcilesRouteFoundAfterPendingTransition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settled, err := ctrl.timeoutExpiredRun(stored)
+	settled, err := ctrl.timeoutExpiredRun(context.Background(), stored)
 	if err != nil || settled.Status != workflowledger.RunStatusSucceeded {
 		t.Fatalf("settled = %+v, error = %v", settled, err)
 	}

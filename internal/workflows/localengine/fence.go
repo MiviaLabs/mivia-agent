@@ -150,6 +150,13 @@ func (f *abandonFence) ClaimRun(ctx context.Context, runID, holder string) error
 	return f.inner.ClaimRun(ctx, runID, holder)
 }
 
+func (f *abandonFence) TakeoverRunClaim(ctx context.Context, runID, holder string) error {
+	if f.isAbandoned(runID) {
+		return workflowledger.ErrClaimHeld
+	}
+	return f.inner.TakeoverRunClaim(ctx, runID, holder)
+}
+
 func (f *abandonFence) ReleaseRun(ctx context.Context, runID, holder string) error {
 	return f.inner.ReleaseRun(ctx, runID, holder)
 }

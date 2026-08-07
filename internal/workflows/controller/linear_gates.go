@@ -224,6 +224,7 @@ func (c *LinearController) resolveHumanGate(ctx context.Context, approvalID, act
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	ctx = workflowledger.ContextWithClaimHolder(ctx, c.Holder)
 	if err := c.Repo.ClaimRun(ctx, c.RunID, c.Holder); err != nil {
 		return err
 	}

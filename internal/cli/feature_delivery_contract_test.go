@@ -18,10 +18,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
-// TestCommittedFeatureDeliveryWorkflowContract keeps the checked-in delivery
+// TestFeatureDeliveryWorkflowContract keeps the checked-in delivery
 // workflow aligned with its checked-in agents, skills, references, and fixed
 // host evidence gates.
-func TestCommittedFeatureDeliveryWorkflowContract(t *testing.T) {
+func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	root := committedWorkflowRoot(t)
 	workflow, base := loadCommittedFeatureDeliveryWorkflow(t, root)
 
@@ -74,6 +74,8 @@ func TestCommittedFeatureDeliveryWorkflowContract(t *testing.T) {
 	}
 
 	assertFeatureDeliveryReviewFeedbackChannel(t, workflow)
+	assertFeatureDeliveryReviewPriorFindingsBindings(t, workflow)
+	assertFeatureDeliveryFindingsBindingsCapped(t, workflow)
 	assertFeatureDeliveryIntegrationGate(t, workflow)
 	assertFeatureDeliverySchemasRequireInspected(t, base, filepath.Join(root, "internal", "workflows", "testdata"))
 }
@@ -182,6 +184,74 @@ func assertFeatureDeliveryReviewFeedbackChannel(t *testing.T, workflow definitio
 	}
 }
 
+// assertFeatureDeliveryReviewPriorFindingsBindings pins the plan-v3
+// convergence contract on the four review steps: each reviewer must bind its
+// OWN prior output back into its prompt as prior_findings (optional,
+// envelope-only, capped at 4096 bytes). Every reviewer is re-invoked on its
+// repair loop back-edge (plan_review → plan → plan_review, test_plan_review →
+// plan_tests → test_plan_review, review → implement → review,
+// review_integration → implement → … → review_integration). Without the
+// self-binding the reviewer regenerates its findings from identical context
+// with no memory of the previous round, so it cannot reuse open finding ids
+// verbatim or drop resolved ones, and the zero-progress gate cannot tell a
+// no-progress loop from a converging one. The envelope-only 4096-byte cap
+// keeps the ledger-refs directive honest: findings arrive as a reference
+// envelope (artifact pointer + note), never the full inline payload, so the
+// reviewer must read the prior round artifact back with workflow_inspect
+// instead of re-deriving it from the prompt.
+func assertFeatureDeliveryReviewPriorFindingsBindings(t *testing.T, workflow definition.WorkflowFile) {
+	t.Helper()
+	for _, id := range []string{"plan_review", "test_plan_review", "review", "review_integration"} {
+		step := featureDeliveryStep(t, workflow, id)
+		if step.Kind != "agent_gate" {
+			t.Fatalf("review step %q kind = %q, want agent_gate", id, step.Kind)
+		}
+		found := false
+		for _, cb := range step.Context {
+			if cb.From == "steps."+id+".output" && cb.As == "prior_findings" && cb.Optional && cb.EnvelopeOnly && cb.MaxBytes == 4096 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("review step %q must bind %q as prior_findings (optional, envelope_only, max_bytes = 4096); "+
+				"without it the reviewer is blind to its own prior round", id, "steps."+id+".output")
+		}
+	}
+}
+
+// assertFeatureDeliveryFindingsBindingsCapped pins the ledger-refs directive
+// on the repair-feedback bindings: every binding that feeds a reviewer's
+// findings back into an agent step (review_findings on plan/plan_tests/
+// implement, integration_findings on implement) must be optional, envelope-only
+// and capped at 4096 bytes, so findings always arrive as a ledger reference
+// envelope and the agent reads the full artifact with workflow_inspect rather
+// than re-deriving it from an inline payload.
+func assertFeatureDeliveryFindingsBindingsCapped(t *testing.T, workflow definition.WorkflowFile) {
+	t.Helper()
+	want := map[string]map[string]string{
+		// agent step -> finding channel -> reviewer step whose output feeds it.
+		"plan":       {"review_findings": "plan_review"},
+		"plan_tests": {"review_findings": "test_plan_review"},
+		"implement":  {"review_findings": "review", "integration_findings": "review_integration"},
+	}
+	for stepID, channels := range want {
+		step := featureDeliveryStep(t, workflow, stepID)
+		for as, reviewer := range channels {
+			found := false
+			for _, cb := range step.Context {
+				if cb.From == "steps."+reviewer+".output" && cb.As == as && cb.Optional && cb.EnvelopeOnly && cb.MaxBytes == 4096 {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("step %q must bind %q as %s (optional, envelope_only, max_bytes = 4096)", stepID, "steps."+reviewer+".output", as)
+			}
+		}
+	}
+}
+
 // assertFeatureDeliveryIntegrationGate pins the cross-cutting integration
 // review gate: a reviewer step that runs after the main review and checks
 // cross-layer interaction surfaces (context budget x tool results, retry x
@@ -218,12 +288,23 @@ func assertFeatureDeliveryIntegrationGate(t *testing.T, workflow definition.Work
 	}
 }
 
-// featureDeliveryContractSchemas are the shared output-schema filenames that
+// featureDeliveryContractSchemas are the shared schema filenames that
 // must stay pinned across every checked-in copy of the delivery workflow's
 // schema directory. The verifier catalogue and presentation tests read the
 // mirror under internal/workflows/testdata/schemas, so a weakened mirror must
 // fail the contract just like a weakened primary.
 var featureDeliveryContractSchemas = []string{
+	"plan-v1.json",
+	"review-v1.json",
+	"change-summary-v1.json",
+	"verification-v1.json",
+}
+
+// inspectedContractSchemas are the delivery output schemas that must require
+// a non-empty inspected array on every copy. verification-v1.json is pinned
+// byte-for-byte but is host evidence (status + checks), so it carries no
+// inspected array.
+var inspectedContractSchemas = []string{
 	"plan-v1.json",
 	"review-v1.json",
 	"change-summary-v1.json",
@@ -273,6 +354,7 @@ func assertFeatureDeliverySchemasRequireInspected(tb schemaContractTB, bases ...
 	}
 	for _, base := range bases {
 		assertFeatureDeliverySchemaCopyRequiresInspected(tb, base)
+		assertFeatureDeliverySchemaCopyCarriesFindingsContract(tb, base)
 	}
 }
 
@@ -283,7 +365,7 @@ func assertFeatureDeliverySchemasRequireInspected(tb schemaContractTB, bases ...
 // source, and stops a BLOCKED/no-op summary from validating as success.
 func assertFeatureDeliverySchemaCopyRequiresInspected(tb schemaContractTB, base string) {
 	tb.Helper()
-	for _, name := range featureDeliveryContractSchemas {
+	for _, name := range inspectedContractSchemas {
 		raw := readSchemaBytes(tb, base, name)
 		var schema struct {
 			Required   []string `json:"required"`
@@ -350,6 +432,128 @@ func assertFeatureDeliverySchemaCopyRequiresInspected(tb schemaContractTB, base 
 	noopOutput := `{"summary":"BLOCKED: no changes to implement","files_changed":[],"inspected":["internal/cli/feature_delivery_contract_test.go"]}`
 	if _, err := compiled.ValidateJSONBytes([]byte(noopOutput)); err == nil {
 		tb.Fatalf("schema change-summary-v1.json in %s must reject empty files_changed (no-op output validated)", base)
+	}
+}
+
+// assertFeatureDeliverySchemaCopyCarriesFindingsContract verifies the plan-v3
+// findings contract in the delivery output schemas: the plan and
+// change-summary outputs declare addressed_findings (the ids of every prior
+// finding the agent claims to have addressed, empty when none), and the review
+// output declares rich findings — each finding item carries an id that the
+// reviewer reuses verbatim across rounds and that the controller's
+// zero-progress gate normalizes.
+func assertFeatureDeliverySchemaCopyCarriesFindingsContract(tb schemaContractTB, base string) {
+	tb.Helper()
+	assertPlanChangeSummaryFindingsContract(tb, base)
+	assertReviewRichFindingsContract(tb, base)
+}
+
+// assertPlanChangeSummaryFindingsContract verifies the addressed_findings
+// contract in the plan and change-summary output schemas: both declare
+// addressed_findings (the ids of every prior finding the agent claims to have
+// addressed, empty when none), required so an output that omits it never
+// validates — otherwise the zero-progress gate cannot tell "no findings to
+// address" from "the agent forgot to report what it addressed".
+func assertPlanChangeSummaryFindingsContract(tb schemaContractTB, base string) {
+	tb.Helper()
+	for _, name := range []string{"plan-v1.json", "change-summary-v1.json"} {
+		raw := readSchemaBytes(tb, base, name)
+		var schema struct {
+			Required   []string `json:"required"`
+			Properties map[string]struct {
+				Type  string `json:"type"`
+				Items struct {
+					Type      string `json:"type"`
+					MinLength int    `json:"minLength"`
+				} `json:"items"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			tb.Fatalf("parse schema %q from %s: %v", name, base, err)
+		}
+		prop, ok := schema.Properties["addressed_findings"]
+		if !ok || prop.Type != "array" || prop.Items.Type != "string" || prop.Items.MinLength < 1 {
+			tb.Fatalf("schema %q in %s: addressed_findings must be an array of non-empty strings", name, base)
+		}
+		// The findings contract is not optional: a plan or change-summary
+		// output that omits addressed_findings must not validate, or the
+		// zero-progress gate cannot tell "no findings to address" from "the
+		// agent forgot to report what it addressed".
+		requiresFindings := false
+		for _, r := range schema.Required {
+			if r == "addressed_findings" {
+				requiresFindings = true
+			}
+		}
+		if !requiresFindings {
+			tb.Fatalf("schema %q in %s must require addressed_findings", name, base)
+		}
+	}
+}
+
+// assertReviewRichFindingsContract verifies the review-v1 rich-findings
+// contract: findings must be an array whose items each require an id that the
+// reviewer reuses verbatim across rounds (the zero-progress gate normalizes
+// the R<round>- prefix), plus the review contract's three parts — the
+// concrete claim, the cited evidence, and the exact required change — so a
+// findings item is usable by the agent and by the convergence gate, not a
+// bare severity/reason label.
+func assertReviewRichFindingsContract(tb schemaContractTB, base string) {
+	tb.Helper()
+	raw := readSchemaBytes(tb, base, "review-v1.json")
+	var review struct {
+		Properties map[string]struct {
+			Type  string `json:"type"`
+			Items struct {
+				Type       string   `json:"type"`
+				Required   []string `json:"required"`
+				Properties map[string]struct {
+					Type      string `json:"type"`
+					MinLength int    `json:"minLength"`
+				} `json:"properties"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &review); err != nil {
+		tb.Fatalf("parse schema review-v1.json from %s: %v", base, err)
+	}
+	findings, ok := review.Properties["findings"]
+	if !ok || findings.Type != "array" {
+		tb.Fatalf("schema review-v1.json in %s: findings must be an array", base)
+	}
+	requiresID := false
+	for _, r := range findings.Items.Required {
+		if r == "id" {
+			requiresID = true
+		}
+	}
+	if !requiresID {
+		tb.Fatalf("schema review-v1.json in %s: findings items must require id (rich findings)", base)
+	}
+	idProp, ok := findings.Items.Properties["id"]
+	if !ok || idProp.Type != "string" || idProp.MinLength < 1 {
+		tb.Fatalf("schema review-v1.json in %s: findings item id must be a non-empty string", base)
+	}
+	// Rich findings: every finding carries an id the reviewer reuses verbatim
+	// across rounds (the zero-progress gate normalizes the R<round>- prefix),
+	// plus the review contract's three parts — the concrete claim, the cited
+	// evidence, and the exact required change — so a findings item is usable
+	// by the agent and by the convergence gate, not a bare severity/reason
+	// label.
+	rich := map[string]bool{"id": true, "claim": false, "evidence": false, "required": false}
+	for _, r := range findings.Items.Required {
+		if _, ok := rich[r]; ok {
+			rich[r] = true
+		}
+	}
+	for field, required := range rich {
+		if !required {
+			tb.Fatalf("schema review-v1.json in %s: findings items must require %s (rich findings)", base, field)
+		}
+		prop, ok := findings.Items.Properties[field]
+		if !ok || prop.Type != "string" || prop.MinLength < 1 {
+			tb.Fatalf("schema review-v1.json in %s: findings item %s must be a non-empty string", base, field)
+		}
 	}
 }
 

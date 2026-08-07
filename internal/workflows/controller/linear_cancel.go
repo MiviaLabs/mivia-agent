@@ -22,6 +22,7 @@ func CancelRun(ctx context.Context, repo workflowledger.Repository, runID string
 		return fmt.Errorf("workflow ledger is nil")
 	}
 	holder := newWorkflowHolder()
+	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
 		return err
 	}

@@ -84,6 +84,10 @@ func (f *failingAppendStore) GetContent(ctx context.Context, ref string) ([]byte
 
 func (f *failingAppendStore) Count(ctx context.Context) (int, error) { return f.inner.Count(ctx) }
 
+func (f *failingAppendStore) TakeoverClaim(ctx context.Context, runID, holder string) error {
+	return f.inner.TakeoverClaim(ctx, runID, holder)
+}
+
 func (f *failingAppendStore) ListRunIDs(ctx context.Context) ([]string, error) {
 	return f.inner.ListRunIDs(ctx)
 }
