@@ -9,7 +9,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-func (c *coordinator) terminalTaskResult(snap ledger.TaskSnapshot) (subagents.Result, bool) {
+// terminalTaskResultWithOutput wraps the package-level terminalTaskResult
+// with optional output content loading. Unlike the package-level function,
+// it loads the output ref when available and sets result.Output.
+// Accepts a context so LoadContent respects cancellation/deadlines.
+func (c *coordinator) terminalTaskResultWithOutput(ctx context.Context, snap ledger.TaskSnapshot) (subagents.Result, bool) {
 	result, terminal := terminalTaskResult(snap)
 	if !terminal || snap.OutputRef == "" {
 		if terminal {
@@ -18,7 +22,7 @@ func (c *coordinator) terminalTaskResult(snap ledger.TaskSnapshot) (subagents.Re
 		return result, terminal
 	}
 	result.Provenance = runtime.Metadata{Kind: "recovered", Status: snap.Status}
-	output, err := c.repo.LoadContent(context.Background(), snap.OutputRef)
+	output, err := c.repo.LoadContent(ctx, snap.OutputRef)
 	if err != nil {
 		return result, true
 	}
@@ -26,10 +30,10 @@ func (c *coordinator) terminalTaskResult(snap ledger.TaskSnapshot) (subagents.Re
 	return result, true
 }
 
-func (c *coordinator) resultsFromSnapshots(tasks []ledger.TaskSnapshot) []subagents.Result {
+func (c *coordinator) resultsFromSnapshots(ctx context.Context, tasks []ledger.TaskSnapshot) []subagents.Result {
 	results := make([]subagents.Result, len(tasks))
 	for i, task := range tasks {
-		result, terminal := c.terminalTaskResult(task)
+		result, terminal := c.terminalTaskResultWithOutput(ctx, task)
 		if terminal {
 			results[i] = result
 			continue
