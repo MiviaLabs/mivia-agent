@@ -549,6 +549,13 @@ func TestLoopEventBusMultipleSubscribers(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The bus is asynchronous: handlers run on per-subscriber delivery
+	// goroutines after Publish returns. Flush guarantees every event
+	// published during loop.Run has reached both handlers before we compare
+	// their counts; without it the comparison races the delivery goroutines
+	// (c1=2 c2=1 flakes).
+	bus.Flush()
+
 	e1 := c1.Events()
 	e2 := c2.Events()
 	if len(e1) == 0 || len(e2) == 0 {
