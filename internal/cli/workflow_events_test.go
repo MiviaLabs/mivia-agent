@@ -39,6 +39,78 @@ func TestWorkflowEventsContinuationHintWithForeignEvents(t *testing.T) {
 	}
 }
 
+// TestWorkflowEventsOffsetBeyondStream verifies that when offset exceeds the
+// decodable event stream, executeWorkflowEvents prints 'no events' and returns
+// nil. ListEvents clamps an offset past the trail to an empty slice, so no
+// slice-bounds panic occurs.
+func TestWorkflowEventsOffsetBeyondStream(t *testing.T) {
+	root, store, repo, closeFn, ctx, run := openEventsFixtureWithRun(t, "wfr-cli-offset-beyond")
+	seedInterleavedEvents(t, store, repo, ctx, run) // 10 decodable events
+	closeFn()                                       // release seeding connection
+
+	var stdout strings.Builder
+	err := executeWorkflowEvents(run, root, filepath.Join(root, "config.toml"), 4, 999, &stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("executeWorkflowEvents error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "no events") {
+		t.Fatalf("stdout = %q, want 'no events'", stdout.String())
+	}
+}
+
+// openEventsFixtureWithRun builds a workspace config + sqlite store + a fresh run
+// with the given runID, mirroring how openWorkflowReportContext resolves them,
+// and returns the store handles so the caller can seed events.
+func openEventsFixtureWithRun(t *testing.T, runID string) (root string, store *storage.SQLite, repo *workflowledger.StorageRepository, closeFn func(), ctx context.Context, run string) {
+	t.Helper()
+	root = t.TempDir()
+	configPath := filepath.Join(root, "config.toml")
+	configBody := `[provider]
+name = "openrouter"
+[providers.openrouter]
+base_url = "https://example.com"
+api_key_env = "WORKFLOW_EVENTS_TEST_KEY"
+models = [{ name = "test/model", context_window_tokens = 128000 }]
+[subagents]
+store_backend = "sqlite"
+`
+	if err := os.WriteFile(configPath, []byte(configBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	work, err := workspace.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyPrivacyPolicy(res)
+	applyWorkflowStoreRoot(res, work.Abs)
+	store, _, closeFn, err = openWorkflowStore(work.Abs, res.Subagents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo = workflowledger.NewStorageRepository(store)
+
+	ctx = context.Background()
+	run = runID
+	snap := workflowledger.RunSnapshot{
+		RunID: run, WorkflowName: "test-wf", Status: workflowledger.RunStatusPending, ActiveStepID: "start",
+	}
+	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("x"), DefinitionDigest: "d",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(ctx, snap, snapshotJSON); err != nil {
+		t.Fatal(err)
+	}
+	return root, store, repo, closeFn, ctx, run
+}
+
 // openEventsFixture builds a workspace config + sqlite store + a fresh run,
 // mirroring how openWorkflowReportContext resolves them, and returns the store
 // handles so the caller can seed events.
