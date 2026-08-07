@@ -100,7 +100,9 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		return nil, fmt.Errorf("gh pr list: repo %q is not owner/repo", repo)
 	}
 	for _, pr := range prs {
-		if pr.HeadRepositoryOwner.Login != owner {
+		// GitHub owner names are case-insensitive; the configured owner
+		// keeps the casing from the remote URL and may not match the API.
+		if !strings.EqualFold(pr.HeadRepositoryOwner.Login, owner) {
 			continue
 		}
 		return &PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL, Draft: pr.Draft}, nil
