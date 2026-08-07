@@ -119,15 +119,14 @@ func PlanResume(ctx context.Context, repo Repository, runID string) (RecoveryPla
 
 	// Rule (1): recorded attempts that never reached a terminal status are
 	// in flight (JOIN evidence: CoordinatorRunID/TaskID); a recorded attempt
-	// is never re-dispatched. Their outcome is unresolved, so the plan
-	// reports them as pending — the ledger's own record is untouched.
+	// is never re-dispatched. The plan preserves the ledger's authoritative
+	// status (Running) so consumers know the attempt was dispatched but
+	// never completed — overriding to Pending loses this signal.
 	// NextAttemptNo is the max attempt_no recorded for the derived active
 	// step (terminal or not) plus one.
 	for _, attempt := range attempts {
 		if !IsTerminalAttemptStatus(attempt.Status) {
-			inFlight := attempt
-			inFlight.Status = AttemptStatusPending
-			plan.AttemptsInFlight = append(plan.AttemptsInFlight, inFlight)
+			plan.AttemptsInFlight = append(plan.AttemptsInFlight, attempt.Clone())
 		}
 		if attempt.StepID == activeStep && attempt.AttemptNo >= plan.NextAttemptNo {
 			plan.NextAttemptNo = attempt.AttemptNo + 1
