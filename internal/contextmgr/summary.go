@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -148,7 +149,7 @@ func validateSummaryText(field, value string, allowEmpty bool) error {
 		return fmt.Errorf("%w: summary %s is empty", contextstate.ErrInvalidDTO, field)
 	}
 	for _, r := range value {
-		if r < 0x20 || r == 0x7f {
+		if unicode.IsControl(r) {
 			return fmt.Errorf("%w: summary %s contains control characters", contextstate.ErrInvalidDTO, field)
 		}
 	}
