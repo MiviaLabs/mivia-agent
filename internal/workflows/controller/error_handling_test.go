@@ -156,7 +156,11 @@ func TestChildTimedOutStatusUpgradesFailure(t *testing.T) {
 }
 
 // TestSucceededOutputPreservedOnStepError pins that a succeeded child whose
-// step-level join fails keeps its output and gains an error reference.
+// step-level join/persistence boundary errors (runErr != nil) still routes
+// onward: the completed child's output is preserved, the step error is
+// recorded, and the attempt carries a durable route instead of being
+// persisted Succeeded with an empty ToStepID (which previously failed the
+// run with "succeeded without a durable route").
 func TestSucceededOutputPreservedOnStepError(t *testing.T) {
 	runner := &errorRunner{
 		results: map[string]AgentStepResult{
@@ -165,14 +169,24 @@ func TestSucceededOutputPreservedOnStepError(t *testing.T) {
 		errors: map[string]error{"one": errors.New("join failed")},
 	}
 	ctrl, repo := newErrorController(t, runner, "wfr-output-preserved")
-	if _, err := ctrl.Run(context.Background()); err == nil {
-		t.Fatal("run succeeded; want failure")
+	got, err := ctrl.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run failed = %v; want succeeded route onward", err)
+	}
+	if got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run status = %q, want succeeded", got.Status)
 	}
 	attempts, _ := repo.ListStepAttempts(context.Background(), ctrl.RunID)
 	if len(attempts) != 1 {
 		t.Fatalf("attempts = %d, want 1", len(attempts))
 	}
 	a := attempts[0]
+	if a.Status != workflowledger.AttemptStatusSucceeded {
+		t.Fatalf("attempt status = %q, want succeeded", a.Status)
+	}
+	if a.ToStepID == "" {
+		t.Fatal("attempt ToStepID is empty; succeeded child must carry a durable route")
+	}
 	if a.OutputRef == "" {
 		t.Fatal("attempt OutputRef is empty; succeeded child output must survive")
 	}

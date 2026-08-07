@@ -18,6 +18,16 @@ func (c *LinearController) advanceAgentStep(ctx context.Context, run workflowled
 	if err != nil {
 		return run, false, err
 	}
+	// A non-terminal latest attempt with a recorded coordinator identity is a
+	// crash artifact whose child may already have run: JOIN the recorded
+	// coordinator run per the ledger contract (internal/workflows/ledger/recovery.go)
+	// before admitting anything fresh, so a completed child's outcome settles
+	// the attempt and its work is never re-executed under a new identity.
+	if latest, found := latestAttempt(attempts, step.ID); found &&
+		!workflowledger.IsTerminalAttemptStatus(latest.Status) &&
+		latest.CoordinatorRunID != "" && latest.TaskID != "" {
+		return c.joinInFlightAttempt(ctx, run, step, runtime, latest, attempts)
+	}
 	attempt, ok, err := c.admitAttempt(ctx, run, step.ID, attempts)
 	if err != nil {
 		return c.fail(ctx, run, err)
@@ -31,6 +41,124 @@ func (c *LinearController) advanceAgentStep(ctx context.Context, run workflowled
 		return run, false, err
 	}
 	return c.executeAgentAttempt(ctx, run, step, runtime, attempt, attempts)
+}
+
+// joinInFlightAttempt resumes a step whose latest attempt is in-flight by
+// JOINING the recorded coordinator run first, per the ledger contract: a
+// recorded attempt is never re-dispatched. When the join yields the child's
+// terminal outcome, the attempt is completed with that outcome and its route —
+// the step's work is NOT re-executed. Only when the runner cannot join, or the
+// join shows the child never ran (nothing to join), does the controller
+// interrupt the stale attempt and admit a fresh one with a new identity.
+func (c *LinearController) joinInFlightAttempt(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, runtime StepRuntime, attempt workflowledger.StepAttempt, attempts []workflowledger.StepAttempt) (workflowledger.RunSnapshot, bool, error) {
+	joiner, canJoin := c.Runner.(StepRunJoiner)
+	if !canJoin {
+		// No join capability (test seams, non-coordinator runners): keep the
+		// pre-join resume behavior for the stale attempt.
+		return c.interruptAndRedispatch(ctx, run, step, runtime, attempt, attempts)
+	}
+	req, err := c.agentStepRequest(ctx, run, step, runtime, attempt, attempts)
+	if err != nil {
+		return c.failAttempt(ctx, run, attempt, err)
+	}
+	result, joined, joinErr := joiner.JoinStep(ctx, req)
+	if joined {
+		// The child ran (or is being joined to completion): complete the
+		// attempt with the child's outcome and its durable route. This reuses
+		// the route-on-succeeded logic from executeAgentAttempt, so a joined
+		// child that reported "completed" is never persisted Succeeded with an
+		// empty ToStepID.
+		return c.settleAgentAttempt(ctx, run, step, attempt, result, joinErr)
+	}
+	// Nothing to join: the child never ran (or the join could not be
+	// completed, e.g. an idempotency conflict from drifted step inputs). Mark
+	// the stale attempt interrupted and admit a fresh attempt with a new
+	// coordinator identity, exactly as a crashed executor would have left it.
+	if joinErr != nil {
+		log.Printf("workflow: run %s step %s attempt %d join did not resolve (%v); re-dispatching fresh", c.RunID, step.ID, attempt.AttemptNo, joinErr)
+	}
+	return c.interruptAndRedispatch(ctx, run, step, runtime, attempt, attempts)
+}
+
+// interruptAndRedispatch marks the stale in-flight attempt interrupted and
+// admits a fresh attempt (No+1) with a new coordinator identity, then executes
+// it. This is the pre-join resume behavior, used only when the recorded child
+// never ran (nothing to join) or the runner cannot join.
+func (c *LinearController) interruptAndRedispatch(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, runtime StepRuntime, attempt workflowledger.StepAttempt, attempts []workflowledger.StepAttempt) (workflowledger.RunSnapshot, bool, error) {
+	writeCtx, cancel := stepPersistenceContext(ctx)
+	defer cancel()
+	fresh, ok, err := c.admitAttempt(writeCtx, run, step.ID, attempts)
+	if err != nil {
+		return c.fail(writeCtx, run, err)
+	}
+	if !ok {
+		return c.reconcileTerminalAttempt(writeCtx, run, fresh)
+	}
+	attempts, err = c.Repo.ListStepAttempts(writeCtx, c.RunID)
+	if err != nil {
+		return run, false, err
+	}
+	// The persistence context bounds ONLY the admit/persist writes above. The
+	// fresh child must run under the CALLER's context (the run-loop ctx carrying
+	// the step deadline): a child bound by the 5s writeCtx would be canceled at
+	// the coordinator.Join boundary after 5s and the re-dispatched attempt would
+	// time out even though the run deadline is much longer.
+	return c.executeAgentAttempt(ctx, run, step, runtime, fresh, attempts)
+}
+
+// JoinInFlightAttempt joins one recorded in-flight attempt's coordinator run
+// per the ledger contract (a recorded attempt is JOINED, never re-dispatched).
+// It is the CLI resume boundary's consumer of PlanResume.AttemptsInFlight: each
+// recorded in-flight attempt is settled from its child's outcome before the
+// controller's Run loop starts, so a completed child is never orphaned and its
+// work is never re-executed. When the join shows nothing to join (no join
+// capability, or the child never ran), the attempt is left in-flight for
+// Advance to interrupt and re-dispatch under the run claim. Idempotent: an
+// attempt that is already terminal (or no longer the latest) is a no-op.
+func (c *LinearController) JoinInFlightAttempt(ctx context.Context, attempt workflowledger.StepAttempt) error {
+	if workflowledger.IsTerminalAttemptStatus(attempt.Status) {
+		return nil
+	}
+	step, ok := c.WorkflowStep(attempt.StepID)
+	if !ok {
+		return fmt.Errorf("workflow step %q is not declared", attempt.StepID)
+	}
+	runtime, ok := c.Steps[attempt.StepID]
+	if !ok {
+		return fmt.Errorf("step %q has no snapshotted runtime", attempt.StepID)
+	}
+	run, err := c.Repo.GetRun(ctx, c.RunID)
+	if err != nil {
+		return err
+	}
+	attempts, err := c.Repo.ListStepAttempts(ctx, c.RunID)
+	if err != nil {
+		return err
+	}
+	latest, found := latestAttempt(attempts, attempt.StepID)
+	if !found || latest.AttemptID != attempt.AttemptID || workflowledger.IsTerminalAttemptStatus(latest.Status) {
+		return nil // already settled or superseded (idempotent replay)
+	}
+	joiner, canJoin := c.Runner.(StepRunJoiner)
+	if !canJoin {
+		return nil // no join capability: Advance falls back to interrupt + re-dispatch
+	}
+	req, err := c.agentStepRequest(ctx, run, step, runtime, latest, attempts)
+	if err != nil {
+		return err
+	}
+	result, joined, joinErr := joiner.JoinStep(ctx, req)
+	if !joined {
+		// The child never ran (or the join could not confirm it): leave the
+		// attempt in-flight; the controller's Advance interrupts it and admits
+		// a fresh attempt under the run claim.
+		if joinErr != nil {
+			log.Printf("workflow: run %s step %s attempt %d pre-flight join did not resolve (%v); Advance will interrupt and re-dispatch", c.RunID, step.ID, attempt.AttemptNo, joinErr)
+		}
+		return nil
+	}
+	_, _, err = c.settleAgentAttempt(ctx, run, step, latest, result, joinErr)
+	return err
 }
 
 func (c *LinearController) newAttempt(stepID string, attemptNo int) workflowledger.StepAttempt {
@@ -84,12 +212,26 @@ func (c *LinearController) runStepWithTransientRetry(ctx context.Context, req Ag
 }
 
 func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, runtime StepRuntime, attempt workflowledger.StepAttempt, attempts []workflowledger.StepAttempt) (workflowledger.RunSnapshot, bool, error) {
-	stepInputs, evidence, err := c.contextForStep(ctx, step, attempts)
+	req, err := c.agentStepRequest(ctx, run, step, runtime, attempt, attempts)
 	if err != nil {
 		return c.failAttempt(ctx, run, attempt, err)
 	}
+	result, runErr := c.runStepWithTransientRetry(ctx, req, attempt, step)
+	return c.settleAgentAttempt(ctx, run, step, attempt, result, runErr)
+}
+
+// agentStepRequest builds the bounded dispatch request for one attempt from
+// the step's snapshotted runtime and the current context, using the attempt's
+// recorded coordinator identity. On a resume join the identity is the
+// attempt's ORIGINAL child, so the production runner joins that child instead
+// of dispatching a fresh one.
+func (c *LinearController) agentStepRequest(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, runtime StepRuntime, attempt workflowledger.StepAttempt, attempts []workflowledger.StepAttempt) (AgentStepRequest, error) {
+	stepInputs, evidence, err := c.contextForStep(ctx, step, attempts)
+	if err != nil {
+		return AgentStepRequest{}, err
+	}
 	if err := validateBindingLimits(step, c.Inputs, attempts, c.Repo, ctx); err != nil {
-		return c.failAttempt(ctx, run, attempt, err)
+		return AgentStepRequest{}, err
 	}
 	var timeout time.Duration
 	if runtime.Agent.TimeoutSeconds != nil {
@@ -101,8 +243,20 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 			timeout = remaining
 		}
 	}
-	req := AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, Skill: step.Skill, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: maxStepContextBytes, OutputSchema: runtime.Schema}
-	result, runErr := c.runStepWithTransientRetry(ctx, req, attempt, step)
+	return AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, Skill: step.Skill, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: maxStepContextBytes, OutputSchema: runtime.Schema}, nil
+}
+
+// settleAgentAttempt records one attempt's outcome from the child result and
+// error, computing a durable route. A classified success routes even when the
+// join/persistence boundary errored (child reported "completed"): compute the
+// route from the completed child's output so the attempt is never persisted
+// Succeeded with an empty ToStepID. Route-selection failure degrades to a
+// durable on_failure route, never a route-less success. Infrastructure/schema/
+// agent failures use on_failure, never repair loops. Both the fresh-dispatch
+// path (executeAgentAttempt) and the resume-join path (joinInFlightAttempt,
+// JoinInFlightAttempt) settle through here, so a joined child's outcome is
+// recorded exactly like a fresh child's.
+func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, result AgentStepResult, runErr error) (workflowledger.RunSnapshot, bool, error) {
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
 	status := classifyStepStatus(runErr, result.Status)
@@ -110,7 +264,13 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 		result.ErrorRef = storeErrorText(writeCtx, c.Repo, runErr)
 	}
 	route := RouteDecision{}
-	if runErr == nil {
+	var err error
+	if status == workflowledger.AttemptStatusSucceeded {
+		// A classified success routes even when the join/persistence boundary
+		// errored (child reported "completed"): compute the route from the
+		// completed child's output so the attempt is never persisted
+		// Succeeded with an empty ToStepID. Route-selection failure degrades
+		// to a durable on_failure route, never a route-less success.
 		outMap, mapErr := resultOutputMap(result)
 		if mapErr != nil {
 			status, runErr = workflowledger.AttemptStatusFailed, mapErr
@@ -158,6 +318,17 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 func classifyStepStatus(runErr error, childStatus string) workflowledger.AttemptStatus {
 	if runErr == nil {
 		return workflowledger.AttemptStatusSucceeded
+	}
+	// A schema-validation error means the child's output FAILED the declared
+	// OutputSchema. It is a genuine agent failure regardless of the child's
+	// reported status: the runner pairs a "completed" child with the validation
+	// error, and routing that schema-invalid output onward as Succeeded would
+	// bypass the OutputSchema guard. Schema failures use on_failure, never a
+	// success route. (SchemaValidationError.Unwrap exposes the jschema cause, so
+	// errors.As matches direct and wrapped forms.)
+	var schemaErr *SchemaValidationError
+	if errors.As(runErr, &schemaErr) {
+		return workflowledger.AttemptStatusFailed
 	}
 	switch childStatus {
 	case "completed":

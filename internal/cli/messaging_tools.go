@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,8 +20,17 @@ const (
 	toolPostMessage = "post_message"
 	toolRunMessages = "run_messages"
 
-	// defaultQuestionWaitSec is the default wait_seconds for a question.
-	defaultQuestionWaitSec = 60
+	// defaultQuestionWaitSec is the default wait_seconds for a question. It sits
+	// above the agent-loop tool-timeout floor (DefaultToolTimeout = 60s) so a
+	// default question is not clamped away before a realistic parent answer can
+	// arrive; the effective wait is still clamped to the enclosing tool/step
+	// deadline by parkedWaitDuration.
+	defaultQuestionWaitSec = 180
+
+	// maxQuestionWaitSec is the advertised schema ceiling for wait_seconds. It
+	// documents the bound for the model; the runtime wait is always clamped to
+	// the enclosing tool/step budget regardless of the requested value.
+	maxQuestionWaitSec = 3600
 )
 
 // postMessageTool is the child-side upstream messaging tool
@@ -66,8 +76,13 @@ func (t *postMessageTool) Parameters() map[string]any {
 				"items":       map[string]any{"type": "string"},
 			},
 			"wait_seconds": map[string]any{
-				"type":        "integer",
-				"description": "For question (required wait) or ask (optional park): max seconds to wait for an answer",
+				"type":    "integer",
+				"minimum": 0,
+				"maximum": maxQuestionWaitSec,
+				"description": fmt.Sprintf("For question (required wait) or ask (optional park): max seconds to wait "+
+					"for an answer (0 = tool default %ds; capped at %ds). Waits beyond the "+
+					"enclosing tool/step budget are clamped and end as no_answer",
+					defaultQuestionWaitSec, maxQuestionWaitSec),
 			},
 			"to_role": map[string]any{
 				"type":        "string",
@@ -151,12 +166,20 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 	if waitSec <= 0 {
 		waitSec = defaultQuestionWaitSec
 	}
+	// Clamp the effective wait to the remaining context deadline
+	// (min(waitSec, remaining)): a child-requested wait above the enclosing
+	// tool/step budget must park only until that budget expires, then exit via
+	// the clean no_answer JSON — never a raw ctx.Done() error. The park maxWait
+	// uses the same clamped value so the registry TTL tracks the effective wait
+	// instead of a stale full-length request.
+	wait := parkedWaitDuration(ctx, waitSec)
 
 	// Reserve park BEFORE ledger announce so a racing parent answer cannot
 	// miss DeliverAnswer (persist-then-announce still holds for the message).
-	// Tie the park expiry to the effective wait so a long wait (operator-raised
-	// tool deadline) is never evicted early by a parent's DeliverAnswer.
-	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msg.ID, time.Duration(waitSec)*time.Second)
+	// Tie the park expiry to the effective (clamped) wait so a long wait
+	// (operator-raised tool deadline) is never evicted early by a parent's
+	// DeliverAnswer.
+	answerCh, unpark, err := c.ParkQuestion(id.RunID, id.TaskID, msg.ID, wait)
 	if err != nil {
 		// Another park is live — do NOT force awaiting_input → running.
 		return "", err
@@ -181,22 +204,15 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 	// Best-effort: cancel may race; park registry is already held.
 	_ = c.TransitionToAwaitingInput(ctx, id.RunID, id.TaskID)
 
-	// The park maxWait above stays the full waitSec; only the timer is clamped
-	// to the remaining context deadline so a near-deadline wait exits via the
-	// clean no_answer JSON instead of ctx.Done()'s raw error.
-	timer := time.NewTimer(parkedWaitDuration(ctx, waitSec))
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
-	// finishReceive retires the park for any value read off the channel. A
-	// system decline sentinel (AskDeclinePrefix) reports no_answer with the
-	// stripped reason; any other value is a real peer answer. Every receive
-	// path (primary case plus the timer/ctx drains) routes through it.
+	// finishReceive retires the park for any value read off the channel: a
+	// system decline sentinel reports no_answer; any other value is a real answer.
 	finishReceive := func(answer string) (string, error) {
 		if reason, ok := declineReason(answer); ok {
-			return retireParkedWait(ctx, c, id, &parked, unpark, map[string]any{
-				"status": "no_answer", "reason": reason, "message_id": msg.ID,
-			})
+			return retireParkedWaitNoAnswer(c, id, &parked, unpark, msg.ID, reason)
 		}
-		return retireParkedWait(ctx, c, id, &parked, unpark, map[string]any{
+		return retireParkedWait(c, id, &parked, unpark, map[string]any{
 			"status": "answered", "message_id": msg.ID, "answer": answer,
 		})
 	}
@@ -208,34 +224,59 @@ func (t *postMessageTool) waitForAnswer(ctx context.Context, c coordinator.Coord
 		if answer, ok := tryRecvAnswer(answerCh); ok {
 			return finishReceive(answer)
 		}
-		return retireParkedWait(ctx, c, id, &parked, unpark, map[string]any{
-			"status": "no_answer", "reason": "timed_out", "message_id": msg.ID,
-		})
+		return retireParkedWaitNoAnswer(c, id, &parked, unpark, msg.ID, "timed_out")
 	case <-ctx.Done():
 		// Prefer a ready answer/decline over the raw cancel error.
 		if answer, ok := tryRecvAnswer(answerCh); ok {
 			return finishReceive(answer)
 		}
-		// Cancel-while-parked: leave terminal transition to cancel path;
-		// best-effort unpark of status if still awaiting.
-		parked = false
-		unpark()
-		_ = c.TransitionFromAwaitingInput(context.Background(), id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
-		return "", ctx.Err()
+		// The enclosing tool/step deadline fired while parked (the wait was
+		// clamped to that budget, or the requested wait elapsed in a timer
+		// race): surface the documented no_answer result, not the raw
+		// ctx.Err(). A genuine cancel must still propagate as an error.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return retireParkedWaitNoAnswer(c, id, &parked, unpark, msg.ID, "timed_out")
+		}
+		// Cancel-while-parked: leave terminal transition to the cancel path.
+		return retireParkedWaitCancel(c, id, &parked, unpark, ctx.Err())
 	}
 }
 
 // retireParkedWait retires a parked-question wait: clears the parked flag,
 // unparks, best-effort transitions the task back to running, and renders the
 // JSON result. Every terminal path of waitForAnswer routes through it so the
-// park retirement and status transition stay in one place.
-func retireParkedWait(ctx context.Context, c coordinator.Coordinator, id runtime.TaskIdentity, parked *bool, unpark func(), result map[string]any) (string, error) {
+// park retirement and status transition stay in one place. The transition runs
+// on context.Background() because the tool ctx may already be expired when the
+// wait ends (a deadline-clamped timer race); the best-effort transition must
+// not be blocked by the very deadline that ended the wait.
+func retireParkedWait(c coordinator.Coordinator, id runtime.TaskIdentity, parked *bool, unpark func(), result map[string]any) (string, error) {
 	*parked = false
 	unpark()
 	// Best-effort unpark; cancel may have won — still return the result.
-	_ = c.TransitionFromAwaitingInput(ctx, id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
+	_ = c.TransitionFromAwaitingInput(context.Background(), id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
 	out, _ := json.Marshal(result)
 	return string(out), nil
+}
+
+// retireParkedWaitNoAnswer retires a parked-question wait with a no_answer
+// result: the wait ended without a real peer answer (parked timer expiry,
+// deadline-clamped ctx expiry, or a system ask-decline sentinel). It renders
+// the same no_answer JSON shape retireParkedWait produced for these paths.
+func retireParkedWaitNoAnswer(c coordinator.Coordinator, id runtime.TaskIdentity, parked *bool, unpark func(), msgID, reason string) (string, error) {
+	return retireParkedWait(c, id, parked, unpark, map[string]any{
+		"status": "no_answer", "reason": reason, "message_id": msgID,
+	})
+}
+
+// retireParkedWaitCancel retires a parked-question wait for a genuine cancel:
+// clears the parked flag, unparks, best-effort returns the task to running
+// (the terminal transition is left to the cancel path), and propagates the
+// context error unchanged so a canceled task is never a no_answer park.
+func retireParkedWaitCancel(c coordinator.Coordinator, id runtime.TaskIdentity, parked *bool, unpark func(), cause error) (string, error) {
+	*parked = false
+	unpark()
+	_ = c.TransitionFromAwaitingInput(context.Background(), id.RunID, id.TaskID, string(ledger.TaskStatusRunning))
+	return "", cause
 }
 
 // runMessagesTool is the parent-side pull tool for run message history.

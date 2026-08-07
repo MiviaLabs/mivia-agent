@@ -29,10 +29,16 @@ const MaxEventSummaryBytes = 512
 const DefaultEventPageSize = 200
 
 // ListEvents returns the run's audit trail, ordered by event sequence. The
-// listing is paged: limit <= 0 means DefaultEventPageSize, offset skips that
-// many events. Events whose kind or payload is not a known wf_* shape are
-// skipped (matching the projection's tolerance), so a listing never fails on
-// a foreign or undecodable event. Returns ErrNotFound when the run is absent.
+// listing is paged over the DECODABLE stream: unknown/undecodable events are
+// filtered out first, then limit/offset slice the decodable events, so each
+// page holds up to `limit` decodable events and never comes back short while
+// decodable events remain. limit <= 0 means DefaultEventPageSize, offset skips
+// that many decodable events. A limit/offset large enough to overflow the
+// page bounds is clamped to the trail (an offset past the trail is an empty
+// page), never a slice-bounds panic. Events whose kind or payload is not a known
+// wf_* shape are skipped (matching the projection's tolerance), so a listing
+// never fails on a foreign or undecodable event. Returns ErrNotFound when the
+// run is absent.
 func (s *StorageRepository) ListEvents(ctx context.Context, runID string, limit, offset int) ([]EventRecord, error) {
 	if err := s.ensureBuilt(ctx); err != nil {
 		return nil, err
@@ -49,6 +55,17 @@ func (s *StorageRepository) ListEvents(ctx context.Context, runID string, limit,
 	if err != nil {
 		return nil, fmt.Errorf("read workflow events for %s: %w", runID, err)
 	}
+	// Decodable-select BEFORE slicing: pages count decodable events, so a page
+	// is full whenever at least `limit` decodable events remain, even with
+	// foreign events interleaved in the raw stream.
+	decodable := make([]EventRecord, 0, len(events))
+	for _, ev := range events {
+		record, ok := summarizeEvent(ev)
+		if !ok {
+			continue
+		}
+		decodable = append(decodable, record)
+	}
 	if limit <= 0 {
 		limit = DefaultEventPageSize
 	}
@@ -56,22 +73,17 @@ func (s *StorageRepository) ListEvents(ctx context.Context, runID string, limit,
 	if start < 0 {
 		start = 0
 	}
-	if start > len(events) {
-		start = len(events)
+	if start > len(decodable) {
+		return nil, nil
 	}
 	end := start + limit
-	if end > len(events) {
-		end = len(events)
+	// end < start means start+limit overflowed int64 and wrapped negative;
+	// clamp it like any other past-the-end page instead of slicing with a
+	// negative bound and panicking.
+	if end > len(decodable) || end < start {
+		end = len(decodable)
 	}
-	out := make([]EventRecord, 0, end-start)
-	for _, ev := range events[start:end] {
-		record, ok := summarizeEvent(ev)
-		if !ok {
-			continue
-		}
-		out = append(out, record)
-	}
-	return out, nil
+	return decodable[start:end], nil
 }
 
 // summarizeEvent decodes one wf_* event into a bounded display summary.

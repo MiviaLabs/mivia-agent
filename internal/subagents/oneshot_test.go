@@ -105,6 +105,50 @@ func TestOneShotHandlerEmptyTask(t *testing.T) {
 	}
 }
 
+func TestOneShotHandlerRejectsWhitespaceOnlyTask(t *testing.T) {
+	comp := &captureRequestCompleter{}
+	h := &OneShotHandler{
+		Completer:    comp,
+		Model:        "test-model",
+		SystemPrompt: "Analyze.",
+	}
+	_, err := h.Invoke(context.Background(), runtime.Request{
+		Name:  "test",
+		Input: json.RawMessage(`"   "`),
+	})
+	if err == nil {
+		t.Fatal("expected error for whitespace-only task")
+	}
+	if !strings.Contains(err.Error(), "empty task prompt") {
+		t.Fatalf("error %q should contain 'empty task prompt'", err.Error())
+	}
+	if comp.requests != 0 {
+		t.Fatalf("provider was called %d times; whitespace-only input should be rejected before LLM call", comp.requests)
+	}
+}
+
+func TestOneShotHandlerRejectsTabNewlineTask(t *testing.T) {
+	comp := &captureRequestCompleter{}
+	h := &OneShotHandler{
+		Completer:    comp,
+		Model:        "test-model",
+		SystemPrompt: "Analyze.",
+	}
+	_, err := h.Invoke(context.Background(), runtime.Request{
+		Name:  "test",
+		Input: json.RawMessage(`"\t\n"`),
+	})
+	if err == nil {
+		t.Fatal("expected error for tab/newline-only task")
+	}
+	if !strings.Contains(err.Error(), "empty task prompt") {
+		t.Fatalf("error %q should contain 'empty task prompt'", err.Error())
+	}
+	if comp.requests != 0 {
+		t.Fatalf("provider was called %d times; tab/newline-only input should be rejected before LLM call", comp.requests)
+	}
+}
+
 func TestOneShotHandlerCancel(t *testing.T) {
 	h := &OneShotHandler{
 		Completer: &mockCompleter{

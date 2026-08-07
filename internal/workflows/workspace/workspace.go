@@ -36,12 +36,13 @@ const (
 
 // Identity records the Git identity of a workflow workspace.
 type Identity struct {
-	Root         string
-	MainRoot     string
-	BaseRef      string
-	BaseCommit   string
-	WorktreeName string
-	Branch       string
+	Root             string
+	MainRoot         string
+	BaseRef          string
+	BaseCommit       string
+	OriginBaseCommit string
+	WorktreeName     string
+	Branch           string
 }
 
 // Ensure returns the workspace for a new or repeated run admission.
@@ -69,7 +70,7 @@ func Ensure(ctx context.Context, sourceRoot, runID string, isolation Isolation) 
 // Resolve validates and returns a recorded workflow workspace.
 func Resolve(ctx context.Context, sourceRoot string, recorded Identity) (Identity, error) {
 	if recorded.WorktreeName == "" {
-		if recorded.MainRoot != "" || recorded.BaseRef != "" || recorded.BaseCommit != "" || recorded.Branch != "" {
+		if recorded.MainRoot != "" || recorded.BaseRef != "" || recorded.BaseCommit != "" || recorded.OriginBaseCommit != "" || recorded.Branch != "" {
 			return Identity{}, fmt.Errorf("read-only workflow identity contains worktree data")
 		}
 		return readOnlyIdentity(sourceRoot)
@@ -115,8 +116,25 @@ func admissionIdentity(ctx context.Context, callerRoot, runID string) (Identity,
 	}
 	return Identity{
 		MainRoot: mainRoot, BaseRef: baseRef, BaseCommit: baseCommit,
-		WorktreeName: name, Branch: workflowBranchPrefix + name,
+		OriginBaseCommit: originBaseCommit(ctx, callerRoot, baseRef),
+		WorktreeName:     name, Branch: workflowBranchPrefix + name,
 	}, nil
+}
+
+// originBaseCommit resolves the origin tracking ref for the base branch at
+// admission. It reads refs/remotes/origin/<base> only when the ref is already
+// present locally: the admission path makes no network calls, so a remote ref
+// that has never been fetched is recorded as empty and delivery's retryable
+// path fetches and verifies the remote base later.
+func originBaseCommit(ctx context.Context, root, baseRef string) string {
+	if baseRef == "" {
+		return ""
+	}
+	commit, err := vcs.ResolveCommit(ctx, root, "refs/remotes/origin/"+baseRef)
+	if err != nil {
+		return ""
+	}
+	return commit
 }
 
 func ensureWorktree(ctx context.Context, identity Identity) (Identity, error) {

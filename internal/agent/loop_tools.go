@@ -333,6 +333,14 @@ func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools
 		raw := json.RawMessage(call.Function.Arguments)
 		capability := reg.Capability(call.Function.Name, raw)
 		callTimeout := resolveToolCallTimeout(timeout, capability.Timeout)
+		// A model-supplied per-call timeout_seconds overrides the capability
+		// default: it may extend or tighten the budget the loop arms for this
+		// call, clamped to the enclosing step/task deadline so a huge request
+		// can never outlive the turn that owns it. Without the param the
+		// capability stays the default and the hang bound is unchanged.
+		if requested := requestedToolTimeout(raw); requested > 0 {
+			callTimeout = clampToDeadline(ctx, requested)
+		}
 		// Only the timeout DURATION is fixed here. The clock starts in the
 		// worker (see executeToolTask): a batch is prepared in full up front but
 		// runs `workers` at a time, so a deadline armed here would be spent

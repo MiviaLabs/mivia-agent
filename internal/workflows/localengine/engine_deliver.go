@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
 // Deliver implements agenttools.Engine.
@@ -130,10 +131,18 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	}
 	deliveryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	// Resolve the run's delivery workspace and verify its real git directory.
+	// The CLI path does the same (workflow_deliver.go: Resolve + VerifyGitDir);
+	// an empty GitDir would make pinnedEnv emit GIT_DIR= and every git command
+	// would fail against an invalid empty path.
+	gitCtx, err := e.deliveryGitCtx(ctx, run)
+	if err != nil {
+		return agenttools.DeliverResult{}, err
+	}
 	dreq := delivery.Request{
 		RunID: runID, WorkflowDigest: run.WorkflowDigest, Policy: policy,
 		Inputs: snapshot.Inputs, BaseCommit: run.BaseCommit,
-		Branch: "wf/" + run.WorktreeName, GitCtx: delivery.GitContext{Dir: e.WorkspaceRoot},
+		Branch: "wf/" + run.WorktreeName, GitCtx: gitCtx,
 		OriginURL: run.RemoteURL,
 	}
 	result, err := delivery.Deliver(deliveryCtx, e.Repo, git, pr, dreq)
@@ -157,6 +166,34 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		}
 	}
 	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
+}
+
+// deliveryGitCtx resolves the run's delivery workspace and verifies its real
+// git directory, mirroring the CLI's workflow deliver path (workflowspace.
+// Resolve + delivery.VerifyGitDir). The engine records the worktree identity
+// at start/resume; runs admitted by another engine (or before the identity was
+// recorded) are resolved from the durable run record. A run without a recorded
+// worktree cannot publish and is refused permanently.
+func (e *Engine) deliveryGitCtx(ctx context.Context, run workflowledger.RunSnapshot) (delivery.GitContext, error) {
+	if run.WorktreeName == "" {
+		return delivery.GitContext{}, &delivery.RefusalError{Reason: fmt.Sprintf("workflow run %q has no recorded worktree; delivery requires a run worktree", run.RunID)}
+	}
+	identity, ok := e.worktreeIdentity(run.RunID)
+	if !ok || identity.Root == "" || identity.MainRoot == "" {
+		var err error
+		identity, err = workflowspace.Resolve(ctx, e.WorkspaceRoot, workflowspace.Identity{
+			BaseRef: run.BaseRef, BaseCommit: run.BaseCommit,
+			WorktreeName: run.WorktreeName, Branch: "wf/" + run.WorktreeName,
+		})
+		if err != nil {
+			return delivery.GitContext{}, &delivery.RefusalError{Reason: "resolve delivery workspace: " + err.Error()}
+		}
+	}
+	gitDir, err := delivery.VerifyGitDir(ctx, identity.MainRoot, run.WorktreeName, identity.Root)
+	if err != nil {
+		return delivery.GitContext{}, err
+	}
+	return delivery.GitContext{Dir: identity.Root, GitDir: gitDir}, nil
 }
 
 // settleRunFailure best-effort settles a run whose execution stopped with a

@@ -28,7 +28,8 @@ func selectWorkflowWorkspace(ctx context.Context, sourceRoot, runID string, writ
 	if recorded != nil {
 		identity := workflowspace.Identity{
 			BaseRef: recorded.BaseRef, BaseCommit: recorded.BaseCommit,
-			WorktreeName: recorded.WorktreeName,
+			OriginBaseCommit: recorded.OriginBaseCommit,
+			WorktreeName:     recorded.WorktreeName,
 		}
 		if recorded.WorktreeName != "" {
 			identity.Branch = workflowBranchPrefix + recorded.WorktreeName

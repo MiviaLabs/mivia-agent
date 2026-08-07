@@ -413,11 +413,15 @@ func (c *LinearController) reconcileWaitingApproval(ctx context.Context, run wor
 //
 // A NON-terminal latest attempt is a crash artifact: only a crashed or
 // force-replaced executor leaves an attempt RUNNING (the controller is
-// single-threaded per run and completes each attempt before advancing). The
-// old executor's writes are claim-fenced and discarded, so re-executing the
-// same attemptID would double-run the step's agent work while the ledger
-// keeps one attempt. Mark the stale attempt interrupted and admit a fresh
-// attempt (No+1) instead.
+// single-threaded per run and completes each attempt before advancing). For
+// agent steps, advanceAgentStep JOINS the recorded coordinator run FIRST (see
+// joinInFlightAttempt) per the ledger contract — a recorded attempt is never
+// re-dispatched. This branch is reached only when there is nothing to join
+// (evidence gates dispatch no coordinator child, the runner has no join
+// capability, or the join showed the child never ran): the stale attempt is
+// marked interrupted and a fresh attempt (No+1) is admitted instead, so the
+// step's work is not double-recorded under one attempt while the old
+// executor's fenced writes are discarded.
 func (c *LinearController) admitAttempt(ctx context.Context, _ workflowledger.RunSnapshot, stepID string, attempts []workflowledger.StepAttempt) (workflowledger.StepAttempt, bool, error) {
 	attempt, found := latestAttempt(attempts, stepID)
 	if !found {

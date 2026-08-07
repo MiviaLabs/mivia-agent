@@ -125,7 +125,9 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 		defer close(done)
 		snap, err := built.Controller.Run(runCtx)
 		if err == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
-			_ = deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, runID, true, io.Discard, io.Discard)
+			if derr := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, runID, true, io.Discard, io.Discard); derr != nil {
+				recordAutoDeliveryFailure(context.Background(), prepared.repo, runID, derr)
+			}
 		}
 		e.mu.Lock()
 		active := e.active[runID]
@@ -279,7 +281,9 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 		snap, err := workflowResumeRun(runCtx, p.built)
 		// Same grant rule as startCLI: allow_publish permits end-of-run publication.
 		if err == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
-			_ = deliverRunWithStore(context.Background(), p.root, p.res, p.store, p.repo, p.runID, true, io.Discard, io.Discard)
+			if derr := deliverRunWithStore(context.Background(), p.root, p.res, p.store, p.repo, p.runID, true, io.Discard, io.Discard); derr != nil {
+				recordAutoDeliveryFailure(context.Background(), p.repo, p.runID, derr)
+			}
 		}
 		e.mu.Lock()
 		active := e.active[p.runID]
@@ -389,7 +393,6 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 	}
 	return result, nil
 }
-
 func sessionDeliverResultFromLedger(ctx context.Context, root, configPath, runID string, deliverErr error) (agenttools.DeliverResult, bool) {
 	repo, closeFn, err := openWorkflowReportContext(root, configPath)
 	if err != nil {
@@ -409,7 +412,6 @@ func sessionDeliverResultFromLedger(ctx context.Context, root, configPath, runID
 	}
 	return agenttools.DeliverResult{}, false
 }
-
 func inputsToRawFlags(inputs map[string]any) ([]string, error) {
 	if len(inputs) == 0 {
 		return nil, nil

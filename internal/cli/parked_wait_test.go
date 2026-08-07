@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -210,6 +211,135 @@ func TestWaitForAnswerDeclineSentinel(t *testing.T) {
 	}
 	if res["status"] != "no_answer" || res["reason"] != agentmsg.DeclineReasonResponderTerminal {
 		t.Fatalf("out=%s", out)
+	}
+}
+
+// TestWaitForAnswerDeadlineExceededReturnsNoAnswer: a question whose
+// wait_seconds exceeds the enclosing tool/step budget must exit as the
+// documented no_answer result (reason timed_out) with nil error — never a raw
+// ctx.Err(). The budget is already spent when the question parks (rem <= 0 at
+// clamp time, so the timer cannot be clamped and ctx.Done() fires immediately
+// inside the select); park/post still succeed because the ledger is
+// ctx-agnostic, leaving the select as the only place the deadline error could
+// surface.
+func TestWaitForAnswerDeadlineExceededReturnsNoAnswer(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	expiredCtx, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer cancel()
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindQuestion,
+		agentmsg.Party{TaskID: taskID}, agentmsg.Party{Role: agentmsg.ParentSentinel},
+		"q", nil, agentmsg.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.waitForAnswer(expiredCtx, c,
+		runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 10000)
+	if err != nil {
+		t.Fatalf("deadline-exceeded park surfaced a raw error: %v", err)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res["status"] != "no_answer" || res["reason"] != "timed_out" {
+		t.Fatalf("out=%s", out)
+	}
+}
+
+// TestWaitForAnswerParkDurationClampedToDeadline: wait_seconds above a clamped
+// budget is clamped — the park is registered for the remaining deadline time,
+// not the full requested wait, and the wait ends as no_answer with nil error.
+func TestWaitForAnswerParkDurationClampedToDeadline(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindQuestion,
+		agentmsg.Party{TaskID: taskID}, agentmsg.Party{Role: agentmsg.ParentSentinel},
+		"q", nil, agentmsg.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		out string
+		err error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		out, err := tool.waitForAnswer(dctx, c,
+			runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 10000)
+		resCh <- result{out, err}
+	}()
+	// Capture the registered park's expiry while the wait is live: a clamped
+	// park expires at the parkTTL floor (~30m), never at the 10000s request
+	// (now + 10000s + slack).
+	var expiresAt time.Time
+	deadline := time.After(3 * time.Second)
+	for {
+		parks := c.ParkedQuestions(runID)
+		if len(parks) > 0 {
+			expiresAt = parks[0].ExpiresAt
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("question never parked")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	now := time.Now()
+	if !expiresAt.After(now) || !expiresAt.Before(now.Add(10000*time.Second)) {
+		t.Fatalf("park expiry %v not clamped below the 10000s request (now=%v)", expiresAt, now)
+	}
+	res := <-resCh
+	if res.err != nil {
+		t.Fatalf("clamped park surfaced a raw error: %v", res.err)
+	}
+	if !strings.Contains(res.out, `"status":"no_answer"`) || !strings.Contains(res.out, "timed_out") {
+		t.Fatalf("out=%s", res.out)
+	}
+}
+
+// TestWaitForAnswerCancelPropagatesError: a canceled park must surface
+// context.Canceled as a raw error — a canceled task must never be mistaken for
+// a no_answer park timeout.
+func TestWaitForAnswerCancelPropagatesError(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	msg, err := agentmsg.NewMessage(runID, agentmsg.KindQuestion,
+		agentmsg.Party{TaskID: taskID}, agentmsg.Party{Role: agentmsg.ParentSentinel},
+		"q", nil, agentmsg.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	resCh := make(chan error, 1)
+	go func() {
+		_, err := tool.waitForAnswer(cctx, c,
+			runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 30)
+		resCh <- err
+	}()
+	deadline := time.After(3 * time.Second)
+	for c.CountPendingQuestions(runID, taskID) != 1 {
+		select {
+		case <-deadline:
+			t.Fatal("question never parked")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case err := <-resCh:
+		if err == nil {
+			t.Fatal("cancel must propagate an error")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err=%v, want context.Canceled", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("waitForAnswer did not return after cancel")
 	}
 }
 

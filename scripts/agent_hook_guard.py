@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -36,19 +37,237 @@ def load_policy() -> dict[str, Any]:
     return policy
 
 
-def iter_strings(value: Any) -> list[str]:
-    values: list[str] = []
-    if isinstance(value, str):
-        values.append(value)
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            if isinstance(key, str):
-                values.append(key)
-            values.extend(iter_strings(item))
-    elif isinstance(value, list):
-        for item in value:
-            values.extend(iter_strings(item))
-    return values
+GIT_COMMIT_VALUE_OPTIONS = {
+    "-m",
+    "-F",
+    "-C",
+    "--message",
+    "--file",
+    "--reuse-message",
+    "--reedit-message",
+}
+
+# Short-option characters that consume a value for `git commit`. Uppercase -C
+# (reuse-message) takes a value; lowercase -c (git config) does not.
+GIT_COMMIT_SHORT_VALUE_CHARS = "mFC"
+
+# Shell control operators that start a NEW command. Every command in a
+# compound string must be vetted, so scanning restarts at these.
+SHELL_SEPARATORS = {"&&", ";", "||", "|"}
+
+
+def _takes_message_value(tok: str) -> bool:
+    """True when the exact option `tok` consumes the NEXT argv element as a
+    message/file value (`--` ends option parsing for git commit)."""
+    return tok in GIT_COMMIT_VALUE_OPTIONS or tok == "--"
+
+
+def _split_shell_segments(argv: list[str]) -> list[list[str]]:
+    """Split argv into per-command segments at shell separators.
+
+    `git commit -m x && HUSKY=0 git commit -m y` is TWO commands; without a
+    split, the first -m value swallows every following token, hiding the
+    second command's bypass flags. Splitting restores scanning per command.
+    """
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for tok in argv:
+        if tok in SHELL_SEPARATORS:
+            if current:
+                segments.append(current)
+                current = []
+        else:
+            current.append(tok)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _scan_segment(segment: list[str]) -> list[str]:
+    """Reduce one command's argv to tokens that can carry bypass flags.
+
+    For `git commit`, -m/-F/-C/--message/--file/--reuse-message/--reedit-
+    message consume EXACTLY ONE following argv element as their VALUE, and
+    scanning resumes afterwards. The value is always data, even when it looks
+    like a flag: `git commit -m -n` means the message is "-n" and hooks still
+    run. A real option AFTER the value (`-m x -n`) is still scanned.
+
+    Short-option bundles are parsed char-by-char: 'n' is a no-arg flag and is
+    blocked in any bundle (-an, -na, -nF, -anF); 'm'/'F'/'C' consume the rest
+    of the token or the next token as their value, so -Fn is -F with value
+    'n' and never a flag.
+    """
+    vec: list[str] = []
+    i = 0
+    n = len(segment)
+    while i < n:
+        tok = segment[i]
+        if tok == "--":
+            # Post-`--` elements are positional data, but dash-prefixed
+            # elements are still scanned as options (fail closed).
+            vec.append(tok)
+            i += 1
+            while i < n and not segment[i].startswith("-"):
+                i += 1
+            continue
+        if len(tok) > 2 and tok.startswith("--"):
+            vec.append(tok)
+            i += 2 if _takes_message_value(tok) else 1
+            continue
+        if len(tok) > 1 and tok[0] == "-" and tok[1] != "-":
+            # Short-option bundle, parsed char-by-char.
+            body = tok[1:]
+            j = 0
+            consumed_next = False
+            while j < len(body):
+                char = body[j]
+                if char == "n":
+                    vec.append("-n")
+                    j += 1
+                elif char in GIT_COMMIT_SHORT_VALUE_CHARS:
+                    vec.append("-" + char)
+                    if j + 1 < len(body):
+                        # The rest of the token is the value: -Fv, -mx.
+                        j = len(body)
+                    else:
+                        # The next argv element is the value: consume it.
+                        consumed_next = True
+                        j = len(body)
+                else:
+                    vec.append("-" + char)
+                    j += 1
+            i += 2 if consumed_next else 1
+            continue
+        vec.append(tok)
+        i += 1
+    return vec
+
+
+def option_vector(argv: list[str]) -> list[str]:
+    """Tokens that can carry bypass flags; option VALUES are excluded.
+
+    Compound shell strings are vetted per command: the argv is split at shell
+    separators (&&, ;, ||, |) and each segment is scanned on its own, so a
+    second `git commit` after a separator can never hide behind the first
+    command's -m value. Within a command, -m/-F/-C consume exactly one value
+    token (even a dash-prefixed one) and scanning resumes.
+    """
+    vec: list[str] = []
+    for segment in _split_shell_segments(argv):
+        vec.extend(_scan_segment(segment))
+    return vec
+
+
+def is_git_commit(argv: list[str]) -> bool:
+    """True when argv invokes `git commit` (git options like -c included)."""
+    for i, tok in enumerate(argv):
+        if tok == "git" and any(t == "commit" for t in argv[i + 1 :]):
+            return True
+    return False
+
+
+def _structured_argv(payload: dict[str, Any]) -> list[str] | None:
+    """The structured argv array from tool_input, or None when unavailable."""
+    tool_input = payload.get("tool_input") or payload.get("toolInput")
+    candidates: list[Any] = []
+    if isinstance(tool_input, dict):
+        candidates.append(tool_input.get("argv"))
+        inner = tool_input.get("input")
+        if isinstance(inner, dict):
+            candidates.append(inner.get("argv"))
+    top = payload.get("input")
+    if isinstance(top, dict):
+        candidates.append(top.get("argv"))
+    for argv in candidates:
+        if isinstance(argv, list):
+            return [str(a) for a in argv]
+    return None
+
+
+def _fallback_strings(payload: dict[str, Any]) -> list[str]:
+    """Command/prompt strings scanned when no structured argv is available."""
+    out: list[str] = []
+    tool_input = payload.get("tool_input") or payload.get("toolInput")
+    if isinstance(tool_input, dict):
+        cmd = tool_input.get("command")
+        if isinstance(cmd, str) and cmd.strip():
+            out.append(cmd)
+    prompt = payload.get("prompt")
+    if isinstance(prompt, str) and prompt.strip():
+        out.append(prompt)
+    return out
+
+
+def _env_strings(payload: dict[str, Any]) -> list[str]:
+    """Env assignment keys/values from env dicts (never message text)."""
+    out: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if isinstance(key, str) and key.lower() in {
+                    "env",
+                    "environment",
+                    "env_vars",
+                    "environment_variables",
+                }:
+                    if isinstance(item, dict):
+                        for ek, ev in item.items():
+                            out.append(str(ek))
+                            out.append(str(ev))
+                    elif isinstance(item, list):
+                        out.extend(str(x) for x in item)
+                else:
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(payload)
+    return out
+
+
+def _split_command(text: str) -> list[str] | None:
+    """Tokenize a command string; None when it cannot be parsed."""
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return None
+
+
+def _flag_hits(vec: list[str], policy: dict[str, Any]) -> list[str]:
+    """Exact-flag and git-commit -n hits over the option vector only."""
+    hits: list[str] = []
+    for flag in policy.get("blockedFlags", []):
+        if not isinstance(flag, str) or flag == "-n":
+            continue
+        if flag in vec:
+            hits.append(f"blocked flag {flag}")
+    if re.search(r"(?i)git\s+commit\b[^\n]*\s-n\b", " ".join(vec)):
+        hits.append("blocked flag -n")
+    return hits
+
+
+def _pattern_hits(texts: list[str], policy: dict[str, Any]) -> list[str]:
+    """Pattern hits over the supplied scan texts."""
+    hits: list[str] = []
+    pattern_keys = (
+        "blockedPatterns",
+        "blockedFlagPatterns",
+        "blockedEnvPatterns",
+        "blockedCommandPatterns",
+    )
+    for key in pattern_keys:
+        for pat in policy.get(key, []) or []:
+            if not isinstance(pat, str):
+                continue
+            try:
+                cre = re.compile(pat)
+            except re.error:
+                continue
+            if any(cre.search(t) for t in texts):
+                hits.append(f"blocked pattern ({key})")
+    return hits
 
 
 def has_blocked_env(value: Any, policy: dict[str, Any]) -> bool:
@@ -76,16 +295,31 @@ def has_blocked_env(value: Any, policy: dict[str, Any]) -> bool:
 
 def bypass_reasons(payload: dict[str, Any], policy: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
-    texts = iter_strings(payload)
-    for flag in policy.get("blockedFlags", []):
-        if not isinstance(flag, str):
-            continue
-        if flag == "-n":
-            if any(re.search(r"(?i)git\s+commit\b[^\n]*\s-n\b", t) for t in texts):
-                reasons.append("blocked flag -n")
-            continue
-        if any(flag in t for t in texts):
-            reasons.append(f"blocked flag {flag}")
+
+    argv = _structured_argv(payload)
+    if argv is not None:
+        # Structured argv: check the option vector only. Message values (-m/-F
+        # argument VALUES) are data and are never scanned for flags.
+        vec = option_vector(argv) if is_git_commit(argv) else argv
+        texts = [" ".join(vec)]
+    else:
+        # No structured argv: fall back to scanning command/prompt strings,
+        # parsing git commit argv so quoted -m values stay data.
+        vec: list[str] = []
+        texts: list[str] = []
+        for raw in _fallback_strings(payload):
+            tokens = _split_command(raw)
+            if tokens is None:
+                # Unparseable (unbalanced quotes): scan the raw text, fail closed.
+                texts.append(raw)
+                continue
+            parsed = option_vector(tokens) if is_git_commit(tokens) else tokens
+            vec.extend(parsed)
+            texts.append(" ".join(parsed))
+    texts.extend(_env_strings(payload))
+
+    reasons.extend(_flag_hits(vec, policy))
+    reasons.extend(_pattern_hits(texts, policy))
 
     husky_zero = re.compile(
         r"(?i)(?:^|[\s;])(?:export\s+|env\s+)?HUSKY\s*=\s*['\"]?0['\"]?(?=$|[\s;])"
@@ -102,23 +336,6 @@ def bypass_reasons(payload: dict[str, Any], policy: dict[str, Any]) -> list[str]
         )
         if any(assign.search(t) for t in texts):
             reasons.append(f"blocked legacy {name}")
-
-    pattern_keys = (
-        "blockedPatterns",
-        "blockedFlagPatterns",
-        "blockedEnvPatterns",
-        "blockedCommandPatterns",
-    )
-    for key in pattern_keys:
-        for pat in policy.get(key, []) or []:
-            if not isinstance(pat, str):
-                continue
-            try:
-                cre = re.compile(pat)
-            except re.error:
-                continue
-            if any(cre.search(t) for t in texts):
-                reasons.append(f"blocked pattern ({key})")
 
     skip_assign = re.compile(
         r"(?i)(?:^|[\s;])(?:export\s+|env\s+)?"

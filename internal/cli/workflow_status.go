@@ -134,6 +134,9 @@ func printWorkflowDeliveries(ctx context.Context, stdout io.Writer, repo workflo
 			}
 			if d.ErrorRef != "" {
 				line += " error " + d.ErrorRef
+				if body, err := repo.LoadContent(ctx, d.ErrorRef); err == nil && len(body) > 0 {
+					line += ": " + deliveryErrorInline(string(body))
+				}
 			}
 			fmt.Fprintln(stdout, line)
 		}

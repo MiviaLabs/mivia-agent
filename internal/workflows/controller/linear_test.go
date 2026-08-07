@@ -30,7 +30,7 @@ func TestLinearControllerStartPersistsAdmissionAndOneDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	admittedAt := time.Date(2026, 8, 6, 1, 2, 3, 0, time.UTC)
-	if err := ctrl.SetAdmission(Admission{BaseRef: "main", BaseCommit: "abc123", WorktreeName: "workflow-1", InputDigest: "inputs-digest"}); err != nil {
+	if err := ctrl.SetAdmission(Admission{BaseRef: "main", BaseCommit: "abc123", OriginBaseCommit: "origin-abc123", WorktreeName: "workflow-1", InputDigest: "inputs-digest"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctrl.SetTimeSource(func() time.Time { return admittedAt }); err != nil {
@@ -43,7 +43,7 @@ func TestLinearControllerStartPersistsAdmissionAndOneDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.BaseRef != "main" || got.BaseCommit != "abc123" || got.WorktreeName != "workflow-1" {
+	if got.BaseRef != "main" || got.BaseCommit != "abc123" || got.OriginBaseCommit != "origin-abc123" || got.WorktreeName != "workflow-1" {
 		t.Fatalf("admission = %+v", got)
 	}
 	if got.SnapshotDigest != workflowledger.SnapshotDigest([]byte("snapshot")) || got.InputDigest != "inputs-digest" {
@@ -472,10 +472,13 @@ func TestLinearControllerResumesRecordedAttemptWithoutNewAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A RUNNING attempt is a crash artifact (only a crashed or force-replaced
-	// executor leaves one). Resume must NOT re-execute the same attemptID:
-	// the stale attempt is marked interrupted and a fresh attempt No+1 is
-	// admitted, so the step's agent work cannot be double-recorded under one
-	// attempt while the old executor's fenced writes are discarded.
+	// executor leaves one). This runner has NO join capability, so resume
+	// falls back to the pre-join behavior: the stale attempt is marked
+	// interrupted and a fresh attempt No+1 is admitted with a NEW identity, so
+	// the step's agent work is not double-recorded under one attempt while the
+	// old executor's fenced writes are discarded. (A join-capable runner would
+	// instead JOIN the recorded coordinator run — see
+	// TestLinearControllerJoinsInFlightAttemptOnResume.)
 	if err := repo.CreateStepAttempt(context.Background(), workflowledger.StepAttempt{
 		AttemptID: "wfa-first-1", RunID: ctrl.RunID, StepID: "first", AttemptNo: 1,
 		Status: workflowledger.AttemptStatusRunning, CoordinatorRunID: "coord-existing", TaskID: "task-existing",
@@ -502,6 +505,227 @@ func TestLinearControllerResumesRecordedAttemptWithoutNewAttempt(t *testing.T) {
 	}
 	if attempts[1].AttemptNo != 2 {
 		t.Fatalf("fresh attempt = %+v, want No 2", attempts[1])
+	}
+}
+
+// joinAwareRunner simulates a coordinator whose previously dispatched children
+// can be JOINED by their recorded identity: JoinStep reports the child's
+// terminal outcome without dispatching anything, while RunStep records any
+// fresh dispatch. A missing child reports joined=false (nothing to join).
+type joinAwareRunner struct {
+	mu       sync.Mutex
+	joined   []AgentStepRequest
+	dispatch []AgentStepRequest
+	children map[string]AgentStepResult // by TaskID
+}
+
+func (r *joinAwareRunner) JoinStep(_ context.Context, req AgentStepRequest) (AgentStepResult, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.joined = append(r.joined, req)
+	result, ok := r.children[req.TaskID]
+	if !ok {
+		return AgentStepResult{}, false, nil
+	}
+	// Mirror the production runner: a child that did not complete carries an
+	// error alongside its terminal status.
+	if result.Status != "" && result.Status != "completed" {
+		return result, true, fmt.Errorf("child %s reported %s", req.TaskID, result.Status)
+	}
+	return result, true, nil
+}
+
+func (r *joinAwareRunner) RunStep(_ context.Context, req AgentStepRequest) (AgentStepResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dispatch = append(r.dispatch, req)
+	return AgentStepResult{CoordinatorRunID: req.CoordinatorRunID, TaskID: req.TaskID, EvidenceJSON: []byte(`[]`)}, nil
+}
+
+// TestLinearControllerJoinsInFlightAttemptOnResume: on resume, an in-flight
+// attempt whose recorded coordinator run already completed MUST be joined —
+// the attempt completes with the child's outcome and route and the step is NOT
+// re-executed (no fresh CoordinatorRunID/TaskID, no fresh attempt). This is the
+// ledger contract (recovery.go: recorded attempts are JOINED, never
+// re-dispatched).
+func TestLinearControllerJoinsInFlightAttemptOnResume(t *testing.T) {
+	ctx := context.Background()
+	wf := linearWorkflow(t)
+	repo := workflowledger.NewMemoryRepository()
+	runner := &joinAwareRunner{children: map[string]AgentStepResult{
+		"task-existing": {
+			CoordinatorRunID: "coord-existing", TaskID: "task-existing",
+			Output: json.RawMessage(`{"ok":true}`), EvidenceJSON: []byte(`[]`), Status: "completed",
+		},
+	}}
+	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
+		"first":  {Agent: agents.ResolvedAgent{Name: "one"}},
+		"second": {Agent: agents.ResolvedAgent{Name: "two"}},
+	}, map[string]any{"task": "build"}, "wfr-join-resume", []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err := repo.GetRun(ctx, ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, ctrl.RunID, run.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Seed a RUNNING attempt whose coordinator child already completed.
+	if err := repo.CreateStepAttempt(ctx, workflowledger.StepAttempt{
+		AttemptID: "wfa-first-1", RunID: ctrl.RunID, StepID: "first", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusRunning, CoordinatorRunID: "coord-existing", TaskID: "task-existing",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Resume: the recorded child must be JOINED, not re-dispatched.
+	got, done, err := ctrl.Advance(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done {
+		t.Fatalf("advance = %+v, want non-terminal (routed to second)", got)
+	}
+	if got.ActiveStepID != "second" {
+		t.Fatalf("active step = %q, want second", got.ActiveStepID)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.dispatch) != 0 {
+		t.Fatalf("resume dispatched a fresh child: %+v", runner.dispatch)
+	}
+	if len(runner.joined) != 1 || runner.joined[0].CoordinatorRunID != "coord-existing" || runner.joined[0].TaskID != "task-existing" {
+		t.Fatalf("joined requests = %+v, want the recorded identity", runner.joined)
+	}
+	attempts, err := repo.ListStepAttempts(ctx, ctrl.RunID)
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("attempts = %d, err=%v, want exactly 1 (no fresh attempt)", len(attempts), err)
+	}
+	attempt := attempts[0]
+	if attempt.Status != workflowledger.AttemptStatusSucceeded || attempt.ToStepID != "second" {
+		t.Fatalf("attempt = %+v, want succeeded routed to second", attempt)
+	}
+	if attempt.CoordinatorRunID != "coord-existing" || attempt.TaskID != "task-existing" {
+		t.Fatalf("attempt identity changed after join: %+v", attempt)
+	}
+}
+
+// TestLinearControllerJoinsFailedInFlightChild: a joined child that FAILED
+// completes the attempt as failed with the on_failure route — it is recorded,
+// not re-dispatched.
+func TestLinearControllerJoinsFailedInFlightChild(t *testing.T) {
+	ctx := context.Background()
+	wf := linearWorkflow(t)
+	repo := workflowledger.NewMemoryRepository()
+	runner := &joinAwareRunner{children: map[string]AgentStepResult{
+		"task-existing": {
+			CoordinatorRunID: "coord-existing", TaskID: "task-existing",
+			Output: json.RawMessage(`{"partial":true}`), EvidenceJSON: []byte(`[]`), Status: "failed",
+		},
+	}}
+	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
+		"first":  {Agent: agents.ResolvedAgent{Name: "one"}},
+		"second": {Agent: agents.ResolvedAgent{Name: "two"}},
+	}, map[string]any{"task": "build"}, "wfr-join-failed", []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err := repo.GetRun(ctx, ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, ctrl.RunID, run.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateStepAttempt(ctx, workflowledger.StepAttempt{
+		AttemptID: "wfa-first-1", RunID: ctrl.RunID, StepID: "first", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusRunning, CoordinatorRunID: "coord-existing", TaskID: "task-existing",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, done, err := ctrl.Advance(ctx)
+	if err == nil || !done || got.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("advance = %+v, done=%v, err=%v, want failed terminal", got, done, err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.dispatch) != 0 {
+		t.Fatalf("resume dispatched a fresh child after a failed join: %+v", runner.dispatch)
+	}
+	attempts, err := repo.ListStepAttempts(ctx, ctrl.RunID)
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("attempts = %d, err=%v, want exactly 1 (no fresh attempt)", len(attempts), err)
+	}
+	if attempts[0].Status != workflowledger.AttemptStatusFailed || attempts[0].ToStepID != "failure" {
+		t.Fatalf("attempt = %+v, want failed routed to failure", attempts[0])
+	}
+	if attempts[0].CoordinatorRunID != "coord-existing" || attempts[0].TaskID != "task-existing" {
+		t.Fatalf("attempt identity changed after failed join: %+v", attempts[0])
+	}
+}
+
+// TestLinearControllerRedispatchWhenInFlightChildNeverRan: when the join shows
+// the child never ran (nothing to join), the stale attempt is interrupted and
+// a FRESH attempt with a new coordinator identity is dispatched — the
+// fallback branch of the ledger contract.
+func TestLinearControllerRedispatchWhenInFlightChildNeverRan(t *testing.T) {
+	ctx := context.Background()
+	wf := linearWorkflow(t)
+	repo := workflowledger.NewMemoryRepository()
+	runner := &joinAwareRunner{}
+	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
+		"first":  {Agent: agents.ResolvedAgent{Name: "one"}},
+		"second": {Agent: agents.ResolvedAgent{Name: "two"}},
+	}, map[string]any{"task": "build"}, "wfr-join-never-ran", []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err := repo.GetRun(ctx, ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, ctrl.RunID, run.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateStepAttempt(ctx, workflowledger.StepAttempt{
+		AttemptID: "wfa-first-1", RunID: ctrl.RunID, StepID: "first", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusRunning, CoordinatorRunID: "coord-never", TaskID: "task-never",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ctrl.Advance(ctx); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.joined) != 1 || runner.joined[0].TaskID != "task-never" {
+		t.Fatalf("joined requests = %+v, want the recorded identity", runner.joined)
+	}
+	if len(runner.dispatch) != 1 {
+		t.Fatalf("dispatch requests = %d, want 1 fresh dispatch", len(runner.dispatch))
+	}
+	if runner.dispatch[0].CoordinatorRunID == "coord-never" || runner.dispatch[0].TaskID == "task-never" {
+		t.Fatalf("fresh dispatch reused the stale identity: %+v", runner.dispatch[0])
+	}
+	attempts, err := repo.ListStepAttempts(ctx, ctrl.RunID)
+	if err != nil || len(attempts) != 2 {
+		t.Fatalf("attempts = %d, err=%v, want 2 (interrupted stale + fresh)", len(attempts), err)
+	}
+	if attempts[0].Status != workflowledger.AttemptStatusInterrupted || attempts[0].AttemptNo != 1 {
+		t.Fatalf("stale attempt = %+v, want interrupted No 1", attempts[0])
+	}
+	if attempts[1].AttemptNo != 2 || !workflowledger.IsTerminalAttemptStatus(attempts[1].Status) {
+		t.Fatalf("fresh attempt = %+v, want terminal No 2", attempts[1])
 	}
 }
 

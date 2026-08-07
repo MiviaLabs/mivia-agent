@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -57,7 +58,7 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 	if err := json.Unmarshal(req.Input, &taskPrompt); err != nil {
 		return nil, fmt.Errorf("subagent %q: invalid task input: %w", req.Name, err)
 	}
-	if taskPrompt == "" {
+	if strings.TrimSpace(taskPrompt) == "" {
 		return nil, fmt.Errorf("subagent %q: empty task prompt", req.Name)
 	}
 

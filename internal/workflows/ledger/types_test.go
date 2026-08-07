@@ -502,20 +502,21 @@ func TestSnapshotJSONRunSnapshot(t *testing.T) {
 	deadline := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 	finished := time.Date(2025, 6, 1, 13, 0, 0, 0, time.UTC)
 	orig := RunSnapshot{
-		RunID:          "run_1",
-		WorkflowName:   "checkout",
-		WorkflowDigest: "wf-digest",
-		SnapshotDigest: "snap-digest",
-		InputDigest:    "input-digest",
-		Status:         RunStatusSucceeded,
-		ActiveStepID:   "success",
-		BaseRef:        "refs/heads/main",
-		BaseCommit:     "abc123",
-		WorktreeName:   "wt-1",
-		Version:        9,
-		StartedAt:      time.Date(2025, 6, 1, 11, 0, 0, 0, time.UTC),
-		DeadlineAt:     &deadline,
-		FinishedAt:     &finished,
+		RunID:            "run_1",
+		WorkflowName:     "checkout",
+		WorkflowDigest:   "wf-digest",
+		SnapshotDigest:   "snap-digest",
+		InputDigest:      "input-digest",
+		Status:           RunStatusSucceeded,
+		ActiveStepID:     "success",
+		BaseRef:          "refs/heads/main",
+		BaseCommit:       "abc123",
+		OriginBaseCommit: "origin-abc123",
+		WorktreeName:     "wt-1",
+		Version:          9,
+		StartedAt:        time.Date(2025, 6, 1, 11, 0, 0, 0, time.UTC),
+		DeadlineAt:       &deadline,
+		FinishedAt:       &finished,
 	}
 
 	data, err := json.Marshal(orig)
@@ -536,7 +537,7 @@ func TestSnapshotJSONRunSnapshot(t *testing.T) {
 	for _, want := range []string{
 		"run_id", "workflow_name", "workflow_digest", "snapshot_digest",
 		"input_digest", "status", "active_step_id", "base_ref", "base_commit",
-		"worktree_name", "version", "started_at", "deadline_at", "finished_at",
+		"origin_base_commit", "worktree_name", "version", "started_at", "deadline_at", "finished_at",
 	} {
 		if _, ok := keys[want]; !ok {
 			t.Errorf("RunSnapshot JSON missing key %q: %s", want, data)

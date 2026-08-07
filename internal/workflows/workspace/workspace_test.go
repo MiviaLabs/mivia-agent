@@ -372,6 +372,59 @@ func TestResolveWorktreeRequiresRepository(t *testing.T) {
 	}
 }
 
+func TestAdmissionRecordsOriginBaseCommit(t *testing.T) {
+	// Local master is ahead of origin/master: origin/master sits at commit A,
+	// local master at commit B. Admission must record BOTH the local HEAD as
+	// BaseCommit AND the origin tracking ref as OriginBaseCommit, so delivery
+	// can later verify against the remote base instead of the local branch.
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare")
+
+	root := initRepo(t) // master at commit A
+	runGit(t, root, "branch", "-m", "master")
+	runGit(t, root, "remote", "add", "origin", bare)
+	runGit(t, root, "push", "-u", "origin", "master")
+	runGit(t, root, "fetch", "origin") // guarantee refs/remotes/origin/master exists
+
+	originCommit, err := vcs.ResolveCommit(context.Background(), root, "refs/remotes/origin/master")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, root, "next.txt", "next")
+	runGit(t, root, "add", "next.txt")
+	runGit(t, root, "commit", "-m", "next")
+	localCommit, err := vcs.CurrentCommit(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if localCommit == originCommit {
+		t.Fatal("precondition: local master must be ahead of origin/master")
+	}
+
+	identity, err := Ensure(context.Background(), root, "run-origin-base", IsolationWorktree)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if identity.BaseCommit != localCommit {
+		t.Fatalf("BaseCommit = %q, want local HEAD %q", identity.BaseCommit, localCommit)
+	}
+	if identity.OriginBaseCommit != originCommit {
+		t.Fatalf("OriginBaseCommit = %q, want origin/master %q", identity.OriginBaseCommit, originCommit)
+	}
+}
+
+func TestAdmissionOriginBaseCommitEmptyWithoutRemoteRef(t *testing.T) {
+	root := initRepo(t) // no origin remote, so refs/remotes/origin/<base> is absent
+	identity, err := Ensure(context.Background(), root, "run-no-origin", IsolationWorktree)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if identity.OriginBaseCommit != "" {
+		t.Fatalf("OriginBaseCommit = %q, want empty when no remote ref is present", identity.OriginBaseCommit)
+	}
+}
+
 func TestValidateRetainedBranchHonorsCanceledContext(t *testing.T) {
 	root := initRepo(t)
 	identity := Identity{MainRoot: root, BaseCommit: "HEAD", WorktreeName: "workflow-run-canceled", Branch: "wf/workflow-run-canceled"}

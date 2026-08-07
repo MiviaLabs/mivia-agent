@@ -46,7 +46,7 @@ func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.T
 	return c.createAndStartRunWithID(ctx, newRunID(), tasks, key, fingerprint, true)
 }
 
-func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string, tasks []subagents.Task, key, fingerprint string, recoverDuplicate bool) (*RunHandle, error) {
+func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string, tasks []subagents.Task, key, fingerprint string, recoverDuplicate bool, opts ...runHandleOption) (*RunHandle, error) {
 	now := c.nowLocked()
 	run := ledger.RunSnapshot{RunID: runID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Labels: map[string]string{}, Tasks: make([]ledger.TaskSnapshot, 0, len(tasks))}
 	if err := c.repo.CreateRun(ctx, key, run); err != nil {
@@ -89,7 +89,7 @@ func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string,
 		ledgerTasks[i] = task.task
 		ledgerTasks[i].ID = task.taskID
 	}
-	h := c.newRunHandle(runID, key, attempts, fingerprint, false)
+	h := c.newRunHandle(runID, key, attempts, fingerprint, false, opts...)
 	// Stamp pool context before starting the run goroutine so concurrent
 	// referral spawns never race the first poolCtx write (plan 53.04).
 	h.mu.Lock()
@@ -223,13 +223,29 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 	return namedTask{task: task, taskID: taskID, displayName: displayName, attemptID: attemptID}, nil
 }
 
-func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string, fingerprint string, recovered bool) *RunHandle {
+// runHandleOption mutates a RunHandle at construction time. Options apply
+// before the handle is registered, so they are visible to every pool worker
+// the moment the run starts.
+type runHandleOption func(*RunHandle)
+
+// withNonInteractiveParent marks a run whose parent is a non-interactive
+// controller that can never answer child questions. ParkQuestion then declines
+// the run's child questions immediately at park time (generic mechanism; the
+// coordinator never assumes who the parent is).
+func withNonInteractiveParent() runHandleOption {
+	return func(h *RunHandle) { h.nonInteractiveParent = true }
+}
+
+func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string, fingerprint string, recovered bool, opts ...runHandleOption) *RunHandle {
 	poolCtx, cancel := context.WithCancel(context.Background())
 	h := &RunHandle{
 		runID: runID, done: make(chan struct{}), cancel: cancel, poolCtx: poolCtx,
 		attempts: attempts, requestFingerprint: fingerprint, recovered: recovered,
 		cancelDone: make(chan struct{}), owner: c,
 		mailboxes: newRunMailboxes(c.mailboxCapacity),
+	}
+	for _, opt := range opts {
+		opt(h)
 	}
 	c.handlesMu.Lock()
 	c.handlesByRun[runID] = h

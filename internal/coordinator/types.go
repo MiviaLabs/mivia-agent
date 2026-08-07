@@ -31,6 +31,11 @@ type RunHandle struct {
 	cancelDone         chan struct{}
 	cancellationErr    error
 	owner              *coordinator
+	// nonInteractiveParent marks a run whose parent is a non-interactive
+	// controller that can never answer child questions (set at construction;
+	// immutable thereafter). ParkQuestion declines such runs' child questions
+	// immediately at park time instead of parking and burning wait_seconds.
+	nonInteractiveParent bool
 	// mailboxes is parent→child delivery (plan 53.03). Context-only; never
 	// fingerprinted. Guarded by its own mutex (mailboxes.mu), not h.mu.
 	mailboxes *runMailboxes
@@ -39,6 +44,19 @@ type RunHandle struct {
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.done }
+
+// isNonInteractiveParent reports whether the run's parent cannot answer child
+// questions. Locking accessor: the flag is written at construction before the
+// run goroutine starts and never mutated, but ParkQuestion may be reached from
+// any pool worker, so reads go through h.mu like poolContext().
+func (h *RunHandle) isNonInteractiveParent() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.nonInteractiveParent
+}
 
 // poolContext returns the run's pool context under lock so concurrent
 // referral tasks do not race executeResumedRun's rewrite of poolCtx.

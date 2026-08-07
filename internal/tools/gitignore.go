@@ -86,8 +86,12 @@ func (v ignoreView) ShouldIgnoreDir(name, rel string) bool {
 	if v.m == nil || v.root == "" {
 		return false
 	}
-	dirPath := filepath.Join(v.root, rel) + string(os.PathSeparator)
-	return v.m.Match(strings.ReplaceAll(dirPath, string(os.PathSeparator), "/"))
+	// gitignore-go patterns are relative to the workspace root (anchored or
+	// any-depth); matching root-joined absolute paths would collapse every path
+	// when the root itself sits inside an ignored prefix (e.g. a worktree at
+	// <repo>/.mivia/worktrees/wt with a ".mivia/worktrees/" rule). Match the
+	// workspace-relative path instead.
+	return v.m.Match(filepath.ToSlash(rel) + "/")
 }
 
 // ShouldIgnoreFile reports whether a file path matches root-gitignore rules.
@@ -97,7 +101,8 @@ func (v ignoreView) ShouldIgnoreFile(name, rel string) bool {
 	if v.m == nil || v.root == "" {
 		return false
 	}
-	return v.m.Match(filepath.Join(v.root, rel))
+	// Match the workspace-relative path (see ShouldIgnoreDir).
+	return v.m.Match(rel)
 }
 
 // Match reports whether absPath should be excluded according to .gitignore
@@ -118,7 +123,13 @@ func (g *gitignoreMatcher) MatchRel(relPath string) bool {
 	if g == nil || g.root == "" {
 		return false
 	}
-	return g.Match(filepath.Join(g.root, relPath))
+	v := g.snapshot()
+	if v.m == nil {
+		return false
+	}
+	// Match the workspace-relative path, not the root-joined absolute path
+	// (see ShouldIgnoreDir).
+	return v.m.Match(relPath)
 }
 
 // IsDir returns true if the directory at relPath matches a directory-only
@@ -131,8 +142,9 @@ func (g *gitignoreMatcher) IsDir(relPath string) bool {
 	if v.m == nil {
 		return false
 	}
-	dirPath := filepath.Join(g.root, relPath) + string(os.PathSeparator)
-	return v.m.Match(strings.ReplaceAll(dirPath, string(os.PathSeparator), "/"))
+	// Match the workspace-relative path with a trailing slash for the
+	// directory-only pattern form (see ShouldIgnoreDir).
+	return v.m.Match(filepath.ToSlash(relPath) + "/")
 }
 
 // Patterns returns the name-pattern floor (for tests and diagnostics).
