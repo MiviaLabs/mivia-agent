@@ -283,11 +283,25 @@ func TestAgentStepTransientRetryThroughRealCoordinator(t *testing.T) {
 	if attempts[0].CoordinatorRunID == failedRun.RunID {
 		t.Fatalf("attempt CoordinatorRunID = %q; the retry must not record the orphaned failed run", failedRun.RunID)
 	}
+	assertRetryExecutionHistory(t, attempts[0], failedRun.RunID, okRun.RunID)
 	tasks, err := coordRepo.ListTasks(context.Background(), okRun.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tasks) != 1 || tasks[0].TaskID != attempts[0].TaskID {
 		t.Fatalf("coordinator retry tasks = %+v, want the attempt's TaskID %q", tasks, attempts[0].TaskID)
+	}
+}
+
+func assertRetryExecutionHistory(t *testing.T, attempt workflowledger.StepAttempt, failedRunID, completedRunID string) {
+	t.Helper()
+	if len(attempt.Executions) != 2 {
+		t.Fatalf("execution history = %+v, want first and retry child", attempt.Executions)
+	}
+	if attempt.Executions[0].CoordinatorRunID != failedRunID || attempt.Executions[1].CoordinatorRunID != completedRunID {
+		t.Fatalf("execution run history = %+v, want failed=%q then completed=%q", attempt.Executions, failedRunID, completedRunID)
+	}
+	if attempt.Executions[1].TaskID != attempt.TaskID {
+		t.Fatalf("retry execution task = %q, want current task %q", attempt.Executions[1].TaskID, attempt.TaskID)
 	}
 }

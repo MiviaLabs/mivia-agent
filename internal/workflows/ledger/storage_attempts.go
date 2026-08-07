@@ -38,6 +38,11 @@ func (s *StorageRepository) CreateStepAttempt(ctx context.Context, attempt StepA
 	rec.Status = AttemptStatusRunning
 	rec.Version = 1
 	rec.StartedAt = now
+	if len(rec.Executions) == 0 && rec.CoordinatorRunID != "" && rec.TaskID != "" {
+		rec.Executions = []StepExecution{{
+			ExecutionNo: 1, CoordinatorRunID: rec.CoordinatorRunID, TaskID: rec.TaskID, StartedAt: now,
+		}}
+	}
 	prevActive := p.ActiveStepID
 	p.Attempts = append(p.Attempts, rec)
 	// Mirror RebuildProjection's step-candidate rule exactly: an attempt
@@ -366,21 +371,37 @@ func (s *StorageRepository) SetStepAttemptExecution(ctx context.Context, runID, 
 		return ErrNotFound
 	}
 	cur := p.Attempts[idx]
-	if cur.CoordinatorRunID == coordinatorRunID && cur.TaskID == taskID {
+	if len(cur.Executions) > 0 {
+		latest := cur.Executions[len(cur.Executions)-1]
+		if latest.CoordinatorRunID == coordinatorRunID && latest.TaskID == taskID {
+			s.mu.Unlock()
+			return nil
+		}
+	} else if cur.CoordinatorRunID == coordinatorRunID && cur.TaskID == taskID {
 		s.mu.Unlock()
 		return nil
 	}
-	prevRun, prevTask := cur.CoordinatorRunID, cur.TaskID
-	p.Attempts[idx].CoordinatorRunID = coordinatorRunID
-	p.Attempts[idx].TaskID = taskID
+	prev := cur.Clone()
+	if len(cur.Executions) == 0 && cur.CoordinatorRunID != "" && cur.TaskID != "" {
+		cur.Executions = append(cur.Executions, StepExecution{
+			ExecutionNo: 1, CoordinatorRunID: cur.CoordinatorRunID, TaskID: cur.TaskID, StartedAt: cur.StartedAt,
+		})
+	}
+	executionNo := len(cur.Executions) + 1
+	cur.Executions = append(cur.Executions, StepExecution{
+		ExecutionNo: executionNo, CoordinatorRunID: coordinatorRunID, TaskID: taskID, StartedAt: s.now(),
+	})
+	cur.CoordinatorRunID = coordinatorRunID
+	cur.TaskID = taskID
+	p.Attempts[idx] = cur
 	s.proj[runID] = p
 	s.mu.Unlock()
-	now := s.now()
-	payload, err := marshalAttemptExecution(attemptExecutionPayload{AttemptID: attemptID, CoordinatorRunID: coordinatorRunID, TaskID: taskID, CreatedAt: now})
+	now := cur.Executions[len(cur.Executions)-1].StartedAt
+	payload, err := marshalAttemptExecution(attemptExecutionPayload{AttemptID: attemptID, ExecutionNo: executionNo, CoordinatorRunID: coordinatorRunID, TaskID: taskID, CreatedAt: now})
 	if err != nil {
 		s.rollbackAndRebuild(ctx, runID, func() {
 			q := s.proj[runID]
-			q.Attempts[idx].CoordinatorRunID, q.Attempts[idx].TaskID = prevRun, prevTask
+			q.Attempts[idx] = prev
 			s.proj[runID] = q
 		})
 		return err
@@ -388,7 +409,7 @@ func (s *StorageRepository) SetStepAttemptExecution(ctx context.Context, runID, 
 	evt := storage.Event{ID: EventID(runID, eventKindAttemptExecution, attemptID, coordinatorRunID, taskID), RunID: runID, Sequence: int(s.nextSequence(runID)), Kind: eventKindAttemptExecution, Payload: payload}
 	rollback := func() {
 		q := s.proj[runID]
-		q.Attempts[idx].CoordinatorRunID, q.Attempts[idx].TaskID = prevRun, prevTask
+		q.Attempts[idx] = prev
 		s.proj[runID] = q
 	}
 	return s.appendEvent(ctx, evt, rollback)

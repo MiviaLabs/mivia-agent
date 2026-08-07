@@ -79,14 +79,23 @@ func TestStorageRepository_SetStepAttemptExecutionPersistsRetryIdentity(t *testi
 			run := runID(t)
 			snap, raw := newRun(t, run)
 			requireErr(t, repo.CreateRun(ctx, snap, raw), nil, "CreateRun")
-			requireErr(t, repo.CreateStepAttempt(ctx, StepAttempt{AttemptID: "att-1", RunID: run, StepID: "plan", AttemptNo: 1}), nil, "CreateStepAttempt")
+			requireErr(t, repo.CreateStepAttempt(ctx, StepAttempt{AttemptID: "att-1", RunID: run, StepID: "plan", AttemptNo: 1, CoordinatorRunID: "coord-first", TaskID: "task-first"}), nil, "CreateStepAttempt")
 			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-retry", "task-retry"), nil, "SetStepAttemptExecution")
+			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-final", "task-final"), nil, "SetStepAttemptExecution")
 			got, err := repo.GetStepAttempt(ctx, run, "att-1")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.CoordinatorRunID != "coord-retry" || got.TaskID != "task-retry" {
-				t.Fatalf("execution identity = %q/%q, want coord-retry/task-retry", got.CoordinatorRunID, got.TaskID)
+			if got.CoordinatorRunID != "coord-final" || got.TaskID != "task-final" {
+				t.Fatalf("execution identity = %q/%q, want coord-final/task-final", got.CoordinatorRunID, got.TaskID)
+			}
+			if len(got.Executions) != 3 {
+				t.Fatalf("execution history length = %d, want 3", len(got.Executions))
+			}
+			for i, want := range []struct{ run, task string }{{"coord-first", "task-first"}, {"coord-retry", "task-retry"}, {"coord-final", "task-final"}} {
+				if got.Executions[i].ExecutionNo != i+1 || got.Executions[i].CoordinatorRunID != want.run || got.Executions[i].TaskID != want.task {
+					t.Fatalf("execution %d = %+v, want %s/%s", i+1, got.Executions[i], want.run, want.task)
+				}
 			}
 		})
 	}

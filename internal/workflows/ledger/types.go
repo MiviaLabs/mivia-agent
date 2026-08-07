@@ -154,31 +154,43 @@ func (s RunSnapshot) Clone() RunSnapshot {
 }
 
 type StepAttempt struct {
-	AttemptID        string        `json:"attempt_id"`
-	RunID            string        `json:"run_id"`
-	StepID           string        `json:"step_id"`
-	AttemptNo        int           `json:"attempt_no"`
-	Status           AttemptStatus `json:"status"`
-	CoordinatorRunID string        `json:"coordinator_run_id,omitempty"`
-	TaskID           string        `json:"task_id,omitempty"`
-	OutputRef        string        `json:"output_ref,omitempty"`
-	OutputDigest     string        `json:"output_digest,omitempty"`
-	ErrorRef         string        `json:"error_ref,omitempty"`
-	ToStepID         string        `json:"to_step_id,omitempty"`
-	TransitionIndex  int           `json:"transition_index,omitempty"`
-	MatchDigest      string        `json:"match_digest,omitempty"`
-	PromptRef        string        `json:"prompt_ref,omitempty"`
-	DecisionJSON     []byte        `json:"decision_json,omitempty"`
-	EvidenceJSON     []byte        `json:"evidence_json,omitempty"`
-	StartedAt        time.Time     `json:"started_at"`
-	FinishedAt       *time.Time    `json:"finished_at,omitempty"`
-	Version          uint64        `json:"version"`
+	AttemptID        string          `json:"attempt_id"`
+	RunID            string          `json:"run_id"`
+	StepID           string          `json:"step_id"`
+	AttemptNo        int             `json:"attempt_no"`
+	Status           AttemptStatus   `json:"status"`
+	CoordinatorRunID string          `json:"coordinator_run_id,omitempty"`
+	TaskID           string          `json:"task_id,omitempty"`
+	Executions       []StepExecution `json:"executions,omitempty"`
+	OutputRef        string          `json:"output_ref,omitempty"`
+	OutputDigest     string          `json:"output_digest,omitempty"`
+	ErrorRef         string          `json:"error_ref,omitempty"`
+	ToStepID         string          `json:"to_step_id,omitempty"`
+	TransitionIndex  int             `json:"transition_index,omitempty"`
+	MatchDigest      string          `json:"match_digest,omitempty"`
+	PromptRef        string          `json:"prompt_ref,omitempty"`
+	DecisionJSON     []byte          `json:"decision_json,omitempty"`
+	EvidenceJSON     []byte          `json:"evidence_json,omitempty"`
+	StartedAt        time.Time       `json:"started_at"`
+	FinishedAt       *time.Time      `json:"finished_at,omitempty"`
+	Version          uint64          `json:"version"`
+}
+
+// StepExecution identifies one coordinator child that runs a step attempt.
+// Executions remain ordered by ExecutionNo. The parent attempt mirrors the
+// newest execution in CoordinatorRunID and TaskID for compatibility.
+type StepExecution struct {
+	ExecutionNo      int       `json:"execution_no"`
+	CoordinatorRunID string    `json:"coordinator_run_id"`
+	TaskID           string    `json:"task_id"`
+	StartedAt        time.Time `json:"started_at"`
 }
 
 // Clone returns a deep copy.
 func (s StepAttempt) Clone() StepAttempt {
 	clone := s
 	clone.PromptRef = s.PromptRef
+	clone.Executions = cloneStepExecutions(s.Executions)
 	clone.DecisionJSON = append([]byte(nil), s.DecisionJSON...)
 	clone.EvidenceJSON = append([]byte(nil), s.EvidenceJSON...)
 	if s.FinishedAt != nil {
@@ -186,6 +198,10 @@ func (s StepAttempt) Clone() StepAttempt {
 		clone.FinishedAt = &t
 	}
 	return clone
+}
+
+func cloneStepExecutions(in []StepExecution) []StepExecution {
+	return append([]StepExecution(nil), in...)
 }
 
 // AttemptOutcome is the terminal result of one attempt, recorded atomically

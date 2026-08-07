@@ -93,6 +93,7 @@ type attemptPromptPayload struct {
 
 type attemptExecutionPayload struct {
 	AttemptID        string    `json:"attempt_id"`
+	ExecutionNo      int       `json:"execution_no,omitempty"`
 	CoordinatorRunID string    `json:"coordinator_run_id"`
 	TaskID           string    `json:"task_id"`
 	CreatedAt        time.Time `json:"created_at"`
