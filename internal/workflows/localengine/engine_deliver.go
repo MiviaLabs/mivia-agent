@@ -138,6 +138,15 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	// would fail against an invalid empty path.
 	gitCtx, err := e.deliveryGitCtx(ctx, run)
 	if err != nil {
+		// A deliveryGitCtx refusal is permanent (same contract as delivery.Deliver
+		// refusals): settle the run to delivery_failed so it does not wedge in
+		// delivery_pending forever.
+		if delivery.IsRefusal(err) {
+			if fresh, getErr := e.Repo.GetRun(ctx, runID); getErr == nil {
+				_ = e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
+			}
+			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
+		}
 		return agenttools.DeliverResult{}, err
 	}
 	dreq := delivery.Request{

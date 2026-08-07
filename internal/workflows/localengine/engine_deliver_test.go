@@ -292,6 +292,35 @@ func TestEngineResumeRecreatesRunWorktree(t *testing.T) {
 	}
 }
 
+// TestEngineDeliverRefusalWithoutWorktree is the regression test for the
+// wedged-delivery bug: a deliveryGitCtx refusal (here a run with no recorded
+// worktree) returned as a plain error, so the run stayed in delivery_pending
+// forever. Engine.Deliver must settle it: Refused=true with status
+// delivery_failed, and the ledger run must be terminal delivery_failed.
+func TestEngineDeliverRefusalWithoutWorktree(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	run := createDeliveryPendingRun(t, repo, workflowledger.RunSnapshot{
+		RunID: "wfr-test", WorkflowName: "deliver-me", WorkflowDigest: "digest",
+		ActiveStepID: "success", BaseRef: "main", BaseCommit: "deadbeef",
+	})
+	engine := &localengine.Engine{WorkspaceRoot: t.TempDir(), Repo: repo}
+
+	res, err := engine.Deliver(context.Background(), run.RunID, true)
+	if err != nil {
+		t.Fatalf("Engine.Deliver: %v", err)
+	}
+	if !res.Refused || res.Status != string(workflowledger.RunStatusDeliveryFailed) {
+		t.Fatalf("deliver result = %+v, want Refused=true status=delivery_failed", res)
+	}
+	fresh, err := repo.GetRun(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Status != workflowledger.RunStatusDeliveryFailed {
+		t.Fatalf("run status = %q, want delivery_failed", fresh.Status)
+	}
+}
+
 func assertWorktreeHEAD(t *testing.T, root, want string) {
 	t.Helper()
 	if got := runGitOutT(t, root, "rev-parse", "HEAD"); got != want {
