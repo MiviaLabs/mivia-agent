@@ -18,6 +18,7 @@ import (
 type workflowFailureRepository struct {
 	workflowledger.Repository
 	clearErr     error
+	takeoverErr  error
 	casErr       error
 	getErr       error
 	failGetAfter int
@@ -29,6 +30,13 @@ func (r *workflowFailureRepository) ClearRunClaim(ctx context.Context, runID str
 		return r.clearErr
 	}
 	return r.Repository.ClearRunClaim(ctx, runID)
+}
+
+func (r *workflowFailureRepository) TakeoverRunClaim(ctx context.Context, runID, holder string) error {
+	if r.takeoverErr != nil {
+		return r.takeoverErr
+	}
+	return r.Repository.TakeoverRunClaim(ctx, runID, holder)
 }
 
 func (r *workflowFailureRepository) CompareAndSetRunStatus(ctx context.Context, runID string, version uint64, status workflowledger.RunStatus, finishedAt *time.Time) error {

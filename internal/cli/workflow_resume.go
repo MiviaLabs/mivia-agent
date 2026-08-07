@@ -111,23 +111,13 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	return err
 }
 
-// prepareWorkflowResumeExecution handles the shared resume handoff. It takes
-// an expired lease when needed, clears the temporary handoff claim, and joins
-// every recorded child before the controller starts a replacement step.
+// prepareWorkflowResumeExecution handles the shared resume handoff. It claims
+// the run with the final controller holder before it joins recorded children.
 func prepareWorkflowResumeExecution(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID string, force bool, stdout io.Writer) error {
-	if !force {
-		err := repo.TakeoverExpiredRunClaim(ctx, runID, "", workflowledger.DefaultClaimLease)
-		if err != nil && !errors.Is(err, workflowledger.ErrClaimNotHeld) {
-			return fmt.Errorf("workflow run %q is still active; retry after the claim lease expires or pass --force after the prior executor stopped", runID)
-		}
-	}
-	if err := repo.ClearRunClaim(ctx, runID); err != nil {
-		return fmt.Errorf("clear interrupted workflow claim: %w", err)
-	}
 	if built.Controller == nil {
 		return joinInFlightAttempts(ctx, built, repo, runID, stdout)
 	}
-	if err := repo.ClaimRun(ctx, runID, built.Controller.Holder); err != nil {
+	if err := claimWorkflowResumeHandoff(ctx, repo, runID, built.Controller.Holder, force); err != nil {
 		return fmt.Errorf("claim workflow resume handoff: %w", err)
 	}
 	if err := joinInFlightAttempts(ctx, built, repo, runID, stdout); err != nil {
@@ -135,6 +125,22 @@ func prepareWorkflowResumeExecution(ctx context.Context, built workflowControlle
 		return err
 	}
 	return nil
+}
+
+// claimWorkflowResumeHandoff acquires the final controller claim without an
+// unowned clear-and-claim window. A forced resume replaces the claim atomically.
+func claimWorkflowResumeHandoff(ctx context.Context, repo workflowledger.Repository, runID, holder string, force bool) error {
+	if force {
+		return repo.TakeoverRunClaim(ctx, runID, holder)
+	}
+	err := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
+	if errors.Is(err, workflowledger.ErrClaimNotHeld) {
+		err = repo.ClaimRun(ctx, runID, holder)
+	}
+	if errors.Is(err, workflowledger.ErrClaimHeld) {
+		return fmt.Errorf("workflow run %q is still active; retry after the claim lease expires or pass --force after the prior executor stopped", runID)
+	}
+	return err
 }
 
 // joinInFlightAttempts consumes PlanResume.AttemptsInFlight: it joins each

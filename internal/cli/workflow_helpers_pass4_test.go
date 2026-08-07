@@ -68,7 +68,10 @@ func TestExecuteWorkflowResumeInjectedFailures(t *testing.T) {
 		}
 		workflowResumeInstallHooks = func(string, bool) (func(), error) { return func() {}, nil }
 		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
-			return workflowControllerBuild{Dispatcher: workflowTestDispatcher{}}, nil
+			return workflowControllerBuild{
+				Controller: &controller.LinearController{Holder: "resume-test"},
+				Dispatcher: workflowTestDispatcher{},
+			}, nil
 		}
 		workflowResumeSetAdmission = func(workflowControllerBuild) error { return nil }
 		workflowResumeSetForce = func(workflowControllerBuild) error { return nil }
@@ -142,10 +145,10 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 		}
 	})
 	t.Run("claim", func(t *testing.T) {
-		failing := &workflowFailureRepository{Repository: repo, clearErr: sentinel}
+		failing := &workflowFailureRepository{Repository: repo, takeoverErr: sentinel}
 		reset(failing)
 		err := executeWorkflowResume(run.RunID, root, configPath, true, io.Discard, io.Discard)
-		if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "clear interrupted") {
+		if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "claim workflow resume handoff") {
 			t.Fatalf("claim error = %v", err)
 		}
 	})
