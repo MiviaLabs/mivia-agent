@@ -16,7 +16,9 @@ func Execute(args []string) error {
 		return nil
 	}
 	switch args[0] {
-	case "version", "--version", "-V":
+	case "version":
+		return runVersion(args[1:])
+	case "--version", "-V":
 		fmt.Println(version.String())
 		return nil
 	case "help", "--help", "-h":
@@ -38,6 +40,22 @@ func Execute(args []string) error {
 		return runWorktree(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (try %s help)", args[0], version.Binary)
+	}
+}
+
+// runVersion handles the "version" subcommand with optional --json flag.
+func runVersion(args []string) error {
+	switch {
+	case len(args) == 0:
+		fmt.Println(version.String())
+		return nil
+	case len(args) == 1 && args[0] == "--json":
+		fmt.Println(version.JSONString())
+		return nil
+	case len(args) > 1 && args[0] == "--json":
+		return fmt.Errorf("unexpected arguments after --json: %v", args[1:])
+	default:
+		return fmt.Errorf("unknown argument %q (try \"mivia version --json\")", args[0])
 	}
 }
 
@@ -69,7 +87,7 @@ Usage:
   %s worktree create <name> [--branch ref] [--workspace dir]
   %s worktree list [--workspace dir]
   %s worktree remove <name> [--workspace dir]
-  %s version
+  %s version [--json]
   %s help
 
 Defaults: provider deepseek, model deepseek-v4-flash, tools ON (coding agent)
