@@ -11,6 +11,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
+// syncFile is the sync function used by writeMetaJSON. Exposed as a package-level
+// variable so tests can replace it with a tracking wrapper to verify Sync is called.
+var syncFile = (*os.File).Sync
+
 // --- File I/O ---
 
 // writeJSONL writes messages as JSONL (one JSON object per line).
@@ -46,6 +50,12 @@ func writeMetaJSON(dir string, meta sessionMeta) error {
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(meta); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	// Sync to ensure durability before rename (matches writeJSONL contract).
+	if err := syncFile(f); err != nil {
 		f.Close()
 		os.Remove(tmpPath)
 		return err
