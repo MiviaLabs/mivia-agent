@@ -147,16 +147,24 @@ func TestPlanResumeTerminalRun(t *testing.T) {
 	}
 }
 
-// TestPlanResumeInFlightAttempt: a pending recorded attempt is returned in
-// AttemptsInFlight with its CoordinatorRunID/TaskID preserved (the JOIN
-// evidence), and NextAttemptNo advances.
+// TestPlanResumeInFlightAttempt: a running (non-terminal) recorded attempt is
+// returned in AttemptsInFlight with its CoordinatorRunID/TaskID preserved (the
+// JOIN evidence) and the ledger's authoritative status (Running) preserved,
+// and NextAttemptNo advances.
 func TestPlanResumeInFlightAttempt(t *testing.T) {
 	repo := newTestRepo(t)
 	runID := "wfr-inflight-1"
 	createRun(t, repo, runID)
 	casRunStatus(t, repo, runID, RunStatusRunning)
 
-	want := createAttempt(t, repo, runID, "plan", 1, "run-abc", "task-1")
+	created := createAttempt(t, repo, runID, "plan", 1, "run-abc", "task-1")
+	// Fetch the stored attempt: CreateStepAttempt stamps Status=Running,
+	// so the plan must return Running (the ledger's authoritative status),
+	// not Pending (the in-memory struct before creation).
+	want, err := repo.GetStepAttempt(context.Background(), runID, created.AttemptID)
+	if err != nil {
+		t.Fatalf("GetStepAttempt(%q, %q): %v", runID, created.AttemptID, err)
+	}
 
 	plan, err := PlanResume(context.Background(), repo, runID)
 	if err != nil {
@@ -169,6 +177,9 @@ func TestPlanResumeInFlightAttempt(t *testing.T) {
 		t.Fatalf("len(AttemptsInFlight) = %d, want 1", len(plan.AttemptsInFlight))
 	}
 	assertAttemptEquals(t, plan.AttemptsInFlight[0], want)
+	if plan.AttemptsInFlight[0].Status != AttemptStatusRunning {
+		t.Errorf("in-flight status = %q, want %q (ledger authority)", plan.AttemptsInFlight[0].Status, AttemptStatusRunning)
+	}
 	if plan.NextAttemptNo != 2 {
 		t.Errorf("NextAttemptNo = %d, want 2", plan.NextAttemptNo)
 	}
@@ -374,5 +385,39 @@ func TestPlanResumeRunActiveStepReflectsDerivedStep(t *testing.T) {
 	}
 	if plan.Terminal {
 		t.Errorf("Terminal = true, want false")
+	}
+}
+
+// TestPlanResumePreservesRunningStatus proves that PlanResume preserves the
+// ledger's authoritative attempt status (Running) for in-flight attempts,
+// not the pre-creation in-memory status (Pending). This matters for
+// consumers that use the plan's status to decide whether an attempt was
+// dispatched (Running → join) vs. pre-creation (never occurs in practice,
+// but the signal must not be lost).
+func TestPlanResumePreservesRunningStatus(t *testing.T) {
+	repo := newTestRepo(t)
+	runID := "wfr-status-preserve-1"
+	createRun(t, repo, runID)
+	casRunStatus(t, repo, runID, RunStatusRunning)
+
+	created := createAttempt(t, repo, runID, "step", 1, "coord-run", "task-a")
+	stored, err := repo.GetStepAttempt(context.Background(), runID, created.AttemptID)
+	if err != nil {
+		t.Fatalf("GetStepAttempt: %v", err)
+	}
+	if stored.Status != AttemptStatusRunning {
+		t.Fatalf("stored status = %q, want %q", stored.Status, AttemptStatusRunning)
+	}
+
+	plan, err := PlanResume(context.Background(), repo, runID)
+	if err != nil {
+		t.Fatalf("PlanResume: %v", err)
+	}
+	if len(plan.AttemptsInFlight) != 1 {
+		t.Fatalf("AttemptsInFlight len = %d, want 1", len(plan.AttemptsInFlight))
+	}
+	if plan.AttemptsInFlight[0].Status != AttemptStatusRunning {
+		t.Errorf("in-flight status = %q, want %q (must preserve ledger authority, not override to Pending)",
+			plan.AttemptsInFlight[0].Status, AttemptStatusRunning)
 	}
 }
