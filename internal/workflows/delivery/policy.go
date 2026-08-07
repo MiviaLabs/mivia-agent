@@ -135,8 +135,8 @@ func renderTemplate(src string, inputs map[string]string, maxBytes int, allowNew
 	rendered, err := template.Render(src, anyInputs, nil, unboundedBinding, maxBytes)
 	if err != nil {
 		// The rendered-output cap inside template.Render is strict. Retry with
-		// unbounded output and truncate ourselves.
-		rendered, err = template.Render(src, anyInputs, nil, unboundedBinding, 0)
+		// the high binding cap and truncate ourselves.
+		rendered, err = template.Render(src, anyInputs, nil, unboundedBinding, unboundedBinding)
 		if err != nil {
 			return "", err
 		}
