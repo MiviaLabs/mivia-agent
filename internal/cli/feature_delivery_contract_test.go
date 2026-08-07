@@ -74,6 +74,7 @@ func TestCommittedFeatureDeliveryWorkflowContract(t *testing.T) {
 	}
 
 	assertFeatureDeliveryReviewFeedbackChannel(t, workflow)
+	assertFeatureDeliveryIntegrationGate(t, workflow)
 	assertFeatureDeliverySchemasRequireInspected(t, base, filepath.Join(root, "internal", "workflows", "testdata"))
 }
 
@@ -178,6 +179,42 @@ func assertFeatureDeliveryReviewFeedbackChannel(t *testing.T, workflow definitio
 			t.Fatalf("step %q must bind %q as review_findings (optional); "+
 				"without it the review-repair loop is blind", stepID, reviewerOutput)
 		}
+	}
+}
+
+// assertFeatureDeliveryIntegrationGate pins the cross-cutting integration
+// review gate: a reviewer step that runs after the main review and checks
+// cross-layer interaction surfaces (context budget x tool results, retry x
+// preparation consistency, concurrency), with its findings fed back to the
+// implement step via a dedicated evidence channel so the repair loop is not
+// blind. Without it, package-scoped reviews miss cross-layer defects (the
+// prompt-too-long retry leaving a stale preparation, oversized tool results
+// defeating the budget) because no single package owns the interaction.
+func assertFeatureDeliveryIntegrationGate(t *testing.T, workflow definition.WorkflowFile) {
+	t.Helper()
+	step := featureDeliveryStep(t, workflow, "review_integration")
+	if step.Kind != "agent_gate" {
+		t.Fatalf("step review_integration kind = %q, want agent_gate", step.Kind)
+	}
+	if step.Agent != "reviewer" || step.Skill != "secure-change" {
+		t.Fatalf("step review_integration agent/skill = %q/%q; want reviewer/secure-change", step.Agent, step.Skill)
+	}
+	if step.Template != "templates/review-integration.md" {
+		t.Fatalf("step review_integration template = %q, want templates/review-integration.md", step.Template)
+	}
+	if step.OutputSchema != "schemas/review-v1.json" {
+		t.Fatalf("step review_integration output schema = %q, want schemas/review-v1.json", step.OutputSchema)
+	}
+	impl := featureDeliveryStep(t, workflow, "implement")
+	found := false
+	for _, cb := range impl.Context {
+		if cb.From == "steps.review_integration.output" && cb.As == "integration_findings" && cb.Optional {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("step implement must bind steps.review_integration.output as integration_findings (optional)")
 	}
 }
 

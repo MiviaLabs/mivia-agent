@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // elisionHistory builds a multi-turn transcript with an oversized prior tool
@@ -483,6 +484,68 @@ func TestPlanElidedActiveContextOmitsOriginalBody(t *testing.T) {
 	}
 	if !strings.Contains(active, "context elided prior tool result") {
 		t.Fatalf("active context missing elision notice: %s", active)
+	}
+}
+
+// TestPlanCompactRedactsCandidateReasoning pins the compacted-path candidate
+// redaction (planCompact): candidate ActiveContext bytes are durable,
+// operator-visible state, so reasoning must be scrubbed before they are
+// marshaled, while plan.Messages stay raw for replay. Mirrors
+// TestStructuralPrepareRedactsCandidateReasoning, which pins the non-compacted
+// structural path.
+func TestPlanCompactRedactsCandidateReasoning(t *testing.T) {
+	policy, err := redact.Compile([]string{`(?i)secret-[0-9]+`}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := redact.Current()
+	defer redact.SetPolicy(old)
+	redact.SetPolicy(policy)
+
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "question"},
+		{Role: provider.RoleAssistant, Content: "answer", ReasoningContent: "secret-1234"},
+	}
+	plan, err := Plan(PlanInput{
+		Messages:   messages,
+		Budget:     forceCompactBudget(t, messages),
+		Force:      true,
+		RecentTail: 64,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Compacted {
+		t.Fatal("expected compaction")
+	}
+	// The reasoning-carrying assistant message must be in the retained set,
+	// otherwise the leak assertions below are vacuous.
+	var retainedReasoning bool
+	for _, msg := range plan.Messages {
+		if msg.Role == provider.RoleAssistant && msg.ReasoningContent == "secret-1234" {
+			retainedReasoning = true
+		}
+	}
+	if !retainedReasoning {
+		t.Fatal("reasoning-carrying assistant message was not retained")
+	}
+
+	active := string(plan.Candidate.ActiveContext)
+	if !strings.Contains(active, "[redacted]") {
+		t.Fatalf("compacted candidate ActiveContext was not redacted: %s", active)
+	}
+	if strings.Contains(active, "secret-1234") {
+		t.Fatalf("compacted candidate ActiveContext leaked the reasoning secret: %s", active)
+	}
+	// plan.Messages keeps raw reasoning for replay, so a raw marshal of the
+	// retained set must differ from the redacted candidate bytes.
+	raw, err := contextstate.MarshalCanonical(plan.Messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) == string(plan.Candidate.ActiveContext) {
+		t.Fatal("compacted candidate ActiveContext equals a raw marshal; reasoning was not redacted")
 	}
 }
 

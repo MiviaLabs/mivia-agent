@@ -161,6 +161,16 @@ func shapeBatchResults(results []toolExecResult, opts Options) []string {
 	bodies := make([]string, len(results))
 	budget := effectiveBatchBudget(opts)
 	if budget <= 0 || len(results) == 0 {
+		// R1a: with no per-result or batch cap configured, a single oversized
+		// result (e.g. read_file of a huge file) used to flow into history
+		// uncapped. Context planning elides prior-turn results but keeps the
+		// CURRENT turn's mandatory latest tool unit whole, so one such result
+		// exceeded the prompt budget in a single step and hard-aborted the
+		// turn with ErrPromptBudgetExceeded after the tool already ran. Derive
+		// a per-result cap from the prompt budget and apply it via capToolResult.
+		if capChars := derivedResultCapChars(opts); capChars > 0 {
+			return shapeUnbudgetedResults(results, opts, capChars)
+		}
 		// The default. No shaping, no allocation beyond this slice, and the
 		// bytes are the ones pass 1 already built.
 		for i, r := range results {
@@ -181,6 +191,35 @@ func shapeBatchResults(results []toolExecResult, opts Options) []string {
 		bodies[i] = appendHookContext(shaped[i], parts[i].hookContext)
 	}
 	emitBatchShaping(opts, report)
+	return bodies
+}
+
+// shapeUnbudgetedResults applies the derived per-result cap to a batch whose
+// own budget is off, mirroring pass 1's capping semantics: the body is cut via
+// capToolResult so a truncation spools the FULL original and names the ref for
+// read_output, hook context rides above the cap, and Role/ToolCallID are never
+// touched (pairing survives). A result that fits stays byte-identical.
+//
+// Two deliberate exceptions, mirroring pass 1 and the batch shaper:
+//   - a result pass 1 already truncated under its own capability cap is kept
+//     whole - re-capping the artifact would clip the ref embedded in its own
+//     notice (C1);
+//   - an ephemeral body is capped with a nil spool so it is never stored
+//     behind a ref (D10).
+func shapeUnbudgetedResults(results []toolExecResult, opts Options, capChars int) []string {
+	bodies := make([]string, len(results))
+	for i, r := range results {
+		if r.parts.truncated {
+			bodies[i] = r.result
+			continue
+		}
+		spool := opts.RemainderSpool
+		if r.parts.ephemeral {
+			spool = nil
+		}
+		capped, _ := capToolResult(r.parts.cappedBody, capChars, 0, spool, opts.SessionID)
+		bodies[i] = appendHookContext(capped, r.parts.hookContext)
+	}
 	return bodies
 }
 

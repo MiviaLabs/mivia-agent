@@ -33,7 +33,11 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	if err != nil {
 		return PlanResult{}, err
 	}
-	active, err := marshalCanonical(retained)
+	// Candidate ActiveContext bytes are durable, operator-visible state:
+	// redact reasoning before they are marshaled (identity without an
+	// installed policy), matching the non-compacted structural path.
+	// plan.Messages itself stays raw for replay.
+	active, err := marshalCanonical(redactReasoningMessages(retained))
 	if err != nil {
 		return PlanResult{}, err
 	}

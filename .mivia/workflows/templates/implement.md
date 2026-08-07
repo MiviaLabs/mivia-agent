@@ -17,6 +17,13 @@ Prior review findings (present on repair iterations only):
 When review findings are present, address each finding before you resubmit. Do not repeat a
 change the reviewer rejected.
 
+Integration review findings (present on integration-repair iterations only):
+
+{{ evidence.integration_findings }}
+
+When integration review findings are present, address each finding before you resubmit. Do not
+repeat a change the integration reviewer rejected.
+
 Read the relevant source and tests. Edit only files required by the approved scope. Write or
 update tests before or with the implementation. Cover success behavior and negative paths. For
 parsed or decoded untrusted structured input, cover empty, malformed, oversized, and duplicate

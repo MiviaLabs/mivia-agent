@@ -457,6 +457,96 @@ func TestEffectiveBatchBudget(t *testing.T) {
 	}
 }
 
+// --- R1a: budget-derived per-result cap --------------------------------------
+
+func TestDerivedResultCapChars(t *testing.T) {
+	cases := []struct {
+		name   string
+		opts   Options
+		expect int
+	}{
+		{"no prompt budget is uncapped", Options{}, 0},
+		{"prompt budget derives a quarter in chars",
+			Options{MaxContextTokens: 8000}, (8000 / 4) * 4},
+		{"rounds down to a multiple of 4",
+			Options{MaxContextTokens: 8003}, (8003 / 4) * 4},
+		{"bounded at 32K tokens",
+			Options{MaxContextTokens: 1 << 20}, 32768 * 4},
+		{"explicit MaxToolResultChars wins",
+			Options{MaxContextTokens: 8000, MaxToolResultChars: 100}, 0},
+		{"armed literal batch budget wins",
+			Options{MaxContextTokens: 8000, BatchResultBudgetBytes: 4096}, 0},
+		{"derived batch budget wins",
+			Options{MaxContextTokens: 8000, BatchResultBudgetBytes: batchBudgetDerived}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := derivedResultCapChars(tc.opts); got != tc.expect {
+				t.Fatalf("derivedResultCapChars=%d, want %d", got, tc.expect)
+			}
+		})
+	}
+}
+
+// R1a: with no configured caps but a prompt budget, shapeBatchResults derives
+// a per-result cap. Oversized bodies are cut via capToolResult - the FULL
+// original is spooled and named in the notice, so read_output can page it
+// back - while a fitting body stays byte-identical. A pass-1-truncated
+// artifact is never re-cut (C1), and an ephemeral body is capped but never
+// spooled (D10).
+func TestShapeBatchResultsDerivesPerResultCap(t *testing.T) {
+	spool, store := testSpool(t)
+	const principal = "session-derived"
+	const small = "small"
+	big := strings.Repeat("A", 500<<10)
+	opts := Options{MaxContextTokens: 8000, SessionID: principal, RemainderSpool: spool}
+	results := []toolExecResult{
+		{index: 0, result: small, parts: untruncatedPart(small, 0)},
+		{index: 1, result: big, parts: untruncatedPart(big, 0)},
+	}
+	bodies := shapeBatchResults(results, opts)
+
+	if bodies[0] != small {
+		t.Fatalf("fitting result altered: %q", trunc(bodies[0], 80))
+	}
+	if len(bodies[1]) > 8000 {
+		t.Fatalf("big result kept %d chars, want <= the derived 8000", len(bodies[1]))
+	}
+	ref := remainderRefPattern.FindString(bodies[1])
+	if ref == "" {
+		t.Fatalf("big result names no remainder ref: %q", trunc(bodies[1], 200))
+	}
+	recovered, err := spool.Load(t.Context(), principal, ref)
+	if err != nil || string(recovered) != big {
+		t.Fatalf("remainder ref %q not recoverable (err=%v)", ref, err)
+	}
+	if store.Len() != 1 {
+		t.Fatalf("spool holds %d bodies, want exactly 1 (only the truncated big result)", store.Len())
+	}
+
+	// A pass-1-truncated artifact (capability cap) is kept whole, never re-cut.
+	capped := capPart(t, spool, strings.Repeat("B", 200<<10), 4<<10)
+	if !capped.truncated {
+		t.Fatal("precondition: capPart did not truncate")
+	}
+	results[1] = toolExecResult{index: 1, result: capped.cappedBody, parts: capped}
+	bodies = shapeBatchResults(results, opts)
+	if bodies[1] != capped.cappedBody {
+		t.Fatal("pass-1 artifact was re-cut by the derived cap (C1)")
+	}
+
+	// An ephemeral body is capped but never spooled (D10).
+	ephemeral := resultParts{cappedBody: big, totalN: len(big), ephemeral: true}
+	results[1] = toolExecResult{index: 1, result: big, parts: ephemeral}
+	bodies = shapeBatchResults(results, opts)
+	if strings.Contains(bodies[1], "ref:output:") {
+		t.Fatalf("ephemeral body was put behind a ref: %q", trunc(bodies[1], 200))
+	}
+	if !strings.Contains(bodies[1], "... truncated: kept ") {
+		t.Fatalf("ephemeral body lost its truncation notice: %q", trunc(bodies[1], 200))
+	}
+}
+
 // BenchmarkShapeBatchResultsUnbudgeted pins the default path's cost: with no
 // budget configured, appending a batch must not allocate per result beyond the
 // one slice of bodies. Run with -benchmem; a regression here means shaping
