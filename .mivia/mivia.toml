@@ -43,6 +43,11 @@ models = [
   # Reasoner: deep-thinking variant of the V4 family (deepseek-reasoner
   # legacy ID still routed on OpenRouter; maps to the V4 Flash family).
   { name = "deepseek/deepseek-reasoner", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
+  # Tencent Hy3 preview: high-efficiency MoE built for agentic workflows.
+  # 262K context, reasoning disabled/low/high (high = the judge default),
+  # tool calling supported. Assigned to the reviewer (judge) agent; the
+  # workflow's review gates run on this model.
+  { name = "tencent/hy3-preview", context_window_tokens = 262144, reasoning_efforts = ["off", "low", "high"], reasoning = "high", reasoning_dialect = "openrouter" },
 ]
 default_model = "deepseek/deepseek-v4-pro"
 api_key_env = "OPENROUTER_API_KEY"

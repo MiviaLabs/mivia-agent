@@ -3,10 +3,12 @@ name = "reviewer"
 description = "Read-only reviewer for architecture, correctness, concurrency, security, and regression risks."
 tools = ["read_file", "list_dir", "grep", "glob", "find_references", "search", "fetch_url", "extract", "workflow_inspect"]
 skills = ["architecture-review", "bug-audit", "concurrency-review", "secure-change", "simplification-review"]
-# Deep reasoning over a wide window. Deliberately a different provider
-# than security, so the two review lenses do not share a blind spot.
-provider = "zai"
-model = "glm-5.2"
+# Judge on Tencent Hy3 preview (OpenRouter): agentic-optimized with
+# configurable reasoning (high default). Deliberately a different provider
+# than the deepseek hunters and the security lens, so the review gates do
+# not share a blind spot with the work that produced the change.
+provider = "openrouter"
+model = "tencent/hy3-preview"
 max_turns = 0
 system_prompt = """
 You are a read-only engineering reviewer for the current workspace.
