@@ -165,36 +165,45 @@ func (c *LinearController) SetForceResume(force bool) error {
 
 // Start admits the run. It is idempotent for the same run ID and snapshot.
 func (c *LinearController) Start(ctx context.Context) error {
+	_, err := c.StartNew(ctx)
+	return err
+}
+
+// StartNew admits the run and reports whether this controller created it.
+// A false result means another executor already admitted the same snapshot.
+func (c *LinearController) StartNew(ctx context.Context) (bool, error) {
 	if c == nil {
-		return fmt.Errorf("linear controller is nil")
+		return false, fmt.Errorf("linear controller is nil")
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.started {
-		return nil
+		return false, nil
 	}
 	snap := c.admissionSnapshot()
+	created := true
 	if err := c.Repo.CreateRun(ctx, snap, c.Snapshot); err != nil {
 		if !errors.Is(err, workflowledger.ErrDuplicate) {
-			return err
+			return false, err
 		}
+		created = false
 		stored, getErr := c.Repo.GetRunSnapshot(ctx, c.RunID)
 		if getErr != nil {
-			return getErr
+			return false, getErr
 		}
 		if !bytes.Equal(stored, c.Snapshot) {
-			return fmt.Errorf("workflow run %q already exists with a different snapshot", c.RunID)
+			return false, fmt.Errorf("workflow run %q already exists with a different snapshot", c.RunID)
 		}
 		run, getRunErr := c.Repo.GetRun(ctx, c.RunID)
 		if getRunErr != nil {
-			return getRunErr
+			return false, getRunErr
 		}
 		if !sameAdmission(run, snap) {
-			return fmt.Errorf("workflow run %q already exists with different admission data", c.RunID)
+			return false, fmt.Errorf("workflow run %q already exists with different admission data", c.RunID)
 		}
 	}
 	c.started = true
-	return nil
+	return created, nil
 }
 
 func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {

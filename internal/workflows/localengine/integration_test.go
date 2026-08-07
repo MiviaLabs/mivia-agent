@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -219,6 +220,68 @@ func TestIntegrationParallelRunsIsolation(t *testing.T) {
 		if status.Status != "succeeded" || status.RunID != id {
 			t.Fatalf("status for %s = %+v", id, status)
 		}
+	}
+}
+
+type invocationCountingRunner struct{ calls *atomic.Int32 }
+
+func (r invocationCountingRunner) RunStep(_ context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, error) {
+	r.calls.Add(1)
+	output := json.RawMessage(`{"ok":true}`)
+	if req.StepID == "two" {
+		output = json.RawMessage(`{"ok":true,"done":true}`)
+	}
+	return controller.AgentStepResult{CoordinatorRunID: req.CoordinatorRunID, TaskID: req.TaskID, Output: output, EvidenceJSON: []byte(`[]`), Status: "completed"}, nil
+}
+
+// TestIntegrationInvocationKeyAdmitsOneRunAcrossEngines forces two independent
+// engines past their initial run lookup before either can create the run. Only
+// one controller may launch after the durable run-ID uniqueness check.
+func TestIntegrationInvocationKeyAdmitsOneRunAcrossEngines(t *testing.T) {
+	root := writeTwoStepWorkspace(t)
+	repo := workflowledger.NewMemoryRepository()
+	ready := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	newEngine := func() *localengine.Engine {
+		return &localengine.Engine{WorkspaceRoot: root, Repo: repo, NewRunner: func() controller.AgentStepRunner {
+			ready <- struct{}{}
+			<-release
+			return invocationCountingRunner{calls: &calls}
+		}}
+	}
+	engines := []*localengine.Engine{newEngine(), newEngine()}
+	results := make(chan agenttools.StartResult, len(engines))
+	errs := make(chan error, len(engines))
+	for _, engine := range engines {
+		go func(engine *localengine.Engine) {
+			result, err := engine.Start(context.Background(), agenttools.StartRequest{
+				Workflow: "two-step", Inputs: map[string]any{"task": "same"}, InvocationKey: "same-request",
+			})
+			results <- result
+			errs <- err
+		}(engine)
+	}
+	<-ready
+	<-ready
+	close(release)
+	var first agenttools.StartResult
+	for range engines {
+		result := <-results
+		if err := <-errs; err != nil {
+			t.Fatalf("Start() error = %v", err)
+		}
+		if first.RunID == "" {
+			first = result
+		} else if result.RunID != first.RunID {
+			t.Fatalf("run IDs = %q and %q, want one invocation run", first.RunID, result.RunID)
+		}
+	}
+	for _, engine := range engines {
+		waitRun(t, engine, first.RunID)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("step calls = %d, want 2 from one two-step workflow", got)
 	}
 }
 

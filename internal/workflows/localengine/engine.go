@@ -143,8 +143,16 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	if err := ctrl.SetAdmission(admission); err != nil {
 		return agenttools.StartResult{}, err
 	}
-	if err := ctrl.Start(ctx); err != nil {
+	created, err := ctrl.StartNew(ctx)
+	if err != nil {
 		return agenttools.StartResult{}, err
+	}
+	if !created {
+		existing, getErr := e.Repo.GetRun(ctx, runID)
+		if getErr != nil {
+			return agenttools.StartResult{}, getErr
+		}
+		return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 	}
 	_ = req.AllowPublish // publication is a separate deliver step for tools
 	e.launch(ctrl)
