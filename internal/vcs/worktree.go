@@ -430,5 +430,15 @@ func parseWorktreeList(output, wtPrefix string) ([]WorktreeInfo, error) {
 			}
 		}
 	}
+	// Flush the final block when the input does not end with a blank line.
+	if wt.path != "" && strings.HasPrefix(wt.path, wtPrefix) {
+		name := filepath.Base(wt.path)
+		absPath, _ := filepath.Abs(wt.path)
+		result = append(result, WorktreeInfo{
+			Name:   name,
+			Path:   absPath,
+			Branch: wt.branch,
+		})
+	}
 	return result, nil
 }
