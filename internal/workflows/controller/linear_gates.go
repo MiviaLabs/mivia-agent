@@ -45,6 +45,12 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 			verifyErr = fmt.Errorf("verifier %q reported failed checks", step.Verifier)
 		}
 	}
+	// A caller deadline or cancel is a run timeout, not a verifier host failure.
+	if errors.Is(verifyErr, context.DeadlineExceeded) || errors.Is(verifyErr, context.Canceled) {
+		writeCtx, cancel := stepPersistenceContext(ctx)
+		defer cancel()
+		return c.failWithStatus(writeCtx, run, context.DeadlineExceeded, workflowledger.RunStatusTimedOut)
+	}
 	output, err := json.Marshal(result)
 	if err != nil {
 		return c.failAttempt(ctx, run, attempt, err)
@@ -56,19 +62,17 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 	if status == workflowledger.AttemptStatusFailed {
 		return c.routeEvidenceFailure(ctx, run, attempt, step, result, output, outputMap)
 	}
+	writeCtx, cancel := stepPersistenceContext(ctx)
+	defer cancel()
 	route := RouteDecision{}
-	route, err = c.selectRoute(ctx, step, status, outputMap)
+	route, err = c.selectRoute(writeCtx, step, status, outputMap)
 	if err != nil {
 		if route.ToStepID == "" {
 			route = failureRoute(step)
 		}
-		writeCtx, cancel := stepPersistenceContext(ctx)
-		defer cancel()
 		_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output, ErrorRef: storeErrorText(writeCtx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route)
 		return c.fail(writeCtx, run, err)
 	}
-	writeCtx, cancel := stepPersistenceContext(ctx)
-	defer cancel()
 	if err := c.completeSucceededRoute(writeCtx, attempt, AgentStepResult{Output: output}, route); err != nil {
 		if isLoopAccountError(err) {
 			return settleAfterRoute(ctx, c, run, route)

@@ -20,16 +20,20 @@ func (e *Engine) Interrupt(runID string) error {
 		return fmt.Errorf("workflow engine is incomplete")
 	}
 	ctx := context.Background()
-	// Mark open attempts interrupted before the dying controller can cancel them.
-	if err := e.markOpenAttemptsInterrupted(ctx, runID); err != nil {
-		return err
-	}
-	// Fence terminal writes from the dying controller.
+	// Fence terminal writes from the dying controller before mutating attempts.
+	// Marking bumps the attempt version; an unfenced controller would settle the
+	// run to failed on the version conflict before the fence exists.
 	_ = e.ctrlRepo()
 	e.mu.Lock()
 	if e.fence != nil {
 		e.fence.abandon(runID)
 	}
+	e.mu.Unlock()
+	// Mark open attempts interrupted before the dying controller can cancel them.
+	if err := e.markOpenAttemptsInterrupted(ctx, runID); err != nil {
+		return err
+	}
+	e.mu.Lock()
 	active, ok := e.active[runID]
 	if ok {
 		delete(e.active, runID)

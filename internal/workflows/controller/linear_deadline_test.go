@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 func deadlineWorkflow(t *testing.T) *compiler.CompiledWorkflow {
@@ -236,5 +238,171 @@ func TestReconcileTerminalRouteVanishingRun(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("error = %v, want error containing 'not found'", err)
+	}
+}
+
+// blockingContextVerifier blocks until the caller context is done, then
+// returns a host-class failure wrapping the context error. It simulates a
+// sandboxed verifier that hits the run deadline.
+type blockingContextVerifier struct {
+	started chan struct{}
+}
+
+func (v *blockingContextVerifier) Name() string { return "blocking-context" }
+
+func (v *blockingContextVerifier) Verify(ctx context.Context, _ verifier.Request) (verifier.Result, error) {
+	close(v.started)
+	<-ctx.Done()
+	return verifier.Result{
+		Status: "failed",
+		Checks: []verifier.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "host verifier setup failed"}},
+	}, fmt.Errorf("host verifier setup failed: %w", ctx.Err())
+}
+
+// TestEvidenceGateVerifierHostFailureFromContextErrorTimesOut verifies that a
+// verifier host failure caused by the caller context expiring is settled as a
+// run timeout, not as a fabricated host failure.
+func TestEvidenceGateVerifierHostFailureFromContextErrorTimesOut(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "evidence-timeout", InitialStep: "verify",
+		Inputs:      map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits:      definition.Limits{MaxStepAttempts: 4},
+		Steps:       []definition.Step{{ID: "verify", Kind: "evidence_gate", Verifier: "blocking-context", OnFailure: "failure"}},
+		Transitions: []definition.Transition{{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}}},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := verifier.NewCatalogue()
+	v := &blockingContextVerifier{started: make(chan struct{})}
+	if err := cat.Register(v); err != nil {
+		t.Fatal(err)
+	}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, &linearRunner{}, compiled, nil, map[string]any{"task": "x"}, "wfr-evidence-timeout", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetVerifiers(cat); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-v.started
+		cancel()
+	}()
+	got, done, err := ctrl.Advance(ctx)
+	if !done {
+		t.Fatalf("advance done=%v, want true", done)
+	}
+	if got.Status != workflowledger.RunStatusTimedOut {
+		t.Fatalf("status = %q, want timed_out", got.Status)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context error", err)
+	}
+	attempts, listErr := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	verify, ok := latestAttempt(attempts, "verify")
+	if !ok {
+		t.Fatal("missing verify attempt")
+	}
+	if verify.ErrorRef != "" {
+		raw, loadErr := repo.LoadContent(context.Background(), verify.ErrorRef)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		if strings.Contains(string(raw), "host failure") {
+			t.Fatalf("error ref contains host failure: %s", raw)
+		}
+	}
+}
+
+// ctxAwareRepo wraps a repository and fails GetLoopCounters when the caller
+// context is already canceled. It proves that evidence-gate routing uses the
+// detached persistence context, not the caller context.
+type ctxAwareRepo struct {
+	workflowledger.Repository
+}
+
+func (r *ctxAwareRepo) GetLoopCounters(ctx context.Context, runID string) ([]workflowledger.LoopCounter, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.Repository.GetLoopCounters(ctx, runID)
+}
+
+// TestEvidenceGateLoopTransitionUsesDetachedContext verifies that an
+// evidence-gate loop transition at the run deadline still routes using the
+// detached persistence context instead of the canceled caller context.
+func TestEvidenceGateLoopTransitionUsesDetachedContext(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "evidence-loop-context", InitialStep: "verify",
+		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits: definition.Limits{MaxStepAttempts: 4},
+		Steps: []definition.Step{
+			{ID: "verify", Kind: "evidence_gate", Verifier: "always-passes", OnFailure: "failure"},
+			{ID: "repair", Kind: "agent", Agent: "dev", OnFailure: "failure"},
+		},
+		Transitions: []definition.Transition{
+			{From: "verify", To: "repair", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}}, Loop: "fix", MaxIterations: 4},
+			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "approved"}}},
+		},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := verifier.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{
+		name:   "always-passes",
+		result: verifier.Result{Status: "passed", Checks: []verifier.Check{{Name: "test", Status: "passed"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	repo := &ctxAwareRepo{Repository: workflowledger.NewMemoryRepository()}
+	ctrl, err := NewLinearController(repo, &linearRunner{}, compiled, map[string]StepRuntime{
+		"repair": {Agent: agents.ResolvedAgent{Name: "dev"}},
+	}, map[string]any{"task": "x"}, "wfr-evidence-loop-context", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetVerifiers(cat); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, done, err := ctrl.Advance(ctx)
+	if err != nil {
+		t.Fatalf("advance err=%v", err)
+	}
+	if done {
+		t.Fatalf("advance done=%v, want false", done)
+	}
+	if got.Status != workflowledger.RunStatusRunning {
+		t.Fatalf("status = %q, want running", got.Status)
+	}
+	attempts, listErr := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	verify, ok := latestAttempt(attempts, "verify")
+	if !ok {
+		t.Fatal("missing verify attempt")
+	}
+	if verify.Status != workflowledger.AttemptStatusSucceeded {
+		t.Fatalf("verify status = %q, want succeeded", verify.Status)
+	}
+	if verify.ToStepID != "repair" {
+		t.Fatalf("verify route = %q, want repair", verify.ToStepID)
 	}
 }

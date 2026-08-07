@@ -137,9 +137,11 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	if identity, ok := e.ensureRunWorktree(ctx, runID, nil); ok {
 		admission.BaseRef, admission.BaseCommit, admission.OriginBaseCommit, admission.WorktreeName = identity.BaseRef, identity.BaseCommit, identity.OriginBaseCommit, identity.WorktreeName
 		if compiled.Delivery != nil && compiled.DeliveryActive() {
-			if url, uerr := resolveOriginURL(ctx, identity, compiled.Delivery.Base); uerr == nil {
-				admission.RemoteURL = url
+			url, uerr := resolveOriginURL(ctx, identity, compiled.Delivery.Base)
+			if uerr != nil {
+				return agenttools.StartResult{}, fmt.Errorf("resolve delivery origin: %w", uerr)
 			}
+			admission.RemoteURL = url
 		}
 	} else if base, commit, wt, rerr := resolveLocalIdentity(e.WorkspaceRoot, runID); rerr == nil {
 		admission.BaseRef, admission.BaseCommit, admission.WorktreeName = base, commit, wt
