@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 	"unicode/utf8"
@@ -193,6 +192,14 @@ func (e *SchemaValidationError) Unwrap() error { return e.Err }
 // CoordinatorRunner is the production implementation of AgentStepRunner.
 type CoordinatorRunner struct {
 	Coordinator coordinator.Coordinator
+	// JoinWatchdog bounds a coordinator join from the controller side. The
+	// coordinator's own Join (internal/coordinator/coordinator.go) waits on
+	// the child run's done channel with no bound of its own, so a child that
+	// never settles (hung pool worker, stuck referral wait, dead executor)
+	// would park the controller forever. A value <= 0 uses
+	// defaultJoinWatchdog; tests set it short to exercise the join-timeout
+	// path.
+	JoinWatchdog time.Duration
 }
 
 var _ AgentStepRunner = (*CoordinatorRunner)(nil)
@@ -294,7 +301,7 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: spec.TaskID, EvidenceJSON: evidenceJSON}, fmt.Errorf("coordinator task identity does not match %q", spec.TaskID)
 	}
 	actualTaskID := spec.TaskID
-	joined, err := r.joinWithCancellation(ctx, h)
+	joined, err := r.joinWithCancellation(ctx, spec, h)
 	if err != nil {
 		// A canceled or expired wait still carries the child outcome when the
 		// coordinator settled: keep the result so the attempt records output
@@ -356,22 +363,6 @@ func extractTaskOutput(raw json.RawMessage) json.RawMessage {
 		return append(json.RawMessage(nil), envelope["output"]...)
 	}
 	return append(json.RawMessage(nil), raw...)
-}
-
-func (r *CoordinatorRunner) joinWithCancellation(ctx context.Context, h *coordinator.RunHandle) (*coordinator.RunResult, error) {
-	result, err := r.Coordinator.Join(ctx, h)
-	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		return result, err
-	}
-	_ = r.Coordinator.Cancel(context.Background(), h)
-	cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	// The canceled wait may still settle with the child outcome; keep it so
-	// the caller records output and status instead of a bare failure.
-	if settled, settleErr := r.Coordinator.Join(cleanup, h); settleErr == nil && settled != nil {
-		return settled, err
-	}
-	return result, err
 }
 
 // maxErrorTextBytes bounds stored failure detail for one attempt.

@@ -1,6 +1,10 @@
 package jschema_test
 
 import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -87,5 +91,71 @@ func TestFormatCorrectiveBounded(t *testing.T) {
 	}
 	if !strings.Contains(msg, "JSON schema") {
 		t.Fatalf("corrective missing guidance: %q", msg)
+	}
+}
+
+func TestPromptAppendixRendersAContractNotTheSchemaDocument(t *testing.T) {
+	schema := map[string]any{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"title":       "Review output",
+		"description": "A review verdict with findings.",
+		"type":        "object",
+		"required":    []any{"verdict", "inspected"},
+		"properties": map[string]any{
+			"verdict":   map[string]any{"type": "string", "enum": []any{"approved", "changes_requested"}},
+			"inspected": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		},
+	}
+	appendix := jschema.PromptAppendix(schema)
+	for _, key := range []string{`"$schema"`, `"title"`, `"description"`} {
+		if strings.Contains(appendix, key) {
+			t.Fatalf("PromptAppendix leaked the %s meta-key: %q", key, appendix)
+		}
+	}
+	if !strings.Contains(appendix, "never the schema document") {
+		t.Fatalf("PromptAppendix must carry the never-echo instruction: %q", appendix)
+	}
+	if !strings.Contains(appendix, "Example: ") {
+		t.Fatalf("PromptAppendix should include a compact filled example: %q", appendix)
+	}
+	// The schema part (the final line) must stay a valid JSON object.
+	lines := strings.Split(strings.TrimSpace(appendix), "\n")
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &doc); err != nil {
+		t.Fatalf("appendix schema part is not valid JSON: %v\nappendix=%q", err, appendix)
+	}
+	if doc["type"] != "object" || doc["required"] == nil {
+		t.Fatalf("appendix schema part lost the instance shape: %#v", doc)
+	}
+	if _, ok := doc["properties"].(map[string]any); !ok {
+		t.Fatalf("appendix schema part lost its properties: %#v", doc)
+	}
+}
+
+func TestFormatCorrectiveWithSchemaHidesReviewSchemaMetaKeys(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".mivia", "workflows", "schemas", "review-v1.json"))
+	if err != nil {
+		t.Skipf("committed review-v1.json is not present: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := schema["$schema"]; !ok {
+		t.Fatalf("test fixture review-v1.json must carry the $schema meta-key")
+	}
+	msg := jschema.FormatCorrectiveWithSchema(errors.New("missing properties 'verdict'"), schema, nil)
+	if strings.Contains(msg, `"$schema"`) {
+		t.Fatalf("corrective leaked the $schema meta-key: %q", msg)
+	}
+	if !strings.Contains(msg, "never the schema document") {
+		t.Fatalf("corrective must carry the never-echo instruction: %q", msg)
+	}
+	if !strings.Contains(msg, `"required"`) || !strings.Contains(msg, "verdict") {
+		t.Fatalf("corrective lost the instance shape: %q", msg)
 	}
 }

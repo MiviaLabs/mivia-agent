@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -180,17 +181,20 @@ func (h *agentTaskHandler) resolveOutputSchema(req runtime.Request) map[string]a
 
 // schemaSystemAppendix is the deterministic system-prompt block stating the
 // output contract. It mirrors the user-turn PromptAppendix wording so both
-// surfaces demand the same shape. A nil schema (no contract) emits nothing:
+// surfaces demand the same shape. Both renderers show the model-facing
+// contract (meta-keywords stripped, never-echo instruction, compact example),
+// never the raw schema document: a verbatim document invites the model to
+// echo it back as its answer. A nil schema (no contract) emits nothing:
 // json.Marshal of a nil map would otherwise produce a bogus "null" block.
 func schemaSystemAppendix(schema map[string]any) string {
 	if schema == nil {
 		return ""
 	}
-	raw, err := json.Marshal(schema)
-	if err != nil || len(raw) == 0 {
+	contract := jschema.ModelSchemaContract(schema)
+	if contract == "" {
 		return ""
 	}
-	return "\n\nReturn ONLY valid JSON matching this required output schema (no prose, no markdown fences):\n" + string(raw)
+	return "\n\nReturn ONLY valid JSON matching this required output schema (no prose, no markdown fences):\n" + contract
 }
 
 func messagingDisallowed(names []string) map[string]struct{} {

@@ -89,7 +89,7 @@ base_url = "https://openrouter.ai/api/v1"
 # ignores thinking:{"type":"disabled"} on some server paths, so reasoning = "off"
 # is not guaranteed to take effect.
 models = [
-  { name = "glm-5.2", context_window_tokens = 1000000, max_output_tokens = 16384, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "thinking_preserved" },
+  { name = "glm-5.2", context_window_tokens = 200000, max_output_tokens = 16384, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "thinking_preserved" },
   # An entry with no reasoning keys offers nothing and sends no field:
   { name = "glm-4.6", context_window_tokens = 200000, max_output_tokens = 16384 },
 ]

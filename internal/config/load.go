@@ -334,6 +334,8 @@ func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
 	}
 	if cfg.SchemaRetryMax <= 0 { // 0 = use default 2, not "no retries"
 		cfg.SchemaRetryMax = DefaultSubagentConfig.SchemaRetryMax
+	} else if cfg.SchemaRetryMax > MaxSchemaRetryMax { // typo guard, see MaxSchemaRetryMax
+		cfg.SchemaRetryMax = MaxSchemaRetryMax
 	}
 	cfg.Messaging = resolveMessagingConfig(cfg.Messaging)
 	return cfg

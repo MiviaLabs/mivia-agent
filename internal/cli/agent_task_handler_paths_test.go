@@ -58,6 +58,39 @@ func newSchemaTaskHandler(t *testing.T, skillReg *skills.Registry) (*agentTaskHa
 	return handler, digest
 }
 
+// TestSchemaSystemAppendixRendersAContractNotTheSchemaDocument guards the
+// system-prompt output contract: it must show the model an instance shape,
+// never the raw schema document with its $schema/meta keys (a verbatim
+// document invites the model to echo it back as its answer).
+func TestSchemaSystemAppendixRendersAContractNotTheSchemaDocument(t *testing.T) {
+	schema := map[string]any{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"title":       "Review output",
+		"description": "A review verdict with findings.",
+		"type":        "object",
+		"required":    []any{"verdict", "inspected"},
+		"properties": map[string]any{
+			"verdict":   map[string]any{"type": "string", "enum": []any{"approved", "changes_requested"}},
+			"inspected": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		},
+	}
+	block := schemaSystemAppendix(schema)
+	for _, key := range []string{`"$schema"`, `"title"`, `"description"`} {
+		if strings.Contains(block, key) {
+			t.Fatalf("system appendix leaked the %s meta-key: %q", key, block)
+		}
+	}
+	if !strings.Contains(block, "never the schema document") {
+		t.Fatalf("system appendix must carry the never-echo instruction: %q", block)
+	}
+	if !strings.Contains(block, `"required"`) || !strings.Contains(block, "verdict") {
+		t.Fatalf("system appendix lost the instance shape: %q", block)
+	}
+	if got := schemaSystemAppendix(nil); got != "" {
+		t.Fatalf("a nil schema must emit nothing, got %q", got)
+	}
+}
+
 func TestAgentTaskRefusesASkillItCannotActivate(t *testing.T) {
 	handler, digest := newSchemaTaskHandler(t, schemaSkillRegistry(t, ""))
 	_, err := handler.Invoke(context.Background(), runtime.Request{
