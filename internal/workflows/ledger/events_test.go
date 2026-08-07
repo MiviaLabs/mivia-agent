@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -135,6 +136,8 @@ func roundTripPayload[T any](t *testing.T, name string, p T) {
 			roundTrip(t, marshalAttemptStarted, unmarshalAttemptStarted, v)
 		case attemptCompletedPayload:
 			roundTrip(t, marshalAttemptCompleted, unmarshalAttemptCompleted, v)
+		case attemptPromptPayload:
+			roundTrip(t, marshalAttemptPrompt, unmarshalAttemptPrompt, v)
 		case loopIncrementedPayload:
 			roundTrip(t, marshalLoopIncremented, unmarshalLoopIncremented, v)
 		case approvalCreatedPayload:
@@ -216,6 +219,107 @@ func TestPayloadRoundTripAttemptEvents(t *testing.T) {
 		FinishedAt:      ts(2024, time.April, 4, 4, 4, 4, 444444444),
 		CreatedAt:       ts(2024, time.April, 4, 4, 4, 4, 555555555),
 	})
+}
+
+// TestPayloadRoundTripAttemptPrompt covers the wf_attempt_prompt payload
+// round trip. The payload carries ONLY attempt identity + a content reference
+// (never prompt content), so the round trip is exact for a fixed timestamp.
+func TestPayloadRoundTripAttemptPrompt(t *testing.T) {
+	roundTripPayload(t, "attemptPrompt", attemptPromptPayload{
+		AttemptID: "att-7",
+		PromptRef: "refs/prompts/1",
+		CreatedAt: ts(2024, time.September, 9, 9, 9, 9, 999999999),
+	})
+}
+
+// TestAttemptPromptValidation verifies marshalAttemptPrompt rejects empty
+// identity/reference fields and normalizes a zero CreatedAt to the current
+// time instead of persisting the zero timestamp.
+func TestAttemptPromptValidation(t *testing.T) {
+	// Empty AttemptID is rejected even when the reference is present.
+	if _, err := marshalAttemptPrompt(attemptPromptPayload{
+		PromptRef: "refs/prompts/1",
+		CreatedAt: ts(2024, time.September, 9, 9, 9, 9, 999999999),
+	}); err == nil {
+		t.Error("marshalAttemptPrompt accepted an empty AttemptID")
+	}
+
+	// Empty PromptRef is rejected even when the identity is present.
+	if _, err := marshalAttemptPrompt(attemptPromptPayload{
+		AttemptID: "att-7",
+		CreatedAt: ts(2024, time.September, 9, 9, 9, 9, 999999999),
+	}); err == nil {
+		t.Error("marshalAttemptPrompt accepted an empty PromptRef")
+	}
+
+	// A zero CreatedAt is normalized to the current time, never the zero
+	// (0001-01-01) timestamp.
+	before := time.Now()
+	data, err := marshalAttemptPrompt(attemptPromptPayload{AttemptID: "att-7", PromptRef: "refs/prompts/1"})
+	if err != nil {
+		t.Fatalf("marshalAttemptPrompt with zero CreatedAt failed: %v", err)
+	}
+	out, err := unmarshalAttemptPrompt(data)
+	if err != nil {
+		t.Fatalf("unmarshalAttemptPrompt failed: %v", err)
+	}
+	if out.CreatedAt.IsZero() {
+		t.Error("zero CreatedAt was persisted as the zero timestamp")
+	}
+	if out.CreatedAt.Before(before.Add(-time.Minute)) || out.CreatedAt.After(time.Now().Add(time.Minute)) {
+		t.Errorf("normalized CreatedAt = %v, want approximately time.Now()", out.CreatedAt)
+	}
+}
+
+// TestAttemptPromptPayloadOnlyMetadata proves the wf_attempt_prompt payload
+// carries ONLY ref metadata: the struct has no prompt-content field, marshal
+// emits exactly the three declared keys, and a prompt body smuggled into the
+// JSON is dropped by unmarshal and never re-emitted.
+func TestAttemptPromptPayloadOnlyMetadata(t *testing.T) {
+	data, err := marshalAttemptPrompt(attemptPromptPayload{
+		AttemptID: "att-7",
+		PromptRef: "refs/prompts/1",
+		CreatedAt: ts(2024, time.September, 9, 9, 9, 9, 999999999),
+	})
+	if err != nil {
+		t.Fatalf("marshalAttemptPrompt failed: %v", err)
+	}
+
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		t.Fatalf("unmarshal payload as map failed: %v", err)
+	}
+	want := []string{"attempt_id", "prompt_ref", "created_at"}
+	if len(keys) != len(want) {
+		t.Fatalf("payload has %d keys, want exactly %d (%v): %s", len(keys), len(want), want, data)
+	}
+	for _, k := range want {
+		if _, ok := keys[k]; !ok {
+			t.Errorf("payload missing metadata key %q: %s", k, data)
+		}
+	}
+
+	// Smuggling attempt: JSON carrying prompt-content fields decodes into the
+	// struct (no such fields), so the content is dropped and a re-marshal
+	// emits only the metadata keys.
+	smuggled := []byte(`{"attempt_id":"att-7","prompt_ref":"refs/prompts/1","created_at":"2024-09-09T09:09:09.999999999Z","prompt":"do not log this","content":"also secret"}`)
+	p, err := unmarshalAttemptPrompt(smuggled)
+	if err != nil {
+		t.Fatalf("unmarshal smuggled payload failed: %v", err)
+	}
+	re, err := marshalAttemptPrompt(p)
+	if err != nil {
+		t.Fatalf("re-marshal of unmarshaled payload failed: %v", err)
+	}
+	var reKeys map[string]json.RawMessage
+	if err := json.Unmarshal(re, &reKeys); err != nil {
+		t.Fatalf("unmarshal re-marshaled payload as map failed: %v", err)
+	}
+	for _, extra := range []string{"prompt", "content"} {
+		if _, ok := reKeys[extra]; ok {
+			t.Errorf("re-marshal emitted smuggled key %q: %s", extra, re)
+		}
+	}
 }
 
 // TestPayloadRoundTripLoopAndApproval covers the wf_loop_incremented,

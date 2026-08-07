@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -187,7 +189,7 @@ func TestContextForStepKeepsInlineValuesByteIdentical(t *testing.T) {
 		t.Fatal(err)
 	}
 	step := definition.Step{ID: "review", Kind: "agent", Context: []definition.ContextBinding{{From: "steps.plan.output", As: "plan", MaxBytes: 16000}}}
-	_, evidence, err := ctrl.contextForStep(context.Background(), step, attempts)
+	_, evidence, _, err := ctrl.contextForStep(context.Background(), step, attempts)
 	if err != nil {
 		t.Fatalf("inline evidence must not error: %v", err)
 	}
@@ -246,7 +248,7 @@ func TestValidateBindingLimitsMeasuresEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidenceStep := definition.Step{ID: "review", Kind: "agent", Context: []definition.ContextBinding{{From: "steps.plan_tests.output", As: "test_plan", MaxBytes: 16000}}}
-	_, evidence, err := ctrl.contextForStep(context.Background(), evidenceStep, attempts)
+	_, evidence, _, err := ctrl.contextForStep(context.Background(), evidenceStep, attempts)
 	if err != nil {
 		t.Fatalf("contextForStep must envelope the oversized artifact, not error: %v", err)
 	}
@@ -257,5 +259,161 @@ func TestValidateBindingLimitsMeasuresEnvelope(t *testing.T) {
 	err = validateBindingLimits(inputStep, map[string]any{"task": "build"}, map[string]any{})
 	if err == nil || !strings.Contains(err.Error(), "exceeds 1 bytes") {
 		t.Fatalf("oversized input = %v, want rejection containing %q", err, "exceeds 1 bytes")
+	}
+}
+
+// TestBuildEvidenceEnvelopeFitsUnderHTMLEscaping pins the plan v3 P1 fix:
+// json.Marshal HTML-escapes & < > into \u0026 \u003c \u003e (6 bytes each), so
+// a 4KiB preview dense with URL/HTML characters can inflate the MARSHALED
+// envelope past the binding cap. buildEvidenceEnvelope must measure the
+// skeleton exactly, budget the preview, and halve it until the marshaled
+// envelope fits the 16,000-byte cap.
+func TestBuildEvidenceEnvelopeFitsUnderHTMLEscaping(t *testing.T) {
+	const cap = 16000
+	raw := []byte("<a href=\"https://ex.test/?a=1&b=2&c=3\">" + strings.Repeat("&", 4<<10) + "</a>")
+	prior := workflowledger.StepAttempt{
+		StepID: "first", AttemptNo: 1, OutputRef: "sha256:abc", OutputDigest: "sha256:def",
+	}
+	env, err := buildEvidenceEnvelope("wfr-html", prior, raw, cap)
+	if err != nil {
+		t.Fatalf("buildEvidenceEnvelope: %v", err)
+	}
+	marshaled, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(marshaled) > cap {
+		t.Fatalf("marshaled envelope = %d bytes, want <= %d", len(marshaled), cap)
+	}
+	artifact, ok := env["artifact"].(map[string]any)
+	if !ok {
+		t.Fatalf("envelope = %#v, want an artifact key", env)
+	}
+	preview, _ := artifact["preview"].(string)
+	if len(preview) == 0 || len(preview) >= evidencePreviewBytes {
+		t.Fatalf("preview = %d bytes, want a halved preview strictly < %d (HTML escaping must have forced a shrink)",
+			len(preview), evidencePreviewBytes)
+	}
+}
+
+// TestBuildEvidenceEnvelopeFitsRedactionInflation pins the redact-then-
+// truncate ordering: a text full of redaction-pattern matches grows when each
+// match becomes "[redacted]", and that growth must stay inside the preview
+// budget instead of pushing the marshaled envelope over the cap. Truncating
+// first would inflate a 4KiB raw preview to ~40KiB of placeholders; redacting
+// first caps the preview at its budget.
+func TestBuildEvidenceEnvelopeFitsRedactionInflation(t *testing.T) {
+	prev := redact.Current()
+	policy, err := redact.Compile([]string{"a"}, nil, redact.DefaultPlaceholder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redact.SetPolicy(policy)
+	defer redact.SetPolicy(prev)
+
+	const cap = 16000
+	raw := []byte(strings.Repeat("a", 4<<10))
+	prior := workflowledger.StepAttempt{
+		StepID: "first", AttemptNo: 1, OutputRef: "sha256:abc", OutputDigest: "sha256:def",
+	}
+	env, err := buildEvidenceEnvelope("wfr-redact", prior, raw, cap)
+	if err != nil {
+		t.Fatalf("buildEvidenceEnvelope: %v", err)
+	}
+	marshaled, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(marshaled) > cap {
+		t.Fatalf("marshaled envelope = %d bytes, want <= %d", len(marshaled), cap)
+	}
+	artifact, ok := env["artifact"].(map[string]any)
+	if !ok {
+		t.Fatalf("envelope = %#v, want an artifact key", env)
+	}
+	preview, _ := artifact["preview"].(string)
+	if !strings.Contains(preview, "[redacted]") {
+		t.Fatalf("preview = %q, want redacted content", preview)
+	}
+	if len(preview) > evidencePreviewBytes {
+		t.Fatalf("preview = %d bytes, want <= %d even after placeholder growth", len(preview), evidencePreviewBytes)
+	}
+}
+
+// TestEvidenceEnvelopePreviewRuneSafeAndBounded pins evidencePreview's
+// guarantees: the result is at most max bytes, is valid UTF-8 even when the
+// raw bytes end mid-rune or are invalid, and cuts only on a rune boundary.
+func TestEvidenceEnvelopePreviewRuneSafeAndBounded(t *testing.T) {
+	// Two-byte runes: 4096 is an even byte count, so a full-budget preview is
+	// exactly 2048 runes and stays on a rune boundary.
+	preview := evidencePreview([]byte(strings.Repeat("é", 5000)), evidencePreviewBytes)
+	if len(preview) > evidencePreviewBytes {
+		t.Fatalf("preview = %d bytes, want <= %d", len(preview), evidencePreviewBytes)
+	}
+	if !utf8.ValidString(preview) {
+		t.Fatalf("preview is not valid UTF-8: %q", preview)
+	}
+	if len(preview) != evidencePreviewBytes {
+		t.Fatalf("preview = %d bytes, want exactly %d (a rune boundary)", len(preview), evidencePreviewBytes)
+	}
+
+	// A 3-byte rune spanning the truncation point must not be cut in half.
+	midRune := []byte(strings.Repeat("é", 2047) + "€") // 3-byte rune straddles byte 4096
+	preview = evidencePreview(midRune, evidencePreviewBytes)
+	if !utf8.ValidString(preview) || len(preview) > evidencePreviewBytes {
+		t.Fatalf("mid-rune preview = %q (%d bytes), want valid UTF-8 within %d bytes", preview, len(preview), evidencePreviewBytes)
+	}
+
+	// Invalid bytes are sanitized to U+FFFD before truncation, so the preview
+	// is always valid UTF-8 within the budget.
+	dirty := append([]byte("x"), 0xFF, 0xFE, 0x80)
+	preview = evidencePreview(dirty, 4)
+	if !utf8.ValidString(preview) || len(preview) > 4 {
+		t.Fatalf("dirty preview = %q (%d bytes), want <= 4 valid UTF-8 bytes", preview, len(preview))
+	}
+}
+
+// TestBuildEvidenceEnvelopeNoPreviewFallback pins the budget floor: a cap just
+// above the exact no-preview skeleton leaves no preview budget, so the preview
+// field is omitted entirely and the envelope still fits; a cap below the
+// skeleton cannot fit even the no-preview envelope and returns an error.
+func TestBuildEvidenceEnvelopeNoPreviewFallback(t *testing.T) {
+	raw := []byte(strings.Repeat("x", 4096))
+	prior := workflowledger.StepAttempt{
+		StepID: "first", AttemptNo: 1, OutputRef: "sha256:abc", OutputDigest: "sha256:def",
+	}
+	const runID = "wfr-nopreview"
+	skeleton, err := json.Marshal(map[string]any{
+		"artifact": map[string]any{
+			"step": "first", "attempt": 1, "ref": "sha256:abc",
+			"bytes": len(raw), "digest": "sha256:def", "preview": "",
+		},
+		"note": "full artifact is in the workflow ledger; read it with workflow_inspect(run_id=" + runID + ", step=<step>, attempt=<attempt>)",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env, err := buildEvidenceEnvelope(runID, prior, raw, len(skeleton)+1)
+	if err != nil {
+		t.Fatalf("cap slightly above the skeleton must not error: %v", err)
+	}
+	artifact, ok := env["artifact"].(map[string]any)
+	if !ok {
+		t.Fatalf("envelope = %#v, want an artifact key", env)
+	}
+	if _, hasPreview := artifact["preview"]; hasPreview {
+		t.Fatalf("artifact = %#v, want the preview omitted when the budget is exhausted", artifact)
+	}
+	marshaled, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(marshaled) > len(skeleton)+1 {
+		t.Fatalf("no-preview envelope = %d bytes, want <= %d", len(marshaled), len(skeleton)+1)
+	}
+
+	if _, err := buildEvidenceEnvelope(runID, prior, raw, len(skeleton)-1); err == nil {
+		t.Fatalf("cap below the skeleton must error, got nil")
 	}
 }

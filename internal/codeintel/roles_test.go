@@ -200,7 +200,7 @@ func TestFindImplementationsOnNonInterfaceReturnsEmpty(t *testing.T) {
 // and a myReader concrete type that implements Read.
 func TestFindImplementationsEmbeddedInterface(t *testing.T) {
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, "go.mod"), "module example.com/impl\n\ngo 1.22\n")
+	write(t, filepath.Join(dir, "go.mod"), "module example.com/impl\n\ngo 1.25\n")
 	write(t, filepath.Join(dir, "p.go"), `package impl
 
 // Readable declares a single method.
@@ -235,6 +235,42 @@ func (myReader) Read([]byte) (int, error) { return 0, nil }
 		t.Fatalf("expected at least one implementation of FullReader (myReader), got none; FullLocations=%+v", result.Locations)
 	}
 	t.Logf("implementations of FullReader: %v", imps)
+}
+
+// TestFindImplementationsEmptyInterfaceReturnsNone verifies that findImplementations
+// correctly returns no results for an empty interface (NumMethods == 0).
+// This confirms the guard at roles.go:128 (iface.NumMethods() == 0) correctly skips
+// truly empty interfaces without panicking or misreporting.
+func TestFindImplementationsEmptyInterfaceReturnsNone(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package p
+
+type Empty interface {}
+`
+	f, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{Defs: make(map[*ast.Ident]types.Object)}
+	pkg, err := conf.Check("p", fset, []*ast.File{f}, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgsPkg := &packages.Package{Types: pkg, TypesInfo: info, Fset: fset}
+	target := pkg.Scope().Lookup("Empty")
+	if target == nil {
+		t.Fatal("Empty not found in scope")
+	}
+	var locs []string
+	findImplementations(pkgsPkg, target, fset,
+		func(file string, line int, name string, role Role) {
+			locs = append(locs, name)
+		},
+	)
+	if len(locs) != 0 {
+		t.Errorf("expected 0 locations for empty interface, got %d: %v", len(locs), locs)
+	}
 }
 
 // TestFindImplementationsNilInputs verifies that findImplementations returns no

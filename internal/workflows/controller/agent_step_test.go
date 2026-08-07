@@ -275,6 +275,57 @@ func TestCoordinatorRunnerResumesCompletedChildWithoutDuplicateDispatch(t *testi
 	}
 }
 
+func TestCoordinatorRunnerUsesExplicitPromptVerbatim(t *testing.T) {
+	seen := make(chan runtime.Request, 1)
+	runner := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`), seen: seen})
+	spec := validStepRequest()
+	const want = "You are the plan reviewer.\n\nEvidence refs:\n- plan @ attempt 1 (sha256:abc, 1234 bytes)\n- diff @ attempt 2 (sha256:def, 22 bytes)"
+	spec.Prompt = want
+	if _, err := runner.RunStep(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	req := <-seen
+	var got string
+	if err := json.Unmarshal(req.Input, &got); err != nil {
+		t.Fatalf("task input is not a JSON string: %s", req.Input)
+	}
+	if got != want {
+		t.Fatalf("task input = %q, want the exact prompt %q", got, want)
+	}
+}
+
+func TestCoordinatorRunnerRendersTemplateWhenPromptEmpty(t *testing.T) {
+	seen := make(chan runtime.Request, 1)
+	runner := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`), seen: seen})
+	spec := validStepRequest()
+	spec.Prompt = ""
+	if _, err := runner.RunStep(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	req := <-seen
+	var got string
+	if err := json.Unmarshal(req.Input, &got); err != nil {
+		t.Fatalf("task input is not a JSON string: %s", req.Input)
+	}
+	const want = `task=build evidence={"ok":true}`
+	if got != want {
+		t.Fatalf("task input = %q, want template-rendered prompt %q", got, want)
+	}
+}
+
+func TestCoordinatorRunnerAcceptsNilAndEmptyEvidenceRefs(t *testing.T) {
+	runner := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)})
+	spec := validStepRequest()
+	spec.EvidenceRefs = nil
+	if _, err := runner.RunStep(context.Background(), spec); err != nil {
+		t.Fatalf("nil EvidenceRefs: %v", err)
+	}
+	spec.EvidenceRefs = map[string]ArtifactRef{}
+	if _, err := runner.RunStep(context.Background(), spec); err != nil {
+		t.Fatalf("empty EvidenceRefs: %v", err)
+	}
+}
+
 func TestRecordStepResultStoresChildIdentityAndEvidence(t *testing.T) {
 	runner := stepRunner(t, stepHandler{out: json.RawMessage(`{"ok":true}`)})
 	spec := validStepRequest()

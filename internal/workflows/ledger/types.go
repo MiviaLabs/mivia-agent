@@ -164,6 +164,7 @@ type StepAttempt struct {
 	ToStepID         string        `json:"to_step_id,omitempty"`
 	TransitionIndex  int           `json:"transition_index,omitempty"`
 	MatchDigest      string        `json:"match_digest,omitempty"`
+	PromptRef        string        `json:"prompt_ref,omitempty"`
 	DecisionJSON     []byte        `json:"decision_json,omitempty"`
 	EvidenceJSON     []byte        `json:"evidence_json,omitempty"`
 	StartedAt        time.Time     `json:"started_at"`
@@ -174,6 +175,7 @@ type StepAttempt struct {
 // Clone returns a deep copy.
 func (s StepAttempt) Clone() StepAttempt {
 	clone := s
+	clone.PromptRef = s.PromptRef
 	clone.DecisionJSON = append([]byte(nil), s.DecisionJSON...)
 	clone.EvidenceJSON = append([]byte(nil), s.EvidenceJSON...)
 	if s.FinishedAt != nil {

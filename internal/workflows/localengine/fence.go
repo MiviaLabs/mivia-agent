@@ -87,6 +87,13 @@ func (f *abandonFence) CompleteStepAttempt(ctx context.Context, runID, attemptID
 	return f.inner.CompleteStepAttempt(ctx, runID, attemptID, expectedVersion, outcome)
 }
 
+func (f *abandonFence) SetStepAttemptPrompt(ctx context.Context, runID, attemptID, promptRef string) error {
+	if f.isAbandoned(runID) {
+		return workflowledger.ErrConflict
+	}
+	return f.inner.SetStepAttemptPrompt(ctx, runID, attemptID, promptRef)
+}
+
 func (f *abandonFence) ListTransitions(ctx context.Context, runID string) ([]workflowledger.TransitionRecord, error) {
 	return f.inner.ListTransitions(ctx, runID)
 }

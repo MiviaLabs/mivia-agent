@@ -154,6 +154,24 @@ type AgentStepRequest struct {
 	MaxBindingBytes  int
 	MaxContextBytes  int
 	OutputSchema     map[string]any
+	// Prompt is the fully rendered step prompt (including the evidence-refs
+	// block), produced by the controller. An empty value means the runner
+	// must render the prompt from Template/Inputs/Evidence.
+	Prompt string
+	// EvidenceRefs names the artifact references bound into the prompt,
+	// keyed by evidence name. Nil when the step binds no artifact
+	// references.
+	EvidenceRefs map[string]ArtifactRef
+}
+
+// ArtifactRef addresses one content-addressed artifact referenced by a
+// workflow step's evidence.
+type ArtifactRef struct {
+	Step    string `json:"step"`
+	Attempt int    `json:"attempt"`
+	Ref     string `json:"ref"`
+	Bytes   int    `json:"bytes"`
+	Digest  string `json:"digest"`
 }
 
 // AgentStepResult contains the validated output and bounded evidence metadata.
@@ -218,9 +236,15 @@ func (r *CoordinatorRunner) RunStep(ctx context.Context, spec AgentStepRequest) 
 	if err := validateRequest(spec); err != nil {
 		return AgentStepResult{}, err
 	}
-	prompt, err := template.Render(spec.Template, spec.Inputs, spec.Evidence, spec.MaxBindingBytes, spec.MaxContextBytes)
-	if err != nil {
-		return AgentStepResult{}, err
+	var prompt string
+	if spec.Prompt != "" {
+		prompt = spec.Prompt
+	} else {
+		var err error
+		prompt, err = template.Render(spec.Template, spec.Inputs, spec.Evidence, spec.MaxBindingBytes, spec.MaxContextBytes)
+		if err != nil {
+			return AgentStepResult{}, err
+		}
 	}
 	evidenceJSON, err := marshalEvidenceSelection(spec)
 	if err != nil {

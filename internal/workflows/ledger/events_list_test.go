@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -380,5 +381,112 @@ func TestListEventsBoundedDeliverySummary(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("delivery upsert event missing from the listing")
+	}
+}
+
+// TestSummarizeEventAttemptPromptRefOnly: a wf_attempt_prompt event yields a
+// bounded REF-ONLY summary carrying attempt_id and prompt_ref, and NEVER any
+// prompt content — however large the body and however it is named in the
+// payload (prompt, content, messages, ...), it must stay out of the summary.
+func TestSummarizeEventAttemptPromptRefOnly(t *testing.T) {
+	fakeBody := "top-secret-prompt-body-" + strings.Repeat("x", 4096)
+	payload, err := json.Marshal(map[string]any{
+		"attempt_id": "wfa-step1-1",
+		"prompt_ref": "sha256:deadbeef",
+		"prompt":     fakeBody,
+		"content":    fakeBody,
+		"messages":   []any{map[string]any{"role": "user", "content": fakeBody}},
+	})
+	requireErr(t, err, nil, "marshal attempt_prompt payload")
+
+	record, ok := summarizeEvent(storage.Event{Kind: eventKindAttemptPrompt, Payload: payload})
+	if !ok {
+		t.Fatal("summarizeEvent(wf_attempt_prompt) = ok=false, want a summary")
+	}
+	if want := "attempt wfa-step1-1 prompt ref sha256:deadbeef"; record.Summary != want {
+		t.Fatalf("attempt_prompt summary = %q, want %q (ref-only, no content)", record.Summary, want)
+	}
+	if strings.Contains(record.Summary, fakeBody) {
+		t.Fatalf("attempt_prompt summary leaks the raw prompt body: %q", record.Summary)
+	}
+	if strings.Contains(record.Summary, `{"`) {
+		t.Fatalf("attempt_prompt summary echoes raw payload JSON: %q", record.Summary)
+	}
+	if len(record.Summary) > MaxEventSummaryBytes {
+		t.Fatalf("attempt_prompt summary = %d bytes, want <= %d", len(record.Summary), MaxEventSummaryBytes)
+	}
+}
+
+// TestSummarizeEventUnknownKind: a foreign or unknown kind is not displayable:
+// summarizeEvent must answer ok=false and never fabricate a summary. An
+// undecodable payload of the NEW known kind is store corruption, not display.
+func TestSummarizeEventUnknownKind(t *testing.T) {
+	for _, kind := range []string{"wf_unknown_kind", "run_created", ""} {
+		record, ok := summarizeEvent(storage.Event{Kind: kind, Payload: []byte(`{}`)})
+		if ok {
+			t.Fatalf("summarizeEvent(kind %q) = ok=true (%+v), want ok=false", kind, record)
+		}
+	}
+	if _, ok := summarizeEvent(storage.Event{Kind: eventKindAttemptPrompt, Payload: []byte("not-json")}); ok {
+		t.Fatal("summarizeEvent(wf_attempt_prompt, invalid payload) = ok=true, want ok=false")
+	}
+	if _, ok := summarizeEvent(storage.Event{Kind: eventKindAttemptPrompt, Payload: []byte(`{"attempt_id":"wfa-x"}`)}); ok {
+		t.Fatal("summarizeEvent(wf_attempt_prompt, missing prompt_ref) = ok=true, want ok=false")
+	}
+}
+
+// TestListEventsAttemptPromptRefOnly: a wf_attempt_prompt event lands in the
+// audit trail with the same ref-only summary; the long prompt body stays out
+// of the listing end to end.
+func TestListEventsAttemptPromptRefOnly(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, snapJSON := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, snapJSON), nil, "CreateRun")
+
+			fakeBody := "secret-prompt-" + strings.Repeat("y", 4096)
+			payload, err := json.Marshal(map[string]any{
+				"attempt_id": "wfa-prompt-1",
+				"prompt_ref": "sha256:feedface",
+				"prompt":     fakeBody,
+			})
+			requireErr(t, err, nil, "marshal attempt_prompt payload")
+
+			events, err := repo.store.Events(ctx, run)
+			requireErr(t, err, nil, "store.Events")
+			seq := 0
+			for _, ev := range events {
+				if ev.Sequence > seq {
+					seq = ev.Sequence
+				}
+			}
+			requireErr(t, repo.store.Append(ctx, storage.Event{
+				ID: "wfe:attempt-prompt:1", RunID: run, Sequence: seq + 1,
+				Kind: eventKindAttemptPrompt, Payload: payload,
+			}), nil, "Append wf_attempt_prompt")
+
+			listed, err := repo.ListEvents(ctx, run, 0, 0)
+			requireErr(t, err, nil, "ListEvents")
+			var found *EventRecord
+			for i := range listed {
+				if listed[i].Kind == eventKindAttemptPrompt {
+					found = &listed[i]
+				}
+			}
+			if found == nil {
+				t.Fatal("wf_attempt_prompt event missing from the listing")
+			}
+			if want := "attempt wfa-prompt-1 prompt ref sha256:feedface"; found.Summary != want {
+				t.Fatalf("attempt_prompt summary = %q, want %q (ref-only)", found.Summary, want)
+			}
+			if strings.Contains(found.Summary, fakeBody) {
+				t.Fatalf("attempt_prompt summary leaks the prompt body: %q", found.Summary)
+			}
+			if len(found.Summary) > MaxEventSummaryBytes {
+				t.Fatalf("attempt_prompt summary = %d bytes, want <= %d", len(found.Summary), MaxEventSummaryBytes)
+			}
+		})
 	}
 }

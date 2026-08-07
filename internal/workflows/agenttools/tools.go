@@ -229,6 +229,7 @@ func (t *inspectTool) ResultBudgetBytes() int { return t.svc.budget("inspect") }
 func (t *inspectTool) Description() string {
 	return "Inspect one workflow step attempt: validated output JSON, evidence selection, " +
 		"transition decision, and coordinator run/task references for tool-call tracing. " +
+		"Large output artifacts are paged; offset and limit select the page of output text. " +
 		"Read-only; does not mutate run state. " +
 		"Available to agents by default when the workspace defines workflows; use it to trace a step."
 }
@@ -249,6 +250,16 @@ func (t *inspectTool) Parameters() map[string]any {
 				"minimum":     1,
 				"description": "Attempt number for that step (starts at 1)",
 			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"minimum":     0,
+				"description": "Maximum output bytes to return in one page (default 0); 0 uses the service default page size",
+			},
+			"offset": map[string]any{
+				"type":        "integer",
+				"minimum":     0,
+				"description": "Number of output bytes to skip from the start of the artifact (default 0)",
+			},
 		},
 		"required":             []string{"run_id", "step", "attempt"},
 		"additionalProperties": false,
@@ -259,11 +270,13 @@ func (t *inspectTool) Execute(ctx context.Context, args json.RawMessage) (string
 		RunID   string `json:"run_id"`
 		Step    string `json:"step"`
 		Attempt int    `json:"attempt"`
+		Limit   int    `json:"limit"`
+		Offset  int    `json:"offset"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return "", fmt.Errorf("%s: invalid arguments: %w", ToolWorkflowInspect, err)
 	}
-	view, err := t.svc.Inspect(ctx, strings.TrimSpace(in.RunID), strings.TrimSpace(in.Step), in.Attempt)
+	view, err := t.svc.Inspect(ctx, strings.TrimSpace(in.RunID), strings.TrimSpace(in.Step), in.Attempt, in.Offset, in.Limit)
 	if err != nil {
 		return "", err
 	}

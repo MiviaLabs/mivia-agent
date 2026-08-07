@@ -224,13 +224,20 @@ func (c *LinearController) executeAgentAttempt(ctx context.Context, run workflow
 // the step's snapshotted runtime and the current context, using the attempt's
 // recorded coordinator identity. On a resume join the identity is the
 // attempt's ORIGINAL child, so the production runner joins that child instead
-// of dispatching a fresh one.
+// of dispatching a fresh one. The step prompt is rendered HERE, in the
+// controller, and persisted per attempt: a resume JOIN reuses the stored
+// prompt (fingerprint-stable) instead of re-rendering, and the runner never
+// re-renders when spec.Prompt is set.
 func (c *LinearController) agentStepRequest(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, runtime StepRuntime, attempt workflowledger.StepAttempt, attempts []workflowledger.StepAttempt) (AgentStepRequest, error) {
-	stepInputs, evidence, err := c.contextForStep(ctx, step, attempts)
+	stepInputs, evidence, refs, err := c.contextForStep(ctx, step, attempts)
 	if err != nil {
 		return AgentStepRequest{}, err
 	}
 	if err := validateBindingLimits(step, c.Inputs, evidence); err != nil {
+		return AgentStepRequest{}, err
+	}
+	prompt, err := c.renderStepPrompt(ctx, attempt, runtime, step, stepInputs, evidence, refs)
+	if err != nil {
 		return AgentStepRequest{}, err
 	}
 	var timeout time.Duration
@@ -243,7 +250,7 @@ func (c *LinearController) agentStepRequest(ctx context.Context, run workflowled
 			timeout = remaining
 		}
 	}
-	return AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, Skill: step.Skill, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: maxStepContextBytes, OutputSchema: runtime.Schema}, nil
+	return AgentStepRequest{WorkflowRunID: c.RunID, StepID: step.ID, AttemptNo: attempt.AttemptNo, TaskID: attempt.TaskID, CoordinatorRunID: attempt.CoordinatorRunID, AgentName: runtime.Agent.Name, AgentDigest: runtime.Digest, Skill: step.Skill, ProviderName: runtime.ProviderName, Model: runtime.Model, Timeout: timeout, ForceResume: c.forceResume, Template: runtime.Template, Inputs: stepInputs, Evidence: evidence, MaxBindingBytes: maxBinding(step), MaxContextBytes: maxStepContextBytes, OutputSchema: runtime.Schema, Prompt: prompt, EvidenceRefs: refs}, nil
 }
 
 // settleAgentAttempt records one attempt's outcome from the child result and
