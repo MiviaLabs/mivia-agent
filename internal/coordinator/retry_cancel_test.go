@@ -347,8 +347,9 @@ func (r *erroringSetTaskAttemptRepo) SetTaskAttempt(ctx context.Context, runID, 
 }
 
 func TestCoordinator_MintRetryAttemptLedgerError(t *testing.T) {
-	// Exercises dag.go:451-452: when SetTaskAttempt fails during retry,
-	// the error propagates without panic.
+	// Exercises the SetTaskAttempt error path during retry finalization:
+	// when SetTaskAttempt fails (simulated), the error propagates without
+	// panic and the run completes (with errors).
 	repo := ledger.NewMemoryLedgerRepository()
 	fixedTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	repo.SetTimeSource(func() time.Time { return fixedTime })
@@ -381,4 +382,185 @@ func TestCoordinator_MintRetryAttemptLedgerError(t *testing.T) {
 	// The task should have attempted retry and the error from SetTaskAttempt
 	// should be recorded, not panic.
 	t.Logf("task status: %s, run error: %v", result.Results[0].Status, result.Err)
+}
+
+// ---------------------------------------------------------------------------
+// Original-attempt finalization on retry (bug fix regression tests)
+// ---------------------------------------------------------------------------
+
+// TestRetryFinalizesOriginalFailedAttempt verifies that when a retry-enabled
+// task fails and is retried, the original attempt's ledger record is finalized
+// with its terminal status (failed) and a non-nil FinishedAt. Before the fix,
+// processResults called mintRetryAttempt which overwrote h.attempts[taskID] with
+// the new retry attempt ID, and recordTaskResult only finalized the LAST
+// attempt — leaving the original attempt stuck at status 'queued' forever.
+func TestRetryFinalizesOriginalFailedAttempt(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	fixedTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	repo.SetTimeSource(func() time.Time { return fixedTime })
+	d := runtime.New(runtime.Policy{})
+	failer := &failTwiceHandler{}
+	_ = d.Register(runtime.Subagent, "flaky-finalize-1", failer)
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	c := New(repo, p).WithRetryPolicy(RetryPolicy{
+		MaxRetries:     3,
+		BaseBackoff:    1 * time.Millisecond,
+		MaxBackoff:     5 * time.Millisecond,
+		BackoffFactor:  2.0,
+		JitterFraction: 0,
+	})
+
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "t1", Name: "flaky-finalize-1"},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := c.Join(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Err != nil {
+		t.Fatalf("unexpected run error: %v", result.Err)
+	}
+
+	snap, err := c.Inspect(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+	}
+	attempts := snap.Tasks[0].Attempts
+	if len(attempts) < 2 {
+		t.Fatalf("expected >= 2 attempts, got %d", len(attempts))
+	}
+
+	// Original attempt must be finalized as 'failed' (the handler returned an error).
+	if attempts[0].Status != string(ledger.TaskStatusFailed) {
+		t.Errorf("original attempt[0].Status = %q, want %q", attempts[0].Status, ledger.TaskStatusFailed)
+	}
+	if attempts[0].FinishedAt == nil {
+		t.Errorf("original attempt[0].FinishedAt = nil, want non-nil")
+	}
+
+	// Final attempt must be 'completed' (the retry succeeded).
+	last := attempts[len(attempts)-1]
+	if last.Status != string(ledger.TaskStatusCompleted) {
+		t.Errorf("final attempt[%d].Status = %q, want %q", len(attempts)-1, last.Status, ledger.TaskStatusCompleted)
+	}
+}
+
+// TestRetryFinalizesOriginalTimedOutAttempt verifies that when a retry-enabled
+// task times out and is retried, the original attempt is finalized with
+// status 'timed_out' and a non-nil FinishedAt. Uses a slow handler with a
+// per-task Timeout so subagents.resultStatus maps context.DeadlineExceeded to
+// 'timed_out' (not context.Canceled which maps to 'canceled').
+func TestRetryFinalizesOriginalTimedOutAttempt(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	fixedTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	repo.SetTimeSource(func() time.Time { return fixedTime })
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "slowtimeout", invoker(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}))
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	c := New(repo, p).WithRetryPolicy(RetryPolicy{
+		MaxRetries:     3,
+		BaseBackoff:    1 * time.Millisecond,
+		MaxBackoff:     5 * time.Millisecond,
+		BackoffFactor:  2.0,
+		JitterFraction: 0,
+	})
+
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "t1", Name: "slowtimeout", Timeout: 1 * time.Millisecond},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := c.Join(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := c.Inspect(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+	}
+	attempts := snap.Tasks[0].Attempts
+	if len(attempts) < 2 {
+		t.Fatalf("expected >= 2 attempts, got %d", len(attempts))
+	}
+
+	// Original attempt must be finalized as 'timed_out'.
+	if attempts[0].Status != string(ledger.TaskStatusTimedOut) {
+		t.Errorf("original attempt[0].Status = %q, want %q", attempts[0].Status, ledger.TaskStatusTimedOut)
+	}
+	if attempts[0].FinishedAt == nil {
+		t.Errorf("original attempt[0].FinishedAt = nil, want non-nil")
+	}
+
+	// All attempts time out because the handler always blocks. After retries
+	// are exhausted, the final attempt is 'timed_out' and the run fails.
+	_ = result
+	t.Logf("run result: %v", result)
+}
+
+// TestRetryFinalizesOriginalFailedExhausted verifies that when all retries are
+// exhausted (every attempt fails), every attempt including the original is
+// finalized with terminal status 'failed' and a non-nil FinishedAt.
+func TestRetryFinalizesOriginalFailedExhausted(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	fixedTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	repo.SetTimeSource(func() time.Time { return fixedTime })
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "alwaysfail-finalize", staticHandler{err: errors.New("always fail")})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	c := New(repo, p).WithRetryPolicy(RetryPolicy{
+		MaxRetries:     2,
+		BaseBackoff:    1 * time.Millisecond,
+		MaxBackoff:     5 * time.Millisecond,
+		BackoffFactor:  2.0,
+		JitterFraction: 0,
+	})
+
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "t1", Name: "alwaysfail-finalize"},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Join(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := c.Inspect(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+	}
+	attempts := snap.Tasks[0].Attempts
+	if len(attempts) != 3 {
+		t.Fatalf("expected 3 attempts (original + 2 retries), got %d", len(attempts))
+	}
+
+	for i, a := range attempts {
+		if a.Status != string(ledger.TaskStatusFailed) {
+			t.Errorf("attempt[%d].Status = %q, want %q", i, a.Status, ledger.TaskStatusFailed)
+		}
+		if a.FinishedAt == nil {
+			t.Errorf("attempt[%d].FinishedAt = nil, want non-nil", i)
+		}
+	}
 }
