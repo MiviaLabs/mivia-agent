@@ -86,7 +86,7 @@ func (t *runCommandTool) Parameters() map[string]any {
 		},
 		"timeout_seconds": map[string]any{
 			"type":        "integer",
-			"description": "Optional per-call timeout in seconds, clamped to the tool-level maximum.",
+			"description": "Optional per-call timeout in seconds, bounded by the caller step/run grant; without a grant, clamped to the tool-level maximum.",
 		},
 		"cwd": map[string]any{
 			"type":        "string",
@@ -140,20 +140,36 @@ func (t *runCommandTool) Execute(ctx context.Context, args json.RawMessage) (str
 	return t.composeResult(in.Argv, callCtx, capture.runErr, cmdDir, capture), nil
 }
 
-// callContext derives the effective per-call timeout context, clamped to the
-// tool-level maximum and only applied when tighter than the parent's deadline
-// (never extending it). The cancel func is nil when the parent deadline
-// already bounds the call.
+// callContext derives the effective per-call timeout context. A per-call
+// timeout_seconds argument extends past the static tool cap when the parent
+// context carries a deadline (a step/run grant); without a parent deadline the
+// static cap remains the ceiling. The effective timeout is clamped to a 24h
+// absolute ceiling and never extends the parent deadline (when the parent is
+// the tighter bound, the parent context is handed through unchanged, so the
+// cancel func is nil).
 func (t *runCommandTool) callContext(ctx context.Context, requested int) (context.Context, context.CancelFunc) {
-	effectiveTimeout := t.timeoutSec
-	if requested > 0 && requested < effectiveTimeout {
-		effectiveTimeout = requested
+	const absoluteCeiling = 24 * time.Hour
+	timeout := time.Duration(t.timeoutSec) * time.Second
+	if timeout <= 0 {
+		timeout = 900 * time.Second
 	}
-	timeout := time.Duration(effectiveTimeout) * time.Second
-	if parentDeadline, ok := ctx.Deadline(); !ok || timeout < time.Until(parentDeadline) {
-		return context.WithTimeout(ctx, timeout)
+	if requested > 0 {
+		req := time.Duration(requested) * time.Second
+		if _, ok := ctx.Deadline(); ok {
+			// A parent grant exists: the per-call arg may extend past the
+			// static cap (bounded below by the parent and the ceiling).
+			timeout = req
+		} else if req < timeout {
+			timeout = req
+		}
 	}
-	return ctx, nil
+	if timeout > absoluteCeiling {
+		timeout = absoluteCeiling
+	}
+	if parentDeadline, ok := ctx.Deadline(); ok && time.Until(parentDeadline) < timeout {
+		return ctx, nil
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 // resolveCwd validates a per-call workspace-relative working directory,

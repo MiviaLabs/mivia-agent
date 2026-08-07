@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -375,6 +377,204 @@ func (r *recordingDeliverGit) Dirs() []string {
 	return out
 }
 
+// refusalDeliverGit is a GitRunner that permanently refuses delivery with a
+// fixed reason, modelling a host refusal such as an over-long PR title.
+type refusalDeliverGit struct{ reason string }
+
+func (r refusalDeliverGit) Run(_ context.Context, _ delivery.GitContext, _ ...string) (string, error) {
+	return "", &delivery.RefusalError{Reason: r.reason}
+}
+
+// plainErrorDeliverGit is a GitRunner that fails every command with a plain,
+// recoverable error (models a transient host failure).
+type plainErrorDeliverGit struct{ msg string }
+
+func (p plainErrorDeliverGit) Run(_ context.Context, _ delivery.GitContext, _ ...string) (string, error) {
+	return "", errors.New(p.msg)
+}
+
+// waitForSessionEngineIdle blocks until the engine's background goroutine for
+// runID has finished (the active entry is removed after the controller and any
+// auto-delivery complete), or fails the test on timeout.
+func waitForSessionEngineIdle(t *testing.T, e *sessionWorkflowEngine, runID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		e.mu.Lock()
+		active, ok := e.active[runID]
+		e.mu.Unlock()
+		if !ok {
+			return
+		}
+		select {
+		case <-active.done:
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	t.Fatalf("engine did not finish run %s within deadline", runID)
+}
+
+// TestSessionAutoDeliveryRefusalRecordedNotDiscarded proves the end-of-run
+// auto-delivery path surfaces a delivery failure instead of silently
+// discarding it: after a permanent refusal the run settles to delivery_failed
+// AND a durable failed delivery record with a content-addressed ErrorRef names
+// the reason, so `workflow status` explains the failure.
+func TestSessionAutoDeliveryRefusalRecordedNotDiscarded(t *testing.T) {
+	root, storePath, configPath, _ := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, configPath)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, runID, repo)
+
+	prevRun := workflowResumeRun
+	prevGit := workflowDeliverGit
+	t.Cleanup(func() {
+		workflowResumeRun = prevRun
+		workflowDeliverGit = prevGit
+	})
+	workflowResumeRun = func(context.Context, workflowControllerBuild) (workflowledger.RunSnapshot, error) {
+		return workflowledger.RunSnapshot{
+			RunID:  runID,
+			Status: workflowledger.RunStatusDeliveryPending,
+		}, nil
+	}
+	workflowDeliverGit = refusalDeliverGit{reason: "test PR title too long"}
+
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyWorkflowStoreRoot(res, root)
+	store, engineRepo, closeFn, err := openWorkflowStore(root, res.Subagents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closeFn)
+	finish, err := beginWorkflowExecution(root, contextStorePath(root, res.Subagents), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := newSessionWorkflowEngine(root, configPath)
+	p := resumePrepared{
+		runID: runID, workflow: "two-step", root: root,
+		built:      workflowControllerBuild{Dispatcher: workflowTestDispatcher{}},
+		closeFn:    func() {},
+		finishExec: finish,
+		repo:       engineRepo,
+		store:      store,
+		res:        res,
+	}
+	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionEngineIdle(t, e, runID)
+
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryFailed {
+		t.Fatalf("run status = %q, want delivery_failed after a permanent refusal", run.Status)
+	}
+	rec, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(runID, run.WorkflowDigest))
+	if err != nil {
+		t.Fatalf("no durable delivery record after failed auto-delivery: %v", err)
+	}
+	if rec.Status != "failed" {
+		t.Fatalf("delivery record status = %q, want failed", rec.Status)
+	}
+	if rec.ErrorRef == "" {
+		t.Fatal("delivery record ErrorRef is empty: the refusal reason must be recorded, not silently discarded")
+	}
+	body, err := repo.LoadContent(ctx, rec.ErrorRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "test PR title too long") {
+		t.Fatalf("recorded delivery error = %q, want it to name the refusal reason", body)
+	}
+}
+
+// TestSessionAutoDeliveryTransientFailureRecordedNotDiscarded proves a
+// recoverable auto-delivery failure leaves the run delivery_pending (retry-
+// able) but is still recorded durably: a failed delivery record with a
+// content-addressed ErrorRef tells `workflow status` why delivery did not
+// settle, instead of vanishing into a discarded error.
+func TestSessionAutoDeliveryTransientFailureRecordedNotDiscarded(t *testing.T) {
+	root, storePath, configPath, _ := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, configPath)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, runID, repo)
+
+	prevRun := workflowResumeRun
+	prevGit := workflowDeliverGit
+	t.Cleanup(func() {
+		workflowResumeRun = prevRun
+		workflowDeliverGit = prevGit
+	})
+	workflowResumeRun = func(context.Context, workflowControllerBuild) (workflowledger.RunSnapshot, error) {
+		return workflowledger.RunSnapshot{
+			RunID:  runID,
+			Status: workflowledger.RunStatusDeliveryPending,
+		}, nil
+	}
+	workflowDeliverGit = plainErrorDeliverGit{msg: "test host unreachable"}
+
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyWorkflowStoreRoot(res, root)
+	store, engineRepo, closeFn, err := openWorkflowStore(root, res.Subagents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closeFn)
+	finish, err := beginWorkflowExecution(root, contextStorePath(root, res.Subagents), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := newSessionWorkflowEngine(root, configPath)
+	p := resumePrepared{
+		runID: runID, workflow: "two-step", root: root,
+		built:      workflowControllerBuild{Dispatcher: workflowTestDispatcher{}},
+		closeFn:    func() {},
+		finishExec: finish,
+		repo:       engineRepo,
+		store:      store,
+		res:        res,
+	}
+	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionEngineIdle(t, e, runID)
+
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("run status = %q, want delivery_pending (retryable) after a transient failure", run.Status)
+	}
+	rec, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(runID, run.WorkflowDigest))
+	if err != nil {
+		t.Fatalf("no durable delivery record after failed auto-delivery: %v", err)
+	}
+	if rec.Status != "failed" || rec.ErrorRef == "" {
+		t.Fatalf("delivery record = %+v, want failed with a non-empty ErrorRef", rec)
+	}
+	body, err := repo.LoadContent(ctx, rec.ErrorRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "test host unreachable") {
+		t.Fatalf("recorded delivery error = %q, want it to name the failure", body)
+	}
+}
+
 // TestSessionDeliverRoutesThroughCLIExecute proves allow_publish deliver
 // calls executeWorkflowDeliver (CLI path) rather than localengine root deliver.
 // A missing run fails before git; the recording runner must stay idle.
@@ -433,5 +633,108 @@ func TestSessionDeliverUsesRunWorktreeNotCallerRoot(t *testing.T) {
 		if !strings.Contains(dir, run.WorktreeName) {
 			t.Fatalf("git Dir = %q, want it to contain worktree %q", dir, run.WorktreeName)
 		}
+	}
+}
+
+// TestRecordAutoDeliveryFailurePreservesPushedIdentity is the regression test
+// for recordAutoDeliveryFailure: an end-of-run auto-delivery failure must not
+// clobber a prior pushed record with a bare failed record. latest-wins would
+// erase CommitSHA/TreeSHA/DiffRef/RemoteID/URL — destroying crash-resume and
+// PR-ownership data so the next retry refuses the run's own PR as foreign.
+func TestRecordAutoDeliveryFailurePreservesPushedIdentity(t *testing.T) {
+	root, storePath, config, _ := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := delivery.DeliveryKey(runID, run.WorkflowDigest)
+	// The crashed attempt published the run's PR and recorded its identity
+	// before the end-of-run auto-delivery attempt failed.
+	if err := repo.UpsertDelivery(ctx, workflowledger.DeliveryRecord{
+		RunID:          runID,
+		IdempotencyKey: key,
+		Mode:           "draft",
+		BaseRef:        "main",
+		HeadRef:        "wf/" + run.WorktreeName,
+		Provider:       "github",
+		Status:         "pushed",
+		CommitSHA:      "c0ffee",
+		TreeSHA:        "tree",
+		DiffRef:        "diff",
+		RemoteID:       "42",
+		URL:            "https://github.com/x/y/pull/42",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recordAutoDeliveryFailure(ctx, repo, runID, errors.New("find: transient failure"))
+
+	rec, err := repo.GetDeliveryByIdempotencyKey(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != "failed" {
+		t.Fatalf("record status = %q, want failed", rec.Status)
+	}
+	if rec.ErrorRef == "" {
+		t.Fatal("record ErrorRef is empty: the auto-delivery failure reason must be recorded")
+	}
+	if rec.RemoteID != "42" || rec.URL != "https://github.com/x/y/pull/42" {
+		t.Fatalf("failed record = %+v, want RemoteID 42 and URL preserved from the pushed record", rec)
+	}
+	if rec.CommitSHA != "c0ffee" || rec.TreeSHA != "tree" || rec.DiffRef != "diff" {
+		t.Fatalf("failed record = %+v, want CommitSHA/TreeSHA/DiffRef preserved", rec)
+	}
+}
+
+// TestRecordAutoDeliveryFailureTruncatesRuneSafe proves the stored failure
+// text is truncated on a UTF-8 rune boundary: a long multibyte error must
+// never split a rune (the stored body must stay valid UTF-8 within the bound).
+func TestRecordAutoDeliveryFailureTruncatesRuneSafe(t *testing.T) {
+	root, storePath, config, _ := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	ctx := context.Background()
+	// 2000 × "€" = 6000 bytes > maxAutoDeliveryErrorBytes (4096); a raw byte
+	// cut would land mid-rune and store invalid UTF-8.
+	recordAutoDeliveryFailure(ctx, repo, runID, errors.New(strings.Repeat("€", 2000)))
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(runID, run.WorkflowDigest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.ErrorRef == "" {
+		t.Fatal("record ErrorRef is empty")
+	}
+	body, err := repo.LoadContent(ctx, rec.ErrorRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) > maxAutoDeliveryErrorBytes {
+		t.Fatalf("stored error length = %d, want <= %d", len(body), maxAutoDeliveryErrorBytes)
+	}
+	if !utf8.Valid(body) {
+		t.Fatalf("stored error body is not valid UTF-8: %q", body)
+	}
+}
+
+// TestDeliveryErrorInlineRuneSafe proves the inline status body truncation
+// never splits a UTF-8 rune at the 200-byte inline bound.
+func TestDeliveryErrorInlineRuneSafe(t *testing.T) {
+	// 67 × "€" = 201 bytes; the 200-byte inline bound then lands inside the
+	// 67th rune, which must not be split.
+	body := strings.Repeat("€", 67)
+	line := deliveryErrorInline(body)
+	if !utf8.ValidString(line) {
+		t.Fatalf("deliveryErrorInline output is not valid UTF-8: %q", line)
+	}
+	if !strings.HasSuffix(line, "...") {
+		t.Fatalf("deliveryErrorInline = %q, want a truncated marker", line)
 	}
 }

@@ -121,7 +121,8 @@ func TestPostMessageQuestionPostFailsAfterPark(t *testing.T) {
 func TestPostMessageQuestionDefaultWaitAndDeadlineCap(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
 	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
-	// wait_seconds omitted (0) → default 60; tight deadline caps wait (128-132).
+	// wait_seconds omitted (0) → default (defaultQuestionWaitSec); tight
+	// deadline caps wait via parkedWaitDuration (128-132).
 	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	// Answer quickly so test finishes.
@@ -147,6 +148,36 @@ func TestPostMessageQuestionDefaultWaitAndDeadlineCap(t *testing.T) {
 	}
 	if !strings.Contains(out, "answered") && !strings.Contains(out, "no_answer") {
 		t.Fatalf("out=%s", out)
+	}
+}
+
+// TestPostMessageWaitSecondsSchemaIsBounded: the wait_seconds schema must
+// advertise a positive cap (the hostile audit found an unbounded schema
+// integer), and the default question wait must exceed the 60s agent-loop
+// tool-timeout floor so a default question is not clamped away before a
+// realistic parent answer can arrive.
+func TestPostMessageWaitSecondsSchemaIsBounded(t *testing.T) {
+	tool := &postMessageTool{cfg: config.DefaultSubagentConfig}
+	props, ok := tool.Parameters()["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("parameters carry no properties object")
+	}
+	ws, ok := props["wait_seconds"].(map[string]any)
+	if !ok {
+		t.Fatal("parameters declare no wait_seconds property")
+	}
+	max, ok := ws["maximum"].(int)
+	if !ok {
+		t.Fatalf("wait_seconds = %v, want a numeric maximum the model can see", ws)
+	}
+	if max <= 0 {
+		t.Fatalf("wait_seconds maximum = %d, want a positive bound", max)
+	}
+	if defaultQuestionWaitSec <= 60 {
+		t.Fatalf("defaultQuestionWaitSec=%d, want > 60 (the agent-loop tool-timeout floor) so a default question can outlive the enclosing step budget", defaultQuestionWaitSec)
+	}
+	if max < defaultQuestionWaitSec {
+		t.Fatalf("wait_seconds maximum %d below default %d", max, defaultQuestionWaitSec)
 	}
 }
 

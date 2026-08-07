@@ -29,12 +29,13 @@ type StepRuntime struct {
 
 // Admission contains immutable host data for one workflow run.
 type Admission struct {
-	BaseRef      string
-	BaseCommit   string
-	WorktreeName string
-	InputDigest  string
-	DeadlineAt   *time.Time
-	RemoteURL    string
+	BaseRef          string
+	BaseCommit       string
+	OriginBaseCommit string
+	WorktreeName     string
+	InputDigest      string
+	DeadlineAt       *time.Time
+	RemoteURL        string
 }
 
 // LinearController advances a workflow one active step at a time.
@@ -187,7 +188,8 @@ func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
 		RunID: c.RunID, WorkflowName: c.Workflow.Name, WorkflowDigest: c.Workflow.Digest,
 		SnapshotDigest: workflowledger.SnapshotDigest(c.Snapshot), InputDigest: c.admission.InputDigest,
 		Status: workflowledger.RunStatusPending, ActiveStepID: c.Workflow.InitialStep,
-		BaseRef: c.admission.BaseRef, BaseCommit: c.admission.BaseCommit, WorktreeName: c.admission.WorktreeName,
+		BaseRef: c.admission.BaseRef, BaseCommit: c.admission.BaseCommit,
+		OriginBaseCommit: c.admission.OriginBaseCommit, WorktreeName: c.admission.WorktreeName,
 		RemoteURL: c.admission.RemoteURL, StartedAt: admittedAt,
 	}
 	if c.admission.DeadlineAt != nil {
@@ -204,6 +206,7 @@ func sameAdmission(stored, candidate workflowledger.RunSnapshot) bool {
 	return stored.WorkflowName == candidate.WorkflowName && stored.WorkflowDigest == candidate.WorkflowDigest &&
 		stored.SnapshotDigest == candidate.SnapshotDigest && stored.InputDigest == candidate.InputDigest &&
 		stored.BaseRef == candidate.BaseRef && stored.BaseCommit == candidate.BaseCommit &&
+		stored.OriginBaseCommit == candidate.OriginBaseCommit &&
 		stored.WorktreeName == candidate.WorktreeName && stored.RemoteURL == candidate.RemoteURL &&
 		sameDeadline(stored.DeadlineAt, candidate.DeadlineAt)
 }
@@ -352,8 +355,8 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 			if err != nil {
 				return nil, nil, err
 			}
-			if len(raw) > maxEvidenceBindingBytes {
-				return nil, nil, fmt.Errorf("prior output %q exceeds %d bytes", binding.From, maxEvidenceBindingBytes)
+			if len(raw) > definition.MaxEvidenceBindingBytes {
+				return nil, nil, fmt.Errorf("prior output %q exceeds %d bytes", binding.From, definition.MaxEvidenceBindingBytes)
 			}
 			var value any
 			if err := json.Unmarshal(raw, &value); err != nil {
@@ -452,6 +455,8 @@ func validateBindingLimits(step definition.Step, inputs map[string]any, attempts
 func cloneValues(values map[string]any) map[string]any {
 	raw, _ := json.Marshal(values)
 	var out map[string]any
-	_ = json.Unmarshal(raw, &out)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	_ = decoder.Decode(&out)
 	return out
 }

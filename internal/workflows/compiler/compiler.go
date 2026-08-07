@@ -123,7 +123,7 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 	}
 
 	// Context binding checks
-	if err := validateContextBindings(wf, stepIDs); err != nil {
+	if err := validateContextBindings(wf, stepIDs, skipCycleValidation); err != nil {
 		errs = append(errs, err.Error())
 	}
 
@@ -165,7 +165,10 @@ func validateOnFailure(wf *definition.WorkflowFile, stepIDs map[string]bool) err
 }
 
 // validateContextBindings checks that context source references are structurally valid.
-func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
+// skipCycleValidation is true only for resume of an admitted snapshot; the
+// evidence-cap check is admission-only, matching the cycle-check precedent,
+// so an in-flight run admitted under an earlier policy is never stranded.
+func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]bool, skipCycleValidation bool) error {
 	for _, s := range wf.Steps {
 		for _, cb := range s.Context {
 			if strings.TrimSpace(cb.From) == "" {
@@ -193,6 +196,14 @@ func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]boo
 				stepID := parts[1]
 				if !stepIDs[stepID] {
 					return fmt.Errorf("step %q: context from %q references unknown step %q", s.ID, cb.From, stepID)
+				}
+				// The executor caps a prior step output bound into context at
+				// MaxEvidenceBindingBytes, so reject larger requests at admission.
+				// Admission-only: a run admitted under an earlier policy whose
+				// snapshot carries a larger max_bytes binding must still resume
+				// (the runtime cap on actual output bytes stays the safety bound).
+				if !skipCycleValidation && cb.MaxBytes > definition.MaxEvidenceBindingBytes {
+					return fmt.Errorf("step %q: context binding %q max_bytes %d exceeds maximum of %d for prior step evidence", s.ID, cb.From, cb.MaxBytes, definition.MaxEvidenceBindingBytes)
 				}
 			default:
 				return fmt.Errorf("step %q: context from %q invalid (must start with inputs. or steps.)", s.ID, cb.From)

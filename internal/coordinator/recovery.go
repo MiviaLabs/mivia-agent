@@ -87,7 +87,7 @@ func (c *coordinator) ResumeInterruptedRun(ctx context.Context, runID string) (*
 	return c.resumeInterruptedRun(ctx, runID, nil)
 }
 
-func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, liveTasks []subagents.Task) (*RunHandle, error) {
+func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, liveTasks []subagents.Task, opts ...runHandleOption) (*RunHandle, error) {
 	c.resumeMu.Lock()
 	defer c.resumeMu.Unlock()
 	if c.HandleForRun(runID) != nil {
@@ -137,7 +137,7 @@ func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, li
 
 	// Create handle for resumed execution. Already-completed tasks are seeded as
 	// results, so the resumed run still reports one result per task.
-	h := c.newRunHandle(runID, "", newAttempts, "", false)
+	h := c.newRunHandle(runID, "", newAttempts, "", false, opts...)
 
 	// Run the DAG in background, which will execute pending/retry tasks.
 	go c.executeResumedRun(h, originalTasks, alreadyDone)

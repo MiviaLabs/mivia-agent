@@ -111,3 +111,7 @@ const MaxWorkflowFileBytes = 65536
 
 // MaxInputBytes is the maximum allowed max_bytes value for a single input definition.
 const MaxInputBytes = 1048576
+
+// MaxEvidenceBindingBytes is the maximum bytes of a prior step output bound
+// into a later step context.
+const MaxEvidenceBindingBytes = 32 << 10

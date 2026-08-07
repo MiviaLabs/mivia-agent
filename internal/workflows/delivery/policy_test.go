@@ -1,9 +1,14 @@
 package delivery
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
@@ -259,14 +264,20 @@ func TestRenderTitle(t *testing.T) {
 		}
 	})
 
-	t.Run("configurable high default", func(t *testing.T) {
+	t.Run("github 256-rune ceiling beats the high byte default", func(t *testing.T) {
+		// MaxTitleBytes=0 resolves to DefaultMaxTitleBytes (65536 bytes), but
+		// GitHub's 256-character title limit is the effective ceiling, so a
+		// 10000-character task renders truncated to MaxTitleRunes runes.
 		p := Policy{TitleTemplate: "{{ inputs.task }}", MaxTitleBytes: 0}
 		got, err := p.RenderTitle(map[string]string{"task": strings.Repeat("x", 10000)})
 		if err != nil {
 			t.Fatalf("RenderTitle: unexpected error: %v", err)
 		}
-		if want := strings.Repeat("x", 10000); got != want {
-			t.Errorf("got %d bytes, want %d bytes (high default)", len(got), len(want))
+		if want := strings.Repeat("x", MaxTitleRunes); got != want {
+			t.Errorf("got %d runes, want %d runes under the GitHub 256-character ceiling", utf8.RuneCountInString(got), MaxTitleRunes)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("title is not valid UTF-8: %q", got)
 		}
 	})
 }
@@ -424,4 +435,353 @@ func assertMissingBinding(t *testing.T, render func(map[string]string) (string, 
 	if !strings.Contains(err.Error(), "missing") {
 		t.Errorf("error %q should mention missing binding", err.Error())
 	}
+}
+
+// TestRenderTitleGitHubRuneCeiling pins the 256-character (rune count) ceiling
+// GitHub applies to pull-request titles: a rendered title longer than
+// MaxTitleRunes runes must be truncated rune-safely, never splitting a rune.
+func TestRenderTitleGitHubRuneCeiling(t *testing.T) {
+	t.Run("300 ascii characters truncate to 256 runes", func(t *testing.T) {
+		p := Policy{TitleTemplate: "{{ inputs.task }}"}
+		got, err := p.RenderTitle(map[string]string{"task": strings.Repeat("a", 300)})
+		if err != nil {
+			t.Fatalf("RenderTitle: %v", err)
+		}
+		if n := utf8.RuneCountInString(got); n > MaxTitleRunes {
+			t.Errorf("title has %d runes, want <= %d", n, MaxTitleRunes)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("title is not valid UTF-8: %q", got)
+		}
+	})
+
+	t.Run("300 CJK characters truncate to 256 runes, valid UTF-8", func(t *testing.T) {
+		p := Policy{TitleTemplate: "{{ inputs.task }}"}
+		got, err := p.RenderTitle(map[string]string{"task": strings.Repeat("日", 300)})
+		if err != nil {
+			t.Fatalf("RenderTitle: %v", err)
+		}
+		if n := utf8.RuneCountInString(got); n > MaxTitleRunes {
+			t.Errorf("title has %d runes, want <= %d", n, MaxTitleRunes)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("title is not valid UTF-8: %q", got)
+		}
+	})
+
+	t.Run("configured byte cap below the rune ceiling still wins", func(t *testing.T) {
+		p := Policy{TitleTemplate: "{{ inputs.task }}", MaxTitleBytes: 100}
+		got, err := p.RenderTitle(map[string]string{"task": strings.Repeat("a", 300)})
+		if err != nil {
+			t.Fatalf("RenderTitle: %v", err)
+		}
+		if len(got) > 100 {
+			t.Errorf("title %d bytes exceeds MaxTitleBytes 100", len(got))
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("title is not valid UTF-8: %q", got)
+		}
+	})
+}
+
+// TestTruncateRenderedValidUTF8 pins that truncateRendered never emits invalid
+// UTF-8: a long unbroken token or CJK run of text has no space to break at, so
+// the byte fallback must not split a multi-byte rune.
+func TestTruncateRenderedValidUTF8(t *testing.T) {
+	t.Run("long unbroken CJK token", func(t *testing.T) {
+		s := strings.Repeat("日", 200) // 600 bytes, no spaces
+		got, err := truncateRendered(s, 500, false)
+		if err != nil {
+			t.Fatalf("truncateRendered: %v", err)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("truncated title is not valid UTF-8: %q", got)
+		}
+		if len(got) > 500 {
+			t.Errorf("truncated title %d bytes exceeds 500", len(got))
+		}
+		if !strings.HasPrefix(s, got) {
+			t.Errorf("truncated title %q is not a prefix of the input", got)
+		}
+	})
+
+	t.Run("emoji token never splits a rune", func(t *testing.T) {
+		s := strings.Repeat("🙂", 300) // 4-byte runes, no spaces
+		got, err := truncateRendered(s, 1000, false)
+		if err != nil {
+			t.Fatalf("truncateRendered: %v", err)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("truncated title is not valid UTF-8: %q", got)
+		}
+		if len(got) > 1000 {
+			t.Errorf("truncated title %d bytes exceeds 1000", len(got))
+		}
+	})
+
+	t.Run("commit message truncation is rune-safe too", func(t *testing.T) {
+		s := strings.Repeat("日", 200) // 600 bytes
+		got, err := truncateRendered(s, 500, true)
+		if err != nil {
+			t.Fatalf("truncateRendered: %v", err)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("truncated commit message is not valid UTF-8: %q", got)
+		}
+		if !strings.HasSuffix(got, "...") {
+			t.Errorf("truncated commit message should end with ..., got %q", got)
+		}
+	})
+}
+
+// TestRenderTemplateAppliesRedaction pins that renderTemplate applies the
+// process-wide redaction policy (redact.Text) to the rendered title and the
+// rendered commit message, so a credential-shaped input never reaches GitHub
+// verbatim. The policy is a process-wide global; no test here may run in
+// parallel while depending on it.
+func TestRenderTemplateAppliesRedaction(t *testing.T) {
+	previous := redact.Current()
+	policy, err := redact.Compile(
+		[]string{`(?:sk-ant-|sk-|ghp_|github_pat_)[A-Za-z0-9._~-]+`},
+		nil, "[redacted]",
+	)
+	if err != nil {
+		t.Fatalf("compile redaction policy: %v", err)
+	}
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(previous) })
+
+	const credential = "ghp_1234567890abcdef"
+	t.Run("title is redacted", func(t *testing.T) {
+		got, err := Policy{TitleTemplate: "feat: {{ inputs.task }}"}.RenderTitle(map[string]string{"task": "use " + credential})
+		if err != nil {
+			t.Fatalf("RenderTitle: %v", err)
+		}
+		if strings.Contains(got, credential) {
+			t.Errorf("title leaks credential: %q", got)
+		}
+		if !strings.Contains(got, "[redacted]") {
+			t.Errorf("title lacks redaction placeholder: %q", got)
+		}
+	})
+
+	t.Run("commit message is redacted", func(t *testing.T) {
+		got, err := Policy{CommitMessageTemplate: "feat: {{ inputs.task }}\n\nBody."}.RenderCommitMessage(map[string]string{"task": "use " + credential})
+		if err != nil {
+			t.Fatalf("RenderCommitMessage: %v", err)
+		}
+		if strings.Contains(got, credential) {
+			t.Errorf("commit message leaks credential: %q", got)
+		}
+		if !strings.Contains(got, "[redacted]") {
+			t.Errorf("commit message lacks redaction placeholder: %q", got)
+		}
+	})
+}
+
+// TestRenderTemplateRedactsNothingWithoutPolicy pins the fail-open posture: an
+// unconfigured workspace redacts nothing, so rendering is an identity.
+func TestRenderTemplateRedactsNothingWithoutPolicy(t *testing.T) {
+	previous := redact.Current()
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(previous) })
+
+	const credential = "sk-ant-aaaabbbbccccdddd"
+	got, err := Policy{TitleTemplate: "{{ inputs.task }}"}.RenderTitle(map[string]string{"task": credential})
+	if err != nil {
+		t.Fatalf("RenderTitle: %v", err)
+	}
+	if got != credential {
+		t.Errorf("unconfigured title was altered: %q", got)
+	}
+}
+
+// TestValidateCommitMessage pins the optional workspace commit-message policy
+// (.mivia/policy/commit-message.json): absent file validates nothing; a
+// scope-less or oversized subject is a permanent RefusalError; a conforming
+// subject passes. Only the generic requireScope/maxSubjectLength fields are
+// enforced - no workspace's type or scope lists are compiled in.
+func TestValidateCommitMessage(t *testing.T) {
+	writeCommitPolicy := func(t *testing.T, root, jsonContent string) {
+		t.Helper()
+		dir := filepath.Join(root, ".mivia", "policy")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "commit-message.json"), []byte(jsonContent), 0o644); err != nil {
+			t.Fatalf("write commit-message.json: %v", err)
+		}
+	}
+
+	t.Run("absent policy file validates nothing", func(t *testing.T) {
+		p := Policy{CommitMessageTemplate: "fix: no scope here"}
+		if err := p.ValidateCommitMessage(t.TempDir(), nil); err != nil {
+			t.Fatalf("ValidateCommitMessage with absent policy = %v, want nil", err)
+		}
+	})
+
+	t.Run("scope-less subject is a permanent refusal", func(t *testing.T) {
+		root := t.TempDir()
+		writeCommitPolicy(t, root, `{"requireScope": true, "maxSubjectLength": 72}`)
+		p := Policy{CommitMessageTemplate: "fix: no scope here"}
+		err := p.ValidateCommitMessage(root, nil)
+		if err == nil || !IsRefusal(err) {
+			t.Fatalf("ValidateCommitMessage = %v, want RefusalError", err)
+		}
+		if !strings.Contains(err.Error(), "type(scope)") {
+			t.Errorf("refusal %q should mention the type(scope) shape", err.Error())
+		}
+	})
+
+	t.Run("oversized subject is a permanent refusal", func(t *testing.T) {
+		root := t.TempDir()
+		writeCommitPolicy(t, root, `{"requireScope": true, "maxSubjectLength": 10}`)
+		p := Policy{CommitMessageTemplate: "fix(delivery): this subject is way too long"}
+		err := p.ValidateCommitMessage(root, nil)
+		if err == nil || !IsRefusal(err) {
+			t.Fatalf("ValidateCommitMessage = %v, want RefusalError", err)
+		}
+		if !strings.Contains(err.Error(), "maxSubjectLength") {
+			t.Errorf("refusal %q should mention maxSubjectLength", err.Error())
+		}
+	})
+
+	t.Run("conforming subject passes", func(t *testing.T) {
+		root := t.TempDir()
+		writeCommitPolicy(t, root, `{"requireScope": true, "maxSubjectLength": 72}`)
+		p := Policy{CommitMessageTemplate: "fix(delivery): add validation"}
+		if err := p.ValidateCommitMessage(root, nil); err != nil {
+			t.Fatalf("ValidateCommitMessage = %v, want nil", err)
+		}
+	})
+
+	t.Run("requireScope false allows a scope-less subject", func(t *testing.T) {
+		root := t.TempDir()
+		writeCommitPolicy(t, root, `{"requireScope": false, "maxSubjectLength": 72}`)
+		p := Policy{CommitMessageTemplate: "fix: no scope needed"}
+		if err := p.ValidateCommitMessage(root, nil); err != nil {
+			t.Fatalf("ValidateCommitMessage = %v, want nil", err)
+		}
+	})
+
+	t.Run("subject is the first non-empty line", func(t *testing.T) {
+		root := t.TempDir()
+		writeCommitPolicy(t, root, `{"requireScope": true, "maxSubjectLength": 72}`)
+		p := Policy{CommitMessageTemplate: "\n\nfix(delivery): body paragraph"}
+		if err := p.ValidateCommitMessage(root, nil); err != nil {
+			t.Fatalf("ValidateCommitMessage = %v, want nil", err)
+		}
+	})
+
+	t.Run("malformed policy file is a permanent refusal", func(t *testing.T) {
+		root := t.TempDir()
+		writeCommitPolicy(t, root, `{not json`)
+		p := Policy{CommitMessageTemplate: "fix(delivery): x"}
+		err := p.ValidateCommitMessage(root, nil)
+		if err == nil || !IsRefusal(err) {
+			t.Fatalf("ValidateCommitMessage = %v, want RefusalError", err)
+		}
+	})
+}
+
+// TestDeliverValidatesCommitMessageAgainstWorkspacePolicy pins the
+// admission-time validation end to end: when .mivia/policy/commit-message.json
+// is present in the workspace, a non-conforming rendered subject refuses the
+// delivery BEFORE any commit or push; when absent, delivery proceeds.
+func TestDeliverValidatesCommitMessageAgainstWorkspacePolicy(t *testing.T) {
+	t.Run("absent policy file: delivery proceeds", func(t *testing.T) {
+		res, err, _, _, _ := deliverWithCommitPolicy(t, false, "fix: no scope here")
+		if err != nil {
+			t.Fatalf("Deliver with absent policy file = %v, want success", err)
+		}
+		if res.Status != "succeeded" {
+			t.Fatalf("Result = %+v, want succeeded", res)
+		}
+	})
+
+	t.Run("scope-less subject is a permanent refusal", func(t *testing.T) {
+		_, err, worktreeRoot, baseCommit, pr := deliverWithCommitPolicy(t, true, "fix: no scope here")
+		if err == nil || !IsRefusal(err) {
+			t.Fatalf("Deliver = %v, want RefusalError", err)
+		}
+		if !strings.Contains(err.Error(), "scope") {
+			t.Errorf("refusal %q should mention scope", err.Error())
+		}
+		assertZeroCreates(t, pr)
+		if got := runGitOut(t, worktreeRoot, "rev-parse", "HEAD"); got != baseCommit {
+			t.Fatalf("HEAD = %s, want untouched base %s", got, baseCommit)
+		}
+	})
+
+	t.Run("oversized subject is a permanent refusal", func(t *testing.T) {
+		_, err, _, _, pr := deliverWithCommitPolicy(t, true, "fix(delivery): "+strings.Repeat("x", 80))
+		if err == nil || !IsRefusal(err) {
+			t.Fatalf("Deliver = %v, want RefusalError", err)
+		}
+		if !strings.Contains(err.Error(), "maxSubjectLength") {
+			t.Errorf("refusal %q should mention maxSubjectLength", err.Error())
+		}
+		assertZeroCreates(t, pr)
+	})
+
+	t.Run("conforming subject passes with policy present", func(t *testing.T) {
+		res, err, worktreeRoot, _, _ := deliverWithCommitPolicy(t, true, "fix(delivery): add validation")
+		if err != nil {
+			t.Fatalf("Deliver with conforming subject = %v, want success", err)
+		}
+		if res.Status != "succeeded" {
+			t.Fatalf("Result = %+v, want succeeded", res)
+		}
+		if msg := runGitOut(t, worktreeRoot, "log", "-1", "--format=%s"); msg != "fix(delivery): add validation" {
+			t.Fatalf("commit subject = %q, want %q", msg, "fix(delivery): add validation")
+		}
+		if tree := runGitOut(t, worktreeRoot, "ls-tree", "-r", "--name-only", "HEAD"); strings.Contains(tree, ".mivia") {
+			t.Errorf("delivery commit includes .mivia policy file:\n%s", tree)
+		}
+	})
+}
+
+// deliverWithCommitPolicy runs one Deliver attempt against a fresh fixture,
+// writing the workspace commit-message policy file when writePolicy is true and
+// rendering the given commit subject. It returns the delivery outcome plus the
+// fixture values subtests need for their post-conditions: worktree root, base
+// commit, and the PR client used for the attempt.
+func deliverWithCommitPolicy(t *testing.T, writePolicy bool, template string) (Result, error, string, string, *fakePRClient) {
+	t.Helper()
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	if writePolicy {
+		writeWorkspacePolicy(t, repoRoot, worktreeRoot, `{"version": 1, "requireScope": true, "maxSubjectLength": 72}`)
+	}
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	pol := defaultPolicy("draft")
+	pol.CommitMessageTemplate = template
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, pol, map[string]string{"task": "x"}))
+	return res, err, worktreeRoot, baseCommit, pr
+}
+
+// writeWorkspacePolicy writes an optional workspace policy file under the
+// worktree's .mivia/policy directory and excludes .mivia/ from the fixture's
+// index (common exclude file), so delivery reads the policy file but never
+// commits it into the delivered diff.
+func writeWorkspacePolicy(t *testing.T, repoRoot, worktreeRoot, jsonContent string) {
+	t.Helper()
+	exclude := filepath.Join(repoRoot, ".git", "info", "exclude")
+	f, err := os.OpenFile(exclude, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open git exclude: %v", err)
+	}
+	if _, err := f.WriteString("\n.mivia/\n"); err != nil {
+		f.Close()
+		t.Fatalf("append git exclude: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close git exclude: %v", err)
+	}
+	dir := filepath.Join(worktreeRoot, ".mivia", "policy")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	writeWorktreeFile(t, worktreeRoot, filepath.Join(".mivia", "policy", "commit-message.json"), jsonContent)
 }

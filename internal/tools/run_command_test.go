@@ -574,6 +574,7 @@ func TestRunCommandTimeoutSecondsRespected(t *testing.T) {
 		}
 	})
 }
+
 func TestGrepNestedAndGlob(t *testing.T) {
 	ws, reg := setupWS(t)
 	// Nested tree with matches and non-matches.

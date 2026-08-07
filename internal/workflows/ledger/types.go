@@ -118,21 +118,22 @@ func IsTerminalStepID(stepID string) bool {
 }
 
 type RunSnapshot struct {
-	RunID          string     `json:"run_id"`
-	WorkflowName   string     `json:"workflow_name"`
-	WorkflowDigest string     `json:"workflow_digest"`
-	SnapshotDigest string     `json:"snapshot_digest"`
-	InputDigest    string     `json:"input_digest"`
-	Status         RunStatus  `json:"status"`
-	ActiveStepID   string     `json:"active_step_id"`
-	BaseRef        string     `json:"base_ref,omitempty"`
-	BaseCommit     string     `json:"base_commit,omitempty"`
-	WorktreeName   string     `json:"worktree_name,omitempty"`
-	RemoteURL      string     `json:"remote_url,omitempty"`
-	Version        uint64     `json:"version"`
-	StartedAt      time.Time  `json:"started_at"`
-	DeadlineAt     *time.Time `json:"deadline_at,omitempty"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	RunID            string     `json:"run_id"`
+	WorkflowName     string     `json:"workflow_name"`
+	WorkflowDigest   string     `json:"workflow_digest"`
+	SnapshotDigest   string     `json:"snapshot_digest"`
+	InputDigest      string     `json:"input_digest"`
+	Status           RunStatus  `json:"status"`
+	ActiveStepID     string     `json:"active_step_id"`
+	BaseRef          string     `json:"base_ref,omitempty"`
+	BaseCommit       string     `json:"base_commit,omitempty"`
+	OriginBaseCommit string     `json:"origin_base_commit,omitempty"`
+	WorktreeName     string     `json:"worktree_name,omitempty"`
+	RemoteURL        string     `json:"remote_url,omitempty"`
+	Version          uint64     `json:"version"`
+	StartedAt        time.Time  `json:"started_at"`
+	DeadlineAt       *time.Time `json:"deadline_at,omitempty"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
 }
 
 // Clone returns a deep copy.

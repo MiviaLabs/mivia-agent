@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 )
 
@@ -66,6 +67,19 @@ func (c *coordinator) evictExpiredQuestionsLocked() {
 // without unpark) still self-heals via the TTL. Absent maxWait behaves as 0
 // (parkTTL floor only).
 func (c *coordinator) ParkQuestion(runID, taskID, messageID string, maxWait ...time.Duration) (<-chan string, func(), error) {
+	// Non-interactive parent: the run's parent is a controller that can never
+	// answer child questions, so a real park would only burn the asker's full
+	// wait_seconds before timing out. Decline immediately at park time with the
+	// wire-format decline sentinel — the CLI wait site maps it to
+	// {status:"no_answer"} with nil error, so the asker proceeds instead of
+	// stalling. No registry entry is created (nothing to unpark, no TTL to
+	// consume), and the task itself is never failed. A missing handle (run
+	// already evicted) falls through to the existing park semantics.
+	if h := c.HandleForRun(runID); h != nil && h.isNonInteractiveParent() {
+		ch := make(chan string, 1)
+		ch <- agentmsg.AskDeclinePrefix + agentmsg.DeclineReasonParentNonInteractive
+		return ch, func() {}, nil
+	}
 	now := c.nowLocked()
 	expiresAt := now.Add(parkTTL)
 	if len(maxWait) > 0 && maxWait[0] > 0 {

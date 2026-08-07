@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +21,10 @@ const DefaultToolTimeout = 60 * time.Second
 // that need a tighter cap may set a lower one. The default only applies when
 // the tool does not declare a capability timeout. A non-positive default
 // falls back to DefaultToolTimeout so the loop never waits unbounded.
+//
+// This is the DEFAULT resolution: a model-supplied per-call timeout_seconds in
+// the call's own params outranks both (see prepareToolTasks /
+// requestedToolTimeout), clamped to the enclosing step/task deadline.
 func resolveToolCallTimeout(defaultTimeout, capabilityTimeout time.Duration) time.Duration {
 	if capabilityTimeout > 0 {
 		return capabilityTimeout
@@ -27,6 +33,47 @@ func resolveToolCallTimeout(defaultTimeout, capabilityTimeout time.Duration) tim
 		return defaultTimeout
 	}
 	return DefaultToolTimeout
+}
+
+// requestedToolTimeout extracts a model-supplied per-call timeout_seconds from
+// tool call params. It returns 0 when the call did not request one (absent,
+// non-JSON, or non-positive), so the capability default applies unchanged.
+//
+// A seconds value too large for time.Duration is clamped to the largest safe
+// duration first: without that, a huge model-supplied timeout_seconds (which
+// parses fine and fits int64) wraps negative when multiplied by time.Second and
+// would silently disable the per-call budget. The clamp is a conversion guard,
+// not a policy cap - the enclosing step/task deadline bounds the real budget.
+func requestedToolTimeout(raw json.RawMessage) time.Duration {
+	var params struct {
+		TimeoutSeconds int64 `json:"timeout_seconds"`
+	}
+	if err := json.Unmarshal(raw, &params); err != nil || params.TimeoutSeconds <= 0 {
+		return 0
+	}
+	if params.TimeoutSeconds > maxDurationSeconds {
+		return time.Duration(maxDurationSeconds) * time.Second
+	}
+	return time.Duration(params.TimeoutSeconds) * time.Second
+}
+
+// maxDurationSeconds is the largest whole seconds value that keeps
+// time.Duration(secs)*time.Second inside int64 range.
+const maxDurationSeconds = int64(^uint64(0)>>1) / int64(time.Second)
+
+// clampToDeadline returns the tighter of budget and the time remaining before
+// the parent ctx deadline, so a per-call extension can never outlive the step
+// or task that owns it. A ctx without a deadline leaves the budget unchanged:
+// the per-call budget itself is the bound then.
+func clampToDeadline(ctx context.Context, budget time.Duration) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return budget
+	}
+	if remaining := time.Until(deadline); remaining < budget {
+		return remaining
+	}
+	return budget
 }
 
 // effectiveResultCap is the tighter of the loop-wide maxChars and the tool's

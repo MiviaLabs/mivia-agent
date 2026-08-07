@@ -2,12 +2,9 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +19,26 @@ import (
 // AgentStepRunner executes one workflow agent step through the coordinator.
 type AgentStepRunner interface {
 	RunStep(context.Context, AgentStepRequest) (AgentStepResult, error)
+}
+
+// StepRunJoiner is an optional AgentStepRunner capability: join a previously
+// dispatched step's coordinator run by its recorded identity and report its
+// terminal outcome. The ledger contract (internal/workflows/ledger/recovery.go)
+// requires a recorded in-flight attempt to be JOINED, never re-dispatched, so
+// the controller tries JoinStep on resume before admitting a fresh attempt.
+// A runner that cannot join (test seams, non-coordinator runners) simply does
+// not implement this interface; the controller then falls back to interrupting
+// the stale attempt and admitting a fresh one.
+type StepRunJoiner interface {
+	// JoinStep joins the coordinator run named by spec.CoordinatorRunID and
+	// waits for its terminal outcome. joined=true means the child ran (or is
+	// being joined to completion) and result carries its terminal status
+	// ("completed", "failed", "timed_out", "canceled"); the caller must
+	// complete the attempt with that outcome instead of re-dispatching.
+	// joined=false means there was nothing to join (the child never ran, the
+	// run is unknown, or the join could not be completed) and the caller may
+	// interrupt the stale attempt and re-dispatch fresh.
+	JoinStep(context.Context, AgentStepRequest) (AgentStepResult, bool, error)
 }
 
 // RouteDecision is the durable transition decision attached to one attempt.
@@ -106,16 +123,13 @@ func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Reposit
 	return repo.CompleteStepAttempt(ctx, attempt.RunID, attempt.AttemptID, attempt.Version, outcome)
 }
 
-// maxEvidenceBindingBytes bounds one prior-step evidence value bound into a
-// template (contextForStep in linear.go).
-const maxEvidenceBindingBytes = 32 << 10
-
-// maxStepContextBytes bounds the rendered agent prompt and the aggregate
-// evidence selection for one workflow step. It is deliberately larger than
-// one evidence binding so a step that binds several legal values renders
-// successfully: the template file itself is bounded by MaxTemplateBytes, and
-// the routed model budget (~72k tokens) plus the schema-aware prune guard
-// the actual request.
+// maxStepContextBytes bounds the rendered agent prompt for one workflow step.
+// It is deliberately larger than one evidence binding so a step that binds
+// several legal values renders successfully: the template file itself is
+// bounded by MaxTemplateBytes, and the routed model budget (~72k tokens) plus
+// the schema-aware prune guard the actual request. The aggregate evidence
+// selection metadata is bounded separately by workflowledger.MaxEvidenceBytes
+// inside marshalEvidenceSelection, before the child is dispatched.
 const maxStepContextBytes = 256 << 10
 
 // AgentStepRequest contains only the explicit, bounded step inputs.
@@ -216,6 +230,21 @@ func (r *CoordinatorRunner) RunStep(ctx context.Context, spec AgentStepRequest) 
 	return r.finish(ctx, spec, h, evidenceJSON)
 }
 
+// JoinStep implements StepRunJoiner for the production coordinator runner.
+// It re-dispatches the recorded CoordinatorRunID/TaskID through the same
+// dispatch+join machinery as RunStep: coordinator.EnsureRun is idempotent on
+// the workflow step's identity key, so an EXISTING child run is resumed and
+// joined (a completed child yields its recorded outcome without re-executing
+// its work) instead of creating a fresh run. The child's terminal status is
+// reported in result.Status; joined=false when no child outcome is available
+// (the run is unknown, an idempotency conflict from changed step inputs or a
+// drifted deadline-derived timeout, or a join-boundary error), in which case
+// the controller interrupts the stale attempt and re-dispatches fresh.
+func (r *CoordinatorRunner) JoinStep(ctx context.Context, spec AgentStepRequest) (AgentStepResult, bool, error) {
+	result, err := r.RunStep(ctx, spec)
+	return result, result.Status != "", err
+}
+
 func workflowTask(ctx context.Context, spec AgentStepRequest, prompt string) subagents.Task {
 	task := subagents.Task{ID: spec.TaskID, Name: spec.AgentName, AgentName: spec.AgentName,
 		AgentDigest: spec.AgentDigest, Skill: spec.Skill, ProviderName: spec.ProviderName,
@@ -235,6 +264,10 @@ func (r *CoordinatorRunner) dispatch(ctx context.Context, spec AgentStepRequest,
 	h, err := r.Coordinator.EnsureRun(detached, coordinator.EnsureRunRequest{
 		RunID: spec.CoordinatorRunID, Tasks: []subagents.Task{task},
 		IdempotencyKey: idempotencyKey(spec), ForceResume: spec.ForceResume,
+		// The workflow controller is a non-interactive parent: it runs steps
+		// unattended and can never answer child questions, so child parks must
+		// be auto-declined at park time instead of burning wait_seconds.
+		NonInteractiveParent: true,
 	})
 	if err != nil {
 		return nil, err
@@ -427,50 +460,6 @@ func validateOutput(stepID string, raw json.RawMessage, schema map[string]any) (
 		return nil, &SchemaValidationError{StepID: stepID, Err: err}
 	}
 	return value, nil
-}
-
-type evidenceSelection struct {
-	Name   string `json:"name"`
-	Source string `json:"source"`
-	Bytes  int    `json:"bytes"`
-	Digest string `json:"digest"`
-}
-
-func marshalEvidenceSelection(spec AgentStepRequest) ([]byte, error) {
-	items := make([]evidenceSelection, 0, len(spec.Inputs)+len(spec.Evidence))
-	appendItems := func(source string, values map[string]any) error {
-		keys := make([]string, 0, len(values))
-		for key := range values {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			raw, err := json.Marshal(values[key])
-			if err != nil {
-				return fmt.Errorf("marshal %s binding %q: %w", source, key, err)
-			}
-			if spec.MaxBindingBytes > 0 && len(raw) > spec.MaxBindingBytes {
-				return fmt.Errorf("%s binding %q exceeds %d bytes", source, key, spec.MaxBindingBytes)
-			}
-			sum := sha256.Sum256(raw)
-			items = append(items, evidenceSelection{Name: key, Source: source, Bytes: len(raw), Digest: "sha256:" + hex.EncodeToString(sum[:])})
-		}
-		return nil
-	}
-	if err := appendItems("input", spec.Inputs); err != nil {
-		return nil, err
-	}
-	if err := appendItems("evidence", spec.Evidence); err != nil {
-		return nil, err
-	}
-	raw, err := json.Marshal(items)
-	if err != nil {
-		return nil, fmt.Errorf("marshal evidence selection: %w", err)
-	}
-	if spec.MaxContextBytes > 0 && len(raw) > spec.MaxContextBytes {
-		return nil, fmt.Errorf("evidence selection exceeds %d bytes", spec.MaxContextBytes)
-	}
-	return raw, nil
 }
 
 func findResult(results []subagents.Result, taskID string) (subagents.Result, error) {

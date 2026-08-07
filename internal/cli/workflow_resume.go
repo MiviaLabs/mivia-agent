@@ -82,7 +82,6 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	if !force {
 		return fmt.Errorf("workflow run %q is not terminal; pass --force only after the prior executor stopped", runID)
 	}
-
 	uninstallHooks, err := workflowResumeInstallHooks(work.Abs, false)
 	if err != nil {
 		return err
@@ -102,9 +101,47 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	if err := repo.ClearRunClaim(ctx, runID); err != nil {
 		return fmt.Errorf("clear interrupted workflow claim: %w", err)
 	}
+	if err := joinInFlightAttempts(ctx, built, repo, runID, stdout); err != nil {
+		return err
+	}
 	snap, err := workflowResumeRun(ctx, built)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, snap.Status)
 	return err
+}
+
+// joinInFlightAttempts consumes PlanResume.AttemptsInFlight: it joins each
+// recorded in-flight attempt's coordinator run through the controller BEFORE
+// the Run loop starts, so a completed (or failed) child settles the attempt
+// with its outcome and route instead of being orphaned by a fresh re-dispatch
+// (recovery.go: a recorded attempt is joined, never re-dispatched). Attempts
+// whose child never ran are left in-flight for the controller's Advance to
+// interrupt and re-dispatch under the run claim. The join is idempotent:
+// attempts already terminal (or superseded) are no-ops. On failure the run's
+// settled status is reported to stdout before the error is returned.
+func joinInFlightAttempts(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID string, stdout io.Writer) (err error) {
+	defer func() {
+		if err != nil {
+			if settled, getErr := repo.GetRun(ctx, runID); getErr == nil {
+				fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
+			}
+		}
+	}()
+	plan, err := workflowledger.PlanResume(ctx, repo, runID)
+	if err != nil {
+		return err
+	}
+	if len(plan.AttemptsInFlight) == 0 {
+		return nil
+	}
+	if built.Controller == nil {
+		return fmt.Errorf("workflow controller is nil; cannot join %d in-flight attempt(s)", len(plan.AttemptsInFlight))
+	}
+	for _, inFlight := range plan.AttemptsInFlight {
+		if err := built.Controller.JoinInFlightAttempt(ctx, inFlight); err != nil {
+			return fmt.Errorf("join in-flight attempt %s for step %q: %w", inFlight.AttemptID, inFlight.StepID, err)
+		}
+	}
+	return nil
 }
 
 func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) (workflowledger.Snapshot, *compiler.CompiledWorkflow, map[string]any, error) {

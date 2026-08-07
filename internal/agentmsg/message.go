@@ -46,6 +46,15 @@ const DeclineReasonTargetTerminal = "target_terminal"
 // wave depends on this exact constant name — do not rename.
 const DeclineReasonResponderTerminal = DeclineReasonTargetTerminal
 
+// DeclineReasonParentNonInteractive is the stable decline reason delivered at
+// park time when a run's parent is a non-interactive controller that can never
+// answer child questions. Generic mechanism: any parent that cannot mediate
+// Q&A opts in via the run-creation flag, and the coordinator declines the
+// asker's park immediately instead of letting it burn the full wait_seconds.
+// Appended verbatim to AskDeclinePrefix to form the delivered answer body, so
+// the CLI wait site reports {status:"no_answer", reason:...} with nil error.
+const DeclineReasonParentNonInteractive = "parent_non_interactive"
+
 // ParentSentinel is the To/From value for the parent principal.
 const ParentSentinel = "parent"
 

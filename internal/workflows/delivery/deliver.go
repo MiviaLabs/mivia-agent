@@ -70,20 +70,30 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 		return Result{}, &RefusalError{Reason: fmt.Sprintf("delivery requires mode draft or ready, got %q", req.Policy.Mode)}
 	}
 
-	// 3. Idempotency: a previously succeeded/no_diff attempt replays its
-	// durable result. Any other status is a resumable attempt.
+	// 3. Idempotency: a previously succeeded attempt replays its durable
+	// result. A no_diff verdict is point-in-time, so it is NOT replayed:
+	// the current worktree is re-verified below, and newly appeared work is
+	// published instead of letting a stale no_diff settle the run with zero
+	// PRs. Any other status is a resumable attempt.
 	key := DeliveryKey(req.RunID, req.WorkflowDigest)
 	existing, err := repo.GetDeliveryByIdempotencyKey(ctx, key)
 	if err != nil && !errors.Is(err, ledger.ErrNotFound) {
 		return Result{}, err
 	}
-	if err == nil && (existing.Status == "succeeded" || existing.Status == "no_diff") {
+	if err == nil && existing.Status == "succeeded" {
 		return replayResult(existing), nil
 	}
 
 	// 4-9. Verify the pinned worktree and snapshot the intended diff. An
 	// empty intended diff settles as no_diff with no PR and no commit.
-	head, porcelainEmpty, diffRef, repoSlug, err := verifyEligibility(ctx, repo, git, req, key)
+	// The remote base is verified against the origin base recorded at
+	// admission (OriginBaseCommit) when present; otherwise the admitted
+	// local BaseCommit is the pin.
+	originBase := run.OriginBaseCommit
+	if originBase == "" {
+		originBase = req.BaseCommit
+	}
+	head, porcelainEmpty, diffRef, repoSlug, err := verifyEligibility(ctx, repo, git, req, key, originBase)
 	if err != nil {
 		return Result{}, err
 	}
@@ -92,6 +102,17 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 			Mode: req.Policy.Mode, BaseRef: req.Policy.Base, HeadRef: req.Branch,
 			Provider: "github", Status: "no_diff",
 		}, nil
+	}
+
+	// 10b. Optional workspace commit-message policy: validate the rendered
+	// subject ONLY when a commit will actually be created (a diff exists, so
+	// the repo's commit-msg hook would fire). A no_diff run never fires the
+	// hook, so a present policy must not refuse it. The check stays BEFORE
+	// commitOrResume, so a subject the hook would reject mid-flight becomes
+	// a permanent refusal instead of a delivery_pending retry loop; a refusal
+	// here writes no delivery record, commits nothing, and pushes nothing.
+	if err := req.Policy.ValidateCommitMessage(req.GitCtx.Dir, req.Inputs); err != nil {
+		return Result{}, err
 	}
 
 	// 11. Commit the intended change (fresh attempt) or resume the recorded
@@ -121,7 +142,7 @@ func replayResult(existing ledger.DeliveryRecord) Result {
 // commit, whether the worktree is clean, the content ref of the diff snapshot
 // (empty when there is nothing to publish), and the PR client repo slug. The
 // no-diff outcome writes the no_diff record here and returns an empty ref.
-func verifyEligibility(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key string) (head string, porcelainEmpty bool, diffRef, repoSlug string, err error) {
+func verifyEligibility(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, originBase string) (head string, porcelainEmpty bool, diffRef, repoSlug string, err error) {
 	// 4. The worktree must be on the admitted branch.
 	out, err := git.Run(ctx, req.GitCtx, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
@@ -146,6 +167,22 @@ func verifyEligibility(ctx context.Context, repo ledger.Repository, git GitRunne
 	}
 	if strings.TrimSpace(out) != req.BaseCommit {
 		return "", false, "", "", &RefusalError{Reason: fmt.Sprintf("delivery base %q moved since admission", req.Policy.Base)}
+	}
+
+	// 6b. The PR is created against the REMOTE base, so the origin's base
+	// must still point at the commit recorded at admission: a locally pinned
+	// base must not mask a remote base that diverged after admission.
+	// originBase is the origin base commit recorded at admission
+	// (OriginBaseCommit), falling back to the admitted local BaseCommit.
+	out, err = git.Run(ctx, req.GitCtx, "rev-parse", "--verify", "--end-of-options", "refs/remotes/origin/"+req.Policy.Base+"^{commit}")
+	if err != nil {
+		// The remote-tracking ref is absent (never fetched after admission):
+		// recoverable — fetching and retrying fixes it, so keep the run
+		// delivery_pending instead of refusing.
+		return "", false, "", "", fmt.Errorf("cannot resolve remote delivery base %q (fetch and retry): %w", req.Policy.Base, err)
+	}
+	if strings.TrimSpace(out) != originBase {
+		return "", false, "", "", &RefusalError{Reason: fmt.Sprintf("remote delivery base %q diverged since admission", req.Policy.Base)}
 	}
 
 	// 7. The origin remote must match the admitted URL.
@@ -221,111 +258,6 @@ func intendedDiff(ctx context.Context, repo ledger.Repository, git GitRunner, re
 		return head, true, "", "", true, nil
 	}
 	return head, porcelainEmpty, stat, porcelain, false, nil
-}
-
-// commitOrResume creates the delivery commit on a fresh attempt, or verifies
-// and adopts the recorded delivery commit on a retry. The delivery commit is
-// built deterministically: the tree is recorded with the diff ref BEFORE the
-// branch ref moves, so a crash between the commit and the pushed record can
-// be resumed by verifying HEAD against the recorded tree instead of refusing
-// the worktree as foreign. It returns the adopted HEAD and tree SHA.
-func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key string, existing ledger.DeliveryRecord, head string, porcelainEmpty bool, diffRef string) (string, string, error) {
-	treeSHA := existing.TreeSHA
-	if head != req.BaseCommit {
-		// Retry path: verify the record found at step 3 against HEAD BEFORE
-		// any record write in this attempt. A refusal leaves the existing
-		// record untouched; on success the existing record IS the stage state
-		// and is NOT rewritten with a fresh pending upsert.
-		switch {
-		case existing.CommitSHA == head:
-			// Already committed by a previous attempt; the worktree must be
-			// exactly that commit (no edits on top).
-			if !porcelainEmpty {
-				return "", "", &RefusalError{Reason: "worktree has uncommitted changes on the delivery commit"}
-			}
-		case existing.CommitSHA == "" && existing.TreeSHA != "":
-			// Crash between commit and the CommitSHA record: adopt HEAD only
-			// if it is EXACTLY the recorded delivery commit — same tree, clean
-			// worktree, and exactly one commit on top of base. Git execution
-			// failures are recoverable (plain error keeps the run
-			// delivery_pending); only a verified mismatch is a refusal.
-			headTree, terr := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD^{tree}")
-			if terr != nil {
-				return "", "", fmt.Errorf("cannot verify recorded delivery commit: %w", terr)
-			}
-			if strings.TrimSpace(headTree) != existing.TreeSHA || !porcelainEmpty {
-				return "", "", &RefusalError{Reason: "worktree has foreign commits or uncommitted changes"}
-			}
-			count, cerr := git.Run(ctx, req.GitCtx, "rev-list", "--count", req.BaseCommit+"..HEAD")
-			if cerr != nil {
-				return "", "", fmt.Errorf("cannot count delivery commits: %w", cerr)
-			}
-			if strings.TrimSpace(count) != "1" {
-				return "", "", &RefusalError{Reason: "worktree has foreign commits or uncommitted changes"}
-			}
-		default:
-			return "", "", &RefusalError{Reason: "worktree has foreign commits or uncommitted changes"}
-		}
-		return head, treeSHA, nil
-	}
-
-	// Fresh: stage the intended change (idempotent on retry).
-	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", err
-	}
-	// Snapshot the staged tree; the delivery commit will carry it.
-	treeOut, err := git.Run(ctx, req.GitCtx, "write-tree")
-	if err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", err
-	}
-	treeSHA = strings.TrimSpace(treeOut)
-	if _, err := git.Run(ctx, req.GitCtx, "diff", "--quiet", "--cached", treeSHA); err != nil {
-		return "", "", &RefusalError{Reason: "staged tree changed before commit"}
-	}
-	// Render the commit message.
-	msg, err := req.Policy.RenderCommitMessage(req.Inputs)
-	if err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", err
-	}
-	// Record the pending attempt with the tree BEFORE creating the commit,
-	// so the retry can resume by tree verification. This is the ONLY stage
-	// record written on the fresh path.
-	stage := deliveryRecord(req, key, "pending")
-	stage.DiffRef = diffRef
-	stage.TreeSHA = treeSHA
-	if err := repo.UpsertDelivery(ctx, stage); err != nil {
-		return "", "", err
-	}
-	sha, err := commitStagedTree(ctx, git, req, treeSHA, msg)
-	if err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", err
-	}
-	return sha, treeSHA, nil
-}
-
-func commitStagedTree(ctx context.Context, git GitRunner, req Request, treeSHA, msg string) (string, error) {
-	// Commit through Git so pre-commit and commit-msg hooks can reject it.
-	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
-		"-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
-		"commit", "--allow-empty-message", "-m", msg); err != nil {
-		return "", err
-	}
-	committedTree, err := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD^{tree}")
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(committedTree) != treeSHA {
-		return "", fmt.Errorf("commit hooks changed the staged tree")
-	}
-	shaOut, err := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(shaOut), nil
 }
 
 // pushAndPublish pushes the delivery commit and finds or creates exactly one

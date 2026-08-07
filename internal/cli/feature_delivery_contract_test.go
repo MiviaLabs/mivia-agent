@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -71,7 +74,7 @@ func TestCommittedFeatureDeliveryWorkflowContract(t *testing.T) {
 	}
 
 	assertFeatureDeliveryReviewFeedbackChannel(t, workflow)
-	assertFeatureDeliverySchemasRequireInspected(t, base)
+	assertFeatureDeliverySchemasRequireInspected(t, base, filepath.Join(root, "internal", "workflows", "testdata"))
 }
 
 func committedWorkflowRoot(t *testing.T) string {
@@ -178,17 +181,73 @@ func assertFeatureDeliveryReviewFeedbackChannel(t *testing.T, workflow definitio
 	}
 }
 
-// assertFeatureDeliverySchemasRequireInspected verifies that the three
-// output schemas require an inspected array with at least one entry. This
-// forces the agent and reviewer to cite workspace paths they read before
-// making claims about the source.
-func assertFeatureDeliverySchemasRequireInspected(t *testing.T, base string) {
-	t.Helper()
-	for _, name := range []string{"plan-v1.json", "review-v1.json", "change-summary-v1.json"} {
-		raw, err := os.ReadFile(filepath.Join(base, "schemas", name))
-		if err != nil {
-			t.Fatalf("read schema %q: %v", name, err)
+// featureDeliveryContractSchemas are the shared output-schema filenames that
+// must stay pinned across every checked-in copy of the delivery workflow's
+// schema directory. The verifier catalogue and presentation tests read the
+// mirror under internal/workflows/testdata/schemas, so a weakened mirror must
+// fail the contract just like a weakened primary.
+var featureDeliveryContractSchemas = []string{
+	"plan-v1.json",
+	"review-v1.json",
+	"change-summary-v1.json",
+}
+
+// schemaContractTB is the subset of testing.TB the schema contract assertions
+// need, so a negative-control test can record failures instead of aborting.
+type schemaContractTB interface {
+	Helper()
+	Fatalf(format string, args ...any)
+}
+
+// failingT records the first fatal assertion for negative-control tests.
+type failingT struct {
+	failed bool
+	msg    string
+}
+
+func (f *failingT) Helper() {}
+func (f *failingT) Fatalf(format string, args ...any) {
+	f.failed = true
+	f.msg = fmt.Sprintf(format, args...)
+}
+
+// assertFeatureDeliverySchemasRequireInspected verifies that every checked-in
+// copy of the delivery workflow's output schemas enforces the inspected and
+// files_changed invariants, and that the copies have not diverged
+// byte-for-byte. The host workflow reads .mivia/workflows/schemas, while the
+// verifier catalogue and presentation tests read the mirror under
+// internal/workflows/testdata/schemas; both are pinned here.
+func assertFeatureDeliverySchemasRequireInspected(tb schemaContractTB, bases ...string) {
+	tb.Helper()
+	if len(bases) == 0 {
+		tb.Fatalf("no schema bases provided")
+	}
+	// Pin every checked-in copy to the primary: the verifier catalogue and
+	// presentation tests read the mirror under internal/workflows/testdata/
+	// schemas, so a weakened mirror (e.g. minItems removed from
+	// files_changed) must fail CI exactly like a weakened primary.
+	for _, name := range featureDeliveryContractSchemas {
+		primary := readSchemaBytes(tb, bases[0], name)
+		for _, other := range bases[1:] {
+			if !bytes.Equal(primary, readSchemaBytes(tb, other, name)) {
+				tb.Fatalf("schema %q diverged between %s and %s", name, bases[0], other)
+			}
 		}
+	}
+	for _, base := range bases {
+		assertFeatureDeliverySchemaCopyRequiresInspected(tb, base)
+	}
+}
+
+// assertFeatureDeliverySchemaCopyRequiresInspected verifies that one copy of
+// the delivery workflow's output schemas requires an inspected array with at
+// least one entry and a non-empty files_changed. This forces the agent and
+// reviewer to cite workspace paths they read before making claims about the
+// source, and stops a BLOCKED/no-op summary from validating as success.
+func assertFeatureDeliverySchemaCopyRequiresInspected(tb schemaContractTB, base string) {
+	tb.Helper()
+	for _, name := range featureDeliveryContractSchemas {
+		raw := readSchemaBytes(tb, base, name)
 		var schema struct {
 			Required   []string `json:"required"`
 			Properties map[string]struct {
@@ -197,20 +256,157 @@ func assertFeatureDeliverySchemasRequireInspected(t *testing.T, base string) {
 			} `json:"properties"`
 		}
 		if err := json.Unmarshal(raw, &schema); err != nil {
-			t.Fatalf("parse schema %q: %v", name, err)
+			tb.Fatalf("parse schema %q from %s: %v", name, base, err)
 		}
-		required := false
+		requiresInspected := false
 		for _, r := range schema.Required {
 			if r == "inspected" {
-				required = true
+				requiresInspected = true
 			}
 		}
-		if !required {
-			t.Fatalf("schema %q must require inspected", name)
+		if !requiresInspected {
+			tb.Fatalf("schema %q in %s must require inspected", name, base)
 		}
 		prop, ok := schema.Properties["inspected"]
 		if !ok || prop.Type != "array" || prop.MinItems < 1 {
-			t.Fatalf("schema %q inspected must be an array with minItems >= 1", name)
+			tb.Fatalf("schema %q in %s: inspected must be an array with minItems >= 1", name, base)
 		}
+	}
+
+	// change-summary-v1.json is the output schema for the implement and repair
+	// steps. It must also require a non-empty files_changed array: a
+	// BLOCKED/no-op output like {summary: "BLOCKED...", files_changed: []}
+	// must not validate, or the workflow step is wrongly marked succeeded.
+	raw := readSchemaBytes(tb, base, "change-summary-v1.json")
+	var changeSummary struct {
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			MinItems int    `json:"minItems"`
+			Type     string `json:"type"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &changeSummary); err != nil {
+		tb.Fatalf("parse schema change-summary-v1.json from %s: %v", base, err)
+	}
+	requiresFilesChanged := false
+	for _, r := range changeSummary.Required {
+		if r == "files_changed" {
+			requiresFilesChanged = true
+		}
+	}
+	if !requiresFilesChanged {
+		tb.Fatalf("schema change-summary-v1.json in %s must require files_changed", base)
+	}
+	filesChanged, ok := changeSummary.Properties["files_changed"]
+	if !ok || filesChanged.Type != "array" || filesChanged.MinItems < 1 {
+		tb.Fatalf("schema change-summary-v1.json in %s: files_changed must be an array with minItems >= 1", base)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		tb.Fatalf("unmarshal schema change-summary-v1.json from %s: %v", base, err)
+	}
+	compiled, err := jschema.Compile(doc)
+	if err != nil {
+		tb.Fatalf("compile schema change-summary-v1.json from %s: %v", base, err)
+	}
+	noopOutput := `{"summary":"BLOCKED: no changes to implement","files_changed":[],"inspected":["internal/cli/feature_delivery_contract_test.go"]}`
+	if _, err := compiled.ValidateJSONBytes([]byte(noopOutput)); err == nil {
+		tb.Fatalf("schema change-summary-v1.json in %s must reject empty files_changed (no-op output validated)", base)
+	}
+}
+
+// readSchemaBytes reads one schema file from a schema base directory.
+func readSchemaBytes(tb schemaContractTB, base, name string) []byte {
+	tb.Helper()
+	raw, err := os.ReadFile(filepath.Join(base, "schemas", name))
+	if err != nil {
+		tb.Fatalf("read schema %q from %s: %v", name, base, err)
+	}
+	return raw
+}
+
+// TestFeatureDeliveryContractRejectsWeakenedCopy is the negative control
+// for the schema contract assertions: a copy of change-summary-v1.json with
+// minItems removed from files_changed must be rejected, whether it is the
+// primary copy or an unpinned mirror.
+func TestFeatureDeliveryContractRejectsWeakenedCopy(t *testing.T) {
+	root := committedWorkflowRoot(t)
+
+	t.Run("single-copy", func(t *testing.T) {
+		dir := t.TempDir()
+		copyCommittedContractSchemas(t, root, dir)
+		weakenFilesChangedMinItems(t, filepath.Join(dir, "schemas", "change-summary-v1.json"))
+
+		rec := &failingT{}
+		assertFeatureDeliverySchemasRequireInspected(rec, dir)
+		if !rec.failed {
+			t.Fatal("weakened change-summary copy was accepted by the schema contract")
+		}
+	})
+
+	t.Run("diverged-mirror", func(t *testing.T) {
+		primary := t.TempDir()
+		mirror := t.TempDir()
+		copyCommittedContractSchemas(t, root, primary)
+		copyCommittedContractSchemas(t, root, mirror)
+		weakenFilesChangedMinItems(t, filepath.Join(mirror, "schemas", "change-summary-v1.json"))
+
+		rec := &failingT{}
+		assertFeatureDeliverySchemasRequireInspected(rec, primary, mirror)
+		if !rec.failed {
+			t.Fatal("diverged mirror copy was accepted by the schema contract")
+		}
+	})
+}
+
+// copyCommittedContractSchemas copies the pinned contract schemas from the
+// committed host workflow into dst/schemas so a control can mutate one copy.
+func copyCommittedContractSchemas(t *testing.T, root, dst string) {
+	t.Helper()
+	src := filepath.Join(root, ".mivia", "workflows", "schemas")
+	dir := filepath.Join(dst, "schemas")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range featureDeliveryContractSchemas {
+		raw, err := os.ReadFile(filepath.Join(src, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// weakenFilesChangedMinItems removes the minItems constraint from files_changed
+// in a change-summary-v1.json copy, simulating the drift the contract must
+// catch in every copy.
+func weakenFilesChangedMinItems(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	props, ok := doc["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s: properties is not an object", path)
+	}
+	filesChanged, ok := props["files_changed"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s: files_changed is not an object", path)
+	}
+	delete(filesChanged, "minItems")
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

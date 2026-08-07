@@ -17,6 +17,12 @@ type EnsureRunRequest struct {
 	Tasks          []subagents.Task
 	IdempotencyKey string
 	ForceResume    bool
+	// NonInteractiveParent marks the run's parent as a non-interactive
+	// controller that can never answer child questions. Parked questions for
+	// tasks in such a run are declined immediately at park time so the child
+	// proceeds instead of burning its full wait budget. Generic mechanism: the
+	// coordinator never assumes who the parent is, only that it cannot answer.
+	NonInteractiveParent bool
 }
 
 // EnsureRun creates or resumes the exact host-admitted run.
@@ -37,7 +43,7 @@ func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*Run
 
 	snap, err := c.repo.GetRunByIdempotencyKey(ctx, key)
 	if errors.Is(err, ledger.ErrNotFound) {
-		h, createErr := c.createAndStartRunWithID(ctx, req.RunID, req.Tasks, key, fingerprint, false)
+		h, createErr := c.createAndStartRunWithID(ctx, req.RunID, req.Tasks, key, fingerprint, false, nonInteractiveRunOpts(req)...)
 		if createErr == nil {
 			return h, nil
 		}
@@ -67,7 +73,7 @@ func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*Run
 		}
 	}
 	if isTerminalRunStatus(snap.Status) {
-		h := c.newRunHandle(snap.RunID, key, latestAttempts(storedTasks), fingerprint, true)
+		h := c.newRunHandle(snap.RunID, key, latestAttempts(storedTasks), fingerprint, true, nonInteractiveRunOpts(req)...)
 		go c.watchRecoveredRun(h)
 		return h, nil
 	}
@@ -82,7 +88,7 @@ func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*Run
 			return nil, err
 		}
 	}
-	h, err := c.resumeInterruptedRun(ctx, snap.RunID, req.Tasks)
+	h, err := c.resumeInterruptedRun(ctx, snap.RunID, req.Tasks, nonInteractiveRunOpts(req)...)
 	if err != nil {
 		return nil, err
 	}
@@ -189,9 +195,18 @@ func (c *coordinator) resumeEmptyRun(ctx context.Context, runID, key, fingerprin
 		tasks[i] = task.task
 		tasks[i].ID = task.taskID
 	}
-	h := c.newRunHandle(runID, key, attempts, fingerprint, false)
+	h := c.newRunHandle(runID, key, attempts, fingerprint, false, nonInteractiveRunOpts(req)...)
 	go c.executeRun(h, tasks)
 	return h, nil
+}
+
+// nonInteractiveRunOpts converts the ensure request's parent-interactivity flag
+// into run-handle construction options (nil when the parent is interactive).
+func nonInteractiveRunOpts(req EnsureRunRequest) []runHandleOption {
+	if req.NonInteractiveParent {
+		return []runHandleOption{withNonInteractiveParent()}
+	}
+	return nil
 }
 
 // claimForResume acquires the execution claim for a (force-)resume without

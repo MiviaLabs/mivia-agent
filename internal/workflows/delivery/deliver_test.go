@@ -79,37 +79,7 @@ func newDeliveryFixtureStatus(t *testing.T, status workflowledger.RunStatus) (re
 // wf_delivery_upserted event log (see TestDeliverRetryPathWritesNoStageRecord).
 func newDeliveryFixtureStatusStore(t *testing.T, status workflowledger.RunStatus, store storage.Store) (repoRoot, worktreeRoot string, gc GitContext, baseCommit, originURL string, run workflowledger.RunSnapshot, ledgerRepo workflowledger.Repository, st storage.Store) {
 	t.Helper()
-	repoRoot = t.TempDir()
-	runGit(t, repoRoot, "init", "-b", "main")
-	gitConfig(t, repoRoot)
-	writeWorktreeFile(t, repoRoot, "a.txt", "base\n")
-	runGit(t, repoRoot, "add", "a.txt")
-	runGit(t, repoRoot, "commit", "-m", "base")
-	baseCommit = runGitOut(t, repoRoot, "rev-parse", "HEAD")
-
-	originDir := filepath.Join(t.TempDir(), "origin.git")
-	runGit(t, filepath.Dir(originDir), "init", "--bare", filepath.Base(originDir))
-	runGit(t, repoRoot, "remote", "add", "origin", originDir)
-	runGit(t, repoRoot, "push", "-u", "origin", "main")
-	originURL = originDir
-
-	worktreeRoot = filepath.Join(t.TempDir(), "wt")
-	runGit(t, repoRoot, "worktree", "add", "-b", "wf/wt-test", worktreeRoot, baseCommit)
-	gitConfig(t, worktreeRoot)
-	gc = GitContext{Dir: worktreeRoot, GitDir: filepath.Join(repoRoot, ".git", "worktrees", filepath.Base(worktreeRoot))}
-
-	if store == nil {
-		store = storage.NewMemory()
-	}
-	ledgerRepo = workflowledger.NewStorageRepository(store)
-	run = createRunWithStatus(t, ledgerRepo, workflowledger.RunSnapshot{
-		RunID:          "wfr-test",
-		WorkflowName:   "test-wf",
-		WorkflowDigest: "digest",
-		ActiveStepID:   "success",
-		RemoteURL:      originURL,
-	}, status)
-	return repoRoot, worktreeRoot, gc, baseCommit, originURL, run, ledgerRepo, store
+	return newDeliveryFixtureStatusStoreOrigin(t, status, store, "")
 }
 
 func newDeliveryFixture(t *testing.T) (string, string, GitContext, string, string, workflowledger.RunSnapshot, workflowledger.Repository) {
@@ -359,6 +329,34 @@ func TestDeliverNoDiff(t *testing.T) {
 	rec := deliveryRecordByKey(t, repo, run)
 	if rec.Status != "no_diff" || rec.DiffRef != "" || rec.CommitSHA != "" {
 		t.Fatalf("record = %+v, want no_diff with empty DiffRef/CommitSHA", rec)
+	}
+}
+
+// TestDeliverNoDiffSkipsCommitMessagePolicy pins the audit fix: the optional
+// workspace commit-message policy is only enforced when a commit will actually
+// be created. A clean-at-base run (no diff) never fires the repo's commit-msg
+// hook, so a present policy with a non-conforming/empty rendered subject must
+// NOT refuse: the run settles no_diff without a commit.
+func TestDeliverNoDiffSkipsCommitMessagePolicy(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorkspacePolicy(t, repoRoot, worktreeRoot, `{"version": 1, "requireScope": true, "maxSubjectLength": 72}`)
+	pol := defaultPolicy("draft")
+	pol.CommitMessageTemplate = "" // renders an empty subject; would violate requireScope if validated
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, pol, map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("Deliver with no diff and a present commit-message policy = %v, want no refusal (no commit will be made)", err)
+	}
+	if res.Status != "no_diff" {
+		t.Fatalf("Result = %+v, want no_diff", res)
+	}
+	if n := pr.createdCount(); n != 0 {
+		t.Fatalf("Create calls = %d, want 0", n)
+	}
+	rec := deliveryRecordByKey(t, repo, run)
+	if rec.Status != "no_diff" {
+		t.Fatalf("record = %+v, want no_diff", rec)
 	}
 }
 

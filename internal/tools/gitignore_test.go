@@ -270,6 +270,62 @@ func TestGitignoreMatchRel(t *testing.T) {
 	}
 }
 
+// TestGitignoreRootInsideIgnoredPath reproduces the workflow-worktree bug: a
+// workspace root that itself lives inside a gitignored path (e.g.
+// <repo>/.mivia/worktrees/wt with a root .gitignore line ".mivia/worktrees/").
+// Matching the ABSOLUTE root-joined path against gitignore-go's
+// relative/anchored patterns collapses every path (the any-depth
+// ".mivia/worktrees/" pattern matches the absolute path) and never matches
+// anchored patterns like "/build/" or "dir/*.txt". Matching
+// workspace-relative paths must be unaffected by where the root sits.
+func TestGitignoreRootInsideIgnoredPath(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, ".mivia", "worktrees", "wt")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"),
+		[]byte(".mivia/worktrees/\n/build/\ndir/*.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gi := newGitignoreMatcher(root)
+	view := gi.snapshot()
+
+	// Ordinary paths inside the worktree must NOT be collapsed just because the
+	// root itself sits under the ignored .mivia/worktrees/ prefix.
+	if view.ShouldIgnoreDir("internal", "internal") {
+		t.Error("ShouldIgnoreDir(internal) must be false: root inside ignored path collapsed every dir")
+	}
+	if view.ShouldIgnoreFile("a.go", "internal/a.go") {
+		t.Error("ShouldIgnoreFile(internal/a.go) must be false: root inside ignored path collapsed every file")
+	}
+	if gi.MatchRel("internal/a.go") {
+		t.Error("MatchRel(internal/a.go) must be false")
+	}
+	if gi.IsDir("internal") {
+		t.Error("IsDir(internal) must be false")
+	}
+
+	// Anchored patterns (/build/, dir/*.txt) must match their workspace-relative
+	// paths once matching is relative to the root.
+	if !view.ShouldIgnoreDir("build", "build") {
+		t.Error("ShouldIgnoreDir(build) must match anchored '/build/' pattern")
+	}
+	if !view.ShouldIgnoreFile("x.txt", "dir/x.txt") {
+		t.Error("ShouldIgnoreFile(dir/x.txt) must match anchored 'dir/*.txt' pattern")
+	}
+	if !gi.MatchRel("build/out.o") {
+		t.Error("MatchRel(build/out.o) must be ignored under '/build/'")
+	}
+	if !gi.MatchRel("dir/x.txt") {
+		t.Error("MatchRel(dir/x.txt) must be ignored under 'dir/*.txt'")
+	}
+	if !gi.IsDir("build") {
+		t.Error("IsDir(build) must match '/build/'")
+	}
+}
+
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }
 
 func contains(s, substr string) bool { return strings.Contains(s, substr) }
