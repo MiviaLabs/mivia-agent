@@ -226,6 +226,14 @@ func (s *SQLite) TakeoverExpiredClaim(ctx context.Context, id, h string, maxAge 
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		var found int
+		err := s.db.QueryRowContext(ctx, `SELECT 1 FROM run_claims WHERE run_id = ?`, id).Scan(&found)
+		if err == sql.ErrNoRows {
+			return ErrClaimNotHeld
+		}
+		if err != nil {
+			return fmt.Errorf("read expired claim %q: %w", id, err)
+		}
 		return ErrClaimHeld
 	}
 	return nil

@@ -66,6 +66,9 @@ func (s *StorageRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, 
 		if errors.Is(err, storage.ErrClaimHeld) {
 			return ErrClaimHeld
 		}
+		if errors.Is(err, storage.ErrClaimNotHeld) {
+			return ErrClaimNotHeld
+		}
 		return err
 	}
 	s.mu.Lock()
