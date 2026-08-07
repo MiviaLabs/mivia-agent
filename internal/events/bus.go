@@ -110,6 +110,10 @@ func (b *Bus) Unsubscribe(kind Kind, target Handler) {
 		return
 	}
 	b.mu.Lock()
+	if b.subs == nil {
+		b.mu.Unlock()
+		return
+	}
 	subs := b.subs[kind]
 	for i, s := range subs {
 		if s.handler == target {
@@ -142,6 +146,10 @@ func (b *Bus) Unsubscribe(kind Kind, target Handler) {
 // instead.
 func (b *Bus) Flush() {
 	b.mu.Lock()
+	if b.subs == nil {
+		b.mu.Unlock()
+		return
+	}
 	seen := make(map[*subscription]struct{})
 	for _, subs := range b.subs {
 		for _, s := range subs {

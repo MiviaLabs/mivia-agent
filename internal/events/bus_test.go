@@ -602,6 +602,55 @@ func TestNewSubscriptionZeroBufSize(t *testing.T) {
 // select reaches it with events still queued; the fixed drainEvents never
 // touches flushCh, so a barrier is only ever acked after the event channel
 // is empty.
+// Regression: Bus.Unsubscribe must not panic when called after Bus.Close.
+// Close sets b.subs = nil after draining delivery goroutines (bus.go line 168),
+// but Unsubscribe reads b.subs[kind] without a nil guard (bus.go line 113).
+func TestBusUnsubscribeAfterCloseMustNotPanic(t *testing.T) {
+	bus := New()
+	h := &collectHandler{}
+	bus.Subscribe(KindToolStart, h)
+	bus.Close()
+
+	// Must not panic with nil map dereference.
+	var recovered interface{}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered = r
+			}
+		}()
+		bus.Unsubscribe(KindToolStart, h)
+	}()
+	if recovered != nil {
+		t.Fatalf("Unsubscribe after Close panicked: %v", recovered)
+	}
+}
+
+// Regression: Bus.Flush must not panic when called after Bus.Close.
+// Close sets b.subs = nil after draining delivery goroutines (bus.go line 168),
+// but Flush ranges over b.subs without a nil guard (bus.go line 146).
+func TestBusFlushAfterCloseMustNotPanic(t *testing.T) {
+	bus := New()
+	h := &collectHandler{}
+	bus.Subscribe(KindToolStart, h)
+	bus.Publish(NewEvent(KindToolStart))
+	bus.Close()
+
+	// Must not panic with nil map iteration.
+	var recovered interface{}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered = r
+			}
+		}()
+		bus.Flush()
+	}()
+	if recovered != nil {
+		t.Fatalf("Flush after Close panicked: %v", recovered)
+	}
+}
+
 func TestFlushWaitsForEventsPublishedBeforeIt(t *testing.T) {
 	const (
 		events     = 3
