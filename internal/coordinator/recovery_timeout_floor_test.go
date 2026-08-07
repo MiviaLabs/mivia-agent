@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func floorCoordinatorAndSnapshot(t *testing.T, poolTimeout, snapTimeout time.Dur
 // safety floor instead, or the resumed execution would be unbounded.
 func TestTasksFromSnapshotsAppliesTimeoutFloor(t *testing.T) {
 	c, snap := floorCoordinatorAndSnapshot(t, 0, 0)
-	tasks, _, err := c.(*coordinator).tasksFromSnapshots([]ledger.TaskSnapshot{snap})
+	tasks, _, err := c.(*coordinator).tasksFromSnapshots(context.Background(), []ledger.TaskSnapshot{snap})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestTasksFromSnapshotsAppliesTimeoutFloor(t *testing.T) {
 // that already carries a finite budget.
 func TestTasksFromSnapshotsKeepsPositiveTimeout(t *testing.T) {
 	c, snap := floorCoordinatorAndSnapshot(t, 0, 30*time.Second)
-	tasks, _, err := c.(*coordinator).tasksFromSnapshots([]ledger.TaskSnapshot{snap})
+	tasks, _, err := c.(*coordinator).tasksFromSnapshots(context.Background(), []ledger.TaskSnapshot{snap})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestTasksFromSnapshotsKeepsPositiveTimeout(t *testing.T) {
 // pool policy allows must not raise the ceiling.
 func TestTasksFromSnapshotsClampsTimeoutToPoolCeiling(t *testing.T) {
 	c, snap := floorCoordinatorAndSnapshot(t, time.Minute, 2*time.Minute)
-	tasks, _, err := c.(*coordinator).tasksFromSnapshots([]ledger.TaskSnapshot{snap})
+	tasks, _, err := c.(*coordinator).tasksFromSnapshots(context.Background(), []ledger.TaskSnapshot{snap})
 	if err != nil {
 		t.Fatal(err)
 	}

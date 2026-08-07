@@ -138,6 +138,47 @@ func TestAgentStepDoesNotRetryNonTransientFailure(t *testing.T) {
 	}
 }
 
+// TestAgentStepDoesNotRetryPromptTooLong pins the contract for a
+// prompt-too-long child failure: a zai provider error "HTTP 400, code 1261:
+// prompt too long" is TERMINAL at the transport layer (internal/provider/
+// retry.go treats HTTP 400 as non-retryable) and must NOT be classified
+// transient at the workflow layer. A step-level retry re-renders a
+// byte-identical prompt (template.Render is a pure function of the same
+// inputs), so re-dispatching cannot change the outcome: the step settles
+// immediately as attempt failed -> failureRoute (on_failure). Regression for
+// the retry storm where the marker list matched 'HTTP 400'/'prompt too long'
+// and re-ran the step up to 3 extra times, each failing identically.
+func TestAgentStepDoesNotRetryPromptTooLong(t *testing.T) {
+	orig := stepTransientRetryBackoff
+	stepTransientRetryBackoff = func(int) time.Duration { return 0 }
+	t.Cleanup(func() { stepTransientRetryBackoff = orig })
+
+	runner := &transientFailRunner{
+		failures: 10, // every call fails; a terminal prompt-too-long must not be retried
+		err:      errors.New("zai: provider error (HTTP 400, code 1261: prompt too long)"),
+	}
+	ctrl, repo := newErrorController(t, runner, "wfr-prompt-too-long")
+	got, err := ctrl.Run(context.Background())
+	if err == nil {
+		t.Fatalf("run succeeded = %+v; want failure", got)
+	}
+	if got.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("status = %q, want failed", got.Status)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) != 1 {
+		t.Fatalf("RunStep calls = %d, want exactly 1 (prompt-too-long is terminal, not transient)", len(runner.calls))
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != workflowledger.AttemptStatusFailed {
+		t.Fatalf("attempts = %+v, want exactly one failed attempt", attempts)
+	}
+}
+
 // transientFailOnceHandler fails the first invocation with a transient
 // provider error and succeeds on every later invocation. It is driven by the
 // REAL coordinator in the regression test below, which mirrors production

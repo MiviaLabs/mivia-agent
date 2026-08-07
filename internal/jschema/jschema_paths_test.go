@@ -179,7 +179,9 @@ func TestFormatCorrectiveWithSchemaNeverTruncatesTheSchema(t *testing.T) {
 	props := map[string]any{}
 	for i := 0; i < 20; i++ {
 		props[fmt.Sprintf("field_%02d", i)] = map[string]any{
-			"type": "string", "description": strings.Repeat("x", 40),
+			// Meta keywords (description) are stripped from the rendered
+			// contract, so size the schema with instance-shape keywords.
+			"type": "string", "minLength": 5, "pattern": "^[a-z]+$",
 		}
 	}
 	schema := map[string]any{"type": "object", "properties": props}
@@ -189,8 +191,8 @@ func TestFormatCorrectiveWithSchemaNeverTruncatesTheSchema(t *testing.T) {
 		t.Fatalf("schema tail truncated by corrective (len=%d): %.120s…", len(msg), msg)
 	}
 	// The error detail must give way before the schema does: with the full
-	// schema at ~1.8KB the message necessarily exceeds the soft cap, but the
-	// errors list must be cut far below its raw length.
+	// schema the message necessarily exceeds the soft cap, but the errors
+	// list must be cut far below its raw length.
 	if strings.Contains(msg, "line\nline\nline\nline\nline") {
 		t.Fatalf("error detail was not bounded: %.160s", msg)
 	}

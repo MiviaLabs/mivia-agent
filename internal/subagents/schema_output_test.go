@@ -136,6 +136,77 @@ func TestMultiStepSchemaRetryRespectsMaxSteps(t *testing.T) {
 	}
 }
 
+// invokeMultiStepCounted is invokeMultiStep plus the number of LLM turns the
+// completer actually served, so tests can assert on LLM-call budgets.
+func invokeMultiStepCounted(t *testing.T, replies []string, schema map[string]any, maxSteps, retryMax int) (map[string]any, int, error) {
+	t.Helper()
+	c := &scriptedSchemaCompleter{replies: replies}
+	reg := tools.NewRegistry()
+	h := &subagents.MultiStepHandler{
+		Completer:      c,
+		FullRegistry:   reg,
+		Model:          "m",
+		MaxSteps:       maxSteps,
+		SchemaRetryMax: retryMax,
+		OutputSchema:   schema,
+	}
+	input, _ := json.Marshal("do the work")
+	out, err := h.Invoke(context.Background(), runtime.Request{
+		ID: "task-1", Name: "worker", Kind: runtime.Subagent, Input: input,
+		OutputSchema: schema,
+	})
+	var payload map[string]any
+	if len(out) > 0 {
+		_ = json.Unmarshal(out, &payload)
+	}
+	return payload, c.i, err
+}
+
+func TestMultiStepSchemaNoProgressFailsFast(t *testing.T) {
+	// A model that repeats the byte-identical invalid candidate after the
+	// corrective turn cannot be repaired by more retries: it must fail after
+	// exactly 2 LLM calls (initial + one confirm), not burn the whole
+	// retryMax+1 budget on the same dead end.
+	replies := []string{
+		`{"ok":"yes"}`,
+		`{"ok":"yes"}`,
+		`{"ok":"yes"}`,
+		`{"ok":"yes"}`,
+	}
+	payload, calls, err := invokeMultiStepCounted(t, replies, schemaObject(), 10, 2)
+	if !errors.Is(err, subagents.ErrSchemaViolation) {
+		t.Fatalf("err=%v, want ErrSchemaViolation", err)
+	}
+	if !strings.Contains(err.Error(), "no progress on schema repair") {
+		t.Fatalf("err=%v, want no-progress cause", err)
+	}
+	if calls != 2 {
+		t.Fatalf("got %d LLM calls, want exactly 2 (initial + one confirm)", calls)
+	}
+	if payload["schema"] != "violation" {
+		t.Fatalf("schema=%v payload=%#v", payload["schema"], payload)
+	}
+	if _, has := payload["output"]; has {
+		t.Fatalf("malformed output must not be inlined: %#v", payload)
+	}
+}
+
+func TestMultiStepSchemaDistinctInvalidGetsFullBudget(t *testing.T) {
+	// Distinct invalid candidates each earn a corrective re-entry; the full
+	// retryMax+1 budget is consumed before failing.
+	replies := []string{`nope`, `still nope`, `and again`, `one more`}
+	payload, calls, err := invokeMultiStepCounted(t, replies, schemaObject(), 10, 2)
+	if !errors.Is(err, subagents.ErrSchemaViolation) {
+		t.Fatalf("err=%v, want ErrSchemaViolation", err)
+	}
+	if calls != 3 {
+		t.Fatalf("got %d LLM calls, want retryMax+1 = 3 for distinct invalid outputs", calls)
+	}
+	if payload["schema"] != "violation" {
+		t.Fatalf("schema=%v payload=%#v", payload["schema"], payload)
+	}
+}
+
 func TestMultiStepSchemaFenceStrip(t *testing.T) {
 	payload, err := invokeMultiStep(t, []string{"```json\n{\"ok\":true}\n```"}, schemaObject(), 3, 2)
 	if err != nil {

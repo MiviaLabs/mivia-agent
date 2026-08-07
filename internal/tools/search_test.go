@@ -25,12 +25,12 @@ func TestGlobMatchesMultiDoublestar(t *testing.T) {
 		{"**/*.md", "docs/guide.md", "guide.md", true},
 		{"**/*.md", "docs/deep/notes.md", "notes.md", true},
 
-		// Multiple **/ — currently broken (only first **/ is honored)
+		// Multiple **/ — each **/ matches zero or more directories
 		{"**/pkg/**/*.go", "pkg/a.go", "a.go", true},
 		{"**/pkg/**/*.go", "pkg/nested/b.go", "b.go", true},
 		{"**/pkg/**/*.go", "src/main.go", "main.go", false},
 
-		// **/ with slash-containing tail — currently broken
+		// **/ with slash-containing tail — leading **/ may skip directories
 		{"**/foo/bar.md", "foo/bar.md", "bar.md", true},
 		{"**/foo/bar.md", "a/foo/bar.md", "bar.md", true},
 		{"**/foo/bar.md", "a/b/foo/bar.md", "bar.md", true},
@@ -399,6 +399,32 @@ func TestGlobMatchSegmentsLiteralPrefix(t *testing.T) {
 		got := globMatchSegments([]string{"src/", "*.go"}, tc.path, globSegmentsMatch)
 		if got != tc.want {
 			t.Errorf("globMatchSegments([\"src/\", \"*.go\"], %q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestGlobMatchSegmentsNonEmptyPrefixSkipsPathDirs covers **/ patterns where
+// a non-empty segment (e.g. "foo/") must match inside a path that has leading
+// directories: the leading **/ must skip path dirs before the non-empty
+// segment is consumed. Regression cases:
+//
+//	"**/foo/bar.md"            -> segments ["", "foo/bar.md"]  vs "a/foo/bar.md"
+//	"**/pkg/**/*.go"           -> segments ["", "pkg/", "*.go"] vs "x/pkg/nested/b.go"
+//	"src/**/internal/**/*.go"  -> segments ["src/", "internal/", "*.go"] vs "src/pkg/internal/util.go"
+func TestGlobMatchSegmentsNonEmptyPrefixSkipsPathDirs(t *testing.T) {
+	cases := []struct {
+		segments []string
+		path     string
+		want     bool
+	}{
+		{[]string{"", "foo/bar.md"}, "a/foo/bar.md", true},
+		{[]string{"", "pkg/", "*.go"}, "x/pkg/nested/b.go", true},
+		{[]string{"src/", "internal/", "*.go"}, "src/pkg/internal/util.go", true},
+	}
+	for _, tc := range cases {
+		got := globMatchSegments(tc.segments, tc.path, globSegmentsMatch)
+		if got != tc.want {
+			t.Errorf("globMatchSegments(%v, %q) = %v, want %v", tc.segments, tc.path, got, tc.want)
 		}
 	}
 }

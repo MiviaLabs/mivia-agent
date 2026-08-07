@@ -30,6 +30,13 @@ const MaxTimeoutSeconds = 315_360_000 // 10 years
 // reference.
 const defaultInlineOutputBytes = 4096
 
+// MaxSchemaRetryMax is the load-time ceiling for [subagents] schema_retry_max.
+// A positive configured value above it is clamped to it, so an operator typo
+// (40 typed instead of 4) cannot configure a 40+-call schema-retry storm, where
+// every retry is a full provider round-trip. Values <= 0 keep the existing
+// "use the default 2" behavior; only 1..MaxSchemaRetryMax pass through.
+const MaxSchemaRetryMax = 10
+
 // Messaging defaults (plan 53.01). Messaging is always enabled; budgets and
 // routing quotas are the only operational knobs.
 const (

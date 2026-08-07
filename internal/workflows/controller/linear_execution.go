@@ -183,10 +183,10 @@ func (c *LinearController) reconcileTerminalAttempt(ctx context.Context, run wor
 }
 
 // runStepWithTransientRetry runs the step's agent, retrying transient
-// LLM-provider failures (overload, rate limit, upstream 5xx, or a
-// prompt-too-long from accumulated child context) with a FRESH subagent run:
-// re-running the whole step resets the child's accumulated context, and the
-// coordinator dedupes on TaskID, so a new identity is minted per retry. The
+// LLM-provider failures (overload, rate limit, upstream 5xx) with a FRESH
+// subagent run: re-running the whole step resets the child's accumulated
+// context, and the coordinator dedupes on TaskID, so a new identity is
+// minted per retry. The
 // coordinator run ID is minted alongside the task ID: the idempotency key
 // encodes the TaskID (agent_step.go), so a retry with the old run ID and a
 // new key would find the key absent and collide with the existing run
@@ -385,13 +385,17 @@ func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.R
 const maxTransientStepRetries = 3
 
 // transientProviderMarkers identify retryable LLM-provider transport errors:
-// overload/rate limits, upstream 5xx, and prompt-too-long (the latter comes
-// from accumulated child context, which a fresh subagent run clears). Real
-// agent failures (schema, binding, refusal) do not match and fail
-// immediately.
+// overload/rate limits and upstream 5xx, which a fresh subagent run may
+// outlive. HTTP 400-class client errors are TERMINAL at the transport layer
+// (internal/provider/retry.go) and are deliberately not matched here: a
+// step-level retry re-renders a byte-identical prompt (template.Render is a
+// pure function of the same inputs), so re-dispatching cannot change the
+// outcome. In particular, zai code 1261 "prompt too long" surfaces as
+// "provider error (HTTP 400, code 1261: prompt too long)" and must settle
+// immediately as attempt failed -> failureRoute (on_failure). Real agent
+// failures (schema, binding, refusal) do not match and fail immediately.
 var transientProviderMarkers = []string{
 	"HTTP 429", "temporarily overloaded", "rate limited", "overloaded",
-	"HTTP 400", "prompt too long",
 	"HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504",
 	"service unavailable", "upstream", "connection reset", "EOF",
 }

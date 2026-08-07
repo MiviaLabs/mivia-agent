@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
@@ -45,5 +46,30 @@ func TestShippedExampleConfigLoads(t *testing.T) {
 	}
 	if unset == 0 {
 		t.Fatal("the example must show an unset model beside the configured one")
+	}
+}
+
+// The live shipped catalog (.mivia/mivia.toml, what this repository runs on)
+// must advertise glm-5.2's real context window (~200K, the figure the provider
+// bindings model at 200000). A larger number inflates the prompt budget
+// (EffectivePromptTokens reserves only max_output_tokens from it), so context
+// grows far past the provider limit before the 80% compaction trigger fires and
+// the provider answers HTTP 400 prompt-too-long.
+func TestShippedCatalogGLM52ContextWindowTokens(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	res, err := Load(LoadOptions{ConfigPath: filepath.Join(root, ".mivia", "mivia.toml")})
+	if err != nil {
+		t.Fatalf("the shipped catalog does not load: %v", err)
+	}
+	spec := profileNamed(t, res, "zai", "glm-5.2")
+	if spec.ContextWindowTokens != 200000 {
+		t.Fatalf("shipped glm-5.2 context_window_tokens = %d, want 200000 (provider's real limit)", spec.ContextWindowTokens)
+	}
+	if spec.MaxOutputTokens >= spec.ContextWindowTokens {
+		t.Fatalf("shipped glm-5.2 max_output_tokens = %d must stay below the 200000 context window", spec.MaxOutputTokens)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -100,9 +101,11 @@ func TestExecuteWorkflowResumeJoinsInFlightAttempt(t *testing.T) {
 	}
 }
 
-// newJoinResumeFixture builds the run, in-flight attempt, join-capable runner
-// and controller for the resume-join scenario, wiring the resume boundary seams.
-func newJoinResumeFixture(t *testing.T) (root string, repo workflowledger.Repository, run workflowledger.RunSnapshot, runner *workflowResumeJoinRunner, snapshot workflowledger.Snapshot, ctrl *controller.LinearController) {
+// newJoinResumeRun scaffolds the shared resume-join fixture: the run (with an
+// optional run deadline), the seeded in-flight attempt, the controller over the
+// given runner, and the resume boundary seams. The runner is injected so join
+// tests can substitute a join that never settles (workflowResumeHangingJoinRunner).
+func newJoinResumeRun(t *testing.T, runner controller.AgentStepRunner, deadline *time.Time) (root string, repo workflowledger.Repository, run workflowledger.RunSnapshot, snapshot workflowledger.Snapshot, ctrl *controller.LinearController) {
 	t.Helper()
 	root, _ = newForcedResumeFixture(t)
 	compiled, rawDefinition := compileResumeWorkflowFixture(t, root)
@@ -116,6 +119,7 @@ func newJoinResumeFixture(t *testing.T) (root string, repo workflowledger.Reposi
 		SnapshotDigest: workflowledger.SnapshotDigest(rawSnapshot),
 		InputDigest:    workflowledger.InputDigest(snapshot.Inputs),
 		Status:         workflowledger.RunStatusPending, ActiveStepID: compiled.InitialStep,
+		DeadlineAt: deadline,
 	}
 	ctx := context.Background()
 	repo = workflowledger.NewMemoryRepository()
@@ -129,19 +133,14 @@ func newJoinResumeFixture(t *testing.T) (root string, repo workflowledger.Reposi
 	if err := repo.CompareAndSetRunStatus(ctx, run.RunID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
 		t.Fatal(err)
 	}
-	// Seed a RUNNING attempt whose coordinator child already completed.
+	// Seed a RUNNING attempt whose coordinator child already ran (the join is
+	// expected to settle it from the child's recorded outcome).
 	if err := repo.CreateStepAttempt(ctx, workflowledger.StepAttempt{
 		AttemptID: "wfa-one-1", RunID: run.RunID, StepID: "one", AttemptNo: 1,
 		Status: workflowledger.AttemptStatusRunning, CoordinatorRunID: "coord-rec", TaskID: "task-rec",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	runner = &workflowResumeJoinRunner{children: map[string]controller.AgentStepResult{
-		"task-rec": {
-			CoordinatorRunID: "coord-rec", TaskID: "task-rec",
-			Output: json.RawMessage(`{"ok":true}`), EvidenceJSON: []byte(`[]`), Status: "completed",
-		},
-	}}
 	steps := map[string]controller.StepRuntime{
 		"one": {Agent: agents.ResolvedAgent{Name: "one"}, ProviderName: "openrouter", Model: "test/model"},
 		"two": {Agent: agents.ResolvedAgent{Name: "two"}, ProviderName: "openrouter", Model: "test/model"},
@@ -167,6 +166,20 @@ func newJoinResumeFixture(t *testing.T) (root string, repo workflowledger.Reposi
 			Admission:  controller.Admission{InputDigest: workflowledger.InputDigest(snapshot.Inputs)},
 		}, nil
 	}
+	return root, repo, run, snapshot, ctrl
+}
+
+// newJoinResumeFixture builds the run, in-flight attempt, join-capable runner
+// and controller for the resume-join scenario, wiring the resume boundary seams.
+func newJoinResumeFixture(t *testing.T) (root string, repo workflowledger.Repository, run workflowledger.RunSnapshot, runner *workflowResumeJoinRunner, snapshot workflowledger.Snapshot, ctrl *controller.LinearController) {
+	t.Helper()
+	runner = &workflowResumeJoinRunner{children: map[string]controller.AgentStepResult{
+		"task-rec": {
+			CoordinatorRunID: "coord-rec", TaskID: "task-rec",
+			Output: json.RawMessage(`{"ok":true}`), EvidenceJSON: []byte(`[]`), Status: "completed",
+		},
+	}}
+	root, repo, run, snapshot, ctrl = newJoinResumeRun(t, runner, nil)
 	return root, repo, run, runner, snapshot, ctrl
 }
 
@@ -226,5 +239,125 @@ func TestExecuteWorkflowResumeRefusesNilControllerWithInFlightAttempts(t *testin
 	err = executeWorkflowResume(run.RunID, root, filepath.Join(root, "config.toml"), true, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "cannot join") {
 		t.Fatalf("executeWorkflowResume() error = %v, want nil-controller join refusal", err)
+	}
+}
+
+// workflowResumeHangingJoinRunner is a controller runner whose JoinStep never
+// settles on its own: it blocks until the caller's context expires, mirroring
+// a production coordinator child whose run never reaches a terminal outcome.
+// RunStep completes instantly so a run that escapes the join still progresses.
+type workflowResumeHangingJoinRunner struct {
+	mu     sync.Mutex
+	joined []controller.AgentStepRequest
+}
+
+func (r *workflowResumeHangingJoinRunner) JoinStep(ctx context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, bool, error) {
+	r.mu.Lock()
+	r.joined = append(r.joined, req)
+	r.mu.Unlock()
+	<-ctx.Done()
+	return controller.AgentStepResult{}, false, ctx.Err()
+}
+
+func (r *workflowResumeHangingJoinRunner) RunStep(_ context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, error) {
+	return controller.AgentStepResult{CoordinatorRunID: req.CoordinatorRunID, TaskID: req.TaskID, EvidenceJSON: []byte(`[]`), Status: "completed"}, nil
+}
+
+// resumeJoinMustReturn runs executeWorkflowResume and fails the test if it does
+// not return within the anti-hang window: the whole point of the join bound is
+// that a child that never settles cannot park resume forever.
+func resumeJoinMustReturn(t *testing.T, runID, root string, stdout io.Writer) error {
+	t.Helper()
+	type resumeResult struct {
+		err error
+	}
+	done := make(chan resumeResult, 1)
+	go func() {
+		err := executeWorkflowResume(runID, root, filepath.Join(root, "config.toml"), true, stdout, io.Discard)
+		done <- resumeResult{err: err}
+	}()
+	select {
+	case res := <-done:
+		return res.err
+	case <-time.After(5 * time.Second):
+		t.Fatalf("executeWorkflowResume did not return within 5s: the in-flight join hung without a bound")
+		return nil
+	}
+}
+
+// TestExecuteWorkflowResumeJoinBoundedByRunDeadline: a forced resume whose
+// in-flight join never settles (the recorded child's coordinator run never
+// reaches a terminal outcome) must not park the resume command past the run's
+// own deadline: the join runs under a context bounded by time.Until(deadline)
+// and, on expiry, resume returns a clear error with the attempt still in-flight
+// for the controller's normal reconciliation.
+func TestExecuteWorkflowResumeJoinBoundedByRunDeadline(t *testing.T) {
+	runner := &workflowResumeHangingJoinRunner{}
+	deadline := time.Now().Add(150 * time.Millisecond)
+	root, repo, run, _, ctrl := newJoinResumeRun(t, runner, &deadline)
+	_ = ctrl
+	start := time.Now()
+	err := resumeJoinMustReturn(t, run.RunID, root, io.Discard)
+	elapsed := time.Since(start)
+	if elapsed > 5*time.Second {
+		t.Fatalf("executeWorkflowResume took %v to return; want within the run deadline bound", elapsed)
+	}
+	if err == nil {
+		t.Fatalf("executeWorkflowResume() error = nil, want the join-bound expiry error")
+	}
+	if !strings.Contains(err.Error(), "join in-flight attempt") || !strings.Contains(err.Error(), "wfa-one-1") {
+		t.Fatalf("executeWorkflowResume() error = %v, want a clear in-flight join error", err)
+	}
+	runner.mu.Lock()
+	if len(runner.joined) != 1 || runner.joined[0].TaskID != "task-rec" {
+		t.Fatalf("joined requests = %+v, want the recorded child identity", runner.joined)
+	}
+	runner.mu.Unlock()
+	// The expired join leaves the run reconcilable: the attempt is still
+	// in-flight for the controller's normal reconciliation (Advance interrupts
+	// and re-dispatches it under the run claim), never settled or corrupted.
+	attempts, err := repo.ListStepAttempts(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 || attempts[0].AttemptID != "wfa-one-1" || attempts[0].Status != workflowledger.AttemptStatusRunning {
+		t.Fatalf("attempts = %+v, want wfa-one-1 left in-flight/running", attempts)
+	}
+}
+
+// TestExecuteWorkflowResumeJoinBoundedByFixedBound: a run with no deadline of
+// its own bounds the in-flight join by the injectable workflowResumeJoinBound,
+// so resume returns with a clear error instead of hanging on a child that never
+// settles.
+func TestExecuteWorkflowResumeJoinBoundedByFixedBound(t *testing.T) {
+	runner := &workflowResumeHangingJoinRunner{}
+	originalBound := workflowResumeJoinBound
+	t.Cleanup(func() { workflowResumeJoinBound = originalBound })
+	workflowResumeJoinBound = 100 * time.Millisecond
+
+	root, repo, run, _, _ := newJoinResumeRun(t, runner, nil)
+	start := time.Now()
+	err := resumeJoinMustReturn(t, run.RunID, root, io.Discard)
+	elapsed := time.Since(start)
+	if elapsed > 5*time.Second {
+		t.Fatalf("executeWorkflowResume took %v to return; want within the injectable join bound", elapsed)
+	}
+	if err == nil {
+		t.Fatalf("executeWorkflowResume() error = nil, want the join-bound expiry error")
+	}
+	if !strings.Contains(err.Error(), "join in-flight attempt") || !strings.Contains(err.Error(), "wfa-one-1") {
+		t.Fatalf("executeWorkflowResume() error = %v, want a clear in-flight join error", err)
+	}
+	runner.mu.Lock()
+	if len(runner.joined) != 1 || runner.joined[0].TaskID != "task-rec" {
+		t.Fatalf("joined requests = %+v, want the recorded child identity", runner.joined)
+	}
+	runner.mu.Unlock()
+	attempts, err := repo.ListStepAttempts(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != workflowledger.AttemptStatusRunning {
+		t.Fatalf("attempts = %+v, want wfa-one-1 left in-flight/running", attempts)
 	}
 }

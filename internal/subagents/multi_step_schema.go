@@ -50,6 +50,12 @@ func (h *MultiStepHandler) runValidatedReply(
 		retryMax = 2
 	}
 	userTurn := taskPrompt
+	// lastInvalid is the normalized (fence-stripped) candidate that failed
+	// validation on the previous iteration. A byte-identical repeat means the
+	// corrective turn produced zero repair progress; re-entering the loop
+	// would only burn another LLM call on the same dead end, so fail fast
+	// instead of spending the whole retry budget.
+	var lastInvalid string
 	for attempt := 0; ; attempt++ {
 		// Each loop.Run resets its local MaxSteps counter, so shrink MaxSteps
 		// to remaining budget — re-entry must not extend step allowance.
@@ -76,6 +82,10 @@ func (h *MultiStepHandler) runValidatedReply(
 		if vErr == nil {
 			return candidate, inst, nil
 		}
+		if attempt > 0 && candidate == lastInvalid {
+			return "", nil, fmt.Errorf("%w: no progress on schema repair: repeated the identical invalid output", ErrSchemaViolation)
+		}
+		lastInvalid = candidate
 		if attempt >= retryMax {
 			// Never inline known-malformed output.
 			return "", nil, fmt.Errorf("%w: %v", ErrSchemaViolation, vErr)

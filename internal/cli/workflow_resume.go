@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -26,6 +27,12 @@ var (
 	workflowResumeRun = func(ctx context.Context, b workflowControllerBuild) (workflowledger.RunSnapshot, error) {
 		return b.Controller.Run(ctx)
 	}
+	// workflowResumeJoinBound bounds the pre-Run in-flight attempt join for runs
+	// that carry no deadline of their own, so a coordinator child whose run never
+	// settles cannot park resume forever (runs WITH a deadline bound the join to
+	// the time remaining before it; see workflowResumeJoinCtx). Injectable for
+	// tests.
+	workflowResumeJoinBound = 10 * time.Minute
 )
 
 func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _ io.Writer) error {
@@ -136,12 +143,38 @@ func joinInFlightAttempts(ctx context.Context, built workflowControllerBuild, re
 	if built.Controller == nil {
 		return fmt.Errorf("workflow controller is nil; cannot join %d in-flight attempt(s)", len(plan.AttemptsInFlight))
 	}
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	// The join is bounded so a child whose coordinator run never settles cannot
+	// park resume forever: bound to the run's own deadline when present (time.Until
+	// it), otherwise a fixed workflowResumeJoinBound. On expiry the join is
+	// abandoned with a clear error and the attempt stays in-flight for the
+	// controller's normal reconciliation (Advance interrupts and re-dispatches it
+	// under the run claim on a subsequent resume).
+	joinCtx, cancelJoin := workflowResumeJoinCtx(ctx, run)
+	defer cancelJoin()
 	for _, inFlight := range plan.AttemptsInFlight {
-		if err := built.Controller.JoinInFlightAttempt(ctx, inFlight); err != nil {
+		if err := built.Controller.JoinInFlightAttempt(joinCtx, inFlight); err != nil {
 			return fmt.Errorf("join in-flight attempt %s for step %q: %w", inFlight.AttemptID, inFlight.StepID, err)
+		}
+		if joinCtx.Err() != nil {
+			return fmt.Errorf("join in-flight attempt %s for step %q did not settle within the resume join bound; leaving it in-flight for controller reconciliation: %w", inFlight.AttemptID, inFlight.StepID, joinCtx.Err())
 		}
 	}
 	return nil
+}
+
+// workflowResumeJoinCtx derives the bounded context for the pre-Run in-flight
+// attempt join: the run's own deadline when present (time.Until it), otherwise
+// the fixed workflowResumeJoinBound. An already-expired deadline yields an
+// immediately-expired context so the join fails fast instead of hanging.
+func workflowResumeJoinCtx(parent context.Context, run workflowledger.RunSnapshot) (context.Context, context.CancelFunc) {
+	if run.DeadlineAt != nil {
+		return context.WithDeadline(parent, *run.DeadlineAt)
+	}
+	return context.WithTimeout(parent, workflowResumeJoinBound)
 }
 
 func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) (workflowledger.Snapshot, *compiler.CompiledWorkflow, map[string]any, error) {
