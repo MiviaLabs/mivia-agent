@@ -53,8 +53,11 @@ func validateGraph(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
 	// Check that at least one transition leads to a terminal (success or failure)
 	hasSuccessPath := false
 	for _, t := range wf.Transitions {
-		if t.To == "success" {
+		// The matcher is only invoked with real step IDs, so a success edge must
+		// originate from a declared step.
+		if t.To == "success" && stepIDs[t.From] {
 			hasSuccessPath = true
+			break
 		}
 	}
 	// At minimum, success path must exist. Failure path is optional (default on_failure covers it).
