@@ -12,6 +12,8 @@ Use this approved test plan when it is available:
 
 {{ evidence.test_plan }}
 
+Evidence below may be a reference envelope containing a preview and a ledger ref. When it is, read the FULL artifact with workflow_inspect(run_id, step, attempt) instead of relying on the preview.
+
 Read the relevant source and tests. Edit only files that repair the reported failure and stay
 within the approved scope. Preserve test coverage for accepted behavior, negative paths, and
 structured input. Recheck security, safe paths, external input, privileges, fail-closed guards,

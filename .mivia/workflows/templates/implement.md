@@ -24,6 +24,8 @@ Integration review findings (present on integration-repair iterations only):
 When integration review findings are present, address each finding before you resubmit. Do not
 repeat a change the integration reviewer rejected.
 
+Evidence below may be a reference envelope containing a preview and a ledger ref. When it is, read the FULL artifact with workflow_inspect(run_id, step, attempt) instead of relying on the preview.
+
 Read the relevant source and tests. Edit only files required by the approved scope. Write or
 update tests before or with the implementation. Cover success behavior and negative paths. For
 parsed or decoded untrusted structured input, cover empty, malformed, oversized, and duplicate

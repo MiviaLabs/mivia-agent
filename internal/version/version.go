@@ -1,7 +1,10 @@
 // Package version reports build identity for the mivia CLI.
 package version
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Version is the semantic version of the mivia binary.
 // Overridden at link time in release builds via -ldflags.
@@ -42,4 +45,31 @@ func String() string {
 	}
 	line += ")"
 	return line
+}
+
+// JSONString renders the version information as a compact JSON object.
+// Commit is omitted when empty or "unknown" (same condition as String()).
+// Dirty is omitted when empty.
+func JSONString() string {
+	type versionInfo struct {
+		Binary  string `json:"binary"`
+		Version string `json:"version"`
+		Commit  string `json:"commit,omitempty"`
+		Dirty   string `json:"dirty,omitempty"`
+	}
+	v := versionInfo{
+		Binary:  Binary,
+		Version: Version,
+	}
+	if Commit != "" && Commit != "unknown" {
+		v.Commit = Commit
+		if Dirty != "" {
+			v.Dirty = Dirty
+		}
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("{\"binary\":%q,\"version\":%q,\"error\":%q}", Binary, Version, err)
+	}
+	return string(data)
 }

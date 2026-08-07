@@ -355,12 +355,31 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 			if err != nil {
 				return nil, nil, err
 			}
-			if len(raw) > definition.MaxEvidenceBindingBytes {
-				return nil, nil, fmt.Errorf("prior output %q exceeds %d bytes", binding.From, definition.MaxEvidenceBindingBytes)
-			}
 			var value any
 			if err := json.Unmarshal(raw, &value); err != nil {
 				return nil, nil, fmt.Errorf("decode prior output: %w", err)
+			}
+			threshold := binding.MaxBytes
+			if threshold <= 0 {
+				threshold = definition.MaxEvidenceBindingBytes
+			}
+			if len(raw) > threshold {
+				// Defect 1 (size-reject): instead of failing the run, substitute
+				// a compact ledger-backed reference envelope. The full artifact
+				// stays content-addressed in the workflow ledger and is read
+				// back with workflow_inspect. Substitute only when the envelope
+				// itself fits the binding cap; a cap smaller than the envelope
+				// keeps the historical reject (defense-in-depth).
+				envelope := buildEvidenceEnvelope(c.RunID, prior, raw)
+				envelopeRaw, err := json.Marshal(envelope)
+				if err != nil {
+					return nil, nil, err
+				}
+				if len(envelopeRaw) > threshold {
+					return nil, nil, fmt.Errorf("prior output %q exceeds %d bytes", binding.From, threshold)
+				}
+				evidence[binding.As] = envelope
+				continue
 			}
 			evidence[binding.As] = value
 			continue
@@ -416,7 +435,13 @@ func maxBinding(step definition.Step) int {
 	return max
 }
 
-func validateBindingLimits(step definition.Step, inputs map[string]any, attempts []workflowledger.StepAttempt, repo workflowledger.Repository, ctx context.Context) error {
+// validateBindingLimits measures every context binding's resolved value against
+// its max_bytes. Evidence bindings measure the EVIDENCE VALUE already built by
+// contextForStep — the inlined value or the reference envelope — never the
+// original artifact bytes: an enveloped artifact passes the binding cap, or the
+// envelope substitution in contextForStep would be pointless. Inputs bindings
+// keep reading the controller's inputs unchanged.
+func validateBindingLimits(step definition.Step, inputs map[string]any, evidence map[string]any) error {
 	for _, binding := range step.Context {
 		if binding.MaxBytes <= 0 {
 			continue
@@ -426,19 +451,13 @@ func validateBindingLimits(step definition.Step, inputs map[string]any, attempts
 		if len(parts) == 2 {
 			value = inputs[parts[1]]
 		} else {
-			prior, ok := latestAttempt(attempts, parts[1])
-			if !ok || prior.OutputRef == "" {
-				if binding.Optional {
+			value = evidence[binding.As]
+			if binding.Optional {
+				// A missing optional prior output resolves to "" (contextForStep);
+				// never reject it against a tiny max_bytes on the first attempt.
+				if s, ok := value.(string); ok && s == "" {
 					continue
 				}
-				return fmt.Errorf("missing prior output %q", binding.From)
-			}
-			raw, err := repo.LoadContent(ctx, prior.OutputRef)
-			if err != nil {
-				return err
-			}
-			if err := json.Unmarshal(raw, &value); err != nil {
-				return fmt.Errorf("decode prior output: %w", err)
 			}
 		}
 		raw, err := json.Marshal(value)

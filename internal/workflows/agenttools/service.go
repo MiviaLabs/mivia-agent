@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -202,6 +203,22 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo int
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return InspectView{}, err
+	}
+	// Caller-identity participant gate (plan 59): a child task may only
+	// inspect runs whose attempts record its own coordinator run. Refusals
+	// are indistinguishable from the run not existing. No identity (root or
+	// interactive session) is unchanged.
+	if id, ok := runtime.TaskIdentityFrom(ctx); ok {
+		member := false
+		for _, a := range attempts {
+			if a.CoordinatorRunID == id.RunID {
+				member = true
+				break
+			}
+		}
+		if !member {
+			return InspectView{}, fmt.Errorf("workflow run %q not found", runID)
+		}
 	}
 	var found *workflowledger.StepAttempt
 	for i := range attempts {

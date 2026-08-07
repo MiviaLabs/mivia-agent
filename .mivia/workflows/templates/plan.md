@@ -13,6 +13,8 @@ Prior review findings (present on repair iterations only):
 When review findings are present, address each finding before you resubmit. Do not ignore a
 finding or repeat a claim the reviewer rejected.
 
+Evidence below may be a reference envelope containing a preview and a ledger ref. When it is, read the FULL artifact with workflow_inspect(run_id, step, attempt) instead of relying on the preview.
+
 Lock the scope. Identify:
 
 - the requested behavior and acceptance criteria;
