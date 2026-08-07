@@ -4,6 +4,7 @@ package subagents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"sort"
@@ -312,16 +313,16 @@ func resultStatus(taskCtx, parentCtx context.Context, err error) string {
 	if err == nil {
 		return "completed"
 	}
-	if taskCtx.Err() == context.DeadlineExceeded {
+	if errors.Is(taskCtx.Err(), context.DeadlineExceeded) {
 		return "timed_out"
 	}
-	if taskCtx.Err() == context.Canceled || parentCtx.Err() != nil {
+	if errors.Is(taskCtx.Err(), context.Canceled) || parentCtx.Err() != nil {
 		return "canceled"
 	}
-	if err == context.DeadlineExceeded {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return "timed_out"
 	}
-	if err == context.Canceled {
+	if errors.Is(err, context.Canceled) {
 		return "canceled"
 	}
 	return "failed"

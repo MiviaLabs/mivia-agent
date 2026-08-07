@@ -3,6 +3,8 @@ package subagents
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -208,5 +210,86 @@ func TestPoolPolicyTimeoutFallback(t *testing.T) {
 		if got[0].Err == nil {
 			t.Fatal("expected timeout error")
 		}
+	}
+}
+
+func TestResultStatusWrappedErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		handlerErr func() error
+		wantStatus string
+	}{
+		{
+			name:       "wrapped_deadline_returns_timed_out",
+			handlerErr: func() error { return fmt.Errorf("wrapped: %w", context.DeadlineExceeded) },
+			wantStatus: "timed_out",
+		},
+		{
+			name:       "wrapped_canceled_returns_canceled",
+			handlerErr: func() error { return fmt.Errorf("wrapped: %w", context.Canceled) },
+			wantStatus: "canceled",
+		},
+		{
+			name:       "generic_error_returns_failed",
+			handlerErr: func() error { return fmt.Errorf("generic failure") },
+			wantStatus: "failed",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := runtime.New(runtime.Policy{})
+			_ = d.Register(runtime.Subagent, "test", handlerFunc(func(_ context.Context, _ runtime.Request) (json.RawMessage, error) {
+				return nil, tc.handlerErr()
+			}))
+			p := New(d, Policy{Workers: 1})
+			got, err := p.Run(context.Background(), []Task{{
+				ID: "t1", Name: "test", Timeout: 10 * time.Millisecond,
+			}})
+			if err != nil {
+				t.Fatalf("unexpected run err: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("results=%d, want 1", len(got))
+			}
+			if got[0].Status != tc.wantStatus {
+				t.Fatalf("status=%q want %q err=%v", got[0].Status, tc.wantStatus, got[0].Err)
+			}
+		})
+	}
+}
+
+func TestResultStatusWrappedContextErrors(t *testing.T) {
+	// Direct unit test of resultStatus with a context whose Err() is a deadline.
+	// The handler error is also a wrapped deadline, testing both the ctx.Err()
+	// branch and the err branch.
+	taskCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+	<-taskCtx.Done() // ensure deadline fires
+
+	// Handler wraps the deadline error, simulating MultiStepHandler/OneShotHandler.
+	wrappedErr := fmt.Errorf("multi-step subagent %q: %w", "test", context.DeadlineExceeded)
+
+	got := resultStatus(taskCtx, context.Background(), wrappedErr)
+	if got != "timed_out" {
+		t.Fatalf("resultStatus=%q want timed_out", got)
+	}
+
+	// Also test wrapped canceled with a canceled context.
+	cancelCtx, cancelCancel := context.WithCancel(context.Background())
+	cancelCancel()
+	<-cancelCtx.Done()
+
+	wrappedCancelErr := fmt.Errorf("subagent %q: %w", "test", context.Canceled)
+	gotCancel := resultStatus(cancelCtx, context.Background(), wrappedCancelErr)
+	if gotCancel != "canceled" {
+		t.Fatalf("resultStatus=%q want canceled", gotCancel)
+	}
+
+	// Verify the errors.Is path works: the wrapped error should be detected.
+	if !errors.Is(wrappedErr, context.DeadlineExceeded) {
+		t.Fatal("errors.Is(wrappedErr, context.DeadlineExceeded) should be true")
+	}
+	if !errors.Is(wrappedCancelErr, context.Canceled) {
+		t.Fatal("errors.Is(wrappedCancelErr, context.Canceled) should be true")
 	}
 }
