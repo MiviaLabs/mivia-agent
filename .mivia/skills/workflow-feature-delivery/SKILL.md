@@ -31,6 +31,7 @@ commits, pushes, and publishes. The workflow agent does none of these actions.
 - Workspace instructions and the approved workflow plan.
 - The approved test plan before implementation.
 - Relevant source, tests, interfaces, configuration, and security boundaries.
+- `.mivia/quality/defect-taxonomy.md` when the slice touches run state, ownership, delivery, or persistence.
 
 ## Method
 
@@ -40,9 +41,13 @@ commits, pushes, and publishes. The workflow agent does none of these actions.
 4. State whether a deterministic fuzz target is practical. Request a bounded host fuzz gate when it is practical. Otherwise state why it is not practical.
 5. Implement the smallest change that meets the approved plan and test plan.
 6. Inspect the change for secrets, unsafe file paths, unsafe external input, privilege expansion, and fail-open guards.
-7. Do not run commands. Request the required host evidence gates for tests, build or type checks, static checks, security checks, fuzz checks when needed, and final validation.
-8. Use failed host evidence as repair input. Fix only the reported issue and repeat the required review and host gates.
-9. Do not claim that a command, hook, commit, push, or publication occurred unless the host reports it.
+7. When the slice adds or changes a run state, an ownership step, or a delivery step, answer these before you request the host gates. The delivery machine is this repository's most defect-dense surface, so these are gates, not advice. Both are pinned: `INV-DUR-1` and `INV-DUR-2` in `.mivia/invariants.md`.
+   - **`DC-1` terminal states.** Name every terminal state the slice can reach and the conditions that reach it. Classify each condition as permanent or transient. A transient condition must not reach a terminal state, or the terminal state needs an explicit re-entry edge with one enforcing compare-and-set. State the answer; do not leave it implied.
+   - **`DC-2` ownership.** Name the owner of each record the slice mutates and the mechanism that proves ownership. A boolean claim flag is not exclusion. State what happens when a second owner takes over and the first one resumes and writes, and confirm the claim is released on every failure branch, the pre-flight refusal included.
+   - Cover both with tests. `internal/durablefence` supplies the two-owner takeover, exclusivity, concurrent-claim, and holder-only-release checks; adapt it rather than re-deriving the scenarios.
+8. Do not run commands. Request the required host evidence gates for tests, build or type checks, static checks, security checks, fuzz checks when needed, and final validation.
+9. Use failed host evidence as repair input. Fix only the reported issue and repeat the required review and host gates.
+10. Do not claim that a command, hook, commit, push, or publication occurred unless the host reports it.
 
 ## Rules
 
