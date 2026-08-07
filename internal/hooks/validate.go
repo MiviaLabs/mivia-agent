@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -150,8 +151,18 @@ func parseTimeout(value any, fallback time.Duration) (time.Duration, error) {
 	if value == nil {
 		return fallback, nil
 	}
-	seconds, ok := value.(int64)
-	if !ok {
+	seconds := int64(-1)
+	switch v := value.(type) {
+	case int64:
+		seconds = v
+	case float64:
+		// Accept whole-number floats (e.g. 10.0) from TOML decoders that
+		// may represent integers as float64. Reject non-integer values.
+		if v != math.Trunc(v) || v < math.MinInt64 || v > math.MaxInt64 {
+			return 0, timeoutRangeError(value)
+		}
+		seconds = int64(v)
+	default:
 		return 0, timeoutRangeError(value)
 	}
 	timeout := time.Duration(seconds) * time.Second

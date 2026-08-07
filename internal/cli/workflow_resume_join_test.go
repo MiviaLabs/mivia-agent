@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -28,6 +29,18 @@ type workflowResumeJoinRunner struct {
 	joined   []controller.AgentStepRequest
 	dispatch []controller.AgentStepRequest
 	children map[string]controller.AgentStepResult // by TaskID
+}
+
+type workflowResumeRaceClaimRepository struct {
+	workflowledger.Repository
+	contender string
+}
+
+func (r *workflowResumeRaceClaimRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, _ string, _ time.Duration) error {
+	if err := r.Repository.ClaimRun(ctx, runID, r.contender); err != nil {
+		return err
+	}
+	return workflowledger.ErrClaimNotHeld
 }
 
 func (r *workflowResumeJoinRunner) JoinStep(_ context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, bool, error) {
@@ -98,6 +111,27 @@ func TestExecuteWorkflowResumeJoinsInFlightAttempt(t *testing.T) {
 	}
 	if attempts[1].StepID != "two" || attempts[1].AttemptNo != 1 {
 		t.Fatalf("fresh attempt = %+v, want step two No 1", attempts[1])
+	}
+}
+
+// TestPrepareWorkflowResumeExecutionDoesNotClearConcurrentClaim proves that a
+// normal resume never removes a claim that appears after the lease check.
+func TestPrepareWorkflowResumeExecutionDoesNotClearConcurrentClaim(t *testing.T) {
+	ctx := context.Background()
+	base := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = base.Close() })
+	runID := "wfr-resume-race"
+	if err := base.CreateRun(ctx, workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusPending}, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	repo := &workflowResumeRaceClaimRepository{Repository: base, contender: "other-executor"}
+	built := workflowControllerBuild{Controller: &controller.LinearController{Holder: "resuming-executor"}}
+	err := prepareWorkflowResumeExecution(ctx, built, repo, runID, false, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "still active") {
+		t.Fatalf("prepareWorkflowResumeExecution() error = %v, want active claim refusal", err)
+	}
+	if err := base.ClaimRun(ctx, runID, "resuming-executor"); !errors.Is(err, workflowledger.ErrClaimHeld) {
+		t.Fatalf("resuming executor claim = %v, want held by concurrent executor", err)
 	}
 }
 

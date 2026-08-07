@@ -84,3 +84,90 @@ func TestDiff_SeparateHunksAndNewlineMetadata(t *testing.T) {
 		t.Fatalf("stats=%d/%d", ins, del)
 	}
 }
+
+func TestDiff_ZeroContextIsFullDiff(t *testing.T) {
+	// context=0 previously produced degenerate empty-content hunks per change.
+	// After fix it should produce a single full-diff hunk (same as context < 0).
+	old := "a\nb\nc"
+	newText := "x\nb\nc"
+	r, err := Compute(old, newText, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotZero := FormatUnifiedAt("x", r, 1, 1, 0)
+	gotNeg := FormatUnifiedAt("x", r, 1, 1, -1)
+	if gotZero != gotNeg {
+		t.Fatalf("context=0 should equal context=-1 (full diff)\n  0: %q\n -1: %q", gotZero, gotNeg)
+	}
+	// Verify it contains the actual change, not an empty hunk.
+	if !strings.Contains(gotZero, "-a\n") || !strings.Contains(gotZero, "+x\n") {
+		t.Fatalf("context=0 diff missing content: %q", gotZero)
+	}
+	// Verify only one hunk header.
+	if strings.Count(gotZero, "@@ ") != 1 {
+		t.Fatalf("context=0 should produce exactly one hunk: %q", gotZero)
+	}
+}
+
+func TestDiff_ZeroContextMultipleChanges(t *testing.T) {
+	// Two separate changes with context=0 should still produce a single full-diff hunk.
+	old := "a\n1\n2\n3\n4\nb"
+	newText := "x\n1\n2\n3\n4\ny"
+	r, err := Compute(old, newText, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotZero := FormatUnifiedAt("x", r, 1, 1, 0)
+	// Should NOT split into two hunks — that was the old broken behavior.
+	if strings.Count(gotZero, "@@ ") != 1 {
+		t.Fatalf("context=0 should produce exactly one hunk for multiple changes: %q", gotZero)
+	}
+	if !strings.Contains(gotZero, "-a\n") || !strings.Contains(gotZero, "+x\n") {
+		t.Fatalf("context=0 diff missing first change: %q", gotZero)
+	}
+	if !strings.Contains(gotZero, "-b\n") || !strings.Contains(gotZero, "+y\n") {
+		t.Fatalf("context=0 diff missing second change: %q", gotZero)
+	}
+}
+
+func TestDiff_ZeroContextAllEqual(t *testing.T) {
+	// No changes with context=0 should still produce valid output.
+	r, err := Compute("a\nb\nc", "a\nb\nc", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := FormatUnifiedAt("x", r, 1, 1, 0)
+	if !strings.Contains(got, "@@ -1,3 +1,3 @@") {
+		t.Fatalf("context=0 with no changes should show full file: %q", got)
+	}
+}
+
+func TestDiff_EmptyInputPairs(t *testing.T) {
+	// Empty-to-empty should produce a valid (but trivial) unified diff.
+	r, err := Compute("", "", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := FormatUnified("x", r)
+	if !strings.HasPrefix(got, "--- a/x\n+++ b/x") {
+		t.Fatalf("empty-to-empty diff: %q", got)
+	}
+	// Empty-to-something.
+	r, err = Compute("", "hello", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, del := Stats(r)
+	if ins != 1 || del != 0 {
+		t.Fatalf("empty-to-hello stats=%d/%d", ins, del)
+	}
+	// Something-to-empty.
+	r, err = Compute("hello", "", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, del = Stats(r)
+	if ins != 0 || del != 1 {
+		t.Fatalf("hello-to-empty stats=%d/%d", ins, del)
+	}
+}

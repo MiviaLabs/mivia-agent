@@ -21,19 +21,15 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-func TestExecuteWorkflowResumeRejectsNonterminalRunWithoutForce(t *testing.T) {
+func TestExecuteWorkflowResumeRecoversUnclaimedNonterminalRun(t *testing.T) {
 	root, run := newForcedResumeFixture(t)
 	configPath := filepath.Join(root, "config.toml")
-	err := executeWorkflowResume(run.RunID, root, configPath, false, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--force") {
-		t.Fatalf("executeWorkflowResume() error = %v, want force requirement", err)
-	}
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(run.RunID, root, configPath, true, &stdout, io.Discard); err != nil {
-		t.Fatalf("executeWorkflowResume(force) error = %v", err)
+	if err := executeWorkflowResume(run.RunID, root, configPath, false, &stdout, io.Discard); err != nil {
+		t.Fatalf("executeWorkflowResume() error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "status=succeeded") {
-		t.Fatalf("executeWorkflowResume(force) output = %q", stdout.String())
+		t.Fatalf("executeWorkflowResume() output = %q", stdout.String())
 	}
 }
 

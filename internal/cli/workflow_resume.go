@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -105,24 +107,50 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	if err := prepareWorkflowResumeExecution(ctx, built, repo, runID, force, stdout); err != nil {
 		return err
 	}
+	defer releaseWorkflowResumeHandoff(repo, runID, built.Controller)
 	snap, err := workflowResumeRun(ctx, built)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, snap.Status)
 	return err
 }
 
-// prepareWorkflowResumeExecution handles the shared resume handoff. It takes
-// an expired lease when needed, clears the temporary handoff claim, and joins
-// every recorded child before the controller starts a replacement step.
+// prepareWorkflowResumeExecution handles the shared resume handoff. It claims
+// the run with the final controller holder before it joins recorded children.
 func prepareWorkflowResumeExecution(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID string, force bool, stdout io.Writer) error {
-	if !force {
-		if err := repo.TakeoverExpiredRunClaim(ctx, runID, "", workflowledger.DefaultClaimLease); err != nil {
-			return fmt.Errorf("workflow run %q is still active; retry after the claim lease expires or pass --force after the prior executor stopped", runID)
-		}
+	if built.Controller == nil {
+		return joinInFlightAttempts(ctx, built, repo, runID, stdout)
 	}
-	if err := repo.ClearRunClaim(ctx, runID); err != nil {
-		return fmt.Errorf("clear interrupted workflow claim: %w", err)
+	if err := claimWorkflowResumeHandoff(ctx, repo, runID, built.Controller.Holder, force); err != nil {
+		return fmt.Errorf("claim workflow resume handoff: %w", err)
 	}
-	return joinInFlightAttempts(ctx, built, repo, runID, stdout)
+	if err := joinInFlightAttempts(ctx, built, repo, runID, stdout); err != nil {
+		_ = repo.ReleaseRun(context.Background(), runID, built.Controller.Holder)
+		return err
+	}
+	return nil
+}
+
+// claimWorkflowResumeHandoff acquires the final controller claim without an
+// unowned clear-and-claim window. A forced resume replaces the claim atomically.
+func claimWorkflowResumeHandoff(ctx context.Context, repo workflowledger.Repository, runID, holder string, force bool) error {
+	if force {
+		return repo.TakeoverRunClaim(ctx, runID, holder)
+	}
+	err := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
+	if errors.Is(err, workflowledger.ErrClaimNotHeld) {
+		err = repo.ClaimRun(ctx, runID, holder)
+	}
+	if errors.Is(err, workflowledger.ErrClaimHeld) {
+		return fmt.Errorf("workflow run %q is still active; retry after the claim lease expires or pass --force after the prior executor stopped", runID)
+	}
+	return err
+}
+
+// releaseWorkflowResumeHandoff clears a preflight claim when controller startup
+// or execution returns before Advance releases its own claim.
+func releaseWorkflowResumeHandoff(repo workflowledger.Repository, runID string, controller *controller.LinearController) {
+	if controller != nil {
+		_ = repo.ReleaseRun(context.Background(), runID, controller.Holder)
+	}
 }
 
 // joinInFlightAttempts consumes PlanResume.AttemptsInFlight: it joins each

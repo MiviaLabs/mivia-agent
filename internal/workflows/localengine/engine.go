@@ -39,9 +39,10 @@ type Engine struct {
 	// DeliveryTimeout bounds one deliver call. Zero uses 2 minutes.
 	DeliveryTimeout time.Duration
 
-	mu     sync.Mutex
-	active map[string]*activeRun
-	fence  *abandonFence
+	mu        sync.Mutex
+	active    map[string]*activeRun
+	admitting map[string]chan struct{}
+	fence     *abandonFence
 	// worktrees records the resolved git worktree identity per run (Root +
 	// MainRoot + admission pins), so delivery can pin GitCtx to the run's real
 	// git directory instead of the caller checkout. Recorded at start and
@@ -103,6 +104,20 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 		} else if !errors.Is(getErr, workflowledger.ErrNotFound) {
 			return agenttools.StartResult{}, getErr
 		}
+		owner, release := e.beginInvocationAdmission(runID)
+		if !owner {
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return agenttools.StartResult{}, ctx.Err()
+			}
+			existing, getErr := e.Repo.GetRun(ctx, runID)
+			if getErr != nil {
+				return agenttools.StartResult{}, fmt.Errorf("invocation %q did not admit run %q: %w", key, runID, getErr)
+			}
+			return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
+		}
+		defer e.finishInvocationAdmission(runID, release)
 	}
 	ctrl, admission, err := e.newRunController(compiled, raw, baseDir, inputs, inputSnapshot, runID, req.InvocationKey)
 	if err != nil {
@@ -128,8 +143,16 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	if err := ctrl.SetAdmission(admission); err != nil {
 		return agenttools.StartResult{}, err
 	}
-	if err := ctrl.Start(ctx); err != nil {
+	created, err := ctrl.StartNew(ctx)
+	if err != nil {
 		return agenttools.StartResult{}, err
+	}
+	if !created {
+		existing, getErr := e.Repo.GetRun(ctx, runID)
+		if getErr != nil {
+			return agenttools.StartResult{}, getErr
+		}
+		return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 	}
 	_ = req.AllowPublish // publication is a separate deliver step for tools
 	e.launch(ctrl)
@@ -138,6 +161,29 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 		return agenttools.StartResult{}, err
 	}
 	return agenttools.StartResult{RunID: runID, Status: string(run.Status), Workflow: compiled.Name}, nil
+}
+
+func (e *Engine) beginInvocationAdmission(runID string) (bool, chan struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.admitting == nil {
+		e.admitting = make(map[string]chan struct{})
+	}
+	if done, ok := e.admitting[runID]; ok {
+		return false, done
+	}
+	done := make(chan struct{})
+	e.admitting[runID] = done
+	return true, done
+}
+
+func (e *Engine) finishInvocationAdmission(runID string, done chan struct{}) {
+	e.mu.Lock()
+	if e.admitting[runID] == done {
+		delete(e.admitting, runID)
+		close(done)
+	}
+	e.mu.Unlock()
 }
 
 func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
@@ -168,11 +214,8 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	if activeHere {
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is already executing in this engine; cancel it first", req.RunID)
 	}
-	// Re-ensure the run worktree: validate the recorded worktree or recreate it
-	// when missing, and record the identity for a later delivery. Non-fatal:
-	// execution resumes with the recorded admission either way.
-	if identity, ok := e.ensureRunWorktree(ctx, req.RunID, &run); ok {
-		e.recordWorktree(req.RunID, identity)
+	if err := e.prepareResumeWorktree(ctx, run); err != nil {
+		return agenttools.StartResult{}, err
 	}
 	raw, err := e.Repo.GetRunSnapshot(ctx, req.RunID)
 	if err != nil {

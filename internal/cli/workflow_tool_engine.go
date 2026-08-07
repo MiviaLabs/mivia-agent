@@ -108,12 +108,24 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 		prepared.closeFn()
 		return agenttools.StartResult{}, err
 	}
-	if err := built.Controller.Start(ctx); err != nil {
+	created, err := built.Controller.StartNew(ctx)
+	if err != nil {
 		built.Cleanup()
 		built.Dispatcher.Close()
 		finishExecution()
 		prepared.closeFn()
 		return agenttools.StartResult{}, err
+	}
+	if !created {
+		existing, getErr := prepared.repo.GetRun(ctx, runID)
+		built.Cleanup()
+		built.Dispatcher.Close()
+		finishExecution()
+		prepared.closeFn()
+		if getErr != nil {
+			return agenttools.StartResult{}, getErr
+		}
+		return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 	}
 	return e.launchStartedWorkflow(ctx, prepared, built, runID, req.Workflow, req.AllowPublish, finishExecution)
 }

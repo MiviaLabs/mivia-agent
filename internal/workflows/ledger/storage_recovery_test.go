@@ -45,6 +45,9 @@ func TestStorageRepository_TakeoverExpiredRunClaim(t *testing.T) {
 			run := runID(t, "lease")
 			snap, raw := newRun(t, run)
 			requireErr(t, repoA.CreateRun(ctx, snap, raw), nil, "CreateRun")
+			if err := repoB.TakeoverExpiredRunClaim(ctx, run, "holder-b", time.Hour); err != ErrClaimNotHeld {
+				t.Fatalf("unclaimed takeover = %v, want ErrClaimNotHeld", err)
+			}
 			requireErr(t, repoA.ClaimRun(ctx, run, "holder-a"), nil, "ClaimRun")
 			if err := repoB.TakeoverExpiredRunClaim(ctx, run, "holder-b", time.Hour); err != ErrClaimHeld {
 				t.Fatalf("fresh claim takeover = %v, want ErrClaimHeld", err)

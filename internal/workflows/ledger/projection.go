@@ -140,8 +140,21 @@ func applyAttemptExecution(proj *Projection, ev storage.Event) error {
 	}
 	for i := range proj.Attempts {
 		if proj.Attempts[i].AttemptID == p.AttemptID {
-			proj.Attempts[i].CoordinatorRunID = p.CoordinatorRunID
-			proj.Attempts[i].TaskID = p.TaskID
+			a := &proj.Attempts[i]
+			if len(a.Executions) == 0 && a.CoordinatorRunID != "" && a.TaskID != "" {
+				a.Executions = append(a.Executions, StepExecution{
+					ExecutionNo: 1, CoordinatorRunID: a.CoordinatorRunID, TaskID: a.TaskID, StartedAt: a.StartedAt,
+				})
+			}
+			executionNo := p.ExecutionNo
+			if executionNo == 0 {
+				executionNo = len(a.Executions) + 1
+			}
+			a.Executions = append(a.Executions, StepExecution{
+				ExecutionNo: executionNo, CoordinatorRunID: p.CoordinatorRunID, TaskID: p.TaskID, StartedAt: p.CreatedAt,
+			})
+			a.CoordinatorRunID = p.CoordinatorRunID
+			a.TaskID = p.TaskID
 			return nil
 		}
 	}
