@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -71,6 +72,40 @@ func TestZAIErrorParserNeverEchoesProviderMessage(t *testing.T) {
 		if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), prompt) {
 			t.Fatalf("provider message leaked: %v", err)
 		}
+	}
+}
+
+// Code 1261 is the provider's prompt-too-long failure. The parser must wrap
+// ErrPromptTooLong so the agent loop can compact and retry once, while the
+// provider's message (which can echo request content) stays out of the error
+// string: only the sentinel is added, via %w.
+func TestZAIErrorParserWrapsPromptTooLongSentinel(t *testing.T) {
+	const secret = "zai-secret-echo"
+	body := `{"code":1261,"message":"` + secret + `: your request exceeds the maximum context length, reduce the prompt"}`
+	err := zaiErrorParser(http.StatusBadRequest, []byte(body))
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("expected ErrPromptTooLong, got: %v", err)
+	}
+	if got := err.Error(); strings.Contains(got, secret) || strings.Contains(got, "maximum context length") {
+		t.Fatalf("provider message leaked: %v", got)
+	}
+	if !strings.Contains(err.Error(), "1261") {
+		t.Fatalf("code not reported: %v", err)
+	}
+}
+
+// Any other z.ai code must keep its current surface and never wrap the
+// sentinel: only a genuine prompt-too-long rejection earns the retry path.
+func TestZAIErrorParserOtherCodesDoNotWrapPromptTooLong(t *testing.T) {
+	err := zaiErrorParser(http.StatusBadRequest, []byte(`{"code":1211,"message":"unknown model m"}`))
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("code 1211 must not wrap ErrPromptTooLong: %v", err)
 	}
 }
 

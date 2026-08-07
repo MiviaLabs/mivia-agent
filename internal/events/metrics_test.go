@@ -261,3 +261,152 @@ func TestMetricsAdapter_CloseRacingSubscribeLeavesNoSubscriptions(t *testing.T) 
 		}
 	}
 }
+
+// --- Regression tests for missing allKnownKinds entries ---
+
+// declaredKinds collects every exported Kind constant declared in the
+// events package via reflect. This is the authoritative set: allKnownKinds
+// must contain every entry returned, or MetricsAdapter silently drops events
+// of that kind.
+func declaredKinds() map[Kind]bool {
+	result := make(map[Kind]bool)
+	// Enumerate every declared Kind constant directly. This file is in
+	// package events so all Kind constants are in scope — if a Kind is renamed
+	// or removed, this compilation unit fails to compile, catching drift.
+	for _, k := range []Kind{
+		KindAssistant, KindToolStart, KindToolEnd, KindStep, KindPrune,
+		KindToolParallel, KindSubagentStart, KindSubagentEnd, KindSubagentHeartbeat,
+		KindSubagentDone, KindThinking, KindCompaction,
+		KindCacheUsage, KindTokenUsage,
+		KindSessionStart, KindSessionEnd, KindTurnStart, KindTurnEnd,
+		KindUIResize, KindUserInput, KindUIReady, KindConfigChange,
+		KindError,
+	} {
+		result[k] = true
+	}
+	return result
+}
+
+func knownKindsSet() map[Kind]bool {
+	result := make(map[Kind]bool, len(allKnownKinds))
+	for _, k := range allKnownKinds {
+		result[k] = true
+	}
+	return result
+}
+
+// TestAllKnownKinds_ContainsAllDeclaredKinds verifies that every declared
+// Kind constant appears in allKnownKinds. Fails on current code because
+// KindThinking, KindCompaction, and KindTokenUsage are missing.
+func TestAllKnownKinds_ContainsAllDeclaredKinds(t *testing.T) {
+	declared := declaredKinds()
+	known := knownKindsSet()
+	missing := make([]Kind, 0)
+	for k := range declared {
+		if !known[k] {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("allKnownKinds is missing declared Kind constants: %v", missing)
+	}
+}
+
+// TestAllKnownKinds_HasNoExtraKinds verifies that every entry in
+// allKnownKinds is a valid declared Kind constant. Guards against phantom
+// entries. Expected to pass on both current and fixed code.
+func TestAllKnownKinds_HasNoExtraKinds(t *testing.T) {
+	declared := declaredKinds()
+	known := knownKindsSet()
+	extra := make([]Kind, 0)
+	for k := range known {
+		if !declared[k] {
+			extra = append(extra, k)
+		}
+	}
+	if len(extra) > 0 {
+		t.Errorf("allKnownKinds contains entries that are not declared Kind constants: %v", extra)
+	}
+}
+
+// TestMetricsAdapter_CountsMissingKinds publishes one event each of
+// KindThinking, KindCompaction, and KindTokenUsage to a subscribed
+// MetricsAdapter, Flushes, then asserts per-kind counts and total.
+// Each assertion fails on current code because Subscribe never registers
+// handlers for these kinds.
+func TestMetricsAdapter_CountsMissingKinds(t *testing.T) {
+	bus, adapter := setupMetricsTest(t)
+
+	bus.Publish(NewEvent(KindThinking))
+	bus.Publish(NewEvent(KindCompaction))
+	bus.Publish(NewEvent(KindTokenUsage))
+	bus.Flush()
+
+	counts, total := adapter.Snapshot()
+	if total != 3 {
+		t.Fatalf("expected total=3, got %d", total)
+	}
+	if counts[string(KindThinking)] != 1 {
+		t.Errorf("expected thinking=1, got %d", counts[string(KindThinking)])
+	}
+	if counts[string(KindCompaction)] != 1 {
+		t.Errorf("expected compaction=1, got %d", counts[string(KindCompaction)])
+	}
+	if counts[string(KindTokenUsage)] != 1 {
+		t.Errorf("expected token_usage=1, got %d", counts[string(KindTokenUsage)])
+	}
+}
+
+// TestMetricsAdapter_TotalIncludesMissingKinds publishes events of all three
+// previously-missing kinds plus two well-known kinds, Flushes, and asserts
+// total==5. Confirms that the fix adds to the total, not just individual
+// counters.
+func TestMetricsAdapter_TotalIncludesMissingKinds(t *testing.T) {
+	bus, adapter := setupMetricsTest(t)
+
+	bus.Publish(NewEvent(KindThinking))
+	bus.Publish(NewEvent(KindCompaction))
+	bus.Publish(NewEvent(KindTokenUsage))
+	bus.Publish(NewEvent(KindAssistant))
+	bus.Publish(NewEvent(KindError))
+	bus.Flush()
+
+	_, total := adapter.Snapshot()
+	if total != 5 {
+		t.Fatalf("expected total=5 (3 missing + 2 known), got %d", total)
+	}
+}
+
+// TestMetricsAdapter_MissingKindNotDropped subscribes a raw HandlerFunc for
+// KindThinking alongside MetricsAdapter, publishes KindThinking, Flushes,
+// and asserts both the raw handler received the event AND MetricsAdapter
+// counted it. Negative/control test: proves the gap is in Subscribe (not
+// in the bus).
+func TestMetricsAdapter_MissingKindNotDropped(t *testing.T) {
+	bus := New()
+	t.Cleanup(bus.Close)
+	adapter := NewMetricsAdapter()
+	adapter.Subscribe(bus)
+
+	var rawReceived int
+	var rawMu sync.Mutex
+	bus.Subscribe(KindThinking, HandlerFunc(func(_ context.Context, ev Event) {
+		rawMu.Lock()
+		rawReceived++
+		rawMu.Unlock()
+	}))
+
+	bus.Publish(NewEvent(KindThinking))
+	bus.Flush()
+
+	counts, total := adapter.Snapshot()
+	if total != 1 {
+		t.Errorf("expected MetricsAdapter total=1, got %d", total)
+	}
+	if counts[string(KindThinking)] != 1 {
+		t.Errorf("expected MetricsAdapter thinking=1, got %d", counts[string(KindThinking)])
+	}
+	if rawReceived != 1 {
+		t.Errorf("expected raw handler to receive 1 event, got %d", rawReceived)
+	}
+}

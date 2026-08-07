@@ -356,6 +356,14 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	estimatedTokens, _ := provider.EstimatePromptCost(req.Messages, req.Tools)
 	resp, err := l.Completer.ChatTurn(llmCtx, req)
 	heartbeatCancel()
+	// Prompt-too-long recovery: the provider rejected the request because the
+	// prompt exceeds its REAL context limit, which can be far below the
+	// advertised budget. Compact and retry exactly once (retryAfterPromptTooLong);
+	// a second rejection propagates unchanged. The steer mapping below is
+	// untouched: it only fires on context.Canceled, which never matches here.
+	if err != nil && errors.Is(err, provider.ErrPromptTooLong) && ctx.Err() == nil {
+		resp, estimatedTokens, err = l.retryAfterPromptTooLong(req, opts, llmCtx, estimatedTokens)
+	}
 	if err != nil && steerFired.Load() && errors.Is(err, context.Canceled) && ctx.Err() == nil {
 		// Map to the sentinel ONLY when this call's own watcher canceled llmCtx
 		// (the error is the llmCtx cancel) and the turn ctx is still alive. A
@@ -383,6 +391,36 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 		EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
 	}
 	return resp, err
+}
+
+// retryAfterPromptTooLong compacts history to a small fixed target INDEPENDENT
+// of the advertised budget (a 1M-token model profile does not guarantee a 1M
+// window) and retries the model call exactly once after the provider rejected
+// the prompt as too long. A second rejection is a permanent property of the
+// conversation, so the caller propagates it unchanged (fail fast — no second
+// retry, no loop). It returns the retry's response/error and the re-estimated
+// prompt cost so the success-path calibration events reflect what was sent.
+func (l *Loop) retryAfterPromptTooLong(req provider.Request, opts Options, llmCtx context.Context, estimatedTokens int) (*provider.Response, int, error) {
+	target := 16 << 10 // 16K tokens: small enough to fit any real limit
+	if opts.MaxContextTokens > 0 && opts.MaxContextTokens/4 < target {
+		target = opts.MaxContextTokens / 4
+	}
+	if target < 1 {
+		target = 1
+	}
+	// PruneMessagesKeepTurns always keeps the system prompt and the newest
+	// turns, and drops tool exchanges as a unit (announced call + results),
+	// so pairing survives. The failed ChatTurn appended nothing, so history
+	// holds no orphaned tool calls.
+	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, target)
+	emit(opts, Event{
+		Kind:   EventPrune,
+		Detail: fmt.Sprintf("provider rejected prompt (prompt too long); compacted to %d tokens and retrying once", target),
+	})
+	req.Messages = l.Messages
+	estimatedTokens, _ = provider.EstimatePromptCost(req.Messages, req.Tools)
+	resp, err := l.Completer.ChatTurn(llmCtx, req)
+	return resp, estimatedTokens, err
 }
 
 // streamRevoker is implemented by the TUI streamBridge to clear optimistic

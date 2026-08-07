@@ -98,6 +98,13 @@ func zaiErrorParser(statusCode int, body []byte) error {
 		return fmt.Errorf("zai: provider error (HTTP %d)", statusCode)
 	}
 	if meaning := zaiCodeMeanings[code]; meaning != "" {
+		if code == 1261 {
+			// 1261 is a prompt-too-long rejection: wrap ErrPromptTooLong so the
+			// agent loop can compact the history and retry once. The surfaced
+			// text stays content-free (static meaning + code only); the
+			// provider's own message is never forwarded.
+			return fmt.Errorf("zai: provider error (HTTP %d, code %d: %s): %w", statusCode, code, meaning, ErrPromptTooLong)
+		}
 		return fmt.Errorf("zai: provider error (HTTP %d, code %d: %s)", statusCode, code, meaning)
 	}
 	return fmt.Errorf("zai: provider error (HTTP %d, code %d)", statusCode, code)
