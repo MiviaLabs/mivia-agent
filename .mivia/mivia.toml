@@ -15,7 +15,9 @@
 env_file = "~/.mivia/.env"
 
 [provider]
-name = "zai"
+# DeepSeek everywhere: native DeepSeek API by default, DeepSeek via OpenRouter
+# as the fallback (--provider openrouter).
+name = "deepseek"
 
 [providers.deepseek]
 # DeepSeek v4 thinking mode: reasoning_effort high/max (low/medium→high,
@@ -32,16 +34,17 @@ base_url = "https://api.deepseek.com/v1"
 
 [providers.openrouter]
 # Switch with: mivia --provider openrouter
+# DeepSeek models via the OpenRouter unified API (deepseek/deepseek-* IDs).
+# The V4 family reports a 1M+ context window and supports graded reasoning
+# effort high/max; OpenRouter normalizes reasoning_effort per upstream model.
 models = [
-  { name = "openai/gpt-4o-mini", context_window_tokens = 128000 },
-  # gpt-oss-20b supports reasoning_effort (low/medium/high); OpenRouter
-  # normalizes it per upstream model, so no reasoning_dialect is needed.
-  { name = "openai/gpt-oss-20b", context_window_tokens = 131000, reasoning_efforts = ["low", "medium", "high"], reasoning = "medium" },
-  # Ling-3.0-flash supports text, tools, and OpenRouter reasoning. Its current
-  # routed provider reports 131072 context tokens and 32768 output tokens.
-  { name = "inclusionai/ling-3.0-flash", context_window_tokens = 131072, max_output_tokens = 32768, reasoning_efforts = ["off", "medium"], reasoning = "off", reasoning_dialect = "openrouter" }
+  { name = "deepseek/deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
+  { name = "deepseek/deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
+  # Reasoner: deep-thinking variant of the V4 family (deepseek-reasoner
+  # legacy ID still routed on OpenRouter; maps to the V4 Flash family).
+  { name = "deepseek/deepseek-reasoner", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
 ]
-default_model = "openai/gpt-4o-mini"
+default_model = "deepseek/deepseek-v4-pro"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
 
