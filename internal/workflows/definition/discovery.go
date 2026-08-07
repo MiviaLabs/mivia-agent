@@ -102,7 +102,10 @@ func readRegularWorkflowFile(root *os.Root, name string) ([]byte, error) {
 	}
 	defer file.Close()
 
-	data, _ := io.ReadAll(io.LimitReader(file, MaxWorkflowFileBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, MaxWorkflowFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read workflow file: %w", err)
+	}
 	if len(data) > MaxWorkflowFileBytes {
 		return nil, fmt.Errorf("workflow file exceeds %d bytes", MaxWorkflowFileBytes)
 	}
