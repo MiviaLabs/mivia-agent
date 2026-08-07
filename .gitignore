@@ -53,3 +53,7 @@ secrets/*
 # Build / dist
 dist/
 bin/
+
+# Codegraph daemon state
+codegraph.db*
+.codegraph/
