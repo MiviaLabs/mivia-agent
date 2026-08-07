@@ -3,6 +3,7 @@ package ledger
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -79,6 +80,16 @@ type attemptCompletedPayload struct {
 	CreatedAt        time.Time     `json:"created_at"`
 }
 
+// attemptPromptPayload is the wf_attempt_prompt event payload. It carries
+// ONLY attempt identity + a content reference — NEVER prompt content: the
+// prompt body lives in content-addressed storage and is looked up via
+// PromptRef, so the event log stays free of prompt text.
+type attemptPromptPayload struct {
+	AttemptID string    `json:"attempt_id"`
+	PromptRef string    `json:"prompt_ref"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // loopIncrementedPayload is the wf_loop_incremented event payload.
 type loopIncrementedPayload struct {
 	LoopName   string    `json:"loop_name"`
@@ -130,6 +141,28 @@ func unmarshalAttemptStarted(data []byte) (attemptStartedPayload, error) {
 func marshalAttemptCompleted(p attemptCompletedPayload) ([]byte, error) { return json.Marshal(p) }
 func unmarshalAttemptCompleted(data []byte) (attemptCompletedPayload, error) {
 	var p attemptCompletedPayload
+	err := json.Unmarshal(data, &p)
+	return p, err
+}
+
+// marshalAttemptPrompt encodes the wf_attempt_prompt payload. It rejects
+// empty identity/reference fields (the payload must always be resolvable to
+// an attempt and its stored prompt) and normalizes a zero CreatedAt to the
+// current time so the log never persists the zero timestamp.
+func marshalAttemptPrompt(p attemptPromptPayload) ([]byte, error) {
+	if p.AttemptID == "" {
+		return nil, fmt.Errorf("attempt_prompt payload: attempt_id is empty")
+	}
+	if p.PromptRef == "" {
+		return nil, fmt.Errorf("attempt_prompt payload: prompt_ref is empty")
+	}
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = time.Now()
+	}
+	return json.Marshal(p)
+}
+func unmarshalAttemptPrompt(data []byte) (attemptPromptPayload, error) {
+	var p attemptPromptPayload
 	err := json.Unmarshal(data, &p)
 	return p, err
 }

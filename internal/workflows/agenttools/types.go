@@ -46,6 +46,13 @@ const (
 	DefaultCancelBudgetBytes  = 16 << 10
 	DefaultEventsPageSize     = 50
 	DefaultListRunsPageSize   = 50
+
+	// DefaultInspectPageBytes is the default page size for workflow_inspect
+	// output text (INV-AG-25): one page of redacted, rune-safe text.
+	DefaultInspectPageBytes = 64 << 10
+	// MaxPageableBytes is the total artifact size beyond which
+	// workflow_inspect refuses to page output at all (clear refusal).
+	MaxPageableBytes = 8 << 20
 )
 
 // StartRequest admits a new workflow run or resumes an interrupted one.
@@ -149,6 +156,12 @@ type EventsPage struct {
 }
 
 // InspectView is the Level-2 step attempt detail for workflow_inspect.
+// The OutputText/OutputBytes/OutputOffset/OutputNextOffset fields page a
+// large artifact: OutputText is one redacted, rune-safe text page
+// (DefaultInspectPageBytes), OutputBytes is the total artifact size
+// (metadata only), OutputOffset is this page's raw-byte offset, and
+// OutputNextOffset is the next page's offset (0 when exhausted). Artifacts
+// larger than MaxPageableBytes are refused outright.
 type InspectView struct {
 	RunID             string          `json:"run_id"`
 	Step              string          `json:"step"`
@@ -159,6 +172,10 @@ type InspectView struct {
 	Output            any             `json:"output,omitempty"`
 	OutputRef         string          `json:"output_ref,omitempty"`
 	OutputDigest      string          `json:"output_digest,omitempty"`
+	OutputText        string          `json:"output_text,omitempty"`
+	OutputBytes       int             `json:"output_bytes,omitempty"`
+	OutputOffset      int             `json:"output_offset,omitempty"`
+	OutputNextOffset  int             `json:"output_next_offset,omitempty"`
 	ErrorRef          string          `json:"error_ref,omitempty"`
 	EvidenceSelection any             `json:"evidence_selection,omitempty"`
 	Transition        *TransitionView `json:"transition,omitempty"`

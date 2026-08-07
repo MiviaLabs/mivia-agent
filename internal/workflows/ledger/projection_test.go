@@ -102,6 +102,18 @@ func projLoopIncrementedPayload(t *testing.T) []byte {
 	return mustMarshal(t, loopIncrementedPayload{LoopName: "build", Iterations: 1, CreatedAt: fixedTime(3)})
 }
 
+// projAttemptPromptPayload builds a wf_attempt_prompt payload for one attempt.
+// It carries only attempt identity + a content-addressed prompt ref — never
+// prompt text.
+func projAttemptPromptPayload(t *testing.T, attemptID, promptRef string) []byte {
+	t.Helper()
+	return mustMarshal(t, attemptPromptPayload{
+		AttemptID: attemptID,
+		PromptRef: promptRef,
+		CreatedAt: fixedTime(2),
+	})
+}
+
 // mergedAttemptEvents builds the started+completed event pair for one attempt
 // that completed with a route.
 func mergedAttemptEvents(t *testing.T) []storage.Event {
@@ -674,5 +686,86 @@ func TestRebuildProjectionDeliveriesLatestWins(t *testing.T) {
 				t.Errorf("key-1 UpdatedAt = %v, want %v", d.UpdatedAt, fixedTime(2))
 			}
 		}
+	}
+}
+
+// TestRebuildProjectionAttemptPromptReplay covers requirement 10: replaying
+// [run_created, attempt_started, attempt_prompt, attempt_completed] records
+// PromptRef on the matching attempt and leaves the derived active step
+// untouched by the prompt event (the completion's to_step_id wins; the prompt
+// contributes no step candidate).
+func TestRebuildProjectionAttemptPromptReplay(t *testing.T) {
+	proj, err := RebuildProjection([]storage.Event{
+		wfEvent("e-created", 1, 1, eventKindRunCreated, projRunCreatedPayload(t, "kickoff")),
+		wfEvent("e-started", 2, 2, eventKindAttemptStarted, projAttemptStartedPayload(t, "a1", "plan")),
+		wfEvent("e-prompt", 3, 3, eventKindAttemptPrompt, projAttemptPromptPayload(t, "a1", "ref:prompt:p-7")),
+		wfEvent("e-completed", 4, 4, eventKindAttemptCompleted, projAttemptCompletedPayload(t, "a1", "implement")),
+	})
+	if err != nil {
+		t.Fatalf("RebuildProjection: %v", err)
+	}
+	a := requireAttempt(t, proj, "a1")
+	if a.PromptRef != "ref:prompt:p-7" {
+		t.Errorf("a1 PromptRef = %q, want ref:prompt:p-7", a.PromptRef)
+	}
+	// The completion merge must not clobber the prompt ref recorded earlier.
+	if a.Status != AttemptStatusSucceeded {
+		t.Errorf("a1 Status = %q, want succeeded (completion still merges after prompt)", a.Status)
+	}
+	if proj.ActiveStepID != "implement" {
+		t.Errorf("ActiveStepID = %q, want implement (prompt event carries no step)", proj.ActiveStepID)
+	}
+}
+
+// TestRebuildProjectionAttemptPromptLegacyReplay covers requirement 10: a run
+// written before the prompt event existed replays with an empty PromptRef and
+// the same derived active step as before.
+func TestRebuildProjectionAttemptPromptLegacyReplay(t *testing.T) {
+	proj, err := RebuildProjection(mergedAttemptEvents(t)) // started + completed, no wf_attempt_prompt
+	if err != nil {
+		t.Fatalf("RebuildProjection: %v", err)
+	}
+	a := requireAttempt(t, proj, "a1")
+	if a.PromptRef != "" {
+		t.Errorf("a1 PromptRef = %q, want empty for legacy replay without wf_attempt_prompt", a.PromptRef)
+	}
+	if proj.ActiveStepID != "implement" {
+		t.Errorf("ActiveStepID = %q, want implement", proj.ActiveStepID)
+	}
+}
+
+// TestRebuildProjectionAttemptPromptUnknownAttemptIgnored covers requirement
+// 10: a prompt event whose attempt_id has no started/completed attempt is
+// ignored — no placeholder attempt is created and there is no panic.
+func TestRebuildProjectionAttemptPromptUnknownAttemptIgnored(t *testing.T) {
+	proj, err := RebuildProjection([]storage.Event{
+		wfEvent("e-created", 1, 1, eventKindRunCreated, projRunCreatedPayload(t, "kickoff")),
+		wfEvent("e-started", 2, 2, eventKindAttemptStarted, projAttemptStartedPayload(t, "a1", "plan")),
+		wfEvent("e-prompt-ghost", 3, 3, eventKindAttemptPrompt, projAttemptPromptPayload(t, "ghost", "ref:prompt:g-1")),
+	})
+	if err != nil {
+		t.Fatalf("RebuildProjection: %v", err)
+	}
+	if len(proj.Attempts) != 1 {
+		t.Fatalf("len(Attempts) = %d, want 1 (unknown prompt must not create a placeholder): %+v", len(proj.Attempts), proj.Attempts)
+	}
+	a := requireAttempt(t, proj, "a1")
+	if a.PromptRef != "" {
+		t.Errorf("a1 PromptRef = %q, want empty (unknown prompt ignored)", a.PromptRef)
+	}
+	if proj.ActiveStepID != "plan" {
+		t.Errorf("ActiveStepID = %q, want plan (prompt event carries no step)", proj.ActiveStepID)
+	}
+}
+
+// TestRebuildProjectionUndecodableAttemptPromptErrors covers requirement 7
+// applied to the new kind: wf_attempt_prompt is a KNOWN kind, so an
+// undecodable payload is an error, never silently ignored.
+func TestRebuildProjectionUndecodableAttemptPromptErrors(t *testing.T) {
+	proj, err := RebuildProjection([]storage.Event{
+		{ID: "e-bad-prompt", RunID: "wfr-test-run-1", RowID: 1, Sequence: 1, Kind: eventKindAttemptPrompt, Payload: []byte("not-json")},
+	})
+	if err == nil {
+		t.Fatalf("RebuildProjection returned nil error for undecodable %s payload, want error (proj=%+v)", eventKindAttemptPrompt, proj)
 	}
 }

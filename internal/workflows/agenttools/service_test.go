@@ -1,6 +1,7 @@
 package agenttools_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -117,6 +118,168 @@ func TestEventsFromLedger(t *testing.T) {
 		if strings.Contains(ev.Detail, "api_key") || strings.Contains(ev.Detail, "sk-") {
 			t.Fatalf("event detail leaks secret material: %q", ev.Detail)
 		}
+	}
+}
+
+func TestInspectValidatesOffsetAndLimit(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-inspect-page-validate"
+	seedRunningAttempt(t, repo, runID)
+	svc := testService(t, repo, nil)
+	ctx := context.Background()
+
+	if _, err := svc.Inspect(ctx, runID, "one", 1, -1, 0); err == nil || !strings.Contains(err.Error(), "offset") {
+		t.Fatalf("negative offset error = %v, want offset validation", err)
+	}
+	if _, err := svc.Inspect(ctx, runID, "one", 1, 0, -1); err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("negative limit error = %v, want limit validation", err)
+	}
+}
+
+func TestInspectClampsLimitAndDefaultsPageSize(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-inspect-page-clamp"
+	// Larger than the page ceiling so the paging path is active.
+	blob := bytes.Repeat([]byte("a"), agenttools.DefaultInspectPageBytes+64)
+	seedRunningAttemptWithOutput(t, repo, runID, blob)
+	svc := testService(t, repo, nil)
+	ctx := context.Background()
+
+	// limit 0 defaults to DefaultInspectPageBytes.
+	view, err := svc.Inspect(ctx, runID, "one", 1, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.OutputText) != agenttools.DefaultInspectPageBytes {
+		t.Fatalf("default page length = %d, want %d", len(view.OutputText), agenttools.DefaultInspectPageBytes)
+	}
+	if view.OutputNextOffset != agenttools.DefaultInspectPageBytes {
+		t.Fatalf("default page next offset = %d, want %d", view.OutputNextOffset, agenttools.DefaultInspectPageBytes)
+	}
+
+	// A limit above the page ceiling clamps to DefaultInspectPageBytes.
+	view, err = svc.Inspect(ctx, runID, "one", 1, 0, agenttools.DefaultInspectPageBytes*10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.OutputText) != agenttools.DefaultInspectPageBytes {
+		t.Fatalf("clamped page length = %d, want %d", len(view.OutputText), agenttools.DefaultInspectPageBytes)
+	}
+	if view.OutputNextOffset != agenttools.DefaultInspectPageBytes {
+		t.Fatalf("clamped page next offset = %d, want %d", view.OutputNextOffset, agenttools.DefaultInspectPageBytes)
+	}
+	if view.Output != nil {
+		t.Fatalf("paged view unexpectedly carries full parsed output: %#v", view.Output)
+	}
+	if view.OutputBytes != len(blob) {
+		t.Fatalf("OutputBytes = %d, want %d", view.OutputBytes, len(blob))
+	}
+}
+
+func TestInspectPagesOutputTextWithNextOffset(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-inspect-page"
+	blob := bytes.Repeat([]byte("abcdefghij"), 30) // 300 bytes
+	seedRunningAttemptWithOutput(t, repo, runID, blob)
+	svc := testService(t, repo, nil)
+	ctx := context.Background()
+
+	view, err := svc.Inspect(ctx, runID, "one", 1, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.OutputText != string(blob[0:100]) {
+		t.Fatalf("page 0 text = %q, want %q", view.OutputText, blob[0:100])
+	}
+	if view.OutputOffset != 0 || view.OutputBytes != len(blob) {
+		t.Fatalf("page 0 framing = offset %d bytes %d, want 0/%d", view.OutputOffset, view.OutputBytes, len(blob))
+	}
+	if view.OutputNextOffset != 100 {
+		t.Fatalf("page 0 next offset = %d, want 100", view.OutputNextOffset)
+	}
+	if view.Output != nil {
+		t.Fatalf("paged page 0 unexpectedly carries full parsed output: %#v", view.Output)
+	}
+
+	view, err = svc.Inspect(ctx, runID, "one", 1, 100, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.OutputText != string(blob[100:200]) {
+		t.Fatalf("page 1 text = %q, want %q", view.OutputText, blob[100:200])
+	}
+	if view.OutputOffset != 100 || view.OutputNextOffset != 200 {
+		t.Fatalf("page 1 framing = offset %d next %d, want 100/200", view.OutputOffset, view.OutputNextOffset)
+	}
+
+	// Final page: OutputNextOffset is 0 (exhausted) and omitted by omitempty.
+	view, err = svc.Inspect(ctx, runID, "one", 1, 200, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.OutputText != string(blob[200:300]) {
+		t.Fatalf("page 2 text = %q, want %q", view.OutputText, blob[200:300])
+	}
+	if view.OutputOffset != 200 || view.OutputNextOffset != 0 {
+		t.Fatalf("page 2 framing = offset %d next %d, want 200/0", view.OutputOffset, view.OutputNextOffset)
+	}
+}
+
+func TestInspectRefusesAbovePageableCeiling(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-inspect-ceiling"
+	blob := bytes.Repeat([]byte("x"), agenttools.MaxPageableBytes+1)
+	seedRunningAttemptWithOutput(t, repo, runID, blob)
+	svc := testService(t, repo, nil)
+	ctx := context.Background()
+
+	_, err := svc.Inspect(ctx, runID, "one", 1, 0, 0)
+	if err == nil {
+		t.Fatal("inspect of an artifact above the pageable ceiling: expected refusal")
+	}
+	if !strings.Contains(err.Error(), "ceiling") {
+		t.Fatalf("ceiling refusal = %q, want ceiling wording", err.Error())
+	}
+	if !strings.Contains(err.Error(), "sha256:") {
+		t.Fatalf("ceiling refusal = %q, want the output ref named", err.Error())
+	}
+}
+
+func TestInspectBudgetGuardHalvesPageOnce(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-inspect-budget"
+	blob := bytes.Repeat([]byte("a"), agenttools.DefaultInspectPageBytes*2)
+	seedRunningAttemptWithOutput(t, repo, runID, blob)
+	// A tight inspect budget that a full default page (64 KiB of text) would
+	// exceed but a halved page (32 KiB) fits: the guard must halve once and
+	// rebuild, never fail closed on framing.
+	ctx := context.Background()
+	svc, err := agenttools.NewService(agenttools.ServiceOptions{
+		Repo: func(context.Context) (workflowledger.Repository, func(), error) {
+			return repo, func() {}, nil
+		},
+		InspectBudgetBytes: 48 << 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := svc.Inspect(ctx, runID, "one", 1, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := agenttools.DefaultInspectPageBytes / 2
+	if len(view.OutputText) != want {
+		t.Fatalf("budget-guarded page length = %d, want %d (page halved once)", len(view.OutputText), want)
+	}
+	if view.OutputNextOffset != want {
+		t.Fatalf("budget-guarded next offset = %d, want %d", view.OutputNextOffset, want)
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > 48<<10 {
+		t.Fatalf("budget-guarded view marshals to %d bytes, still over budget %d", len(encoded), 48<<10)
 	}
 }
 

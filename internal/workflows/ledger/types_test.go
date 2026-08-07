@@ -308,6 +308,7 @@ func TestCloneStepAttempt(t *testing.T) {
 		ToStepID:         "success",
 		TransitionIndex:  2,
 		MatchDigest:      "match-digest",
+		PromptRef:        "prompts/att_1_v3",
 		DecisionJSON:     decision,
 		StartedAt:        time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
 		FinishedAt:       &finished,
@@ -334,6 +335,7 @@ func TestCloneStepAttempt(t *testing.T) {
 		clone.TaskID != orig.TaskID || clone.OutputRef != orig.OutputRef ||
 		clone.OutputDigest != orig.OutputDigest || clone.ToStepID != orig.ToStepID ||
 		clone.TransitionIndex != orig.TransitionIndex || clone.MatchDigest != orig.MatchDigest ||
+		clone.PromptRef != orig.PromptRef ||
 		clone.Version != orig.Version || !clone.StartedAt.Equal(orig.StartedAt) {
 		t.Errorf("Clone() = %+v, want equal scalar fields to %+v", clone, orig)
 	}
@@ -352,11 +354,47 @@ func TestCloneStepAttempt(t *testing.T) {
 		t.Errorf("mutating clone.FinishedAt changed the original: %v", *orig.FinishedAt)
 	}
 
-	// Nil slice and pointer must stay nil.
+	// Nil slice and pointer must stay nil; PromptRef must stay empty.
 	nilOrig := StepAttempt{AttemptID: "att_2", Status: AttemptStatusPending}
 	nilClone := nilOrig.Clone()
 	if nilClone.DecisionJSON != nil || nilClone.FinishedAt != nil {
 		t.Errorf("Clone() of attempt with nil fields = %+v, want nil DecisionJSON/FinishedAt", nilClone)
+	}
+	if nilClone.PromptRef != "" {
+		t.Errorf("Clone() of attempt without PromptRef = %q, want empty", nilClone.PromptRef)
+	}
+}
+
+// TestStepAttemptPromptRefZeroValue asserts PromptRef is optional: legacy
+// records without the key stay empty and the zero value never serializes it.
+func TestStepAttemptPromptRefZeroValue(t *testing.T) {
+	// Legacy JSON without prompt_ref must unmarshal to an empty PromptRef.
+	legacy := []byte(`{"attempt_id":"att_legacy","run_id":"run_1","step_id":"plan","attempt_no":1,"status":"pending"}`)
+	var got StepAttempt
+	if err := json.Unmarshal(legacy, &got); err != nil {
+		t.Fatalf("Unmarshal(legacy StepAttempt) failed: %v", err)
+	}
+	if got.PromptRef != "" {
+		t.Errorf("legacy StepAttempt PromptRef = %q, want empty", got.PromptRef)
+	}
+
+	// Zero-value attempt must stay empty through Clone().
+	clone := (StepAttempt{AttemptID: "att_zero"}).Clone()
+	if clone.PromptRef != "" {
+		t.Errorf("Clone() of zero-value StepAttempt PromptRef = %q, want empty", clone.PromptRef)
+	}
+
+	// omitempty: a zero-value PromptRef must not appear in serialized JSON.
+	data, err := json.Marshal(StepAttempt{AttemptID: "att_zero"})
+	if err != nil {
+		t.Fatalf("Marshal(zero-value StepAttempt) failed: %v", err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		t.Fatalf("Unmarshal(StepAttempt) as map failed: %v", err)
+	}
+	if _, ok := keys["prompt_ref"]; ok {
+		t.Errorf("zero-value StepAttempt JSON contains prompt_ref: %s", data)
 	}
 }
 
@@ -561,6 +599,7 @@ func TestSnapshotJSONStepAttempt(t *testing.T) {
 		ToStepID:         "success",
 		TransitionIndex:  2,
 		MatchDigest:      "match-digest",
+		PromptRef:        "prompts/att_1",
 		DecisionJSON:     []byte(`{"route":"success"}`),
 		StartedAt:        time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
 		FinishedAt:       &finished,
@@ -585,7 +624,7 @@ func TestSnapshotJSONStepAttempt(t *testing.T) {
 	for _, want := range []string{
 		"attempt_id", "run_id", "step_id", "attempt_no", "status",
 		"coordinator_run_id", "task_id", "output_ref", "output_digest",
-		"to_step_id", "transition_index", "match_digest", "decision_json",
+		"to_step_id", "transition_index", "match_digest", "prompt_ref", "decision_json",
 		"started_at", "finished_at", "version",
 	} {
 		if _, ok := keys[want]; !ok {

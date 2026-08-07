@@ -76,6 +76,18 @@ type Repository interface {
 	// for a non-terminal outcome status or an illegal status edge.
 	CompleteStepAttempt(ctx context.Context, runID, attemptID string, expectedVersion uint64, outcome AttemptOutcome) error
 
+	// SetStepAttemptPrompt records the content-addressed prompt reference for
+	// one attempt (the prompt body lives in content-addressed storage and is
+	// looked up via PromptRef; the event log never carries prompt text). The
+	// attempt may still be Running — the prompt is persisted at dispatch time,
+	// before completion — and its status/version are never changed. Setting the
+	// same promptRef twice is an idempotent no-op. Returns ErrNotFound if the
+	// run or attempt is absent; ErrConflict if the attempt already carries a
+	// prompt ref different from promptRef (attempts are immutable after
+	// dispatch) or a concurrent writer took the deterministic event ID with a
+	// different payload.
+	SetStepAttemptPrompt(ctx context.Context, runID, attemptID, promptRef string) error
+
 	// ListTransitions returns the route decisions derived from completed
 	// attempts, ordered by event sequence.
 	ListTransitions(ctx context.Context, runID string) ([]TransitionRecord, error)

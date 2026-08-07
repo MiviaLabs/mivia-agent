@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,6 +135,89 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 		}
 		if view.RunID != childRunID {
 			t.Fatalf("inspect view = %+v, want run %q", view, childRunID)
+		}
+	})
+}
+
+// TestInspectToolPagingParams pins plan v3 P2: workflow_inspect exposes
+// optional offset/limit parameters, forwards them to the service layer
+// (which validates non-negative values), and treats missing parameters as 0.
+// A negative offset reaching the service validation is the observable proof
+// that Execute forwards the values rather than dropping them.
+func TestInspectToolPagingParams(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-paging-1"
+	seedRunningAttempt(t, repo, runID)
+	svc := testService(t, repo, nil)
+	tool := findTool(t, svc, agenttools.ToolWorkflowInspect)
+
+	t.Run("missing paging params behave as 0", func(t *testing.T) {
+		out, err := tool.Execute(context.Background(),
+			json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1}`))
+		if err != nil {
+			t.Fatalf("inspect without offset/limit: %v", err)
+		}
+		var view agenttools.InspectView
+		if err := json.Unmarshal([]byte(out), &view); err != nil {
+			t.Fatal(err)
+		}
+		if view.RunID != runID || view.Step != "one" || view.Attempt != 1 {
+			t.Fatalf("inspect view = %+v, want run %q step one attempt 1", view, runID)
+		}
+	})
+
+	t.Run("explicit zero offset and limit accepted", func(t *testing.T) {
+		if _, err := tool.Execute(context.Background(),
+			json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1,"limit":0,"offset":0}`)); err != nil {
+			t.Fatalf("inspect with limit=0 offset=0: %v", err)
+		}
+	})
+
+	t.Run("negative offset rejected by service", func(t *testing.T) {
+		_, err := tool.Execute(context.Background(),
+			json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1,"offset":-1}`))
+		if err == nil {
+			t.Fatal("inspect with negative offset: expected service-layer error")
+		}
+		if !strings.Contains(err.Error(), "limit and offset must be >= 0") {
+			t.Fatalf("negative offset error = %q, want service-layer range error", err.Error())
+		}
+	})
+
+	t.Run("negative limit rejected by service", func(t *testing.T) {
+		if _, err := tool.Execute(context.Background(),
+			json.RawMessage(`{"run_id":"`+runID+`","step":"one","attempt":1,"limit":-1}`)); err == nil {
+			t.Fatal("inspect with negative limit: expected service-layer error")
+		}
+	})
+
+	t.Run("parameters declare offset and limit", func(t *testing.T) {
+		params := tool.Parameters()
+		props, ok := params["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("inspect parameters properties = %T, want map", params["properties"])
+		}
+		for _, name := range []string{"offset", "limit"} {
+			prop, ok := props[name].(map[string]any)
+			if !ok {
+				t.Fatalf("parameter %q missing from inspect parameters", name)
+			}
+			if prop["type"] != "integer" {
+				t.Fatalf("parameter %q type = %v, want integer", name, prop["type"])
+			}
+			if prop["minimum"] != 0 {
+				t.Fatalf("parameter %q minimum = %v, want 0", name, prop["minimum"])
+			}
+			desc, _ := prop["description"].(string)
+			if desc == "" {
+				t.Fatalf("parameter %q missing description", name)
+			}
+		}
+	})
+
+	t.Run("description mentions paging", func(t *testing.T) {
+		if !strings.Contains(strings.ToLower(tool.Description()), "page") {
+			t.Fatalf("inspect description does not mention paging: %q", tool.Description())
 		}
 	})
 }

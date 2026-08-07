@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -118,7 +120,32 @@ func extractVerdict(a workflowledger.StepAttempt) string {
 	return ""
 }
 
-func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID string, attempt workflowledger.StepAttempt) (InspectView, error) {
+// buildInspectView renders one step attempt for workflow_inspect. offset and
+// limit are byte offsets into the artifact's text form (limit clamped to
+// DefaultInspectPageBytes). The WHOLE artifact is redacted before any page is
+// sliced, so a secret split across a page boundary is redacted identically in
+// every page and key-named secrets are caught wherever the boundary falls.
+// When offset and limit are omitted the call behaves like offset=0,
+// limit=DefaultInspectPageBytes, which keeps the pre-pagination behavior for
+// artifacts that fit the page. Artifacts larger than MaxPageableBytes are
+// refused outright.
+func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID string, attempt workflowledger.StepAttempt, page ...int) (InspectView, error) {
+	pageOffset, pageLimit := 0, DefaultInspectPageBytes
+	if len(page) > 0 {
+		pageOffset = page[0]
+	}
+	if len(page) > 1 {
+		pageLimit = page[1]
+	}
+	if pageOffset < 0 {
+		pageOffset = 0
+	}
+	if pageLimit < 0 {
+		pageLimit = 0
+	}
+	if pageLimit > DefaultInspectPageBytes {
+		pageLimit = DefaultInspectPageBytes
+	}
 	view := InspectView{
 		RunID:            runID,
 		Step:             attempt.StepID,
@@ -160,13 +187,95 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 			return InspectView{}, err
 		}
 		if err == nil && len(data) > 0 {
-			var output any
-			if json.Unmarshal(data, &output) == nil {
-				view.Output = redact.JSONValue(output)
-			} else {
-				view.Output = redact.Text(string(data))
+			if len(data) > MaxPageableBytes {
+				return InspectView{}, fmt.Errorf("artifact %s is %d bytes, exceeding the %d byte workflow_inspect paging ceiling", attempt.OutputRef, len(data), MaxPageableBytes)
 			}
+			fillInspectOutput(&view, data, pageOffset, pageLimit)
 		}
 	}
 	return view, nil
+}
+
+// fillInspectOutput redacts the WHOLE artifact with the existing semantics
+// (redact.JSONValue after a successful json.Unmarshal, otherwise redact.Text
+// on the string) and renders it either as the structured value (when offset is
+// 0 and the artifact fits the page) or as a rune-aligned text page of the
+// already-redacted artifact. Pages always slice the redacted text; the text is
+// never redacted per page, so redaction parity holds across page boundaries.
+func fillInspectOutput(view *InspectView, raw []byte, offset, limit int) {
+	total := len(raw)
+	if offset >= total {
+		// Empty page past the end of the artifact: metadata only, no error.
+		view.OutputBytes = total
+		view.OutputOffset = offset
+		return
+	}
+	var redactedText string
+	var output any
+	if json.Unmarshal(raw, &output) == nil {
+		redacted := redact.JSONValue(output)
+		view.Output = redacted
+		if b, err := json.Marshal(redacted); err == nil {
+			redactedText = string(b)
+		} else {
+			redactedText = redact.Text(string(raw))
+		}
+	} else {
+		redactedText = redact.Text(string(raw))
+	}
+	if offset == 0 && total <= limit {
+		// Backward-compatible small page: the parsed/redacted value, no text
+		// page and no paging metadata.
+		if view.Output == nil {
+			view.Output = redactedText
+		}
+		return
+	}
+	// Paginated page of the whole-artifact redacted text.
+	view.Output = nil
+	view.OutputText, view.OutputNextOffset = inspectTextPage(redactedText, offset, limit)
+	view.OutputBytes = total
+	view.OutputOffset = offset
+}
+
+// inspectTextPage returns the [offset, offset+limit) byte window of text as a
+// valid UTF-8 string (invalid bytes replaced with U+FFFD) trimmed to UTF-8
+// rune boundaries at both ends, plus the byte offset of the next page (0 when
+// the window reaches the end of the text). Mirroring evidencePreview, the
+// window is sanitized before rune-boundary trimming so the returned slice is
+// always valid UTF-8 and never splits a rune across pages.
+func inspectTextPage(text string, offset, limit int) (string, int) {
+	sanitized := strings.ToValidUTF8(text, "\uFFFD")
+	if limit <= 0 || offset >= len(sanitized) {
+		return "", 0
+	}
+	end := offset + limit
+	if end > len(sanitized) {
+		end = len(sanitized)
+	}
+	window := sanitized[offset:end]
+	before := len(window)
+	// Drop a rune cut in half at the window start (a complete U+FFFD from
+	// sanitization reports size > 1 and is kept).
+	for len(window) > 0 {
+		r, size := utf8.DecodeRuneInString(window)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
+		window = window[size:]
+	}
+	leftTrimmed := before - len(window)
+	// Drop a rune cut in half at the window end.
+	for len(window) > 0 {
+		r, size := utf8.DecodeLastRuneInString(window)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
+		window = window[:len(window)-size]
+	}
+	emittedEnd := offset + leftTrimmed + len(window)
+	if emittedEnd >= len(sanitized) {
+		return window, 0
+	}
+	return window, emittedEnd
 }

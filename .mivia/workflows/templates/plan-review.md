@@ -4,7 +4,12 @@ Independently review this delivery plan for `{{ inputs.task }}`:
 
 {{ evidence.plan }}
 
-Evidence below may be a reference envelope containing a preview and a ledger ref. When it is, read the FULL artifact with workflow_inspect(run_id, step, attempt) instead of relying on the preview.
+Every prior-step output is stored in the workflow ledger.
+Its ref, step, and attempt are listed in the 'Evidence refs' section of the prompt.
+The evidence value is the full artifact when it fits the binding cap.
+Otherwise, it is a reference envelope with a preview.
+When the preview is truncated or more context is needed, read the full artifact with workflow_inspect(run_id, step, attempt).
+For very large artifacts, use the offset and limit parameters to page through the output.
 
 Read the relevant source and tests. Do not edit files. Do not run commands, commit, push,
 publish, or read secret-like files.

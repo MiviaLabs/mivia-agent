@@ -179,7 +179,12 @@ func (s *Service) Events(ctx context.Context, runID string, limit, offset int) (
 }
 
 // Inspect returns one step attempt's validated output and route decision.
-func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo int) (InspectView, error) {
+// offset/limit page large output artifacts: limit 0 means the default page
+// size; both must be >= 0 (the tool schema enforces the same minimum). The
+// final view is also guarded by the inspect result budget: a page that would
+// marshal over it is halved once and rebuilt before returning (bounded; the
+// tool's encodeJSON remains the outer fail-closed guard).
+func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, offset, limit int) (InspectView, error) {
 	if strings.TrimSpace(runID) == "" {
 		return InspectView{}, fmt.Errorf("run_id is required")
 	}
@@ -188,6 +193,12 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo int
 	}
 	if attemptNo < 1 {
 		return InspectView{}, fmt.Errorf("attempt must be >= 1")
+	}
+	if limit < 0 || offset < 0 {
+		return InspectView{}, fmt.Errorf("limit and offset must be >= 0")
+	}
+	if limit == 0 {
+		limit = DefaultInspectPageBytes
 	}
 	repo, closeFn, err := s.openRepo(ctx)
 	if err != nil {
@@ -230,7 +241,37 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo int
 	if found == nil {
 		return InspectView{}, fmt.Errorf("attempt %s#%d not found on run %q", step, attemptNo, runID)
 	}
-	return buildInspectView(ctx, repo, runID, *found)
+	view, err := s.inspectWithinBudget(ctx, repo, runID, *found, offset, limit)
+	if err != nil {
+		return InspectView{}, err
+	}
+	return view, nil
+}
+
+// inspectWithinBudget builds the inspect view and guards the marshaled result
+// budget for the paging path: if the view still marshals over the inspect
+// result budget, halve the page once and rebuild it before returning. Bounded
+// (at most one shrink, never fail-closed on framing); the tool's encodeJSON
+// remains the outer fail-closed guard.
+func (s *Service) inspectWithinBudget(ctx context.Context, repo workflowledger.Repository, runID string, attempt workflowledger.StepAttempt, offset, limit int) (InspectView, error) {
+	view, err := buildInspectView(ctx, repo, runID, attempt, offset, limit)
+	if err != nil {
+		return InspectView{}, err
+	}
+	if budget := s.budget("inspect"); budget > 0 {
+		encoded, err := json.Marshal(view)
+		if err != nil {
+			return InspectView{}, err
+		}
+		if len(encoded) > budget {
+			shrunk := limit / 2
+			if shrunk < 1 {
+				shrunk = 1
+			}
+			return buildInspectView(ctx, repo, runID, attempt, offset, shrunk)
+		}
+	}
+	return view, nil
 }
 
 // ListRuns lists active and historical runs with optional status filter.

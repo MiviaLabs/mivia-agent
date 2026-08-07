@@ -105,6 +105,8 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 			err = applyRunStatusChanged(&proj, ev)
 		case eventKindAttemptStarted:
 			err = applyAttemptStarted(&proj, st, ev)
+		case eventKindAttemptPrompt:
+			err = applyAttemptPrompt(&proj, ev)
 		case eventKindAttemptCompleted:
 			err = applyAttemptCompleted(&proj, st, ev)
 		case eventKindLoopIncremented:
@@ -183,6 +185,25 @@ func applyAttemptStarted(proj *Projection, st *rebuildState, ev storage.Event) e
 		st.stepCandidates = append(st.stepCandidates, a.StepID)
 	}
 	return nil
+}
+
+// applyAttemptPrompt folds one wf_attempt_prompt event into the projection:
+// the prompt reference is recorded on the matching attempt by attempt_id. It
+// carries no step, so it contributes no step candidate and never changes the
+// derived active step (mirroring the loop/approval/delivery apply functions).
+// A prompt for an unknown attempt is ignored — no placeholder is created.
+func applyAttemptPrompt(proj *Projection, ev storage.Event) error {
+	p, err := unmarshalAttemptPrompt(ev.Payload)
+	if err != nil {
+		return fmt.Errorf("decode %s payload: %w", ev.Kind, err)
+	}
+	for i := range proj.Attempts {
+		if proj.Attempts[i].AttemptID == p.AttemptID {
+			proj.Attempts[i].PromptRef = p.PromptRef
+			return nil
+		}
+	}
+	return nil // unknown attempt: ignore
 }
 
 // applyAttemptCompleted folds one wf_attempt_completed event into the

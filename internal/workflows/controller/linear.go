@@ -329,15 +329,16 @@ func (c *LinearController) WorkflowStep(id string) (definition.Step, bool) {
 	return definition.Step{}, false
 }
 
-func (c *LinearController) contextForStep(ctx context.Context, step definition.Step, attempts []workflowledger.StepAttempt) (map[string]any, map[string]any, error) {
+func (c *LinearController) contextForStep(ctx context.Context, step definition.Step, attempts []workflowledger.StepAttempt) (map[string]any, map[string]any, map[string]ArtifactRef, error) {
 	inputs := make(map[string]any)
 	evidence := make(map[string]any)
+	refs := make(map[string]ArtifactRef)
 	for _, binding := range step.Context {
 		parts := strings.Split(binding.From, ".")
 		if len(parts) == 2 && parts[0] == "inputs" {
 			value, ok := c.Inputs[parts[1]]
 			if !ok {
-				return nil, nil, fmt.Errorf("missing input %q", parts[1])
+				return nil, nil, nil, fmt.Errorf("missing input %q", parts[1])
 			}
 			inputs[binding.As] = value
 			continue
@@ -349,34 +350,51 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 					evidence[binding.As] = ""
 					continue
 				}
-				return nil, nil, fmt.Errorf("missing prior output %q", binding.From)
+				return nil, nil, nil, fmt.Errorf("missing prior output %q", binding.From)
 			}
 			raw, err := c.Repo.LoadContent(ctx, prior.OutputRef)
 			if err != nil {
-				return nil, nil, err
-			}
-			var value any
-			if err := json.Unmarshal(raw, &value); err != nil {
-				return nil, nil, fmt.Errorf("decode prior output: %w", err)
+				return nil, nil, nil, err
 			}
 			threshold := binding.MaxBytes
 			if threshold <= 0 {
 				threshold = definition.MaxEvidenceBindingBytes
 			}
+			// Every resolved steps.X.output binding records its artifact
+			// reference; the controller renders them into the prompt's
+			// evidence-refs block. Optional-absent bindings resolve to ""
+			// above and are skipped here (they have no artifact to address).
+			refs[binding.As] = ArtifactRef{
+				Step: prior.StepID, Attempt: prior.AttemptNo, Ref: prior.OutputRef,
+				Bytes: len(raw), Digest: prior.OutputDigest,
+			}
 			if len(raw) > threshold {
-				// Defect 1 (size-reject): instead of failing the run, substitute
-				// a compact ledger-backed reference envelope. The full artifact
-				// stays content-addressed in the workflow ledger and is read
-				// back with workflow_inspect. Substitute only when the envelope
-				// itself fits the binding cap; a cap smaller than the envelope
-				// keeps the historical reject (defense-in-depth).
-				envelope := buildEvidenceEnvelope(c.RunID, prior, raw)
-				envelopeRaw, err := json.Marshal(envelope)
+				// Size check runs BEFORE json.Unmarshal: an oversized prior
+				// output — JSON or not — substitutes a compact ledger-backed
+				// reference envelope instead of failing the run. The full
+				// artifact stays content-addressed in the workflow ledger and
+				// is read back with workflow_inspect. The builder measures the
+				// envelope skeleton exactly and budgets/halves the preview so
+				// the marshaled envelope always fits the binding cap; it errors
+				// only for a cap that cannot fit even the no-preview envelope
+				// (the historical reject, defense-in-depth).
+				envelope, err := buildEvidenceEnvelope(c.RunID, prior, raw, threshold)
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, nil, fmt.Errorf("context binding %q exceeds %d bytes", binding.From, threshold)
 				}
-				if len(envelopeRaw) > threshold {
-					return nil, nil, fmt.Errorf("prior output %q exceeds %d bytes", binding.From, threshold)
+				evidence[binding.As] = envelope
+				continue
+			}
+			var value any
+			if err := json.Unmarshal(raw, &value); err != nil {
+				// A SMALL prior output that is not valid JSON (e.g. prose or
+				// binary) also degrades to the ledger-backed reference envelope
+				// instead of rejecting the run: the child reads the full
+				// artifact with workflow_inspect. Reject only when even the
+				// no-preview envelope cannot fit the binding cap.
+				envelope, err := buildEvidenceEnvelope(c.RunID, prior, raw, threshold)
+				if err != nil {
+					return nil, nil, nil, fmt.Errorf("context binding %q exceeds %d bytes", binding.From, threshold)
 				}
 				evidence[binding.As] = envelope
 				continue
@@ -384,9 +402,9 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 			evidence[binding.As] = value
 			continue
 		}
-		return nil, nil, fmt.Errorf("unsupported context binding %q", binding.From)
+		return nil, nil, nil, fmt.Errorf("unsupported context binding %q", binding.From)
 	}
-	return inputs, evidence, nil
+	return inputs, evidence, refs, nil
 }
 
 func (c *LinearController) fail(ctx context.Context, run workflowledger.RunSnapshot, cause error) (workflowledger.RunSnapshot, bool, error) {
