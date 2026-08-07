@@ -100,6 +100,9 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	if key := strings.TrimSpace(req.InvocationKey); key != "" {
 		runID = agenttools.InvocationRunID(key)
 		if existing, getErr := e.Repo.GetRun(ctx, runID); getErr == nil {
+			if result, resumed, resumeErr := e.resumeExistingInvocation(ctx, existing, req); resumed || resumeErr != nil {
+				return result, resumeErr
+			}
 			return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 		} else if !errors.Is(getErr, workflowledger.ErrNotFound) {
 			return agenttools.StartResult{}, getErr
