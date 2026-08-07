@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -44,6 +45,16 @@ func executeWorkflowEvents(runID, root, configPath string, limit, offset int, st
 // flag, e.g. --limit 50. It returns def when the flag is absent.
 func parseWorkflowIntFlag(args []string, name string, def int) (int, error) {
 	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], name+"=") {
+			v, err := strconv.Atoi(strings.TrimPrefix(args[i], name+"="))
+			if err != nil {
+				return 0, fmt.Errorf("%s requires an integer value", name)
+			}
+			if v < 0 {
+				return 0, fmt.Errorf("%s must be >= 0", name)
+			}
+			return v, nil
+		}
 		if args[i] != name || i+1 >= len(args) {
 			continue
 		}
@@ -71,6 +82,10 @@ func parseWorkflowStringFlag(args []string, name string) (string, []string, erro
 			}
 			value = args[i+1]
 			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], name+"=") {
+			value = strings.TrimPrefix(args[i], name+"=")
 			continue
 		}
 		out = append(out, args[i])
