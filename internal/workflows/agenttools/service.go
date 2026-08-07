@@ -299,9 +299,11 @@ func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offs
 	if offset > len(runs) {
 		offset = len(runs)
 	}
-	end := offset + limit
-	if end > len(runs) {
-		end = len(runs)
+	// Compute end overflow-safe: offset+limit can wrap negative with a huge
+	// admitted limit (schema has minimum 0, no maximum).
+	end := len(runs)
+	if limit < len(runs)-offset {
+		end = offset + limit
 	}
 	page := runs[offset:end]
 	now := time.Now()

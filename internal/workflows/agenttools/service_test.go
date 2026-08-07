@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -355,6 +356,29 @@ func TestListRunsFromLedger(t *testing.T) {
 	}
 	if list.Count < 1 || list.Runs[0].RunID != runID {
 		t.Fatalf("list = %+v", list)
+	}
+}
+
+// TestListRunsHugeLimitDoesNotOverflow: the list_runs schema admits limit up to
+// MaxInt64 with no maximum, so offset+limit can wrap negative, which used to
+// slice runs[1:negative] and panic. A huge limit must clamp to the remainder
+// after offset, never panic.
+func TestListRunsHugeLimitDoesNotOverflow(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	seedRunningAttempt(t, repo, "wfr-list-huge-1")
+	seedRunningAttempt(t, repo, "wfr-list-huge-2")
+	svc := testService(t, repo, nil)
+	ctx := context.Background()
+	all, err := svc.ListRuns(ctx, "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := svc.ListRuns(ctx, "", math.MaxInt, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Count != all.Count-1 {
+		t.Fatalf("ListRuns(MaxInt, 1) Count = %d, want %d (remainder after offset 1)", page.Count, all.Count-1)
 	}
 }
 
