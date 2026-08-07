@@ -190,6 +190,121 @@ func TestDeliverHookMutationRetryWritesNoStageRecord(t *testing.T) {
 	}
 }
 
+// TestDeliverCommitSHAUnconditionalWhenTreeUnchanged pins the bug where
+// commitStagedTree fails to persist CommitSHA when the pre-commit hook does
+// NOT mutate the staged tree (the common case). The conditional upsert at
+// deliver_stage.go line 124 gates the CommitSHA write behind
+// adoptedTree != treeSHA, so when the tree is unchanged CommitSHA stays empty
+// in the pending record. This test asserts that after a fresh commit WITHOUT
+// hook mutation, (a) the result carries the correct CommitSHA, (b) the
+// persisted record has CommitSHA set to HEAD, and (c) exactly 2 pending
+// wf_delivery_upserted events exist for the key: the pre-commit snapshot (with
+// CommitSHA empty) plus the unconditional post-commit upsert (with CommitSHA
+// equal to HEAD). The two upserts differ in CommitSHA, so the idempotency
+// guard at storage_deliveries.go does NOT absorb the second.
+func TestDeliverCommitSHAUnconditionalWhenTreeUnchanged(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo, store := newDeliveryFixtureStatusStore(t, workflowledger.RunStatusDeliveryPending, nil)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "add delivery"}))
+	if err != nil {
+		t.Fatalf("Deliver must succeed on fresh commit without hook mutation: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Status = %q, want succeeded", res.Status)
+	}
+	head := runGitOut(t, worktreeRoot, "rev-parse", "HEAD")
+	if res.CommitSHA != head {
+		t.Fatalf("Result.CommitSHA = %q, want HEAD %q", res.CommitSHA, head)
+	}
+	rec := deliveryRecordByKey(t, repo, run)
+	if rec.CommitSHA == "" {
+		t.Fatalf("persisted record CommitSHA is empty; commitStagedTree did not write CommitSHA when the tree was unchanged (the common case)")
+	}
+	if rec.CommitSHA != head {
+		t.Fatalf("persisted record CommitSHA = %q, want HEAD %q", rec.CommitSHA, head)
+	}
+
+	// Exactly 2 pending events: pre-commit snapshot (CommitSHA empty) + post-commit upsert (CommitSHA == HEAD).
+	key := DeliveryKey(run.RunID, run.WorkflowDigest)
+	events, err := store.Events(ctx, run.RunID)
+	if err != nil {
+		t.Fatalf("store.Events: %v", err)
+	}
+	var pending int
+	for _, ev := range events {
+		if ev.Kind != "wf_delivery_upserted" {
+			continue
+		}
+		var payload struct {
+			Delivery workflowledger.DeliveryRecord `json:"delivery"`
+		}
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal %s payload: %v", ev.ID, err)
+		}
+		if payload.Delivery.IdempotencyKey != key {
+			continue
+		}
+		if payload.Delivery.Status == "pending" {
+			pending++
+		}
+	}
+	if pending != 2 {
+		t.Fatalf("pending wf_delivery_upserted for key = %d, want 2 (pre-commit snapshot + post-commit upsert with CommitSHA)", pending)
+	}
+}
+
+// TestDeliverCommitSHAPresentInPendingEvents inspects the raw store events to
+// assert that at least one pending wf_delivery_upserted event for the key
+// carries CommitSHA equal to HEAD after a fresh commit without hook mutation.
+// Before the fix this fails because no pending event carries CommitSHA when
+// the tree is unchanged; after the fix the unconditional post-commit upsert
+// writes CommitSHA.
+func TestDeliverCommitSHAPresentInPendingEvents(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo, store := newDeliveryFixtureStatusStore(t, workflowledger.RunStatusDeliveryPending, nil)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "add delivery"}))
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Status = %q, want succeeded", res.Status)
+	}
+	head := runGitOut(t, worktreeRoot, "rev-parse", "HEAD")
+
+	key := DeliveryKey(run.RunID, run.WorkflowDigest)
+	events, err := store.Events(ctx, run.RunID)
+	if err != nil {
+		t.Fatalf("store.Events: %v", err)
+	}
+	var foundCommitSHA bool
+	for _, ev := range events {
+		if ev.Kind != "wf_delivery_upserted" {
+			continue
+		}
+		var payload struct {
+			Delivery workflowledger.DeliveryRecord `json:"delivery"`
+		}
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal %s payload: %v", ev.ID, err)
+		}
+		if payload.Delivery.IdempotencyKey != key || payload.Delivery.Status != "pending" {
+			continue
+		}
+		if payload.Delivery.CommitSHA == head {
+			foundCommitSHA = true
+		}
+	}
+	if !foundCommitSHA {
+		t.Fatal("no pending event carries CommitSHA == HEAD; commitStagedTree did not unconditionally write CommitSHA post-commit")
+	}
+}
+
 // TestDeliverNoDiffReVerifyPublishesNewWork pins bug 2: a no_diff verdict is
 // point-in-time. A no_diff record seeded by a crashed attempt must NOT be
 // replayed at step 3; the current worktree is re-verified, and new work that
