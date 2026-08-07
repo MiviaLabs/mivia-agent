@@ -147,7 +147,8 @@ func admissionIdentity(ctx context.Context, callerRoot, runID string) (Identity,
 // that has never been fetched is recorded as empty and delivery's retryable
 // path fetches and verifies the remote base later.
 func originBaseCommit(ctx context.Context, root, baseRef string) string {
-	if baseRef == "" {
+	// A detached HEAD has no branch, so it has no remote tracking ref.
+	if baseRef == "" || baseRef == "HEAD" {
 		return ""
 	}
 	commit, err := vcs.ResolveCommit(ctx, root, "refs/remotes/origin/"+baseRef)

@@ -425,6 +425,48 @@ func TestAdmissionOriginBaseCommitEmptyWithoutRemoteRef(t *testing.T) {
 	}
 }
 
+func TestAdmissionDetachedHEADRecordsEmptyOriginBaseCommit(t *testing.T) {
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare")
+
+	root := initRepo(t)
+	runGit(t, root, "branch", "-m", "master", "main")
+	runGit(t, root, "remote", "add", "origin", bare)
+	runGit(t, root, "push", "-u", "origin", "main")
+
+	// Create a develop branch on the remote and make origin/HEAD point to it.
+	// This mirrors a clone where the remote default branch is develop,
+	// while the workflow base branch is main.
+	runGit(t, root, "checkout", "-b", "develop")
+	writeFile(t, root, "develop.txt", "develop")
+	runGit(t, root, "add", "develop.txt")
+	runGit(t, root, "commit", "-m", "develop")
+	runGit(t, root, "push", "-u", "origin", "develop")
+	runGit(t, root, "fetch", "origin")
+	runGit(t, root, "remote", "set-head", "origin", "develop")
+
+	// Detach at the main tip.
+	runGit(t, root, "checkout", "--detach", "main")
+	detachedCommit, err := vcs.CurrentCommit(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := Ensure(context.Background(), root, "run-detached", IsolationWorktree)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if identity.BaseRef != "HEAD" {
+		t.Fatalf("BaseRef = %q, want HEAD", identity.BaseRef)
+	}
+	if identity.BaseCommit != detachedCommit {
+		t.Fatalf("BaseCommit = %q, want detached commit %q", identity.BaseCommit, detachedCommit)
+	}
+	if identity.OriginBaseCommit != "" {
+		t.Fatalf("OriginBaseCommit = %q, want empty on detached HEAD", identity.OriginBaseCommit)
+	}
+}
+
 func TestValidateRetainedBranchHonorsCanceledContext(t *testing.T) {
 	root := initRepo(t)
 	identity := Identity{MainRoot: root, BaseCommit: "HEAD", WorktreeName: "workflow-run-canceled", Branch: "wf/workflow-run-canceled"}
