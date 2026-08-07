@@ -232,3 +232,69 @@ func seedInterleavedEvents(t *testing.T, store *storage.SQLite, repo *workflowle
 	injectUnknown()
 	oneStatusEvent() // D
 }
+
+func TestParseWorkflowStringFlag_EqualsForm(t *testing.T) {
+	value, rest, err := parseWorkflowStringFlag([]string{"--actor=alice", "run-id"}, "--actor")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if value != "alice" {
+		t.Fatalf("value = %q, want %q", value, "alice")
+	}
+	if len(rest) != 1 || rest[0] != "run-id" {
+		t.Fatalf("rest = %v, want [run-id]", rest)
+	}
+}
+
+func TestParseWorkflowStringFlag_ReasonEqualsForm(t *testing.T) {
+	value, rest, err := parseWorkflowStringFlag([]string{"--reason=test", "run-id"}, "--reason")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if value != "test" {
+		t.Fatalf("value = %q, want %q", value, "test")
+	}
+	if len(rest) != 1 || rest[0] != "run-id" {
+		t.Fatalf("rest = %v, want [run-id]", rest)
+	}
+}
+
+func TestParseWorkflowIntFlag_EqualsForm_Limit(t *testing.T) {
+	v, err := parseWorkflowIntFlag([]string{"--limit=50"}, "--limit", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != 50 {
+		t.Fatalf("v = %d, want 50", v)
+	}
+}
+
+func TestParseWorkflowIntFlag_EqualsForm_Offset(t *testing.T) {
+	v, err := parseWorkflowIntFlag([]string{"--offset=10"}, "--offset", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != 10 {
+		t.Fatalf("v = %d, want 10", v)
+	}
+}
+
+func TestParseWorkflowIntFlag_EqualsForm_NonInteger(t *testing.T) {
+	_, err := parseWorkflowIntFlag([]string{"--limit=abc"}, "--limit", 0)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "integer value") {
+		t.Fatalf("error = %q, want 'integer value'", err.Error())
+	}
+}
+
+func TestParseWorkflowIntFlag_EqualsForm_Negative(t *testing.T) {
+	_, err := parseWorkflowIntFlag([]string{"--limit=-1"}, "--limit", 0)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), ">= 0") {
+		t.Fatalf("error = %q, want '>= 0'", err.Error())
+	}
+}
