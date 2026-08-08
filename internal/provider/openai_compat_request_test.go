@@ -46,7 +46,7 @@ func TestNewRequestReportsAnUnusableBaseURL(t *testing.T) {
 func TestNewRequestSetsAttributionAndStreamHeaders(t *testing.T) {
 	c := NewOpenAICompatWithOptions(CompatOptions{
 		Name: "test", BaseURL: "https://example.test", APIKey: "k",
-		HTTPReferer: "https://mivia.app", XTitle: "mivia.app",
+		HTTPReferer: "https://mivia.app", XTitle: "Mivia Agent",
 		ExtraHeaders: map[string]string{"X-Extra": "1"},
 	})
 	httpReq, err := c.newRequest(context.Background(), Request{
@@ -59,7 +59,7 @@ func TestNewRequestSetsAttributionAndStreamHeaders(t *testing.T) {
 	}
 	for header, want := range map[string]string{
 		"HTTP-Referer": "https://mivia.app",
-		"X-Title":      "mivia.app",
+		"X-Title":      "Mivia Agent",
 		"X-Extra":      "1",
 		"Accept":       "text/event-stream",
 		"Content-Type": "application/json",

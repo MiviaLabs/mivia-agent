@@ -22,7 +22,7 @@ func NewOpenRouter(opts Options) (Completer, error) {
 	}
 	title := opts.XTitle
 	if title == "" {
-		title = "mivia.app"
+		title = "Mivia Agent"
 	}
 	return NewOpenAICompatWithOptions(CompatOptions{
 		Name: "openrouter", BaseURL: base, APIKey: opts.APIKey,
