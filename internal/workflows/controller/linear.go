@@ -38,6 +38,21 @@ type Admission struct {
 	InputDigest      string
 	DeadlineAt       *time.Time
 	RemoteURL        string
+	// WorkflowDigest is the digest RECORDED when the run was admitted. A
+	// resume must pass it; a fresh admission leaves it empty.
+	//
+	// The digest is a hash of the marshalled definition struct, so it moves
+	// whenever those types gain a field, even when the workflow text does not
+	// change by one byte. Comparing a resumed run against a digest THIS binary
+	// recomputed therefore asserts that this binary hashes the definition the
+	// way the admitting binary did, which is a fact about the binary. Two
+	// field additions moved it in one day, and every run admitted before them
+	// became permanently unresumable.
+	//
+	// The definition text is proven by other means on the resume path: the
+	// snapshot digest covers the raw snapshot bytes, StartNew compares those
+	// bytes directly, and the two recorded digests are compared to each other.
+	WorkflowDigest string
 }
 
 // LinearController advances a workflow one active step at a time.
@@ -209,7 +224,7 @@ func (c *LinearController) StartNew(ctx context.Context) (bool, error) {
 func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
 	admittedAt := c.now()
 	snap := workflowledger.RunSnapshot{
-		RunID: c.RunID, InvocationKey: c.admission.InvocationKey, WorkflowName: c.Workflow.Name, WorkflowDigest: c.Workflow.Digest,
+		RunID: c.RunID, InvocationKey: c.admission.InvocationKey, WorkflowName: c.Workflow.Name, WorkflowDigest: c.admittedWorkflowDigest(),
 		SnapshotDigest: workflowledger.SnapshotDigest(c.Snapshot), InputDigest: c.admission.InputDigest,
 		Status: workflowledger.RunStatusPending, ActiveStepID: c.Workflow.InitialStep,
 		BaseRef: c.admission.BaseRef, BaseCommit: c.admission.BaseCommit,
@@ -224,6 +239,17 @@ func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
 		snap.DeadlineAt = &deadline
 	}
 	return snap
+}
+
+// admittedWorkflowDigest returns the digest to compare against the stored run:
+// the recorded one for a resume, this binary's for a fresh admission. A fresh
+// admission keeps the full guard, so two concurrent admissions of different
+// workflows still collide.
+func (c *LinearController) admittedWorkflowDigest() string {
+	if c.admission.WorkflowDigest != "" {
+		return c.admission.WorkflowDigest
+	}
+	return c.Workflow.Digest
 }
 
 func sameAdmission(stored, candidate workflowledger.RunSnapshot) bool {

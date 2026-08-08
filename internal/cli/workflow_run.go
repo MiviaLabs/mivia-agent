@@ -419,6 +419,12 @@ func workflowAdmission(setup workflowBuildSetup, inputs map[string]string, recor
 	admission := controller.Admission{BaseRef: setup.identity.BaseRef, BaseCommit: setup.identity.BaseCommit, OriginBaseCommit: setup.identity.OriginBaseCommit, WorktreeName: setup.identity.WorktreeName, InputDigest: workflowledger.InputDigest(inputs), RemoteURL: setup.remoteURL}
 	if recorded != nil {
 		admission.InputDigest, admission.DeadlineAt, admission.RemoteURL = recorded.InputDigest, recorded.DeadlineAt, recorded.RemoteURL
+		// Both of these are compared by sameAdmission, so both must come from the
+		// record and never from a value this binary recomputed or left empty. The
+		// invocation key is written only on the fresh-start path, so a run started
+		// with one could never resume; the digest moves whenever the definition
+		// types gain a field.
+		admission.InvocationKey, admission.WorkflowDigest = recorded.InvocationKey, recorded.WorkflowDigest
 	}
 	return admission
 }
