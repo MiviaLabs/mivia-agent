@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -359,6 +360,17 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	}
 	if turnDispatcher != nil {
 		opts.Dispatcher = turnDispatcher
+	}
+	// A tool staged by load_tools becomes callable only after the turn boundary
+	// publishes it. When that boundary defers (R2-1/R2-2), a call to the staged
+	// tool must report pending publication instead of the unknown-tool denial.
+	// The check is dynamic so a same-turn stage is visible too.
+	opts.IsToolPending = func(name string) bool {
+		stage, ok := s.PendingAdmission()
+		if !ok {
+			return false
+		}
+		return slices.Contains(stage.Names, name)
 	}
 	reply, err := loop.Run(ctx, userText, opts)
 

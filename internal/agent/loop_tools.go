@@ -427,6 +427,16 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 	// The dispatcher is the authorization boundary, but a loop must never gain
 	// reach from a wider dispatcher than the registry it exposed to the model.
 	if _, ok := reg.Get(task.call.Function.Name); !ok {
+		// A staged tool is absent from the registry until the boundary
+		// publishes it, so the denial must say publication is pending instead
+		// of reading as an unknown tool: load_tools promised next-turn
+		// availability, and the generic message is indistinguishable from a
+		// hallucinated name. Execution is denied either way (INV-AG-29).
+		if opts.IsToolPending != nil && opts.IsToolPending(task.call.Function.Name) {
+			failToolTask(idx, task, opts, results, finished,
+				fmt.Errorf("tool %q is staged for loading but is not published to the live tool surface yet. Publication happens at a turn boundary and can be deferred; retry the call on your next turn", task.call.Function.Name))
+			return
+		}
 		failToolTask(idx, task, opts, results, finished,
 			fmt.Errorf("tool %q is not available to this agent", task.call.Function.Name))
 		return

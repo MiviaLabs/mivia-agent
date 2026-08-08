@@ -291,11 +291,14 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	// Authority is the root scope without the tier split: deferring a tool
 	// withholds its schema from the root model, it does not revoke the session's
 	// authority to delegate it.
-	authority, disabled := scopedRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
+	authority, _ := scopedRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
 	// Attach is an entry point, so this is where the operator hears about tool
 	// names their agent asks for and this build cannot offer - once, before any
-	// turn starts and before the TUI owns the terminal.
-	warnDisabledAgentTools(ctx.Selected, disabled)
+	// turn starts and before the TUI owns the terminal. The disabled set comes
+	// from the agent's effective tools (disabledForAgent), not from the scoped
+	// build: the scope intersects with the registry, so its own report is
+	// always empty.
+	warnDisabledAgentTools(ctx.Selected, disabledForAgent(ctx.Selected, sess.Tools))
 	sess.Tools = tieredRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions, plan, nil)
 	applyDeferredToolPrompt(sess, routing.Resolved, plan)
 	// Rebuild the skill policy against the final live authority registry (plan
