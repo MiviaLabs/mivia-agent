@@ -1,41 +1,80 @@
 # Workflow Guide
 
-How to use, author, and monitor Mivia workflows.
+## Level 1: in plain words
 
-## What is a workflow
+This guide shows how to use workflows. It has the commands you type and the tools an agent can call.
 
-A workflow is a repository-authored state machine in `.mivia/workflows/<name>.toml`. It selects agents and host capabilities, then declares a bounded sequential process with typed evidence gates and optional repair loops. The host controls credentials, tools, Git state, and publication.
+First, the words used here:
 
-Workflows run in an isolated Git worktree. They never write to your checkout.
+- A workflow is a fixed list of steps that runs one task from start to finish.
+- A ledger is a saved record of what a run did. It survives crashes and restarts.
+- A gate is a check that a step must pass before the run moves on.
+- A worktree is a separate copy of your project folder. The run works there, so it never changes your own files.
 
-## Quick start
+Four things you can do with a workflow:
 
-### Discover available workflows
+1. List the workflows a project has.
+2. Start a run.
+3. Watch the run.
+4. Deliver the result, when the workflow supports it.
+
+### List workflows
+
+```bash
+mivia workflows list
+```
+
+### Start a run
+
+```bash
+mivia workflow run feature-delivery --input task="add rate limiter middleware"
+```
+
+### Watch a run
+
+```bash
+mivia workflow status wfr-ABCDEF1234
+mivia workflow events wfr-ABCDEF1234
+```
+
+### Deliver a run
+
+```bash
+mivia workflow deliver wfr-ABCDEF1234 --allow-publish
+```
+
+That is the whole simple path. The rest of this guide is the detail.
+
+## Level 2: more detail
+
+### The workflow commands
+
+`mivia workflows` works with the workflow files themselves.
 
 ```bash
 mivia workflows list                     # list all .mivia/workflows/*.toml
 mivia workflows show feature-delivery     # compiled details for one workflow
 mivia workflows validate                  # validate all workflow files
 mivia workflows validate feature-delivery # validate one workflow file
-mivia workflows explain feature-delivery  # step/transition summary
+mivia workflows explain feature-delivery  # step and transition summary
 ```
 
-### Run a workflow
+`mivia workflow` works with runs. A run is one execution of a workflow.
 
 ```bash
 # Start a new run
 mivia workflow run feature-delivery --input task="add rate limiter middleware"
+
+# List runs
+mivia workflow runs
+mivia workflow runs --status running --limit 20
 
 # Resume an interrupted run
 mivia workflow resume wfr-ABCDEF1234
 
 # Force-resume a run held by a stale process
 mivia workflow resume wfr-ABCDEF1234 --force
-```
 
-### Monitor a running workflow
-
-```bash
 # Deep status (active step, attempts, loops, delivery, approvals)
 mivia workflow status wfr-ABCDEF1234
 
@@ -43,45 +82,23 @@ mivia workflow status wfr-ABCDEF1234
 mivia workflow events wfr-ABCDEF1234
 mivia workflow events wfr-ABCDEF1234 --limit 20 --offset 0
 
-# Inspect one step attempt (validated output, evidence, transition)
-mivia workflow inspect wfr-ABCDEF1234 plan 1
-```
-
-### List all workflow runs
-
-```bash
-mivia workflows list                          # workflows in .mivia/workflows/
-```
-
-Workflow runs are tracked in the durable ledger. Use the agent tools
-(`workflow_list_runs`, `workflow_status`, `workflow_events`, `workflow_inspect`)
-from within an agent session to query run state without leaving the chat.
-
-### Approve or reject a human gate
-
-```bash
-# Human gate steps require explicit approval or rejection
+# Approve or reject a human gate
 mivia workflow approve wfr-ABCDEF1234 approval-1 --actor operator
 mivia workflow reject wfr-ABCDEF1234 approval-1 --actor operator --reason "incomplete"
-```
 
-### Deliver a completed workflow
-
-```bash
-# Deliver a pull request (requires explicit publish grant)
+# Deliver a completed run (requires explicit publish grant)
 mivia workflow deliver wfr-ABCDEF1234 --allow-publish
 
-# A run without --allow-publish finishes as delivery_pending
+# Cancel a running or waiting run
+mivia workflow cancel wfr-ABCDEF1234
+
+# Clean up a terminal run
+mivia workflow cleanup wfr-ABCDEF1234
 ```
 
-### Cancel or clean up
+A run without `--allow-publish` finishes as `delivery_pending`. It stays there until someone delivers it with the grant.
 
-```bash
-mivia workflow cancel wfr-ABCDEF1234    # cancel a running or waiting run
-mivia workflow cleanup wfr-ABCDEF1234   # clean up a terminal run
-```
-
-## Shared flags
+### Shared flags
 
 | Flag | Applies to | Default |
 |------|------------|---------|
@@ -89,11 +106,34 @@ mivia workflow cleanup wfr-ABCDEF1234   # clean up a terminal run
 | `--config <path>` | `workflow *` commands | user default |
 | `--force` | `workflow resume` | false |
 
-## Agent tools
+### Worktrees
+
+A worktree is a separate copy of your project folder. A write-capable run works in a worktree. Your own files never change. mivia gives each worktree branch a prefix from `[worktrees].branch_prefix`. The default is `mivia/`.
+
+```bash
+# Create a worktree with a branch, for example mivia/fix
+mivia worktree create fix
+
+# Create a worktree from a specific branch
+mivia worktree create fix --branch my-base
+
+# List worktrees
+mivia worktree list
+
+# Remove a worktree
+mivia worktree remove fix
+
+# Adopt an existing worktree that mivia does not manage yet
+mivia worktree adopt fix
+```
+
+`worktree adopt` takes a worktree that already exists and brings it under mivia's management. `worktree remove` keeps the branch. It removes the worktree folder only. See [Configuration](config.md#worktree-branches) for the prefix rules.
+
+### Agent tools
 
 When `.mivia/workflows/` exists, seven agent tools become available. The model can call these to start, monitor, inspect, deliver, and cancel workflow runs from within a chat session.
 
-### Write tools
+Write tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -101,7 +141,7 @@ When `.mivia/workflows/` exists, seven agent tools become available. The model c
 | `workflow_deliver` | Deliver a `delivery_pending` run |
 | `workflow_cancel` | Cancel a running or waiting run |
 
-### Read tools
+Read tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -110,7 +150,9 @@ When `.mivia/workflows/` exists, seven agent tools become available. The model c
 | `workflow_events` | Ordered audit trail for one run (paginated) |
 | `workflow_inspect` | One step attempt detail (output, evidence, transition) |
 
-### workflow_run
+`workflow_inspect` is an agent tool. The CLI has no inspect subcommand. To see a step attempt from the CLI, use `workflow status` for the attempt status and `workflow events` for the trail.
+
+#### workflow_run
 
 Start a new run or resume an interrupted run.
 
@@ -123,9 +165,9 @@ Start a new run or resume an interrupted run.
 | `run_id` | string | yes (resume) | Existing run ID to resume |
 | `force` | boolean | no | Clear a stale execution claim when resuming |
 
-Returns: `run_id`, `status`, `workflow` name, `resumed` flag.
+Returns: `run_id`, `status`, workflow name, and `resumed` flag.
 
-### workflow_status
+#### workflow_status
 
 Deep status for one workflow run.
 
@@ -135,7 +177,7 @@ Deep status for one workflow run.
 
 Returns: run metadata, active step, version, timestamps, base commit, worktree path, all attempts with their status and transition target, loop iteration counts, delivery records, and approval records.
 
-### workflow_events
+#### workflow_events
 
 Ordered audit trail for one workflow run.
 
@@ -145,9 +187,9 @@ Ordered audit trail for one workflow run.
 | `limit` | integer | no | Maximum events to return (default: 50) |
 | `offset` | integer | no | Events to skip from start (default: 0) |
 
-Returns: run ID, event array with sequence number, timestamp, kind, and detail summary, plus pagination metadata.
+Returns: run ID, an event array with sequence number, timestamp, kind, and detail summary, plus pagination metadata.
 
-### workflow_inspect
+#### workflow_inspect
 
 Inspect one step attempt.
 
@@ -159,7 +201,7 @@ Inspect one step attempt.
 
 Returns: step attempt status, coordinator run and task references, validated output JSON, evidence selection, and transition decision.
 
-### workflow_list_runs
+#### workflow_list_runs
 
 List active and historical workflow runs.
 
@@ -169,9 +211,9 @@ List active and historical workflow runs.
 | `limit` | integer | no | Maximum runs to return (default: 50) |
 | `offset` | integer | no | Runs to skip from start (default: 0) |
 
-Returns: run array with ID, workflow name, status, age, and start timestamp, plus pagination metadata.
+Returns: a run array with ID, workflow name, status, age, and start timestamp, plus pagination metadata.
 
-### workflow_deliver
+#### workflow_deliver
 
 Deliver a completed workflow run that is waiting for publication.
 
@@ -182,23 +224,80 @@ Deliver a completed workflow run that is waiting for publication.
 
 The tool refuses delivery without explicit `allow_publish=true`. This permission is never implicit. An eligible run without the grant finishes as `delivery_pending` until delivery is called with the grant.
 
-### workflow_cancel
+#### workflow_cancel
 
-Cancel a running or waiting workflow run. Idempotent: canceling an already-terminal run is a no-op.
+Cancel a running or waiting workflow run. Canceling an already-terminal run is a no-op.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `run_id` | string | yes | Workflow run ID |
 
-`delivery_pending` runs must be delivered or cleaned up first; cancel is refused for those.
+`delivery_pending` runs must be delivered or cleaned up first. Cancel is refused for those.
 
-## Authoring a workflow
+### Observability
 
-### File location and format
+Three levels of observability:
 
-Workflow files are TOML, located at `.mivia/workflows/<name>.toml`. Maximum file size is 64 KiB.
+| Level | How to look | What you see |
+|-------|-------------|--------------|
+| Status | `workflow_status` or CLI `workflow status` | Active step, attempts, loops, delivery |
+| Audit trail | `workflow_events` or CLI `workflow events` | Ordered events with timestamps |
+| Deep inspect | `workflow_inspect` (agent tool) | Validated output, evidence, transition decision |
 
-### Top-level fields
+### The shipped workflow: feature-delivery
+
+The repository ships one workflow named `feature-delivery`. It runs a full plan, review, implement, and verify cycle:
+
+```mermaid
+flowchart TD
+    plan --> plan_review
+    plan_review -->|approved| plan_tests
+    plan_review -->|changes requested| plan
+    plan_tests --> test_plan_review
+    test_plan_review -->|approved| implement
+    test_plan_review -->|changes requested| plan_tests
+    implement --> review
+    review -->|approved| review_integration
+    review -->|changes requested| implement
+    review_integration -->|approved| test_validate
+    review_integration -->|changes requested| implement
+    test_validate -->|passed| verify
+    test_validate -->|failed| repair_tests
+    repair_tests --> review
+    verify -->|passed| code_validate
+    verify -->|failed| repair_verify
+    repair_verify --> review
+    code_validate -->|passed| preflight_validate
+    code_validate -->|failed| repair_final
+    repair_final --> review
+    preflight_validate -->|passed| preflight_structure
+    preflight_validate -->|failed| repair_preflight
+    repair_preflight --> review
+    preflight_structure -->|passed| success
+    preflight_structure -->|failed| repair_preflight_structure
+    repair_preflight_structure --> review
+    success -->|draft PR| delivery
+```
+
+Look at the right side of the diagram. Three gates run the tests and checks. Each failed gate sends the run back for repair. The repairs feed into review again.
+
+The evidence gates use fixed verifier profiles:
+
+| Gate | What it runs |
+|------|-------------|
+| `test_validate` | `go test ./...` |
+| `verify` | `go vet ./...` and `go build ./cmd/mivia` |
+| `code_validate` | `go test -race ./...` |
+| `preflight_validate` | `python3 scripts/validate_invariants.py` |
+| `preflight_structure` | `python3 scripts/check_go_structure.py --strict --all` |
+
+The delivery policy is a draft pull request to GitHub `master`. It requires `--allow-publish`.
+
+### Authoring a workflow
+
+A workflow file is TOML, located at `.mivia/workflows/<name>.toml`. The maximum file size is 64 KiB.
+
+Top-level fields:
 
 ```toml
 version = 1
@@ -207,9 +306,7 @@ description = "What this workflow does"
 initial_step = "plan"
 ```
 
-### Inputs
-
-Declare typed inputs that callers must supply.
+Inputs:
 
 ```toml
 [inputs.task]
@@ -218,9 +315,7 @@ required = true
 max_bytes = 12000
 ```
 
-### Limits
-
-Bound the overall run duration and step attempts.
+Limits:
 
 ```toml
 [limits]
@@ -228,16 +323,7 @@ max_step_attempts = 16    # 0-100
 max_duration_seconds = 10800  # 0-86400
 ```
 
-### Steps
-
-Four step kinds:
-
-| Kind | Purpose |
-|------|---------|
-| `agent` | Execute an agent task |
-| `agent_gate` | Independent review by an agent |
-| `evidence_gate` | Deterministic verification by a registered verifier |
-| `human_gate` | Require human approval or rejection |
+Steps:
 
 ```toml
 [[steps]]
@@ -275,20 +361,13 @@ context = [
 ]
 ```
 
-### Transitions
-
-Transitions route based on step completion status and output schema fields.
+Transitions route based on step completion status and output schema fields:
 
 ```toml
 [[transitions]]
 from = "plan"
 to = "plan_review"
 match = { status = "succeeded" }
-
-[[transitions]]
-from = "plan_review"
-to = "plan_tests"
-match = { status = "succeeded", output = { verdict = "approved" } }
 
 [[transitions]]
 from = "plan_review"
@@ -309,9 +388,7 @@ max_iterations = -1
 
 A transition matches only a closed attempt status and declared output-schema fields. Zero or multiple matches fails closed.
 
-### Delivery
-
-Optional pull-request delivery at the terminal `success` state.
+Delivery:
 
 ```toml
 [delivery]
@@ -334,128 +411,33 @@ commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs
 
 Publication requires the invoking user to grant `--allow-publish`. Without the grant, an eligible run finishes as `delivery_pending`.
 
-## Execution flow
+### Trust
 
-### Compilation
+A workflow file is untrusted repository input. Anyone can edit it. It may name an existing agent or verifier, but it cannot define or override:
 
-Before a run starts, the compiler performs eight validation checks:
+- a model provider, endpoint, credential, or tool allowlist;
+- a shell command, URL, environment variable, or secret;
+- a Git base target outside runtime policy;
+- publication permission.
 
-1. Graph reachability: all steps reachable from the initial step
-2. Transition overlaps: no duplicate match criteria per source step
-3. Loop constraints: iteration bounds are valid
-4. Cycle detection: no unbounded cycles without global limits
-5. Context bindings: valid references, no path traversal, byte bounds
-6. Verifier names: valid format for evidence gate steps
-7. On-failure targets: reference declared steps or terminals
-8. Delivery config: valid kind, mode, provider, and base
+A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 
-### Run lifecycle
+### How a run is checked before it starts
 
-```mermaid
-flowchart TD
-    A["TOML definition"] --> B["Compile and validate"]
-    B --> C["Immutable run snapshot"]
-    C --> D["Isolated Git worktree"]
-    D --> E["Execute steps sequentially"]
-    E --> F{"Structural transition"}
-    F -->|loop| E
-    F -->|next step| E
-    F -->|success| G{"Delivery policy"}
-    G -->|none| H["Run complete"]
-    G -->|draft/ready + allow_publish| I["Pull request created"]
-    G -->|draft/ready, no grant| J["delivery_pending"]
-    F -->|failure| K["Run failed"]
-```
+Before a run starts, the compiler checks the workflow file:
 
-A loop is a fresh, numbered step attempt. It is never a coordinator DAG back-edge.
-
-### Run isolation
-
-A write-capable run creates a host-owned Git worktree at a recorded base commit. The run never writes to your checkout. Resume uses the immutable snapshot, not a changed workspace file.
+1. All steps are reachable from the initial step.
+2. No duplicate match criteria per source step.
+3. Loop iteration bounds are valid.
+4. No unbounded cycles without global limits.
+5. Context bindings are valid, with no path traversal, and byte bounds hold.
+6. Verifier names are valid for evidence gate steps.
+7. On-failure targets reference declared steps or terminals.
+8. Delivery config is valid: kind, mode, provider, and base.
 
 ### Resume
 
-Interrupted runs (process crash, terminal close, or explicit cancel) can be resumed from the durable ledger snapshot. The snapshot contains the compiled workflow, templates, schemas, inputs, and resolved agent digests. Use `--force` to clear a stale execution claim.
-
-### Observability
-
-Three levels of observability:
-
-| Level | Tool | Detail |
-|-------|------|--------|
-| Status | `workflow_status` / CLI `status` | Active step, attempts, loops, delivery |
-| Audit trail | `workflow_events` / CLI `events` | Ordered events with timestamps |
-| Deep inspect | `workflow_inspect` / CLI `inspect` | Validated output, evidence, transition decision |
-
-## Trust model
-
-A workflow file is untrusted repository input. It may name an existing agent or verifier, but it cannot define or override:
-
-- A model provider, endpoint, credential, or tool allowlist
-- A shell command, URL, environment variable, or secret
-- A Git base target outside runtime policy
-- Publication permission
-
-A reviewer must return schema-valid structured evidence. Prose is never a routing signal.
-
-## Shipped workflow: feature-delivery
-
-The `feature-delivery` workflow implements a full ADLC cycle:
-
-```mermaid
-flowchart TD
-    plan --> plan_review
-    plan_review -->|approved| plan_tests
-    plan_review -->|changes_requested| plan
-    plan_tests --> test_plan_review
-    test_plan_review -->|approved| implement
-    test_plan_review -->|changes_requested| plan_tests
-    implement --> review
-    review -->|approved| test_validate
-    review -->|changes_requested| implement
-    test_validate -->|passed| verify
-    test_validate -->|failed| repair_tests
-    repair_tests --> review
-    verify -->|passed| code_validate
-    verify -->|failed| repair_verify
-    repair_verify --> review
-    code_validate -->|passed| success
-    code_validate -->|failed| repair_final
-    repair_final --> review
-    success -->|draft PR| delivery
-```
-
-### Steps
-
-| Step | Kind | Purpose |
-|------|------|---------|
-| `plan` | agent | Create implementation plan |
-| `plan_review` | agent_gate | Independent plan review (secure-change) |
-| `plan_tests` | agent | Plan test coverage |
-| `test_plan_review` | agent_gate | Independent test plan review |
-| `implement` | agent | Implement with tests |
-| `review` | agent_gate | Independent code review |
-| `repair_tests` | agent | Fix failing tests |
-| `repair_verify` | agent | Fix verification failures |
-| `repair_final` | agent | Fix final gate failures |
-| `test_validate` | evidence_gate | Run `go-test` verifier |
-| `verify` | evidence_gate | Run `go-verify` verifier |
-| `code_validate` | evidence_gate | Run `go-final` verifier |
-
-### Repair loops
-
-Six repair loops with unlimited iterations (bounded by `max_step_attempts = 16`):
-
-1. `plan_review_repair`: plan review → plan (plan changes requested)
-2. `test_plan_review_repair`: test plan review → plan tests
-3. `review_repair`: code review → implement (code changes requested)
-4. `test_repair`: test validation → repair tests → review
-5. `verify_repair`: verify → repair verify → review
-6. `final_repair`: final validation → repair final → review
-
-### Delivery
-
-Mode: `draft` PR to GitHub `master`. Requires `--allow-publish`.
+Interrupted runs can be resumed from the durable ledger snapshot. The snapshot contains the compiled workflow, templates, schemas, inputs, and resolved agent digests. Use `--force` to clear a stale execution claim.
 
 ## See also
 

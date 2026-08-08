@@ -1,88 +1,82 @@
 # Configuration
 
-## Files
+## Level 1: in plain words
 
-| Kind | Purpose | Secrets? |
-|------|---------|----------|
-| TOML config | Provider, model, paths | No |
-| Env file / process env | API keys | Yes |
+Configuration is how you tell mivia which AI provider to use and how to behave.
 
-### Config search order
+You need two things:
 
-1. `$MIVIA_CONFIG`
-2. `./.mivia/mivia.toml`
-3. `~/.mivia/mivia.toml`
+1. A settings file. The file is called `mivia.toml`. It holds choices such as which provider to use and which models to offer.
+2. An API key. An API key is a secret code that lets a program use an AI service. The key lives in your environment, never in the settings file.
 
-### Env file search order (if root-level `env_file` is unset)
+The simple path has three steps.
+
+Step 1: set your API key in the environment.
+
+```bash
+export DEEPSEEK_API_KEY=sk-REPLACE-ME
+```
+
+Step 2: check your setup.
+
+```bash
+mivia doctor
+```
+
+`mivia doctor` prints whether mivia can find your key. It never prints the key value.
+
+Step 3: start a chat.
+
+```bash
+mivia chat
+```
+
+That is all you need for the default setup. The default provider is DeepSeek and the default model is `deepseek-v4-flash`. A provider is a company that runs an AI service. A model is the AI brain the provider runs.
+
+## Level 2: more detail
+
+### Where mivia looks for settings
+
+mivia reads the first settings file it finds, in this order:
+
+1. The file named by `$MIVIA_CONFIG`.
+2. `./.mivia/mivia.toml` (the project folder).
+3. `~/.mivia/mivia.toml` (your home folder).
+
+A TOML file is a text file with a simple format for settings.
+
+### Where mivia looks for the API key
+
+API keys live in an env file or in the process environment. An env file is a text file with lines in the form `NAME=value`. The search order for the env file is:
 
 1. `./.env`
 2. `~/.mivia/.env`
 
-Process environment variables always override values from the env file.
+Process environment variables always win over the env file.
 
-The workspace `.env` deliberately stays beside the repository files at
-`./.env`: direnv, Docker Compose, and other dotenv tooling already use that
-convention. Only the user-level env file lives inside the `~/.mivia/` namespace.
+The workspace `.env` stays beside the project files at `./.env`. Tools such as direnv and Docker Compose already use that location. Only the user-level env file lives in `~/.mivia/`.
 
-## Defaults
+### Defaults
 
 | Setting | Default |
 |---------|---------|
 | Provider | `deepseek` |
-| DeepSeek example model | `deepseek-v4-flash` (declare it explicitly) |
-| DeepSeek advanced example | `deepseek-v4-pro` (declare it, then use `default_model` or `--model`) |
+| DeepSeek example model | `deepseek-v4-flash` (declare it in your settings) |
+| DeepSeek advanced example | `deepseek-v4-pro` (declare it, then set `default_model` or use `--model`) |
 | OpenRouter example | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
 | ZAI example | `glm-5.2` (declare it under `providers.zai`) |
 
-## Worktree branches
+### Set up a provider
 
-Mivia creates linked worktree branches with the `[worktrees].branch_prefix`
-setting. The default is `"mivia/"`. For example, `mivia worktree create fix`
-creates the branch `mivia/fix`.
-
-```toml
-[worktrees]
-# Branches for linked worktrees use this prefix.
-branch_prefix = "mivia/"
-```
-
-Set a namespace prefix that ends with `/` and forms a valid Git branch name
-when Mivia adds a worktree name. The prefix must not be empty. Do not use
-spaces, control characters, Git ref characters such as `~`, `^`, `:`, `?`,
-`*`, `[`, or `\\`, or invalid ref sequences such as `..`, `//`, and `@{`.
-Each path component must be non-empty and must not start with `.` or end with
-`.lock`.
-
-The CLI and TUI always resolve this setting from
-`<main-repository>/.mivia/mivia.toml`. A command run in a linked worktree uses
-the main repository setting. It does not use a config file in the linked
-worktree or `MIVIA_CONFIG` for worktree branch operations.
-
-Mivia preserves a removed worktree branch. This policy avoids destructive
-branch deletion when other worktrees use the branch. If you create a worktree
-with the same name again, Mivia reuses the retained branch that has the current
-configured prefix. Mivia does not reset that branch.
-
-If you change the prefix, branches with the old prefix remain. Remove them
-manually only after you confirm that no worktree needs them. A worktree with a
-given name uses the branch with the current configured prefix.
-
-## Set up a provider
-
-Set the provider API key in the process environment or an env file, then use
-`mivia doctor` to confirm that mivia can find it. `doctor` prints key presence,
-never its value.
+Set the provider API key in the process environment or an env file. Then run `mivia doctor` to confirm that mivia can find it.
 
 ```bash
-export DEEPSEEK_API_KEY=...
+export DEEPSEEK_API_KEY=sk-REPLACE-ME
 mivia doctor
 mivia chat -p "hi"
 ```
 
-### From a source checkout
-
-For a source checkout, keep the project config in the workspace namespace and
-the workspace credentials file at the repository root:
+For a source checkout, keep the project settings in the workspace namespace. Keep the workspace credentials file at the repository root.
 
 ```bash
 mkdir -p .mivia
@@ -116,306 +110,152 @@ api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
 
-z.ai serves two OpenAI-compatible endpoints and a key works on exactly one of
-them. Pay-as-you-go keys use `https://api.z.ai/api/paas/v4`; GLM Coding Plan
-keys use `https://api.z.ai/api/coding/paas/v4`. A Coding Plan key on the
-pay-as-you-go endpoint has no balance to spend, so every request fails with
-`code 1113` regardless of the model, and models the plan does not serve on that
-endpoint fail earlier with `code 1211` or `1212`. mivia reports the code and
-what it means; it never forwards z.ai's own error text, which echoes request
-content back.
+### Any OpenAI-compatible provider
+
+mivia works with any provider that uses the OpenAI-compatible API. Examples include OpenAI, xAI (Grok), and Kimi (Moonshot AI). Add a `[providers.<name>]` block in the same shape.
+
+```toml
+[providers.openai]
+models = [
+  { name = "gpt-4o-mini", context_window_tokens = 128000 },
+  { name = "gpt-4o", context_window_tokens = 128000 },
+]
+default_model = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"
+base_url = "https://api.openai.com/v1"
+```
+
+```toml
+[providers.xai]
+models = [{ name = "grok-code-fast-1", context_window_tokens = 256000 }]
+default_model = "grok-code-fast-1"
+api_key_env = "XAI_API_KEY"
+base_url = "https://api.x.ai/v1"
+```
+
+```toml
+[providers.kimi]
+models = [{ name = "kimi-k3", context_window_tokens = 1048576 }]
+default_model = "kimi-k3"
+api_key_env = "MOONSHOT_API_KEY"
+base_url = "https://api.moonshot.ai/v1"
+```
+
+z.ai serves two OpenAI-compatible endpoints. A key works on exactly one of them. Pay-as-you-go keys use `https://api.z.ai/api/paas/v4`. GLM Coding Plan keys use `https://api.z.ai/api/coding/paas/v4`. A Coding Plan key on the pay-as-you-go endpoint fails every request with code `1113`. mivia reports the code and what it means. It never forwards z.ai's own error text.
 
 ### Explicit model catalog
 
-Every provider must declare a non-empty `models` array. Each entry is an object
-with a provider-local `name`, `context_window_tokens`, and optional positive
-`max_output_tokens`. The array is the
-complete selectable catalog: `--model`, `/model`, the TUI picker, and resumed
-sessions may select only its entries. `default_model` sets the startup default
-and must be in `models`; otherwise the first entry is used.
+Every provider must declare a non-empty `models` list. Each entry has a provider-local `name`, a `context_window_tokens` value, and an optional positive `max_output_tokens` value. The list is the complete catalog. `--model`, `/model`, the TUI picker, and resumed sessions may select only its entries. `default_model` sets the startup default and must be in `models`. If it is not, the first entry is used.
 
-Omitting `models`, using an empty array, or relying on a provider registry
-default is invalid. mivia does not discover models remotely or accept arbitrary
-model names. Model IDs are kept intact, including slash-containing IDs such as
-`openai/gpt-4o-mini`; duplicate IDs are allowed across providers but not within
-one provider. Providers without credentials remain visible in the catalog and
-are disabled for selection.
+An empty list, a missing list, or a remote model registry is invalid. mivia does not discover models remotely and does not accept arbitrary model names. Model IDs stay intact, including slash-containing IDs such as `openai/gpt-4o-mini`. Duplicate IDs are allowed across providers but not within one provider. Providers without credentials stay visible in the catalog but are disabled for selection.
 
-`context_window_tokens` is the model's physical prompt-plus-completion limit.
-When set, `max_output_tokens` is the model's response ceiling; it must be below
-the context window. The usable prompt budget reserves the tighter of this value
-and `[chat].max_tokens`, further limited by `max_prompt_tokens` when set.
-`config show` and `doctor` display
-each catalog entry as `provider/model:context_window_tokens` and show the
-active usable prompt budget.
+`context_window_tokens` is the model's physical prompt-plus-completion limit. `max_output_tokens` is the response ceiling and must stay below the context window. The usable prompt budget keeps the tighter of this value and `[chat].max_tokens`, further limited by `max_prompt_tokens` when set. `config show` and `doctor` show each catalog entry as `provider/model:context_window_tokens` and the active usable prompt budget.
 
 ```bash
-DEEPSEEK_API_KEY=...
-OPENROUTER_API_KEY=...
-ZAI_API_KEY=...
+DEEPSEEK_API_KEY=sk-REPLACE-ME
+OPENROUTER_API_KEY=sk-REPLACE-ME
+ZAI_API_KEY=sk-REPLACE-ME
 ```
 
 ### Installed binary
 
-Create `~/.mivia/mivia.toml` and, if desired, `~/.mivia/.env` using the
-settings above. Leave the root-level `env_file` unset to use the default
-`~/.mivia/.env`, or set it explicitly to that path. Alternatively, set the API
-key in the process environment and run with the built-in defaults. There is no
-`config init` command.
+Create `~/.mivia/mivia.toml` and, if you want, `~/.mivia/.env` with the settings above. Leave the root-level `env_file` unset to use the default `~/.mivia/.env`. Or set the API key in the process environment and run with the built-in defaults. There is no `config init` command.
 
-## File-backed agent definitions
+### Worktree branches
 
-Named agents are separate TOML files, one definition per file:
+mivia creates linked worktree branches with the `[worktrees].branch_prefix` setting. The default is `"mivia/"`. For example, `mivia worktree create fix` creates the branch `mivia/fix`.
 
-- user-owned definitions: `~/.mivia/agents/<name>.toml`
-- workspace definitions: `<workspace>/.mivia/agents/<name>.toml`
-
-Create those two directories as needed and copy definitions into the matching
-destination. The filename is canonical: `<name>.toml` must contain the same
-lowercase `name`. Agent files are not inline `[agents]` configuration.
-
-The accepted schema is:
-
-| Field | Meaning and omission semantics |
-|---|---|
-| `name` | Required; must match the filename and pass the lowercase name rules. |
-| `description` | Optional bounded display text. |
-| `inherits` | Optional same-origin parent; only file-backed agents may be parents. |
-| `tools` | Optional full allowlist; mutually exclusive with `tools_add`/`tools_remove`. |
-| `tools_add`, `tools_remove` | Optional deltas applied to the inherited tool list. |
-| `disallowed_tools` | Optional additional denylist applied before the allowlist. |
-| `skills` | Omitted = all trusted skills; `[]` = none; a list = only those names. |
-| `model` | Optional model identifier for spawned tasks, validated against the active provider catalog; it is not root model selection or a provider catalog. |
-| `max_turns` | Omitted = caller/session default; `0` = unlimited; positive = cap. |
-| `system_prompt` | Optional authored prompt text; workspace-origin prompt text remains subject to the user gate. |
-
-An omitted root `tools` field resolves to the complete known workspace-tool
-catalogue unless trusted `require_explicit_tools` is enabled. `tools = []` is
-an explicit empty allowlist. The default `fail_on_empty_toolset` guardrail
-rejects an empty effective set. Unknown keys, unknown tools or skills,
-filename/name mismatches, invalid inheritance, and unsafe file boundaries fail
-closed rather than producing a selectable definition.
-
-User definitions win when a workspace definition has the same name. Workspace
-agent files are still discovered when `load_workspace_config = false`; that
-trusted user-only gate controls workspace `[chat]`/`[subagents]` prompts and
-project skill handlers, not agent-file discovery. Inheritance cannot cross the
-user/workspace trust boundary.
-
-## Commands
-
-```bash
-mivia doctor          # paths + key presence (no secret values)
-mivia config show     # resolved non-secret settings
-mivia chat -p "hi"
-mivia chat --model deepseek-v4-pro -p "harder question"
-mivia chat --provider openrouter --model openai/gpt-4o-mini -p "hi"
-mivia chat --provider openrouter -p "hi"
-mivia chat --provider zai -p "hi"
+```toml
+[worktrees]
+branch_prefix = "mivia/"
 ```
 
-## Tool safety policy
+A worktree is a separate copy of the project folder. The prefix must end with `/` and form a valid Git branch name when mivia adds a worktree name. The prefix must not be empty. Do not use spaces, control characters, or Git ref characters such as `~`, `^`, `:`, `?`, `*`, `[`, or `\`. Do not use invalid ref sequences such as `..`, `//`, and `@{`. Each path component must be non-empty and must not start with `.` or end with `.lock`.
 
-`[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only
-source of the file-tool secret filter - nothing is compiled into the binary, so
-an unconfigured workspace filters nothing. Recommended starting values ship in
-`.mivia/mivia.toml.example`. Patterns match case-insensitively as substrings of
-the workspace-relative path; exceptions take precedence.
+The CLI and TUI always read this setting from `<main-repository>/.mivia/mivia.toml`. A command run in a linked worktree uses the main repository setting. It does not use a config file in the linked worktree or `MIVIA_CONFIG` for worktree branch operations.
 
-This guards against accidental exposure, not against a determined agent:
-`run_command` can build a path at runtime and reach the file anyway. With these
-patterns unset, no paths are filtered.
+mivia preserves a removed worktree branch. This avoids destructive branch deletion when other worktrees use the branch. If you create a worktree with the same name again, mivia reuses the retained branch that has the current configured prefix. mivia does not reset that branch.
 
-## Allowlists are configuration-only
+If you change the prefix, branches with the old prefix remain. Remove them manually only after you confirm that no worktree needs them.
 
-Neither the `run_command` program allowlist nor the child-process environment
-allowlist is compiled into the binary. `[tools].run_allowlist` and
-`[tools].env_allowlist` are the only sources: **with them unset, `run_command`
-executes nothing and child processes inherit no environment.**
+### Named agents
 
-Recommended multi-ecosystem values ship in `.mivia/mivia.toml.example` - copy it
-and trim it to what your project actually needs. The example includes powerful
-programs, including shells and network clients; remove anything your workspace
-does not need. In `env_allowlist`, a trailing
-`*` declares a prefix rule (`"GIT_*"`). Because there is no built-in list to
-extend or replace, `run_allowlist_only` and `env_allowlist_only` behave
-identically to their plain counterparts.
+Named agents are separate TOML files, one definition per file. User-owned definitions live in `~/.mivia/agents/<name>.toml`. Workspace definitions live in `<workspace>/.mivia/agents/<name>.toml`. Create those two directories as needed. The filename is canonical: `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
 
-`[tools].env_allow_keyword_blocklist` is the companion subtractive filter:
-a variable admitted by a `*` prefix rule is dropped when its name contains any
-listed substring (`SECRET`, `TOKEN`, `PASSWORD`, `API_KEY` in the example).
-Exact `env_allowlist` entries are never dropped, so a build that genuinely
-needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything
-they match.
+### Tool safety policy
 
-## Redaction and persisted orchestration history
+`[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only source of the file-tool secret filter. Nothing is compiled into the binary, so an unconfigured workspace filters nothing. Recommended starting values ship in `.mivia/mivia.toml.example`. Patterns match case-insensitively as substrings of the workspace-relative path. Exceptions take precedence.
 
-`[privacy].redaction_patterns` and `[privacy].redaction_key_names` control
-redaction in displayed tool previews, output, and event bodies. They do not
-redact SQLite task inputs or result content at rest. The example configuration
-provides starting patterns; adapt and test them for your workspace.
+This guards against accidental exposure, not against a determined agent. `run_command` can build a path at runtime and reach the file anyway. With these patterns unset, no paths are filtered.
 
-`[subagents].store_backend = "sqlite"` persists orchestration state. By
-default the database is in the current user's cache directory under a
-workspace-derived name. Set `store_path` to choose a different location.
+### Allowlists are configuration-only
 
-That state includes **each task's full input payload**, recorded for recovery
-support and execution history.
+Neither the `run_command` program allowlist nor the child-process environment allowlist is compiled into the binary. `[tools].run_allowlist` and `[tools].env_allowlist` are the only sources. With them unset, `run_command` executes nothing and child processes inherit no environment.
 
-Two consequences worth knowing before enabling it:
+Recommended values ship in `.mivia/mivia.toml.example`. Copy it and trim it to what your project needs. The example includes powerful programs, including shells and network clients. Remove anything your workspace does not need. In `env_allowlist`, a trailing `*` declares a prefix rule (for example, `"GIT_*"`). Because there is no built-in list to extend or replace, `run_allowlist_only` and `env_allowlist_only` behave identically to their plain counterparts.
 
-- Task inputs and results are written unredacted at rest, even when `[privacy]`
-  patterns are configured. Treat the chosen store location as sensitive
-  workspace data and do not put secrets in task prompts.
-- Authority is deliberately *not* stored. Permissions, scopes, roles and caller
-  identity are never written to the ledger and are never restored from it: a
-  resumed run runs under the identity and permissions of whoever resumes it, so
-  editing the store file cannot grant privilege. Resource limits (timeout,
-  budget, depth) are restored but clamped to your current configuration.
+`[tools].env_allow_keyword_blocklist` is the companion subtractive filter. A variable admitted by a `*` prefix rule is dropped when its name contains any listed substring. The example lists `SECRET`, `TOKEN`, `PASSWORD`, and `API_KEY`. Exact `env_allowlist` entries are never dropped, so a build that needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything they match.
 
-## Interactive turn ceiling
+### Redaction and persisted orchestration history
 
-`[chat] max_steps` bounds one turn's agent loop. Unset uses the built-in default
-of 100 steps. **`0` means unlimited** (this is the default when unset) `/steps` overrides it for the current session.
+`[privacy].redaction_patterns` and `[privacy].redaction_key_names` control redaction in displayed tool previews, output, and event bodies. They do not redact SQLite task inputs or result content at rest. The example configuration provides starting patterns. Adapt and test them for your workspace.
 
-## Tool result ceiling
+`[subagents].store_backend = "sqlite"` persists orchestration state. By default the database is in the current user's cache directory under a workspace-derived name. Set `store_path` to choose a different location.
 
-`[tools] max_tool_result_bytes` caps each tool result stored in agent-loop
-history, in bytes. **Default is 0 = uncapped**: the per-tool budgets
-(`max_read_bytes`, `max_output_bytes`, tool-declared limits) are the bound.
-The one knob governs both the interactive session loop and nested sub-agent
-loops, so a sub-agent never sees a different ceiling than the session that
-spawned it.
+That state includes each task's full input payload, recorded for recovery support and execution history.
 
-Set a positive value (minimum 1024; smaller positive values are a config
-error) when running small-context models that cannot afford large tool
-outputs in history. When a cap is set, `read_file` pre-clamps its own byte
-budget below it so its `… lines X–Y of Z` window header stays honest, and the
-code-navigation tools (`find_references`, `list_symbols`, `go_to_definition`)
-tighten their JSON budgets to fit.
+Two consequences worth knowing before you enable it:
 
-Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded
-interactive-loop ceiling.
+- Task inputs and results are written unredacted at rest, even when `[privacy]` patterns are configured. Treat the chosen store location as sensitive workspace data. Do not put secrets in task prompts.
+- Authority is deliberately not stored. Permissions, scopes, roles, and caller identity are never written to the ledger and never restored from it. A resumed run runs under the identity and permissions of whoever resumes it. Editing the store file cannot grant privilege. Resource limits (timeout, budget, depth) are restored but clamped to your current configuration.
 
-## Per-batch tool result budget
+### Interactive turn ceiling
 
-`[tools] batch_result_budget_bytes` bounds what **one tool batch** adds to
-history, across all of its parallel calls together. **Default is 0 = off.**
+`[chat] max_steps` bounds one turn's agent loop. Unset uses the built-in default of 100 steps. `0` means unlimited, and this is the default when unset. `/steps` overrides it for the current session.
 
-`max_tool_result_bytes` bounds each call in isolation and cannot see the
-others: when the model issues ten calls in one step, ten results each honestly
-under the per-call ceiling still land in the context together. This key is the
-only bound that sees the batch as a whole.
+### Tool result ceiling
 
-- `0` (default) - off. History is byte-for-byte what it is without the key.
-- `-1` - derive it from the model's prompt budget (a quarter of it in bytes,
-  never below 256 KiB). Inert when there is no prompt budget configured.
-- a positive value - the literal byte budget. Minimum 16384; smaller positive
-  values are a config error, because the first oversized result is re-cut to
-  that floor regardless and the bound would be a fiction.
+`[tools] max_tool_result_bytes` caps each tool result stored in agent-loop history, in bytes. Default is `0`, which means uncapped. The per-tool budgets (`max_read_bytes`, `max_output_bytes`, tool-declared limits) are the bound. The one knob governs both the interactive session loop and nested sub-agent loops, so a sub-agent never sees a different ceiling than the session that spawned it.
 
-Over-budget results are **degraded, never failed**. The call already ran and
-its side effects already happened, so its result is re-cut - or, once the
-budget is spent, replaced by a truncation notice - naming the content
-reference that holds the full body. The model pages it back with `read_output`
-when it actually needs it. The last degraded result carries a one-line status
-saying how much budget was left and how many results were degraded.
+Set a positive value (minimum 1024; smaller positive values are a config error) when running small-context models. When a cap is set, `read_file` pre-clamps its own byte budget below it, and the code-navigation tools (`find_references`, `list_symbols`, `go_to_definition`) tighten their JSON budgets to fit.
 
-What the budget does **not** charge: lifecycle-hook advisory context (it has
-its own 8 KiB bound), and truncation notices themselves. Results whose whole
-body is already smaller than the notice that would replace them are kept
-intact - error explanations are not worth trading for a pointer to
-themselves. Results from tools whose output is scrubbed after the turn
-(skill resources) are charged but never put behind a reference.
+Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded interactive-loop ceiling.
 
-The key governs the interactive session loop and nested sub-agent loops
-alike, and the budget resets per batch: cross-batch growth remains context
-compaction's job.
+### Per-batch tool result budget
 
-## Web research response bound
+`[tools] batch_result_budget_bytes` bounds what one tool batch adds to history, across all of its parallel calls together. Default is `0`, which means off.
 
-`[tools] max_tavily_response_bytes` bounds a Tavily API response body, in
-bytes. It governs the `search` tool's Tavily path and the `extract` tool.
-Default 4194304 (4 MiB).
+- `0` (default): off. History is byte-for-byte what it is without the key.
+- `-1`: derive it from the model's prompt budget (a quarter of it in bytes, never below 256 KiB). Inert when there is no prompt budget configured.
+- a positive value: the literal byte budget. Minimum 16384; smaller positive values are a config error.
 
-**Responses are never truncated.** This is not a cap on how much content
-reaches the model: nothing fetched is ever cut. The bound exists so that the
-maximum size of these tools' results is a known, finite number, which is what
-lets the dispatcher's runaway-output backstop (below) be derived high enough to
-clear an honest result. Before it existed, a single extracted page larger than
-331776 bytes was destroyed wholesale - the request was made, the credit was
-spent, and the model received `output budget exceeded` instead of the content.
+Over-budget results are degraded, never failed. The call already ran and its side effects already happened, so its result is re-cut. Once the budget is spent, the result is replaced by a truncation notice that names the content reference holding the full body. The model pages it back with `read_output` when it needs it.
 
-The number is enforced in two places and declared once:
+What the budget does not charge: lifecycle-hook advisory context (it has its own 8 KiB bound) and truncation notices themselves.
 
-- on the response body, so the read is finite;
-- on **every composed result** - the Tavily search and extract results, the
-  extract empty-content echo, and the free-engine fallback - because
-  composition does not always shrink the body it came from. `search` writes a
-  bullet per result and formats the query into a header with Go's `%q`, both of
-  which can outgrow their source bytes, and the extract echo is sized by the
-  request rather than the response.
+### Web research response bound
 
-A result over the bound is **refused with an explicit error naming the bound
-and this key**, never silently cut short and never quietly replaced by
-fallback search-engine results. Raise the key if you hit it.
+`[tools] max_tavily_response_bytes` bounds a Tavily API response body, in bytes. It governs the `search` tool's Tavily path and the `extract` tool. Default is 4194304 (4 MiB).
 
-Nothing on these paths is truncated. Each search result's own content reaches
-the model whole.
+Responses are never truncated. Nothing fetched is ever cut. The bound exists so that the maximum size of these tools' results is a known, finite number. A result over the bound is refused with an explicit error naming the bound and this key. Raise the key if you hit it.
 
-Unset, `0` and negative all mean "use the default". There is deliberately no
-unlimited setting: an unlimited response could not be declared to the backstop,
-and an undeclared result is exactly what the backstop destroys. Values outside
-`1024`-`67108864` are rejected at load - below the floor every response fails,
-and above the ceiling the backstop arithmetic can overflow and silently fall
-back to its 256 KiB floor while the read stayed effectively unbounded.
+Unset, `0`, and negative all mean "use the default". There is deliberately no unlimited setting. Values outside `1024`–`67108864` are rejected at load.
 
-This bound is **not** clamped by `max_tool_result_bytes`. That key caps what
-the agent loop stores; clamping the wire bound to it would turn a soft ceiling
-on stored results into a hard failure of every web search.
-
-Installs with no Tavily API key are unaffected: neither tool can reach the
-provider, so neither declares a provider-sized budget and the backstop stays
-where it was.
-
-Separately from these budgets, the tool dispatcher keeps a **per-tool output
-ceiling** derived so it can never bind below an honest tool result: the
-largest tool-declared result budget (`max_read_bytes`, `max_output_bytes`,
-`max_tavily_response_bytes`, the code-navigation tools' JSON budget) plus an
-input allowance (64 KiB, covering results that echo request input such as
-`run_command`'s argv header) plus 4096 bytes of slack for fixed tool framing
-(window headers, truncation notices), floored at 256 KiB. Raising a per-tool
-budget raises the ceiling with it.
-
-**Ceiling policy (not silent destroy):** when a tool returns more than its
-effective ceiling, honest oversize (`ceiling < size ≤ ceiling×4`) is
-**tail-truncated** at a UTF-8 boundary with an honest
-`... truncated: kept X of Y bytes` notice. Only **runaway** results
-(`size > ceiling×4`) are destroyed with `output budget exceeded`.
+This bound is not clamped by `max_tool_result_bytes`. That key caps what the agent loop stores. Installs with no Tavily API key are unaffected.
 
 ### Memory OOM backstop
 
-`[tools] memory_backstop_mb` (default **256**) is the OOM guard for tools that
-may load whole files when volume caps are uncapped (`max_read_bytes = 0`,
-etc.). It is **not** a context-cost cap. `0` or negative resolves to the
-default 256 so the guard cannot be accidentally disabled.
+`[tools] memory_backstop_mb` (default `256`) is the out-of-memory guard for tools that may load whole files when volume caps are uncapped. It is not a context-cost cap. `0` or negative resolves to the default 256 so the guard cannot be accidentally disabled.
 
 ### Bounded `run_command` capture
 
-When `max_output_bytes` is a positive bound, stdout/stderr capture keeps
-roughly **1/3 head + 2/3 tail** of the shared budget with an elision marker
-between, so compiler error tails survive. Exit-status framing is composed
-outside the capture buffer.
+When `max_output_bytes` is a positive bound, stdout and stderr capture keeps roughly one-third head and two-thirds tail of the shared budget, with an elision marker between. Compiler error tails survive.
 
 ### Durable source payloads (chunking)
 
-`[context] max_source_event_bytes` is the **chunk size** for durable source
-event payloads (not a whole-payload reject). `0` uses a built-in default chunk
-size (64 KiB). Large payloads store as an ordered chunk sequence under one
-content ref (SHA-256 of the full payload); `ReadPayload` reassembles
-byte-identical and fails closed on digest mismatch.
+`[context] max_source_event_bytes` is the chunk size for durable source event payloads, not a whole-payload reject. `0` uses a built-in default chunk size (64 KiB). Large payloads store as an ordered chunk sequence under one content ref (SHA-256 of the full payload). ReadPayload reassembles byte-identical and fails closed on digest mismatch.
 
-## Subagent knobs
+### Subagent knobs
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
@@ -424,23 +264,18 @@ byte-identical and fails closed on digest mismatch.
 | `max_fanout` | int | `0` (unlimited) | Parallel sub-tasks per level |
 | `nested_steps` | int | `0` (unlimited) | Sub-agent loop steps per turn |
 | `default_timeout_seconds` | int | `0` | Per-task orchestration timeout; `0` = safety bound (12 hours) |
-| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns (seconds); `0` = fall back to the effective orchestration default (`default_timeout_seconds` when positive, otherwise the 12-hour safety bound); the internal 15-minute HTTP transport timeout is the hard per-request ceiling regardless |
+| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns; `0` = fall back to the effective orchestration default |
 | `default_budget` | int | `0` (unlimited) | Per-task token budget |
 | `store_backend` | string | `"memory"` | Outside chat: `"memory"` (ephemeral) or `"sqlite"` (durable) |
 | `store_path` | string | platform default | One SQLite file for chat sessions, context, worktree routes, and runs |
 
-For `mivia chat`, Mivia uses one SQLite file for all durable chat state. It
-resolves `store_path` from the main repository configuration. A worktree never
-creates another chat database. When `store_path` is unset, Mivia uses the
-main repository cache path. The shipped repository config sets
-`~/.mivia/mivia-agent/context.db` for this repository. The `store_backend`
-value does not create a second chat database.
+For `mivia chat`, mivia uses one SQLite file for all durable chat state. It resolves `store_path` from the main repository configuration. A worktree never creates another chat database. When `store_path` is unset, mivia uses the main repository cache path.
 
-
-`default_request_timeout_seconds` governs the per-LLM-call timeout within a sub-agent turn. It never needs to be set below `default_timeout_seconds` (the outer orchestration timeout will cancel the turn first). When both `default_request_timeout_seconds` and `default_timeout_seconds` are `0` or absent, the effective request timeout equals the effective orchestration default — the 12-hour safety bound. The internal 15-minute HTTP transport timeout remains the hard per-request ceiling, preventing a single hung provider call from blocking the sub-agent beyond that transport limit.
+`default_request_timeout_seconds` never needs to be set below `default_timeout_seconds`. The outer orchestration timeout cancels the turn first. The internal 15-minute HTTP transport timeout is the hard per-request ceiling. It stops a single hung provider call from blocking a sub-agent beyond that limit.
 
 ## See also
 
 - [Product overview](overview.md)
 - [Coding agent mode](agent.md)
+- [Workflow guide](workflows-guide.md)
 - [Security and privacy](../security/overview.md)

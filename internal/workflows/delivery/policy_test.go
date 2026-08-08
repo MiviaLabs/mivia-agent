@@ -240,10 +240,17 @@ func TestRenderTitle(t *testing.T) {
 		assertRejectedInput(t, "title", "{{ inputs.task }}", []string{
 			"bad\x00title", "bad\x1btitle", "bad\u0085title", "bad\u009btitle",
 		})
-		t.Run("newline rejected in title", func(t *testing.T) {
+		// A newline folds to a space instead of failing. A title field holds
+		// one line, and a multi-line task input must not stop delivery. The
+		// invariant that matters is that the result carries no newline.
+		t.Run("newline folded in title", func(t *testing.T) {
 			p := Policy{TitleTemplate: "{{ inputs.task }}"}
-			if _, err := p.RenderTitle(map[string]string{"task": "line1\nline2"}); err == nil {
-				t.Fatal("RenderTitle: nil error for newline")
+			got, err := p.RenderTitle(map[string]string{"task": "line1\nline2"})
+			if err != nil {
+				t.Fatalf("RenderTitle: %v", err)
+			}
+			if got != "line1 line2" {
+				t.Fatalf("RenderTitle = %q, want %q", got, "line1 line2")
 			}
 		})
 	})

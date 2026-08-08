@@ -86,6 +86,23 @@ make docs-check
 make semgrep
 ```
 
+## Workflow runs
+
+Start every `feature-delivery` run with this script:
+
+```bash
+scripts/run-delivery-workflow.sh <label> <<'TASK'
+...task text, any length, any number of lines...
+TASK
+```
+
+The script sets `--allow-publish` and starts the run in the background. It
+prints the log path, so you can start several runs and watch them together.
+
+Do not call `mivia workflow run feature-delivery` directly. Without
+`--allow-publish` the run does all the work, reaches its success terminal, then
+stops at `delivery_pending` and opens no pull request.
+
 ## Layout
 
 ```text

@@ -21,25 +21,16 @@ func ValidateSchemaReferenceBytes(wf *definition.WorkflowFile, schemas map[strin
 		return fmt.Errorf("workflow is nil")
 	}
 	for _, step := range wf.Steps {
-		if step.OutputSchema == "" {
+		if err := validateSchemaBytes(step.ID, "", step.OutputSchema, schemas); err != nil {
+			return err
+		}
+		if step.Kind != "agent_panel" || step.Panel == nil {
 			continue
 		}
-		if err := validateSchemaReferencePath(step.OutputSchema); err != nil {
-			return fmt.Errorf("step %q: output_schema %q: %w", step.ID, step.OutputSchema, err)
-		}
-		data, ok := schemas[step.OutputSchema]
-		if !ok {
-			return fmt.Errorf("step %q: output_schema %q: file not found", step.ID, step.OutputSchema)
-		}
-		if err := validateClosedSchema(data); err != nil {
-			return fmt.Errorf("step %q: output_schema %q: %w", step.ID, step.OutputSchema, err)
-		}
-		var schema map[string]any
-		// validateClosedSchema parses the same bytes as a JSON object first.
-		// This decode cannot fail after that validation succeeds.
-		_ = json.Unmarshal(data, &schema)
-		if _, err := jschema.Compile(schema); err != nil {
-			return fmt.Errorf("step %q: output_schema %q: compile schema: %w", step.ID, step.OutputSchema, err)
+		for _, member := range step.Panel.Members {
+			if err := validateSchemaBytes(step.ID, member.ID, member.OutputSchema, schemas); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -51,23 +42,69 @@ func ValidateSchemaReferenceBytes(wf *definition.WorkflowFile, schemas map[strin
 func ValidateSchemaReferences(wf *definition.WorkflowFile, baseDir string) error {
 	schemas := make(map[string][]byte)
 	for _, s := range wf.Steps {
-		if s.OutputSchema == "" {
+		if err := loadSchemaReference(schemas, baseDir, s.ID, "", s.OutputSchema); err != nil {
+			return err
+		}
+		if s.Kind != "agent_panel" || s.Panel == nil {
 			continue
 		}
-		if err := validateSchemaReferencePath(s.OutputSchema); err != nil {
-			return fmt.Errorf("step %q: output_schema %q: path traversal not allowed", s.ID, s.OutputSchema)
-		}
-		schemaPath := filepath.Join(baseDir, s.OutputSchema)
-		data, err := readBoundedFile(schemaPath, MaxSchemaBytes)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return fmt.Errorf("step %q: output_schema %q: file not found", s.ID, s.OutputSchema)
+		for _, member := range s.Panel.Members {
+			if err := loadSchemaReference(schemas, baseDir, s.ID, member.ID, member.OutputSchema); err != nil {
+				return err
 			}
-			return fmt.Errorf("step %q: output_schema %q: reading file: %w", s.ID, s.OutputSchema, err)
 		}
-		schemas[s.OutputSchema] = data
 	}
 	return ValidateSchemaReferenceBytes(wf, schemas)
+}
+
+func validateSchemaBytes(stepID, memberID, reference string, schemas map[string][]byte) error {
+	if reference == "" {
+		return nil
+	}
+	prefix := schemaReferencePrefix(stepID, memberID)
+	if err := validateSchemaReferencePath(reference); err != nil {
+		return fmt.Errorf("%s: output_schema %q: %w", prefix, reference, err)
+	}
+	data, ok := schemas[reference]
+	if !ok {
+		return fmt.Errorf("%s: output_schema %q: file not found", prefix, reference)
+	}
+	if err := validateClosedSchema(data); err != nil {
+		return fmt.Errorf("%s: output_schema %q: %w", prefix, reference, err)
+	}
+	var schema map[string]any
+	_ = json.Unmarshal(data, &schema)
+	if _, err := jschema.Compile(schema); err != nil {
+		return fmt.Errorf("%s: output_schema %q: compile schema: %w", prefix, reference, err)
+	}
+	return nil
+}
+
+func loadSchemaReference(schemas map[string][]byte, baseDir, stepID, memberID, reference string) error {
+	if reference == "" {
+		return nil
+	}
+	prefix := schemaReferencePrefix(stepID, memberID)
+	if err := validateSchemaReferencePath(reference); err != nil {
+		return fmt.Errorf("%s: output_schema %q: path traversal not allowed", prefix, reference)
+	}
+	data, err := readBoundedFile(filepath.Join(baseDir, reference), MaxSchemaBytes)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%s: output_schema %q: file not found", prefix, reference)
+		}
+		return fmt.Errorf("%s: output_schema %q: reading file: %w", prefix, reference, err)
+	}
+	schemas[reference] = data
+	return nil
+}
+
+func schemaReferencePrefix(stepID, memberID string) string {
+	prefix := fmt.Sprintf("step %q", stepID)
+	if memberID != "" {
+		prefix += fmt.Sprintf(": panel member %q", memberID)
+	}
+	return prefix
 }
 
 func validateSchemaReferencePath(ref string) error {

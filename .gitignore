@@ -57,3 +57,4 @@ bin/
 # Codegraph daemon state
 codegraph.db*
 .codegraph/
+.mivia/run-logs/

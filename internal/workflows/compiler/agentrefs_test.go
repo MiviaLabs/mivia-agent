@@ -290,3 +290,49 @@ func TestValidateAgentSkillReferences(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateAgentReferences_AgentPanel(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "review-synthesizer.toml"), []byte("name = \"review-synthesizer\""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wf := newAgentPanelWorkflow()
+	err := ValidateAgentReferences(wf, tmpDir)
+	if err == nil || !strings.Contains(err.Error(), `panel member "correctness": agent "panel-reviewer" not found`) {
+		t.Fatalf("ValidateAgentReferences() error = %v", err)
+	}
+}
+
+func TestValidateAgentSkillReferences_AgentPanel(t *testing.T) {
+	allowed := []string{"review-synthesis", "bug-audit"}
+	agentRegistry := agents.NewRegistry()
+	if err := agentRegistry.Publish(agents.ResolvedAgent{Name: "review-synthesizer", Skills: &allowed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := agentRegistry.Publish(agents.ResolvedAgent{Name: "panel-reviewer", Skills: &allowed}); err != nil {
+		t.Fatal(err)
+	}
+	skillRegistry := skills.NewRegistry()
+	if err := skillRegistry.Register(skills.Definition{Name: "review-synthesis"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := skillRegistry.Register(skills.Definition{Name: "bug-audit"}); err != nil {
+		t.Fatal(err)
+	}
+
+	wf := newAgentPanelWorkflow()
+	wf.Steps[0].Skill = "review-synthesis"
+	wf.Steps[0].Panel.Members[1].Skill = "secure-change"
+	compiled, err := Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateAgentSkillReferences(compiled, agentRegistry, skillRegistry)
+	if err == nil || !strings.Contains(err.Error(), `panel member "security": skill "secure-change" not found`) {
+		t.Fatalf("ValidateAgentSkillReferences() error = %v", err)
+	}
+}

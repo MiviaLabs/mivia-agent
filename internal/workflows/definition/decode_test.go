@@ -64,6 +64,90 @@ match = { status = "succeeded" }
 	}
 }
 
+func TestParseWorkflowTOML_AgentPanel(t *testing.T) {
+	data := []byte(`
+version = 1
+name = "panel"
+initial_step = "review"
+
+[[steps]]
+id = "review"
+kind = "agent_panel"
+agent = "review-synthesizer"
+skill = "review-synthesis"
+template = "templates/review-synthesis.md"
+output_schema = "schemas/review-panel-v1.json"
+
+[steps.panel]
+failure_policy = "require_all"
+require_distinct_bindings = true
+
+[[steps.panel.members]]
+id = "correctness"
+agent = "panel-reviewer"
+provider = "deepseek"
+model = "deepseek-v4-flash"
+skill = "bug-audit"
+template = "templates/review-correctness.md"
+output_schema = "schemas/panel-review-v1.json"
+
+[[steps.panel.members]]
+id = "security"
+agent = "panel-reviewer"
+provider = "openrouter"
+model = "tencent/hy3-preview"
+skill = "secure-change"
+template = "templates/review-security.md"
+output_schema = "schemas/panel-review-v1.json"
+
+[[transitions]]
+from = "review"
+to = "success"
+match = { status = "succeeded" }
+`)
+
+	wf, _, err := ParseWorkflowTOML(data, "panel.toml")
+	if err != nil {
+		t.Fatalf("ParseWorkflowTOML() error = %v", err)
+	}
+	if got := wf.Steps[0].Kind; got != "agent_panel" {
+		t.Fatalf("step kind = %q, want agent_panel", got)
+	}
+}
+
+func TestParseWorkflowTOML_AgentPanelCompatibility(t *testing.T) {
+	base := func(step string) string {
+		return "version = 1\nname = \"panel-compatibility\"\ninitial_step = \"review\"\n\n" +
+			step + "\n\n[[transitions]]\nfrom = \"review\"\nto = \"success\"\nmatch = { status = \"succeeded\" }\n"
+	}
+	panel := "[steps.panel]\nfailure_policy = \"require_all\"\nrequire_distinct_bindings = true"
+	for _, tc := range []struct {
+		name    string
+		step    string
+		wantErr string
+	}{
+		{
+			name:    "panel step requires panel",
+			step:    "[[steps]]\nid = \"review\"\nkind = \"agent_panel\"\nagent = \"review-synthesizer\"",
+			wantErr: "panel is required",
+		},
+		{
+			name:    "non-panel step rejects panel",
+			step:    "[[steps]]\nid = \"review\"\nkind = \"human_gate\"\n" + panel,
+			wantErr: "only valid for kind",
+		},
+		{
+			name:    "panel step requires top-level agent",
+			step:    "[[steps]]\nid = \"review\"\nkind = \"agent_panel\"\n" + panel,
+			wantErr: "agent is required",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertParseError(t, base(tc.step), "panel-compatibility.toml", tc.wantErr)
+		})
+	}
+}
+
 // TestParseWorkflowTOML_EnvelopeOnlyBinding pins the Step-5 audit fix: the
 // strict TOML decoder (DisallowUnknownFields) must ACCEPT the envelope_only
 // key on a context binding and decode it onto ContextBinding.EnvelopeOnly,

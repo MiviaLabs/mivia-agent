@@ -318,6 +318,35 @@ func intendedDiff(ctx context.Context, repo ledger.Repository, git GitRunner, re
 	return head, porcelainEmpty, stat, porcelain, false, nil
 }
 
+// baseStillContains reports whether the pull request's current base commit
+// still contains the base commit this run was admitted against. It returns nil
+// when the base only moved forward, and an error that names the cause when the
+// base was rewritten.
+//
+// The check needs the pull request's base commit in the local object store.
+// The base moves forward whenever another change merges while this run works,
+// which is normal and must not stop delivery. The worktree does not hold that
+// new commit, so `git merge-base` fails with "not a valid object" and the old
+// code read that failure as a rewrite. A run then refused to publish because
+// somebody else merged first.
+//
+// So: try the ancestry test, fetch the base when the object is missing, then
+// try once more. Only a second failure is a true rewrite.
+func baseStillContains(ctx context.Context, git GitRunner, req Request, admittedBase, prBase string) error {
+	if _, err := git.Run(ctx, req.GitCtx, "merge-base", "--is-ancestor", admittedBase, prBase); err == nil {
+		return nil
+	}
+	// The object may simply be absent. Fetch the base branch, then retest.
+	if _, ferr := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
+		"fetch", "--no-tags", "origin", req.Policy.Base); ferr != nil {
+		return fmt.Errorf("fetch base %q to test ancestry: %w", req.Policy.Base, ferr)
+	}
+	if _, err := git.Run(ctx, req.GitCtx, "merge-base", "--is-ancestor", admittedBase, prBase); err != nil {
+		return fmt.Errorf("remote base rewritten during delivery: %w", err)
+	}
+	return nil
+}
+
 // pushAndPublish pushes the delivery commit and finds or creates exactly one
 // PR, recording each stage durably. originBase is the admitted remote base
 // pin used by the post-create base verification (AR-7).
@@ -358,8 +387,8 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	// exist; this check only prevents the success settle. Skipped when the
 	// client reports no base OID (fake/unknown).
 	if ref.BaseRefOID != "" {
-		if _, aerr := git.Run(ctx, req.GitCtx, "merge-base", "--is-ancestor", originBase, ref.BaseRefOID); aerr != nil {
-			rerr := &RefusalError{Reason: fmt.Sprintf("PR %s base %s does not contain the admitted base commit %s (remote base rewritten during delivery)", ref.RemoteID, ref.BaseRefOID, originBase)}
+		if aerr := baseStillContains(ctx, git, req, originBase, ref.BaseRefOID); aerr != nil {
+			rerr := &RefusalError{Reason: fmt.Sprintf("PR %s base %s does not contain the admitted base commit %s (%v)", ref.RemoteID, ref.BaseRefOID, originBase, aerr)}
 			markFailed(ctx, repo, key, req, rerr)
 			return Result{}, rerr
 		}

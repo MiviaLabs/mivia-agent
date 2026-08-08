@@ -18,6 +18,7 @@ package durablefence
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -105,8 +106,10 @@ func Run(t *testing.T, name string, new func(testing.TB) Scenario) {
 	}
 }
 
-// CheckClaimIsExclusive proves a second holder cannot claim a held record, and
-// that the record becomes claimable again after the holder releases it.
+// CheckClaimIsExclusive proves a second holder cannot claim a held record, that
+// the record becomes claimable again after the holder releases it, and that a
+// claim refresh cannot transfer ownership back: after a new holder claims a
+// released record, the previous holder's claim must be refused.
 func CheckClaimIsExclusive(t testing.TB, s Scenario) {
 	t.Helper()
 	ctx := context.Background()
@@ -129,6 +132,17 @@ func CheckClaimIsExclusive(t testing.TB, s Scenario) {
 	if err := s.Claim(ctx, "owner-b"); err != nil {
 		t.Fatalf("%s: claim after release: %v", s.Name, err)
 	}
+	// A claim refresh must not transfer ownership back to a previous holder:
+	// after owner-b claims the released record, owner-a's claim is refused and
+	// must not re-grant the record. A surface whose refresh is keyed on the
+	// record's history instead of its current owner fails here.
+	reclaim := s.Claim(ctx, "owner-a")
+	if reclaim == nil {
+		t.Fatalf("%s: previous holder reclaimed the record after release", s.Name)
+	}
+	if !s.IsHeld(reclaim) {
+		t.Fatalf("%s: previous holder claim error = %v, want a held error", s.Name, reclaim)
+	}
 }
 
 // CheckTakeoverFencesPreviousOwner proves the write of a stale owner fails
@@ -137,6 +151,12 @@ func CheckClaimIsExclusive(t testing.TB, s Scenario) {
 // This is the load-bearing check. A boolean claim flag passes
 // CheckClaimIsExclusive and still fails here: the previous owner keeps a
 // reference it acquired before the takeover and its next mutation lands.
+//
+// The check also proves a claim refresh does not transfer ownership. After the
+// takeover, the previous owner's claim is refused, its write stays fenced, and
+// the new owner keeps writing. A surface whose claim grants any holder the
+// record has ever seen (a refresh keyed on history instead of current
+// ownership) fails here, because the stale holder reclaims after the takeover.
 func CheckTakeoverFencesPreviousOwner(t testing.TB, s Scenario) {
 	t.Helper()
 	ctx := context.Background()
@@ -159,6 +179,27 @@ func CheckTakeoverFencesPreviousOwner(t testing.TB, s Scenario) {
 	if err := s.Mutate(ctx, "owner-b"); err != nil {
 		t.Fatalf("%s: owner-b must write after takeover, got %v", s.Name, err)
 	}
+	// A claim refresh must not transfer ownership back: after the takeover,
+	// owner-a's claim is refused, its write stays fenced, and owner-b keeps
+	// writing. A surface that refreshes any holder present in its seen-history
+	// map fails here by re-granting the record to the stale holder.
+	reclaim := s.Claim(ctx, "owner-a")
+	if reclaim == nil {
+		t.Fatalf("%s: stale owner-a reclaimed the record after takeover", s.Name)
+	}
+	if !s.IsHeld(reclaim) {
+		t.Fatalf("%s: stale owner-a claim error = %v, want a held error", s.Name, reclaim)
+	}
+	stale := s.Mutate(ctx, "owner-a")
+	if stale == nil {
+		t.Fatalf("%s: stale owner-a write landed after its claim was refused", s.Name)
+	}
+	if !s.fenced(stale) {
+		t.Fatalf("%s: stale owner-a write error = %v, want a fenced error", s.Name, stale)
+	}
+	if err := s.Mutate(ctx, "owner-b"); err != nil {
+		t.Fatalf("%s: owner-b must keep writing after a refused reclaim, got %v", s.Name, err)
+	}
 }
 
 // ConcurrentHolders is the number of claimers CheckConcurrentClaimAdmitsOne
@@ -176,6 +217,11 @@ const ConcurrentHolders = 8
 // after its check until all of them have checked; the scenario then widens the
 // window deterministically. Without such a hook, record the residual risk
 // rather than reporting the class as proven.
+//
+// A claim that panics is reported as an unexpected error, not a crash: the
+// harness recovers each claimer and attributes the panic, so a defective
+// surface fails the check with the failure state intact instead of killing the
+// test binary.
 func CheckConcurrentClaimAdmitsOne(t testing.TB, s Scenario) {
 	t.Helper()
 	const holders = ConcurrentHolders
@@ -191,7 +237,15 @@ func CheckConcurrentClaimAdmitsOne(t testing.TB, s Scenario) {
 		go func() {
 			defer wg.Done()
 			<-start
-			err := s.Claim(ctx, holder)
+			var err error
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						err = fmt.Errorf("claim panicked: %v", r)
+					}
+				}()
+				err = s.Claim(ctx, holder)
+			}()
 			mu.Lock()
 			defer mu.Unlock()
 			switch {

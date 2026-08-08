@@ -118,10 +118,13 @@ func validateStep(index int, s *Step) error {
 		return fmt.Errorf("step %q: unknown kind %q", s.ID, s.Kind)
 	}
 	// Agent steps require an agent field.
-	if s.Kind == "agent" || s.Kind == "agent_gate" {
+	if s.Kind == "agent" || s.Kind == "agent_gate" || s.Kind == "agent_panel" {
 		if strings.TrimSpace(s.Agent) == "" {
 			return fmt.Errorf("step %q: agent is required for kind %q", s.ID, s.Kind)
 		}
+	}
+	if err := validatePanelStep(s); err != nil {
+		return err
 	}
 	// Evidence gates require a verifier field or a sandboxed command, never both.
 	if s.Kind == "evidence_gate" {

@@ -151,6 +151,12 @@ may be separate processes or hosts.
 | INV-DUR-1 | Safety | Every terminal run state has an enumerated re-entry rule. A transient condition never reaches a terminal state without one: a forward-advanced base is a normal condition that still delivers, a rewritten or deleted base is the only permanent refusal, and `delivery_failed` is re-enterable through a single enforcing CAS while the terminal invariant holds | `TestDeliverRemoteBaseForwardAdvanced`, `TestDeliverRemoteBaseRewrittenRefused`, `TestDeliverDeliveryFailedReentry`, `TestWorkflowDeliverReopensDeliveryFailed` | 2026-08-08 (registered from the `b977729` fix chain) |
 | INV-DUR-2 | Safety | A durable owner's write is fenced. After a takeover the previous owner's next mutation fails instead of winning, a claim is exclusive across repositories and processes, and one invocation key admits exactly one run | `TestStorageRepository_TakeoverFencesBoundOldWriter`, `TestIntegrationClaimFencesWorkflowMutation`, `TestWorkflowDeliverClaimFencing`, `TestMemoryBackendClaimIsExclusive`, `TestResumeRefusesRunHeldByAnotherExecutor`, `TestInvocationKeyAdmitsOneRunAcrossSQLiteRepositories` | 2026-08-08 (registered from the claim/fence fix chain) |
 
+## Storage path invariants
+
+| ID | Category | Invariant | Test(s) | Last Verified |
+|----|----------|-----------|---------|---------------|
+| INV-STORE-1 | Safety | A bare relative store path (no directory separator) opens as a database file in the current directory, never as a directory (DC-10): `OpenSQLite` must not `MkdirAll` a directory named like the DB file, which made the WAL PRAGMA fail and left a stray directory - with `[subagents] store_path` set to a bare name the ledger then silently fell back to the memory backend and the context store failed to open. Empty and whitespace-only paths are refused before any filesystem work; nested-relative and absolute paths keep their existing behavior | `TestOpenSQLiteBareFilenameOpensDatabaseFile`, `TestOpenSQLiteRejectsEmptyPath`, `TestOpenSQLitePathShapeBoundary` | |
+
 ## Liveness Gap Notes
 
 | ID | Gap | Mitigation | Feasibility |
