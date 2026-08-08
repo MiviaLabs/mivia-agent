@@ -3,10 +3,12 @@ package mcp
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -267,6 +269,36 @@ func TestNewHTTPClientUsesBoundedTransport(t *testing.T) {
 	transport, ok := wrapped.base.(*http.Transport)
 	if !ok || transport.TLSHandshakeTimeout == 0 || transport.ResponseHeaderTimeout == 0 || transport.IdleConnTimeout == 0 {
 		t.Fatalf("HTTP transport bounds = %#v", transport)
+	}
+}
+
+func TestHTTPTransportBoundsInboundResponse(t *testing.T) {
+	transport := headerTransport{base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(strings.Repeat("x", maxMCPInboundMessageBytes+1))),
+		}, nil
+	})}
+	request, err := http.NewRequest(http.MethodPost, "https://example.test/mcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(response.Body)
+	if readErr == nil || len(body) > maxMCPInboundMessageBytes {
+		t.Fatalf("inbound HTTP response len=%d err=%v, want bounded error", len(body), readErr)
+	}
+}
+
+func TestStdioReaderBoundsInboundMessage(t *testing.T) {
+	reader := newBoundedStdioReader(io.NopCloser(strings.NewReader(strings.Repeat("x", maxMCPInboundMessageBytes+1) + "\n")))
+	body, err := io.ReadAll(reader)
+	if err == nil || len(body) > maxMCPInboundMessageBytes {
+		t.Fatalf("inbound stdio message len=%d err=%v, want bounded error", len(body), err)
 	}
 }
 

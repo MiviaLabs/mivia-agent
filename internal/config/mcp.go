@@ -208,24 +208,12 @@ func mergeMCPConfig(user, project mcpConfigInput) mcpConfigInput {
 	if project.Enabled != nil {
 		out.Enabled = project.Enabled
 	}
-	if project.StartupTimeoutSeconds != nil {
-		out.StartupTimeoutSeconds = project.StartupTimeoutSeconds
-	}
-	if project.MaxServers != nil {
-		out.MaxServers = project.MaxServers
-	}
-	if project.MaxToolsPerServer != nil {
-		out.MaxToolsPerServer = project.MaxToolsPerServer
-	}
-	if project.MaxToolSchemaBytes != nil {
-		out.MaxToolSchemaBytes = project.MaxToolSchemaBytes
-	}
-	if project.MaxToolDescriptionBytes != nil {
-		out.MaxToolDescriptionBytes = project.MaxToolDescriptionBytes
-	}
-	if project.MaxToolResultBytes != nil {
-		out.MaxToolResultBytes = project.MaxToolResultBytes
-	}
+	out.StartupTimeoutSeconds = tighterMCPBound(out.StartupTimeoutSeconds, project.StartupTimeoutSeconds)
+	out.MaxServers = tighterMCPBound(out.MaxServers, project.MaxServers)
+	out.MaxToolsPerServer = tighterMCPBound(out.MaxToolsPerServer, project.MaxToolsPerServer)
+	out.MaxToolSchemaBytes = tighterMCPBound(out.MaxToolSchemaBytes, project.MaxToolSchemaBytes)
+	out.MaxToolDescriptionBytes = tighterMCPBound(out.MaxToolDescriptionBytes, project.MaxToolDescriptionBytes)
+	out.MaxToolResultBytes = tighterMCPBound(out.MaxToolResultBytes, project.MaxToolResultBytes)
 	byID := make(map[string]int, len(out.Servers))
 	for i, server := range out.Servers {
 		byID[server.ID] = i
@@ -239,6 +227,16 @@ func mergeMCPConfig(user, project mcpConfigInput) mcpConfigInput {
 		out.Servers = append(out.Servers, server)
 	}
 	return out
+}
+
+func tighterMCPBound(user, project *int) *int {
+	if user == nil {
+		return project
+	}
+	if project == nil || *user <= *project {
+		return user
+	}
+	return project
 }
 
 func (in mcpConfigInput) resolve(_ MCPConfig) MCPConfig {

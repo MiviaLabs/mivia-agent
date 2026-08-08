@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,6 +19,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+const maxMCPInboundMessageBytes = 8 << 20
+
+var errMCPInboundMessageTooLarge = errors.New("MCP inbound message exceeds limit")
 
 type remoteTool struct {
 	Name        string
@@ -74,7 +80,15 @@ func (c *sdkClient) Close() error {
 	if c.command == nil {
 		return err
 	}
-	waitErr := c.command.Wait()
+	wait := make(chan error, 1)
+	go func() { wait <- c.command.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-wait:
+	case <-time.After(5 * time.Second):
+		_ = c.command.Process.Kill()
+		waitErr = <-wait
+	}
 	if err != nil {
 		return err
 	}
@@ -155,7 +169,8 @@ func (c *serializedRemoteClient) Close() error {
 func (t headerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	clone := request.Clone(request.Context())
 	if clone.Context().Value(redirectRequestKey{}) != nil {
-		return t.base.RoundTrip(clone)
+		response, err := t.base.RoundTrip(clone)
+		return boundInboundResponse(response, err)
 	}
 	for name, values := range t.headers {
 		clone.Header.Del(name)
@@ -163,7 +178,16 @@ func (t headerTransport) RoundTrip(request *http.Request) (*http.Response, error
 			clone.Header.Add(name, value)
 		}
 	}
-	return t.base.RoundTrip(clone)
+	response, err := t.base.RoundTrip(clone)
+	return boundInboundResponse(response, err)
+}
+
+func boundInboundResponse(response *http.Response, err error) (*http.Response, error) {
+	if err != nil || response == nil || response.Body == nil {
+		return response, err
+	}
+	response.Body = newBoundedInboundReader(response.Body)
+	return response, nil
 }
 
 func sameOriginRedirect(endpoint *url.URL) func(*http.Request, []*http.Request) error {
@@ -192,13 +216,58 @@ func connectStdio(ctx context.Context, server config.MCPServerConfig) (remoteCli
 	if err := command.Start(); err != nil {
 		return nil, err
 	}
-	session, err := sdk.NewClient(&sdk.Implementation{Name: "mivia", Version: "1"}, nil).Connect(ctx, &sdk.IOTransport{Reader: out, Writer: in}, nil)
+	session, err := sdk.NewClient(&sdk.Implementation{Name: "mivia", Version: "1"}, nil).Connect(ctx, &sdk.IOTransport{Reader: newBoundedStdioReader(out), Writer: in}, nil)
 	if err != nil {
 		_ = command.Process.Kill()
 		_ = command.Wait()
 		return nil, err
 	}
 	return &sdkClient{session: session, command: command}, nil
+}
+
+type boundedInboundReader struct {
+	io.ReadCloser
+	remaining int
+}
+
+func newBoundedInboundReader(reader io.ReadCloser) *boundedInboundReader {
+	return &boundedInboundReader{ReadCloser: reader, remaining: maxMCPInboundMessageBytes}
+}
+
+func (r *boundedInboundReader) Read(buffer []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, errMCPInboundMessageTooLarge
+	}
+	if len(buffer) > r.remaining {
+		buffer = buffer[:r.remaining]
+	}
+	n, err := r.ReadCloser.Read(buffer)
+	r.remaining -= n
+	return n, err
+}
+
+type boundedStdioReader struct {
+	io.ReadCloser
+	messageBytes int
+}
+
+func newBoundedStdioReader(reader io.ReadCloser) *boundedStdioReader {
+	return &boundedStdioReader{ReadCloser: reader}
+}
+
+func (r *boundedStdioReader) Read(buffer []byte) (int, error) {
+	n, err := r.ReadCloser.Read(buffer)
+	for index, value := range buffer[:n] {
+		if value == '\n' {
+			r.messageBytes = 0
+			continue
+		}
+		if r.messageBytes >= maxMCPInboundMessageBytes {
+			return index, errMCPInboundMessageTooLarge
+		}
+		r.messageBytes++
+	}
+	return n, err
 }
 
 func environmentFor(names []string) []string {

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -108,5 +109,10 @@ func ensureSelectedMCPTools(state *agentSessionState, selected agents.ResolvedAg
 }
 
 func ensureMCPServerTools(registry *tools.Registry, manager *mcp.Manager) func([]string) error {
-	return func(ids []string) error { return registerMCPTools(registry, manager, ids) }
+	var mu sync.Mutex
+	return func(ids []string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return registerMCPTools(registry, manager, ids)
+	}
 }
