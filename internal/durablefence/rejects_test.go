@@ -71,6 +71,28 @@ type brokenCase struct {
 
 func alwaysFail(context.Context, string) error { return errOther }
 
+// stealBackClaim returns a Claim that grants a refresh to any holder the record
+// has ever seen (the seen-history map), without consulting the current owner.
+// A previous holder can therefore reclaim the record after it lost ownership:
+// this is the DC-2 steal-back surface the takeover and exclusivity checks must
+// reject.
+func stealBackClaim(owner *fakeOwner) func(context.Context, string) error {
+	return func(ctx context.Context, holder string) error {
+		owner.mu.Lock()
+		if owner.seen[holder] > 0 {
+			// History-keyed refresh: a holder the record has ever seen is
+			// re-granted even after a takeover moved ownership elsewhere.
+			owner.owner = holder
+			owner.fence++
+			owner.seen[holder] = owner.fence
+			owner.mu.Unlock()
+			return nil
+		}
+		owner.mu.Unlock()
+		return owner.claim(ctx, holder)
+	}
+}
+
 func TestChecksRejectEveryDefect(t *testing.T) {
 	for _, tc := range brokenCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -154,6 +176,11 @@ func exclusiveCases() []brokenCase {
 			}
 			return s
 		}, "claim after release"},
+		{"exclusive/the previous holder reclaims after release", check, func(t *testing.T) Scenario {
+			owner, s := base(t)
+			s.Claim = stealBackClaim(owner)
+			return s
+		}, "previous holder reclaimed"},
 	}
 }
 
@@ -200,6 +227,11 @@ func takeoverCases() []brokenCase {
 			}
 			return s
 		}, "must write after takeover"},
+		{"takeover/the stale owner reclaims after takeover", check, func(t *testing.T) Scenario {
+			owner, s := base(t)
+			s.Claim = stealBackClaim(owner)
+			return s
+		}, "reclaimed the record after takeover"},
 	}
 }
 
@@ -227,6 +259,13 @@ func concurrentCases() []brokenCase {
 			}()
 			return s
 		}, "won the claim"},
+		{"concurrent/a claim panic is reported", check, func(t *testing.T) Scenario {
+			_, s := base(t)
+			s.Claim = func(context.Context, string) error {
+				panic("claim boom")
+			}
+			return s
+		}, "panicked"},
 	}
 }
 
