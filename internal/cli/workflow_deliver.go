@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -131,11 +132,17 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 		if delivery.IsRefusal(err) {
 			return settleDeliveryRefusal(ctx, repo, runID, err, stdout)
 		}
-		// A plain error is a condition in the change itself, not a permanent
-		// refusal: a commit hook rejected the work, a gate found a violation.
-		// An agent can repair that. When the workflow names a repair step, the
-		// run goes back to it instead of stopping with all its work done.
-		if policy.OnFailure != "" {
+		// A transport fault is not a condition in the change. An unreachable
+		// origin, a gh outage, a reset push: no agent can repair any of them,
+		// and sending one to try burns model budget and the run deadline
+		// before delivery fails again the same way. Such a run stays at
+		// delivery_pending, which is what delivery.Deliver already contracts
+		// (see TestDeliverFetchFailureIsTransient), so a later deliver
+		// succeeds once the network is back.
+		//
+		// What DOES reach a repair step is a rejection of the work itself: a
+		// commit hook that refuses the change, a gate that finds a violation.
+		if policy.OnFailure != "" && !provider.IsTransient(err) {
 			recordAutoDeliveryFailure(ctx, repo, runID, err)
 			return reopenForRepair(ctx, repo, runID, policy.OnFailure, err, stdout)
 		}

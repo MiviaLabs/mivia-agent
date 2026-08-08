@@ -59,9 +59,11 @@ func IsTransient(err error) bool {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
+	// context.DeadlineExceeded is NOT transient here. A step deadline and a
+	// run deadline both surface as that error, and repeating a call under an
+	// expired context fails at once, every time. The provider layer knows
+	// when the deadline was its OWN request timeout and marks those calls
+	// TransientError explicitly, so the useful case is still covered.
 	return isTransientMessage(err)
 }
 
@@ -81,7 +83,18 @@ var transientMessages = []string{
 	"no such host",            // transient DNS failure
 	"i/o timeout",
 	"tls handshake timeout",
-	"eof", // bare EOF from a torn stream read
+	// Provider overload. The transport layer retries these first; they reach
+	// a caller only after that budget is spent, and a fresh call later can
+	// still succeed.
+	"http 429",
+	"http 500",
+	"http 502",
+	"http 503",
+	"http 504",
+	"temporarily overloaded",
+	"rate limited",
+	"overloaded",
+	"service unavailable",
 }
 
 func isTransientMessage(err error) bool {

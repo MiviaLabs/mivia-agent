@@ -11,9 +11,21 @@ import (
 // deliveryRepairStepID is the step ID under which a failed delivery is
 // recorded. Delivery is not a step in the workflow graph, but the ledger
 // tracks the active step through attempts, so the re-entry needs an attempt to
-// carry the route. The ID is reserved: a workflow cannot declare a step with
-// this name, because step IDs come from the definition and this one does not.
-const deliveryRepairStepID = "delivery"
+// carry the route.
+//
+// The name carries a "wf-" prefix so it cannot collide with a step a workflow
+// declares. A workflow step ID never starts with that prefix, because the
+// prefix is not a legal start for a declared ID. Sharing the name with a real
+// step would merge two histories: the synthetic failure would become that
+// step's latest attempt, show in workflow status as one of its attempts, and
+// pollute a steps.<id>.output binding.
+const deliveryRepairStepID = "wf-delivery"
+
+// maxDeliveryRepairs bounds the delivery -> repair -> success -> delivery
+// cycle. A rejection the named repair step cannot actually fix would otherwise
+// cycle until the step cap or the 24h run deadline is spent, and a run that
+// repairs at the last minute is destroyed rather than delivered.
+const maxDeliveryRepairs = 3
 
 // reopenForRepair returns a run whose delivery failed to the step the workflow
 // names in delivery.on_failure.
@@ -44,6 +56,22 @@ func reopenForRepair(ctx context.Context, repo workflowledger.Repository, runID,
 			next = a.AttemptNo + 1
 		}
 	}
+	if next > maxDeliveryRepairs {
+		return fmt.Errorf("delivery failed %d times and the repair step did not fix it: %w", next-1, cause)
+	}
+
+	// The status CAS runs FIRST. The attempt writes below change the run's
+	// derived active step, so writing them before a CAS that then fails would
+	// leave a run whose active step is the repair step while its status still
+	// says it is waiting for delivery - resume refuses that status, so the run
+	// would be stuck in a shape no command can move.
+	current, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("delivery failed: %v; read run status for repair: %w", cause, err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, current.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		return fmt.Errorf("delivery failed: %v; return run to running: %w", cause, err)
+	}
 
 	attempt := workflowledger.StepAttempt{
 		RunID:     runID,
@@ -67,14 +95,6 @@ func reopenForRepair(ctx context.Context, repo workflowledger.Repository, runID,
 	}
 	if err := repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, fresh.Version, outcome); err != nil {
 		return fmt.Errorf("delivery failed: %v; route delivery attempt to %q: %w", cause, repairStep, err)
-	}
-
-	current, err := repo.GetRun(ctx, runID)
-	if err != nil {
-		return fmt.Errorf("delivery failed: %v; read run status for repair: %w", cause, err)
-	}
-	if err := repo.CompareAndSetRunStatus(ctx, runID, current.Version, workflowledger.RunStatusRunning, nil); err != nil {
-		return fmt.Errorf("delivery failed: %v; return run to running: %w", cause, err)
 	}
 
 	fmt.Fprintf(stdout, "delivery failed: %v\n", cause)

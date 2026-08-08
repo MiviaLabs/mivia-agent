@@ -22,11 +22,6 @@ type InputDef struct {
 type Limits struct {
 	MaxStepAttempts    int `toml:"max_step_attempts"`
 	MaxDurationSeconds int `toml:"max_duration_seconds"`
-	// MaxTransientRetries bounds how many times one step repeats after a
-	// transport fault: a call that never delivered an answer. Zero uses the
-	// controller default. A negative value declares transport faults always
-	// retryable, so only the run duration bounds them.
-	MaxTransientRetries int `toml:"max_transient_retries"`
 }
 
 // IsEmpty reports true when both MaxStepAttempts and MaxDurationSeconds are zero,

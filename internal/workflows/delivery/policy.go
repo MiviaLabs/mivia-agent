@@ -114,6 +114,12 @@ func (p Policy) RenderTitle(inputs map[string]string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A template that renders to whitespace folds to nothing. Publishing a
+	// blank title is worse than saying so: the pull request would carry no
+	// subject at all, and the failure would surface as an opaque gh error.
+	if strings.TrimSpace(rendered) == "" {
+		return "", fmt.Errorf("delivery policy: title_template rendered an empty title")
+	}
 	return truncateRunes(rendered, MaxTitleRunes), nil
 }
 
