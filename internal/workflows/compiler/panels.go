@@ -72,7 +72,20 @@ func validatePanelMembers(stepID string, members []definition.PanelMember) error
 		if strings.TrimSpace(member.OutputSchema) == "" {
 			return fmt.Errorf("step %q: panel member %q: output_schema is required", stepID, member.ID)
 		}
-		binding := providerModel{provider: member.Provider, model: member.Model}
+		// Normalize the binding before comparing: the provider registry resolves
+		// names via strings.ToLower(strings.TrimSpace(name)) (providerregistry)
+		// and binding resolution lowercases the provider, so a case or
+		// whitespace variant of an already-bound provider is the same provider.
+		// Without this, 'DeepSeek' vs 'deepseek' bypasses require_distinct_bindings.
+		// The model must NOT be lowercased: models are case-sensitive
+		// (config.NormalizeModelName only trims, selectableModel matches
+		// profile.Name == model exactly, and the model string reaches the
+		// provider API unmodified), so 'GLM-5.2' vs 'glm-5.2' are distinct
+		// bindings and both must be admitted.
+		binding := providerModel{
+			provider: strings.ToLower(strings.TrimSpace(member.Provider)),
+			model:    strings.TrimSpace(member.Model),
+		}
 		if _, exists := bindings[binding]; exists {
 			return fmt.Errorf("step %q: panel has duplicate provider/model binding %q/%q", stepID, member.Provider, member.Model)
 		}

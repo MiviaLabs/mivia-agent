@@ -12,6 +12,7 @@ import (
 func DetectBranch() string {
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir, _ = os.Getwd()
+	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -42,6 +43,7 @@ func DetectWorktreeName() string {
 func IsWorktree() bool {
 	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	cmd.Dir, _ = os.Getwd()
+	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		return false

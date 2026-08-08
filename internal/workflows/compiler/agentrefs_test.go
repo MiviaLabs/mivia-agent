@@ -324,14 +324,13 @@ func TestValidateAgentSkillReferences_AgentPanel(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// agent_panel steps are rejected at Compile (FINDING E6), so exercise the
+	// admission function on a compiled workflow built directly, as the CLI does.
 	wf := newAgentPanelWorkflow()
 	wf.Steps[0].Skill = "review-synthesis"
 	wf.Steps[0].Panel.Members[1].Skill = "secure-change"
-	compiled, err := Compile(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = ValidateAgentSkillReferences(compiled, agentRegistry, skillRegistry)
+	compiled := &CompiledWorkflow{Steps: wf.Steps}
+	err := ValidateAgentSkillReferences(compiled, agentRegistry, skillRegistry)
 	if err == nil || !strings.Contains(err.Error(), `panel member "security": skill "secure-change" not found`) {
 		t.Fatalf("ValidateAgentSkillReferences() error = %v", err)
 	}

@@ -87,6 +87,7 @@ func CreateWithPrefixLease(ctx context.Context, repoRoot string, name string, ba
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
+	cmd.Env = pinnedEnv()
 	if out, err := runGitMutation(cmd, lease); err != nil {
 		return nil, &gitCommandError{cmd: "worktree add", output: string(out), err: err}
 	}
@@ -105,6 +106,7 @@ func CreateWithPrefixLease(ctx context.Context, repoRoot string, name string, ba
 func localBranchExists(ctx context.Context, root, branchName string) (bool, error) {
 	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
 	cmd.Dir = root
+	cmd.Env = pinnedEnv()
 	if err := cmd.Run(); err == nil {
 		return true, nil
 	} else {
@@ -155,12 +157,14 @@ func RemoveWithPrefixLease(ctx context.Context, repoRoot string, name string, br
 	}
 	cmd := exec.CommandContext(ctx, "git", "worktree", "remove", targetPath, "--force")
 	cmd.Dir = root
+	cmd.Env = pinnedEnv()
 	if out, err := runGitMutation(cmd, lease); err != nil {
 		return &gitCommandError{cmd: "worktree remove", output: string(out), err: err}
 	}
 	// Prune stale references.
 	prune := exec.CommandContext(ctx, "git", "worktree", "prune")
 	prune.Dir = root
+	prune.Env = pinnedEnv()
 	_, _ = runGitMutation(prune, lease)
 
 	return nil
@@ -220,6 +224,7 @@ func List(ctx context.Context, repoRoot string) ([]WorktreeInfo, error) {
 	wtPrefix := wtDir + string(filepath.Separator)
 	cmd := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain")
 	cmd.Dir = root
+	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, &gitCommandError{cmd: "worktree list", output: string(out), err: err}
@@ -253,6 +258,7 @@ func Resolve(ctx context.Context, repoRoot string, name string) (*WorktreeInfo, 
 func MainRepoRoot(dir string) (string, error) {
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
 	cmd.Dir = dir
+	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		return "", NotGitRepoError{Dir: dir}
@@ -277,6 +283,7 @@ func mainWorktreeFromListing(out, dir string) (string, error) {
 func RepoRoot(dir string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = dir
+	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		return "", NotGitRepoError{Dir: dir}
@@ -335,6 +342,7 @@ func (e *gitCommandError) Error() string {
 func ensureGitRepo(dir string) error {
 	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
 	cmd.Dir = dir
+	cmd.Env = pinnedEnv()
 	if err := cmd.Run(); err != nil {
 		return NotGitRepoError{Dir: dir}
 	}
@@ -345,6 +353,7 @@ func ensureGitRepo(dir string) error {
 func CurrentBranch(ctx context.Context, dir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = dir
+	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -364,6 +373,7 @@ func ResolveCommit(ctx context.Context, dir, ref string) (string, error) {
 	}
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 	cmd.Dir = dir
+	cmd.Env = pinnedEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", &gitCommandError{cmd: "rev-parse", output: string(out), err: err}
@@ -383,6 +393,7 @@ func IsAncestor(ctx context.Context, dir, ancestor, descendant string) (bool, er
 	}
 	cmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", ancestorCommit, descendantCommit)
 	cmd.Dir = dir
+	cmd.Env = pinnedEnv()
 	if err := cmd.Run(); err == nil {
 		return true, nil
 	} else {

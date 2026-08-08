@@ -153,7 +153,29 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 		errs = append(errs, err.Error())
 	}
 
+	// Executable step kind checks
+	if err := validateExecutableStepKinds(wf); err != nil {
+		errs = append(errs, err.Error())
+	}
+
 	return errs
+}
+
+// validateExecutableStepKinds rejects step kinds the controller cannot execute
+// in this build. agent_panel steps are fully validated, admitted, authorized
+// and snapshotted, but the controller has no agent_panel case, so every run
+// that reaches one fails mid-flight after earlier steps finished. The rejection
+// runs for both Compile and CompileForResume (it is not gated behind
+// skipCycleValidation) so admission AND resume refuse, closing the resume
+// bypass: an in-flight run whose next step cannot be executed must not be
+// resumed into a guaranteed failure.
+func validateExecutableStepKinds(wf *definition.WorkflowFile) error {
+	for _, s := range wf.Steps {
+		if s.Kind == "agent_panel" {
+			return fmt.Errorf("step %q: agent_panel is not executable by this build (panel executor not wired); remove the step or use agent_gate", s.ID)
+		}
+	}
+	return nil
 }
 
 // validateOnFailure checks that all on_failure targets reference existing steps or terminals.
