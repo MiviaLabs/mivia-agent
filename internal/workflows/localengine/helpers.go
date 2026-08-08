@@ -16,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowtemplate "github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
 func buildStepRuntimes(wf *compiler.CompiledWorkflow, base string) (map[string]controller.StepRuntime, error) {
@@ -91,7 +92,7 @@ func loadOutputSchemas(base string, wf *compiler.CompiledWorkflow) (map[string]w
 	return schemas, nil
 }
 
-func loadPanelSnapshotAssets(base string, wf *compiler.CompiledWorkflow, schemas map[string]workflowledger.RefSnapshot) (map[string]workflowledger.RefSnapshot, map[string]workflowledger.PanelBindingSnapshot, error) {
+func loadPanelSnapshotAssets(base string, wf *compiler.CompiledWorkflow, schemas map[string]workflowledger.RefSnapshot, registry *agents.AgentRegistry) (map[string]workflowledger.RefSnapshot, map[string]workflowledger.PanelBindingSnapshot, error) {
 	templates := make(map[string]workflowledger.RefSnapshot)
 	bindings := make(map[string]workflowledger.PanelBindingSnapshot)
 	for _, step := range wf.Steps {
@@ -99,7 +100,15 @@ func loadPanelSnapshotAssets(base string, wf *compiler.CompiledWorkflow, schemas
 			continue
 		}
 		for _, member := range step.Panel.Members {
-			data, err := loadOutputSchemaBytes(base, member.Template)
+			agent, ok := registry.Get(member.Agent)
+			if !ok {
+				return nil, nil, fmt.Errorf("panel step %q member %q references unknown agent %q", step.ID, member.ID, member.Agent)
+			}
+			agentDigest, err := agent.DefinitionDigest()
+			if err != nil {
+				return nil, nil, fmt.Errorf("panel step %q member %q agent digest: %w", step.ID, member.ID, err)
+			}
+			data, err := loadTemplateBytes(base, member.Template)
 			if err != nil {
 				return nil, nil, fmt.Errorf("panel step %q member %q template %q: %w", step.ID, member.ID, member.Template, err)
 			}
@@ -115,7 +124,7 @@ func loadPanelSnapshotAssets(base string, wf *compiler.CompiledWorkflow, schemas
 			}
 			bindings[key] = workflowledger.PanelBindingSnapshot{
 				StepID: step.ID, MemberID: member.ID, AgentName: member.Agent,
-				AgentDigest:  "sha256:" + workflowledger.DigestHex([]byte(member.Agent)),
+				AgentDigest:  agentDigest,
 				ProviderName: member.Provider, Model: member.Model,
 				SkillDigest:    workflowledger.DigestHex([]byte(member.Skill)),
 				TemplateDigest: templateRef.Digest, SchemaDigest: schemaRef.Digest,
@@ -136,6 +145,14 @@ func digestRefBytes(data []byte) string {
 // admission guards: no path escape, no symlink, and a size cap. Resume never
 // reaches it because it reads the pinned snapshot bytes instead.
 func loadOutputSchemaBytes(base, ref string) ([]byte, error) {
+	return loadBoundedReferenceBytes(base, ref, definition.MaxWorkflowFileBytes)
+}
+
+func loadTemplateBytes(base, ref string) ([]byte, error) {
+	return loadBoundedReferenceBytes(base, ref, workflowtemplate.MaxTemplateBytes)
+}
+
+func loadBoundedReferenceBytes(base, ref string, maxBytes int) ([]byte, error) {
 	clean := filepath.Clean(ref)
 	if clean == "." || filepath.IsAbs(ref) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("workflow reference %q escapes its directory", ref)
@@ -154,12 +171,12 @@ func loadOutputSchemaBytes(base, ref string) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, int64(definition.MaxWorkflowFileBytes)+1))
+	data, err := io.ReadAll(io.LimitReader(file, int64(maxBytes)+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > definition.MaxWorkflowFileBytes {
-		return nil, fmt.Errorf("workflow reference %q exceeds %d bytes", ref, definition.MaxWorkflowFileBytes)
+	if len(data) > maxBytes {
+		return nil, fmt.Errorf("workflow reference %q exceeds %d bytes", ref, maxBytes)
 	}
 	return data, nil
 }

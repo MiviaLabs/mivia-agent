@@ -217,7 +217,7 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 		Role:                   req.Role,
 		Depth:                  req.Depth + 1,
 		Budget:                 req.Budget,
-		WorkLimits:             h.WorkLimits,
+		WorkLimits:             runtime.LowestPositiveWorkLimits(h.WorkLimits, req.WorkLimits),
 		DisableProviderReplay:  h.DisableProviderReplay || req.DisableProviderReplay,
 	}
 	if h.ContextPreparationManager != nil {

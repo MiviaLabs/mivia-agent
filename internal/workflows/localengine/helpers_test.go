@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
@@ -141,7 +142,11 @@ func TestLoadPanelSnapshotAssetsPinsMemberWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	templates, bindings, err := loadPanelSnapshotAssets(base, wf, schemas)
+	registry := agents.NewRegistry()
+	if err := registry.Publish(agents.ResolvedAgent{Name: "panel-reviewer", Model: "deepseek-v4"}); err != nil {
+		t.Fatal(err)
+	}
+	templates, bindings, err := loadPanelSnapshotAssets(base, wf, schemas, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,8 +176,18 @@ func TestLoadPanelSnapshotAssetsRejectsSymlinkTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := loadPanelSnapshotAssets(base, wf, schemas); err == nil {
+	if _, _, err := loadPanelSnapshotAssets(base, wf, schemas, agents.NewRegistry()); err == nil {
 		t.Fatal("expected symlink template rejection")
+	}
+}
+
+func TestLoadTemplateBytesUsesTemplateLimit(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "large.md"), []byte(strings.Repeat("x", 32769)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadTemplateBytes(base, "large.md"); err == nil {
+		t.Fatal("expected oversized template rejection")
 	}
 }
 

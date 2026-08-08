@@ -14,7 +14,7 @@ func (e *Engine) newRunController(compiled *compiler.CompiledWorkflow, raw []byt
 	if err != nil {
 		return nil, controller.Admission{}, err
 	}
-	templates, bindings, err := loadPanelSnapshotAssets(baseDir, compiled, schemas)
+	templates, bindings, err := loadPanelSnapshotAssets(baseDir, compiled, schemas, e.AgentRegistry)
 	if err != nil {
 		return nil, controller.Admission{}, err
 	}

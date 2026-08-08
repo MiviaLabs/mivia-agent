@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -32,6 +33,9 @@ type Engine struct {
 	// NewRunner builds the agent-step runner for one admitted run.
 	// Required for agent steps; a nil NewRunner fails closed (no fake success).
 	NewRunner func() controller.AgentStepRunner
+	// AgentRegistry supplies immutable agent definitions for panel admission.
+	// Panel work fails closed when the registry cannot resolve a member.
+	AgentRegistry *agents.AgentRegistry
 	// NewRunID mints run IDs. Nil uses a secure random wfr- id.
 	NewRunID func() string
 	// PanelLimiter is the process-wide local actor limiter supplied by the host.
@@ -294,6 +298,9 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 	if err != nil {
 		return nil, err
 	}
+	if run.SnapshotDigest == "" || run.SnapshotDigest != workflowledger.SnapshotDigest(raw) {
+		return nil, fmt.Errorf("workflow snapshot digest does not match the admitted snapshot")
+	}
 	wf, _, err := definition.ParseWorkflowTOML(snapshot.DefinitionTOML, run.WorkflowName+".toml")
 	if err != nil {
 		return nil, err
@@ -301,6 +308,9 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 	compiled, err := compiler.CompileForResume(&wf)
 	if err != nil {
 		return nil, err
+	}
+	if snapshot.DefinitionDigest != run.WorkflowDigest {
+		return nil, fmt.Errorf("workflow definition digest does not match the admitted definition")
 	}
 	inputs := make(map[string]any, len(snapshot.Inputs))
 	for k, v := range snapshot.Inputs {
