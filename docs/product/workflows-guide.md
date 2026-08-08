@@ -247,7 +247,71 @@ flowchart TD
     success -->|draft PR| delivery
 ```
 
-Look at the right side of the diagram. Three gates run the tests and checks. Each failed gate sends the run back for repair. The repairs feed into review again.
+Look at the right side of the diagram. Five gates run the tests and checks. Each failed gate sends the run back for repair. The repairs feed into review again.
+
+### What each part does
+
+The workflow first creates and challenges a change plan. It then creates and
+challenges a test plan. Only then does it change files. The reviewer checks the
+implementation twice: once for the change and once for cross-layer effects.
+Each failed automated check routes to a focused repair step, then to review
+again. A run can continue to repair while it stays inside its attempt and
+duration limits.
+
+| Steps | Kind | Agent and skill | Purpose |
+|------|------|-----------------|---------|
+| `plan`, `plan_tests`, `implement`, and all `repair_*` steps | `agent` | `workflow-engineer` + `workflow-feature-delivery` | Plan, write tests, change files, and repair failed evidence. |
+| `plan_review`, `test_plan_review`, `review`, and `review_integration` | `agent_gate` | `reviewer` + `secure-change` | Challenge plans and review the change before automated gates. |
+| `test_validate`, `verify`, `code_validate`, `preflight_validate`, and `preflight_structure` | `evidence_gate` | Fixed verifier or fixed command | Run the required checks outside the implementation agent. |
+| `delivery` | Host delivery policy | Not an agent step | Create a draft GitHub pull request after `success`, with explicit publication permission. |
+
+The workflow starts in an isolated worktree. It stores the compiled workflow,
+inputs, templates, schemas, and resolved agent bindings in the ledger. A
+resumed run uses that saved snapshot. It does not silently use later workflow
+or agent changes.
+
+### Where the workflow is configured
+
+Use this map when you need to inspect or change the shipped workflow.
+
+| Concern | Source | Change with care |
+|---------|--------|------------------|
+| Step order, routes, limits, and delivery policy | [`.mivia/workflows/feature-delivery.toml`](../../.mivia/workflows/feature-delivery.toml) | This file is the workflow contract. It cannot grant provider, tool, or publication authority. |
+| Agent prompts | [`.mivia/workflows/templates/`](../../.mivia/workflows/templates/) | Each template defines the task for one workflow step. |
+| Structured step results | [`.mivia/workflows/schemas/`](../../.mivia/workflows/schemas/) | Routes use these validated fields, not free-form prose. |
+| Implementation agent | [`.mivia/agents/workflow-engineer.toml`](../../.mivia/agents/workflow-engineer.toml) | This agent can edit its isolated worktree. It cannot run commands or publish. |
+| Review agent | [`.mivia/agents/reviewer.toml`](../../.mivia/agents/reviewer.toml) | This agent is read-only. It returns review evidence. |
+| Provider catalog, credentials, worktrees, and subagent limits | [`.mivia/mivia.toml`](../../.mivia/mivia.toml) | Keep API keys in the environment or env file, never in this file. |
+
+### Agent models
+
+The shipped workflow uses two separate model bindings. This separation gives
+the review gates an independent provider from the implementation steps.
+
+| Agent | Provider | Model | Used by |
+|-------|----------|-------|---------|
+| `workflow-engineer` | `deepseek` | `deepseek-v4-flash` | Plan, test plan, implementation, and repairs. |
+| `reviewer` | `openrouter` | `tencent/hy3-preview` | Plan review, test-plan review, change review, and integration review. |
+
+The agent file selects its provider and model. The provider catalog in
+`.mivia/mivia.toml` must declare that model. The run records the resolved
+provider and model at admission. A resume fails if an agent binding changed.
+
+### Run the shipped workflow in this repository
+
+For this repository, use the helper script. It starts the run in the
+background, sets `--allow-publish`, and writes the run log under
+`.mivia/run-logs/` by default.
+
+```bash
+scripts/run-delivery-workflow.sh docs-workflow-guide <<'TASK'
+Document the feature-delivery workflow with its agents, models, and configuration.
+TASK
+```
+
+Use `mivia workflow status <run-id>` and `mivia workflow events <run-id>` to
+monitor the run. Use the general CLI form shown earlier when you do not want
+to grant publication permission.
 
 The evidence gates use fixed verifier profiles:
 
