@@ -263,6 +263,42 @@ func TestZAIUnknownHTTP429KeepsDefaultRetry(t *testing.T) {
 	}
 }
 
+// The step-level retry (runStepWithTransientRetry) consults provider.IsTransient
+// on the runner error. A permanent z.ai quota/plan 429 must classify as NOT
+// transient there, or the whole step re-runs up to three times on a block that
+// holds for the rest of the billing period. The parser's error text contains
+// "HTTP 429" - which transientMessages matches - so the parser must mark these
+// codes permanent for the marker to beat the text phrase.
+func TestZAIPermanent429IsNotTransientAtStepLayer(t *testing.T) {
+	for _, code := range []int{1113, 1308, 1309, 1310, 1311, 1314} {
+		body := `{"error":{"code":"` + strconv.Itoa(code) + `","message":"m"}}`
+		err := zaiErrorParser(http.StatusTooManyRequests, []byte(body))
+		if err == nil {
+			t.Fatalf("code %d: expected an error", code)
+		}
+		if IsTransient(err) {
+			t.Fatalf("code %d: permanent quota error must not be transient at the step layer: %v", code, err)
+		}
+	}
+}
+
+// Codes 1302/1305 are the transient half of the 429 split: the transport
+// retries them (TestZAITransientHTTP429IsRetried) and the step layer must keep
+// retrying them too. Marking them permanent would end a recoverable overload
+// after a single attempt.
+func TestZAITransient429CodesStayTransient(t *testing.T) {
+	for _, code := range []int{1302, 1305} {
+		body := `{"error":{"code":"` + strconv.Itoa(code) + `","message":"m"}}`
+		err := zaiErrorParser(http.StatusTooManyRequests, []byte(body))
+		if err == nil {
+			t.Fatalf("code %d: expected an error", code)
+		}
+		if !IsTransient(err) {
+			t.Fatalf("code %d: transient rate-limit error must stay transient: %v", code, err)
+		}
+	}
+}
+
 // The classifier peeks at the response body to read the code. The body the
 // caller reads afterwards must still be complete, or the error text is built
 // from a truncated payload.

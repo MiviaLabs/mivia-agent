@@ -482,7 +482,13 @@ func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatRespon
 	}
 	var body chatResponseBody
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, asTransient(fmt.Errorf("%s: decode response: %w", c.name, err))
+		// Left unwrapped on purpose: a decode failure is not by itself a
+		// transport fault (IsTransient excludes JSON syntax errors, because at
+		// agent-output parsing sites they are bad answers). retryOnIncompleteBody
+		// retries a body that was provably cut and marks the final error
+		// TransientError when its per-call budget is spent, where the cut is
+		// known.
+		return nil, fmt.Errorf("%s: decode response: %w", c.name, err)
 	}
 	return &body, nil
 }

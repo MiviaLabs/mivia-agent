@@ -29,6 +29,25 @@ func (e *TransientError) Error() string {
 
 func (e *TransientError) Unwrap() error { return e.Err }
 
+// permanentError is the typed counterpart of TransientError: it pins a failure
+// as permanent so no text phrase can flip it back to transient. The provider
+// layer marks a refusal it knows holds (z.ai quota/plan 429 codes, for example)
+// so a caller's IsTransient cannot re-run a whole step on a permanent block.
+type permanentError struct{ err error }
+
+func (e *permanentError) Error() string { return e.err.Error() }
+
+func (e *permanentError) Unwrap() error { return e.err }
+
+// markPermanent wraps err so IsTransient reports false for it at every layer,
+// whatever its text says. A nil error stays nil.
+func markPermanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &permanentError{err: err}
+}
+
 // IsTransient reports whether err says the call never delivered an answer.
 //
 // It reports true for a failure already marked TransientError, and for the
@@ -51,6 +70,14 @@ func IsTransient(err error) bool {
 	// every expired run as a transport fault, and retry each one under the
 	// context that just expired.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	// A permanent marker wins over every other signal, including the
+	// TransientError type test below: an error cannot be both marked, and a
+	// provider refusal the transport already classified as permanent must not
+	// re-run a whole step because its text happens to name a transient status.
+	var perm *permanentError
+	if errors.As(err, &perm) {
 		return false
 	}
 	var transient *TransientError
@@ -101,6 +128,7 @@ var transientMessages = []string{
 	// a caller only after that budget is spent, and a fresh call later can
 	// still succeed.
 	"http 429",
+	"http 408",
 	"http 500",
 	"http 502",
 	"http 503",

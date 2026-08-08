@@ -46,6 +46,10 @@ func TestChatRetriesATruncatedResponseBody(t *testing.T) {
 }
 
 // A body that stays truncated still fails, and the caller still learns why.
+// The final error must be transient: the per-call budget is spent on a body
+// that was provably cut short, so the call never delivered an answer and the
+// step-level retry (runStepWithTransientRetry) must still fire instead of
+// failing the whole run on the first attempt's bare JSON syntax error.
 func TestChatFailsWhenEveryTryIsTruncated(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -57,13 +61,21 @@ func TestChatFailsWhenEveryTryIsTruncated(t *testing.T) {
 	defer srv.Close()
 
 	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
-	if _, err := c.Chat(context.Background(), Request{
+	_, err := c.Chat(context.Background(), Request{
 		Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}},
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("Chat() = nil error, want the decode failure")
 	}
 	if calls != 1+maxIncompleteBodyRetries {
 		t.Fatalf("calls = %d, want %d", calls, 1+maxIncompleteBodyRetries)
+	}
+	if !IsTransient(err) {
+		t.Fatalf("final error = %v, want transient: a persistently cut body must let the step-level retry fire", err)
+	}
+	var transient *TransientError
+	if !errors.As(err, &transient) {
+		t.Fatalf("final error = %T %v, want a *TransientError", err, err)
 	}
 }
 

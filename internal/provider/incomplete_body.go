@@ -65,5 +65,17 @@ func retryOnIncompleteBody[T any](ctx context.Context, call func() (T, error)) (
 			return result, err
 		}
 	}
+	// The per-call budget is spent on a body that was provably cut short
+	// (isIncompleteBody matched on the last call), so the call never delivered
+	// an answer and a step-level retry may still recover. Mark the final error
+	// transient EXPLICITLY: asTransient would no-op here, because IsTransient
+	// deliberately excludes the JSON syntax errors a cut body decodes to. An
+	// error the read path already marked (io.ErrUnexpectedEOF wrapped at the
+	// point of the read) keeps its single mark. A mid-retry permanent refusal
+	// never reaches this line: it exits through the checks above, unwrapped.
+	var marked *TransientError
+	if !errors.As(err, &marked) {
+		err = &TransientError{Err: err}
+	}
 	return zero, err
 }
