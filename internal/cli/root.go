@@ -82,7 +82,7 @@ Usage:
   %s workflows validate [name] [--workspace dir]
   %s workflows explain <name> [--workspace dir]
   %s workflow run <name> [--workspace dir] [--config path] [--input name=value]... [--allow-publish]
-  %s workflow runs [--status name] [--limit n] [--workspace dir] [--config path]
+  %s workflow runs [--status name] [--limit n] [--watch] [--workspace dir] [--config path]
   %s workflow deliver <run-id> --allow-publish [--workspace dir] [--config path]
   %s workflow resume <run-id> [--workspace dir] [--config path] [--force]
   %s worktree create <name> [--branch ref] [--workspace dir]

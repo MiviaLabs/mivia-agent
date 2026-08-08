@@ -62,3 +62,15 @@ func checkResolvedBinding(in ResolveInput, fields inheritedFields) error {
 	}
 	return nil
 }
+
+// stripWorkspaceBinding applies credential-routing protection: a workspace
+// definition must not select a (provider, model) pair unless the operator
+// opted in through the user-only [agents] gate. It reports the warning to
+// print and whether the pair was stripped.
+//
+// The warning names the model as well as the provider. Stripping the pair
+// while reporting only the provider let an operator believe a per-agent model
+// was still in force: an agent file that pins one model for a review lens ran
+// the session model instead, silently collapsing a deliberately decorrelated
+// gate onto the model that produced the work. It also names the opt-in,
+// because a warning an operator cannot act on is noise on every command.

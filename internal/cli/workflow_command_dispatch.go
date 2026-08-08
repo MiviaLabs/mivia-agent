@@ -28,6 +28,10 @@ func runWorkflowCommandRuns(args []string, workspaceRoot, configPath string, std
 	if err != nil {
 		return err
 	}
+	watch, rest, err := parseWorkflowBoolFlag(rest, "--watch")
+	if err != nil {
+		return err
+	}
 	limit, err := parseWorkflowIntFlag(rest, "--limit", 20)
 	if err != nil {
 		return err
@@ -43,6 +47,9 @@ func runWorkflowCommandRuns(args []string, workspaceRoot, configPath string, std
 		default:
 			return fmt.Errorf("workflow runs: unexpected argument %q", rest[i])
 		}
+	}
+	if watch {
+		return executeWorkflowRunsWatch(workspaceRoot, configPath, status, limit, stdout, stderr)
 	}
 	return executeWorkflowRuns(workspaceRoot, configPath, status, limit, stdout, stderr)
 }

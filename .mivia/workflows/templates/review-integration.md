@@ -32,6 +32,26 @@ For very large artifacts, use the offset and limit parameters to page through th
 Read the relevant source and tests. Do not edit files. Do not run commands, commit, push,
 publish, or read secret-like files.
 
+## Task fulfilment (check this first)
+
+Before you review the interaction surface, check that the change does the task.
+
+Read `files_changed` in the implementation summary above. Compare it against the task text.
+Reply with `changes_requested` when any of these is true:
+
+- The task asks for a defect fix, and no changed file holds the corrected behavior. A change
+  that adds only tests does not fix a defect. It records the defect.
+- The changed files do not touch the behavior that the task names.
+- The summary claims a fix, but no changed file shows the corrected logic.
+
+Give the finding the required change: name the file that must hold the fix, and the behavior
+it must show. Do not approve a delivery that only proves a defect exists.
+
+A change that only adds tests is correct for a task that asks for tests. Read the task text
+and decide. Do not apply this rule to a task that asks for coverage.
+
+## Interaction surface
+
 Your job is the interaction surface, not a second line-by-line code review. For each surface
 below, check whether the change creates, misses, or fails to guard a cross-layer defect, and
 verify the claim against the source you actually read. Cite file:line for every finding.

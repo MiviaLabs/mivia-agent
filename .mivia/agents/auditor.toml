@@ -3,9 +3,9 @@ name = "auditor"
 description = "Hostile bug auditor that hunts confirmed reachable defects and reproduces them with project-native commands, without editing files."
 tools = ["read_file", "list_dir", "grep", "glob", "find_references", "search", "fetch_url", "extract", "run_command"]
 skills = ["bug-audit", "concurrency-review"]
-# Deliberately a different provider than reviewer (zai), so the audit lens is
-# not correlated with the review lens. Flash carries the same 1M window as pro
-# at higher throughput for the repeated audit rounds.
+# Deliberately a different provider than reviewer (openrouter), so the audit
+# lens is not correlated with the review lens. Flash carries the same 1M window
+# as pro at higher throughput for the repeated audit rounds.
 provider = "deepseek"
 model = "deepseek-v4-flash"
 max_turns = 0
