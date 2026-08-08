@@ -39,6 +39,7 @@ type ResolvedAgent struct {
 	MaxTokens       *int
 	SystemPrompt    string
 	EffectiveTools  []string // final allowlist after inheritance/deltas/guardrails
+	AllowEmptyTools bool     // explicit empty-tool contract
 	DisallowedTools []string // effective denylist names applied before allowlist
 	// CoreTools is the resolved always-advertised tool tier (plan tools/05).
 	// nil = no per-agent override; the host falls back to [tools] core, and a
@@ -145,6 +146,7 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		MaxTokens                                          *int           `json:",omitempty"`
 		OutputSchema                                       map[string]any `json:",omitempty"`
 		InputSchema                                        map[string]any `json:",omitempty"`
+		AllowEmptyTools                                    bool           `json:",omitempty"`
 	}
 	payload, err := json.Marshal(definition{
 		Name: a.Name, Description: a.Description, Model: a.Model,
@@ -154,6 +156,7 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		SkillOrigins: a.SkillOrigins, Source: string(a.Provenance.Source), Path: a.Provenance.Path,
 		Provider: a.Provider, TimeoutSeconds: a.TimeoutSeconds, MaxTokens: a.MaxTokens,
 		OutputSchema: a.OutputSchema, InputSchema: a.InputSchema,
+		AllowEmptyTools: a.AllowEmptyTools,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal agent definition %q: %w", a.Name, err)

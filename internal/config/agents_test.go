@@ -83,6 +83,40 @@ system_prompt = ""
 	}
 }
 
+func TestAgentAllowEmptyToolsContract(t *testing.T) {
+	valid := []byte(`
+name = "a"
+description = "d"
+tools = []
+allow_empty_tools = true
+`)
+	spec, _, err := ParseAgentFileTOML(valid, "a.toml")
+	if err != nil {
+		t.Fatalf("ParseAgentFileTOML(valid): %v", err)
+	}
+	if spec.Tools == nil || len(*spec.Tools) != 0 {
+		t.Fatalf("tools = %#v", spec.Tools)
+	}
+
+	for name, body := range map[string][]byte{
+		"omitted tools":  []byte("name = \"a\"\ndescription = \"d\"\nallow_empty_tools = true\n"),
+		"nonempty tools": []byte("name = \"a\"\ndescription = \"d\"\ntools = [\"read_file\"]\nallow_empty_tools = true\n"),
+		"inherits":       []byte("name = \"a\"\ndescription = \"d\"\ninherits = \"parent\"\ntools = []\nallow_empty_tools = true\n"),
+		"tool delta":     []byte("name = \"a\"\ndescription = \"d\"\ntools = []\ntools_remove = [\"read_file\"]\nallow_empty_tools = true\n"),
+		"false marker":   []byte("name = \"a\"\ndescription = \"d\"\ntools = []\nallow_empty_tools = false\n"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := ParseAgentFileTOML(body, "a.toml"); err == nil {
+				t.Fatal("ParseAgentFileTOML() succeeded")
+			}
+		})
+	}
+	withDenylist := []byte("name = \"a\"\ndescription = \"d\"\ntools = []\ndisallowed_tools = [\"post_message\"]\nallow_empty_tools = true\n")
+	if _, _, err := ParseAgentFileTOML(withDenylist, "a.toml"); err != nil {
+		t.Fatalf("ParseAgentFileTOML(denylist): %v", err)
+	}
+}
+
 func TestAgentFilenameNameAgreement(t *testing.T) {
 	body := []byte(`
 name = "other"

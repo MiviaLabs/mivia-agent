@@ -17,7 +17,7 @@ func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, regi
 		base = filepath.Join(root, ".mivia", "workflows")
 	}
 	result := make(map[string]controller.StepRuntime)
-	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionDigest: wf.Digest, Agents: map[string]workflowledger.AgentSnapshot{}, Schemas: map[string]workflowledger.RefSnapshot{}, Templates: map[string]workflowledger.RefSnapshot{}}
+	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionDigest: wf.Digest, Agents: map[string]workflowledger.AgentSnapshot{}, PanelBindings: map[string]workflowledger.PanelBindingSnapshot{}, Schemas: map[string]workflowledger.RefSnapshot{}, Templates: map[string]workflowledger.RefSnapshot{}}
 	for _, step := range wf.Steps {
 		if !definition.ValidStepKinds[step.Kind] {
 			return nil, snapshot, fmt.Errorf("workflow step %q has unsupported kind %q", step.ID, step.Kind)
@@ -31,6 +31,12 @@ func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, regi
 		}
 		if step.OutputSchema != "" {
 			snapshot.Schemas[step.OutputSchema] = workflowledger.RefSnapshot{Digest: digestBytes(schemaBytes), Bytes: append([]byte(nil), schemaBytes...)}
+		}
+		if step.Kind == "agent_panel" && step.Panel != nil {
+			if err := loadPanelMemberBindings(base, step, registry, prior, &snapshot); err != nil {
+				return nil, snapshot, err
+			}
+			continue
 		}
 		if step.Kind != "agent" && step.Kind != "agent_gate" {
 			continue
@@ -58,6 +64,50 @@ func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, regi
 		}
 	}
 	return result, snapshot, nil
+}
+
+func loadPanelMemberBindings(base string, step definition.Step, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, snapshot *workflowledger.Snapshot) error {
+	for _, member := range step.Panel.Members {
+		memberStep := step
+		memberStep.Template = member.Template
+		memberStep.OutputSchema = member.OutputSchema
+		_, _, templateBytes, schemaBytes, err := loadStepReferences(base, memberStep, prior)
+		if err != nil {
+			return fmt.Errorf("panel step %q member %q: %w", step.ID, member.ID, err)
+		}
+		if member.Template != "" {
+			snapshot.Templates[member.Template] = workflowledger.RefSnapshot{Digest: digestBytes(templateBytes), Bytes: append([]byte(nil), templateBytes...)}
+		}
+		if member.OutputSchema != "" {
+			snapshot.Schemas[member.OutputSchema] = workflowledger.RefSnapshot{Digest: digestBytes(schemaBytes), Bytes: append([]byte(nil), schemaBytes...)}
+		}
+		agent, ok := registry.Get(member.Agent)
+		if !ok {
+			return fmt.Errorf("panel step %q member %q references unknown agent %q", step.ID, member.ID, member.Agent)
+		}
+		digest, err := agent.DefinitionDigest()
+		if err != nil {
+			return err
+		}
+		key := step.ID + "/" + member.ID
+		if _, exists := snapshot.PanelBindings[key]; exists {
+			return fmt.Errorf("duplicate panel binding key %q", key)
+		}
+		binding := workflowledger.PanelBindingSnapshot{
+			StepID: step.ID, MemberID: member.ID, AgentName: agent.Name, AgentDigest: digest,
+			ProviderName: member.Provider, Model: member.Model,
+			TemplateDigest: digestBytes(templateBytes), SchemaDigest: digestBytes(schemaBytes),
+		}
+		if prior != nil {
+			pinned, ok := prior.PanelBindings[key]
+			pinned.SkillDigest = ""
+			if !ok || pinned != binding {
+				return fmt.Errorf("panel binding %q changed since workflow admission", key)
+			}
+		}
+		snapshot.PanelBindings[key] = binding
+	}
+	return nil
 }
 
 func loadStepReferences(base string, step definition.Step, prior *workflowledger.Snapshot) (string, map[string]any, []byte, []byte, error) {

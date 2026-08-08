@@ -56,10 +56,13 @@ type AgentsGlobal struct {
 // AgentFileSpec is one presence-preserving agent TOML definition.
 // Pointer fields distinguish omitted keys from empty values.
 type AgentFileSpec struct {
-	Name            *string
-	Description     *string
-	Inherits        *string
-	Tools           *[]string
+	Name        *string
+	Description *string
+	Inherits    *string
+	Tools       *[]string
+	// AllowEmptyTools permits an explicitly declared empty tools list. It is
+	// valid only for a standalone agent with tools = [].
+	AllowEmptyTools *bool
 	ToolsAdd        *[]string
 	ToolsRemove     *[]string
 	DisallowedTools *[]string

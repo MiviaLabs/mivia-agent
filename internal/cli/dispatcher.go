@@ -37,7 +37,10 @@ type SessionDispatcherOpts struct {
 	Completer         provider.Completer
 	Model             string
 	ProviderName      string
-	ModelGeneration   uint64
+	// AllowWorkspaceAgentProviders is the user-owned opt-in for static workflow
+	// panel provider routing.
+	AllowWorkspaceAgentProviders bool
+	ModelGeneration              uint64
 	// ModelGenerationFunc is evaluated when a routed task starts. Candidate
 	// dispatchers are built before a binding is published, so a fixed
 	// generation here can be stale after a concurrent switch.

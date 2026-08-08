@@ -46,6 +46,7 @@ type agentFileTOML struct {
 	Description     *string         `toml:"description"`
 	Inherits        *string         `toml:"inherits"`
 	Tools           *[]string       `toml:"tools"`
+	AllowEmptyTools *bool           `toml:"allow_empty_tools"`
 	ToolsAdd        *[]string       `toml:"tools_add"`
 	ToolsRemove     *[]string       `toml:"tools_remove"`
 	DisallowedTools *[]string       `toml:"disallowed_tools"`
@@ -67,6 +68,7 @@ func (r agentFileTOML) toSpec() AgentFileSpec {
 		Description:     r.Description,
 		Inherits:        r.Inherits,
 		Tools:           r.Tools,
+		AllowEmptyTools: r.AllowEmptyTools,
 		ToolsAdd:        r.ToolsAdd,
 		ToolsRemove:     r.ToolsRemove,
 		DisallowedTools: r.DisallowedTools,
@@ -129,6 +131,17 @@ func validateAgentFileSpec(spec AgentFileSpec) error {
 	hasRemove := spec.ToolsRemove != nil
 	if hasTools && (hasAdd || hasRemove) {
 		return fmt.Errorf("tools is mutually exclusive with tools_add/tools_remove; remove tools_add/tools_remove if stating a full tools list, or remove tools to extend an inherited pool with tools_add/tools_remove")
+	}
+	if spec.AllowEmptyTools != nil {
+		if !*spec.AllowEmptyTools {
+			return fmt.Errorf("allow_empty_tools must be true when set")
+		}
+		if spec.Tools == nil || len(*spec.Tools) != 0 {
+			return fmt.Errorf("allow_empty_tools requires tools = []")
+		}
+		if spec.Inherits != nil || hasAdd || hasRemove {
+			return fmt.Errorf("allow_empty_tools cannot inherit or modify another tool list")
+		}
 	}
 	return nil
 }
