@@ -79,6 +79,22 @@ func TestSanitizeToolMetadataAppliesRedaction(t *testing.T) {
 	}
 }
 
+func TestSanitizeToolMetadataRedactsEnumValues(t *testing.T) {
+	policy, err := redact.Compile([]string{"secret-value"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := map[string]any{"type": "string", "enum": []any{"public", "secret-value"}}
+	_, got, err := sanitizeToolMetadata("tool", schema, 100, 1000, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := got["enum"].([]any)
+	if values[1] == "secret-value" {
+		t.Fatalf("sanitizeToolMetadata() leaked enum value: %#v", values)
+	}
+}
+
 func TestDiscoveredToolRedactsResult(t *testing.T) {
 	policy, err := redact.Compile([]string{"secret"}, nil, "")
 	if err != nil {

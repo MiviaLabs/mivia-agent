@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -87,6 +89,36 @@ func TestCloneForGenerationNil(t *testing.T) {
 	if got := r.CloneForGeneration(); got != nil {
 		t.Errorf("nil registry CloneForGeneration() = %v, want nil", got)
 	}
+}
+
+func TestRegistryConcurrentRegisterAndScope(t *testing.T) {
+	registry := NewRegistry()
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		<-start
+		for i := 0; i < 1_000; i++ {
+			registry.Register(&mockTool{name: fmt.Sprintf("tool-%d", i)})
+		}
+	}()
+
+	for i := 0; i < 8; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			for i := 0; i < 1_000; i++ {
+				_ = registry.List()
+				_ = ScopedRegistry(registry, ScopeOptions{Mode: ScopeSpawned})
+			}
+		}()
+	}
+
+	close(start)
+	workers.Wait()
 }
 
 // mockTool implements Tool for testing.

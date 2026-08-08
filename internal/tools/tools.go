@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
@@ -80,6 +81,7 @@ type ResultBudgetTool interface {
 
 // Registry holds tools by name.
 type Registry struct {
+	mu    sync.RWMutex
 	order []Tool
 	by    map[string]Tool
 }
@@ -97,7 +99,7 @@ func (r *Registry) Clone() *Registry {
 		return nil
 	}
 	out := NewRegistry()
-	for _, tool := range r.order {
+	for _, tool := range r.List() {
 		out.Register(tool)
 	}
 	return out
@@ -121,7 +123,7 @@ func (r *Registry) CloneForGenerationExcluding(excludedNames ...string) *Registr
 		excluded[name] = struct{}{}
 	}
 	out := NewRegistry()
-	for _, tool := range r.order {
+	for _, tool := range r.List() {
 		if _, privileged := tool.(PrivilegedTool); privileged {
 			continue
 		}
@@ -135,6 +137,8 @@ func (r *Registry) CloneForGenerationExcluding(excludedNames ...string) *Registr
 
 // Register adds a tool.
 func (r *Registry) Register(t Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.by[t.Name()]; ok {
 		return
 	}
@@ -144,19 +148,24 @@ func (r *Registry) Register(t Tool) {
 
 // Get returns a tool by name.
 func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	t, ok := r.by[name]
 	return t, ok
 }
 
 // List returns tools in registration order.
 func (r *Registry) List() []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return append([]Tool(nil), r.order...)
 }
 
 // OpenAITools returns the tools array for chat completions.
 func (r *Registry) OpenAITools() []map[string]any {
-	out := make([]map[string]any, 0, len(r.order))
-	for _, t := range r.order {
+	registered := r.List()
+	out := make([]map[string]any, 0, len(registered))
+	for _, t := range registered {
 		out = append(out, map[string]any{
 			"type": "function",
 			"function": map[string]any{
@@ -171,7 +180,7 @@ func (r *Registry) OpenAITools() []map[string]any {
 
 // Execute runs a tool by name with JSON args.
 func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessage) (string, error) {
-	t, ok := r.by[name]
+	t, ok := r.Get(name)
 	if !ok {
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
@@ -363,7 +372,7 @@ func schemaEnum(raw any) ([]any, bool) {
 // Capability returns scheduling metadata, using a conservative external
 // classification for tools that do not implement CapableTool.
 func (r *Registry) Capability(name string, args json.RawMessage) Capability {
-	t, ok := r.by[name]
+	t, ok := r.Get(name)
 	if !ok {
 		return Capability{Class: ExecutionExternal}
 	}

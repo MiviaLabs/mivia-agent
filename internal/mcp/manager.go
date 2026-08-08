@@ -2,9 +2,7 @@ package mcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,9 +18,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const maxMCPInboundMessageBytes = 8 << 20
-
-var errMCPInboundMessageTooLarge = errors.New("MCP inbound message exceeds limit")
+const mcpShutdownTimeout = 5 * time.Second
 
 type remoteTool struct {
 	Name        string
@@ -73,26 +69,49 @@ func (c *sdkClient) CallTool(ctx context.Context, name string, arguments map[str
 	return strings.Join(parts, "\n"), nil
 }
 func (c *sdkClient) Close() error {
-	err := c.session.Close()
 	if c.httpClient != nil {
 		c.httpClient.CloseIdleConnections()
 	}
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- c.session.Close() }()
 	if c.command == nil {
-		return err
+		select {
+		case err := <-sessionDone:
+			return err
+		case <-time.After(mcpShutdownTimeout):
+			return fmt.Errorf("MCP client shutdown timed out")
+		}
 	}
-	wait := make(chan error, 1)
-	go func() { wait <- c.command.Wait() }()
-	var waitErr error
+	commandDone := make(chan error, 1)
+	go func() { commandDone <- c.command.Wait() }()
+	timer := time.NewTimer(mcpShutdownTimeout)
+	defer timer.Stop()
 	select {
-	case waitErr = <-wait:
-	case <-time.After(5 * time.Second):
+	case sessionErr := <-sessionDone:
+		select {
+		case waitErr := <-commandDone:
+			if sessionErr != nil {
+				return sessionErr
+			}
+			return waitErr
+		case <-timer.C:
+			_ = c.command.Process.Kill()
+			waitErr := <-commandDone
+			if sessionErr != nil {
+				return sessionErr
+			}
+			return waitErr
+		}
+	case <-timer.C:
 		_ = c.command.Process.Kill()
-		waitErr = <-wait
+		<-commandDone
+		select {
+		case sessionErr := <-sessionDone:
+			return sessionErr
+		case <-time.After(mcpShutdownTimeout):
+			return fmt.Errorf("MCP client shutdown timed out")
+		}
 	}
-	if err != nil {
-		return err
-	}
-	return waitErr
 }
 
 func connectServer(ctx context.Context, server config.MCPServerConfig) (remoteClient, error) {
@@ -144,26 +163,85 @@ type headerTransport struct {
 type redirectRequestKey struct{}
 
 type serializedRemoteClient struct {
-	client remoteClient
-	mu     sync.Mutex
+	client       remoteClient
+	operationMu  sync.Mutex
+	stateMu      sync.Mutex
+	activeCancel context.CancelFunc
+	closed       bool
+	closeDone    chan struct{}
+	closeErr     error
 }
 
 func (c *serializedRemoteClient) ListTools(ctx context.Context) ([]remoteTool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	c.stateMu.Lock()
+	closed := c.closed
+	c.stateMu.Unlock()
+	if closed {
+		return nil, fmt.Errorf("MCP client is closed")
+	}
 	return c.client.ListTools(ctx)
 }
 
 func (c *serializedRemoteClient) CallTool(ctx context.Context, name string, args map[string]any) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.CallTool(ctx, name, args)
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	callCtx, cancel, err := c.startCall(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer c.finishCall(cancel)
+	return c.client.CallTool(callCtx, name, args)
 }
 
 func (c *serializedRemoteClient) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.Close()
+	c.stateMu.Lock()
+	c.closed = true
+	if c.activeCancel != nil {
+		c.activeCancel()
+	}
+	if c.closeDone == nil {
+		c.closeDone = make(chan struct{})
+		go func() {
+			err := c.client.Close()
+			c.stateMu.Lock()
+			c.closeErr = err
+			c.stateMu.Unlock()
+			close(c.closeDone)
+		}()
+	}
+	closeDone := c.closeDone
+	c.stateMu.Unlock()
+	select {
+	case <-closeDone:
+		c.stateMu.Lock()
+		err := c.closeErr
+		c.stateMu.Unlock()
+		return err
+	case <-time.After(mcpShutdownTimeout):
+		return fmt.Errorf("MCP client shutdown timed out")
+	}
+}
+
+func (c *serializedRemoteClient) startCall(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.closed {
+		return nil, nil, fmt.Errorf("MCP client is closed")
+	}
+	callCtx, cancel := context.WithCancel(ctx)
+	c.activeCancel = cancel
+	return callCtx, cancel, nil
+}
+
+func (c *serializedRemoteClient) finishCall(cancel context.CancelFunc) {
+	c.stateMu.Lock()
+	if c.activeCancel != nil {
+		c.activeCancel = nil
+	}
+	c.stateMu.Unlock()
+	cancel()
 }
 
 func (t headerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -185,6 +263,10 @@ func (t headerTransport) RoundTrip(request *http.Request) (*http.Response, error
 func boundInboundResponse(response *http.Response, err error) (*http.Response, error) {
 	if err != nil || response == nil || response.Body == nil {
 		return response, err
+	}
+	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+		response.Body = newBoundedSSEReader(response.Body)
+		return response, nil
 	}
 	response.Body = newBoundedInboundReader(response.Body)
 	return response, nil
@@ -225,51 +307,6 @@ func connectStdio(ctx context.Context, server config.MCPServerConfig) (remoteCli
 	return &sdkClient{session: session, command: command}, nil
 }
 
-type boundedInboundReader struct {
-	io.ReadCloser
-	remaining int
-}
-
-func newBoundedInboundReader(reader io.ReadCloser) *boundedInboundReader {
-	return &boundedInboundReader{ReadCloser: reader, remaining: maxMCPInboundMessageBytes}
-}
-
-func (r *boundedInboundReader) Read(buffer []byte) (int, error) {
-	if r.remaining <= 0 {
-		return 0, errMCPInboundMessageTooLarge
-	}
-	if len(buffer) > r.remaining {
-		buffer = buffer[:r.remaining]
-	}
-	n, err := r.ReadCloser.Read(buffer)
-	r.remaining -= n
-	return n, err
-}
-
-type boundedStdioReader struct {
-	io.ReadCloser
-	messageBytes int
-}
-
-func newBoundedStdioReader(reader io.ReadCloser) *boundedStdioReader {
-	return &boundedStdioReader{ReadCloser: reader}
-}
-
-func (r *boundedStdioReader) Read(buffer []byte) (int, error) {
-	n, err := r.ReadCloser.Read(buffer)
-	for index, value := range buffer[:n] {
-		if value == '\n' {
-			r.messageBytes = 0
-			continue
-		}
-		if r.messageBytes >= maxMCPInboundMessageBytes {
-			return index, errMCPInboundMessageTooLarge
-		}
-		r.messageBytes++
-	}
-	return n, err
-}
-
 func environmentFor(names []string) []string {
 	out := make([]string, 0, len(names))
 	for _, name := range names {
@@ -291,6 +328,8 @@ type ManagerOptions struct {
 type Manager struct {
 	cfg            config.MCPConfig
 	connect        func(context.Context, config.MCPServerConfig) (remoteClient, error)
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 	mu             sync.Mutex
 	clients        map[string]remoteClient
 	tools          map[string][]tools.Tool
@@ -302,8 +341,9 @@ type Manager struct {
 
 // NewManager constructs a disconnected MCP manager.
 func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	if !cfg.Enabled {
-		return &Manager{cfg: cfg, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, redaction: opts.RedactionPolicy}, nil
+		return &Manager{cfg: cfg, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, redaction: opts.RedactionPolicy}, nil
 	}
 	if opts.Connect == nil {
 		opts.Connect = connectServer
@@ -325,7 +365,7 @@ func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	if limit == 0 {
 		limit = 64 << 10
 	}
-	return &Manager{cfg: cfg, connect: opts.Connect, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, maxResultBytes: limit, redaction: opts.RedactionPolicy}, nil
+	return &Manager{cfg: cfg, connect: opts.Connect, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, maxResultBytes: limit, redaction: opts.RedactionPolicy}, nil
 }
 
 // EnsureServers discovers tools for the requested server IDs once per session.
@@ -387,17 +427,26 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 }
 
 func (m *Manager) startupContext(parent context.Context) (context.Context, context.CancelFunc) {
-	if m.cfg.StartupTimeoutSeconds <= 0 {
-		return context.WithCancel(parent)
-	}
-	return context.WithTimeout(parent, time.Duration(m.cfg.StartupTimeoutSeconds)*time.Second)
+	return m.boundContext(parent, m.cfg.StartupTimeoutSeconds)
 }
 
 func (m *Manager) serverContext(parent context.Context, server config.MCPServerConfig) (context.Context, context.CancelFunc) {
-	if server.TimeoutSeconds <= 0 {
-		return context.WithCancel(parent)
+	return m.boundContext(parent, server.TimeoutSeconds)
+}
+
+func (m *Manager) boundContext(parent context.Context, timeoutSeconds int) (context.Context, context.CancelFunc) {
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if timeoutSeconds <= 0 {
+		ctx, cancel = context.WithCancel(parent)
+	} else {
+		ctx, cancel = context.WithTimeout(parent, time.Duration(timeoutSeconds)*time.Second)
 	}
-	return context.WithTimeout(parent, time.Duration(server.TimeoutSeconds)*time.Second)
+	stop := context.AfterFunc(m.shutdownCtx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
 }
 
 func (m *Manager) server(id string) (config.MCPServerConfig, bool) {
@@ -425,6 +474,7 @@ func (m *Manager) OwnsTool(name string) bool {
 
 // Close closes every connected MCP client.
 func (m *Manager) Close() error {
+	m.shutdownCancel()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {

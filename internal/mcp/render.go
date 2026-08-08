@@ -35,11 +35,15 @@ func sanitizeToolMetadata(description string, schema map[string]any, maxDescript
 	if maxSchema > 0 && len(encoded) > maxSchema {
 		return "", nil, fmt.Errorf("MCP tool schema exceeds configured limit")
 	}
+	redactedSchema, ok := redaction.JSONValue(schema).(map[string]any)
+	if !ok {
+		return "", nil, fmt.Errorf("redact MCP tool schema")
+	}
 	depth, properties := schemaComplexity(schema, 1)
 	if depth > maxSchemaDepth || properties > maxSchemaProperties {
 		return "", nil, fmt.Errorf("MCP tool schema is too complex")
 	}
-	return description, bridgeToolSchema(schema), nil
+	return description, bridgeToolSchema(redactedSchema), nil
 }
 
 // bridgeToolSchema copies the JSON Schema subset the host can safely expose.

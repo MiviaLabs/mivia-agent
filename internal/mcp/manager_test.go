@@ -39,6 +39,59 @@ func TestManagerEnsuresOnlyRequestedServerOnce(t *testing.T) {
 	}
 }
 
+func TestManagerCloseCancelsBlockingDiscovery(t *testing.T) {
+	client := &blockingDiscoveryClient{started: make(chan struct{}), canceled: make(chan struct{})}
+	manager, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
+		ID: "repository", Transport: "stdio", Command: "/bin/echo",
+	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
+		return client, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
+	defer cancelDiscovery()
+	ensureDone := make(chan error, 1)
+	go func() { _, err := manager.EnsureServers(discoveryCtx, []string{"repository"}); ensureDone <- err }()
+	select {
+	case <-client.started:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("EnsureServers() did not start discovery")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- manager.Close() }()
+	closeReturned := false
+	select {
+	case err := <-closeDone:
+		closeReturned = true
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Close() did not return while discovery was active")
+	}
+	select {
+	case <-client.canceled:
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Close() did not cancel the active discovery context")
+	}
+
+	cancelDiscovery()
+	<-ensureDone
+	if !closeReturned {
+		select {
+		case err := <-closeDone:
+			if err != nil {
+				t.Errorf("Close() cleanup error = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("Close() did not return during test cleanup")
+		}
+	}
+}
+
 func TestStreamableHTTPDiscoversAndCallsTool(t *testing.T) {
 	server := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1"}, nil)
 	sdk.AddTool(server, &sdk.Tool{Name: "echo", Description: "returns text"}, func(context.Context, *sdk.CallToolRequest, struct{}) (*sdk.CallToolResult, any, error) {
@@ -294,6 +347,49 @@ func TestHTTPTransportBoundsInboundResponse(t *testing.T) {
 	}
 }
 
+func TestHTTPTransportAllowsInboundResponseAtLimit(t *testing.T) {
+	transport := headerTransport{base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(strings.Repeat("x", maxMCPInboundMessageBytes))),
+		}, nil
+	})}
+	request, err := http.NewRequest(http.MethodPost, "https://example.test/mcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read inbound HTTP response: %v", err)
+	}
+	if len(body) != maxMCPInboundMessageBytes {
+		t.Fatalf("inbound HTTP response len=%d, want %d", len(body), maxMCPInboundMessageBytes)
+	}
+}
+
+func TestSSEReaderBoundsEachEvent(t *testing.T) {
+	event := strings.Repeat("x", maxMCPInboundMessageBytes-2) + "\n\n"
+	response, err := boundInboundResponse(&http.Response{
+		Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:   io.NopCloser(strings.NewReader(event + event)),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read inbound SSE stream: %v", err)
+	}
+	if len(body) != len(event)*2 {
+		t.Fatalf("inbound SSE stream len=%d, want %d", len(body), len(event)*2)
+	}
+}
+
 func TestStdioReaderBoundsInboundMessage(t *testing.T) {
 	reader := newBoundedStdioReader(io.NopCloser(strings.NewReader(strings.Repeat("x", maxMCPInboundMessageBytes+1) + "\n")))
 	body, err := io.ReadAll(reader)
@@ -325,6 +421,48 @@ func TestSerializedRemoteClientSerializesCalls(t *testing.T) {
 	<-done
 }
 
+func TestSerializedRemoteClientCloseCancelsActiveCall(t *testing.T) {
+	client := &closeProbeClient{started: make(chan struct{}), canceled: make(chan struct{})}
+	wrapped := &serializedRemoteClient{client: client}
+	go func() { _, _ = wrapped.CallTool(context.Background(), "tool", nil) }()
+	<-client.started
+
+	closed := make(chan error, 1)
+	go func() { closed <- wrapped.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Close() did not return while CallTool() was active")
+	}
+	select {
+	case <-client.canceled:
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Close() did not cancel the active CallTool() context")
+	}
+}
+
+func TestSerializedRemoteClientCloseDoesNotWaitForIgnoredCancellation(t *testing.T) {
+	client := &blockingCloseClient{started: make(chan struct{}), release: make(chan struct{})}
+	wrapped := &serializedRemoteClient{client: client}
+	go func() { _, _ = wrapped.CallTool(context.Background(), "tool", nil) }()
+	<-client.started
+
+	closed := make(chan error, 1)
+	go func() { closed <- wrapped.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Close() waited for an operation that ignored cancellation")
+	}
+	close(client.release)
+}
+
 func TestCapMCPResultNeverExceedsLimit(t *testing.T) {
 	for _, limit := range []int{1, 10, 32} {
 		got := capMCPResult("abcdefghijk", limit)
@@ -335,6 +473,11 @@ func TestCapMCPResultNeverExceedsLimit(t *testing.T) {
 }
 
 type fakeRemoteClient struct{}
+
+type blockingDiscoveryClient struct {
+	started  chan struct{}
+	canceled chan struct{}
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -347,6 +490,17 @@ func (fakeRemoteClient) CallTool(context.Context, string, map[string]any) (strin
 	return "", nil
 }
 func (fakeRemoteClient) Close() error { return nil }
+
+func (c *blockingDiscoveryClient) ListTools(ctx context.Context) ([]remoteTool, error) {
+	close(c.started)
+	<-ctx.Done()
+	close(c.canceled)
+	return nil, ctx.Err()
+}
+func (c *blockingDiscoveryClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	return "", nil
+}
+func (c *blockingDiscoveryClient) Close() error { return nil }
 
 type toolListClient struct{ tools []remoteTool }
 
@@ -368,3 +522,30 @@ func (c *serialProbeClient) CallTool(context.Context, string, map[string]any) (s
 	return "", nil
 }
 func (c *serialProbeClient) Close() error { return nil }
+
+type closeProbeClient struct {
+	started  chan struct{}
+	canceled chan struct{}
+}
+
+func (c *closeProbeClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (c *closeProbeClient) CallTool(ctx context.Context, _ string, _ map[string]any) (string, error) {
+	close(c.started)
+	<-ctx.Done()
+	close(c.canceled)
+	return "", ctx.Err()
+}
+func (c *closeProbeClient) Close() error { return nil }
+
+type blockingCloseClient struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (c *blockingCloseClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (c *blockingCloseClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	close(c.started)
+	<-c.release
+	return "", nil
+}
+func (c *blockingCloseClient) Close() error { return nil }
