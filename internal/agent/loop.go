@@ -356,14 +356,14 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	estimatedTokens, _ := provider.EstimatePromptCost(req.Messages, req.Tools)
 	resp, err := l.Completer.ChatTurn(llmCtx, req)
 	heartbeatCancel()
-	// Prompt-too-long recovery: the provider rejected the request because the
-	// prompt exceeds its REAL context limit, which can be far below the
-	// advertised budget. Compact and retry exactly once (retryAfterPromptTooLong);
-	// a second rejection propagates unchanged. The steer mapping below is
-	// untouched: it only fires on context.Canceled, which never matches here.
+	// Prompt-too-long recovery: compact and retry exactly once
+	// (retryAfterPromptTooLong); a second rejection propagates unchanged.
 	retried := false
 	if err != nil && errors.Is(err, provider.ErrPromptTooLong) && ctx.Err() == nil {
-		resp, estimatedTokens, err = l.retryAfterPromptTooLong(req, opts, llmCtx, estimatedTokens)
+		// Retry on a LIVE context: a steer may have canceled llmCtx (DC-8).
+		retryCtx, retryCancel := context.WithCancel(ctx)
+		defer retryCancel()
+		resp, estimatedTokens, err = l.retryAfterPromptTooLong(req, opts, retryCtx, estimatedTokens)
 		retried = true
 	}
 	// R2: a successful retry replaced l.Messages with the pruned history (plus
