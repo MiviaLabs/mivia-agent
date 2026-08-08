@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/prompts"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -124,7 +125,9 @@ well-known concepts, explanations of standard patterns, language syntax, etc.
 
 If a task requires information you cannot access, state clearly:
 "I cannot answer this without file access."
-Do NOT guess or invent.`
+Do NOT guess or invent.
+
+` + prompts.WritingStandard
 
 // DefaultSubagentTimeout is retained for callers that invoke a one-shot
 // handler directly. Coordinator tasks use their explicit effective timeout.

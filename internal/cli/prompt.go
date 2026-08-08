@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/prompts"
 )
 
 // defaultSystemPrompt is the short prompt for plain chat mode (no tools).
@@ -12,7 +13,9 @@ import (
 const defaultSystemPrompt = `You are mivia, a local CLI coding agent by MiviaLabs.
 You help with software work in the current workspace (any language or stack).
 Be concise, technical, and concrete. Prefer small actionable steps and real commands/code.
-When unsure, say what is unverified. Do not invent files or test results.`
+When unsure, say what is unverified. Do not invent files or test results.
+
+` + prompts.WritingStandard
 
 // defaultAgentPrompt is the compiled-in fallback for agent mode (tools on).
 // It is used when no file-backed agent definition supplies a system_prompt
@@ -69,7 +72,9 @@ Step 6 - COMMIT: git diff review, final verification, conventional commit, git p
 
 # Prompt maintenance
 Project agents (if present): .mivia/agents/<name>.toml - default root agent is "mivia".
-Agent files: durable orientation only; no living state. Keep tool usage language-generic.`
+Agent files: durable orientation only; no living state. Keep tool usage language-generic.
+
+` + prompts.WritingStandard
 
 // buildAgentPrompt builds the agent system prompt with actual config values
 // interpolated. Unlike defaultAgentPrompt (a static fallback), this function
@@ -128,7 +133,9 @@ Step 6 - COMMIT: git diff review, final verification, conventional commit, git p
 
 # Prompt maintenance
 Project agents (if present): .mivia/agents/<name>.toml - default root agent is "mivia".
-Agent files: durable orientation only; no living state. Keep tool usage language-generic.`, auditLimit)
+Agent files: durable orientation only; no living state. Keep tool usage language-generic.
+
+`+prompts.WritingStandard, auditLimit)
 }
 
 // describeAuditLimit returns a human-readable audit limit description.
