@@ -34,6 +34,10 @@ func TestValidateServerConfigRejectsUnsafeHeadersAndArguments(t *testing.T) {
 	if err := ValidateServerConfig(http); err == nil {
 		t.Fatal("ValidateServerConfig accepted duplicate HTTP headers")
 	}
+	http.Headers = []config.MCPHeaderConfig{{Name: "Mcp-Session-Id", ValueEnv: "SESSION"}}
+	if err := ValidateServerConfig(http); err == nil {
+		t.Fatal("ValidateServerConfig accepted a transport-owned HTTP header")
+	}
 }
 
 func TestEncodeToolNameIsDistinctAndBounded(t *testing.T) {

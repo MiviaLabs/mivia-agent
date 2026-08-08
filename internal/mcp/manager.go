@@ -124,6 +124,8 @@ type headerTransport struct {
 	headers http.Header
 }
 
+type redirectRequestKey struct{}
+
 type serializedRemoteClient struct {
 	client remoteClient
 	mu     sync.Mutex
@@ -149,6 +151,9 @@ func (c *serializedRemoteClient) Close() error {
 
 func (t headerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	clone := request.Clone(request.Context())
+	if clone.Context().Value(redirectRequestKey{}) != nil {
+		return t.base.RoundTrip(clone)
+	}
 	for name, values := range t.headers {
 		clone.Header.Del(name)
 		for _, value := range values {
@@ -163,6 +168,7 @@ func sameOriginRedirect(endpoint *url.URL) func(*http.Request, []*http.Request) 
 		if request.URL.Scheme != endpoint.Scheme || request.URL.Host != endpoint.Host {
 			return http.ErrUseLastResponse
 		}
+		*request = *request.WithContext(context.WithValue(request.Context(), redirectRequestKey{}, true))
 		return nil
 	}
 }

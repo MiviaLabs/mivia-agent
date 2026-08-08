@@ -14,6 +14,12 @@ import (
 
 var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var headerName = regexp.MustCompile(`^[!#$%&'*+.^_` + "`" + `|~0-9A-Za-z-]+$`)
+var transportHeaders = map[string]struct{}{
+	"accept":         {},
+	"content-type":   {},
+	"last-event-id":  {},
+	"mcp-session-id": {},
+}
 
 // ValidateServerConfig validates one secret-free MCP server definition.
 func ValidateServerConfig(server config.MCPServerConfig) error {
@@ -67,6 +73,9 @@ func ValidateServerConfig(server config.MCPServerConfig) error {
 		name := strings.ToLower(header.Name)
 		if !environmentName.MatchString(header.ValueEnv) || !headerName.MatchString(header.Name) {
 			return fmt.Errorf("MCP header is invalid")
+		}
+		if _, reserved := transportHeaders[name]; reserved {
+			return fmt.Errorf("MCP header %q is transport-owned", header.Name)
 		}
 		if _, ok := seenHeaders[name]; ok {
 			return fmt.Errorf("MCP header %q is duplicated", header.Name)

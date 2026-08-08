@@ -107,6 +107,20 @@ max_servers = -1
 	}
 }
 
+func TestLoadTrustedMCPConfigRejectsUnknownMCPKeys(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MIVIA_CONFIG", "")
+	writeMCPConfig(t, filepath.Join(home, ".mivia", "mivia.toml"), `
+[mcp]
+enabled = true
+unsafe_secret = "value"
+`)
+	if _, _, err := LoadTrustedMCPConfig(t.TempDir()); err == nil {
+		t.Fatal("LoadTrustedMCPConfig() accepted an unknown MCP key")
+	}
+}
+
 func TestLoadExposesEffectiveMCPConfig(t *testing.T) {
 	home := t.TempDir()
 	workspace := t.TempDir()

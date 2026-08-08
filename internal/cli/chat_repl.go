@@ -152,9 +152,6 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if err != nil {
 		return nil, fmt.Errorf("MCP tools: %w", err)
 	}
-	if state != nil {
-		state.MCPManager = mcpManager
-	}
 	surface := scopeAttachedToolSurface(sess, ctx, state, skillReg, routing)
 	plan, liveScope := surface.plan, surface.skillScope
 	adoptSessionLedgerRepo(sess, cfg, state, routing)
@@ -195,6 +192,9 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
+	if state != nil {
+		state.MCPManager = mcpManager
+	}
 	recordSchemaMass(sess, state, plan, sess.AdmittedTools(), agentNameOf(ctx.Selected), "attach")
 	if plan.Deferred() && state != nil {
 		sess.SetSurfaceWidener(newSurfaceWidener(sess, routing.Resolved, state))

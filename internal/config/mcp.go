@@ -82,6 +82,9 @@ func loadMCPConfigPath(path string) (mcpConfigInput, error) {
 	if err != nil {
 		return mcpConfigInput{}, fmt.Errorf("read MCP config %s: %w", path, err)
 	}
+	if err := validateMCPConfigKeys(data); err != nil {
+		return mcpConfigInput{}, fmt.Errorf("MCP config %s: %w", path, err)
+	}
 	var document struct {
 		MCP *mcpConfigInput `toml:"mcp"`
 	}
@@ -100,6 +103,92 @@ func loadMCPConfigPath(path string) (mcpConfigInput, error) {
 		return mcpConfigInput{}, fmt.Errorf("MCP config %s: %w", path, err)
 	}
 	return *document.MCP, nil
+}
+
+func validateMCPConfigKeys(data []byte) error {
+	var document map[string]any
+	if err := toml.Unmarshal(data, &document); err != nil {
+		return err
+	}
+	mcpValue, exists := document["mcp"]
+	if !exists {
+		return nil
+	}
+	mcpTable, ok := mcpValue.(map[string]any)
+	if !ok {
+		return fmt.Errorf("[mcp] must be a table")
+	}
+	if err := validateMCPTableKeys(mcpTable, map[string]struct{}{
+		"enabled": {}, "startup_timeout_seconds": {}, "max_servers": {},
+		"max_tools_per_server": {}, "max_tool_schema_bytes": {},
+		"max_tool_description_bytes": {}, "max_tool_result_bytes": {}, "servers": {},
+	}, "[mcp]"); err != nil {
+		return err
+	}
+	servers, exists := mcpTable["servers"]
+	if !exists {
+		return nil
+	}
+	serverList, ok := mcpTableSlice(servers)
+	if !ok {
+		return fmt.Errorf("[mcp].servers must be an array")
+	}
+	for index, server := range serverList {
+		if err := validateMCPTableKeys(server, map[string]struct{}{
+			"id": {}, "transport": {}, "command": {}, "url": {}, "args": {}, "env": {},
+			"headers": {}, "global": {}, "timeout_seconds": {},
+		}, fmt.Sprintf("[mcp].servers[%d]", index)); err != nil {
+			return err
+		}
+		if err := validateMCPHeaders(server["headers"], index); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMCPTableKeys(values map[string]any, allowed map[string]struct{}, location string) error {
+	for key := range values {
+		if _, ok := allowed[key]; !ok {
+			return fmt.Errorf("unknown key %q in %s", key, location)
+		}
+	}
+	return nil
+}
+
+func validateMCPHeaders(value any, serverIndex int) error {
+	if value == nil {
+		return nil
+	}
+	headers, ok := mcpTableSlice(value)
+	if !ok {
+		return fmt.Errorf("[mcp].servers[%d].headers must be an array", serverIndex)
+	}
+	for index, header := range headers {
+		if err := validateMCPTableKeys(header, map[string]struct{}{"name": {}, "value_env": {}}, fmt.Sprintf("[mcp].servers[%d].headers[%d]", serverIndex, index)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func mcpTableSlice(value any) ([]map[string]any, bool) {
+	switch tables := value.(type) {
+	case []map[string]any:
+		return tables, true
+	case []any:
+		out := make([]map[string]any, len(tables))
+		for index, table := range tables {
+			value, ok := table.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			out[index] = value
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 func mergeMCPConfig(user, project mcpConfigInput) mcpConfigInput {

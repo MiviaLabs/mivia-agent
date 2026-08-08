@@ -48,6 +48,34 @@ func TestSameOriginRedirectRefusesCrossOrigin(t *testing.T) {
 	}
 }
 
+func TestSameOriginRedirectStripsConfiguredHeaders(t *testing.T) {
+	endpoint, err := url.Parse("https://example.test/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodGet, "https://example.test/next", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sameOriginRedirect(endpoint)(request, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got *http.Request
+	transport := headerTransport{
+		headers: http.Header{"Authorization": []string{"secret"}},
+		base: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			got = request
+			return nil, nil
+		}),
+	}
+	if _, err := transport.RoundTrip(request); err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Header.Get("Authorization") != "" {
+		t.Fatal("redirect request retained configured HTTP headers")
+	}
+}
+
 func TestManagerRejectsMoreToolsThanConfigured(t *testing.T) {
 	m, err := NewManager(config.MCPConfig{Enabled: true, MaxToolsPerServer: 1, Servers: []config.MCPServerConfig{{
 		ID: "repository", Transport: "stdio", Command: "/bin/echo",
@@ -158,6 +186,12 @@ func TestSerializedRemoteClientSerializesCalls(t *testing.T) {
 }
 
 type fakeRemoteClient struct{}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func (fakeRemoteClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
 func (fakeRemoteClient) CallTool(context.Context, string, map[string]any) (string, error) {
