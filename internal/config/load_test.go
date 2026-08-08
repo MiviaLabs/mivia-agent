@@ -11,7 +11,17 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+// TestLoadDefaultsDeepSeekFlash pins that a load with no discoverable config
+// fails closed rather than inventing a provider.
+//
+// It isolates HOME and MIVIA_CONFIG first. DefaultConfigCandidates searches
+// $MIVIA_CONFIG, then <cwd>/.mivia/mivia.toml, then ~/.mivia/mivia.toml, so
+// without isolation this test asserted a property of the developer's home
+// directory: it passed only on a machine with no user config, and failed for
+// anyone using the documented user-level setup.
 func TestLoadDefaultsDeepSeekFlash(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MIVIA_CONFIG", "")
 	_, err := Load(LoadOptions{AllowMissingConfig: true})
 	if err == nil || !strings.Contains(err.Error(), "models must be non-empty") {
 		t.Fatalf("missing config error = %v", err)
