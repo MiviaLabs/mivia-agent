@@ -603,3 +603,13 @@ func TestMultiStepLoopOptionsPropagatesRequestNoReplay(t *testing.T) {
 		t.Fatalf("runtime work limits = %+v, want MaxTurns=2", opts.WorkLimits)
 	}
 }
+
+func TestMultiStepTimeoutUsesTighterRequestTimeout(t *testing.T) {
+	h := &MultiStepHandler{TotalTimeout: time.Second}
+	ctx, cancel := h.timeoutContext(context.Background(), runtime.Request{Timeout: 10 * time.Millisecond})
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > 100*time.Millisecond {
+		t.Fatalf("deadline=%v, want request timeout near 10ms", deadline)
+	}
+}

@@ -336,13 +336,13 @@ func buildResultStructured(output any, messageCount int, elapsed time.Duration, 
 // beyond parent - the orchestrator controls the outer bound.
 // Returns the derived context and a cleanup func (caller must defer it).
 func (h *MultiStepHandler) timeoutContext(ctx context.Context, req runtime.Request) (context.Context, func()) {
-	if h.TotalTimeout > 0 {
-		if parentDeadline, ok := ctx.Deadline(); !ok || h.TotalTimeout < time.Until(parentDeadline) {
-			return context.WithTimeout(ctx, h.TotalTimeout)
-		}
-	} else if req.Timeout > 0 {
-		if parentDeadline, ok := ctx.Deadline(); !ok || req.Timeout < time.Until(parentDeadline) {
-			return context.WithTimeout(ctx, req.Timeout)
+	timeout := h.TotalTimeout
+	if req.Timeout > 0 && (timeout <= 0 || req.Timeout < timeout) {
+		timeout = req.Timeout
+	}
+	if timeout > 0 {
+		if parentDeadline, ok := ctx.Deadline(); !ok || timeout < time.Until(parentDeadline) {
+			return context.WithTimeout(ctx, timeout)
 		}
 	}
 	return ctx, func() {}
