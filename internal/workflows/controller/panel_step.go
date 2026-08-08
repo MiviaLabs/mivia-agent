@@ -2,11 +2,16 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
+
+// ErrPanelMembersComplete reports that Wave 4 completed member work but Wave
+// 5 synthesis is not available to finish the workflow step.
+var ErrPanelMembersComplete = errors.New("panel members completed; synthesis is unavailable")
 
 func (c *LinearController) advancePanelStep(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step) (workflowledger.RunSnapshot, bool, error) {
 	attempts, err := c.Repo.ListStepAttempts(ctx, c.RunID)

@@ -82,6 +82,28 @@ func TestWorkLimitMeterReservesRemainingOutputWhenPerCallIsUnlimited(t *testing.
 	}
 }
 
+func TestWorkLimitMeterOutputCapUsesPerCallAndRemainingTotal(t *testing.T) {
+	meter := workLimitMeter{limits: runtime.WorkLimits{MaxOutputTokens: 5, MaxOutputPerCall: 4}}
+	cap, err := meter.outputCap(nil)
+	if err != nil || cap == nil || *cap != 4 {
+		t.Fatalf("first cap = %v, %v; want 4, nil", cap, err)
+	}
+	if err := meter.reserveProvider(0, *cap); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := meter.outputCap(nil); err == nil {
+		t.Fatal("partial final output allocation was accepted")
+	}
+}
+
+func TestWorkLimitMeterOutputCapUsesFiniteTotalWithoutPerCallLimit(t *testing.T) {
+	meter := workLimitMeter{limits: runtime.WorkLimits{MaxOutputTokens: 5}}
+	cap, err := meter.outputCap(nil)
+	if err != nil || cap == nil || *cap != 5 {
+		t.Fatalf("cap = %v, %v; want 5, nil", cap, err)
+	}
+}
+
 func TestWorkLimitMeterToolBoundaries(t *testing.T) {
 	for _, limit := range []int{4} {
 		t.Run("limit", func(t *testing.T) {

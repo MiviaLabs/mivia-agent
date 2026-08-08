@@ -114,8 +114,9 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		replayReasoning:              opts.RequiresReasoningReplay,
 		rejectReasoningLessToolTurns: opts.RejectReasoningLessToolTurns,
 		client: &http.Client{
-			Timeout:   DefaultHTTPTimeout,
-			Transport: newRetryRoundTripper(http.DefaultTransport, retry),
+			Timeout:       DefaultHTTPTimeout,
+			Transport:     newRetryRoundTripper(http.DefaultTransport, retry),
+			CheckRedirect: checkNoReplayRedirect,
 		},
 	}
 	// Every OpenAI-compatible provider gets a default error parser that
@@ -170,8 +171,9 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		replayReasoning:              options.RequiresReasoningReplay,
 		rejectReasoningLessToolTurns: options.RejectReasoningLessToolTurns,
 		client: &http.Client{
-			Timeout:   DefaultHTTPTimeout,
-			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
+			Timeout:       DefaultHTTPTimeout,
+			Transport:     newRetryRoundTripper(http.DefaultTransport, baseOpts),
+			CheckRedirect: checkNoReplayRedirect,
 		},
 	}
 	if c.errorParser == nil {
@@ -419,6 +421,7 @@ func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w
 		Messages:         req.Messages,
 		Temperature:      req.Temperature,
 		MaxTokens:        req.MaxTokens,
+		ToolChoice:       req.ToolChoice,
 		Timeout:          req.Timeout,
 		Stream:           false,
 		ReasoningLevel:   req.ReasoningLevel,

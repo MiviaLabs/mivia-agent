@@ -120,6 +120,62 @@ func TestBuildStepRuntimesPopulatesOutputSchema(t *testing.T) {
 	}
 }
 
+func TestLoadPanelSnapshotAssetsPinsMemberWork(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "security.md"), []byte("Review {{inputs.task}}."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "correctness.md"), []byte("Review {{inputs.task}}."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "report.json"), []byte(`{"type":"object"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{
+			{ID: "security", Agent: "panel-reviewer", Provider: "deepseek", Model: "deepseek-v4", Skill: "secure-change", Template: "security.md", OutputSchema: "report.json"},
+			{ID: "correctness", Agent: "panel-reviewer", Provider: "zai", Model: "glm-5", Skill: "bug-audit", Template: "correctness.md", OutputSchema: "report.json"},
+		}},
+	}}}
+	schemas, err := loadOutputSchemas(base, wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	templates, bindings, err := loadPanelSnapshotAssets(base, wf, schemas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 2 || len(bindings) != 2 {
+		t.Fatalf("assets templates=%d bindings=%d", len(templates), len(bindings))
+	}
+	binding := bindings["review/security"]
+	if binding.AgentName != "panel-reviewer" || binding.ProviderName != "deepseek" || binding.Model != "deepseek-v4" || binding.TemplateDigest != templates["security.md"].Digest || binding.SchemaDigest != schemas["report.json"].Digest {
+		t.Fatalf("security binding = %+v", binding)
+	}
+	snapshot := newRunSnapshot(wf, []byte("raw"), map[string]string{"task": "change"}, schemas, templates, bindings)
+	if got := snapshot.PanelBindings["review/correctness"]; got.ProviderName != "zai" || got.Model != "glm-5" {
+		t.Fatalf("snapshot correctness binding = %+v", got)
+	}
+}
+
+func TestLoadPanelSnapshotAssetsRejectsSymlinkTemplate(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "report.json"), []byte(`{"type":"object"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/hostname", filepath.Join(base, "template.md")); err != nil {
+		t.Fatal(err)
+	}
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "member", Agent: "reviewer", Provider: "deepseek", Model: "deepseek-v4", Skill: "bug-audit", Template: "template.md", OutputSchema: "report.json"}}}}}}
+	schemas, err := loadOutputSchemas(base, wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadPanelSnapshotAssets(base, wf, schemas); err == nil {
+		t.Fatal("expected symlink template rejection")
+	}
+}
+
 // TestBuildStepRuntimesRejectsMissingSchema pins that a step whose
 // output_schema ref cannot be read fails admission instead of silently
 // skipping schema validation (which would accept invalid agent output).

@@ -29,7 +29,7 @@ func (s PanelTaskSpec) validate(allowMissingWorkFingerprint bool) error {
 	if s.TaskName == "" || s.InputRef == "" || s.InputSchemaRef == "" || s.OutputSchemaRef == "" || s.AgentName == "" || s.AgentDigest == "" || s.Skill == "" || s.Scope == "" || s.Provider == "" || s.Model == "" || !isCoordinatorFingerprint(s.CoordinatorRequestFingerprint) || (!allowMissingWorkFingerprint && !isCoordinatorFingerprint(s.WorkFingerprint)) {
 		return fmt.Errorf("incomplete panel task specification")
 	}
-	if !isSHA256(s.InputDigest) || !isSHA256(s.InputSchemaDigest) || !isSHA256(s.AgentDigest) || !isSHA256(s.OutputSchemaDigest) {
+	if !isSHA256(s.InputDigest) || !isSHA256(s.InputSchemaDigest) || !isAgentDigest(s.AgentDigest) || !isSHA256(s.OutputSchemaDigest) {
 		return fmt.Errorf("invalid panel task digest")
 	}
 	if len(s.DependsOn) != 0 {
@@ -95,6 +95,10 @@ func isSHA256(value string) bool {
 	}
 	_, err := hex.DecodeString(value)
 	return err == nil && value == strings.ToLower(value)
+}
+
+func isAgentDigest(value string) bool {
+	return isSHA256(value) || (strings.HasPrefix(value, "sha256:") && isSHA256(strings.TrimPrefix(value, "sha256:")))
 }
 
 // PanelChildPrincipal derives the only principal panel child operations use.

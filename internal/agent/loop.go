@@ -279,19 +279,9 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		live = &teeWriter{w: opts.FinalWriter}
 		streamWriter = live
 	}
-	req := provider.Request{
-		Model:                 opts.Model,
-		Messages:              l.Messages,
-		Temperature:           opts.Temperature,
-		MaxTokens:             opts.MaxTokens,
-		Tools:                 toolSpecs,
-		ToolChoice:            "auto",
-		Stream:                stream,
-		StreamWriter:          streamWriter,
-		Timeout:               opts.RequestTimeout,
-		ReasoningLevel:        opts.Reasoning.Level,
-		ReasoningDialect:      opts.Reasoning.Dialect,
-		DisableProviderReplay: opts.DisableProviderReplay,
+	req, err := l.stepRequest(toolSpecs, opts, stream, streamWriter)
+	if err != nil {
+		return stepOutcome{}, err
 	}
 	resp, err := l.requestStep(ctx, req, opts)
 	if err != nil {
@@ -338,6 +328,20 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	return l.processToolCalls(ctx, resp, trimmed, opts)
 }
 
+func (l *Loop) stepRequest(toolSpecs []provider.ToolSpec, opts Options, stream bool, streamWriter io.Writer) (provider.Request, error) {
+	maxTokens, err := l.workLimits.outputCap(opts.MaxTokens)
+	if err != nil {
+		return provider.Request{}, err
+	}
+	return provider.Request{
+		Model: opts.Model, Messages: l.Messages, Temperature: opts.Temperature,
+		MaxTokens: maxTokens, Tools: toolSpecs, ToolChoice: "auto", Stream: stream,
+		StreamWriter: streamWriter, Timeout: opts.RequestTimeout,
+		ReasoningLevel: opts.Reasoning.Level, ReasoningDialect: opts.Reasoning.Dialect,
+		DisableProviderReplay: opts.DisableProviderReplay,
+	}, nil
+}
+
 func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Options) (*provider.Response, error) {
 	// Model-thinking progress applies only to the model call. Stop it before
 	// processing tool calls so it cannot replace live tool-batch progress.
@@ -370,7 +374,7 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	// Prompt-too-long recovery: compact and retry exactly once
 	// (retryAfterPromptTooLong); a second rejection propagates unchanged.
 	retried := false
-	if err != nil && errors.Is(err, provider.ErrPromptTooLong) && ctx.Err() == nil {
+	if err != nil && !opts.DisableProviderReplay && errors.Is(err, provider.ErrPromptTooLong) && ctx.Err() == nil {
 		// Retry on a LIVE context: a steer may have canceled llmCtx (DC-8).
 		retryCtx, retryCancel := context.WithCancel(ctx)
 		defer retryCancel()

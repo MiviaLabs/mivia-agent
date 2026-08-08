@@ -14,11 +14,15 @@ func (e *Engine) newRunController(compiled *compiler.CompiledWorkflow, raw []byt
 	if err != nil {
 		return nil, controller.Admission{}, err
 	}
+	templates, bindings, err := loadPanelSnapshotAssets(baseDir, compiled, schemas)
+	if err != nil {
+		return nil, controller.Admission{}, err
+	}
 	steps, err := buildStepRuntimesFromSnapshot(compiled, schemas)
 	if err != nil {
 		return nil, controller.Admission{}, err
 	}
-	snapshot, err := workflowledger.MarshalSnapshot(newRunSnapshot(compiled, raw, inputSnapshot, schemas))
+	snapshot, err := workflowledger.MarshalSnapshot(newRunSnapshot(compiled, raw, inputSnapshot, schemas, templates, bindings))
 	if err != nil {
 		return nil, controller.Admission{}, err
 	}
@@ -32,8 +36,8 @@ func (e *Engine) newRunController(compiled *compiler.CompiledWorkflow, raw []byt
 	return ctrl, controller.Admission{InvocationKey: invocationKey, BaseRef: "main", BaseCommit: "test-base", WorktreeName: "workflow-" + runID, InputDigest: workflowledger.InputDigest(inputSnapshot)}, nil
 }
 
-func newRunSnapshot(compiled *compiler.CompiledWorkflow, raw []byte, inputs map[string]string, schemas map[string]workflowledger.RefSnapshot) workflowledger.Snapshot {
-	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: append([]byte(nil), raw...), DefinitionDigest: compiled.Digest, Inputs: inputs, Schemas: schemas}
+func newRunSnapshot(compiled *compiler.CompiledWorkflow, raw []byte, inputs map[string]string, schemas, templates map[string]workflowledger.RefSnapshot, bindings map[string]workflowledger.PanelBindingSnapshot) workflowledger.Snapshot {
+	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: append([]byte(nil), raw...), DefinitionDigest: compiled.Digest, Inputs: inputs, Schemas: schemas, Templates: templates, PanelBindings: bindings}
 	if compiled.Delivery != nil && compiled.DeliveryActive() {
 		snapshot.Delivery = &workflowledger.DeliverySnapshot{Mode: compiled.Delivery.Mode, Provider: compiled.Delivery.Provider, Base: compiled.Delivery.Base}
 	}

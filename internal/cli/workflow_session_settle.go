@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -19,10 +20,14 @@ const sessionSettleTimeout = 5 * time.Second
 // non-deadline failures need this settle. It is a no-op for nil, cancelled,
 // and deadline errors.
 func settleCLIRunFailure(repo workflowledger.Repository, runID string, runErr error) {
-	if runErr == nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+	if runErr == nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) || isNonTerminalWorkflowStop(runErr) {
 		return
 	}
 	settleSessionRunFailure(repo, runID, runErr)
+}
+
+func isNonTerminalWorkflowStop(err error) bool {
+	return errors.Is(err, controller.ErrPanelMembersComplete)
 }
 
 // settleSessionRunFailure records why a session-driven run stopped, and gives
@@ -59,7 +64,7 @@ func settleCLIRunFailure(repo workflowledger.Repository, runID string, runErr er
 // the ledger, and the operator can see the cause instead of guessing why a
 // `running` run stopped moving.
 func settleSessionRunFailure(repo workflowledger.Repository, runID string, runErr error) {
-	if runErr == nil || errors.Is(runErr, context.Canceled) {
+	if runErr == nil || errors.Is(runErr, context.Canceled) || isNonTerminalWorkflowStop(runErr) {
 		return
 	}
 	log.Printf("workflow: run %s stopped with error: %v", runID, runErr)

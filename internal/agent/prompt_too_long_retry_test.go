@@ -150,3 +150,15 @@ func TestAgentPromptTooLongFailsFastAfterOneRetry(t *testing.T) {
 		t.Fatalf("completer called %d times, want exactly 2 (bounded retry, no loop)", comp.calls)
 	}
 }
+
+func TestAgentDoesNotCompactRetryWhenProviderReplayIsDisabled(t *testing.T) {
+	comp := &promptTooLongCompleter{failN: 1, promptTooLongErr: fmt.Errorf("%w", provider.ErrPromptTooLong)}
+	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
+	_, err := loop.Run(context.Background(), "final question", Options{Model: "deepseek-v4-flash", MaxSteps: 5, DisableProviderReplay: true})
+	if !errors.Is(err, provider.ErrPromptTooLong) {
+		t.Fatalf("err=%v, want prompt-too-long error", err)
+	}
+	if comp.calls != 1 {
+		t.Fatalf("completer calls=%d, want one", comp.calls)
+	}
+}

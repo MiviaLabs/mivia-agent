@@ -508,6 +508,33 @@ func TestReadStreamFallbackPropagatesTimeout(t *testing.T) {
 	close(release)
 }
 
+func TestReadStreamFallbackPreservesToolChoice(t *testing.T) {
+	var choices []any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		choices = append(choices, body["tool_choice"])
+		if len(choices) == 1 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "fallback"}, "finish_reason": "stop"}}})
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+	text, err := c.ChatStream(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}, ToolChoice: "none"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "fallback" || len(choices) != 2 || choices[0] != "none" || choices[1] != "none" {
+		t.Fatalf("fallback tool choices = %#v, text=%q", choices, text)
+	}
+}
+
 // partialReadServer returns an httptest server that writes a partial body (no
 // Content-Length, no line/JSON terminator), flushes, then blocks until release
 // is closed. The client's body read therefore blocks until its deadline fires.

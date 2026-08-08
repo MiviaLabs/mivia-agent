@@ -25,7 +25,7 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 	preparation, err := opts.PreparationManager.Prepare(ctx, input)
 	if err != nil {
 		l.PreparationErr = err
-		if !l.HasPreparation && interruptedContext(ctx, err) {
+		if !l.HasPreparation && opts.WorkLimits.DeadlineAt.IsZero() && interruptedContext(ctx, err) {
 			preparation, fallbackErr := opts.PreparationManager.Prepare(context.Background(), input)
 			if fallbackErr == nil {
 				l.recordPreparation(preparation)

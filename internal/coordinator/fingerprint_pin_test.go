@@ -14,7 +14,7 @@ import (
 // conscious update - mailbox/message runtime state must never enter it.
 //
 // Computed from requestFingerprint of pinFixtureTasks().
-const pinnedRequestFingerprint = "sha256:85d75579b23faa8d7d68245537728eb51b0e911693ff0b50d6bf84ad6f149311"
+const pinnedRequestFingerprint = "sha256:fbc7d7cdcb814cedf0088d134c031f52b53f2cedd0be435374f52c28f33cf436"
 
 func pinFixtureTasks() []subagents.Task {
 	return []subagents.Task{{

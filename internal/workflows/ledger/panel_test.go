@@ -159,6 +159,15 @@ func TestPanelTaskSpecRejectsIncompleteWork(t *testing.T) {
 	}
 }
 
+func TestPanelTaskSpecAcceptsAgentDefinitionDigest(t *testing.T) {
+	work := validPanelTask("agent-digest")
+	work.AgentDigest = "sha256:" + panelDigest("agent")
+	work.WorkFingerprint = work.workFingerprint()
+	if err := work.Validate(); err != nil {
+		t.Fatalf("agent definition digest rejected: %v", err)
+	}
+}
+
 func TestPanelTaskSpecRejectsChangedLimitsAndDeadline(t *testing.T) {
 	work := panelTaskWithID(t, "member", "task-member")
 	work.WorkLimits.MaxTurns++
