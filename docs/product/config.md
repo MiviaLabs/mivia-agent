@@ -158,6 +158,33 @@ If you change the prefix, branches with the old prefix remain. Remove them manua
 
 Named agents are separate TOML files, one definition per file. User-owned definitions live in `~/.mivia/agents/<name>.toml`. Workspace definitions live in `<workspace>/.mivia/agents/<name>.toml`. Create those two directories as needed. The filename is canonical: `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
 
+## MCP servers
+
+Configure Model Context Protocol (MCP) servers in `~/.mivia/mivia.toml` or in the project `.mivia/mivia.toml`. A project server is explicit project authority. It can start a local process or call the configured HTTP endpoint.
+
+When user and project files define the same server ID, the project definition replaces the complete user definition. mivia does not merge command arguments, environment names, URLs, or headers between definitions.
+
+```toml
+[mcp]
+enabled = true
+
+[[mcp.servers]]
+id = "repository"
+transport = "stdio"
+command = "/usr/local/bin/repository-mcp"
+args = ["serve"]
+env = ["REPOSITORY_MCP_TOKEN"]
+global = true
+
+[[mcp.servers]]
+id = "issues"
+transport = "streamable_http"
+url = "https://mcp.example.test/mcp"
+headers = [{ name = "Authorization", value_env = "ISSUES_MCP_TOKEN" }]
+```
+
+The configuration stores only environment variable names. It never stores secret values. A global server is available to an agent that omits `mcp_servers`. A named agent can set `mcp_servers = []` to deny all MCP servers, or list exact server IDs. Workspace agents can select only global servers. Child agents can only narrow their parent server list.
+
 ## Tool safety policy
 
 `[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only source of the file-tool secret filter. Nothing is compiled into the binary, so an unconfigured workspace filters nothing. Recommended starting values ship in `.mivia/mivia.toml.example`. Patterns match case-insensitively as substrings of the workspace-relative path. Exceptions take precedence.

@@ -94,7 +94,7 @@ See [Security and privacy](../security/overview.md).
 
 - Not a cloud service. It runs on your machine.
 - No hosted control plane; the hosted multi-tenant platform is a separate product.
-- No MCP integration; MCP is not part of the current product.
+- MCP client support uses stdio and Streamable HTTP servers that the user or project configures.
 - Not a replacement for every vendor coding agent.
 
 ## Guides
