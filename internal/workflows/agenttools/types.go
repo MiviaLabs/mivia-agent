@@ -16,7 +16,7 @@ import (
 // InvocationRunID returns the stable workflow run ID for a caller key.
 func InvocationRunID(key string) string {
 	sum := sha256.Sum256([]byte(key))
-	return "wfr-inv-" + hex.EncodeToString(sum[:])
+	return "wfr-inv-" + hex.EncodeToString(sum[:16])
 }
 
 // Tool names are model-facing and project/language-generic (rule 60).

@@ -6,8 +6,30 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 )
+
+// TestInvocationRunIDFitsWorktreeNameLimit pins that every invocation run ID
+// yields a worktree name that vcs.SanitizeName accepts. The digest is truncated
+// to 16 bytes, so "workflow-"+runID stays within vcs.MaxWorktreeNameLen. A full
+// digest makes the name 81 chars, and SanitizeName rejects it with
+// "name is too long" (that rejection contract is pinned by vcs tests).
+func TestInvocationRunIDFitsWorktreeNameLimit(t *testing.T) {
+	for _, k := range []string{"", "request-1", strings.Repeat("x", 4096)} {
+		runID := agenttools.InvocationRunID(k)
+		if got, want := len(runID), len("wfr-inv-")+32; got != want {
+			t.Fatalf("InvocationRunID(%q) length = %d, want %d", k, got, want)
+		}
+		name, err := vcs.SanitizeName("workflow-" + runID)
+		if err != nil {
+			t.Fatalf("SanitizeName(\"workflow-\"+InvocationRunID(%q)): %v", k, err)
+		}
+		if want := "workflow-" + runID; name != want {
+			t.Fatalf("SanitizeName = %q, want %q", name, want)
+		}
+	}
+}
 
 // TestInspectPagingConstants pins the workflow_inspect paging budgets
 // (plan v3 P2): the default page size for output text and the hard refusal
