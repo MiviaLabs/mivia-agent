@@ -68,13 +68,8 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	if err != nil {
 		return err
 	}
-	// A delivery_pending run is settled: the workflow body is complete and the
-	// result is waiting for publication. Resume must refuse BEFORE any terminal
-	// reconciliation — delivery is a separate host-owned step, and reconciling
-	// here would CAS delivery_pending->delivery_pending (invalid) or, under an
-	// older classification, delivery_pending->succeeded (skipping delivery).
-	if run.Status == workflowledger.RunStatusDeliveryPending {
-		return fmt.Errorf("workflow run %q is waiting for delivery; deliver with: mivia workflow deliver %s --allow-publish", runID, runID)
+	if err := refuseWorkflowDeliverySettled(runID, run.Status); err != nil {
+		return err
 	}
 	raw, err := repo.GetRunSnapshot(ctx, runID)
 	if err != nil {
@@ -212,6 +207,22 @@ func workflowResumeJoinCtx(parent context.Context, run workflowledger.RunSnapsho
 		return context.WithDeadline(parent, *run.DeadlineAt)
 	}
 	return context.WithTimeout(parent, workflowResumeJoinBound)
+}
+
+// refuseWorkflowDeliverySettled points resume at the delivery surface for runs
+// whose body is complete: delivery_pending means the result waits for
+// publication, and delivery_failed means publication failed (its refusal may
+// have cleared - a forward-advanced base is normal). Recovery for both is a
+// delivery concern, not a body re-run: re-eligibility happens inside workflow
+// deliver.
+func refuseWorkflowDeliverySettled(runID string, status workflowledger.RunStatus) error {
+	if status == workflowledger.RunStatusDeliveryPending {
+		return fmt.Errorf("workflow run %q is waiting for delivery; deliver with: mivia workflow deliver %s --allow-publish", runID, runID)
+	}
+	if status == workflowledger.RunStatusDeliveryFailed {
+		return fmt.Errorf("workflow run %q failed delivery; recover with: mivia workflow deliver %s --allow-publish (re-runs eligibility; add --force after a prior deliverer stopped)", runID, runID)
+	}
+	return nil
 }
 
 func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) (workflowledger.Snapshot, *compiler.CompiledWorkflow, map[string]any, error) {

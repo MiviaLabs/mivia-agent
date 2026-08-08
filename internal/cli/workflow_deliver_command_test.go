@@ -191,20 +191,33 @@ func TestWorkflowDeliverRefusesNonDeliveryPending(t *testing.T) {
 	}
 }
 
-// TestWorkflowDeliverStaleClaimRecovered: a stale run claim is force-cleared
-// under the execution lock and delivery publishes exactly one PR.
-func TestWorkflowDeliverStaleClaimRecovered(t *testing.T) {
+// TestWorkflowDeliverClaimFencing pins the AR-1 lease behavior: a held,
+// unexpired claim means another host is (or was recently) publishing - deliver
+// refuses instead of force-releasing, so two hosts can never publish the same
+// run. --force is the explicit bypass and then delivers exactly one PR.
+func TestWorkflowDeliverClaimFencing(t *testing.T) {
 	root, storePath, config, prRecorder := newDeliveryFixture(t)
 	runID := runFixtureToDeliveryPending(t, root, config)
 	repo := openDeliveryStore(t, storePath)
 	seedWorktreeChange(t, root, runID, repo)
-	if err := repo.ClaimRun(context.Background(), runID, "stale-holder"); err != nil {
+	if err := repo.ClaimRun(context.Background(), runID, "other-holder"); err != nil {
 		t.Fatal(err)
 	}
+
+	// Without --force: a fresh claim is a live publisher -> refuse, no PR.
+	err := runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "claim") {
+		t.Fatalf("deliver error = %v, want a held-claim refusal without --force", err)
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls after refused claim: creates=%d finds=%d, want zero", creates, finds)
+	}
+
+	// With --force: the operator explicitly takes the claim over.
 	var stdout strings.Builder
-	err := runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, &stdout, io.Discard)
+	err = runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish", "--force"}, &stdout, io.Discard)
 	if err != nil {
-		t.Fatalf("deliver error = %v; stdout = %q", err, stdout.String())
+		t.Fatalf("deliver --force error = %v; stdout = %q", err, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "status=succeeded") {
 		t.Fatalf("deliver stdout = %q, want status=succeeded", stdout.String())
@@ -217,7 +230,7 @@ func TestWorkflowDeliverStaleClaimRecovered(t *testing.T) {
 		t.Fatal(err)
 	}
 	if run.Status != workflowledger.RunStatusSucceeded {
-		t.Fatalf("run status = %q, want succeeded after stale claim recovery", run.Status)
+		t.Fatalf("run status = %q, want succeeded after --force claim takeover", run.Status)
 	}
 }
 
@@ -333,32 +346,26 @@ func (blockingGitRunner) Run(ctx context.Context, _ delivery.GitContext, _ ...st
 }
 
 // TestWorkflowDeliverRefusalPrintsDeliveryFailedStatus: a permanent refusal
-// (delivery base moved since admission) settles the run to delivery_failed,
-// prints the settled status line, and creates no PR.
+// (the REMOTE base was rewritten since admission - a base REWRITE, not a
+// forward advance) settles the run to delivery_failed, durably records the
+// reason, prints the settled status line, and creates no PR.
 func TestWorkflowDeliverRefusalPrintsDeliveryFailedStatus(t *testing.T) {
 	root, storePath, config, prRecorder := newDeliveryFixture(t)
 	runID := runFixtureToDeliveryPending(t, root, config)
 	repo := openDeliveryStore(t, storePath)
 	seedWorktreeChange(t, root, runID, repo)
-	// Move the base branch: a new commit on main makes refs/heads/main point
-	// past the admitted base commit, so delivery refuses (base target moved).
-	if err := os.WriteFile(filepath.Join(root, "main-advance.txt"), []byte("new\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"add", "main-advance.txt"}, {"commit", "-m", "advance main"}} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
+	// Rewrite the REMOTE base: force-replace origin main with an orphan
+	// commit that drops the admitted base from history, so delivery refuses.
+	// (A merely advanced base is now accepted - see
+	// TestWorkflowDeliverReopensDeliveryFailed.)
+	rewriteFixtureOriginMain(t, root)
 	var stdout strings.Builder
 	err := runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, &stdout, io.Discard)
 	if err == nil {
 		t.Fatalf("deliver error = nil, want a refusal; stdout = %q", stdout.String())
 	}
 	if !strings.Contains(err.Error(), "delivery base") {
-		t.Fatalf("deliver error = %v, want a base-moved refusal", err)
+		t.Fatalf("deliver error = %v, want a base-rewritten refusal", err)
 	}
 	if !strings.Contains(stdout.String(), "status=delivery_failed") {
 		t.Fatalf("deliver stdout = %q, want the settled status=delivery_failed line", stdout.String())
@@ -372,5 +379,93 @@ func TestWorkflowDeliverRefusalPrintsDeliveryFailedStatus(t *testing.T) {
 	}
 	if run.Status != workflowledger.RunStatusDeliveryFailed {
 		t.Fatalf("run status = %q, want delivery_failed after a permanent refusal", run.Status)
+	}
+	// The refusal reason must be durable so `workflow status` explains the
+	// failure and the operator knows the run is recoverable.
+	rec, err := repo.GetDeliveryByIdempotencyKey(context.Background(), delivery.DeliveryKey(runID, run.WorkflowDigest))
+	if err != nil {
+		t.Fatalf("no durable delivery record after the refusal: %v", err)
+	}
+	if rec.Status != "failed" || rec.ErrorRef == "" {
+		t.Fatalf("delivery record = %+v, want failed with a recorded ErrorRef", rec)
+	}
+	body, err := repo.LoadContent(context.Background(), rec.ErrorRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "delivery base") {
+		t.Fatalf("recorded refusal reason = %q, want it to name the base rewrite", body)
+	}
+}
+
+// rewriteFixtureOriginMain force-replaces the fixture origin's main branch with
+// an orphan commit that drops the admitted base from remote history.
+func rewriteFixtureOriginMain(t *testing.T, root string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"checkout", "--orphan", "orphan-main"},
+		{"commit", "--allow-empty", "-m", "rewritten base"},
+		{"push", "--force", "origin", "orphan-main:refs/heads/main"},
+		{"checkout", "main"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+}
+
+// TestWorkflowDeliverReopensDeliveryFailed pins the CLI recovery path: a run
+// settled delivery_failed is re-opened by workflow deliver, eligibility is
+// re-run against the CURRENT state, and - once the base advanced forward
+// (the original failure mode) - the PR is produced and the run settles
+// succeeded.
+func TestWorkflowDeliverReopensDeliveryFailed(t *testing.T) {
+	root, storePath, config, prRecorder := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(context.Background(), runID, run.Version, workflowledger.RunStatusDeliveryFailed, nil); err != nil {
+		t.Fatalf("CAS to delivery_failed: %v", err)
+	}
+	seedWorktreeChange(t, root, runID, repo)
+	// Advance the remote base forward (the normal mid-run development case).
+	for _, args := range [][]string{
+		{"add", "base-advance.txt"},
+		{"commit", "-m", "advance base"},
+		{"push", "origin", "main"},
+	} {
+		if args[0] == "add" {
+			if err := os.WriteFile(filepath.Join(root, "base-advance.txt"), []byte("new\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	var stdout strings.Builder
+	err = runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, &stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("deliver on a delivery_failed run = %v; stdout = %q, want re-eligibility success", err, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "status=succeeded") {
+		t.Fatalf("deliver stdout = %q, want status=succeeded", stdout.String())
+	}
+	if creates, _ := prRecorder.calls(); creates != 1 {
+		t.Fatalf("PR creates = %d, want 1", creates)
+	}
+	run, err = repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run status = %q, want succeeded after re-eligibility delivery", run.Status)
 	}
 }

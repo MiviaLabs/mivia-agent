@@ -23,7 +23,12 @@ const (
 // ValidRunTransition reports whether a run may move from one status to another.
 // Edges: pending->running; running->waiting_approval|delivery_pending|succeeded|failed|canceled|timed_out;
 // waiting_approval->running|failed|canceled|timed_out; delivery_pending->succeeded|delivery_failed.
-// Terminal statuses (succeeded/failed/canceled/timed_out/delivery_failed) have no outgoing edges.
+// Recovery carve-out: delivery_failed->delivery_pending re-opens a refused run
+// for re-eligibility (the delivery retry path CASes it back to delivery_pending
+// before re-attempting), and delivery_failed->delivery_failed is a defensive
+// self-loop so a still-refused re-eligibility can settle without an invalid
+// transition. Every other terminal status (succeeded/failed/canceled/timed_out)
+// has no outgoing edges.
 func ValidRunTransition(from, to RunStatus) bool {
 	switch from {
 	case RunStatusPending:
@@ -43,6 +48,9 @@ func ValidRunTransition(from, to RunStatus) bool {
 		return false
 	case RunStatusDeliveryPending:
 		return to == RunStatusSucceeded || to == RunStatusDeliveryFailed
+	case RunStatusDeliveryFailed:
+		// Recovery carve-out only; see the doc comment above.
+		return to == RunStatusDeliveryPending || to == RunStatusDeliveryFailed
 	default:
 		return false
 	}

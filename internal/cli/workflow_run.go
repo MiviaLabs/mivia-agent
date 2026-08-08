@@ -71,7 +71,7 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	case "run":
 		return runWorkflowCommandRun(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "deliver":
-		return runWorkflowCommandDeliver(args[1:], workspaceRoot, configPath, stdout, stderr)
+		return runWorkflowCommandDeliver(args[1:], workspaceRoot, configPath, force, stdout, stderr)
 	case "resume":
 		return runWorkflowCommandResume(args[1:], workspaceRoot, configPath, force, stdout, stderr)
 	case "status":
@@ -215,7 +215,7 @@ func prepareWorkflowRun(name, root, configPath string, rawInputs []string) (*pre
 // without it prints the non-publication explanation.
 func finishWorkflowRunDelivery(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName, mode string, allowPublish bool, stdout, stderr io.Writer) error {
 	if allowPublish {
-		if err := deliverRunWithStore(ctx, root, res, store, repo, runID, allowPublish, stdout, stderr); err != nil {
+		if err := deliverRunWithStore(ctx, root, res, store, repo, runID, allowPublish, false, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "workflow delivery failed: %v\n", err)
 			return err
 		}

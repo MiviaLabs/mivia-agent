@@ -33,7 +33,7 @@ func (e *Engine) Deliver(ctx context.Context, runID string, allowPublish bool) (
 	if run.Status == workflowledger.RunStatusSucceeded {
 		return e.replayDelivery(ctx, run)
 	}
-	if run.Status != workflowledger.RunStatusDeliveryPending {
+	if run.Status != workflowledger.RunStatusDeliveryPending && run.Status != workflowledger.RunStatusDeliveryFailed {
 		return agenttools.DeliverResult{}, fmt.Errorf("run is not waiting for delivery (status %q)", run.Status)
 	}
 	return e.deliverPending(ctx, run)
@@ -106,11 +106,11 @@ func (e *Engine) claimDelivery(ctx context.Context, runID string) (string, func(
 	// (clearing would let both hosts publish to the same branch) or a
 	// crashed deliverer. In-process deliveries are already serialized by the
 	// delivering map, so a held claim here is cross-host: refuse and let the
-	// operator settle it (a stale delivery claim is cleared by the CLI's
-	// workflow deliver, which force-releases under the execution lock).
+	// operator settle it (the CLI's workflow deliver takes over an EXPIRED
+	// claim via lease; use --force to bypass the lease explicitly).
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) {
-			return "", nil, fmt.Errorf("workflow run %q is being delivered by another host or has a stale delivery claim; retry after it settles (mivia workflow deliver clears stale claims)", runID)
+			return "", nil, fmt.Errorf("workflow run %q is being delivered by another host or has a fresh delivery claim; retry after it settles (mivia workflow deliver --force takes over an expired claim)", runID)
 		}
 		return "", nil, err
 	}

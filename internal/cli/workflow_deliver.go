@@ -32,7 +32,7 @@ var (
 // workflow execution file lock (beginWorkflowExecution also installs hooks)
 // before handing off to deliverRunWithStore, which must NOT re-acquire the
 // lock. On success it prints the settled run status like executeWorkflowRun.
-func executeWorkflowDeliver(runID, root, configPath string, allowPublish bool, stdout, stderr io.Writer) error {
+func executeWorkflowDeliver(runID, root, configPath string, allowPublish, force bool, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
@@ -58,7 +58,7 @@ func executeWorkflowDeliver(runID, root, configPath string, allowPublish bool, s
 	}
 	defer finishExecution()
 	ctx := context.Background()
-	if err := deliverRunWithStore(ctx, work.Abs, res, store, repo, runID, allowPublish, stdout, stderr); err != nil {
+	if err := deliverRunWithStore(ctx, work.Abs, res, store, repo, runID, allowPublish, force, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "workflow delivery failed: %v\n", err)
 		return err
 	}
@@ -72,7 +72,7 @@ func executeWorkflowDeliver(runID, root, configPath string, allowPublish bool, s
 
 // deliverRunWithStore performs delivery for a delivery_pending run. The caller
 // holds the workflow execution file lock (beginWorkflowExecution).
-func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID string, allowPublish bool, stdout, stderr io.Writer) error {
+func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID string, allowPublish, force bool, stdout, stderr io.Writer) error {
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
@@ -92,13 +92,13 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 	if run.Status == workflowledger.RunStatusSucceeded {
 		return replayDeliveryRecord(ctx, repo, run, stdout)
 	}
-	if run.Status != workflowledger.RunStatusDeliveryPending {
+	if run.Status != workflowledger.RunStatusDeliveryPending && run.Status != workflowledger.RunStatusDeliveryFailed {
 		return fmt.Errorf("run is not waiting for delivery (status %q)", run.Status)
 	}
 	if !allowPublish {
 		return fmt.Errorf("delivery requires --allow-publish")
 	}
-	release, err := claimWorkflowDeliveryRun(ctx, repo, runID)
+	release, err := claimWorkflowDeliveryRun(ctx, repo, runID, force)
 	if err != nil {
 		return err
 	}
@@ -156,27 +156,39 @@ func replayDeliveryRecord(ctx context.Context, repo workflowledger.Repository, r
 }
 
 // claimWorkflowDeliveryRun acquires the run claim for delivery. Under the held
-// execution file lock, a claim held by another holder is stale (an interrupted
-// prior executor left it behind) and is force-released before re-claiming.
-func claimWorkflowDeliveryRun(ctx context.Context, repo workflowledger.Repository, runID string) (func(), error) {
+// execution file lock, a claim held by another holder is either a live
+// cross-host deliverer or an expired leftover: mirroring the resume handoff,
+// the claim is taken over only when its lease has EXPIRED (or immediately with
+// --force). A held, unexpired claim is a live publisher - refusing beats
+// force-releasing and double-publishing the same run.
+func claimWorkflowDeliveryRun(ctx context.Context, repo workflowledger.Repository, runID string, force bool) (func(), error) {
 	holder := newWorkflowDeliveryHolder()
-	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
-		if !errors.Is(err, workflowledger.ErrClaimHeld) {
+	if force {
+		if err := repo.TakeoverRunClaim(ctx, runID, holder); err != nil {
 			return nil, err
 		}
-		if err := repo.ClearRunClaim(ctx, runID); err != nil {
-			return nil, err
-		}
-		if err := repo.ClaimRun(ctx, runID, holder); err != nil {
-			return nil, err
-		}
+		return func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }, nil
+	}
+	err := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
+	if errors.Is(err, workflowledger.ErrClaimNotHeld) {
+		err = repo.ClaimRun(ctx, runID, holder)
+	}
+	if errors.Is(err, workflowledger.ErrClaimHeld) {
+		return nil, fmt.Errorf("workflow run %q is being delivered by another host or has a fresh claim; retry after the lease expires or pass --force after the prior deliverer stopped", runID)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }, nil
 }
 
-// settleDeliveryRefusal CASes a permanently refused run to delivery_failed and
-// prints the settled status line, then returns the refusal for a non-zero exit.
+// settleDeliveryRefusal CASes a permanently refused run to delivery_failed,
+// durably records the refusal reason (so `workflow status` explains the
+// failure), and prints the settled status line, then returns the refusal for
+// a non-zero exit. A refused run is recoverable: a later workflow deliver
+// re-runs eligibility and re-opens it when the refusal condition clears.
 func settleDeliveryRefusal(ctx context.Context, repo workflowledger.Repository, runID string, refusal error, stdout io.Writer) error {
+	recordAutoDeliveryFailure(ctx, repo, runID, refusal)
 	fresh, getErr := repo.GetRun(ctx, runID)
 	if getErr != nil {
 		return fmt.Errorf("delivery refused: %v; read settled run: %w", refusal, getErr)

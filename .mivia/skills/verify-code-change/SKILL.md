@@ -106,6 +106,33 @@ A suite that reaches the changed lines but would pass with the change's logic in
 
 For new behavior that accepts input, branches on a condition, or enforces a rule, confirm at least one error, boundary, or negative case is exercised. This matches the "missing error handling" concern in diff review but makes it concrete: the test must demonstrate the guard fires. A guard with no failing test is remaining risk.
 
+### Interrupted paths
+
+The happy path and the rejected path are not the only paths. Work that stops part-way
+escapes most suites, because the tests drive the operation to completion. When the
+change touches long-running work, durable state, cancellation, retry, or resume,
+confirm the interrupted paths are exercised as well:
+
+- **Cancellation mid-operation.** Cancel at each phase the operation has, not only at
+  the start. Confirm the partial result survives, that it is marked partial, and that
+  the error reaches the caller instead of being replaced by a clean status.
+- **Failure of one attempt inside a retry.** Confirm the attempt's error is recorded
+  before the next attempt starts, and that the retry does not erase it.
+- **Restart between two durable writes.** Confirm the recovery path handles the state
+  at each gap, and that a repeated recovery run produces the same result as one run.
+- **Loss of a resource the stopped work depends on.** Confirm the resume refuses
+  instead of continuing without it.
+
+A change to durable or long-running behavior whose interrupted paths have no test is
+remaining risk, whatever the coverage number says.
+
+### Bound and sentinel values
+
+When the change adds or moves a numeric bound, confirm a test pins what the bound's
+sentinel value means, at the layer the caller reaches. Confirm the resolved value is
+the value the runtime reads: a bound that a later layer replaces with a default is a
+bound the caller cannot set, and no test of the resolver will show it.
+
 ## Result semantics
 
 - `PASS` - the checks required at the change's blast radius were executed and passed, the change was shown to be exercised (for executable code) or validated (for IaC/config), and no material issue was found within that scope.

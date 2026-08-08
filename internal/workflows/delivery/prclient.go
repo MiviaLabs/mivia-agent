@@ -16,9 +16,10 @@ import (
 
 // PRRef identifies one remote pull request.
 type PRRef struct {
-	RemoteID string
-	URL      string
-	Draft    bool
+	RemoteID   string
+	URL        string
+	Draft      bool
+	BaseRefOID string // the PR's current base commit (gh baseRefOid)
 }
 
 // PRInput is the fixed set of values for PR creation. Values come from
@@ -78,17 +79,18 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		"--repo", repo,
 		"--head", headBranch,
 		"--state", "open",
-		"--json", "number,url,isDraft,headRepositoryOwner",
+		"--json", "number,url,isDraft,baseRefOid,headRepositoryOwner",
 	}
 	out, err := runGH(ctx, "pr list", args...)
 	if err != nil {
 		return nil, err
 	}
 	var prs []struct {
-		Number              int    `json:"number"`
-		URL                 string `json:"url"`
-		Draft               bool   `json:"isDraft"`
-		HeadRepositoryOwner struct {
+		Number        int    `json:"number"`
+		URL           string `json:"url"`
+		Draft         bool   `json:"isDraft"`
+		BaseRefOID    string `json:"baseRefOid"`
+		HeadRepoOwner struct {
 			Login string `json:"login"`
 		} `json:"headRepositoryOwner"`
 	}
@@ -102,10 +104,10 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 	for _, pr := range prs {
 		// GitHub owner names are case-insensitive; the configured owner
 		// keeps the casing from the remote URL and may not match the API.
-		if !strings.EqualFold(pr.HeadRepositoryOwner.Login, owner) {
+		if !strings.EqualFold(pr.HeadRepoOwner.Login, owner) {
 			continue
 		}
-		return &PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL, Draft: pr.Draft}, nil
+		return &PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL, Draft: pr.Draft, BaseRefOID: pr.BaseRefOID}, nil
 	}
 	return nil, nil
 }
@@ -114,7 +116,9 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 // body use the --title= and --body= equals forms, so values that start
 // with '-' stay safe as single argv elements. The PR URL is parsed from
 // stdout (gh pr create prints it on success); --json is not used because
-// older gh versions do not support it on pr create.
+// older gh versions do not support it on pr create. The created PR's base
+// commit is read back with pr view so the caller can verify the base still
+// contains the admitted commit (delivery recovery, AR-7).
 func (GitHubCLI) Create(ctx context.Context, repo string, in PRInput) (PRRef, error) {
 	args := []string{
 		"pr", "create",
@@ -139,7 +143,27 @@ func (GitHubCLI) Create(ctx context.Context, repo string, in PRInput) (PRRef, er
 	if err != nil {
 		return PRRef{}, fmt.Errorf("gh pr create: %w", err)
 	}
-	return PRRef{RemoteID: number, URL: url}, nil
+	ref := PRRef{RemoteID: number, URL: url}
+	ref.BaseRefOID, err = baseRefOID(ctx, repo, number)
+	if err != nil {
+		return PRRef{}, err
+	}
+	return ref, nil
+}
+
+// baseRefOID resolves a PR's current base commit via gh pr view.
+func baseRefOID(ctx context.Context, repo, number string) (string, error) {
+	out, err := runGH(ctx, "pr view", "pr", "view", number, "--repo", repo, "--json", "baseRefOid")
+	if err != nil {
+		return "", err
+	}
+	var parsed struct {
+		BaseRefOID string `json:"baseRefOid"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return "", fmt.Errorf("gh pr view: parse output: %w", err)
+	}
+	return parsed.BaseRefOID, nil
 }
 
 // prNumberFromURL extracts the numeric PR identifier from a GitHub pull

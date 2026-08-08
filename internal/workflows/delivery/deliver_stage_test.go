@@ -391,15 +391,16 @@ func TestDeliverNoDiffReVerifyStillNoDiffMintsNoEvent(t *testing.T) {
 	}
 }
 
-// TestDeliverRemoteBaseDiverged pins bug 3: the PR is created against the
-// REMOTE base, so a locally pinned refs/heads/<base> must not mask a remote
-// base that diverged after admission. Present-but-different is a permanent
-// condition -> RefusalError, before any record write.
-func TestDeliverRemoteBaseDiverged(t *testing.T) {
+// TestDeliverRemoteBaseAdvancedAccepted pins the recovery semantics: a REMOTE
+// base that advanced forward after admission is a normal condition - delivery
+// proceeds and creates the PR against the current base. The local
+// refs/heads/<base> ref is deliberately reset to the admitted commit to prove
+// the local ref is no longer consulted (linked-worktree shared refs).
+func TestDeliverRemoteBaseAdvancedAccepted(t *testing.T) {
 	ctx := context.Background()
 	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
 	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
-	// Advance ONLY the remote base: commit locally, push, then restore the
+	// Advance the remote base: commit locally, push, then restore the
 	// local ref so refs/heads/main still equals BaseCommit while
 	// refs/remotes/origin/main points at the new commit.
 	writeWorktreeFile(t, repoRoot, "adv.txt", "remote advanced\n")
@@ -415,27 +416,48 @@ func TestDeliverRemoteBaseDiverged(t *testing.T) {
 	}
 
 	pr := &fakePRClient{}
-	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
-	if err == nil || !IsRefusal(err) {
-		t.Fatalf("Deliver err = %v, want RefusalError for diverged remote base", err)
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("Deliver with an advanced remote base = %v, want success", err)
 	}
-	assertNoRecord(t, repo, run)
-	assertZeroCreates(t, pr)
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	if n := pr.createdCount(); n != 1 {
+		t.Fatalf("Create calls = %d, want 1", n)
+	}
 }
 
-// TestDeliverRemoteBaseAbsentIsRetryable pins bug 3's transient case: a
-// missing remote-tracking ref (never fetched after admission) is recoverable
-// — the operator can fetch and retry — so it must be a plain error (run stays
-// delivery_pending), not a refusal.
-func TestDeliverRemoteBaseAbsentIsRetryable(t *testing.T) {
+// TestDeliverRemoteBaseAbsentRefFetched pins the fetch-first eligibility: a
+// missing remote-tracking ref is healed by the unconditional pinned fetch, so
+// delivery proceeds instead of erroring or refusing.
+func TestDeliverRemoteBaseAbsentRefFetched(t *testing.T) {
 	ctx := context.Background()
 	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
 	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
 	runGit(t, repoRoot, "update-ref", "-d", "refs/remotes/origin/main")
 	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("Deliver with an absent remote-tracking ref = %v, want the fetch to heal it", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+}
+
+// TestDeliverRemoteBaseDeletedRefused pins F-1: a remote whose base branch no
+// longer exists can never satisfy ancestry, so delivery refuses permanently
+// (a deleted base is not a transient condition).
+func TestDeliverRemoteBaseDeletedRefused(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	runGit(t, repoRoot, "push", "origin", "--delete", "main")
+	pr := &fakePRClient{}
 	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
-	if err == nil || IsRefusal(err) {
-		t.Fatalf("Deliver err = %v, want a retryable (non-refusal) error for an absent remote base", err)
+	if err == nil || !IsRefusal(err) {
+		t.Fatalf("Deliver err = %v, want RefusalError for a deleted remote base branch", err)
 	}
 	assertNoRecord(t, repo, run)
 	assertZeroCreates(t, pr)
@@ -503,4 +525,168 @@ func TestDeliverRemoteBaseComparedAgainstAdmittedOriginBase(t *testing.T) {
 	if n := pr.createdCount(); n != 1 {
 		t.Fatalf("Create calls = %d, want 1", n)
 	}
+}
+
+// TestDeliverForwardAdvancedLocalBaseAccepted pins the linked-worktree fix: a
+// commit that advances the LOCAL base branch (the main repo's shared
+// refs/heads/main, which legitimately moves while a run is in flight) must NOT
+// refuse delivery. The remote base is unchanged, so ancestry passes and the
+// PR is created against the current base.
+func TestDeliverForwardAdvancedLocalBaseAccepted(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	// Advance the local base branch only; origin still points at baseCommit.
+	writeWorktreeFile(t, repoRoot, "a2.txt", "x\n")
+	runGit(t, repoRoot, "add", "a2.txt")
+	runGit(t, repoRoot, "commit", "-m", "advance main")
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("Deliver with an advanced local base = %v, want success (linked-worktree shared refs must not refuse)", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	if n := pr.createdCount(); n != 1 {
+		t.Fatalf("Create calls = %d, want 1", n)
+	}
+}
+
+// TestDeliverRemoteBaseForwardAdvanced pins the recovery behavior for the
+// original defect: when the REMOTE base advances forward (a normal condition,
+// Dependabot/Renovate-style), delivery proceeds and creates the PR against the
+// current base instead of refusing.
+func TestDeliverRemoteBaseForwardAdvanced(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	// Advance both local and remote base: commit on main and push to origin.
+	writeWorktreeFile(t, repoRoot, "a2.txt", "x\n")
+	runGit(t, repoRoot, "add", "a2.txt")
+	runGit(t, repoRoot, "commit", "-m", "advance base")
+	runGit(t, repoRoot, "push", "origin", "main")
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("Deliver with a forward-advanced remote base = %v, want success", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	if n := pr.createdCount(); n != 1 {
+		t.Fatalf("Create calls = %d, want 1", n)
+	}
+}
+
+// TestDeliverRemoteBaseRewrittenRefused pins the permanent-refusal boundary: a
+// base REWRITE that drops the admitted commit from origin history must refuse
+// (producing a PR would be garbage).
+func TestDeliverRemoteBaseRewrittenRefused(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	rewriteRemoteBase(t, repoRoot, originURL)
+	pr := &fakePRClient{}
+	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+	if err == nil || !IsRefusal(err) {
+		t.Fatalf("Deliver err = %v, want RefusalError for a rewritten remote base", err)
+	}
+	assertNoRecord(t, repo, run)
+	assertZeroCreates(t, pr)
+}
+
+// rewriteRemoteBase force-replaces the origin base branch with an orphan
+// commit that has no parent, so the admitted base commit is no longer part of
+// the remote history.
+func rewriteRemoteBase(t *testing.T, repoRoot, originURL string) {
+	t.Helper()
+	runGit(t, repoRoot, "checkout", "--orphan", "orphan-main")
+	runGit(t, repoRoot, "commit", "--allow-empty", "-m", "rewritten base")
+	runGit(t, repoRoot, "push", "--force", "origin", "orphan-main:refs/heads/main")
+	runGit(t, repoRoot, "checkout", "main")
+}
+
+// TestDeliverDeliveryFailedReentry pins re-eligibility: a run settled
+// delivery_failed is promoted back to delivery_pending by the single enforcing
+// CAS inside Deliver and then delivers normally.
+func TestDeliverDeliveryFailedReentry(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	cur, err := repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, run.RunID, cur.Version, workflowledger.RunStatusDeliveryFailed, nil); err != nil {
+		t.Fatalf("CAS to delivery_failed: %v", err)
+	}
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("Deliver on a delivery_failed run = %v, want re-eligibility success", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	if n := pr.createdCount(); n != 1 {
+		t.Fatalf("Create calls = %d, want 1", n)
+	}
+	stored, err := repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("run status = %q, want delivery_pending (re-opened; caller CASes to succeeded)", stored.Status)
+	}
+}
+
+// TestDeliverPostCreateBaseCheckAR7 pins the TOCTOU close: when the PR's
+// actual base (baseRefOid) no longer contains the admitted base commit, the
+// attempt must refuse instead of settling succeeded, even though the PR was
+// already created. Each subtest uses its own fixture (a succeeded record on
+// the shared key would replay, not re-run, the check).
+func TestDeliverPostCreateBaseCheckAR7(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("base contains the admitted commit - succeeds", func(t *testing.T) {
+		_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+		writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+		pr := &fakePRClient{baseRefOID: baseCommit}
+		res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+		if err != nil {
+			t.Fatalf("Deliver = %v, want success when the PR base contains the admitted commit", err)
+		}
+		if res.Status != "succeeded" {
+			t.Fatalf("Result = %+v, want succeeded", res)
+		}
+	})
+
+	t.Run("rewritten PR base - refused", func(t *testing.T) {
+		_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+		writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+		orphan := orphanCommit(t, worktreeRoot, "wf/wt-test")
+		pr := &fakePRClient{baseRefOID: orphan}
+		_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+		if err == nil || !IsRefusal(err) {
+			t.Fatalf("Deliver err = %v, want RefusalError when the PR base was rewritten", err)
+		}
+		rec := deliveryRecordByKey(t, repo, run)
+		if rec.Status != "failed" {
+			t.Fatalf("record status = %q, want failed", rec.Status)
+		}
+	})
+}
+
+// orphanCommit creates a parentless commit in the given repo and returns its
+// SHA. branch is the branch to return to afterwards (the worktree's own).
+func orphanCommit(t *testing.T, dir, branch string) string {
+	t.Helper()
+	orphan := "orphan-tmp"
+	runGit(t, dir, "checkout", "--orphan", orphan)
+	runGit(t, dir, "commit", "--allow-empty", "-m", "orphan")
+	sha := runGitOut(t, dir, "rev-parse", "HEAD")
+	runGit(t, dir, "checkout", branch)
+	runGit(t, dir, "branch", "-D", orphan)
+	return sha
 }

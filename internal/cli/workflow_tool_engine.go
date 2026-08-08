@@ -151,7 +151,7 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 		defer close(done)
 		snap, runErr := built.Controller.Run(runCtx)
 		if runErr == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
-			if err := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, runID, true, io.Discard, io.Discard); err != nil {
+			if err := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, runID, true, false, io.Discard, io.Discard); err != nil {
 				recordAutoDeliveryFailure(context.Background(), prepared.repo, runID, err)
 			}
 		}
@@ -240,7 +240,7 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 		return agenttools.DeliverResult{RunID: runID, Refused: true, Reason: "delivery requires allow_publish=true"}, nil
 	}
 	var stdout, stderr strings.Builder
-	if err := executeWorkflowDeliver(runID, e.root, e.configPath, allowPublish, &stdout, &stderr); err != nil {
+	if err := executeWorkflowDeliver(runID, e.root, e.configPath, allowPublish, false, &stdout, &stderr); err != nil {
 		// Prefer structured status when the ledger still opens after a refusal.
 		if result, ok := sessionDeliverResultFromLedger(ctx, e.root, e.configPath, runID, err); ok {
 			return result, nil

@@ -99,6 +99,37 @@ func mustValidatedSummary(t *testing.T, summary Summary) UntrustedSummary {
 	return validated
 }
 
+// TestValidateSummaryRejectsC1ControlCharacters confirms that C1 control
+// characters (U+0080–U+009F) are rejected by ValidateSummary after the
+// control-character check uses unicode.IsControl instead of a C0-only range.
+func TestValidateSummaryRejectsC1ControlCharacters(t *testing.T) {
+	request := summaryTestRequest(t)
+
+	// C1 low boundary: U+0081 (PAD) in Objective
+	c1Low := Summary{Version: 1, Objective: "obj\u0081ective", State: "state", SourceRange: request.SourceRange}
+	if _, err := ValidateSummary(c1Low, request); !errors.Is(err, contextstate.ErrInvalidDTO) {
+		t.Fatalf("summary with U+0081 in Objective: error = %v, want ErrInvalidDTO", err)
+	}
+
+	// C1 high boundary: U+009F (APC) in a Decision item
+	c1High := Summary{Version: 1, Objective: "objective", State: "state", SourceRange: request.SourceRange, Decisions: []string{"dec\u009Fision"}}
+	if _, err := ValidateSummary(c1High, request); !errors.Is(err, contextstate.ErrInvalidDTO) {
+		t.Fatalf("summary with U+009F in Decisions: error = %v, want ErrInvalidDTO", err)
+	}
+
+	// Positive control: non-control Unicode U+00E9 (é) passes
+	validUnicode := Summary{Version: 1, Objective: "café", State: "state", SourceRange: request.SourceRange}
+	if _, err := ValidateSummary(validUnicode, request); err != nil {
+		t.Fatalf("summary with U+00E9 é: unexpected error = %v", err)
+	}
+
+	// C0 regression: U+0001 (SOH) still rejected
+	c0 := Summary{Version: 1, Objective: "obj\x01ective", State: "state", SourceRange: request.SourceRange}
+	if _, err := ValidateSummary(c0, request); !errors.Is(err, contextstate.ErrInvalidDTO) {
+		t.Fatalf("summary with U+0001 SOH: error = %v, want ErrInvalidDTO", err)
+	}
+}
+
 // TestSummaryMetadataEnvelopeRejection drives the summary envelope's metadata
 // bound through Validate: an envelope whose canonical size exceeds the default
 // 12 KiB ceiling is refused, and the same envelope is accepted once the

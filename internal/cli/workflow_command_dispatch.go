@@ -21,7 +21,7 @@ func runWorkflowCommandRun(args []string, workspaceRoot, configPath string, stdo
 	return executeWorkflowRun(rest[0], workspaceRoot, configPath, inputs, allowPublish, stdout, stderr)
 }
 
-func runWorkflowCommandDeliver(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
+func runWorkflowCommandDeliver(args []string, workspaceRoot, configPath string, force bool, stdout, stderr io.Writer) error {
 	allowPublish, rest, err := parseWorkflowBoolFlag(args, "--allow-publish")
 	if err != nil {
 		return err
@@ -29,7 +29,7 @@ func runWorkflowCommandDeliver(args []string, workspaceRoot, configPath string, 
 	if len(rest) != 1 {
 		return fmt.Errorf("workflow deliver: expected one run ID")
 	}
-	return executeWorkflowDeliver(rest[0], workspaceRoot, configPath, allowPublish, stdout, stderr)
+	return executeWorkflowDeliver(rest[0], workspaceRoot, configPath, allowPublish, force, stdout, stderr)
 }
 
 func runWorkflowCommandResume(args []string, workspaceRoot, configPath string, force bool, stdout, stderr io.Writer) error {
