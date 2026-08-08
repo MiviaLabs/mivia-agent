@@ -21,6 +21,32 @@ func runWorkflowCommandRun(args []string, workspaceRoot, configPath string, stdo
 	return executeWorkflowRun(rest[0], workspaceRoot, configPath, inputs, allowPublish, stdout, stderr)
 }
 
+// runWorkflowCommandRuns parses `workflow runs [--status s] [--limit n]`.
+// It takes no positional arguments.
+func runWorkflowCommandRuns(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
+	status, rest, err := parseWorkflowStringFlag(args, "--status")
+	if err != nil {
+		return err
+	}
+	limit, err := parseWorkflowIntFlag(rest, "--limit", 20)
+	if err != nil {
+		return err
+	}
+	// runs takes no positional argument, so anything left that is not part
+	// of --limit is a typo the operator should hear about rather than have
+	// silently ignored.
+	for i := 0; i < len(rest); i++ {
+		switch {
+		case strings.HasPrefix(rest[i], "--limit="):
+		case rest[i] == "--limit":
+			i++
+		default:
+			return fmt.Errorf("workflow runs: unexpected argument %q", rest[i])
+		}
+	}
+	return executeWorkflowRuns(workspaceRoot, configPath, status, limit, stdout, stderr)
+}
+
 func runWorkflowCommandDeliver(args []string, workspaceRoot, configPath string, force bool, stdout, stderr io.Writer) error {
 	allowPublish, rest, err := parseWorkflowBoolFlag(args, "--allow-publish")
 	if err != nil {
