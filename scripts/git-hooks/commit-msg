@@ -62,11 +62,34 @@ def print_catalog(policy: dict) -> None:
         f"commit-msg: policy: {policy_path.as_posix()}",
         file=sys.stderr,
     )
+    required = policy.get("requiredTrailers") or {}
+    if isinstance(required, dict) and required:
+        for ctype, labels in required.items():
+            print(
+                f"commit-msg: required trailers for {ctype}: {', '.join(labels)}",
+                file=sys.stderr,
+            )
     examples = policy.get("examples") or []
     if examples:
         print("commit-msg: examples:", file=sys.stderr)
         for ex in examples[:6]:
             print(f"commit-msg:   {ex}", file=sys.stderr)
+
+
+def has_trailer(raw: str, label: str) -> bool:
+    """True when the body carries a non-empty `<label>: value` line.
+
+    The subject is excluded, and so are comment and `Quality:` lines, which the
+    pre-commit hook appends after the author wrote the message.
+    """
+    prefix = f"{label}:"
+    for line in raw.splitlines()[1:]:
+        if line.startswith("#") or line.startswith("Quality:"):
+            continue
+        stripped = line.strip()
+        if stripped.startswith(prefix) and stripped[len(prefix):].strip():
+            return True
+    return False
 
 
 def fail(policy: dict, reason: str) -> None:
@@ -178,31 +201,25 @@ def main() -> int:
     ending = "\n" if raw.endswith("\n") else ""
     msg_path.write_text("\n".join(lines) + ending, encoding="utf-8")
 
-    # Regression line required for fix commits (Phase 2 guardrail)
-    if ctype == "fix":
-        body_lines = raw.splitlines()[1:]  # everything after the subject
-        body_text = "\n".join(
-            line for line in body_lines
-            if not line.startswith("#") and not line.startswith("Quality:")
+    # Trailers required per type by policy (Regression, Class, Sweep for fix).
+    required = policy.get("requiredTrailers") or {}
+    for label in required.get(ctype, []):
+        if has_trailer(raw, label):
+            continue
+        hint = (policy.get("trailerHints") or {}).get(label, "")
+        # Catalog first - agents need the menu before the diagnosis.
+        print_catalog(policy)
+        for name in required.get(ctype, []):
+            guide = (policy.get("trailerGuide") or {}).get(name, "")
+            if guide:
+                print(f"commit-msg:   {name}: {guide}", file=sys.stderr)
+        print(
+            f"commit-msg: error: {ctype} commits require a {label}: line in the body",
+            file=sys.stderr,
         )
-        has_regression = False
-        for line in body_text.splitlines():
-            line_stripped = line.strip()
-            if line_stripped.startswith("Regression:"):
-                rest = line_stripped[len("Regression:"):].strip()
-                if rest:
-                    has_regression = True
-                    break
-        if not has_regression:
-            print(
-                "commit-msg: error: fix commits require a Regression: line in the body",
-                file=sys.stderr,
-            )
-            print(
-                'commit-msg: fix-hint: add "Regression: Test<Name>" or "Regression: none (<reason>)"',
-                file=sys.stderr,
-            )
-            sys.exit(1)
+        if hint:
+            print(f"commit-msg: fix-hint: {hint}", file=sys.stderr)
+        sys.exit(1)
 
     return 0
 

@@ -196,11 +196,18 @@ def test_commit_msg_rejects_unknown_scope() -> None:
     assert "ai:" in err  # scope guide mentions ai for control surface work
 
 
+FIX_TRAILERS = "Regression: TestMyNewTest\nClass: DC-2\nSweep: searched claim sites, found 0 further\n"
+
+
+def write_msg(text: str) -> str:
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
+        fh.write(text)
+        return fh.name
+
+
 def test_commit_msg_fix_requires_regression() -> None:
     scope = first_valid_scope()
-    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
-        fh.write(f"fix({scope}): correct the widget\n")
-        path = fh.name
+    path = write_msg(f"fix({scope}): correct the widget\n")
     proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
     assert proc.returncode != 0
     assert "Regression:" in proc.stderr
@@ -208,20 +215,75 @@ def test_commit_msg_fix_requires_regression() -> None:
 
 def test_commit_msg_fix_accepts_regression_test() -> None:
     scope = first_valid_scope()
-    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
-        fh.write(f"fix({scope}): correct the widget\n\nRegression: TestMyNewTest\n")
-        path = fh.name
+    path = write_msg(f"fix({scope}): correct the widget\n\n{FIX_TRAILERS}")
     proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
     assert proc.returncode == 0, proc.stderr
 
 
 def test_commit_msg_fix_accepts_regression_none() -> None:
     scope = first_valid_scope()
-    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as fh:
-        fh.write(f"fix({scope}): typo in comment\n\nRegression: none (trivial)\n")
-        path = fh.name
+    path = write_msg(
+        f"fix({scope}): typo in comment\n\n"
+        "Regression: none (trivial)\nClass: none (comment only)\nSweep: none (comment only)\n"
+    )
     proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_commit_msg_fix_requires_class_trailer() -> None:
+    """A fix must name its recurring defect class or say none.
+
+    Without this gate a fix closes one site of a known class and leaves the
+    rest, which is how the repository produced 35-commit repeat chains.
+    """
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\n"
+        "Regression: TestMyNewTest\nSweep: searched claim sites, found 0 further\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode != 0
+    assert "Class:" in proc.stderr
+    assert "defect-taxonomy" in proc.stderr
+
+
+def test_commit_msg_fix_requires_sweep_trailer() -> None:
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\nRegression: TestMyNewTest\nClass: DC-2\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode != 0
+    assert "Sweep:" in proc.stderr
+
+
+def test_commit_msg_fix_rejects_empty_trailer_value() -> None:
+    """A bare label with no value must not satisfy the gate."""
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\n"
+        "Regression: TestMyNewTest\nClass:\nSweep: searched claim sites, found 0 further\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode != 0
+    assert "Class:" in proc.stderr
+
+
+def test_commit_msg_required_trailers_come_from_policy() -> None:
+    """The gate is policy-driven, not hardcoded in the hook."""
+    policy = json.loads(COMMIT_POLICY.read_text(encoding="utf-8"))
+    assert policy["requiredTrailers"]["fix"] == ["Regression", "Class", "Sweep"]
+    for label in policy["requiredTrailers"]["fix"]:
+        assert policy["trailerHints"].get(label), label
+        assert policy["trailerGuide"].get(label), label
+
+
+def test_commit_msg_failure_lists_required_trailers() -> None:
+    scope = first_valid_scope()
+    path = write_msg(f"fix({scope}): correct the widget\n")
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode != 0
+    assert "required trailers for fix: Regression, Class, Sweep" in proc.stderr
 
 
 def test_commit_msg_feat_skips_regression() -> None:
@@ -486,6 +548,11 @@ def main() -> None:
     test_commit_msg_fix_requires_regression()
     test_commit_msg_fix_accepts_regression_test()
     test_commit_msg_fix_accepts_regression_none()
+    test_commit_msg_fix_requires_class_trailer()
+    test_commit_msg_fix_requires_sweep_trailer()
+    test_commit_msg_fix_rejects_empty_trailer_value()
+    test_commit_msg_required_trailers_come_from_policy()
+    test_commit_msg_failure_lists_required_trailers()
     test_commit_msg_feat_skips_regression()
     test_summary_file_name_is_mivia()
     test_pre_commit_is_staged_only_and_bounded()

@@ -57,21 +57,38 @@ func TestParseOwnerRepo(t *testing.T) {
 }
 
 // writeFakeGH installs a fake gh executable on PATH. The script records
-// its argv to $GH_ARGS_FILE (pr create/list) or $GH_VIEW_ARGS_FILE
-// (pr view) and its environment to $GH_ENV_FILE. When $GH_EXIT is set, the
-// script prints $GH_EXIT_MSG to stderr and exits with that code. Otherwise
-// it prints $GH_STDOUT, except for `pr view` which prints $GH_STDOUT_VIEW
-// (default: a baseRefOid JSON envelope).
+// its argv to $GH_ARGS_FILE (pr create/list) or $GH_API_ARGS_FILE (api) and
+// its environment to $GH_ENV_FILE. When $GH_EXIT is set, the script prints
+// $GH_EXIT_MSG to stderr and exits with that code. Otherwise it prints
+// $GH_STDOUT, except for `api` which prints $GH_STDOUT_API (default: a
+// pulls payload carrying base.sha).
+//
+// The double rejects any argv mentioning baseRefOid exactly as released gh
+// does. gh 2.46 has no such field on pr list or pr view and fails with
+// "Unknown JSON field". A double that accepted it let a delivery-breaking
+// regression ship green, so faithfulness here is the point, not pedantry.
 func writeFakeGH(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	scheme := `#!/bin/sh
-if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-  printf '%s\n' "$@" > "$GH_VIEW_ARGS_FILE"
-  if [ -n "$GH_STDOUT_VIEW" ]; then
-    printf '%s' "$GH_STDOUT_VIEW"
+for arg in "$@"; do
+  case "$arg" in
+    *baseRefOid*)
+      printf 'Unknown JSON field: "baseRefOid"\nAvailable fields:\n  additions\n' >&2
+      exit 1
+      ;;
+  esac
+done
+if [ "$1" = "api" ]; then
+  printf '%s\n' "$@" > "${GH_API_ARGS_FILE:-/dev/null}"
+  if [ -n "$GH_API_EXIT" ]; then
+    printf '%s\n' "${GH_API_EXIT_MSG:-gh api failed}" >&2
+    exit "$GH_API_EXIT"
+  fi
+  if [ -n "$GH_STDOUT_API" ]; then
+    printf '%s' "$GH_STDOUT_API"
   else
-    printf '%s' '{"baseRefOid":"1111111111111111111111111111111111111111"}'
+    printf '%s' '{"base":{"sha":"1111111111111111111111111111111111111111"}}'
   fi
   exit 0
 fi
@@ -95,9 +112,9 @@ func readRecordedArgs(t *testing.T) []string {
 	return readRecordedFileArgs(t, "GH_ARGS_FILE")
 }
 
-func readRecordedViewArgs(t *testing.T) []string {
+func readRecordedAPIArgs(t *testing.T) []string {
 	t.Helper()
-	return readRecordedFileArgs(t, "GH_VIEW_ARGS_FILE")
+	return readRecordedFileArgs(t, "GH_API_ARGS_FILE")
 }
 
 func readRecordedFileArgs(t *testing.T, envName string) []string {
@@ -143,7 +160,8 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 	t.Setenv("GIT_TERMINAL_PROMPT", "0")
 
 	t.Run("found", func(t *testing.T) {
-		t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":true,"baseRefOid":"aaa111","headRepositoryOwner":{"login":"owner"}}]`)
+		t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":true,"headRepositoryOwner":{"login":"owner"}}]`)
+		t.Setenv("GH_STDOUT_API", `{"base":{"sha":"aaa111"}}`)
 		got, err := (GitHubCLI{}).FindByHead(context.Background(), "owner/repo", "feature/x")
 		if err != nil {
 			t.Fatalf("FindByHead error: %v", err)
@@ -154,7 +172,7 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 		if got.RemoteID != "12" || got.URL != "https://github.com/o/r/pull/12" || !got.Draft || got.BaseRefOID != "aaa111" {
 			t.Errorf("FindByHead = %+v, want RemoteID 12 with PR url, Draft=true, BaseRefOID aaa111", got)
 		}
-		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "open", "--json", "number,url,isDraft,baseRefOid,headRepositoryOwner"}
+		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "open", "--json", "number,url,isDraft,headRepositoryOwner"}
 		if gotArgs := readRecordedArgs(t); !slices.Equal(gotArgs, want) {
 			t.Errorf("argv = %q, want %q", gotArgs, want)
 		}
@@ -210,6 +228,30 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 // branch name across head repositories, so a fork PR with the same branch
 // name must be skipped; only a PR whose head repository belongs to the
 // target repository's owner may be reused as this delivery's PR.
+// TestGitHubCLIFindByHeadBaseOIDFailureSurfaces covers the base-commit lookup
+// error path. A matching PR whose base commit cannot be resolved must surface
+// the failure: returning the PR with an empty BaseRefOID would let delivery
+// proceed against an unknown base, which is the condition INV-DUR-1 pins.
+func TestGitHubCLIFindByHeadBaseOIDFailureSurfaces(t *testing.T) {
+	writeFakeGH(t)
+	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
+	t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":true,"headRepositoryOwner":{"login":"owner"}}]`)
+	t.Setenv("GH_API_EXIT", "1")
+	t.Setenv("GH_API_EXIT_MSG", "gh api: rate limited")
+
+	got, err := (GitHubCLI{}).FindByHead(context.Background(), "owner/repo", "feature/x")
+	if err == nil {
+		t.Fatalf("FindByHead = %+v, want the base OID error", got)
+	}
+	if got != nil {
+		t.Errorf("FindByHead returned %+v alongside an error, want nil", got)
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("error = %v, want it to carry the gh api failure", err)
+	}
+}
+
 func TestGitHubCLIFindByHeadScopesToRepoOwner(t *testing.T) {
 	writeFakeGH(t)
 	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
@@ -337,37 +379,80 @@ func TestGitHubCLICreate(t *testing.T) {
 }
 
 // TestGitHubCLICreateBaseRefOID pins the AR-7 base-read: after creating a PR,
-// Create resolves the PR's actual base commit via `gh pr view --json
-// baseRefOid` so delivery can verify the base still contains the admitted
-// commit.
+// Create resolves the PR's actual base commit from the REST pulls payload so
+// delivery can verify the base still contains the admitted commit.
 func TestGitHubCLICreateBaseRefOID(t *testing.T) {
 	writeFakeGH(t)
 	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
-	t.Setenv("GH_VIEW_ARGS_FILE", filepath.Join(t.TempDir(), "view-args.txt"))
+	t.Setenv("GH_API_ARGS_FILE", filepath.Join(t.TempDir(), "api-args.txt"))
 	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
 	t.Setenv("GH_STDOUT", `https://github.com/owner/repo/pull/7`+"\n")
 
-	t.Run("pr view resolves the base oid", func(t *testing.T) {
-		t.Setenv("GH_STDOUT_VIEW", `{"baseRefOid":"beef123"}`)
+	t.Run("api resolves the base oid", func(t *testing.T) {
+		t.Setenv("GH_STDOUT_API", `{"base":{"sha":"beef123"}}`)
 		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
 		got, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in)
 		if err != nil {
 			t.Fatalf("Create error: %v", err)
 		}
 		if got.BaseRefOID != "beef123" {
-			t.Errorf("BaseRefOID = %q, want beef123 from pr view", got.BaseRefOID)
+			t.Errorf("BaseRefOID = %q, want beef123 from gh api", got.BaseRefOID)
 		}
-		wantView := []string{"pr", "view", "7", "--repo", "owner/repo", "--json", "baseRefOid"}
-		if gotArgs := readRecordedViewArgs(t); !slices.Equal(gotArgs, wantView) {
-			t.Errorf("pr view argv = %q, want %q", gotArgs, wantView)
+		wantAPI := []string{"api", "repos/owner/repo/pulls/7"}
+		if gotArgs := readRecordedAPIArgs(t); !slices.Equal(gotArgs, wantAPI) {
+			t.Errorf("api argv = %q, want %q", gotArgs, wantAPI)
 		}
 	})
 
-	t.Run("malformed pr view output", func(t *testing.T) {
-		t.Setenv("GH_STDOUT_VIEW", "not json")
+	t.Run("malformed api output", func(t *testing.T) {
+		t.Setenv("GH_STDOUT_API", "not json")
 		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
 		if _, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in); err == nil {
-			t.Fatal("Create error = nil, want a pr view parse error")
+			t.Fatal("Create error = nil, want a gh api parse error")
+		}
+	})
+
+	t.Run("api payload without base.sha", func(t *testing.T) {
+		t.Setenv("GH_STDOUT_API", `{"base":{}}`)
+		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
+		if _, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in); err == nil {
+			t.Fatal("Create error = nil, want a missing base.sha error")
+		}
+	})
+}
+
+// TestGitHubCLINeverRequestsBaseRefOid is the regression guard for the
+// delivery outage introduced by b977729: every gate passed and then delivery
+// died on `gh pr list --json ...baseRefOid...` because released gh has no such
+// field. No gh invocation may name it, on any path.
+func TestGitHubCLINeverRequestsBaseRefOid(t *testing.T) {
+	writeFakeGH(t)
+	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("GH_API_ARGS_FILE", filepath.Join(t.TempDir(), "api-args.txt"))
+	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
+
+	t.Run("FindByHead", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":true,"headRepositoryOwner":{"login":"owner"}}]`)
+		if _, err := (GitHubCLI{}).FindByHead(context.Background(), "owner/repo", "feature/x"); err != nil {
+			t.Fatalf("FindByHead rejected by a gh that lacks baseRefOid: %v", err)
+		}
+		for _, arg := range readRecordedArgs(t) {
+			if strings.Contains(arg, "baseRefOid") {
+				t.Errorf("pr list argv names baseRefOid: %q", arg)
+			}
+		}
+	})
+
+	t.Run("Create", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `https://github.com/owner/repo/pull/7`+"\n")
+		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
+		if _, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in); err != nil {
+			t.Fatalf("Create rejected by a gh that lacks baseRefOid: %v", err)
+		}
+		for _, arg := range append(readRecordedArgs(t), readRecordedAPIArgs(t)...) {
+			if strings.Contains(arg, "baseRefOid") {
+				t.Errorf("argv names baseRefOid: %q", arg)
+			}
 		}
 	})
 }

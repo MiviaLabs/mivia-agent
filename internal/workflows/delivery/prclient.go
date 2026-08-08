@@ -79,7 +79,7 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		"--repo", repo,
 		"--head", headBranch,
 		"--state", "open",
-		"--json", "number,url,isDraft,baseRefOid,headRepositoryOwner",
+		"--json", "number,url,isDraft,headRepositoryOwner",
 	}
 	out, err := runGH(ctx, "pr list", args...)
 	if err != nil {
@@ -89,7 +89,6 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		Number        int    `json:"number"`
 		URL           string `json:"url"`
 		Draft         bool   `json:"isDraft"`
-		BaseRefOID    string `json:"baseRefOid"`
 		HeadRepoOwner struct {
 			Login string `json:"login"`
 		} `json:"headRepositoryOwner"`
@@ -107,7 +106,12 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		if !strings.EqualFold(pr.HeadRepoOwner.Login, owner) {
 			continue
 		}
-		return &PRRef{RemoteID: strconv.Itoa(pr.Number), URL: pr.URL, Draft: pr.Draft, BaseRefOID: pr.BaseRefOID}, nil
+		number := strconv.Itoa(pr.Number)
+		baseOID, err := baseRefOID(ctx, repo, number)
+		if err != nil {
+			return nil, err
+		}
+		return &PRRef{RemoteID: number, URL: pr.URL, Draft: pr.Draft, BaseRefOID: baseOID}, nil
 	}
 	return nil, nil
 }
@@ -117,8 +121,8 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 // with '-' stay safe as single argv elements. The PR URL is parsed from
 // stdout (gh pr create prints it on success); --json is not used because
 // older gh versions do not support it on pr create. The created PR's base
-// commit is read back with pr view so the caller can verify the base still
-// contains the admitted commit (delivery recovery, AR-7).
+// commit is read back from the REST API so the caller can verify the base
+// still contains the admitted commit (delivery recovery, AR-7).
 func (GitHubCLI) Create(ctx context.Context, repo string, in PRInput) (PRRef, error) {
 	args := []string{
 		"pr", "create",
@@ -151,19 +155,30 @@ func (GitHubCLI) Create(ctx context.Context, repo string, in PRInput) (PRRef, er
 	return ref, nil
 }
 
-// baseRefOID resolves a PR's current base commit via gh pr view.
+// baseRefOID resolves a PR's current base commit via the REST API.
+//
+// It deliberately does NOT use `gh pr view --json baseRefOid`: that field is
+// absent from gh's pr list/view field sets on released versions still in wide
+// use (gh 2.46 rejects it with "Unknown JSON field"), which fails delivery
+// after every gate has already passed. The REST payload's base.sha carries the
+// same value and is not gated on the local gh build.
 func baseRefOID(ctx context.Context, repo, number string) (string, error) {
-	out, err := runGH(ctx, "pr view", "pr", "view", number, "--repo", repo, "--json", "baseRefOid")
+	out, err := runGH(ctx, "api", "api", "repos/"+repo+"/pulls/"+number)
 	if err != nil {
 		return "", err
 	}
 	var parsed struct {
-		BaseRefOID string `json:"baseRefOid"`
+		Base struct {
+			SHA string `json:"sha"`
+		} `json:"base"`
 	}
 	if err := json.Unmarshal(out, &parsed); err != nil {
-		return "", fmt.Errorf("gh pr view: parse output: %w", err)
+		return "", fmt.Errorf("gh api pulls: parse output: %w", err)
 	}
-	return parsed.BaseRefOID, nil
+	if parsed.Base.SHA == "" {
+		return "", fmt.Errorf("gh api pulls: response has no base.sha for PR %s", number)
+	}
+	return parsed.Base.SHA, nil
 }
 
 // prNumberFromURL extracts the numeric PR identifier from a GitHub pull

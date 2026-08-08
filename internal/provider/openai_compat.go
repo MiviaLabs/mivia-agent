@@ -376,8 +376,16 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 			}
 			continue
 		}
-		received = true
 		delta := chunk.Choices[0].Delta.Content
+		if delta != "" {
+			received = true
+		}
+		if chunk.Choices[0].FinishReason != "" {
+			received = true
+		}
+		if chunk.Usage != nil {
+			received = true
+		}
 		if delta == "" {
 			continue
 		}

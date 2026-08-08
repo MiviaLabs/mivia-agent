@@ -59,6 +59,23 @@
     "Do not end the subject with a period",
     "Subject line max 72 characters"
   ],
+  "requiredTrailers": {
+    "fix": [
+      "Regression",
+      "Class",
+      "Sweep"
+    ]
+  },
+  "trailerHints": {
+    "Regression": "add \"Regression: Test<Name>\" or \"Regression: none (<reason>)\"",
+    "Class": "add \"Class: DC-n\" from .mivia/quality/defect-taxonomy.md, or \"Class: none (<reason>)\" when no class fits",
+    "Sweep": "add \"Sweep: searched <what>, found <n> further sites\" - the same-class sweep from .mivia/quality/defect-taxonomy.md"
+  },
+  "trailerGuide": {
+    "Regression": "Test that fails before the fix and passes after it.",
+    "Class": "Recurring defect class from .mivia/quality/defect-taxonomy.md. A fix with no matching class must say so and the class should be added to that document.",
+    "Sweep": "Result of the same-class sweep: what you searched for other sites of the class, and how many you found. This is the gate that stops one class producing a chain of repeat fixes."
+  },
   "examples": [
     "feat(cli): add version command",
     "fix(hooks): print allowed scopes on commit-msg failure",

@@ -265,10 +265,17 @@ deliver and cancel through the CLI paths instead of a parallel path.
 - A nested component inherits work, never authority.
 - Test the denial, not only the grant.
 
-## DC-14 Provider and stream protocol tolerance
+## DC-14 External interface tolerance
 
-**Mechanism.** The code assumes a well-formed provider stream. A real provider omits a
-field, sends a usage-only chunk, or returns arguments that do not parse.
+**Mechanism.** The code assumes a well-formed response from an interface it does not
+own. The real interface omits a field, sends a usage-only chunk, returns arguments that
+do not parse, or rejects a field the code asks for.
+
+The boundary is not only a model provider. A local external tool is the same
+mechanism: `ad1e38c` requested a `baseRefOID` field that `gh` has never exposed, so
+every workflow delivery died after all gates had passed, and the fake `gh` in the tests
+accepted the field that real `gh` rejects. A fake that is more tolerant than the real
+interface hides this class instead of catching it.
 
 **Evidence.** 71 commits. Fixes assigned identifiers when the provider omitted tool
 call identifiers, treated usage-only chunks as completed turns, rejected invalid stream
@@ -276,12 +283,15 @@ tool arguments, stopped a provider message leak in error text, and compacted and
 retried once on a prompt-too-long response.
 
 **Probes.**
-- For each provider field the code reads, ask what happens when it is absent.
+- For each field the code reads from an external interface, ask what happens when it is
+  absent. For each field the code *requests*, confirm the interface actually exposes it
+  in the versions in use.
+- A fake must refuse what the real interface refuses. A permissive fake proves nothing.
 - Every tool call must stay pairable with its result, including skipped and failed
   calls.
-- Provider error text may carry request content. Do not put it into a user-facing
+- External error text may carry request content. Do not put it into a user-facing
   error without redaction.
-- Test the malformed stream, not only the good stream.
+- Test the malformed response, not only the good one.
 
 ---
 
