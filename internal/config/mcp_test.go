@@ -121,6 +121,55 @@ unsafe_secret = "value"
 	}
 }
 
+func TestLoadTrustedMCPConfigRejectsInvalidSecretReferences(t *testing.T) {
+	tests := []struct {
+		name   string
+		server string
+	}{
+		{
+			name: "literal stdio environment value",
+			server: `
+[[mcp.servers]]
+id = "repository"
+transport = "stdio"
+command = "/usr/bin/repository-server"
+env = ["REPOSITORY_TOKEN=literal-secret"]
+	`,
+		},
+		{
+			name: "literal HTTP header value",
+			server: `
+[[mcp.servers]]
+id = "issues"
+transport = "streamable_http"
+url = "https://example.invalid/mcp"
+headers = [{ name = "Authorization", value_env = "literal-secret" }]
+`,
+		},
+		{
+			name: "transport owned header",
+			server: `
+[[mcp.servers]]
+id = "issues"
+transport = "streamable_http"
+url = "https://example.invalid/mcp"
+headers = [{ name = "Mcp-Session-Id", value_env = "SESSION_ID" }]
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("MIVIA_CONFIG", "")
+			writeMCPConfig(t, filepath.Join(home, ".mivia", "mivia.toml"), "[mcp]\nenabled = true\n"+tt.server)
+			if _, _, err := LoadTrustedMCPConfig(t.TempDir()); err == nil {
+				t.Fatal("LoadTrustedMCPConfig() accepted invalid server secret reference")
+			}
+		})
+	}
+}
+
 func TestLoadExposesEffectiveMCPConfig(t *testing.T) {
 	home := t.TempDir()
 	workspace := t.TempDir()

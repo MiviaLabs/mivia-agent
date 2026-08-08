@@ -4,13 +4,25 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"github.com/pelletier/go-toml/v2"
 )
+
+var mcpEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var mcpHeaderName = regexp.MustCompile(`^[!#$%&'*+.^_` + "`" + `|~0-9A-Za-z-]+$`)
+
+var mcpTransportHeaders = map[string]struct{}{
+	"accept":         {},
+	"content-type":   {},
+	"last-event-id":  {},
+	"mcp-session-id": {},
+}
 
 const (
 	defaultMCPStartupTimeoutSeconds = 10
@@ -267,16 +279,54 @@ func validateMCPServer(server MCPServerConfig) error {
 	if !validMCPID(server.ID) {
 		return fmt.Errorf("id %q is invalid", server.ID)
 	}
-	if strings.TrimSpace(server.Transport) == "" {
-		return fmt.Errorf("transport is required")
-	}
 	if server.TimeoutSeconds < 0 {
 		return fmt.Errorf("timeout_seconds must not be negative")
+	}
+	switch server.Transport {
+	case "stdio":
+		if !filepath.IsAbs(server.Command) {
+			return fmt.Errorf("stdio command must be absolute")
+		}
+		if server.URL != "" {
+			return fmt.Errorf("stdio server must not set url")
+		}
+		if len(server.Headers) != 0 {
+			return fmt.Errorf("stdio server must not set headers")
+		}
+	case "streamable_http":
+		u, err := url.Parse(server.URL)
+		if err != nil || !u.IsAbs() || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Fragment != "" {
+			return fmt.Errorf("streamable_http url is invalid")
+		}
+		if server.Command != "" || len(server.Args) != 0 || len(server.Env) != 0 {
+			return fmt.Errorf("streamable_http server must not set stdio fields")
+		}
+	default:
+		return fmt.Errorf("transport %q is unsupported", server.Transport)
+	}
+	for _, name := range server.Env {
+		if !mcpEnvironmentName.MatchString(name) {
+			return fmt.Errorf("environment name %q is invalid", name)
+		}
 	}
 	for _, arg := range server.Args {
 		if strings.ContainsAny(arg, "\x00\r\n") {
 			return fmt.Errorf("args must not contain control characters")
 		}
+	}
+	seenHeaders := make(map[string]struct{}, len(server.Headers))
+	for _, header := range server.Headers {
+		name := strings.ToLower(header.Name)
+		if !mcpHeaderName.MatchString(header.Name) || !mcpEnvironmentName.MatchString(header.ValueEnv) {
+			return fmt.Errorf("header is invalid")
+		}
+		if _, owned := mcpTransportHeaders[name]; owned {
+			return fmt.Errorf("header %q is transport-owned", header.Name)
+		}
+		if _, duplicate := seenHeaders[name]; duplicate {
+			return fmt.Errorf("header %q is duplicated", header.Name)
+		}
+		seenHeaders[name] = struct{}{}
 	}
 	return nil
 }
