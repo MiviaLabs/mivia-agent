@@ -369,52 +369,46 @@ func (s *StorageLedgerRepository) SetTaskAttempt(ctx context.Context, runID, tas
 	return nil
 }
 
-// CloseRun marks a run as closed, writing both a run_closed event and a
-// run_status_changed (→canceled) event. The dual events simplify recovery:
-// the run_closed event signals storage-level closure, while the status
-// change allows the projection rebuild to derive the correct terminal state.
-// Callers that want cancel-only semantics should use CancelRun (if added)
-// or transition task statuses before calling CloseRun.
+// CloseRun marks a run as closed. The terminal transition (status canceled,
+// completed_at) is marshalled INTO the single run_closed event payload, so the
+// closure and the terminal status land in ONE fenced append: a store failure
+// cannot leave a durable closure row beside a projection that still reports
+// the run open, and no retry or concurrent writer can commit task transitions
+// after the durable closure (DC-4). On append failure the projection is
+// rebuilt from the store, so reads report only what is durable. Legacy
+// run_closed rows without the optional fields decode empty and close through
+// closeRebuiltRun, exactly as they always did.
 func (s *StorageLedgerRepository) CloseRun(ctx context.Context, runID string) error {
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
 	}
 
-	payload, err := marshalRunClosed()
-	if err != nil {
-		return fmt.Errorf("marshal run closed: %w", err)
-	}
-
-	storeEvt := s.newStoreEvent(runID, storageKindRunClosed, payload)
-
-	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
-		return fmt.Errorf("store append: %w", err)
-	}
-
-	// Also write a run_status_changed event for the status transition.
-	s.mu.RLock()
-	now := s.nowLocked()
-	s.mu.RUnlock()
-	statusPayload, err := marshalRunStatusChange(string(RunStatusCanceled), &now)
-	if err != nil {
-		return fmt.Errorf("marshal run status change: %w", err)
-	}
-	statusEvt := s.newStoreEvent(runID, storageKindRunStatusChanged, statusPayload)
-	if err := s.appendStoreEvent(ctx, statusEvt); err != nil {
-		return fmt.Errorf("store append status change: %w", err)
-	}
-
-	// Update mem's internal state directly (same package).
+	// Validate and apply in the projection first (D2 pattern): an
+	// already-closed run is refused with ErrInvalidTransition before any row
+	// reaches the store (a double close writes nothing), and a failed append
+	// rebuilds the projection from the store, rolling the closed flag and the
+	// terminal status back to what the durable history actually holds.
 	if err := s.mem.CloseRun(ctx, runID); err != nil {
 		return err
 	}
-	// Also update the run's status to canceled in the in-memory projection.
+	s.mu.RLock()
+	now := s.nowLocked()
+	s.mu.RUnlock()
 	s.mem.mu.Lock()
 	if rec, ok := s.mem.runs[runID]; ok {
 		rec.snapshot.Status = RunStatusCanceled
 		rec.snapshot.CompletedAt = &now
 	}
 	s.mem.mu.Unlock()
+
+	payload, err := marshalRunClosed(string(RunStatusCanceled), &now)
+	if err != nil {
+		_ = s.rebuildRunProjection(ctx, runID)
+		return fmt.Errorf("marshal run closed: %w", err)
+	}
+	if err := s.appendStoreEventOrRebuild(ctx, s.newStoreEvent(runID, storageKindRunClosed, payload)); err != nil {
+		return fmt.Errorf("store append: %w", err)
+	}
 	return nil
 }
 

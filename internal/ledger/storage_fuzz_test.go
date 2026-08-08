@@ -5,8 +5,12 @@ package ledger
 // fresh StorageLedgerRepository. Random rows (known and unknown kinds, random
 // payload bytes, including empty, malformed, wrong-shape and oversized) must
 // never panic or hang; malformed payloads must fail with a clean error rather
-// than corrupting state. The target is hermetic: no network, no filesystem, no
-// wall-clock assertion, so time-stamping nondeterminism cannot flake it.
+// than corrupting state. The rotation covers the run-level kinds too
+// (run_closed and run_status_changed): run_closed decode is deliberately
+// lenient (a malformed payload still closes via closeRebuiltRun), so a hostile
+// row must never panic or wedge catch-up. The target is hermetic: no network,
+// no filesystem, no wall-clock assertion, so time-stamping nondeterminism
+// cannot flake it.
 
 import (
 	"bytes"
@@ -24,6 +28,13 @@ func FuzzLedgerProjectionApply(f *testing.F) {
 	f.Add([]byte(storageKindLifecycleEvent + "\x00" + string(bytes.Repeat([]byte("x"), 2048))))
 	f.Add([]byte("unknown_kind\x00not-json"))
 	f.Add([]byte(""))
+	// run_closed and run_status_changed seeds: legacy '{}', the new shape with
+	// status + completed_at, and a malformed payload. The run_closed decode is
+	// the changed surface, so it gets direct seeds plus the rotation below.
+	f.Add([]byte(storageKindRunClosed + "\x00" + `{"status":"canceled","completed_at":"2026-01-01T00:00:00Z"}`))
+	f.Add([]byte(storageKindRunClosed + "\x00" + `{}`))
+	f.Add([]byte(storageKindRunClosed + "\x00not-json"))
+	f.Add([]byte(storageKindRunStatusChanged + "\x00" + `{"status":"canceled","completed_at":"2026-01-01T00:00:00Z"}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		segments := bytes.Split(data, []byte{0})
@@ -43,11 +54,15 @@ func FuzzLedgerProjectionApply(f *testing.F) {
 		seq := 2
 		for i, seg := range segments {
 			kind := storageKindLifecycleEvent
-			switch i % 3 {
+			switch i % 5 {
 			case 0:
 				kind = storageKindTaskStatusChanged
 			case 1:
 				kind = storageKindTaskCreated
+			case 2:
+				kind = storageKindRunClosed
+			case 3:
+				kind = storageKindRunStatusChanged
 			}
 			_ = store.Append(ctx, storage.Event{
 				ID: fmt.Sprintf("se-%d", seq), RunID: runID, Sequence: seq, Kind: kind, Payload: seg,

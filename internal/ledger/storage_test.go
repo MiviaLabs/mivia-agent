@@ -409,7 +409,7 @@ func TestRebuildProjection_RunCreatedThenClosed(t *testing.T) {
 		RunID:  "run-1",
 		Status: RunStatusCreated,
 	})
-	closedPayload, _ := marshalRunClosed()
+	closedPayload, _ := marshalRunClosed("", nil)
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	cancelPayload, _ := marshalRunStatusChange(string(RunStatusCanceled), &now)
 
