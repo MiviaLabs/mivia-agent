@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -58,6 +59,47 @@ func TestStreamableHTTPDiscoversAndCallsTool(t *testing.T) {
 	if err != nil || result != "reply" {
 		t.Fatalf("CallTool() = %q, %v", result, err)
 	}
+}
+
+func TestStdioDiscoversCallsAndReapsProcess(t *testing.T) {
+	t.Setenv("MIVIA_MCP_HELPER", "1")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := connectStdio(ctx, config.MCPServerConfig{
+		Command: os.Args[0], Args: []string{"-test.run=^TestStdioMCPHelper$"}, Env: []string{"MIVIA_MCP_HELPER"},
+	})
+	if err != nil {
+		t.Fatalf("connectStdio() error = %v", err)
+	}
+	remote, err := client.ListTools(ctx)
+	if err != nil || len(remote) != 1 || remote[0].Name != "echo" {
+		t.Fatalf("ListTools() = %#v, %v", remote, err)
+	}
+	result, err := client.CallTool(ctx, "echo", map[string]any{})
+	if err != nil || result != "reply" {
+		t.Fatalf("CallTool() = %q, %v", result, err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestStdioMCPHelper(t *testing.T) {
+	if os.Getenv("MIVIA_MCP_HELPER") != "1" {
+		return
+	}
+	server := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+	sdk.AddTool(server, &sdk.Tool{Name: "echo", Description: "returns text"}, func(context.Context, *sdk.CallToolRequest, struct{}) (*sdk.CallToolResult, any, error) {
+		return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "reply"}}}, nil, nil
+	})
+	session, err := server.Connect(context.Background(), &sdk.IOTransport{Reader: os.Stdin, Writer: os.Stdout}, nil)
+	if err != nil {
+		os.Exit(2)
+	}
+	if err := session.Wait(); err != nil {
+		os.Exit(3)
+	}
+	os.Exit(0)
 }
 
 func TestSameOriginRedirectRefusesCrossOrigin(t *testing.T) {
