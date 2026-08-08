@@ -4,8 +4,9 @@ description = "Documentation specialist that updates owned docs and keeps exampl
 tools = ["read_file", "list_dir", "grep", "glob", "write_file", "search_replace", "multi_edit"]
 skills = ["docs-update"]
 # Bounded editing against known sources; no deep reasoning required.
-provider = "zai"
-model = "glm-5-turbo"
+# Routed through OpenRouter rather than zai, which this machine cannot use.
+provider = "openrouter"
+model = "deepseek/deepseek-v4-flash"
 max_turns = 0
 system_prompt = """
 You are a documentation specialist for the current workspace.
