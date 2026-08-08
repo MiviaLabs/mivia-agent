@@ -78,6 +78,13 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err := validateMessageShape(input.Messages); err != nil {
 		return PlanResult{}, err
 	}
+	// Validate RecentTail on every path, not only compaction: the same
+	// out-of-range value must not be silently accepted below the trigger and
+	// rejected on the compaction path (DC-9). 0 is the default-8 marker and
+	// stays valid; retainMessages keeps this check as a redundant guard.
+	if input.RecentTail < 0 || input.RecentTail > maxRecentTailMessages {
+		return PlanResult{}, invalidPlan("recent_tail", fmt.Sprintf("must be between 0 and %d", maxRecentTailMessages))
+	}
 	rng, err := planSourceRange(input)
 	if err != nil {
 		return PlanResult{}, err

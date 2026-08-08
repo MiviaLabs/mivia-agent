@@ -193,6 +193,7 @@ type StepAttempt struct {
 	PromptRef        string          `json:"prompt_ref,omitempty"`
 	DecisionJSON     []byte          `json:"decision_json,omitempty"`
 	EvidenceJSON     []byte          `json:"evidence_json,omitempty"`
+	PanelExecution   *PanelExecution `json:"panel_execution,omitempty"`
 	StartedAt        time.Time       `json:"started_at"`
 	FinishedAt       *time.Time      `json:"finished_at,omitempty"`
 	Version          uint64          `json:"version"`
@@ -215,6 +216,7 @@ func (s StepAttempt) Clone() StepAttempt {
 	clone.Executions = cloneStepExecutions(s.Executions)
 	clone.DecisionJSON = append([]byte(nil), s.DecisionJSON...)
 	clone.EvidenceJSON = append([]byte(nil), s.EvidenceJSON...)
+	clone.PanelExecution = s.PanelExecution.clone()
 	if s.FinishedAt != nil {
 		t := *s.FinishedAt
 		clone.FinishedAt = &t

@@ -46,6 +46,28 @@ Agent steps are adapted to one existing coordinator task. The adapter preserves 
 
 Delivery lives outside both the workflow TOML and agent tools. A host-owned provider implementation creates a branch in the run worktree, commits, pushes, and creates or finds one GitHub PR using a persisted idempotency key. It receives a runtime publication grant, never an agent instruction.
 
+### Delivery repair
+
+Delivery runs after the run reaches its success terminal, outside the step
+graph, so a delivery failure has no automatic route back into the graph
+unless the workflow declares one.
+
+`delivery.on_failure` names a step to return to. On a failure that a step can
+plausibly repair, the run records the failure as an attempt that routes to
+that step and returns to `running`. The active step is derived from the last
+attempt's route, the same way an in-graph repair loop resumes, so the repair
+step sees the failure and can act on it. The run then reaches the success
+terminal again and delivery runs again. The cycle is bounded: a cause the
+step cannot fix does not repeat forever.
+
+Not every delivery failure repairs. A transport fault - an unreachable
+remote, a failed push - is not a condition in the change, so no agent step
+can fix it. Such a failure leaves the run at `delivery_pending` instead, and
+a later delivery attempt succeeds once the network recovers. See
+[`internal/cli/workflow_deliver_repair.go`](../../internal/cli/workflow_deliver_repair.go)
+and the `delivery.on_failure` field in the
+[workflow user guide](../product/workflows-guide.md#authoring-a-workflow).
+
 ## See also
 
 - [Workflow user guide](../product/workflows-guide.md)

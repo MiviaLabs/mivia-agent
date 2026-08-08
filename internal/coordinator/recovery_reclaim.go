@@ -98,6 +98,28 @@ func (c *coordinator) watchRecoveredRun(h *RunHandle) {
 	close(h.done)
 }
 
+// watchJoinedRun waits for the executor that won an atomic admission race.
+// It does not execute work or claim the run.
+func (c *coordinator) watchJoinedRun(h *RunHandle) {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		snap, err := c.repo.GetRun(context.Background(), h.runID)
+		if err != nil || isTerminalRunStatus(snap.Status) {
+			result := &RunResult{Snapshot: snap, Err: err}
+			if err == nil {
+				result.Results = c.resultsFromSnapshots(context.Background(), snap.Tasks)
+			}
+			h.mu.Lock()
+			h.result = result
+			h.mu.Unlock()
+			close(h.done)
+			return
+		}
+		<-ticker.C
+	}
+}
+
 // recoverIdempotentWithRetry resolves an idempotency key, retrying through the
 // R4-1 contention window. When another process is mid-recovery - reclaiming an
 // abandoned run, or between its own durable CreateRun and first CreateTask - the

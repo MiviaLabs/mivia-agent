@@ -73,7 +73,7 @@ func (c *coordinator) recoverByIdempotencyKey(ctx context.Context, key, fingerpr
 		}
 		attempts[task.TaskID] = latest.AttemptID
 	}
-	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true)
+	h := c.newRunHandle(snap.RunID, key, attempts, fingerprint, true, withRunPolicy(snap.Policy))
 	go c.watchRecoveredRun(h)
 	return h, true, nil
 }
@@ -122,7 +122,7 @@ func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, li
 		}
 	}()
 
-	originalTasks, alreadyDone, err := c.resumeValidateAndMark(ctx, runID, liveTasks)
+	originalTasks, alreadyDone, err := c.resumeValidateAndMark(ctx, runID, liveTasks, snap.Policy.FailInterrupted)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +137,7 @@ func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, li
 
 	// Create handle for resumed execution. Already-completed tasks are seeded as
 	// results, so the resumed run still reports one result per task.
+	opts = append(opts, withRunPolicy(snap.Policy))
 	h := c.newRunHandle(runID, "", newAttempts, "", false, opts...)
 
 	// Run the DAG in background, which will execute pending/retry tasks.
@@ -149,7 +150,7 @@ func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, li
 // resumeValidateAndMark reads the interrupted run's tasks, validates them,
 // marks any in-flight tasks as interrupted, and returns the prepared task
 // list plus results from already-completed tasks.
-func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string, liveTasks []subagents.Task) ([]subagents.Task, map[string]subagents.Result, error) {
+func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string, liveTasks []subagents.Task, failInterrupted bool) ([]subagents.Task, map[string]subagents.Result, error) {
 	tasks, err := c.repo.ListTasks(ctx, runID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resume: list tasks %q: %w", runID, err)
@@ -169,8 +170,10 @@ func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string, l
 
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	c.markInterruptedTasks(persistCtx, runID, tasks, attempts)
-	c.requeuePersistedFailures(persistCtx, runID)
+	c.markInterruptedTasks(persistCtx, runID, tasks, attempts, failInterrupted)
+	if !failInterrupted {
+		c.requeuePersistedFailures(persistCtx, runID)
+	}
 
 	// Re-read tasks after marking running tasks as failed.
 	updatedTasks, err := c.repo.ListTasks(ctx, runID)
@@ -181,7 +184,7 @@ func (c *coordinator) resumeValidateAndMark(ctx context.Context, runID string, l
 	return c.tasksFromSnapshotsWithAuthority(ctx, updatedTasks, liveTasks)
 }
 
-func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, tasks []ledger.TaskSnapshot, attempts map[string]string) {
+func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, tasks []ledger.TaskSnapshot, attempts map[string]string, failInterrupted bool) {
 	for _, task := range tasks {
 		if task.Status != string(ledger.TaskStatusRunning) && task.Status != string(ledger.TaskStatusCancelRequested) {
 			continue
@@ -218,7 +221,7 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 		// Resume IS the retry request, so requeue here rather than depending on
 		// a policy. The failed status and its event are still written first, so
 		// the interruption stays in the audit trail.
-		if requeue {
+		if requeue && !failInterrupted {
 			c.requeueForResume(ctx, runID, task.TaskID, task.Version+1)
 		}
 	}

@@ -1,41 +1,19 @@
 # Configuration
 
-## Level 1: in plain words
-
-Configuration is how you tell mivia which AI provider to use and how to behave.
-
-You need two things:
-
-1. A settings file. The file is called `mivia.toml`. It holds choices such as which provider to use and which models to offer.
-2. An API key. An API key is a secret code that lets a program use an AI service. The key lives in your environment, never in the settings file.
-
-The simple path has three steps.
-
-Step 1: set your API key in the environment.
+Configuration selects the AI provider and model, and controls tool policy,
+privacy, and orchestration limits. Two inputs: a settings file (`mivia.toml`)
+and an API key, kept out of the settings file, in your environment.
 
 ```bash
 export DEEPSEEK_API_KEY=sk-REPLACE-ME
-```
-
-Step 2: check your setup.
-
-```bash
-mivia doctor
-```
-
-`mivia doctor` prints whether mivia can find your key. It never prints the key value.
-
-Step 3: start a chat.
-
-```bash
+mivia doctor   # confirms mivia can find the key; never prints it
 mivia chat
 ```
 
-That is all you need for the default setup. The default provider is DeepSeek and the default model is `deepseek-v4-flash`. A provider is a company that runs an AI service. A model is the AI brain the provider runs.
+Default provider: DeepSeek, model `deepseek-v4-flash`. No further config
+needed for that path.
 
-## Level 2: more detail
-
-### Where mivia looks for settings
+## Where mivia looks for settings
 
 mivia reads the first settings file it finds, in this order:
 
@@ -43,11 +21,9 @@ mivia reads the first settings file it finds, in this order:
 2. `./.mivia/mivia.toml` (the project folder).
 3. `~/.mivia/mivia.toml` (your home folder).
 
-A TOML file is a text file with a simple format for settings.
+## Where mivia looks for the API key
 
-### Where mivia looks for the API key
-
-API keys live in an env file or in the process environment. An env file is a text file with lines in the form `NAME=value`. The search order for the env file is:
+API keys live in an env file (`NAME=value` lines) or in the process environment. Search order:
 
 1. `./.env`
 2. `~/.mivia/.env`
@@ -56,7 +32,7 @@ Process environment variables always win over the env file.
 
 The workspace `.env` stays beside the project files at `./.env`. Tools such as direnv and Docker Compose already use that location. Only the user-level env file lives in `~/.mivia/`.
 
-### Defaults
+## Defaults
 
 | Setting | Default |
 |---------|---------|
@@ -66,7 +42,7 @@ The workspace `.env` stays beside the project files at `./.env`. Tools such as d
 | OpenRouter example | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
 | ZAI example | `glm-5.2` (declare it under `providers.zai`) |
 
-### Set up a provider
+## Set up a provider
 
 Set the provider API key in the process environment or an env file. Then run `mivia doctor` to confirm that mivia can find it.
 
@@ -110,7 +86,7 @@ api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
 
-### Any OpenAI-compatible provider
+## Any OpenAI-compatible provider
 
 mivia works with any provider that uses the OpenAI-compatible API. Examples include OpenAI, xAI (Grok), and Kimi (Moonshot AI). Add a `[providers.<name>]` block in the same shape.
 
@@ -143,7 +119,7 @@ base_url = "https://api.moonshot.ai/v1"
 
 z.ai serves two OpenAI-compatible endpoints. A key works on exactly one of them. Pay-as-you-go keys use `https://api.z.ai/api/paas/v4`. GLM Coding Plan keys use `https://api.z.ai/api/coding/paas/v4`. A Coding Plan key on the pay-as-you-go endpoint fails every request with code `1113`. mivia reports the code and what it means. It never forwards z.ai's own error text.
 
-### Explicit model catalog
+## Explicit model catalog
 
 Every provider must declare a non-empty `models` list. Each entry has a provider-local `name`, a `context_window_tokens` value, and an optional positive `max_output_tokens` value. The list is the complete catalog. `--model`, `/model`, the TUI picker, and resumed sessions may select only its entries. `default_model` sets the startup default and must be in `models`. If it is not, the first entry is used.
 
@@ -157,11 +133,11 @@ OPENROUTER_API_KEY=sk-REPLACE-ME
 ZAI_API_KEY=sk-REPLACE-ME
 ```
 
-### Installed binary
+## Installed binary
 
 Create `~/.mivia/mivia.toml` and, if you want, `~/.mivia/.env` with the settings above. Leave the root-level `env_file` unset to use the default `~/.mivia/.env`. Or set the API key in the process environment and run with the built-in defaults. There is no `config init` command.
 
-### Worktree branches
+## Worktree branches
 
 mivia creates linked worktree branches with the `[worktrees].branch_prefix` setting. The default is `"mivia/"`. For example, `mivia worktree create fix` creates the branch `mivia/fix`.
 
@@ -170,7 +146,7 @@ mivia creates linked worktree branches with the `[worktrees].branch_prefix` sett
 branch_prefix = "mivia/"
 ```
 
-A worktree is a separate copy of the project folder. The prefix must end with `/` and form a valid Git branch name when mivia adds a worktree name. The prefix must not be empty. Do not use spaces, control characters, or Git ref characters such as `~`, `^`, `:`, `?`, `*`, `[`, or `\`. Do not use invalid ref sequences such as `..`, `//`, and `@{`. Each path component must be non-empty and must not start with `.` or end with `.lock`.
+The prefix must end with `/` and form a valid Git branch name when mivia adds a worktree name. The prefix must not be empty. Do not use spaces, control characters, or Git ref characters such as `~`, `^`, `:`, `?`, `*`, `[`, or `\`. Do not use invalid ref sequences such as `..`, `//`, and `@{`. Each path component must be non-empty and must not start with `.` or end with `.lock`.
 
 The CLI and TUI always read this setting from `<main-repository>/.mivia/mivia.toml`. A command run in a linked worktree uses the main repository setting. It does not use a config file in the linked worktree or `MIVIA_CONFIG` for worktree branch operations.
 
@@ -178,17 +154,17 @@ mivia preserves a removed worktree branch. This avoids destructive branch deleti
 
 If you change the prefix, branches with the old prefix remain. Remove them manually only after you confirm that no worktree needs them.
 
-### Named agents
+## Named agents
 
 Named agents are separate TOML files, one definition per file. User-owned definitions live in `~/.mivia/agents/<name>.toml`. Workspace definitions live in `<workspace>/.mivia/agents/<name>.toml`. Create those two directories as needed. The filename is canonical: `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
 
-### Tool safety policy
+## Tool safety policy
 
 `[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only source of the file-tool secret filter. Nothing is compiled into the binary, so an unconfigured workspace filters nothing. Recommended starting values ship in `.mivia/mivia.toml.example`. Patterns match case-insensitively as substrings of the workspace-relative path. Exceptions take precedence.
 
 This guards against accidental exposure, not against a determined agent. `run_command` can build a path at runtime and reach the file anyway. With these patterns unset, no paths are filtered.
 
-### Allowlists are configuration-only
+## Allowlists are configuration-only
 
 Neither the `run_command` program allowlist nor the child-process environment allowlist is compiled into the binary. `[tools].run_allowlist` and `[tools].env_allowlist` are the only sources. With them unset, `run_command` executes nothing and child processes inherit no environment.
 
@@ -196,7 +172,7 @@ Recommended values ship in `.mivia/mivia.toml.example`. Copy it and trim it to w
 
 `[tools].env_allow_keyword_blocklist` is the companion subtractive filter. A variable admitted by a `*` prefix rule is dropped when its name contains any listed substring. The example lists `SECRET`, `TOKEN`, `PASSWORD`, and `API_KEY`. Exact `env_allowlist` entries are never dropped, so a build that needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything they match.
 
-### Redaction and persisted orchestration history
+## Redaction and persisted orchestration history
 
 `[privacy].redaction_patterns` and `[privacy].redaction_key_names` control redaction in displayed tool previews, output, and event bodies. They do not redact SQLite task inputs or result content at rest. The example configuration provides starting patterns. Adapt and test them for your workspace.
 
@@ -209,11 +185,11 @@ Two consequences worth knowing before you enable it:
 - Task inputs and results are written unredacted at rest, even when `[privacy]` patterns are configured. Treat the chosen store location as sensitive workspace data. Do not put secrets in task prompts.
 - Authority is deliberately not stored. Permissions, scopes, roles, and caller identity are never written to the ledger and never restored from it. A resumed run runs under the identity and permissions of whoever resumes it. Editing the store file cannot grant privilege. Resource limits (timeout, budget, depth) are restored but clamped to your current configuration.
 
-### Interactive turn ceiling
+## Interactive turn ceiling
 
-`[chat] max_steps` bounds one turn's agent loop. Unset uses the built-in default of 100 steps. `0` means unlimited, and this is the default when unset. `/steps` overrides it for the current session.
+`[chat] max_steps` bounds one turn's agent loop. `0` means unlimited, and this is the default when unset. `/steps` overrides it for the current session.
 
-### Tool result ceiling
+## Tool result ceiling
 
 `[tools] max_tool_result_bytes` caps each tool result stored in agent-loop history, in bytes. Default is `0`, which means uncapped. The per-tool budgets (`max_read_bytes`, `max_output_bytes`, tool-declared limits) are the bound. The one knob governs both the interactive session loop and nested sub-agent loops, so a sub-agent never sees a different ceiling than the session that spawned it.
 
@@ -221,7 +197,7 @@ Set a positive value (minimum 1024; smaller positive values are a config error) 
 
 Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded interactive-loop ceiling.
 
-### Per-batch tool result budget
+## Per-batch tool result budget
 
 `[tools] batch_result_budget_bytes` bounds what one tool batch adds to history, across all of its parallel calls together. Default is `0`, which means off.
 
@@ -233,7 +209,7 @@ Over-budget results are degraded, never failed. The call already ran and its sid
 
 What the budget does not charge: lifecycle-hook advisory context (it has its own 8 KiB bound) and truncation notices themselves.
 
-### Web research response bound
+## Web research response bound
 
 `[tools] max_tavily_response_bytes` bounds a Tavily API response body, in bytes. It governs the `search` tool's Tavily path and the `extract` tool. Default is 4194304 (4 MiB).
 
@@ -243,19 +219,19 @@ Unset, `0`, and negative all mean "use the default". There is deliberately no un
 
 This bound is not clamped by `max_tool_result_bytes`. That key caps what the agent loop stores. Installs with no Tavily API key are unaffected.
 
-### Memory OOM backstop
+## Memory OOM backstop
 
 `[tools] memory_backstop_mb` (default `256`) is the out-of-memory guard for tools that may load whole files when volume caps are uncapped. It is not a context-cost cap. `0` or negative resolves to the default 256 so the guard cannot be accidentally disabled.
 
-### Bounded `run_command` capture
+## Bounded `run_command` capture
 
 When `max_output_bytes` is a positive bound, stdout and stderr capture keeps roughly one-third head and two-thirds tail of the shared budget, with an elision marker between. Compiler error tails survive.
 
-### Durable source payloads (chunking)
+## Durable source payloads (chunking)
 
 `[context] max_source_event_bytes` is the chunk size for durable source event payloads, not a whole-payload reject. `0` uses a built-in default chunk size (64 KiB). Large payloads store as an ordered chunk sequence under one content ref (SHA-256 of the full payload). ReadPayload reassembles byte-identical and fails closed on digest mismatch.
 
-### Subagent knobs
+## Subagent knobs
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|

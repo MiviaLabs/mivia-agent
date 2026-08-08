@@ -76,6 +76,9 @@ type Repository interface {
 	// for a non-terminal outcome status or an illegal status edge.
 	CompleteStepAttempt(ctx context.Context, runID, attemptID string, expectedVersion uint64, outcome AttemptOutcome) error
 
+	// CompareAndSetPanelPhase records one claim-fenced panel phase intent.
+	CompareAndSetPanelPhase(ctx context.Context, runID string, attemptID string, expectedVersion uint64, from PanelPhase, to PanelPhase, synthesis *PanelSynthesisExecution) error
+
 	// SetStepAttemptPrompt records the content-addressed prompt reference for
 	// one attempt (the prompt body lives in content-addressed storage and is
 	// looked up via PromptRef; the event log never carries prompt text). The

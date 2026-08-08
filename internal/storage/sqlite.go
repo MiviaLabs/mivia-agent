@@ -72,9 +72,119 @@ func (s *SQLite) Append(ctx context.Context, e Event) error {
 	return s.append(ctx, e, "", false)
 }
 
+func (s *SQLite) AppendBatch(ctx context.Context, events []Event) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	for _, e := range events {
+		if len(e.Payload) == 0 {
+			_ = tx.Rollback()
+			return fmt.Errorf("empty payload")
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO events(id,run_id,sequence,kind,payload) VALUES(?,?,?,?,?)`, e.ID, e.RunID, e.Sequence, e.Kind, e.Payload); err != nil {
+			_ = tx.Rollback()
+			if isConstraint(err) {
+				return ErrDuplicate
+			}
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *SQLite) AppendBatchForNewRun(ctx context.Context, runID string, events []Event) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	for attempt := 0; ; attempt++ {
+		err := s.appendBatchForNewRun(ctx, runID, events)
+		if !isSQLiteBusy(err) || attempt == 7 {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * time.Millisecond):
+		}
+	}
+}
+
+func (s *SQLite) appendBatchForNewRun(ctx context.Context, runID string, events []Event) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	var exists int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE run_id=?)`, runID).Scan(&exists); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if exists != 0 {
+		_ = tx.Rollback()
+		return ErrDuplicate
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM run_claims WHERE run_id=?)`, runID).Scan(&exists); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if exists != 0 {
+		_ = tx.Rollback()
+		return ErrClaimHeld
+	}
+	for _, e := range events {
+		if len(e.Payload) == 0 {
+			_ = tx.Rollback()
+			return fmt.Errorf("empty payload")
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO events(id,run_id,sequence,kind,payload) VALUES(?,?,?,?,?)`, e.ID, e.RunID, e.Sequence, e.Kind, e.Payload); err != nil {
+			_ = tx.Rollback()
+			if isConstraint(err) {
+				return ErrDuplicate
+			}
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func isSQLiteBusy(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "SQLITE_BUSY") || strings.Contains(err.Error(), "database is locked"))
+}
+
 // AppendClaimed atomically checks the run claim and appends the event.
 func (s *SQLite) AppendClaimed(ctx context.Context, e Event, holder string) error {
 	return s.append(ctx, e, holder, true)
+}
+
+func (s *SQLite) AppendWithExistingClaim(ctx context.Context, e Event, holder string) error {
+	if len(e.Payload) == 0 {
+		return fmt.Errorf("empty payload")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO events(id,run_id,sequence,kind,payload) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM run_claims WHERE run_id=? AND holder=?)`, e.ID, e.RunID, e.Sequence, e.Kind, e.Payload, e.RunID, holder)
+	if err == nil {
+		var n int64
+		n, err = res.RowsAffected()
+		if err == nil && n == 0 {
+			_ = tx.Rollback()
+			return ErrClaimHeld
+		}
+	}
+	if err != nil {
+		_ = tx.Rollback()
+		if isConstraint(err) {
+			return ErrDuplicate
+		}
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLite) append(ctx context.Context, e Event, holder string, claimed bool) error {

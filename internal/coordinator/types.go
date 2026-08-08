@@ -27,6 +27,8 @@ type RunHandle struct {
 	attemptsMu         sync.RWMutex // guards attempts: write from DAG goroutine, read from cancel goroutine
 	recovered          bool
 	requestFingerprint string
+	retryPolicy        RetryPolicy
+	failInterrupted    bool
 	cancelOnce         sync.Once
 	cancelDone         chan struct{}
 	cancellationErr    error
@@ -41,6 +43,26 @@ type RunHandle struct {
 	mailboxes *runMailboxes
 	// referrals tracks in-flight referral-as-spawn tasks (plan 53.04).
 	referrals *referralTracker
+}
+
+func (h *RunHandle) policy() RetryPolicy {
+	if h == nil {
+		return NoRetry
+	}
+	h.mu.RLock()
+	p := h.retryPolicy
+	h.mu.RUnlock()
+	return p
+}
+
+func (h *RunHandle) mustFailInterrupted() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.RLock()
+	v := h.failInterrupted
+	h.mu.RUnlock()
+	return v
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.done }
@@ -102,6 +124,8 @@ type LifecycleSubscriber func(event ledger.LifecycleEvent)
 type Coordinator interface {
 	Spawn(context.Context, []subagents.Task, string) (*RunHandle, error)
 	EnsureRun(context.Context, EnsureRunRequest) (*RunHandle, error)
+	EnsureSingleTaskRun(context.Context, EnsureRunRequest) (*RunHandle, error)
+	EnsureTerminalSingleTaskRun(context.Context, EnsureRunRequest, ledger.TaskStatus) (*RunHandle, error)
 	Inspect(context.Context, *RunHandle) (ledger.RunSnapshot, error)
 	Join(context.Context, *RunHandle) (*RunResult, error)
 	Cancel(context.Context, *RunHandle) error

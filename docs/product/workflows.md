@@ -1,25 +1,22 @@
 # Workflows
 
-## Level 1: in plain words
+A workflow is a fixed sequence of steps that mivia runs in order, for a task
+that must follow the same path every time - plan, implement, review, verify.
 
-A workflow is a fixed list of steps. mivia runs the steps in order. Use a workflow for a task that must follow the same path every time, such as "plan, build, review, and check a feature".
+Terms used throughout:
 
-Four words appear throughout this guide. Here they are, in plain words:
+- **Workflow**: a fixed step sequence that runs one task start to finish.
+- **Ledger**: the durable record of a run. Survives crashes and restarts.
+- **Gate**: a check a step must pass before the run advances.
+- **Worktree**: an isolated checkout the run works in; your own files never change.
 
-- A workflow is a fixed list of steps that runs one task from start to finish.
-- A ledger is a saved record of what a run did. It survives crashes and restarts.
-- A gate is a check that a step must pass before the run moves on.
-- A worktree is a separate copy of your project folder.
+A run starts in a fresh worktree, runs its steps there, and records each
+result in the ledger.
 
-When you start a workflow, mivia makes a worktree. It runs the steps there. It saves each result in the ledger. Your own files never change.
+## What a workflow file contains
 
-## Level 2: more detail
-
-### What a workflow file contains
-
-A workflow is a TOML file in the `.mivia/workflows/` folder of your project. A TOML file is a text file with a simple format for settings. The file names the steps, the order they run in, and the checks between them.
-
-Each step has one of four kinds:
+A workflow is a TOML file in `.mivia/workflows/`. It names the steps, their
+order, and the checks between them.
 
 | Kind | What the step does |
 |------|--------------------|
@@ -28,15 +25,15 @@ Each step has one of four kinds:
 | `evidence_gate` | A fixed check runs, such as a test suite |
 | `human_gate` | A person must approve or reject |
 
-A step produces a result. The next step can read that result. The workflow routes from step to step with transitions. A transition says: "when this step ends this way, go to that step".
+A step's result feeds the next step. Transitions route from step to step:
+"when this step ends this way, go to that step." A repair loop sends the run
+back to an earlier step when a gate fails, bounded by a maximum round count.
 
-The workflow can also declare repair loops. A repair loop sends the run back to an earlier step when a gate fails. A loop has a maximum number of rounds.
-
-### How a run goes from start to finish
+## How a run goes from start to finish
 
 ```mermaid
 flowchart TD
-    Start["You start a run"] --> Compile["Check the workflow file"]
+    Start["Start a run"] --> Compile["Check the workflow file"]
     Compile --> Snapshot["Save a copy of the plan"]
     Snapshot --> Worktree["Open a worktree"]
     Worktree --> Step["Run a step"]
@@ -49,32 +46,45 @@ flowchart TD
     Delivery --> End["Run ends"]
 ```
 
-Look at the diamond in the middle. It is the gate. The gate decides whether the run moves on or goes back for repair.
+The gate in the middle decides whether the run advances or goes back for
+repair.
 
-### Where the run works
+## Where the run works
 
-A write-capable run creates a host-owned worktree at a recorded base commit. A commit is a saved point in the project's history. The run never writes to your checkout. Your checkout is the copy of the project you work in. If the run stops, you can resume it from the saved snapshot. The snapshot holds the compiled workflow, templates, schemas, inputs, and resolved agent digests.
+A write-capable run creates a host-owned worktree at a recorded base commit.
+It never writes to your checkout. If the run stops, resume it from the saved
+snapshot: compiled workflow, templates, schemas, inputs, and resolved agent
+digests.
 
-### Trust: what a workflow file can and cannot do
+## Trust: what a workflow file can and cannot do
 
-A workflow file is untrusted repository input. Anyone can edit it. It may name an existing agent or a registered verifier profile. It cannot define or override:
+A workflow file is untrusted repository input - anyone can edit it. It may
+name an existing agent or a registered verifier profile. It cannot define or
+override:
 
 - a model provider, endpoint, credential, tool allowlist, skill permission, or agent authority;
 - a shell command, URL, environment variable, or secret;
 - a Git base target outside runtime policy;
 - publication permission.
 
-A reviewer must return schema-valid structured evidence. A schema is a formal description of the shape a result must have. Prose is never a routing signal. Routing decisions use only typed, validated results.
+A reviewer must return schema-valid structured evidence. Prose is never a
+routing signal; routing uses only typed, validated results.
 
-### The ledger
+## The ledger
 
-The ledger holds the run's record. It keeps events in order, with timestamps. It stores results and the evidence a gate used. The ledger is durable, so a run survives a crash. You can inspect the ledger from the CLI or from an agent session.
+The ledger holds the run's ordered, timestamped record: results, and the
+evidence each gate used. It is durable, so a run survives a crash. Inspect it
+from the CLI or from an agent session.
 
-### Delivery
+## Delivery
 
-Delivery is the last step, and it is optional. The workflow may choose `none`, `draft`, or `ready`. Publication also requires the invoking user to grant `--allow-publish`. Without that grant, an eligible run finishes as `delivery_pending`. A `delivery_pending` run waits until someone delivers it with the grant.
+Delivery is the last step, and optional. Modes: `none`, `draft`, `ready`.
+Publication also requires the invoking user to grant `--allow-publish`.
+Without it, an eligible run finishes as `delivery_pending` and waits until
+someone delivers it with the grant.
 
-Pull-request delivery is a terminal host policy. It is not a workflow step and not an agent tool. A pull request is a proposed change that someone can review and merge.
+Pull-request delivery is a terminal host policy - not a workflow step and not
+an agent tool.
 
 ## See also
 

@@ -72,7 +72,7 @@ func (c *coordinator) onTaskDone(ctx context.Context, t subagents.Task, r subage
 	// NoRetry (orchestration_state.go), so this only affects retry-enabled
 	// library/test paths, where failed/timed_out keep the pre-existing
 	// late-fence behavior.
-	if c.retryPolicyLocked().MaxRetries > 0 &&
+	if h.policy().MaxRetries > 0 &&
 		(status == string(ledger.TaskStatusFailed) || status == string(ledger.TaskStatusTimedOut)) {
 		return
 	}

@@ -336,7 +336,7 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 		d.mu.Unlock()
 		return blocked
 	}
-	result := d.execute(ctx, req, res, started, meta, finish)
+	result := d.execute(ctx, req, res, started, meta, fail)
 	// An allowing PreToolUse hook can still have advisory text - that is what
 	// additionalContext is for - and it is merged with the reactive event's
 	// rather than replaced by it. Reading the verdict's Context and then
@@ -389,6 +389,11 @@ func (d *Dispatcher) acquireScope(ctx context.Context, scope string) (func(), er
 }
 
 func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, started time.Time, meta Metadata, fail func(error) Result) Result {
+	// fail is the terminal builder for failures that return BEFORE postInvoke
+	// (scope-acquisition failure, runaway output). It must not record the turn
+	// bucket: Invoke records every execute-returned result exactly once, after
+	// the hooks attach HookContext, so a same-step duplicate is served the same
+	// post-hook result as the owner (DC-9 dedup fidelity).
 	h := res.handler
 	meta.Status = "started"
 	d.emit(meta)
@@ -451,18 +456,37 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	d.emit(meta)
 	result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Output: out, Attempts: attempts, Metadata: meta}
 	d.mu.Lock()
-	// A SkipDedup call never reads or writes ID-keyed dedup state: its result
-	// must not enter the completed map, and it must not deliver to ID-keyed
-	// waiters it never registered. A later re-issue of the same ID re-executes.
-	if !req.SkipDedup {
-		d.completed[req.ID] = result
-		if waiter := d.waiters[req.ID]; waiter != nil {
-			delete(d.waiters, req.ID)
-			waiter <- result
-		}
-	}
+	// Record the ID-keyed completed entry only for calls that read it
+	// (turnDedupKey == "", see reserve); the ID-keyed waiter delivery inside
+	// stays ungated.
+	d.completeIDKeyed(req, result)
 	d.mu.Unlock()
 	return result
+}
+
+// completeIDKeyed records a result for the ID-keyed completed map and delivers
+// it to any ID-keyed waiter. The caller must hold d.mu.
+//
+// The completed map is read only for calls OUTSIDE the turn-scoped dedup
+// (turnDedupKey == "" - see reserve): a turn-scoped Tool call is answered by
+// the step-aware turn bucket, so recording it here would be dead retention of
+// the full Result - Output bytes up to the per-tool ceiling - for the whole
+// session until Close. The ID-keyed waiter delivery is separate and stays
+// ungated: a same-ID turn-scoped duplicate with a different step collapses on
+// the active/waiter path and must still receive the owner's result. A
+// SkipDedup call never reads or writes ID-keyed dedup state: it registered no
+// waiter and must not steal the channel.
+func (d *Dispatcher) completeIDKeyed(req Request, result Result) {
+	if req.SkipDedup {
+		return
+	}
+	if key, _ := turnDedupKey(req); key == "" {
+		d.completed[req.ID] = result
+	}
+	if waiter := d.waiters[req.ID]; waiter != nil {
+		delete(d.waiters, req.ID)
+		waiter <- result
+	}
 }
 
 func ephemeralMarker(h Handler, req Request) string {

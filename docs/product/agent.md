@@ -1,19 +1,10 @@
 # Coding Agent Mode
 
-## Level 1: in plain words
+`mivia chat` opens a session with tool access: read, search, and edit files;
+run allowed commands; search the web. `mivia chat -p "question"` runs one
+turn and exits. `--no-tools` disables file and command access.
 
-`mivia chat` starts a chat window. The chat can do more than talk. mivia can read, search, and edit files in your project. It can run allowed commands and search the web.
-
-You have two ways to use the chat:
-
-- Interactive: run `mivia chat`, then type questions.
-- One-shot: run `mivia chat -p "question"` and mivia answers once and stops.
-
-Add `--no-tools` to talk without letting mivia touch your files.
-
-## Level 2: more detail
-
-### Chat modes
+## Chat modes
 
 ```bash
 mivia chat                    # tools on, interactive
@@ -27,7 +18,7 @@ mivia chat --agent reviewer -p "review the last commit"
 
 Ctrl-C at the prompt exits. Ctrl-C during a reply stops the reply.
 
-### File tools
+## File tools
 
 mivia can read, search, and edit files with these tools:
 
@@ -45,21 +36,21 @@ mivia can read, search, and edit files with these tools:
 | `multi_edit` | Apply several exact-text edits to one file, all or nothing |
 | `read_skill_resource` | Read one declared text resource for the active skill |
 
-A symbol is the name of a function, a variable, or a type in code. `find_references`, `list_symbols`, and `go_to_definition` share one workspace analysis. mivia loads it on the first call of a session. Later calls are fast. mivia checks the analysis against the files on every call. It reloads when anything differs. A query never reports a position from a file as it used to be.
+`find_references`, `list_symbols`, and `go_to_definition` share one workspace analysis of function, variable, and type declarations. mivia loads it on the first call of a session. Later calls are fast. mivia checks the analysis against the files on every call. It reloads when anything differs. A query never reports a position from a file as it used to be.
 
 `list_symbols` with a `path` reads and parses that one file. It needs no workspace analysis. It works while the analysis is cold and in projects that do not compile.
 
-### run_command
+## run_command
 
 | Tool | What it does |
 |------|-------------|
 | `run_command` | Run an allowed program in the workspace |
 
-`run_command` runs one program with a fixed list of arguments. It does not take a shell command string. A shell is a program that reads commands and runs them. mivia does not use one here.
+`run_command` runs one program with a fixed argv list. There is no shell: no `;`, `&&`, or `$(...)` expansion.
 
 `run_command` is disabled until configuration or a CLI override supplies a program allowlist. The recommended configuration is broad and includes shells and network clients. Trim it to the least authority your workspace needs. Child-process environment variables are also controlled by an explicit allowlist. See [Configuration](config.md) for the persistent policy.
 
-### Web research tools
+## Web research tools
 
 | Tool | What it does |
 |------|-------------|
@@ -75,7 +66,7 @@ Session-control and ledger tools are separate surfaces. They are not valid agent
 
 Tool names, descriptions, and schemas are project- and language-generic. mivia is a host coding agent for any workspace.
 
-### Deferred tool loading
+## Deferred tool loading
 
 Every advertised tool costs schema bytes on every request, whether the model uses it or not. `[tools] core` (or per-agent `tools_core`) names the tools that stay advertised. The rest of the agent's authorized set is deferred. A deferred tool's schema is withheld. The model instead sees a one-line index of what is available. A `load_tools` tool pulls the ones it needs.
 
@@ -85,7 +76,7 @@ Every advertised tool costs schema bytes on every request, whether the model use
 - Loaded tools persist for the rest of the agent binding and across save and load of the session. An `/agent` switch resets the surface to the new agent's core tier.
 - `/tools` reports the advertised schema mass and how much the deferred tier is withholding.
 
-### Named agents and skill binding
+## Named agents and skill binding
 
 Named agents are file-backed definitions. They live in two places:
 
@@ -125,7 +116,7 @@ Every `dispatch_tasks` and `spawn_agent` task selects a required named `agent` a
 
 This task-agent binding is separate from direct user-invoked skill slash handlers and prompt turns.
 
-### Skills
+## Skills
 
 A skill is a reusable task template. It is a `SKILL.md` file with optional YAML frontmatter. Skills live in `~/.mivia/skills/` (user) or `.mivia/skills/` (workspace).
 
@@ -142,7 +133,7 @@ Pre-built skills include:
 | `concurrency-review` | Subagent caps, race conditions, cancel safety |
 | `feature-delivery` | Bounded feature slice with verification |
 
-### Subagent orchestration
+## Subagent orchestration
 
 mivia can run several sub-agents at the same time. A sub-agent is a helper agent that works on part of a task. The model can spawn them, inspect their progress, block on results, or cancel them.
 
@@ -172,7 +163,7 @@ The root agent's workspace-tool allowlist is not the complete privilege model. R
 
 #### How tasks run (DAG)
 
-Tasks can declare `depends_on` for dependency ordering. A dependency is a task that must finish first. The scheduler:
+Tasks can declare `depends_on` for dependency ordering. The scheduler:
 
 1. Runs all tasks with no dependencies at the same time.
 2. Schedules a task only after all its dependencies complete.
@@ -195,9 +186,9 @@ Orchestration returns one result per task. Each result has its own status: `comp
 
 If the call's context expires before the run resolves, the results are read back from the recorded execution history. The run is not cancelled. It keeps going and stays reachable through `inspect_agents` and `join_run` on its `run_id`.
 
-### Content references (the ledger)
+## Content references (the ledger)
 
-A ledger is a saved record of what a run did. mivia records task results in the ledger. Agents see two kinds of content reference:
+mivia records task results in the durable ledger. Agents see two kinds of content reference:
 
 1. Task results carry `output_ref` or `error_ref` (`ref:<kind>:<digest>`) for bytes recorded in the execution history.
 2. Truncated tool results may append a notice with `remainder: ref:output:<digest>` when the harness shortened a tool body and stored the full remainder.
@@ -234,7 +225,7 @@ Both `ledger_read` and `read_output` page long bodies the same way. `offset` is 
 | Task field `output_ref` or `error_ref` | `ledger_read` with that ref |
 | Need run lifecycle metadata only | `list_run_events` |
 
-### Interrupted-run recovery
+## Interrupted-run recovery
 
 When a run is interrupted, mivia detects it on the next startup. An interruption can come from a crash, a closed terminal, or an explicit stop. Interrupted runs appear in the TUI run dashboard (toggle with Ctrl+R) or are reported on stderr in REPL mode.
 
@@ -261,7 +252,7 @@ Resume can be refused for three reasons, each with its own message:
 
 Resume re-executes tasks that were interrupted. That re-spends model budget. Before resuming, mivia shows what will re-run and requires explicit confirmation. This prevents accidental re-spending on work that may have partially completed.
 
-### Slash commands
+## Slash commands
 
 Slash commands work inside the chat. Type `/` followed by the command name.
 
@@ -295,11 +286,11 @@ Slash commands work inside the chat. Type `/` followed by the command name.
 | `/provider` | Show provider |
 | `/workspace` | Show workspace |
 
-### Lifecycle hooks
+## Lifecycle hooks
 
 Hooks are safety scripts that a project can set. They run at fixed moments during a session. For example, a `PreToolUse` hook can block a tool call before it runs. Hooks come from `~/.mivia/mivia.toml` and the workspace's `.mivia/mivia.toml`. They add rather than replace. A repository you cloned can run its hooks on first launch. Every session names what it armed and marks which hooks came with the repo. For the full reference, see [Lifecycle hooks](../development/lifecycle-hooks.md).
 
-### Safety and limits
+## Safety and limits
 
 - Paths must stay under `--workspace` (default: current directory).
 - File-tool secret filtering is controlled by `[tools].secret_path_patterns` and `[tools].secret_path_exceptions`. With no patterns, secret-like paths are not filtered.

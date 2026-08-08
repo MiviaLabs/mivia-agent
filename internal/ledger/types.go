@@ -62,7 +62,28 @@ type RunSnapshot struct {
 	// created under. It is persisted with the run_created payload so a fresh
 	// repository replaying the store re-registers the key and refuses a
 	// second CreateRun with it, instead of executing the same work twice.
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	IdempotencyKey string    `json:"idempotency_key,omitempty"`
+	Policy         RunPolicy `json:"policy"`
+}
+
+// RunPolicy describes fixed recovery behaviour for one admitted run.
+type RunPolicy struct {
+	NoRetry         bool `json:"no_retry"`
+	FailInterrupted bool `json:"fail_interrupted"`
+	// Retry fields are the immutable scheduler policy captured at admission.
+	// They are work policy, not caller authority.
+	RetryMaxRetries     int           `json:"retry_max_retries"`
+	RetryBaseBackoff    time.Duration `json:"retry_base_backoff"`
+	RetryMaxBackoff     time.Duration `json:"retry_max_backoff"`
+	RetryBackoffFactor  float64       `json:"retry_backoff_factor"`
+	RetryJitterFraction float64       `json:"retry_jitter_fraction"`
+}
+
+// SingleTaskAdmission is the complete durable tuple for one child run.
+type SingleTaskAdmission struct {
+	IdempotencyKey string
+	Run            RunSnapshot
+	Task           TaskSnapshot
 }
 
 // Clone returns a deep copy of the snapshot.
@@ -75,6 +96,7 @@ func (s RunSnapshot) Clone() RunSnapshot {
 		CreatedAt:          s.CreatedAt,
 		CompletedAt:        nil,
 		IdempotencyKey:     s.IdempotencyKey,
+		Policy:             s.Policy,
 	}
 	if s.Labels != nil {
 		out.Labels = make(map[string]string, len(s.Labels))
@@ -123,6 +145,8 @@ type TaskSnapshot struct {
 	Scope string `json:"scope,omitempty"`
 	// OutputSchema is part of the work request and must survive coordinator recovery.
 	OutputSchema map[string]any `json:"output_schema,omitempty"`
+	// InputSchema is part of the work request and must survive coordinator recovery.
+	InputSchema map[string]any `json:"input_schema,omitempty"`
 	// Input is the task payload, stored so a resumed task re-executes the work
 	// it was given rather than an empty request.
 	//
@@ -166,6 +190,7 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 		Model:        s.Model,
 		Scope:        s.Scope,
 		OutputSchema: cloneJSONMap(s.OutputSchema),
+		InputSchema:  cloneJSONMap(s.InputSchema),
 		Timeout:      s.Timeout,
 		Budget:       s.Budget,
 		Depth:        s.Depth,

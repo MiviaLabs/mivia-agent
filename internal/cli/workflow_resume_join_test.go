@@ -78,7 +78,7 @@ func TestExecuteWorkflowResumeJoinsInFlightAttempt(t *testing.T) {
 	ctx := context.Background()
 	configPath := filepath.Join(root, "config.toml")
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(run.RunID, root, configPath, true, &stdout, io.Discard); err != nil {
+	if err := executeWorkflowResume(run.RunID, root, configPath, true, false, &stdout, io.Discard); err != nil {
 		t.Fatalf("executeWorkflowResume(force) error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "status=succeeded") {
@@ -270,7 +270,7 @@ func TestExecuteWorkflowResumeRefusesNilControllerWithInFlightAttempts(t *testin
 	}
 	workflowResumeSetAdmission = func(workflowControllerBuild) error { return nil }
 	workflowResumeSetForce = func(workflowControllerBuild) error { return nil }
-	err = executeWorkflowResume(run.RunID, root, filepath.Join(root, "config.toml"), true, io.Discard, io.Discard)
+	err = executeWorkflowResume(run.RunID, root, filepath.Join(root, "config.toml"), true, false, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "cannot join") {
 		t.Fatalf("executeWorkflowResume() error = %v, want nil-controller join refusal", err)
 	}
@@ -307,7 +307,7 @@ func resumeJoinMustReturn(t *testing.T, runID, root string, stdout io.Writer) er
 	}
 	done := make(chan resumeResult, 1)
 	go func() {
-		err := executeWorkflowResume(runID, root, filepath.Join(root, "config.toml"), true, stdout, io.Discard)
+		err := executeWorkflowResume(runID, root, filepath.Join(root, "config.toml"), true, false, stdout, io.Discard)
 		done <- resumeResult{err: err}
 	}()
 	select {
