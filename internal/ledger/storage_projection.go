@@ -196,10 +196,18 @@ func (s *StorageLedgerRepository) applyStoreEventLocked(ctx context.Context, evt
 		}
 
 	case storageKindRunClosed:
+		status, completedAt := unmarshalRunClosed(evt.Payload)
 		s.mem.mu.Lock()
 		if rec, ok := s.mem.runs[evt.RunID]; ok {
 			rec.closed = true
 			closeRebuiltRun(&rec.snapshot)
+			if status != "" {
+				rec.snapshot.Status = RunStatus(status)
+			}
+			if completedAt != nil {
+				t := *completedAt
+				rec.snapshot.CompletedAt = &t
+			}
 		}
 		s.mem.mu.Unlock()
 
