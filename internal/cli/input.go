@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/rivo/uniseg"
 )
 
 // MaxHistorySize is the maximum number of history entries kept per session.
@@ -317,17 +319,8 @@ func (ib *InputBuffer) RenderInPlace(t *Terminal) {
 }
 
 // runeWidth returns the visible column width of a string.
-// ASCII = 1 per rune, CJK = 2 per rune.
 func runeWidth(s string) int {
-	w := 0
-	for _, r := range s {
-		if isWideRune(r) {
-			w += 2
-		} else {
-			w++
-		}
-	}
-	return w
+	return uniseg.StringWidth(s)
 }
 
 // isWideRune returns true for CJK wide characters.
@@ -335,5 +328,7 @@ func isWideRune(r rune) bool {
 	return unicode.Is(unicode.Han, r) ||
 		unicode.Is(unicode.Hangul, r) ||
 		unicode.Is(unicode.Katakana, r) ||
-		unicode.Is(unicode.Hiragana, r)
+		unicode.Is(unicode.Hiragana, r) ||
+		r >= 0xff01 && r <= 0xff60 ||
+		r >= 0xffe0 && r <= 0xffe6
 }

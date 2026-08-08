@@ -93,7 +93,7 @@ func (m *tuiModel) applySidebarSessionsConfirm() {
 			sidebar.notice = sessionDeleteNotice(session)
 			break
 		}
-		if err := m.session.DeleteSession(session.Name); err != nil {
+		if err := m.session.DeleteSession(session.Reference()); err != nil {
 			sidebar.notice = "delete failed: " + err.Error()
 			break
 		}
@@ -109,7 +109,7 @@ func (m *tuiModel) applySidebarSessionsConfirm() {
 				remaining = append(remaining, session)
 				continue
 			}
-			if err := m.session.DeleteSession(session.Name); err != nil {
+			if err := m.session.DeleteSession(session.Reference()); err != nil {
 				failed++
 				remaining = append(remaining, session)
 				continue

@@ -40,6 +40,17 @@ func TestDisplaySessionName(t *testing.T) {
 	}
 }
 
+func TestDisplaySessionNameUsesTitleAfterAutosaveRules(t *testing.T) {
+	title := chat.SessionInfo{Name: "session-id", Title: "Project title"}
+	if got := displaySessionName(title, ""); got != "Project title" {
+		t.Fatalf("title display = %q", got)
+	}
+	auto := chat.SessionInfo{Name: chat.AutoSaveName, Title: "Project title"}
+	if got := displaySessionName(auto, chat.AutoSaveName); got != "Last session" {
+		t.Fatalf("auto display = %q", got)
+	}
+}
+
 func TestLatestAutoSaveName(t *testing.T) {
 	// Newest-first list: first auto wins even if a named session sits above.
 	sessions := []chat.SessionInfo{

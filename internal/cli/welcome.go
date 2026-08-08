@@ -70,6 +70,9 @@ func displaySessionName(si chat.SessionInfo, latestAuto string) string {
 		return "Worktree · " + si.Worktree
 	}
 	if !chat.IsAutoSaveName(si.Name) {
+		if si.Title != "" {
+			return si.Title
+		}
 		return si.Name
 	}
 	if latestAuto != "" && si.Name == latestAuto {
@@ -128,7 +131,7 @@ func renderSessionPicker(
 	selected, scroll = normalizePickerSelection(selected, scroll, maxRows, len(sessions))
 	newScroll = scroll
 
-	lines, hits, _ := renderSessionRows(sessions, selected, scroll, maxRows, yBase)
+	lines, hits, _ := renderSessionRows(sessions, selected, scroll, width, maxRows, yBase)
 	return strings.Join(lines, "\n"), hits, newScroll
 }
 
@@ -148,7 +151,7 @@ func normalizePickerSelection(selected, scroll, maxRows, sessionCount int) (int,
 	return selected, min(scroll, max(0, sessionCount-maxRows))
 }
 
-func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, maxRows, yBase int) ([]string, []sessionRowHit, int) {
+func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, width, maxRows, yBase int) ([]string, []sessionRowHit, int) {
 	lines := []string{tuiAccentStyle.Render("  Sessions"), ""}
 	hits := make([]sessionRowHit, 0, maxRows)
 	latestAuto := latestAutoSaveName(sessions)
@@ -156,9 +159,6 @@ func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, maxRows, y
 	for i := scroll; i < end; i++ {
 		si := sessions[i]
 		name := displaySessionName(si, latestAuto)
-		if len(name) > 28 {
-			name = name[:25] + "…"
-		}
 		meta := fmt.Sprintf("%d msgs · %s", si.MessageCount, formatSessionAge(si.UpdatedAt))
 		if si.Worktree != "" {
 			meta = "⊞ " + si.Worktree + " · " + meta
@@ -171,7 +171,12 @@ func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, maxRows, y
 			prefix = "◆ "
 			style = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorBright)).Background(lipgloss.Color(themeColorCardBg)).Bold(true)
 		}
-		lines = append(lines, style.Render(prefix+fmt.Sprintf("%-28s  %s", name, meta)))
+		nameWidth := max(1, width-runeWidth(prefix)-runeWidth(meta)-2)
+		if runeWidth(name) > nameWidth {
+			name = truncateToWidth(name, max(1, nameWidth-1)) + "…"
+		}
+		line := prefix + name + strings.Repeat(" ", max(0, nameWidth-runeWidth(name))) + "  " + meta
+		lines = append(lines, style.Render(truncateToWidth(line, width)))
 		hits = append(hits, sessionRowHit{y0: yBase + 2 + i - scroll, y1: yBase + 2 + i - scroll, idx: i})
 	}
 	if scroll > 0 || end < len(sessions) {
@@ -363,11 +368,11 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 		}
 		m.workspaceDir = dir
 		m.restartWorkspace = dir
-		m.resumeSessionName = si.Name
+		m.resumeSessionName = si.Reference()
 		m.restartWorktreeInstance = si.WorktreeInstance
 		return nil
 	}
-	if err := m.session.Load(si.Name); err != nil {
+	if err := m.session.Load(si.Reference()); err != nil {
 		return err
 	}
 	active := si
