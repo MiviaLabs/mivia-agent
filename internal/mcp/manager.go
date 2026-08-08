@@ -233,7 +233,7 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 				delete(m.clients, id)
 				return nil, fmt.Errorf("MCP server %q returned too many tools", id)
 			}
-			wrapped, err := wrapRemoteTools(id, client, remote, m.maxResultBytes)
+			wrapped, err := wrapRemoteTools(id, client, remote, m.cfg.MaxToolDescriptionBytes, m.cfg.MaxToolSchemaBytes, m.maxResultBytes)
 			if err != nil {
 				_ = client.Close()
 				delete(m.clients, id)

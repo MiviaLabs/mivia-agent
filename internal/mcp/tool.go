@@ -31,7 +31,7 @@ func (t discoveredTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	return capMCPResult(result, t.maxResultBytes), nil
 }
 
-func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, maxResultBytes int) ([]tools.Tool, error) {
+func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, maxDescriptionBytes, maxSchemaBytes, maxResultBytes int) ([]tools.Tool, error) {
 	out := make([]tools.Tool, 0, len(remote))
 	seen := map[string]bool{}
 	for _, tool := range remote {
@@ -43,7 +43,11 @@ func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, 
 			return nil, fmt.Errorf("duplicate MCP tool %q", name)
 		}
 		seen[name] = true
-		out = append(out, discoveredTool{name: name, remoteName: tool.Name, description: tool.Description, schema: tool.Schema, client: client, maxResultBytes: maxResultBytes})
+		description, schema, err := sanitizeToolMetadata(tool.Description, tool.Schema, maxDescriptionBytes, maxSchemaBytes)
+		if err != nil {
+			return nil, fmt.Errorf("MCP tool %q: %w", tool.Name, err)
+		}
+		out = append(out, discoveredTool{name: name, remoteName: tool.Name, description: description, schema: schema, client: client, maxResultBytes: maxResultBytes})
 	}
 	return out, nil
 }
