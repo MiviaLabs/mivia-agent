@@ -313,13 +313,13 @@ func canceledResult(h *RunHandle, taskID string) subagents.Result {
 
 func (c *coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
-	if err != nil || c.retryPolicyLocked().MaxRetries <= 0 || (snap.Status != string(ledger.TaskStatusFailed) && snap.Status != string(ledger.TaskStatusTimedOut)) {
+	if err != nil || h.policy().MaxRetries <= 0 || (snap.Status != string(ledger.TaskStatusFailed) && snap.Status != string(ledger.TaskStatusTimedOut)) {
 		return false
 	}
 	if c.transitionTaskToStatus(h, task.ID, string(ledger.TaskStatusRetryPending)) != nil {
 		return false
 	}
-	state := retryState(task.ID, states, c.retryPolicyLocked())
+	state := retryState(task.ID, states, h.policy())
 	queue[task.ID] = c.nowLocked().Add(state.NextBackoff())
 	delete(pending, task.ID)
 	return true
@@ -344,7 +344,7 @@ func buildBatch(ready []subagents.Task, pending map[string]subagents.Task, resul
 func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {
 	var runErr error
 	for _, result := range batch {
-		if !c.shouldRetryTask(mapStatus(result), result.TaskID, states) {
+		if !c.shouldRetryTask(h, mapStatus(result), result.TaskID, states) {
 			results[result.TaskID] = result
 			continue
 		}
@@ -382,7 +382,7 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 			runErr = joinError(runErr, fmt.Errorf("finalize original attempt %q: %w", result.TaskID, err))
 		}
 		runErr = joinError(runErr, c.mintRetryAttempt(h, result.TaskID))
-		state := retryState(result.TaskID, states, c.retryPolicyLocked())
+		state := retryState(result.TaskID, states, h.policy())
 		queue[result.TaskID] = c.nowLocked().Add(state.NextBackoff())
 	}
 	return runErr
@@ -417,8 +417,8 @@ func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]sub
 	return out
 }
 
-func (c *coordinator) shouldRetryTask(status, taskID string, states map[string]*RetryState) bool {
-	if c.retryPolicyLocked().IsZero() || c.retryPolicyLocked().MaxRetries <= 0 || (status != string(ledger.TaskStatusFailed) && status != string(ledger.TaskStatusTimedOut)) {
+func (c *coordinator) shouldRetryTask(h *RunHandle, status, taskID string, states map[string]*RetryState) bool {
+	if h.policy().IsZero() || h.policy().MaxRetries <= 0 || (status != string(ledger.TaskStatusFailed) && status != string(ledger.TaskStatusTimedOut)) {
 		return false
 	}
 	state := states[taskID]

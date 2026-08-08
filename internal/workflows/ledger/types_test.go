@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+func TestStepAttemptHasPanelExecution(t *testing.T) {
+	field, ok := reflect.TypeOf(StepAttempt{}).FieldByName("PanelExecution")
+	if !ok {
+		t.Fatal("StepAttempt must persist PanelExecution")
+	}
+	if field.Tag.Get("json") != "panel_execution,omitempty" {
+		t.Fatalf("PanelExecution JSON tag = %q", field.Tag.Get("json"))
+	}
+}
+
 // TestValidRunTransition asserts the run status transition contract.
 func TestValidRunTransition(t *testing.T) {
 	all := []RunStatus{

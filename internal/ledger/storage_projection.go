@@ -342,6 +342,12 @@ func (s *StorageLedgerRepository) nextSequence(runID string) uint64 {
 	return next
 }
 
+func (s *StorageLedgerRepository) clearInflight(runID string, sequence uint64) {
+	s.mu.Lock()
+	delete(s.inflight, inflightKey{runID: runID, sequence: sequence})
+	s.mu.Unlock()
+}
+
 // inflightKey identifies one sequence claimed by a writer on this instance.
 type inflightKey struct {
 	runID    string

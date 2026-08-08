@@ -59,7 +59,7 @@ func (f *abandonFence) GetRunSnapshot(ctx context.Context, runID string) ([]byte
 }
 
 func (f *abandonFence) CompareAndSetRunStatus(ctx context.Context, runID string, expectedVersion uint64, status workflowledger.RunStatus, finishedAt *time.Time) error {
-	if f.isAbandoned(runID) && workflowledger.IsTerminalRunStatus(status) {
+	if f.isAbandoned(runID) {
 		return workflowledger.ErrConflict
 	}
 	return f.inner.CompareAndSetRunStatus(ctx, runID, expectedVersion, status, finishedAt)
@@ -85,6 +85,13 @@ func (f *abandonFence) CompleteStepAttempt(ctx context.Context, runID, attemptID
 		return workflowledger.ErrConflict
 	}
 	return f.inner.CompleteStepAttempt(ctx, runID, attemptID, expectedVersion, outcome)
+}
+
+func (f *abandonFence) CompareAndSetPanelPhase(ctx context.Context, runID, attemptID string, expectedVersion uint64, from workflowledger.PanelPhase, to workflowledger.PanelPhase, synthesis *workflowledger.PanelSynthesisExecution) error {
+	if f.isAbandoned(runID) {
+		return workflowledger.ErrConflict
+	}
+	return f.inner.CompareAndSetPanelPhase(ctx, runID, attemptID, expectedVersion, from, to, synthesis)
 }
 
 func (f *abandonFence) SetStepAttemptPrompt(ctx context.Context, runID, attemptID, promptRef string) error {
@@ -154,6 +161,9 @@ func (f *abandonFence) ListEvents(ctx context.Context, runID string, limit, offs
 }
 
 func (f *abandonFence) ClaimRun(ctx context.Context, runID, holder string) error {
+	if f.isAbandoned(runID) {
+		return workflowledger.ErrConflict
+	}
 	return f.inner.ClaimRun(ctx, runID, holder)
 }
 
@@ -165,14 +175,23 @@ func (f *abandonFence) TakeoverRunClaim(ctx context.Context, runID, holder strin
 }
 
 func (f *abandonFence) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
+	if f.isAbandoned(runID) {
+		return workflowledger.ErrConflict
+	}
 	return f.inner.TakeoverExpiredRunClaim(ctx, runID, holder, maxAge)
 }
 
 func (f *abandonFence) ReleaseRun(ctx context.Context, runID, holder string) error {
+	if f.isAbandoned(runID) {
+		return workflowledger.ErrConflict
+	}
 	return f.inner.ReleaseRun(ctx, runID, holder)
 }
 
 func (f *abandonFence) ClearRunClaim(ctx context.Context, runID string) error {
+	if f.isAbandoned(runID) {
+		return workflowledger.ErrConflict
+	}
 	return f.inner.ClearRunClaim(ctx, runID)
 }
 

@@ -3,6 +3,7 @@ package ledger
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -111,6 +112,12 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 			err = applyAttemptExecution(&proj, ev)
 		case eventKindAttemptCompleted:
 			err = applyAttemptCompleted(&proj, st, ev)
+		case eventKindPanelPhaseSet:
+			err = applyPanelPhase(&proj, ev)
+		default:
+			if strings.HasPrefix(ev.Kind, "wf_panel_") {
+				err = fmt.Errorf("unknown panel event %q", ev.Kind)
+			}
 		case eventKindLoopIncremented:
 			err = applyLoopIncremented(&proj, st, ev)
 		case eventKindApprovalCreated:
@@ -131,6 +138,35 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 		proj.ActiveStepID = st.initialStep
 	}
 	return proj, nil
+}
+
+func applyPanelPhase(proj *Projection, ev storage.Event) error {
+	p, err := unmarshalPanelPhase(ev.Payload)
+	if err != nil {
+		return fmt.Errorf("decode %s payload: %w", ev.Kind, err)
+	}
+	if p.AttemptID == "" || p.Version == 0 {
+		return fmt.Errorf("invalid panel phase payload")
+	}
+	for i := range proj.Attempts {
+		a := &proj.Attempts[i]
+		if a.AttemptID != p.AttemptID {
+			continue
+		}
+		if a.PanelExecution == nil {
+			return fmt.Errorf("panel phase has no panel attempt")
+		}
+		if IsTerminalAttemptStatus(a.Status) || p.Version != a.Version+1 || !validPanelTransition(a.PanelExecution.Phase, p.Phase, p.Synthesis) {
+			return fmt.Errorf("invalid panel phase transition")
+		}
+		a.PanelExecution.Phase = p.Phase
+		if p.Phase == PanelPhaseSynthesisAdmitted {
+			a.PanelExecution.Synthesis = p.Synthesis.clone()
+		}
+		a.Version = p.Version
+		return nil
+	}
+	return fmt.Errorf("panel phase references unknown attempt %q", p.AttemptID)
 }
 
 func applyAttemptExecution(proj *Projection, ev storage.Event) error {
@@ -208,6 +244,9 @@ func applyAttemptStarted(proj *Projection, st *rebuildState, ev storage.Event) e
 		return fmt.Errorf("decode %s payload: %w", ev.Kind, err)
 	}
 	a := p.Attempt.Clone()
+	if err := a.PanelExecution.validateInitial(a.RunID, a.AttemptID); err != nil {
+		return fmt.Errorf("invalid panel attempt: %w", err)
+	}
 	a.Status = AttemptStatusRunning
 	a.Version = 1
 	proj.Attempts = upsert(proj.Attempts, st.attemptIdx, a.AttemptID, a)
@@ -264,7 +303,11 @@ func applyAttemptCompleted(proj *Projection, st *rebuildState, ev storage.Event)
 	a.DecisionJSON = append([]byte(nil), p.DecisionJSON...)
 	a.EvidenceJSON = append([]byte(nil), p.EvidenceJSON...)
 	a.FinishedAt = cloneTime(&p.FinishedAt)
-	a.Version = 2
+	if p.Version > 0 {
+		a.Version = p.Version
+	} else {
+		a.Version = 2
+	}
 	if p.ToStepID != "" {
 		proj.Transitions = append(proj.Transitions, TransitionRecord{
 			RunID:           ev.RunID,

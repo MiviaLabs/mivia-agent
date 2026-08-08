@@ -1,6 +1,7 @@
 package localengine
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -30,4 +31,17 @@ func TestAbandonFenceConcurrentMapAccess(t *testing.T) {
 		}(id)
 	}
 	wg.Wait()
+}
+
+func TestAbandonFenceRejectsEveryRunMutation(t *testing.T) {
+	inner := workflowledger.NewMemoryRepository()
+	run := workflowledger.RunSnapshot{RunID: "wfr-fence", Status: workflowledger.RunStatusPending, Version: 1}
+	if err := inner.CreateRun(context.Background(), run, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	fence := newAbandonFence(inner)
+	fence.abandon(run.RunID)
+	if err := fence.CompareAndSetRunStatus(context.Background(), run.RunID, run.Version, workflowledger.RunStatusRunning, nil); err != workflowledger.ErrConflict {
+		t.Fatalf("error = %v, want ErrConflict", err)
+	}
 }

@@ -50,6 +50,9 @@ func validatePanelMembers(stepID string, members []definition.PanelMember) error
 		if strings.TrimSpace(member.ID) == "" {
 			return fmt.Errorf("step %q: panel member[%d]: id is required", stepID, index)
 		}
+		if member.ID == "synthesis" {
+			return fmt.Errorf("step %q: panel member id %q is reserved", stepID, member.ID)
+		}
 		if _, exists := memberIDs[member.ID]; exists {
 			return fmt.Errorf("step %q: panel has duplicate member id %q", stepID, member.ID)
 		}

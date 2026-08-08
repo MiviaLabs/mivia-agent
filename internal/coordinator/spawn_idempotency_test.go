@@ -50,6 +50,7 @@ func TestSpawnFingerprintIgnoresCallerIdentity(t *testing.T) {
 		{"owner", func(task *subagents.Task) { task.Owner = "other-owner" }},
 		{"invocation key", func(task *subagents.Task) { task.InvocationKey = "invocation" }},
 		{"idempotency key", func(task *subagents.Task) { task.IdempotencyKey = "task-key" }},
+		{"permission", func(task *subagents.Task) { task.Permission = "other-permission" }},
 	}
 	for _, tc := range mutations {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,7 +84,6 @@ func TestSpawnFingerprintCoversRequestedWork(t *testing.T) {
 		{"timeout", func(task *subagents.Task) { task.Timeout = 2 * time.Second }},
 		{"budget", func(task *subagents.Task) { task.Budget = 8 }},
 		{"scope", func(task *subagents.Task) { task.Scope = "other-scope" }},
-		{"permission", func(task *subagents.Task) { task.Permission = "other-permission" }},
 		{"agent name", func(task *subagents.Task) { task.AgentName = "other-agent" }},
 		{"agent digest", func(task *subagents.Task) { task.AgentDigest = "sha256:agent-v2" }},
 		{"skill", func(task *subagents.Task) { task.Skill = "other-skill" }},

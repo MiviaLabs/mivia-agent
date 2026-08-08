@@ -22,6 +22,7 @@ var (
 // LedgerRepository is the narrow storage boundary for the coordinator.
 // Implementations must be concurrency-safe and return defensive copies.
 type LedgerRepository interface {
+	AdmitSingleTask(context.Context, SingleTaskAdmission) error
 	// CreateRun creates a new run record. Returns ErrDuplicate if an
 	// idempotency-key matched run already exists.
 	CreateRun(ctx context.Context, key string, snapshot RunSnapshot) error

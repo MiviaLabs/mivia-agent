@@ -29,7 +29,7 @@ func TestFingerprintDiffersWithOutputSchema(t *testing.T) {
 // part of the work fingerprint (caller identity, coordination keys).
 var fingerprintExcludedTaskFields = map[string]bool{
 	"Owner": true, "SessionID": true, "TurnID": true, "Role": true,
-	"InvocationKey": true, "Depth": true, "IdempotencyKey": true,
+	"InvocationKey": true, "Depth": true, "IdempotencyKey": true, "Permission": true,
 }
 
 func TestFingerprintCoversWorkDefiningTaskFields(t *testing.T) {

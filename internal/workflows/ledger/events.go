@@ -17,11 +17,27 @@ const (
 	eventKindAttemptStarted   = "wf_attempt_started"
 	eventKindAttemptExecution = "wf_attempt_execution"
 	eventKindAttemptCompleted = "wf_attempt_completed"
+	eventKindPanelPhaseSet    = "wf_panel_phase_set"
 	eventKindLoopIncremented  = "wf_loop_incremented"
 	eventKindApprovalCreated  = "wf_approval_created"
 	eventKindApprovalResolved = "wf_approval_resolved"
 	eventKindDeliveryUpserted = "wf_delivery_upserted"
 )
+
+type panelPhasePayload struct {
+	AttemptID string                   `json:"attempt_id"`
+	Version   uint64                   `json:"version"`
+	Phase     PanelPhase               `json:"phase"`
+	Synthesis *PanelSynthesisExecution `json:"synthesis,omitempty"`
+}
+
+func marshalPanelPhase(p panelPhasePayload) ([]byte, error) { return json.Marshal(p) }
+
+func unmarshalPanelPhase(data []byte) (panelPhasePayload, error) {
+	var p panelPhasePayload
+	err := json.Unmarshal(data, &p)
+	return p, err
+}
 
 // EventID mints the DETERMINISTIC event ID for a logical key:
 //
@@ -66,6 +82,7 @@ type attemptStartedPayload struct {
 // ordered event log is the audit trail (no separate transition/audit event).
 type attemptCompletedPayload struct {
 	AttemptID        string        `json:"attempt_id"`
+	Version          uint64        `json:"version,omitempty"`
 	Status           AttemptStatus `json:"status"`
 	CoordinatorRunID string        `json:"coordinator_run_id,omitempty"`
 	TaskID           string        `json:"task_id,omitempty"`

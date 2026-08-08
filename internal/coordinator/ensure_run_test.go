@@ -8,6 +8,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,6 +83,84 @@ func (h ensureAuthorityValidator) Invoke(ctx context.Context, req runtime.Reques
 func TestCoordinatorExposesEnsureRun(t *testing.T) {
 	if _, ok := reflect.TypeOf((*Coordinator)(nil)).Elem().MethodByName("EnsureRun"); !ok {
 		t.Fatal("Coordinator has no EnsureRun method")
+	}
+}
+
+func TestCoordinatorExposesSingleTaskEnsureOperations(t *testing.T) {
+	typ := reflect.TypeOf((*Coordinator)(nil)).Elem()
+	for _, name := range []string{"EnsureSingleTaskRun", "EnsureTerminalSingleTaskRun"} {
+		if _, ok := typ.MethodByName(name); !ok {
+			t.Fatalf("Coordinator has no %s method", name)
+		}
+	}
+}
+
+func TestEnsureRequestFingerprintIncludesNonDefaultPolicy(t *testing.T) {
+	task := subagents.Task{ID: "task", Name: "worker"}
+	base, err := requestFingerprintWithPolicy([]subagents.Task{task}, ledger.RunPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel, err := requestFingerprintWithPolicy([]subagents.Task{task}, ledger.RunPolicy{NoRetry: true, FailInterrupted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base == panel {
+		t.Fatal("non-default policy must change the request fingerprint")
+	}
+	withRetry, err := requestFingerprintWithPolicy([]subagents.Task{task}, ledger.RunPolicy{RetryMaxRetries: 2, RetryBaseBackoff: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withRetry == base || withRetry == panel {
+		t.Fatal("retry policy must change the request fingerprint")
+	}
+}
+
+func TestEnsureRestoresStoredPolicyWhenRequestOmitsIt(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	first := newIdempotencyCoordinator(repo)
+	first.WithRetryPolicy(RetryPolicy{MaxRetries: 1, BaseBackoff: time.Millisecond})
+	req := EnsureRunRequest{RunID: NewRunID(), Tasks: []subagents.Task{idempotencyTask()}, IdempotencyKey: "policy-restore"}
+	h, err := first.EnsureRun(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Join(context.Background(), h); err != nil {
+		t.Fatal(err)
+	}
+	second := newIdempotencyCoordinator(repo)
+	second.WithRetryPolicy(RetryPolicy{MaxRetries: 9, BaseBackoff: time.Second})
+	restored, err := second.EnsureRun(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy := restored.policy(); policy.MaxRetries != 1 || policy.BaseBackoff != time.Millisecond {
+		t.Fatalf("restored policy = %+v", policy)
+	}
+}
+
+func TestEnsureTerminalSingleTaskRunNeverDispatches(t *testing.T) {
+	var calls atomic.Int32
+	dispatcher := runtime.New(runtime.Policy{})
+	if err := dispatcher.Register(runtime.Subagent, "worker", invoker(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		calls.Add(1)
+		return json.RawMessage(`{"unexpected":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	coord := New(ledger.NewMemoryLedgerRepository(), subagents.New(dispatcher, subagents.Policy{Workers: 1}))
+	task := subagents.Task{ID: "task-tombstone", Name: "worker", Input: json.RawMessage(`"work"`)}
+	h, err := coord.EnsureTerminalSingleTaskRun(context.Background(), EnsureRunRequest{RunID: NewRunID(), Tasks: []subagents.Task{task}, IdempotencyKey: "tombstone"}, ledger.TaskStatusCanceled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := coord.Join(context.Background(), h)
+	if err != nil || result.Snapshot.Status != ledger.RunStatusCanceled {
+		t.Fatalf("join = %+v, %v", result, err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("handler calls = %d, want 0", calls.Load())
 	}
 }
 
@@ -524,18 +603,19 @@ func TestEnsureRunReturnsTerminalExactTuple(t *testing.T) {
 
 func seedEnsuredRun(t *testing.T, repo ledger.LedgerRepository, ctx context.Context, runID, key string, tasks []subagents.Task, admitted int) {
 	t.Helper()
-	fingerprint, err := requestFingerprint(tasks)
+	policy := policyWithRetry(ledger.RunPolicy{}, DefaultRetryPolicy)
+	fingerprint, err := requestFingerprintWithPolicy(tasks, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CreateRun(ctx, scopedKey(ctx, key), ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: time.Now()}); err != nil {
+	if err := repo.CreateRun(ctx, scopedKey(ctx, key), ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: time.Now(), Policy: policy}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < admitted; i++ {
 		task := tasks[i]
 		snap := ledger.TaskSnapshot{RunID: runID, TaskID: task.ID, DisplayName: task.Name, HandlerName: task.Name,
 			AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName,
-			Model: task.Model, Scope: task.Scope, OutputSchema: task.OutputSchema, Input: task.Input, Timeout: task.Timeout,
+			Model: task.Model, Scope: task.Scope, OutputSchema: task.OutputSchema, InputSchema: task.InputSchema, Input: task.Input, Timeout: task.Timeout,
 			Budget: task.Budget, Depth: task.Depth, Status: string(ledger.TaskStatusQueued), DependsOn: task.DependsOn,
 			CreatedAt: time.Now(), Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: "attempt-seed-" + task.ID, TaskID: task.ID, RunID: runID, AttemptNum: 1, Status: string(ledger.TaskStatusQueued)}}}
 		if err := repo.CreateTask(ctx, snap); err != nil {
