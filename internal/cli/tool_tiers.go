@@ -71,7 +71,7 @@ func authorizedNamesInRegistryOrder(base *tools.Registry, selected *agents.Resol
 	}
 	var allowed map[string]struct{}
 	if selected != nil {
-		kept, _ := agents.IntersectWithRegistry(selected.EffectiveTools, base)
+		kept, _ := agents.IntersectWithRegistry(authorizedAgentTools(selected, base), base)
 		allowed = agents.AllowlistSet(kept)
 	}
 	out := make([]string, 0, len(base.List()))
