@@ -191,6 +191,7 @@ type InspectView struct {
 	OutputOffset      int             `json:"output_offset,omitempty"`
 	OutputNextOffset  int             `json:"output_next_offset,omitempty"`
 	ErrorRef          string          `json:"error_ref,omitempty"`
+	ErrorText         string          `json:"error_text,omitempty"`
 	EvidenceSelection any             `json:"evidence_selection,omitempty"`
 	Transition        *TransitionView `json:"transition,omitempty"`
 }
