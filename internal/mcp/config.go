@@ -91,7 +91,7 @@ func validServerID(id string) bool {
 
 // EncodeToolName makes a host-safe and reversible MCP tool name.
 func EncodeToolName(serverID, remoteName string) (string, error) {
-	if serverID == "" || remoteName == "" {
+	if !validServerID(serverID) || remoteName == "" {
 		return "", fmt.Errorf("MCP tool name is empty")
 	}
 	const hex = "0123456789abcdef"

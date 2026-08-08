@@ -49,3 +49,9 @@ func TestEncodeToolNameIsDistinctAndBounded(t *testing.T) {
 		t.Fatalf("encoded names = %q, %q", first, second)
 	}
 }
+
+func TestEncodeToolNameRejectsUnsafeServerID(t *testing.T) {
+	if _, err := EncodeToolName("bad/id", "read"); err == nil {
+		t.Fatal("EncodeToolName accepted an unsafe server ID")
+	}
+}
