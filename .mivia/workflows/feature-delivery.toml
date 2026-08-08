@@ -409,4 +409,10 @@ mode = "draft"
 provider = "github"
 base = "master"
 title_template = "feat: {{ inputs.task }}"
+# Delivery runs after the success terminal, outside the step graph. When it
+# fails for a reason an agent can repair - a commit hook that rejects the
+# change is the common one - the run returns to this step instead of stopping
+# with all of its work done. The step repairs the change, the run reaches
+# success again, and delivery runs again.
+on_failure = "repair_preflight_structure"
 commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs.task }}"

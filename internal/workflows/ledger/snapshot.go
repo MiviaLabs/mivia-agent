@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -26,6 +27,20 @@ type AgentSnapshot struct {
 	Model        string `json:"model,omitempty"`
 }
 
+// PanelBindingSnapshot pins one static panel member. The key in Snapshot is
+// always <step-id>/<member-id> so one agent name may safely use many bindings.
+type PanelBindingSnapshot struct {
+	StepID         string `json:"step_id"`
+	MemberID       string `json:"member_id"`
+	AgentName      string `json:"agent_name"`
+	AgentDigest    string `json:"agent_digest"`
+	ProviderName   string `json:"provider_name"`
+	Model          string `json:"model"`
+	SkillDigest    string `json:"skill_digest"`
+	TemplateDigest string `json:"template_digest"`
+	SchemaDigest   string `json:"schema_digest"`
+}
+
 type DeliverySnapshot struct {
 	Mode     string `json:"mode"`
 	Provider string `json:"provider"`
@@ -38,16 +53,17 @@ type DeliverySnapshot struct {
 // resolved agent/schema/template/verifier references. Resume never re-reads a
 // changed TOML file: everything needed is in this snapshot.
 type Snapshot struct {
-	SchemaVersion    int                      `json:"schema_version"`
-	DefinitionTOML   []byte                   `json:"definition_toml"`
-	DefinitionDigest string                   `json:"definition_digest"`
-	Inputs           map[string]string        `json:"inputs,omitempty"`
-	Agents           map[string]AgentSnapshot `json:"agents,omitempty"`
-	Schemas          map[string]RefSnapshot   `json:"schemas,omitempty"`
-	Templates        map[string]RefSnapshot   `json:"templates,omitempty"`
-	Skills           map[string]RefSnapshot   `json:"skills,omitempty"`
-	Verifiers        map[string]RefSnapshot   `json:"verifiers,omitempty"`
-	Delivery         *DeliverySnapshot        `json:"delivery,omitempty"`
+	SchemaVersion    int                             `json:"schema_version"`
+	DefinitionTOML   []byte                          `json:"definition_toml"`
+	DefinitionDigest string                          `json:"definition_digest"`
+	Inputs           map[string]string               `json:"inputs,omitempty"`
+	Agents           map[string]AgentSnapshot        `json:"agents,omitempty"`
+	PanelBindings    map[string]PanelBindingSnapshot `json:"panel_bindings,omitempty"`
+	Schemas          map[string]RefSnapshot          `json:"schemas,omitempty"`
+	Templates        map[string]RefSnapshot          `json:"templates,omitempty"`
+	Skills           map[string]RefSnapshot          `json:"skills,omitempty"`
+	Verifiers        map[string]RefSnapshot          `json:"verifiers,omitempty"`
+	Delivery         *DeliverySnapshot               `json:"delivery,omitempty"`
 }
 
 // MarshalSnapshot serializes the snapshot to its canonical JSON form. The
@@ -63,7 +79,54 @@ func UnmarshalSnapshot(data []byte) (Snapshot, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return Snapshot{}, err
 	}
+	var raw struct {
+		PanelBindings json.RawMessage `json:"panel_bindings"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return Snapshot{}, err
+	}
+	if len(raw.PanelBindings) != 0 && string(raw.PanelBindings) != "null" {
+		bindings, err := decodePanelBindings(raw.PanelBindings)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		s.PanelBindings = bindings
+	}
 	return s, nil
+}
+
+func decodePanelBindings(data []byte) (map[string]PanelBindingSnapshot, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	token, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != '{' {
+		return nil, fmt.Errorf("panel_bindings must be an object")
+	}
+	bindings := make(map[string]PanelBindingSnapshot)
+	for dec.More() {
+		token, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return nil, fmt.Errorf("panel binding key is invalid")
+		}
+		if _, exists := bindings[key]; exists {
+			return nil, fmt.Errorf("duplicate panel binding key %q", key)
+		}
+		var binding PanelBindingSnapshot
+		if err := dec.Decode(&binding); err != nil {
+			return nil, err
+		}
+		bindings[key] = binding
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, err
+	}
+	return bindings, nil
 }
 
 // SnapshotDigest returns the hex SHA-256 of the canonical snapshot bytes.

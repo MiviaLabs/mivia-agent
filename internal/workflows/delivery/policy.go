@@ -16,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // DefaultMaxTitleBytes is the default limit for rendered pull-request titles.
@@ -46,6 +47,9 @@ type Policy struct {
 	CommitMessageTemplate string
 	MaxTitleBytes         int
 	MaxCommitMessageBytes int
+	// OnFailure names the step the run returns to when delivery fails for a
+	// reason an agent can repair. Empty means the run holds for a person.
+	OnFailure string
 }
 
 // clampMax returns v when positive, otherwise def.
@@ -72,6 +76,7 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		CommitMessageTemplate: d.CommitMessageTemplate,
 		MaxTitleBytes:         clampMax(d.MaxTitleBytes, DefaultMaxTitleBytes),
 		MaxCommitMessageBytes: clampMax(d.MaxCommitMessageBytes, DefaultMaxCommitMessageBytes),
+		OnFailure:             d.OnFailure,
 	}, true
 }
 
@@ -264,7 +269,7 @@ func findLastSpace(s string, limit int) int {
 // commitMessagePolicyPath is the OPTIONAL workspace policy file consulted
 // before a delivery commit, mirroring the repo's commit-msg hook. It is only
 // read when present: a workspace that configures nothing is unaffected.
-const commitMessagePolicyPath = ".mivia/policy/commit-message.json"
+const commitMessagePolicyPath = workspace.Namespace + "/policy/commit-message.json"
 
 // commitMessagePolicy is the subset of the commit-message policy schema the
 // delivery engine enforces generically. Repo-specific fields (types, scopes,

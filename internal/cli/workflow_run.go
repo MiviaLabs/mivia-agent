@@ -245,7 +245,7 @@ func workflowConfigPath(root, explicit string) string {
 	if strings.TrimSpace(explicit) != "" {
 		return explicit
 	}
-	candidate := filepath.Join(root, ".mivia", "mivia.toml")
+	candidate := workspace.NamespacePath(root, "mivia.toml")
 	info, err := os.Stat(candidate)
 	if err == nil && info.Mode().IsRegular() {
 		return candidate
@@ -350,7 +350,7 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 		return nil, SessionDispatcherOpts{}, nil, err
 	}
 	legacy := ledger.NewStorageLedgerRepository(store)
-	opts := SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, ModelCatalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res), Config: res.Subagents, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root}
+	opts := SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res), Config: res.Subagents, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root}
 	dispatcher, err := workflowBuildDispatcher(opts)
 	if err != nil {
 		return nil, SessionDispatcherOpts{}, nil, err

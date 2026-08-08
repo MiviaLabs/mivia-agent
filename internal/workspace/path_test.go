@@ -140,3 +140,119 @@ func TestIsUnder(t *testing.T) {
 		t.Fatal("other tree must not match")
 	}
 }
+
+// TestResolveContainmentTable locks the workspace containment contract
+// (DC-10): Resolve evaluates symlinks BEFORE the isUnder check, so every
+// escape variant - relative .., absolute outside, a symlink inside the
+// workspace pointing outside, a missing suffix reached through an outside
+// symlink, and a dangling final-component symlink - is refused, while
+// legitimate paths (including a final-component symlink that resolves inside
+// the workspace) stay under the root. The NUL and overlong-name rows pin the
+// current behavior: the pure string predicates accept them (lexically under
+// the root), and the OS refuses the open - a containment guarantee, never an
+// escape.
+func TestResolveContainmentTable(t *testing.T) {
+	outside := t.TempDir()
+	longName := strings.Repeat("x", 300)
+	cases := []resolveContainmentCase{
+		{name: "empty", path: "", wantErr: true},
+		{name: "whitespace only", path: "   ", wantErr: true},
+		{name: "dot", path: ".", wantOK: true},
+		{name: "dotdot", path: "..", wantErr: true},
+		{name: "deep escape", path: "a/../../..", wantErr: true},
+		{name: "absolute outside", path: outside, wantErr: true},
+		{name: "symlink to outside", path: "link", wantErr: true,
+			setup: func(t *testing.T, root string) {
+				target := filepath.Join(outside, "target.txt")
+				if err := os.WriteFile(target, []byte("outside"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, filepath.Join(root, "link")); err != nil {
+					t.Fatal(err)
+				}
+			}},
+		{name: "missing suffix through outside symlink", path: "link/child/new.txt", wantErr: true,
+			setup: func(t *testing.T, root string) {
+				if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+					t.Fatal(err)
+				}
+			}},
+		{name: "dangling final symlink", path: "dangle", wantErr: true,
+			setup: func(t *testing.T, root string) {
+				if err := os.Symlink(filepath.Join(outside, "missing"), filepath.Join(root, "dangle")); err != nil {
+					t.Fatal(err)
+				}
+			}},
+		{name: "symlink inside to inside target", path: "alias", wantOK: true,
+			setup: func(t *testing.T, root string) {
+				target := filepath.Join(root, "real.txt")
+				if err := os.WriteFile(target, []byte("inside"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, filepath.Join(root, "alias")); err != nil {
+					t.Fatal(err)
+				}
+			}},
+		{name: "NUL byte", path: "a\x00b", wantOK: true, openRefused: true},
+		{name: "overlong final component", path: "a/" + longName, wantOK: true, openRefused: true},
+	}
+	if runtime.GOOS != "windows" {
+		cases = append(cases, resolveContainmentCase{name: "/etc/passwd", path: "/etc/passwd", wantErr: true})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertResolveContainment(t, tc, outside)
+		})
+	}
+}
+
+type resolveContainmentCase struct {
+	name        string
+	path        string
+	setup       func(t *testing.T, root string)
+	wantErr     bool // exact: Resolve must fail
+	wantOK      bool // exact: Resolve must succeed under the root
+	openRefused bool // when Resolve succeeds, the OS must refuse the open
+}
+
+// assertResolveContainment runs one containment row against a fresh workspace
+// root and pins the exact outcome: an error, or a path under the root (and,
+// for NUL/overlong rows, an OS-level open refusal).
+func assertResolveContainment(t *testing.T, tc resolveContainmentCase, outside string) {
+	t.Helper()
+	root := t.TempDir()
+	ws, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc.setup != nil {
+		tc.setup(t, root)
+	}
+	p, err := ws.Resolve(tc.path)
+	if tc.wantErr {
+		if err == nil {
+			t.Fatalf("Resolve(%q) = %q, want error", tc.path, p)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("Resolve(%q): %v", tc.path, err)
+	}
+	if !isUnder(ws.Abs, p) {
+		t.Fatalf("Resolve(%q) = %q escapes root %s", tc.path, p, ws.Abs)
+	}
+	if tc.name == "symlink inside to inside target" {
+		want, evalErr := filepath.EvalSymlinks(filepath.Join(root, "real.txt"))
+		if evalErr != nil {
+			t.Fatal(evalErr)
+		}
+		if p != want {
+			t.Fatalf("Resolve(%q) = %q, want canonical target %q", tc.path, p, want)
+		}
+	}
+	if tc.openRefused {
+		if _, statErr := os.Stat(p); statErr == nil {
+			t.Fatalf("Resolve(%q) = %q: expected the OS to refuse the open, but stat succeeded", tc.path, p)
+		}
+	}
+}

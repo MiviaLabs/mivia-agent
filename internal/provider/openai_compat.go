@@ -439,7 +439,16 @@ func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w
 	return content, nil
 }
 
+// doJSON makes the call and repeats it while the response body arrives
+// incomplete. A truncated body still carries status 200, so the retry
+// transport treats it as a success and only the decode below finds the cut.
 func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBody, error) {
+	return retryOnIncompleteBody(ctx, func() (*chatResponseBody, error) {
+		return c.doJSONOnce(ctx, req)
+	})
+}
+
+func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatResponseBody, error) {
 	httpReq, err := c.newRequest(ctx, req)
 	if err != nil {
 		return nil, err

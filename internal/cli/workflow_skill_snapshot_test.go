@@ -44,6 +44,41 @@ func TestWorkflowSkillSnapshotRejectsChangedSkillOnResume(t *testing.T) {
 	}
 }
 
+func TestWorkflowSkillSnapshotRejectsChangedPanelMemberSkillOnResume(t *testing.T) {
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "security", Skill: "review"}}},
+	}}}
+	initial := skills.NewRegistry()
+	if err := initial.Register(skills.Definition{Name: "review", Instructions: "admitted instruction"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: []byte("workflow"), DefinitionDigest: "digest",
+		PanelBindings: map[string]workflowledger.PanelBindingSnapshot{"review/security": {StepID: "review", MemberID: "security"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = pinWorkflowSkills(raw, wf, initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := workflowledger.UnmarshalSnapshot(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyWorkflowSkillSnapshot(wf, initial, &prior); err != nil {
+		t.Fatalf("verify admitted panel skill: %v", err)
+	}
+	changed := skills.NewRegistry()
+	if err := changed.Register(skills.Definition{Name: "review", Instructions: "changed instruction"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyWorkflowSkillSnapshot(wf, changed, &prior); err == nil {
+		t.Fatal("verifyWorkflowSkillSnapshot accepted a changed panel skill")
+	}
+}
+
 func TestWorkflowSkillSnapshotRejectsChangedResourceOnResume(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "workflow-safe")

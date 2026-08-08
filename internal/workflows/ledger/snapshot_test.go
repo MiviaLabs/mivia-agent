@@ -66,6 +66,26 @@ func TestSnapshotLegacyAgentDecode(t *testing.T) {
 	}
 }
 
+func TestSnapshotPanelBindingsRoundTripAndRejectsDuplicateKey(t *testing.T) {
+	data := []byte(`{"schema_version":1,"definition_toml":"eA==","definition_digest":"digest","panel_bindings":{"review/security":{"step_id":"review","member_id":"security","agent_name":"panel-reviewer","agent_digest":"agent","provider_name":"deepseek","model":"deepseek-v4-flash","skill_digest":"skill","template_digest":"template","schema_digest":"schema"}}}`)
+	snapshot, err := UnmarshalSnapshot(data)
+	if err != nil {
+		t.Fatalf("UnmarshalSnapshot: %v", err)
+	}
+	got, err := MarshalSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("MarshalSnapshot: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("panel binding round-trip:\ngot: %s\nwant: %s", got, data)
+	}
+
+	duplicate := []byte(`{"schema_version":1,"definition_toml":"eA==","definition_digest":"digest","panel_bindings":{"review/security":{"step_id":"review","member_id":"security"},"review/security":{"step_id":"review","member_id":"security"}}}`)
+	if _, err := UnmarshalSnapshot(duplicate); err == nil {
+		t.Fatal("UnmarshalSnapshot accepted a duplicate panel binding key")
+	}
+}
+
 // TestMarshalSnapshotRoundTrip asserts that MarshalSnapshot produces canonical
 // JSON that UnmarshalSnapshot decodes back to a byte-identical Snapshot.
 func TestMarshalSnapshotRoundTrip(t *testing.T) {

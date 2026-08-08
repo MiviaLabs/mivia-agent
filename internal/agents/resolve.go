@@ -204,7 +204,8 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	if err != nil {
 		return ResolvedAgent{}, nil, fmt.Errorf("agent %q: %w", in.Name, err)
 	}
-	if len(effective) == 0 && opts.Global.FailOnEmptyToolset {
+	allowEmptyTools := in.Spec.AllowEmptyTools != nil && *in.Spec.AllowEmptyTools && in.Spec.Tools != nil && len(*in.Spec.Tools) == 0
+	if len(effective) == 0 && opts.Global.FailOnEmptyToolset && !allowEmptyTools {
 		return ResolvedAgent{}, nil, fmt.Errorf("agent %q: empty toolset refused (fail_on_empty_toolset)", in.Name)
 	}
 	if err := validateCatalogueTools(in.Name, effective, opts.KnownTools); err != nil {
@@ -249,6 +250,7 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 		MaxTokens:       fields.maxTokens,
 		SystemPrompt:    fields.systemPrompt,
 		EffectiveTools:  effective,
+		AllowEmptyTools: allowEmptyTools,
 		DisallowedTools: dis,
 		CoreTools:       fields.coreTools,
 		Skills:          skills,

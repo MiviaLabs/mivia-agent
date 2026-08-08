@@ -229,7 +229,7 @@ func resolveAgentBindingAt(definition agents.ResolvedAgent, opts SessionDispatch
 	}
 	completer, err := opts.CompleterFactory(binding.providerName, binding.model)
 	if err != nil {
-		return agentBinding{}, fmt.Errorf("agent %q provider %q: %w", definition.Name, binding.providerName, err)
+		return agentBinding{}, fmt.Errorf("agent %q provider %q is unavailable", definition.Name, binding.providerName)
 	}
 	if completer == nil {
 		return agentBinding{}, fmt.Errorf("agent %q provider %q: completer factory returned nothing", definition.Name, binding.providerName)

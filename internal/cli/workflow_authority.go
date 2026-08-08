@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -11,16 +12,71 @@ import (
 )
 
 var workflowWritePathDenylist = []string{
-	".mivia/mivia.toml",
-	".mivia/agents",
-	".mivia/policy",
-	".mivia/rules",
-	".mivia/skills",
-	".mivia/workflows",
+	workspace.Namespace + "/mivia.toml",
+	workspace.Namespace + "/agents",
+	workspace.Namespace + "/policy",
+	workspace.Namespace + "/rules",
+	workspace.Namespace + "/skills",
+	workspace.Namespace + "/workflows",
 	".git",
 	"go.mod",
 	"go.sum",
 	"go.work",
+}
+
+var panelReviewerTools = []string{"find_references", "glob", "grep", "list_dir", "read_file"}
+
+func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts SessionDispatcherOpts, synthesizer bool) error {
+	authority := opts.authority()
+	if authority == nil {
+		return fmt.Errorf("panel agent %q has no runtime tool registry", agent.Name)
+	}
+	surface := tools.ScopedRegistry(authority, tools.ScopeOptions{
+		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(agent.EffectiveTools),
+	})
+	if !slices.Contains(agent.DisallowedTools, toolPostMessage) {
+		return fmt.Errorf("panel agent %q must disallow post_message", agent.Name)
+	}
+	if synthesizer && !agent.AllowEmptyTools {
+		return fmt.Errorf("review-synthesizer must declare allow_empty_tools = true")
+	}
+	if skillName != "" {
+		if opts.SkillReg == nil {
+			return fmt.Errorf("panel agent %q has no skill registry", agent.Name)
+		}
+		skill, ok := opts.SkillReg.Get(skillName)
+		if !ok {
+			return fmt.Errorf("panel agent %q references unknown skill %q", agent.Name, skillName)
+		}
+		if synthesizer && (len(skill.Tools) != 0 || len(skill.Resources) != 0) {
+			return fmt.Errorf("review-synthesizer skill %q must not declare tools or resources", skillName)
+		}
+		if len(skill.Resources) != 0 {
+			activation, err := skill.Activate()
+			if err != nil {
+				return err
+			}
+			defer activation.Close()
+			surface, err = injectSkillResourceTool(surface, activation)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	injectBaselineMessaging(authority, surface, opts.Config, messagingDisallowed(agent.DisallowedTools))
+	names := make([]string, 0, len(surface.List()))
+	for _, tool := range surface.List() {
+		names = append(names, tool.Name())
+	}
+	slices.Sort(names)
+	want := []string{}
+	if !synthesizer {
+		want = slices.Clone(panelReviewerTools)
+	}
+	if !slices.Equal(names, want) {
+		return fmt.Errorf("panel agent %q final runtime tools = %v, want %v", agent.Name, names, want)
+	}
+	return nil
 }
 
 func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry, error) {

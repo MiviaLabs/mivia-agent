@@ -180,6 +180,25 @@ func TestAgentResolve_EmptyToolsetRefused(t *testing.T) {
 	}
 }
 
+func TestAgentResolve_ExplicitEmptyToolsetAllowed(t *testing.T) {
+	spec, _, err := config.ParseAgentFileTOML([]byte("name = \"empty\"\ndescription = \"e\"\ntools = []\nallow_empty_tools = true\n"), "empty.toml")
+	if err != nil {
+		t.Fatalf("ParseAgentFileTOML: %v", err)
+	}
+	inputs := []ResolveInput{{
+		Name: "empty", Source: config.AgentSourceUser, Path: "e.toml",
+		Spec: spec,
+	}}
+	reg, _, err := ResolveAll(inputs, baseOpts())
+	if err != nil {
+		t.Fatalf("ResolveAll: %v", err)
+	}
+	agent, ok := reg.Get("empty")
+	if !ok || len(agent.EffectiveTools) != 0 {
+		t.Fatalf("resolved agent = %+v, found=%v", agent, ok)
+	}
+}
+
 func TestAgentResolve_CompiledFallbackNotParent(t *testing.T) {
 	inputs := []ResolveInput{
 		{

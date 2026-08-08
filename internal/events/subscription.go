@@ -92,20 +92,43 @@ func (s *subscription) deliver(ctx context.Context) {
 	}
 }
 
-// drain processes all events currently buffered in the event channel.
+// drain processes all events currently buffered in the event channel, acking
+// any pending flush barrier only once the channel is empty, and exits when
+// the subscription is stopped or nothing is left to process. It is the
+// ctx.Done() teardown path for the delivery goroutine, so it must preserve
+// the same invariants as deliver()'s flush case: a re-entrant stop
+// (Delivery.Unsubscribe) terminates the drain without re-invoking the
+// handler, and a flush barrier is acked only after every queued event has
+// been delivered (a barrier acked early lets Flush() return before events
+// published before it are handled).
 func (s *subscription) drain(ctx context.Context) {
 	for {
-		select {
-		case ev, ok := <-s.ch:
-			if !ok {
-				return
-			}
-			s.handle(ctx, ev)
-		case reply := <-s.flushCh:
-			close(reply)
-		default:
+		if s.stopped.Load() {
+			// Re-entrant stop: the handler self-unsubscribed, so events queued
+			// behind it must not be re-invoked. Ack any pending flush barrier
+			// so a concurrent Flush does not wait on this exiting goroutine.
+			s.ackFlushBarrier()
 			return
 		}
+		// Drain queued events before acking any flush barrier (mirror
+		// drainEvents ordering): a barrier acked while events remain queued
+		// breaks the documented Flush barrier ordering.
+		s.drainEvents(ctx)
+		if !s.ackFlushBarrier() {
+			return
+		}
+	}
+}
+
+// ackFlushBarrier closes one pending flush barrier, if any, and reports
+// whether one was acked.
+func (s *subscription) ackFlushBarrier() bool {
+	select {
+	case reply := <-s.flushCh:
+		close(reply)
+		return true
+	default:
+		return false
 	}
 }
 
@@ -114,9 +137,13 @@ func (s *subscription) drain(ctx context.Context) {
 // only be acked once the event channel is empty, otherwise a second Flush
 // whose barrier is queued mid-drain can be acked while events published
 // before it are still undelivered (Flush() returning early breaks the
-// documented barrier ordering).
+// documented barrier ordering). A re-entrant stop (Delivery.Unsubscribe)
+// terminates the drain without re-invoking the handler for queued events.
 func (s *subscription) drainEvents(ctx context.Context) {
 	for {
+		if s.stopped.Load() {
+			return
+		}
 		select {
 		case ev, ok := <-s.ch:
 			if !ok {

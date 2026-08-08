@@ -15,6 +15,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 )
@@ -251,7 +252,7 @@ func sandboxArgs(workRoot, modulesRoot, homeRoot, goRoot, exePath string, goEnv 
 
 func createSandboxHome(tempRoot string) (string, error) {
 	homeRoot := filepath.Join(tempRoot, "home")
-	configDir := filepath.Join(homeRoot, ".mivia")
+	configDir := workspace.NamespacePath(homeRoot)
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return "", fmt.Errorf("create verifier home: %w", err)
 	}
@@ -319,7 +320,7 @@ func sandboxControlDirectory(rel string) bool {
 		return false
 	}
 	switch parts[0] {
-	case ".agents", ".claude", ".codex", ".mivia":
+	case ".agents", ".claude", ".codex", workspace.Namespace:
 		return true
 	default:
 		return false
