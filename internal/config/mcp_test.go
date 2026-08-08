@@ -207,6 +207,36 @@ command = "/usr/bin/project-server"
 	}
 }
 
+func TestLoadTrustedMCPConfigWarnsForPlaintextHTTP(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MIVIA_CONFIG", "")
+	writeMCPConfig(t, filepath.Join(home, ".mivia", "mivia.toml"), `
+[mcp]
+enabled = true
+[[mcp.servers]]
+id = "plain"
+transport = "streamable_http"
+url = "http://127.0.0.1:8080/mcp"
+`)
+	_, warnings, err := LoadTrustedMCPConfig(t.TempDir())
+	if err != nil || len(warnings) != 1 || !strings.Contains(warnings[0], "plain") {
+		t.Fatalf("LoadTrustedMCPConfig() warnings = %v, error = %v", warnings, err)
+	}
+}
+
+func TestMergeMCPConfigDoesNotWidenUserLimits(t *testing.T) {
+	userLimit, projectLimit := 10, 100
+	user := mcpConfigInput{StartupTimeoutSeconds: &userLimit, MaxServers: &userLimit, MaxToolsPerServer: &userLimit, MaxToolSchemaBytes: &userLimit, MaxToolDescriptionBytes: &userLimit, MaxToolResultBytes: &userLimit}
+	project := mcpConfigInput{StartupTimeoutSeconds: &projectLimit, MaxServers: &projectLimit, MaxToolsPerServer: &projectLimit, MaxToolSchemaBytes: &projectLimit, MaxToolDescriptionBytes: &projectLimit, MaxToolResultBytes: &projectLimit}
+	merged := mergeMCPConfig(user, project)
+	for _, value := range []*int{merged.StartupTimeoutSeconds, merged.MaxServers, merged.MaxToolsPerServer, merged.MaxToolSchemaBytes, merged.MaxToolDescriptionBytes, merged.MaxToolResultBytes} {
+		if value == nil || *value != 10 {
+			t.Fatalf("merged limit = %v, want 10", value)
+		}
+	}
+}
+
 func TestLoadUsesExplicitWorkspaceRootForMCPConfig(t *testing.T) {
 	home := t.TempDir()
 	workspace := t.TempDir()

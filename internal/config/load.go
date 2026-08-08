@@ -49,14 +49,14 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err := normalizeProviderConfigs(&file, maxTokens); err != nil {
 		return nil, err
 	}
-	mcpConfig, err := loadRuntimeMCPConfig(opts.WorkspaceRoot)
+	mcpConfig, mcpWarnings, err := loadRuntimeMCPConfig(opts.WorkspaceRoot)
 	if err != nil {
 		return nil, err
 	}
-	return resolveLoaded(file, configPath, found, opts, mcpConfig)
+	return resolveLoaded(file, configPath, found, opts, mcpConfig, mcpWarnings)
 }
 
-func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, mcpConfig MCPConfig) (*Resolved, error) {
+func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, mcpConfig MCPConfig, mcpWarnings []string) (*Resolved, error) {
 	providerName, pc, model, err := resolveProvider(file, opts)
 	if err != nil {
 		return nil, err
@@ -123,6 +123,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		Context:          resolveContextConfig(file.Context),
 		Tools:            resolveToolsConfig(file.Tools),
 		MCP:              mcpConfig,
+		MCPWarnings:      append([]string(nil), mcpWarnings...),
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 		PromptCache:      resolvePromptCache(file.Provider.PromptCache),
 	}
@@ -136,16 +137,16 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 	return res, nil
 }
 
-func loadRuntimeMCPConfig(workspaceRoot string) (MCPConfig, error) {
+func loadRuntimeMCPConfig(workspaceRoot string) (MCPConfig, []string, error) {
 	if strings.TrimSpace(workspaceRoot) == "" {
 		var err error
 		workspaceRoot, err = os.Getwd()
 		if err != nil {
-			return MCPConfig{}, fmt.Errorf("get workspace directory: %w", err)
+			return MCPConfig{}, nil, fmt.Errorf("get workspace directory: %w", err)
 		}
 	}
-	cfg, _, err := LoadTrustedMCPConfig(workspaceRoot)
-	return cfg, err
+	cfg, warnings, err := LoadTrustedMCPConfig(workspaceRoot)
+	return cfg, warnings, err
 }
 
 const DefaultTavilyAPIKeyEnv = "TAVILY_API_KEY"

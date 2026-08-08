@@ -69,7 +69,15 @@ func resolveMCPConfig(input mcpConfigInput) (MCPConfig, []string, error) {
 	if err := validateResolvedMCPConfig(resolved); err != nil {
 		return MCPConfig{}, nil, err
 	}
-	return resolved, nil, nil
+	warnings := make([]string, 0)
+	if resolved.Enabled {
+		for _, server := range resolved.Servers {
+			if server.Transport == "streamable_http" && strings.HasPrefix(server.URL, "http://") {
+				warnings = append(warnings, fmt.Sprintf("MCP server %q uses plaintext HTTP", server.ID))
+			}
+		}
+	}
+	return resolved, warnings, nil
 }
 
 type mcpConfigInput struct {

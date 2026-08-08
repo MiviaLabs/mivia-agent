@@ -330,6 +330,8 @@ type Resolved struct {
 	Tools ToolsConfig
 	// MCP is the resolved MCP server configuration.
 	MCP MCPConfig
+	// MCPWarnings are scrubbed operator diagnostics for the MCP configuration.
+	MCPWarnings []string
 
 	// TavilyAPIKey is the Tavily web search API key (set via TAVILY_API_KEY env).
 	// When set, the search tool uses Tavily as the primary web search engine.
