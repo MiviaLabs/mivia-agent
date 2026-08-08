@@ -239,6 +239,29 @@ func TestSameOriginRedirectStripsConfiguredHeaders(t *testing.T) {
 	}
 }
 
+func TestHeaderTransportStripsHeadersFromMarkedRedirect(t *testing.T) {
+	request, err := http.NewRequest(http.MethodGet, "https://example.test/next", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "secret")
+	request = request.WithContext(context.WithValue(request.Context(), redirectRequestKey{}, true))
+	var got *http.Request
+	transport := headerTransport{
+		headers: http.Header{"Authorization": []string{"secret"}},
+		base: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			got = request
+			return nil, nil
+		}),
+	}
+	if _, err := transport.RoundTrip(request); err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Header.Get("Authorization") != "" {
+		t.Fatal("marked redirect retained configured HTTP headers")
+	}
+}
+
 func TestManagerRejectsMoreToolsThanConfigured(t *testing.T) {
 	m, err := NewManager(config.MCPConfig{Enabled: true, MaxToolsPerServer: 1, Servers: []config.MCPServerConfig{{
 		ID: "repository", Transport: "stdio", Command: "/bin/echo",
@@ -387,6 +410,24 @@ func TestSSEReaderBoundsEachEvent(t *testing.T) {
 	}
 	if len(body) != len(event)*2 {
 		t.Fatalf("inbound SSE stream len=%d, want %d", len(body), len(event)*2)
+	}
+}
+
+func TestSSEReaderAllowsCRLFSeparatedEvents(t *testing.T) {
+	event := strings.Repeat("x", maxMCPInboundMessageBytes-4) + "\r\n\r\n"
+	response, err := boundInboundResponse(&http.Response{
+		Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:   io.NopCloser(strings.NewReader(event + event)),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read inbound CRLF SSE stream: %v", err)
+	}
+	if len(body) != len(event)*2 {
+		t.Fatalf("inbound CRLF SSE stream len=%d, want %d", len(body), len(event)*2)
 	}
 }
 

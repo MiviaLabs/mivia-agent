@@ -247,6 +247,9 @@ func (c *serializedRemoteClient) finishCall(cancel context.CancelFunc) {
 func (t headerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	clone := request.Clone(request.Context())
 	if clone.Context().Value(redirectRequestKey{}) != nil {
+		for name := range t.headers {
+			clone.Header.Del(name)
+		}
 		response, err := t.base.RoundTrip(clone)
 		return boundInboundResponse(response, err)
 	}
