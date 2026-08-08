@@ -24,6 +24,33 @@ func TestSanitizeToolMetadataBoundsUntrustedValues(t *testing.T) {
 	}
 }
 
+func TestSanitizeToolMetadataBridgesUnsupportedSchema(t *testing.T) {
+	schema := map[string]any{"$ref": "https://untrusted.invalid/schema"}
+	_, got, err := sanitizeToolMetadata("tool", schema, 100, 1000, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["type"] != "object" || got["additionalProperties"] != true || len(got) != 2 {
+		t.Fatalf("bridged schema = %#v", got)
+	}
+}
+
+func TestSanitizeToolMetadataCopiesSafeSchema(t *testing.T) {
+	schema := map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}}}
+	_, got, err := sanitizeToolMetadata("tool", schema, 100, 1000, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	properties := got["properties"].(map[string]any)
+	if properties["name"].(map[string]any)["type"] != "string" {
+		t.Fatalf("bridged schema = %#v", got)
+	}
+	properties["name"].(map[string]any)["type"] = "changed"
+	if schema["properties"].(map[string]any)["name"].(map[string]any)["type"] != "string" {
+		t.Fatal("bridge returned a mutable source schema")
+	}
+}
+
 func TestSanitizeToolMetadataRejectsDeepSchema(t *testing.T) {
 	value := map[string]any{}
 	root := value
