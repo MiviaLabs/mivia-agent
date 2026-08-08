@@ -77,8 +77,6 @@ type tuiModel struct {
 	subagents *subagentTracker
 	// overlay is the full-screen block detail pager (nil = closed).
 	overlay *blockOverlay
-	// sessionsDlg is the /sessions manager (nil = closed).
-	sessionsDlg *sessionsDialog
 	// sessionsSidebar is the session list sidebar (nil = closed).
 	sessionsSidebar *sessionsSidebar
 	// modelDlg is the provider-qualified /model picker (nil = closed).

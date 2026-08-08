@@ -68,8 +68,7 @@ func TestCtrlCCancelsWithFleetOverlayOpen(t *testing.T) {
 
 func TestCtrlQQuitsFromEveryModalSurface(t *testing.T) {
 	for name, open := range map[string]func(*tuiModel){
-		"overlay":  func(m *tuiModel) { m.overlay = newDialog("x", []string{"y"}) },
-		"sessions": func(m *tuiModel) { m.openSessionsDialog() },
+		"overlay": func(m *tuiModel) { m.overlay = newDialog("x", []string{"y"}) },
 	} {
 		m := newReadyChatModel(30, 80)
 		m.mode = modeChat

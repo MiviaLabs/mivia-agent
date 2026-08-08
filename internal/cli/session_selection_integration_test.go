@@ -267,10 +267,6 @@ func TestIntegrationSessionsSlashTogglesFocusedSidebar(t *testing.T) {
 	if m.focus != focusSidebar {
 		t.Fatalf("focus = %v, want %v", m.focus, focusSidebar)
 	}
-	if m.sessionsDlg != nil {
-		t.Fatal("/sessions opened the sessions dialog instead of the sidebar")
-	}
-
 	if !m.handleSlash("/sessions") {
 		t.Fatal("second /sessions was not handled")
 	}

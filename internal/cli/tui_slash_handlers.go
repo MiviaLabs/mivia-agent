@@ -221,7 +221,6 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 		} else {
 			m.appendInfo("sessions refresh failed: " + err.Error())
 		}
-		m.sessionsDlg = nil
 		if !newChatPaneLayout(m.width, true).sidebarVisible {
 			m.appendInfo("sessions sidebar needs a wider terminal")
 			return true

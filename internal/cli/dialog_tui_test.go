@@ -1,12 +1,10 @@
 package cli
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -110,28 +108,6 @@ func TestBlockOverlayPreservesLongLines(t *testing.T) {
 	view, _ = o.ViewAt(50, 12)
 	if !strings.Contains(stripANSI(view), "🙂") {
 		t.Fatal("final wrapped row was not reachable")
-	}
-}
-
-func TestSessionsDialogUsesAvailableRows(t *testing.T) {
-	d := newSessionsDialog(nil)
-	for i := 0; i < 20; i++ {
-		d.sessions = append(d.sessions, chat.SessionInfo{Name: fmt.Sprintf("s-%d", i)})
-	}
-	l := d.layout(40, 10)
-	if l.pageH <= 0 || l.pageH >= len(d.sessions) {
-		t.Fatalf("sessions page height did not derive from terminal: %+v", l)
-	}
-	if len(d.rowLines(l.innerW, l.pageH)) > l.pageH {
-		t.Fatal("sessions rendered more rows than available")
-	}
-	tiny := stripANSI(strings.Join(d.rowLines(l.innerW, 1), "\n"))
-	if !strings.Contains(tiny, "more") || !strings.Contains(tiny, "▸") {
-		t.Fatalf("one-row sessions page lost cursor or more indicator: %q", tiny)
-	}
-	oneCell := d.rowLines(1, 1)
-	if len(oneCell) != 1 || ansi.StringWidth(oneCell[0]) > 1 {
-		t.Fatalf("one-cell sessions fallback exceeded canvas: %q", oneCell)
 	}
 }
 

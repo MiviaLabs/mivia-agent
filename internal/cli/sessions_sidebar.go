@@ -8,6 +8,21 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+type sessionsConfirm int
+
+const (
+	confirmNone sessionsConfirm = iota
+	confirmDeleteOne
+	confirmPurgeAll
+)
+
+func sessionDeleteNotice(info chat.SessionInfo) string {
+	if info.WorktreeRoute {
+		return "remove worktree sessions with /worktrees"
+	}
+	return "open this session in its workspace to delete it"
+}
+
 // sessionsSidebar stores the session-list state for the left sidebar.
 type sessionsSidebar struct {
 	cursor          int

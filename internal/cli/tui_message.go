@@ -204,16 +204,12 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) modalOpen() bool {
-	return m.overlay != nil || m.sessionsDlg != nil || m.modelDlg != nil || m.agentDlg != nil || m.effortDlg != nil || m.worktreeDlg != nil
+	return m.overlay != nil || m.modelDlg != nil || m.agentDlg != nil || m.effortDlg != nil || m.worktreeDlg != nil
 }
 
 func (m *tuiModel) clampModalState() {
 	if m.overlay != nil {
 		_, _ = m.overlay.ViewAt(max(1, m.width), max(1, m.height))
-	}
-	if m.sessionsDlg != nil {
-		visible := m.sessionsDlg.visibleRows(max(1, m.width), max(1, m.height))
-		m.sessionsDlg.clampScrollTo(m.sessionsDlg.cursorRows(visible))
 	}
 	if m.modelDlg != nil {
 		layout := m.modelDlg.layout(max(1, m.width), max(1, m.height))
@@ -431,11 +427,6 @@ func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
 		layout := m.overlay.layout(max(1, m.width), max(1, m.height))
 		m.overlay.renderedRows = m.overlay.rowsForLayout(max(1, layout.innerW), layout.pageH)
 		m.overlay.scroll(delta*max(1, m.viewport.MouseWheelDelta), max(1, layout.pageH))
-	}
-	if m.sessionsDlg != nil && wheel {
-		visible := m.sessionsDlg.visibleRows(max(1, m.width), max(1, m.height))
-		m.sessionsDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
-		m.sessionsDlg.clampScrollTo(m.sessionsDlg.cursorRows(visible))
 	}
 	if m.modelDlg != nil {
 		if wheel {
