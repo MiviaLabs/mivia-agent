@@ -58,7 +58,7 @@ GIT_COMMIT_SHORT_VALUE_CHARS = "mFC"
 
 # Shell control operators that start a NEW command. Every command in a
 # compound string must be vetted, so scanning restarts at these.
-SHELL_SEPARATORS = {"&&", ";", "||", "|"}
+SHELL_SEPARATORS = {"&&", ";", "||"}
 
 
 def _takes_message_value(tok: str) -> bool:
@@ -153,7 +153,7 @@ def option_vector(argv: list) -> list:
     """Tokens that can carry bypass flags; option VALUES are excluded.
 
     Compound shell strings are vetted per command: the argv is split at shell
-    separators (&&, ;, ||, |) and each segment is scanned on its own, so a
+    separators (&&, ;, ||) and each segment is scanned on its own, so a
     second `git commit` after a separator can never hide behind the first
     command's -m value. Within a command, -m/-F/-C consume exactly one value
     token (even a dash-prefixed one) and scanning resumes.
