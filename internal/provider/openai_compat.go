@@ -182,8 +182,6 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 	return c
 }
 
-func (c *OpenAICompat) Name() string { return c.name }
-
 type chatRequestBody struct {
 	Model       string       `json:"model"`
 	Messages    []apiMessage `json:"messages"`
