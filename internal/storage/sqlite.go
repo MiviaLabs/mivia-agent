@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,10 +23,15 @@ type SQLite struct {
 }
 
 func OpenSQLite(path string) (*SQLite, error) {
-	dir := path
-	if last := strings.LastIndexAny(dir, "/\\"); last >= 0 {
-		dir = dir[:last]
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("open sqlite store: empty path")
 	}
+	// filepath.Dir yields "." for a bare filename, so the parent of a
+	// separator-less relative path is the current directory and the database
+	// opens as a regular file there - never as a directory named like the
+	// file, which is what MkdirAll over the filename itself used to create
+	// (DC-10). Separator-containing and absolute paths are unchanged.
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create db directory %s: %w", dir, err)
 	}
