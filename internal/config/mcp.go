@@ -12,6 +12,15 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+const (
+	defaultMCPStartupTimeoutSeconds = 10
+	defaultMCPMaxServers            = 16
+	defaultMCPMaxToolsPerServer     = 64
+	defaultMCPMaxToolSchemaBytes    = 64 << 10
+	defaultMCPMaxToolDescription    = 4 << 10
+	defaultMCPMaxToolResultBytes    = 64 << 10
+)
+
 // MCPConfigDigest returns a stable, secret-free digest of MCP configuration.
 func MCPConfigDigest(cfg MCPConfig) (string, error) {
 	payload, err := json.Marshal(cfg)
@@ -34,24 +43,32 @@ func LoadTrustedMCPConfig(workspaceRoot string) (MCPConfig, []string, error) {
 		projectPath = workspace.NamespacePath(".", "mivia.toml")
 	}
 	if sameFilePath(UserConfigPath(), projectPath) {
-		return user.resolve(MCPConfig{}), nil, nil
+		return resolveMCPConfig(user)
 	}
 	project, err := loadMCPConfigPath(projectPath)
 	if err != nil {
 		return MCPConfig{}, nil, err
 	}
-	return mergeMCPConfig(user, project).resolve(MCPConfig{}), nil, nil
+	return resolveMCPConfig(mergeMCPConfig(user, project))
+}
+
+func resolveMCPConfig(input mcpConfigInput) (MCPConfig, []string, error) {
+	resolved := input.resolve(MCPConfig{})
+	if err := validateResolvedMCPConfig(resolved); err != nil {
+		return MCPConfig{}, nil, err
+	}
+	return resolved, nil, nil
 }
 
 type mcpConfigInput struct {
-	Enabled                 *bool
-	StartupTimeoutSeconds   *int
-	MaxServers              *int
-	MaxToolsPerServer       *int
-	MaxToolSchemaBytes      *int
-	MaxToolDescriptionBytes *int
-	MaxToolResultBytes      *int
-	Servers                 []MCPServerConfig
+	Enabled                 *bool             `toml:"enabled"`
+	StartupTimeoutSeconds   *int              `toml:"startup_timeout_seconds"`
+	MaxServers              *int              `toml:"max_servers"`
+	MaxToolsPerServer       *int              `toml:"max_tools_per_server"`
+	MaxToolSchemaBytes      *int              `toml:"max_tool_schema_bytes"`
+	MaxToolDescriptionBytes *int              `toml:"max_tool_description_bytes"`
+	MaxToolResultBytes      *int              `toml:"max_tool_result_bytes"`
+	Servers                 []MCPServerConfig `toml:"servers"`
 }
 
 func loadMCPConfigPath(path string) (mcpConfigInput, error) {
@@ -78,6 +95,9 @@ func loadMCPConfigPath(path string) (mcpConfigInput, error) {
 		if err := validateMCPServer(document.MCP.Servers[i]); err != nil {
 			return mcpConfigInput{}, fmt.Errorf("MCP config %s: server %d: %w", path, i, err)
 		}
+	}
+	if err := validateMCPServerIDs(document.MCP.Servers); err != nil {
+		return mcpConfigInput{}, fmt.Errorf("MCP config %s: %w", path, err)
 	}
 	return *document.MCP, nil
 }
@@ -121,7 +141,15 @@ func mergeMCPConfig(user, project mcpConfigInput) mcpConfigInput {
 }
 
 func (in mcpConfigInput) resolve(_ MCPConfig) MCPConfig {
-	out := MCPConfig{Servers: append([]MCPServerConfig(nil), in.Servers...)}
+	out := MCPConfig{
+		StartupTimeoutSeconds:   defaultMCPStartupTimeoutSeconds,
+		MaxServers:              defaultMCPMaxServers,
+		MaxToolsPerServer:       defaultMCPMaxToolsPerServer,
+		MaxToolSchemaBytes:      defaultMCPMaxToolSchemaBytes,
+		MaxToolDescriptionBytes: defaultMCPMaxToolDescription,
+		MaxToolResultBytes:      defaultMCPMaxToolResultBytes,
+		Servers:                 append([]MCPServerConfig(nil), in.Servers...),
+	}
 	if in.Enabled != nil {
 		out.Enabled = *in.Enabled
 	}
@@ -156,7 +184,45 @@ func validateMCPServer(server MCPServerConfig) error {
 	if server.TimeoutSeconds < 0 {
 		return fmt.Errorf("timeout_seconds must not be negative")
 	}
+	for _, arg := range server.Args {
+		if strings.ContainsAny(arg, "\x00\r\n") {
+			return fmt.Errorf("args must not contain control characters")
+		}
+	}
 	return nil
+}
+
+func validateMCPServerIDs(servers []MCPServerConfig) error {
+	seen := make(map[string]struct{}, len(servers))
+	for _, server := range servers {
+		if _, ok := seen[server.ID]; ok {
+			return fmt.Errorf("duplicate MCP server ID %q", server.ID)
+		}
+		seen[server.ID] = struct{}{}
+	}
+	return nil
+}
+
+func validateResolvedMCPConfig(cfg MCPConfig) error {
+	if len(cfg.Servers) > cfg.MaxServers {
+		return fmt.Errorf("MCP server count %d exceeds max_servers %d", len(cfg.Servers), cfg.MaxServers)
+	}
+	for _, limit := range []struct {
+		name  string
+		value int
+	}{
+		{"startup_timeout_seconds", cfg.StartupTimeoutSeconds},
+		{"max_servers", cfg.MaxServers},
+		{"max_tools_per_server", cfg.MaxToolsPerServer},
+		{"max_tool_schema_bytes", cfg.MaxToolSchemaBytes},
+		{"max_tool_description_bytes", cfg.MaxToolDescriptionBytes},
+		{"max_tool_result_bytes", cfg.MaxToolResultBytes},
+	} {
+		if limit.value <= 0 {
+			return fmt.Errorf("MCP %s must be positive", limit.name)
+		}
+	}
+	return validateMCPServerIDs(cfg.Servers)
 }
 
 func validMCPID(id string) bool {

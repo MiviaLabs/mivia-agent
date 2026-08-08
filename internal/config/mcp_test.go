@@ -61,6 +61,52 @@ func TestMCPConfigDigestExcludesEnvironmentValues(t *testing.T) {
 	}
 }
 
+func TestLoadTrustedMCPConfigRejectsDuplicateServerIDs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MIVIA_CONFIG", "")
+	writeMCPConfig(t, filepath.Join(home, ".mivia", "mivia.toml"), `
+[mcp]
+enabled = true
+[[mcp.servers]]
+id = "duplicate"
+transport = "stdio"
+command = "/usr/bin/one"
+[[mcp.servers]]
+id = "duplicate"
+transport = "stdio"
+command = "/usr/bin/two"
+`)
+	if _, _, err := LoadTrustedMCPConfig(t.TempDir()); err == nil {
+		t.Fatal("LoadTrustedMCPConfig() accepted duplicate server IDs")
+	}
+}
+
+func TestLoadTrustedMCPConfigDefaultsAndBounds(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MIVIA_CONFIG", "")
+	writeMCPConfig(t, filepath.Join(home, ".mivia", "mivia.toml"), `
+[mcp]
+enabled = true
+`)
+	got, _, err := LoadTrustedMCPConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxServers == 0 || got.MaxToolsPerServer == 0 || got.MaxToolResultBytes == 0 {
+		t.Fatalf("MCP defaults = %#v, want positive limits", got)
+	}
+	writeMCPConfig(t, filepath.Join(home, ".mivia", "mivia.toml"), `
+[mcp]
+enabled = true
+max_servers = -1
+`)
+	if _, _, err := LoadTrustedMCPConfig(t.TempDir()); err == nil {
+		t.Fatal("LoadTrustedMCPConfig() accepted a negative limit")
+	}
+}
+
 func TestLoadExposesEffectiveMCPConfig(t *testing.T) {
 	home := t.TempDir()
 	workspace := t.TempDir()

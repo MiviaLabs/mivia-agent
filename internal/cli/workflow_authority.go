@@ -32,7 +32,7 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 		return fmt.Errorf("panel agent %q has no runtime tool registry", agent.Name)
 	}
 	surface := tools.ScopedRegistry(authority, tools.ScopeOptions{
-		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(agent.EffectiveTools),
+		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(authorizedAgentTools(&agent, authority)),
 	})
 	if !slices.Contains(agent.DisallowedTools, toolPostMessage) {
 		return fmt.Errorf("panel agent %q must disallow post_message", agent.Name)
@@ -118,7 +118,7 @@ func workflowWriteAuthority(wf *compiler.CompiledWorkflow, registry *agents.Agen
 			return false, fmt.Errorf("workflow step %q references unknown agent %q", step.ID, step.Agent)
 		}
 		surface := tools.ScopedRegistry(authority, tools.ScopeOptions{
-			Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(agent.EffectiveTools),
+			Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(authorizedAgentTools(&agent, authority)),
 			ExtraDenylist: extraDenylist,
 		})
 		if _, ok := surface.Get(tools.RunCommandToolName); ok {
