@@ -70,6 +70,9 @@ func displaySessionName(si chat.SessionInfo, latestAuto string) string {
 		return "Worktree · " + si.Worktree
 	}
 	if !chat.IsAutoSaveName(si.Name) {
+		if si.Title != "" {
+			return si.Title
+		}
 		return si.Name
 	}
 	if latestAuto != "" && si.Name == latestAuto {
@@ -363,11 +366,11 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 		}
 		m.workspaceDir = dir
 		m.restartWorkspace = dir
-		m.resumeSessionName = si.Name
+		m.resumeSessionName = si.Reference()
 		m.restartWorktreeInstance = si.WorktreeInstance
 		return nil
 	}
-	if err := m.session.Load(si.Name); err != nil {
+	if err := m.session.Load(si.Reference()); err != nil {
 		return err
 	}
 	active := si

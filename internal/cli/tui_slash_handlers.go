@@ -42,6 +42,8 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return m.handleTuiSessionLifecycleSlash(cmd, fields)
 	case "/save", "/load", "/delete", "/list", "/session":
 		return m.handleTuiSessionStoreSlash(cmd, fields)
+	case "/title":
+		return m.handleTuiTitleSlash(cmd)
 	case "/select", "/plain":
 		return m.handleTuiMiscSlash(cmd, fields)
 	case "/resume":
@@ -53,6 +55,23 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return false
 	}
 }
+
+func (m *tuiModel) handleTuiTitleSlash(cmd string) bool {
+	title := strings.TrimSpace(strings.TrimPrefix(cmd, fieldsFirst(cmd)))
+	if err := m.session.SetContextSessionTitle(title); err != nil {
+		m.appendInfo("title error: " + err.Error())
+		return true
+	}
+	if err := m.refreshSessionList(); err != nil {
+		m.appendInfo("sessions refresh failed: " + err.Error())
+	} else {
+		m.renderVP()
+	}
+	m.appendInfo("session title updated")
+	return true
+}
+
+func fieldsFirst(cmd string) string { return strings.Fields(cmd)[0] }
 
 // handleTuiInfoSlash handles /help, /status, and /tools (reference overlays).
 func (m *tuiModel) handleTuiInfoSlash(cmd string, fields []string) bool {
@@ -272,7 +291,8 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 				if chat.IsAutoSaveName(si.Name) {
 					marker = " [auto]"
 				}
-				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", si.Name, si.MessageCount, marker)), Rendered: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", si.Name, si.MessageCount, marker))})
+				name := displaySessionName(si, latestAutoSaveName(sessions))
+				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", name, si.MessageCount, marker)), Rendered: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", name, si.MessageCount, marker))})
 			}
 		}
 		return true
@@ -324,7 +344,7 @@ func (m *tuiModel) runLoadSlash(fields []string) {
 	} else {
 		for i := range m.sessions {
 			si := m.sessions[i]
-			if si.Name == fields[1] && !si.WorktreeRoute {
+			if si.Reference() == fields[1] && !si.WorktreeRoute {
 				m.activeSession = &si
 				break
 			}
