@@ -205,24 +205,31 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 		m.appendInfo("history cleared")
 		return true
 	case "/new":
-		// A turn in flight reads saveManager without a lock during its
-		// writeback, so the SaveManager swap below would race it. /new is a
-		// session-switch, not a queue action: block it while busy.
-		if m.waiting {
-			m.appendInfo("(finish the current turn before /new)")
-			return true
-		}
-		if err := m.resetForNewSession(); err != nil {
-			m.appendInfo("new session failed: " + err.Error())
-			return true
-		}
-		m.appendInfo("new session started (previous conversation saved)")
+		m.startNewSession()
 		return true
 	case "/sessions":
-		// One place to switch, delete and purge - the same actions that used
-		// to need /list, /load <name> and /delete <name> plus a name you had
-		// to already know.
-		m.openSessionsDialog()
+		if m.sessionsSidebar != nil {
+			m.sessionsSidebar = nil
+			m.setFocus(focusComposer)
+			m.layout()
+			m.renderVP()
+			return true
+		}
+		list, err := m.listSessions()
+		if err == nil {
+			m.sessions = list
+		} else {
+			m.appendInfo("sessions refresh failed: " + err.Error())
+		}
+		m.sessionsDlg = nil
+		if !newChatPaneLayout(m.width, true).sidebarVisible {
+			m.appendInfo("sessions sidebar needs a wider terminal")
+			return true
+		}
+		m.sessionsSidebar = newSessionsSidebar()
+		m.setFocus(focusSidebar)
+		m.layout()
+		m.renderVP()
 		return true
 	case "/worktrees":
 		m.openWorktreeDialog()

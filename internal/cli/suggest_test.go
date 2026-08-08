@@ -171,6 +171,21 @@ func TestSuggestPopupRendersAboveComposerWithoutGrowingCanvas(t *testing.T) {
 	}
 }
 
+func TestSuggestPopupStaysInsideChatPaneWithSessionsSidebar(t *testing.T) {
+	m := newReadyChatModel(24, 100)
+	m.sessionsSidebar = newSessionsSidebar()
+	m.textarea.SetValue("/")
+	m.textarea.SetCursor(1)
+	m.syncSuggest()
+
+	pane := newChatPaneLayout(m.width, true)
+	panel, size := renderSuggestPanel(m.suggest, pane.chatWidth, max(0, m.suggestComposerTop()-1))
+	got := suggestOverlayRect(m, panel, size)
+	if got.x < pane.chatX || got.x+got.w > pane.chatX+pane.chatWidth {
+		t.Fatalf("suggestion rect %#v is outside chat pane %#v", got, pane)
+	}
+}
+
 func TestSuggestAcceptRefreshesSpanAfterLeadingWhitespaceEdit(t *testing.T) {
 	m := newReadyChatModel(24, 80)
 	m.textarea.SetValue("/lo")

@@ -264,6 +264,19 @@ func (m *tuiModel) resetForNewSession() error {
 	return nil
 }
 
+// startNewSession applies the shared TUI new-session guard and action.
+func (m *tuiModel) startNewSession() {
+	if m.workspaceSwitchBusy() {
+		m.appendInfo("(finish the current turn before /new)")
+		return
+	}
+	if err := m.resetForNewSession(); err != nil {
+		m.appendInfo("new session failed: " + err.Error())
+		return
+	}
+	m.appendInfo("new session started (previous conversation saved)")
+}
+
 // openSelectedSession loads the selected list entry into chat mode.
 func (m *tuiModel) openSelectedSession() error {
 	if len(m.sessions) == 0 {
@@ -307,15 +320,15 @@ func (m *tuiModel) openSessionByName(name string) error {
 // openSessionInfo opens the exact selected session. Routes and snapshots can
 // have the same display name, so selection cannot use a name alone.
 func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
+	if m.workspaceSwitchBusy() {
+		return fmt.Errorf("cannot switch while agent is running")
+	}
 	if !si.WorktreeInstance.IsZero() {
 		if err := m.validateSessionWorktree(si.Dir, si.WorktreeInstance); err != nil {
 			return err
 		}
 	}
 	if si.WorktreeRoute {
-		if m.workspaceSwitchBusy() {
-			return fmt.Errorf("cannot switch while agent is running")
-		}
 		dir, err := filepath.Abs(si.Dir)
 		if err != nil {
 			return fmt.Errorf("resolve worktree route: %w", err)
@@ -333,9 +346,6 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 		return nil
 	}
 	if si.Dir != "" && !sameSessionWorkspace(m.resolveWorkspaceDir(), si.Dir) {
-		if m.workspaceSwitchBusy() {
-			return fmt.Errorf("cannot switch while agent is running")
-		}
 		dir, err := filepath.Abs(si.Dir)
 		if err != nil {
 			return fmt.Errorf("resolve session workspace: %w", err)

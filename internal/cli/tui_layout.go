@@ -24,16 +24,18 @@ func (m *tuiModel) layout() {
 
 	vpHeight := max(3, avail)
 
+	chatWidth := m.chatPaneWidth()
 	if !m.ready {
 		// Must go through the constructor: a bare viewport.New here would
 		// silently reinstate the default keymap's ctrl+u/ctrl+d scroll
 		// aliases that newTranscriptViewport strips.
-		m.viewport = newTranscriptViewport(max(1, m.width), vpHeight)
-		m.textarea.SetWidth(composerInnerWidth(m.width))
+		m.viewport = newTranscriptViewport(max(1, chatWidth), vpHeight)
+		m.textarea.SetWidth(composerInnerWidth(chatWidth))
 		m.ready = true
 	} else {
-		m.viewport.Width = max(1, m.width)
+		m.viewport.Width = max(1, chatWidth)
 		m.viewport.Height = vpHeight
+		m.textarea.SetWidth(composerInnerWidth(chatWidth))
 	}
 }
 

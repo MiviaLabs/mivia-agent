@@ -79,6 +79,8 @@ type tuiModel struct {
 	overlay *blockOverlay
 	// sessionsDlg is the /sessions manager (nil = closed).
 	sessionsDlg *sessionsDialog
+	// sessionsSidebar is the session list sidebar (nil = closed).
+	sessionsSidebar *sessionsSidebar
 	// modelDlg is the provider-qualified /model picker (nil = closed).
 	modelDlg *modelDialog
 	// agentDlg is the /agent root-agent picker (nil = closed).
@@ -262,9 +264,6 @@ func (m *tuiModel) refreshGitContext() {
 func (m *tuiModel) refreshSessionList() {
 	list, err := m.listSessions()
 	if err != nil {
-		m.sessions = list
-		m.sessionSel = 0
-		m.sessionScroll = 0
 		return
 	}
 	// ListSessions is newest-first; keep selection on index 0 (latest) by default

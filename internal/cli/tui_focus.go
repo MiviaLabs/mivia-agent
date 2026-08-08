@@ -6,12 +6,15 @@ type tuiFocus uint8
 const (
 	focusComposer tuiFocus = iota
 	focusScrollback
+	focusSidebar
 )
 
 func (f tuiFocus) String() string {
 	switch f {
 	case focusScrollback:
 		return "scrollback"
+	case focusSidebar:
+		return "sidebar"
 	default:
 		return "composer"
 	}
@@ -19,6 +22,25 @@ func (f tuiFocus) String() string {
 
 func nextTUIFocus(current tuiFocus, reverse bool) tuiFocus {
 	panes := []tuiFocus{focusComposer, focusScrollback}
+	for i, pane := range panes {
+		if pane != current {
+			continue
+		}
+		step := 1
+		if reverse {
+			step = -1
+		}
+		return panes[(i+step+len(panes))%len(panes)]
+	}
+	return focusComposer
+}
+
+// nextTUIFocus returns the focus cycle for the panes that are visible now.
+func (m *tuiModel) nextTUIFocus(current tuiFocus, reverse bool) tuiFocus {
+	panes := []tuiFocus{focusComposer, focusScrollback}
+	if m.sidebarVisible() {
+		panes = append(panes, focusSidebar)
+	}
 	for i, pane := range panes {
 		if pane != current {
 			continue
@@ -69,6 +91,9 @@ func routeFocusKey(current tuiFocus, key string) (tuiFocus, bool) {
 }
 
 func (m *tuiModel) setFocus(focus tuiFocus) {
+	if focus == focusSidebar && !m.sidebarVisible() {
+		focus = focusComposer
+	}
 	m.focus = focus
 	if focus == focusComposer {
 		m.textarea.Focus()
@@ -76,4 +101,8 @@ func (m *tuiModel) setFocus(focus tuiFocus) {
 		m.closeSuggest()
 		m.textarea.Blur()
 	}
+}
+
+func (m *tuiModel) sidebarVisible() bool {
+	return m.sessionsSidebar != nil && newChatPaneLayout(m.width, true).sidebarVisible
 }

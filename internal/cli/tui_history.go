@@ -33,7 +33,7 @@ func (m *tuiModel) loadMoreMessages() {
 		return
 	}
 	// Visual lines (not slot count): multi-line content shifts YOffset by more than 1.
-	addedVisual := visualLineCount(RenderChatBlocksWithWorkGroups(newBlocks, m.modelName, max(20, m.width-2), m.thinkingExpandDefault, m.workGroupCollapsed).Lines)
+	addedVisual := visualLineCount(RenderChatBlocksWithWorkGroups(newBlocks, m.modelName, max(20, m.chatPaneWidth()-2), m.thinkingExpandDefault, m.workGroupCollapsed).Lines)
 	oldYOffset := m.viewport.YOffset
 	// Prepend to messages.
 	m.blocks = append(newBlocks, m.blocks...)
@@ -59,7 +59,7 @@ func (m *tuiModel) loadMoreMessages() {
 	if m.msgOffset <= 0 {
 		for i := range m.blocks {
 			if m.blocks[i].Kind == ChatBlockSystem && strings.Contains(m.blocks[i].Text, "showing last") {
-				noticeVisual := visualLineCount(RenderChatBlocksWithWorkGroups([]ChatBlock{m.blocks[i]}, m.modelName, max(20, m.width-2), m.thinkingExpandDefault, m.workGroupCollapsed).Lines)
+				noticeVisual := visualLineCount(RenderChatBlocksWithWorkGroups([]ChatBlock{m.blocks[i]}, m.modelName, max(20, m.chatPaneWidth()-2), m.thinkingExpandDefault, m.workGroupCollapsed).Lines)
 				m.blocks = append(m.blocks[:i], m.blocks[i+1:]...)
 				m.messages = m.renderBlocksForView().Lines
 				m.viewport.SetContent(m.buildViewportContent())

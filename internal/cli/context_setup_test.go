@@ -451,10 +451,11 @@ func TestSQLiteSessionsAreSelectableThroughSplashAndDialog(t *testing.T) {
 	}
 	for i, id := range []string{secondID, firstID, secondID} {
 		m.mode = modeChat
+		m.sessionsSidebar = nil
 		if !m.handleSlash("/sessions") {
 			t.Fatal("/sessions was not handled")
 		}
-		m.sessionsDlg.cursor = indexOf(id)
+		m.sessionsSidebar.cursor = indexOf(id)
 		m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		want := "second history"
 		if id == firstID {
