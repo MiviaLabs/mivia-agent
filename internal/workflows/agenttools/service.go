@@ -13,7 +13,7 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// Service is the in-process host for the seven workflow tools.
+// Service is the in-process host for the eight workflow tools.
 // Read methods use only ledger projections. Mutating methods call Engine.
 type Service struct {
 	mu     sync.Mutex
@@ -124,6 +124,18 @@ func (s *Service) Deliver(ctx context.Context, runID string, allowPublish bool) 
 		return DeliverResult{}, fmt.Errorf("workflow engine is not configured")
 	}
 	return engine.Deliver(ctx, runID, allowPublish)
+}
+
+// Delete removes a settled run (terminal or delivery_pending) from the ledger.
+func (s *Service) Delete(ctx context.Context, runID string) (DeleteResult, error) {
+	if strings.TrimSpace(runID) == "" {
+		return DeleteResult{}, fmt.Errorf("run_id is required")
+	}
+	engine := s.getEngine()
+	if engine == nil {
+		return DeleteResult{}, fmt.Errorf("workflow engine is not configured")
+	}
+	return engine.Delete(ctx, runID)
 }
 
 // Status returns a deep run overview from ledger projections only.

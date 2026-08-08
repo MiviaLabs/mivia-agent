@@ -45,6 +45,7 @@ func AllToolNames() []string {
 		"workflow_list_runs",
 		"workflow_deliver",
 		"workflow_cancel",
+		"workflow_delete",
 	}
 	out := slices.Clone(names)
 	slices.Sort(out)

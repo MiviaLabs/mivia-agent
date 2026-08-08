@@ -73,6 +73,10 @@ func (f *abandonFence) CompareAndSetRunStatus(ctx context.Context, runID string,
 	return f.mutate(runID, func() error { return f.inner.CompareAndSetRunStatus(ctx, runID, expectedVersion, status, finishedAt) })
 }
 
+func (f *abandonFence) DeleteRun(ctx context.Context, runID string) error {
+	return f.mutate(runID, func() error { return f.inner.DeleteRun(ctx, runID) })
+}
+
 func (f *abandonFence) CreateStepAttempt(ctx context.Context, attempt workflowledger.StepAttempt) error {
 	return f.mutate(attempt.RunID, func() error { return f.inner.CreateStepAttempt(ctx, attempt) })
 }

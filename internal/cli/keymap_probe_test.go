@@ -87,13 +87,14 @@ func boundKeyProbes(t *testing.T) []keyProbe {
 		m.handleSuggestKey(key)
 	})...)
 
-	// Sessions manager.
+	// Sessions manager (non-modal sidebar). The sidebar owns a small key set;
+	// driving handleChatKey would attribute every global key to this scope.
 	all = append(all, probeSurface(t, scopeSessions, func(m *tuiModel) {
 		m.sessions = []chat.SessionInfo{{Name: "one"}, {Name: "two"}}
 		m.sessionsSidebar = newSessionsSidebar()
 		m.setFocus(focusSidebar)
 	}, func(m *tuiModel, key string) {
-		m.handleChatKey(key, false)
+		m.handleSidebarKey(key)
 	})...)
 
 	// Block/help/status overlay.

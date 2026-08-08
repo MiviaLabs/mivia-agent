@@ -371,7 +371,7 @@ func (m *tuiModel) handleSidebarMouse(msg tea.MouseMsg, skipViewport *bool) bool
 		sidebar.move(m.sessions, 1)
 		m.setFocus(focusSidebar)
 	case tea.MouseLeft:
-		cursor, ok := sidebar.cursorAt(m.sessions, m.height, msg.Y)
+		cursor, ok := sidebar.cursorAt(m.sessions, pane.sidebarWidth, m.height, msg.Y)
 		if !ok {
 			return true
 		}

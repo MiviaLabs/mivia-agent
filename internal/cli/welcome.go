@@ -260,7 +260,6 @@ func (m *tuiModel) resetForNewSession() error {
 		m.session.SetSessionStore(store, mgr)
 	}
 	m.beginNewSession()
-	m.refreshSessionList()
 	return nil
 }
 
@@ -274,7 +273,11 @@ func (m *tuiModel) startNewSession() {
 		m.appendInfo("new session failed: " + err.Error())
 		return
 	}
+	m.activeSession = nil
 	m.appendInfo("new session started (previous conversation saved)")
+	if err := m.refreshSessionList(); err != nil {
+		m.appendInfo("sessions refresh failed: " + err.Error())
+	}
 	m.renderVP()
 }
 
@@ -367,6 +370,8 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 	if err := m.session.Load(si.Name); err != nil {
 		return err
 	}
+	active := si
+	m.activeSession = &active
 	m.modelName = shortenModel(m.session.CurrentModel())
 	m.enterChatMode()
 	m.hydrateHistory()

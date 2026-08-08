@@ -455,7 +455,9 @@ func TestSQLiteSessionsAreSelectableThroughSplashAndDialog(t *testing.T) {
 		if !m.handleSlash("/sessions") {
 			t.Fatal("/sessions was not handled")
 		}
-		m.sessionsSidebar.cursor = indexOf(id)
+		// The sidebar cursor is 1-based: row 0 is the permanent "New session"
+		// action, so saved session i sits at cursor i+1.
+		m.sessionsSidebar.cursor = indexOf(id) + 1
 		m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		want := "second history"
 		if id == firstID {

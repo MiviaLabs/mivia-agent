@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -38,6 +39,37 @@ const (
 	sidebarRowsY       = 3
 	sidebarChromeRows  = 4 // title, new action, divider, and footer
 )
+
+// sidebarLayout defines the rows shared by rendering and mouse hit testing.
+type sidebarLayout struct {
+	newSessionY  int
+	rowsY        int
+	rowHeight    int
+	rowCapacity  int
+	showMetadata bool
+	showCue      bool
+}
+
+func newSidebarLayout(rows, width, height int) sidebarLayout {
+	height = max(1, height)
+	space := max(0, height-sidebarChromeRows)
+	layout := sidebarLayout{
+		newSessionY: sidebarNewSessionY,
+		rowsY:       sidebarRowsY,
+		rowHeight:   1,
+		rowCapacity: space,
+	}
+	if width >= 24 && height >= 10 && space >= 4 {
+		layout.rowHeight = 2
+		layout.showMetadata = true
+		layout.rowCapacity = max(1, space/layout.rowHeight)
+	}
+	if rows > layout.rowCapacity && space > layout.rowHeight {
+		layout.showCue = true
+		layout.rowCapacity = max(1, (space-1)/layout.rowHeight)
+	}
+	return layout
+}
 
 func (s *sessionsSidebar) clampScroll(rows int, visible int) {
 	visible = max(1, visible)
@@ -98,14 +130,24 @@ func (s *sessionsSidebar) selected(rows []chat.SessionInfo) (chat.SessionInfo, b
 }
 
 // cursorAt returns the sidebar cursor at a rendered terminal row.
-func (s *sessionsSidebar) cursorAt(rows []chat.SessionInfo, height, y int) (int, bool) {
-	if y == sidebarNewSessionY {
+func (s *sessionsSidebar) cursorAt(rows []chat.SessionInfo, width, height, y int) (int, bool) {
+	if y < 0 || y >= max(1, height) {
+		return 0, false
+	}
+	layout := newSidebarLayout(len(rows), width, height)
+	if y == layout.newSessionY && y < max(1, height) {
 		return 0, true
 	}
-	visible := max(1, max(1, height)-sidebarChromeRows)
-	s.clampScroll(len(rows), visible)
-	index := s.scroll + y - sidebarRowsY
-	if y < sidebarRowsY || index < s.scroll || index >= min(len(rows), s.scroll+visible) {
+	if layout.rowCapacity == 0 {
+		return 0, false
+	}
+	s.clampScroll(len(rows), layout.rowCapacity)
+	if y < layout.rowsY {
+		return 0, false
+	}
+	row := (y - layout.rowsY) / layout.rowHeight
+	index := s.scroll + row
+	if row >= layout.rowCapacity || index < s.scroll || index >= min(len(rows), s.scroll+layout.rowCapacity) {
 		return 0, false
 	}
 	return index + 1, true
@@ -123,56 +165,116 @@ func (s *sessionsSidebar) doubleClick(cursor int, now time.Time) bool {
 	return false
 }
 
-// view renders the non-modal session picker. The model owns the session rows.
+// view renders the non-modal session picker without an active-session marker.
 func (s *sessionsSidebar) view(rows []chat.SessionInfo, width, height int, focused bool) string {
+	return s.viewWithActive(rows, width, height, focused, nil)
+}
+
+// viewWithActive renders the non-modal session picker. The model owns the rows.
+func (s *sessionsSidebar) viewWithActive(rows []chat.SessionInfo, width, height int, focused bool, active *chat.SessionInfo) string {
 	width = max(1, width)
 	height = max(1, height)
-	visible := max(1, height-sidebarChromeRows)
-	title := tuiHeaderStyle.Render(" sessions ")
-	newSession := "  New session"
-	if s.selectsNewSession(rows) {
-		newSession = "▸ New session"
-		if focused {
-			newSession = lipgloss.NewStyle().Bold(true).Render(newSession)
-		}
+	layout := newSidebarLayout(len(rows), width, height)
+	s.move(rows, 0)
+	if layout.rowCapacity > 0 {
+		s.clampScroll(len(rows), layout.rowCapacity)
 	}
-	divider := tuiDimStyle.Render(strings.Repeat("─", width))
-	lines := []string{title, newSession, divider}
-	if len(rows) == 0 {
-		lines = append(lines, tuiDimStyle.Render(" no saved sessions"))
+	end := min(len(rows), s.scroll+max(0, layout.rowCapacity))
+
+	title := fmt.Sprintf(" Sessions %d · saved sessions", len(rows))
+	lines := []string{
+		tuiHeaderStyle.Render(sidebarPad(title, width)),
+		s.renderNewSession(rows, width, focused),
+		tuiDimStyle.Render(strings.Repeat("─", width)),
+	}
+	if len(rows) == 0 && layout.rowCapacity > 0 {
+		lines = append(lines, tuiDimStyle.Render(sidebarPad(" no saved sessions", width)))
 	} else {
-		s.move(rows, 0)
-		s.clampScroll(len(rows), visible)
-		end := min(len(rows), s.scroll+visible)
+		latestAuto := latestAutoSaveName(rows)
 		for i := s.scroll; i < end; i++ {
-			row := rows[i]
-			marker := "  "
-			name := row.Name
-			if i+1 == s.cursor {
-				marker = "▸ "
-				if focused {
-					name = lipgloss.NewStyle().Bold(true).Render(name)
-				}
-			}
-			lines = append(lines, marker+truncateToWidth(name, max(1, width-2)))
+			rowLines := s.renderSessionRow(rows[i], i+1 == s.cursor, width, focused, layout.showMetadata, sidebarSessionMatches(rows[i], active), latestAuto)
+			lines = append(lines, rowLines...)
 		}
 	}
-	lines = append(lines, s.footer())
-	for i := range lines {
-		lines[i] = truncateToWidth(lines[i], width)
+	if layout.showCue {
+		lines = append(lines, tuiDimStyle.Render(sidebarPad(fmt.Sprintf(" %d–%d / %d", s.scroll+1, end, len(rows)), width)))
+	}
+	footer := sidebarPad(s.footer(rows), width)
+	switch {
+	case s.confirm != confirmNone:
+		lines = append(lines, tuiErrorStyle.Render(footer))
+	case s.notice != "":
+		lines = append(lines, tuiInfoStyle.Render(footer))
+	default:
+		lines = append(lines, tuiDimStyle.Render(footer))
 	}
 	return lipgloss.NewStyle().Width(width).Height(height).Render(strings.Join(lines, "\n"))
 }
 
-func (s *sessionsSidebar) footer() string {
+func (s *sessionsSidebar) renderNewSession(rows []chat.SessionInfo, width int, focused bool) string {
+	line := "  + New session"
+	if s.selectsNewSession(rows) {
+		line = "▸ + New session"
+		return sidebarSelectedStyle(width, focused).Render(sidebarPad(line, width))
+	}
+	return tuiAccentStyle.Render(sidebarPad(line, width))
+}
+
+func (s *sessionsSidebar) renderSessionRow(row chat.SessionInfo, selected bool, width int, focused, showMetadata, active bool, latestAuto string) []string {
+	marker := "  "
+	if selected {
+		marker = "▸ "
+	}
+	name := displaySessionName(row, latestAuto)
+	if active {
+		name = "● current · " + name
+	}
+	line := marker + truncateToWidth(name, max(1, width-runeWidth(marker)))
+	line = sidebarPad(line, width)
+	if selected {
+		line = sidebarSelectedStyle(width, focused).Render(line)
+	}
+	lines := []string{line}
+	if showMetadata {
+		metadata := fmt.Sprintf("   %d messages", row.MessageCount)
+		if age := formatSessionAge(row.UpdatedAt); age != "" {
+			metadata += " · " + age
+		}
+		lines = append(lines, tuiDimStyle.Render(sidebarPad(metadata, width)))
+	}
+	return lines
+}
+
+func sidebarSessionMatches(row chat.SessionInfo, active *chat.SessionInfo) bool {
+	return active != nil && row.Name == active.Name && row.Dir == active.Dir &&
+		row.WorktreeRoute == active.WorktreeRoute && row.WorktreeInstance == active.WorktreeInstance
+}
+
+func sidebarSelectedStyle(width int, focused bool) lipgloss.Style {
+	style := lipgloss.NewStyle().Background(lipgloss.Color(themeColorSelBg)).Width(width)
+	if focused {
+		return style.Foreground(lipgloss.Color(themeColorBright)).Bold(true)
+	}
+	return style
+}
+
+func sidebarPad(text string, width int) string {
+	text = truncateToWidth(text, width)
+	return text + strings.Repeat(" ", max(0, width-runeWidth(text)))
+}
+
+func (s *sessionsSidebar) footer(rows []chat.SessionInfo) string {
 	if s.confirm == confirmDeleteOne {
-		return tuiErrorStyle.Render(" delete selected session? y/n")
+		return " delete selected session? y/n"
 	}
 	if s.confirm == confirmPurgeAll {
-		return tuiErrorStyle.Render(" purge all sessions? y/n")
+		return " purge all sessions? y/n"
 	}
 	if s.notice != "" {
-		return tuiDimStyle.Render(" " + s.notice)
+		return " " + s.notice
 	}
-	return tuiDimStyle.Render(" ↑↓ move · enter open/start · d delete · P purge · esc close")
+	if s.selectsNewSession(rows) {
+		return " Enter new · Esc close"
+	}
+	return " Enter open · d delete · P purge"
 }

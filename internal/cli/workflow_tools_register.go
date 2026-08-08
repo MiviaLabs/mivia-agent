@@ -10,11 +10,11 @@ import (
 
 func init() {
 	// Install the Phase 7 workflow tool builder so NewDefaultRegistry registers
-	// the seven tools when a workspace has .mivia/workflows/.
+	// the eight tools when a workspace has .mivia/workflows/.
 	tools.SetWorkflowToolsBuilder(buildWorkflowToolsForRegistry)
 }
 
-// buildWorkflowToolsForRegistry constructs the seven workflow tools for the
+// buildWorkflowToolsForRegistry constructs the eight workflow tools for the
 // default registry. Pre-built opts.WorkflowTools win when the session already
 // wired a Service (chat path).
 func buildWorkflowToolsForRegistry(opts tools.DefaultOptions) []tools.Tool {
@@ -39,7 +39,7 @@ func wrapWorkflowTools(svc *agenttools.Service) []tools.Tool {
 	if svc == nil {
 		return nil
 	}
-	out := make([]tools.Tool, 0, 7)
+	out := make([]tools.Tool, 0, 8)
 	for _, inner := range agenttools.Tools(svc) {
 		out = append(out, &workflowRegistryTool{inner: inner})
 	}

@@ -109,7 +109,7 @@ func (m *tuiModel) renderBaseChatView() string {
 	m.width = pane.chatWidth
 	chat := m.renderChatPane()
 	m.width = width
-	sidebar := m.sessionsSidebar.view(m.sessions, pane.sidebarWidth, max(1, m.height), m.focus == focusSidebar)
+	sidebar := m.sessionsSidebar.viewWithActive(m.sessions, pane.sidebarWidth, max(1, m.height), m.focus == focusSidebar, m.activeSession)
 	padding := paneSpacer(pane.dividerPadding, max(1, m.height))
 	divider := sidebarDivider(pane.dividerWidth, max(1, m.height))
 	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, padding, divider, padding, chat)

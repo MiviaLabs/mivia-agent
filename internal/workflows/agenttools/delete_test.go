@@ -1,0 +1,122 @@
+package agenttools_test
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+)
+
+// deleteEngine records Delete calls so service/tool tests can assert the
+// run_id reaches the engine untouched.
+type deleteEngine struct {
+	deleted []string
+}
+
+func (e *deleteEngine) Start(context.Context, agenttools.StartRequest) (agenttools.StartResult, error) {
+	return agenttools.StartResult{}, nil
+}
+func (e *deleteEngine) Cancel(context.Context, string) (agenttools.CancelResult, error) {
+	return agenttools.CancelResult{}, nil
+}
+func (e *deleteEngine) Deliver(context.Context, string, bool) (agenttools.DeliverResult, error) {
+	return agenttools.DeliverResult{}, nil
+}
+func (e *deleteEngine) Delete(_ context.Context, runID string) (agenttools.DeleteResult, error) {
+	e.deleted = append(e.deleted, runID)
+	return agenttools.DeleteResult{RunID: runID, Status: "delivery_pending", Deleted: true}, nil
+}
+
+// TestDeleteToolExecutes asserts the workflow_delete tool decodes run_id,
+// forwards it to the engine, and encodes the DeleteResult within budget.
+func TestDeleteToolExecutes(t *testing.T) {
+	engine := &deleteEngine{}
+	svc := testService(t, workflowledger.NewMemoryRepository(), engine)
+	tool := findTool(t, svc, agenttools.ToolWorkflowDelete)
+
+	if tool.Name() != agenttools.ToolWorkflowDelete {
+		t.Fatalf("Name = %q, want %q", tool.Name(), agenttools.ToolWorkflowDelete)
+	}
+	if tool.Class() != "write" {
+		t.Fatalf("Class = %q, want write", tool.Class())
+	}
+	if tool.ResultBudgetBytes() <= 0 {
+		t.Fatalf("ResultBudgetBytes = %d, want > 0", tool.ResultBudgetBytes())
+	}
+	if strings.TrimSpace(tool.Description()) == "" {
+		t.Fatal("empty description")
+	}
+	params := tool.Parameters()
+	props, _ := params["properties"].(map[string]any)
+	if _, ok := props["run_id"]; !ok {
+		t.Fatal("parameters missing run_id")
+	}
+	req, _ := params["required"].([]string)
+	if len(req) != 1 || req[0] != "run_id" {
+		t.Fatalf("required = %v, want [run_id]", req)
+	}
+
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"run_id":"wfr-x"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(engine.deleted) != 1 || engine.deleted[0] != "wfr-x" {
+		t.Fatalf("engine deletes = %v, want [wfr-x]", engine.deleted)
+	}
+	if !strings.Contains(out, `"deleted":true`) || !strings.Contains(out, `"run_id":"wfr-x"`) {
+		t.Fatalf("output = %s, want deleted:true for wfr-x", out)
+	}
+}
+
+// TestDeleteToolInvalidArguments pins fail-closed arg parsing: malformed JSON
+// and a missing required field both refuse without touching the engine.
+func TestDeleteToolInvalidArguments(t *testing.T) {
+	engine := &deleteEngine{}
+	svc := testService(t, workflowledger.NewMemoryRepository(), engine)
+	tool := findTool(t, svc, agenttools.ToolWorkflowDelete)
+
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{`)); err == nil {
+		t.Fatal("malformed JSON accepted")
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{}`)); err == nil {
+		t.Fatal("missing run_id accepted")
+	}
+	if len(engine.deleted) != 0 {
+		t.Fatalf("engine deletes = %v, want none", engine.deleted)
+	}
+}
+
+// TestDeleteServiceRequiresRunID pins that blank run_id is refused before the
+// engine is consulted.
+func TestDeleteServiceRequiresRunID(t *testing.T) {
+	engine := &deleteEngine{}
+	svc := testService(t, workflowledger.NewMemoryRepository(), engine)
+	if _, err := svc.Delete(context.Background(), ""); err == nil {
+		t.Fatal("empty run_id accepted")
+	}
+	if _, err := svc.Delete(context.Background(), "   "); err == nil {
+		t.Fatal("blank run_id accepted")
+	}
+	if len(engine.deleted) != 0 {
+		t.Fatalf("engine deletes = %v, want none", engine.deleted)
+	}
+}
+
+// TestDeleteServiceNoEngine pins the fail-closed refusal when no engine is
+// configured (e.g. a read-only session).
+func TestDeleteServiceNoEngine(t *testing.T) {
+	svc, err := agenttools.NewService(agenttools.ServiceOptions{
+		Repo: func(context.Context) (workflowledger.Repository, func(), error) {
+			return workflowledger.NewMemoryRepository(), func() {}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if _, err := svc.Delete(context.Background(), "wfr-x"); err == nil || !strings.Contains(err.Error(), "engine") {
+		t.Fatalf("Delete without engine = %v, want engine refusal", err)
+	}
+}
