@@ -317,6 +317,7 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
+		err = markTransientReadDeadline(callCtx, req.Timeout, err)
 		return "", fmt.Errorf("%s: request failed: %w", c.name, err)
 	}
 	defer resp.Body.Close()
@@ -339,7 +340,7 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return full.String(), fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, ctx.Err(), deadlineLabel(req.Timeout))
+				return full.String(), fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, req.Timeout, ctx.Err()), deadlineLabel(req.Timeout))
 			}
 			return full.String(), ctx.Err()
 		default:
@@ -398,7 +399,7 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 	}
 	if err := sc.Err(); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return full.String(), fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, err, deadlineLabel(req.Timeout))
+			return full.String(), fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, req.Timeout, err), deadlineLabel(req.Timeout))
 		}
 		return full.String(), fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
@@ -455,6 +456,7 @@ func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatRespon
 	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
+		err = markTransientReadDeadline(ctx, req.Timeout, err)
 		return nil, asTransient(fmt.Errorf("%s: request failed: %w", c.name, err))
 	}
 	defer resp.Body.Close()
@@ -464,7 +466,7 @@ func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatRespon
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, asTransient(fmt.Errorf("%s: read response: %w (request deadline %s)", c.name, err, deadlineLabel(req.Timeout)))
+			return nil, asTransient(fmt.Errorf("%s: read response: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, req.Timeout, err), deadlineLabel(req.Timeout)))
 		}
 		return nil, asTransient(fmt.Errorf("%s: read response: %w", c.name, err))
 	}
