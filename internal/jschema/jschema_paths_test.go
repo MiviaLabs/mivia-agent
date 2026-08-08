@@ -321,3 +321,79 @@ func TestFormatValidationErrPrefersBasicOutputAndStaysBounded(t *testing.T) {
 		t.Fatalf("oversized validation error not bounded: %d bytes", got)
 	}
 }
+
+func TestStripOneCodeFenceAllowsThreeBacktickContentInFourBacktickFence(t *testing.T) {
+	// A 4-backtick fence whose body contains a line starting with exactly 3
+	// backticks is valid CommonMark (§4.5): a fenced code block opened with N
+	// backticks can contain lines of N-1 or fewer backticks. The function's doc
+	// comment advertises 4-backtick support but the hardcoded triple-backtick
+	// guard at line ~160 incorrectly rejects this input.
+	in := "````\nregular line\n``` not a fence, 3 backticks < 4\nalso ok\n````"
+	want := "regular line\n``` not a fence, 3 backticks < 4\nalso ok"
+	if got := StripOneCodeFence(in); got != want {
+		t.Fatalf("4-backtick fence with 3-backtick body line was not stripped: got %q, want %q", got, want)
+	}
+}
+
+func TestStripOneCodeFenceRejectsNBacktickContentInNBacktickFence(t *testing.T) {
+	// A body line starting with N backticks inside an N-backtick fence is
+	// ambiguous and must not be stripped.  N=4 case.
+	in := "````\nregular\n````ambiguous — 4 backticks = fence width\n````"
+	if got := StripOneCodeFence(in); got != in {
+		t.Fatalf("4-backtick fence with 4-backtick body line was stripped: %q", got)
+	}
+	// 5-backtick fence: body lines with 3 or 4 backticks must strip, body line
+	// with 5 backticks must reject.
+	in5 := "`````\n```` four backticks < 5, ok\n``` three backticks < 5, ok\n````` five backticks == 5, ambiguous\n`````"
+	if got := StripOneCodeFence(in5); got != in5 {
+		t.Fatalf("5-backtick fence with 5-backtick body line was stripped: %q", got)
+	}
+	// 5-backtick fence with only safe body lines: must strip.
+	in5safe := "`````\n```` four, ok\n``` three, ok\n`````"
+	want5safe := "```` four, ok\n``` three, ok"
+	if got := StripOneCodeFence(in5safe); got != want5safe {
+		t.Fatalf("5-backtick fence with safe body lines was not stripped: got %q, want %q", got, want5safe)
+	}
+}
+
+func FuzzStripOneCodeFence(f *testing.F) {
+	// Seed corpus with key shapes.
+	f.Add("```json\n{\"a\":1}\n```")
+	f.Add("````json\n{\"a\":1,\"code\":\"```\"}\n````")
+	f.Add("````\nregular line\n``` not a fence\n````")
+	f.Add("````\nregular\n````ambiguous\n````")
+	f.Add("```\n```inner```\n```")
+	f.Add("plain body")
+	f.Add("```only")
+	f.Add("```\nunterminated")
+	f.Fuzz(func(t *testing.T, s string) {
+		// Invariant: the function never panics.
+		got := StripOneCodeFence(s)
+		// Output is either the original string or a proper substring of the
+		// trimmed input.
+		trimmed := strings.TrimSpace(s)
+		if got != s && got != trimmed {
+			// When output differs from input, it must be the body content
+			// stripped of a well-formed fence.
+			lines := strings.Split(trimmed, "\n")
+			if len(lines) < 2 {
+				t.Fatalf("output differs but trimmed has < 2 lines: %q → %q", s, got)
+			}
+			open := lines[0]
+			backticks := 0
+			for backticks < len(open) && open[backticks] == '`' {
+				backticks++
+			}
+			if backticks < 3 {
+				t.Fatalf("stripped but opening fence has %d backticks: %q → %q", backticks, s, got)
+			}
+			// Verify no body line starts with N or more backticks.
+			repeat := strings.Repeat("`", backticks)
+			for _, line := range strings.Split(got, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), repeat) {
+					t.Fatalf("stripped body contains a line starting with %d backticks: %q in %q", backticks, line, got)
+				}
+			}
+		}
+	})
+}
