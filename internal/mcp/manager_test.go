@@ -100,6 +100,24 @@ func TestManagerAppliesServerTimeout(t *testing.T) {
 	}
 }
 
+func TestManagerOwnsDiscoveredTool(t *testing.T) {
+	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
+		ID: "repository", Transport: "stdio", Command: "/bin/echo",
+	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
+		return toolListClient{tools: []remoteTool{{Name: "read"}}}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrappers, err := m.EnsureServers(context.Background(), []string{"repository"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.OwnsTool(wrappers[0].Name()) {
+		t.Fatalf("OwnsTool(%q) = false", wrappers[0].Name())
+	}
+}
+
 func TestNewHTTPClientUsesBoundedTransport(t *testing.T) {
 	endpoint, err := url.Parse("https://example.test/mcp")
 	if err != nil {

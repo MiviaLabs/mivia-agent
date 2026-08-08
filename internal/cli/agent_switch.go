@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/mcp"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -30,6 +31,9 @@ type agentSessionState struct {
 	// ToolBase is the post-dispatcher, pre-scope registry for re-scoping.
 	// Nil when tools are off.
 	ToolBase *tools.Registry
+	// MCPManager owns the session-wide MCP clients. Agent switches borrow it to
+	// discover newly selected server tools without starting another client.
+	MCPManager *mcp.Manager
 	// SkillScope is the immutable per-instance skill policy for the selected
 	// root agent, including the final live tool registry snapshot (plan 43).
 	// Set at dispatcher attach and agent switch; read by the TUI slash path.
@@ -211,6 +215,9 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	if err != nil {
 		return err
 	}
+	if err := ensureSelectedMCPTools(state, selected); err != nil {
+		return fmt.Errorf("MCP tools: %w", err)
+	}
 	if !state.BaselineCaptured {
 		state.BaselinePrompt, state.BaselineMaxSteps = sess.AgentSettings()
 		state.BaselineCaptured = true
@@ -247,7 +254,6 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	sess.ResetAdmissions()
 	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(candidate.registry))
-	// A new binding starts with nothing admitted, so nothing is loaded yet.
 	recordSchemaMassLocked(sess, state, candidate.plan, nil, sel.Name, "agent_switch")
 	if state.TierPlan.Deferred() {
 		sess.SetSurfaceWidener(newSurfaceWidener(sess, res, state))

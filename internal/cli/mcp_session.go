@@ -17,34 +17,92 @@ func sessionMCPConfig(res *config.Resolved) config.MCPConfig {
 	return res.MCP
 }
 
-func addRootMCPTools(registry *tools.Registry, cfg *config.Resolved, selected *agents.ResolvedAgent) (func(), error) {
-	if registry == nil || cfg == nil || selected == nil || len(selected.EffectiveMCPServers) == 0 {
-		return func() {}, nil
+func setupSessionMCPTools(registry *tools.Registry, cfg *config.Resolved, selected *agents.ResolvedAgent) (*mcp.Manager, func(), error) {
+	manager, err := newMCPManager(cfg)
+	if err != nil {
+		return nil, nil, err
 	}
-	return addMCPTools(registry, cfg, selected.EffectiveMCPServers)
+	if selected != nil {
+		err = registerMCPTools(registry, manager, selected.EffectiveMCPServers)
+	}
+	if err != nil {
+		if manager != nil {
+			_ = manager.Close()
+		}
+		return nil, nil, err
+	}
+	return manager, func() {
+		if manager != nil {
+			_ = manager.Close()
+		}
+	}, nil
 }
 
-func addMCPTools(registry *tools.Registry, cfg *config.Resolved, serverIDs []string) (func(), error) {
-	if registry == nil || cfg == nil || len(serverIDs) == 0 {
-		return func() {}, nil
+func addRootMCPTools(registry *tools.Registry, cfg *config.Resolved, selected *agents.ResolvedAgent) (func(), error) {
+	manager, err := newMCPManager(cfg)
+	if err != nil || manager == nil {
+		return func() {}, err
 	}
-	manager, err := mcp.NewManager(cfg.MCP, mcp.ManagerOptions{RedactionPolicy: cfg.RedactionPolicy})
-	if err != nil {
-		return nil, err
+	if selected != nil {
+		err = registerMCPTools(registry, manager, selected.EffectiveMCPServers)
 	}
-	wrappers, err := manager.EnsureServers(context.Background(), serverIDs)
 	if err != nil {
 		_ = manager.Close()
 		return nil, err
 	}
+	return func() { _ = manager.Close() }, nil
+}
+
+func newMCPManager(cfg *config.Resolved) (*mcp.Manager, error) {
+	if cfg == nil || !cfg.MCP.Enabled {
+		return nil, nil
+	}
+	return mcp.NewManager(cfg.MCP, mcp.ManagerOptions{RedactionPolicy: cfg.RedactionPolicy})
+}
+
+func addMCPTools(registry *tools.Registry, cfg *config.Resolved, serverIDs []string) (func(), error) {
+	manager, err := newMCPManager(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if manager == nil {
+		return func() {}, nil
+	}
+	if err := registerMCPTools(registry, manager, serverIDs); err != nil {
+		_ = manager.Close()
+		return nil, err
+	}
+	return func() { _ = manager.Close() }, nil
+}
+
+func registerMCPTools(registry *tools.Registry, manager *mcp.Manager, serverIDs []string) error {
+	if registry == nil || manager == nil || len(serverIDs) == 0 {
+		return nil
+	}
+	wrappers, err := manager.EnsureServers(context.Background(), serverIDs)
+	if err != nil {
+		return err
+	}
 	for _, wrapper := range wrappers {
 		if _, exists := registry.Get(wrapper.Name()); exists {
-			_ = manager.Close()
-			return nil, fmt.Errorf("MCP tool %q collides with registry", wrapper.Name())
+			if manager.OwnsTool(wrapper.Name()) {
+				continue
+			}
+			return fmt.Errorf("MCP tool %q collides with registry", wrapper.Name())
 		}
 	}
 	for _, wrapper := range wrappers {
+		if _, exists := registry.Get(wrapper.Name()); exists {
+			continue
+		}
 		registry.Register(wrapper)
 	}
-	return func() { _ = manager.Close() }, nil
+	return nil
+}
+
+func ensureSelectedMCPTools(state *agentSessionState, selected agents.ResolvedAgent) error {
+	if state == nil {
+		return nil
+	}
+	return registerMCPTools(state.ToolBase, state.MCPManager, selected.EffectiveMCPServers)
 }

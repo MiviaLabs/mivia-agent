@@ -329,6 +329,20 @@ func (m *Manager) server(id string) (config.MCPServerConfig, bool) {
 	return config.MCPServerConfig{}, false
 }
 
+// OwnsTool reports whether name is one wrapper this manager discovered.
+func (m *Manager) OwnsTool(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, wrappers := range m.tools {
+		for _, wrapper := range wrappers {
+			if wrapper.Name() == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Close closes every connected MCP client.
 func (m *Manager) Close() error {
 	m.mu.Lock()

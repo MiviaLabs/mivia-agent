@@ -148,9 +148,12 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess.Tools == nil {
 		return func() {}, nil
 	}
-	closeMCP, err := addRootMCPTools(sess.Tools, routing.Resolved, ctx.Selected)
+	mcpManager, closeMCP, err := setupSessionMCPTools(sess.Tools, routing.Resolved, ctx.Selected)
 	if err != nil {
 		return nil, fmt.Errorf("MCP tools: %w", err)
+	}
+	if state != nil {
+		state.MCPManager = mcpManager
 	}
 	surface := scopeAttachedToolSurface(sess, ctx, state, skillReg, routing)
 	plan, liveScope := surface.plan, surface.skillScope
