@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestManagerEnsuresOnlyRequestedServerOnce(t *testing.T) {
@@ -31,6 +33,30 @@ func TestManagerEnsuresOnlyRequestedServerOnce(t *testing.T) {
 	}
 	if got := connects.Load(); got != 1 {
 		t.Fatalf("connect count = %d, want 1", got)
+	}
+}
+
+func TestStreamableHTTPDiscoversAndCallsTool(t *testing.T) {
+	server := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+	sdk.AddTool(server, &sdk.Tool{Name: "echo", Description: "returns text"}, func(context.Context, *sdk.CallToolRequest, struct{}) (*sdk.CallToolResult, any, error) {
+		return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "reply"}}}, nil, nil
+	})
+	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, &sdk.StreamableHTTPOptions{JSONResponse: true})
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+
+	client, err := connectStreamableHTTP(context.Background(), config.MCPServerConfig{Transport: "streamable_http", URL: httpServer.URL})
+	if err != nil {
+		t.Fatalf("connectStreamableHTTP() error = %v", err)
+	}
+	defer client.Close()
+	remote, err := client.ListTools(context.Background())
+	if err != nil || len(remote) != 1 || remote[0].Name != "echo" {
+		t.Fatalf("ListTools() = %#v, %v", remote, err)
+	}
+	result, err := client.CallTool(context.Background(), "echo", map[string]any{})
+	if err != nil || result != "reply" {
+		t.Fatalf("CallTool() = %q, %v", result, err)
 	}
 }
 
