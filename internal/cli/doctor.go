@@ -23,6 +23,7 @@ func runDoctorWithIO(args []string, stdout, stderr io.Writer) error {
 	view, catalogErr := loadAgentCatalog(workspaceRoot)
 	res, err := config.Load(config.LoadOptions{
 		ConfigPath:         cfgPath,
+		WorkspaceRoot:      workspaceRoot,
 		AllowMissingConfig: true,
 	})
 	if err != nil {

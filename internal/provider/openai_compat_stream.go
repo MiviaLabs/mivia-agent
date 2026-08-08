@@ -97,7 +97,7 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, ctx.Err(), deadlineLabel(timeout))
+				return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, timeout, ctx.Err()), deadlineLabel(timeout))
 			}
 			return "", "", nil, nil, "", false, nil, ctx.Err()
 		default:
@@ -117,7 +117,7 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	}
 	if err := sc.Err(); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return "", "", nil, nil, "", false, nil, asTransient(fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, err, deadlineLabel(timeout)))
+			return "", "", nil, nil, "", false, nil, asTransient(fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, timeout, err), deadlineLabel(timeout)))
 		}
 		// A stream torn mid-body never delivered an answer.
 		return "", "", nil, nil, "", false, nil, asTransient(fmt.Errorf("%s: stream read: %w", c.name, err))

@@ -570,12 +570,28 @@ func TestRuneWidth(t *testing.T) {
 		{"你好", 4},        // 2 CJK × 2
 		{"a你b好c", 7},     // 3 ASCII + 4 CJK
 		{"Hello 世界", 10}, // 7 ASCII + 4 CJK (space = 1) -> wait: H(1)e(1)l(1)l(1)o(1) (1)世(2)界(2) = 10
+		{"😀", 2},
+		{"e\u0301", 1},
+		{"Ａ", 2},
+		{"A　B", 4},
 	}
 	for _, tt := range tests {
 		got := runeWidth(tt.input)
 		if got != tt.want {
 			t.Errorf("runeWidth(%q) = %d, want %d", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestTruncateToWidthUsesTerminalWidth(t *testing.T) {
+	if got := truncateToWidth("😀a", 1); got != "" {
+		t.Fatalf("truncateToWidth emoji = %q, want empty", got)
+	}
+	if got := truncateToWidth("Ａa", 2); got != "Ａ" {
+		t.Fatalf("truncateToWidth fullwidth = %q", got)
+	}
+	if got := truncateToWidth("1️⃣a", 1); got != "1️⃣" {
+		t.Fatalf("truncateToWidth keycap = %q", got)
 	}
 }
 

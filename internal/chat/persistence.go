@@ -76,6 +76,8 @@ func cleanupSessionIOLock(dir string) {
 
 // SessionInfo is the public metadata for a saved session.
 type SessionInfo struct {
+	SessionID    string    `json:"session_id,omitempty"`
+	Title        string    `json:"title,omitempty"`
 	Name         string    `json:"name"`
 	Model        string    `json:"model"`
 	Provider     string    `json:"provider"`
@@ -93,6 +95,14 @@ type SessionInfo struct {
 	WorktreeRoute bool `json:"worktree_route,omitempty"`
 	// WorktreeInstance retains the exact managed worktree for picker actions.
 	WorktreeInstance contextstate.WorktreeInstance `json:"worktree_instance,omitempty"`
+}
+
+// Reference returns the durable ID when it exists, else the legacy save name.
+func (s SessionInfo) Reference() string {
+	if s.SessionID != "" {
+		return s.SessionID
+	}
+	return s.Name
 }
 
 // sessionMeta is the on-disk metadata shape (extensible).

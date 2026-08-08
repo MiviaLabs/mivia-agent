@@ -39,11 +39,36 @@ func decodeCatalogMessages(data []byte) ([]provider.Message, error) {
 func sessionInfoFromCatalog(info contextstate.SessionCatalogInfo) SessionInfo {
 	created, _ := time.Parse(time.RFC3339Nano, info.CreatedAt)
 	updated, _ := time.Parse(time.RFC3339Nano, info.UpdatedAt)
-	return SessionInfo{Name: info.Name, Model: info.Model, Provider: info.Provider,
+	return SessionInfo{SessionID: info.SessionID, Title: info.Title, Name: info.Name, Model: info.Model, Provider: info.Provider,
 		CreatedAt: created, UpdatedAt: updated, TurnCount: info.TurnCount,
 		TokenCount: info.TokenCount, MessageCount: info.MessageCount, ChunkCount: 1,
 		Dir: info.Dir, Worktree: info.Worktree, WorktreeRoute: info.WorktreeRoute,
 		WorktreeInstance: info.WorktreeInstance}
+}
+
+// SetContextSessionTitle changes display metadata for a durable context session.
+func (s *Session) SetContextSessionTitle(sessionID, title string) error {
+	s.mu.RLock()
+	instance := s.contextWorktree
+	s.mu.RUnlock()
+	return s.SetContextSessionTitleInWorktree(sessionID, title, instance)
+}
+
+// SetContextSessionTitleInWorktree changes title metadata in the given worktree.
+func (s *Session) SetContextSessionTitleInWorktree(sessionID, title string, instance contextstate.WorktreeInstance) error {
+	catalog, principal, ok := s.contextCatalogState()
+	if !ok {
+		return fmt.Errorf("context session titles are not configured")
+	}
+	title, err := contextstate.NormalizeSessionTitle(title)
+	if err != nil {
+		return err
+	}
+	titles, ok := catalog.(contextstate.SessionTitleCatalog)
+	if !ok {
+		return fmt.Errorf("context session titles are not configured")
+	}
+	return titles.SetSessionTitle(context.Background(), principal, sessionID, title, instance)
 }
 
 func (s *Session) saveContextSession(name string, msgs []provider.Message, selection ModelBinding) error {

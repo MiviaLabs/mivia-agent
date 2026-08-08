@@ -4,6 +4,9 @@
 Modes:
   --staged     only staged *.go (pre-commit)
   --all        all tracked *.go under cmd/ and internal/ (pre-push / make)
+  --worktree   all *.go on disk under cmd/ and internal/, tracked or not
+               (in-loop workflow gate; the sandbox git index is empty, so
+               --all would check zero files)
   --paths ...  explicit paths
 
 Exit codes:
@@ -69,14 +72,26 @@ def git_tracked_go() -> list[Path]:
     )
     if r.returncode != 0:
         # fallback glob
-        return sorted(ROOT.joinpath("internal").rglob("*.go")) + sorted(
-            ROOT.joinpath("cmd").rglob("*.go")
-        )
+        return git_worktree_go()
     paths = []
     for f in r.stdout.strip("\0").split("\0"):
         if f.endswith(".go"):
             paths.append(ROOT / f)
     return paths
+
+
+def git_worktree_go() -> list[Path]:
+    """Return every *.go on disk under cmd/ and internal/.
+
+    This is the in-loop workflow gate shape: the verifier sandbox runs
+    `git init` with an empty index and never stages the change, so
+    --all (git ls-files) checks zero files and a new untracked test file is
+    invisible. Scanning the filesystem like a fresh checkout covers tracked
+    and untracked files alike.
+    """
+    return sorted(ROOT.joinpath("internal").rglob("*.go")) + sorted(
+        ROOT.joinpath("cmd").rglob("*.go")
+    )
 
 
 def is_test(path: Path) -> bool:
@@ -260,6 +275,7 @@ def main() -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--staged", action="store_true", help="Staged Go files only")
     g.add_argument("--all", action="store_true", help="All tracked Go under cmd/internal")
+    g.add_argument("--worktree", action="store_true", help="All Go on disk under cmd/internal (tracked or not)")
     ap.add_argument("paths", nargs="*", help="Explicit paths")
     ap.add_argument(
         "--strict",
@@ -273,6 +289,8 @@ def main() -> int:
         paths = [Path(p) if Path(p).is_absolute() else ROOT / p for p in args.paths]
     elif args.all:
         paths = git_tracked_go()
+    elif args.worktree:
+        paths = git_worktree_go()
     else:
         # default staged for hook ergonomics
         paths = git_staged_go()

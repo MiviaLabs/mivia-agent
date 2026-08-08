@@ -142,11 +142,14 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	skillReg = sessionSkillRegistry(root, ctx, skillReg)
 	skillScope := skillScopeFromAgent(ctx.Selected)
 	modelCatalog := routing.Catalog
-	// The TUI binding must reflect the root agent's policy. Keep skillReg itself
-	// complete for explicitly routed task agents, which validate their own scope.
+	// Keep skillReg complete for explicitly routed task agents.
 	sess.SetBindingSkillRegistry(filterSkillsForScope(skillReg, skillScope))
 	if sess.Tools == nil {
 		return func() {}, nil
+	}
+	mcpManager, closeMCP, err := setupSessionMCPTools(sess.Tools, routing.Resolved, ctx.Selected)
+	if err != nil {
+		return nil, fmt.Errorf("MCP tools: %w", err)
 	}
 	surface := scopeAttachedToolSurface(sess, ctx, state, skillReg, routing)
 	plan, liveScope := surface.plan, surface.skillScope
@@ -163,6 +166,8 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		ModelCatalog:              modelCatalog,
 		CompleterFactory:          routing.CompleterFactory,
 		Config:                    cfg,
+		MCP:                       sessionMCPConfig(routing.Resolved),
+		EnsureMCPTools:            ensureMCPServerTools(surface.authority, mcpManager),
 		ToolResultCapBytes:        sess.MaxToolResultChars,
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		WorkspaceRoot:             root,
@@ -180,12 +185,16 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		Session:                   sess,
 	})
 	if err != nil {
+		closeMCP()
 		// No cleanup is handed back on this path, so the store adopted just
 		// above would otherwise stay open for the life of the process.
 		releaseSessionLedgerRepo(state)
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
+	if state != nil {
+		state.MCPManager = mcpManager
+	}
 	recordSchemaMass(sess, state, plan, sess.AdmittedTools(), agentNameOf(ctx.Selected), "attach")
 	if plan.Deferred() && state != nil {
 		sess.SetSurfaceWidener(newSurfaceWidener(sess, routing.Resolved, state))
@@ -194,7 +203,8 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	// Same spool instance the registered read_output tool holds, so a
 	// truncation notice minted by the root loop resolves for this session.
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(sess.Tools))
-	return sessionSurfaceCleanup(sess, state), nil
+	cleanup := sessionSurfaceCleanup(sess, state)
+	return func() { cleanup(); closeMCP() }, nil
 }
 
 // adoptSessionLedgerRepo gives the SESSION ownership of the ledger store the
@@ -281,11 +291,14 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	// Authority is the root scope without the tier split: deferring a tool
 	// withholds its schema from the root model, it does not revoke the session's
 	// authority to delegate it.
-	authority, disabled := scopedRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
+	authority, _ := scopedRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions)
 	// Attach is an entry point, so this is where the operator hears about tool
 	// names their agent asks for and this build cannot offer - once, before any
-	// turn starts and before the TUI owns the terminal.
-	warnDisabledAgentTools(ctx.Selected, disabled)
+	// turn starts and before the TUI owns the terminal. The disabled set comes
+	// from the agent's effective tools (disabledForAgent), not from the scoped
+	// build: the scope intersects with the registry, so its own report is
+	// always empty.
+	warnDisabledAgentTools(ctx.Selected, disabledForAgent(ctx.Selected, sess.Tools))
 	sess.Tools = tieredRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions, plan, nil)
 	applyDeferredToolPrompt(sess, routing.Resolved, plan)
 	// Rebuild the skill policy against the final live authority registry (plan

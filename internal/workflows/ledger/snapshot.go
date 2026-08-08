@@ -53,17 +53,20 @@ type DeliverySnapshot struct {
 // resolved agent/schema/template/verifier references. Resume never re-reads a
 // changed TOML file: everything needed is in this snapshot.
 type Snapshot struct {
-	SchemaVersion    int                             `json:"schema_version"`
-	DefinitionTOML   []byte                          `json:"definition_toml"`
-	DefinitionDigest string                          `json:"definition_digest"`
-	Inputs           map[string]string               `json:"inputs,omitempty"`
-	Agents           map[string]AgentSnapshot        `json:"agents,omitempty"`
-	PanelBindings    map[string]PanelBindingSnapshot `json:"panel_bindings,omitempty"`
-	Schemas          map[string]RefSnapshot          `json:"schemas,omitempty"`
-	Templates        map[string]RefSnapshot          `json:"templates,omitempty"`
-	Skills           map[string]RefSnapshot          `json:"skills,omitempty"`
-	Verifiers        map[string]RefSnapshot          `json:"verifiers,omitempty"`
-	Delivery         *DeliverySnapshot               `json:"delivery,omitempty"`
+	SchemaVersion    int    `json:"schema_version"`
+	DefinitionTOML   []byte `json:"definition_toml"`
+	DefinitionDigest string `json:"definition_digest"`
+	// MCPConfigDigest pins the enabled MCP authority without storing server
+	// commands, URLs, headers, environment names, or values.
+	MCPConfigDigest string                          `json:"mcp_config_digest,omitempty"`
+	Inputs          map[string]string               `json:"inputs,omitempty"`
+	Agents          map[string]AgentSnapshot        `json:"agents,omitempty"`
+	PanelBindings   map[string]PanelBindingSnapshot `json:"panel_bindings,omitempty"`
+	Schemas         map[string]RefSnapshot          `json:"schemas,omitempty"`
+	Templates       map[string]RefSnapshot          `json:"templates,omitempty"`
+	Skills          map[string]RefSnapshot          `json:"skills,omitempty"`
+	Verifiers       map[string]RefSnapshot          `json:"verifiers,omitempty"`
+	Delivery        *DeliverySnapshot               `json:"delivery,omitempty"`
 }
 
 // MarshalSnapshot serializes the snapshot to its canonical JSON form. The

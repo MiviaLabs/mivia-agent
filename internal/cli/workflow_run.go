@@ -99,6 +99,7 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	if err != nil {
 		return err
 	}
+	logMCPWarnings(stderr, prepared.res)
 	defer prepared.closeFn()
 	runID := newCLIWorkflowRunID()
 	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
@@ -170,7 +171,7 @@ func prepareWorkflowRun(name, root, configPath string, rawInputs []string) (*pre
 		return nil, err
 	}
 	configPath = workflowConfigPath(work.Abs, configPath)
-	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
 	if err != nil {
 		return nil, err
 	}
@@ -335,6 +336,16 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.Compil
 		cleanup()
 		return workflowBuildSetup{}, err
 	}
+	closeMCP, err := addMCPTools(authority, res, workflowMCPServers(wf, loaded.Registry))
+	if err != nil {
+		cleanup()
+		return workflowBuildSetup{}, err
+	}
+	previousCleanup := cleanup
+	cleanup = func() {
+		closeMCP()
+		previousCleanup()
+	}
 	remoteURL, err := workflowBuildRemoteURL(wf, identity, writeCapable, recorded)
 	if err != nil {
 		cleanup()
@@ -356,7 +367,7 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 		return nil, SessionDispatcherOpts{}, nil, err
 	}
 	legacy := ledger.NewStorageLedgerRepository(store)
-	opts := SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res), Config: res.Subagents, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root}
+	opts := SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res), Config: res.Subagents, MCP: res.MCP, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root}
 	dispatcher, err := workflowBuildDispatcher(opts)
 	if err != nil {
 		return nil, SessionDispatcherOpts{}, nil, err

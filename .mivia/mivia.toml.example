@@ -334,6 +334,38 @@ secret_path_exceptions = [
 # ---------------------------------------------------------------------------
 # Third-party integrations
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Model Context Protocol (MCP) servers
+# ---------------------------------------------------------------------------
+# MCP configuration stores environment VARIABLE NAMES only. Do not put a token
+# or a header value in this file. A project .mivia/mivia.toml may define MCP
+# servers. A project server replaces a user server with the same id.
+# [mcp]
+# enabled = true
+# startup_timeout_seconds = 10
+# max_servers = 16
+# max_tools_per_server = 64
+# max_tool_schema_bytes = 65536
+# max_tool_description_bytes = 4096
+# max_tool_result_bytes = 65536
+#
+# [[mcp.servers]]
+# id = "repository"
+# transport = "stdio"
+# command = "/usr/local/bin/repository-mcp"
+# args = ["serve"]
+# env = ["REPOSITORY_MCP_TOKEN"]
+# global = true
+# timeout_seconds = 30
+#
+# [[mcp.servers]]
+# id = "issues"
+# transport = "streamable_http"
+# url = "https://mcp.example.test/mcp"
+# headers = [{ name = "Authorization", value_env = "ISSUES_MCP_TOKEN" }]
+# global = false
+# timeout_seconds = 30
+
 [integrations.tavily]
 # Set the API key via TAVILY_API_KEY env var or in the env_file above.
 api_key_env = "TAVILY_API_KEY"

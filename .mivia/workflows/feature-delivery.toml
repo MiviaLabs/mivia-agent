@@ -228,14 +228,19 @@ output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
 # preflight_structure runs the repository's structure gate (check_go_structure
-# --strict) inside the sandbox so a change that passes go test/vet/race but
-# violates the project's own layout policy is caught in-loop: the failed
-# evidence routes to repair_preflight_structure and the agent fixes it before
-# delivery, instead of the delivery pre-commit hook hard-failing publication.
+# --strict --worktree) inside the sandbox so a change that passes go
+# test/vet/race but violates the project's own layout policy is caught in-loop:
+# the failed evidence routes to repair_preflight_structure and the agent fixes
+# it before delivery, instead of the delivery pre-commit hook hard-failing
+# publication. The gate uses --worktree, not --all: workflow agents write files
+# without git add, and the sandbox git index is empty (git init, nothing
+# staged), so --all (git ls-files) checks zero files and a new untracked test
+# file is invisible. --worktree scans the filesystem like a fresh checkout
+# (tracked and untracked), so the real tree is what the gate judges.
 [[steps]]
 id = "preflight_structure"
 kind = "evidence_gate"
-command = { check = "go-structure", program = "python3", args = ["scripts/check_go_structure.py", "--strict", "--all"] }
+command = { check = "go-structure", program = "python3", args = ["scripts/check_go_structure.py", "--strict", "--worktree"] }
 output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 

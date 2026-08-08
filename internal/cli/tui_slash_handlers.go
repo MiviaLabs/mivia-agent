@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
 // handleSlashImpl is the TUI slash dispatcher. The var form is a deliberate
@@ -42,6 +43,8 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return m.handleTuiSessionLifecycleSlash(cmd, fields)
 	case "/save", "/load", "/delete", "/list", "/session":
 		return m.handleTuiSessionStoreSlash(cmd, fields)
+	case "/title":
+		return m.handleTuiTitleSlash(cmd)
 	case "/select", "/plain":
 		return m.handleTuiMiscSlash(cmd, fields)
 	case "/resume":
@@ -53,6 +56,40 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return false
 	}
 }
+
+func (m *tuiModel) handleTuiTitleSlash(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	title := strings.TrimSpace(strings.TrimPrefix(cmd, fieldsFirst(cmd)))
+	sessionID := m.session.SessionID
+	instance := contextstate.WorktreeInstance{}
+	if m.activeSession != nil {
+		if m.activeSession.SessionID == "" {
+			m.appendInfo("title error: titles are not available for saved snapshots")
+			return true
+		}
+		sessionID = m.activeSession.Reference()
+		instance = m.activeSession.WorktreeInstance
+	}
+	var err error
+	if m.activeSession != nil {
+		err = m.session.SetContextSessionTitleInWorktree(sessionID, title, instance)
+	} else {
+		err = m.session.SetContextSessionTitle(sessionID, title)
+	}
+	if err != nil {
+		m.appendInfo("title error: " + err.Error())
+		return true
+	}
+	if err := m.refreshSessionList(); err != nil {
+		m.appendInfo("sessions refresh failed: " + err.Error())
+	} else {
+		m.renderVP()
+	}
+	m.appendInfo("session title updated")
+	return true
+}
+
+func fieldsFirst(cmd string) string { return strings.Fields(cmd)[0] }
 
 // handleTuiInfoSlash handles /help, /status, and /tools (reference overlays).
 func (m *tuiModel) handleTuiInfoSlash(cmd string, fields []string) bool {
@@ -272,7 +309,12 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 				if chat.IsAutoSaveName(si.Name) {
 					marker = " [auto]"
 				}
-				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", si.Name, si.MessageCount, marker)), Rendered: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", si.Name, si.MessageCount, marker))})
+				name := displaySessionName(si, latestAutoSaveName(sessions))
+				line := fmt.Sprintf("  %-20s %3d msgs%s", name, si.MessageCount, marker)
+				if si.SessionID != "" {
+					line += " · " + si.Reference()
+				}
+				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(line), Rendered: tuiDimStyle.Render(line)})
 			}
 		}
 		return true
@@ -287,7 +329,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 				m.appendInfo(deleteSessionResult(fields[1]))
 			}
 		} else {
-			m.appendInfo("usage: /delete <name>")
+			m.appendInfo("usage: /delete <session-id>")
 		}
 		return true
 	case "/session":
@@ -311,7 +353,7 @@ func (m *tuiModel) runLoadSlash(fields []string) {
 	}
 	if len(fields) < 2 {
 		// Correct usage string on TUI (classic preserves a historical typo).
-		m.appendInfo("usage: /load <name>")
+		m.appendInfo("usage: /load <session-id>")
 		return
 	}
 	if err := m.session.Load(fields[1]); err != nil {
@@ -324,7 +366,7 @@ func (m *tuiModel) runLoadSlash(fields []string) {
 	} else {
 		for i := range m.sessions {
 			si := m.sessions[i]
-			if si.Name == fields[1] && !si.WorktreeRoute {
+			if si.Reference() == fields[1] && !si.WorktreeRoute {
 				m.activeSession = &si
 				break
 			}

@@ -150,8 +150,33 @@ func unmarshalRunStatusChange(data []byte) (status string, completedAt *time.Tim
 	return p.Status, p.CompletedAt, nil
 }
 
-func marshalRunClosed() ([]byte, error) {
-	return []byte("{}"), nil
+// runClosedPayload is the JSON shape for run_closed events. Status and
+// CompletedAt are optional: CloseRun carries the terminal transition (status
+// canceled, completed_at) inside the single closure row, so the closure and
+// the terminal status land in ONE fenced append. Rows written before the
+// fields existed - or a hand-edited row - decode with zero values and close
+// through closeRebuiltRun exactly as they always did.
+type runClosedPayload struct {
+	Status      string     `json:"status,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+func marshalRunClosed(status string, completedAt *time.Time) ([]byte, error) {
+	return json.Marshal(runClosedPayload{Status: status, CompletedAt: completedAt})
+}
+
+// unmarshalRunClosed decodes a run_closed payload. It is deliberately lenient:
+// closure is the load-bearing fact and the optional status/completed_at fields
+// are a refinement, so a payload this package cannot decode still closes the
+// run through closeRebuiltRun (the legacy behavior) instead of wedging
+// catch-up. Unknown extra fields are ignored, as json.Unmarshal does for any
+// struct.
+func unmarshalRunClosed(data []byte) (status string, completedAt *time.Time) {
+	var p runClosedPayload
+	if err := json.Unmarshal(data, &p); err != nil {
+		return "", nil
+	}
+	return p.Status, p.CompletedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -179,29 +204,19 @@ func RebuildProjection(events []storage.Event) (RunSnapshot, []TaskSnapshot, []L
 			lifecycleEvents = nil
 
 		case storageKindRunCreated:
-			snap, err := unmarshalRunSnapshot(evt.Payload)
-			if err != nil {
+			if err := applyRebuiltRunCreated(&runSnap, evt.Payload); err != nil {
 				return RunSnapshot{}, nil, nil, err
 			}
-			runSnap = snap
 
 		case storageKindRunStatusChanged:
-			status, completedAt, err := unmarshalRunStatusChange(evt.Payload)
-			if err != nil {
+			if err := applyRebuiltRunStatusChanged(&runSnap, evt.Payload); err != nil {
 				return RunSnapshot{}, nil, nil, err
-			}
-			runSnap.Status = RunStatus(status)
-			if completedAt != nil {
-				t := *completedAt
-				runSnap.CompletedAt = &t
 			}
 
 		case storageKindTaskCreated:
-			snap, err := unmarshalTaskSnapshot(evt.Payload)
-			if err != nil {
+			if err := applyRebuiltTaskCreated(tasksMap, evt.Payload); err != nil {
 				return RunSnapshot{}, nil, nil, err
 			}
-			tasksMap[snap.TaskID] = snap
 
 		case storageKindTaskStatusChanged:
 			if err := rebuildTaskStatus(tasksMap, runSnap.RunID, evt.Payload); err != nil {
@@ -209,17 +224,9 @@ func RebuildProjection(events []storage.Event) (RunSnapshot, []TaskSnapshot, []L
 			}
 
 		case storageKindTaskOutputSet:
-			taskID, outputRef, errorRef, err := unmarshalOutputRefs(evt.Payload)
-			if err != nil {
+			if err := applyRebuiltTaskOutputSet(tasksMap, runSnap.RunID, evt.Payload); err != nil {
 				return RunSnapshot{}, nil, nil, err
 			}
-			task, ok := tasksMap[taskID]
-			if !ok {
-				task = TaskSnapshot{RunID: runSnap.RunID, TaskID: taskID}
-			}
-			task.OutputRef = outputRef
-			task.ErrorRef = errorRef
-			tasksMap[taskID] = task
 
 		case storageKindTaskAttempt:
 			if err := rebuildTaskAttempt(tasksMap, runSnap.RunID, evt.Payload); err != nil {
@@ -234,13 +241,79 @@ func RebuildProjection(events []storage.Event) (RunSnapshot, []TaskSnapshot, []L
 			}
 
 		case storageKindRunClosed:
-			closeRebuiltRun(&runSnap)
+			applyRebuiltRunClosed(&runSnap, evt.Payload)
 
 		default:
 		}
 	}
 
 	return runSnap, sortedRebuiltTasks(tasksMap), lifecycleEvents, nil
+}
+
+// applyRebuiltRunCreated applies a run_created event to the rebuilt snapshot.
+func applyRebuiltRunCreated(runSnap *RunSnapshot, payload []byte) error {
+	snap, err := unmarshalRunSnapshot(payload)
+	if err != nil {
+		return err
+	}
+	*runSnap = snap
+	return nil
+}
+
+// applyRebuiltRunStatusChanged applies a run_status_changed event to the
+// rebuilt snapshot.
+func applyRebuiltRunStatusChanged(runSnap *RunSnapshot, payload []byte) error {
+	status, completedAt, err := unmarshalRunStatusChange(payload)
+	if err != nil {
+		return err
+	}
+	runSnap.Status = RunStatus(status)
+	if completedAt != nil {
+		t := *completedAt
+		runSnap.CompletedAt = &t
+	}
+	return nil
+}
+
+// applyRebuiltTaskCreated applies a task_created event to the rebuilt task map.
+func applyRebuiltTaskCreated(tasksMap map[string]TaskSnapshot, payload []byte) error {
+	snap, err := unmarshalTaskSnapshot(payload)
+	if err != nil {
+		return err
+	}
+	tasksMap[snap.TaskID] = snap
+	return nil
+}
+
+// applyRebuiltTaskOutputSet applies a task_output_set event to the rebuilt
+// task map.
+func applyRebuiltTaskOutputSet(tasksMap map[string]TaskSnapshot, runID string, payload []byte) error {
+	taskID, outputRef, errorRef, err := unmarshalOutputRefs(payload)
+	if err != nil {
+		return err
+	}
+	task, ok := tasksMap[taskID]
+	if !ok {
+		task = TaskSnapshot{RunID: runID, TaskID: taskID}
+	}
+	task.OutputRef = outputRef
+	task.ErrorRef = errorRef
+	tasksMap[taskID] = task
+	return nil
+}
+
+// applyRebuiltRunClosed applies a run_closed event to the rebuilt snapshot.
+// Status and completed_at refine the closure; closeRebuiltRun is the fallback.
+func applyRebuiltRunClosed(runSnap *RunSnapshot, payload []byte) {
+	status, completedAt := unmarshalRunClosed(payload)
+	closeRebuiltRun(runSnap)
+	if status != "" {
+		runSnap.Status = RunStatus(status)
+	}
+	if completedAt != nil {
+		t := *completedAt
+		runSnap.CompletedAt = &t
+	}
 }
 
 func closeRebuiltRun(runSnap *RunSnapshot) {

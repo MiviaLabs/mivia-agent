@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -115,12 +116,17 @@ type Session struct {
 	// refund budget is per binding, not per streak, so the real ceiling on
 	// load_tools calls stays within maxConsecutiveAdmissionNoOps of
 	// tools.MaxAdmissionAttempts instead of being multiplied by it.
-	admissionRefunds  int
-	admissionNotes    []string
-	admissionAgent    string
-	admissionDigest   string
-	surfaceWidener    SurfaceWidener
-	operatorPromptCap int
+	admissionRefunds int
+	admissionNotes   []string
+	admissionAgent   string
+	admissionDigest  string
+	// admissionDeferralReason names why the last boundary deferred the pending
+	// stage, or "" when nothing deferred. The staged-tool denial and the
+	// load_tools result announce it, so a staged tool never reads as an
+	// unknown tool (DC-9: a status says what happened, not what was asked).
+	admissionDeferralReason string
+	surfaceWidener          SurfaceWidener
+	operatorPromptCap       int
 	// requestedPromptCap is the user's /budget choice. PromptBudget() reports
 	// only the effective capacity, so a surface wanting to say "your budget was
 	// reduced" can reach the same wrong answer the /effort dial once did:
@@ -323,7 +329,9 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		return "", err
 	}
 	defer done()
-	toolRegistry, turnDispatcher := resolveTurnExecutionSurface(snapshot.toolRegistry, snapshot.binding.Dispatcher, turn)
+	// Publish any stage an earlier boundary could not at the earliest safe
+	// point of this turn, and take the surface the loop must run on.
+	toolRegistry, turnDispatcher := s.surfaceForTurnStart(snapshot, turn)
 	loop := &agent.Loop{
 		Completer: snapshot.binding.Completer,
 		Tools:     toolRegistry,
@@ -360,6 +368,21 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	if turnDispatcher != nil {
 		opts.Dispatcher = turnDispatcher
 	}
+	// A tool staged by load_tools becomes callable only after the turn boundary
+	// publishes it. When that boundary defers (R2-1/R2-2), a call to the staged
+	// tool must report pending publication and the reason, instead of the
+	// unknown-tool denial. The check is dynamic so a same-turn stage is visible
+	// too, and it announces the deferral cause mid-turn.
+	opts.StagedToolMessage = func(name string) (string, bool) {
+		names, reason, ok := s.PendingAdmissionStatus()
+		if !ok || !slices.Contains(names, name) {
+			return "", false
+		}
+		if reason != "" {
+			return fmt.Sprintf("tool %q is staged for loading but publication is deferred because %s; retry the call on your next turn", name, reason), true
+		}
+		return fmt.Sprintf("tool %q is staged for loading but is not published to the live tool surface yet. Publication happens at a turn boundary and can be deferred; retry the call on your next turn", name), true
+	}
 	reply, err := loop.Run(ctx, userText, opts)
 
 	if persistErr := s.finishAgentTurn(ctx, loop, toolRegistry, userText, persistedText, snapshot.token, turn, snapshot.context, err); persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
@@ -374,6 +397,30 @@ func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
 	s.mu.Lock()
 	s.RemainderSpool = spool
 	s.mu.Unlock()
+}
+
+// surfaceForTurnStart publishes any stage an earlier boundary could not
+// (guarded boundary, failed save) at the earliest safe point of this turn: no
+// batch is running, so closing the previous dispatcher is safe (R2-1), and the
+// returned surface carries the staged tool so it is callable from the first
+// step (DC-9: the load_tools "next turn" promise must hold). A stage owned by
+// this not-yet-run turn stays deferred for its own boundary (D7). Turns with
+// nothing pending keep the snapshot path byte-for-byte.
+func (s *Session) surfaceForTurnStart(snapshot agentTurnSnapshot, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher) {
+	toolRegistry, turnDispatcher := resolveTurnExecutionSurface(snapshot.toolRegistry, snapshot.binding.Dispatcher, turn)
+	if !snapshot.pendingAdmission {
+		return toolRegistry, turnDispatcher
+	}
+	s.PublishPendingAdmissionAtTurnStart()
+	// The snapshot predates the start-of-turn publication. Read the live
+	// surface once so the loop's registry and dispatcher carry the staged tool
+	// and stay in agreement (INV-AG-29); a later mid-turn switch still cannot
+	// change what this turn captured.
+	s.mu.RLock()
+	liveTools := s.Tools
+	liveDispatcher := s.binding.Dispatcher
+	s.mu.RUnlock()
+	return resolveTurnExecutionSurface(liveTools, liveDispatcher, turn)
 }
 
 // adoptCalibration copies a finished turn's rolling token calibration back

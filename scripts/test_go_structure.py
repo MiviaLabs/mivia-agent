@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -22,6 +23,33 @@ def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
         stderr=subprocess.PIPE,
         check=False,
     )
+
+
+def make_tree_copy(violating: bool = True) -> Path:
+    """Create a temp tree that mirrors the layout --worktree scans.
+
+    The copy carries scripts/check_go_structure.py, the go-structure policy,
+    cmd/demo/main.go, and (unless violating is False) internal/demo/
+    close_run_atomicity_test.go whose TestCloseRunAtomicity() function spans
+    123 lines (hard max 120). No git repository exists; the files sit on disk
+    exactly as a fresh checkout would have them.
+    """
+    d = Path(tempfile.mkdtemp())
+    (d / "scripts").mkdir()
+    shutil.copy(str(CHECK), d / "scripts" / "check_go_structure.py")
+    (d / ".mivia" / "policy").mkdir(parents=True)
+    shutil.copy(str(POLICY), d / ".mivia" / "policy" / "go-structure.json")
+    (d / "cmd" / "demo").mkdir(parents=True)
+    (d / "cmd" / "demo" / "main.go").write_text(
+        "package main\n\nfunc main() {}\n", encoding="utf-8")
+    if violating:
+        (d / "internal" / "demo").mkdir(parents=True)
+        lines = ["package demo", "", "func TestCloseRunAtomicity() {"]
+        lines += [f"\t_ = {i}" for i in range(121)]
+        lines += ["}", ""]
+        (d / "internal" / "demo" / "close_run_atomicity_test.go").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8")
+    return d
 
 
 def test_policy_exists_and_thresholds() -> None:
@@ -87,6 +115,10 @@ def test_all_repo_exits_zero_today() -> None:
     """Current tree must pass (warnings OK) so hooks don't brick the repo."""
     proc = run(["python3", str(CHECK), "--all"])
     assert proc.returncode == 0, proc.stderr
+    # --worktree scans the same clean tree from the filesystem (no git index),
+    # so it must also pass on the real repo.
+    wt_proc = run(["python3", str(CHECK), "--strict", "--worktree"])
+    assert wt_proc.returncode == 0, wt_proc.stderr
 
 def test_strict_mode_promotes_warning() -> None:
     with tempfile.TemporaryDirectory() as td:
@@ -99,6 +131,57 @@ def test_strict_mode_promotes_warning() -> None:
         strict_proc = run(["python3", str(CHECK), "--strict", str(f)])
         assert strict_proc.returncode == 1, strict_proc.stderr
         assert "strict mode promotes 1 warning(s)" in strict_proc.stderr
+
+
+def test_worktree_mode_catches_untracked_violation() -> None:
+    d = make_tree_copy()
+    proc = run(["python3", "scripts/check_go_structure.py", "--strict", "--worktree"], cwd=d)
+    assert proc.returncode == 1, proc.stderr
+    assert "HARD function LOC" in proc.stderr, proc.stderr
+
+
+def test_worktree_vs_all_on_empty_index() -> None:
+    d = make_tree_copy()
+    init = run(["git", "init", "-q", "."], cwd=d)
+    assert init.returncode == 0, init.stderr
+    # --all reads git ls-files: an empty index means zero files checked (the
+    # historical blindness), so it passes with no diagnostic.
+    all_proc = run(["python3", "scripts/check_go_structure.py", "--strict", "--all"], cwd=d)
+    assert all_proc.returncode == 0, all_proc.stderr
+    assert all_proc.stderr == "", all_proc.stderr
+    # --worktree scans the filesystem, so the untracked violation is caught.
+    wt_proc = run(["python3", "scripts/check_go_structure.py", "--strict", "--worktree"], cwd=d)
+    assert wt_proc.returncode == 1, wt_proc.stderr
+    assert "HARD function LOC" in wt_proc.stderr, wt_proc.stderr
+
+
+def test_worktree_clean_tree_passes() -> None:
+    d = make_tree_copy(violating=False)
+    proc = run(["python3", "scripts/check_go_structure.py", "--strict", "--worktree"], cwd=d)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_worktree_strict_promotes_warning() -> None:
+    d = make_tree_copy(violating=False)
+    (d / "internal" / "demo").mkdir(parents=True)
+    lines = ["package demo", "", "func Warn() {"]
+    lines += [f"\t_ = {i}" for i in range(88)]
+    lines += ["}", ""]
+    (d / "internal" / "demo" / "warn_test.go").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
+    non_strict = run(["python3", "scripts/check_go_structure.py", "--worktree"], cwd=d)
+    assert non_strict.returncode == 0, non_strict.stderr
+    assert "WARN function LOC" in non_strict.stderr, non_strict.stderr
+    strict = run(["python3", "scripts/check_go_structure.py", "--strict", "--worktree"], cwd=d)
+    assert strict.returncode == 1, strict.stderr
+    assert "strict mode promotes" in strict.stderr, strict.stderr
+
+
+def test_worktree_scans_untracked_modified_file() -> None:
+    d = make_tree_copy()
+    proc = run(["python3", "scripts/check_go_structure.py", "--strict", "--worktree"], cwd=d)
+    assert proc.returncode == 1, proc.stderr
+    assert "internal/demo/close_run_atomicity_test.go" in proc.stderr, proc.stderr
 
 
 def test_generated_exclusions_are_applied() -> None:
@@ -123,6 +206,11 @@ def main() -> None:
     test_all_repo_exits_zero_today()
     test_strict_mode_promotes_warning()
     test_generated_exclusions_are_applied()
+    test_worktree_mode_catches_untracked_violation()
+    test_worktree_vs_all_on_empty_index()
+    test_worktree_clean_tree_passes()
+    test_worktree_strict_promotes_warning()
+    test_worktree_scans_untracked_modified_file()
     print("test_go_structure: ok")
 
 

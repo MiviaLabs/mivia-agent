@@ -538,6 +538,62 @@ def assert_nested_git_fixture_preserves_index(checkout: Path) -> None:
     assert after == before, f"outer index changed in {checkout}"
 
 
+def extract_semgrep_detector() -> str:
+    source = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
+    start = source.index("semgrep_engine_failure() {")
+    end = source.index("\n}\n", start) + 3
+    return source[start:end]
+
+
+def test_semgrep_engine_failure_detector() -> None:
+    """Engine crashes (io_uring ENOMEM under low RLIMIT_MEMLOCK) are environment
+    problems and must be detected distinctly from findings or config errors."""
+    if os.name == "nt":
+        return
+    detector = extract_semgrep_detector()
+    with tempfile.TemporaryDirectory() as tmp:
+        helper = Path(tmp) / "detector.sh"
+        helper.write_text(f"{detector}\nsemgrep_engine_failure \"$1\"\n", encoding="utf-8")
+        crash = Path(tmp) / "crash.log"
+        crash.write_text(
+            "semgrep-core exited with 1!\n"
+            "[ERROR] Error while running rules:\n"
+            "  You are seeing this because the engine was killed.\n"
+            "Uncaught exn in Core_scan.scan: Multiple exceptions:\n"
+            "- Unix_error: Cannot allocate memory io_uring_queue_init \n",
+            encoding="utf-8",
+        )
+        findings = Path(tmp) / "findings.log"
+        findings.write_text(
+            "Running 20 rules on 3 files\nfoo.go:1:3: possible bug\n1 finding\n",
+            encoding="utf-8",
+        )
+        config_err = Path(tmp) / "config.log"
+        config_err.write_text(
+            "Configuration is invalid - found 1 configuration error(s), and 20 rule(s).\n",
+            encoding="utf-8",
+        )
+        for log, expected in ((crash, 0), (findings, 1), (config_err, 1)):
+            proc = run(["bash", str(helper), str(log)], ROOT, check=False)
+            assert proc.returncode == expected, (log.name, proc.returncode, proc.stdout)
+
+
+def test_pre_commit_semgrep_engine_resilience() -> None:
+    pre = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
+    assert "semgrep_engine_failure() {" in pre
+    assert "--validate --config semgrep/agent-standards.yml -j 1" in pre
+    assert "engine unavailable" in pre
+    assert "semgrep scan failed (findings or error)" in pre
+
+
+def test_pre_push_semgrep_engine_resilience() -> None:
+    push = (ROOT / "scripts" / "git-hooks" / "pre-push").read_text(encoding="utf-8")
+    assert "semgrep_engine_failure() {" in push
+    assert "--validate --config semgrep/agent-standards.yml -j 1" in push
+    assert "engine unavailable" in push
+    assert "semgrep scan failed (findings or error)" in push
+
+
 def main() -> None:
     test_commit_policy_loads()
     test_hooks_executable_and_present()
@@ -558,6 +614,9 @@ def main() -> None:
     test_pre_commit_is_staged_only_and_bounded()
     test_pre_commit_has_invariant_gate()
     test_pre_push_without_a_base_scans_all_tracked_files()
+    test_semgrep_engine_failure_detector()
+    test_pre_commit_semgrep_engine_resilience()
+    test_pre_push_semgrep_engine_resilience()
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         test_prepare_commit_msg_appends_summary(base / "append")

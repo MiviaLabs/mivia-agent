@@ -228,9 +228,14 @@ func (t *loadToolsTool) render(result chat.AdmissionStageResult) string {
 		b.WriteString("\n")
 	}
 	if len(result.Staged) > 0 || len(result.AlreadyStaged) > 0 {
-		b.WriteString("These are available from your next turn, not this one. Finish this turn first.")
+		b.WriteString("These are available from your next turn, not this one. Publication happens at the turn boundary and can be deferred while other work is active. Finish this turn first.")
 	}
 	if len(result.AlreadyStaged) > 0 {
+		// The stage is from an earlier turn whose boundary deferred. Announce
+		// the cause now, mid-turn, so the model is not left probing per turn.
+		if _, reason, ok := t.session.PendingAdmissionStatus(); ok && reason != "" {
+			fmt.Fprintf(&b, " Publication is deferred because %s.", reason)
+		}
 		b.WriteString(" The list of not-loaded tools in your instructions is frozen from when this agent was bound and is NOT updated as tools load, so do not re-request these.")
 	}
 	if len(result.Already) > 0 {

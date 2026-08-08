@@ -16,7 +16,10 @@ import (
 
 // LoadOptions controls config resolution.
 type LoadOptions struct {
-	ConfigPath         string
+	ConfigPath string
+	// WorkspaceRoot selects the project MCP configuration. Empty uses the
+	// current working directory for backward compatibility.
+	WorkspaceRoot      string
 	ProviderOverride   string
 	ModelOverride      string
 	AllowMissingConfig bool
@@ -46,10 +49,14 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err := normalizeProviderConfigs(&file, maxTokens); err != nil {
 		return nil, err
 	}
-	return resolveLoaded(file, configPath, found, opts)
+	mcpConfig, mcpWarnings, err := loadRuntimeMCPConfig(opts.WorkspaceRoot)
+	if err != nil {
+		return nil, err
+	}
+	return resolveLoaded(file, configPath, found, opts, mcpConfig, mcpWarnings)
 }
 
-func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (*Resolved, error) {
+func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, mcpConfig MCPConfig, mcpWarnings []string) (*Resolved, error) {
 	providerName, pc, model, err := resolveProvider(file, opts)
 	if err != nil {
 		return nil, err
@@ -115,6 +122,8 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (
 		Privacy:          resolvePrivacyConfig(file.Privacy),
 		Context:          resolveContextConfig(file.Context),
 		Tools:            resolveToolsConfig(file.Tools),
+		MCP:              mcpConfig,
+		MCPWarnings:      append([]string(nil), mcpWarnings...),
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 		PromptCache:      resolvePromptCache(file.Provider.PromptCache),
 	}
@@ -126,6 +135,18 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (
 		return nil, err
 	}
 	return res, nil
+}
+
+func loadRuntimeMCPConfig(workspaceRoot string) (MCPConfig, []string, error) {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		var err error
+		workspaceRoot, err = os.Getwd()
+		if err != nil {
+			return MCPConfig{}, nil, fmt.Errorf("get workspace directory: %w", err)
+		}
+	}
+	cfg, warnings, err := LoadTrustedMCPConfig(workspaceRoot)
+	return cfg, warnings, err
 }
 
 const DefaultTavilyAPIKeyEnv = "TAVILY_API_KEY"

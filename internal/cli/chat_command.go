@@ -67,9 +67,13 @@ func runChat(args []string) error {
 	if err != nil {
 		return err
 	}
+	workspaceRoot, err := chatWorkspaceRoot(invocation.workspacePath)
+	if err != nil {
+		return err
+	}
 	res, err := config.Load(config.LoadOptions{
 		ConfigPath: invocation.configPath, ProviderOverride: invocation.provider,
-		ModelOverride: invocation.model, AllowMissingConfig: true,
+		ModelOverride: invocation.model, WorkspaceRoot: workspaceRoot, AllowMissingConfig: true,
 	})
 	if err != nil {
 		return err
@@ -141,6 +145,7 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 			ConfigPath:         invocation.configPath,
 			ProviderOverride:   invocation.provider,
 			ModelOverride:      invocation.model,
+			WorkspaceRoot:      invocation.workspacePath,
 			AllowMissingConfig: true,
 		})
 		if err != nil {
@@ -356,7 +361,7 @@ func repositorySessionStorePath(root string, invocation chatInvocation, _ *confi
 	if !found {
 		return config.DefaultStorePathForWorkspace(root), nil
 	}
-	resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: root, AllowMissingConfig: true})
 	if err != nil {
 		return "", err
 	}
@@ -405,6 +410,17 @@ func enterChatWorkspace(path string) (string, error) {
 	}
 	if err := os.Chdir(root); err != nil {
 		return "", fmt.Errorf("enter workspace: %w", err)
+	}
+	return root, nil
+}
+
+func chatWorkspaceRoot(path string) (string, error) {
+	if path == "" {
+		path = "."
+	}
+	root, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace: %w", err)
 	}
 	return root, nil
 }
