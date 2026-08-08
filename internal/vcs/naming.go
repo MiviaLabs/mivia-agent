@@ -3,6 +3,8 @@ package vcs
 import (
 	"strings"
 	"unicode"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // MaxWorktreeNameLen is the maximum length of a sanitised worktree name.
@@ -11,7 +13,7 @@ const MaxWorktreeNameLen = 64
 
 // reservedNames are names that must not be used as worktree directories.
 var reservedNames = map[string]bool{
-	".": true, "..": true, ".git": true, ".mivia": true,
+	".": true, "..": true, ".git": true, workspace.Namespace: true,
 }
 
 // SanitizeName converts a user-provided worktree name to a safe directory name.

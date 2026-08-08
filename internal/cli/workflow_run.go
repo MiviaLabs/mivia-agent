@@ -245,7 +245,7 @@ func workflowConfigPath(root, explicit string) string {
 	if strings.TrimSpace(explicit) != "" {
 		return explicit
 	}
-	candidate := filepath.Join(root, ".mivia", "mivia.toml")
+	candidate := workspace.NamespacePath(root, "mivia.toml")
 	info, err := os.Stat(candidate)
 	if err == nil && info.Mode().IsRegular() {
 		return candidate

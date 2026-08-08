@@ -16,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // DefaultMaxTitleBytes is the default limit for rendered pull-request titles.
@@ -264,7 +265,7 @@ func findLastSpace(s string, limit int) int {
 // commitMessagePolicyPath is the OPTIONAL workspace policy file consulted
 // before a delivery commit, mirroring the repo's commit-msg hook. It is only
 // read when present: a workspace that configures nothing is unaffected.
-const commitMessagePolicyPath = ".mivia/policy/commit-message.json"
+const commitMessagePolicyPath = workspace.Namespace + "/policy/commit-message.json"
 
 // commitMessagePolicy is the subset of the commit-message policy schema the
 // delivery engine enforces generically. Repo-specific fields (types, scopes,

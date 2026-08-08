@@ -10,13 +10,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // ValidateAgentReferences checks that every step with kind "agent" or "agent_gate"
 // references an agent file that exists in <workspaceRoot>/.mivia/agents/.
 // Returns an error if any referenced agent is not found.
 func ValidateAgentReferences(wf *definition.WorkflowFile, workspaceRoot string) error {
-	agentsDir := filepath.Join(workspaceRoot, ".mivia", "agents")
+	agentsDir := workspace.NamespacePath(workspaceRoot, "agents")
 
 	knownAgents, err := discoverAgentFiles(agentsDir)
 	if err != nil {

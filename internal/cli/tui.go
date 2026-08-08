@@ -48,7 +48,7 @@ type tuiModel struct {
 	modelName       string
 	workspaceDir    string // cwd with ~ for home; shown on the welcome hero
 	gitBranch       string // current branch (set at init, updated on cd)
-	gitWorktreeName string // non-empty if inside a .mivia/worktree
+	gitWorktreeName string // non-empty when running inside a managed worktree
 	viewport        viewport.Model
 	textarea        textarea.Model
 	spinner         spinner.Model

@@ -18,6 +18,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
 )
 
@@ -389,7 +390,7 @@ func repositoryConfigPath(root string, invocation chatInvocation) (string, bool)
 		return path, true
 	}
 	return config.FirstExisting([]string{
-		filepath.Join(root, ".mivia", "mivia.toml"),
+		workspace.NamespacePath(root, "mivia.toml"),
 		config.UserConfigPath(),
 	})
 }

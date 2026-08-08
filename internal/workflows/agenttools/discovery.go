@@ -3,10 +3,12 @@ package agenttools
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // WorkflowsDir is the workspace-relative path that holds workflow TOML files.
-const WorkflowsDir = ".mivia/workflows"
+const WorkflowsDir = workspace.Namespace + "/workflows"
 
 // HasWorkflows reports whether root contains a workflows directory that can
 // hold workflow definitions. The check is presence-only: an empty directory

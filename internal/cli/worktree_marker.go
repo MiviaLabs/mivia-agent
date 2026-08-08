@@ -13,13 +13,14 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 const worktreeMarkerName = "worktree-instance.json"
 
 const maxWorktreeMarkerBytes = 4096
 
-const worktreeMarkerExclude = "/.mivia/" + worktreeMarkerName
+const worktreeMarkerExclude = "/" + workspace.Namespace + "/" + worktreeMarkerName
 
 type worktreeMarker struct {
 	Version  int    `json:"version"`
@@ -44,7 +45,7 @@ var (
 )
 
 func worktreeMarkerPath(root string) string {
-	return filepath.Join(root, ".mivia", worktreeMarkerName)
+	return workspace.NamespacePath(root, worktreeMarkerName)
 }
 
 func writeWorktreeMarker(root string, instance contextstate.WorktreeInstance) error {
@@ -55,7 +56,7 @@ func writeWorktreeMarker(root string, instance contextstate.WorktreeInstance) er
 	if err := instance.Validate(); err != nil || instance.IsZero() {
 		return fmt.Errorf("invalid worktree marker instance: %w", contextstate.ErrInvalidDTO)
 	}
-	dir := filepath.Join(canonical, ".mivia")
+	dir := workspace.NamespacePath(canonical)
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("worktree marker directory is a symlink")
 	} else if err != nil && !os.IsNotExist(err) {
@@ -262,12 +263,12 @@ func readWorktreeMarker(root string) (contextstate.WorktreeInstance, error) {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("open worktree marker root: %w", err)
 	}
 	defer markerRoot.Close()
-	if info, statErr := markerRoot.Lstat(".mivia"); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
+	if info, statErr := markerRoot.Lstat(workspace.Namespace); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker directory is a symlink")
 	} else if statErr != nil {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("inspect worktree marker directory: %w", statErr)
 	}
-	markerPath := filepath.Join(".mivia", worktreeMarkerName)
+	markerPath := filepath.Join(workspace.Namespace, worktreeMarkerName)
 	if info, statErr := markerRoot.Lstat(markerPath); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker is not a regular file")
 	} else if statErr != nil {
