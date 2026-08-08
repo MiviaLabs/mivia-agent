@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -172,6 +173,29 @@ func TestWorkflowStatusAttemptErrorTruncates(t *testing.T) {
 	}
 	if strings.Count(out, "x") > maxAttemptErrorBytes+10 {
 		t.Error("truncation did not bound the printed error")
+	}
+}
+
+// TestWorkflowStatusAttemptErrorTruncatesRuneSafe pins that printAttemptError
+// truncates rune-safely (E4, DC-6): the raw byte cut used to split a
+// multi-byte rune, emitting invalid UTF-8 into the status report.
+func TestWorkflowStatusAttemptErrorTruncatesRuneSafe(t *testing.T) {
+	// 2 ASCII bytes push the 2000-byte cut inside the 4-byte rune stream, so
+	// a raw cut would leave a dangling lead byte.
+	long := "xx" + strings.Repeat("\U0001F642", 600) // 2402 bytes
+	root, run, closeFn := seedFailedAttempt(t, "wfr-JJJJ9999", long, true)
+	defer closeFn()
+
+	var stdout bytes.Buffer
+	if err := executeWorkflowStatus(run, root, filepath.Join(root, "config.toml"), &stdout, io.Discard); err != nil {
+		t.Fatalf("executeWorkflowStatus: %v", err)
+	}
+	out := stdout.String()
+	if !utf8.ValidString(out) {
+		t.Errorf("status output is not valid UTF-8:\n%s", out)
+	}
+	if !strings.Contains(out, "truncated") {
+		t.Errorf("oversized error was not marked truncated:\n%s", out[:min(len(out), 400)])
 	}
 }
 

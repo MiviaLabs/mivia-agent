@@ -84,12 +84,39 @@ var panelValidationCases = []panelValidationCase{
 		},
 		wantErr: "duplicate provider/model binding",
 	},
+	// FINDING E3 (DC-11): the provider registry resolves names via
+	// strings.ToLower(strings.TrimSpace(name)) and binding resolution
+	// lowercases the provider, so a case or whitespace variant of an
+	// already-bound provider is the same provider. Without provider
+	// normalization these pairs bypass require_distinct_bindings. Models stay
+	// case-sensitive (NormalizeModelName only trims; selectableModel matches
+	// profile.Name == model exactly), so the duplicate check must not lowercase
+	// the model.
+	{
+		name: "duplicate provider model binding case-insensitive provider",
+		mutate: func(s *definition.Step) {
+			s.Panel.Members[1].Provider = "DeepSeek"
+			s.Panel.Members[1].Model = s.Panel.Members[0].Model
+		},
+		wantErr: "duplicate provider/model binding",
+	},
+	{
+		name: "duplicate provider model binding whitespace variant",
+		mutate: func(s *definition.Step) {
+			s.Panel.Members[1].Provider = "  deepseek "
+			s.Panel.Members[1].Model = s.Panel.Members[0].Model
+		},
+		wantErr: "duplicate provider/model binding",
+	},
 }
 
-func TestCompile_AgentPanel(t *testing.T) {
-	t.Run("valid panel compiles", func(t *testing.T) {
-		if _, err := Compile(newAgentPanelWorkflow()); err != nil {
-			t.Fatalf("Compile() error = %v", err)
+// TestValidatePanelsMemberRules exercises the static agent_panel validation
+// rules directly. Compile cannot be used for these cases: agent_panel steps
+// are rejected as non-executable before panel validation runs (FINDING E6).
+func TestValidatePanelsMemberRules(t *testing.T) {
+	t.Run("valid panel passes member validation", func(t *testing.T) {
+		if err := validatePanels(newAgentPanelWorkflow()); err != nil {
+			t.Fatalf("validatePanels() error = %v", err)
 		}
 	})
 
@@ -97,11 +124,51 @@ func TestCompile_AgentPanel(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			wf := newAgentPanelWorkflow()
 			tc.mutate(&wf.Steps[0])
-			_, err := Compile(wf)
+			err := validatePanels(wf)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("Compile() error = %v, want %q", err, tc.wantErr)
+				t.Fatalf("validatePanels() error = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestValidatePanelsAllowsCaseDistinctModels is the FINDING E3 over-reach
+// regression: models are case-sensitive (config.NormalizeModelName only trims,
+// selectableModel matches profile.Name == model exactly, and the model string
+// reaches the provider API unmodified), so a panel binding one provider to two
+// case-distinct catalog models - e.g. 'GLM-5.2' vs 'glm-5.2' - must compile.
+// Lowercasing the model in the duplicate-binding key rejected legal
+// case-distinct models of one provider that the runtime treats as different,
+// violating require_distinct_bindings' actual contract.
+func TestValidatePanelsAllowsCaseDistinctModels(t *testing.T) {
+	wf := newAgentPanelWorkflow()
+	wf.Steps[0].Panel.Members[1].Provider = wf.Steps[0].Panel.Members[0].Provider
+	wf.Steps[0].Panel.Members[1].Model = strings.ToUpper(wf.Steps[0].Panel.Members[0].Model)
+	if err := validatePanels(wf); err != nil {
+		t.Fatalf("validatePanels() error = %v, want same provider with case-distinct models to compile", err)
+	}
+}
+
+// FINDING E6 (DC-9): agent_panel steps are fully validated and admitted but the
+// controller has no agent_panel case, so every run reaching one fails mid-flight
+// after earlier steps finished. The rejection belongs at COMPILE time so both
+// Compile and CompileForResume refuse, closing the resume bypass.
+func TestCompileRejectsAgentPanelNotExecutable(t *testing.T) {
+	_, err := Compile(newAgentPanelWorkflow())
+	if err == nil || !strings.Contains(err.Error(), "agent_panel is not executable by this build") {
+		t.Fatalf("Compile() error = %v, want agent_panel rejection", err)
+	}
+}
+
+// TestCompileForResumeRejectsAgentPanelSnapshot is the resume-path regression:
+// a snapshot containing an agent_panel step must be refused at CompileForResume
+// with the same clear error. Resume is recovery, not admission, but a run whose
+// next step cannot be executed must not be resumed into a guaranteed mid-flight
+// failure; refusing at resume surfaces the reason before any work runs.
+func TestCompileForResumeRejectsAgentPanelSnapshot(t *testing.T) {
+	_, err := CompileForResume(newAgentPanelWorkflow())
+	if err == nil || !strings.Contains(err.Error(), "agent_panel is not executable by this build") {
+		t.Fatalf("CompileForResume() error = %v, want agent_panel rejection", err)
 	}
 }
 
@@ -163,8 +230,11 @@ match = { status = "succeeded" }
 	if err != nil {
 		t.Fatalf("ParseWorkflowTOML() error = %v", err)
 	}
-	if _, err := Compile(&wf); err != nil {
-		t.Fatalf("Compile() error = %v", err)
+	if wf.Steps[0].Kind != "agent_panel" {
+		t.Fatalf("step kind = %q, want agent_panel", wf.Steps[0].Kind)
+	}
+	if _, err := Compile(&wf); err == nil || !strings.Contains(err.Error(), "agent_panel is not executable by this build") {
+		t.Fatalf("Compile() error = %v, want agent_panel rejection", err)
 	}
 }
 

@@ -233,6 +233,175 @@ func TestSpawnReclaimsAbandonedKeyAndExecutesWork(t *testing.T) {
 	assertKeyResolvesTo(t, replayed, "K", h.runID)
 }
 
+// TestSpawnReclaimsStaleClaimedAbandonedKeyAndExecutesWork pins the C4 fix: a
+// crash between ClaimRun and the first CreateTask leaves a run in status
+// 'created' with zero tasks AND a claim row held by the dead process's holder
+// (DC-4). reclaimAbandonedRun probes ClaimRun, gets ErrClaimHeld, and - pre-fix
+// - returned false forever: coordinator claims have no lease expiry, so the
+// idempotency key was permanently bricked (ErrIdempotencyKeyContended after the
+// bounded retry) and the keyed work never executed. Post-fix, the claim on a
+// provably abandoned run ('created', zero tasks, older than the grace period -
+// a state no live creator occupies) is treated as stale: it is cleared, the
+// claim re-probed, and the run reclaimed so the same key dispatches the work
+// for real.
+func TestSpawnReclaimsStaleClaimedAbandonedKeyAndExecutesWork(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run must be OLDER than the abandoned-run grace period for the
+	// caller-side gate to consider it abandoned; the claim on it is then
+	// provably stale (no live creator occupies this state for 60s).
+	now := time.Now().Add(-2 * abandonedRunGracePeriod)
+	seedAbandonedRun(t, store, now)
+	// Crash between ClaimRun and the first CreateTask: the dead process's
+	// claim row survives on the abandoned run. Seeded at the STORE level so
+	// the seed repository's Close does not release it.
+	if err := store.ClaimRun(ctx, "run-abandoned", "dead-process-holder"); err != nil {
+		t.Fatalf("seed stale claim: %v", err)
+	}
+
+	fresh := ledger.NewStorageLedgerRepository(store)
+	fresh.SetTimeSource(func() time.Time { return now })
+
+	invoked := make(chan struct{}, 1)
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "worker", invoker(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		invoked <- struct{}{}
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+
+	h, err := c.Spawn(ctx, []subagents.Task{idempotencyTask()}, "K")
+	if err != nil {
+		t.Fatalf("Spawn against stale-claimed abandoned keyed run: %v; want the stale claim cleared and the abandoned row reclaimed so the work executes (C4)", err)
+	}
+	if h.runID == "run-abandoned" {
+		t.Fatalf("Spawn resolved to the abandoned run %q; want a fresh run under the same key", h.runID)
+	}
+
+	joinCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	res, err := c.Join(joinCtx, h)
+	if err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	if res.Err != nil {
+		t.Fatalf("run result error: %v", res.Err)
+	}
+
+	select {
+	case <-invoked:
+	default:
+		t.Fatal("worker was never invoked: the stale-claimed abandoned-key spawn did not dispatch its task")
+	}
+
+	snap, err := c.Inspect(ctx, h)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if snap.Status != ledger.RunStatusCompleted {
+		t.Fatalf("run status = %q, want %q", snap.Status, ledger.RunStatusCompleted)
+	}
+	// The key must now resolve to the NEW run, not the reclaimed abandoned row.
+	assertKeyResolvesTo(t, fresh, "K", h.runID)
+}
+
+// TestReclaimClaimsOldAbandonedRunDespiteForeignClaim pins the C4 amendment at
+// the recoverByIdempotencyKey boundary: an OLD 'created + zero tasks' run whose
+// claim is held by ANY other holder is provably abandoned - the claim row can
+// only belong to a process that crashed between ClaimRun and the first
+// CreateTask, or to another reclaimer in the act of deleting the run. The
+// stale claim is cleared and the run reclaimed; recovery reports not-found (so
+// Spawn re-creates) instead of ErrIdempotencyKeyContended forever. Pre-fix,
+// this scenario reported contention and never reclaimed.
+func TestReclaimClaimsOldAbandonedRunDespiteForeignClaim(t *testing.T) {
+	c, runID := reclaimGuardCoordinator(t, time.Now().Add(-2*abandonedRunGracePeriod), "other-holder")
+	ctx := context.Background()
+
+	h, found, err := c.recoverByIdempotencyKey(ctx, "K", "fingerprint")
+	if err != nil {
+		t.Fatalf("recoverByIdempotencyKey for old claimed run: err=%v; want the stale claim cleared and the abandoned run reclaimed (C4)", err)
+	}
+	if found || h != nil {
+		t.Fatalf("old claimed run resolved as a dedup hit (found=%v handle=%v); it must be reclaimed", found, h)
+	}
+	if _, err := c.repo.GetRun(ctx, runID); !errors.Is(err, ledger.ErrNotFound) {
+		t.Fatalf("old claimed run %q was not reclaimed: GetRun = %v, want ErrNotFound", runID, err)
+	}
+}
+
+// TestListInterruptedRunsDropsStaleClaimedAbandonedRun pins the C4 symptom at
+// the listing boundary: pre-fix, a stale-claimed abandoned run was reported by
+// ListInterruptedRuns with HeldByAnotherExecutor=true forever (reclaim could
+// never clear the claim, so Spawn never reclaimed the run). Post-fix, Spawn
+// reclaims the run, so the listing no longer reports it at all - neither as
+// held-by-another-executor nor as an interrupted run.
+func TestListInterruptedRunsDropsStaleClaimedAbandonedRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(-2 * abandonedRunGracePeriod)
+	seedAbandonedRun(t, store, now)
+	if err := store.ClaimRun(ctx, "run-abandoned", "dead-process-holder"); err != nil {
+		t.Fatalf("seed stale claim: %v", err)
+	}
+
+	fresh := ledger.NewStorageLedgerRepository(store)
+	fresh.SetTimeSource(func() time.Time { return now })
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+
+	// Before the reclaim, the abandoned run IS listed - with the dead holder's
+	// claim reported as held-by-another-executor. The fix targets the
+	// "forever": the reclaim path clears the stale claim, so the run no longer
+	// lingers in the listing once Spawn reclaims it.
+	before, err := c.ListInterruptedRuns(ctx)
+	if err != nil {
+		t.Fatalf("ListInterruptedRuns before reclaim: %v", err)
+	}
+	foundBefore := false
+	for _, r := range before {
+		if r.RunID == "run-abandoned" {
+			foundBefore = true
+			if !r.HeldByAnotherExecutor {
+				t.Fatalf("abandoned run listed without HeldByAnotherExecutor before reclaim; want the dead holder's claim reported")
+			}
+		}
+	}
+	if !foundBefore {
+		t.Fatalf("abandoned run not listed before reclaim: %+v", before)
+	}
+
+	h, err := c.Spawn(ctx, []subagents.Task{idempotencyTask()}, "K")
+	if err != nil {
+		t.Fatalf("Spawn against stale-claimed abandoned keyed run: %v; want the stale claim cleared and the abandoned row reclaimed (C4)", err)
+	}
+	joinCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, err := c.Join(joinCtx, h); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+
+	after, err := c.ListInterruptedRuns(ctx)
+	if err != nil {
+		t.Fatalf("ListInterruptedRuns after reclaim: %v", err)
+	}
+	for _, r := range after {
+		if r.RunID == "run-abandoned" {
+			t.Fatalf("stale-claimed abandoned run %q still reported after reclaim (held_by_another_executor=%v); the reclaim must drop it", r.RunID, r.HeldByAnotherExecutor)
+		}
+	}
+}
+
 // seedAbandonedRun creates an old, unclaimed, zero-task keyed run over store and
 // closes the seed repository so the durable events replay into a fresh repo.
 // The seed repo borrows the store: its Close simulates a process restart (a
@@ -300,42 +469,38 @@ func reclaimGuardCoordinator(t *testing.T, createdAt time.Time, claimHolder stri
 	return New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator), "run-guarded"
 }
 
-// TestReclaimSkipsClaimedLiveRun is the round-3 claim guard: a 'created + zero
-// tasks' run CLAIMED by another holder is live (or recoverable by its holder),
-// never abandoned. Recovery must NOT delete it - the run must still resolve
-// afterwards. The old-created-at row is the load-bearing one: only the claim
-// probe (not the grace gate) protects that run, so it fails if the probe is
-// removed. Pre-fix, reclaimAbandonedRun deleted both unconditionally, killing a
-// live creator that had durably created and claimed its run but not yet written
-// its first task.
+// TestReclaimSkipsClaimedLiveRun is the claim guard for a run that may still
+// be LIVE: a 'created + zero tasks' run YOUNGER than the grace period is a
+// creator mid-creation, so a foreign claim on it (or even no visible claim) is
+// not evidence of abandonment - the grace gate refuses before the claim probe
+// ever runs (R4-1). Recovery must NOT delete it and must report
+// ErrIdempotencyKeyContended so the caller backs off and retries until the
+// creator's run is durably visible.
 //
-// R4-1: a claimed run is also a contention signal - another process either
-// owns the run or is mid-reclaim (holding its probe claim) - so recovery must
-// report ErrIdempotencyKeyContended, never a 'fresh run' signal that would let
-// the caller race a second execution.
+// The C4 amendment moves the live/abandoned boundary to the RUN's age, not the
+// claim's: an OLD 'created + zero tasks' run is provably abandoned (no live
+// creator occupies that state for the grace period), so ANY claim on it is
+// provably stale - the holder crashed between ClaimRun and the first
+// CreateTask, or is another reclaimer in the act of deleting the run - and is
+// cleared. That amended case is pinned by
+// TestReclaimClaimsOldAbandonedRunDespiteForeignClaim.
+//
+// R4-1: a young claimed run is a contention signal - another process owns the
+// run - so recovery must report ErrIdempotencyKeyContended, never a 'fresh
+// run' signal that would let the caller race a second execution.
 func TestReclaimSkipsClaimedLiveRun(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		createdAt time.Time
-	}{
-		{"recent-created-at", time.Now()},
-		{"old-created-at", time.Now().Add(-2 * abandonedRunGracePeriod)}, // old enough to pass the grace gate
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			c, runID := reclaimGuardCoordinator(t, tc.createdAt, "other-holder")
-			ctx := context.Background()
+	c, runID := reclaimGuardCoordinator(t, time.Now(), "other-holder")
+	ctx := context.Background()
 
-			h, found, err := c.recoverByIdempotencyKey(ctx, "K", "fingerprint")
-			if !errors.Is(err, ErrIdempotencyKeyContended) {
-				t.Fatalf("recoverByIdempotencyKey for claimed run: err=%v, want %v (R4-1); a claimed run is live or being reclaimed and the caller must back off", err, ErrIdempotencyKeyContended)
-			}
-			if found || h != nil {
-				t.Fatalf("claimed live run resolved as a dedup hit (found=%v handle=%v); a claimed run must be left to its holder", found, h)
-			}
-			if _, err := c.repo.GetRun(ctx, runID); err != nil {
-				t.Fatalf("claimed live run %q was deleted by the abandoned-run guard: %v; DeleteRun must not fire on a claimed run", runID, err)
-			}
-		})
+	h, found, err := c.recoverByIdempotencyKey(ctx, "K", "fingerprint")
+	if !errors.Is(err, ErrIdempotencyKeyContended) {
+		t.Fatalf("recoverByIdempotencyKey for young claimed run: err=%v, want %v (R4-1); a young run is a live creator mid-creation and the caller must back off", err, ErrIdempotencyKeyContended)
+	}
+	if found || h != nil {
+		t.Fatalf("young claimed run resolved as a dedup hit (found=%v handle=%v); a claimed run must be left to its holder", found, h)
+	}
+	if _, err := c.repo.GetRun(ctx, runID); err != nil {
+		t.Fatalf("young claimed run %q was deleted by the abandoned-run guard: %v; DeleteRun must not fire on a run younger than the grace period", runID, err)
 	}
 }
 
@@ -442,12 +607,15 @@ func concurrentSpawnCoordinators(t *testing.T, createdAt time.Time, invoked func
 	return makeCoord(), makeCoord(), makeCoord
 }
 
-// TestConcurrentSpawnSameKeyDoesNotDoubleExecute pins R4-1: with two processes
-// A and B spawning the same key K over an abandoned run X, only the process
-// that actually reclaims X may proceed to create; everyone else must back off
-// (ErrIdempotencyKeyContended) and converge onto the winner's run. Pre-fix, B
-// either fell through to create (a second run / double execution) or returned a
-// dead 'create run: duplicate' error - never a handle to A's run.
+// TestConcurrentSpawnSameKeyDoesNotDoubleExecute pins R4-1 under the C4
+// amendment: with two processes A and B spawning the same key K over an
+// abandoned run X, exactly one process may proceed to create the replacement
+// and the keyed work executes exactly once. X is provably abandoned ('created',
+// zero tasks, older than the grace period), so a claim on it is provably stale:
+// when A holds the probe claim (mid-reclaim), B treats it as stale - clears it,
+// re-probes, and wins the reclaim itself. A's DeleteRun on the already-reclaimed
+// run is then refused, so only the winner creates; every loser converges onto
+// the winner's durably visible run instead of racing a second execution.
 //
 // The test drives the ledger directly so the race is deterministic: A's reclaim
 // is simulated with the repo primitives (ClaimRun probe + DeleteRun), exactly as
@@ -460,45 +628,47 @@ func TestConcurrentSpawnSameKeyDoesNotDoubleExecute(t *testing.T) {
 	const key = "K"
 
 	// Phase 1 - A is mid-reclaim: it holds the probe claim on X (the window
-	// between ClaimRun and DeleteRun in reclaimAbandonedRun). B's recovery of K
-	// must report contention (R4-1), NOT a 'fresh run' signal: only the
-	// successful reclaimer may proceed to create.
+	// between ClaimRun and DeleteRun in reclaimAbandonedRun). X is provably
+	// abandoned, so A's claim is provably stale: B clears it, re-probes, and
+	// reclaims X itself. B's Spawn must succeed - the key is NOT bricked - and
+	// only the reclaimer whose DeleteRun landed may proceed to create.
 	if err := a.repo.ClaimRun(ctx, "run-abandoned", a.holderID); err != nil {
 		t.Fatalf("A claim probe on X: %v", err)
 	}
-	if h, found, err := b.recoverByIdempotencyKey(ctx, key, "fingerprint"); !errors.Is(err, ErrIdempotencyKeyContended) {
-		t.Fatalf("B recovery of K while A holds the reclaim probe: err=%v (handle=%v found=%v), want %v so B backs off and never creates a second run", err, h, found, ErrIdempotencyKeyContended)
+	hB, err := b.Spawn(ctx, []subagents.Task{idempotencyTask()}, key)
+	if err != nil {
+		t.Fatalf("B Spawn(K) while A holds a stale claim on abandoned X: %v; want B to reclaim X and execute the work (C4)", err)
 	}
-	if err := a.repo.DeleteRun(ctx, "run-abandoned"); err != nil {
-		t.Fatalf("A DeleteRun(X): %v", err)
+	if hB.runID == "run-abandoned" {
+		t.Fatalf("B Spawn resolved to the abandoned run %q; want a fresh run under the same key", hB.runID)
+	}
+	// A's DeleteRun on the already-reclaimed run must be refused: the reclaim
+	// winner is decided by the DeleteRun fence / ErrNotFound, so a loser can
+	// never delete after the winner and then race its own creation.
+	if err := a.repo.DeleteRun(ctx, "run-abandoned"); err == nil {
+		t.Fatalf("A DeleteRun(X) after B reclaimed: succeeded; want a clean refusal so only the reclaim winner creates")
 	}
 
-	// Phase 2 - A completes its reclaim-then-create: a fresh coordinator over
-	// the same store creates Y_A under K and executes the work to completion.
-	hA, err := a.Spawn(ctx, []subagents.Task{idempotencyTask()}, key)
-	if err != nil {
-		t.Fatalf("A Spawn(K): %v", err)
-	}
 	joinCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if _, err := a.Join(joinCtx, hA); err != nil {
-		t.Fatalf("A Join(Y_A): %v", err)
+	if _, err := b.Join(joinCtx, hB); err != nil {
+		t.Fatalf("B Join(Y_B): %v", err)
 	}
 
-	// Phase 3 - a FRESH B's Spawn must converge onto A's run (dedup), never
-	// create Y_B. After A's run is durably visible, B's Spawn (fresh coordinator
-	// over the same store, per the R4-1 recipe) returns a handle to Y_A and the
-	// keyed work has executed exactly once.
+	// Phase 2 - a FRESH B's Spawn must converge onto B's run (dedup), never
+	// create a second run. After B's run is durably visible, the fresh
+	// coordinator over the same store returns a handle to Y_B and the keyed
+	// work has executed exactly once.
 	b2 := freshB()
-	hB, err := b2.Spawn(ctx, []subagents.Task{idempotencyTask()}, key)
+	hB2, err := b2.Spawn(ctx, []subagents.Task{idempotencyTask()}, key)
 	if err != nil {
-		t.Fatalf("B Spawn(K) after A's run is visible: %v", err)
+		t.Fatalf("fresh B Spawn(K) after B's run is visible: %v", err)
 	}
-	if hB.runID != hA.runID {
-		t.Fatalf("double execution: B spawned run %q under K, want A's run %q; the loser must dedup onto the winner", hB.runID, hA.runID)
+	if hB2.runID != hB.runID {
+		t.Fatalf("double execution: second spawn produced run %q under K, want B's run %q; the loser must dedup onto the winner", hB2.runID, hB.runID)
 	}
-	if _, err := b2.Join(joinCtx, hB); err != nil {
-		t.Fatalf("B Join(Y_A): %v", err)
+	if _, err := b2.Join(joinCtx, hB2); err != nil {
+		t.Fatalf("fresh B Join(Y_B): %v", err)
 	}
 	if n := invocations.Load(); n != 1 {
 		t.Fatalf("worker invocations = %d, want exactly 1 (the keyed work must never execute twice)", n)

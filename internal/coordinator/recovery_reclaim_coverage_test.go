@@ -65,6 +65,56 @@ func TestReclaimAbandonedRunDeleteFailureUndoesProbeClaim(t *testing.T) {
 	}
 }
 
+// staleReclaimReProbeFailingRepo fails the reclaim claim probe with
+// ErrClaimHeld and then fails the re-probe after ClearRunClaim, exercising the
+// re-probe-failure branch of reclaimAbandonedRun (recovery_reclaim.go:98-103):
+// a second ErrClaimHeld means another reclaimer won the clear+re-probe race,
+// so the reclaim backs off and never deletes the run.
+type staleReclaimReProbeFailingRepo struct {
+	*ledger.MemoryLedgerRepository
+	probes int
+}
+
+func (r *staleReclaimReProbeFailingRepo) ClaimRun(context.Context, string, string) error {
+	r.probes++
+	// First probe sees the stale claim; the re-probe also fails because
+	// another reclaimer won the race and re-claimed.
+	return ledger.ErrClaimHeld
+}
+
+// TestReclaimAbandonedRunReProbeFailureIsNoReclaim pins the fix's step (e): a
+// re-probe that fails after the stale claim was cleared is a no-reclaim - the
+// run stays with the reclaimer that won the race, and the caller treats the key
+// as contended. The stale claim must have been cleared (ClearRunClaim ran) so a
+// dead holder's claim never bricks the key.
+func TestReclaimAbandonedRunReProbeFailureIsNoReclaim(t *testing.T) {
+	repo := &staleReclaimReProbeFailingRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
+	// Seed the run and a stale claim so the clear path has real state to act
+	// on; the fake ClaimRun reports ErrClaimHeld regardless (both probe and
+	// re-probe), so the seed must go through the embedded repository.
+	ctx := context.Background()
+	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: "run-x", Status: ledger.RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MemoryLedgerRepository.ClaimRun(ctx, "run-x", "dead-process-holder"); err != nil {
+		t.Fatal(err)
+	}
+	c := newIdempotencyCoordinator(repo).(*coordinator)
+	if c.reclaimAbandonedRun("run-x") {
+		t.Fatal("reclaim succeeded despite a failed re-probe; only the winner of the clear+re-probe race may delete")
+	}
+	if repo.probes != 2 {
+		t.Fatalf("ClaimRun calls = %d, want 2 (one probe, one re-probe after the clear)", repo.probes)
+	}
+	// The stale claim was cleared; the run itself was NOT deleted.
+	if _, err := repo.GetRun(ctx, "run-x"); err != nil {
+		t.Fatalf("run %q deleted after a failed re-probe: %v; a no-reclaim must leave the run untouched", "run-x", err)
+	}
+	if err := repo.MemoryLedgerRepository.ClaimRun(ctx, "run-x", "winner-holder"); err != nil {
+		t.Fatalf("stale claim not cleared: %v; the dead holder's claim must not survive the clear", err)
+	}
+}
+
 // TestRecoverIdempotentWithRetryRespectsCanceledContext pins the mid-retry
 // cancellation return in recoverIdempotentWithRetry (recovery_reclaim.go:120-124):
 // a contended idempotency key plus an already-canceled caller context surfaces

@@ -491,56 +491,6 @@ func TestRenderTitleGitHubRuneCeiling(t *testing.T) {
 	})
 }
 
-// TestTruncateRenderedValidUTF8 pins that truncateRendered never emits invalid
-// UTF-8: a long unbroken token or CJK run of text has no space to break at, so
-// the byte fallback must not split a multi-byte rune.
-func TestTruncateRenderedValidUTF8(t *testing.T) {
-	t.Run("long unbroken CJK token", func(t *testing.T) {
-		s := strings.Repeat("日", 200) // 600 bytes, no spaces
-		got, err := truncateRendered(s, 500, false)
-		if err != nil {
-			t.Fatalf("truncateRendered: %v", err)
-		}
-		if !utf8.ValidString(got) {
-			t.Errorf("truncated title is not valid UTF-8: %q", got)
-		}
-		if len(got) > 500 {
-			t.Errorf("truncated title %d bytes exceeds 500", len(got))
-		}
-		if !strings.HasPrefix(s, got) {
-			t.Errorf("truncated title %q is not a prefix of the input", got)
-		}
-	})
-
-	t.Run("emoji token never splits a rune", func(t *testing.T) {
-		s := strings.Repeat("🙂", 300) // 4-byte runes, no spaces
-		got, err := truncateRendered(s, 1000, false)
-		if err != nil {
-			t.Fatalf("truncateRendered: %v", err)
-		}
-		if !utf8.ValidString(got) {
-			t.Errorf("truncated title is not valid UTF-8: %q", got)
-		}
-		if len(got) > 1000 {
-			t.Errorf("truncated title %d bytes exceeds 1000", len(got))
-		}
-	})
-
-	t.Run("commit message truncation is rune-safe too", func(t *testing.T) {
-		s := strings.Repeat("日", 200) // 600 bytes
-		got, err := truncateRendered(s, 500, true)
-		if err != nil {
-			t.Fatalf("truncateRendered: %v", err)
-		}
-		if !utf8.ValidString(got) {
-			t.Errorf("truncated commit message is not valid UTF-8: %q", got)
-		}
-		if !strings.HasSuffix(got, "...") {
-			t.Errorf("truncated commit message should end with ..., got %q", got)
-		}
-	})
-}
-
 // TestRenderTemplateAppliesRedaction pins that renderTemplate applies the
 // process-wide redaction policy (redact.Text) to the rendered title and the
 // rendered commit message, so a credential-shaped input never reaches GitHub

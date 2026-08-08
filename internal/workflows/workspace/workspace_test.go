@@ -467,6 +467,40 @@ func TestAdmissionDetachedHEADRecordsEmptyOriginBaseCommit(t *testing.T) {
 	}
 }
 
+// TestEnsureIgnoresAmbientGitDir is the DC-10 regression test for workflow
+// workspace discovery: a workflow launched from a git hook or CI job inherits
+// GIT_DIR/GIT_WORK_TREE pointing at a different repository. Ensure must still
+// resolve and create the worktree under the source repository. Fails before
+// the pinnedEnv fix in internal/vcs.
+func TestEnsureIgnoresAmbientGitDir(t *testing.T) {
+	source := initRepo(t)
+	other := initRepo(t)
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	t.Setenv("GIT_WORK_TREE", other)
+
+	got, err := Ensure(context.Background(), source, "run-ambient", IsolationWorktree)
+	if err != nil {
+		t.Fatalf("Ensure with ambient GIT_DIR/GIT_WORK_TREE: %v", err)
+	}
+	abs, _ := filepath.Abs(source)
+	if got.MainRoot != abs {
+		t.Errorf("MainRoot = %q, want source repo %q (ambient GIT_DIR must not redirect)", got.MainRoot, abs)
+	}
+	if got.WorktreeName != "workflow-run-ambient" {
+		t.Errorf("WorktreeName = %q, want workflow-run-ambient", got.WorktreeName)
+	}
+	if !strings.HasPrefix(got.Root, abs+string(filepath.Separator)) {
+		t.Errorf("worktree Root = %q, want under source repo %q", got.Root, abs)
+	}
+	commit, err := vcs.CurrentCommit(context.Background(), got.Root)
+	if err != nil {
+		t.Fatalf("CurrentCommit in the ensured worktree: %v", err)
+	}
+	if commit != got.BaseCommit {
+		t.Errorf("worktree commit = %q, want base commit %q", commit, got.BaseCommit)
+	}
+}
+
 func TestValidateRetainedBranchHonorsCanceledContext(t *testing.T) {
 	root := initRepo(t)
 	identity := Identity{MainRoot: root, BaseCommit: "HEAD", WorktreeName: "workflow-run-canceled", Branch: "wf/workflow-run-canceled"}
