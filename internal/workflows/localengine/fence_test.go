@@ -5,9 +5,22 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
+
+type blockingContentRepository struct {
+	workflowledger.Repository
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingContentRepository) StoreContent(ctx context.Context, ref string, data []byte) error {
+	close(r.entered)
+	<-r.release
+	return r.Repository.StoreContent(ctx, ref, data)
+}
 
 // TestAbandonFenceConcurrentMapAccess races abandon/clearAbandon/isAbandoned
 // under the race detector. A bare delete of abandoned without f.mu fails this.
@@ -47,5 +60,41 @@ func TestAbandonFenceRejectsEveryRunMutation(t *testing.T) {
 	ctx := workflowledger.ContextWithRunID(context.Background(), run.RunID)
 	if err := fence.StoreContent(ctx, "ref:fence", []byte("output")); err != workflowledger.ErrConflict {
 		t.Fatalf("store content error = %v, want ErrConflict", err)
+	}
+}
+
+func TestAbandonFenceSerializesAbandonWithContentWrite(t *testing.T) {
+	inner := workflowledger.NewMemoryRepository()
+	run := workflowledger.RunSnapshot{RunID: "wfr-content-fence", Status: workflowledger.RunStatusPending, Version: 1}
+	if err := inner.CreateRun(context.Background(), run, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	blocking := &blockingContentRepository{Repository: inner, entered: make(chan struct{}), release: make(chan struct{})}
+	fence := newAbandonFence(blocking)
+	ctx := workflowledger.ContextWithRunID(context.Background(), run.RunID)
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- fence.StoreContent(ctx, "ref:fence-race", []byte("output")) }()
+	<-blocking.entered
+	abandonDone := make(chan struct{})
+	go func() {
+		fence.abandon(run.RunID)
+		close(abandonDone)
+	}()
+	select {
+	case <-abandonDone:
+		t.Fatal("abandon completed before the in-flight content write")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(blocking.release)
+	if err := <-writeDone; err != nil {
+		t.Fatalf("in-flight content write error = %v", err)
+	}
+	select {
+	case <-abandonDone:
+	case <-time.After(time.Second):
+		t.Fatal("abandon did not complete after the content write")
+	}
+	if err := fence.StoreContent(ctx, "ref:fence-after", []byte("output")); err != workflowledger.ErrConflict {
+		t.Fatalf("post-abandon content write error = %v, want ErrConflict", err)
 	}
 }
