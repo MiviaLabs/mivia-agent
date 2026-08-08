@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	ledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -21,7 +22,9 @@ const maxErrorBytes = 4 << 10
 func markFailed(ctx context.Context, repo ledger.Repository, key string, req Request, err error) {
 	errText := err.Error()
 	if len(errText) > maxErrorBytes {
-		errText = errText[:maxErrorBytes]
+		// Rune-safe cut: a raw byte slice could split a multi-byte rune and
+		// store invalid UTF-8 that later reaches the status report (DC-6).
+		errText = textutil.TruncateRuneSafe(errText, maxErrorBytes)
 	}
 	ref := "sha256:" + ledger.DigestHex([]byte(errText))
 	if serr := repo.StoreContent(ctx, ref, []byte(errText)); serr != nil {
@@ -40,14 +43,16 @@ func markFailed(ctx context.Context, repo ledger.Repository, key string, req Req
 }
 
 // boundText truncates text to maxBytes, appending a notice line when
-// truncated, so the result never exceeds maxBytes.
+// truncated, so the result never exceeds maxBytes. Both cuts are rune-safe: a
+// raw byte slice could split a multi-byte rune in the stored diff snapshot,
+// leaving invalid UTF-8 in content-addressable storage (E2, DC-6).
 func boundText(text string, maxBytes int, notice string) string {
 	if len(text) <= maxBytes {
 		return text
 	}
 	marker := "\n[mivia] " + notice + "\n"
 	if len(marker) >= maxBytes {
-		return text[:maxBytes]
+		return textutil.TruncateRuneSafe(text, maxBytes)
 	}
-	return text[:maxBytes-len(marker)] + marker
+	return textutil.TruncateRuneSafe(text, maxBytes-len(marker)) + marker
 }

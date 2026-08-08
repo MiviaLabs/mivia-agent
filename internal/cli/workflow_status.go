@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -125,7 +126,9 @@ func printAttemptError(ctx context.Context, stdout io.Writer, repo workflowledge
 	}
 	truncated := false
 	if len(text) > maxAttemptErrorBytes {
-		text = text[:maxAttemptErrorBytes]
+		// Rune-safe cut: a raw byte slice could split a multi-byte rune and
+		// emit invalid UTF-8 into the status report (E4, DC-6).
+		text = textutil.TruncateRuneSafe(text, maxAttemptErrorBytes)
 		truncated = true
 	}
 	for _, l := range strings.Split(text, "\n") {

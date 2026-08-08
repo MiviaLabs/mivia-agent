@@ -219,13 +219,19 @@ func truncateRendered(rendered string, maxBytes int, allowNewline bool) (string,
 		return rendered, nil
 	}
 	if allowNewline {
-		// Byte-level truncation for commit messages, rune-safe so a
-		// multi-byte rune at the cut is never split.
-		truncated := textutil.TruncateRuneSafe(rendered, maxBytes)
-		if len(truncated) > 3 {
-			truncated = truncated[:len(truncated)-3] + "..."
+		// Commit-message truncation, rune-safe so a multi-byte rune at the
+		// cut is never split. The "..." marker bytes are reserved BEFORE the
+		// rune-safe cut: carving them out of the END of the prefix with a raw
+		// slice could strip 3 bytes off a 4-byte rune that ended exactly at
+		// maxBytes, leaving a dangling lead byte in the value that reaches
+		// `git commit -m` (E1, DC-6).
+		if maxBytes > 3 {
+			return textutil.TruncateRuneSafe(rendered, maxBytes-3) + "...", nil
 		}
-		return truncated, nil
+		// The marker cannot fit; truncate rune-safely at the raw cap. The
+		// caller still learns truncation happened because the input exceeded
+		// maxBytes.
+		return textutil.TruncateRuneSafe(rendered, maxBytes), nil
 	}
 	// Word-boundary truncation for titles. A space is one byte, so cutting at
 	// a space is always a rune boundary.

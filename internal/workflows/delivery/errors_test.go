@@ -3,8 +3,10 @@ package delivery
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -52,6 +54,66 @@ func TestMarkFailedPreservesPRIdentity(t *testing.T) {
 	}
 	if rec.CommitSHA != "c0ffee" || rec.TreeSHA != "tree" || rec.DiffRef != "diff" {
 		t.Fatalf("failed record = %+v, want CommitSHA/TreeSHA/DiffRef preserved", rec)
+	}
+}
+
+// TestBoundTextRuneSafe pins that boundText never splits a multi-byte rune in
+// the stored diff snapshot (E2, DC-6): the payload cut before the notice
+// marker used to be a raw byte slice, and the marker-cannot-fit branch cut
+// raw bytes too, both of which could leave invalid UTF-8 in stored content.
+func TestBoundTextRuneSafe(t *testing.T) {
+	t.Run("payload cut before marker is rune-safe", func(t *testing.T) {
+		text := strings.Repeat("\U0001F642", 20000) // 80000 bytes > maxDiffBytes (64 KiB)
+		got := boundText(text, maxDiffBytes, "diff truncated at 64 KiB")
+		if !utf8.ValidString(got) {
+			t.Errorf("boundText result is not valid UTF-8: %q", got[:40])
+		}
+		if len(got) > maxDiffBytes {
+			t.Errorf("boundText result %d bytes exceeds maxDiffBytes %d", len(got), maxDiffBytes)
+		}
+		if !strings.HasSuffix(got, "diff truncated at 64 KiB\n") {
+			t.Errorf("boundText result lacks the notice marker: %q", got[len(got)-60:])
+		}
+	})
+
+	t.Run("marker cannot fit falls back rune-safe", func(t *testing.T) {
+		text := strings.Repeat("\U0001F642", 5) // 20 bytes of 4-byte runes
+		got := boundText(text, 10, "notice")
+		if !utf8.ValidString(got) {
+			t.Errorf("boundText result is not valid UTF-8: %q", got)
+		}
+		if len(got) > 10 {
+			t.Errorf("boundText result %d bytes exceeds 10", len(got))
+		}
+	})
+}
+
+// TestMarkFailedTruncatesRuneSafe pins the DC-6 sweep site in markFailed: the
+// stored failure text used to be cut with a raw byte slice, so a 4-byte rune
+// at the maxErrorBytes boundary left invalid UTF-8 in content-addressable
+// storage, which later reaches the status report verbatim.
+func TestMarkFailedTruncatesRuneSafe(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"})
+	key := DeliveryKey(run.RunID, run.WorkflowDigest)
+
+	// "boom: " (6 ASCII bytes) plus enough 4-byte runes that the
+	// maxErrorBytes cut lands in the middle of a rune.
+	errText := "boom: " + strings.Repeat("\U0001F642", (maxErrorBytes-6)/4+1)
+	markFailed(ctx, repo, key, req, errors.New(errText))
+
+	rec := deliveryRecordByKey(t, repo, run)
+	body, err := repo.LoadContent(ctx, rec.ErrorRef)
+	if err != nil {
+		t.Fatalf("LoadContent: %v", err)
+	}
+	if !utf8.Valid(body) {
+		t.Errorf("stored failure text is not valid UTF-8: %q", body)
+	}
+	if len(body) > maxErrorBytes {
+		t.Errorf("stored failure text %d bytes exceeds maxErrorBytes %d", len(body), maxErrorBytes)
 	}
 }
 
