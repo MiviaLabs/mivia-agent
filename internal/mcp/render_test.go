@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 func TestSanitizeToolMetadataBoundsUntrustedValues(t *testing.T) {
@@ -61,6 +63,17 @@ func TestDiscoveredToolRedactsResult(t *testing.T) {
 	}
 	if got == "secret value" {
 		t.Fatal("discoveredTool.Execute() did not redact result text")
+	}
+}
+
+func TestDiscoveredToolUsesExternalServerCapability(t *testing.T) {
+	tool := discoveredTool{serverID: "repository", timeout: 3 * time.Second, maxResultBytes: 100}
+	capability := tool.Capability(nil)
+	if capability.Class != tools.ExecutionExternal || capability.ResourceKey != "mcp:repository" || capability.Timeout != 3*time.Second {
+		t.Fatalf("Capability() = %#v", capability)
+	}
+	if tool.ResultBudgetBytes() != 100 {
+		t.Fatalf("ResultBudgetBytes() = %d, want 100", tool.ResultBudgetBytes())
 	}
 }
 

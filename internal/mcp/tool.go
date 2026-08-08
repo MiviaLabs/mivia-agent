@@ -12,17 +12,25 @@ import (
 )
 
 type discoveredTool struct {
-	name, remoteName, description string
-	schema                        map[string]any
-	client                        remoteClient
-	maxResultBytes                int
-	timeout                       time.Duration
-	redaction                     *redact.Policy
+	name, serverID, remoteName, description string
+	schema                                  map[string]any
+	client                                  remoteClient
+	maxResultBytes                          int
+	timeout                                 time.Duration
+	redaction                               *redact.Policy
 }
 
 func (t discoveredTool) Name() string               { return t.name }
 func (t discoveredTool) Description() string        { return t.description }
 func (t discoveredTool) Parameters() map[string]any { return t.schema }
+func (t discoveredTool) ResultBudgetBytes() int     { return t.maxResultBytes }
+func (t discoveredTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{
+		Class:       tools.ExecutionExternal,
+		ResourceKey: "mcp:" + t.serverID,
+		Timeout:     t.timeout,
+	}
+}
 func (t discoveredTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var values map[string]any
 	if err := json.Unmarshal(args, &values); err != nil {
@@ -56,7 +64,7 @@ func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, 
 		if err != nil {
 			return nil, fmt.Errorf("MCP tool %q: %w", tool.Name, err)
 		}
-		out = append(out, discoveredTool{name: name, remoteName: tool.Name, description: description, schema: schema, client: client, maxResultBytes: maxResultBytes, timeout: time.Duration(timeoutSeconds) * time.Second, redaction: redaction})
+		out = append(out, discoveredTool{name: name, serverID: serverID, remoteName: tool.Name, description: description, schema: schema, client: client, maxResultBytes: maxResultBytes, timeout: time.Duration(timeoutSeconds) * time.Second, redaction: redaction})
 	}
 	return out, nil
 }
