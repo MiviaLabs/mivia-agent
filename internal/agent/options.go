@@ -62,12 +62,13 @@ type Options struct {
 	Step       int
 	Budget     int
 	Dispatcher *runtime.Dispatcher
-	// IsToolPending reports whether name is staged for loading (load_tools)
-	// but not yet published to the live tool surface. The loop calls it only
-	// when a tool call is denied because the name is absent from its registry,
-	// to choose the denial message. Nil means no check; the generic denial
-	// message is used. It must be safe for concurrent calls.
-	IsToolPending func(name string) bool
+	// StagedToolMessage returns the denial message for a tool call to a name
+	// staged for loading (load_tools) but not yet published to the live tool
+	// surface, plus true. The loop calls it only when the name is absent from
+	// its registry. The returned message announces why publication is pending;
+	// nil means no check and the generic denial message is used. It must be
+	// safe for concurrent calls.
+	StagedToolMessage func(name string) (string, bool)
 	// RemainderSpool, when non-nil, stores truncated tool-result bodies under
 	// content refs so the model can page them via read_output. Nil means
 	// truncation notices omit refs (legacy plain notices).

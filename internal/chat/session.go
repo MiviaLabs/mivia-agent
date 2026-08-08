@@ -116,12 +116,17 @@ type Session struct {
 	// refund budget is per binding, not per streak, so the real ceiling on
 	// load_tools calls stays within maxConsecutiveAdmissionNoOps of
 	// tools.MaxAdmissionAttempts instead of being multiplied by it.
-	admissionRefunds  int
-	admissionNotes    []string
-	admissionAgent    string
-	admissionDigest   string
-	surfaceWidener    SurfaceWidener
-	operatorPromptCap int
+	admissionRefunds int
+	admissionNotes   []string
+	admissionAgent   string
+	admissionDigest  string
+	// admissionDeferralReason names why the last boundary deferred the pending
+	// stage, or "" when nothing deferred. The staged-tool denial and the
+	// load_tools result announce it, so a staged tool never reads as an
+	// unknown tool (DC-9: a status says what happened, not what was asked).
+	admissionDeferralReason string
+	surfaceWidener          SurfaceWidener
+	operatorPromptCap       int
 	// requestedPromptCap is the user's /budget choice. PromptBudget() reports
 	// only the effective capacity, so a surface wanting to say "your budget was
 	// reduced" can reach the same wrong answer the /effort dial once did:
@@ -363,14 +368,18 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	}
 	// A tool staged by load_tools becomes callable only after the turn boundary
 	// publishes it. When that boundary defers (R2-1/R2-2), a call to the staged
-	// tool must report pending publication instead of the unknown-tool denial.
-	// The check is dynamic so a same-turn stage is visible too.
-	opts.IsToolPending = func(name string) bool {
-		stage, ok := s.PendingAdmission()
-		if !ok {
-			return false
+	// tool must report pending publication and the reason, instead of the
+	// unknown-tool denial. The check is dynamic so a same-turn stage is visible
+	// too, and it announces the deferral cause mid-turn.
+	opts.StagedToolMessage = func(name string) (string, bool) {
+		names, reason, ok := s.PendingAdmissionStatus()
+		if !ok || !slices.Contains(names, name) {
+			return "", false
 		}
-		return slices.Contains(stage.Names, name)
+		if reason != "" {
+			return fmt.Sprintf("tool %q is staged for loading but publication is deferred because %s; retry the call on your next turn", name, reason), true
+		}
+		return fmt.Sprintf("tool %q is staged for loading but is not published to the live tool surface yet. Publication happens at a turn boundary and can be deferred; retry the call on your next turn", name), true
 	}
 	reply, err := loop.Run(ctx, userText, opts)
 

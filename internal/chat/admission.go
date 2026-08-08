@@ -364,6 +364,7 @@ func (s *Session) PublishPendingAdmission() {
 	stage := s.pendingAdmission
 	widener := s.surfaceWidener
 	if stage == nil {
+		s.admissionDeferralReason = ""
 		s.mu.Unlock()
 		return
 	}
@@ -371,6 +372,7 @@ func (s *Session) PublishPendingAdmission() {
 		// The binding this stage was authored against is gone (/agent switch),
 		// or no host publisher exists. Either way the stage is void.
 		s.pendingAdmission = nil
+		s.admissionDeferralReason = ""
 		s.mu.Unlock()
 		return
 	}
@@ -381,8 +383,13 @@ func (s *Session) PublishPendingAdmission() {
 	// has already reached its own boundary, where a superseded or errored turn
 	// drops its stage. So a stage that survives to a quiet boundary is
 	// publishable even when that boundary belongs to a later turn.
-	if s.switching || s.activeTurns != 1 {
-		s.deferAdmissionLocked()
+	if s.switching {
+		s.deferAdmissionLocked(deferralReasonSwitching)
+		s.mu.Unlock()
+		return
+	}
+	if s.activeTurns != 1 {
+		s.deferAdmissionLocked(deferralReasonActiveTurn)
 		s.mu.Unlock()
 		return
 	}
@@ -399,7 +406,7 @@ func (s *Session) PublishPendingAdmission() {
 	// session's dispatcher; widening would close it underneath (R2-2).
 	if err := s.CheckSwitchAllowed(); err != nil {
 		s.mu.Lock()
-		s.deferAdmissionLocked()
+		s.deferAdmissionLocked(deferralReasonOrchestration)
 		s.mu.Unlock()
 		return
 	}
@@ -411,25 +418,14 @@ func (s *Session) PublishPendingAdmission() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil || !published {
-		s.deferAdmissionLocked()
+		s.deferAdmissionLocked(deferralReasonWidener)
 		return
 	}
 	s.admittedTools = admitted
 	s.pendingAdmission = nil
 	s.admissionPublications++
 	s.admissionDeferrals = 0
-}
-
-// deferAdmissionLocked keeps a stage pending and, up to a bounded count, tells
-// the user why their tools have not appeared yet.
-func (s *Session) deferAdmissionLocked() {
-	s.admissionDeferrals++
-	if s.admissionDeferrals > maxAdmissionDeferralNotes || s.pendingAdmission == nil {
-		return
-	}
-	s.admissionNotes = append(s.admissionNotes,
-		fmt.Sprintf("tool loading deferred: %s could not be added to the tool surface yet (other work is still active); it will be retried at the next turn boundary",
-			boundedNames(s.pendingAdmission.Names, maxAdmissionNoteNames)))
+	s.admissionDeferralReason = ""
 }
 
 // TakeAdmissionNotes drains and returns queued operator-visible admission

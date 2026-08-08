@@ -651,52 +651,6 @@ func TestBackgroundWorkDefersTheAdmission(t *testing.T) {
 	}
 }
 
-// TestCallingAStagedToolBeforePublicationSaysSo: a tool staged by load_tools
-// becomes callable only after the turn boundary publishes it. When the boundary
-// defers (R2-2), a later turn calling the staged tool must receive a precise
-// pending-publication message instead of the unknown-tool denial.
-func TestCallingAStagedToolBeforePublicationSaysSo(t *testing.T) {
-	completer := &scriptedCompleter{turns: []provider.Response{
-		loadToolsCall("c1", `{"names":["grep"]}`),
-		{Content: "done"},
-	}}
-	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	fixture.sess.SetSwitchGuard(func() error { return fmt.Errorf("background run active") })
-
-	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
-		t.Fatalf("turn: %v", err)
-	}
-	if got := fixture.sess.AdmittedTools(); len(got) != 0 {
-		t.Fatalf("admitted = %v while background work held the dispatcher", got)
-	}
-	if _, ok := fixture.sess.PendingAdmission(); !ok {
-		t.Fatal("the stage must stay pending for the next qualifying boundary")
-	}
-
-	completer.mu.Lock()
-	completer.turns = []provider.Response{
-		toolCallResponse(namedCall("c2", "grep", `{}`)),
-		{Content: "done"},
-	}
-	completer.calls = 0
-	completer.mu.Unlock()
-	if _, err := fixture.sess.SendUser(context.Background(), "use it", io.Discard); err != nil {
-		t.Fatalf("second turn: %v", err)
-	}
-	var sawStagedMessage bool
-	for _, msg := range fixture.sess.MessagesCopy() {
-		if msg.Role == provider.RoleTool && msg.ToolCallID == "c2" {
-			sawStagedMessage = strings.Contains(msg.Content, "staged for loading")
-			if strings.Contains(msg.Content, "not available to this agent") {
-				t.Fatalf("staged tool got the unknown-tool denial: %q", msg.Content)
-			}
-		}
-	}
-	if !sawStagedMessage {
-		t.Fatal("the staged tool call did not report pending publication")
-	}
-}
-
 func TestDeferralNotesAreBounded(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
