@@ -319,6 +319,23 @@ func TestValidateSchemaReferenceBytesRequiresEveryReference(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaReferenceBytes_AgentPanel(t *testing.T) {
+	wf := newAgentPanelWorkflow()
+	err := ValidateSchemaReferenceBytes(wf, map[string][]byte{})
+	if err == nil || !contains(err.Error(), `panel member "correctness": output_schema "schemas/panel.json": file not found`) {
+		t.Fatalf("ValidateSchemaReferenceBytes() error = %v", err)
+	}
+}
+
+func TestValidateSchemaReferences_AgentPanel(t *testing.T) {
+	tmpDir := t.TempDir()
+	wf := newAgentPanelWorkflow()
+	err := ValidateSchemaReferences(wf, tmpDir)
+	if err == nil || !contains(err.Error(), `panel member "correctness": output_schema "schemas/panel.json": file not found`) {
+		t.Fatalf("ValidateSchemaReferences() error = %v", err)
+	}
+}
+
 func TestValidateSchemaReferenceBytesRejectsInvalidWorkflowAndPath(t *testing.T) {
 	if err := ValidateSchemaReferenceBytes(nil, nil); err == nil {
 		t.Fatal("nil workflow was accepted")

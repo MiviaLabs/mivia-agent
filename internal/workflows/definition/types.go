@@ -44,6 +44,25 @@ type Step struct {
 	OutputSchema string           `toml:"output_schema"`
 	Context      []ContextBinding `toml:"context"`
 	OnFailure    string           `toml:"on_failure"`
+	Panel        *AgentPanel      `toml:"panel"`
+}
+
+// AgentPanel defines the static members of one agent_panel step.
+type AgentPanel struct {
+	FailurePolicy           string        `toml:"failure_policy"`
+	RequireDistinctBindings bool          `toml:"require_distinct_bindings"`
+	Members                 []PanelMember `toml:"members"`
+}
+
+// PanelMember defines one statically bound agent in an agent_panel step.
+type PanelMember struct {
+	ID           string `toml:"id"`
+	Agent        string `toml:"agent"`
+	Provider     string `toml:"provider"`
+	Model        string `toml:"model"`
+	Skill        string `toml:"skill"`
+	Template     string `toml:"template"`
+	OutputSchema string `toml:"output_schema"`
 }
 
 // StepCommand declares one sandboxed command for an evidence_gate step that
@@ -107,6 +126,7 @@ type DiscoveredWorkflow struct {
 // ValidStepKinds enumerates the allowed step kind values.
 var ValidStepKinds = map[string]bool{
 	"agent":         true,
+	"agent_panel":   true,
 	"agent_gate":    true,
 	"evidence_gate": true,
 	"human_gate":    true,

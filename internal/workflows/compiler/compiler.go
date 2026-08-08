@@ -148,6 +148,11 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 		errs = append(errs, err.Error())
 	}
 
+	// Agent panel validation
+	if err := validatePanels(wf); err != nil {
+		errs = append(errs, err.Error())
+	}
+
 	return errs
 }
 
