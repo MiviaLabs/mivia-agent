@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -221,13 +222,17 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 			return nil, fmt.Errorf("MCP server %q is unavailable", id)
 		}
 		if _, ok := m.clients[id]; !ok {
-			client, err := m.connect(ctx, server)
+			startupCtx, cancel := m.startupContext(ctx)
+			client, err := m.connect(startupCtx, server)
+			cancel()
 			if err != nil {
 				m.failures[id] = err
 				return nil, fmt.Errorf("MCP server %q is unavailable", id)
 			}
 			m.clients[id] = client
-			remote, err := client.ListTools(ctx)
+			discoveryCtx, cancel := m.serverContext(ctx, server)
+			remote, err := client.ListTools(discoveryCtx)
+			cancel()
 			if err != nil {
 				_ = client.Close()
 				delete(m.clients, id)
@@ -240,7 +245,7 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 				m.failures[id] = fmt.Errorf("too many tools")
 				return nil, fmt.Errorf("MCP server %q returned too many tools", id)
 			}
-			wrapped, err := wrapRemoteTools(id, client, remote, m.cfg.MaxToolDescriptionBytes, m.cfg.MaxToolSchemaBytes, m.maxResultBytes)
+			wrapped, err := wrapRemoteTools(id, client, remote, m.cfg.MaxToolDescriptionBytes, m.cfg.MaxToolSchemaBytes, m.maxResultBytes, server.TimeoutSeconds)
 			if err != nil {
 				_ = client.Close()
 				delete(m.clients, id)
@@ -252,6 +257,20 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 		out = append(out, m.tools[id]...)
 	}
 	return out, nil
+}
+
+func (m *Manager) startupContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if m.cfg.StartupTimeoutSeconds <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, time.Duration(m.cfg.StartupTimeoutSeconds)*time.Second)
+}
+
+func (m *Manager) serverContext(parent context.Context, server config.MCPServerConfig) (context.Context, context.CancelFunc) {
+	if server.TimeoutSeconds <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, time.Duration(server.TimeoutSeconds)*time.Second)
 }
 
 func (m *Manager) server(id string) (config.MCPServerConfig, bool) {

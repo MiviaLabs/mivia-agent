@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
@@ -79,6 +80,23 @@ func TestManagerMemoizesFailedDiscovery(t *testing.T) {
 	}
 	if got := connects.Load(); got != 1 {
 		t.Fatalf("connect count = %d, want 1 after failure", got)
+	}
+}
+
+func TestManagerAppliesServerTimeout(t *testing.T) {
+	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
+		ID: "repository", Transport: "stdio", Command: "/bin/echo", TimeoutSeconds: 1,
+	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
+		return fakeRemoteClient{}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := m.serverContext(context.Background(), config.MCPServerConfig{TimeoutSeconds: 1})
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > time.Second {
+		t.Fatalf("server context deadline = %v, ok = %v", deadline, ok)
 	}
 }
 

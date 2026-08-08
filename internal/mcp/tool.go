@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -14,6 +15,7 @@ type discoveredTool struct {
 	schema                        map[string]any
 	client                        remoteClient
 	maxResultBytes                int
+	timeout                       time.Duration
 }
 
 func (t discoveredTool) Name() string               { return t.name }
@@ -24,6 +26,11 @@ func (t discoveredTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := json.Unmarshal(args, &values); err != nil {
 		return "", fmt.Errorf("decode MCP arguments: %w", err)
 	}
+	if t.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, t.timeout)
+		defer cancel()
+	}
 	result, err := t.client.CallTool(ctx, t.remoteName, values)
 	if err != nil {
 		return "", err
@@ -31,7 +38,7 @@ func (t discoveredTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	return capMCPResult(result, t.maxResultBytes), nil
 }
 
-func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, maxDescriptionBytes, maxSchemaBytes, maxResultBytes int) ([]tools.Tool, error) {
+func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, maxDescriptionBytes, maxSchemaBytes, maxResultBytes, timeoutSeconds int) ([]tools.Tool, error) {
 	out := make([]tools.Tool, 0, len(remote))
 	seen := map[string]bool{}
 	for _, tool := range remote {
@@ -47,7 +54,7 @@ func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, 
 		if err != nil {
 			return nil, fmt.Errorf("MCP tool %q: %w", tool.Name, err)
 		}
-		out = append(out, discoveredTool{name: name, remoteName: tool.Name, description: description, schema: schema, client: client, maxResultBytes: maxResultBytes})
+		out = append(out, discoveredTool{name: name, remoteName: tool.Name, description: description, schema: schema, client: client, maxResultBytes: maxResultBytes, timeout: time.Duration(timeoutSeconds) * time.Second})
 	}
 	return out, nil
 }
