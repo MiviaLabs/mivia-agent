@@ -268,6 +268,62 @@ func newWorkflowCancelHolder() string {
 	return "wfcancel-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(value[:])
 }
 
+// newWorkflowDeleteHolder mints the run-claim holder for a session-engine
+// delete attempt.
+func newWorkflowDeleteHolder() string {
+	var value [10]byte
+	_, _ = rand.Read(value[:])
+	return "wfdelete-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(value[:])
+}
+
+// Delete implements agenttools.Engine.
+// It removes a settled run (terminal or delivery_pending) from the durable
+// ledger via the same execution-lock + claim path as `mivia workflow delete`.
+// The status gate resolves BEFORE any claim mutation: a delivery_pending run
+// may be mid-publish under a live claim (this or another host), and a refused
+// delete must leave claims untouched. Active runs are refused, so no
+// in-process controller stop is needed.
+func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string) (agenttools.DeleteResult, error) {
+	if e == nil {
+		return agenttools.DeleteResult{}, fmt.Errorf("workflow engine is nil")
+	}
+	if strings.TrimSpace(runID) == "" {
+		return agenttools.DeleteResult{}, fmt.Errorf("run_id is required")
+	}
+	releaseExecution, repo, closeFn, err := openWorkflowResolutionContextBounded(e.root, e.configPath, runID, workflowResolutionLockWait)
+	if err != nil {
+		return agenttools.DeleteResult{}, err
+	}
+	defer closeFn()
+	defer releaseExecution()
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return agenttools.DeleteResult{}, err
+	}
+	if !workflowledger.IsDeletableRunStatus(run.Status) {
+		return agenttools.DeleteResult{}, fmt.Errorf("run %q is %q; cancel it before delete", runID, run.Status)
+	}
+	// Never clear a held claim: delete accepts any run_id, and a blind clear
+	// would strip a live delivery claim (held by this or another host mid-
+	// publish) and enable double-publish. Claim instead; an expired lease may
+	// be taken over, a fresh foreign claim is refused outright.
+	holder := newWorkflowDeleteHolder()
+	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+		if errors.Is(err, workflowledger.ErrClaimHeld) {
+			if takeoverErr := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease); takeoverErr != nil {
+				return agenttools.DeleteResult{}, fmt.Errorf("workflow run %q is claimed by another executor; delete refused", runID)
+			}
+		} else {
+			return agenttools.DeleteResult{}, err
+		}
+	}
+	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
+	if err := repo.DeleteRun(ctx, runID); err != nil {
+		return agenttools.DeleteResult{}, err
+	}
+	return agenttools.DeleteResult{RunID: runID, Status: string(run.Status), Deleted: true}, nil
+}
+
 // Deliver implements agenttools.Engine.
 // Publication uses the CLI deliver path (run-owned worktree + execution lock).
 // It never delivers from the caller workspace root via localengine.

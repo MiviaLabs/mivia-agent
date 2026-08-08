@@ -46,7 +46,7 @@ func runWorkflow(args []string) error {
 
 func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, or cleanup")
+		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, cleanup, or delete")
 	}
 	var workspaceRoot, configPath string
 	var found bool
@@ -64,7 +64,7 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 	args = filtered
 	if len(args) == 0 {
-		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, or cleanup")
+		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, cleanup, or delete")
 	}
 	switch args[0] {
 	case "run":
@@ -87,6 +87,8 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 		return runWorkflowCommandCancel(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "cleanup":
 		return runWorkflowCommandCleanup(args[1:], workspaceRoot, configPath, stdout, stderr)
+	case "delete":
+		return runWorkflowCommandDelete(args[1:], workspaceRoot, configPath, stdout, stderr)
 	default:
 		return fmt.Errorf("workflow: unknown subcommand %q", args[0])
 	}

@@ -80,6 +80,14 @@ func IsTerminalRunStatus(s RunStatus) bool {
 	}
 }
 
+// IsDeletableRunStatus reports whether a settled run may be deleted from the
+// ledger: every terminal status plus delivery_pending (the explicit operator
+// choice not to deliver). Active statuses (pending, running, waiting_approval)
+// are not deletable — cancel the run first.
+func IsDeletableRunStatus(s RunStatus) bool {
+	return IsTerminalRunStatus(s) || s == RunStatusDeliveryPending
+}
+
 // IsResumableRunStatus reports whether the status means the run was interrupted
 // and can be resumed: pending, running, waiting_approval. delivery_pending is a
 // deliberate terminal-like pause, not an interruption.

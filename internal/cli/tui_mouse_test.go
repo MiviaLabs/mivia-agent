@@ -240,8 +240,8 @@ func TestTUIMouseSidebarRowsSelectAndWheelMove(t *testing.T) {
 	m.setFocus(focusScrollback)
 	m.hitMap.rebuild(m.width, m.height, 0, 0, 0, -1, 1, 1, nil, 0)
 
-	// Session rows start after the title, new-session action, and divider.
-	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 1, Y: 4})
+	// Wide sidebars show a metadata line below each session name.
+	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 1, Y: 5})
 	if m.focus != focusSidebar {
 		t.Fatalf("click focus = %v, want sidebar", m.focus)
 	}

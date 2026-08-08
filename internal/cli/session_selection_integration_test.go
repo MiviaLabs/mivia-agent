@@ -107,6 +107,9 @@ func TestIntegrationSessionsSidebarEnterLoadsPersistedSession(t *testing.T) {
 	if got := sess.MessagesCopy(); len(got) != 2 || got[0].Content != "previous question" {
 		t.Fatalf("dialog Enter did not restore persisted history: %#v; view=%q", got, stripANSI(m.View()))
 	}
+	if got := strings.Count(stripANSI(m.View()), "current"); got != 1 {
+		t.Fatalf("loaded session current marker count = %d, want 1; view=%q", got, stripANSI(m.View()))
+	}
 
 	// Reopening the same saved session must rebuild a second dispatcher
 	// generation without re-registering generation-owned tools.
@@ -120,6 +123,21 @@ func TestIntegrationSessionsSidebarEnterLoadsPersistedSession(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if m.sessionsSidebar == nil {
 		t.Fatalf("second Enter unexpectedly closed the sessions sidebar; view=%q", stripANSI(m.View()))
+	}
+}
+
+func TestTUISlashLoadMarksCurrentSidebarSession(t *testing.T) {
+	sess, res, _, cleanup := persistedSessionForSelection(t)
+	defer cleanup()
+
+	m := newTUIModel(sess, res, true)
+	m.mode, m.ready, m.width, m.height = modeChat, true, 100, 40
+	m.sessions = nil
+	if !m.handleSlash("/load previous") || !m.handleSlash("/sessions") {
+		t.Fatal("sessions and load commands must be handled")
+	}
+	if got := strings.Count(stripANSI(m.View()), "current"); got != 1 {
+		t.Fatalf("slash-loaded session current marker count = %d, want 1; view=%q", got, stripANSI(m.View()))
 	}
 }
 

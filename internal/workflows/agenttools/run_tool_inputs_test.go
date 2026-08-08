@@ -23,6 +23,9 @@ func (e *recordingEngine) Cancel(context.Context, string) (agenttools.CancelResu
 func (e *recordingEngine) Deliver(context.Context, string, bool) (agenttools.DeliverResult, error) {
 	return agenttools.DeliverResult{}, nil
 }
+func (e *recordingEngine) Delete(context.Context, string) (agenttools.DeleteResult, error) {
+	return agenttools.DeleteResult{}, nil
+}
 
 // TestRunToolPreservesLargeIntegerInputs pins that workflow_run decodes inputs
 // with UseNumber: an integer ≥ 2^53 must reach the engine verbatim. The plain

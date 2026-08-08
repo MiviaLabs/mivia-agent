@@ -47,6 +47,7 @@ func TestSlashNewPersistsOldSessionAndClears(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 	m.session = sess
 	m.waiting = false
+	m.activeSession = &chat.SessionInfo{Name: "old"}
 
 	if !m.handleSlash("/new") {
 		t.Fatal("/new must be handled by the TUI")
@@ -94,6 +95,9 @@ func TestSlashNewPersistsOldSessionAndClears(t *testing.T) {
 	// Fresh identity: SessionID must change.
 	if sess.SessionID == beforeID {
 		t.Fatal("expected a fresh SessionID after /new")
+	}
+	if m.activeSession != nil {
+		t.Fatalf("new session kept active saved session: %#v", m.activeSession)
 	}
 }
 

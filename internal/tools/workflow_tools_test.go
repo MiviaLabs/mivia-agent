@@ -28,7 +28,7 @@ func installTestWorkflowBuilder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out := make([]tools.Tool, 0, 7)
+		out := make([]tools.Tool, 0, 8)
 		for _, inner := range agenttools.Tools(svc) {
 			out = append(out, &testWorkflowTool{inner: inner})
 		}

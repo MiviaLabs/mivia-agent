@@ -126,6 +126,8 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 			err = applyApprovalResolved(&proj, st, ev)
 		case eventKindDeliveryUpserted:
 			err = applyDeliveryUpserted(&proj, st, ev)
+		case eventKindRunDeleted:
+			err = applyRunDeleted(&proj)
 		}
 		if err != nil {
 			return Projection{}, err
@@ -138,6 +140,15 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 		proj.ActiveStepID = st.initialStep
 	}
 	return proj, nil
+}
+
+// applyRunDeleted clears a deleted run's projection. The wf_run_deleted
+// tombstone is the durable deletion marker: folding it empties every read
+// surface (GetRun/ListRuns/ListEvents report the run absent), and a later
+// incarnation of the same run ID replays from an empty projection.
+func applyRunDeleted(proj *Projection) error {
+	*proj = Projection{}
+	return nil
 }
 
 func applyPanelPhase(proj *Projection, ev storage.Event) error {

@@ -21,7 +21,7 @@ type Tool interface {
 	Class() string
 }
 
-// Tools returns the seven workflow tools bound to svc.
+// Tools returns the eight workflow tools bound to svc.
 func Tools(svc *Service) []Tool {
 	if svc == nil {
 		return nil
@@ -34,6 +34,7 @@ func Tools(svc *Service) []Tool {
 		&listRunsTool{svc: svc},
 		&deliverTool{svc: svc},
 		&cancelTool{svc: svc},
+		&deleteTool{svc: svc},
 	}
 }
 
@@ -425,6 +426,51 @@ func (t *cancelTool) Execute(ctx context.Context, args json.RawMessage) (string,
 		return "", fmt.Errorf("%s: invalid arguments: %w", ToolWorkflowCancel, err)
 	}
 	result, err := t.svc.Cancel(ctx, strings.TrimSpace(in.RunID))
+	if err != nil {
+		return "", err
+	}
+	return encodeJSON(result, t.ResultBudgetBytes())
+}
+
+// ---------------------------------------------------------------------------
+// workflow_delete
+// ---------------------------------------------------------------------------
+
+type deleteTool struct{ svc *Service }
+
+func (t *deleteTool) Name() string           { return ToolWorkflowDelete }
+func (t *deleteTool) Class() string          { return "write" }
+func (t *deleteTool) ResultBudgetBytes() int { return DefaultDeleteBudgetBytes }
+func (t *deleteTool) Description() string {
+	return "Delete a settled workflow run's durable ledger record. Only runs that " +
+		"already finished (succeeded, failed, canceled, timed_out, delivery_failed) or " +
+		"are waiting for delivery (delivery_pending) can be deleted; active runs must " +
+		"be canceled first. The run disappears from every read surface; its worktree " +
+		"and branch, if any, are not removed (use the workspace cleanup command for " +
+		"those). Shared stored content is never deleted. Available to agents by default " +
+		"when the workspace defines workflows; use it to purge stale runs."
+}
+func (t *deleteTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"run_id": map[string]any{
+				"type":        "string",
+				"description": "Workflow run id to delete (form wfr-...)",
+			},
+		},
+		"required":             []string{"run_id"},
+		"additionalProperties": false,
+	}
+}
+func (t *deleteTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var in struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return "", fmt.Errorf("%s: invalid arguments: %w", ToolWorkflowDelete, err)
+	}
+	result, err := t.svc.Delete(ctx, strings.TrimSpace(in.RunID))
 	if err != nil {
 		return "", err
 	}

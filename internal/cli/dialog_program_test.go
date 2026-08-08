@@ -9,7 +9,9 @@ import (
 
 func TestDialogProgramResizeIntegration(t *testing.T) {
 	m := newReadyChatModel(24, 90)
-	for _, command := range []string{"/help", "/status", "/tools", "/sessions"} {
+	// /sessions is a non-modal sidebar, not a dialog; the modal loop below
+	// covers the dialog producers that still open a modal.
+	for _, command := range []string{"/help", "/status", "/tools"} {
 		m.handleSlash(command)
 		if command == "/tools" && !m.modalOpen() {
 			// The harness session has no registry; exercise the same producer

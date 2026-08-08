@@ -247,7 +247,9 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 			if err := m.session.Save(fields[1]); err != nil {
 				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("save error: " + err.Error()), Rendered: tuiErrorStyle.Render("save error: " + err.Error())})
 			} else {
-				m.refreshSessionList()
+				if err := m.refreshSessionList(); err != nil {
+					m.appendInfo("sessions refresh failed: " + err.Error())
+				}
 				m.appendInfo(saveSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
 			}
 		} else {
@@ -279,7 +281,9 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 			if err := m.session.DeleteSession(fields[1]); err != nil {
 				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("delete error: " + err.Error()), Rendered: tuiErrorStyle.Render("delete error: " + err.Error())})
 			} else {
-				m.refreshSessionList()
+				if err := m.refreshSessionList(); err != nil {
+					m.appendInfo("sessions refresh failed: " + err.Error())
+				}
 				m.appendInfo(deleteSessionResult(fields[1]))
 			}
 		} else {
@@ -313,6 +317,18 @@ func (m *tuiModel) runLoadSlash(fields []string) {
 	if err := m.session.Load(fields[1]); err != nil {
 		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("load error: " + err.Error()), Rendered: tuiErrorStyle.Render("load error: " + err.Error())})
 		return
+	}
+	m.activeSession = nil
+	if err := m.refreshSessionList(); err != nil {
+		m.appendInfo("sessions refresh failed: " + err.Error())
+	} else {
+		for i := range m.sessions {
+			si := m.sessions[i]
+			if si.Name == fields[1] && !si.WorktreeRoute {
+				m.activeSession = &si
+				break
+			}
+		}
 	}
 	m.modelName = shortenModel(m.session.CurrentModel())
 	m.messages = nil

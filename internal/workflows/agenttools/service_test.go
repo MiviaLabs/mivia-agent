@@ -464,3 +464,6 @@ func (stubEngine) Cancel(context.Context, string) (agenttools.CancelResult, erro
 func (stubEngine) Deliver(context.Context, string, bool) (agenttools.DeliverResult, error) {
 	return agenttools.DeliverResult{RunID: "wfr-stub", Status: "succeeded"}, nil
 }
+func (stubEngine) Delete(context.Context, string) (agenttools.DeleteResult, error) {
+	return agenttools.DeleteResult{RunID: "wfr-stub", Status: "succeeded", Deleted: true}, nil
+}

@@ -22,6 +22,7 @@ const (
 	eventKindApprovalCreated  = "wf_approval_created"
 	eventKindApprovalResolved = "wf_approval_resolved"
 	eventKindDeliveryUpserted = "wf_delivery_upserted"
+	eventKindRunDeleted       = "wf_run_deleted"
 )
 
 type panelPhasePayload struct {
@@ -145,6 +146,18 @@ type deliveryUpsertedPayload struct {
 	CreatedAt time.Time      `json:"created_at"`
 }
 
+// runDeletedPayload is the wf_run_deleted tombstone payload. The tombstone is
+// appended BEFORE the run's prior events are hard-deleted, so a second
+// repository instance over the same store converges to "deleted" (its
+// watermark is forced past the tombstone and the projection rebuild clears
+// the run). A later incarnation of the same wfr- ID starts after the
+// tombstone, so its event IDs and sequences cannot collide with the deleted
+// incarnation's.
+type runDeletedPayload struct {
+	RunID     string    `json:"run_id"`
+	DeletedAt time.Time `json:"deleted_at"`
+}
+
 // Marshal helpers (json.Marshal of the payload structs).
 func marshalRunCreated(p runCreatedPayload) ([]byte, error) { return json.Marshal(p) }
 func unmarshalRunCreated(data []byte) (runCreatedPayload, error) {
@@ -220,6 +233,12 @@ func unmarshalApprovalResolved(data []byte) (approvalResolvedPayload, error) {
 func marshalDeliveryUpserted(p deliveryUpsertedPayload) ([]byte, error) { return json.Marshal(p) }
 func unmarshalDeliveryUpserted(data []byte) (deliveryUpsertedPayload, error) {
 	var p deliveryUpsertedPayload
+	err := json.Unmarshal(data, &p)
+	return p, err
+}
+func marshalRunDeleted(p runDeletedPayload) ([]byte, error) { return json.Marshal(p) }
+func unmarshalRunDeleted(data []byte) (runDeletedPayload, error) {
+	var p runDeletedPayload
 	err := json.Unmarshal(data, &p)
 	return p, err
 }

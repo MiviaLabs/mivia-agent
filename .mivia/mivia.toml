@@ -367,6 +367,7 @@ core = [
     "workflow_list_runs",
     "workflow_deliver",
     "workflow_cancel",
+    "workflow_delete",
 ]
 
 

@@ -28,9 +28,10 @@ const (
 	ToolWorkflowListRuns = "workflow_list_runs"
 	ToolWorkflowDeliver  = "workflow_deliver"
 	ToolWorkflowCancel   = "workflow_cancel"
+	ToolWorkflowDelete   = "workflow_delete"
 )
 
-// AllToolNames returns the seven Phase 7 workflow tool names in stable order.
+// AllToolNames returns the eight Phase 7 workflow tool names in stable order.
 func AllToolNames() []string {
 	return []string{
 		ToolWorkflowRun,
@@ -40,6 +41,7 @@ func AllToolNames() []string {
 		ToolWorkflowListRuns,
 		ToolWorkflowDeliver,
 		ToolWorkflowCancel,
+		ToolWorkflowDelete,
 	}
 }
 
@@ -52,6 +54,7 @@ const (
 	DefaultRunBudgetBytes     = 16 << 10
 	DefaultDeliverBudgetBytes = 32 << 10
 	DefaultCancelBudgetBytes  = 16 << 10
+	DefaultDeleteBudgetBytes  = 16 << 10
 	DefaultEventsPageSize     = 50
 	DefaultListRunsPageSize   = 50
 
@@ -233,6 +236,15 @@ type CancelResult struct {
 	Status string `json:"status"`
 }
 
+// DeleteResult is the response from workflow_delete. Status is the run's
+// status BEFORE deletion; Deleted is always true on success (an error is
+// returned otherwise), so the tool output is self-documenting for the agent.
+type DeleteResult struct {
+	RunID   string `json:"run_id"`
+	Status  string `json:"status"`
+	Deleted bool   `json:"deleted"`
+}
+
 // Engine performs mutating workflow operations. Reads use Repository only.
 type Engine interface {
 	// Start admits a run and advances it in a background goroutine.
@@ -242,6 +254,9 @@ type Engine interface {
 	Cancel(ctx context.Context, runID string) (CancelResult, error)
 	// Deliver publishes a delivery_pending run when allow_publish is true.
 	Deliver(ctx context.Context, runID string, allowPublish bool) (DeliverResult, error)
+	// Delete removes a settled run (terminal or delivery_pending) from the
+	// durable ledger. Active runs are refused; cancel them first.
+	Delete(ctx context.Context, runID string) (DeleteResult, error)
 }
 
 // RepoFactory opens a workflow ledger repository. The closer releases resources.

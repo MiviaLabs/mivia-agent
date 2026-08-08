@@ -134,6 +134,15 @@ type Repository interface {
 	// run is absent.
 	ListEvents(ctx context.Context, runID string, limit, offset int) ([]EventRecord, error)
 
+	// DeleteRun removes a settled run's durable record: the wf_run_deleted
+	// tombstone plus every prior event and the run's claim are removed from
+	// the store, and the in-memory projection is dropped. Shared
+	// content-addressed blobs are never deleted. Returns ErrNotFound when
+	// the run has no record (never created or already deleted). The caller
+	// must hold the execution lock and a claim (or otherwise guarantee no
+	// concurrent writer) before calling.
+	DeleteRun(ctx context.Context, runID string) error
+
 	// ClaimRun acquires the exclusive execution claim on a run. Returns
 	// ErrClaimHeld if another holder owns it. Same-holder refresh succeeds.
 	ClaimRun(ctx context.Context, runID, holder string) error

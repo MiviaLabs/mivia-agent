@@ -143,3 +143,10 @@ func runWorkflowCommandCleanup(args []string, workspaceRoot, configPath string, 
 	}
 	return executeWorkflowCleanup(args[0], workspaceRoot, configPath, stdout, stderr)
 }
+
+func runWorkflowCommandDelete(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
+	if len(args) != 1 {
+		return fmt.Errorf("workflow delete: expected one run ID")
+	}
+	return executeWorkflowDelete(args[0], workspaceRoot, configPath, stdout, stderr)
+}

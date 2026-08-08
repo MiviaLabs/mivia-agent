@@ -79,6 +79,9 @@ type tuiModel struct {
 	overlay *blockOverlay
 	// sessionsSidebar is the session list sidebar (nil = closed).
 	sessionsSidebar *sessionsSidebar
+	// activeSession identifies the saved session loaded into this TUI. Nil means
+	// the current chat has no saved-session identity.
+	activeSession *chat.SessionInfo
 	// modelDlg is the provider-qualified /model picker (nil = closed).
 	modelDlg *modelDialog
 	// agentDlg is the /agent root-agent picker (nil = closed).
@@ -259,10 +262,10 @@ func (m *tuiModel) refreshGitContext() {
 	m.gitWorktreeName = vcs.DetectWorktreeName()
 }
 
-func (m *tuiModel) refreshSessionList() {
+func (m *tuiModel) refreshSessionList() error {
 	list, err := m.listSessions()
 	if err != nil {
-		return
+		return err
 	}
 	// ListSessions is newest-first; keep selection on index 0 (latest) by default
 	// when the list is freshly loaded or the previous index is out of range.
@@ -270,6 +273,7 @@ func (m *tuiModel) refreshSessionList() {
 	if m.sessionSel < 0 || m.sessionSel >= len(m.sessions) {
 		m.sessionSel = 0
 	}
+	return nil
 }
 
 func (m *tuiModel) Init() tea.Cmd {
