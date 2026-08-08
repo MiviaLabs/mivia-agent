@@ -105,7 +105,19 @@ func zaiErrorParser(statusCode int, body []byte) error {
 			// provider's own message is never forwarded.
 			return fmt.Errorf("zai: provider error (HTTP %d, code %d: %s): %w", statusCode, code, meaning, ErrPromptTooLong)
 		}
-		return fmt.Errorf("zai: provider error (HTTP %d, code %d: %s)", statusCode, code, meaning)
+		err := fmt.Errorf("zai: provider error (HTTP %d, code %d: %s)", statusCode, code, meaning)
+		// A permanent 429 (quota or plan state) is refused at the transport and
+		// must stay refused at every layer: the error text names "HTTP 429",
+		// which the shared transient-message table matches, so without a typed
+		// marker the workflow step would re-run itself up to three times on a
+		// block that holds for the rest of the billing period. zaiNonRetryable
+		// is the SAME classifier the transport consults, so the permanent split
+		// (1113, 1308-1311, 1314) stays pinned in one place and the transient
+		// codes 1302/1305 are never marked.
+		if zaiNonRetryable(statusCode, body) {
+			return markPermanent(err)
+		}
+		return err
 	}
 	return fmt.Errorf("zai: provider error (HTTP %d, code %d)", statusCode, code)
 }
