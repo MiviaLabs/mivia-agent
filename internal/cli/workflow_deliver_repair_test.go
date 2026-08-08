@@ -160,4 +160,19 @@ func TestDeliveryRepairIsBounded(t *testing.T) {
 	if err := reopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("hook rejected"), &stdout); err == nil {
 		t.Fatal("the repair budget is spent; a further re-entry must fail")
 	}
+	// The budget-exhausted run must settle terminal instead of waiting at
+	// delivery_pending forever: resume and cancel both refuse delivery_pending,
+	// and cleanup would remove the worktree without settling, so an unsettled
+	// run looks waiting but can never be delivered.
+	after, err := repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != workflowledger.RunStatusDeliveryFailed {
+		t.Fatalf("run status = %q, want %q: a budget-exhausted run must settle as delivery_failed, not wait at delivery_pending forever",
+			after.Status, workflowledger.RunStatusDeliveryFailed)
+	}
+	if !workflowledger.IsTerminalRunStatus(after.Status) {
+		t.Fatalf("run status = %q is not terminal; the budget-exhausted run must be settled", after.Status)
+	}
 }
