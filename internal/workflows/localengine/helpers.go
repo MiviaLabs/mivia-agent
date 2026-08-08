@@ -5,6 +5,7 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowtemplate "github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
 func buildStepRuntimes(wf *compiler.CompiledWorkflow, base string) (map[string]controller.StepRuntime, error) {
@@ -67,22 +69,69 @@ func buildStepRuntimesFromSnapshot(wf *compiler.CompiledWorkflow, schemas map[st
 func loadOutputSchemas(base string, wf *compiler.CompiledWorkflow) (map[string]workflowledger.RefSnapshot, error) {
 	schemas := make(map[string]workflowledger.RefSnapshot)
 	for _, step := range wf.Steps {
-		if step.OutputSchema == "" {
-			continue
+		refs := []string{step.OutputSchema}
+		if step.Panel != nil {
+			for _, member := range step.Panel.Members {
+				refs = append(refs, member.OutputSchema)
+			}
 		}
-		if _, ok := schemas[step.OutputSchema]; ok {
-			continue // same ref used by multiple steps: read and pin once
-		}
-		data, err := loadOutputSchemaBytes(base, step.OutputSchema)
-		if err != nil {
-			return nil, fmt.Errorf("step %q: output_schema %q: %w", step.ID, step.OutputSchema, err)
-		}
-		schemas[step.OutputSchema] = workflowledger.RefSnapshot{
-			Digest: digestRefBytes(data),
-			Bytes:  append([]byte(nil), data...),
+		for _, ref := range refs {
+			if ref == "" {
+				continue
+			}
+			if _, ok := schemas[ref]; ok {
+				continue
+			}
+			data, err := loadOutputSchemaBytes(base, ref)
+			if err != nil {
+				return nil, fmt.Errorf("step %q: output_schema %q: %w", step.ID, ref, err)
+			}
+			schemas[ref] = workflowledger.RefSnapshot{Digest: digestRefBytes(data), Bytes: append([]byte(nil), data...)}
 		}
 	}
 	return schemas, nil
+}
+
+func loadPanelSnapshotAssets(base string, wf *compiler.CompiledWorkflow, schemas map[string]workflowledger.RefSnapshot, registry *agents.AgentRegistry) (map[string]workflowledger.RefSnapshot, map[string]workflowledger.PanelBindingSnapshot, error) {
+	templates := make(map[string]workflowledger.RefSnapshot)
+	bindings := make(map[string]workflowledger.PanelBindingSnapshot)
+	for _, step := range wf.Steps {
+		if step.Kind != "agent_panel" || step.Panel == nil {
+			continue
+		}
+		for _, member := range step.Panel.Members {
+			agent, ok := registry.Get(member.Agent)
+			if !ok {
+				return nil, nil, fmt.Errorf("panel step %q member %q references unknown agent %q", step.ID, member.ID, member.Agent)
+			}
+			agentDigest, err := agent.DefinitionDigest()
+			if err != nil {
+				return nil, nil, fmt.Errorf("panel step %q member %q agent digest: %w", step.ID, member.ID, err)
+			}
+			data, err := loadTemplateBytes(base, member.Template)
+			if err != nil {
+				return nil, nil, fmt.Errorf("panel step %q member %q template %q: %w", step.ID, member.ID, member.Template, err)
+			}
+			templateRef := workflowledger.RefSnapshot{Digest: digestRefBytes(data), Bytes: append([]byte(nil), data...)}
+			templates[member.Template] = templateRef
+			schemaRef, ok := schemas[member.OutputSchema]
+			if !ok {
+				return nil, nil, fmt.Errorf("panel step %q member %q schema %q is missing", step.ID, member.ID, member.OutputSchema)
+			}
+			key := step.ID + "/" + member.ID
+			if _, exists := bindings[key]; exists {
+				return nil, nil, fmt.Errorf("duplicate panel binding %q", key)
+			}
+			bindings[key] = workflowledger.PanelBindingSnapshot{
+				StepID: step.ID, MemberID: member.ID, AgentName: member.Agent,
+				AgentDigest:  agentDigest,
+				ProviderName: member.Provider, Model: member.Model,
+				SkillDigest:    workflowledger.DigestHex([]byte(member.Skill)),
+				TemplateDigest: templateRef.Digest, SchemaDigest: schemaRef.Digest,
+			}
+		}
+	}
+	return templates, bindings, nil
 }
 
 // digestRefBytes returns the content digest in the same wire format the CLI
@@ -93,21 +142,41 @@ func digestRefBytes(data []byte) string {
 }
 
 // loadOutputSchemaBytes reads one workflow output-schema reference with the
-// admission guards: no path escape and a size cap. It follows symlinks like
-// the previous os.ReadFile admission path; resume never reaches it (it reads
-// the pinned snapshot bytes instead), so a symlinked schema on disk cannot
-// change what an admitted run enforces.
+// admission guards: no path escape, no symlink, and a size cap. Resume never
+// reaches it because it reads the pinned snapshot bytes instead.
 func loadOutputSchemaBytes(base, ref string) ([]byte, error) {
+	return loadBoundedReferenceBytes(base, ref, definition.MaxWorkflowFileBytes)
+}
+
+func loadTemplateBytes(base, ref string) ([]byte, error) {
+	return loadBoundedReferenceBytes(base, ref, workflowtemplate.MaxTemplateBytes)
+}
+
+func loadBoundedReferenceBytes(base, ref string, maxBytes int) ([]byte, error) {
 	clean := filepath.Clean(ref)
 	if clean == "." || filepath.IsAbs(ref) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("workflow reference %q escapes its directory", ref)
 	}
-	data, err := os.ReadFile(filepath.Join(base, clean))
+	root, err := os.OpenRoot(base)
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > definition.MaxWorkflowFileBytes {
-		return nil, fmt.Errorf("workflow reference %q exceeds %d bytes", ref, definition.MaxWorkflowFileBytes)
+	defer root.Close()
+	info, err := root.Lstat(clean)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("workflow reference %q is not a regular file", ref)
+	}
+	file, err := root.Open(clean)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, int64(maxBytes)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxBytes {
+		return nil, fmt.Errorf("workflow reference %q exceeds %d bytes", ref, maxBytes)
 	}
 	return data, nil
 }

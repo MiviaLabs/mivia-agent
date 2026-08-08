@@ -140,6 +140,9 @@ func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, li
 	// results, so the resumed run still reports one result per task.
 	opts = append(opts, withRunPolicy(snap.Policy))
 	h := c.newRunHandle(runID, "", newAttempts, "", false, opts...)
+	h.mu.Lock()
+	h.localActor = true
+	h.mu.Unlock()
 
 	// Run the DAG in background, which will execute pending/retry tasks.
 	go c.executeResumedRun(h, originalTasks, alreadyDone)

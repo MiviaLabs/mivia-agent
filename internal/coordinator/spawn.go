@@ -92,6 +92,9 @@ func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string,
 	}
 	opts = append(opts, withRunPolicy(policy))
 	h := c.newRunHandle(runID, key, attempts, fingerprint, false, opts...)
+	h.mu.Lock()
+	h.localActor = true
+	h.mu.Unlock()
 	// Stamp pool context before starting the run goroutine so concurrent
 	// referral spawns never race the first poolCtx write (plan 53.04).
 	h.mu.Lock()
@@ -108,20 +111,22 @@ var ErrIdempotencyConflict = errors.New("idempotency key already used for a diff
 // identity is deliberately excluded because it is idempotency-key scope, not
 // requested work. Add new work-defining Task fields here deliberately.
 type fingerprintTask struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	DependsOn    []string        `json:"depends_on,omitempty"`
-	Input        json.RawMessage `json:"input,omitempty"`
-	Timeout      time.Duration   `json:"timeout,omitempty"`
-	Budget       int             `json:"budget,omitempty"`
-	Scope        string          `json:"scope,omitempty"`
-	AgentName    string          `json:"agent_name"`
-	AgentDigest  string          `json:"agent_digest"`
-	Skill        string          `json:"skill,omitempty"`
-	ProviderName string          `json:"provider_name,omitempty"`
-	Model        string          `json:"model,omitempty"`
-	OutputSchema map[string]any  `json:"output_schema,omitempty"`
-	InputSchema  map[string]any  `json:"input_schema,omitempty"`
+	ID                    string             `json:"id"`
+	Name                  string             `json:"name"`
+	DependsOn             []string           `json:"depends_on,omitempty"`
+	Input                 json.RawMessage    `json:"input,omitempty"`
+	Timeout               time.Duration      `json:"timeout,omitempty"`
+	Budget                int                `json:"budget,omitempty"`
+	Scope                 string             `json:"scope,omitempty"`
+	AgentName             string             `json:"agent_name"`
+	AgentDigest           string             `json:"agent_digest"`
+	Skill                 string             `json:"skill,omitempty"`
+	ProviderName          string             `json:"provider_name,omitempty"`
+	Model                 string             `json:"model,omitempty"`
+	OutputSchema          map[string]any     `json:"output_schema,omitempty"`
+	InputSchema           map[string]any     `json:"input_schema,omitempty"`
+	WorkLimits            runtime.WorkLimits `json:"work_limits,omitempty"`
+	DisableProviderReplay bool               `json:"disable_provider_replay,omitempty"`
 }
 
 // requestFingerprint returns the canonical identity of the work in tasks.
@@ -134,6 +139,7 @@ func requestFingerprint(tasks []subagents.Task) (string, error) {
 			AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill,
 			ProviderName: task.ProviderName, Model: task.Model,
 			OutputSchema: task.OutputSchema, InputSchema: task.InputSchema,
+			WorkLimits: task.WorkLimits, DisableProviderReplay: task.DisableProviderReplay,
 		}
 	}
 	payload, err := json.Marshal(projected)
@@ -237,7 +243,7 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 		displayName = c.names.Generate("task")
 	}
 	attemptID := newAttemptID()
-	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID, ParentTaskID: parentTaskID(task.Owner), DisplayName: displayName, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Scope: task.Scope, OutputSchema: task.OutputSchema, InputSchema: task.InputSchema, Input: task.Input, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, Status: string(ledger.TaskStatusQueued), DependsOn: append([]string(nil), task.DependsOn...), CreatedAt: now, Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: taskID, RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
+	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID, ParentTaskID: parentTaskID(task.Owner), DisplayName: displayName, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Scope: task.Scope, OutputSchema: task.OutputSchema, InputSchema: task.InputSchema, Input: task.Input, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, WorkLimits: task.WorkLimits, DisableProviderReplay: task.DisableProviderReplay, Status: string(ledger.TaskStatusQueued), DependsOn: append([]string(nil), task.DependsOn...), CreatedAt: now, Version: 1, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: taskID, RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
 	if err := c.repo.CreateTask(ctx, snap); err != nil {
 		return namedTask{}, fmt.Errorf("create task %q: %w", taskID, err)
 	}

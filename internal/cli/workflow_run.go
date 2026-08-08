@@ -413,6 +413,9 @@ func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.D
 	if err := ctrl.SetWorkDir(identity.Root); err != nil {
 		return nil, err
 	}
+	if err := ctrl.SetPanelLimiter(processWorkflowServices().panelLimiter); err != nil {
+		return nil, err
+	}
 	if baseline != nil {
 		if err := ctrl.SetModuleBaseline(baseline); err != nil {
 			return nil, err

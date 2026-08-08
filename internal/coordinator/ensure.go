@@ -138,7 +138,7 @@ func (c *coordinator) EnsureSingleTaskRun(ctx context.Context, req EnsureRunRequ
 	now := c.nowLocked()
 	task := req.Tasks[0]
 	attemptID := newAttemptID()
-	taskSnap := ledger.TaskSnapshot{RunID: req.RunID, TaskID: task.ID, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Scope: task.Scope, Input: task.Input, InputSchema: task.InputSchema, OutputSchema: task.OutputSchema, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, DependsOn: append([]string(nil), task.DependsOn...), Status: string(ledger.TaskStatusQueued), Version: 1, CreatedAt: now, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: task.ID, RunID: req.RunID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
+	taskSnap := ledger.TaskSnapshot{RunID: req.RunID, TaskID: task.ID, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Scope: task.Scope, Input: task.Input, InputSchema: task.InputSchema, OutputSchema: task.OutputSchema, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, WorkLimits: task.WorkLimits, DisableProviderReplay: task.DisableProviderReplay, DependsOn: append([]string(nil), task.DependsOn...), Status: string(ledger.TaskStatusQueued), Version: 1, CreatedAt: now, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: task.ID, RunID: req.RunID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
 	run := ledger.RunSnapshot{RunID: req.RunID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Policy: req.Policy}
 	if err := c.repo.AdmitSingleTask(ctx, ledger.SingleTaskAdmission{IdempotencyKey: key, Run: run, Task: taskSnap}); err != nil {
 		if errors.Is(err, ledger.ErrDuplicate) {
@@ -151,6 +151,9 @@ func (c *coordinator) EnsureSingleTaskRun(ctx context.Context, req EnsureRunRequ
 	}
 	opts := append(nonInteractiveRunOpts(req), withRunPolicy(req.Policy))
 	h := c.newRunHandle(req.RunID, key, map[string]string{task.ID: attemptID}, fingerprint, false, opts...)
+	h.mu.Lock()
+	h.localActor = true
+	h.mu.Unlock()
 	go c.executeRun(h, []subagents.Task{task})
 	return h, nil
 }
@@ -189,7 +192,7 @@ func (c *coordinator) EnsureTerminalSingleTaskRun(ctx context.Context, req Ensur
 	now := c.nowLocked()
 	run := ledger.RunSnapshot{RunID: req.RunID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCanceled, RequestFingerprint: fingerprint, CreatedAt: now, CompletedAt: &now, Policy: req.Policy}
 	task := req.Tasks[0]
-	snap := ledger.TaskSnapshot{RunID: req.RunID, TaskID: task.ID, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Scope: task.Scope, Input: task.Input, InputSchema: task.InputSchema, OutputSchema: task.OutputSchema, Timeout: task.Timeout, Budget: task.Budget, DependsOn: append([]string(nil), task.DependsOn...), Status: string(status), Version: 1, CreatedAt: now, CompletedAt: &now, Attempts: []ledger.AttemptSnapshot{{AttemptID: newAttemptID(), TaskID: task.ID, RunID: req.RunID, AttemptNum: 1, StartedAt: now, FinishedAt: &now, Status: string(status)}}}
+	snap := ledger.TaskSnapshot{RunID: req.RunID, TaskID: task.ID, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Scope: task.Scope, Input: task.Input, InputSchema: task.InputSchema, OutputSchema: task.OutputSchema, Timeout: task.Timeout, Budget: task.Budget, WorkLimits: task.WorkLimits, DisableProviderReplay: task.DisableProviderReplay, DependsOn: append([]string(nil), task.DependsOn...), Status: string(status), Version: 1, CreatedAt: now, CompletedAt: &now, Attempts: []ledger.AttemptSnapshot{{AttemptID: newAttemptID(), TaskID: task.ID, RunID: req.RunID, AttemptNum: 1, StartedAt: now, FinishedAt: &now, Status: string(status)}}}
 	if err := c.repo.AdmitSingleTask(ctx, ledger.SingleTaskAdmission{IdempotencyKey: key, Run: run, Task: snap}); err != nil {
 		if errors.Is(err, ledger.ErrDuplicate) {
 			return c.joinSingleTaskAdmission(ctx, req, key, fingerprint)
@@ -199,6 +202,45 @@ func (c *coordinator) EnsureTerminalSingleTaskRun(ctx context.Context, req Ensur
 	h := c.newRunHandle(req.RunID, key, latestAttempts([]ledger.TaskSnapshot{snap}), fingerprint, true, nonInteractiveRunOpts(req)...)
 	go c.watchRecoveredRun(h)
 	return h, nil
+}
+
+// NeedsActorPermit reports whether an admitted child needs a local actor
+// permit. It never admits work. It briefly claims a durable child to tell an
+// unclaimed resumable child from a remote wait-only child.
+func (c *coordinator) NeedsActorPermit(ctx context.Context, req EnsureRunRequest) (bool, error) {
+	var err error
+	req, err = c.resolveEnsurePolicy(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	fingerprint, key, err := c.validateEnsureRequest(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	if h := c.lookupHandle(key); h != nil {
+		return h.LocalActor(), nil
+	}
+	run, err := c.repo.GetRunByIdempotencyKey(ctx, key)
+	if errors.Is(err, ledger.ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if run.RunID != req.RunID || run.RequestFingerprint != fingerprint || run.Policy != req.Policy {
+		return false, ErrIdempotencyConflict
+	}
+	if isTerminalRunStatus(run.Status) {
+		return false, nil
+	}
+	if err := c.repo.ClaimRun(ctx, run.RunID, c.holderID); err == nil {
+		_ = c.repo.ReleaseRun(context.Background(), run.RunID, c.holderID)
+		return true, nil
+	} else if errors.Is(err, ledger.ErrClaimHeld) {
+		return false, nil
+	} else {
+		return false, err
+	}
 }
 
 // resolveEnsurePolicy restores the durable policy for an omitted request.
@@ -247,6 +289,18 @@ func (c *coordinator) joinSingleTaskAdmission(ctx context.Context, req EnsureRun
 	}
 	if h := c.HandleForRun(run.RunID); h != nil {
 		return h, nil
+	}
+	if panelWaitOnlyJoin(ctx) {
+		if err := c.repo.ClaimRun(ctx, run.RunID, c.holderID); err == nil {
+			_ = c.repo.ReleaseRun(context.Background(), run.RunID, c.holderID)
+			return nil, ErrWaitOnlyJoinLost
+		} else if errors.Is(err, ledger.ErrClaimHeld) {
+			h := c.newRunHandle(run.RunID, key, latestAttempts(tasks), fingerprint, true, nonInteractiveRunOpts(req)...)
+			go c.watchJoinedRun(h)
+			return h, nil
+		} else {
+			return nil, err
+		}
 	}
 	if err := c.repo.ClaimRun(ctx, run.RunID, c.holderID); errors.Is(err, ledger.ErrClaimHeld) {
 		h := c.newRunHandle(run.RunID, key, latestAttempts(tasks), fingerprint, true, nonInteractiveRunOpts(req)...)
@@ -314,14 +368,14 @@ func sameStoredWork(task subagents.Task, snap ledger.TaskSnapshot) bool {
 		Timeout: task.Timeout, Budget: task.Budget, Scope: task.Scope,
 		AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill,
 		ProviderName: task.ProviderName, Model: task.Model, OutputSchema: task.OutputSchema,
-		InputSchema: task.InputSchema,
+		InputSchema: task.InputSchema, WorkLimits: task.WorkLimits, DisableProviderReplay: task.DisableProviderReplay,
 	}})
 	right, rightErr := requestFingerprint([]subagents.Task{{
 		ID: snap.TaskID, Name: snap.HandlerName, DependsOn: snap.DependsOn, Input: snap.Input,
 		Timeout: snap.Timeout, Budget: snap.Budget, Scope: snap.Scope,
 		AgentName: snap.AgentName, AgentDigest: snap.AgentDigest, Skill: snap.Skill,
 		ProviderName: snap.ProviderName, Model: snap.Model, OutputSchema: snap.OutputSchema,
-		InputSchema: snap.InputSchema,
+		InputSchema: snap.InputSchema, WorkLimits: snap.WorkLimits, DisableProviderReplay: snap.DisableProviderReplay,
 	}})
 	return leftErr == nil && rightErr == nil && left == right
 }

@@ -30,6 +30,8 @@ type Request struct {
 	Input                         json.RawMessage
 	Timeout                       time.Duration
 	Budget                        int
+	WorkLimits                    WorkLimits
+	DisableProviderReplay         bool
 	Permission                    string
 	Depth, Retry                  int
 	// Step is the loop-stamped model step this invocation belongs to. 0 means

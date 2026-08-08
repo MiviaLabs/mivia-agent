@@ -114,8 +114,9 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		replayReasoning:              opts.RequiresReasoningReplay,
 		rejectReasoningLessToolTurns: opts.RejectReasoningLessToolTurns,
 		client: &http.Client{
-			Timeout:   DefaultHTTPTimeout,
-			Transport: newRetryRoundTripper(http.DefaultTransport, retry),
+			Timeout:       DefaultHTTPTimeout,
+			Transport:     newRetryRoundTripper(http.DefaultTransport, retry),
+			CheckRedirect: checkNoReplayRedirect,
 		},
 	}
 	// Every OpenAI-compatible provider gets a default error parser that
@@ -170,8 +171,9 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		replayReasoning:              options.RequiresReasoningReplay,
 		rejectReasoningLessToolTurns: options.RejectReasoningLessToolTurns,
 		client: &http.Client{
-			Timeout:   DefaultHTTPTimeout,
-			Transport: newRetryRoundTripper(http.DefaultTransport, baseOpts),
+			Timeout:       DefaultHTTPTimeout,
+			Transport:     newRetryRoundTripper(http.DefaultTransport, baseOpts),
+			CheckRedirect: checkNoReplayRedirect,
 		},
 	}
 	if c.errorParser == nil {
@@ -366,11 +368,7 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 			continue
 		}
 		if len(chunk.Choices) == 0 {
-			// A usage-only chunk (the stream_options.include_usage trailing
-			// shape) is a completion signal: the upstream answered with
-			// accounting for the turn, so the non-streaming fallback below
-			// would re-send the whole prompt and bill the same turn twice.
-			// Mirrors the received logic in chatTurnStream.
+			// A usage-only chunk is a completion signal. Do not replay the turn.
 			if chunk.Usage != nil {
 				received = true
 			}
@@ -403,6 +401,9 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 		return full.String(), fmt.Errorf("%s: stream read: %w", c.name, err)
 	}
 	if full.Len() == 0 && !received {
+		if req.DisableProviderReplay {
+			return "", fmt.Errorf("%s: stream delivered no response", c.name)
+		}
 		return c.retryWithoutStreaming(ctx, req, w)
 	}
 	return full.String(), nil
@@ -420,6 +421,7 @@ func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w
 		Messages:         req.Messages,
 		Temperature:      req.Temperature,
 		MaxTokens:        req.MaxTokens,
+		ToolChoice:       req.ToolChoice,
 		Timeout:          req.Timeout,
 		Stream:           false,
 		ReasoningLevel:   req.ReasoningLevel,
@@ -443,6 +445,9 @@ func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w
 // incomplete. A truncated body still carries status 200, so the retry
 // transport treats it as a success and only the decode below finds the cut.
 func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBody, error) {
+	if req.DisableProviderReplay {
+		return c.doJSONOnce(ctx, req)
+	}
 	return retryOnIncompleteBody(ctx, func() (*chatResponseBody, error) {
 		return c.doJSONOnce(ctx, req)
 	})

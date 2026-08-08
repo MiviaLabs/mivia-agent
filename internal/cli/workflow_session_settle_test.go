@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -113,6 +114,31 @@ func TestSessionRunFailureLeavesACancelledRunAlone(t *testing.T) {
 	after, _ := repo.GetRun(ctx, run.RunID)
 	if after.Status != workflowledger.RunStatusRunning {
 		t.Fatalf("run status = %q, want running: cancel owns this run's outcome", after.Status)
+	}
+}
+
+func TestSessionRunFailureLeavesPanelMembersPhaseRunning(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	run := workflowledger.RunSnapshot{RunID: "wfr-panel-members", Status: workflowledger.RunStatusPending, ActiveStepID: "review"}
+	if err := repo.CreateRun(ctx, run, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, run.RunID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	settleSessionRunFailure(repo, run.RunID, controller.ErrPanelMembersComplete)
+	after, err := repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != workflowledger.RunStatusRunning {
+		t.Fatalf("run status = %q, want running members-only phase", after.Status)
 	}
 }
 

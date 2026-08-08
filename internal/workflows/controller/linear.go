@@ -70,6 +70,7 @@ type LinearController struct {
 	WorkDir        string
 	ModuleBaseline *verifier.GoModuleBaseline
 	SecretPolicy   secretpath.Policy
+	PanelLimiter   *PanelActorLimiter
 	admission      Admission
 	forceResume    bool
 	now            func() time.Time
@@ -91,7 +92,7 @@ func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner,
 	if len(snapshot) == 0 {
 		return nil, fmt.Errorf("workflow snapshot is empty")
 	}
-	return &LinearController{Repo: repo, Runner: runner, Workflow: wf, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now}, nil
+	return &LinearController{Repo: repo, Runner: runner, Workflow: wf, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now, PanelLimiter: NewPanelActorLimiter()}, nil
 }
 
 // SetVerifiers sets the host verifier catalogue before Start.
@@ -150,20 +151,6 @@ func (c *LinearController) SetAdmission(admission Admission) error {
 		return fmt.Errorf("workflow run already started")
 	}
 	c.admission = admission
-	return nil
-}
-
-// SetTimeSource sets the immutable controller clock before Start.
-func (c *LinearController) SetTimeSource(now func() time.Time) error {
-	if now == nil {
-		return fmt.Errorf("workflow controller clock is nil")
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.started {
-		return fmt.Errorf("workflow run already started")
-	}
-	c.now = now
 	return nil
 }
 
@@ -316,6 +303,11 @@ func (c *LinearController) Run(ctx context.Context) (workflowledger.RunSnapshot,
 		if done {
 			return snap, nil
 		}
+		if step, ok := c.WorkflowStep(snap.ActiveStepID); ok && step.Kind == "agent_panel" {
+			// Wave 4 completes the member phase only. Wave 5 advances the
+			// persisted panel phase into synthesis.
+			return snap, ErrPanelMembersComplete
+		}
 	}
 }
 
@@ -374,6 +366,8 @@ func (c *LinearController) Advance(ctx context.Context) (workflowledger.RunSnaps
 			return c.fail(ctx, run, fmt.Errorf("step %q has no snapshotted runtime", step.ID))
 		}
 		return c.advanceAgentStep(ctx, run, step, runtime)
+	case "agent_panel":
+		return c.advancePanelStep(ctx, run, step)
 	case "evidence_gate":
 		return c.advanceEvidenceGate(ctx, run, step)
 	case "human_gate":

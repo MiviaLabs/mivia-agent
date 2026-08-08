@@ -22,6 +22,9 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 	if err != nil {
 		return nil, err
 	}
+	if req.DisableProviderReplay {
+		ctx = context.WithValue(ctx, disableProviderReplayContextKey{}, true)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
@@ -97,10 +100,12 @@ func (c *OpenAICompat) setHeaders(httpReq *http.Request, req Request, raw []byte
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("Accept", "application/json")
-	// Retries may occur after the provider accepted the request. A stable
-	// request key lets providers that support idempotency suppress duplicates.
-	key := sha256.Sum256(raw)
-	httpReq.Header.Set("Idempotency-Key", fmt.Sprintf("mivia-%d-%x", c.requestSeq.Add(1), key[:]))
+	// The Go transport can replay a request with an Idempotency-Key after a
+	// reused connection fails. Panel actors forbid every transport replay.
+	if !req.DisableProviderReplay {
+		key := sha256.Sum256(raw)
+		httpReq.Header.Set("Idempotency-Key", fmt.Sprintf("mivia-%d-%x", c.requestSeq.Add(1), key[:]))
+	}
 	if req.Stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}

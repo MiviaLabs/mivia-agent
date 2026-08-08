@@ -40,7 +40,7 @@ func panelTaskWithID(t *testing.T, name, taskID string) PanelTaskSpec {
 	t.Helper()
 	work := validPanelTask(name)
 	input := fmt.Sprintf(`{"input":%q}`, name)
-	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{{ID: taskID, Name: work.TaskName, Input: []byte(input), InputSchema: map[string]any{}, OutputSchema: map[string]any{}, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model}}, work.Policy)
+	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{{ID: taskID, Name: work.TaskName, Input: []byte(input), InputSchema: map[string]any{}, OutputSchema: map[string]any{}, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}}, work.Policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +156,15 @@ func TestPanelChildIDsAreCanonicalAndDistinct(t *testing.T) {
 func TestPanelTaskSpecRejectsIncompleteWork(t *testing.T) {
 	if err := (PanelTaskSpec{}).Validate(); err == nil {
 		t.Fatal("incomplete work must fail")
+	}
+}
+
+func TestPanelTaskSpecAcceptsAgentDefinitionDigest(t *testing.T) {
+	work := validPanelTask("agent-digest")
+	work.AgentDigest = "sha256:" + panelDigest("agent")
+	work.WorkFingerprint = work.workFingerprint()
+	if err := work.Validate(); err != nil {
+		t.Fatalf("agent definition digest rejected: %v", err)
 	}
 }
 

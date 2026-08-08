@@ -13,12 +13,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/processservices"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
@@ -31,8 +33,14 @@ type Engine struct {
 	// NewRunner builds the agent-step runner for one admitted run.
 	// Required for agent steps; a nil NewRunner fails closed (no fake success).
 	NewRunner func() controller.AgentStepRunner
+	// AgentRegistry supplies immutable agent definitions for panel admission.
+	// Panel work fails closed when the registry cannot resolve a member.
+	AgentRegistry *agents.AgentRegistry
 	// NewRunID mints run IDs. Nil uses a secure random wfr- id.
 	NewRunID func() string
+	// PanelLimiter is the process-wide local actor limiter supplied by the host.
+	// A nil value uses the shared workflow process service.
+	PanelLimiter *controller.PanelActorLimiter
 	// Git and PR are optional delivery adapters.
 	Git delivery.GitRunner
 	PR  delivery.PRClient
@@ -74,6 +82,13 @@ func (e *Engine) ctrlRepo() workflowledger.Repository {
 		e.fence = newAbandonFence(e.Repo)
 	}
 	return e.fence
+}
+
+func (e *Engine) panelLimiter() *controller.PanelActorLimiter {
+	if e.PanelLimiter != nil {
+		return e.PanelLimiter
+	}
+	return processservices.PanelLimiter()
 }
 
 // Start implements agenttools.Engine.
@@ -283,6 +298,9 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 	if err != nil {
 		return nil, err
 	}
+	if run.SnapshotDigest == "" || run.SnapshotDigest != workflowledger.SnapshotDigest(raw) {
+		return nil, fmt.Errorf("workflow snapshot digest does not match the admitted snapshot")
+	}
 	wf, _, err := definition.ParseWorkflowTOML(snapshot.DefinitionTOML, run.WorkflowName+".toml")
 	if err != nil {
 		return nil, err
@@ -290,6 +308,9 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 	compiled, err := compiler.CompileForResume(&wf)
 	if err != nil {
 		return nil, err
+	}
+	if snapshot.DefinitionDigest != run.WorkflowDigest {
+		return nil, fmt.Errorf("workflow definition digest does not match the admitted definition")
 	}
 	inputs := make(map[string]any, len(snapshot.Inputs))
 	for k, v := range snapshot.Inputs {
@@ -314,6 +335,9 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 	}
 	ctrl, err := controller.NewLinearController(e.ctrlRepo(), e.runner(), compiled, steps, inputs, req.RunID, raw)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctrl.SetPanelLimiter(e.panelLimiter()); err != nil {
 		return nil, err
 	}
 	// Every field sameAdmission compares comes from the record. The invocation
@@ -354,7 +378,7 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 	go func() {
 		defer close(done)
 		_, runErr := ctrl.Run(runCtx)
-		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		if runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, controller.ErrPanelMembersComplete) {
 			// Surface the failure instead of silently dropping it: a
 			// claim-contention or step error that stops the run must not
 			// look like a healthy no-op resume. Best-effort settle to

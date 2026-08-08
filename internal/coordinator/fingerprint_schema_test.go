@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
@@ -22,6 +23,24 @@ func TestFingerprintDiffersWithOutputSchema(t *testing.T) {
 	}
 	if a == b {
 		t.Fatal("fingerprint must change when OutputSchema is set")
+	}
+}
+
+func TestFingerprintDiffersWithWorkLimits(t *testing.T) {
+	base := subagents.Task{ID: "t1", Name: "worker", Input: []byte(`"hi"`)}
+	limited := base
+	limited.WorkLimits = runtime.WorkLimits{MaxTurns: 1}
+
+	a, err := requestFingerprint([]subagents.Task{base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := requestFingerprint([]subagents.Task{limited})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatal("fingerprint must change when WorkLimits change")
 	}
 }
 

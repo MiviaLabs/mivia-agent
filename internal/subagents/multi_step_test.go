@@ -592,3 +592,14 @@ func TestMailboxAccessBundleWiring(t *testing.T) {
 		t.Fatalf("applyMailboxAccess(background) SoftInterruptCooldown = %v, want 0", plain.SoftInterruptCooldown)
 	}
 }
+
+func TestMultiStepLoopOptionsPropagatesRequestNoReplay(t *testing.T) {
+	h := &MultiStepHandler{}
+	opts := h.loopOptions(&scopedLoop{}, 1, nil, 0, runtime.Request{DisableProviderReplay: true, WorkLimits: runtime.WorkLimits{MaxTurns: 2}}, "task")
+	if !opts.DisableProviderReplay {
+		t.Fatal("runtime no-replay flag did not reach the agent loop")
+	}
+	if opts.WorkLimits.MaxTurns != 2 {
+		t.Fatalf("runtime work limits = %+v, want MaxTurns=2", opts.WorkLimits)
+	}
+}

@@ -70,6 +70,9 @@ type Request struct {
 	Tools        []ToolSpec
 	ToolChoice   string // "auto", "none", or empty
 	Timeout      time.Duration
+	// DisableProviderReplay prevents transport and protocol fallbacks from
+	// issuing a second provider request for this logical attempt.
+	DisableProviderReplay bool
 	// ReasoningLevel is the selected model's reasoning dial. Empty sends no
 	// reasoning field at all, which is the required shape for a non-reasoning
 	// model, and leaves the request body byte-identical to a pre-reasoning one.

@@ -5,10 +5,12 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -43,6 +45,19 @@ func (preparationSuccessCompleter) ChatTurn(context.Context, provider.Request) (
 type agentPreparationProbe struct {
 	discards int
 }
+
+type deadlinePreparationProbe struct{ calls int }
+
+func (p *deadlinePreparationProbe) Prepare(ctx context.Context, _ contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	p.calls++
+	if ctx.Done() == nil {
+		return contextmgr.Preparation{}, errors.New("unexpected background prepare")
+	}
+	<-ctx.Done()
+	return contextmgr.Preparation{}, ctx.Err()
+}
+
+func (p *deadlinePreparationProbe) Discard(contextmgr.Preparation) {}
 
 func (p *agentPreparationProbe) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
 	rangeValue := contextstate.SourceRange{
@@ -105,5 +120,17 @@ func TestAgentTurnRetainsSuccessfulPreparationForSessionCommit(t *testing.T) {
 	loop.discardPreparation(Options{PreparationManager: probe})
 	if probe.discards != 1 {
 		t.Fatalf("discards=%d, want one owner cleanup", probe.discards)
+	}
+}
+
+func TestAgentDeadlineDoesNotUseBackgroundPreparationFallback(t *testing.T) {
+	probe := &deadlinePreparationProbe{}
+	loop := &Loop{Completer: preparationSuccessCompleter{}, Tools: tools.NewRegistry()}
+	_, err := loop.Run(context.Background(), "question", Options{Model: "model", PreparationManager: probe, WorkLimits: runtime.WorkLimits{DeadlineAt: time.Now().Add(20 * time.Millisecond)}})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err=%v, want deadline exceeded", err)
+	}
+	if probe.calls != 1 {
+		t.Fatalf("prepare calls=%d, want one", probe.calls)
 	}
 }

@@ -60,6 +60,9 @@ func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, tr
 	// answers each call must all agree on one ID per call.
 	calls := identifiedToolCalls(resp.ToolCalls)
 	validCalls, errorResults := filterValidToolCalls(calls)
+	if err := l.workLimits.reserveToolBatch(len(validCalls)); err != nil {
+		return stepOutcome{}, err
+	}
 	l.Messages = append(l.Messages, provider.Message{
 		Role:             provider.RoleAssistant,
 		Content:          resp.Content,

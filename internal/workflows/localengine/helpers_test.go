@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
@@ -117,6 +118,76 @@ func TestBuildStepRuntimesPopulatesOutputSchema(t *testing.T) {
 	}
 	if _, ok := steps["validate"]; ok {
 		t.Fatal("evidence_gate step must not produce a step runtime")
+	}
+}
+
+func TestLoadPanelSnapshotAssetsPinsMemberWork(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "security.md"), []byte("Review {{inputs.task}}."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "correctness.md"), []byte("Review {{inputs.task}}."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "report.json"), []byte(`{"type":"object"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{
+			{ID: "security", Agent: "panel-reviewer", Provider: "deepseek", Model: "deepseek-v4", Skill: "secure-change", Template: "security.md", OutputSchema: "report.json"},
+			{ID: "correctness", Agent: "panel-reviewer", Provider: "zai", Model: "glm-5", Skill: "bug-audit", Template: "correctness.md", OutputSchema: "report.json"},
+		}},
+	}}}
+	schemas, err := loadOutputSchemas(base, wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := agents.NewRegistry()
+	if err := registry.Publish(agents.ResolvedAgent{Name: "panel-reviewer", Model: "deepseek-v4"}); err != nil {
+		t.Fatal(err)
+	}
+	templates, bindings, err := loadPanelSnapshotAssets(base, wf, schemas, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) != 2 || len(bindings) != 2 {
+		t.Fatalf("assets templates=%d bindings=%d", len(templates), len(bindings))
+	}
+	binding := bindings["review/security"]
+	if binding.AgentName != "panel-reviewer" || binding.ProviderName != "deepseek" || binding.Model != "deepseek-v4" || binding.TemplateDigest != templates["security.md"].Digest || binding.SchemaDigest != schemas["report.json"].Digest {
+		t.Fatalf("security binding = %+v", binding)
+	}
+	snapshot := newRunSnapshot(wf, []byte("raw"), map[string]string{"task": "change"}, schemas, templates, bindings)
+	if got := snapshot.PanelBindings["review/correctness"]; got.ProviderName != "zai" || got.Model != "glm-5" {
+		t.Fatalf("snapshot correctness binding = %+v", got)
+	}
+}
+
+func TestLoadPanelSnapshotAssetsRejectsSymlinkTemplate(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "report.json"), []byte(`{"type":"object"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/hostname", filepath.Join(base, "template.md")); err != nil {
+		t.Fatal(err)
+	}
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "member", Agent: "reviewer", Provider: "deepseek", Model: "deepseek-v4", Skill: "bug-audit", Template: "template.md", OutputSchema: "report.json"}}}}}}
+	schemas, err := loadOutputSchemas(base, wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadPanelSnapshotAssets(base, wf, schemas, agents.NewRegistry()); err == nil {
+		t.Fatal("expected symlink template rejection")
+	}
+}
+
+func TestLoadTemplateBytesUsesTemplateLimit(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "large.md"), []byte(strings.Repeat("x", 32769)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadTemplateBytes(base, "large.md"); err == nil {
+		t.Fatal("expected oversized template rejection")
 	}
 }
 

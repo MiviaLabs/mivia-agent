@@ -6,6 +6,8 @@ package ledger
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
 // RunID is a system-generated immutable identifier for one orchestration run.
@@ -164,36 +166,40 @@ type TaskSnapshot struct {
 	Input json.RawMessage `json:"input,omitempty"`
 	// Timeout, Budget and Depth are resource limits: restored on resume, but
 	// clamped to the live configuration so the ledger cannot raise a ceiling.
-	Timeout time.Duration `json:"timeout,omitempty"`
-	Budget  int           `json:"budget,omitempty"`
-	Depth   int           `json:"depth,omitempty"`
+	Timeout               time.Duration      `json:"timeout,omitempty"`
+	Budget                int                `json:"budget,omitempty"`
+	Depth                 int                `json:"depth,omitempty"`
+	WorkLimits            runtime.WorkLimits `json:"work_limits,omitempty"`
+	DisableProviderReplay bool               `json:"disable_provider_replay,omitempty"`
 }
 
 // Clone returns a deep copy of the snapshot.
 func (s TaskSnapshot) Clone() TaskSnapshot {
 	out := TaskSnapshot{
-		RunID:        s.RunID,
-		TaskID:       s.TaskID,
-		ParentTaskID: s.ParentTaskID,
-		DisplayName:  s.DisplayName,
-		Status:       s.Status,
-		CreatedAt:    s.CreatedAt,
-		CompletedAt:  nil,
-		OutputRef:    s.OutputRef,
-		ErrorRef:     s.ErrorRef,
-		Version:      s.Version,
-		HandlerName:  s.HandlerName,
-		AgentName:    s.AgentName,
-		AgentDigest:  s.AgentDigest,
-		Skill:        s.Skill,
-		ProviderName: s.ProviderName,
-		Model:        s.Model,
-		Scope:        s.Scope,
-		OutputSchema: cloneJSONMap(s.OutputSchema),
-		InputSchema:  cloneJSONMap(s.InputSchema),
-		Timeout:      s.Timeout,
-		Budget:       s.Budget,
-		Depth:        s.Depth,
+		RunID:                 s.RunID,
+		TaskID:                s.TaskID,
+		ParentTaskID:          s.ParentTaskID,
+		DisplayName:           s.DisplayName,
+		Status:                s.Status,
+		CreatedAt:             s.CreatedAt,
+		CompletedAt:           nil,
+		OutputRef:             s.OutputRef,
+		ErrorRef:              s.ErrorRef,
+		Version:               s.Version,
+		HandlerName:           s.HandlerName,
+		AgentName:             s.AgentName,
+		AgentDigest:           s.AgentDigest,
+		Skill:                 s.Skill,
+		ProviderName:          s.ProviderName,
+		Model:                 s.Model,
+		Scope:                 s.Scope,
+		OutputSchema:          cloneJSONMap(s.OutputSchema),
+		InputSchema:           cloneJSONMap(s.InputSchema),
+		Timeout:               s.Timeout,
+		Budget:                s.Budget,
+		Depth:                 s.Depth,
+		WorkLimits:            s.WorkLimits,
+		DisableProviderReplay: s.DisableProviderReplay,
 	}
 	if s.Input != nil {
 		out.Input = append(json.RawMessage(nil), s.Input...)

@@ -29,15 +29,17 @@ type Task struct {
 	SessionID, TurnID, Role string
 	// InvocationKey scopes dispatcher idempotency independently from the
 	// user-facing task ID, which may repeat across batches.
-	InvocationKey  string
-	DependsOn      []string
-	Scope          string
-	Permission     string
-	Input          json.RawMessage
-	Depth          int
-	Timeout        time.Duration
-	Budget         int
-	IdempotencyKey string
+	InvocationKey         string
+	DependsOn             []string
+	Scope                 string
+	Permission            string
+	Input                 json.RawMessage
+	Depth                 int
+	Timeout               time.Duration
+	Budget                int
+	WorkLimits            runtime.WorkLimits
+	DisableProviderReplay bool
+	IdempotencyKey        string
 	// OutputSchema, when non-nil, is the resolved JSON Schema the child's final
 	// reply must satisfy (plan tools/02). Nil means free-text output (today's
 	// contract). Work-defining: included in the coordinator fingerprint.
@@ -113,6 +115,7 @@ func (p *Pool) ValidateTask(t Task) error {
 		Permission: t.Permission, Input: t.Input, Budget: t.Budget, Depth: t.Depth,
 		Timeout: t.Timeout, AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
 		ProviderName: t.ProviderName, Model: t.Model,
+		WorkLimits: t.WorkLimits, DisableProviderReplay: t.DisableProviderReplay,
 	})
 }
 
@@ -313,6 +316,7 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		AgentName: t.AgentName, AgentDigest: t.AgentDigest, Skill: t.Skill,
 		ProviderName: t.ProviderName, Model: t.Model,
 		Budget: t.Budget, Depth: t.Depth, Timeout: timeout,
+		WorkLimits: t.WorkLimits, DisableProviderReplay: t.DisableProviderReplay,
 		OutputSchema: t.OutputSchema,
 	})
 	s := "completed"
