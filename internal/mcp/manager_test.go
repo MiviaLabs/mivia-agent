@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"sync/atomic"
@@ -57,6 +58,27 @@ func TestManagerRejectsMoreToolsThanConfigured(t *testing.T) {
 	}
 	if _, err := m.EnsureServers(context.Background(), []string{"repository"}); err == nil {
 		t.Fatal("EnsureServers() accepted too many remote tools")
+	}
+}
+
+func TestManagerMemoizesFailedDiscovery(t *testing.T) {
+	var connects atomic.Int32
+	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
+		ID: "repository", Transport: "stdio", Command: "/bin/echo",
+	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
+		connects.Add(1)
+		return nil, errors.New("dial failure")
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := m.EnsureServers(context.Background(), []string{"repository"}); err == nil {
+			t.Fatal("EnsureServers() accepted a failed server")
+		}
+	}
+	if got := connects.Load(); got != 1 {
+		t.Fatalf("connect count = %d, want 1 after failure", got)
 	}
 }
 

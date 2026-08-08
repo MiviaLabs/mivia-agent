@@ -168,6 +168,7 @@ type Manager struct {
 	mu             sync.Mutex
 	clients        map[string]remoteClient
 	tools          map[string][]tools.Tool
+	failures       map[string]error
 	maxResultBytes int
 	closed         bool
 }
@@ -175,7 +176,7 @@ type Manager struct {
 // NewManager constructs a disconnected MCP manager.
 func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	if !cfg.Enabled {
-		return &Manager{cfg: cfg, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}}, nil
+		return &Manager{cfg: cfg, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}}, nil
 	}
 	if opts.Connect == nil {
 		opts.Connect = connectServer
@@ -197,7 +198,7 @@ func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	if limit == 0 {
 		limit = 64 << 10
 	}
-	return &Manager{cfg: cfg, connect: opts.Connect, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, maxResultBytes: limit}, nil
+	return &Manager{cfg: cfg, connect: opts.Connect, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, maxResultBytes: limit}, nil
 }
 
 // EnsureServers discovers tools for the requested server IDs once per session.
@@ -216,27 +217,34 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 		if !ok {
 			return nil, fmt.Errorf("unknown MCP server %q", id)
 		}
+		if _, failed := m.failures[id]; failed {
+			return nil, fmt.Errorf("MCP server %q is unavailable", id)
+		}
 		if _, ok := m.clients[id]; !ok {
 			client, err := m.connect(ctx, server)
 			if err != nil {
-				return nil, fmt.Errorf("connect MCP server %q: %w", id, err)
+				m.failures[id] = err
+				return nil, fmt.Errorf("MCP server %q is unavailable", id)
 			}
 			m.clients[id] = client
 			remote, err := client.ListTools(ctx)
 			if err != nil {
 				_ = client.Close()
 				delete(m.clients, id)
-				return nil, fmt.Errorf("discover MCP server %q: %w", id, err)
+				m.failures[id] = err
+				return nil, fmt.Errorf("MCP server %q is unavailable", id)
 			}
 			if m.cfg.MaxToolsPerServer > 0 && len(remote) > m.cfg.MaxToolsPerServer {
 				_ = client.Close()
 				delete(m.clients, id)
+				m.failures[id] = fmt.Errorf("too many tools")
 				return nil, fmt.Errorf("MCP server %q returned too many tools", id)
 			}
 			wrapped, err := wrapRemoteTools(id, client, remote, m.cfg.MaxToolDescriptionBytes, m.cfg.MaxToolSchemaBytes, m.maxResultBytes)
 			if err != nil {
 				_ = client.Close()
 				delete(m.clients, id)
+				m.failures[id] = err
 				return nil, err
 			}
 			m.tools[id] = wrapped
