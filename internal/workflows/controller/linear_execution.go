@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -298,64 +297,19 @@ func (c *LinearController) agentStepRequest(ctx context.Context, run workflowled
 // path (executeAgentAttempt) and the resume-join path (joinInFlightAttempt,
 // JoinInFlightAttempt) settle through here, so a joined child's outcome is
 // recorded exactly like a fresh child's.
+//
+// A GENUINE agent/runner failure honors a declared NON-TERMINAL on_failure
+// target within the re-entry budget: the attempt is persisted Failed with the
+// on_failure route and the run advances to the declared step (the compiler and
+// the product docs both accept "Target step or terminal on failure", but the
+// route was recorded and never followed — DC-9). Degraded failures (route
+// selection, zero-progress reviews) are not genuine agent failures: they stay
+// hard failures regardless of on_failure. Canceled/timed_out attempts keep
+// their run-status mapping unchanged.
 func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, result AgentStepResult, runErr error) (workflowledger.RunSnapshot, bool, error) {
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
-	status := classifyStepStatus(runErr, result.Status)
-	if runErr != nil {
-		result.ErrorRef = storeErrorText(writeCtx, c.Repo, runErr)
-	}
-	route := RouteDecision{}
-	var err error
-	if status == workflowledger.AttemptStatusSucceeded {
-		// A classified success routes even when the join/persistence boundary
-		// errored (child reported "completed"): compute the route from the
-		// completed child's output so the attempt is never persisted
-		// Succeeded with an empty ToStepID. Route-selection failure degrades
-		// to a durable on_failure route, never a route-less success.
-		outMap, mapErr := resultOutputMap(result)
-		if mapErr != nil {
-			status, runErr = workflowledger.AttemptStatusFailed, mapErr
-			// Defect 2: a succeeded child whose route selection fails flips to
-			// Failed here; persist the route-selection cause so the attempt's
-			// ErrorRef is never empty (storeErrorText stays fail-soft).
-			result.ErrorRef = storeErrorText(writeCtx, c.Repo, mapErr)
-			route = failureRoute(step)
-		} else {
-			// Route computation reads the ledger (loop counters, prior review
-			// output). Use the detached writeCtx, not ctx: at the run deadline
-			// ctx is already expired, and a context.DeadlineExceeded from those
-			// reads would mis-record a completed child as Failed on on_failure.
-			route, err = c.selectRoute(writeCtx, step, status, outMap)
-			if err != nil {
-				status, runErr = workflowledger.AttemptStatusFailed, err
-				result.ErrorRef = storeErrorText(writeCtx, c.Repo, err)
-				if route.ToStepID == "" {
-					route = failureRoute(step)
-				}
-			} else if noProgress, zpErr := c.reviewMadeNoProgress(writeCtx, step, route, outMap); zpErr != nil {
-				// A ledger-read failure inside the zero-progress check is a HARD
-				// step failure: the controller cannot safely route a review
-				// whose prior findings it could not read, so it must not take
-				// the loop back-edge on a guess. This matches agentStepRequest's
-				// GetLoopCounters error behavior — a loop-bound step whose
-				// counters cannot be read fails hard instead of proceeding with
-				// a fabricated round. The durable cause is persisted so the
-				// attempt carries the exact failure.
-				readErr := fmt.Errorf("zero-progress check failed to read prior review output: %w", zpErr)
-				status, runErr, route = c.failReviewNoProgress(writeCtx, &result, step, readErr)
-			} else if noProgress {
-				// Zero progress across rounds: a review that repeats the
-				// previous round's findings must NOT take the loop back-edge.
-				// Treat the review as failed with the durable cause so the run
-				// stops instead of spinning identical findings.
-				noProgressErr := errors.New("review made no progress across rounds (identical findings set); run failed")
-				status, runErr, route = c.failReviewNoProgress(writeCtx, &result, step, noProgressErr)
-			}
-		}
-	} else if status == workflowledger.AttemptStatusFailed {
-		route = failureRoute(step) // transport budget already spent upstream
-	}
+	status, runErr, route, degraded, err := c.settleAttemptOutcome(writeCtx, step, &result, runErr)
 	if status == workflowledger.AttemptStatusSucceeded {
 		if err = c.completeSucceededRoute(writeCtx, attempt, result, route); err != nil {
 			if isLoopAccountError(err) {
@@ -365,6 +319,27 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 			return c.fail(writeCtx, run, err)
 		}
 		return settleAfterRoute(ctx, c, run, route)
+	}
+	if status == workflowledger.AttemptStatusFailed && !degraded {
+		// A GENUINE agent/runner failure. When the step declares a non-terminal
+		// on_failure target and the re-entry budget is not exhausted, honor the
+		// target: the attempt is persisted Failed with the on_failure route and
+		// the run advances to the declared step (mirrors settleHostFailure).
+		// Degraded failures and terminal targets / an exhausted budget keep
+		// the hard-fail behavior exactly as before.
+		if c.agentFailureRepairable(writeCtx, step, route) {
+			if err = CompleteExistingStepResult(writeCtx, c.Repo, attempt, result, status, route); err != nil {
+				return c.fail(writeCtx, run, err)
+			}
+			return settleAfterRoute(ctx, c, run, route)
+		}
+		// Budget spent (or the history could not be read): record the TERMINAL
+		// failure route so the ledger derives a terminal step — never an
+		// un-honored repair target that a crash between this persist and the
+		// status CAS could resume into — then fail the run as before.
+		if !workflowledger.IsTerminalStepID(route.ToStepID) {
+			route.ToStepID = "failure"
+		}
 	}
 	if err = CompleteExistingStepResult(writeCtx, c.Repo, attempt, result, status, route); err != nil {
 		return c.fail(writeCtx, run, err)
@@ -376,76 +351,6 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 		runStatus = workflowledger.RunStatusTimedOut
 	}
 	return c.failWithStatus(writeCtx, run, runErr, runStatus)
-}
-
-// classifyStepStatus maps a runner error and the child's reported status to
-// the attempt terminal status. The child's own status is authoritative for
-// timeouts/cancels: joinWithCancellation can pair a child timed_out/canceled
-// status with a parent ctx error, and the child's terminal status must win.
-// The error type is the fallback when the runner reports no status.
-func classifyStepStatus(runErr error, childStatus string) workflowledger.AttemptStatus {
-	if runErr == nil {
-		return workflowledger.AttemptStatusSucceeded
-	}
-	// A schema-validation error means the child's output FAILED the declared
-	// OutputSchema. It is a genuine agent failure regardless of the child's
-	// reported status: the runner pairs a "completed" child with the validation
-	// error, and routing that schema-invalid output onward as Succeeded would
-	// bypass the OutputSchema guard. Schema failures use on_failure, never a
-	// success route. (SchemaValidationError.Unwrap exposes the jschema cause, so
-	// errors.As matches direct and wrapped forms.)
-	var schemaErr *SchemaValidationError
-	if errors.As(runErr, &schemaErr) {
-		return workflowledger.AttemptStatusFailed
-	}
-	switch childStatus {
-	case "completed":
-		// The child's work completed; a parent ctx error racing the result
-		// (deadline/cancel at the join boundary) must not discard it.
-		return workflowledger.AttemptStatusSucceeded
-	case "timed_out":
-		return workflowledger.AttemptStatusTimedOut
-	case "canceled":
-		// A canceled child is ambiguous: joinWithCancellation cancels the
-		// child when the PARENT expires. A parent deadline means the RUN
-		// timed out (must settle timed_out, not canceled); an explicit
-		// parent cancel is a run cancel.
-		if errors.Is(runErr, context.DeadlineExceeded) {
-			return workflowledger.AttemptStatusTimedOut
-		}
-		return workflowledger.AttemptStatusCanceled
-	case "failed":
-		// A genuine child failure wins over a parent ctx error racing it.
-		return workflowledger.AttemptStatusFailed
-	default:
-		if errors.Is(runErr, context.DeadlineExceeded) {
-			return workflowledger.AttemptStatusTimedOut
-		}
-		if errors.Is(runErr, context.Canceled) {
-			return workflowledger.AttemptStatusCanceled
-		}
-		return workflowledger.AttemptStatusFailed
-	}
-}
-
-// stepPersistenceContext bounds the writes that record a step outcome. It is
-// DETACHED from the parent (WithoutCancel) so a run deadline or cancel that
-// expires between RunStep returning and the persistence writes cannot lose
-// the step result: the 5s window is measured from this call, not inherited
-// from an already-expired parent. The abandon fence, not context, is the
-// authority for Interrupt.
-func stepPersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-}
-
-func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, cause error) (workflowledger.RunSnapshot, bool, error) {
-	writeCtx, cancel := stepPersistenceContext(ctx)
-	defer cancel()
-	// Defect 2: a failed attempt must persist its cause. storeErrorText is
-	// fail-soft: a store failure returns "" and never masks the cause.
-	result := AgentStepResult{ErrorRef: storeErrorText(writeCtx, c.Repo, cause)}
-	_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, result, workflowledger.AttemptStatusFailed, RouteDecision{})
-	return c.fail(writeCtx, run, cause)
 }
 
 // maxTransientStepRetries bounds step-level retries for transient
