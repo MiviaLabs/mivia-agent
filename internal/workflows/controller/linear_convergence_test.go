@@ -239,6 +239,8 @@ func TestReviewZeroProgressFailsRunOnIdenticalFindings(t *testing.T) {
 		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-f1","severity":"high","reason":"x"}]}`),
 		"implement#2": json.RawMessage(`{"summary":"v2"}`),
 		"review#2":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R1-f1","severity":"high","reason":"x"}]}`),
+		"implement#3": json.RawMessage(`{"summary":"v3"}`),
+		"review#3":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R2-f1","severity":"high","reason":"x"}]}`),
 	}}
 	repo := workflowledger.NewMemoryRepository()
 	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
@@ -261,18 +263,18 @@ func TestReviewZeroProgressFailsRunOnIdenticalFindings(t *testing.T) {
 	}
 	var secondReview workflowledger.StepAttempt
 	for _, a := range attempts {
-		if a.StepID == "review" && a.AttemptNo == 2 {
+		if a.StepID == "review" && a.AttemptNo == 3 {
 			secondReview = a
 		}
 	}
 	if secondReview.Status != workflowledger.AttemptStatusFailed {
-		t.Fatalf("review#2 status = %q, want failed", secondReview.Status)
+		t.Fatalf("review#3 status = %q, want failed", secondReview.Status)
 	}
 	if secondReview.ToStepID != "failure" {
-		t.Fatalf("review#2 route = %q, want failure (no loop back-edge)", secondReview.ToStepID)
+		t.Fatalf("review#3 route = %q, want failure (no loop back-edge)", secondReview.ToStepID)
 	}
 	if secondReview.ErrorRef == "" {
-		t.Fatal("review#2 must carry an ErrorRef")
+		t.Fatal("review#3 must carry an ErrorRef")
 	}
 	raw, loadErr := repo.LoadContent(context.Background(), secondReview.ErrorRef)
 	if loadErr != nil {
@@ -286,14 +288,14 @@ func TestReviewZeroProgressFailsRunOnIdenticalFindings(t *testing.T) {
 	if counterErr != nil {
 		t.Fatal(counterErr)
 	}
-	if len(counters) != 1 || counters[0].LoopName != "review_repair" || counters[0].Iterations != 1 {
-		t.Fatalf("loop counters = %+v, want review_repair=1", counters)
+	if len(counters) != 1 || counters[0].LoopName != "review_repair" || counters[0].Iterations != 2 {
+		t.Fatalf("loop counters = %+v, want review_repair=2", counters)
 	}
-	// No implement#3 dispatch after the no-progress failure.
+	// Two real repair attempts ran before the stall was declared; no implement#4.
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
-	if len(runner.calls) != 4 {
-		t.Fatalf("runner calls = %d, want 4 (no implement#3): %+v", len(runner.calls), runner.calls)
+	if len(runner.calls) != 6 {
+		t.Fatalf("runner calls = %d, want 6 (two repairs, no implement#4): %+v", len(runner.calls), runner.calls)
 	}
 }
 
@@ -493,6 +495,10 @@ func TestReviewZeroProgressDetectsOscillation(t *testing.T) {
 		"review#2":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R1-fB","severity":"high","reason":"y"}]}`),
 		"implement#3": json.RawMessage(`{"summary":"v3"}`),
 		"review#3":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R2-fA","severity":"high","reason":"x"}]}`),
+		"implement#4": json.RawMessage(`{"summary":"v4"}`),
+		"review#4":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R3-fB","severity":"high","reason":"y"}]}`),
+		"implement#5": json.RawMessage(`{"summary":"v5"}`),
+		"review#5":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R4-fA","severity":"high","reason":"x"}]}`),
 	}}
 	repo := workflowledger.NewMemoryRepository()
 	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
@@ -514,12 +520,12 @@ func TestReviewZeroProgressDetectsOscillation(t *testing.T) {
 		t.Fatal(listErr)
 	}
 	for _, a := range attempts {
-		if a.StepID == "review" && a.AttemptNo == 3 {
+		if a.StepID == "review" && a.AttemptNo == 5 {
 			if a.Status != workflowledger.AttemptStatusFailed {
-				t.Fatalf("review#3 status = %q, want failed", a.Status)
+				t.Fatalf("review#5 status = %q, want failed", a.Status)
 			}
 			if a.ToStepID != "failure" {
-				t.Fatalf("review#3 route = %q, want failure", a.ToStepID)
+				t.Fatalf("review#5 route = %q, want failure", a.ToStepID)
 			}
 		}
 	}

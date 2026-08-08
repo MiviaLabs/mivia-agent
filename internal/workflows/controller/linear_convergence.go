@@ -38,6 +38,7 @@ func (c *LinearController) reviewMadeNoProgress(ctx context.Context, step defini
 	// between two finding sets (A, B, A, B) never repeats consecutively. Such
 	// a run makes no progress but is not detected, so it burns the loop cap
 	// and dies at the 24h duration bound as an undiagnosed timeout.
+	repeats := 1 // the round being settled
 	for _, prior := range priorOutputAttempts(attempts, step.ID, maxConvergenceHistory) {
 		raw, err := c.Repo.LoadContent(ctx, prior.OutputRef)
 		if err != nil {
@@ -52,11 +53,25 @@ func (c *LinearController) reviewMadeNoProgress(ctx context.Context, step defini
 			continue
 		}
 		if equalStringSets(previous, current) {
-			return true, nil
+			repeats++
 		}
 	}
-	return false, nil
+	return repeats >= maxIdenticalReviewRounds, nil
 }
+
+// maxIdenticalReviewRounds is how many times one findings set may recur
+// before the run is declared stalled.
+//
+// Failing on the FIRST repeat made this a one-strike rule: implement,
+// review, implement, review, dead. The implementer got a single attempt at
+// any finding set, and a review template that is told to reuse a finding's id
+// while it stays open guarantees an identical set whenever one fix lands
+// short. That killed runs that were still making progress, which is the
+// opposite of what a repair loop is for.
+//
+// Three occurrences gives two real repair attempts and still stops a genuine
+// stall long before the loop cap or the duration bound.
+const maxIdenticalReviewRounds = 3
 
 // maxConvergenceHistory bounds how many prior rounds one review is compared
 // against. It caps the work per round: the loop allows up to 500 iterations,
