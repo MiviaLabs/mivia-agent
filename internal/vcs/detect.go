@@ -76,9 +76,37 @@ func resolveGitDir(path string) string {
 	data, err := os.ReadFile(path)
 	// A read failure or a non-gitdir body both mean the file is not a valid
 	// gitdir pointer, so they share one fallback.
-	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(data)), "gitdir: ") {
+	if err != nil {
 		return path
 	}
-	resolved, _ := filepath.Abs(strings.TrimPrefix(strings.TrimSpace(string(data)), "gitdir: "))
+	pointer, ok := gitdirPointer(data)
+	if !ok {
+		return path
+	}
+	// Git's read_gitfile_gently anchors a relative pointer to the directory
+	// that contains the .git file, not to the process working directory.
+	if !filepath.IsAbs(pointer) {
+		pointer = filepath.Join(filepath.Dir(path), pointer)
+	}
+	resolved, _ := filepath.Abs(pointer)
 	return resolved
+}
+
+// gitdirPointer extracts the git directory pointer from a .git gitfile.
+// It returns the pointer and true when the trimmed content starts with the
+// 'gitdir: ' prefix and the first line after the prefix is non-empty. The
+// pointer is the first line, trimmed; later lines are ignored. Any other
+// content yields ("", false).
+func gitdirPointer(data []byte) (string, bool) {
+	trimmed := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(trimmed, "gitdir: ") {
+		return "", false
+	}
+	rest := strings.TrimPrefix(trimmed, "gitdir: ")
+	line, _, _ := strings.Cut(rest, "\n")
+	pointer := strings.TrimSpace(line)
+	if pointer == "" {
+		return "", false
+	}
+	return pointer, true
 }
