@@ -27,14 +27,40 @@ const (
 	matchesTruncNotice = "\n... truncated at %d matches"
 )
 
+// walkErrsNoticeReserve is the byte headroom a search tool holds back for the
+// walk-error trailer ("… N files skipped (first: …)") when its byte budget is
+// set. executeGrep/executeGlob clamp that trailer to whatever budget room the
+// content and truncation notice left; this reserve is what guarantees the room
+// exists even when matches fill the whole budget. Sized for the capped-count
+// header plus a readable prefix of the first error line (both search tools cap
+// the trailer at 10 entries).
+const walkErrsNoticeReserve = 256
+
 // truncationReserve is the byte headroom a search tool holds back for
-// whichever truncation notice it may append, so the notice is paid for out of
-// the budget instead of pushing the result past it.
+// whichever truncation notice it may append (byte or match - exactly one
+// fires), plus the walk-error trailer, so every notice is paid for out of the
+// budget instead of pushing the result past it.
 func truncationReserve(maxMatches, maxBytes int) int {
 	return max(
 		len(fmt.Sprintf(byteTruncNotice, maxBytes)),
 		len(fmt.Sprintf(matchesTruncNotice, maxMatches)),
-	)
+	) + walkErrsNoticeReserve
+}
+
+// appendWalkNotice appends the walk-error trailer, clamping it to the room the
+// content and truncation notice left in the byte budget when one is set, so a
+// pathological first error line (a near-PATH_MAX path) can never push an
+// honest result past its declared ResultBudgetBytes. truncateUTF8 never splits
+// a rune. With no byte budget (0 = uncapped) the trailer is appended whole.
+func appendWalkNotice(out string, maxBytes int, errs *walkErrors) string {
+	if errs == nil || errs.count() == 0 {
+		return out
+	}
+	notice := errs.notice()
+	if maxBytes > 0 {
+		notice = truncateUTF8(notice, max(0, maxBytes-len(out)))
+	}
+	return out + notice
 }
 
 type grepTool struct {
@@ -140,11 +166,12 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 	case errors.Is(err, errMaxMatches):
 		out += fmt.Sprintf(matchesTruncNotice, t.maxMatches)
 	}
-	// Error reporting trailer.
-	if errs != nil {
-		out += errs.notice()
-	}
-	return out, nil
+	// Error reporting trailer. The walk-error notice is part of the byte
+	// budget: it is clamped to the room the content and truncation notice
+	// left (truncateUTF8 never splits a rune), so a pathological first error
+	// line (a near-PATH_MAX path) can never push an honest result past its
+	// declared ResultBudgetBytes.
+	return appendWalkNotice(out, t.maxBytes, errs), nil
 }
 
 type grepInput struct {
@@ -232,6 +259,13 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 	var budget int
 	if maxBytes > 0 {
 		budget = maxBytes - truncationReserve(maxMatches, maxBytes)
+		// A reserve larger than the budget itself (tiny maxBytes) must still
+		// keep the walk bounded: scanFile reads `budget > 0` as "byte cap
+		// active", so floor the budget at 1 and the first match trips
+		// errMaxBytes instead of disabling the cap.
+		if budget < 1 {
+			budget = 1
+		}
 	}
 	total := 0
 	errs := &walkErrors{maxErrs: 10}
@@ -363,10 +397,9 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	case errors.Is(err, errMaxMatches):
 		out += fmt.Sprintf(matchesTruncNotice, t.maxMatches)
 	}
-	if errs.count() > 0 {
-		out += errs.notice()
-	}
-	return out, nil
+	// Part of the byte budget, like executeGrep's trailer: clamped to the
+	// room the content and truncation notice left, never splitting a rune.
+	return appendWalkNotice(out, t.maxBytes, errs), nil
 }
 
 // walkGlob walks the filesystem matching files against a glob pattern.
@@ -375,6 +408,11 @@ func walkGlob(ctx context.Context, ws *workspace.Root, root, pattern string, max
 	var budget int
 	if maxBytes > 0 {
 		budget = maxBytes - truncationReserve(maxMatches, maxBytes)
+		// Same floor as walkGrep: a reserve larger than the budget must keep
+		// the walk bounded (immediate errMaxBytes), not disable the byte cap.
+		if budget < 1 {
+			budget = 1
+		}
 	}
 	total := 0
 	errs := &walkErrors{maxErrs: 10}
