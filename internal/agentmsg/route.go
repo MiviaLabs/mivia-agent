@@ -86,6 +86,9 @@ func RouteAsk(policy RoutingPolicy, in RouteInput) RouteDecision {
 	if from == "" {
 		return RouteDecision{Action: RouteDecline, Reason: DeclineInvalid}
 	}
+	if in.Cycle {
+		return RouteDecision{Action: RouteDecline, Reason: DeclineCycle}
+	}
 	maxAsks := policy.MaxAsksPerTask
 	if maxAsks <= 0 {
 		maxAsks = 4
@@ -99,9 +102,6 @@ func RouteAsk(policy RoutingPolicy, in RouteInput) RouteDecision {
 	}
 	if in.ChainDepth >= maxDepth {
 		return RouteDecision{Action: RouteDecline, Reason: DeclineDepthExceeded}
-	}
-	if in.Cycle {
-		return RouteDecision{Action: RouteDecline, Reason: DeclineCycle}
 	}
 
 	allow := parseAllowPairs(policy.Allow)
