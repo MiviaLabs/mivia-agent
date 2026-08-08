@@ -275,6 +275,7 @@ func (m *tuiModel) startNewSession() {
 		return
 	}
 	m.appendInfo("new session started (previous conversation saved)")
+	m.renderVP()
 }
 
 // openSelectedSession loads the selected list entry into chat mode.

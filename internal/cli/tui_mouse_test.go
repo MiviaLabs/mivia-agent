@@ -255,6 +255,50 @@ func TestTUIMouseSidebarRowsSelectAndWheelMove(t *testing.T) {
 	}
 }
 
+func TestTUISidebarKeyboardNewSessionRefreshesTranscript(t *testing.T) {
+	m := newSidebarNewSessionModel()
+	if !strings.Contains(stripANSI(m.View()), "old sidebar transcript") {
+		t.Fatal("precondition: old transcript is not visible")
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := stripANSI(m.View())
+	if strings.Contains(view, "old sidebar transcript") {
+		t.Fatalf("keyboard New session left the old transcript visible:\n%s", view)
+	}
+	if !strings.Contains(view, "new session started") {
+		t.Fatalf("keyboard New session did not refresh the transcript:\n%s", view)
+	}
+}
+
+func TestTUISidebarMouseNewSessionRefreshesTranscript(t *testing.T) {
+	m := newSidebarNewSessionModel()
+	if !strings.Contains(stripANSI(m.View()), "old sidebar transcript") {
+		t.Fatal("precondition: old transcript is not visible")
+	}
+
+	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 1, Y: sidebarNewSessionY})
+	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 1, Y: sidebarNewSessionY})
+
+	view := stripANSI(m.View())
+	if strings.Contains(view, "old sidebar transcript") {
+		t.Fatalf("mouse New session left the old transcript visible:\n%s", view)
+	}
+	if !strings.Contains(view, "new session started") {
+		t.Fatalf("mouse New session did not refresh the transcript:\n%s", view)
+	}
+}
+
+func newSidebarNewSessionModel() *tuiModel {
+	m := newReadyChatModel(24, 100)
+	m.sessionsSidebar = newSessionsSidebar()
+	m.setFocus(focusSidebar)
+	m.appendBlock(ChatBlock{Kind: ChatBlockAssistant, Text: "old sidebar transcript"})
+	m.renderVP()
+	return m
+}
+
 // TestTUIMouseHitToolsClick verifies that tools info appears in the status bar
 // during execution, and clicking the transcript selects a block.
 func TestTUIMouseHitToolsClick(t *testing.T) {
