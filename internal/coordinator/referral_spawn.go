@@ -17,21 +17,39 @@ import (
 // executeRun does not release the claim while they still mutate the ledger.
 // Uses an active counter under RunHandle.mu (not WaitGroup) so Add cannot
 // race Wait when referrals start after the DAG begins draining.
+//
+// settled closes the referral window: once waitReferrals observes zero
+// in-flight referrals it marks the window settled, and a referral registered
+// after that point must run synchronously (SpawnReferral checks referralAdd's
+// return) - an asynchronous goroutine would escape the join and h.done could
+// close while the referral still mutates ledger state and closes its ask.
 type referralTracker struct {
-	active int
-	cond   *sync.Cond // optional; set when first waiters appear
+	active  int
+	settled bool
+	cond    *sync.Cond // optional; set when first waiters appear
 }
 
-func (h *RunHandle) referralAdd() {
+// referralAdd registers one in-flight referral on the run handle. It returns
+// false when the run's referral window has already settled (executeResumedRun
+// reached waitReferrals and observed zero in-flight referrals): the caller
+// must then run the referral task synchronously, because an asynchronous
+// goroutine would not be waited for and h.done could close before its
+// terminal side effects (ledger status, CloseAsk) complete - the
+// Join/claim-release race this tracker exists to prevent.
+func (h *RunHandle) referralAdd() bool {
 	if h == nil {
-		return
+		return false
 	}
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.referrals == nil {
 		h.referrals = &referralTracker{}
 	}
+	if h.referrals.settled {
+		return false
+	}
 	h.referrals.active++
-	h.mu.Unlock()
+	return true
 }
 
 func (h *RunHandle) referralDone() {
@@ -54,8 +72,7 @@ func (h *RunHandle) waitReferrals() {
 	}
 	h.mu.Lock()
 	if h.referrals == nil {
-		h.mu.Unlock()
-		return
+		h.referrals = &referralTracker{}
 	}
 	if h.referrals.cond == nil {
 		h.referrals.cond = sync.NewCond(&h.mu)
@@ -63,12 +80,19 @@ func (h *RunHandle) waitReferrals() {
 	for h.referrals.active > 0 {
 		h.referrals.cond.Wait()
 	}
+	// Settle the window: any referral registered from now on must run inline
+	// (SpawnReferral checks referralAdd's return), never as an escaping
+	// goroutine that survives h.done.
+	h.referrals.settled = true
 	h.mu.Unlock()
 }
 
 // SpawnReferral creates one same-run task and starts it concurrently (plan 53.04).
 // When askID is non-empty it is bound to the new task ID before the goroutine
-// starts so failed referrals always CloseAsk.
+// starts so failed referrals always CloseAsk. When the run has already reached
+// its terminal referral wait (the DAG finished and waitReferrals settled), the
+// task runs synchronously so its terminal side effects complete before
+// SpawnReferral returns.
 func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task subagents.Task, askID string) (taskID string, err error) {
 	if runID == "" {
 		return "", fmt.Errorf("spawn referral: run_id required")
@@ -104,7 +128,17 @@ func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task suba
 	h.mu.RLock()
 	baseCtx := h.poolCtx
 	h.mu.RUnlock()
-	h.referralAdd()
+	// Register the referral on the run's tracker. When the run has already
+	// reached its terminal referral wait (the DAG finished and waitReferrals
+	// settled the window), a goroutine would escape the join: h.done can close
+	// - and the run claim be released - while the referral goroutine still
+	// mutates ledger state and closes its ask. Run the task inline instead:
+	// the run is done, so there is nothing left to overlap, and the referral's
+	// terminal side effects complete before SpawnReferral returns.
+	if !h.referralAdd() {
+		c.runReferralTask(h, named.task, baseCtx)
+		return taskID, nil
+	}
 	go func() {
 		defer h.referralDone()
 		c.runReferralTask(h, named.task, baseCtx)
