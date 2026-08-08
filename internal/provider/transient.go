@@ -41,16 +41,30 @@ func IsTransient(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) {
+	// A cancelled or expired context is NOT transient. The caller stopped the
+	// call, or its deadline ran out; repeating it works against that decision
+	// and, for an expired deadline, fails again at once.
+	//
+	// This test must come before the net.Error test below.
+	// context.DeadlineExceeded satisfies net.Error with Timeout() == true, so
+	// the generic timeout test would otherwise classify every expired step and
+	// every expired run as a transport fault, and retry each one under the
+	// context that just expired.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	var transient *TransientError
 	if errors.As(err, &transient) {
 		return true
 	}
-	if isIncompleteBody(err) {
-		return true
-	}
+	// No blanket test for a JSON syntax error or a bare EOF here. Those say
+	// "these bytes are not the answer I expected", and at a call site that
+	// parses an AGENT'S OUTPUT they describe a bad answer, not a broken
+	// connection. Retrying a bad answer repeats it.
+	//
+	// The provider layer already wraps its OWN cut bodies and torn streams as
+	// TransientError at the point of the read, where the difference is known,
+	// so the type test above still covers every real transport fault.
 	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) ||
 		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ETIMEDOUT) {
 		return true
