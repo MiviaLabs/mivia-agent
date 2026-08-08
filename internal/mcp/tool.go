@@ -73,9 +73,13 @@ func capMCPResult(value string, limit int) string {
 	if limit <= 0 || len(value) <= limit {
 		return value
 	}
-	cut := limit
+	marker := "\n[MCP result truncated]"
+	if limit <= len(marker) {
+		return marker[:limit]
+	}
+	cut := limit - len(marker)
 	for cut > 0 && !utf8.RuneStart(value[cut]) {
 		cut--
 	}
-	return value[:cut] + "\n[MCP result truncated]"
+	return value[:cut] + marker
 }

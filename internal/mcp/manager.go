@@ -177,7 +177,9 @@ func sameOriginRedirect(endpoint *url.URL) func(*http.Request, []*http.Request) 
 }
 
 func connectStdio(ctx context.Context, server config.MCPServerConfig) (remoteClient, error) {
-	command := exec.CommandContext(ctx, server.Command, server.Args...)
+	// The startup context bounds the protocol handshake. Do not bind it to the
+	// child process lifetime: EnsureServers cancels it after Connect returns.
+	command := exec.Command(server.Command, server.Args...)
 	command.Env = environmentFor(server.Env)
 	in, err := command.StdinPipe()
 	if err != nil {

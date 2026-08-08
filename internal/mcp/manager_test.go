@@ -109,6 +109,21 @@ func TestStdioDiscoversCallsAndReapsProcess(t *testing.T) {
 	}
 }
 
+func TestManagerStdioDiscoverySurvivesStartupContext(t *testing.T) {
+	t.Setenv("MIVIA_MCP_HELPER", "1")
+	manager, err := NewManager(config.MCPConfig{Enabled: true, StartupTimeoutSeconds: 1, Servers: []config.MCPServerConfig{{
+		ID: "stdio", Transport: "stdio", Command: os.Args[0], Args: []string{"-test.run=^TestStdioMCPHelper$"}, Env: []string{"MIVIA_MCP_HELPER"},
+	}}}, ManagerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	wrappers, err := manager.EnsureServers(context.Background(), []string{"stdio"})
+	if err != nil || len(wrappers) != 1 {
+		t.Fatalf("EnsureServers() = %#v, %v", wrappers, err)
+	}
+}
+
 func TestStdioMCPHelper(t *testing.T) {
 	if os.Getenv("MIVIA_MCP_HELPER") != "1" {
 		return
@@ -276,6 +291,15 @@ func TestSerializedRemoteClientSerializesCalls(t *testing.T) {
 	client.release <- struct{}{}
 	<-done
 	<-done
+}
+
+func TestCapMCPResultNeverExceedsLimit(t *testing.T) {
+	for _, limit := range []int{1, 10, 32} {
+		got := capMCPResult("abcdefghijk", limit)
+		if len(got) > limit {
+			t.Fatalf("capMCPResult() length = %d, limit = %d", len(got), limit)
+		}
+	}
 }
 
 type fakeRemoteClient struct{}
