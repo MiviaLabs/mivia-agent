@@ -167,6 +167,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		ModelCatalog:              modelCatalog,
 		CompleterFactory:          routing.CompleterFactory,
 		Config:                    cfg,
+		MCP:                       sessionMCPConfig(routing.Resolved),
 		ToolResultCapBytes:        sess.MaxToolResultChars,
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		WorkspaceRoot:             root,

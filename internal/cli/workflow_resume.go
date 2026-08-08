@@ -80,6 +80,9 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish b
 	if err != nil {
 		return err
 	}
+	if err := validateWorkflowMCPConfigDigest(snapshot, res.MCP); err != nil {
+		return err
+	}
 	terminal, err := reconcileWorkflowTerminal(ctx, repo, runID, compiled.DeliveryActive(), stdout)
 	if err != nil {
 		return err
@@ -111,6 +114,23 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish b
 	// ReleaseRun is a no-op when the caller is not the current holder.
 	defer releaseWorkflowResumeHandoff(repo, runID, built.Controller)
 	return runWorkflowResumeAndSettle(ctx, built, repo, runID, work.Abs, res, store, run.WorkflowName, compiled, allowPublish, stdout, stderr)
+}
+
+func validateWorkflowMCPConfigDigest(snapshot workflowledger.Snapshot, current config.MCPConfig) error {
+	if snapshot.MCPConfigDigest == "" {
+		if current.Enabled && len(current.Servers) > 0 {
+			return fmt.Errorf("workflow snapshot does not pin the enabled MCP configuration")
+		}
+		return nil
+	}
+	digest, err := config.MCPConfigDigest(current)
+	if err != nil {
+		return err
+	}
+	if digest != snapshot.MCPConfigDigest {
+		return fmt.Errorf("MCP configuration changed since workflow admission")
+	}
+	return nil
 }
 
 // runWorkflowResumeAndSettle runs the resumed controller and settles the run

@@ -10,6 +10,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
+func sessionMCPConfig(res *config.Resolved) config.MCPConfig {
+	if res == nil {
+		return config.MCPConfig{}
+	}
+	return res.MCP
+}
+
 func addRootMCPTools(registry *tools.Registry, cfg *config.Resolved, selected *agents.ResolvedAgent) (func(), error) {
 	if registry == nil || cfg == nil || selected == nil || len(selected.EffectiveMCPServers) == 0 {
 		return func() {}, nil
@@ -28,6 +35,8 @@ func addRootMCPTools(registry *tools.Registry, cfg *config.Resolved, selected *a
 			_ = manager.Close()
 			return nil, fmt.Errorf("MCP tool %q collides with registry", wrapper.Name())
 		}
+	}
+	for _, wrapper := range wrappers {
 		registry.Register(wrapper)
 	}
 	return func() { _ = manager.Close() }, nil

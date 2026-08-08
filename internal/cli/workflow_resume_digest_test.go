@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -66,5 +67,38 @@ func TestResumeRefusesAnAlteredDefinitionText(t *testing.T) {
 	// run.SnapshotDigest still pins the ORIGINAL snapshot bytes.
 	if _, _, _, err := validateWorkflowResumeSnapshot(run, tampered); err == nil {
 		t.Fatal("altered definition text must fail the snapshot digest check")
+	}
+}
+
+func TestValidateWorkflowMCPConfigDigest(t *testing.T) {
+	current := config.MCPConfig{
+		Enabled: true,
+		Servers: []config.MCPServerConfig{{
+			ID:        "project-tools",
+			Transport: "stdio",
+			Command:   "/usr/bin/project-tools",
+		}},
+	}
+	digest, err := config.MCPConfigDigest(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := workflowledger.Snapshot{MCPConfigDigest: digest}
+	if err := validateWorkflowMCPConfigDigest(snapshot, current); err != nil {
+		t.Fatalf("validateWorkflowMCPConfigDigest() error = %v", err)
+	}
+
+	changed := current
+	changed.Servers = append([]config.MCPServerConfig(nil), current.Servers...)
+	changed.Servers[0].Command = "/usr/bin/other-tools"
+	if err := validateWorkflowMCPConfigDigest(snapshot, changed); err == nil {
+		t.Fatal("validateWorkflowMCPConfigDigest() accepted changed MCP configuration")
+	}
+}
+
+func TestValidateWorkflowMCPConfigDigestRejectsLegacySnapshotWithMCP(t *testing.T) {
+	current := config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{ID: "tools"}}}
+	if err := validateWorkflowMCPConfigDigest(workflowledger.Snapshot{}, current); err == nil {
+		t.Fatal("validateWorkflowMCPConfigDigest() accepted an unpinned MCP configuration")
 	}
 }

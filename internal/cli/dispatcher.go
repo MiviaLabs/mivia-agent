@@ -53,6 +53,7 @@ type SessionDispatcherOpts struct {
 	// (the model travels per request), so the model argument is advisory.
 	CompleterFactory   func(providerName, model string) (provider.Completer, error)
 	Config             config.SubagentConfig
+	MCP                config.MCPConfig
 	ToolResultCapBytes int
 	// BatchResultBudgetBytes is the [tools] batch_result_budget_bytes knob,
 	// applied to every nested sub-agent loop the same way it applies to the

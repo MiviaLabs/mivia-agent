@@ -76,6 +76,10 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttool
 		closeFn()
 		return resumePrepared{}, err
 	}
+	if err := validateWorkflowMCPConfigDigest(snapshot, res.MCP); err != nil {
+		closeFn()
+		return resumePrepared{}, err
+	}
 	finishExecution, err := beginWorkflowExecution(work.Abs, contextStorePath(work.Abs, res.Subagents), req.RunID)
 	if err != nil {
 		closeFn()
