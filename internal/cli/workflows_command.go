@@ -215,7 +215,7 @@ func validateWorkflowFiles(base string, wf *compiler.CompiledWorkflow) error {
 			if err != nil {
 				return fmt.Errorf("step %q: template %q: %w", step.ID, step.Template, err)
 			}
-			if err := validateWorkflowTemplateBindings(step, string(data)); err != nil {
+			if err := validateWorkflowTemplateBindings(wf, step, string(data)); err != nil {
 				return fmt.Errorf("step %q: template %q: %w", step.ID, step.Template, err)
 			}
 		}
@@ -233,9 +233,18 @@ func validateWorkflowFiles(base string, wf *compiler.CompiledWorkflow) error {
 // validateWorkflowTemplateBindings verifies that each template reads only a
 // value declared by its step context. It uses empty values because this check
 // validates binding names, not runtime output.
-func validateWorkflowTemplateBindings(step definition.Step, source string) error {
+//
+// A loop-bound step also receives the synthetic inputs.round, which the
+// controller injects from the loop's durable iteration counter rather than
+// from a declared context binding (see roundInputForStep). Omitting it here
+// reported a workflow that runs correctly as invalid, because a review
+// template that mints per-round finding ids must read it.
+func validateWorkflowTemplateBindings(wf *compiler.CompiledWorkflow, step definition.Step, source string) error {
 	inputs := make(map[string]any)
 	evidence := make(map[string]any)
+	if stepIsLoopBound(wf, step) {
+		inputs["round"] = ""
+	}
 	for _, binding := range step.Context {
 		if strings.HasPrefix(binding.From, "inputs.") {
 			inputs[binding.As] = ""
@@ -249,10 +258,39 @@ func validateWorkflowTemplateBindings(step definition.Step, source string) error
 	return err
 }
 
+// stepIsLoopBound reports whether the step owns a loop back-edge, which is
+// exactly the condition under which the controller supplies inputs.round.
+func stepIsLoopBound(wf *compiler.CompiledWorkflow, step definition.Step) bool {
+	if wf == nil {
+		return false
+	}
+	for _, t := range wf.Transitions {
+		if t.From == step.ID && t.Loop != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// validateWorkflowVerifiers checks that every evidence_gate resolves to a
+// runnable profile.
+//
+// It resolves in the same order the controller does (see gateProfile): a step
+// that declares a command uses that command, and only a step without one is
+// looked up in the built-in catalogue. Validating the catalogue name first
+// reported every command-form gate as invalid, which is the form a repository
+// uses to declare its own gate and the reason the workflow engine stays
+// project-agnostic.
 func validateWorkflowVerifiers(wf *compiler.CompiledWorkflow) error {
 	catalogue := verifier.DefaultCatalogue(secretpath.Policy{})
 	for _, step := range wf.Steps {
 		if step.Kind != "evidence_gate" {
+			continue
+		}
+		if step.Command != nil {
+			if _, err := verifier.NewCommandProfile(step.Command.Check, step.Command.Program, step.Command.Args); err != nil {
+				return fmt.Errorf("step %q: %w", step.ID, err)
+			}
 			continue
 		}
 		if _, err := catalogue.Lookup(step.Verifier); err != nil {
