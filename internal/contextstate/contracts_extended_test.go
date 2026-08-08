@@ -3,6 +3,7 @@ package contextstate
 import (
 	"crypto/sha256"
 	"errors"
+	"math"
 	"testing"
 )
 
@@ -39,6 +40,69 @@ func TestSourceRangeExceedsLimit(t *testing.T) {
 	_, err := NewSourceRange(start, end)
 	if err == nil {
 		t.Fatal("expected range limit error")
+	}
+}
+
+// TestSourceRangeOverflowBoundaryRejected pins the uint64 overflow in
+// SourceRange.Validate: the span from Sequence 0 to math.MaxUint64 used to
+// wrap End-Start+1 to 0, so the full 2^64 event space validated. The fix makes
+// the span check overflow-safe (End-Start >= MaxSourceRangeEvents), so the
+// pathological range is refused as an invalid DTO.
+func TestSourceRangeOverflowBoundaryRejected(t *testing.T) {
+	overflow := SourceRange{
+		Start: SourceID{SessionID: "s", Sequence: 0},
+		End:   SourceID{SessionID: "s", Sequence: math.MaxUint64},
+	}
+	if _, err := NewSourceRange(overflow.Start, overflow.End); err == nil || !errors.Is(err, ErrInvalidDTO) {
+		t.Fatalf("NewSourceRange() error = %v, want ErrInvalidDTO wrapped", err)
+	}
+	if err := overflow.Validate(); err == nil || !errors.Is(err, ErrInvalidDTO) {
+		t.Fatalf("SourceRange.Validate() error = %v, want ErrInvalidDTO wrapped", err)
+	}
+}
+
+// TestCheckpointRecordRejectsOverflowSourceRange proves the overflow range
+// reaches the DTO composition path storage adapters use: the same overflow
+// SourceRange rides on both the CheckpointID and the CheckpointRecord, so the
+// identity-equality check cannot reject the fixture for the wrong reason and
+// CheckpointRecord.Validate must refuse it via SourceRange.Validate.
+func TestCheckpointRecordRejectsOverflowSourceRange(t *testing.T) {
+	overflow := SourceRange{
+		Start: SourceID{SessionID: "s", Sequence: 0},
+		End:   SourceID{SessionID: "s", Sequence: math.MaxUint64},
+	}
+	id := CheckpointID{
+		SessionID:      "s",
+		SourceRange:    overflow,
+		Algorithm:      "alg",
+		SchemaVersion:  1,
+		SummaryModel:   "m",
+		IdempotencyKey: "key",
+	}
+	rec := CheckpointRecord{
+		ID:            id,
+		Revision:      Revision{Session: 1, Durable: 1, Source: 1},
+		Binding:       BindingRevision{Provider: "p", Model: "m", Generation: 1},
+		SourceRange:   overflow,
+		ActiveContext: []byte(`{"m":[]}`),
+		TurnID:        1,
+	}
+	if err := rec.Validate(); err == nil || !errors.Is(err, ErrInvalidDTO) {
+		t.Fatalf("CheckpointRecord.Validate() error = %v, want ErrInvalidDTO wrapped", err)
+	}
+}
+
+// TestSourceRangeEventLimitBoundary pins that the overflow-safe check changes
+// no accepted boundary: the exact-limit span (End-Start+1 == MaxSourceRangeEvents)
+// still validates and the one-over span is still rejected.
+func TestSourceRangeEventLimitBoundary(t *testing.T) {
+	exactEnd := SourceID{SessionID: "s", Sequence: MaxSourceRangeEvents}
+	if _, err := NewSourceRange(SourceID{SessionID: "s", Sequence: 1}, exactEnd); err != nil {
+		t.Fatalf("exact-limit range rejected: %v", err)
+	}
+	oneOverEnd := SourceID{SessionID: "s", Sequence: MaxSourceRangeEvents + 1}
+	if _, err := NewSourceRange(SourceID{SessionID: "s", Sequence: 1}, oneOverEnd); err == nil || !errors.Is(err, ErrInvalidDTO) {
+		t.Fatalf("one-over range error = %v, want ErrInvalidDTO wrapped", err)
 	}
 }
 
