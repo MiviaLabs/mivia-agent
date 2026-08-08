@@ -39,6 +39,76 @@ var workflowRunsList = func(ctx context.Context, repo workflowledger.Repository,
 // prints run_id only when it finishes, and the worktree name is the
 // sanitized (lower-cased) form of the ID, so the ID cannot be read back
 // from `worktree list` while the run is still going.
+// workflowWatchInterval is how often --watch re-reads the ledger. The reads
+// are cheap, but a live run holds its own execution lock and writes attempts,
+// so the poll stays well clear of a tight loop.
+var workflowWatchInterval = 5 * time.Second
+
+// workflowWatchSleep is a variable so tests drive the loop without waiting.
+var workflowWatchSleep = time.Sleep
+
+// executeWorkflowRunsWatch prints one line per run state change and returns
+// when every matched run is terminal.
+//
+// It uses workflowledger.IsTerminalRunStatus rather than its own status list.
+// A hand-copied list is how an earlier watcher treated delivery_pending as
+// terminal and stopped while a run was still publishing; the ledger owns that
+// predicate and documents delivery_pending as a deliberate pause.
+func executeWorkflowRunsWatch(root, configPath, statusFilter string, limit int, stdout, stderr io.Writer) error {
+	seen := map[string]workflowledger.RunStatus{}
+	for {
+		runs, err := watchSnapshot(root, configPath, statusFilter, limit)
+		if err != nil {
+			return err
+		}
+		pending := 0
+		for _, r := range runs {
+			if prior, ok := seen[r.RunID]; !ok || prior != r.Status {
+				seen[r.RunID] = r.Status
+				step := r.ActiveStepID
+				if step == "" {
+					step = "-"
+				}
+				fmt.Fprintf(stdout, "%s  %-16s step=%s\n", r.RunID, r.Status, step)
+			}
+			if !workflowledger.IsTerminalRunStatus(r.Status) {
+				pending++
+			}
+		}
+		if pending == 0 {
+			return nil
+		}
+		workflowWatchSleep(workflowWatchInterval)
+	}
+}
+
+// watchSnapshot reads the same run set executeWorkflowRuns prints, opening and
+// closing the store each pass so a watch never pins the ledger open.
+func watchSnapshot(root, configPath, statusFilter string, limit int) ([]workflowledger.RunSnapshot, error) {
+	var filter []workflowledger.RunStatus
+	if trimmed := strings.TrimSpace(statusFilter); trimmed != "" {
+		status, ok := workflowRunStatuses[trimmed]
+		if !ok {
+			return nil, fmt.Errorf("workflow runs: unknown status %q (want one of %s)", trimmed, workflowRunStatusNames())
+		}
+		filter = append(filter, status)
+	}
+	repo, closeFn, err := openWorkflowReportContext(root, configPath)
+	if err != nil {
+		return nil, err
+	}
+	defer closeFn()
+	runs, err := workflowRunsList(context.Background(), repo, filter...)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(runs, func(i, j int) bool { return runs[i].StartedAt.After(runs[j].StartedAt) })
+	if limit > 0 && len(runs) > limit {
+		runs = runs[:limit]
+	}
+	return runs, nil
+}
+
 func executeWorkflowRuns(root, configPath, statusFilter string, limit int, stdout, stderr io.Writer) error {
 	var filter []workflowledger.RunStatus
 	if trimmed := strings.TrimSpace(statusFilter); trimmed != "" {

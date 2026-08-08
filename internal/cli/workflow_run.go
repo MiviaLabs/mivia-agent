@@ -423,6 +423,10 @@ func workflowAdmission(setup workflowBuildSetup, inputs map[string]string, recor
 	return admission
 }
 
+// workflowDeliveryProbe checks the provider's PR tool at admission. It is a
+// variable so tests can drive the missing-tool path without changing PATH.
+var workflowDeliveryProbe = delivery.ProbePRTool
+
 // workflowDeliveryAdmission verifies that a fresh delivery-required run can
 // publish: the workflow must be write-capable, the repository must have an
 // origin remote, and the delivery base must sit at the admitted base commit.
@@ -434,6 +438,9 @@ func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflows
 	policy, ok := delivery.FromCompiled(wf)
 	if !ok {
 		return "", fmt.Errorf("workflow %s delivery policy is not active", wf.Name)
+	}
+	if err := workflowDeliveryProbe(policy.Provider); err != nil {
+		return "", err
 	}
 	gitCtx := delivery.GitContext{Dir: identity.MainRoot, GitDir: filepath.Join(identity.MainRoot, ".git")}
 	originURL, err := workflowDeliverGit.Run(context.Background(), gitCtx, "remote", "get-url", "origin")

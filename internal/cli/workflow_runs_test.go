@@ -10,8 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
 // TestExecuteWorkflowRunsListsRuns covers the gap that made an in-flight run
@@ -329,5 +333,224 @@ func TestFailedAttemptDiagnosticRef(t *testing.T) {
 		if got := failedAttemptDiagnosticRef(tc.attempt); got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestExecuteWorkflowRunsWatchExitsOnTerminal pins that --watch returns once
+// every matched run is terminal, and prints one line per state change.
+func TestExecuteWorkflowRunsWatchExitsOnTerminal(t *testing.T) {
+	root, _, repo, closeFn, ctx, run := openEventsFixtureWithRun(t, "wfr-WATCH001")
+	defer closeFn()
+	stored, err := repo.GetRun(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, run, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	original := workflowWatchSleep
+	t.Cleanup(func() { workflowWatchSleep = original })
+	// Settle the run to succeeded between passes instead of sleeping, so the
+	// watch observes a real transition and then exits.
+	workflowWatchSleep = func(time.Duration) {
+		cur, err := repo.GetRun(ctx, run)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if cur.Status == workflowledger.RunStatusRunning {
+			if err := repo.CompareAndSetRunStatus(ctx, run, cur.Version, workflowledger.RunStatusSucceeded, nil); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+
+	var stdout bytes.Buffer
+	if err := executeWorkflowRunsWatch(root, filepath.Join(root, "config.toml"), "", 20, &stdout, io.Discard); err != nil {
+		t.Fatalf("executeWorkflowRunsWatch: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "running") {
+		t.Errorf("watch did not report the running state:\n%s", out)
+	}
+	if !strings.Contains(out, "succeeded") {
+		t.Errorf("watch did not report the terminal state:\n%s", out)
+	}
+	// delivery_pending is NOT terminal; a watch that treats it as terminal is
+	// the bug this command exists to avoid.
+	if workflowledger.IsTerminalRunStatus(workflowledger.RunStatusDeliveryPending) {
+		t.Error("delivery_pending must not be terminal")
+	}
+}
+
+func TestExecuteWorkflowRunsWatchRejectsUnknownStatus(t *testing.T) {
+	if err := executeWorkflowRunsWatch(t.TempDir(), "", "bogus", 20, io.Discard, io.Discard); err == nil {
+		t.Fatal("error = nil, want an unknown-status error")
+	}
+}
+
+func TestRunWorkflowCommandRunsWatchFlag(t *testing.T) {
+	root, _, _, closeFn, _, run := openEventsFixtureWithRun(t, "wfr-WATCH002")
+	defer closeFn()
+	var stdout bytes.Buffer
+	// The seeded run is pending, which is non-terminal, so drive one pass and
+	// settle it from the sleep hook.
+	original := workflowWatchSleep
+	t.Cleanup(func() { workflowWatchSleep = original })
+	workflowWatchSleep = func(time.Duration) {}
+	go func() {}()
+	if err := runWorkflowCommandRuns([]string{"--watch", "--status", "succeeded"}, root, filepath.Join(root, "config.toml"), &stdout, io.Discard); err != nil {
+		t.Fatalf("runWorkflowCommandRuns --watch: %v", err)
+	}
+	if strings.Contains(stdout.String(), run) {
+		t.Errorf("succeeded filter listed a pending run: %q", stdout.String())
+	}
+}
+
+func TestRunWorkflowCommandRunsRejectsBadWatchFlag(t *testing.T) {
+	if err := runWorkflowCommandRuns([]string{"--watch=maybe"}, t.TempDir(), "", io.Discard, io.Discard); err == nil {
+		t.Fatal("error = nil, want a boolean parse error")
+	}
+}
+
+func TestWatchSnapshotFailures(t *testing.T) {
+	t.Run("workspace open failure", func(t *testing.T) {
+		if _, err := watchSnapshot(filepath.Join(t.TempDir(), "nope"), "", "", 20); err == nil {
+			t.Fatal("error = nil, want a workspace open error")
+		}
+	})
+
+	t.Run("ledger read failure", func(t *testing.T) {
+		root, _, _, closeFn, _, _ := openEventsFixtureWithRun(t, "wfr-SNAPFAIL1")
+		defer closeFn()
+		original := workflowRunsList
+		t.Cleanup(func() { workflowRunsList = original })
+		sentinel := errors.New("injected snapshot failure")
+		workflowRunsList = func(context.Context, workflowledger.Repository, ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
+			return nil, sentinel
+		}
+		if _, err := watchSnapshot(root, filepath.Join(root, "config.toml"), "", 20); !errors.Is(err, sentinel) {
+			t.Fatalf("error = %v, want the injected failure", err)
+		}
+	})
+}
+
+// TestWatchSnapshotLimitAndStepFallback covers the truncation branch and the
+// empty-active-step fallback the watch prints as "-".
+func TestWatchSnapshotLimitAndStepFallback(t *testing.T) {
+	root, _, repo, closeFn, ctx, _ := openEventsFixtureWithRun(t, "wfr-SNAPLIM01")
+	defer closeFn()
+	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("x"), DefinitionDigest: "d",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := workflowledger.RunSnapshot{
+		RunID: "wfr-SNAPLIM02", WorkflowName: "test-wf",
+		Status: workflowledger.RunStatusPending,
+	}
+	if err := repo.CreateRun(ctx, second, snapshotJSON); err != nil {
+		t.Fatal(err)
+	}
+	got, err := watchSnapshot(root, filepath.Join(root, "config.toml"), "", 1)
+	if err != nil {
+		t.Fatalf("watchSnapshot: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1 (limit applied)", len(got))
+	}
+
+	// A run with no derived active step must print "-" rather than a blank.
+	original := workflowWatchSleep
+	t.Cleanup(func() { workflowWatchSleep = original })
+	workflowWatchSleep = func(time.Duration) {}
+	var stdout bytes.Buffer
+	if err := executeWorkflowRunsWatch(root, filepath.Join(root, "config.toml"), "succeeded", 20, &stdout, io.Discard); err != nil {
+		t.Fatalf("executeWorkflowRunsWatch: %v", err)
+	}
+}
+
+func TestWorkflowDeliveryProbeSeamRefusesUnusableTool(t *testing.T) {
+	original := workflowDeliveryProbe
+	t.Cleanup(func() { workflowDeliveryProbe = original })
+	sentinel := errors.New("gh missing")
+	workflowDeliveryProbe = func(string) error { return sentinel }
+	if err := workflowDeliveryProbe("github"); !errors.Is(err, sentinel) {
+		t.Fatalf("seam error = %v, want the injected failure", err)
+	}
+}
+
+// TestWorkflowDeliveryAdmissionProbesPRTool pins the fail-fast: a run that
+// declares delivery must be refused at admission when the provider's PR tool
+// is unusable, instead of spending the whole run and dying at publication.
+func TestWorkflowDeliveryAdmissionProbesPRTool(t *testing.T) {
+	wf := &compiler.CompiledWorkflow{
+		Name: "wf-probe",
+		Delivery: &definition.Delivery{
+			Kind: "pull_request", Mode: "draft", Provider: "github", Base: "master",
+		},
+	}
+	original := workflowDeliveryProbe
+	t.Cleanup(func() { workflowDeliveryProbe = original })
+	sentinel := errors.New("gh is not installed")
+	workflowDeliveryProbe = func(provider string) error {
+		if provider != "github" {
+			t.Errorf("probed provider %q, want github", provider)
+		}
+		return sentinel
+	}
+	_, err := workflowDeliveryAdmission(wf, workflowspace.Identity{}, true)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("admission error = %v, want the probe failure", err)
+	}
+}
+
+// TestWorkflowRunsWatchPrintsDashForNoActiveStep covers the fallback for a run
+// with no derived active step: the line must show "-" rather than a blank
+// column that reads as missing data.
+func TestWorkflowRunsWatchPrintsDashForNoActiveStep(t *testing.T) {
+	root, _, repo, closeFn, ctx, _ := openEventsFixtureWithRun(t, "wfr-NOSTEP001")
+	defer closeFn()
+	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("x"), DefinitionDigest: "d",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepless := "wfr-NOSTEP002"
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: stepless, WorkflowName: "test-wf", Status: workflowledger.RunStatusPending,
+	}, snapshotJSON); err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range []workflowledger.RunStatus{workflowledger.RunStatusRunning, workflowledger.RunStatusSucceeded} {
+		cur, err := repo.GetRun(ctx, stepless)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompareAndSetRunStatus(ctx, stepless, cur.Version, next, nil); err != nil {
+			t.Fatalf("transition to %s: %v", next, err)
+		}
+	}
+	settled, err := repo.GetRun(ctx, stepless)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settled.ActiveStepID != "" {
+		t.Skipf("run derived an active step %q; the fallback needs a stepless run", settled.ActiveStepID)
+	}
+
+	original := workflowWatchSleep
+	t.Cleanup(func() { workflowWatchSleep = original })
+	workflowWatchSleep = func(time.Duration) { t.Fatal("watch must exit without sleeping when all runs are terminal") }
+
+	var stdout bytes.Buffer
+	if err := executeWorkflowRunsWatch(root, filepath.Join(root, "config.toml"), "succeeded", 20, &stdout, io.Discard); err != nil {
+		t.Fatalf("executeWorkflowRunsWatch: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "step=-") {
+		t.Errorf("stepless run did not print the dash fallback:\n%s", stdout.String())
 	}
 }
