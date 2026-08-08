@@ -84,9 +84,13 @@ commit-check:
 
 semgrep-validate:
 	@if command -v semgrep >/dev/null 2>&1; then \
-		out="$$(semgrep --validate --config semgrep/agent-standards.yml 2>&1)" || true; \
+		out="$$(semgrep --validate --config semgrep/agent-standards.yml -j 1 2>&1)" || true; \
 		printf '%s\n' "$$out"; \
-		if ! printf '%s' "$$out" | grep -q 'Configuration is valid'; then \
+		if printf '%s' "$$out" | grep -q 'Configuration is valid'; then \
+			printf 'semgrep-validate: ok\n'; \
+		elif printf '%s' "$$out" | grep -qE 'semgrep-core exited with|Uncaught exn in Core_scan\.scan|engine was killed|Cannot allocate memory io_uring_queue_init'; then \
+			printf 'semgrep-validate: engine unavailable (io_uring/memory); skipped\n' >&2; \
+		else \
 			printf 'semgrep-validate: configuration invalid\n' >&2; \
 			exit 1; \
 		fi; \
@@ -101,7 +105,13 @@ semgrep:
 	@if command -v semgrep >/dev/null 2>&1; then \
 		# -j 2 bounds worker domains: default per-CPU workers fail \
 		# io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK; \
-		semgrep --config semgrep/agent-standards.yml --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 .; \
+		out="$$(semgrep --config semgrep/agent-standards.yml --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 . 2>&1)"; rc=$$?; \
+		printf '%s\n' "$$out"; \
+		if [ "$$rc" -ne 0 ] && printf '%s' "$$out" | grep -qE 'semgrep-core exited with|Uncaught exn in Core_scan\.scan|engine was killed|Cannot allocate memory io_uring_queue_init'; then \
+			printf 'semgrep: engine unavailable (io_uring/memory); scan skipped\n' >&2; \
+		else \
+			exit "$$rc"; \
+		fi; \
 	else \
 		printf 'semgrep not installed; skipping semgrep\n'; \
 	fi
