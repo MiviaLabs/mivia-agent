@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -228,28 +229,65 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 }
 
 // requeueForResume walks failed → retry_pending → queued, the only route the
-// transition table permits back to runnable (ledger/transition.go).
+// transition table permits back to runnable (ledger/transition.go). A task
+// already stranded at retry_pending (a crash or transient storage error between
+// the two CASes below) is re-driven here too: it is already in the state the
+// first CAS would produce, so it goes straight to queued with the live version
+// (retry_pending → retry_pending is not a valid transition).
+//
+// Both CAS results are checked (DC-3). A first-CAS failure means the task moved
+// on (a concurrent writer transitioned it, or the version went stale), so the
+// second CAS is NOT written - it could overwrite the newer state. A second-CAS
+// failure strands the task at retry_pending: it is logged so the stranded state
+// is visible (DC-9) and requeuePersistedFailures re-drives it on the next
+// resume (DC-4).
 func (c *coordinator) requeueForResume(ctx context.Context, runID, taskID string, version uint64) {
-	if c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version, string(ledger.TaskStatusRetryPending)) != nil {
+	snap, err := c.repo.GetTask(ctx, runID, taskID)
+	if err != nil {
+		log.Printf("coordinator: resume: requeue task %q: read: %v", taskID, err)
 		return
 	}
-	_ = c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version+1, string(ledger.TaskStatusQueued))
+	switch snap.Status {
+	case string(ledger.TaskStatusRetryPending):
+		// Stranded between the two CASes: already at retry_pending.
+		version = snap.Version
+	case string(ledger.TaskStatusFailed), string(ledger.TaskStatusTimedOut):
+		if err := c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version, string(ledger.TaskStatusRetryPending)); err != nil {
+			// The task moved on - do not write the second CAS.
+			return
+		}
+		version = snap.Version + 1
+	default:
+		// Already queued, terminal, or cancel-claimed: nothing to re-queue.
+		return
+	}
+	if err := c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, version, string(ledger.TaskStatusQueued)); err != nil {
+		// The task is stranded at retry_pending. Surface it instead of
+		// silently discarding the error; requeuePersistedFailures re-drives it
+		// on the next resume.
+		log.Printf("coordinator: resume: requeue task %q (status %s): %v; task stranded at retry_pending, next resume re-drives it", taskID, snap.Status, err)
+	}
 }
 
 // requeuePersistedFailures makes ResumeInterruptedRun the explicit retry
 // boundary for work that failed just before the process stopped. A nonterminal
 // run can otherwise contain failed/timed_out tasks, but the scheduler cannot
-// transition either state directly back to running.
+// transition either state directly back to running. A task stranded at
+// retry_pending (a crash or transient error between requeueForResume's two
+// CASes) is re-driven here too: retry_pending → queued is the same valid
+// transition, and resume's exclusive claim prevents touching a retry owned by
+// a live executor. Resume IS the retry request, so immediate re-queue
+// (bypassing any remaining backoff) is correct.
 func (c *coordinator) requeuePersistedFailures(ctx context.Context, runID string) {
 	tasks, err := c.repo.ListTasks(ctx, runID)
 	if err != nil {
 		return
 	}
 	for _, task := range tasks {
-		if task.Status != string(ledger.TaskStatusFailed) && task.Status != string(ledger.TaskStatusTimedOut) {
-			continue
+		switch task.Status {
+		case string(ledger.TaskStatusFailed), string(ledger.TaskStatusTimedOut), string(ledger.TaskStatusRetryPending):
+			c.requeueForResume(ctx, runID, task.TaskID, task.Version)
 		}
-		c.requeueForResume(ctx, runID, task.TaskID, task.Version)
 	}
 }
 
