@@ -733,21 +733,28 @@ func TestDeliverTemplateInjectionSingleArgv(t *testing.T) {
 		t.Fatalf("commit message = %q, want the newline payload intact", msg)
 	}
 
-	t.Run("newline title refused by renderer", func(t *testing.T) {
+	// The newline payload folds to one line and still publishes. The defense
+	// against argv injection is the --title= equals form, which the assertion
+	// above proves: the payload stays ONE argument. The fold makes the title
+	// safer still, because the published title holds no newline at all.
+	t.Run("newline title folded, not refused", func(t *testing.T) {
 		_, wt2, gc2, base2, origin2, run2, repo2 := newDeliveryFixture(t)
 		writeWorktreeFile(t, wt2, "b.txt", "change\n")
-		bad := Policy{Kind: "pull_request", Mode: "draft", Provider: "github", Base: "main",
+		folding := Policy{Kind: "pull_request", Mode: "draft", Provider: "github", Base: "main",
 			TitleTemplate: "{{ inputs.task }}", CommitMessageTemplate: "{{ inputs.task }}"}
 		pr2 := &fakePRClient{}
-		if _, err := Deliver(ctx, repo2, RealGit{}, pr2, newRequest(run2, gc2, base2, origin2, bad, inputs)); err == nil {
-			t.Fatal("Deliver with newline title = nil error, want failure")
+		if _, err := Deliver(ctx, repo2, RealGit{}, pr2, newRequest(run2, gc2, base2, origin2, folding, inputs)); err != nil {
+			t.Fatalf("Deliver with newline title = %v, want success", err)
 		}
-		if n := pr2.createdCount(); n != 0 {
-			t.Fatalf("Create calls = %d, want 0", n)
+		if n := pr2.createdCount(); n != 1 {
+			t.Fatalf("Create calls = %d, want 1", n)
 		}
-		rec := deliveryRecordByKey(t, repo2, run2)
-		if rec.Status != "failed" || rec.ErrorRef == "" {
-			t.Fatalf("record = %+v, want failed with ErrorRef", rec)
+		got := pr2.created[0].Title
+		if strings.ContainsAny(got, "\n\r") {
+			t.Fatalf("published title %q must hold no line break", got)
+		}
+		if got != "x --draft --base evil" {
+			t.Fatalf("title = %q, want the folded single line", got)
 		}
 	})
 }

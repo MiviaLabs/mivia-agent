@@ -141,6 +141,9 @@ func renderTemplate(src string, inputs map[string]string, maxBytes int, allowNew
 			return "", err
 		}
 	}
+	if !allowNewline {
+		rendered = foldToSingleLine(rendered)
+	}
 	for _, r := range rendered {
 		if r == '\n' && allowNewline {
 			continue
@@ -158,6 +161,37 @@ func renderTemplate(src string, inputs map[string]string, maxBytes int, allowNew
 		return rendered, nil
 	}
 	return truncateRendered(rendered, maxBytes, allowNewline)
+}
+
+// foldToSingleLine makes rendered text safe for a single-line field.
+//
+// A pull-request title is one line. A template that interpolates a multi-line
+// input therefore renders a value that no title field can hold. The previous
+// behavior rejected that value and stopped delivery, which made a formatting
+// detail of the INPUT block the whole run from publishing. A title that reads
+// as one line is what the caller asked for, so this folds instead of refuses.
+//
+// The fold covers the whitespace control characters only: it turns each line
+// break and tab into a space, then collapses each run of spaces into one. A
+// control character that is not whitespace (NUL, an escape) still fails the
+// check that follows, because such a character is a sign of corrupt or hostile
+// input rather than of a multi-line message.
+func foldToSingleLine(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	space := false
+	for _, r := range s {
+		if r == '\n' || r == '\r' || r == '\t' || r == ' ' {
+			space = true
+			continue
+		}
+		if space && b.Len() > 0 {
+			b.WriteRune(' ')
+		}
+		space = false
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // truncateRendered truncates rendered text to fit within maxBytes.
