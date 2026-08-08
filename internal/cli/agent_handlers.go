@@ -65,7 +65,16 @@ func scopedRootRegistry(registry *tools.Registry, selected *agents.ResolvedAgent
 	if registry == nil || selected == nil {
 		return registry, nil
 	}
-	kept, disabled := agents.IntersectWithRegistry(authorizedAgentTools(selected, registry), registry)
+	// The scope allowlist can only contain tools the registry can actually
+	// serve, so the disabled report must be derived from the agent's REQUESTED
+	// tools instead: authorizedAgentTools is registry-filtered, and intersecting
+	// it with the same registry always yields an empty disabled list, which made
+	// the attach diagnostic (warnDisabledAgentTools at the attach entry point)
+	// dead code. disabledForAgent compares the agent's effective tools against
+	// the live registry - the exact report the operator needs at attach, and the
+	// same derivation the /agent entry point already uses.
+	kept, _ := agents.IntersectWithRegistry(authorizedAgentTools(selected, registry), registry)
+	disabled := disabledForAgent(selected, registry)
 	return tools.ScopedRegistry(registry, tools.ScopeOptions{
 		Mode:          tools.ScopeRoot,
 		Allowlist:     agents.AllowlistSet(kept),

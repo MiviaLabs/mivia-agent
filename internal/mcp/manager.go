@@ -344,8 +344,8 @@ type Manager struct {
 
 // NewManager constructs a disconnected MCP manager.
 func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
-	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	if !cfg.Enabled {
+		shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 		return &Manager{cfg: cfg, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, redaction: opts.RedactionPolicy}, nil
 	}
 	if opts.Connect == nil {
@@ -368,6 +368,7 @@ func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	if limit == 0 {
 		limit = 64 << 10
 	}
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	return &Manager{cfg: cfg, connect: opts.Connect, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, maxResultBytes: limit, redaction: opts.RedactionPolicy}, nil
 }
 

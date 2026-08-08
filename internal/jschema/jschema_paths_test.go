@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -394,6 +395,155 @@ func FuzzStripOneCodeFence(f *testing.F) {
 					t.Fatalf("stripped body contains a line starting with %d backticks: %q in %q", backticks, line, got)
 				}
 			}
+		}
+	})
+}
+
+func TestFormatCorrectiveOutputIsValidUTF8(t *testing.T) {
+	// DC-6 regression: the MaxCorrectiveBytes cap cut must never split a
+	// UTF-8 rune. Derive the fixed prefix length from the formatter (tracks
+	// prefix drift), then size a 3-byte-rune detail so the cut offset lands
+	// mid-rune: for the current constants the cut lands at 1024-122 = 902,
+	// and 902 % 3 = 2, so the raw byte cut s[:1024] splits a rune.
+	prefixLen := len(FormatCorrective(errors.New(""), nil))
+	room := MaxCorrectiveBytes - prefixLen
+	if room%3 == 0 {
+		t.Fatalf("test setup: cut offset %d lands on a rune boundary; choose another detail width", room)
+	}
+	detail := strings.Repeat("本", room/3+1) // 3*len(detail) > room: detail overflows the budget
+	out := FormatCorrective(errors.New(detail), nil)
+	if !utf8.ValidString(out) {
+		t.Fatalf("FormatCorrective produced invalid UTF-8 (cut at %d lands mid-rune): %q", MaxCorrectiveBytes, out)
+	}
+	if len(out) > MaxCorrectiveBytes {
+		t.Fatalf("corrective length %d exceeds %d", len(out), MaxCorrectiveBytes)
+	}
+	if len(out) >= prefixLen+len(detail) {
+		t.Fatalf("oversized detail was not truncated: %d bytes of %d", len(out), prefixLen+len(detail))
+	}
+	if !strings.HasPrefix(out, "Your previous reply did not match") {
+		t.Fatalf("corrective lost its guidance prefix: %q", out)
+	}
+}
+
+func TestFormatCorrectiveWithSchemaOutputIsValidUTF8(t *testing.T) {
+	schema := map[string]any{"type": "object"}
+	prefixLen := len(FormatCorrective(errors.New(""), nil))
+	schemaSection := "\nThe required schema is:\n" + ModelSchemaContract(schema)
+	room := MaxCorrectiveBytes - prefixLen - len(schemaSection)
+	// Lead the detail with one ASCII byte so the 3-byte runes do not align to
+	// byte 0 of the detail: the raw cut joined[:room] then provably splits a
+	// rune for the current constants (room 792; detail byte 792 is a 本
+	// continuation byte). The setup asserts the property directly - the byte at
+	// the cut offset is not a rune start - so the test stays a real mid-rune
+	// regression even if the prefix or contract lengths drift.
+	detail := "x" + strings.Repeat("本", room/3+1) // 1 + 3*len(detail) > room: detail overflows the room
+	if room >= len(detail) || utf8.RuneStart(detail[room]) {
+		t.Fatalf("test setup: cut offset %d does not land mid-rune (detail len %d); choose another detail width", room, len(detail))
+	}
+	out := FormatCorrectiveWithSchema(errors.New(detail), schema, nil)
+	if !utf8.ValidString(out) {
+		t.Fatalf("FormatCorrectiveWithSchema produced invalid UTF-8 (detail cut at room %d lands mid-rune): %q", room, out)
+	}
+	if len(out) > MaxCorrectiveBytes {
+		t.Fatalf("corrective length %d exceeds %d", len(out), MaxCorrectiveBytes)
+	}
+	if !strings.HasSuffix(out, schemaSection) {
+		t.Fatalf("schema section truncated; the contract is never cut: %q", out)
+	}
+	if strings.Contains(out, detail) {
+		t.Fatalf("oversized detail was not truncated: %q", out)
+	}
+
+	// Boundary: a schema whose contract alone fills the budget keeps the
+	// ENTIRE contract and drops the detail entirely (room clamps to 0).
+	bigProps := map[string]any{}
+	for i := 0; i < 40; i++ {
+		bigProps[fmt.Sprintf("field_%02d", i)] = map[string]any{"type": "string", "minLength": 5, "pattern": "^[a-z]+$"}
+	}
+	big := map[string]any{"type": "object", "properties": bigProps}
+	bigSection := "\nThe required schema is:\n" + ModelSchemaContract(big)
+	if bigRoom := MaxCorrectiveBytes - prefixLen - len(bigSection); bigRoom > 0 {
+		t.Fatalf("test setup: big schema contract (%d bytes) still leaves detail room (%d)", len(bigSection), bigRoom)
+	}
+	bigOut := FormatCorrectiveWithSchema(errors.New(strings.Repeat("本", 100)), big, nil)
+	if !utf8.ValidString(bigOut) {
+		t.Fatalf("big-schema corrective produced invalid UTF-8: %q", bigOut)
+	}
+	if !strings.HasSuffix(bigOut, bigSection) {
+		t.Fatalf("big schema contract truncated: %q", bigOut)
+	}
+	if strings.Contains(bigOut, "本") {
+		t.Fatalf("detail kept when the schema fills the budget: %q", bigOut)
+	}
+
+	// Boundary: nil schema (no schemaSection) with empty and oversized details.
+	if out := FormatCorrectiveWithSchema(errors.New(""), nil, nil); !utf8.ValidString(out) {
+		t.Fatalf("empty-detail corrective produced invalid UTF-8: %q", out)
+	}
+	if out := FormatCorrectiveWithSchema(errors.New(strings.Repeat("本", 350)), nil, nil); !utf8.ValidString(out) {
+		t.Fatalf("nil-schema oversized-detail corrective produced invalid UTF-8: %q", out)
+	}
+
+	// Boundary: nil error falls back to the generic guidance.
+	if out := FormatCorrectiveWithSchema(nil, schema, nil); !strings.Contains(out, "does not match the required schema") || !utf8.ValidString(out) {
+		t.Fatalf("nil-error corrective = %q", out)
+	}
+}
+
+func TestFormatValidationErrOutputIsValidUTF8(t *testing.T) {
+	// The plain-error fallback byte-cuts at MaxCorrectiveBytes. 1024 % 3 = 1,
+	// so a 3-byte-rune detail lands the cut mid-rune on the raw slice.
+	k := MaxCorrectiveBytes/3 + 1
+	err := errors.New(strings.Repeat("本", k)) // 3k > 1024; not a *jsonschema.ValidationError
+	out := formatValidationErr(err)
+	if !utf8.ValidString(out) {
+		t.Fatalf("formatValidationErr produced invalid UTF-8 (cut at %d lands mid-rune): %q", MaxCorrectiveBytes, out)
+	}
+	if len(out) > MaxCorrectiveBytes {
+		t.Fatalf("length %d exceeds %d", len(out), MaxCorrectiveBytes)
+	}
+	// Keep the pure-ASCII exact-bound behavior green.
+	if got := len(formatValidationErr(errors.New(strings.Repeat("x", MaxCorrectiveBytes*2)))); got != MaxCorrectiveBytes {
+		t.Fatalf("pure-ASCII exact-bound length = %d, want %d", got, MaxCorrectiveBytes)
+	}
+}
+
+func FuzzFormatCorrective(f *testing.F) {
+	// Seeds span empty, ASCII over-long, and 2-byte, 3-byte, and 4-byte runes
+	// around the 1024-byte boundary, plus a mixed-size detail. The seeds
+	// themselves run under plain go test, so the mid-rune case (本*350, room
+	// 902 % 3 = 2; 🙂*300, 902 % 4 = 2) is exercised even without -fuzz.
+	f.Add("")
+	f.Add(strings.Repeat("x", MaxCorrectiveBytes*2))
+	f.Add(strings.Repeat("é", 600))
+	f.Add(strings.Repeat("本", 350))
+	f.Add(strings.Repeat("🙂", 300))
+	f.Add("prefix " + strings.Repeat("本", 100) + " 🙂 tail")
+	f.Fuzz(func(t *testing.T, s string) {
+		// Byte bound holds for every input.
+		if out := FormatCorrective(errors.New(s), nil); len(out) > MaxCorrectiveBytes {
+			t.Fatalf("FormatCorrective length %d exceeds %d", len(out), MaxCorrectiveBytes)
+		}
+		withSchema := FormatCorrectiveWithSchema(errors.New(s), map[string]any{"type": "object"}, nil)
+		if len(withSchema) > MaxCorrectiveBytes {
+			t.Fatalf("FormatCorrectiveWithSchema length %d exceeds %d", len(withSchema), MaxCorrectiveBytes)
+		}
+		// The restated schema must always survive, even under a full budget.
+		if !strings.Contains(withSchema, `"type":"object"`) {
+			t.Fatalf("schema contract missing from corrective: %q", withSchema)
+		}
+		// Rune safety is guaranteed for valid UTF-8 input (the formatters'
+		// documented contract). Invalid input is out of contract, so the
+		// invariant is asserted only on valid input.
+		if !utf8.ValidString(s) {
+			return
+		}
+		if out := FormatCorrective(errors.New(s), nil); !utf8.ValidString(out) {
+			t.Fatalf("FormatCorrective(%q) produced invalid UTF-8: %q", s, out)
+		}
+		if !utf8.ValidString(withSchema) {
+			t.Fatalf("FormatCorrectiveWithSchema(%q) produced invalid UTF-8: %q", s, withSchema)
 		}
 	})
 }
