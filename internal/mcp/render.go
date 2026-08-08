@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 const (
@@ -12,14 +14,14 @@ const (
 	maxSchemaProperties = 128
 )
 
-func sanitizeToolMetadata(description string, schema map[string]any, maxDescription, maxSchema int) (string, map[string]any, error) {
+func sanitizeToolMetadata(description string, schema map[string]any, maxDescription, maxSchema int, redaction *redact.Policy) (string, map[string]any, error) {
 	description = strings.Map(func(value rune) rune {
 		if unicode.IsControl(value) {
 			return ' '
 		}
 		return value
 	}, description)
-	description = strings.TrimSpace(description)
+	description = strings.TrimSpace(redaction.Text(description))
 	if maxDescription > 0 && len(description) > maxDescription {
 		return "", nil, fmt.Errorf("MCP tool description exceeds configured limit")
 	}

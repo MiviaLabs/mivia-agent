@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -202,7 +203,8 @@ func environmentFor(names []string) []string {
 // ManagerOptions supplies the transport constructor. Production wiring uses
 // the MCP SDK constructor. Tests provide a deterministic fake.
 type ManagerOptions struct {
-	Connect func(context.Context, config.MCPServerConfig) (remoteClient, error)
+	Connect         func(context.Context, config.MCPServerConfig) (remoteClient, error)
+	RedactionPolicy *redact.Policy
 }
 
 // Manager owns one lazy client per configured MCP server.
@@ -214,13 +216,14 @@ type Manager struct {
 	tools          map[string][]tools.Tool
 	failures       map[string]error
 	maxResultBytes int
+	redaction      *redact.Policy
 	closed         bool
 }
 
 // NewManager constructs a disconnected MCP manager.
 func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	if !cfg.Enabled {
-		return &Manager{cfg: cfg, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}}, nil
+		return &Manager{cfg: cfg, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, redaction: opts.RedactionPolicy}, nil
 	}
 	if opts.Connect == nil {
 		opts.Connect = connectServer
@@ -242,7 +245,7 @@ func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	if limit == 0 {
 		limit = 64 << 10
 	}
-	return &Manager{cfg: cfg, connect: opts.Connect, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, maxResultBytes: limit}, nil
+	return &Manager{cfg: cfg, connect: opts.Connect, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, maxResultBytes: limit, redaction: opts.RedactionPolicy}, nil
 }
 
 // EnsureServers discovers tools for the requested server IDs once per session.
@@ -289,7 +292,7 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 				m.failures[id] = fmt.Errorf("too many tools")
 				return nil, fmt.Errorf("MCP server %q returned too many tools", id)
 			}
-			wrapped, err := wrapRemoteTools(id, client, remote, m.cfg.MaxToolDescriptionBytes, m.cfg.MaxToolSchemaBytes, m.maxResultBytes, server.TimeoutSeconds)
+			wrapped, err := wrapRemoteTools(id, client, remote, m.cfg.MaxToolDescriptionBytes, m.cfg.MaxToolSchemaBytes, m.maxResultBytes, server.TimeoutSeconds, m.redaction)
 			if err != nil {
 				_ = client.Close()
 				delete(m.clients, id)

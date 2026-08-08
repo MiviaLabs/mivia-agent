@@ -28,7 +28,7 @@ func addMCPTools(registry *tools.Registry, cfg *config.Resolved, serverIDs []str
 	if registry == nil || cfg == nil || len(serverIDs) == 0 {
 		return func() {}, nil
 	}
-	manager, err := mcp.NewManager(cfg.MCP, mcp.ManagerOptions{})
+	manager, err := mcp.NewManager(cfg.MCP, mcp.ManagerOptions{RedactionPolicy: cfg.RedactionPolicy})
 	if err != nil {
 		return nil, err
 	}

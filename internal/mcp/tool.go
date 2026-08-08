@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -16,6 +17,7 @@ type discoveredTool struct {
 	client                        remoteClient
 	maxResultBytes                int
 	timeout                       time.Duration
+	redaction                     *redact.Policy
 }
 
 func (t discoveredTool) Name() string               { return t.name }
@@ -35,10 +37,10 @@ func (t discoveredTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err != nil {
 		return "", err
 	}
-	return capMCPResult(result, t.maxResultBytes), nil
+	return capMCPResult(t.redaction.Text(result), t.maxResultBytes), nil
 }
 
-func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, maxDescriptionBytes, maxSchemaBytes, maxResultBytes, timeoutSeconds int) ([]tools.Tool, error) {
+func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, maxDescriptionBytes, maxSchemaBytes, maxResultBytes, timeoutSeconds int, redaction *redact.Policy) ([]tools.Tool, error) {
 	out := make([]tools.Tool, 0, len(remote))
 	seen := map[string]bool{}
 	for _, tool := range remote {
@@ -50,11 +52,11 @@ func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, 
 			return nil, fmt.Errorf("duplicate MCP tool %q", name)
 		}
 		seen[name] = true
-		description, schema, err := sanitizeToolMetadata(tool.Description, tool.Schema, maxDescriptionBytes, maxSchemaBytes)
+		description, schema, err := sanitizeToolMetadata(tool.Description, tool.Schema, maxDescriptionBytes, maxSchemaBytes, redaction)
 		if err != nil {
 			return nil, fmt.Errorf("MCP tool %q: %w", tool.Name, err)
 		}
-		out = append(out, discoveredTool{name: name, remoteName: tool.Name, description: description, schema: schema, client: client, maxResultBytes: maxResultBytes, timeout: time.Duration(timeoutSeconds) * time.Second})
+		out = append(out, discoveredTool{name: name, remoteName: tool.Name, description: description, schema: schema, client: client, maxResultBytes: maxResultBytes, timeout: time.Duration(timeoutSeconds) * time.Second, redaction: redaction})
 	}
 	return out, nil
 }
