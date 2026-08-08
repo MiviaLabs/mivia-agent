@@ -159,12 +159,13 @@ type ManagerOptions struct {
 
 // Manager owns one lazy client per configured MCP server.
 type Manager struct {
-	cfg     config.MCPConfig
-	connect func(context.Context, config.MCPServerConfig) (remoteClient, error)
-	mu      sync.Mutex
-	clients map[string]remoteClient
-	tools   map[string][]tools.Tool
-	closed  bool
+	cfg            config.MCPConfig
+	connect        func(context.Context, config.MCPServerConfig) (remoteClient, error)
+	mu             sync.Mutex
+	clients        map[string]remoteClient
+	tools          map[string][]tools.Tool
+	maxResultBytes int
+	closed         bool
 }
 
 // NewManager constructs a disconnected MCP manager.
@@ -180,7 +181,11 @@ func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 			return nil, err
 		}
 	}
-	return &Manager{cfg: cfg, connect: opts.Connect, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}}, nil
+	limit := cfg.MaxToolResultBytes
+	if limit == 0 {
+		limit = 64 << 10
+	}
+	return &Manager{cfg: cfg, connect: opts.Connect, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, maxResultBytes: limit}, nil
 }
 
 // EnsureServers discovers tools for the requested server IDs once per session.
@@ -211,7 +216,7 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 				delete(m.clients, id)
 				return nil, fmt.Errorf("discover MCP server %q: %w", id, err)
 			}
-			wrapped, err := wrapRemoteTools(id, client, remote)
+			wrapped, err := wrapRemoteTools(id, client, remote, m.maxResultBytes)
 			if err != nil {
 				_ = client.Close()
 				delete(m.clients, id)
