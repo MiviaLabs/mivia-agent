@@ -233,7 +233,7 @@ func TestAgentStepRequestOmitsRoundOutsideLoop(t *testing.T) {
 // must NOT take the loop back-edge: the attempt fails with the durable
 // zero-progress cause and the run stops.
 func TestReviewZeroProgressFailsRunOnIdenticalFindings(t *testing.T) {
-	wf := repairWorkflow(t, -1, 16)
+	wf := repairWorkflow(t, 30, 16)
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
 		"implement#1": json.RawMessage(`{"summary":"v1"}`),
 		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-f1","severity":"high","reason":"x"}]}`),
@@ -426,7 +426,7 @@ func (r *loadFaultRepository) LoadContent(ctx context.Context, ref string) ([]by
 // a log-and-continue that routes the loop back-edge on a guess. A review whose
 // prior findings cannot be read must not spin the repair loop.
 func TestReviewZeroProgressLedgerReadFailureFailsStep(t *testing.T) {
-	wf := repairWorkflow(t, -1, 16)
+	wf := repairWorkflow(t, 30, 16)
 	review1 := json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-f1","severity":"high","reason":"x"}]}`)
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
 		"implement#1": json.RawMessage(`{"summary":"v1"}`),
@@ -487,7 +487,7 @@ func TestReviewZeroProgressLedgerReadFailureFailsStep(t *testing.T) {
 // prior round let it run until the loop cap and die at the duration bound as
 // an undiagnosed timeout. Round 3 reproduces round 1's set and must fail.
 func TestReviewZeroProgressDetectsOscillation(t *testing.T) {
-	wf := repairWorkflow(t, -1, 16)
+	wf := repairWorkflow(t, 30, 16)
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
 		"implement#1": json.RawMessage(`{"summary":"v1"}`),
 		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-fA","severity":"high","reason":"x"}]}`),
@@ -610,5 +610,44 @@ func TestReviewZeroProgressSkipsUnparsablePriorRound(t *testing.T) {
 	}
 	if got {
 		t.Error("an unparsable prior round must not count as zero progress")
+	}
+}
+
+// TestReviewZeroProgressHonoursUnboundedLoop pins that the loop's configured
+// budget is the authority. A repair loop the author declared unbounded must
+// never be cut short by the convergence guard: a second, hidden bound that
+// overrides max_iterations is an undocumented cap, not a stall guard.
+func TestReviewZeroProgressHonoursUnboundedLoop(t *testing.T) {
+	ctx := context.Background()
+	ctrl := &LinearController{Repo: workflowledger.NewMemoryRepository(), RunID: "wfr-unbounded"}
+	step := definition.Step{ID: "review", Kind: "agent_gate"}
+	output := map[string]any{
+		"verdict":  "changes_requested",
+		"findings": []any{map[string]any{"id": "R9-f1"}},
+	}
+	route := RouteDecision{Loop: "review_repair", MaxIterations: definition.UnlimitedIterations}
+	got, err := ctrl.reviewMadeNoProgress(ctx, step, route, output)
+	if err != nil {
+		t.Fatalf("reviewMadeNoProgress error = %v", err)
+	}
+	if got {
+		t.Error("an unbounded repair loop must never be declared stalled")
+	}
+}
+
+// TestIdenticalRoundLimitScalesWithBudget pins that the tolerance follows the
+// budget the workflow author configured instead of a fixed number.
+func TestIdenticalRoundLimitScalesWithBudget(t *testing.T) {
+	cases := []struct{ maxIterations, want int }{
+		{0, minIdenticalReviewRounds},
+		{4, minIdenticalReviewRounds},
+		{30, minIdenticalReviewRounds},
+		{100, 10},
+		{500, 50},
+	}
+	for _, tc := range cases {
+		if got := identicalRoundLimit(tc.maxIterations); got != tc.want {
+			t.Errorf("identicalRoundLimit(%d) = %d, want %d", tc.maxIterations, got, tc.want)
+		}
 	}
 }

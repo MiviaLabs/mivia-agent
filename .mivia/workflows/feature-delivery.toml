@@ -257,7 +257,7 @@ from = "plan_review"
 to = "plan"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "plan_review_repair"
-max_iterations = 500
+max_iterations = -1
 
 # plan_tests → test_plan_review (test plan ready, review it)
 [[transitions]]
@@ -277,7 +277,7 @@ from = "test_plan_review"
 to = "plan_tests"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "test_plan_review_repair"
-max_iterations = 500
+max_iterations = -1
 
 # implement → review (implementation + tests ready for review)
 [[transitions]]
@@ -303,7 +303,7 @@ from = "review_integration"
 to = "implement"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "integration_repair"
-max_iterations = 500
+max_iterations = -1
 
 # review → implement (code review changes requested, unbounded repair loop)
 [[transitions]]
@@ -311,7 +311,7 @@ from = "review"
 to = "implement"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "review_repair"
-max_iterations = 500
+max_iterations = -1
 
 # test_validate → verify (tests pass, verify code quality)
 [[transitions]]
@@ -324,7 +324,7 @@ from = "test_validate"
 to = "repair_tests"
 match = { status = "failed" }
 loop = "test_repair"
-max_iterations = 500
+max_iterations = -1
 
 [[transitions]]
 from = "repair_tests"
@@ -342,7 +342,7 @@ from = "verify"
 to = "repair_verify"
 match = { status = "failed" }
 loop = "verify_repair"
-max_iterations = 500
+max_iterations = -1
 
 [[transitions]]
 from = "repair_verify"
@@ -360,7 +360,7 @@ from = "code_validate"
 to = "repair_final"
 match = { status = "failed" }
 loop = "final_repair"
-max_iterations = 500
+max_iterations = -1
 
 [[transitions]]
 from = "repair_final"
@@ -378,7 +378,7 @@ from = "preflight_validate"
 to = "repair_preflight"
 match = { status = "failed" }
 loop = "preflight_repair"
-max_iterations = 500
+max_iterations = -1
 
 [[transitions]]
 from = "repair_preflight"
@@ -396,7 +396,7 @@ from = "preflight_structure"
 to = "repair_preflight_structure"
 match = { status = "failed" }
 loop = "preflight_structure_repair"
-max_iterations = 500
+max_iterations = -1
 
 [[transitions]]
 from = "repair_preflight_structure"
