@@ -42,6 +42,9 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 	}
 	// Empty stream with no tools → fall back to non-stream once.
 	if !received {
+		if req.DisableProviderReplay {
+			return nil, fmt.Errorf("%s: stream delivered no response", c.name)
+		}
 		// The caller's `stream` flag stays true across this internal retry, so
 		// it will not rewrite the answer to the writer itself. Honour the
 		// documented contract here instead: a streaming request delivers its

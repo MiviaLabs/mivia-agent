@@ -71,6 +71,9 @@ type SessionDispatcherOpts struct {
 	// Zero values mean "unset" (handler defaults apply).
 	MaxContextTokens int
 	MaxTokens        *int
+	// WorkLimits are session limits. Each task combines these limits with its
+	// agent, model, task, and parent-panel limits.
+	WorkLimits runtime.WorkLimits
 
 	// Budget, if non-nil, is the live session budget provider read by nested
 	// handlers when invoked (so /budget applies without rebuilding).

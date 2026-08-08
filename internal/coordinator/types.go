@@ -26,6 +26,7 @@ type RunHandle struct {
 	attempts           map[string]string
 	attemptsMu         sync.RWMutex // guards attempts: write from DAG goroutine, read from cancel goroutine
 	recovered          bool
+	localActor         bool
 	requestFingerprint string
 	retryPolicy        RetryPolicy
 	failInterrupted    bool
@@ -66,6 +67,17 @@ func (h *RunHandle) mustFailInterrupted() bool {
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.done }
+
+// LocalActor reports whether this process owns execution of the run.
+func (h *RunHandle) LocalActor() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.RLock()
+	local := h.localActor
+	h.mu.RUnlock()
+	return local
+}
 
 // isNonInteractiveParent reports whether the run's parent cannot answer child
 // questions. Locking accessor: the flag is written at construction before the

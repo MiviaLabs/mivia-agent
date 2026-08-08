@@ -40,7 +40,7 @@ func panelTaskWithID(t *testing.T, name, taskID string) PanelTaskSpec {
 	t.Helper()
 	work := validPanelTask(name)
 	input := fmt.Sprintf(`{"input":%q}`, name)
-	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{{ID: taskID, Name: work.TaskName, Input: []byte(input), InputSchema: map[string]any{}, OutputSchema: map[string]any{}, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model}}, work.Policy)
+	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{{ID: taskID, Name: work.TaskName, Input: []byte(input), InputSchema: map[string]any{}, OutputSchema: map[string]any{}, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}}, work.Policy)
 	if err != nil {
 		t.Fatal(err)
 	}

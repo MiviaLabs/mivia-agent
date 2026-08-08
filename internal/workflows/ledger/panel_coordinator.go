@@ -22,6 +22,31 @@ type PanelCoordinator struct {
 	repo          Repository
 }
 
+type panelActorPermitProbe interface {
+	NeedsActorPermit(context.Context, coordinator.EnsureRunRequest) (bool, error)
+}
+
+// MemberNeedsActorPermit checks whether member admission can create a local
+// actor. Existing remote and terminal children only need a wait-only join.
+func (p PanelCoordinator) MemberNeedsActorPermit(ctx context.Context, attemptID, memberID string) (bool, error) {
+	member, err := p.member(ctx, attemptID, memberID)
+	if err != nil {
+		return false, err
+	}
+	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseMembersAdmitted); err != nil {
+		return false, err
+	}
+	req, err := p.request(ctx, member.CoordinatorRunID, member.TaskID, member.Work, false)
+	if err != nil {
+		return false, err
+	}
+	probe, ok := p.inner.(panelActorPermitProbe)
+	if !ok {
+		return true, nil
+	}
+	return probe.NeedsActorPermit(p.childContext(ctx), req)
+}
+
 func NewPanelCoordinator(workflowRunID string, inner coordinator.Coordinator, repo Repository) PanelCoordinator {
 	return PanelCoordinator{workflowRunID: workflowRunID, inner: inner, repo: repo}
 }
@@ -39,6 +64,13 @@ func (p PanelCoordinator) EnsureMember(ctx context.Context, attemptID, memberID 
 		return nil, err
 	}
 	return p.ensure(ctx, member.CoordinatorRunID, member.TaskID, member.Work, false)
+}
+
+// EnsureRemoteMember joins an already remote member without taking it over.
+// A caller that loses the remote state receives ErrWaitOnlyJoinLost and must
+// acquire a local actor permit before a normal ensure.
+func (p PanelCoordinator) EnsureRemoteMember(ctx context.Context, attemptID, memberID string) (*coordinator.RunHandle, error) {
+	return p.EnsureMember(coordinator.ContextWithPanelWaitOnlyJoin(ctx), attemptID, memberID)
 }
 
 func (p PanelCoordinator) EnsureTerminalMember(ctx context.Context, attemptID, memberID string) (*coordinator.RunHandle, error) {
@@ -262,7 +294,7 @@ func (p PanelCoordinator) request(ctx context.Context, runID, taskID string, wor
 	if err != nil {
 		return coordinator.EnsureRunRequest{}, err
 	}
-	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: input, InputSchema: inputSchema, OutputSchema: outputSchema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model}
+	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: input, InputSchema: inputSchema, OutputSchema: outputSchema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}
 	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{task}, work.Policy)
 	if err != nil || fingerprint != work.CoordinatorRequestFingerprint {
 		return coordinator.EnsureRunRequest{}, coordledger.ErrConflict

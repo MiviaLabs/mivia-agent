@@ -216,6 +216,7 @@ func withMessagingProtocol(prompt string) string {
 }
 
 func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *tools.Registry, systemPrompt string, req runtime.Request) *subagents.MultiStepHandler {
+	limits := h.effectiveWorkLimits(binding, req)
 	instanceID := runtime.NewSessionID()
 	generation := h.opts.ModelGeneration
 	if h.opts.ModelGenerationFunc != nil {
@@ -229,6 +230,13 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 	if h.definition.MaxTurns != nil {
 		maxSteps = *h.definition.MaxTurns
 	}
+	if limits.MaxTurns > 0 && (maxSteps <= 0 || limits.MaxTurns < maxSteps) {
+		maxSteps = limits.MaxTurns
+	}
+	maxTokens := binding.maxTokens
+	if limit := limits.MaxOutputPerCall; limit > 0 && (maxTokens <= 0 || maxTokens > limit) {
+		maxTokens = limit
+	}
 	outSchema := h.resolveOutputSchema(req)
 	// Steer watchdog (plan 54 §4.5): the [subagents.messaging]
 	// steer_watchdog_seconds knob bounds how long a pending steer may wait
@@ -239,8 +247,9 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		Dispatcher: h.dispatcher, Model: binding.model, Reasoning: binding.reasoning,
 		ReasoningFunc: binding.effectiveReasoning,
 		SystemPrompt:  systemPrompt, MaxSteps: maxSteps,
+		WorkLimits: limits, DisableProviderReplay: req.DisableProviderReplay,
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
-		MaxTokens:   binding.maxTokens, MaxContextTokens: binding.contextBudget(),
+		MaxTokens:   maxTokens, MaxContextTokens: binding.contextBudget(),
 		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
 		BatchResultBudgetBytes: h.opts.BatchResultBudgetBytes,
 		RemainderSpool:         RemainderSpoolFromRegistry(registry),
@@ -255,6 +264,20 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 			emitSubagentProgress(e)
 		}),
 	}
+}
+
+// effectiveWorkLimits takes the tightest positive limit from every source
+// available to a nested agent invocation.
+func (h *agentTaskHandler) effectiveWorkLimits(binding agentBinding, req runtime.Request) runtime.WorkLimits {
+	agentLimits := runtime.WorkLimits{}
+	if h.definition.MaxTurns != nil {
+		agentLimits.MaxTurns = *h.definition.MaxTurns
+	}
+	if h.definition.MaxTokens != nil {
+		agentLimits.MaxOutputPerCall = *h.definition.MaxTokens
+	}
+	modelLimits := runtime.WorkLimits{MaxOutputPerCall: binding.maxTokens}
+	return runtime.LowestPositiveWorkLimits(agentLimits, h.opts.WorkLimits, modelLimits, req.WorkLimits)
 }
 
 // activateSkill checks that this agent may invoke the named skill and derives

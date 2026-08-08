@@ -50,6 +50,7 @@ type Loop struct {
 	// goroutines write it and later calls' watchers read it, so it must be
 	// atomic.
 	softInterruptAt atomic.Int64
+	workLimits      *workLimitMeter
 }
 
 func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, error) {
@@ -61,6 +62,19 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	}
 	l.discardPreparation(opts)
 	l.resetTurnCompaction()
+	if l.workLimits == nil || !opts.PreserveWorkLimits || l.workLimits.limits != opts.WorkLimits {
+		l.workLimits = &workLimitMeter{limits: opts.WorkLimits}
+	}
+	if limit := opts.WorkLimits.MaxTurns; limit > 0 && (opts.MaxSteps <= 0 || limit < opts.MaxSteps) {
+		opts.MaxSteps = limit
+	}
+	if deadline := opts.WorkLimits.DeadlineAt; !deadline.IsZero() {
+		if parent, ok := ctx.Deadline(); !ok || deadline.Before(parent) {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, deadline)
+			defer cancel()
+		}
+	}
 	if opts.SessionID == "" {
 		opts.SessionID = runtime.NewSessionID()
 	}
@@ -258,10 +272,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	// Stream when a FinalWriter is attached so TUI can show tokens live.
 	// Content deltas go to FinalWriter; tool_calls are still assembled fully.
 	stream := opts.FinalWriter != nil
-	// Tee the live stream so an interrupted turn can keep exactly the text the
-	// user already saw. One tee per step: on the content-then-tools path the
-	// step succeeds and the tee is discarded, so revoked speech that is re-emitted
-	// as an interim bubble cannot be appended twice.
+	// Tee the live stream so an interrupted turn can retain displayed text.
 	var live *teeWriter
 	streamWriter := opts.FinalWriter
 	if stream {
@@ -269,17 +280,18 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		streamWriter = live
 	}
 	req := provider.Request{
-		Model:            opts.Model,
-		Messages:         l.Messages,
-		Temperature:      opts.Temperature,
-		MaxTokens:        opts.MaxTokens,
-		Tools:            toolSpecs,
-		ToolChoice:       "auto",
-		Stream:           stream,
-		StreamWriter:     streamWriter,
-		Timeout:          opts.RequestTimeout,
-		ReasoningLevel:   opts.Reasoning.Level,
-		ReasoningDialect: opts.Reasoning.Dialect,
+		Model:                 opts.Model,
+		Messages:              l.Messages,
+		Temperature:           opts.Temperature,
+		MaxTokens:             opts.MaxTokens,
+		Tools:                 toolSpecs,
+		ToolChoice:            "auto",
+		Stream:                stream,
+		StreamWriter:          streamWriter,
+		Timeout:               opts.RequestTimeout,
+		ReasoningLevel:        opts.Reasoning.Level,
+		ReasoningDialect:      opts.Reasoning.Dialect,
+		DisableProviderReplay: opts.DisableProviderReplay,
 	}
 	resp, err := l.requestStep(ctx, req, opts)
 	if err != nil {
@@ -331,11 +343,7 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	// processing tool calls so it cannot replace live tool-batch progress.
 	heartbeat, heartbeatCancel := context.WithCancel(ctx)
 	defer heartbeatCancel()
-	// Capture the cadence before spawning: modelThinkingHeartbeatInterval is
-	// test-overridable, and a concurrent override would race this goroutine's
-	// read (mirror startToolBatchHeartbeat's capture). Tests that call
-	// emitModelThinkingHeartbeat directly set the variable before spawning, so
-	// they are unaffected.
+	// Capture the cadence before spawning to prevent a concurrent test override.
 	go emitModelThinkingHeartbeatAt(heartbeat, opts, modelThinkingHeartbeatInterval)
 
 	// Soft-interrupt scope (plan 54 §4.3): a steer cancels ONLY the LLM call.
@@ -354,6 +362,9 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 	}
 
 	estimatedTokens, _ := provider.EstimatePromptCost(req.Messages, req.Tools)
+	if err := l.workLimits.reserveProvider(estimatedTokens, requestOutputReserve(req)); err != nil {
+		return nil, err
+	}
 	resp, err := l.Completer.ChatTurn(llmCtx, req)
 	heartbeatCancel()
 	// Prompt-too-long recovery: compact and retry exactly once

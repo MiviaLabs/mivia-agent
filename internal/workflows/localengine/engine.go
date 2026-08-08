@@ -19,6 +19,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/processservices"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
@@ -33,6 +34,9 @@ type Engine struct {
 	NewRunner func() controller.AgentStepRunner
 	// NewRunID mints run IDs. Nil uses a secure random wfr- id.
 	NewRunID func() string
+	// PanelLimiter is the process-wide local actor limiter supplied by the host.
+	// A nil value uses the shared workflow process service.
+	PanelLimiter *controller.PanelActorLimiter
 	// Git and PR are optional delivery adapters.
 	Git delivery.GitRunner
 	PR  delivery.PRClient
@@ -74,6 +78,13 @@ func (e *Engine) ctrlRepo() workflowledger.Repository {
 		e.fence = newAbandonFence(e.Repo)
 	}
 	return e.fence
+}
+
+func (e *Engine) panelLimiter() *controller.PanelActorLimiter {
+	if e.PanelLimiter != nil {
+		return e.PanelLimiter
+	}
+	return processservices.PanelLimiter()
 }
 
 // Start implements agenttools.Engine.
@@ -314,6 +325,9 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 	}
 	ctrl, err := controller.NewLinearController(e.ctrlRepo(), e.runner(), compiled, steps, inputs, req.RunID, raw)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctrl.SetPanelLimiter(e.panelLimiter()); err != nil {
 		return nil, err
 	}
 	// Every field sameAdmission compares comes from the record. The invocation

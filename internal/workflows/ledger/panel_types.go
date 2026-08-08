@@ -77,6 +77,13 @@ func (s PanelTaskSpec) workFingerprint() string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// FinalizePanelTaskSpec records the fingerprint of the durable work fields.
+func FinalizePanelTaskSpec(spec *PanelTaskSpec) {
+	if spec != nil {
+		spec.WorkFingerprint = spec.workFingerprint()
+	}
+}
+
 func isCoordinatorFingerprint(value string) bool {
 	const prefix = "sha256:"
 	return strings.HasPrefix(value, prefix) && isSHA256(strings.TrimPrefix(value, prefix))
@@ -132,15 +139,8 @@ const (
 	PanelPhaseCancelPending     PanelPhase = "cancel_pending"
 )
 
-// PanelWorkLimits records fixed limits for admitted panel work. It grants no authority.
-type PanelWorkLimits struct {
-	MaxTurns         int       `json:"max_turns"`
-	MaxPromptTokens  int       `json:"max_prompt_tokens"`
-	MaxOutputTokens  int       `json:"max_output_tokens"`
-	MaxOutputPerCall int       `json:"max_output_per_call"`
-	MaxToolCalls     int       `json:"max_tool_calls"`
-	DeadlineAt       time.Time `json:"deadline_at"`
-}
+// PanelWorkLimits is the durable form of runtime work limits.
+type PanelWorkLimits = runtime.WorkLimits
 
 // PanelTaskSpec records exact, non-authority data for one admitted child task.
 type PanelTaskSpec struct {

@@ -67,5 +67,6 @@ func (c *coordinator) taskFromSnapshot(snap ledger.TaskSnapshot) (subagents.Task
 		OutputSchema: snap.OutputSchema, InputSchema: snap.InputSchema, DependsOn: snap.DependsOn,
 		Input: append(json.RawMessage(nil), snap.Input...), Depth: clampInt(snap.Depth, c.pool.MaxDepth()),
 		Budget: clampInt(snap.Budget, c.pool.MaxBudget()), Timeout: clampDuration(snap.Timeout, c.pool.Timeout(), time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second),
+		WorkLimits: snap.WorkLimits, DisableProviderReplay: snap.DisableProviderReplay,
 	}, nil
 }

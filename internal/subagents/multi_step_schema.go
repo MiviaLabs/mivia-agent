@@ -57,6 +57,7 @@ func (h *MultiStepHandler) runValidatedReply(
 	// instead of spending the whole retry budget.
 	var lastInvalid string
 	for attempt := 0; ; attempt++ {
+		opts.PreserveWorkLimits = attempt > 0
 		// Each loop.Run resets its local MaxSteps counter, so shrink MaxSteps
 		// to remaining budget — re-entry must not extend step allowance.
 		if remainingSteps > 0 {

@@ -76,6 +76,30 @@ func TestRetryRoundTripper_RetryOn429ThenSucceed(t *testing.T) {
 	}
 }
 
+func TestRetryRoundTripper_DisableProviderReplayUsesOneAttempt(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	rt := newRetryRoundTripper(http.DefaultTransport, retryOptions{MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond})
+	ctx := context.WithValue(context.Background(), disableProviderReplayContextKey{}, true)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := (&http.Client{Transport: rt}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("attempts = %d, want 1", got)
+	}
+}
+
 func TestRetryRoundTripper_RetryOn503(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

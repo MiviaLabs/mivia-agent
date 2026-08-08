@@ -149,14 +149,9 @@ func TestValidatePanelsAllowsCaseDistinctModels(t *testing.T) {
 	}
 }
 
-// FINDING E6 (DC-9): agent_panel steps are fully validated and admitted but the
-// controller has no agent_panel case, so every run reaching one fails mid-flight
-// after earlier steps finished. The rejection belongs at COMPILE time so both
-// Compile and CompileForResume refuse, closing the resume bypass.
-func TestCompileRejectsAgentPanelNotExecutable(t *testing.T) {
-	_, err := Compile(newAgentPanelWorkflow())
-	if err == nil || !strings.Contains(err.Error(), "agent_panel is not executable by this build") {
-		t.Fatalf("Compile() error = %v, want agent_panel rejection", err)
+func TestCompileAcceptsAgentPanel(t *testing.T) {
+	if _, err := Compile(newAgentPanelWorkflow()); err != nil {
+		t.Fatalf("Compile() error = %v", err)
 	}
 }
 
@@ -165,10 +160,9 @@ func TestCompileRejectsAgentPanelNotExecutable(t *testing.T) {
 // with the same clear error. Resume is recovery, not admission, but a run whose
 // next step cannot be executed must not be resumed into a guaranteed mid-flight
 // failure; refusing at resume surfaces the reason before any work runs.
-func TestCompileForResumeRejectsAgentPanelSnapshot(t *testing.T) {
-	_, err := CompileForResume(newAgentPanelWorkflow())
-	if err == nil || !strings.Contains(err.Error(), "agent_panel is not executable by this build") {
-		t.Fatalf("CompileForResume() error = %v, want agent_panel rejection", err)
+func TestCompileForResumeAcceptsAgentPanelSnapshot(t *testing.T) {
+	if _, err := CompileForResume(newAgentPanelWorkflow()); err != nil {
+		t.Fatalf("CompileForResume() error = %v", err)
 	}
 }
 
@@ -233,8 +227,8 @@ match = { status = "succeeded" }
 	if wf.Steps[0].Kind != "agent_panel" {
 		t.Fatalf("step kind = %q, want agent_panel", wf.Steps[0].Kind)
 	}
-	if _, err := Compile(&wf); err == nil || !strings.Contains(err.Error(), "agent_panel is not executable by this build") {
-		t.Fatalf("Compile() error = %v, want agent_panel rejection", err)
+	if _, err := Compile(&wf); err != nil {
+		t.Fatalf("Compile() error = %v", err)
 	}
 }
 

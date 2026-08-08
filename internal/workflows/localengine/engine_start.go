@@ -26,6 +26,9 @@ func (e *Engine) newRunController(compiled *compiler.CompiledWorkflow, raw []byt
 	if err != nil {
 		return nil, controller.Admission{}, fmt.Errorf("new workflow controller: %w", err)
 	}
+	if err := ctrl.SetPanelLimiter(e.panelLimiter()); err != nil {
+		return nil, controller.Admission{}, err
+	}
 	return ctrl, controller.Admission{InvocationKey: invocationKey, BaseRef: "main", BaseCommit: "test-base", WorktreeName: "workflow-" + runID, InputDigest: workflowledger.InputDigest(inputSnapshot)}, nil
 }
 

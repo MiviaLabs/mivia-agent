@@ -32,6 +32,13 @@ type retryOptions struct {
 	NonRetryable func(statusCode int, body []byte) bool
 }
 
+type disableProviderReplayContextKey struct{}
+
+func providerReplayDisabled(ctx context.Context) bool {
+	value, _ := ctx.Value(disableProviderReplayContextKey{}).(bool)
+	return value
+}
+
 // maxErrorPeekBytes bounds how much of an error body NonRetryable sees. It
 // matches the cap the error parsers use, so both read the same prefix.
 const maxErrorPeekBytes = 4096
@@ -78,6 +85,9 @@ func newRetryRoundTripper(inner http.RoundTripper, opts retryOptions) *retryRoun
 
 // RoundTrip performs the request with retries on transient failures.
 func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if providerReplayDisabled(req.Context()) {
+		return r.inner.RoundTrip(req)
+	}
 	var (
 		lastErr error
 	)

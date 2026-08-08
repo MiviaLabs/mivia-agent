@@ -73,6 +73,19 @@ func TestNewRequestSetsAttributionAndStreamHeaders(t *testing.T) {
 	}
 }
 
+func TestNewRequestNoReplayOmitsIdempotencyKey(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: "https://example.test", APIKey: "k"})
+	httpReq, err := c.newRequest(context.Background(), Request{
+		Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}, DisableProviderReplay: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key := httpReq.Header.Get("Idempotency-Key"); key != "" {
+		t.Fatalf("Idempotency-Key = %q, want omitted", key)
+	}
+}
+
 func TestNewRequestRejectsReservedExtras(t *testing.T) {
 	cases := map[string]CompatOptions{
 		"reserved header": {ExtraHeaders: map[string]string{"authorization": "nope"}},

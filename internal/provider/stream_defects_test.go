@@ -219,6 +219,27 @@ func TestChatTurnEmptyCompletionDoesNotResend(t *testing.T) {
 	}
 }
 
+func TestChatTurnPanelMalformedBodyDoesNotReplay(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":`))
+	}))
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	_, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}, DisableProviderReplay: true,
+	})
+	if err == nil {
+		t.Fatal("malformed panel response succeeded")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("requests = %d, want 1", got)
+	}
+}
+
 // A stream that carries no chunk at all is not a completion signal, so the
 // non-streaming fallback must still run.
 func TestChatTurnSilentStreamStillFallsBack(t *testing.T) {
@@ -234,6 +255,23 @@ func TestChatTurnSilentStreamStillFallsBack(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(calls); got != 2 {
 		t.Fatalf("silent stream made %d requests, want 2 (stream + fallback)", got)
+	}
+}
+
+func TestChatTurnSilentPanelStreamDoesNotReplay(t *testing.T) {
+	srv, calls := countingSSEServer(t, nil, false)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	_, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true, DisableProviderReplay: true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("silent panel stream succeeded")
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("silent panel stream made %d requests, want 1", got)
 	}
 }
 

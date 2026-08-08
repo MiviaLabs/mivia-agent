@@ -22,8 +22,13 @@ type Options struct {
 	MaxTokens   *int
 	// Reasoning is the selected model's reasoning dial, carried onto every
 	// request this loop makes. Its zero value sends nothing.
-	Reasoning reasoning.Setting
-	MaxSteps  int
+	Reasoning  reasoning.Setting
+	MaxSteps   int
+	WorkLimits runtime.WorkLimits
+	// PreserveWorkLimits keeps cumulative reservations across a corrective
+	// re-entry of the same task invocation.
+	PreserveWorkLimits    bool
+	DisableProviderReplay bool
 	// MaxContextTokens sets the approximate token limit for the prompt context.
 	// When exceeded, old messages are pruned (keeping system prompt and recent turns).
 	// 0 or negative means no pruning.

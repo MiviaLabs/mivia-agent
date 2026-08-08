@@ -53,7 +53,7 @@ func (s *StorageRepository) validatePanelTaskContent(ctx context.Context, taskID
 	if _, err := compiled.ValidateJSONBytes(content[0]); err != nil {
 		return ErrConflict
 	}
-	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: json.RawMessage(content[0]), InputSchema: inputSchema, OutputSchema: outputSchema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model}
+	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: json.RawMessage(content[0]), InputSchema: inputSchema, OutputSchema: outputSchema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}
 	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{task}, work.Policy)
 	if err != nil || fingerprint != work.CoordinatorRequestFingerprint {
 		return ErrConflict

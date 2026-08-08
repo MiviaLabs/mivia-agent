@@ -56,6 +56,9 @@ func (l *Loop) retryAfterPromptTooLong(req provider.Request, opts Options, llmCt
 	})
 	req.Messages = l.Messages
 	estimatedTokens, _ = provider.EstimatePromptCost(req.Messages, req.Tools)
+	if err := l.workLimits.reserveProvider(estimatedTokens, requestOutputReserve(req)); err != nil {
+		return nil, estimatedTokens, err
+	}
 	resp, err := l.Completer.ChatTurn(llmCtx, req)
 	return resp, estimatedTokens, err
 }

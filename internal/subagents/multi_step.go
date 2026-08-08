@@ -55,6 +55,10 @@ type MultiStepHandler struct {
 	SystemPrompt string
 	// MaxSteps is the maximum number of LLM turns.
 	MaxSteps int
+	// WorkLimits bounds cumulative provider and tool work for this invocation.
+	WorkLimits runtime.WorkLimits
+	// DisableProviderReplay prevents provider-internal replays for this work.
+	DisableProviderReplay bool
 	// ToolTimeout is the per-tool-call timeout.
 	ToolTimeout time.Duration
 	// RequestTimeout is the per-LLM-request timeout for each turn inside the
@@ -213,6 +217,8 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 		Role:                   req.Role,
 		Depth:                  req.Depth + 1,
 		Budget:                 req.Budget,
+		WorkLimits:             h.WorkLimits,
+		DisableProviderReplay:  h.DisableProviderReplay,
 	}
 	if h.ContextPreparationManager != nil {
 		input := h.ContextPreparationInput
