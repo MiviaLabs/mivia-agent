@@ -28,7 +28,7 @@ models = [
   { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
   { name = "deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
 ]
-default_model = "deepseek-v4-pro"
+default_model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/v1"
 
@@ -49,7 +49,7 @@ models = [
   # workflow's review gates run on this model.
   { name = "tencent/hy3-preview", context_window_tokens = 262144, reasoning_efforts = ["off", "low", "high"], reasoning = "high", reasoning_dialect = "openrouter" },
 ]
-default_model = "deepseek/deepseek-v4-pro"
+default_model = "tencent/hy3-preview"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
 
