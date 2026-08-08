@@ -157,7 +157,7 @@ func StripOneCodeFence(s string) string {
 	}
 	body := lines[1 : len(lines)-1]
 	for _, line := range body {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+		if strings.HasPrefix(strings.TrimSpace(line), strings.Repeat("`", backticks)) {
 			// Nested fence — refuse to strip.
 			return s
 		}

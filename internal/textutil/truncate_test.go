@@ -202,3 +202,90 @@ func TestTruncateTailProperties(t *testing.T) {
 		}
 	}
 }
+
+// TestTruncateRuneSafeLongestPrefix checks that TruncateRuneSafe returns the
+// longest valid UTF-8 prefix within the byte limit. For every input in the
+// curated set and every byte limit, it asserts either the budget is filled
+// exactly or the next byte would land inside a rune.
+func TestTruncateRuneSafeLongestPrefix(t *testing.T) {
+	inputs := []string{"", "a", "abcdef", "héllo", "héllo wörld", "日本語", "a🙂b", "e\u0301"}
+	for _, s := range inputs {
+		for max := 0; max <= len(s)+2; max++ {
+			got := TruncateRuneSafe(s, max)
+
+			// Basic invariants.
+			if !utf8.ValidString(got) {
+				t.Errorf("TruncateRuneSafe(%q, %d) = %q, not valid UTF-8", s, max, got)
+			}
+			if !strings.HasPrefix(s, got) {
+				t.Errorf("TruncateRuneSafe(%q, %d) = %q, not a prefix", s, max, got)
+			}
+			if len(got) > max {
+				t.Errorf("TruncateRuneSafe(%q, %d) = %q, length %d exceeds limit", s, max, got, len(got))
+			}
+
+			// Optimality: either filled the budget or the next byte would
+			// split a rune. When len(got) == len(s) the entire input is
+			// consumed — trivially optimal.
+			if len(got) == max || len(got) == len(s) {
+				continue
+			}
+			// len(got) < max and there is more input beyond got.
+			// The byte at s[len(got)] is a rune start.  Decode the
+			// rune; a longer valid prefix exists only when the full
+			// rune fits within the remaining budget.
+			if len(got) < len(s) && utf8.RuneStart(s[len(got)]) {
+				_, runeLen := utf8.DecodeRuneInString(s[len(got):])
+				if len(got)+runeLen <= max {
+					t.Errorf("TruncateRuneSafe(%q, %d) = %q (%d bytes): next rune %q needs %d bytes, so a longer prefix %d ≤ %d exists",
+						s, max, got, len(got), s[len(got):len(got)+runeLen], runeLen, len(got)+runeLen, max)
+				}
+			}
+		}
+	}
+}
+
+// TestTruncateTailLongestSuffix checks that TruncateTail returns the longest
+// valid UTF-8 suffix within the byte limit. For every input in the curated set
+// and every byte limit, it asserts either the budget is filled exactly, the
+// entire input was consumed, the window consists entirely of continuation
+// bytes (got is empty), or the byte just before the suffix would split a rune.
+func TestTruncateTailLongestSuffix(t *testing.T) {
+	inputs := []string{"", "a", "abcdef", "héllo", "héllo wörld", "日本語", "a🙂b", "e\u0301"}
+	for _, s := range inputs {
+		for max := 0; max <= len(s)+2; max++ {
+			got := TruncateTail(s, max)
+
+			// Basic invariants.
+			if !utf8.ValidString(got) {
+				t.Errorf("TruncateTail(%q, %d) = %q, not valid UTF-8", s, max, got)
+			}
+			if !strings.HasSuffix(s, got) {
+				t.Errorf("TruncateTail(%q, %d) = %q, not a suffix", s, max, got)
+			}
+			if len(got) > max {
+				t.Errorf("TruncateTail(%q, %d) = %q, length %d exceeds limit", s, max, got, len(got))
+			}
+
+			// Optimality.
+			if len(got) == max {
+				continue // filled the budget exactly.
+			}
+			if len(got) == len(s) {
+				continue // consumed all input — trivially optimal.
+			}
+			if got == "" {
+				// The window consisted entirely of continuation
+				// bytes; empty is the longest valid suffix.
+				continue
+			}
+			// len(got) < max, got is non-empty, and there is input
+			// before got. The byte just before the suffix,
+			// s[len(s)-len(got)-1], must not be a rune start.
+			if len(s)-len(got)-1 >= 0 && utf8.RuneStart(s[len(s)-len(got)-1]) {
+				t.Errorf("TruncateTail(%q, %d) = %q (%d bytes): byte before suffix at offset %d %q is a rune start, so a longer suffix %d ≤ %d exists",
+					s, max, got, len(got), len(s)-len(got)-1, string(s[len(s)-len(got)-1]), len(got)+1, max)
+			}
+		}
+	}
+}

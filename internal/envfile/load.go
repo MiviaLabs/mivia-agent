@@ -20,6 +20,7 @@ func Load(path string) (map[string]string, error) {
 	defer f.Close()
 
 	out := make(map[string]string)
+	seen := make(map[string]int) // key → first line number
 	sc := bufio.NewScanner(f)
 	lineNo := 0
 	for sc.Scan() {
@@ -39,6 +40,10 @@ func Load(path string) (map[string]string, error) {
 		if key == "" {
 			return nil, fmt.Errorf("%s:%d: empty key", path, lineNo)
 		}
+		if firstLine, dup := seen[key]; dup {
+			return nil, fmt.Errorf("%s:%d: duplicate key %q (first seen at line %d)", path, lineNo, key, firstLine)
+		}
+		seen[key] = lineNo
 		val = strings.TrimSpace(val)
 		val = unquote(val)
 		out[key] = val

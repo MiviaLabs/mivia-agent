@@ -130,8 +130,10 @@ func canonicalJSONValue(dec *json.Decoder) ([]byte, error) {
 			out.WriteByte(']')
 			return out.Bytes(), nil
 		}
-	case string, bool, nil, json.Number:
+	case string, bool, nil:
 		return json.Marshal(value)
+	case json.Number:
+		return []byte(string(value)), nil
 	}
 	return nil, fmt.Errorf("unsupported JSON token %v", token)
 }

@@ -82,6 +82,7 @@ Usage:
   %s workflows validate [name] [--workspace dir]
   %s workflows explain <name> [--workspace dir]
   %s workflow run <name> [--workspace dir] [--config path] [--input name=value]... [--allow-publish]
+  %s workflow runs [--status name] [--limit n] [--workspace dir] [--config path]
   %s workflow deliver <run-id> --allow-publish [--workspace dir] [--config path]
   %s workflow resume <run-id> [--workspace dir] [--config path] [--force]
   %s worktree create <name> [--branch ref] [--workspace dir]
@@ -108,7 +109,7 @@ Chat: /help /tools /hooks /exit /clear /new /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 func flagValue(args []string, names ...string) (string, []string, bool) {

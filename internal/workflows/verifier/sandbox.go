@@ -87,7 +87,7 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 			}
 		}
 	}
-	tempRoot, err := os.MkdirTemp("", "mivia-verifier-")
+	tempRoot, err := newSandboxRoot()
 	if err != nil {
 		return hostFailure(fmt.Errorf("create verifier sandbox: %w", err))
 	}

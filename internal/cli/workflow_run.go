@@ -47,7 +47,7 @@ func runWorkflow(args []string) error {
 
 func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("workflow: expected run, resume, deliver, status, events, approve, reject, cancel, or cleanup")
+		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, or cleanup")
 	}
 	var workspaceRoot, configPath string
 	var found bool
@@ -65,11 +65,13 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 	args = filtered
 	if len(args) == 0 {
-		return fmt.Errorf("workflow: expected run, resume, deliver, status, events, approve, reject, cancel, or cleanup")
+		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, or cleanup")
 	}
 	switch args[0] {
 	case "run":
 		return runWorkflowCommandRun(args[1:], workspaceRoot, configPath, stdout, stderr)
+	case "runs":
+		return runWorkflowCommandRuns(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "deliver":
 		return runWorkflowCommandDeliver(args[1:], workspaceRoot, configPath, force, stdout, stderr)
 	case "resume":

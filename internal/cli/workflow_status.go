@@ -59,7 +59,15 @@ func executeWorkflowStatus(runID, root, configPath string, stdout, stderr io.Wri
 	return printWorkflowDeliveries(ctx, stdout, repo, runID)
 }
 
-// printWorkflowAttempts prints the run's numbered step attempts.
+// maxAttemptErrorBytes bounds the error text printed under one attempt. A
+// failure reason is a short sentence; the cap only stops a pathological
+// payload from burying the rest of the report.
+const maxAttemptErrorBytes = 2000
+
+// printWorkflowAttempts prints the run's numbered step attempts. A failed
+// attempt also prints the stored error text, not only its digest: a digest
+// alone makes a failed run undiagnosable from the CLI, which forced reading
+// the store out of band to learn why a run stopped.
 func printWorkflowAttempts(ctx context.Context, stdout io.Writer, repo workflowledger.Repository, runID string) error {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
@@ -75,8 +83,39 @@ func printWorkflowAttempts(ctx context.Context, stdout io.Writer, repo workflowl
 			line += " output " + a.OutputRef
 		}
 		fmt.Fprintln(stdout, line)
+		printAttemptError(ctx, stdout, repo, a.ErrorRef)
 	}
 	return nil
+}
+
+// printAttemptError prints the text behind one attempt's error ref. A ref
+// that cannot be loaded degrades to printing the ref, because a status
+// report must never fail on a missing or unreadable blob.
+func printAttemptError(ctx context.Context, stdout io.Writer, repo workflowledger.Repository, ref string) {
+	if ref == "" {
+		return
+	}
+	data, err := repo.LoadContent(ctx, ref)
+	if err != nil {
+		fmt.Fprintf(stdout, "    error %s (content unavailable: %v)\n", ref, err)
+		return
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		fmt.Fprintf(stdout, "    error %s (empty)\n", ref)
+		return
+	}
+	truncated := false
+	if len(text) > maxAttemptErrorBytes {
+		text = text[:maxAttemptErrorBytes]
+		truncated = true
+	}
+	for _, l := range strings.Split(text, "\n") {
+		fmt.Fprintf(stdout, "    error: %s\n", l)
+	}
+	if truncated {
+		fmt.Fprintf(stdout, "    error: ... truncated; full text at %s\n", ref)
+	}
 }
 
 // printWorkflowLoopCounters prints the run's loop iteration counters.
