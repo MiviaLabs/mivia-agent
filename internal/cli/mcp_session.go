@@ -106,3 +106,7 @@ func ensureSelectedMCPTools(state *agentSessionState, selected agents.ResolvedAg
 	}
 	return registerMCPTools(state.ToolBase, state.MCPManager, selected.EffectiveMCPServers)
 }
+
+func ensureMCPServerTools(registry *tools.Registry, manager *mcp.Manager) func([]string) error {
+	return func(ids []string) error { return registerMCPTools(registry, manager, ids) }
+}

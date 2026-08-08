@@ -51,9 +51,12 @@ type SessionDispatcherOpts struct {
 	// when it is absent such an agent fails closed rather than silently
 	// downgrading onto the session completer. Completers are provider-scoped
 	// (the model travels per request), so the model argument is advisory.
-	CompleterFactory   func(providerName, model string) (provider.Completer, error)
-	Config             config.SubagentConfig
-	MCP                config.MCPConfig
+	CompleterFactory func(providerName, model string) (provider.Completer, error)
+	Config           config.SubagentConfig
+	MCP              config.MCPConfig
+	// EnsureMCPTools lazily adds wrappers for an authorized routed agent.
+	// The session owns the manager and registry that this callback uses.
+	EnsureMCPTools     func([]string) error
 	ToolResultCapBytes int
 	// BatchResultBudgetBytes is the [tools] batch_result_budget_bytes knob,
 	// applied to every nested sub-agent loop the same way it applies to the

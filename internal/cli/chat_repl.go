@@ -142,8 +142,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	skillReg = sessionSkillRegistry(root, ctx, skillReg)
 	skillScope := skillScopeFromAgent(ctx.Selected)
 	modelCatalog := routing.Catalog
-	// The TUI binding must reflect the root agent's policy. Keep skillReg itself
-	// complete for explicitly routed task agents, which validate their own scope.
+	// Keep skillReg complete for explicitly routed task agents.
 	sess.SetBindingSkillRegistry(filterSkillsForScope(skillReg, skillScope))
 	if sess.Tools == nil {
 		return func() {}, nil
@@ -168,6 +167,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		CompleterFactory:          routing.CompleterFactory,
 		Config:                    cfg,
 		MCP:                       sessionMCPConfig(routing.Resolved),
+		EnsureMCPTools:            ensureMCPServerTools(surface.authority, mcpManager),
 		ToolResultCapBytes:        sess.MaxToolResultChars,
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		WorkspaceRoot:             root,

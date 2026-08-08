@@ -125,6 +125,11 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 }
 
 func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *tools.Registry, func(), error) {
+	if h.opts.EnsureMCPTools != nil {
+		if err := h.opts.EnsureMCPTools(h.definition.EffectiveMCPServers); err != nil {
+			return "", nil, func() {}, fmt.Errorf("MCP tools: %w", err)
+		}
+	}
 	systemPrompt := h.definition.SystemPrompt
 	if systemPrompt == "" {
 		systemPrompt = h.opts.Config.SystemPrompt
