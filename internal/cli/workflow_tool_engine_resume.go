@@ -47,7 +47,7 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttool
 		return resumePrepared{}, err
 	}
 	configPath := workflowConfigPath(work.Abs, e.configPath)
-	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
 	if err != nil {
 		return resumePrepared{}, err
 	}

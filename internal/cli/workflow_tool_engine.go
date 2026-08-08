@@ -409,7 +409,7 @@ func workflowToolSubagentConfig(root string, res *config.Resolved) config.Subage
 		return res.Subagents
 	}
 	configPath := sessionEngineConfigPath(root, nil)
-	loaded, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	loaded, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: root, AllowMissingConfig: true})
 	if err != nil || loaded == nil {
 		return config.DefaultSubagentConfig
 	}

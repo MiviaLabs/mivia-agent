@@ -158,6 +158,44 @@ command = "/usr/bin/project-server"
 	}
 }
 
+func TestLoadUsesExplicitWorkspaceRootForMCPConfig(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	otherDirectory := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MIVIA_CONFIG", "")
+	t.Chdir(otherDirectory)
+	writeMCPConfig(t, filepath.Join(home, ".mivia", "mivia.toml"), `
+[provider]
+name = "deepseek"
+[providers.deepseek]
+default_model = "deepseek-v4-pro"
+models = [{ name = "deepseek-v4-pro", context_window_tokens = 10000 }]
+[mcp]
+enabled = true
+[[mcp.servers]]
+id = "repository"
+transport = "stdio"
+command = "/usr/bin/user-server"
+`)
+	writeMCPConfig(t, filepath.Join(workspace, ".mivia", "mivia.toml"), `
+[mcp]
+enabled = true
+[[mcp.servers]]
+id = "repository"
+transport = "stdio"
+command = "/usr/bin/project-server"
+`)
+
+	got, err := Load(LoadOptions{WorkspaceRoot: workspace})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(got.MCP.Servers) != 1 || got.MCP.Servers[0].Command != "/usr/bin/project-server" {
+		t.Fatalf("MCP = %#v, want server from explicit workspace", got.MCP)
+	}
+}
+
 func writeMCPConfig(t *testing.T, path, data string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

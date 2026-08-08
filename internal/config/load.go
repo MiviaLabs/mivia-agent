@@ -16,7 +16,10 @@ import (
 
 // LoadOptions controls config resolution.
 type LoadOptions struct {
-	ConfigPath         string
+	ConfigPath string
+	// WorkspaceRoot selects the project MCP configuration. Empty uses the
+	// current working directory for backward compatibility.
+	WorkspaceRoot      string
 	ProviderOverride   string
 	ModelOverride      string
 	AllowMissingConfig bool
@@ -46,7 +49,7 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err := normalizeProviderConfigs(&file, maxTokens); err != nil {
 		return nil, err
 	}
-	mcpConfig, err := loadRuntimeMCPConfig()
+	mcpConfig, err := loadRuntimeMCPConfig(opts.WorkspaceRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -133,10 +136,13 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 	return res, nil
 }
 
-func loadRuntimeMCPConfig() (MCPConfig, error) {
-	workspaceRoot, err := os.Getwd()
-	if err != nil {
-		return MCPConfig{}, fmt.Errorf("get workspace directory: %w", err)
+func loadRuntimeMCPConfig(workspaceRoot string) (MCPConfig, error) {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		var err error
+		workspaceRoot, err = os.Getwd()
+		if err != nil {
+			return MCPConfig{}, fmt.Errorf("get workspace directory: %w", err)
+		}
 	}
 	cfg, _, err := LoadTrustedMCPConfig(workspaceRoot)
 	return cfg, err
