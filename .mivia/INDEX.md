@@ -41,102 +41,14 @@ See also "Mandatory process" in `AGENTS.md`.
 
 ## Plans
 
-Active plans follow ADLC protocol (zero `.md` files). Completed plans are archived under `.mivia/plans/archived/`.
-Pending (not yet implemented) plans may reside in `.mivia/plans/` temporarily until the ADLC step zero challenge completes.
+Implementation plans and progress reports do not live in this repository. They
+are prose about work in flight, not a user-facing manual and not an instruction
+an agent reads, so they are kept in the sibling `mivia-agent-plans` repository.
 
-| File | Status |
-|------|--------|
-| `.mivia/plans/archived/00-agent-program-overview.md` | ✅ Archived program index - see plans 01-09 |
-| `.mivia/plans/archived/01-dispatch-boundary-tool-authorization.md` | ✅ Completed (2026-07-29) - index was stale; the plan header already said so |
-| `.mivia/plans/archived/02-run-handle-ownership.md` | ✅ Completed (`402ca3f`) - two test gaps documented in the header |
-| `.mivia/plans/03-agentkit-embedded-serving.md` | ❌ CLOSED - `internal/agentkit` + `agentkitdata` deleted; nothing blocked, 04/06 no longer depend on it |
-| `.mivia/plans/archived/04-workspace-namespace-mivia.md` | ✅ Implemented - §5 gate decided against; see header |
-| `.mivia/plans/archived/05-agent-model-core/` | ✅ **Shipped (archived)** - file-backed named agents (`~/.mivia/agents/*.toml` + workspace agents), immutable resolve, root/spawned scope, `mivia chat --agent` / `/agent`, INV-AG-29. Plan `06` owns `skills` allowlist enforcement. Plan `07` task-binding product work still open; handler-construction seam is shared. |
-| `.mivia/plans/archived/06-agent-skill-binding/` | ✅ **Shipped (archived)** - skill frontmatter `tools` metadata, agent-file `skills` allowlist (omit/empty/inherit/trust), root-only runtime enforcement at dispatch/spawn/resume (INV-AG-30). Nested skill fan-out remains out of scope until plan `07` nested agents receive a delegation capability. |
-| `.mivia/plans/archived/07-agent-routing/` | ✅ Implemented (2026-08-01) - explicit `agent` routing with scoped `skill`, immutable snapshot resume/idempotency, and fail-closed selectors |
-| `.mivia/plans/archived/08-agent-cli-and-observability/` | ✅ Implemented (2026-08-01) - provider-independent agent catalog/doctor, transactional root-agent switching, typed runtime identity, and model generations |
-| `.mivia/plans/archived/09-agent-docs-and-examples/` | ✅ Implemented (2026-08-02) - owned agent docs, isolated parser-backed examples, and closeout verification |
-| `.mivia/plans/archived/10-configurable-redaction.md` | ✅ Implemented - **redaction is off by default; read §5** |
-| `.mivia/plans/archived/11-audit-metadata-honesty.md` | ✅ Implemented - §3 decided **C**: renamed to `InputPreview`/`OutputPreview`, computed only when a sink is attached |
-| `.mivia/plans/archived/12-resume-restores-task-config.md` | ✅ Implemented - resume restores work, never authority |
-| `.mivia/plans/archived/13-run-execution-fencing.md` | ✅ Implemented - **§5 AND §6 both shipped** (index previously said §6 was not started; re-verified at HEAD 2026-07-30). Registered retroactively as INV-AG-13; it had shipped with no manifest row. Unblocks `15` |
-| `.mivia/plans/14-retire-the-legacy-namespace.md` | 🔄 Design-ready - **one open decision (§4)**; removes the last `.ai` references |
-| `.mivia/plans/15-resume-user-surface.md` | ✅ Implemented - `/resume` and a dashboard key behind one shared path; the resumed handle is owned by the chat session principal so inspect/join/cancel work, and resume fails closed without an identity. Pinned by INV-AG-19. `12` + `13` are now reachable |
-| `.mivia/plans/archived/16-discoverable-skills.md` | ✅ Implemented - `b17988f`; skills are now discoverable with name + description in tool surface, sanitized for schema safety |
-| `.mivia/plans/18-agent-codebase-intelligence-tools.md` | 🔄 Implementation-ready - not started; §5 accepts `golang.org/x/tools`, one tool in phase one |
-| `.mivia/plans/archived/19-ledger-query-tools-for-agents.md` | ✅ Implemented - execution references are resolvable; see header for implementation corrections |
-| `.mivia/plans/20-scope-content-reads-to-their-principal.md` | ❌ VALIDATED → **DO NOT BUILD**; §3 decided **D** (accept and document). §1's defect is real; the proposed gate defends against no principal that exists today and costs a measured availability regression on the SQLite backend. Registered as INV-AG-12; INV-AG-9's scope corrected |
-| `.mivia/plans/archived/21-durable-event-ordering-and-timestamps.md` | ✅ Implemented - durable event timestamps and derived ordering are recorded by INV-AG-11 |
-| `.mivia/plans/archived/22-idempotent-spawn-fingerprints-the-work.md` | ✅ Implemented (`3aa2438`, `d1d470e`) - explicit work fingerprints and caller-scoped idempotency keys fix cross-turn retries without exposing foreign runs; pinned by INV-AG-16 |
-| `.mivia/plans/archived/23-content-retention-and-durable-deletion.md` | ✅ Implemented (`99609fc`) - decision E: recorded content is deliberately unbounded and pinned by INV-AG-15; retention is not a privacy control because the same bytes remain in session transcripts |
-| `.mivia/plans/archived/24-durable-run-deletion.md` | ✅ Implemented - durable tombstone-pinned hard deletion prevents resurrection and preserves the incremental cursor; content remains untouched |
-| `.mivia/plans/25-skill-triggers.md` | ✅ Implemented - `triggers:` now parse and reach the model-facing surface; unknown frontmatter keys are rejected at load. Pinned by INV-AG-17. **`05` was amended** - skill metadata remains owned by `internal/skills`; agent policy consumes it through `internal/agents` |
-| `.mivia/plans/archived/30-streaming-ledger-read-paging.md` | 🔄 Design-ready - explores bounded source work for `ledger_read`; implementation is blocked on a redaction strategy that remains safe across stream boundaries |
-| `.mivia/plans/31-kimi-provider-integration.md` | 🔄 Design-ready - direct Kimi Open Platform integration; provider-specific request shaping and preserved reasoning state are required before the Kimi TOML catalog can ship |
-| `.mivia/plans/61-single-config-resolver.md` | 🔄 Design-ready - Step 0 not started. Closes defect class `DC-5`: one resolver owns config defaults, every optional scalar is pointer-typed so `0` is a value rather than "unset", and a misplaced or unknown key in `mivia.toml` fails at load as it already does for agent files. Grounded at HEAD: 11 fields already use the correct pointer shape, 9 still fill from a zero sentinel, and `load.go:286` has no `DisallowUnknownFields`. Four open decisions |
-| `.mivia/plans/60-ollama-provider.md` | ✅ **IMPLEMENTATION-READY** - Ollama **Cloud only** (`https://ollama.com/v1` + required `OLLAMA_API_KEY`). No local daemon, no cloud-via-local. Thin OpenAI-compat factory (same shape as xAI/OpenAI plans) |
-| `.mivia/plans/archived/32-skill-resources.md` | ✅ Implemented (2026-08-01) - manifest-gated, lazy TOML text resources with invocation-scoped reader capabilities and ephemeral output retention |
-| `.mivia/plans/archived/33-lifecycle-hooks/` | ✅ **IMPLEMENTED** (`INV-AG-34`) - the deterministic `PreToolUse`/`PostToolUse`/`Stop` layer, shipped as eight slices. Two Step 0 corrections to the plan: the **managed tier was cut from v1** - `~/.mivia/managed.toml` is user- and agent-writable so it cannot be auto-trusted, and inventing a replacement path is an install surface nothing in this product creates; and the re-entrancy guard is context-scoped rather than process-wide, which would otherwise have let one call's hook suppress a concurrent call's gate. **Plan 44 substantially revised the trust and scope model shipped here - read that entry before trusting this one.** Docs at `docs/development/lifecycle-hooks.md` (NOT `hooks.md`, which is Git hooks) |
-| `.mivia/plans/archived/44-lifecycle-hooks/` | ✅ **IMPLEMENTED** (2026-08-01, `INV-AG-34`) - lifecycle hook enhancement, four commits. Model-visible hook output is wrapped in `<lifecycle-hook-output>` tags the payload cannot forge. **Hook trust confirmation was removed**: no store, no hash, no `/hooks trust`, no `--bypass-hook-trust` (accepted and ignored so CI configs still start) - a declared hook runs, headless included, with disclosure replacing the prompt. **Hooks now load from the workspace's own `.mivia/mivia.toml` as well**, additively and user-first, so a cloned repository can execute its hooks on first launch - chosen deliberately, disclosed at startup, per-hook in `/hooks` (`[user]`/`[project]`) and per execution in the transcript; a faulty workspace config never fails startup, so no clone can deny service in its own directory. Also fixed: an allowing `PreToolUse` hook's `additionalContext` reached nothing (dropped in the parser AND the dispatcher), and hook execution was invisible (now `Result.HookRuns` → `agent.EventHook` → a TUI row per run, silent runs included). This repo declares its own project hooks in `.mivia/mivia.toml` with scripts in `.mivia/hooks/`. R6 (`/hooks untrust`) went obsolete mid-plan - phase 1 deleted the store it operated on |
-| `.mivia/plans/45-v2-lifecycle-events.md` | 📋 **PLANNED** - `SessionStart`, `SubagentStart`/`SubagentStop`, skill-level hooks. Was plan 44 phase 4; moved out as separate work. Its header records which assumptions plan 44 invalidated - notably that a blocking `SessionStart` from a *project* config could stop mivia starting in that directory, with no session in which to report why. Read that before implementing |
-| `.mivia/plans/archived/46-provider-prompt-caching.md` | ✅ **Implemented (2026-08-02)** - v1 slice only; see the plan's own Step 0 correction. All 3 built-in providers (`deepseek`/`zai`/`openrouter`) speak plain OpenAI-compatible chat-completions with no `cache_control` marker support, so explicit-marker breakpoint placement, marker emission, and the strip-and-retry fallback were cut as unreachable for this provider set. Shipped: capability seam (`internal/provider/cache.go`), tolerant usage-field capture on both non-stream and streaming paths (fixed a real bug where the trailing usage-only SSE chunk was dropped), `[provider] prompt_cache = "auto"\|"off"`, `events.CacheUsageEvent`, and a byte-stability regression test. Zero outgoing request mutation in v1. Known gap: `--no-tools` plain chat sessions bypass `agent.Loop` and never publish the event - documented and tested as a boundary, not silently dropped |
-| `.mivia/plans/34-provider-retry-improvements.md` | 🔄 Implementation-ready - five-attempt, `Retry-After`-aware provider transport retries with z.ai classification and committed-stream safety |
-| `.mivia/plans/archived/37-reasoning-effort/` | 📦 **Archived** - parent plan `37-reasoning-effort.md` and implementation overview moved to archived; §12 replacement design shipped (per plan 53); see archived records |
-| `.mivia/plans/41-context-compaction-static/` | ✅ **Implemented (2026-08-01)** - durable context checkpoints, structural compaction, revision fencing, privacy-preserving source projection, isolated nested-agent preparation, and interactive `/compact`/usage surfaces |
-| `.mivia/plans/archived/43-skill-tool-compatibility/` | ✅ **Shipped (archived)** - static declared-tool catalogue (AllToolNames minus read_skill_resource), duplicate frontmatter/tools rejection, explicit skill tools metadata, live-registry + origin fail-closed enforcement at every invocation surface, and a committed roster compatibility matrix |
-| `.mivia/plans/archived/28-model-context-windows.md` | ✅ Implemented - explicit model context capacities, effective prompt budgets, nested-request enforcement, and exact restore |
-| `.mivia/plans/archived/29-model-selection-dialog.md` | ✅ Implemented - explicit provider-qualified model catalog, atomic model bindings, persistence pairing, and TUI picker |
-| `.mivia/plans/archived/27-user-config-path-alignment.md` | ✅ Implemented - user config and env discovery use `~/.mivia/`; hard cutover only, with no legacy fallback, probe, notice, or auto-migrate. Ships before `05`, which owns the home-equals-workspace guard |
-| `.mivia/plans/50-acp-adapter.md` | 📋 **Draft - Step 0 NOT run.** `mivia acp`: an Agent Client Protocol front end over a new headless `internal/session`, so mivia runs in Zed/JetBrains/Neovim with no GUI project and no `internal/cli` refactor. **HIGH blast radius**: §4c folds in first-class interactive approval (`session/request_permission`), which mivia has never had - authorization today is static policy only (`internal/runtime/dispatcher_validate.go:26`). Its safety rests on one invariant, "approval narrows, never widens"; falsify that in Step 0 and slice 4 is cut. Four open decisions (§4a filesystem inversion, §4b subagents have no ACP representation, §4d backpressure must not silently drop, §4e redaction egress). Do not implement from it |
-| `.mivia/plans/51-harness-context-economics/` | 🔄 **Step 0 complete on all members (2026-08-03).** Ships: `05` (auth-truthful schemas) → `04` (class-aware estimation) → `06` (retire the tail count cap) → `03` A/B (enclosing symbol + line span via `codeintel`, match-density ranking). Blocked: `10` (seen-content substitution, needs elision notices to carry a `contentref`), `01` (passive memory - four absent foundations, `02` folded in). **Closed:** `07` merged into archived `tools/01` and `08` merged into archived `tools/06` - both were already shipped; `09` stopped (its `ResourceKey` is path-only and `49` already collects the saving). Read `00-overview.md` §8 first: Step 0 found **nine defects in shipped code**, including a falsely-serialising capability key, elision that destroys content unrecoverably, and `read_output` paging without redaction. Those need owners and are not this program's work |
-| `.mivia/plans/cli-mvp-standalone.md` | 🔄 BLOCK - not implementation-ready |
-| `.mivia/plans/composer-autocomplete.md` | 🔄 v5 - not started. **Phase 0 is a gate:** reuse `overlayAt`/`sliceANSI`/`sgrBefore` from `tui-centered-dialogs`; do not write a second ANSI compositor. v5 also owns skills-as-slash-commands (`/bug` → `/bug-audit`), sized for hundreds of skills across a project and a `~/.mivia/skills` user scope |
-| `.mivia/plans/archived/events-eventbus-refactor-plan.md` | ✅ Implemented (Phases 1–3) - `events.Bus`, agent-loop publishing, and the poll-chain fix all shipped; pinned by INV-TUI-1/2. **Phase 4 (OTEL) was always optional and is not built.** Do not implement from the document - 1713 stale lines; write a short new plan for the OTEL adapter instead |
-| `.mivia/plans/tui-chat-ux-full-experience.md` | ⚠️ Needs re-audit - substantially overtaken by shipped TUI work (INV-TUI-1…22, progress transparency). The story blocks it specifies already exist. Re-derive against HEAD before treating anything as outstanding |
-| `.mivia/plans/archived/progress-transparency-plan.md` | ✅ Implemented - model heartbeat and thinking-phase progress are visible in TUI chrome |
-
-### Implementation order (triaged 2026-07-30)
-
-Re-verify each status against HEAD before starting - four rows in the table above were
-stale when this triage ran, and one of them (`13` §6) changed the ordering.
-
-**Tier 0 - correct the record.** Done 2026-07-30: `13` registered as INV-AG-13, `13` and
-the eventbus RFC archived, stale rows fixed. Remaining: none.
-
-1. ~~**`23`** - implemented 2026-07-30 (`99609fc`): decision **E** landed (accept, pin,
-   document), pinned by INV-AG-15. No production behaviour change.~~
-2. ~~**`24`** - implemented 2026-07-30: tombstone-pinned hard deletion, with Wave 0
-   (`internal/storage/store.go` split) landed separately.~~
-3. **`14`** - LOW; test/doc surface only, one open decision (its own recommendation is B).
-4. **`18`** - implementation-ready, all decisions closed, no dependencies.
-5. **`05` → `07` → `06` → `08` → `09`** - the named-agent program, as one coherent investment.
-   `05` is HIGH blast radius (privilege surface); `07` and `06` must agree on the explicit
-   agent binding. Do not interleave with 1–4; `00`'s program invariants assume the set lands
-   together.
-6. **`composer-autocomplete`** - genuinely not started (no implementation in `internal/cli`).
-   Sequence after `tui-centered-dialogs`: its `dialog_compositor.go` supplies the ANSI splice
-   primitive this plan's popup needs, and `sgrBefore` closes the one high-severity risk
-   (an unterminated SGR run crossing the cut column). Two plans, one compositor.
-
-**Do not build:** `25` option D (parse triggers with no consumer - see its §3) · `20` (validated DO-NOT-BUILD, decision D) · `03` (closed, packages deleted)
-· `cli-mvp-standalone` (independent challenge returned BLOCK; owner approval required)
-· eventbus Phase 4 (write a fresh short plan if OTEL is wanted) · `tui-chat-ux` (re-audit first).
-
-**Sequencing hazards.** Plans that touch `.mivia/invariants.md` concurrently must merge, not
-overwrite. Invariant ids are allocated **at landing time**, lowest free per prefix.
-`INV-AG-29` is allocated to agent-model-core (plan 05). `INV-AG-28` is model binding. Plan 33 landed as `INV-AG-34`, not the
-`INV-AG-29` its own text proposed: 29-31 were taken in `invariants.md` by landing time and 32-33 are reserved by plans 37 and 40.
-The lowest free ID must be recomputed at the next invariant landing. Note: previous free-ID prose said
-recomputed at each landing. This line previously read "`INV-AG-8` is a permanent gap; 12 through
-17 are taken" - both halves were false, and `05` had allocated `INV-AG-8` on the strength of it.
-`scripts/validate_invariants.py` rejects duplicate IDs, so plans must use a placeholder until
-their implementation commit.
-
-`scripts/validate_invariants.py` now **rejects duplicate ids** and runs inside `make verify`,
-so a duplicate no longer passes silently. It counts only the id column of a definition row:
-ids cited inline in a description, and the cross-reference tables under "Liveness Gap Notes",
-are not definitions. A naive grep over the file counts both and reports duplicates that do
-not exist - that mistake was made once already.
+Every `.md` file here must be one of two things: documentation a user reads, or
+an instruction an agent follows. A plan is neither once the work ships; the
+durable truth belongs in the OWNERS-registered canonical doc, in an invariant,
+or in the code.
 
 ## Doctrines
 

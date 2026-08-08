@@ -91,8 +91,3 @@ topics:
     path: docs/product/workflows-guide.md
     owner: product
     description: Workflow user guide: CLI commands, agent tools, authoring, execution, and monitoring
-
-  release-readiness-v0-1-0:
-    path: docs/reports/v0.1.0-open-source-readiness.md
-    owner: quality
-    description: Open-source and binary release readiness assessment for mivia v0.1.0

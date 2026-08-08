@@ -63,4 +63,4 @@ Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
 - Mivia supports **hours-long orchestration**. Default timeouts are advisory, not hard ceilings.
 - The orchestrator agent receives **heartbeat/progress events** from running subagents and can react (cancel stalled, extend deadlines, redirect).
 - Zero timeout means **no timeout** - the task runs until completion, cancellation, or budget exhaustion.
-- See `.mivia/rules/70-long-running-heartbeat.md` and `.mivia/plans/long-running-heartbeat-architecture.md`.
+- See `.mivia/rules/70-long-running-heartbeat.md`.

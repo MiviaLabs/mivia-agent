@@ -83,6 +83,5 @@ All rules are implemented as of 2025-07-17:
 ## See Also
 
 - `.mivia/rules/50-concurrency-subagents.md` - concurrency caps and worker pool rules
-- `.mivia/plans/long-running-heartbeat-architecture.md` - implementation plan
 - `internal/runtime/dispatcher.go` - event sink and handler dispatch
 - `internal/agent/loop.go` - agent loop with step/tool events
