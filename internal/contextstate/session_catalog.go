@@ -2,7 +2,9 @@ package contextstate
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"unicode"
 )
 
 // SessionCatalogInfo is the metadata exposed to user-facing session pickers.
@@ -11,6 +13,7 @@ import (
 // directory when the session is opened.
 type SessionCatalogInfo struct {
 	SessionID    string `json:"session_id,omitempty"`
+	Title        string `json:"title,omitempty"`
 	Name         string `json:"name"`
 	Model        string `json:"model"`
 	Provider     string `json:"provider"`
@@ -42,6 +45,23 @@ type SessionSaveOptions struct {
 // or corrupt row cannot inflate every picker payload without limit.
 const MaxSessionDirBytes = 4096
 
+// MaxSessionTitleBytes bounds a title that the terminal can render safely.
+const MaxSessionTitleBytes = 256
+
+// NormalizeSessionTitle validates and trims user-facing session title text.
+func NormalizeSessionTitle(title string) (string, error) {
+	title = strings.TrimSpace(title)
+	if len(title) > MaxSessionTitleBytes {
+		return "", fmt.Errorf("%w: session title is too long", ErrInvalidDTO)
+	}
+	for _, r := range title {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("%w: session title contains a control character", ErrInvalidDTO)
+		}
+	}
+	return title, nil
+}
+
 // ValidSessionDir reports whether dir is safe to persist: no NUL bytes and
 // within the length bound. The empty string is valid (no directory recorded).
 func ValidSessionDir(dir string) bool {
@@ -60,6 +80,11 @@ type SessionCatalog interface {
 	ListSessions(context.Context, Principal) ([]SessionCatalogInfo, error)
 	DeleteSessionSnapshot(context.Context, Principal, string) error
 	PruneSessionSnapshots(context.Context, Principal, []string) error
+}
+
+// SessionTitleCatalog stores optional display metadata for a bound context session.
+type SessionTitleCatalog interface {
+	SetSessionTitle(context.Context, Principal, string, WorktreeInstance) error
 }
 
 // WorktreeRouteCatalog stores launch routes for mivia-managed worktrees.

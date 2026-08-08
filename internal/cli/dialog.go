@@ -3,6 +3,8 @@ package cli
 
 import (
 	"strings"
+
+	"github.com/rivo/uniseg"
 )
 
 // replHelpContent is the classic REPL's help: catalog-driven Commands plus
@@ -211,16 +213,16 @@ func dim(s string) string {
 }
 
 func truncateToWidth(s string, maxW int) string {
+	var out strings.Builder
 	w := 0
-	for i, r := range s {
-		ww := 1
-		if isWideRune(r) {
-			ww = 2
+	for g := uniseg.NewGraphemes(s); g.Next(); {
+		cluster := g.Str()
+		width := uniseg.StringWidth(cluster)
+		if w+width > maxW {
+			break
 		}
-		if w+ww > maxW {
-			return s[:i]
-		}
-		w += ww
+		out.WriteString(cluster)
+		w += width
 	}
-	return s
+	return out.String()
 }

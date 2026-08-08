@@ -96,7 +96,7 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 	err := s.db.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree)
 	if err == sql.ErrNoRows {
 		var sourceCount int
-		err = s.db.QueryRowContext(ctx, `SELECT cs.session_id,cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id IS NULL`, []byte("[]"), principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree)
+		err = s.db.QueryRowContext(ctx, `SELECT cs.session_id,COALESCE(cs.title,''),cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id IS NULL`, []byte("[]"), principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Title, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree)
 		if err == sql.ErrNoRows {
 			return nil, contextstate.SessionCatalogInfo{}, contextstate.ErrSessionNotFound
 		}
@@ -119,7 +119,7 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 	if err := principal.Validate(); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT c.name,c.model,c.provider,'',c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id IS NULL UNION ALL SELECT t.session_id,t.model,t.provider,t.session_id,t.created,t.updated,t.source_sequence,0,t.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM (SELECT cs.workspace_id,cs.subject_id,cs.session_id,cs.model,cs.provider,cs.source_sequence,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP) AS created,COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP) AS updated FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 AND cs.instance_id IS NULL AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.model,cs.provider,cs.source_sequence) t LEFT JOIN chat_session_dirs d ON d.workspace_id=t.workspace_id AND d.subject_id=t.subject_id AND d.name=t.session_id UNION ALL SELECT 'worktree:' || r.worktree,'','', '',r.created_at,r.updated_at,0,0,0,r.dir,r.worktree,1,COALESCE(r.instance_id,'') FROM worktree_routes r WHERE r.workspace_id=? AND r.subject_id=? AND (r.instance_id IS NULL OR EXISTS (SELECT 1 FROM worktree_instances wi WHERE wi.workspace_id=r.workspace_id AND wi.worktree=r.worktree AND wi.instance_id=r.instance_id AND wi.state='active')) ORDER BY 6 DESC,1`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.name,'',c.model,c.provider,'',c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id IS NULL UNION ALL SELECT t.session_id,t.title,t.model,t.provider,t.session_id,t.created,t.updated,t.source_sequence,0,t.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM (SELECT cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP) AS created,COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP) AS updated FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 AND cs.instance_id IS NULL AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence) t LEFT JOIN chat_session_dirs d ON d.workspace_id=t.workspace_id AND d.subject_id=t.subject_id AND d.name=t.session_id UNION ALL SELECT 'worktree:' || r.worktree,'','','', '',r.created_at,r.updated_at,0,0,0,r.dir,r.worktree,1,COALESCE(r.instance_id,'') FROM worktree_routes r WHERE r.workspace_id=? AND r.subject_id=? AND (r.instance_id IS NULL OR EXISTS (SELECT 1 FROM worktree_instances wi WHERE wi.workspace_id=r.workspace_id AND wi.worktree=r.worktree AND wi.instance_id=r.instance_id AND wi.state='active')) ORDER BY 7 DESC,1`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,9 +128,11 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 	for rows.Next() {
 		var info contextstate.SessionCatalogInfo
 		var instanceID string
-		if err := rows.Scan(&info.Name, &info.Model, &info.Provider, &info.SessionID, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree, &info.WorktreeRoute, &instanceID); err != nil {
+		var title sql.NullString
+		if err := rows.Scan(&info.Name, &title, &info.Model, &info.Provider, &info.SessionID, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree, &info.WorktreeRoute, &instanceID); err != nil {
 			return nil, err
 		}
+		info.Title = title.String
 		if instanceID != "" {
 			info.WorktreeInstance = contextstate.WorktreeInstance{Worktree: info.Worktree, ID: instanceID}
 		}
@@ -176,16 +178,18 @@ func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstat
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	liveRows, err := tx.QueryContext(ctx, `SELECT cs.session_id,cs.model,cs.provider,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP),COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP),cs.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.session_id=cs.session_id AND cc.complete=1 LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.instance_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.model,cs.provider,cs.source_sequence,d.dir,d.worktree`, principal.WorkspaceID, principal.SubjectID, instance.ID)
+	liveRows, err := tx.QueryContext(ctx, `SELECT cs.session_id,cs.title,cs.model,cs.provider,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP),COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP),cs.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.session_id=cs.session_id AND cc.complete=1 LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.instance_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence,d.dir,d.worktree`, principal.WorkspaceID, principal.SubjectID, instance.ID)
 	if err != nil {
 		return nil, err
 	}
 	defer liveRows.Close()
 	for liveRows.Next() {
 		var info contextstate.SessionCatalogInfo
-		if err := liveRows.Scan(&info.Name, &info.Model, &info.Provider, &info.CreatedAt, &info.UpdatedAt, &info.MessageCount, &info.Dir, &info.Worktree); err != nil {
+		var title sql.NullString
+		if err := liveRows.Scan(&info.Name, &title, &info.Model, &info.Provider, &info.CreatedAt, &info.UpdatedAt, &info.MessageCount, &info.Dir, &info.Worktree); err != nil {
 			return nil, err
 		}
+		info.Title = title.String
 		info.SessionID = info.Name
 		info.TurnCount = info.MessageCount
 		info.WorktreeInstance = instance
