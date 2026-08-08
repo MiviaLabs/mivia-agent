@@ -19,7 +19,7 @@ name = "deepseek"
 #
 #   reasoning_efforts  the levels this model OFFERS, in picker order
 #   reasoning          the DEFAULT, which must be one of them
-#   reasoning_dialect  openai | openrouter | thinking | thinking_effort | none
+#   reasoning_dialect  openai | openrouter | thinking | thinking_effort | thinking_preserved | none
 #
 # Levels: off | minimal | low | medium | high | xhigh | max
 #
@@ -36,10 +36,10 @@ name = "deepseek"
 # GLM-5.2+ adds graded depth. A level the model rejects returns a 400 naming
 # the set it does accept.
 #
-# `reasoning_dialect` is the wire shape. zai (thinking object) and openrouter
-# (reasoning_effort) have vetted defaults; any other provider must name it, and
-# mivia refuses to load a config that sets `reasoning` where no dialect can be
-# resolved rather than silently sending nothing.
+# `reasoning_dialect` is the wire shape. zai (thinking object), openrouter and
+# deepseek (thinking_effort) have vetted defaults; any other provider must name
+# it, and mivia refuses to load a config that sets `reasoning` where no dialect
+# can be resolved rather than silently sending nothing.
 #
 # The default is only enough when the model's own set fits it. The `thinking`
 # dialect has exactly two wire outputs, on and off, so it can carry `off` plus
