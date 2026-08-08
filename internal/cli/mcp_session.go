@@ -1,0 +1,34 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/mcp"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
+)
+
+func addRootMCPTools(registry *tools.Registry, cfg *config.Resolved, selected *agents.ResolvedAgent) (func(), error) {
+	if registry == nil || cfg == nil || selected == nil || len(selected.EffectiveMCPServers) == 0 {
+		return func() {}, nil
+	}
+	manager, err := mcp.NewManager(cfg.MCP, mcp.ManagerOptions{})
+	if err != nil {
+		return nil, err
+	}
+	wrappers, err := manager.EnsureServers(context.Background(), selected.EffectiveMCPServers)
+	if err != nil {
+		_ = manager.Close()
+		return nil, err
+	}
+	for _, wrapper := range wrappers {
+		if _, exists := registry.Get(wrapper.Name()); exists {
+			_ = manager.Close()
+			return nil, fmt.Errorf("MCP tool %q collides with registry", wrapper.Name())
+		}
+		registry.Register(wrapper)
+	}
+	return func() { _ = manager.Close() }, nil
+}

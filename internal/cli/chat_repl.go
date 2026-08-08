@@ -148,6 +148,10 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess.Tools == nil {
 		return func() {}, nil
 	}
+	closeMCP, err := addRootMCPTools(sess.Tools, routing.Resolved, ctx.Selected)
+	if err != nil {
+		return nil, fmt.Errorf("MCP tools: %w", err)
+	}
 	surface := scopeAttachedToolSurface(sess, ctx, state, skillReg, routing)
 	plan, liveScope := surface.plan, surface.skillScope
 	adoptSessionLedgerRepo(sess, cfg, state, routing)
@@ -180,6 +184,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		Session:                   sess,
 	})
 	if err != nil {
+		closeMCP()
 		// No cleanup is handed back on this path, so the store adopted just
 		// above would otherwise stay open for the life of the process.
 		releaseSessionLedgerRepo(state)
@@ -194,7 +199,8 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	// Same spool instance the registered read_output tool holds, so a
 	// truncation notice minted by the root loop resolves for this session.
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(sess.Tools))
-	return sessionSurfaceCleanup(sess, state), nil
+	cleanup := sessionSurfaceCleanup(sess, state)
+	return func() { cleanup(); closeMCP() }, nil
 }
 
 // adoptSessionLedgerRepo gives the SESSION ownership of the ledger store the
