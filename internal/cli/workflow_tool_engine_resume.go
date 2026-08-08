@@ -135,23 +135,21 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 	e.mu.Unlock()
 	go func() {
 		defer close(done)
-		// Safety net: releases the preflight handoff claim if the inline
-		// release below was not reached. Releasing with a stale holder is
-		// harmless: ReleaseRun is a no-op when the caller is not the current
-		// holder.
+		// Safety net: releases the preflight handoff claim if the advance
+		// wrapper's release below was not reached. Releasing with a stale
+		// holder is harmless: ReleaseRun is a no-op when the caller is not the
+		// current holder.
 		defer releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
-		snap, err := workflowResumeRun(runCtx, p.built)
-		// Release the preflight handoff claim BEFORE settling: settle claims
-		// the run with its own holder, so a still-held handoff (the controller
-		// stopped before its first Advance claimed and released the run) makes
-		// the settle a no-op and the run stays running with no cause.
-		releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
-		settleSessionRunFailure(p.repo, p.runID, err)
-		if err == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
-			if derr := deliverRunWithStore(context.Background(), p.root, p.res, p.store, p.repo, p.runID, true, false, io.Discard, io.Discard); derr != nil {
-				recordAutoDeliveryFailure(context.Background(), p.repo, p.runID, derr)
-			}
-		}
+		sessionAutoDeliveryRepairLoop(runCtx, p.repo, p.root, p.res, p.store, p.runID, allowPublish, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
+			snap, err := workflowResumeRun(ctx, p.built)
+			// Release the preflight handoff claim BEFORE settling: settle
+			// claims the run with its own holder, so a still-held handoff (the
+			// controller stopped before its first Advance claimed and released
+			// the run) makes the settle a no-op and the run stays running with
+			// no cause.
+			releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
+			return snap, err
+		})
 		e.mu.Lock()
 		active := e.active[p.runID]
 		delete(e.active, p.runID)
