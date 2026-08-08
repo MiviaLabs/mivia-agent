@@ -22,7 +22,13 @@ const (
 
 // ValidRunTransition reports whether a run may move from one status to another.
 // Edges: pending->running; running->waiting_approval|delivery_pending|succeeded|failed|canceled|timed_out;
-// waiting_approval->running|failed|canceled|timed_out; delivery_pending->succeeded|delivery_failed.
+// waiting_approval->running|failed|canceled|timed_out;
+// delivery_pending->succeeded|delivery_failed|running.
+// Repair edges: delivery_pending->running and delivery_failed->running return a
+// run whose delivery failed for a repairable reason to the step the workflow
+// names in delivery.on_failure. Delivery runs after the success terminal,
+// outside the step graph, so without these a failed delivery had no route back
+// and the run stopped with all of its work done.
 // Recovery carve-out: delivery_failed->delivery_pending re-opens a refused run
 // for re-eligibility (the delivery retry path CASes it back to delivery_pending
 // before re-attempting), and delivery_failed->delivery_failed is a defensive

@@ -408,8 +408,43 @@ commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs
 | `base` | Target branch |
 | `title_template` | Go text/template for PR title |
 | `commit_message_template` | Go text/template for commit message |
+| `on_failure` | Step to return to when delivery fails for a repairable reason |
 
 Publication requires the invoking user to grant `--allow-publish`. Without the grant, an eligible run finishes as `delivery_pending`.
+
+Delivery runs after the success terminal, outside the step graph. A delivery
+that fails therefore has no route back into the workflow, and the run stops
+with all of its work done. `on_failure` gives it that route.
+
+Set `on_failure` to the step that repairs the cause. A commit hook that refuses
+the change is the usual cause. The run records the failure, returns to that
+step, repairs the change, reaches the success terminal again, and delivers
+again. The cycle is bounded, so a cause the step cannot fix does not repeat for
+ever.
+
+A transport fault does not go to that step. An unreachable remote or a failed
+push is not a condition in the change, and no agent can repair it, so the run
+stays at `delivery_pending` and a later delivery succeeds.
+
+If `on_failure` is empty, the run holds at `delivery_pending` for a person.
+
+### Run statuses
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | Admitted, not started |
+| `running` | Working |
+| `waiting_approval` | Held at a human gate |
+| `delivery_pending` | Reached the success terminal; waiting to publish |
+| `delivery_failed` | Publication was refused |
+| `succeeded` | Finished and delivered |
+| `failed` | Stopped with a cause |
+| `canceled` | Stopped by a person |
+| `timed_out` | Passed its duration limit |
+
+`succeeded`, `failed`, `canceled`, and `timed_out` are terminal. `running` and
+`waiting_approval` are resumable. `delivery_pending` and `delivery_failed` can
+return to `running` through the delivery repair route above.
 
 ### Trust
 
