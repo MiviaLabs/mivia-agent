@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -126,6 +125,11 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	snap, err := built.Controller.Run(context.Background())
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", built.Controller.RunID, snap.Status)
 	if err != nil {
+		// A genuine (non-deadline) fault that stops the controller must settle
+		// the run: Controller.Run self-settles deadline errors, cancel owns
+		// cancelled runs, but a raw storage/claim fault would otherwise leave
+		// the run row `running` with no cause (DC-9).
+		settleCLIRunFailure(prepared.repo, built.Controller.RunID, err)
 		return err
 	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {
@@ -458,38 +462,6 @@ func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflows
 		return "", fmt.Errorf("delivery base %q is not at the admitted base commit", policy.Base)
 	}
 	return strings.TrimSpace(originURL), nil
-}
-
-// parseWorkflowBoolFlag parses a boolean workflow flag in bare (--name) or
-// --name=true|false form, removing it from args. It reports an error for a
-// malformed value or a duplicate occurrence. It does not reuse flagValue
-// because that helper only handles string-valued flags.
-func parseWorkflowBoolFlag(args []string, name string) (bool, []string, error) {
-	rest := make([]string, 0, len(args))
-	value := false
-	found := false
-	for _, arg := range args {
-		switch {
-		case arg == name:
-			if found {
-				return false, nil, fmt.Errorf("workflow flag %s may only be given once", name)
-			}
-			value, found = true, true
-		case strings.HasPrefix(arg, name+"="):
-			if found {
-				return false, nil, fmt.Errorf("workflow flag %s may only be given once", name)
-			}
-			raw := strings.TrimPrefix(arg, name+"=")
-			parsed, err := strconv.ParseBool(raw)
-			if err != nil {
-				return false, nil, fmt.Errorf("workflow flag %s expects true or false, got %q", name, raw)
-			}
-			value, found = parsed, true
-		default:
-			rest = append(rest, arg)
-		}
-	}
-	return value, rest, nil
 }
 
 // deliveryRequiresPublication reports whether the workflow's delivery policy

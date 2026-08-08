@@ -57,6 +57,21 @@ func reopenForRepair(ctx context.Context, repo workflowledger.Repository, runID,
 		}
 	}
 	if next > maxDeliveryRepairs {
+		// The repair budget is spent. Settle the run terminal BEFORE returning:
+		// without this CAS the run stays delivery_pending forever - resume and
+		// cancel both refuse that status, and cleanup removes the worktree
+		// without settling, so the run looks waiting but can never be
+		// delivered. delivery_failed is the honest, terminal status for a
+		// delivery the named repair step could not fix. No wf-delivery attempt
+		// is created here: the budget is exhausted, so this is a settle, not a
+		// re-entry.
+		current, err := repo.GetRun(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("delivery failed %d times and the repair step did not fix it: %w; read run status to settle: %w", next-1, cause, err)
+		}
+		if err := repo.CompareAndSetRunStatus(ctx, runID, current.Version, workflowledger.RunStatusDeliveryFailed, nil); err != nil {
+			return fmt.Errorf("delivery failed %d times and the repair step did not fix it: %w; settle run to delivery_failed: %w", next-1, cause, err)
+		}
 		return fmt.Errorf("delivery failed %d times and the repair step did not fix it: %w", next-1, cause)
 	}
 

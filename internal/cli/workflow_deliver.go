@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -25,6 +26,14 @@ var (
 	workflowDeliverNow                         = time.Now
 	workflowDeliverRandom                      = rand.Read
 	workflowDeliveryTimeout                    = 10 * time.Minute
+	// workflowDeliveryClaimHeartbeat is how often a running delivery attempt
+	// re-claims its run with the same holder. The attempt can run for
+	// workflowDeliveryTimeout (10m) while the claim lease lasts only
+	// workflowledger.DefaultClaimLease (5m): without a refresh, a second host
+	// could take the claim over mid-publish (DC-2 double publish). One third
+	// of the lease keeps the claim comfortably inside it. A package var so
+	// tests can shorten it.
+	workflowDeliveryClaimHeartbeat = workflowledger.DefaultClaimLease / 3
 )
 
 // executeWorkflowDeliver publishes the result of one delivery_pending run via
@@ -128,27 +137,47 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 	defer cancel()
 	result, err := delivery.Deliver(deliveryCtx, repo, workflowDeliverGit, workflowDeliverNewPR(), req)
 	if err != nil {
-		fmt.Fprintln(stdout, delivery.FormatOutcome(result, err))
-		if delivery.IsRefusal(err) {
-			return settleDeliveryRefusal(ctx, repo, runID, err, stdout)
-		}
-		// A transport fault is not a condition in the change. An unreachable
-		// origin, a gh outage, a reset push: no agent can repair any of them,
-		// and sending one to try burns model budget and the run deadline
-		// before delivery fails again the same way. Such a run stays at
-		// delivery_pending, which is what delivery.Deliver already contracts
-		// (see TestDeliverFetchFailureIsTransient), so a later deliver
-		// succeeds once the network is back.
-		//
-		// What DOES reach a repair step is a rejection of the work itself: a
-		// commit hook that refuses the change, a gate that finds a violation.
-		if policy.OnFailure != "" && !provider.IsTransient(err) {
-			recordAutoDeliveryFailure(ctx, repo, runID, err)
-			return reopenForRepair(ctx, repo, runID, policy.OnFailure, err, stdout)
-		}
-		return err
+		return settleDeliveryError(ctx, repo, runID, policy, stdout, deliveryCtx, result, err)
 	}
 	return settleDeliverySuccess(ctx, repo, runID, result, stdout)
+}
+
+// settleDeliveryError handles a failed delivery attempt: it prints the
+// outcome, then routes the failure to refusal settlement, the attempt-bound
+// pass-through (timeout or caller cancellation), or repair dispatch, and
+// returns the error deliverRunWithStore should surface so the exit behavior
+// is unchanged.
+func settleDeliveryError(ctx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, stdout io.Writer, deliveryCtx context.Context, result delivery.Result, err error) error {
+	fmt.Fprintln(stdout, delivery.FormatOutcome(result, err))
+	if delivery.IsRefusal(err) {
+		return settleDeliveryRefusal(ctx, repo, runID, err, stdout)
+	}
+	// The attempt's own bound fired: a hung git push or gh call hit the
+	// workflowDeliveryTimeout (or the caller cancelled the attempt). That
+	// is a transport fault, not a condition in the change - no agent can
+	// repair it - so the run stays delivery_pending (retryable), exactly
+	// what delivery.Deliver already contracts (see
+	// TestDeliverFetchFailureIsTransient), and no auto-failure record or
+	// repair dispatch is written. A later deliver succeeds once the
+	// network is back.
+	if deliveryCtx.Err() != nil {
+		return err
+	}
+	// A transport fault is not a condition in the change. An unreachable
+	// origin, a gh outage, a reset push: no agent can repair any of them,
+	// and sending one to try burns model budget and the run deadline
+	// before delivery fails again the same way. Such a run stays at
+	// delivery_pending, which is what delivery.Deliver already contracts
+	// (see TestDeliverFetchFailureIsTransient), so a later deliver
+	// succeeds once the network is back.
+	//
+	// What DOES reach a repair step is a rejection of the work itself: a
+	// commit hook that refuses the change, a gate that finds a violation.
+	if policy.OnFailure != "" && !provider.IsTransient(err) {
+		recordAutoDeliveryFailure(ctx, repo, runID, err)
+		return reopenForRepair(ctx, repo, runID, policy.OnFailure, err, stdout)
+	}
+	return err
 }
 
 // replayDeliveryRecord prints the durable outcome of a run that already
@@ -182,19 +211,64 @@ func claimWorkflowDeliveryRun(ctx context.Context, repo workflowledger.Repositor
 		if err := repo.TakeoverRunClaim(ctx, runID, holder); err != nil {
 			return nil, err
 		}
-		return func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }, nil
+	} else {
+		err := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
+		if errors.Is(err, workflowledger.ErrClaimNotHeld) {
+			err = repo.ClaimRun(ctx, runID, holder)
+		}
+		if errors.Is(err, workflowledger.ErrClaimHeld) {
+			return nil, fmt.Errorf("workflow run %q is being delivered by another host or has a fresh claim; retry after the lease expires or pass --force after the prior deliverer stopped", runID)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
-	err := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
-	if errors.Is(err, workflowledger.ErrClaimNotHeld) {
-		err = repo.ClaimRun(ctx, runID, holder)
+	// The attempt can run for workflowDeliveryTimeout (10m) while the claim
+	// lease lasts only DefaultClaimLease (5m), so the claim is refreshed while
+	// the attempt runs. The release func stops and joins the heartbeat BEFORE
+	// releasing the claim (LIFO, mirroring the controller): a tick that landed
+	// after ReleaseRun would re-create the claim row (sqlite ClaimRun INSERTs
+	// when no row exists) and re-arm a dead lease that blocks takeover for
+	// another lease window.
+	stopHeartbeat := startWorkflowDeliveryClaimHeartbeat(ctx, repo, runID, holder)
+	return func() {
+		stopHeartbeat()
+		_ = repo.ReleaseRun(context.Background(), runID, holder)
+	}, nil
+}
+
+// startWorkflowDeliveryClaimHeartbeat refreshes the delivery run claim with
+// the SAME holder while the attempt runs, so a publish that outlives the claim
+// lease cannot be taken over by a second host mid-publish (DC-2). A failed
+// refresh is terminal for the heartbeat: it stops instead of retry-spinning
+// (the claim was taken or the store failed; hammering it cannot help). The
+// returned stop func closes the stop channel and WAITS for the goroutine to
+// exit, so the caller releases the claim only after the last possible refresh
+// has run.
+func startWorkflowDeliveryClaimHeartbeat(ctx context.Context, repo workflowledger.Repository, runID, holder string) (stop func()) {
+	stopCh := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() { _ = recover() }()
+		ticker := time.NewTicker(workflowDeliveryClaimHeartbeat)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+					return
+				}
+			case <-stopCh:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(stopCh)
+		wg.Wait()
 	}
-	if errors.Is(err, workflowledger.ErrClaimHeld) {
-		return nil, fmt.Errorf("workflow run %q is being delivered by another host or has a fresh claim; retry after the lease expires or pass --force after the prior deliverer stopped", runID)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }, nil
 }
 
 // settleDeliveryRefusal CASes a permanently refused run to delivery_failed,
@@ -203,7 +277,12 @@ func claimWorkflowDeliveryRun(ctx context.Context, repo workflowledger.Repositor
 // a non-zero exit. A refused run is recoverable: a later workflow deliver
 // re-runs eligibility and re-opens it when the refusal condition clears.
 func settleDeliveryRefusal(ctx context.Context, repo workflowledger.Repository, runID string, refusal error, stdout io.Writer) error {
-	recordAutoDeliveryFailure(ctx, repo, runID, refusal)
+	// Durably record the refusal reason FIRST (contract with
+	// recordDeliveryRefusal, defined in workflow_delivery_record.go): a
+	// refusal must never settle delivery_failed without its recorded cause.
+	if recErr := recordDeliveryRefusal(ctx, repo, runID, refusal); recErr != nil {
+		return fmt.Errorf("delivery refused: %v; record refusal reason: %w", refusal, recErr)
+	}
 	fresh, getErr := repo.GetRun(ctx, runID)
 	if getErr != nil {
 		return fmt.Errorf("delivery refused: %v; read settled run: %w", refusal, getErr)

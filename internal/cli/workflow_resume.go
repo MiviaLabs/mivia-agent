@@ -106,14 +106,39 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish b
 	if err := prepareWorkflowResumeExecution(ctx, built, repo, runID, force, stdout); err != nil {
 		return err
 	}
+	// Safety net: releases the preflight handoff claim if the inline release
+	// below was not reached. Releasing with a stale holder is harmless:
+	// ReleaseRun is a no-op when the caller is not the current holder.
 	defer releaseWorkflowResumeHandoff(repo, runID, built.Controller)
+	return runWorkflowResumeAndSettle(ctx, built, repo, runID, work.Abs, res, store, run.WorkflowName, compiled, allowPublish, stdout, stderr)
+}
+
+// runWorkflowResumeAndSettle runs the resumed controller and settles the run
+// exactly as executeWorkflowResume's inline tail did: the preflight handoff
+// claim is released BEFORE settling (settle claims the run with its own
+// holder, so a still-held handoff makes the settle a no-op), the settled
+// status is printed, a genuine controller fault is settled with
+// settleCLIRunFailure (DC-9), and a delivery_pending settlement routes to
+// finishWorkflowRunDelivery. executeWorkflowResume's deferred
+// releaseWorkflowResumeHandoff stays as the safety net for the pre-Run path.
+func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID, workRoot string, res *config.Resolved, store *storage.SQLite, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, stdout, stderr io.Writer) error {
 	snap, err := workflowResumeRun(ctx, built)
+	// Release the preflight handoff claim BEFORE settling: settle claims the
+	// run with its own holder, so a still-held handoff (the controller stopped
+	// before its first Advance claimed and released the run) makes the settle
+	// a no-op and the run stays running with no cause.
+	releaseWorkflowResumeHandoff(repo, runID, built.Controller)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, snap.Status)
 	if err != nil {
+		// A genuine (non-deadline) fault that stops the controller must settle
+		// the run: Controller.Run self-settles deadline errors, cancel owns
+		// cancelled runs, but a raw storage/claim fault would otherwise leave
+		// the run row `running` with no cause (DC-9).
+		settleCLIRunFailure(repo, runID, err)
 		return err
 	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {
-		return finishWorkflowRunDelivery(ctx, work.Abs, res, store, repo, runID, run.WorkflowName, workflowResumeDeliveryMode(compiled), allowPublish, stdout, stderr)
+		return finishWorkflowRunDelivery(ctx, workRoot, res, store, repo, runID, workflowName, workflowResumeDeliveryMode(compiled), allowPublish, stdout, stderr)
 	}
 	return nil
 }

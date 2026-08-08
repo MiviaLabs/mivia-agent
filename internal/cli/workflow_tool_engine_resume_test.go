@@ -17,6 +17,15 @@ func TestSessionLaunchResumeReleasesHandoffClaimAfterRunFailure(t *testing.T) {
 	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusPending}, []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
+	// The run is already admitted and running when the session resume takes
+	// over, exactly as a resume of an interrupted run looks.
+	stored, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
 	controller := &controller.LinearController{Holder: "session-resumer"}
 	if err := repo.ClaimRun(ctx, runID, controller.Holder); err != nil {
 		t.Fatal(err)
@@ -51,6 +60,16 @@ func TestSessionLaunchResumeReleasesHandoffClaimAfterRunFailure(t *testing.T) {
 	<-started
 	close(finishRun)
 	<-closed
+	// The settle must run AFTER the handoff release: it claims the run with its
+	// own holder, so a still-held handoff claim makes it a no-op and the run
+	// would stay running with no cause.
+	after, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("run status after failed session resume = %q, want failed: a run whose controller stopped must not stay running", after.Status)
+	}
 	if err := repo.ClaimRun(ctx, runID, "next-resumer"); err != nil {
 		t.Fatalf("claim after failed session resume = %v", err)
 	}

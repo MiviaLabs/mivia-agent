@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -284,5 +286,254 @@ func TestValidateWorkflowResumeSnapshotDeliveryAgreement(t *testing.T) {
 	run, raw = remarshal(t, run, snapshot)
 	if _, _, _, err := validateWorkflowResumeSnapshot(run, raw); err == nil || !strings.Contains(err.Error(), "does not match the admitted definition") {
 		t.Fatalf("undeclared delivery policy error = %v, want a snapshot/definition mismatch", err)
+	}
+}
+
+// gatedGitRunner blocks its first git command until release is closed, so a
+// test can hold a delivery attempt in flight and observe its run claim.
+type gatedGitRunner struct {
+	delivery.GitRunner
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g gatedGitRunner) Run(ctx context.Context, _ delivery.GitContext, _ ...string) (string, error) {
+	select {
+	case g.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-g.release:
+		return "", errors.New("gated git released")
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// TestWorkflowDeliverClaimHeartbeatKeepsLeaseFresh: a delivery attempt can run
+// for workflowDeliveryTimeout (10m) while its claim lease lasts only
+// DefaultClaimLease (5m). The claim heartbeat must re-claim with the same
+// holder while the attempt runs (DC-2): TakeoverExpiredRunClaim with a tiny
+// lease must still fail mid-publish, and after the attempt ends the release
+// must stop+join the heartbeat BEFORE releasing the claim, so no late tick
+// re-arms the claim row (sqlite ClaimRun INSERTs when no row exists).
+func TestWorkflowDeliverClaimHeartbeatKeepsLeaseFresh(t *testing.T) {
+	root, storePath, config, _ := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, runID, repo)
+
+	originalGit := workflowDeliverGit
+	originalTimeout := workflowDeliveryTimeout
+	originalHeartbeat := workflowDeliveryClaimHeartbeat
+	gate := gatedGitRunner{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	workflowDeliverGit = gate
+	workflowDeliveryTimeout = time.Minute
+	workflowDeliveryClaimHeartbeat = 20 * time.Millisecond
+	t.Cleanup(func() {
+		workflowDeliverGit = originalGit
+		workflowDeliveryTimeout = originalTimeout
+		workflowDeliveryClaimHeartbeat = originalHeartbeat
+	})
+
+	var stdout strings.Builder
+	done := make(chan error, 1)
+	go func() {
+		done <- runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, &stdout, io.Discard)
+	}()
+
+	// Wait for the attempt to be in flight (first git command gated): the
+	// claim is held and the heartbeat is refreshing it.
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("delivery never reached the gated git command")
+	}
+
+	waitClaimHeldThroughHeartbeat(t, repo, runID)
+
+	// Let the attempt finish; the release func must stop+join the heartbeat
+	// BEFORE releasing the claim.
+	close(gate.release)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("deliver error = nil, want the gated git failure")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("deliver did not return after the gated git release")
+	}
+
+	// After release the claim row must be gone. Poll across several heartbeat
+	// intervals: a late tick that re-armed the claim (the sqlite ClaimRun
+	// re-INSERT) would show up as a claim still being held.
+	releaseDeadline := time.Now().Add(10 * workflowDeliveryClaimHeartbeat)
+	for time.Now().Before(releaseDeadline) {
+		err := repo.TakeoverExpiredRunClaim(context.Background(), runID, "probe-holder", time.Second)
+		if !errors.Is(err, workflowledger.ErrClaimNotHeld) {
+			t.Fatalf("claim after release: TakeoverExpiredRunClaim = %v, want ErrClaimNotHeld (a late heartbeat tick re-armed the claim)", err)
+		}
+		select {
+		case <-time.After(workflowDeliveryClaimHeartbeat):
+		}
+	}
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("run status = %q, want delivery_pending after the gated failure", run.Status)
+	}
+}
+
+// waitClaimHeldThroughHeartbeat polls TakeoverExpiredRunClaim under a short
+// probe lease across several heartbeat intervals: an UNREFRESHED claim would
+// expire and be taken over, so every probe must still fail with ErrClaimHeld
+// while the delivery claim heartbeat holds the lease.
+func waitClaimHeldThroughHeartbeat(t *testing.T, repo workflowledger.Repository, runID string) {
+	t.Helper()
+	deadline := time.Now().Add(2500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		err := repo.TakeoverExpiredRunClaim(context.Background(), runID, "probe-holder", 2*time.Second)
+		if err == nil {
+			t.Fatal("claim expired during the heartbeat window: takeover succeeded while the heartbeat should hold the lease")
+		}
+		if !errors.Is(err, workflowledger.ErrClaimHeld) {
+			t.Fatalf("probe: TakeoverExpiredRunClaim = %v, want ErrClaimHeld while the claim heartbeat holds the lease", err)
+		}
+		select {
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	for i := 0; i < 3; i++ {
+		err := repo.TakeoverExpiredRunClaim(context.Background(), runID, "probe-holder", 2*time.Second)
+		if !errors.Is(err, workflowledger.ErrClaimHeld) {
+			t.Fatalf("probe %d: TakeoverExpiredRunClaim = %v, want ErrClaimHeld while the claim heartbeat holds the lease", i, err)
+		}
+		select {
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// appendWorkflowDeliveryOnFailure adds an on_failure route to the fixture's
+// [delivery] block so a failed delivery would re-enter the named step.
+func appendWorkflowDeliveryOnFailure(t *testing.T, root, step string) {
+	t.Helper()
+	path := filepath.Join(root, ".mivia", "workflows", "two-step.toml")
+	body := "on_failure = \"" + step + "\"\n"
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(body); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWorkflowDeliverTimeoutWithOnFailureStaysPending: a hung git command that
+// hits the delivery timeout is a transport fault, not a condition in the
+// change. Even with delivery.on_failure set, the run must stay delivery_pending
+// (retryable) and record ZERO wf-delivery repair attempts: dispatching the
+// repair step for a fault that retries clean burns the run deadline for
+// nothing (DC-8).
+func TestWorkflowDeliverTimeoutWithOnFailureStaysPending(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`)
+	}))
+	t.Cleanup(server.Close)
+	root := t.TempDir()
+	storePath := filepath.Join(root, "workflow.db")
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	writeWorkflowRunFixture(t, root, server.URL, storePath)
+	setWorkflowAgentTools(t, root, "write_file")
+	appendWorkflowDeliveryPolicy(t, root, "draft")
+	appendWorkflowDeliveryOnFailure(t, root, "one")
+	initWorkflowGitRepoWithOrigin(t, root)
+	prRecorder := &recordingPRClient{}
+	originalNewPR := workflowDeliverNewPR
+	workflowDeliverNewPR = func() delivery.PRClient { return prRecorder }
+	t.Cleanup(func() { workflowDeliverNewPR = originalNewPR })
+	config := filepath.Join(root, "config.toml")
+
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, runID, repo)
+
+	originalGit := workflowDeliverGit
+	originalTimeout := workflowDeliveryTimeout
+	workflowDeliverGit = blockingGitRunner{}
+	workflowDeliveryTimeout = 100 * time.Millisecond
+	t.Cleanup(func() {
+		workflowDeliverGit = originalGit
+		workflowDeliveryTimeout = originalTimeout
+	})
+
+	if err := runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("deliver error = nil, want a timeout failure")
+	}
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("run status = %q, want delivery_pending: a timed-out attempt is a transport fault, not a repairable rejection", run.Status)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repairAttempts := 0
+	for _, a := range attempts {
+		if a.StepID == deliveryRepairStepID {
+			repairAttempts++
+		}
+	}
+	if repairAttempts != 0 {
+		t.Fatalf("wf-delivery repair attempts = %d, want 0: the timeout must not dispatch the on_failure repair step", repairAttempts)
+	}
+}
+
+// TestWorkflowDeliverRefusalRecordsReason pins the contract with
+// recordDeliveryRefusal (workflow_delivery_record.go): a permanent refusal
+// settled through deliverRunWithStore must durably record the refusal reason
+// (an ErrorRef resolving to the refusal text) so `workflow status` explains
+// why the run settled delivery_failed.
+func TestWorkflowDeliverRefusalRecordsReason(t *testing.T) {
+	root, storePath, config, _ := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, runID, repo)
+	rewriteFixtureOriginMain(t, root)
+
+	err := runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "delivery base") {
+		t.Fatalf("deliver error = %v, want a base-rewritten refusal", err)
+	}
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryFailed {
+		t.Fatalf("run status = %q, want delivery_failed after a permanent refusal", run.Status)
+	}
+	rec, err := repo.GetDeliveryByIdempotencyKey(context.Background(), delivery.DeliveryKey(runID, run.WorkflowDigest))
+	if err != nil {
+		t.Fatalf("no durable delivery record after the refusal: %v", err)
+	}
+	if rec.ErrorRef == "" {
+		t.Fatalf("delivery record = %+v, want a recorded ErrorRef naming the refusal reason", rec)
+	}
+	body, err := repo.LoadContent(context.Background(), rec.ErrorRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "delivery base") {
+		t.Fatalf("recorded refusal reason = %q, want it to name the base rewrite", body)
 	}
 }
