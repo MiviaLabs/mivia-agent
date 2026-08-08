@@ -83,9 +83,27 @@ func printWorkflowAttempts(ctx context.Context, stdout io.Writer, repo workflowl
 			line += " output " + a.OutputRef
 		}
 		fmt.Fprintln(stdout, line)
-		printAttemptError(ctx, stdout, repo, a.ErrorRef)
+		printAttemptError(ctx, stdout, repo, failedAttemptDiagnosticRef(a))
 	}
 	return nil
+}
+
+// failedAttemptDiagnosticRef returns the ref carrying a failed attempt's
+// diagnostic, or "" when the attempt did not fail.
+//
+// The two gate kinds record a failure differently: an agent gate writes the
+// reason to ErrorRef, while an evidence gate's verifier output IS the
+// diagnostic and lands in OutputRef with ErrorRef empty. Reading only
+// ErrorRef left every failed test/verify/preflight gate showing a bare
+// digest, which is the case an operator most needs to read.
+func failedAttemptDiagnosticRef(a workflowledger.StepAttempt) string {
+	if a.Status != workflowledger.AttemptStatusFailed {
+		return ""
+	}
+	if a.ErrorRef != "" {
+		return a.ErrorRef
+	}
+	return a.OutputRef
 }
 
 // printAttemptError prints the text behind one attempt's error ref. A ref

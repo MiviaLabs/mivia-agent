@@ -303,3 +303,31 @@ func TestExecuteWorkflowRunsTruncatesToLimit(t *testing.T) {
 		t.Errorf("limit 1 printed %d newline(s); want a single run line:\n%s", got, stdout.String())
 	}
 }
+
+// TestFailedAttemptDiagnosticRef pins which ref carries a failed attempt's
+// diagnostic. An agent gate writes ErrorRef; an evidence gate's verifier
+// output IS the diagnostic and lands in OutputRef with ErrorRef empty, so
+// reading only ErrorRef showed a bare digest for every failed test, verify,
+// and preflight gate.
+func TestFailedAttemptDiagnosticRef(t *testing.T) {
+	cases := []struct {
+		name    string
+		attempt workflowledger.StepAttempt
+		want    string
+	}{
+		{"agent gate uses ErrorRef", workflowledger.StepAttempt{
+			Status: workflowledger.AttemptStatusFailed, ErrorRef: "sha256:err", OutputRef: "sha256:out",
+		}, "sha256:err"},
+		{"evidence gate falls back to OutputRef", workflowledger.StepAttempt{
+			Status: workflowledger.AttemptStatusFailed, OutputRef: "sha256:out",
+		}, "sha256:out"},
+		{"succeeded attempt yields nothing", workflowledger.StepAttempt{
+			Status: workflowledger.AttemptStatusSucceeded, OutputRef: "sha256:out",
+		}, ""},
+	}
+	for _, tc := range cases {
+		if got := failedAttemptDiagnosticRef(tc.attempt); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
