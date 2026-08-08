@@ -321,7 +321,7 @@ The evidence gates use fixed verifier profiles:
 | `verify` | `go vet ./...` and `go build ./cmd/mivia` |
 | `code_validate` | `go test -race ./...` |
 | `preflight_validate` | `python3 scripts/validate_invariants.py` |
-| `preflight_structure` | `python3 scripts/check_go_structure.py --strict --all` |
+| `preflight_structure` | `python3 scripts/check_go_structure.py --strict --worktree` |
 
 The delivery policy is a draft pull request to GitHub `master`. It requires `--allow-publish`.
 

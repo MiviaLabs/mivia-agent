@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
@@ -151,13 +150,9 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 	e.mu.Unlock()
 	go func() {
 		defer close(done)
-		snap, runErr := built.Controller.Run(runCtx)
-		settleSessionRunFailure(prepared.repo, runID, runErr)
-		if runErr == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
-			if err := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, runID, true, false, io.Discard, io.Discard); err != nil {
-				recordAutoDeliveryFailure(context.Background(), prepared.repo, runID, err)
-			}
-		}
+		sessionAutoDeliveryRepairLoop(runCtx, prepared.repo, prepared.root, prepared.res, prepared.store, runID, allowPublish, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
+			return built.Controller.Run(ctx)
+		})
 		e.mu.Lock()
 		active := e.active[runID]
 		delete(e.active, runID)
@@ -409,7 +404,7 @@ func workflowToolSubagentConfig(root string, res *config.Resolved) config.Subage
 		return res.Subagents
 	}
 	configPath := sessionEngineConfigPath(root, nil)
-	loaded, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	loaded, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: root, AllowMissingConfig: true})
 	if err != nil || loaded == nil {
 		return config.DefaultSubagentConfig
 	}

@@ -246,7 +246,7 @@ func (s *sessionsSidebar) renderSessionRow(row chat.SessionInfo, selected bool, 
 }
 
 func sidebarSessionMatches(row chat.SessionInfo, active *chat.SessionInfo) bool {
-	return active != nil && row.Name == active.Name && row.Dir == active.Dir &&
+	return active != nil && row.Reference() == active.Reference() && row.Dir == active.Dir &&
 		row.WorktreeRoute == active.WorktreeRoute && row.WorktreeInstance == active.WorktreeInstance
 }
 

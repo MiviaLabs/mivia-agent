@@ -285,6 +285,76 @@ func TestEvidenceGateFailureRoutesToRepairWithPersistedResult(t *testing.T) {
 	}
 }
 
+// TestEvidenceGateStructureFailureRoutesToRepairWithFailedDetail pins the
+// preflight_structure tail of feature-delivery: a source-class structure
+// violation must persist resolvable failed evidence (the Detail lives in the
+// stored body, not an unresolvable digest) and reach the repair agent.
+func TestEvidenceGateStructureFailureRoutesToRepairWithFailedDetail(t *testing.T) {
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "structure-repair", InitialStep: "preflight_structure",
+		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits: definition.Limits{MaxStepAttempts: 4},
+		Steps: []definition.Step{
+			{ID: "preflight_structure", Kind: "evidence_gate", Verifier: "failing-structure", OnFailure: "failure"},
+			{ID: "repair_preflight_structure", Kind: "agent", Agent: "dev", Context: []definition.ContextBinding{{From: "steps.preflight_structure.output", As: "failed_evidence", MaxBytes: 16000}}},
+			{ID: "review", Kind: "agent_gate", Agent: "rev", OnFailure: "failure"},
+		},
+		Transitions: []definition.Transition{
+			{From: "preflight_structure", To: "repair_preflight_structure", Match: definition.MatchCriteria{Status: "failed"}},
+			{From: "repair_preflight_structure", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},
+			{From: "review", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+		},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := verifier.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "failing-structure", result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "go-structure", Status: "failed", Class: "source", Detail: "HARD function LOC: internal/ledger/close_run_atomicity_test.go L3-L125 (123 lines, hard max 120). Extract helpers."}}}}); err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"repair_preflight_structure#1": json.RawMessage(`{"summary":"split the oversized function"}`),
+		"review#1":                     json.RawMessage(`{"verdict":"approved"}`),
+	}}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, runner, compiled, map[string]StepRuntime{
+		"repair_preflight_structure": {Agent: agents.ResolvedAgent{Name: "dev"}},
+		"review":                     {Agent: agents.ResolvedAgent{Name: "rev"}},
+	}, map[string]any{"task": "x"}, "wfr-structure-repair", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetVerifiers(cat); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctrl.Run(context.Background())
+	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run = %+v err=%v", got, err)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate, ok := latestAttempt(attempts, "preflight_structure")
+	if !ok || gate.Status != workflowledger.AttemptStatusFailed || gate.ToStepID != "repair_preflight_structure" || gate.OutputRef == "" {
+		t.Fatalf("gate attempt = %+v", gate)
+	}
+	raw, err := repo.LoadContent(context.Background(), gate.OutputRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "HARD function LOC") || !strings.Contains(string(raw), "close_run_atomicity_test.go") {
+		t.Fatalf("failed evidence body = %s", raw)
+	}
+	if len(runner.calls) != 2 || runner.calls[0].StepID != "repair_preflight_structure" {
+		t.Fatalf("repair calls = %+v", runner.calls)
+	}
+	if evidence := runner.calls[0].Evidence["failed_evidence"]; evidence == nil || !strings.Contains(fmt.Sprint(evidence), "HARD function LOC") {
+		t.Fatalf("failed_evidence = %v, want the HARD detail", evidence)
+	}
+}
+
 func TestEvidenceGateHostFailureDoesNotRouteToRepair(t *testing.T) {
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "evidence-host-failure", InitialStep: "verify",

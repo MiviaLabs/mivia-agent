@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const currentContextSchemaVersion = 9
+const currentContextSchemaVersion = 10
 
 func migrateContextSchema(db *sql.DB) error {
 	if err := rejectNewerContextSchema(db); err != nil {
@@ -28,7 +28,7 @@ func migrateContextSchema(db *sql.DB) error {
 		return fmt.Errorf("context schema version %d is newer than supported version %d", version, currentContextSchemaVersion)
 	}
 	if version == currentContextSchemaVersion {
-		return ensureContextSchemaV9(db)
+		return ensureContextSchemaV10(db)
 	}
 	if version == 0 {
 		if err := applyContextSchemaV1(db); err != nil {
@@ -79,7 +79,10 @@ func migrateContextSchema(db *sql.DB) error {
 		version = 8
 	}
 	if version == 8 {
-		return applyContextSchemaV9(db)
+		return applyContextSchemaV9AndV10(db)
+	}
+	if version == 9 {
+		return applyContextSchemaV10(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
 }
@@ -145,6 +148,11 @@ func repairContextSchema(db *sql.DB) error {
 		}
 		if v == 9 {
 			if err := ensureContextSchemaV9(db); err != nil {
+				return err
+			}
+		}
+		if v == 10 {
+			if err := ensureContextSchemaV10(db); err != nil {
 				return err
 			}
 		}
@@ -216,6 +224,8 @@ func contextVersionTable(v int) string {
 		return "worktree_catalog_keys"
 	case 9:
 		return "worktree_routes_v9_contract"
+	case 10:
+		return "context_sessions_v10_contract"
 	default:
 		return ""
 	}

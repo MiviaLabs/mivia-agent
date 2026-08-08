@@ -35,12 +35,14 @@ type ResolvedAgent struct {
 	// TimeoutSeconds and MaxTokens bound wall-clock time and per-response
 	// provider spend independently of MaxTurns: max_turns = 0 means unlimited
 	// iterations, not an unbounded run. nil = inherit the session's.
-	TimeoutSeconds  *int
-	MaxTokens       *int
-	SystemPrompt    string
-	EffectiveTools  []string // final allowlist after inheritance/deltas/guardrails
-	AllowEmptyTools bool     // explicit empty-tool contract
-	DisallowedTools []string // effective denylist names applied before allowlist
+	TimeoutSeconds *int
+	MaxTokens      *int
+	SystemPrompt   string
+	EffectiveTools []string // final allowlist after inheritance/deltas/guardrails
+	// EffectiveMCPServers is the ordered MCP server scope after inheritance.
+	EffectiveMCPServers []string
+	AllowEmptyTools     bool     // explicit empty-tool contract
+	DisallowedTools     []string // effective denylist names applied before allowlist
 	// CoreTools is the resolved always-advertised tool tier (plan tools/05).
 	// nil = no per-agent override; the host falls back to [tools] core, and a
 	// nil global keeps every effective tool core. Non-nil (including empty)
@@ -74,6 +76,7 @@ func (a ResolvedAgent) Clone() ResolvedAgent {
 	out := a
 	out.Trace = a.Trace.clone()
 	out.EffectiveTools = slices.Clone(a.EffectiveTools)
+	out.EffectiveMCPServers = slices.Clone(a.EffectiveMCPServers)
 	out.DisallowedTools = slices.Clone(a.DisallowedTools)
 	out.DisabledTools = slices.Clone(a.DisabledTools)
 	if a.Skills != nil {
@@ -147,11 +150,12 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		OutputSchema                                       map[string]any `json:",omitempty"`
 		InputSchema                                        map[string]any `json:",omitempty"`
 		AllowEmptyTools                                    bool           `json:",omitempty"`
+		EffectiveMCPServers                                []string       `json:",omitempty"`
 	}
 	payload, err := json.Marshal(definition{
 		Name: a.Name, Description: a.Description, Model: a.Model,
 		SystemPrompt: a.SystemPrompt, ParentName: a.ParentName,
-		MaxTurns: a.MaxTurns, EffectiveTools: a.EffectiveTools,
+		MaxTurns: a.MaxTurns, EffectiveTools: a.EffectiveTools, EffectiveMCPServers: a.EffectiveMCPServers,
 		DisallowedTools: a.DisallowedTools, Skills: a.Skills,
 		SkillOrigins: a.SkillOrigins, Source: string(a.Provenance.Source), Path: a.Provenance.Path,
 		Provider: a.Provider, TimeoutSeconds: a.TimeoutSeconds, MaxTokens: a.MaxTokens,

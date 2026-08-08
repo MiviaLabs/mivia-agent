@@ -45,7 +45,7 @@ func TestTuiLoadRequiresAName(t *testing.T) {
 		t.Fatal("/load was not handled")
 	}
 	last := m.blocks[len(m.blocks)-1].Text
-	if !strings.Contains(last, "usage: /load <name>") {
+	if !strings.Contains(last, "usage: /load <session-id>") {
 		t.Fatalf("/load with no name = %q, want the usage line", last)
 	}
 }

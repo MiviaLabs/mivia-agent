@@ -25,28 +25,6 @@ type SkillCatalogueEntry struct {
 	Project bool
 }
 
-// ResolveOptions controls inheritance and global guardrails.
-type ResolveOptions struct {
-	Global config.AgentsGlobal
-	// KnownTools is the compiled catalogue (tools.AllToolNames). Required.
-	KnownTools map[string]struct{}
-	// SkillNames, when set, rejects agent names that collide with skills.
-	SkillNames map[string]struct{}
-	// ReservedHandlers rejects agent names that collide with built-in handlers.
-	ReservedHandlers map[string]struct{}
-	// SkillCatalogue maps skill name → dual-origin presence. When set, agent
-	// skills allowlists are validated against it (plan 06).
-	SkillCatalogue map[string]SkillCatalogueEntry
-	// AllowProjectSkills enables project-origin skills in agent allowlists.
-	// Mirrors the workspace gate (load_workspace_config).
-	AllowProjectSkills bool
-	// TolerantWorkspace, when true, skips a WORKSPACE-sourced input that fails
-	// resolveOne with a warning instead of aborting the whole resolve. USER
-	// failures and structural failures (duplicate names) remain fatal. Opt-in
-	// so direct ResolveAll callers are unchanged.
-	TolerantWorkspace bool
-}
-
 // ResolveAll resolves every input into immutable ResolvedAgent values and
 // publishes them to a new AgentRegistry.
 func ResolveAll(inputs []ResolveInput, opts ResolveOptions) (*AgentRegistry, []string, error) {
@@ -231,6 +209,10 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	if err != nil {
 		return ResolvedAgent{}, nil, err
 	}
+	mcpServers, err := resolveMCPServers(in, parent, opts.MCPConfig)
+	if err != nil {
+		return ResolvedAgent{}, nil, err
+	}
 	desc := ""
 	if in.Spec.Description != nil {
 		desc = *in.Spec.Description
@@ -241,25 +223,26 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	}
 	trace := buildTrace(in, parent, parentName, fields, baseline, effective, dis, skills, opts)
 	return ResolvedAgent{
-		Name:            in.Name,
-		Description:     SanitizeDescription(desc),
-		Provider:        fields.provider,
-		Model:           fields.model,
-		MaxTurns:        fields.maxTurns,
-		TimeoutSeconds:  fields.timeoutSeconds,
-		MaxTokens:       fields.maxTokens,
-		SystemPrompt:    fields.systemPrompt,
-		EffectiveTools:  effective,
-		AllowEmptyTools: allowEmptyTools,
-		DisallowedTools: dis,
-		CoreTools:       fields.coreTools,
-		Skills:          skills,
-		SkillOrigins:    origins,
-		Provenance:      Provenance{Source: in.Source, Path: in.Path},
-		ParentName:      parentName,
-		Trace:           trace,
-		OutputSchema:    fields.outputSchema,
-		InputSchema:     fields.inputSchema,
+		Name:                in.Name,
+		Description:         SanitizeDescription(desc),
+		Provider:            fields.provider,
+		Model:               fields.model,
+		MaxTurns:            fields.maxTurns,
+		TimeoutSeconds:      fields.timeoutSeconds,
+		MaxTokens:           fields.maxTokens,
+		SystemPrompt:        fields.systemPrompt,
+		EffectiveTools:      effective,
+		EffectiveMCPServers: mcpServers,
+		AllowEmptyTools:     allowEmptyTools,
+		DisallowedTools:     dis,
+		CoreTools:           fields.coreTools,
+		Skills:              skills,
+		SkillOrigins:        origins,
+		Provenance:          Provenance{Source: in.Source, Path: in.Path},
+		ParentName:          parentName,
+		Trace:               trace,
+		OutputSchema:        fields.outputSchema,
+		InputSchema:         fields.inputSchema,
 	}, warn, nil
 }
 

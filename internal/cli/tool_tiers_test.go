@@ -496,7 +496,10 @@ func TestRegisterLoadToolsToolPropagatesARegistrationFailure(t *testing.T) {
 // --- the disabled-tool diagnostic is an entry-point event ------------------
 
 // disabledToolWarning is the substring scopedRootRegistry's diagnostic used to
-// write on every surface build.
+// write on every surface build. The fixtures name workflow_run (not extract) as
+// the disabled tool: extract registers only when the fixture supplies a Tavily
+// key, so it is conditional, while workflow_run is known but never registered
+// in a workspace without .mivia/workflows/ (which these fixtures are).
 const disabledToolWarning = "disabled tools omitted from registry"
 
 // TestDisabledToolWarningIsNotEmittedDuringATurn: the TUI owns the terminal
@@ -509,7 +512,7 @@ func TestDisabledToolWarningIsNotEmittedDuringATurn(t *testing.T) {
 		{Content: "done"},
 	}}
 	stderr := captureStderr(t)
-	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "extract"})
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "workflow_run"})
 	attached := stderr()
 	if got := strings.Count(attached, disabledToolWarning); got != 1 {
 		t.Fatalf("attach emitted the diagnostic %d times, want exactly 1:\n%s", got, attached)
@@ -532,7 +535,7 @@ func TestDisabledToolWarningIsNotEmittedDuringATurn(t *testing.T) {
 func TestDisabledToolWarningIsEmittedOnceOnAnInertAttach(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	stderr := captureStderr(t)
-	newDeferredFixture(t, completer, nil, []string{"read_file", "extract"})
+	newDeferredFixture(t, completer, nil, []string{"read_file", "workflow_run"})
 	attached := stderr()
 	if got := strings.Count(attached, disabledToolWarning); got != 1 {
 		t.Fatalf("inert attach emitted the diagnostic %d times, want exactly 1:\n%s", got, attached)

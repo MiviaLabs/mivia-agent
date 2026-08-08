@@ -193,6 +193,15 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 			fillInspectOutput(&view, data, pageOffset, pageLimit)
 		}
 	}
+	if attempt.ErrorRef != "" {
+		data, err := repo.LoadContent(ctx, attempt.ErrorRef)
+		if err != nil && !errors.Is(err, workflowledger.ErrContentNotFound) {
+			return InspectView{}, err
+		}
+		if err == nil && len(data) > 0 {
+			view.ErrorText = redact.Text(string(data))
+		}
+	}
 	return view, nil
 }
 

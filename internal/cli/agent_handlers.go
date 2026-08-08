@@ -65,7 +65,7 @@ func scopedRootRegistry(registry *tools.Registry, selected *agents.ResolvedAgent
 	if registry == nil || selected == nil {
 		return registry, nil
 	}
-	kept, disabled := agents.IntersectWithRegistry(selected.EffectiveTools, registry)
+	kept, disabled := agents.IntersectWithRegistry(authorizedAgentTools(selected, registry), registry)
 	return tools.ScopedRegistry(registry, tools.ScopeOptions{
 		Mode:          tools.ScopeRoot,
 		Allowlist:     agents.AllowlistSet(kept),

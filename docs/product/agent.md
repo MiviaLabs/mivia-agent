@@ -96,11 +96,14 @@ Each filename is `<name>.toml`. The in-file `name` must match the lowercase file
 | `disallowed_tools` | Additional denylist applied before the final allowlist |
 | `tools_core` | Always-advertised tool tier; the rest of `tools` is deferred behind `load_tools`. Omitted = inherit `[tools] core` |
 | `skills` | Which skill handlers this agent may invoke |
+| `mcp_servers` | Exact MCP server IDs; omit for global servers, `[]` for none |
 | `model` | Spawned-task model identifier, validated against the active provider catalog; it does not change root model selection |
 | `max_turns` | Omitted = session default; `0` = unlimited; positive = cap |
 | `system_prompt` | Optional user-owned prompt; workspace prompt text is gate-controlled |
 
 When `tools` is omitted, a root definition receives the complete known workspace-tool catalog unless the trusted `require_explicit_tools` guardrail is enabled. `tools = []` is an explicit empty set. `skills` keeps the same distinction: omitted means all trusted skills, while `skills = []` means none. An empty effective toolset is refused by the default `fail_on_empty_toolset` guardrail.
+
+`mcp_servers` is a separate server scope. It does not list dynamic MCP tool names. A root agent that omits the field receives enabled servers with `global = true`. A user-owned root can name a non-global server. A workspace root can name only global servers. A child can only keep or narrow its parent list. Set `mcp_servers = []` to deny all MCP tools.
 
 ```toml
 # Specialist: only engineering control-surface skills

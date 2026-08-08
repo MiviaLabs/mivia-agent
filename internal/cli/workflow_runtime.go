@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -56,6 +57,11 @@ func prepareWorkflowRuntime(root, refBase string, wf *compiler.CompiledWorkflow,
 	} else {
 		snapshot.DefinitionTOML = append([]byte(nil), definitionTOML...)
 		snapshot.Inputs = cloneStringMap(inputSnapshot)
+		digest, err := config.MCPConfigDigest(dispatcherOpts.MCP)
+		if err != nil {
+			return preparedWorkflowRuntime{}, err
+		}
+		snapshot.MCPConfigDigest = digest
 	}
 	// Snapshot contains only JSON-safe field types.
 	data, _ := workflowledger.MarshalSnapshot(snapshot)

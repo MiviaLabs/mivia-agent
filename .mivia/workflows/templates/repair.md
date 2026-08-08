@@ -17,6 +17,7 @@ Every prior-step output is stored in the workflow ledger.
 Its ref, step, and attempt are listed in the 'Evidence refs' section of the prompt.
 Findings arrive as a ledger reference envelope (artifact + note). Resolve the full artifact with workflow_inspect(run_id, step, attempt) before responding; never guess from the preview.
 For very large artifacts, use the offset and limit parameters to page through the output.
+If a delivery rejection routed this step, read the latest wf-delivery attempt listed by workflow_status with workflow_inspect and repair the reported error.
 
 Implement each required change exactly. Do not repeat a
 claim the reviewer rejected. In your output, set addressed_findings to the ids of every OPEN finding you

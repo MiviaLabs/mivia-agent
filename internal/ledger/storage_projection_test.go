@@ -77,7 +77,7 @@ func TestApplyTailSortTiesOnSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed, err := marshalRunClosed()
+	closed, err := marshalRunClosed("", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

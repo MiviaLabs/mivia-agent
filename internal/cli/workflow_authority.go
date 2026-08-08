@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -32,7 +33,7 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 		return fmt.Errorf("panel agent %q has no runtime tool registry", agent.Name)
 	}
 	surface := tools.ScopedRegistry(authority, tools.ScopeOptions{
-		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(agent.EffectiveTools),
+		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(authorizedAgentTools(&agent, authority)),
 	})
 	if !slices.Contains(agent.DisallowedTools, toolPostMessage) {
 		return fmt.Errorf("panel agent %q must disallow post_message", agent.Name)
@@ -71,12 +72,23 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 	slices.Sort(names)
 	want := []string{}
 	if !synthesizer {
-		want = slices.Clone(panelReviewerTools)
+		want = panelMCPAllowedTools(agent, authority)
+		slices.Sort(want)
 	}
 	if !slices.Equal(names, want) {
 		return fmt.Errorf("panel agent %q final runtime tools = %v, want %v", agent.Name, names, want)
 	}
 	return nil
+}
+
+func panelMCPAllowedTools(agent agents.ResolvedAgent, authority *tools.Registry) []string {
+	out := slices.Clone(panelReviewerTools)
+	for _, name := range authorizedAgentTools(&agent, authority) {
+		if strings.HasPrefix(name, "mcp__") {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry, error) {
@@ -118,7 +130,7 @@ func workflowWriteAuthority(wf *compiler.CompiledWorkflow, registry *agents.Agen
 			return false, fmt.Errorf("workflow step %q references unknown agent %q", step.ID, step.Agent)
 		}
 		surface := tools.ScopedRegistry(authority, tools.ScopeOptions{
-			Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(agent.EffectiveTools),
+			Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(authorizedAgentTools(&agent, authority)),
 			ExtraDenylist: extraDenylist,
 		})
 		if _, ok := surface.Get(tools.RunCommandToolName); ok {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -497,5 +498,46 @@ func TestAgentStepTransientRetryReusesSamePrompt(t *testing.T) {
 	}
 	if firstAttempt.PromptRef != "sha256:"+workflowledger.DigestHex([]byte(prompts[0])) {
 		t.Fatalf("first attempt = %+v, want PromptRef for the retried prompt", firstAttempt)
+	}
+}
+
+// TestAgentStepRetriesProviderMarkedReadDeadline pins the observed failure
+// shape: a provider READ deadline (a transport-backstop or parent bound cut the
+// call while the answer was still on the wire) is marked TransientError by the
+// provider layer, and the step-level retry must engage instead of settling the
+// attempt timed_out and killing the run. Before the fix, IsTransient classified
+// every context deadline as permanent, so runStepWithTransientRetry never ran
+// and a single stalled read ended the run in the terminal timed_out state.
+func TestAgentStepRetriesProviderMarkedReadDeadline(t *testing.T) {
+	orig := stepTransientRetryBackoff
+	stepTransientRetryBackoff = func(int) time.Duration { return 0 }
+	t.Cleanup(func() { stepTransientRetryBackoff = orig })
+
+	runner := &transientPromptRunner{
+		failures: 2,
+		err:      &provider.TransientError{Err: context.DeadlineExceeded},
+	}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, runner, linearWorkflow(t), map[string]StepRuntime{
+		"first":  {Agent: agents.ResolvedAgent{Name: "one"}, Template: "task={{inputs.task}}"},
+		"second": {Agent: agents.ResolvedAgent{Name: "two"}},
+	}, map[string]any{"task": "build"}, "wfr-retry-deadline", []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctrl.Run(context.Background())
+	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run = %+v err=%v, want succeeded (step retries a marked read deadline)", got, err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	var firstCalls int
+	for _, call := range runner.calls {
+		if call.StepID == "first" {
+			firstCalls++
+		}
+	}
+	if firstCalls != 3 {
+		t.Fatalf("first-step calls = %d, want 3 (1 + 2 retries); all calls = %d", firstCalls, len(runner.calls))
 	}
 }

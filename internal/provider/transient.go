@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // TransientError marks a failure where the call never delivered an answer.
@@ -60,6 +61,25 @@ func IsTransient(err error) bool {
 	if err == nil {
 		return false
 	}
+	// A permanent marker wins over every other signal, including the
+	// TransientError type test below: an error cannot be both marked, and a
+	// provider refusal the transport already classified as permanent must not
+	// re-run a whole step because its text happens to name a transient status.
+	var perm *permanentError
+	if errors.As(err, &perm) {
+		return false
+	}
+	// A provider-marked transient wins over the bare-context rule below. The
+	// provider layer marks a deadline it knows was NOT its own request timeout
+	// (a tighter bound - the transport backstop or a parent step/run deadline -
+	// cut the call while the answer was still on the wire) as TransientError at
+	// the read site. Such a call never delivered an answer, so the step may
+	// retry it under a fresh context; that marker must not be defeated by the
+	// blanket rule that a bare context deadline is not transient.
+	var transient *TransientError
+	if errors.As(err, &transient) {
+		return true
+	}
 	// A cancelled or expired context is NOT transient. The caller stopped the
 	// call, or its deadline ran out; repeating it works against that decision
 	// and, for an expired deadline, fails again at once.
@@ -71,18 +91,6 @@ func IsTransient(err error) bool {
 	// context that just expired.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
-	}
-	// A permanent marker wins over every other signal, including the
-	// TransientError type test below: an error cannot be both marked, and a
-	// provider refusal the transport already classified as permanent must not
-	// re-run a whole step because its text happens to name a transient status.
-	var perm *permanentError
-	if errors.As(err, &perm) {
-		return false
-	}
-	var transient *TransientError
-	if errors.As(err, &transient) {
-		return true
 	}
 	// No blanket test for a JSON syntax error or a bare EOF here. Those say
 	// "these bytes are not the answer I expected", and at a call site that
@@ -100,11 +108,13 @@ func IsTransient(err error) bool {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
-	// context.DeadlineExceeded is NOT transient here. A step deadline and a
-	// run deadline both surface as that error, and repeating a call under an
-	// expired context fails at once, every time. The provider layer knows
-	// when the deadline was its OWN request timeout and marks those calls
-	// TransientError explicitly, so the useful case is still covered.
+	// A bare context.DeadlineExceeded is NOT transient here. A step deadline
+	// and a run deadline both surface as that error, and repeating a call
+	// under an expired context fails at once, every time. The provider layer
+	// marks the complementary case at the read site: a deadline that fired
+	// from a tighter bound than its own request timeout (transport backstop
+	// or parent deadline) becomes TransientError there, so the type test above
+	// still covers every real cut answer.
 	return isTransientMessage(err)
 }
 
@@ -147,6 +157,29 @@ func isTransientMessage(err error) bool {
 		}
 	}
 	return false
+}
+
+// markTransientReadDeadline marks a response-read deadline transient when the
+// bound that fired was NOT the provider's own request timeout.
+//
+// A context.DeadlineExceeded during a read can come from three timers: the
+// provider's own request context (req.Timeout), the transport backstop
+// (http.Client.Timeout), or a parent step/run deadline. Only the first is a
+// permanent statement about the call - the provider had its full budget and
+// answered nothing, so retrying the same turn is a storm risk. The other two
+// cut a call whose answer was still on the wire: the transport stalled (a
+// fresh call can clear it), or a parent deadline fired (marking transient is
+// still safe: the step retry loop re-checks its own context and fails fast
+// under an expired parent deadline). Non-deadline errors pass through
+// unchanged.
+func markTransientReadDeadline(ctx context.Context, reqTimeout time.Duration, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) && reqTimeout > 0 {
+		deadline, ok := ctx.Deadline()
+		if ok && time.Until(deadline) > 0 {
+			return &TransientError{Err: err}
+		}
+	}
+	return err
 }
 
 // asTransient wraps err as transient when the transport says the call never
