@@ -131,6 +131,14 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 		if delivery.IsRefusal(err) {
 			return settleDeliveryRefusal(ctx, repo, runID, err, stdout)
 		}
+		// A plain error is a condition in the change itself, not a permanent
+		// refusal: a commit hook rejected the work, a gate found a violation.
+		// An agent can repair that. When the workflow names a repair step, the
+		// run goes back to it instead of stopping with all its work done.
+		if policy.OnFailure != "" {
+			recordAutoDeliveryFailure(ctx, repo, runID, err)
+			return reopenForRepair(ctx, repo, runID, policy.OnFailure, err, stdout)
+		}
 		return err
 	}
 	return settleDeliverySuccess(ctx, repo, runID, result, stdout)

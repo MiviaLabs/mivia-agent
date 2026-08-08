@@ -39,6 +39,10 @@ func TestValidRunTransition(t *testing.T) {
 		// a still-refused re-eligibility settles via the self-loop.
 		{RunStatusDeliveryFailed, RunStatusDeliveryPending},
 		{RunStatusDeliveryFailed, RunStatusDeliveryFailed},
+		// Repair edge: a delivery that failed for a reason an agent can fix
+		// returns the run to the graph at the step delivery.on_failure names.
+		{RunStatusDeliveryPending, RunStatusRunning},
+		{RunStatusDeliveryFailed, RunStatusRunning},
 	}
 	for _, tc := range accept {
 		t.Run(fmt.Sprintf("accept %s->%s", tc.from, tc.to), func(t *testing.T) {
@@ -51,7 +55,6 @@ func TestValidRunTransition(t *testing.T) {
 		{RunStatusPending, RunStatusSucceeded},
 		{RunStatusRunning, RunStatusRunning},
 		{RunStatusWaitingApproval, RunStatusDeliveryPending},
-		{RunStatusDeliveryPending, RunStatusRunning},
 	}
 	for _, tc := range reject {
 		t.Run(fmt.Sprintf("reject %s->%s", tc.from, tc.to), func(t *testing.T) {
@@ -651,7 +654,9 @@ func TestValidRunTransitionDeliveryCarveOut(t *testing.T) {
 	}
 	for _, to := range all {
 		t.Run(fmt.Sprintf("reject delivery_failed->%s", to), func(t *testing.T) {
-			if to != RunStatusDeliveryPending && to != RunStatusDeliveryFailed && ValidRunTransition(RunStatusDeliveryFailed, to) {
+			// Running is the repair edge: a delivery that failed for a
+			// repairable reason returns the run to the graph.
+			if to != RunStatusDeliveryPending && to != RunStatusDeliveryFailed && to != RunStatusRunning && ValidRunTransition(RunStatusDeliveryFailed, to) {
 				t.Errorf("ValidRunTransition(%q, %q) = true, want false", RunStatusDeliveryFailed, to)
 			}
 		})

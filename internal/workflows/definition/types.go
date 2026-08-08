@@ -114,6 +114,20 @@ type Delivery struct {
 	CommitMessageTemplate string `toml:"commit_message_template"`
 	MaxTitleBytes         int    `toml:"max_title_bytes"`
 	MaxCommitMessageBytes int    `toml:"max_commit_message_bytes"`
+	// OnFailure names the step to re-enter when delivery fails for a reason an
+	// agent can repair, for example a commit hook that rejects the change.
+	//
+	// Delivery runs after the success terminal, outside the step graph, so a
+	// delivery failure had no route back into the workflow: the run stopped
+	// and waited for a person. With this set, the run returns to the named
+	// step, the agents fix the cause, the run reaches success again, and
+	// delivery runs again.
+	//
+	// The field names a step, not a reason. Which step repairs which failure
+	// is the workflow author's choice, so this stays generic.
+	//
+	// Empty keeps the old behavior: the run holds for a person.
+	OnFailure string `toml:"on_failure"`
 }
 
 // DiscoveredWorkflow is the result of discovering a workflow file.

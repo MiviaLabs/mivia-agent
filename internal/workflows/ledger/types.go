@@ -47,10 +47,18 @@ func ValidRunTransition(from, to RunStatus) bool {
 		}
 		return false
 	case RunStatusDeliveryPending:
-		return to == RunStatusSucceeded || to == RunStatusDeliveryFailed
+		// Running is the repair edge. Delivery runs after the success
+		// terminal, outside the step graph, so a delivery that fails for a
+		// reason an agent can repair (a commit hook that rejects the change)
+		// used to leave the run stopped with no route back. This edge returns
+		// the run to the graph at the step the workflow names in
+		// delivery.on_failure. The run then repairs, reaches success again,
+		// and delivers again.
+		return to == RunStatusSucceeded || to == RunStatusDeliveryFailed || to == RunStatusRunning
 	case RunStatusDeliveryFailed:
-		// Recovery carve-out only; see the doc comment above.
-		return to == RunStatusDeliveryPending || to == RunStatusDeliveryFailed
+		// Recovery carve-out only; see the doc comment above. Running is the
+		// same repair edge, for a run that already settled as failed.
+		return to == RunStatusDeliveryPending || to == RunStatusDeliveryFailed || to == RunStatusRunning
 	default:
 		return false
 	}

@@ -328,10 +328,27 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 		if wf.Delivery.Base == "" {
 			return fmt.Errorf("delivery: base must be non-empty")
 		}
+		// on_failure names the step the run returns to when delivery fails
+		// for a repairable reason. A name that no step carries would only
+		// show itself at delivery time, after all the work is done, so it
+		// fails admission instead.
+		if wf.Delivery.OnFailure != "" && !stepExists(wf, wf.Delivery.OnFailure) {
+			return fmt.Errorf("delivery: on_failure %q names no step", wf.Delivery.OnFailure)
+		}
 		return nil
 	default:
 		return fmt.Errorf("delivery: kind %q is not recognized (must be \"pull_request\" or empty)", wf.Delivery.Kind)
 	}
+}
+
+// stepExists reports whether the workflow declares a step with this ID.
+func stepExists(wf *definition.WorkflowFile, id string) bool {
+	for _, s := range wf.Steps {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // validateLimits checks that the limits configuration is within acceptable bounds.

@@ -46,6 +46,9 @@ type Policy struct {
 	CommitMessageTemplate string
 	MaxTitleBytes         int
 	MaxCommitMessageBytes int
+	// OnFailure names the step the run returns to when delivery fails for a
+	// reason an agent can repair. Empty means the run holds for a person.
+	OnFailure string
 }
 
 // clampMax returns v when positive, otherwise def.
@@ -72,6 +75,7 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		CommitMessageTemplate: d.CommitMessageTemplate,
 		MaxTitleBytes:         clampMax(d.MaxTitleBytes, DefaultMaxTitleBytes),
 		MaxCommitMessageBytes: clampMax(d.MaxCommitMessageBytes, DefaultMaxCommitMessageBytes),
+		OnFailure:             d.OnFailure,
 	}, true
 }
 
