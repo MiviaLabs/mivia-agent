@@ -18,11 +18,21 @@ import (
 // progress. The gate applies only to rounds whose findings set is non-empty:
 // the first round and any round that reaches a new set route normally on the
 // loop back-edge.
+//
+// The loop's own max_iterations is the authority on how long a repair may
+// run. A loop the author declared unbounded (UnlimitedIterations) is never
+// cut short here: a second, hidden bound that overrides the configured one is
+// not a stall guard, it is an undocumented cap. On a bounded loop this guard
+// only reports the stall earlier than the cap would, with a cause that names
+// what happened instead of "loop exhausted".
 func (c *LinearController) reviewMadeNoProgress(ctx context.Context, step definition.Step, route RouteDecision, output map[string]any) (bool, error) {
 	if step.Kind != "agent_gate" || route.Loop == "" {
 		return false, nil
 	}
 	if verdict, _ := output["verdict"].(string); verdict != "changes_requested" {
+		return false, nil
+	}
+	if route.MaxIterations == definition.UnlimitedIterations {
 		return false, nil
 	}
 	current := findingIDSet(output)
@@ -38,6 +48,7 @@ func (c *LinearController) reviewMadeNoProgress(ctx context.Context, step defini
 	// between two finding sets (A, B, A, B) never repeats consecutively. Such
 	// a run makes no progress but is not detected, so it burns the loop cap
 	// and dies at the 24h duration bound as an undiagnosed timeout.
+	repeats := 1 // the round being settled
 	for _, prior := range priorOutputAttempts(attempts, step.ID, maxConvergenceHistory) {
 		raw, err := c.Repo.LoadContent(ctx, prior.OutputRef)
 		if err != nil {
@@ -52,11 +63,37 @@ func (c *LinearController) reviewMadeNoProgress(ctx context.Context, step defini
 			continue
 		}
 		if equalStringSets(previous, current) {
-			return true, nil
+			repeats++
 		}
 	}
-	return false, nil
+	return repeats >= identicalRoundLimit(route.MaxIterations), nil
 }
+
+// identicalRoundLimit returns how many times one findings set may recur
+// before a BOUNDED loop is declared stalled. It scales with the budget the
+// workflow author configured rather than imposing a fixed number: a loop
+// given room to reason gets proportionally more attempts at the same set,
+// and a short loop still fails fast.
+func identicalRoundLimit(maxIterations int) int {
+	limit := maxIterations / 10
+	if limit < minIdenticalReviewRounds {
+		return minIdenticalReviewRounds
+	}
+	return limit
+}
+
+// minIdenticalReviewRounds is the floor for identicalRoundLimit.
+//
+// Failing on the FIRST repeat made this a one-strike rule: implement,
+// review, implement, review, dead. The implementer got a single attempt at
+// any finding set, and a review template that is told to reuse a finding's id
+// while it stays open guarantees an identical set whenever one fix lands
+// short. That killed runs that were still making progress, which is the
+// opposite of what a repair loop is for.
+//
+// Three occurrences gives two real repair attempts and still stops a genuine
+// stall long before the loop cap or the duration bound.
+const minIdenticalReviewRounds = 3
 
 // maxConvergenceHistory bounds how many prior rounds one review is compared
 // against. It caps the work per round: the loop allows up to 500 iterations,

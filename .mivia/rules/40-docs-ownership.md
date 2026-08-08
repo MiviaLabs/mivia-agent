@@ -19,7 +19,7 @@
 3. **No agent-invented trees.** Do not create `docs/agent-notes/`, `docs/tmp/`, `docs/wip/`, `docs/adr/`, or dated dump folders for durable knowledge. Use the existing canonical trees (`docs/architecture/`, `docs/development/`, `docs/product/`, `docs/security/`, plans under agreed locations).
 4. **Cross-link, do not copy.** Skills, rules, and comments reference the canonical path. At most a short summary (≤ ~10 lines) may appear elsewhere, with an explicit pointer to the canonical file.
 5. **ADRs are prohibited.** Record architectural decisions in the registered canonical architecture document; do not create or retain `docs/adr/`.
-6. **Plans are not product docs.** Implementation plans and task files may exist under `docs/` or `.mivia/plans/`, but they must not become a second user-facing manual for the same topic. Promote durable truth into the OWNERS-registered canonical doc when the work ships.
+6. **Plans are not product docs, and they do not live here.** Every `.md` file in this repository must be documentation a user reads or an instruction an agent follows. Implementation plans, task files, and progress reports are neither, so they belong in the sibling `mivia-agent-plans` repository. When the work ships, promote the durable truth into the OWNERS-registered canonical doc, an invariant, or the code.
 7. **Root instruction files stay thin.** `AGENTS.md`, `CLAUDE.md`, README sections point into `.mivia/` and `docs/`; they do not grow a full second handbook.
 
 ## Required Workflow For Agents

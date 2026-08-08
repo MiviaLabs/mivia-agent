@@ -97,6 +97,14 @@ func TestParseReferenceRejectsMalformed(t *testing.T) {
 		{"short digest", "ref:output:abc"},
 		{"63 hex chars", "ref:output:" + strings.Repeat("a", 63)},
 		{"65 hex chars", "ref:output:" + strings.Repeat("a", 65)},
+		// Regression lock (finding R0-1): a historical minter truncated the
+		// digest to 8 bytes, which encodes as exactly 16 hex chars, so every
+		// reference it minted pointed at a key nothing had stored. This exact
+		// width must be rejected; the 63/65-hex cases above do not name it.
+		{"historical truncated digest (8 bytes = 16 hex chars)", "ref:output:" + strings.Repeat("a", 16)},
+		// Oversized input class: a digest 64x the canonical length must be
+		// rejected exactly like the 65-hex case above.
+		{"oversized digest (4096 hex chars)", "ref:output:" + strings.Repeat("a", 4096)},
 		{"uppercase hex", "ref:output:" + strings.Repeat("A", 64)},
 		{"non hex", "ref:output:" + strings.Repeat("g", 64)},
 		{"unknown kind", "ref:sha256:" + hex64},
@@ -118,5 +126,37 @@ func TestParseReferenceRejectsMalformed(t *testing.T) {
 				t.Fatalf("Parse(%q) digest = %q, want empty", tc.ref, digest)
 			}
 		})
+	}
+}
+
+// TestReferenceEmitsFullSHA256Digest pins the minting contract behaviorally:
+// every known kind mints exactly "ref:<kind>:" + hex(sha256(data)) with a
+// 64-character lowercase-hex digest. This fails for any minter that truncates
+// the digest to 8 bytes (16 hex chars) - the confirmed historical defect that
+// made every output reference point at a key nothing had stored.
+func TestReferenceEmitsFullSHA256Digest(t *testing.T) {
+	payloads := map[string][]byte{
+		"ascii":            []byte("hello world"),
+		"multi-byte UTF-8": []byte("héllo wörld — 你好"),
+		"binary":           {0x00, 0x01, 0xff, 0xfe, 0x80, 0x7f},
+	}
+	for _, kind := range []string{KindOutput, KindError, KindMessage} {
+		for name, data := range payloads {
+			sum := sha256.Sum256(data)
+			want := "ref:" + kind + ":" + hex.EncodeToString(sum[:])
+			got := Reference(kind, data)
+			if got != want {
+				t.Fatalf("Reference(%s, %s payload) = %q, want %q", kind, name, got, want)
+			}
+			digest := strings.TrimPrefix(got, "ref:"+kind+":")
+			if len(digest) != 64 {
+				t.Fatalf("Reference(%s, %s payload) digest %q has length %d, want 64", kind, name, digest, len(digest))
+			}
+			for _, r := range digest {
+				if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
+					t.Fatalf("Reference(%s, %s payload) digest %q contains non lowercase-hex rune %q", kind, name, digest, r)
+				}
+			}
+		}
 	}
 }

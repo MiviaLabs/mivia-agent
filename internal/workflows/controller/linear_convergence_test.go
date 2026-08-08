@@ -233,12 +233,14 @@ func TestAgentStepRequestOmitsRoundOutsideLoop(t *testing.T) {
 // must NOT take the loop back-edge: the attempt fails with the durable
 // zero-progress cause and the run stops.
 func TestReviewZeroProgressFailsRunOnIdenticalFindings(t *testing.T) {
-	wf := repairWorkflow(t, -1, 16)
+	wf := repairWorkflow(t, 30, 16)
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
 		"implement#1": json.RawMessage(`{"summary":"v1"}`),
 		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-f1","severity":"high","reason":"x"}]}`),
 		"implement#2": json.RawMessage(`{"summary":"v2"}`),
 		"review#2":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R1-f1","severity":"high","reason":"x"}]}`),
+		"implement#3": json.RawMessage(`{"summary":"v3"}`),
+		"review#3":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R2-f1","severity":"high","reason":"x"}]}`),
 	}}
 	repo := workflowledger.NewMemoryRepository()
 	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
@@ -261,18 +263,18 @@ func TestReviewZeroProgressFailsRunOnIdenticalFindings(t *testing.T) {
 	}
 	var secondReview workflowledger.StepAttempt
 	for _, a := range attempts {
-		if a.StepID == "review" && a.AttemptNo == 2 {
+		if a.StepID == "review" && a.AttemptNo == 3 {
 			secondReview = a
 		}
 	}
 	if secondReview.Status != workflowledger.AttemptStatusFailed {
-		t.Fatalf("review#2 status = %q, want failed", secondReview.Status)
+		t.Fatalf("review#3 status = %q, want failed", secondReview.Status)
 	}
 	if secondReview.ToStepID != "failure" {
-		t.Fatalf("review#2 route = %q, want failure (no loop back-edge)", secondReview.ToStepID)
+		t.Fatalf("review#3 route = %q, want failure (no loop back-edge)", secondReview.ToStepID)
 	}
 	if secondReview.ErrorRef == "" {
-		t.Fatal("review#2 must carry an ErrorRef")
+		t.Fatal("review#3 must carry an ErrorRef")
 	}
 	raw, loadErr := repo.LoadContent(context.Background(), secondReview.ErrorRef)
 	if loadErr != nil {
@@ -286,14 +288,14 @@ func TestReviewZeroProgressFailsRunOnIdenticalFindings(t *testing.T) {
 	if counterErr != nil {
 		t.Fatal(counterErr)
 	}
-	if len(counters) != 1 || counters[0].LoopName != "review_repair" || counters[0].Iterations != 1 {
-		t.Fatalf("loop counters = %+v, want review_repair=1", counters)
+	if len(counters) != 1 || counters[0].LoopName != "review_repair" || counters[0].Iterations != 2 {
+		t.Fatalf("loop counters = %+v, want review_repair=2", counters)
 	}
-	// No implement#3 dispatch after the no-progress failure.
+	// Two real repair attempts ran before the stall was declared; no implement#4.
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
-	if len(runner.calls) != 4 {
-		t.Fatalf("runner calls = %d, want 4 (no implement#3): %+v", len(runner.calls), runner.calls)
+	if len(runner.calls) != 6 {
+		t.Fatalf("runner calls = %d, want 6 (two repairs, no implement#4): %+v", len(runner.calls), runner.calls)
 	}
 }
 
@@ -424,7 +426,7 @@ func (r *loadFaultRepository) LoadContent(ctx context.Context, ref string) ([]by
 // a log-and-continue that routes the loop back-edge on a guess. A review whose
 // prior findings cannot be read must not spin the repair loop.
 func TestReviewZeroProgressLedgerReadFailureFailsStep(t *testing.T) {
-	wf := repairWorkflow(t, -1, 16)
+	wf := repairWorkflow(t, 30, 16)
 	review1 := json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-f1","severity":"high","reason":"x"}]}`)
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
 		"implement#1": json.RawMessage(`{"summary":"v1"}`),
@@ -485,7 +487,7 @@ func TestReviewZeroProgressLedgerReadFailureFailsStep(t *testing.T) {
 // prior round let it run until the loop cap and die at the duration bound as
 // an undiagnosed timeout. Round 3 reproduces round 1's set and must fail.
 func TestReviewZeroProgressDetectsOscillation(t *testing.T) {
-	wf := repairWorkflow(t, -1, 16)
+	wf := repairWorkflow(t, 30, 16)
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
 		"implement#1": json.RawMessage(`{"summary":"v1"}`),
 		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-fA","severity":"high","reason":"x"}]}`),
@@ -493,6 +495,10 @@ func TestReviewZeroProgressDetectsOscillation(t *testing.T) {
 		"review#2":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R1-fB","severity":"high","reason":"y"}]}`),
 		"implement#3": json.RawMessage(`{"summary":"v3"}`),
 		"review#3":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R2-fA","severity":"high","reason":"x"}]}`),
+		"implement#4": json.RawMessage(`{"summary":"v4"}`),
+		"review#4":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R3-fB","severity":"high","reason":"y"}]}`),
+		"implement#5": json.RawMessage(`{"summary":"v5"}`),
+		"review#5":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R4-fA","severity":"high","reason":"x"}]}`),
 	}}
 	repo := workflowledger.NewMemoryRepository()
 	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
@@ -514,12 +520,12 @@ func TestReviewZeroProgressDetectsOscillation(t *testing.T) {
 		t.Fatal(listErr)
 	}
 	for _, a := range attempts {
-		if a.StepID == "review" && a.AttemptNo == 3 {
+		if a.StepID == "review" && a.AttemptNo == 5 {
 			if a.Status != workflowledger.AttemptStatusFailed {
-				t.Fatalf("review#3 status = %q, want failed", a.Status)
+				t.Fatalf("review#5 status = %q, want failed", a.Status)
 			}
 			if a.ToStepID != "failure" {
-				t.Fatalf("review#3 route = %q, want failure", a.ToStepID)
+				t.Fatalf("review#5 route = %q, want failure", a.ToStepID)
 			}
 		}
 	}
@@ -604,5 +610,44 @@ func TestReviewZeroProgressSkipsUnparsablePriorRound(t *testing.T) {
 	}
 	if got {
 		t.Error("an unparsable prior round must not count as zero progress")
+	}
+}
+
+// TestReviewZeroProgressHonoursUnboundedLoop pins that the loop's configured
+// budget is the authority. A repair loop the author declared unbounded must
+// never be cut short by the convergence guard: a second, hidden bound that
+// overrides max_iterations is an undocumented cap, not a stall guard.
+func TestReviewZeroProgressHonoursUnboundedLoop(t *testing.T) {
+	ctx := context.Background()
+	ctrl := &LinearController{Repo: workflowledger.NewMemoryRepository(), RunID: "wfr-unbounded"}
+	step := definition.Step{ID: "review", Kind: "agent_gate"}
+	output := map[string]any{
+		"verdict":  "changes_requested",
+		"findings": []any{map[string]any{"id": "R9-f1"}},
+	}
+	route := RouteDecision{Loop: "review_repair", MaxIterations: definition.UnlimitedIterations}
+	got, err := ctrl.reviewMadeNoProgress(ctx, step, route, output)
+	if err != nil {
+		t.Fatalf("reviewMadeNoProgress error = %v", err)
+	}
+	if got {
+		t.Error("an unbounded repair loop must never be declared stalled")
+	}
+}
+
+// TestIdenticalRoundLimitScalesWithBudget pins that the tolerance follows the
+// budget the workflow author configured instead of a fixed number.
+func TestIdenticalRoundLimitScalesWithBudget(t *testing.T) {
+	cases := []struct{ maxIterations, want int }{
+		{0, minIdenticalReviewRounds},
+		{4, minIdenticalReviewRounds},
+		{30, minIdenticalReviewRounds},
+		{100, 10},
+		{500, 50},
+	}
+	for _, tc := range cases {
+		if got := identicalRoundLimit(tc.maxIterations); got != tc.want {
+			t.Errorf("identicalRoundLimit(%d) = %d, want %d", tc.maxIterations, got, tc.want)
+		}
 	}
 }

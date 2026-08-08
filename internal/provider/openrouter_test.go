@@ -8,7 +8,7 @@ func TestNewOpenRouterAppliesDefaultsAndOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := comp.(*OpenAICompat)
-	if client.httpReferer == "" || client.xTitle != "mivia.app" || client.baseURL != "https://openrouter.ai/api/v1" {
+	if client.httpReferer == "" || client.xTitle != "Mivia Agent" || client.baseURL != "https://openrouter.ai/api/v1" {
 		t.Fatalf("client=%+v", client)
 	}
 	comp, err = NewOpenRouter(Options{APIKey: "fake", BaseURL: "https://example.com/v1", HTTPReferer: "https://ref.example", XTitle: "title"})
