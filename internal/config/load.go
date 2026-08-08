@@ -46,10 +46,14 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err := normalizeProviderConfigs(&file, maxTokens); err != nil {
 		return nil, err
 	}
-	return resolveLoaded(file, configPath, found, opts)
+	mcpConfig, err := loadRuntimeMCPConfig()
+	if err != nil {
+		return nil, err
+	}
+	return resolveLoaded(file, configPath, found, opts, mcpConfig)
 }
 
-func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (*Resolved, error) {
+func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, mcpConfig MCPConfig) (*Resolved, error) {
 	providerName, pc, model, err := resolveProvider(file, opts)
 	if err != nil {
 		return nil, err
@@ -115,6 +119,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (
 		Privacy:          resolvePrivacyConfig(file.Privacy),
 		Context:          resolveContextConfig(file.Context),
 		Tools:            resolveToolsConfig(file.Tools),
+		MCP:              mcpConfig,
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 		PromptCache:      resolvePromptCache(file.Provider.PromptCache),
 	}
@@ -126,6 +131,15 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions) (
 		return nil, err
 	}
 	return res, nil
+}
+
+func loadRuntimeMCPConfig() (MCPConfig, error) {
+	workspaceRoot, err := os.Getwd()
+	if err != nil {
+		return MCPConfig{}, fmt.Errorf("get workspace directory: %w", err)
+	}
+	cfg, _, err := LoadTrustedMCPConfig(workspaceRoot)
+	return cfg, err
 }
 
 const DefaultTavilyAPIKeyEnv = "TAVILY_API_KEY"

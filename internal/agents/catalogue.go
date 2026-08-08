@@ -28,6 +28,10 @@ func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegis
 	if err != nil {
 		return nil, config.AgentsGlobal{}, nil, err
 	}
+	mcpConfig, _, err := config.LoadTrustedMCPConfig(workspaceRoot)
+	if err != nil {
+		return nil, global, nil, err
+	}
 	files, discWarnings, err := config.DiscoverAgentFilesTolerant(workspaceRoot, global.LoadWorkspaceConfig)
 	if err != nil {
 		return nil, global, nil, err
@@ -48,6 +52,7 @@ func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegis
 	}
 	opts := ResolveOptions{
 		Global:             global,
+		MCPConfig:          mcpConfig,
 		KnownTools:         knownToolSet(tools.DeclaredToolNames()),
 		SkillNames:         o.SkillNames,
 		ReservedHandlers:   subagents.ReservedHandlerNames(),
