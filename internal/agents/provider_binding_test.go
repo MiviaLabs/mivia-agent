@@ -286,3 +286,37 @@ func TestResolvedProviderWithoutModelRejected(t *testing.T) {
 		t.Fatalf("resolved provider without model must fail closed, got %v", err)
 	}
 }
+
+// TestWorkspaceAgentStripWarningNamesModelAndOptIn pins what the strip warning
+// must say. Reporting only the provider let an operator believe a per-agent
+// model was still in force, so a review lens pinned to a different model
+// silently ran the session model that produced the work under review. The
+// warning must also name the opt-in, or it is noise the operator cannot act on.
+func TestWorkspaceAgentStripWarningNamesModelAndOptIn(t *testing.T) {
+	_, warnings, err := ResolveAll([]ResolveInput{{
+		Name:   "reviewer",
+		Source: config.AgentSourceWorkspace,
+		Path:   "/repo/.mivia/agents/reviewer.toml",
+		Spec: config.AgentFileSpec{
+			Name: strp("reviewer"), Description: strp("d"),
+			Provider: strp("openrouter"), Model: strp("tencent/hy3-preview"),
+			Tools: slicep("read_file"),
+		},
+	}}, baseOpts())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want exactly one strip warning", warnings)
+	}
+	w := warnings[0]
+	for _, want := range []string{
+		"openrouter",
+		"tencent/hy3-preview",
+		"allow_workspace_agent_providers",
+	} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warning %q does not mention %q", w, want)
+		}
+	}
+}

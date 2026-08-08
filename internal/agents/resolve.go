@@ -221,10 +221,8 @@ func materialize(in ResolveInput, parent *ResolvedAgent, parentName string, opts
 	// still fails closed from any origin; only the known, well-formed pair is
 	// stripped here. Model without a provider is not a vector (it cannot name a
 	// foreign endpoint) and is left alone.
-	if in.Source == config.AgentSourceWorkspace && fields.provider != "" && !opts.Global.AllowWorkspaceAgentProviders {
-		warn = append(warn, fmt.Sprintf(
-			"agent %q: workspace-declared provider %q ignored (credential-routing protection); agent inherits the session provider",
-			in.Name, fields.provider))
+	if warning, stripped := stripWorkspaceBinding(in.Name, in.Source, fields.provider, fields.model, opts); stripped {
+		warn = append(warn, warning)
 		fields.provider = ""
 		fields.model = ""
 	}
@@ -480,4 +478,19 @@ func knownToolSet(names []string) map[string]struct{} {
 		out[n] = struct{}{}
 	}
 	return out
+}
+
+func stripWorkspaceBinding(name string, source config.AgentSource, provider, model string, opts ResolveOptions) (string, bool) {
+	if source != config.AgentSourceWorkspace || provider == "" || opts.Global.AllowWorkspaceAgentProviders {
+		return "", false
+	}
+	dropped := fmt.Sprintf("provider %q", provider)
+	if model != "" {
+		dropped = fmt.Sprintf("provider %q and model %q", provider, model)
+	}
+	return fmt.Sprintf(
+		"agent %q: workspace-declared %s ignored (credential-routing protection); "+
+			"agent runs the session provider and model. To honor it, set "+
+			"allow_workspace_agent_providers = true under [agents] in your user config",
+		name, dropped), true
 }
