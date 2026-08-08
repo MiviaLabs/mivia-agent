@@ -137,6 +137,7 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 		defer close(done)
 		defer releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
 		snap, err := workflowResumeRun(runCtx, p.built)
+		settleSessionRunFailure(p.repo, p.runID, err)
 		if err == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
 			if derr := deliverRunWithStore(context.Background(), p.root, p.res, p.store, p.repo, p.runID, true, false, io.Discard, io.Discard); derr != nil {
 				recordAutoDeliveryFailure(context.Background(), p.repo, p.runID, derr)

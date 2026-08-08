@@ -95,12 +95,7 @@ func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflo
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
 	if !result.Repairable() {
-		route := failureRoute(step)
-		hostErr := fmt.Errorf("verifier %q has a host failure", step.Verifier)
-		if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output, ErrorRef: storeErrorText(writeCtx, c.Repo, hostErr)}, workflowledger.AttemptStatusFailed, route); err != nil {
-			return c.fail(writeCtx, run, err)
-		}
-		return c.fail(writeCtx, run, hostErr)
+		return c.settleHostFailure(writeCtx, run, attempt, step, output)
 	}
 	route, err := c.selectEvidenceFailureRoute(ctx, step, outputMap)
 	if err != nil {

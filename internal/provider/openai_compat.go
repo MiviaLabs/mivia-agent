@@ -455,7 +455,7 @@ func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatRespon
 	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request failed: %w", c.name, err)
+		return nil, asTransient(fmt.Errorf("%s: request failed: %w", c.name, err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -464,9 +464,9 @@ func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatRespon
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("%s: read response: %w (request deadline %s)", c.name, err, deadlineLabel(req.Timeout))
+			return nil, asTransient(fmt.Errorf("%s: read response: %w (request deadline %s)", c.name, err, deadlineLabel(req.Timeout)))
 		}
-		return nil, fmt.Errorf("%s: read response: %w", c.name, err)
+		return nil, asTransient(fmt.Errorf("%s: read response: %w", c.name, err))
 	}
 	if len(raw) > maxJSONResponseBytes {
 		return nil, fmt.Errorf("%s: response exceeds %d byte limit", c.name, maxJSONResponseBytes)
@@ -482,7 +482,7 @@ func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatRespon
 	}
 	var body chatResponseBody
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, fmt.Errorf("%s: decode response: %w", c.name, err)
+		return nil, asTransient(fmt.Errorf("%s: decode response: %w", c.name, err))
 	}
 	return &body, nil
 }

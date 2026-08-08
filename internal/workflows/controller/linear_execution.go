@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -353,8 +353,7 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 			}
 		}
 	} else if status == workflowledger.AttemptStatusFailed {
-		// Infrastructure/schema/agent failures use on_failure, never repair loops.
-		route = failureRoute(step)
+		route = failureRoute(step) // transport budget already spent upstream
 	}
 	if status == workflowledger.AttemptStatusSucceeded {
 		if err = c.completeSucceededRoute(writeCtx, attempt, result, route); err != nil {
@@ -455,33 +454,26 @@ func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.R
 // before the step fails.
 const maxTransientStepRetries = 3
 
-// transientProviderMarkers identify retryable LLM-provider transport errors:
-// overload/rate limits and upstream 5xx, which a fresh subagent run may
-// outlive. HTTP 400-class client errors are TERMINAL at the transport layer
-// (internal/provider/retry.go) and are deliberately not matched here: a
+// isTransientProviderError reports whether a step failure is a transport
+// fault: a call that never delivered an answer, which a fresh subagent run may
+// outlive.
+//
+// The judgement belongs to the provider layer, because only it knows what its
+// transport does. This delegated after a substring table here missed the two
+// faults that actually killed runs: a torn HTTP/2 stream ("stream error:
+// INTERNAL_ERROR; received from peer") and a truncated body ("decode response:
+// unexpected end of JSON input") matched no marker, so both ended runs that had
+// already finished a dozen steps.
+//
+// HTTP 400-class client errors stay TERMINAL, in the provider layer now. A
 // step-level retry re-renders a byte-identical prompt (template.Render is a
 // pure function of the same inputs), so re-dispatching cannot change the
-// outcome. In particular, zai code 1261 "prompt too long" surfaces as
-// "provider error (HTTP 400, code 1261: prompt too long)" and must settle
-// immediately as attempt failed -> failureRoute (on_failure). Real agent
-// failures (schema, binding, refusal) do not match and fail immediately.
-var transientProviderMarkers = []string{
-	"HTTP 429", "temporarily overloaded", "rate limited", "overloaded",
-	"HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504",
-	"service unavailable", "upstream", "connection reset", "EOF",
-}
-
+// outcome. zai code 1261 "prompt too long" surfaces as "provider error (HTTP
+// 400, code 1261: prompt too long)" and must settle immediately as attempt
+// failed -> failureRoute (on_failure). Real agent failures (schema, binding,
+// refusal) do not match and fail immediately.
 func isTransientProviderError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	for _, marker := range transientProviderMarkers {
-		if strings.Contains(msg, marker) {
-			return true
-		}
-	}
-	return false
+	return provider.IsTransient(err)
 }
 
 // stepTransientRetryBackoff is the backoff schedule between step-level

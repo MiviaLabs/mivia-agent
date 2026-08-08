@@ -316,9 +316,13 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 	if err != nil {
 		return nil, err
 	}
+	// Every field sameAdmission compares comes from the record. The invocation
+	// key and the workflow digest were missing, so a run started with a key,
+	// or admitted before the definition types gained a field, could not resume.
 	admission := controller.Admission{
 		BaseRef: run.BaseRef, BaseCommit: run.BaseCommit, OriginBaseCommit: run.OriginBaseCommit,
 		WorktreeName: run.WorktreeName, InputDigest: run.InputDigest, DeadlineAt: run.DeadlineAt, RemoteURL: run.RemoteURL,
+		InvocationKey: run.InvocationKey, WorkflowDigest: run.WorkflowDigest,
 	}
 	if err := ctrl.SetAdmission(admission); err != nil {
 		return nil, err

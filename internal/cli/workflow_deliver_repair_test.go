@@ -129,3 +129,35 @@ func TestRepeatedDeliveryFailuresEachRecordAnAttempt(t *testing.T) {
 		t.Fatalf("delivery attempts = %d, want 2", count)
 	}
 }
+
+// The repair cycle is bounded. A rejection the named step cannot fix must not
+// cycle until the step cap or the 24h run deadline is spent.
+func TestDeliveryRepairIsBounded(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-deliver-repair-bound", Status: workflowledger.RunStatusPending, ActiveStepID: "preflight_structure",
+	}
+	if err := repo.CreateRun(ctx, run, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	casRunToDeliveryPending(t, ctx, repo, run.RunID)
+
+	var stdout bytes.Buffer
+	for i := 0; i < maxDeliveryRepairs; i++ {
+		if err := reopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("hook rejected"), &stdout); err != nil {
+			t.Fatalf("repair %d refused: %v", i+1, err)
+		}
+		back, err := repo.GetRun(ctx, run.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompareAndSetRunStatus(ctx, run.RunID, back.Version, workflowledger.RunStatusDeliveryPending, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := reopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("hook rejected"), &stdout); err == nil {
+		t.Fatal("the repair budget is spent; a further re-entry must fail")
+	}
+}

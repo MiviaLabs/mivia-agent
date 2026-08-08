@@ -150,6 +150,7 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 	go func() {
 		defer close(done)
 		snap, runErr := built.Controller.Run(runCtx)
+		settleSessionRunFailure(prepared.repo, runID, runErr)
 		if runErr == nil && snap.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
 			if err := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, runID, true, false, io.Discard, io.Discard); err != nil {
 				recordAutoDeliveryFailure(context.Background(), prepared.repo, runID, err)

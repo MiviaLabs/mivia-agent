@@ -19,7 +19,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
-	hook-test agent-hook-test structure-check commit-check go-check test race vet build tidy fmt fmt-check \
+	hook-test agent-hook-test structure-check commit-check go-check test test-changed race vet build tidy fmt fmt-check \
 	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke
 
 help:
@@ -184,3 +184,14 @@ build:
 
 tidy:
 	@go mod tidy
+
+# test-changed runs the tests of every package that has an uncommitted or
+# staged Go change. The commit hook runs an invariant subset only, so a package
+# can break and still commit; this is the check that catches it before the push
+# gate does, minutes later.
+test-changed:
+	@pkgs=$$(git diff --name-only --diff-filter=ACMR HEAD -- '*.go' \
+	  | xargs -r -n1 dirname | sort -u | sed 's|^|./|'); \
+	if [ -z "$$pkgs" ]; then echo "test-changed: no changed Go packages"; exit 0; fi; \
+	echo "test-changed: $$pkgs"; \
+	go test -count=1 -timeout=900s $$pkgs

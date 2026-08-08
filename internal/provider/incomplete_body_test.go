@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -106,5 +107,47 @@ func TestIsIncompleteBody(t *testing.T) {
 				t.Fatalf("isIncompleteBody(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+// A JSON syntax error that did NOT come from this package's transport is not a
+// transport fault. Callers parse agent output with the same standard library,
+// and a malformed answer is a bad answer, not a broken connection. Retrying it
+// repeats it.
+func TestAgentOutputSyntaxErrorIsNotTransient(t *testing.T) {
+	var target map[string]any
+	err := json.Unmarshal([]byte(`{"verdict": `), &target)
+	if err == nil {
+		t.Fatal("fixture must produce a syntax error")
+	}
+	if IsTransient(err) {
+		t.Fatal("a bare JSON syntax error must not be a transport fault: at a call site parsing agent output it is a bad answer")
+	}
+}
+
+// The provider's OWN cut body is still transient, because the read site marks
+// it where the difference is known.
+func TestProviderMarkedIncompleteBodyIsStillTransient(t *testing.T) {
+	var target map[string]any
+	syntaxErr := json.Unmarshal([]byte(`{"choices": `), &target)
+	if !IsTransient(asTransient(&TransientError{Err: syntaxErr})) {
+		t.Fatal("a body the provider marked as cut short must stay transient")
+	}
+}
+
+// context.DeadlineExceeded satisfies net.Error with Timeout() == true, so a
+// generic net.Error timeout test classifies it as a transport fault. It is not
+// one: a step deadline and a run deadline both surface this way, and retrying
+// repeats a call under the context that just expired. This pinned a real
+// regression where an expired run retried its step three times over 100s.
+func TestDeadlineIsNotATransportFault(t *testing.T) {
+	if IsTransient(context.DeadlineExceeded) {
+		t.Fatal("context.DeadlineExceeded must not be transient: it satisfies net.Error with Timeout() true")
+	}
+	if IsTransient(fmt.Errorf("run step: %w", context.DeadlineExceeded)) {
+		t.Fatal("a wrapped deadline must not be transient either")
+	}
+	if IsTransient(context.Canceled) {
+		t.Fatal("a cancelled call must not be transient")
 	}
 }

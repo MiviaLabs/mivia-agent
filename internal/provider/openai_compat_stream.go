@@ -29,7 +29,7 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request failed: %w", c.name, err)
+		return nil, asTransient(fmt.Errorf("%s: request failed: %w", c.name, err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -114,9 +114,10 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	}
 	if err := sc.Err(); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, err, deadlineLabel(timeout))
+			return "", "", nil, nil, "", false, nil, asTransient(fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, err, deadlineLabel(timeout)))
 		}
-		return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream read: %w", c.name, err)
+		// A stream torn mid-body never delivered an answer.
+		return "", "", nil, nil, "", false, nil, asTransient(fmt.Errorf("%s: stream read: %w", c.name, err))
 	}
 	payload := content.Len() > 0 || reasoning.Len() > 0 || len(webSearch) > 0 || len(toolsByIdx) > 0
 	// An empty answer can be the real answer (a stop with no text, a turn whose
@@ -143,7 +144,7 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 		// Check that all tool calls have an ID and name (minimum viable).
 		for _, tc := range toolsByIdx {
 			if tc.ID == "" || tc.Function.Name == "" {
-				return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream ended without a completion signal (truncated tool call)", c.name)
+				return "", "", nil, nil, "", false, nil, &TransientError{Err: fmt.Errorf("%s: stream ended without a completion signal (truncated tool call)", c.name)}
 			}
 			args := strings.TrimSpace(tc.Function.Arguments)
 			if args != "" && !json.Valid([]byte(args)) {
