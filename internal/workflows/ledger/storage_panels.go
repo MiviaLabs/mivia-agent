@@ -52,12 +52,7 @@ func (s *StorageRepository) CompareAndSetPanelPhase(ctx context.Context, runID s
 		s.mu.Unlock()
 		return ErrInvalidTransition
 	}
-	if synthesis != nil {
-		if err := s.validatePanelTaskContent(ctx, current.PanelExecution.SynthesisTaskID, synthesis.Work); err != nil {
-			s.mu.Unlock()
-			return err
-		}
-	}
+	synthesisTaskID := current.PanelExecution.SynthesisTaskID
 	next := current.Clone()
 	next.Version++
 	next.PanelExecution.Phase = to
@@ -65,6 +60,11 @@ func (s *StorageRepository) CompareAndSetPanelPhase(ctx context.Context, runID s
 		next.PanelExecution.Synthesis = synthesis.clone()
 	}
 	s.mu.Unlock()
+	if synthesis != nil {
+		if err := s.validatePanelTaskContent(ctx, synthesisTaskID, synthesis.Work); err != nil {
+			return err
+		}
+	}
 
 	return s.appendPanelPhase(ctx, runID, attemptID, holder, to, synthesis, next, idx)
 }
