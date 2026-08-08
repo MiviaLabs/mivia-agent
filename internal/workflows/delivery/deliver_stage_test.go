@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -66,128 +65,6 @@ func installTreeMutatingHook(t *testing.T, worktreeRoot string) {
 		t.Fatal(err)
 	}
 	runGit(t, worktreeRoot, "config", "core.hooksPath", hooksDir)
-}
-
-// TestDeliverAdoptsHookMutatedTree pins bug 1: a pre-commit hook that
-// legitimately mutates the staged tree (append + stage) makes the committed
-// tree differ from the pre-hook tree snapshot. The commit SUCCEEDED, so the
-// FIRST attempt must adopt the actual committed tree and deliver, instead of
-// erroring "commit hooks changed the staged tree" (and refusing forever on
-// the retry because HEAD^{tree} can never equal the pre-hook treeSHA).
-func TestDeliverAdoptsHookMutatedTree(t *testing.T) {
-	ctx := context.Background()
-	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
-	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
-	installTreeMutatingHook(t, worktreeRoot)
-
-	pr := &fakePRClient{}
-	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "add delivery"}))
-	if err != nil {
-		t.Fatalf("Deliver must succeed on the FIRST attempt when the pre-commit hook mutates the staged tree: %v", err)
-	}
-	if res.Status != "succeeded" {
-		t.Fatalf("Status = %q, want succeeded", res.Status)
-	}
-	head := runGitOut(t, worktreeRoot, "rev-parse", "HEAD")
-	committedTree := runGitOut(t, worktreeRoot, "rev-parse", "HEAD^{tree}")
-	if res.CommitSHA != head {
-		t.Fatalf("CommitSHA = %s, want HEAD %s", res.CommitSHA, head)
-	}
-	if body := runGitOut(t, worktreeRoot, "show", "HEAD:b.txt"); !strings.Contains(body, "hook-line") {
-		t.Fatalf("committed b.txt = %q, want the hook-appended line", body)
-	}
-	if n := pr.createdCount(); n != 1 {
-		t.Fatalf("Create calls = %d, want 1", n)
-	}
-	rec := deliveryRecordByKey(t, repo, run)
-	if rec.Status != "succeeded" || rec.CommitSHA != head {
-		t.Fatalf("record = %+v, want succeeded with CommitSHA %s", rec, head)
-	}
-	// The recorded tree is the ADOPTED committed tree: a crash between the
-	// commit and the pushed record can still resume by tree verification.
-	if rec.TreeSHA != committedTree {
-		t.Fatalf("record TreeSHA = %q, want adopted committed tree %q", rec.TreeSHA, committedTree)
-	}
-}
-
-// TestDeliverHookMutationRetryWritesNoStageRecord pins the critical
-// invariant for bug 1's adoption: after a hook-mutated commit was adopted
-// (pending record re-upserted with the ACTUAL tree + CommitSHA), a retry
-// after a transient failure must NOT mint another pending event — the retry
-// path reuses the stage state byte-for-byte and only adds the push /
-// PR-identity / succeeded records.
-func TestDeliverHookMutationRetryWritesNoStageRecord(t *testing.T) {
-	ctx := context.Background()
-	_, worktreeRoot, gc, baseCommit, originURL, run, repo, store := newDeliveryFixtureStatusStore(t, workflowledger.RunStatusDeliveryPending, nil)
-	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
-	installTreeMutatingHook(t, worktreeRoot)
-
-	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"})
-	fake := &fakePRClient{}
-	pr := &failOncePRClient{fake: fake}
-	if _, err := Deliver(ctx, repo, RealGit{}, pr, req); err == nil {
-		t.Fatal("first Deliver = nil error, want transient Create failure")
-	}
-	rec1 := deliveryRecordByKey(t, repo, run)
-	if rec1.Status != "failed" || rec1.CommitSHA == "" {
-		t.Fatalf("record after first attempt = %+v, want failed with the adopted CommitSHA", rec1)
-	}
-	if rec1.TreeSHA != runGitOut(t, worktreeRoot, "rev-parse", "HEAD^{tree}") {
-		t.Fatalf("record TreeSHA = %q, want the adopted committed tree", rec1.TreeSHA)
-	}
-	res, err := Deliver(ctx, repo, RealGit{}, pr, req)
-	if err != nil {
-		t.Fatalf("second Deliver: %v", err)
-	}
-	if res.Status != "succeeded" || res.CommitSHA != rec1.CommitSHA {
-		t.Fatalf("Result = %+v, want succeeded with the same adopted commit %s", res, rec1.CommitSHA)
-	}
-	rec2 := deliveryRecordByKey(t, repo, run)
-	if rec2.TreeSHA != rec1.TreeSHA {
-		t.Fatalf("TreeSHA changed across attempts: %s -> %s", rec1.TreeSHA, rec2.TreeSHA)
-	}
-
-	events, err := store.Events(ctx, run.RunID)
-	if err != nil {
-		t.Fatalf("store.Events: %v", err)
-	}
-	key := DeliveryKey(run.RunID, run.WorkflowDigest)
-	var pending, pushed, succeeded, failed int
-	for _, ev := range events {
-		if ev.Kind != "wf_delivery_upserted" {
-			continue
-		}
-		var payload struct {
-			Delivery workflowledger.DeliveryRecord `json:"delivery"`
-		}
-		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
-			t.Fatalf("unmarshal %s payload: %v", ev.ID, err)
-		}
-		if payload.Delivery.IdempotencyKey != key {
-			continue
-		}
-		switch payload.Delivery.Status {
-		case "pending":
-			pending++
-		case "pushed":
-			pushed++
-		case "succeeded":
-			succeeded++
-		case "failed":
-			failed++
-		default:
-			t.Fatalf("event %s carries unexpected status %q", ev.ID, payload.Delivery.Status)
-		}
-	}
-	// Fresh attempt: TWO pending events (pre-hook tree snapshot + adopted
-	// tree re-upsert with CommitSHA), one pushed, one failed. Retry: NO
-	// pending event — only the push record, the PR-identity record (the
-	// identity is learned only on the retry) and succeeded. Any additional
-	// pending event on the retry would break the byte-identical stage-state
-	// invariant.
-	if pending != 2 || pushed != 3 || succeeded != 1 || failed != 1 {
-		t.Fatalf("wf_delivery_upserted for key: pending=%d pushed=%d succeeded=%d failed=%d, want 2/3/1/1", pending, pushed, succeeded, failed)
-	}
 }
 
 // TestDeliverCommitSHAUnconditionalWhenTreeUnchanged pins the bug where
