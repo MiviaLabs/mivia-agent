@@ -1,6 +1,10 @@
 package providerregistry
 
-import "testing"
+import (
+	"sort"
+	"strings"
+	"testing"
+)
 
 func TestLookupAndNamesAreStable(t *testing.T) {
 	d, ok := Lookup("DeepSeek")
@@ -18,5 +22,100 @@ func TestLookupAndNamesAreStable(t *testing.T) {
 	zai, ok := Lookup("ZAI")
 	if !ok || zai.DefaultModel != "glm-5.2" || zai.DefaultURL != "https://api.z.ai/api/paas/v4" || zai.DefaultAPIKeyEnv != "ZAI_API_KEY" {
 		t.Fatalf("zai descriptor=%+v ok=%v", zai, ok)
+	}
+}
+
+// TestLookupCanonicalizesName pins the DC-11 canonical-form contract. Lookup
+// normalizes case and surrounding whitespace before it resolves a name. Any
+// spelling of a canonical provider name returns the canonical descriptor.
+func TestLookupCanonicalizesName(t *testing.T) {
+	canonical := map[string]Descriptor{
+		"deepseek": {
+			Name: "deepseek", DefaultModel: "deepseek-v4-flash",
+			DefaultURL: "https://api.deepseek.com/v1", DefaultAPIKeyEnv: "DEEPSEEK_API_KEY",
+		},
+		"zai": {
+			Name: "zai", DefaultModel: "glm-5.2",
+			DefaultURL: "https://api.z.ai/api/paas/v4", DefaultAPIKeyEnv: "ZAI_API_KEY",
+		},
+	}
+	rows := []struct {
+		name string
+		want Descriptor
+	}{
+		{"deepseek", canonical["deepseek"]},
+		{"DeepSeek", canonical["deepseek"]},
+		{" DEEPSEEK ", canonical["deepseek"]},
+		{"\tDeepSeek\n", canonical["deepseek"]},
+		{"  zai  ", canonical["zai"]},
+	}
+	for _, row := range rows {
+		got, ok := Lookup(row.name)
+		if !ok {
+			t.Errorf("Lookup(%q) returned ok=false, want canonical descriptor %+v", row.name, row.want)
+			continue
+		}
+		if got != row.want {
+			t.Errorf("Lookup(%q) returned %+v, want %+v", row.name, got, row.want)
+		}
+	}
+}
+
+// TestLookupRejectsUnknownEmptyAndOversized pins the negative contract. An
+// unknown, empty, whitespace-only, malformed, or oversized name returns
+// ok=false and a zero Descriptor. None of the rows may panic.
+func TestLookupRejectsUnknownEmptyAndOversized(t *testing.T) {
+	rows := []string{
+		"",
+		"   ",
+		"\t\n",
+		"anthropic",
+		"DEEP SEEK",               // interior space survives trim; not a canonical name
+		strings.Repeat("x", 8192), // oversized: no panic, no allocation blow-up
+	}
+	for _, name := range rows {
+		got, ok := Lookup(name)
+		if ok {
+			t.Errorf("Lookup(%q) returned ok=true with %+v, want ok=false and a zero Descriptor", name, got)
+			continue
+		}
+		if got != (Descriptor{}) {
+			t.Errorf("Lookup(%q) returned %+v with ok=false, want a zero Descriptor", name, got)
+		}
+	}
+}
+
+// TestNamesAndLookupAgree pins the Names/Lookup round trip. Names is sorted and
+// duplicate-free. Every entry and its upper-case spelling resolve through
+// Lookup to the entry's canonical descriptor. The returned slice is a fresh
+// copy, never aliased storage.
+func TestNamesAndLookupAgree(t *testing.T) {
+	names := Names()
+	if !sort.StringsAreSorted(names) {
+		t.Fatalf("Names() is not sorted: %v", names)
+	}
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if seen[name] {
+			t.Errorf("Names() contains duplicate %q", name)
+		}
+		seen[name] = true
+		for _, probe := range []string{name, strings.ToUpper(name)} {
+			d, ok := Lookup(probe)
+			if !ok {
+				t.Errorf("Lookup(%q) returned ok=false, want ok=true for a canonical name", probe)
+				continue
+			}
+			if d.Name != name {
+				t.Errorf("Lookup(%q) returned Descriptor.Name %q, want %q", probe, d.Name, name)
+			}
+		}
+	}
+	names[0] = "mutated"
+	next := Names()
+	for _, entry := range next {
+		if entry == "mutated" {
+			t.Fatalf("Names() returned aliased storage; the next call contains the mutation: %v", next)
+		}
 	}
 }

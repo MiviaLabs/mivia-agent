@@ -17,11 +17,16 @@ type Policy struct {
 func New(patterns, exceptions []string) (Policy, error) {
 	policy := Policy{patterns: make([]string, 0, len(patterns)), exceptions: make(map[string]struct{}, len(exceptions))}
 	for _, pattern := range patterns {
-		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		pattern = strings.TrimSpace(pattern)
 		if pattern == "" {
 			return Policy{}, fmt.Errorf("secret path pattern is empty")
 		}
-		policy.patterns = append(policy.patterns, pattern)
+		// Store patterns in the same canonical form Match derives from rel
+		// (lowercase, forward slashes, Clean) so a pattern with a leading "./",
+		// trailing "/", "." / ".." segment, or backslashes still matches the
+		// cleaned workspace-relative path (DC-11). The TrimSpace + empty check
+		// must run first because filepath.Clean("") == ".".
+		policy.patterns = append(policy.patterns, normalizePath(pattern))
 	}
 	for _, exception := range exceptions {
 		normalized, err := normalizeException(exception)

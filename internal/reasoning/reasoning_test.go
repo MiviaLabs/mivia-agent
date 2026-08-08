@@ -245,3 +245,51 @@ func TestDefaultDialectCoversTheClientsThatDependOnIt(t *testing.T) {
 		}
 	}
 }
+
+// The INV-AG-36 invariant once claimed DeepSeek has no default dialect. The
+// shipped table vets deepseek to thinking_effort, and every consumer depends on
+// that value. This pin machine-checks the contract inside the package that owns
+// the table.
+func TestDefaultDialectVetsDeepSeek(t *testing.T) {
+	got, ok := DefaultDialect("deepseek")
+	if !ok {
+		t.Fatal("deepseek must have a vetted default dialect")
+	}
+	if got != DialectThinkingEffort {
+		t.Fatalf("DefaultDialect(\"deepseek\") = %q, want %q", got, DialectThinkingEffort)
+	}
+	parsed, err := ParseDialect(string(DialectThinkingEffort))
+	if err != nil {
+		t.Fatalf("ParseDialect(%q): unexpected error: %v", DialectThinkingEffort, err)
+	}
+	if parsed != DialectThinkingEffort {
+		t.Fatalf("ParseDialect(%q) = %q, want a round trip", DialectThinkingEffort, parsed)
+	}
+	if !DialectThinkingEffort.CanGrade() {
+		t.Fatal("DialectThinkingEffort carries a level on the wire and must grade")
+	}
+}
+
+// Resolve is the only place that sequences deepseek's vetted default onto
+// requests that do not name a dialect. All three directions must hold: an
+// unconfigured level fills in the default, an explicit dialect wins, and an
+// inactive level still resolves its dialect so the binding knows the wire shape
+// it would carry if dialled up.
+func TestResolveSequencesDeepSeekDefault(t *testing.T) {
+	cases := []struct {
+		label string
+		in    Setting
+		want  Setting
+	}{
+		{"an active level resolves the vetted default", Setting{Level: High}, Setting{Level: High, Dialect: DialectThinkingEffort}},
+		{"a configured dialect wins", Setting{Level: High, Dialect: DialectOpenAI}, Setting{Level: High, Dialect: DialectOpenAI}},
+		{"an inactive level still resolves its dialect", Setting{}, Setting{Dialect: DialectThinkingEffort}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			if got := Resolve("deepseek", tc.in); got != tc.want {
+				t.Fatalf("Resolve(\"deepseek\", %+v) = %+v, want %+v", tc.in, got, tc.want)
+			}
+		})
+	}
+}

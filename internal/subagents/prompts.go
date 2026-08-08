@@ -1,6 +1,8 @@
 // Package subagents provides shared prompt constants for sub-agent handlers.
 package subagents
 
+import "github.com/MiviaLabs/mivia-agent/internal/prompts"
+
 // MultiStepSystemPrompt is for sub-agents with full tool access (agent loop).
 // Principle-based rather than recipe-based to avoid overfitting.
 const MultiStepSystemPrompt = `You are a focused sub-agent with access to tools: read_file, list_dir, grep, glob, write_file, search_replace, multi_edit, run_command, search (local/web/url), and read_output.
@@ -29,7 +31,9 @@ const MultiStepSystemPrompt = `You are a focused sub-agent with access to tools:
 ## Blocked
 delegate and dispatch_tasks are blocked to prevent infinite recursion.
 
-Report findings as structured data: bullet points, tables, code blocks.`
+Report findings as structured data: bullet points, tables, code blocks.
+
+` + prompts.WritingStandard
 
 // MessagingProtocolPrompt teaches child-side sub-agents how to coordinate via
 // post_message during a run. Shared by every tool-bearing sub-agent prompt,

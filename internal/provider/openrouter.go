@@ -18,7 +18,7 @@ func NewOpenRouter(opts Options) (Completer, error) {
 	}
 	referer := opts.HTTPReferer
 	if referer == "" {
-		referer = "https://mivia.app"
+		referer = "https://github.com/MiviaLabs/mivia-agent"
 	}
 	title := opts.XTitle
 	if title == "" {

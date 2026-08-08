@@ -14,8 +14,18 @@ import (
 func TestDefaultAgentPromptIsShort(t *testing.T) {
 	// Keep the compiled fallback lean; content-ref routing (read_output /
 	// ledger_read) is intentional and worth a few hundred bytes of budget.
-	if len(defaultAgentPrompt) > 4100 {
-		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 4100", len(defaultAgentPrompt))
+	//
+	// The budget went from 4100 to 4700 for prompts.WritingStandard. The
+	// standard is about 530 bytes, and it applies to every piece of prose the
+	// agent writes, so the agent must see it before it writes, not after a
+	// reviewer rejects the text. Keep the fragment compact. Do not raise this
+	// budget again to make room for content that a project agent definition
+	// under .mivia/agents/ can carry instead.
+	if len(defaultAgentPrompt) > 4700 {
+		t.Fatalf("defaultAgentPrompt is %d bytes, expected < 4700", len(defaultAgentPrompt))
+	}
+	if !strings.Contains(defaultAgentPrompt, "ASD-STE100") {
+		t.Fatal("defaultAgentPrompt must carry the writing standard")
 	}
 	if !strings.Contains(defaultAgentPrompt, ".mivia/agents/") {
 		t.Fatal("defaultAgentPrompt must mention .mivia/agents/ for self-maintenance")
