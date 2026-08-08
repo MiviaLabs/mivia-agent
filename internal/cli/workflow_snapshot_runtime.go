@@ -9,12 +9,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
-	"path/filepath"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot) (map[string]controller.StepRuntime, workflowledger.Snapshot, error) {
 	if base == "" {
-		base = filepath.Join(root, ".mivia", "workflows")
+		base = workspace.NamespacePath(root, "workflows")
 	}
 	result := make(map[string]controller.StepRuntime)
 	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionDigest: wf.Digest, Agents: map[string]workflowledger.AgentSnapshot{}, PanelBindings: map[string]workflowledger.PanelBindingSnapshot{}, Schemas: map[string]workflowledger.RefSnapshot{}, Templates: map[string]workflowledger.RefSnapshot{}}

@@ -9,9 +9,14 @@ import (
 )
 
 // openFileNonblock opens path with O_NONBLOCK so FIFO/special open cannot
-// block the agent tool worker (TOCTOU after a prior Stat).
+// block the agent tool worker (TOCTOU after a prior Stat). O_NOFOLLOW refuses
+// a symlink swapped into the FINAL component between Root.Resolve and this
+// open (DC-10 boundary): Resolve already canonicalizes legitimate
+// final-component symlinks, so a symlink here is always the boundary-escape
+// swap, and following it would let write_file/search_replace O_TRUNC a file
+// outside the workspace.
 func openFileNonblock(path string, flag int, perm os.FileMode) (*os.File, error) {
-	return os.OpenFile(path, flag|syscall.O_NONBLOCK, perm)
+	return os.OpenFile(path, flag|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, perm)
 }
 
 // clearNonblock restores blocking I/O for sequential reads/writes on a

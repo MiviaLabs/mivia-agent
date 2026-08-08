@@ -2,7 +2,6 @@ package tools
 
 import (
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -38,7 +37,7 @@ func HasWorkflowsDir(root string) bool {
 	if root == "" {
 		return false
 	}
-	info, err := os.Stat(filepath.Join(root, ".mivia", "workflows"))
+	info, err := os.Stat(workspace.NamespacePath(root, "workflows"))
 	return err == nil && info.IsDir()
 }
 

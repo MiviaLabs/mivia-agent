@@ -12,12 +12,12 @@ import (
 )
 
 var workflowWritePathDenylist = []string{
-	".mivia/mivia.toml",
-	".mivia/agents",
-	".mivia/policy",
-	".mivia/rules",
-	".mivia/skills",
-	".mivia/workflows",
+	workspace.Namespace + "/mivia.toml",
+	workspace.Namespace + "/agents",
+	workspace.Namespace + "/policy",
+	workspace.Namespace + "/rules",
+	workspace.Namespace + "/skills",
+	workspace.Namespace + "/workflows",
 	".git",
 	"go.mod",
 	"go.sum",
