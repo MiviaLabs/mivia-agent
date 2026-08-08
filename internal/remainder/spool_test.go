@@ -104,6 +104,49 @@ func TestCapWithSpoolNoticeIncludesRef(t *testing.T) {
 	}
 }
 
+func TestCapWithSpoolRefNamesARefThatFitsExactly(t *testing.T) {
+	// Public production entry point (used by buildExecResult and the batch
+	// shaper): when maxBytes equals the full ref notice exactly, the minted
+	// ref must still be named - otherwise the stored remainder is unreachable.
+	store := remainder.NewMemoryStore()
+	spool := remainder.NewSpool(store)
+	const principal = "session-a"
+	body := strings.Repeat("x", 200)
+
+	expectedRef := contentref.Reference(contentref.KindOutput, []byte(body))
+	if expectedRef == "" {
+		t.Fatal("expected a non-empty minted ref")
+	}
+	maxBytes := len(remainder.TruncationNotice(len(body), len(body), expectedRef))
+
+	bodyOut, ref, truncated := remainder.CapWithSpoolRef(spool, principal, body, maxBytes)
+	if !truncated {
+		t.Fatal("expected truncation")
+	}
+	if ref != expectedRef {
+		t.Fatalf("ref = %q, want %q", ref, expectedRef)
+	}
+	if len(bodyOut) > maxBytes {
+		t.Fatalf("len(bodyOut)=%d > maxBytes=%d", len(bodyOut), maxBytes)
+	}
+	if !strings.Contains(bodyOut, expectedRef) {
+		t.Fatalf("full ref not named at the exact boundary: %q", bodyOut)
+	}
+	if !strings.Contains(bodyOut, "use read_output") {
+		t.Fatalf("missing read_output guidance: %q", bodyOut)
+	}
+
+	// The named ref must resolve for the owner (INV-AG-10): naming it in the
+	// notice is only honest if the bytes behind it are loadable.
+	got, err := spool.Load(context.Background(), principal, ref)
+	if err != nil {
+		t.Fatalf("owner load of minted ref: %v", err)
+	}
+	if string(got) != body {
+		t.Fatalf("loaded body mismatch: got %d bytes want %d", len(got), len(body))
+	}
+}
+
 func TestCapWithSpoolFailedStoreOmitsRef(t *testing.T) {
 	spool := remainder.NewSpool(remainder.FailingStore{})
 	body := strings.Repeat("Y", 200)

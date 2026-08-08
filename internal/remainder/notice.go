@@ -74,9 +74,13 @@ func fitTruncation(result string, total, maxBytes int, ref, trailer string) stri
 		effectiveRef = ""
 		noticeBudget = len(TruncationNotice(total, total, "")) + len(trailer)
 	}
-	if noticeBudget >= maxBytes {
-		// Degenerate: even a plain notice does not fit; clip the plain notice
-		// only (no ref: prefix can appear).
+	if noticeBudget > maxBytes {
+		// Degenerate: even the plain notice does not fit; clip it only (no
+		// ref: prefix can appear). A ref notice that fits EXACTLY is kept: at
+		// noticeBudget == maxBytes the normal branch below yields bodyBudget =
+		// 0 and content = "", and TruncationNotice(0, total, ref) is <=
+		// maxBytes because a one-digit kept count is never wider than the
+		// reserve computed from total - which already included the trailer.
 		notice := trailer + TruncationNotice(0, total, "")
 		if len(notice) > maxBytes {
 			return trimPartialRune(notice[:maxBytes])
