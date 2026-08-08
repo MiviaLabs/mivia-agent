@@ -233,6 +233,11 @@ func contextHunks(ops []Op, context, oldStart, newStart int) []diffHunk {
 	}
 	oldBefore, newBefore := 0, 0
 	firstOld, firstNew := -1, -1
+	// The first hunk's leading context belongs to the file region before the
+	// first change, so its length is a constant for every hunk. Each later
+	// hunk's own leading context is already the first ops inside its interval;
+	// subtracting it again over-shifts the start toward zero.
+	firstLeadingOld, firstLeadingNew := 0, 0
 	result := make([]diffHunk, 0, len(intervals))
 	for _, interval := range intervals {
 		for i := 0; i < interval[0]; i++ {
@@ -250,8 +255,18 @@ func contextHunks(ops []Op, context, oldStart, newStart int) []diffHunk {
 		}
 		if firstOld < 0 {
 			firstOld, firstNew = oldBefore, newBefore
+			firstLeadingOld, firstLeadingNew = leadingOld, leadingNew
 		}
-		result = append(result, diffHunk{ops: flat[interval[0]:interval[1]], oldStart: oldStart + oldBefore - firstOld - leadingOld, newStart: newStart + newBefore - firstNew - leadingNew})
+		hunkOldStart := oldStart + oldBefore - firstOld - firstLeadingOld
+		hunkNewStart := newStart + newBefore - firstNew - firstLeadingNew
+		// A hunk start must never name line 0 or a negative line.
+		if hunkOldStart < 1 {
+			hunkOldStart = 1
+		}
+		if hunkNewStart < 1 {
+			hunkNewStart = 1
+		}
+		result = append(result, diffHunk{ops: flat[interval[0]:interval[1]], oldStart: hunkOldStart, newStart: hunkNewStart})
 	}
 	return result
 }
