@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -475,5 +476,133 @@ func TestReviewZeroProgressLedgerReadFailureFailsStep(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "zero-progress check") {
 		t.Fatalf("ErrorRef body = %q, want the zero-progress ledger-read cause", raw)
+	}
+}
+
+// TestReviewZeroProgressDetectsOscillation is the regression guard for the
+// A-B-A oscillation gap: a reviewer that alternates between two finding sets
+// never repeats CONSECUTIVELY, so comparing against only the immediately
+// prior round let it run until the loop cap and die at the duration bound as
+// an undiagnosed timeout. Round 3 reproduces round 1's set and must fail.
+func TestReviewZeroProgressDetectsOscillation(t *testing.T) {
+	wf := repairWorkflow(t, -1, 16)
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": json.RawMessage(`{"summary":"v1"}`),
+		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-fA","severity":"high","reason":"x"}]}`),
+		"implement#2": json.RawMessage(`{"summary":"v2"}`),
+		"review#2":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R1-fB","severity":"high","reason":"y"}]}`),
+		"implement#3": json.RawMessage(`{"summary":"v3"}`),
+		"review#3":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R2-fA","severity":"high","reason":"x"}]}`),
+	}}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
+		"implement": {Agent: agents.ResolvedAgent{Name: "dev"}},
+		"review":    {Agent: agents.ResolvedAgent{Name: "rev"}},
+	}, map[string]any{"task": "x"}, "wfr-oscillation", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctrl.Run(context.Background())
+	if err == nil || got.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("run = %+v err=%v; want failed on an A-B-A oscillation", got, err)
+	}
+	if !strings.Contains(err.Error(), "review made no progress across rounds") {
+		t.Fatalf("err = %v, want the zero-progress cause", err)
+	}
+	attempts, listErr := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	for _, a := range attempts {
+		if a.StepID == "review" && a.AttemptNo == 3 {
+			if a.Status != workflowledger.AttemptStatusFailed {
+				t.Fatalf("review#3 status = %q, want failed", a.Status)
+			}
+			if a.ToStepID != "failure" {
+				t.Fatalf("review#3 route = %q, want failure", a.ToStepID)
+			}
+		}
+	}
+}
+
+// TestPriorOutputAttemptsWindow pins the ordering and bound of the comparison
+// window: newest first, capped, and attempts without output excluded.
+func TestPriorOutputAttemptsWindow(t *testing.T) {
+	attempts := []workflowledger.StepAttempt{
+		{StepID: "review", AttemptNo: 1, OutputRef: "sha256:a"},
+		{StepID: "review", AttemptNo: 2},
+		{StepID: "other", AttemptNo: 3, OutputRef: "sha256:c"},
+		{StepID: "review", AttemptNo: 4, OutputRef: "sha256:d"},
+		{StepID: "review", AttemptNo: 3, OutputRef: "sha256:b"},
+	}
+	got := priorOutputAttempts(attempts, "review", 2)
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2 (limit)", len(got))
+	}
+	if got[0].AttemptNo != 4 || got[1].AttemptNo != 3 {
+		t.Fatalf("order = %d,%d; want 4,3 (newest first)", got[0].AttemptNo, got[1].AttemptNo)
+	}
+	if all := priorOutputAttempts(attempts, "review", 0); len(all) != 3 {
+		t.Fatalf("unbounded len = %d, want 3 (attempt 2 has no output, 'other' excluded)", len(all))
+	}
+}
+
+// TestReviewZeroProgressSkipsUnparsablePriorRound pins that a prior round
+// whose stored output is not valid JSON is skipped, not treated as a match.
+// Failing a run because an old blob is unreadable would be a false positive.
+func TestReviewZeroProgressSkipsUnparsablePriorRound(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-unparsable"
+	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("x"), DefinitionDigest: "d",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: "wf", Status: workflowledger.RunStatusPending,
+	}, snapshotJSON); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte("not json")
+	ref := fmt.Sprintf("sha256:%x", sha256.Sum256(body))
+	if err := repo.StoreContent(ctx, ref, body); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{AttemptID: "att-1", RunID: runID, StepID: "review", AttemptNo: 1}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	storedAttempt, err := repo.GetStepAttempt(ctx, runID, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, storedAttempt.Version, workflowledger.AttemptOutcome{
+		Status: workflowledger.AttemptStatusSucceeded, OutputRef: ref, ToStepID: "implement",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl := &LinearController{Repo: repo, RunID: runID}
+	step := definition.Step{ID: "review", Kind: "agent_gate"}
+	output := map[string]any{
+		"verdict":  "changes_requested",
+		"findings": []any{map[string]any{"id": "R1-f1"}},
+	}
+	got, err := ctrl.reviewMadeNoProgress(ctx, step, RouteDecision{Loop: "review_repair"}, output)
+	if err != nil {
+		t.Fatalf("reviewMadeNoProgress error = %v, want nil", err)
+	}
+	if got {
+		t.Error("an unparsable prior round must not count as zero progress")
 	}
 }

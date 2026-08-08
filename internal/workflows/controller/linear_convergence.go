@@ -4,18 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"sort"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // reviewMadeNoProgress reports whether a succeeded agent_gate review with a
-// changes_requested verdict reproduced the previous round's findings set. Both
-// finding-id sets are normalized by stripping the leading R<digits>- round
-// prefix, so a review that re-emits the SAME findings with a NEW round prefix
-// counts as zero progress. The gate applies only when the previous review
-// produced a non-empty findings set: the first round and any round that
-// changed the set route normally on the loop back-edge.
+// changes_requested verdict reproduced the findings set of ANY recent prior
+// round, within maxConvergenceHistory rounds. Both finding-id sets are
+// normalized by stripping the leading R<digits>- round prefix, so a review
+// that re-emits the SAME findings with a NEW round prefix counts as zero
+// progress. The gate applies only to rounds whose findings set is non-empty:
+// the first round and any round that reaches a new set route normally on the
+// loop back-edge.
 func (c *LinearController) reviewMadeNoProgress(ctx context.Context, step definition.Step, route RouteDecision, output map[string]any) (bool, error) {
 	if step.Kind != "agent_gate" || route.Loop == "" {
 		return false, nil
@@ -28,25 +30,54 @@ func (c *LinearController) reviewMadeNoProgress(ctx context.Context, step defini
 	if err != nil {
 		return false, err
 	}
-	// The attempt being settled is still Running with no OutputRef, so the
-	// latest output attempt is the previous COMPLETED review.
-	prior, ok := latestOutputAttempt(attempts, step.ID)
-	if !ok {
-		return false, nil
+	// The attempt being settled is still Running with no OutputRef, so every
+	// output attempt here is a previous COMPLETED review.
+	//
+	// The comparison covers a window of prior rounds, not only the last one.
+	// Against the immediately prior round alone, a reviewer that alternates
+	// between two finding sets (A, B, A, B) never repeats consecutively. Such
+	// a run makes no progress but is not detected, so it burns the loop cap
+	// and dies at the 24h duration bound as an undiagnosed timeout.
+	for _, prior := range priorOutputAttempts(attempts, step.ID, maxConvergenceHistory) {
+		raw, err := c.Repo.LoadContent(ctx, prior.OutputRef)
+		if err != nil {
+			return false, err
+		}
+		var priorOutput map[string]any
+		if err := json.Unmarshal(raw, &priorOutput); err != nil {
+			continue
+		}
+		previous := findingIDSet(priorOutput)
+		if len(previous) == 0 {
+			continue
+		}
+		if equalStringSets(previous, current) {
+			return true, nil
+		}
 	}
-	raw, err := c.Repo.LoadContent(ctx, prior.OutputRef)
-	if err != nil {
-		return false, err
+	return false, nil
+}
+
+// maxConvergenceHistory bounds how many prior rounds one review is compared
+// against. It caps the work per round: the loop allows up to 500 iterations,
+// and an unbounded comparison would make the check quadratic in the round
+// count. A window of this size detects any oscillation with a period below it.
+const maxConvergenceHistory = 20
+
+// priorOutputAttempts returns up to limit completed attempts of step that
+// carry an output ref, most recent first.
+func priorOutputAttempts(attempts []workflowledger.StepAttempt, step string, limit int) []workflowledger.StepAttempt {
+	matched := make([]workflowledger.StepAttempt, 0, len(attempts))
+	for _, attempt := range attempts {
+		if attempt.StepID == step && attempt.OutputRef != "" {
+			matched = append(matched, attempt)
+		}
 	}
-	var priorOutput map[string]any
-	if err := json.Unmarshal(raw, &priorOutput); err != nil {
-		return false, nil
+	sort.Slice(matched, func(i, j int) bool { return matched[i].AttemptNo > matched[j].AttemptNo })
+	if limit > 0 && len(matched) > limit {
+		matched = matched[:limit]
 	}
-	previous := findingIDSet(priorOutput)
-	if len(previous) == 0 {
-		return false, nil
-	}
-	return equalStringSets(previous, current), nil
+	return matched
 }
 
 // failReviewNoProgress degrades a succeeded review that made no progress
