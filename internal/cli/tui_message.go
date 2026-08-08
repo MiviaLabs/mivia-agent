@@ -307,9 +307,12 @@ func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
 		}
 		return true
 	}
-	if pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil); pane.sidebarVisible && msg.X < pane.sidebarWidth {
-		// The chat hit map uses pane-relative rows. Do not let sidebar input
-		// select, focus, or scroll the chat pane.
+	if m.handleSidebarMouse(msg, skipViewport) {
+		return true
+	}
+	pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil)
+	if pane.sidebarVisible && msg.X >= pane.sidebarWidth && msg.X < pane.chatX {
+		// The divider and its padding are not interactive panes.
 		*skipViewport = true
 		return true
 	}
@@ -350,6 +353,51 @@ func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
 		m.renderVP() // clear selection chrome
 	}
 	return false
+}
+
+// handleSidebarMouse routes input in the visible sidebar. Divider padding is
+// not part of either pane, so it remains inert.
+func (m *tuiModel) handleSidebarMouse(msg tea.MouseMsg, skipViewport *bool) bool {
+	pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil)
+	if !pane.sidebarVisible || msg.X < 0 || msg.X >= pane.sidebarWidth {
+		return false
+	}
+	*skipViewport = true
+	sidebar := m.sessionsSidebar
+	if sidebar.confirm != confirmNone {
+		return true
+	}
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		sidebar.move(m.sessions, -1)
+		m.setFocus(focusSidebar)
+	case tea.MouseWheelDown:
+		sidebar.move(m.sessions, 1)
+		m.setFocus(focusSidebar)
+	case tea.MouseLeft:
+		cursor, ok := sidebar.cursorAt(m.sessions, m.height, msg.Y)
+		if !ok {
+			return true
+		}
+		now := time.Now()
+		if sidebar.doubleClick(cursor, now) {
+			sidebar.cursor = cursor
+			if sidebar.selectsNewSession(m.sessions) {
+				m.startNewSession()
+			} else if m.workspaceSwitchBusy() {
+				m.appendInfo("(finish the current turn before opening a session)")
+			} else if session, ok := sidebar.selected(m.sessions); ok {
+				if err := m.openSessionInfo(session); err != nil {
+					m.appendInfo("open failed: " + err.Error())
+					m.renderVP()
+				}
+			}
+		} else {
+			sidebar.cursor = cursor
+		}
+		m.setFocus(focusSidebar)
+	}
+	return true
 }
 
 func mouseWheelDelta(msg tea.MouseMsg) (int, bool) {

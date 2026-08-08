@@ -2,6 +2,7 @@ package cli
 
 import (
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/charmbracelet/lipgloss"
@@ -9,11 +10,19 @@ import (
 
 // sessionsSidebar stores the session-list state for the left sidebar.
 type sessionsSidebar struct {
-	cursor  int
-	scroll  int
-	confirm sessionsConfirm
-	notice  string
+	cursor          int
+	scroll          int
+	confirm         sessionsConfirm
+	notice          string
+	lastClickCursor int
+	lastClickAt     time.Time
 }
+
+const (
+	sidebarNewSessionY = 1
+	sidebarRowsY       = 3
+	sidebarChromeRows  = 4 // title, new action, divider, and footer
+)
 
 func (s *sessionsSidebar) clampScroll(rows int, visible int) {
 	visible = max(1, visible)
@@ -73,12 +82,37 @@ func (s *sessionsSidebar) selected(rows []chat.SessionInfo) (chat.SessionInfo, b
 	return rows[s.cursor-1], true
 }
 
+// cursorAt returns the sidebar cursor at a rendered terminal row.
+func (s *sessionsSidebar) cursorAt(rows []chat.SessionInfo, height, y int) (int, bool) {
+	if y == sidebarNewSessionY {
+		return 0, true
+	}
+	visible := max(1, max(1, height)-sidebarChromeRows)
+	s.clampScroll(len(rows), visible)
+	index := s.scroll + y - sidebarRowsY
+	if y < sidebarRowsY || index < s.scroll || index >= min(len(rows), s.scroll+visible) {
+		return 0, false
+	}
+	return index + 1, true
+}
+
+// doubleClick reports a second click on the same row within the activation window.
+func (s *sessionsSidebar) doubleClick(cursor int, now time.Time) bool {
+	double := cursor == s.lastClickCursor && now.Sub(s.lastClickAt) < 400*time.Millisecond
+	if double {
+		s.lastClickCursor = -1
+		return true
+	}
+	s.lastClickCursor = cursor
+	s.lastClickAt = now
+	return false
+}
+
 // view renders the non-modal session picker. The model owns the session rows.
 func (s *sessionsSidebar) view(rows []chat.SessionInfo, width, height int, focused bool) string {
 	width = max(1, width)
 	height = max(1, height)
-	const chromeRows = 4 // title + new action + divider + controls
-	visible := max(1, height-chromeRows)
+	visible := max(1, height-sidebarChromeRows)
 	title := tuiHeaderStyle.Render(" sessions ")
 	newSession := "  New session"
 	if s.selectsNewSession(rows) {

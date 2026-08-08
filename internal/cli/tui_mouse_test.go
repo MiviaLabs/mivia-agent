@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -207,6 +208,50 @@ func TestTUIMouseHitComposerClick(t *testing.T) {
 
 	if m.focus != focusComposer {
 		t.Errorf("focus=%v, want focusComposer after clicking composer", m.focus)
+	}
+}
+
+func TestTUIMouseSidebarDividerLanesDoNotReachEitherPane(t *testing.T) {
+	m := newReadyChatModel(24, 100)
+	m.mode = modeChat
+	m.sessionsSidebar = newSessionsSidebar()
+	m.setFocus(focusScrollback)
+	pane := newChatPaneLayout(m.width, true)
+	m.hitMap.rebuild(m.width, m.height, 0, 0, 0, -1, 1, 1, nil, 0)
+
+	for x := pane.sidebarWidth; x < pane.chatX; x++ {
+		skipViewport := false
+		m.setFocus(focusScrollback)
+		m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: 1}, &skipViewport)
+		if !skipViewport {
+			t.Fatalf("x %d: divider lane did not stop viewport input", x)
+		}
+		if m.focus != focusScrollback {
+			t.Fatalf("x %d: divider lane changed focus to %v", x, m.focus)
+		}
+	}
+}
+
+func TestTUIMouseSidebarRowsSelectAndWheelMove(t *testing.T) {
+	m := newReadyChatModel(24, 100)
+	m.mode = modeChat
+	m.sessionsSidebar = newSessionsSidebar()
+	m.sessions = []chat.SessionInfo{{Name: "first"}, {Name: "second"}}
+	m.setFocus(focusScrollback)
+	m.hitMap.rebuild(m.width, m.height, 0, 0, 0, -1, 1, 1, nil, 0)
+
+	// Session rows start after the title, new-session action, and divider.
+	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 1, Y: 4})
+	if m.focus != focusSidebar {
+		t.Fatalf("click focus = %v, want sidebar", m.focus)
+	}
+	if m.sessionsSidebar.cursor != 2 {
+		t.Fatalf("click cursor = %d, want second saved session", m.sessionsSidebar.cursor)
+	}
+
+	m.Update(tea.MouseMsg{Type: tea.MouseWheelUp, X: 1, Y: 4})
+	if m.sessionsSidebar.cursor != 1 {
+		t.Fatalf("wheel cursor = %d, want first saved session", m.sessionsSidebar.cursor)
 	}
 }
 

@@ -69,3 +69,22 @@ func TestNewChatPaneLayoutHidesSidebarOnNarrowTerminal(t *testing.T) {
 		t.Fatalf("chatWidth = %d, want 30", layout.chatWidth)
 	}
 }
+
+func TestNewChatPaneLayoutPreservesChatWidthNearPreferredSidebarBoundary(t *testing.T) {
+	for width := 67; width <= 71; width++ {
+		layout := newChatPaneLayout(width, true)
+		if !layout.sidebarVisible {
+			t.Fatalf("width %d: sidebarVisible = false, want true", width)
+		}
+		if layout.chatWidth < minimumChatWidth {
+			t.Fatalf("width %d: chatWidth = %d, want at least %d", width, layout.chatWidth, minimumChatWidth)
+		}
+		wantSidebarWidth := minimumSidebarWidth
+		if width == 71 {
+			wantSidebarWidth = preferredSidebarWidth
+		}
+		if layout.sidebarWidth != wantSidebarWidth {
+			t.Fatalf("width %d: sidebarWidth = %d, want %d", width, layout.sidebarWidth, wantSidebarWidth)
+		}
+	}
+}

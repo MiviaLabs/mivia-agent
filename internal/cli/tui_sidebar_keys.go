@@ -14,6 +14,10 @@ func (m *tuiModel) handleSidebarKey(key string) bool {
 	if sidebar.confirm != confirmNone {
 		switch key {
 		case "y":
+			if m.workspaceSwitchBusy() {
+				sidebar.notice = "finish the current turn before changing sessions"
+				return true
+			}
 			m.applySidebarSessionsConfirm()
 		case "n", "esc":
 			sidebar.confirm = confirmNone
@@ -46,6 +50,10 @@ func (m *tuiModel) handleSidebarKey(key string) bool {
 			}
 		}
 	case "d":
+		if m.workspaceSwitchBusy() {
+			sidebar.notice = "finish the current turn before changing sessions"
+			break
+		}
 		if session, ok := sidebar.selected(m.sessions); ok {
 			if session.WorktreeRoute {
 				sidebar.notice = sessionDeleteNotice(session)
@@ -54,6 +62,10 @@ func (m *tuiModel) handleSidebarKey(key string) bool {
 			}
 		}
 	case "P":
+		if m.workspaceSwitchBusy() {
+			sidebar.notice = "finish the current turn before changing sessions"
+			break
+		}
 		for _, session := range m.sessions {
 			if !session.WorktreeRoute {
 				sidebar.confirm = confirmPurgeAll

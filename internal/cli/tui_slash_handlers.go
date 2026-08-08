@@ -248,6 +248,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 			if err := m.session.Save(fields[1]); err != nil {
 				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("save error: " + err.Error()), Rendered: tuiErrorStyle.Render("save error: " + err.Error())})
 			} else {
+				m.refreshSessionList()
 				m.appendInfo(saveSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
 			}
 		} else {
@@ -279,6 +280,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 			if err := m.session.DeleteSession(fields[1]); err != nil {
 				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("delete error: " + err.Error()), Rendered: tuiErrorStyle.Render("delete error: " + err.Error())})
 			} else {
+				m.refreshSessionList()
 				m.appendInfo(deleteSessionResult(fields[1]))
 			}
 		} else {

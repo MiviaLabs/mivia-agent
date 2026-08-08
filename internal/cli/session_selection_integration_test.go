@@ -123,6 +123,26 @@ func TestIntegrationSessionsSidebarEnterLoadsPersistedSession(t *testing.T) {
 	}
 }
 
+func TestIntegrationSessionsSidebarMouseDoubleClickLoadsPersistedSession(t *testing.T) {
+	sess, res, infos, cleanup := persistedSessionForSelection(t)
+	defer cleanup()
+
+	m := newTUIModel(sess, res, true)
+	m.mode, m.ready, m.width, m.height = modeChat, true, 100, 40
+	m.sessions = infos
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+
+	// The first saved-session row follows the title, new-session action, and divider.
+	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 1, Y: 3})
+	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: 1, Y: 3})
+
+	if got := sess.MessagesCopy(); len(got) != 2 || got[0].Content != "previous question" {
+		t.Fatalf("mouse double-click did not restore persisted history: %#v", got)
+	}
+}
+
 func TestIntegrationSessionsSidebarNewSessionStartsFreshConversation(t *testing.T) {
 	sess, res, infos, cleanup := persistedSessionForSelection(t)
 	defer cleanup()
@@ -304,5 +324,56 @@ func TestIntegrationSidebarDeleteConfirmsAndRemovesSession(t *testing.T) {
 	}
 	if sessions, err := sess.ListSessions(); err != nil || len(sessions) != 0 {
 		t.Fatalf("stored sessions after delete = %#v, %v", sessions, err)
+	}
+}
+
+func TestIntegrationSidebarBlocksDestructiveActionsWhileBusy(t *testing.T) {
+	sess, res, infos, cleanup := persistedSessionForSelection(t)
+	defer cleanup()
+	m := newTUIModel(sess, res, true)
+	m.mode, m.ready, m.width, m.height = modeChat, true, 100, 40
+	m.sessions = infos
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m.waiting = true
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if m.sessionsSidebar.confirm != confirmNone {
+		t.Fatal("d armed a delete while a turn was running")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	if m.sessionsSidebar.confirm != confirmNone {
+		t.Fatal("P armed a purge while a turn was running")
+	}
+	m.waiting = false
+	m.sessionsSidebar.confirm = confirmDeleteOne
+	m.cancelling = true
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if m.sessionsSidebar.confirm != confirmDeleteOne {
+		t.Fatal("confirmation changed during cancellation unwind")
+	}
+	if sessions, err := sess.ListSessions(); err != nil || len(sessions) != 1 {
+		t.Fatalf("busy sidebar action changed stored sessions: %#v, %v", sessions, err)
+	}
+}
+
+func TestIntegrationSessionStoreSlashRefreshesSidebarRows(t *testing.T) {
+	sess, res, _, cleanup := persistedSessionForSelection(t)
+	defer cleanup()
+	m := newTUIModel(sess, res, true)
+	m.mode, m.ready, m.width, m.height = modeChat, true, 100, 40
+	m.sessions = nil
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+
+	m.handleTuiSessionStoreSlash("/save", []string{"/save", "from-slash"})
+	if len(m.sessions) != 2 || m.sessions[0].Name != "from-slash" {
+		t.Fatalf("sidebar rows after save = %#v, want refreshed rows with from-slash first", m.sessions)
+	}
+	m.handleTuiSessionStoreSlash("/delete", []string{"/delete", "from-slash"})
+	if len(m.sessions) != 1 || m.sessions[0].Name != "previous" {
+		t.Fatalf("sidebar rows after delete = %#v, want only previous", m.sessions)
 	}
 }

@@ -8,6 +8,7 @@ const (
 	minimumChatWidth      = 40
 	sidebarDividerWidth   = 1
 	sidebarDividerPadding = 1
+	sidebarDividerLanes   = 2*sidebarDividerPadding + sidebarDividerWidth
 )
 
 // chatPaneLayout defines the terminal areas for the chat view.
@@ -23,7 +24,7 @@ type chatPaneLayout struct {
 // newChatPaneLayout returns the areas for the chat view.
 func newChatPaneLayout(width int, sidebarVisible bool) chatPaneLayout {
 	layout := chatPaneLayout{chatWidth: width}
-	if !sidebarVisible || width < minimumSidebarWidth+2*sidebarDividerPadding+sidebarDividerWidth+minimumChatWidth {
+	if !sidebarVisible || width < minimumSidebarWidth+sidebarDividerLanes+minimumChatWidth {
 		return layout
 	}
 
@@ -31,10 +32,10 @@ func newChatPaneLayout(width int, sidebarVisible bool) chatPaneLayout {
 	layout.dividerPadding = sidebarDividerPadding
 	layout.dividerWidth = sidebarDividerWidth
 	layout.sidebarWidth = minimumSidebarWidth
-	if width >= preferredSidebarWidth+minimumChatWidth {
+	if width >= preferredSidebarWidth+sidebarDividerLanes+minimumChatWidth {
 		layout.sidebarWidth = preferredSidebarWidth
 	}
-	layout.chatX = layout.sidebarWidth + 2*layout.dividerPadding + layout.dividerWidth
+	layout.chatX = layout.sidebarWidth + sidebarDividerLanes
 	layout.chatWidth = width - layout.chatX
 	return layout
 }
