@@ -36,6 +36,9 @@ mivia workflow runs --status running --limit 20
 # Resume an interrupted run
 mivia workflow resume wfr-ABCDEF1234
 
+# Resume a run that settles at delivery_pending and deliver it in the same call
+mivia workflow resume wfr-ABCDEF1234 --allow-publish
+
 # Force-resume a run held by a stale process
 mivia workflow resume wfr-ABCDEF1234 --force
 
@@ -69,6 +72,7 @@ A run without `--allow-publish` finishes as `delivery_pending`. It stays there u
 | `--workspace <dir>` | all commands | `.` |
 | `--config <path>` | `workflow *` commands | user default |
 | `--force` | `workflow resume` | false |
+| `--allow-publish` | `workflow run`, `workflow deliver`, `workflow resume` | false |
 
 ## Worktrees
 

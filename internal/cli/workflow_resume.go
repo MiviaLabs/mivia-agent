@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -37,7 +38,7 @@ var (
 	workflowResumeJoinBound = 10 * time.Minute
 )
 
-func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _ io.Writer) error {
+func executeWorkflowResume(runID, root, configPath string, force, allowPublish bool, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
@@ -80,8 +81,11 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 		return err
 	}
 	terminal, err := reconcileWorkflowTerminal(ctx, repo, runID, compiled.DeliveryActive(), stdout)
-	if err != nil || terminal {
+	if err != nil {
 		return err
+	}
+	if terminal {
+		return finishWorkflowResumeTerminal(ctx, work.Abs, res, store, repo, runID, run.WorkflowName, compiled, allowPublish, stdout, stderr)
 	}
 	uninstallHooks, err := workflowResumeInstallHooks(work.Abs, false)
 	if err != nil {
@@ -105,7 +109,38 @@ func executeWorkflowResume(runID, root, configPath string, force bool, stdout, _
 	defer releaseWorkflowResumeHandoff(repo, runID, built.Controller)
 	snap, err := workflowResumeRun(ctx, built)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, snap.Status)
-	return err
+	if err != nil {
+		return err
+	}
+	if snap.Status == workflowledger.RunStatusDeliveryPending {
+		return finishWorkflowRunDelivery(ctx, work.Abs, res, store, repo, runID, run.WorkflowName, workflowResumeDeliveryMode(compiled), allowPublish, stdout, stderr)
+	}
+	return nil
+}
+
+// finishWorkflowResumeTerminal delivers a run reconcileWorkflowTerminal
+// already settled, when that settlement landed on delivery_pending.
+func finishWorkflowResumeTerminal(ctx context.Context, workRoot string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, stdout, stderr io.Writer) error {
+	settled, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if settled.Status != workflowledger.RunStatusDeliveryPending {
+		return nil
+	}
+	return finishWorkflowRunDelivery(ctx, workRoot, res, store, repo, runID, workflowName, workflowResumeDeliveryMode(compiled), allowPublish, stdout, stderr)
+}
+
+// workflowResumeDeliveryMode returns the compiled workflow's delivery mode,
+// or "" when no delivery policy is compiled. Mirrors the inline nil check
+// executeWorkflowRun uses; extracted here because executeWorkflowResume needs
+// it at both the crash-recovery settle point and the normal resume-settle
+// point.
+func workflowResumeDeliveryMode(compiled *compiler.CompiledWorkflow) string {
+	if compiled != nil && compiled.Delivery != nil {
+		return compiled.Delivery.Mode
+	}
+	return ""
 }
 
 // prepareWorkflowResumeExecution handles the shared resume handoff. It claims

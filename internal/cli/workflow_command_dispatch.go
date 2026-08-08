@@ -66,10 +66,14 @@ func runWorkflowCommandDeliver(args []string, workspaceRoot, configPath string, 
 }
 
 func runWorkflowCommandResume(args []string, workspaceRoot, configPath string, force bool, stdout, stderr io.Writer) error {
-	if len(args) != 1 {
+	allowPublish, rest, err := parseWorkflowBoolFlag(args, "--allow-publish")
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
 		return fmt.Errorf("workflow resume: expected one run ID")
 	}
-	return executeWorkflowResume(args[0], workspaceRoot, configPath, force, stdout, stderr)
+	return executeWorkflowResume(rest[0], workspaceRoot, configPath, force, allowPublish, stdout, stderr)
 }
 
 func runWorkflowCommandStatus(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
