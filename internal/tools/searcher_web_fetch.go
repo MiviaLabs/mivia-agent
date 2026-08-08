@@ -157,19 +157,34 @@ func formatWebResult(title, href, snippet string) string {
 }
 
 // parseDDGResults extracts search results from DuckDuckGo Lite HTML.
-// The Lite page uses a simple table with alternating result-link and result-snippet rows.
+// The Lite page uses a simple table with alternating result-link and result-snippet rows,
+// but does not guarantee every result-link row is followed by a result-snippet row.
 func parseDDGResults(html string, max int) []string {
 	var out []string
 	rows := ddgRE.FindAllString(html, -1)
 	var pendingTitle, pendingURL string
+	// flushPending emits the pending link with an empty snippet. A link row
+	// arriving while a previous link is still pending means that previous link
+	// has no snippet: without a flush here, the following snippet would attach
+	// to the stale link and the newer link would be dropped entirely.
+	flushPending := func() bool {
+		if pendingTitle == "" {
+			return false
+		}
+		out = append(out, formatWebResult(pendingTitle, pendingURL, ""))
+		pendingTitle = ""
+		pendingURL = ""
+		return len(out) >= max
+	}
 	for _, row := range rows {
 		if m := linkCellRE.FindStringSubmatch(row); len(m) >= 3 {
 			href := unwrapDDGRedirect(decodeHTMLEntities(strings.TrimSpace(m[1])))
 			title := stripHTMLTags(strings.TrimSpace(m[2]))
-			if pendingTitle == "" {
-				pendingURL = href
-				pendingTitle = title
+			if flushPending() {
+				return out
 			}
+			pendingURL = href
+			pendingTitle = title
 		}
 		if m := snippetCellRE.FindStringSubmatch(row); len(m) >= 2 {
 			snippet := stripHTMLTags(strings.TrimSpace(m[1]))
@@ -183,6 +198,8 @@ func parseDDGResults(html string, max int) []string {
 			}
 		}
 	}
+	// A trailing pending link with no following snippet is still a result.
+	flushPending()
 	return out
 }
 
