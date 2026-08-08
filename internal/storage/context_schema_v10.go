@@ -56,6 +56,16 @@ func ensureContextSchemaV10Tx(tx *sql.Tx) error {
 		return err
 	}
 	if !found {
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		var count int
+		if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('context_sessions') WHERE name='title'`).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			return fmt.Errorf("unsupported context session title schema")
+		}
 		if _, err := tx.Exec(`ALTER TABLE context_sessions ADD COLUMN title TEXT`); err != nil {
 			return fmt.Errorf("add context session title: %w", err)
 		}

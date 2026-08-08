@@ -57,6 +57,11 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 }
 
 func (m *tuiModel) handleTuiTitleSlash(cmd string) bool {
+	if m.activeSession != nil && m.activeSession.Reference() != m.session.SessionID {
+		m.appendInfo("title error: title the current durable session before loading another session")
+		return true
+	}
+	cmd = strings.TrimSpace(cmd)
 	title := strings.TrimSpace(strings.TrimPrefix(cmd, fieldsFirst(cmd)))
 	if err := m.session.SetContextSessionTitle(title); err != nil {
 		m.appendInfo("title error: " + err.Error())
@@ -292,7 +297,11 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 					marker = " [auto]"
 				}
 				name := displaySessionName(si, latestAutoSaveName(sessions))
-				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", name, si.MessageCount, marker)), Rendered: tuiDimStyle.Render(fmt.Sprintf("  %-20s %3d msgs%s", name, si.MessageCount, marker))})
+				line := fmt.Sprintf("  %-20s %3d msgs%s", name, si.MessageCount, marker)
+				if si.SessionID != "" {
+					line += " · " + si.Reference()
+				}
+				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(line), Rendered: tuiDimStyle.Render(line)})
 			}
 		}
 		return true
@@ -307,7 +316,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 				m.appendInfo(deleteSessionResult(fields[1]))
 			}
 		} else {
-			m.appendInfo("usage: /delete <name>")
+			m.appendInfo("usage: /delete <session-id>")
 		}
 		return true
 	case "/session":
@@ -331,7 +340,7 @@ func (m *tuiModel) runLoadSlash(fields []string) {
 	}
 	if len(fields) < 2 {
 		// Correct usage string on TUI (classic preserves a historical typo).
-		m.appendInfo("usage: /load <name>")
+		m.appendInfo("usage: /load <session-id>")
 		return
 	}
 	if err := m.session.Load(fields[1]); err != nil {

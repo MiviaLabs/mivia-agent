@@ -193,7 +193,7 @@ func TestSessionPickerShowsWorktreeMarker(t *testing.T) {
 		{Name: "a", MessageCount: 2, UpdatedAt: now, Worktree: "wt-x"},
 		{Name: "b", MessageCount: 1, UpdatedAt: now},
 	}
-	lines, _, _ := renderSessionRows(sessions, 0, 0, 5, 10)
+	lines, _, _ := renderSessionRows(sessions, 0, 0, 80, 5, 10)
 	if !strings.Contains(strings.Join(lines, "\n"), "⊞ wt-x") {
 		t.Fatalf("picker must show the worktree marker:\n%s", strings.Join(lines, "\n"))
 	}
