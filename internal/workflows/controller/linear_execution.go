@@ -353,8 +353,7 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 			}
 		}
 	} else if status == workflowledger.AttemptStatusFailed {
-		// Infrastructure/schema/agent failures use on_failure, never repair loops.
-		route = failureRoute(step)
+		route = c.routeFailedAttempt(writeCtx, step, runErr)
 	}
 	if status == workflowledger.AttemptStatusSucceeded {
 		if err = c.completeSucceededRoute(writeCtx, attempt, result, route); err != nil {
