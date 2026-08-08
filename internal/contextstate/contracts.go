@@ -117,7 +117,7 @@ func (r SourceRange) Validate() error {
 	if r.Start.Sequence > r.End.Sequence {
 		return invalid("source_range", "start follows end")
 	}
-	if r.End.Sequence-r.Start.Sequence+1 > MaxSourceRangeEvents {
+	if r.End.Sequence-r.Start.Sequence >= MaxSourceRangeEvents {
 		return invalid("source_range", "range exceeds event limit")
 	}
 	return nil
