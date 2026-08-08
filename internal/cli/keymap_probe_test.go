@@ -41,16 +41,16 @@ func fingerprint(m *tuiModel) string {
 	if m.runDash != nil {
 		dash = fmt.Sprintf("%d/%v", m.runDash.selectedIdx, m.runDash.isOpen())
 	}
-	dlg := ""
-	if m.sessionsDlg != nil {
-		dlg = fmt.Sprintf("%d/%d/%s/%d", m.sessionsDlg.cursor, m.sessionsDlg.confirm, m.sessionsDlg.notice, m.sessionsDlg.scroll)
+	sidebar := ""
+	if m.sessionsSidebar != nil {
+		sidebar = fmt.Sprintf("%d/%d/%s/%d", m.sessionsSidebar.cursor, m.sessionsSidebar.confirm, m.sessionsSidebar.notice, m.sessionsSidebar.scroll)
 	}
 	ov := ""
 	if m.overlay != nil {
 		ov = fmt.Sprintf("%d", m.overlay.yOffset)
 	}
-	return fmt.Sprintf("dash=%s dlg=%s ov=%s suggest=%v/%d/%d sel=%d mode=%d focus=%d block=%s mouse=%v draft=%q vp=%d follow=%v",
-		dash, dlg, ov, m.suggest.open, len(m.suggest.commands), m.suggest.selected, m.sessionSel, m.mode, m.focus, m.selectedBlockID,
+	return fmt.Sprintf("dash=%s sidebar=%s ov=%s suggest=%v/%d/%d sel=%d mode=%d focus=%d block=%s mouse=%v draft=%q vp=%d follow=%v",
+		dash, sidebar, ov, m.suggest.open, len(m.suggest.commands), m.suggest.selected, m.sessionSel, m.mode, m.focus, m.selectedBlockID,
 		m.mouseEnabled, m.textarea.Value(), m.viewport.YOffset, m.followOutput)
 }
 
@@ -90,11 +90,10 @@ func boundKeyProbes(t *testing.T) []keyProbe {
 	// Sessions manager.
 	all = append(all, probeSurface(t, scopeSessions, func(m *tuiModel) {
 		m.sessions = []chat.SessionInfo{{Name: "one"}, {Name: "two"}}
-		m.openSessionsDialog()
+		m.sessionsSidebar = newSessionsSidebar()
+		m.setFocus(focusSidebar)
 	}, func(m *tuiModel, key string) {
-		if m.sessionsDlg != nil {
-			m.handleSessionsDialogKey(key)
-		}
+		m.handleChatKey(key, false)
 	})...)
 
 	// Block/help/status overlay.

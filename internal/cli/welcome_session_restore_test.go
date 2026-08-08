@@ -198,13 +198,3 @@ func TestSessionPickerShowsWorktreeMarker(t *testing.T) {
 		t.Fatalf("picker must show the worktree marker:\n%s", strings.Join(lines, "\n"))
 	}
 }
-
-// TestSessionsDialogShowsWorktreeMarker verifies the /sessions dialog rows
-// carry the same worktree marker.
-func TestSessionsDialogShowsWorktreeMarker(t *testing.T) {
-	d := newSessionsDialog([]chat.SessionInfo{{Name: "a", MessageCount: 2, UpdatedAt: time.Now(), Worktree: "wt-x"}})
-	rows := d.rowLines(60, 10)
-	if !strings.Contains(strings.Join(rows, "\n"), "⊞ wt-x") {
-		t.Fatalf("dialog must show the worktree marker:\n%s", strings.Join(rows, "\n"))
-	}
-}

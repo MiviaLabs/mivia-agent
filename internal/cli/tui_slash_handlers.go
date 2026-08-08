@@ -221,7 +221,6 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 		} else {
 			m.appendInfo("sessions refresh failed: " + err.Error())
 		}
-		m.sessionsDlg = nil
 		if !newChatPaneLayout(m.width, true).sidebarVisible {
 			m.appendInfo("sessions sidebar needs a wider terminal")
 			return true
@@ -248,6 +247,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 			if err := m.session.Save(fields[1]); err != nil {
 				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("save error: " + err.Error()), Rendered: tuiErrorStyle.Render("save error: " + err.Error())})
 			} else {
+				m.refreshSessionList()
 				m.appendInfo(saveSessionResult(fields[1], m.session.MessagesCount(), m.session.UserTurns()))
 			}
 		} else {
@@ -279,6 +279,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 			if err := m.session.DeleteSession(fields[1]); err != nil {
 				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("delete error: " + err.Error()), Rendered: tuiErrorStyle.Render("delete error: " + err.Error())})
 			} else {
+				m.refreshSessionList()
 				m.appendInfo(deleteSessionResult(fields[1]))
 			}
 		} else {

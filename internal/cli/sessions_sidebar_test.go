@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 )
@@ -18,6 +19,21 @@ func TestSessionsSidebarMoveSelectsSession(t *testing.T) {
 	}
 	if selected.Name != "second" {
 		t.Fatalf("selected session = %q, want %q", selected.Name, "second")
+	}
+}
+
+func TestSessionsSidebarDoubleClickRequiresSameRecentRow(t *testing.T) {
+	sidebar := newSessionsSidebar()
+	now := time.Now()
+
+	if sidebar.doubleClick(1, now) {
+		t.Fatal("first click activated a row")
+	}
+	if sidebar.doubleClick(2, now.Add(time.Millisecond)) {
+		t.Fatal("different row activated a row")
+	}
+	if !sidebar.doubleClick(2, now.Add(2*time.Millisecond)) {
+		t.Fatal("second click on the same row did not activate it")
 	}
 }
 
