@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -71,12 +72,23 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 	slices.Sort(names)
 	want := []string{}
 	if !synthesizer {
-		want = slices.Clone(panelReviewerTools)
+		want = panelMCPAllowedTools(agent, authority)
+		slices.Sort(want)
 	}
 	if !slices.Equal(names, want) {
 		return fmt.Errorf("panel agent %q final runtime tools = %v, want %v", agent.Name, names, want)
 	}
 	return nil
+}
+
+func panelMCPAllowedTools(agent agents.ResolvedAgent, authority *tools.Registry) []string {
+	out := slices.Clone(panelReviewerTools)
+	for _, name := range authorizedAgentTools(&agent, authority) {
+		if strings.HasPrefix(name, "mcp__") {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry, error) {
