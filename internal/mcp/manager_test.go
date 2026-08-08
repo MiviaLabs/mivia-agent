@@ -100,6 +100,45 @@ func TestManagerAppliesServerTimeout(t *testing.T) {
 	}
 }
 
+func TestNewHTTPClientUsesBoundedTransport(t *testing.T) {
+	endpoint, err := url.Parse("https://example.test/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newHTTPClient(http.Header{}, endpoint)
+	wrapped, ok := client.Transport.(headerTransport)
+	if !ok {
+		t.Fatalf("transport = %T, want headerTransport", client.Transport)
+	}
+	transport, ok := wrapped.base.(*http.Transport)
+	if !ok || transport.TLSHandshakeTimeout == 0 || transport.ResponseHeaderTimeout == 0 || transport.IdleConnTimeout == 0 {
+		t.Fatalf("HTTP transport bounds = %#v", transport)
+	}
+}
+
+func TestSerializedRemoteClientSerializesCalls(t *testing.T) {
+	client := &serialProbeClient{entered: make(chan struct{}, 2), release: make(chan struct{})}
+	wrapped := &serializedRemoteClient{client: client}
+	done := make(chan struct{}, 2)
+	for range 2 {
+		go func() {
+			_, _ = wrapped.CallTool(context.Background(), "tool", nil)
+			done <- struct{}{}
+		}()
+	}
+	<-client.entered
+	select {
+	case <-client.entered:
+		t.Fatal("serialized client started two calls at once")
+	case <-time.After(20 * time.Millisecond):
+	}
+	client.release <- struct{}{}
+	<-client.entered
+	client.release <- struct{}{}
+	<-done
+	<-done
+}
+
 type fakeRemoteClient struct{}
 
 func (fakeRemoteClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
@@ -115,3 +154,16 @@ func (toolListClient) CallTool(context.Context, string, map[string]any) (string,
 	return "", nil
 }
 func (toolListClient) Close() error { return nil }
+
+type serialProbeClient struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (c *serialProbeClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (c *serialProbeClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	c.entered <- struct{}{}
+	<-c.release
+	return "", nil
+}
+func (c *serialProbeClient) Close() error { return nil }

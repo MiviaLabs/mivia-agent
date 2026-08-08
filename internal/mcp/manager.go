@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,8 +30,9 @@ type remoteClient interface {
 }
 
 type sdkClient struct {
-	session *sdk.ClientSession
-	command *exec.Cmd
+	session    *sdk.ClientSession
+	command    *exec.Cmd
+	httpClient *http.Client
 }
 
 func (c *sdkClient) ListTools(ctx context.Context) ([]remoteTool, error) {
@@ -62,6 +64,9 @@ func (c *sdkClient) CallTool(ctx context.Context, name string, arguments map[str
 }
 func (c *sdkClient) Close() error {
 	err := c.session.Close()
+	if c.httpClient != nil {
+		c.httpClient.CloseIdleConnections()
+	}
 	if c.command == nil {
 		return err
 	}
@@ -90,17 +95,55 @@ func connectStreamableHTTP(ctx context.Context, server config.MCPServerConfig) (
 			headers.Set(header.Name, value)
 		}
 	}
-	client := &http.Client{Transport: headerTransport{base: http.DefaultTransport, headers: headers}, CheckRedirect: sameOriginRedirect(endpoint)}
+	client := newHTTPClient(headers, endpoint)
 	session, err := sdk.NewClient(&sdk.Implementation{Name: "mivia", Version: "1"}, nil).Connect(ctx, &sdk.StreamableClientTransport{Endpoint: server.URL, HTTPClient: client, MaxRetries: 1, DisableStandaloneSSE: true}, nil)
 	if err != nil {
 		return nil, err
 	}
-	return &sdkClient{session: session}, nil
+	return &sdkClient{session: session, httpClient: client}, nil
+}
+
+func newHTTPClient(headers http.Header, endpoint *url.URL) *http.Client {
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          8,
+		MaxIdleConnsPerHost:   1,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+	return &http.Client{Transport: headerTransport{base: transport, headers: headers}, CheckRedirect: sameOriginRedirect(endpoint)}
 }
 
 type headerTransport struct {
 	base    http.RoundTripper
 	headers http.Header
+}
+
+type serializedRemoteClient struct {
+	client remoteClient
+	mu     sync.Mutex
+}
+
+func (c *serializedRemoteClient) ListTools(ctx context.Context) ([]remoteTool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.ListTools(ctx)
+}
+
+func (c *serializedRemoteClient) CallTool(ctx context.Context, name string, args map[string]any) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.CallTool(ctx, name, args)
+}
+
+func (c *serializedRemoteClient) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.Close()
 }
 
 func (t headerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -229,6 +272,7 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 				m.failures[id] = err
 				return nil, fmt.Errorf("MCP server %q is unavailable", id)
 			}
+			client = &serializedRemoteClient{client: client}
 			m.clients[id] = client
 			discoveryCtx, cancel := m.serverContext(ctx, server)
 			remote, err := client.ListTools(discoveryCtx)
