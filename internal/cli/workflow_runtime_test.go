@@ -83,8 +83,12 @@ func TestLoadWorkflowRuntimesPinsPanelMemberBindings(t *testing.T) {
 	if err := registry.Publish(member); err != nil {
 		t.Fatal(err)
 	}
+	synthesizer := agents.ResolvedAgent{Name: "review-synthesizer", AllowEmptyTools: true}
+	if err := registry.Publish(synthesizer); err != nil {
+		t.Fatal(err)
+	}
 	wf := &compiler.CompiledWorkflow{Digest: "workflow", Steps: []definition.Step{{
-		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{
+		ID: "review", Kind: "agent_panel", Agent: "review-synthesizer", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{
 			ID: "security", Agent: "panel-reviewer", Provider: "deepseek", Model: "deepseek-v4-flash", Skill: "bug-audit", Template: "member.md", OutputSchema: "member.json",
 		}}},
 	}}}
@@ -98,6 +102,12 @@ func TestLoadWorkflowRuntimesPinsPanelMemberBindings(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"panel_bindings":{"review/security":`) || !strings.Contains(string(raw), `"provider_name":"deepseek"`) {
 		t.Fatalf("snapshot does not pin member binding: %s", raw)
+	}
+	if pinned, ok := snapshot.Agents["review-synthesizer"]; !ok || pinned.Digest == "" {
+		t.Fatal("snapshot does not pin the panel synthesizer")
+	}
+	if _, _, err := loadWorkflowRuntimes(t.TempDir(), base, wf, registry, &snapshot); err != nil {
+		t.Fatalf("loadWorkflowRuntimes(resume): %v", err)
 	}
 	for name, mutate := range map[string]func(*workflowledger.PanelBindingSnapshot){
 		"agent digest":    func(b *workflowledger.PanelBindingSnapshot) { b.AgentDigest = "changed" },
@@ -139,6 +149,12 @@ func TestAuthorizeWorkflowPanelBindings(t *testing.T) {
 			b := f.snapshot.PanelBindings["review/security"]
 			b.ProviderName = "unknown"
 			f.snapshot.PanelBindings["review/security"] = b
+		},
+		"unknown catalog provider": func(f *panelAuthorizationFixture) {
+			b := f.snapshot.PanelBindings["review/security"]
+			b.ProviderName = "unknown"
+			f.snapshot.PanelBindings["review/security"] = b
+			f.opts.ModelCatalog = append(f.opts.ModelCatalog, config.ProviderModelGroup{Provider: "unknown", Selectable: true, Models: []config.ModelSpec{{Name: "flash", ContextWindowTokens: 1000}}})
 		},
 		"unknown model": func(f *panelAuthorizationFixture) {
 			b := f.snapshot.PanelBindings["review/security"]

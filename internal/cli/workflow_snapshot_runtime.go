@@ -33,6 +33,9 @@ func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, regi
 			snapshot.Schemas[step.OutputSchema] = workflowledger.RefSnapshot{Digest: digestBytes(schemaBytes), Bytes: append([]byte(nil), schemaBytes...)}
 		}
 		if step.Kind == "agent_panel" && step.Panel != nil {
+			if err := pinWorkflowAgent(step.ID, step.Agent, registry, prior, &snapshot); err != nil {
+				return nil, snapshot, err
+			}
 			if err := loadPanelMemberBindings(base, step, registry, prior, &snapshot); err != nil {
 				return nil, snapshot, err
 			}
@@ -41,22 +44,11 @@ func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, regi
 		if step.Kind != "agent" && step.Kind != "agent_gate" {
 			continue
 		}
-		agent, ok := registry.Get(step.Agent)
-		if !ok {
-			return nil, snapshot, fmt.Errorf("workflow step %q references unknown agent %q", step.ID, step.Agent)
-		}
-		digest, err := agent.DefinitionDigest()
+		agent, digest, err := workflowAgent(step.ID, step.Agent, registry, prior, &snapshot)
 		if err != nil {
 			return nil, snapshot, err
 		}
-		if prior != nil {
-			pinned, ok := prior.Agents[agent.Name]
-			if !ok || pinned.Digest != digest {
-				return nil, snapshot, fmt.Errorf("agent %q changed since workflow admission", agent.Name)
-			}
-		}
 		result[step.ID] = controller.StepRuntime{Agent: agent, Digest: digest, Template: tmpl, Schema: schema}
-		snapshot.Agents[agent.Name] = workflowledger.AgentSnapshot{Digest: digest}
 	}
 	if prior == nil && wf.DeliveryActive() {
 		snapshot.Delivery = &workflowledger.DeliverySnapshot{
@@ -64,6 +56,30 @@ func loadWorkflowRuntimes(root, base string, wf *compiler.CompiledWorkflow, regi
 		}
 	}
 	return result, snapshot, nil
+}
+
+func pinWorkflowAgent(stepID, agentName string, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, snapshot *workflowledger.Snapshot) error {
+	_, _, err := workflowAgent(stepID, agentName, registry, prior, snapshot)
+	return err
+}
+
+func workflowAgent(stepID, agentName string, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, snapshot *workflowledger.Snapshot) (agents.ResolvedAgent, string, error) {
+	agent, ok := registry.Get(agentName)
+	if !ok {
+		return agents.ResolvedAgent{}, "", fmt.Errorf("workflow step %q references unknown agent %q", stepID, agentName)
+	}
+	digest, err := agent.DefinitionDigest()
+	if err != nil {
+		return agents.ResolvedAgent{}, "", err
+	}
+	if prior != nil {
+		pinned, ok := prior.Agents[agent.Name]
+		if !ok || pinned.Digest != digest {
+			return agents.ResolvedAgent{}, "", fmt.Errorf("agent %q changed since workflow admission", agent.Name)
+		}
+	}
+	snapshot.Agents[agent.Name] = workflowledger.AgentSnapshot{Digest: digest}
+	return agent, digest, nil
 }
 
 func loadPanelMemberBindings(base string, step definition.Step, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, snapshot *workflowledger.Snapshot) error {

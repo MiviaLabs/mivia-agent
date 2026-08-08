@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -87,6 +88,9 @@ func authorizeWorkflowPanelBindings(wf *compiler.CompiledWorkflow, registry *age
 			}
 			if strings.TrimSpace(binding.ProviderName) == "" || strings.TrimSpace(binding.Model) == "" {
 				return fmt.Errorf("panel binding %q has an incomplete provider/model pair", key)
+			}
+			if _, ok := providerregistry.Lookup(binding.ProviderName); !ok {
+				return fmt.Errorf("panel binding %q uses unknown provider %q", key, binding.ProviderName)
 			}
 			resolved, err := resolvePinnedAgentBinding(agent, opts, binding.ProviderName, binding.Model)
 			if err != nil {
