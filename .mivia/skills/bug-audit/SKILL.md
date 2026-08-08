@@ -109,6 +109,60 @@ inputs; concurrency; restart; timeout; partial persistence; repeated delivery;
 stale cache; permission revocation; schema mismatch; clock skew). Prefer
 concrete counterexamples over general concerns.
 
+### Recurring-class probes
+
+When the workspace publishes a defect-class catalogue (a document that records the
+classes this codebase produces again and again, with a probe per class), read it and
+run the probes for every class the scope touches. When it publishes none, use the
+classes below. These are the classes that repeat most in long-lived systems, so probe
+them before you hunt for novel defects.
+
+- **Terminal state with no return edge.** List each terminal state and the conditions
+  that reach it. A transient condition that reaches a terminal state is a defect: the
+  work can never recover.
+- **Ownership without a fence.** When two workers, processes, or hosts can act on one
+  record, a boolean claim flag is not exclusion. A stale owner must fail its next
+  write. Check the takeover path and the release path on every failure branch.
+- **Compare-and-set against a stale version.** The version must come from a live read,
+  never a constant. A failed set must not fall through into the success path, and must
+  not leave the caller doing work the state no longer authorizes.
+- **Crash between two durable writes.** For each write sequence, name the state after a
+  crash at each gap, and check the recovery path handles it. Recovery must be
+  idempotent, and must restore work without restoring authority.
+- **Sentinel bound read as a real bound.** When a bound uses a sentinel value for "no
+  limit", a guard of the form `len(x) >= max` reads the sentinel as "already at the
+  limit". Count the layers that replace a caller value with a default; more than one
+  layer means the caller value cannot reach the runtime.
+- **Two limits on one variable.** Independent limits with different owners must not
+  share a variable, and a fixed constant must not govern work whose real bound is a
+  caller deadline. Check each bound at zero, one, maximum, and past maximum, and check
+  paging past the last page for an overflowing sum.
+- **Truncation that breaks its own type.** A cut value must stay a valid value: valid
+  text encoding, valid structure, valid length. The caller must learn that the cut
+  happened.
+- **Retry of a permanent failure.** Classify each failure as transient or permanent
+  before retry. Bound both the attempt count and the elapsed time. Each attempt must
+  restate the full contract, and cancellation during backoff must release the staged
+  attempt.
+- **Swallowed error and dishonest status.** Each discarded error needs a stated reason.
+  A partial result must be labelled partial in the value the caller receives, not only
+  in a log. A status must report what happened, never what was requested.
+- **Check before resolve on a path.** Resolve links first, then check containment. A
+  traversal check must reject the parent-directory path segment, not a substring. List
+  the environment a child process inherits, and deny the variables that redirect its
+  root, its configuration, or its credentials.
+- **Identity compared without a canonical form.** Normalize both sides before you
+  compare. Case, trailing separators, and host spelling are the usual sources. A
+  formatted address is not an identity, and a structural search must walk the whole
+  structure.
+- **Partial record discarded on early exit.** For each early-exit path, name what the
+  caller and the operator see afterwards. A cancellation must keep the partial result
+  and mark it cancelled; a failed attempt must persist its error before the state moves
+  on; a retry must not erase the attempt it replaces.
+- **Protocol tolerance at an external boundary.** For each field the code reads from an
+  external producer, ask what happens when it is absent or malformed. Test the
+  malformed response, not only the good one.
+
 When a practical reproduction is possible, prefer executable evidence. A
 **statistically or static-provable** defect may be confirmed without a runtime
 reproduction when the shown code alone proves the failure.
@@ -394,8 +448,28 @@ Do not stop because one valid defect was found. Prefer finishing when:
 
 - identified invariants have been examined;
 - surviving findings have been adversarially challenged;
-- analogous locations were considered when context allows;
+- every confirmed finding has had a same-class sweep (see below);
 - unresolved unknowns are stated only if they block confirmation.
+
+### Same-class sweep (mandatory per confirmed finding)
+
+One defect of a class is evidence that the class is reachable, not that the site is
+unique. A report that closes one site and leaves the rest produces a chain of repeat
+fixes for the same mechanism.
+
+For each confirmed finding, in repository mode:
+
+1. Name the class, in terms of the mechanism, not the symptom.
+2. Search for the other sites of that class. Search by the mechanism the probe
+   describes, not by the symptom text or the identifier in the finding.
+3. Report every site you find as its own finding, or state in the report that you
+   searched and found none.
+4. Name the boundary at which the class stops being possible. When there is none, say
+   so: that absence is itself a finding about the design.
+
+State the sweep result for each confirmed finding. "Sweep: searched `<what>`, found
+`<n>` further sites" is enough. An absent sweep makes the report incomplete, and
+context limits are a reason to state the limit, not to omit the sweep.
 
 Separate mental categories (internal only unless asked): confirmed reproduced;
 confirmed strong-static; hypotheses needing unavailable runtime; rejected;

@@ -45,19 +45,49 @@ This skill is the **portable, reasoning-driven** concurrency reviewer. A reposit
    - lost wakeups or missed signals in wait/notify patterns;
    - starvation, unfair scheduling, or livelock under contention;
    - thundering-herd or unbounded fan-out under load.
-5. Reject default architectures that fan out one OS process per concurrent task as the concurrency model. External subprocess calls are an adapter boundary with timeouts, cancellation, and allowlists, not the fan-out primitive.
-6. Require tests that prove the load-bearing paths under the project's race
+5. Check the durable-state failure modes. When concurrent workers coordinate through a
+   shared store rather than through in-process memory, a race detector proves nothing:
+   the interleaving happens between transactions, and the workers may be separate
+   processes or separate hosts. Treat this surface as first-class, not as a variant of
+   the in-memory one.
+   - **Exclusion without a fence.** A boolean claim flag, an owner column, or a
+     "running" status is not exclusion. Exclusion needs a monotonic fence token or a
+     lease with an expiry, so a stale owner's next write fails instead of winning.
+     Review the takeover path explicitly: owner A stalls, owner B takes over, owner A
+     resumes and writes.
+   - **Compare-and-set against a stale version.** The version must come from a live
+     read, never from a constant or a value read before an intervening operation. A
+     failed set must not fall through into the success path, and must not leave the
+     caller running work the state no longer authorizes.
+   - **Lost update through read-modify-write.** Two workers read, both compute, both
+     write. Confirm the write is conditional on the version each worker read.
+   - **Admission of duplicates.** Two callers submit the same logical work at the same
+     time. Confirm exactly one unit of work exists afterwards, enforced by a unique
+     constraint or a conditional insert, not by a prior existence check.
+   - **Claim not released on a failure branch.** Trace every early return, refusal, and
+     pre-flight rejection between claim and release.
+   - **Interleaving between two durable writes.** A crash or a takeover can land in the
+     gap. Name the state at each gap and confirm the recovery path handles it, and that
+     recovery is idempotent under a repeat run.
+   - **Effects that outlive the claim.** An external side effect (a publish, a message,
+     a payment, a created resource) performed after a claim was lost is a double
+     effect. Confirm the effect is fenced, or is idempotent by key.
+   Prove these with deterministic fixtures that drive the interleaving through the
+   store: two workers against one record, a takeover between two writes, a repeated
+   recovery run. A race detector run is not evidence for this class.
+6. Reject default architectures that fan out one OS process per concurrent task as the concurrency model. External subprocess calls are an adapter boundary with timeouts, cancellation, and allowlists, not the fan-out primitive.
+7. Require tests that prove the load-bearing paths under the project's race
    detector or concurrency test mode. When the invoking agent has command
    execution, run them; otherwise report the run `PARTIAL`/`NOT_RUN` with the
    reason. A single green sequential run is not evidence for concurrent code;
    treat pass-once-fail-on-retry as a failure to investigate.
-7. When a test or check fails and the invoking agent has command execution,
+8. When a test or check fails and the invoking agent has command execution,
    reproduce against the baseline in the same environment: baseline-fails-too
    implies environmental or pre-existing; baseline-passes implies caused by the
    change. Without command execution, report the reproduction
    `PARTIAL`/`NOT_RUN` with the reason. Continue with all remaining safe checks
    either way.
-8. Adversarially refute each finding: strongest innocent explanation, existing guards, reachability, and counterexample. Reject unsupported findings. Do not weaken them into vague advice.
+9. Adversarially refute each finding: strongest innocent explanation, existing guards, reachability, and counterexample. Reject unsupported findings. Do not weaken them into vague advice.
 
 ## Language-mapping reference
 
@@ -103,7 +133,7 @@ Reject a candidate unless you can show a reachable failure in the shown code und
 Label each finding with a severity consistent with the bug-audit skill:
 
 - **Critical** - exploitable or destructive: authz bypass enabled by a race, double-charge or non-idempotent money path, data corruption under concurrency.
-- **High** - serious reliability: data race with stated concurrency, deadlock blocking unrelated work, leaked worker holding a resource indefinitely, cancellation that leaves external side effects running.
+- **High** - serious reliability: data race with stated concurrency, deadlock blocking unrelated work, leaked worker holding a resource indefinitely, cancellation that leaves external side effects running, a stale owner whose write wins after a takeover, or a durable state that a transient condition makes unrecoverable.
 - **Medium** - degraded but recoverable: lost wakeup under specific timing, retry storm under load that degrades but does not corrupt.
 - **Low** - minor defect with limited blast radius.
 
@@ -142,8 +172,8 @@ use the inline report shape below.
 
 Result semantics:
 
-- `PASS` - no concurrency defect (race, atomicity violation, deadlock, leak, cancellation gap, lost wakeup, starvation, thundering-herd, or process-fan-out-as-default-model) was found; the architecture uses in-process concurrency by default (or a bounded adapter with explicit justification for specific external tools); tests cover load-bearing paths under the race detector or concurrency fixtures.
-- `BLOCK` - a concurrency defect of any severity in the reviewed scope remains: a race, atomicity violation, deadlock, leaked worker, cancellation bug, lost wakeup, starvation, thundering-herd, or process-fan-out-as-default-model.
+- `PASS` - no concurrency defect (race, atomicity violation, deadlock, leak, cancellation gap, lost wakeup, starvation, thundering-herd, unfenced durable-state exclusion, or process-fan-out-as-default-model) was found; the architecture uses in-process concurrency by default (or a bounded adapter with explicit justification for specific external tools); tests cover load-bearing paths under the race detector or concurrency fixtures.
+- `BLOCK` - a concurrency defect of any severity in the reviewed scope remains: a race, atomicity violation, deadlock, leaked worker, cancellation bug, lost wakeup, starvation, thundering-herd, unfenced durable-state exclusion, or process-fan-out-as-default-model.
 - `PARTIAL` - useful findings but the race suite, stress run, or a gated runtime proof could not complete.
 - `NOT_RUN` - plan only, or review could not start.
 

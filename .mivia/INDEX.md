@@ -178,6 +178,7 @@ Machine-readable hook and agent policy:
 ## Quality
 
 - `.mivia/quality/contracts/` - project contract matrices for doctor/audit/runtime gates (populate as product surfaces land).
+- `.mivia/quality/defect-taxonomy.md` - the recurring defect classes (`DC-1`..`DC-14`) derived from this repository's `fix` commit history, with a probe list per class and the chain-control sweep. Read the matching classes at ADLC Step 0 and Step 5. `verify-change` gates on it; `secure-change` cites `DC-10` and `DC-13`.
 
 ## Runtime Artifacts
 

@@ -30,6 +30,7 @@ this skill is the dedicated security pass.
 - `AGENTS.md`
 - `.mivia/rules/10-security-privacy.md` (the authoritative security rules)
 - `.mivia/invariants.md` (rows INV-AG-7, INV-AG-25/26/27, INV-SEC-1 are security-relevant)
+- `.mivia/quality/defect-taxonomy.md` (classes `DC-10` path and isolation escape, `DC-13` authority and scope)
 - `.mivia/templates/agent-report-v1.md`
 - Diff scope named by the user
 - `docs/security/` owned paths when present
@@ -113,7 +114,23 @@ Work from the trust boundaries the product actually has, not a generic checklist
    (`go test -fuzz=Fuzz... -fuzztime=10s ./affected/pkg`); without command
    execution, report the fuzz run `PARTIAL`/`NOT_RUN` with the reason, and
    state when no deterministic target is practical.
-10. Confirm at least one negative security test per new guard (the guard fires
+10. Check the containment boundary of any path, worktree, or child process the
+    change touches. This class has produced repeat defects here; see
+    `.mivia/quality/defect-taxonomy.md` class `DC-10`.
+    - Resolve symlinks first, then check containment. A check that runs before
+      the resolve is bypassable, including on lock files and marker files that
+      look like internal state.
+    - A traversal check must reject the `..` path *segment*. A check on the `..`
+      substring rejects legitimate names and gets weakened later, which is how
+      the guard is lost.
+    - Enumerate the environment a child process inherits. Deny the variables
+      that redirect its root, its configuration, or its credentials: for Git
+      children, `GIT_DIR` and `GIT_WORK_TREE` are the load-bearing pair, and
+      verification and hook children need an isolated Git environment and home.
+    - Inside a linked worktree the repository root is not the working directory.
+      Resolve the main repository root explicitly before you build any path from
+      it, or the containment check applies to the wrong root.
+11. Confirm at least one negative security test per new guard (the guard fires
     on the bad input, not merely that the happy path passes).
 
 ## Severity calibration
