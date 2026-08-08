@@ -4,6 +4,11 @@
 
 version: 1
 topics:
+  docs-index:
+    path: docs/README.md
+    owner: quality
+    description: Documentation index and reading order for docs/
+
   product-overview:
     path: docs/product/overview.md
     owner: product

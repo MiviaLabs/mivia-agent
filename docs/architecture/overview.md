@@ -20,6 +20,18 @@ catalog in TOML; there is no registry model fallback. The example config uses
 `deepseek` with `deepseek-v4-flash` and declares its context capacity.
 Config: TOML + env file for secrets. See `docs/product/config.md`.
 
+## Agents
+
+Two distinct agent concepts, both covered below:
+
+- **The root agent** is one file-backed definition (`.mivia/agents/*.toml`)
+  selected for a session - system prompt, tool scope, model, skill allowlist.
+  See [Agent definition pipeline](#agent-definition-pipeline).
+- **Sub-agents** are concurrent DAG tasks the root agent spawns and manages
+  through the coordinator - `spawn_agent`, `inspect_agents`, `join_run`,
+  `cancel_run`. They run as in-process goroutines, not OS processes. See
+  [Subagent Orchestration](#subagent-orchestration).
+
 ## Agent definition pipeline
 
 File-backed agent configuration follows a bounded four-stage path:
@@ -93,6 +105,30 @@ Two exceptions to the shared policy:
 A request that carries a body but no `GetBody` cannot be replayed. The
 transport fails it with a controlled error before a second request goes out,
 rather than calling a nil `GetBody` or sending an empty body.
+
+### Two layers above the transport retry
+
+`retryRoundTripper` only sees a request that never got a response, or got one
+its status code marks retryable. A response that arrives with **status 200**
+and an incomplete or truncated body is invisible to it - the transport calls
+that a success and hands it up.
+
+Two further layers catch what the transport cannot see:
+
+- **`doJSON` retries an incomplete body.** `internal/provider/incomplete_body.go`
+  repeats the call, up to twice, when decoding the response fails with a cut
+  JSON body or a torn stream read. The provider layer marks these failures
+  `TransientError` at the point where the difference between "the call never
+  delivered an answer" and "the model answered badly" is actually known.
+- **The workflow controller retries a transient step failure.** A step whose
+  call fails with a fault `provider.IsTransient` recognizes - the marked
+  `TransientError` above, a reset or refused connection, a torn HTTP/2 stream -
+  repeats the same step with a fresh task identity, backing off 10s, 30s, then
+  60s (`runStepWithTransientRetry` in `internal/workflows/controller`). Three
+  tries, then the step takes its declared `on_failure` route like any other
+  failure. `context.Canceled` and `context.DeadlineExceeded` are excluded on
+  purpose: a cancelled or expired call must fail once, not repeat under a
+  context that already ended.
 
 ## Subagent Orchestration
 

@@ -1,53 +1,17 @@
 # Workflow Guide
 
-## Level 1: in plain words
-
-This guide shows how to use workflows. It has the commands you type and the tools an agent can call.
-
-First, the words used here:
-
-- A workflow is a fixed list of steps that runs one task from start to finish.
-- A ledger is a saved record of what a run did. It survives crashes and restarts.
-- A gate is a check that a step must pass before the run moves on.
-- A worktree is a separate copy of your project folder. The run works there, so it never changes your own files.
-
-Four things you can do with a workflow:
-
-1. List the workflows a project has.
-2. Start a run.
-3. Watch the run.
-4. Deliver the result, when the workflow supports it.
-
-### List workflows
+CLI commands and agent tools for running workflows. See [Workflows](workflows.md)
+for the concepts (workflow, ledger, gate, worktree).
 
 ```bash
-mivia workflows list
-```
-
-### Start a run
-
-```bash
-mivia workflow run feature-delivery --input task="add rate limiter middleware"
-```
-
-### Watch a run
-
-```bash
-mivia workflow status wfr-ABCDEF1234
+mivia workflows list                                                          # list workflows
+mivia workflow run feature-delivery --input task="add rate limiter middleware" # start a run
+mivia workflow status wfr-ABCDEF1234                                          # watch it
 mivia workflow events wfr-ABCDEF1234
+mivia workflow deliver wfr-ABCDEF1234 --allow-publish                         # deliver the result
 ```
 
-### Deliver a run
-
-```bash
-mivia workflow deliver wfr-ABCDEF1234 --allow-publish
-```
-
-That is the whole simple path. The rest of this guide is the detail.
-
-## Level 2: more detail
-
-### The workflow commands
+## The workflow commands
 
 `mivia workflows` works with the workflow files themselves.
 
@@ -98,7 +62,7 @@ mivia workflow cleanup wfr-ABCDEF1234
 
 A run without `--allow-publish` finishes as `delivery_pending`. It stays there until someone delivers it with the grant.
 
-### Shared flags
+## Shared flags
 
 | Flag | Applies to | Default |
 |------|------------|---------|
@@ -106,9 +70,9 @@ A run without `--allow-publish` finishes as `delivery_pending`. It stays there u
 | `--config <path>` | `workflow *` commands | user default |
 | `--force` | `workflow resume` | false |
 
-### Worktrees
+## Worktrees
 
-A worktree is a separate copy of your project folder. A write-capable run works in a worktree. Your own files never change. mivia gives each worktree branch a prefix from `[worktrees].branch_prefix`. The default is `mivia/`.
+A write-capable run works in a worktree; your own files never change. Each worktree branch gets a prefix from `[worktrees].branch_prefix` (default `mivia/`).
 
 ```bash
 # Create a worktree with a branch, for example mivia/fix
@@ -129,7 +93,7 @@ mivia worktree adopt fix
 
 `worktree adopt` takes a worktree that already exists and brings it under mivia's management. `worktree remove` keeps the branch. It removes the worktree folder only. See [Configuration](config.md#worktree-branches) for the prefix rules.
 
-### Agent tools
+## Agent tools
 
 When `.mivia/workflows/` exists, seven agent tools become available. The model can call these to start, monitor, inspect, deliver, and cancel workflow runs from within a chat session.
 
@@ -152,7 +116,7 @@ Read tools:
 
 `workflow_inspect` is an agent tool. The CLI has no inspect subcommand. To see a step attempt from the CLI, use `workflow status` for the attempt status and `workflow events` for the trail.
 
-#### workflow_run
+### workflow_run
 
 Start a new run or resume an interrupted run.
 
@@ -167,7 +131,7 @@ Start a new run or resume an interrupted run.
 
 Returns: `run_id`, `status`, workflow name, and `resumed` flag.
 
-#### workflow_status
+### workflow_status
 
 Deep status for one workflow run.
 
@@ -177,7 +141,7 @@ Deep status for one workflow run.
 
 Returns: run metadata, active step, version, timestamps, base commit, worktree path, all attempts with their status and transition target, loop iteration counts, delivery records, and approval records.
 
-#### workflow_events
+### workflow_events
 
 Ordered audit trail for one workflow run.
 
@@ -189,7 +153,7 @@ Ordered audit trail for one workflow run.
 
 Returns: run ID, an event array with sequence number, timestamp, kind, and detail summary, plus pagination metadata.
 
-#### workflow_inspect
+### workflow_inspect
 
 Inspect one step attempt.
 
@@ -201,7 +165,7 @@ Inspect one step attempt.
 
 Returns: step attempt status, coordinator run and task references, validated output JSON, evidence selection, and transition decision.
 
-#### workflow_list_runs
+### workflow_list_runs
 
 List active and historical workflow runs.
 
@@ -213,7 +177,7 @@ List active and historical workflow runs.
 
 Returns: a run array with ID, workflow name, status, age, and start timestamp, plus pagination metadata.
 
-#### workflow_deliver
+### workflow_deliver
 
 Deliver a completed workflow run that is waiting for publication.
 
@@ -224,7 +188,7 @@ Deliver a completed workflow run that is waiting for publication.
 
 The tool refuses delivery without explicit `allow_publish=true`. This permission is never implicit. An eligible run without the grant finishes as `delivery_pending` until delivery is called with the grant.
 
-#### workflow_cancel
+### workflow_cancel
 
 Cancel a running or waiting workflow run. Canceling an already-terminal run is a no-op.
 
@@ -234,7 +198,7 @@ Cancel a running or waiting workflow run. Canceling an already-terminal run is a
 
 `delivery_pending` runs must be delivered or cleaned up first. Cancel is refused for those.
 
-### Observability
+## Observability
 
 Three levels of observability:
 
@@ -244,7 +208,7 @@ Three levels of observability:
 | Audit trail | `workflow_events` or CLI `workflow events` | Ordered events with timestamps |
 | Deep inspect | `workflow_inspect` (agent tool) | Validated output, evidence, transition decision |
 
-### The shipped workflow: feature-delivery
+## The shipped workflow: feature-delivery
 
 The repository ships one workflow named `feature-delivery`. It runs a full plan, review, implement, and verify cycle:
 
@@ -293,7 +257,7 @@ The evidence gates use fixed verifier profiles:
 
 The delivery policy is a draft pull request to GitHub `master`. It requires `--allow-publish`.
 
-### Authoring a workflow
+## Authoring a workflow
 
 A workflow file is TOML, located at `.mivia/workflows/<name>.toml`. The maximum file size is 64 KiB.
 
@@ -428,7 +392,7 @@ stays at `delivery_pending` and a later delivery succeeds.
 
 If `on_failure` is empty, the run holds at `delivery_pending` for a person.
 
-### Run statuses
+## Run statuses
 
 | Status | Meaning |
 |--------|---------|
@@ -446,7 +410,7 @@ If `on_failure` is empty, the run holds at `delivery_pending` for a person.
 `waiting_approval` are resumable. `delivery_pending` and `delivery_failed` can
 return to `running` through the delivery repair route above.
 
-### Trust
+## Trust
 
 A workflow file is untrusted repository input. Anyone can edit it. It may name an existing agent or verifier, but it cannot define or override:
 
@@ -457,7 +421,7 @@ A workflow file is untrusted repository input. Anyone can edit it. It may name a
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 
-### How a run is checked before it starts
+## How a run is checked before it starts
 
 Before a run starts, the compiler checks the workflow file:
 
@@ -470,7 +434,7 @@ Before a run starts, the compiler checks the workflow file:
 7. On-failure targets reference declared steps or terminals.
 8. Delivery config is valid: kind, mode, provider, and base.
 
-### Resume
+## Resume
 
 Interrupted runs can be resumed from the durable ledger snapshot. The snapshot contains the compiled workflow, templates, schemas, inputs, and resolved agent digests. Use `--force` to clear a stale execution claim.
 

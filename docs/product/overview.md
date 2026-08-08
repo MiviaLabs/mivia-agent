@@ -2,70 +2,109 @@
 
 ## What mivia is
 
-mivia is a helper program. It runs on your computer, in a terminal window. A terminal is the text window where you type commands.
+mivia is a local CLI coding agent. It runs in your terminal, reads and edits
+files in your project, runs commands such as your test suite, and can drive
+multi-step workflows in an isolated worktree with a durable run record.
 
-mivia uses an AI model to work with a project. A project is a folder of files. mivia can read the files, search them, and edit them. It can run commands, such as tests.
-
-You do not need Go, an agent framework, or any programming skill to read this guide.
+mivia runs on your machine. Your files stay there. mivia sends your prompt
+and the context it selects to the AI provider you configure - nothing else
+leaves your machine.
 
 ## The pieces
-
-mivia has a few parts. Each part does one job. Each part has a short version and a deeper version. Read the short version first. Read the deeper version only if you want more.
 
 ```mermaid
 flowchart TD
     Mivia["mivia"] --> Chat["Chat and tools"]
+    Mivia --> Agents["Agents and skills"]
+    Mivia --> Hooks["Lifecycle hooks"]
     Mivia --> Config["Configuration"]
     Mivia --> Workflows["Workflows"]
     Mivia --> Security["Security and privacy"]
 ```
 
-Look at the boxes below mivia. Each box is one system. The rest of this guide explains each box.
+## Chat and tools
 
-## Chat and tools (level 1: in plain words)
+`mivia chat` starts an interactive session with tool access: read, search,
+and edit files; run allowed commands; search the web. `mivia chat -p
+"question"` runs one turn and exits.
 
-Chat is how you talk to mivia. You type a question. mivia answers. mivia can also read, search, and edit files in your project.
+See [Coding agent mode](agent.md) for the full tool list and slash commands.
 
-### Level 2: more detail
+## Agents and skills
 
-`mivia chat` starts a chat window. Add `-p "question"` to ask one question and stop. mivia has tools that read files, search text, edit files, run allowed commands, and search the web. Read [Coding agent mode](agent.md) for the full list.
+A named agent is a file-backed definition (`.mivia/agents/<name>.toml` or
+`~/.mivia/agents/`) that scopes tools, skills, model, and system prompt.
+Select one with `--agent <name>` or `/agent <name>`.
 
-## Configuration (level 1: in plain words)
+A skill is a reusable task template (`SKILL.md`) an agent can invoke - things
+like `bug-audit`, `architecture-review`, or `feature-delivery` ship with the
+repository.
 
-Configuration is how you tell mivia which AI provider to use and how to behave. A provider is a company that runs an AI service. You give mivia an API key. An API key is a secret code. mivia keeps the key private.
+mivia can run several sub-agents concurrently as DAG tasks: `spawn_agent`,
+`dispatch_tasks`, `inspect_agents`, `join_run`, and `cancel_run` give the
+model orchestration control over a batch of tasks with dependencies, one
+result per task, and idempotent retries.
 
-### Level 2: more detail
+See [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full
+schema and [Skill System Architecture](../architecture/skills.md) for how
+skills are discovered and scoped.
 
-mivia reads settings from two places: a settings file and your environment. The settings file is called `mivia.toml`. Your environment is the set of variables your computer keeps for running programs. API keys live in the environment only, never in the settings file. `mivia doctor` checks that everything is set up. Read [Configuration](config.md).
+## Lifecycle hooks
 
-## Workflows (level 1: in plain words)
+A hook is your own script that mivia runs on a tool-call event, every time,
+whether or not the model wants it. `PreToolUse` can block a call before it
+runs; `PostToolUse` reacts after (format, lint); `Stop` observes a turn's end.
 
-A workflow is a fixed list of steps. mivia runs the steps in order. Use a workflow for a task that must follow the same path every time, such as "plan, build, review, and check a feature".
+Hooks come from two config files - `~/.mivia/mivia.toml` (yours) and the
+workspace's `.mivia/mivia.toml` (the project's) - and they add rather than
+replace. A project you clone can arm its own hooks the first time you start
+mivia there; the session names every hook it armed and marks which came from
+the repository.
 
-### Level 2: more detail
+See [Lifecycle hooks](../development/lifecycle-hooks.md) for the full
+contract, and [Development hooks](../development/hooks.md) for how this
+differs from this repository's own Git hooks.
 
-A workflow is a file in the `.mivia/workflows/` folder of your project. It runs in a worktree. A worktree is a separate copy of the project folder. The workflow works there, so it never changes your own files. mivia saves a record of the run in the ledger. A ledger is a saved record of what a run did. Read [Workflows](workflows.md) and the [Workflow guide](workflows-guide.md).
+## Configuration
 
-## Security and privacy (level 1: in plain words)
+mivia reads settings from `mivia.toml` and an API key from your environment.
+The key never lives in the settings file. `mivia doctor` verifies the setup
+without printing the key.
 
-mivia keeps your API key out of your project files. Powerful tools are off until you turn them on. mivia does not collect personal data.
+See [Configuration](config.md) for the search order, provider setup, and
+every tunable.
 
-### Level 2: more detail
+## Workflows
 
-Your API key lives in your environment. Nothing that looks like a secret is built into the program. `run_command`, the tool that runs other programs, stays off until you allow the programs it may run. Treat a project you did not write like untrusted code: read its files before you let mivia run there. Read [Security and privacy](../security/overview.md).
+A workflow is a TOML-defined, multi-step process - plan, implement, review,
+verify - that runs in an isolated worktree with a durable ledger recording
+every step. Interrupted runs resume from that ledger.
+
+See [Workflows](workflows.md) and the [Workflow guide](workflows-guide.md).
+
+## Security and privacy
+
+Your API key stays in your environment, never in project files. Powerful
+tools (`run_command`, secret-path filtering, redaction) are off until you
+configure them.
+
+See [Security and privacy](../security/overview.md).
 
 ## What mivia is not
 
-- mivia is not a cloud service. It runs on your computer.
-- mivia has no hosted control plane. The hosted multi-tenant platform is a separate product.
-- mivia has no MCP integration. MCP is not part of the current product.
-- mivia does not replace every vendor coding agent.
+- Not a cloud service. It runs on your machine.
+- No hosted control plane; the hosted multi-tenant platform is a separate product.
+- No MCP integration; MCP is not part of the current product.
+- Not a replacement for every vendor coding agent.
 
 ## Guides
 
-- [Configuration](config.md): providers, credentials, and policy controls
-- [Coding agent mode](agent.md): tools, orchestration, and limits
-- [Workflows](workflows.md): step-by-step processes
-- [Workflow guide](workflows-guide.md): workflow commands in detail
-- [Security and privacy](../security/overview.md): how mivia protects your data
-- [Architecture](../architecture/overview.md) and [concurrency](../architecture/concurrency.md): how mivia is built, for developers
+| Guide | Covers |
+|-------|--------|
+| [Configuration](config.md) | Providers, credentials, policy controls |
+| [Coding agent mode](agent.md) | Tools, orchestration, limits |
+| [Workflows](workflows.md) | Step-by-step processes |
+| [Workflow guide](workflows-guide.md) | Workflow commands in detail |
+| [Lifecycle hooks](../development/lifecycle-hooks.md) | Your own scripts on tool-call events |
+| [Security and privacy](../security/overview.md) | How mivia protects your data |
+| [Architecture](../architecture/overview.md) and [concurrency](../architecture/concurrency.md) | How mivia is built |

@@ -51,6 +51,8 @@ Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributin
 - Workflows: durable, multi-step processes with retries and evidence gates.
 - Worktrees: isolated checkouts for a workflow run, so your working tree stays clean.
 - Agents and skills: named specialists you can route work to.
+- Lifecycle hooks: your own scripts run on `PreToolUse`, `PostToolUse`, and
+  `Stop` - gate, format, or log every tool call, deterministically.
 
 ## Architecture
 
@@ -78,6 +80,7 @@ Everything under `mivia chat` runs locally except the `AI provider` edge, which 
 | [Workflows](docs/product/workflows.md) | Step-by-step processes |
 | [Workflow guide](docs/product/workflows-guide.md) | Workflow commands, the built-in workflow |
 | [Security and privacy](docs/security/overview.md) | Data handling |
+| [Lifecycle hooks](docs/development/lifecycle-hooks.md) | Your own scripts on tool-call events |
 | [Architecture](docs/architecture/overview.md) | System design |
 | [Contributing](docs/contributing.md) | Build, test, and PR process |
 
