@@ -375,39 +375,6 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 	}()
 }
 
-// Cancel implements agenttools.Engine.
-func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelResult, error) {
-	if e == nil || e.Repo == nil {
-		return agenttools.CancelResult{}, fmt.Errorf("workflow engine is incomplete")
-	}
-	e.mu.Lock()
-	active, ok := e.active[runID]
-	e.mu.Unlock()
-	if ok {
-		active.cancel()
-		// Wait for the controller to drop its claim so CancelRun can settle.
-		select {
-		case <-active.done:
-		case <-ctx.Done():
-		case <-time.After(3 * time.Second):
-		}
-	}
-	_ = e.Repo.ClearRunClaim(ctx, runID)
-	if err := controller.CancelRun(ctx, e.Repo, runID); err != nil {
-		// Context cancel may already have settled the run; treat terminal as success.
-		run, getErr := e.Repo.GetRun(ctx, runID)
-		if getErr == nil && workflowledger.IsTerminalRunStatus(run.Status) {
-			return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
-		}
-		return agenttools.CancelResult{}, err
-	}
-	run, err := e.Repo.GetRun(ctx, runID)
-	if err != nil {
-		return agenttools.CancelResult{}, err
-	}
-	return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
-}
-
 // Wait blocks until the background run for runID exits or ctx is done.
 func (e *Engine) Wait(ctx context.Context, runID string) error {
 	e.mu.Lock()

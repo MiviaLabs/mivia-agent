@@ -28,18 +28,25 @@ func (e *Engine) Interrupt(runID string) error {
 	if e.fence != nil {
 		e.fence.abandon(runID)
 	}
+	active, ok := e.active[runID]
+	if ok {
+		delete(e.active, runID)
+	}
+	_, delivering := e.delivering[runID]
 	e.mu.Unlock()
 	// Mark open attempts interrupted before the dying controller can cancel them.
 	if err := e.markOpenAttemptsInterrupted(ctx, runID); err != nil {
 		return err
 	}
-	e.mu.Lock()
-	active, ok := e.active[runID]
-	if ok {
-		delete(e.active, runID)
+	// Clear the claim ONLY when this engine owns the controller (the run is
+	// tracked in e.active): an abandoned controller's claim is the stale-owner
+	// residue a resume must be able to claim over. A run that is mid-delivery
+	// (this engine's delivery goroutine, or another host's publisher) or not
+	// active here is left alone - clearing would strip a live delivery claim
+	// and enable double-publish while the delivery keeps publishing.
+	if ok && !delivering {
+		_ = e.Repo.ClearRunClaim(ctx, runID)
 	}
-	e.mu.Unlock()
-	_ = e.Repo.ClearRunClaim(ctx, runID)
 	if ok {
 		active.cancel()
 		<-active.done

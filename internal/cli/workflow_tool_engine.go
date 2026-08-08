@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -194,7 +196,9 @@ func (e *sessionWorkflowEngine) stopActive(ctx context.Context, runID string) {
 
 // Cancel implements agenttools.Engine.
 // It stops any in-process controller first, then settles via the same
-// execution-lock + CancelRun path as `mivia workflow cancel`.
+// execution-lock + CancelRun path as `mivia workflow cancel`. A terminal or
+// delivery_pending run is resolved BEFORE any claim mutation: a refused cancel
+// must never strip a live delivery claim.
 func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agenttools.CancelResult, error) {
 	if e == nil {
 		return agenttools.CancelResult{}, fmt.Errorf("workflow engine is nil")
@@ -209,9 +213,38 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	}
 	defer closeFn()
 	defer releaseExecution()
-	if err := repo.ClearRunClaim(ctx, runID); err != nil {
-		return agenttools.CancelResult{}, fmt.Errorf("clear workflow claim: %w", err)
+	// Resolve the run BEFORE any claim mutation: a delivery_pending run may be
+	// mid-publish under a live claim (this or another host), and a refused or
+	// idempotent cancel must leave claims untouched.
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return agenttools.CancelResult{}, err
 	}
+	if workflowledger.IsTerminalRunStatus(run.Status) {
+		// Idempotent operator retry: the run is already settled; no claim work.
+		return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
+	}
+	if run.Status == workflowledger.RunStatusDeliveryPending {
+		return agenttools.CancelResult{}, fmt.Errorf("run %q is waiting for delivery; deliver it or leave it for cleanup before cancel", runID)
+	}
+	// Never clear a held claim: cancel accepts any run_id, and a blind clear
+	// would strip a live delivery claim (held by this or another host mid-
+	// publish) and enable double-publish. Claim instead; an expired lease may
+	// be taken over with the exclusion fence still armed, but a fresh foreign
+	// claim is refused outright.
+	holder := newWorkflowCancelHolder()
+	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+		if errors.Is(err, workflowledger.ErrClaimHeld) {
+			if takeoverErr := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease); takeoverErr != nil {
+				return agenttools.CancelResult{}, fmt.Errorf("workflow run %q is claimed by another executor; cancel refused", runID)
+			}
+		} else {
+			return agenttools.CancelResult{}, err
+		}
+	}
+	// CancelRun mints and claims its own holder internally; drop ours first so
+	// its claim succeeds. Never clear a foreign claim.
+	_ = repo.ReleaseRun(context.Background(), runID, holder)
 	if err := controller.CancelRun(ctx, repo, runID); err != nil {
 		// Context cancel or a prior settle may already leave the run terminal.
 		run, getErr := repo.GetRun(ctx, runID)
@@ -220,11 +253,19 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 		}
 		return agenttools.CancelResult{}, err
 	}
-	run, err := repo.GetRun(ctx, runID)
+	run, err = repo.GetRun(ctx, runID)
 	if err != nil {
 		return agenttools.CancelResult{}, err
 	}
 	return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
+}
+
+// newWorkflowCancelHolder mints the run-claim holder for a session-engine
+// cancel attempt.
+func newWorkflowCancelHolder() string {
+	var value [10]byte
+	_, _ = rand.Read(value[:])
+	return "wfcancel-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(value[:])
 }
 
 // Deliver implements agenttools.Engine.
