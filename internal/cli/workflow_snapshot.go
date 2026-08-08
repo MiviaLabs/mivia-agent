@@ -17,21 +17,24 @@ func verifyWorkflowSkillSnapshot(wf *compiler.CompiledWorkflow, registry *skills
 	if prior == nil {
 		return nil
 	}
-	for _, step := range wf.Steps {
-		if step.Skill == "" {
-			continue
-		}
-		definition, ok := registry.Get(step.Skill)
+	for _, ref := range workflowSkillReferences(wf) {
+		definition, ok := registry.Get(ref.name)
 		if !ok {
-			return fmt.Errorf("workflow skill %q is missing on resume", step.Skill)
+			return fmt.Errorf("workflow skill %q is missing on resume", ref.name)
 		}
 		bytes, err := workflowSkillBytes(definition)
 		if err != nil {
 			return err
 		}
-		pinned, ok := prior.Skills[step.Skill]
+		pinned, ok := prior.Skills[ref.name]
 		if !ok || pinned.Digest != digestBytes(bytes) || string(pinned.Bytes) != string(bytes) {
-			return fmt.Errorf("workflow skill %q changed since admission", step.Skill)
+			return fmt.Errorf("workflow skill %q changed since admission", ref.name)
+		}
+		if ref.panelKey != "" {
+			binding, ok := prior.PanelBindings[ref.panelKey]
+			if !ok || binding.SkillDigest != digestBytes(bytes) {
+				return fmt.Errorf("panel binding %q skill changed since admission", ref.panelKey)
+			}
 		}
 	}
 	return nil
@@ -45,21 +48,53 @@ func pinWorkflowSkills(raw []byte, wf *compiler.CompiledWorkflow, registry *skil
 	if snapshot.Skills == nil {
 		snapshot.Skills = make(map[string]workflowledger.RefSnapshot)
 	}
-	for _, step := range wf.Steps {
-		if step.Skill == "" {
-			continue
-		}
-		definition, ok := registry.Get(step.Skill)
+	for _, ref := range workflowSkillReferences(wf) {
+		definition, ok := registry.Get(ref.name)
 		if !ok {
-			return nil, fmt.Errorf("workflow skill %q is missing", step.Skill)
+			return nil, fmt.Errorf("workflow skill %q is missing", ref.name)
 		}
 		bytes, err := workflowSkillBytes(definition)
 		if err != nil {
 			return nil, err
 		}
-		snapshot.Skills[step.Skill] = workflowledger.RefSnapshot{Digest: digestBytes(bytes), Bytes: bytes}
+		digest := digestBytes(bytes)
+		snapshot.Skills[ref.name] = workflowledger.RefSnapshot{Digest: digest, Bytes: bytes}
+		if ref.panelKey != "" {
+			binding, ok := snapshot.PanelBindings[ref.panelKey]
+			if !ok {
+				return nil, fmt.Errorf("panel binding %q is missing", ref.panelKey)
+			}
+			binding.SkillDigest = digest
+			snapshot.PanelBindings[ref.panelKey] = binding
+		}
 	}
 	return workflowledger.MarshalSnapshot(snapshot)
+}
+
+type workflowSkillReference struct {
+	name     string
+	panelKey string
+}
+
+func workflowSkillReferences(wf *compiler.CompiledWorkflow) []workflowSkillReference {
+	if wf == nil {
+		return nil
+	}
+	refs := make([]workflowSkillReference, 0)
+	for _, step := range wf.Steps {
+		if step.Skill != "" {
+			refs = append(refs, workflowSkillReference{name: step.Skill})
+		}
+		if step.Kind != "agent_panel" || step.Panel == nil {
+			continue
+		}
+		for _, member := range step.Panel.Members {
+			if member.Skill != "" {
+				refs = append(refs, workflowSkillReference{name: member.Skill, panelKey: step.ID + "/" + member.ID})
+			}
+		}
+	}
+	return refs
 }
 
 func installWorkflowSkillSnapshots(destination map[string]workflowledger.RefSnapshot, raw []byte) error {

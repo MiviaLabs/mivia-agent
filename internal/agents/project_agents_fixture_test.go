@@ -34,16 +34,18 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantNames := map[string]bool{
-		"auditor":           true,
-		"docs":              true,
-		"go-engineer":       true,
-		"mivia":             true,
-		"performance":       true,
-		"researcher":        true,
-		"reviewer":          true,
-		"security":          true,
-		"verifier":          true,
-		"workflow-engineer": true,
+		"auditor":            true,
+		"docs":               true,
+		"go-engineer":        true,
+		"mivia":              true,
+		"panel-reviewer":     true,
+		"performance":        true,
+		"researcher":         true,
+		"review-synthesizer": true,
+		"reviewer":           true,
+		"security":           true,
+		"verifier":           true,
+		"workflow-engineer":  true,
 	}
 	var inputs []ResolveInput
 	seen := make(map[string]bool, len(entries))
@@ -225,7 +227,7 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 	}
 	wantNames := []string{
 		"architecture-review", "bug-audit", "concurrency-review",
-		"docs-update", "feature-delivery", "performance-review",
+		"docs-update", "feature-delivery", "performance-review", "review-synthesis",
 		"secure-change", "simplification-review",
 		"verify-change", "verify-code-change", "workflow-feature-delivery",
 	}
@@ -240,6 +242,12 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		def, ok := reg.Get(name)
 		if !ok {
 			t.Fatalf("required skill %q is missing from %s", name, dir)
+		}
+		if def.Name == "review-synthesis" {
+			if def.Tools != nil || len(def.Resources) != 0 {
+				t.Fatalf("skill %q must declare no tools or resources", def.Name)
+			}
+			continue
 		}
 		if def.Tools == nil {
 			t.Fatalf("skill %q omits tools: metadata; the agent/skill contract is vacuous without it", name)
