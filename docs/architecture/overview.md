@@ -20,6 +20,10 @@ catalog in TOML; there is no registry model fallback. The example config uses
 `deepseek` with `deepseek-v4-flash` and declares its context capacity.
 Config: TOML + env file for secrets. See `docs/product/config.md`.
 
+## MCP client boundary
+
+`internal/config` loads secret-free MCP server definitions from user and project configuration. A project server with the same ID replaces the complete user server definition. `internal/mcp` owns one lazy client per selected server. It discovers tools with `tools/list` and calls them with `tools/call`. `internal/agents` resolves server IDs. The CLI scopes discovered wrappers for root agents, child agents, and workflow agents. The manager closes every client and stdio process at session or workflow cleanup.
+
 ## Agents
 
 Two distinct agent concepts, both covered below:
