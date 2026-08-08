@@ -43,7 +43,7 @@ func (t discoveredTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	}
 	result, err := t.client.CallTool(ctx, t.remoteName, values)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("MCP tool call failed")
 	}
 	return capMCPResult(t.redaction.Text(result), t.maxResultBytes), nil
 }

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -104,6 +105,14 @@ func TestDiscoveredToolUsesExternalServerCapability(t *testing.T) {
 	}
 }
 
+func TestDiscoveredToolHidesRemoteError(t *testing.T) {
+	tool := discoveredTool{remoteName: "result", client: failingResultClient{}}
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err == nil || err.Error() != "MCP tool call failed" {
+		t.Fatalf("Execute() error = %v", err)
+	}
+}
+
 type resultClient struct{}
 
 func (resultClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
@@ -111,3 +120,11 @@ func (resultClient) CallTool(context.Context, string, map[string]any) (string, e
 	return "secret value", nil
 }
 func (resultClient) Close() error { return nil }
+
+type failingResultClient struct{}
+
+func (failingResultClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (failingResultClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	return "", errors.New("untrusted server diagnostic")
+}
+func (failingResultClient) Close() error { return nil }
