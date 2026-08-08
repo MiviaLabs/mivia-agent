@@ -125,6 +125,11 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 }
 
 func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *tools.Registry, func(), error) {
+	if h.opts.EnsureMCPTools != nil {
+		if err := h.opts.EnsureMCPTools(h.definition.EffectiveMCPServers); err != nil {
+			return "", nil, func() {}, fmt.Errorf("MCP tools: %w", err)
+		}
+	}
 	systemPrompt := h.definition.SystemPrompt
 	if systemPrompt == "" {
 		systemPrompt = h.opts.Config.SystemPrompt
@@ -133,7 +138,7 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 		systemPrompt = subagents.MultiStepSystemPrompt
 	}
 	registry := tools.ScopedRegistry(h.full, tools.ScopeOptions{
-		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(h.definition.EffectiveTools),
+		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(authorizedAgentTools(&h.definition, h.full)),
 	})
 	// Baseline messaging: inject post_message after allowlist filter unless
 	// the agent opted out via disallowed_tools = ["post_message"] (plan 53.02).

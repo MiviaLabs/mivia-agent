@@ -13,6 +13,12 @@ mivia never stores credentials in the settings file. API keys live in the proces
 
 A secret scan runs on every commit. It checks staged and tracked files. If a real key appears in the tree, the commit is blocked.
 
+## MCP server authority
+
+MCP server definitions contain only environment variable names. mivia passes only named variables to a stdio server. HTTP header values also come only from named environment variables. A project MCP server is explicit project authority. It can start its configured executable or call its configured endpoint. A project definition with the same ID replaces the complete user definition. Review project MCP configuration before use.
+
+MCP tool descriptions, schemas, errors, and results are untrusted server data. mivia bounds metadata and results before model exposure. It exposes text result content only. It does not treat MCP data as host instructions.
+
 ## Deny by default
 
 Powerful tools stay off until you configure them.

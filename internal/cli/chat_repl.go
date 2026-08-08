@@ -142,11 +142,14 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	skillReg = sessionSkillRegistry(root, ctx, skillReg)
 	skillScope := skillScopeFromAgent(ctx.Selected)
 	modelCatalog := routing.Catalog
-	// The TUI binding must reflect the root agent's policy. Keep skillReg itself
-	// complete for explicitly routed task agents, which validate their own scope.
+	// Keep skillReg complete for explicitly routed task agents.
 	sess.SetBindingSkillRegistry(filterSkillsForScope(skillReg, skillScope))
 	if sess.Tools == nil {
 		return func() {}, nil
+	}
+	mcpManager, closeMCP, err := setupSessionMCPTools(sess.Tools, routing.Resolved, ctx.Selected)
+	if err != nil {
+		return nil, fmt.Errorf("MCP tools: %w", err)
 	}
 	surface := scopeAttachedToolSurface(sess, ctx, state, skillReg, routing)
 	plan, liveScope := surface.plan, surface.skillScope
@@ -163,6 +166,8 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		ModelCatalog:              modelCatalog,
 		CompleterFactory:          routing.CompleterFactory,
 		Config:                    cfg,
+		MCP:                       sessionMCPConfig(routing.Resolved),
+		EnsureMCPTools:            ensureMCPServerTools(surface.authority, mcpManager),
 		ToolResultCapBytes:        sess.MaxToolResultChars,
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		WorkspaceRoot:             root,
@@ -180,12 +185,16 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		Session:                   sess,
 	})
 	if err != nil {
+		closeMCP()
 		// No cleanup is handed back on this path, so the store adopted just
 		// above would otherwise stay open for the life of the process.
 		releaseSessionLedgerRepo(state)
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
 	sess.SetDispatcher(dispatcher)
+	if state != nil {
+		state.MCPManager = mcpManager
+	}
 	recordSchemaMass(sess, state, plan, sess.AdmittedTools(), agentNameOf(ctx.Selected), "attach")
 	if plan.Deferred() && state != nil {
 		sess.SetSurfaceWidener(newSurfaceWidener(sess, routing.Resolved, state))
@@ -194,7 +203,8 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	// Same spool instance the registered read_output tool holds, so a
 	// truncation notice minted by the root loop resolves for this session.
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(sess.Tools))
-	return sessionSurfaceCleanup(sess, state), nil
+	cleanup := sessionSurfaceCleanup(sess, state)
+	return func() { cleanup(); closeMCP() }, nil
 }
 
 // adoptSessionLedgerRepo gives the SESSION ownership of the ledger store the

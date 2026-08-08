@@ -43,7 +43,17 @@ func logEffectiveLimitsOnce(w io.Writer, res *config.Resolved) {
 	for _, warn := range config.ToolResultBytesWarnings(res.Tools) {
 		fmt.Fprintf(w, "warning: %s\n", warn)
 	}
+	logMCPWarnings(w, res)
 	if line := formatEffectiveLimitsSummary(res); line != "" {
 		fmt.Fprintln(w, line)
+	}
+}
+
+func logMCPWarnings(w io.Writer, res *config.Resolved) {
+	if w == nil || res == nil {
+		return
+	}
+	for _, warn := range res.MCPWarnings {
+		fmt.Fprintf(w, "warning: %s\n", warn)
 	}
 }

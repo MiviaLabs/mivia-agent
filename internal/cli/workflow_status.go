@@ -226,7 +226,7 @@ func openWorkflowReportContext(root, configPath string) (workflowledger.Reposito
 		return nil, nil, err
 	}
 	configPath = workflowConfigPath(work.Abs, configPath)
-	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
 	if err != nil {
 		return nil, nil, err
 	}

@@ -50,6 +50,10 @@ Exponential backoff with jitter prevents thundering herd on retry.
 - **Heartbeat/progress events** for long-running tasks (periodic keep-alive signals emitted by active tasks so callers can detect stalls)
 - **Compare-and-set version guards** for concurrent task state transitions (stale-attempt fencing)
 
+## MCP clients
+
+Each selected MCP server has one manager-owned client for a chat session or workflow. The manager discovers a server only when an allowed agent selects it. It serializes discovery and calls for that server. An unavailable server is memoized for the manager lifetime. Cleanup closes HTTP sessions and waits for stdio child processes.
+
 ## Forbidden default
 
 Spawning one Python/Node/interpreter process per subagent as the primary fan-out model.

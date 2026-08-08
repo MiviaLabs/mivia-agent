@@ -60,3 +60,21 @@ func TestLogEffectiveLimitsOnceWarnsHugeToolResult(t *testing.T) {
 		t.Fatalf("expected limits line: %q", out)
 	}
 }
+
+func TestLogEffectiveLimitsOnceWarnsPlaintextMCP(t *testing.T) {
+	res := &config.Resolved{MCPWarnings: []string{"MCP server \"plain\" uses plaintext HTTP"}}
+	var buf bytes.Buffer
+	logEffectiveLimitsOnce(&buf, res)
+	if out := buf.String(); !strings.Contains(out, "warning: MCP server \"plain\" uses plaintext HTTP") {
+		t.Fatalf("operator output = %q", out)
+	}
+}
+
+func TestLogMCPWarningsForWorkflowDiagnostics(t *testing.T) {
+	res := &config.Resolved{MCPWarnings: []string{"MCP server \"plain\" uses plaintext HTTP"}}
+	var buf bytes.Buffer
+	logMCPWarnings(&buf, res)
+	if got := buf.String(); got != "warning: MCP server \"plain\" uses plaintext HTTP\n" {
+		t.Fatalf("workflow diagnostics = %q", got)
+	}
+}

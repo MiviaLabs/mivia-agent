@@ -73,6 +73,9 @@ type AgentFileSpec struct {
 	// nil = omit (root: all trusted skills; inherited: parent decision);
 	// non-nil empty = none; non-nil with names = those skills only.
 	Skills *[]string
+	// MCPServers is the MCP server allowlist. nil inherits the root default or
+	// parent list. An explicit empty list denies every MCP server.
+	MCPServers *[]string
 	// Provider is the built-in provider name owning Model. It is normalized to
 	// lower case at parse time and may only be set together with Model: a
 	// provider alone would silently pair a foreign endpoint with the session's

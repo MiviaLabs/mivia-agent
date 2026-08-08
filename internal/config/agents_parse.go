@@ -52,6 +52,7 @@ type agentFileTOML struct {
 	DisallowedTools *[]string       `toml:"disallowed_tools"`
 	ToolsCore       *[]string       `toml:"tools_core"`
 	Skills          *[]string       `toml:"skills"`
+	MCPServers      *[]string       `toml:"mcp_servers"`
 	Provider        *string         `toml:"provider"`
 	Model           *string         `toml:"model"`
 	MaxTurns        *int            `toml:"max_turns"`
@@ -74,6 +75,7 @@ func (r agentFileTOML) toSpec() AgentFileSpec {
 		DisallowedTools: r.DisallowedTools,
 		ToolsCore:       r.ToolsCore,
 		Skills:          r.Skills,
+		MCPServers:      r.MCPServers,
 		Provider:        normalizeProviderRef(r.Provider),
 		Model:           r.Model,
 		MaxTurns:        r.MaxTurns,
