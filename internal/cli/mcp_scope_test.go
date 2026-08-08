@@ -40,3 +40,16 @@ func TestWorkflowMCPServersUsesReferencedAgentsOnly(t *testing.T) {
 		t.Fatalf("workflowMCPServers() = %v, want [alpha]", got)
 	}
 }
+
+func TestWorkflowMCPServersIncludesPanelMembers(t *testing.T) {
+	registry := agents.NewRegistry()
+	if err := registry.Publish(agents.ResolvedAgent{Name: "panelist", EffectiveMCPServers: []string{"alpha"}}); err != nil {
+		t.Fatal(err)
+	}
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "one", Agent: "panelist"}}},
+	}}}
+	if got := workflowMCPServers(wf, registry); !reflect.DeepEqual(got, []string{"alpha"}) {
+		t.Fatalf("workflowMCPServers() = %v, want [alpha]", got)
+	}
+}

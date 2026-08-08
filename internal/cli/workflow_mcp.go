@@ -11,15 +11,11 @@ func workflowMCPServers(wf *compiler.CompiledWorkflow, registry *agents.AgentReg
 	}
 	seen := make(map[string]struct{})
 	for _, step := range wf.Steps {
-		if step.Agent == "" {
-			continue
-		}
-		agent, ok := registry.Get(step.Agent)
-		if !ok {
-			continue
-		}
-		for _, serverID := range agent.EffectiveMCPServers {
-			seen[serverID] = struct{}{}
+		addWorkflowAgentMCPServers(seen, registry, step.Agent)
+		if step.Panel != nil {
+			for _, member := range step.Panel.Members {
+				addWorkflowAgentMCPServers(seen, registry, member.Agent)
+			}
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -29,6 +25,19 @@ func workflowMCPServers(wf *compiler.CompiledWorkflow, registry *agents.AgentReg
 		}
 	}
 	return out
+}
+
+func addWorkflowAgentMCPServers(seen map[string]struct{}, registry *agents.AgentRegistry, name string) {
+	if name == "" {
+		return
+	}
+	agent, ok := registry.Get(name)
+	if !ok {
+		return
+	}
+	for _, serverID := range agent.EffectiveMCPServers {
+		seen[serverID] = struct{}{}
+	}
 }
 
 func registryMCPServerOrder(registry *agents.AgentRegistry) []string {
