@@ -220,10 +220,10 @@ func List(ctx context.Context, repoRoot string) ([]WorktreeInfo, error) {
 	wtPrefix := wtDir + string(filepath.Separator)
 	cmd := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain")
 	cmd.Dir = root
-	// ensureGitRepo above already proved this is a work tree and the porcelain
-	// listing tolerates broken worktree metadata, so the command cannot fail
-	// in a way a deterministic test can reach; treat failure as an empty list.
-	out, _ := cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, &gitCommandError{cmd: "worktree list", output: string(out), err: err}
+	}
 	return parseWorktreeList(string(out), wtPrefix)
 }
 
