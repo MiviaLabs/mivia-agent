@@ -38,7 +38,7 @@ type RoutingPolicy struct {
 	Mode                    string   // "policy" | "parent"
 	MaxAsksPerTask          int      // default 4
 	MaxReferralDepth        int      // default 2
-	Allow                   []string // "from->to"; empty = any live pair
+	Allow                   []string // "from->to"; empty = any live pair; non-empty all-malformed list declines, never any-live
 	MaxReferralSpawnsPerRun int      // default 4
 }
 
@@ -105,6 +105,12 @@ func RouteAsk(policy RoutingPolicy, in RouteInput) RouteDecision {
 	}
 
 	allow := parseAllowPairs(policy.Allow)
+	// A non-empty Allow list whose entries all fail to parse must never
+	// degrade to any-live routing. The config layer does not validate allow
+	// entries, so the malformed list reaches RouteAsk unchanged.
+	if len(policy.Allow) > 0 && len(allow) == 0 {
+		return RouteDecision{Action: RouteDecline, Reason: DeclineNotAllowed}
+	}
 	explicitAllow := len(allow) > 0
 	pairOK := allowPair(allow, from, to)
 
