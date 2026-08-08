@@ -49,7 +49,8 @@ func (m *tuiModel) renderChatView() string {
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
 	}
 	if m.suggest.open {
-		panel, size := renderSuggestPanel(m.suggest, max(1, m.width), max(0, m.suggestComposerTop()-1))
+		pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil)
+		panel, size := renderSuggestPanel(m.suggest, max(1, pane.chatWidth), max(0, m.suggestComposerTop()-1))
 		if panel != "" {
 			return overlayAt(base, panel, suggestOverlayRect(m, panel, size), max(1, m.width), max(8, m.height))
 		}
@@ -102,6 +103,23 @@ func appendCtxSuffix(detail string, percent int) string {
 }
 
 func (m *tuiModel) renderBaseChatView() string {
+	pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil)
+	if !pane.sidebarVisible {
+		return m.renderChatPane()
+	}
+	// The chat renderer uses m.width as its layout input. Scope the temporary
+	// width change to this synchronous render, then restore the terminal width.
+	width := m.width
+	m.width = pane.chatWidth
+	chat := m.renderChatPane()
+	m.width = width
+	sidebar := m.sessionsSidebar.view(m.sessions, pane.sidebarWidth, max(1, m.height), m.focus == focusSidebar)
+	padding := paneSpacer(pane.dividerPadding, max(1, m.height))
+	divider := sidebarDivider(pane.dividerWidth, max(1, m.height))
+	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, padding, divider, padding, chat)
+}
+
+func (m *tuiModel) renderChatPane() string {
 	open, done, total := countTools(m.toolRows)
 	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false, time.Since(m.turnStart))
 

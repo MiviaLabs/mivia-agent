@@ -24,9 +24,7 @@ func seedSessions(m *tuiModel, n int) {
 func TestSessionsDialogOpensAndLists(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 	seedSessions(m, 4)
-	if !m.handleSlash("/sessions") {
-		t.Fatal("/sessions must be handled")
-	}
+	m.openSessionsDialog()
 	if m.sessionsDlg == nil {
 		t.Fatal("/sessions must open the manager dialog")
 	}
@@ -46,7 +44,7 @@ func TestSessionsDialogOpensAndLists(t *testing.T) {
 func TestSessionsDialogNavigatesAndCloses(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 	seedSessions(m, 3)
-	m.handleSlash("/sessions")
+	m.openSessionsDialog()
 
 	if m.sessionsDlg.cursor != 0 {
 		t.Fatalf("cursor starts at %d", m.sessionsDlg.cursor)
@@ -70,7 +68,7 @@ func TestSessionsDialogDeleteRequiresConfirmation(t *testing.T) {
 	// Deleting a session is irreversible: a single keystroke must never do it.
 	m := newReadyChatModel(30, 90)
 	seedSessions(m, 3)
-	m.handleSlash("/sessions")
+	m.openSessionsDialog()
 
 	m.handleChatKey("d", false)
 	if m.sessionsDlg.confirm != confirmDeleteOne {
@@ -93,7 +91,7 @@ func TestSessionsDialogDeleteRequiresConfirmation(t *testing.T) {
 func TestSessionsDialogPurgeRequiresConfirmation(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 	seedSessions(m, 3)
-	m.handleSlash("/sessions")
+	m.openSessionsDialog()
 
 	m.handleChatKey("P", false)
 	if m.sessionsDlg.confirm != confirmPurgeAll {
@@ -134,7 +132,7 @@ func TestSessionsDialogCursorClampsAfterDelete(t *testing.T) {
 func TestSessionsDialogEmptyState(t *testing.T) {
 	m := newReadyChatModel(30, 90)
 	m.sessions = nil
-	m.handleSlash("/sessions")
+	m.openSessionsDialog()
 	view := stripANSI(m.View())
 	if !strings.Contains(strings.ToLower(view), "no saved sessions") {
 		t.Fatalf("empty dialog must say so:\n%s", view)

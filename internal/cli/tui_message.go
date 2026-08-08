@@ -57,6 +57,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.layout()
 		m.clampModalState()
+		if m.focus == focusSidebar && !m.sidebarVisible() {
+			m.setFocus(focusComposer)
+		}
 		if m.mode == modeChat {
 			m.renderVP()
 		}
@@ -302,6 +305,12 @@ func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
 				}
 			}
 		}
+		return true
+	}
+	if pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil); pane.sidebarVisible && msg.X < pane.sidebarWidth {
+		// The chat hit map uses pane-relative rows. Do not let sidebar input
+		// select, focus, or scroll the chat pane.
+		*skipViewport = true
 		return true
 	}
 	zone, hit := m.hitMap.hit(msg.Y)

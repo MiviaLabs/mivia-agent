@@ -71,7 +71,7 @@ func (m *tuiModel) buildViewportContent() string {
 // map is nil (that made Enter/toggle appear broken).
 // History rails never animate (Live=false).
 func (m *tuiModel) renderBlocksForView() ChatBlockRender {
-	w := max(20, m.width-2)
+	w := max(20, m.chatPaneWidth()-2)
 	view := railView{Frame: m.logoFrame, Live: false}
 	if m.workGroupCollapsed == nil {
 		m.workGroupCollapsed = map[string]bool{}

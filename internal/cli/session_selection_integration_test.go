@@ -85,7 +85,7 @@ func TestIntegrationSplashEnterLoadsPersistedSession(t *testing.T) {
 	}
 }
 
-func TestIntegrationSessionsDialogEnterLoadsPersistedSession(t *testing.T) {
+func TestIntegrationSessionsSidebarEnterLoadsPersistedSession(t *testing.T) {
 	sess, res, infos, cleanup := persistedSessionForSelection(t)
 	defer cleanup()
 
@@ -98,10 +98,11 @@ func TestIntegrationSessionsDialogEnterLoadsPersistedSession(t *testing.T) {
 		t.Fatal("/sessions was not handled")
 	}
 
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
-	if m.sessionsDlg != nil {
-		t.Fatalf("Enter did not close the sessions dialog; view=%q", stripANSI(m.View()))
+	if m.sessionsSidebar == nil {
+		t.Fatalf("Enter unexpectedly closed the sessions sidebar; view=%q", stripANSI(m.View()))
 	}
 	if got := sess.MessagesCopy(); len(got) != 2 || got[0].Content != "previous question" {
 		t.Fatalf("dialog Enter did not restore persisted history: %#v; view=%q", got, stripANSI(m.View()))
@@ -110,11 +111,78 @@ func TestIntegrationSessionsDialogEnterLoadsPersistedSession(t *testing.T) {
 	// Reopening the same saved session must rebuild a second dispatcher
 	// generation without re-registering generation-owned tools.
 	if !m.handleSlash("/sessions") {
-		t.Fatal("second /sessions was not handled")
+		t.Fatal("second /sessions toggle was not handled")
 	}
+	if !m.handleSlash("/sessions") {
+		t.Fatal("third /sessions reopen was not handled")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.sessionsDlg != nil {
-		t.Fatalf("second Enter did not close the sessions dialog; view=%q", stripANSI(m.View()))
+	if m.sessionsSidebar == nil {
+		t.Fatalf("second Enter unexpectedly closed the sessions sidebar; view=%q", stripANSI(m.View()))
+	}
+}
+
+func TestIntegrationSessionsSidebarNewSessionStartsFreshConversation(t *testing.T) {
+	sess, res, infos, cleanup := persistedSessionForSelection(t)
+	defer cleanup()
+	sess.Messages = append(sess.Messages, provider.Message{Role: provider.RoleUser, Content: "current question"})
+
+	m := newTUIModel(sess, res, true)
+	m.mode, m.ready, m.width, m.height = modeChat, true, 100, 40
+	m.sessions = infos
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got := sess.MessagesCopy(); len(got) != 0 {
+		t.Fatalf("new-session row kept current history: %#v", got)
+	}
+	if len(m.blocks) == 0 || !strings.Contains(stripANSI(m.blocks[len(m.blocks)-1].Text), "new session started") {
+		t.Fatalf("new-session result was not visible: %#v", m.blocks)
+	}
+}
+
+func TestIntegrationSessionsSidebarNewSessionBlocksWhileBusy(t *testing.T) {
+	sess, res, infos, cleanup := persistedSessionForSelection(t)
+	defer cleanup()
+	sess.Messages = append(sess.Messages, provider.Message{Role: provider.RoleUser, Content: "current question"})
+
+	m := newTUIModel(sess, res, true)
+	m.mode, m.ready, m.width, m.height = modeChat, true, 100, 40
+	m.sessions, m.waiting = infos, true
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got := sess.MessagesCopy(); len(got) != 1 || got[0].Content != "current question" {
+		t.Fatalf("busy new-session row changed history: %#v", got)
+	}
+	if len(m.blocks) == 0 || !strings.Contains(stripANSI(m.blocks[len(m.blocks)-1].Text), "finish the current turn") {
+		t.Fatalf("busy new-session feedback was not visible: %#v", m.blocks)
+	}
+}
+
+func TestIntegrationSessionsSidebarNewSessionBlocksDuringCancellation(t *testing.T) {
+	sess, res, infos, cleanup := persistedSessionForSelection(t)
+	defer cleanup()
+	sess.Messages = append(sess.Messages, provider.Message{Role: provider.RoleUser, Content: "current question"})
+
+	m := newTUIModel(sess, res, true)
+	m.mode, m.ready, m.width, m.height = modeChat, true, 100, 40
+	m.sessions, m.cancelling = infos, true
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got := sess.MessagesCopy(); len(got) != 1 || got[0].Content != "current question" {
+		t.Fatalf("cancelling new-session row changed history: %#v", got)
 	}
 }
 
@@ -145,7 +213,7 @@ func TestIntegrationSplashEnterSurfacesLoadFailure(t *testing.T) {
 	}
 }
 
-func TestIntegrationSessionsDialogRefreshesStaleRows(t *testing.T) {
+func TestIntegrationSessionsSidebarRefreshesStaleRows(t *testing.T) {
 	sess, res, infos, cleanup := persistedSessionForSelection(t)
 	defer cleanup()
 	if err := sess.DeleteSession("previous"); err != nil {
@@ -161,7 +229,80 @@ func TestIntegrationSessionsDialogRefreshesStaleRows(t *testing.T) {
 		t.Fatal("/sessions was not handled")
 	}
 
-	if len(m.sessions) != 0 || len(m.sessionsDlg.sessions) != 0 {
-		t.Fatalf("stale session rows survived refresh: model=%d dialog=%d", len(m.sessions), len(m.sessionsDlg.sessions))
+	if len(m.sessions) != 0 || m.sessionsSidebar == nil {
+		t.Fatalf("stale session rows survived refresh: model=%d sidebar=%v", len(m.sessions), m.sessionsSidebar != nil)
+	}
+}
+
+func TestIntegrationSessionsSlashTogglesFocusedSidebar(t *testing.T) {
+	m := newReadyChatModel(30, 80)
+	m.mode = modeChat
+
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+	if m.sessionsSidebar == nil {
+		t.Fatal("/sessions did not open the sessions sidebar")
+	}
+	if m.focus != focusSidebar {
+		t.Fatalf("focus = %v, want %v", m.focus, focusSidebar)
+	}
+	if m.sessionsDlg != nil {
+		t.Fatal("/sessions opened the sessions dialog instead of the sidebar")
+	}
+
+	if !m.handleSlash("/sessions") {
+		t.Fatal("second /sessions was not handled")
+	}
+	if m.sessionsSidebar != nil {
+		t.Fatal("second /sessions did not close the sessions sidebar")
+	}
+}
+
+func TestIntegrationSidebarEscapeCloses(t *testing.T) {
+	m := newReadyChatModel(100, 40)
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.sessionsSidebar != nil {
+		t.Fatal("escape did not close the sidebar")
+	}
+}
+
+func TestIntegrationSidebarEnterBlocksCancelUnwind(t *testing.T) {
+	sess, res, infos, cleanup := persistedSessionForSelection(t)
+	defer cleanup()
+	m := newTUIModel(sess, res, true)
+	m.mode, m.ready, m.width, m.height = modeChat, true, 100, 40
+	m.sessions = infos
+	m.cancelling = true
+	before := sess.MessagesCopy()
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := sess.MessagesCopy(); len(got) != len(before) {
+		t.Fatalf("sidebar loaded a session during cancellation unwind: %#v", got)
+	}
+}
+
+func TestIntegrationSidebarDeleteConfirmsAndRemovesSession(t *testing.T) {
+	sess, res, infos, cleanup := persistedSessionForSelection(t)
+	defer cleanup()
+	m := newTUIModel(sess, res, true)
+	m.mode, m.ready, m.width, m.height = modeChat, true, 100, 40
+	m.sessions = infos
+	if !m.handleSlash("/sessions") {
+		t.Fatal("/sessions was not handled")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if len(m.sessions) != 0 {
+		t.Fatalf("sessions after delete = %#v", m.sessions)
+	}
+	if sessions, err := sess.ListSessions(); err != nil || len(sessions) != 0 {
+		t.Fatalf("stored sessions after delete = %#v, %v", sessions, err)
 	}
 }
