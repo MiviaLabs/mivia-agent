@@ -21,7 +21,7 @@ func TestSessionTitlePersistsAndClears(t *testing.T) {
 	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetSessionTitle(context.Background(), principal, "  A title  ", contextstate.WorktreeInstance{}); err != nil {
+	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, "  A title  ", contextstate.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
 	infos, err := store.ListSessions(context.Background(), principal)
@@ -41,7 +41,7 @@ func TestSessionTitlePersistsAndClears(t *testing.T) {
 	if len(infos) != 1 || infos[0].SessionID != principal.SessionID || infos[0].Title != "A title" {
 		t.Fatalf("infos = %+v", infos)
 	}
-	if err := store.SetSessionTitle(context.Background(), principal, " ", contextstate.WorktreeInstance{}); err != nil {
+	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, " ", contextstate.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
 	infos, err = store.ListSessions(context.Background(), principal)
@@ -53,7 +53,7 @@ func TestSessionTitlePersistsAndClears(t *testing.T) {
 	}
 }
 
-func TestSessionTitleRejectsOtherPrincipal(t *testing.T) {
+func TestSessionTitleRejectsOtherSubject(t *testing.T) {
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -66,11 +66,42 @@ func TestSessionTitleRejectsOtherPrincipal(t *testing.T) {
 	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: owner, Binding: mustBinding(t)}); err != nil {
 		t.Fatal(err)
 	}
-	other, err := contextstate.NewPrincipal("workspace", "session-other", "subject")
+	other, err := contextstate.NewPrincipal("workspace", "session-other", "other-subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetSessionTitle(context.Background(), other, "blocked", contextstate.WorktreeInstance{}); err == nil {
-		t.Fatal("other principal updated a title")
+	if err := store.SetSessionTitle(context.Background(), other, owner.SessionID, "blocked", contextstate.WorktreeInstance{}); err == nil {
+		t.Fatal("other subject updated a title")
+	}
+}
+
+func TestSessionTitleUpdatesLoadedSessionForSameSubject(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	current, err := contextstate.NewPrincipal("workspace", "current", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := contextstate.NewPrincipal("workspace", "loaded", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, principal := range []contextstate.Principal{current, loaded} {
+		if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SetSessionTitle(context.Background(), current, loaded.SessionID, "Loaded title", contextstate.WorktreeInstance{}); err != nil {
+		t.Fatalf("SetSessionTitle loaded session: %v", err)
+	}
+	var title string
+	if err := store.db.QueryRow(`SELECT title FROM context_sessions WHERE workspace_id=? AND session_id=?`, loaded.WorkspaceID, loaded.SessionID).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "Loaded title" {
+		t.Fatalf("loaded title = %q", title)
 	}
 }

@@ -84,7 +84,7 @@ type SessionCatalog interface {
 
 // SessionTitleCatalog stores optional display metadata for a bound context session.
 type SessionTitleCatalog interface {
-	SetSessionTitle(context.Context, Principal, string, WorktreeInstance) error
+	SetSessionTitle(context.Context, Principal, string, string, WorktreeInstance) error
 }
 
 // WorktreeRouteCatalog stores launch routes for mivia-managed worktrees.

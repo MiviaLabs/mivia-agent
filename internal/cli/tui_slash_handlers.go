@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
 // handleSlashImpl is the TUI slash dispatcher. The var form is a deliberate
@@ -57,13 +58,25 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 }
 
 func (m *tuiModel) handleTuiTitleSlash(cmd string) bool {
-	if m.activeSession != nil && m.activeSession.Reference() != m.session.SessionID {
-		m.appendInfo("title error: title the current durable session before loading another session")
-		return true
-	}
 	cmd = strings.TrimSpace(cmd)
 	title := strings.TrimSpace(strings.TrimPrefix(cmd, fieldsFirst(cmd)))
-	if err := m.session.SetContextSessionTitle(title); err != nil {
+	sessionID := m.session.SessionID
+	instance := contextstate.WorktreeInstance{}
+	if m.activeSession != nil {
+		if m.activeSession.SessionID == "" {
+			m.appendInfo("title error: titles are not available for saved snapshots")
+			return true
+		}
+		sessionID = m.activeSession.Reference()
+		instance = m.activeSession.WorktreeInstance
+	}
+	var err error
+	if m.activeSession != nil {
+		err = m.session.SetContextSessionTitleInWorktree(sessionID, title, instance)
+	} else {
+		err = m.session.SetContextSessionTitle(sessionID, title)
+	}
+	if err != nil {
 		m.appendInfo("title error: " + err.Error())
 		return true
 	}

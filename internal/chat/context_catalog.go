@@ -46,15 +46,20 @@ func sessionInfoFromCatalog(info contextstate.SessionCatalogInfo) SessionInfo {
 		WorktreeInstance: info.WorktreeInstance}
 }
 
-// SetContextSessionTitle changes display metadata for this bound context session.
-func (s *Session) SetContextSessionTitle(title string) error {
+// SetContextSessionTitle changes display metadata for a durable context session.
+func (s *Session) SetContextSessionTitle(sessionID, title string) error {
+	s.mu.RLock()
+	instance := s.contextWorktree
+	s.mu.RUnlock()
+	return s.SetContextSessionTitleInWorktree(sessionID, title, instance)
+}
+
+// SetContextSessionTitleInWorktree changes title metadata in the given worktree.
+func (s *Session) SetContextSessionTitleInWorktree(sessionID, title string, instance contextstate.WorktreeInstance) error {
 	catalog, principal, ok := s.contextCatalogState()
 	if !ok {
 		return fmt.Errorf("context session titles are not configured")
 	}
-	s.mu.RLock()
-	instance := s.contextWorktree
-	s.mu.RUnlock()
 	title, err := contextstate.NormalizeSessionTitle(title)
 	if err != nil {
 		return err
@@ -63,7 +68,7 @@ func (s *Session) SetContextSessionTitle(title string) error {
 	if !ok {
 		return fmt.Errorf("context session titles are not configured")
 	}
-	return titles.SetSessionTitle(context.Background(), principal, title, instance)
+	return titles.SetSessionTitle(context.Background(), principal, sessionID, title, instance)
 }
 
 func (s *Session) saveContextSession(name string, msgs []provider.Message, selection ModelBinding) error {
