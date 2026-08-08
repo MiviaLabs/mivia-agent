@@ -85,6 +85,23 @@ type Store interface {
 	Close() error
 }
 
+// ExistingClaimAppender appends only when holder owns an existing claim.
+// Unlike Store.AppendClaimed, an unclaimed run is refused.
+type ExistingClaimAppender interface {
+	AppendWithExistingClaim(context.Context, Event, string) error
+}
+
+// BatchAppender atomically appends a set of events.
+type BatchAppender interface {
+	AppendBatch(context.Context, []Event) error
+}
+
+// NewRunBatchAppender atomically appends a new-run batch only when no event
+// or claim exists for its run. It is the atomic admission boundary.
+type NewRunBatchAppender interface {
+	AppendBatchForNewRun(context.Context, string, []Event) error
+}
+
 // LeaseStore is the optional extension used by workflow recovery.
 type LeaseStore interface {
 	TakeoverExpiredClaim(context.Context, string, string, time.Duration) error
@@ -115,11 +132,72 @@ func (m *Memory) Append(_ context.Context, e Event) error {
 	return m.appendLocked(e)
 }
 
+func (m *Memory) AppendBatch(_ context.Context, events []Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.appendBatchLocked(events)
+}
+
+func (m *Memory) AppendBatchForNewRun(_ context.Context, runID string, events []Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.events[runID]) != 0 {
+		return ErrDuplicate
+	}
+	if _, claimed := m.claims[runID]; claimed {
+		return ErrClaimHeld
+	}
+	return m.appendBatchLocked(events)
+}
+
+func (m *Memory) appendBatchLocked(events []Event) error {
+	seenIDs := make(map[string]struct{}, len(events))
+	seenSeq := make(map[string]map[int]struct{}, len(events))
+	for _, e := range events {
+		if _, ok := m.ids[e.ID]; ok {
+			return ErrDuplicate
+		}
+		if _, ok := seenIDs[e.ID]; ok {
+			return ErrDuplicate
+		}
+		seenIDs[e.ID] = struct{}{}
+		if e.Sequence <= m.maxSeq[e.RunID] {
+			return ErrDuplicate
+		}
+		if seenSeq[e.RunID] == nil {
+			seenSeq[e.RunID] = make(map[int]struct{})
+		}
+		if _, ok := seenSeq[e.RunID][e.Sequence]; ok {
+			return ErrDuplicate
+		}
+		seenSeq[e.RunID][e.Sequence] = struct{}{}
+		if len(e.Payload) == 0 {
+			return fmt.Errorf("empty payload")
+		}
+	}
+	for _, e := range events {
+		if err := m.appendLocked(e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // AppendClaimed atomically checks the run claim and appends the event.
 func (m *Memory) AppendClaimed(_ context.Context, e Event, holder string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if claim, ok := m.claims[e.RunID]; ok && (holder == "" || claim.Holder != holder) {
+		return ErrClaimHeld
+	}
+	return m.appendLocked(e)
+}
+
+func (m *Memory) AppendWithExistingClaim(_ context.Context, e Event, holder string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	claim, ok := m.claims[e.RunID]
+	if !ok || holder == "" || claim.Holder != holder {
 		return ErrClaimHeld
 	}
 	return m.appendLocked(e)

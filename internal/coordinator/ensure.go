@@ -23,10 +23,16 @@ type EnsureRunRequest struct {
 	// proceeds instead of burning its full wait budget. Generic mechanism: the
 	// coordinator never assumes who the parent is, only that it cannot answer.
 	NonInteractiveParent bool
+	Policy               ledger.RunPolicy
 }
 
 // EnsureRun creates or resumes the exact host-admitted run.
 func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*RunHandle, error) {
+	var err error
+	req, err = c.resolveEnsurePolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
 	fingerprint, key, err := c.validateEnsureRequest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -43,7 +49,7 @@ func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*Run
 
 	snap, err := c.repo.GetRunByIdempotencyKey(ctx, key)
 	if errors.Is(err, ledger.ErrNotFound) {
-		h, createErr := c.createAndStartRunWithID(ctx, req.RunID, req.Tasks, key, fingerprint, false, nonInteractiveRunOpts(req)...)
+		h, createErr := c.createAndStartRunWithID(ctx, req.RunID, req.Tasks, key, fingerprint, req.Policy, false, nonInteractiveRunOpts(req)...)
 		if createErr == nil {
 			return h, nil
 		}
@@ -97,6 +103,175 @@ func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*Run
 	return h, nil
 }
 
+// EnsureSingleTaskRun admits exactly one runnable task. Wave 3 callers use
+// this operation instead of general DAG admission.
+func (c *coordinator) EnsureSingleTaskRun(ctx context.Context, req EnsureRunRequest) (*RunHandle, error) {
+	if len(req.Tasks) != 1 {
+		return nil, fmt.Errorf("ensure single task run: want one task")
+	}
+	var err error
+	req, err = c.resolveEnsurePolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	fingerprint, key, err := c.validateEnsureRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	c.spawnMu.Lock()
+	defer c.spawnMu.Unlock()
+	if h := c.lookupHandle(key); h != nil {
+		if h.runID != req.RunID || h.requestFingerprint != fingerprint {
+			return nil, ErrIdempotencyConflict
+		}
+		return h, nil
+	}
+	if snap, err := c.repo.GetRunByIdempotencyKey(ctx, key); err == nil {
+		_ = snap
+		return c.joinSingleTaskAdmission(ctx, req, key, fingerprint)
+	} else if !errors.Is(err, ledger.ErrNotFound) {
+		return nil, err
+	}
+	if req.ForceResume {
+		return nil, ledger.ErrNotFound
+	}
+	now := c.nowLocked()
+	task := req.Tasks[0]
+	attemptID := newAttemptID()
+	taskSnap := ledger.TaskSnapshot{RunID: req.RunID, TaskID: task.ID, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Scope: task.Scope, Input: task.Input, InputSchema: task.InputSchema, OutputSchema: task.OutputSchema, Timeout: task.Timeout, Budget: task.Budget, Depth: task.Depth, DependsOn: append([]string(nil), task.DependsOn...), Status: string(ledger.TaskStatusQueued), Version: 1, CreatedAt: now, Attempts: []ledger.AttemptSnapshot{{AttemptID: attemptID, TaskID: task.ID, RunID: req.RunID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusQueued)}}}
+	run := ledger.RunSnapshot{RunID: req.RunID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Policy: req.Policy}
+	if err := c.repo.AdmitSingleTask(ctx, ledger.SingleTaskAdmission{IdempotencyKey: key, Run: run, Task: taskSnap}); err != nil {
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return c.joinSingleTaskAdmission(ctx, req, key, fingerprint)
+		}
+		return nil, err
+	}
+	if err := c.repo.ClaimRun(ctx, req.RunID, c.holderID); err != nil {
+		return nil, err
+	}
+	opts := append(nonInteractiveRunOpts(req), withRunPolicy(req.Policy))
+	h := c.newRunHandle(req.RunID, key, map[string]string{task.ID: attemptID}, fingerprint, false, opts...)
+	go c.executeRun(h, []subagents.Task{task})
+	return h, nil
+}
+
+// EnsureTerminalSingleTaskRun admits a canceled single-task tombstone.
+func (c *coordinator) EnsureTerminalSingleTaskRun(ctx context.Context, req EnsureRunRequest, status ledger.TaskStatus) (*RunHandle, error) {
+	if status != ledger.TaskStatusCanceled {
+		return nil, fmt.Errorf("ensure terminal single task run: unsupported status %q", status)
+	}
+	if len(req.Tasks) != 1 {
+		return nil, fmt.Errorf("ensure terminal single task run: want one task")
+	}
+	var err error
+	req, err = c.resolveEnsurePolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	fingerprint, key, err := c.validateEnsureRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	c.spawnMu.Lock()
+	defer c.spawnMu.Unlock()
+	if h := c.lookupHandle(key); h != nil {
+		if h.runID != req.RunID || h.requestFingerprint != fingerprint {
+			return nil, ErrIdempotencyConflict
+		}
+		return h, nil
+	}
+	if snap, err := c.repo.GetRunByIdempotencyKey(ctx, key); err == nil {
+		_ = snap
+		return c.joinSingleTaskAdmission(ctx, req, key, fingerprint)
+	} else if !errors.Is(err, ledger.ErrNotFound) {
+		return nil, err
+	}
+	now := c.nowLocked()
+	run := ledger.RunSnapshot{RunID: req.RunID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCanceled, RequestFingerprint: fingerprint, CreatedAt: now, CompletedAt: &now, Policy: req.Policy}
+	task := req.Tasks[0]
+	snap := ledger.TaskSnapshot{RunID: req.RunID, TaskID: task.ID, HandlerName: task.Name, AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill, ProviderName: task.ProviderName, Model: task.Model, Scope: task.Scope, Input: task.Input, InputSchema: task.InputSchema, OutputSchema: task.OutputSchema, Timeout: task.Timeout, Budget: task.Budget, DependsOn: append([]string(nil), task.DependsOn...), Status: string(status), Version: 1, CreatedAt: now, CompletedAt: &now, Attempts: []ledger.AttemptSnapshot{{AttemptID: newAttemptID(), TaskID: task.ID, RunID: req.RunID, AttemptNum: 1, StartedAt: now, FinishedAt: &now, Status: string(status)}}}
+	if err := c.repo.AdmitSingleTask(ctx, ledger.SingleTaskAdmission{IdempotencyKey: key, Run: run, Task: snap}); err != nil {
+		if errors.Is(err, ledger.ErrDuplicate) {
+			return c.joinSingleTaskAdmission(ctx, req, key, fingerprint)
+		}
+		return nil, err
+	}
+	h := c.newRunHandle(req.RunID, key, latestAttempts([]ledger.TaskSnapshot{snap}), fingerprint, true, nonInteractiveRunOpts(req)...)
+	go c.watchRecoveredRun(h)
+	return h, nil
+}
+
+// resolveEnsurePolicy restores the durable policy for an omitted request.
+// An explicit non-zero policy is later compared with the durable tuple.
+func (c *coordinator) resolveEnsurePolicy(ctx context.Context, req EnsureRunRequest) (EnsureRunRequest, error) {
+	if req.Policy != (ledger.RunPolicy{}) || strings.TrimSpace(req.IdempotencyKey) == "" {
+		req.Policy = policyWithRetry(req.Policy, c.retryPolicyLocked())
+		return req, nil
+	}
+	snap, err := c.repo.GetRunByIdempotencyKey(ctx, scopedKey(ctx, req.IdempotencyKey))
+	if errors.Is(err, ledger.ErrNotFound) {
+		req.Policy = policyWithRetry(req.Policy, c.retryPolicyLocked())
+		return req, nil
+	}
+	if err != nil {
+		return req, err
+	}
+	req.Policy = snap.Policy
+	return req, nil
+}
+
+// joinSingleTaskAdmission validates and joins a durable admission winner.
+// It never changes the winner's terminal or runnable state.
+func (c *coordinator) joinSingleTaskAdmission(ctx context.Context, req EnsureRunRequest, key, fingerprint string) (*RunHandle, error) {
+	run, err := c.repo.GetRunByIdempotencyKey(ctx, key)
+	if err != nil {
+		if errors.Is(err, ledger.ErrNotFound) {
+			return nil, ErrIdempotencyConflict
+		}
+		return nil, fmt.Errorf("join single admission: lookup winner: %w", err)
+	}
+	if run.RunID != req.RunID || run.RequestFingerprint != fingerprint || run.Policy != req.Policy {
+		return nil, ErrIdempotencyConflict
+	}
+	tasks, err := c.repo.ListTasks(ctx, run.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("join single admission: list winner tasks: %w", err)
+	}
+	if len(tasks) != 1 || !sameStoredWork(req.Tasks[0], tasks[0]) {
+		return nil, ErrIdempotencyConflict
+	}
+	if isTerminalRunStatus(run.Status) {
+		h := c.newRunHandle(run.RunID, key, latestAttempts(tasks), fingerprint, true, nonInteractiveRunOpts(req)...)
+		go c.watchRecoveredRun(h)
+		return h, nil
+	}
+	if h := c.HandleForRun(run.RunID); h != nil {
+		return h, nil
+	}
+	if err := c.repo.ClaimRun(ctx, run.RunID, c.holderID); errors.Is(err, ledger.ErrClaimHeld) {
+		h := c.newRunHandle(run.RunID, key, latestAttempts(tasks), fingerprint, true, nonInteractiveRunOpts(req)...)
+		go c.watchJoinedRun(h)
+		return h, nil
+	} else if err != nil {
+		return nil, err
+	}
+	// Keep this claim through the resume handoff. Releasing it here lets a
+	// winner complete or another executor claim the run between the probe and
+	// resume. resumeInterruptedRun refreshes this same holder claim.
+	current, err := c.repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		_ = c.repo.ReleaseRun(ctx, run.RunID, c.holderID)
+		return nil, err
+	}
+	if isTerminalRunStatus(current.Status) {
+		_ = c.repo.ReleaseRun(ctx, run.RunID, c.holderID)
+		h := c.newRunHandle(run.RunID, key, latestAttempts(tasks), fingerprint, true, nonInteractiveRunOpts(req)...)
+		go c.watchRecoveredRun(h)
+		return h, nil
+	}
+	return c.resumeInterruptedRun(ctx, run.RunID, req.Tasks, nonInteractiveRunOpts(req)...)
+}
+
 func (c *coordinator) validateEnsureRequest(ctx context.Context, req EnsureRunRequest) (string, string, error) {
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return "", "", fmt.Errorf("ensure run: idempotency key is empty")
@@ -112,7 +287,7 @@ func (c *coordinator) validateEnsureRequest(ctx context.Context, req EnsureRunRe
 			return "", "", fmt.Errorf("ensure run: task ID is empty")
 		}
 	}
-	fingerprint, err := requestFingerprint(req.Tasks)
+	fingerprint, err := requestFingerprintWithPolicy(req.Tasks, req.Policy)
 	if err != nil {
 		return "", "", fmt.Errorf("ensure run: fingerprint request: %w", err)
 	}
@@ -139,12 +314,14 @@ func sameStoredWork(task subagents.Task, snap ledger.TaskSnapshot) bool {
 		Timeout: task.Timeout, Budget: task.Budget, Scope: task.Scope,
 		AgentName: task.AgentName, AgentDigest: task.AgentDigest, Skill: task.Skill,
 		ProviderName: task.ProviderName, Model: task.Model, OutputSchema: task.OutputSchema,
+		InputSchema: task.InputSchema,
 	}})
 	right, rightErr := requestFingerprint([]subagents.Task{{
 		ID: snap.TaskID, Name: snap.HandlerName, DependsOn: snap.DependsOn, Input: snap.Input,
 		Timeout: snap.Timeout, Budget: snap.Budget, Scope: snap.Scope,
 		AgentName: snap.AgentName, AgentDigest: snap.AgentDigest, Skill: snap.Skill,
 		ProviderName: snap.ProviderName, Model: snap.Model, OutputSchema: snap.OutputSchema,
+		InputSchema: snap.InputSchema,
 	}})
 	return leftErr == nil && rightErr == nil && left == right
 }
@@ -203,10 +380,11 @@ func (c *coordinator) resumeEmptyRun(ctx context.Context, runID, key, fingerprin
 // nonInteractiveRunOpts converts the ensure request's parent-interactivity flag
 // into run-handle construction options (nil when the parent is interactive).
 func nonInteractiveRunOpts(req EnsureRunRequest) []runHandleOption {
+	opts := []runHandleOption{withRunPolicy(req.Policy)}
 	if req.NonInteractiveParent {
-		return []runHandleOption{withNonInteractiveParent()}
+		opts = append(opts, withNonInteractiveParent())
 	}
-	return nil
+	return opts
 }
 
 // claimForResume acquires the execution claim for a (force-)resume without

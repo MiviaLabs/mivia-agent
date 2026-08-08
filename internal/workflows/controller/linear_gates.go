@@ -227,6 +227,7 @@ func (c *LinearController) resolveHumanGate(ctx context.Context, approvalID, act
 	if c == nil {
 		return fmt.Errorf("linear controller is nil")
 	}
+	ctx = workflowledger.ContextWithRunID(ctx, c.RunID)
 	if strings.TrimSpace(approvalID) == "" || strings.TrimSpace(actor) == "" {
 		return fmt.Errorf("approval id and actor are required")
 	}

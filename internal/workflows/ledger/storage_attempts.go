@@ -17,6 +17,9 @@ func (s *StorageRepository) CreateStepAttempt(ctx context.Context, attempt StepA
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
 	}
+	if err := s.validateInitialPanelAttempt(ctx, attempt); err != nil {
+		return err
+	}
 	lock := s.runLock(attempt.RunID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -223,7 +226,7 @@ func (s *StorageRepository) applyAttemptCompletionLocked(p *Projection, idx int,
 	cur.DecisionJSON = append([]byte(nil), outcome.DecisionJSON...)
 	cur.EvidenceJSON = append([]byte(nil), outcome.EvidenceJSON...)
 	cur.FinishedAt = &now
-	cur.Version = 2
+	cur.Version++
 	if outcome.ToStepID != "" {
 		p.Transitions = append(p.Transitions, TransitionRecord{
 			RunID:           runID,
@@ -255,6 +258,7 @@ func (s *StorageRepository) applyAttemptCompletionLocked(p *Projection, idx int,
 	}
 	payload, err := marshalAttemptCompleted(attemptCompletedPayload{
 		AttemptID:        attemptID,
+		Version:          cur.Version,
 		Status:           outcome.Status,
 		CoordinatorRunID: coordinatorRunID,
 		TaskID:           taskID,
