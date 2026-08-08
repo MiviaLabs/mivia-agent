@@ -196,12 +196,23 @@ func validateWorkflowReferences(root, base string, wf *compiler.CompiledWorkflow
 func validateWorkflowSkillTools(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, skillRegistry *skills.Registry) error {
 	for _, step := range wf.Steps {
 		if step.Skill == "" {
+			// Panel members carry independent skill bindings below.
+		} else {
+			agent, _ := registry.Get(step.Agent)
+			skill, _ := skillRegistry.Get(step.Skill)
+			if err := agents.CheckSkillInvocation(&agent, skill.Name, skill.Tools); err != nil {
+				return fmt.Errorf("step %q: %w", step.ID, err)
+			}
+		}
+		if step.Kind != "agent_panel" || step.Panel == nil {
 			continue
 		}
-		agent, _ := registry.Get(step.Agent)
-		skill, _ := skillRegistry.Get(step.Skill)
-		if err := agents.CheckSkillInvocation(&agent, skill.Name, skill.Tools); err != nil {
-			return fmt.Errorf("step %q: %w", step.ID, err)
+		for _, member := range step.Panel.Members {
+			agent, _ := registry.Get(member.Agent)
+			skill, _ := skillRegistry.Get(member.Skill)
+			if err := agents.CheckSkillInvocation(&agent, skill.Name, skill.Tools); err != nil {
+				return fmt.Errorf("step %q: panel member %q: %w", step.ID, member.ID, err)
+			}
 		}
 	}
 	return nil
@@ -210,24 +221,43 @@ func validateWorkflowSkillTools(wf *compiler.CompiledWorkflow, registry *agents.
 func validateWorkflowFiles(base string, wf *compiler.CompiledWorkflow) error {
 	schemas := make(map[string][]byte)
 	for _, step := range wf.Steps {
-		if step.Template != "" {
-			data, err := readWorkflowRef(base, step.Template, template.MaxTemplateBytes)
-			if err != nil {
-				return fmt.Errorf("step %q: template %q: %w", step.ID, step.Template, err)
-			}
-			if err := validateWorkflowTemplateBindings(wf, step, string(data)); err != nil {
-				return fmt.Errorf("step %q: template %q: %w", step.ID, step.Template, err)
-			}
+		if err := validateWorkflowFileReferences(base, wf, step, "", step.Template, step.OutputSchema, schemas); err != nil {
+			return err
 		}
-		if step.OutputSchema != "" {
-			data, err := readWorkflowRef(base, step.OutputSchema, compiler.MaxSchemaBytes)
-			if err != nil {
-				return fmt.Errorf("step %q: output_schema %q: %w", step.ID, step.OutputSchema, err)
+		if step.Kind != "agent_panel" || step.Panel == nil {
+			continue
+		}
+		for _, member := range step.Panel.Members {
+			if err := validateWorkflowFileReferences(base, wf, step, member.ID, member.Template, member.OutputSchema, schemas); err != nil {
+				return err
 			}
-			schemas[step.OutputSchema] = data
 		}
 	}
 	return compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas)
+}
+
+func validateWorkflowFileReferences(base string, wf *compiler.CompiledWorkflow, step definition.Step, memberID, templateRef, schemaRef string, schemas map[string][]byte) error {
+	prefix := fmt.Sprintf("step %q", step.ID)
+	if memberID != "" {
+		prefix += fmt.Sprintf(": panel member %q", memberID)
+	}
+	if templateRef != "" {
+		data, err := readWorkflowRef(base, templateRef, template.MaxTemplateBytes)
+		if err != nil {
+			return fmt.Errorf("%s: template %q: %w", prefix, templateRef, err)
+		}
+		if err := validateWorkflowTemplateBindings(wf, step, string(data)); err != nil {
+			return fmt.Errorf("%s: template %q: %w", prefix, templateRef, err)
+		}
+	}
+	if schemaRef != "" {
+		data, err := readWorkflowRef(base, schemaRef, compiler.MaxSchemaBytes)
+		if err != nil {
+			return fmt.Errorf("%s: output_schema %q: %w", prefix, schemaRef, err)
+		}
+		schemas[schemaRef] = data
+	}
+	return nil
 }
 
 // validateWorkflowTemplateBindings verifies that each template reads only a
@@ -369,8 +399,15 @@ func buildExplainView(c *compiler.CompiledWorkflow, baseDir string) *presentatio
 	// Agent names (unique, sorted)
 	agentSeen := make(map[string]bool)
 	for _, s := range c.Steps {
-		if (s.Kind == "agent" || s.Kind == "agent_gate") && s.Agent != "" {
+		if (s.Kind == "agent" || s.Kind == "agent_gate" || s.Kind == "agent_panel") && s.Agent != "" {
 			agentSeen[s.Agent] = true
+		}
+		if s.Kind == "agent_panel" && s.Panel != nil {
+			for _, member := range s.Panel.Members {
+				if member.Agent != "" {
+					agentSeen[member.Agent] = true
+				}
+			}
 		}
 	}
 	for a := range agentSeen {
@@ -381,21 +418,27 @@ func buildExplainView(c *compiler.CompiledWorkflow, baseDir string) *presentatio
 	// References (templates + schemas, unique)
 	refSeen := make(map[string]bool)
 	for _, s := range c.Steps {
-		if s.Template != "" {
-			key := "template: " + s.Template
-			if !refSeen[key] {
-				cw.References = append(cw.References, key)
-				refSeen[key] = true
-			}
-		}
-		if s.OutputSchema != "" {
-			key := "schema: " + s.OutputSchema
-			if !refSeen[key] {
-				cw.References = append(cw.References, key)
-				refSeen[key] = true
+		addWorkflowExplainReference(cw, refSeen, "template", s.Template)
+		addWorkflowExplainReference(cw, refSeen, "schema", s.OutputSchema)
+		if s.Kind == "agent_panel" && s.Panel != nil {
+			for _, member := range s.Panel.Members {
+				addWorkflowExplainReference(cw, refSeen, "template", member.Template)
+				addWorkflowExplainReference(cw, refSeen, "schema", member.OutputSchema)
 			}
 		}
 	}
 
 	return cw
+}
+
+func addWorkflowExplainReference(cw *presentation.CompiledWorkflowExplain, seen map[string]bool, kind, reference string) {
+	if reference == "" {
+		return
+	}
+	key := kind + ": " + reference
+	if seen[key] {
+		return
+	}
+	cw.References = append(cw.References, key)
+	seen[key] = true
 }
