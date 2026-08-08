@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,6 +59,47 @@ func TestCallingAStagedToolBeforePublicationSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(stagedContent, "background orchestration is active") {
 		t.Fatalf("the staged denial did not announce the deferral reason: %q", stagedContent)
+	}
+}
+
+// TestStagedToolPublishesAtTheStartOfTheNextTurn: a stage that an earlier
+// boundary could not publish (a guarded boundary, then the guard clears) is
+// published at the start of the next turn, so the model's first call in that
+// turn executes the tool instead of getting the pending-publication denial.
+func TestStagedToolPublishesAtTheStartOfTheNextTurn(t *testing.T) {
+	completer := &scriptedCompleter{turns: []provider.Response{
+		loadToolsCall("c1", `{"names":["grep"]}`),
+		{Content: "done"},
+	}}
+	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
+	fixture.sess.SetSwitchGuard(func() error { return fmt.Errorf("background run active") })
+	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	if _, ok := fixture.sess.PendingAdmission(); !ok {
+		t.Fatal("the stage must stay pending while the guard refuses")
+	}
+
+	fixture.sess.SetSwitchGuard(nil)
+	completer.mu.Lock()
+	completer.turns = []provider.Response{
+		toolCallResponse(namedCall("c2", "grep", `{}`)),
+		{Content: "done"},
+	}
+	completer.calls = 0
+	completer.mu.Unlock()
+	if _, err := fixture.sess.SendUser(context.Background(), "use it", io.Discard); err != nil {
+		t.Fatalf("second turn: %v", err)
+	}
+	if got := fixture.sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
+		t.Fatalf("admitted = %v, want [grep] published at the start of the second turn", got)
+	}
+	for _, msg := range fixture.sess.MessagesCopy() {
+		if msg.Role == provider.RoleTool && msg.ToolCallID == "c2" {
+			if strings.Contains(msg.Content, "staged for loading") || strings.Contains(msg.Content, "not available to this agent") {
+				t.Fatalf("the staged tool was denied in the second turn: %q", msg.Content)
+			}
+		}
 	}
 }
 

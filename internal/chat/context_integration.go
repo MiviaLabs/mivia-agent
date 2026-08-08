@@ -59,6 +59,10 @@ type agentTurnSnapshot struct {
 	eventBus          *events.Bus
 	identityFactory   func(uint64) *events.Identity
 	identity          *events.Identity
+	// pendingAdmission reports whether a stage awaited publication when the
+	// turn began. It lets sendAgent engage the start-of-turn publication
+	// without adding a lock acquisition to every turn.
+	pendingAdmission bool
 	// Calibration is the rolling EWMA correction ratio carried across turns.
 	Calibration contextmgr.Calibration
 }
@@ -384,7 +388,8 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		// surface publication, concurrently with turns starting.
 		remainderSpool: s.RemainderSpool,
 		eventBus:       s.EventBus, identityFactory: s.eventIdentity,
-		Calibration: s.Calibration,
+		pendingAdmission: s.pendingAdmission != nil,
+		Calibration:      s.Calibration,
 	}
 	s.mu.Unlock()
 	if snapshot.identityFactory != nil {
