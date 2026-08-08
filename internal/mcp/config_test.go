@@ -21,6 +21,21 @@ func TestValidateServerConfig(t *testing.T) {
 	}
 }
 
+func TestValidateServerConfigRejectsUnsafeHeadersAndArguments(t *testing.T) {
+	base := config.MCPServerConfig{ID: "repository", Transport: "stdio", Command: "/bin/echo"}
+	base.Args = []string{"line\nbreak"}
+	if err := ValidateServerConfig(base); err == nil {
+		t.Fatal("ValidateServerConfig accepted a control character in an argument")
+	}
+	http := config.MCPServerConfig{
+		ID: "repository", Transport: "streamable_http", URL: "https://example.test/mcp",
+		Headers: []config.MCPHeaderConfig{{Name: "Authorization", ValueEnv: "TOKEN"}, {Name: "authorization", ValueEnv: "OTHER"}},
+	}
+	if err := ValidateServerConfig(http); err == nil {
+		t.Fatal("ValidateServerConfig accepted duplicate HTTP headers")
+	}
+}
+
 func TestEncodeToolNameIsDistinctAndBounded(t *testing.T) {
 	first, err := EncodeToolName("repository", "read.file")
 	if err != nil {

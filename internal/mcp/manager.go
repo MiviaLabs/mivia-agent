@@ -2,12 +2,12 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -49,11 +49,15 @@ func (c *sdkClient) CallTool(ctx context.Context, name string, arguments map[str
 	if err != nil {
 		return "", err
 	}
-	data, err := json.Marshal(result.Content)
-	if err != nil {
-		return "", err
+	parts := make([]string, 0, len(result.Content))
+	for _, content := range result.Content {
+		if text, ok := content.(*sdk.TextContent); ok {
+			parts = append(parts, text.Text)
+			continue
+		}
+		parts = append(parts, "[unsupported MCP result content]")
 	}
-	return string(data), nil
+	return strings.Join(parts, "\n"), nil
 }
 func (c *sdkClient) Close() error {
 	err := c.session.Close()
@@ -176,7 +180,15 @@ func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	if opts.Connect == nil {
 		opts.Connect = connectServer
 	}
+	if cfg.MaxServers > 0 && len(cfg.Servers) > cfg.MaxServers {
+		return nil, fmt.Errorf("MCP server count exceeds configured maximum")
+	}
+	seen := make(map[string]struct{}, len(cfg.Servers))
 	for _, server := range cfg.Servers {
+		if _, ok := seen[server.ID]; ok {
+			return nil, fmt.Errorf("duplicate MCP server %q", server.ID)
+		}
+		seen[server.ID] = struct{}{}
 		if err := ValidateServerConfig(server); err != nil {
 			return nil, err
 		}
@@ -215,6 +227,11 @@ func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool
 				_ = client.Close()
 				delete(m.clients, id)
 				return nil, fmt.Errorf("discover MCP server %q: %w", id, err)
+			}
+			if m.cfg.MaxToolsPerServer > 0 && len(remote) > m.cfg.MaxToolsPerServer {
+				_ = client.Close()
+				delete(m.clients, id)
+				return nil, fmt.Errorf("MCP server %q returned too many tools", id)
 			}
 			wrapped, err := wrapRemoteTools(id, client, remote, m.maxResultBytes)
 			if err != nil {
