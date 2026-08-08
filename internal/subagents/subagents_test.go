@@ -293,3 +293,233 @@ func TestResultStatusWrappedContextErrors(t *testing.T) {
 		t.Fatal("errors.Is(wrappedCancelErr, context.Canceled) should be true")
 	}
 }
+
+// TestPoolBlockedChainNeverReportsMissingOrCycle pins DC-9 (dishonest status and
+// false error) in the standalone pool scheduler. With tasks a(fails),
+// b(DependsOn a), and c(DependsOn b), the second ready() pass used to visit the
+// pending map in random order. When c was visited before b, c saw no result for
+// b, stayed pending, and run() reported the false "dependency cycle" error while
+// collectResults reported c as "missing" instead of "blocked". The 50-iteration
+// loop defeats Go's per-iteration map-order randomization, so the test fails
+// before the fix with probability ~1.
+func TestPoolBlockedChainNeverReportsMissingOrCycle(t *testing.T) {
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "fail", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return nil, errors.New("boom")
+	}))
+	_ = d.Register(runtime.Subagent, "ok", h{})
+	p := New(d, Policy{Workers: 2})
+	for i := 0; i < 50; i++ {
+		got, err := p.Run(context.Background(), []Task{
+			{ID: "a", Name: "fail"},
+			{ID: "b", Name: "ok", DependsOn: []string{"a"}},
+			{ID: "c", Name: "ok", DependsOn: []string{"b"}},
+		})
+		if err != nil {
+			t.Fatalf("iteration %d: run error %v; a failed chain has no cycle", i, err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("iteration %d: got %d results, want 3", i, len(got))
+		}
+		by := map[string]Result{}
+		for _, r := range got {
+			by[r.TaskID] = r
+		}
+		if by["a"].Status != "failed" {
+			t.Fatalf("iteration %d: a status=%q want failed", i, by["a"].Status)
+		}
+		if by["b"].Status != "blocked" || by["b"].Err == nil || !strings.Contains(by["b"].Err.Error(), "dependency a failed") {
+			t.Fatalf("iteration %d: b status=%q err=%v want blocked naming a", i, by["b"].Status, by["b"].Err)
+		}
+		if by["c"].Status != "blocked" || by["c"].Err == nil || !strings.Contains(by["c"].Err.Error(), "dependency b failed") {
+			t.Fatalf("iteration %d: c status=%q err=%v want blocked naming b", i, by["c"].Status, by["c"].Err)
+		}
+		for id, r := range by {
+			if r.Status == "missing" {
+				t.Fatalf("iteration %d: task %s reported missing", i, id)
+			}
+		}
+	}
+}
+
+// FuzzPoolDependencyStatuses asserts the standalone pool scheduler settles
+// every acyclic graph honestly. An acyclic graph never reports "missing" and
+// never reports a false "dependency cycle": every task with a failed ancestor
+// is blocked, and the blocked error names the failed dependency. A cyclic
+// graph terminates, and a "dependency cycle" error appears exactly when some
+// task has no result. The input bytes parse into a bounded task graph with
+// random handler outcomes and random dependencies.
+func FuzzPoolDependencyStatuses(f *testing.F) {
+	f.Add([]byte{3, 'f', 0, 'o', 1, 0, 'o', 1, 1}) // chain a->b->c, a fails
+	f.Add([]byte{2, 'o', 1, 1, 'o', 1, 0})         // cycle a<->b
+	f.Add([]byte{0})                               // empty graph
+	f.Add([]byte{1, 'f', 0})                       // single failing task
+	f.Fuzz(func(t *testing.T, data []byte) {
+		tasks, ok := parsePoolFuzzTasks(data)
+		if !ok {
+			return
+		}
+		d := runtime.New(runtime.Policy{})
+		_ = d.Register(runtime.Subagent, "fail", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+			return nil, errors.New("boom")
+		}))
+		_ = d.Register(runtime.Subagent, "ok", h{})
+		results, err := New(d, Policy{Workers: 4}).Run(context.Background(), tasks)
+		cycleErr := err != nil && strings.Contains(err.Error(), "dependency cycle")
+		if err != nil && !cycleErr {
+			t.Fatalf("unexpected run error: %v", err)
+		}
+		missing := 0
+		for _, r := range results {
+			if r.Status == "missing" {
+				missing++
+			}
+		}
+		if (cycleErr && missing == 0) || (!cycleErr && missing > 0) {
+			t.Fatalf("run error and results disagree: cycleErr=%v missing=%d", cycleErr, missing)
+		}
+		if poolGraphHasCycle(tasks) {
+			return
+		}
+		if cycleErr {
+			t.Fatalf("acyclic graph reported dependency cycle: %v", err)
+		}
+		assertPoolTransitiveBlocking(t, tasks, results)
+	})
+}
+
+// parsePoolFuzzTasks decodes a bounded task graph from fuzz input bytes.
+// Layout: byte[0] is the task count n (0..8). Then each task has one name byte
+// ('f' means the fail handler, any other byte means the ok handler), one dep
+// count byte, then that many dep bytes, each an index into the generated task
+// IDs. A dep index may repeat or reference the task itself, which creates a
+// cycle. Malformed or oversized input returns ok=false.
+func parsePoolFuzzTasks(data []byte) ([]Task, bool) {
+	if len(data) < 1 {
+		return nil, false
+	}
+	n := int(data[0])
+	if n > 8 {
+		return nil, false
+	}
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("t%d", i)
+	}
+	pos := 1
+	tasks := make([]Task, 0, n)
+	for i := 0; i < n; i++ {
+		if pos >= len(data) {
+			return nil, false
+		}
+		name := "ok"
+		if data[pos] == 'f' {
+			name = "fail"
+		}
+		pos++
+		if pos >= len(data) {
+			return nil, false
+		}
+		depCount := int(data[pos])
+		pos++
+		if depCount > n {
+			return nil, false
+		}
+		t := Task{ID: ids[i], Name: name}
+		for j := 0; j < depCount; j++ {
+			if pos >= len(data) {
+				return nil, false
+			}
+			dep := int(data[pos])
+			pos++
+			if dep >= n {
+				return nil, false
+			}
+			t.DependsOn = append(t.DependsOn, ids[dep])
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, true
+}
+
+// poolGraphHasCycle reports whether the dependency graph contains a cycle.
+func poolGraphHasCycle(tasks []Task) bool {
+	byID := make(map[string]Task, len(tasks))
+	for _, t := range tasks {
+		byID[t.ID] = t
+	}
+	visiting := make(map[string]bool, len(tasks))
+	visited := make(map[string]bool, len(tasks))
+	var dfs func(id string) bool
+	dfs = func(id string) bool {
+		if visiting[id] {
+			return true
+		}
+		if visited[id] {
+			return false
+		}
+		visiting[id] = true
+		for _, dep := range byID[id].DependsOn {
+			if dfs(dep) {
+				return true
+			}
+		}
+		delete(visiting, id)
+		visited[id] = true
+		return false
+	}
+	for _, t := range tasks {
+		if dfs(t.ID) {
+			return true
+		}
+	}
+	return false
+}
+
+// assertPoolTransitiveBlocking checks the acyclic-graph outcome. A task is
+// blocked exactly when one of its dependencies carries an error, transitively.
+// Each blocked error names a dependency whose own result carries an error.
+func assertPoolTransitiveBlocking(t *testing.T, tasks []Task, results []Result) {
+	t.Helper()
+	byID := make(map[string]Result, len(results))
+	for _, r := range results {
+		byID[r.TaskID] = r
+	}
+	blocked := make(map[string]bool, len(tasks))
+	for changed := true; changed; {
+		changed = false
+		for _, task := range tasks {
+			if blocked[task.ID] {
+				continue
+			}
+			for _, dep := range task.DependsOn {
+				if r, done := byID[dep]; done && r.Err != nil {
+					blocked[task.ID] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	for _, task := range tasks {
+		r := byID[task.ID]
+		if !blocked[task.ID] {
+			if r.Status == "missing" || r.Status == "blocked" {
+				t.Fatalf("task %s: want executed outcome, got status=%q", task.ID, r.Status)
+			}
+			continue
+		}
+		if r.Status != "blocked" || r.Err == nil {
+			t.Fatalf("task %s: want blocked, got status=%q err=%v", task.ID, r.Status, r.Err)
+		}
+		msg := r.Err.Error()
+		if !strings.HasPrefix(msg, "dependency ") || !strings.HasSuffix(msg, " failed") {
+			t.Fatalf("task %s: blocked error %q has the wrong shape", task.ID, msg)
+		}
+		dep := strings.TrimSuffix(strings.TrimPrefix(msg, "dependency "), " failed")
+		depResult, done := byID[dep]
+		if !done || depResult.Err == nil {
+			t.Fatalf("task %s: blocked error names %q, which did not fail", task.ID, dep)
+		}
+	}
+}

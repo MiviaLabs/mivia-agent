@@ -184,6 +184,14 @@ func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 // ready returns tasks whose dependencies are all resolved. Tasks with a
 // failed dependency are marked blocked and removed from pending.
 //
+// The function iterates pending to a fixpoint. Each pass blocks tasks whose
+// dependencies now carry failed results, then the next pass blocks their
+// dependents. Without the fixpoint, a single map pass could visit a dependent
+// before its newly blocked dependency. The dependent stays pending, and run()
+// reports a false "dependency cycle" while the dependent is reported "missing"
+// instead of "blocked". The fixpoint makes the outcome independent of map
+// order (DC-9).
+//
 // When called from the coordinator, all task dependencies are nil'd (see
 // coordinator/dag.go buildBatch), so this function always returns all pending
 // tasks as ready. The coordinator owns dependency resolution via its own
@@ -193,28 +201,41 @@ func (p *Pool) validate(tasks []Task) (map[string]Task, error) {
 // future non-coordinator use) that pass tasks with live DependsOn.
 func ready(pending map[string]Task, results map[string]Result) ([]Task, error) {
 	out := []Task{}
-	for id, t := range pending {
-		blocked := ""
-		ok := true
-		for _, dep := range t.DependsOn {
-			r, done := results[dep]
-			if !done {
-				ok = false
-			} else if r.Err != nil {
-				blocked = dep
+	// emitted tracks ready tasks already reported. Ready tasks stay in pending:
+	// run() breaks when pending is empty, so deleting them here would skip their
+	// execution. The set stops a later pass from reporting one ready task twice.
+	emitted := make(map[string]bool, len(pending))
+	for changed := true; changed; {
+		changed = false
+		for id, t := range pending {
+			if emitted[id] {
+				continue
 			}
-		}
-		if blocked != "" {
-			// Record and continue. Aborting the scheduler here would deny the caller
-			// results for every task that had already finished, which is the whole
-			// reason the old partial_results knob existed - and it never protected
-			// anything, because this branch was unreachable from the coordinator.
-			delete(pending, id)
-			results[id] = Result{TaskID: id, Status: "blocked", Err: fmt.Errorf("dependency %s failed", blocked)}
-			continue
-		}
-		if ok {
-			out = append(out, t)
+			blocked := ""
+			ok := true
+			for _, dep := range t.DependsOn {
+				r, done := results[dep]
+				if !done {
+					ok = false
+				} else if r.Err != nil {
+					blocked = dep
+				}
+			}
+			if blocked != "" {
+				// Record and continue. Aborting the scheduler here would deny the caller
+				// results for every task that had already finished, which is the whole
+				// reason the old partial_results knob existed - and it never protected
+				// anything, because this branch was unreachable from the coordinator.
+				delete(pending, id)
+				results[id] = Result{TaskID: id, Status: "blocked", Err: fmt.Errorf("dependency %s failed", blocked)}
+				changed = true
+				continue
+			}
+			if ok {
+				out = append(out, t)
+				emitted[id] = true
+				changed = true
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
