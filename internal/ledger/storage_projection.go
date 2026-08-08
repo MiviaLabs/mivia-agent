@@ -318,6 +318,70 @@ func applyAttempt(trec *taskRecord, runID, taskID, attemptID, status string, fin
 	trec.snapshot.Attempts = append(trec.snapshot.Attempts, att)
 }
 
+// rebuildRunProjection rebuilds one run's in-memory projection from the
+// durable store. It is the append-failure recovery path shared by the mutation
+// methods: a write that reached the store must win, and one that did not must
+// leave no trace in the projection. The run's whole store history is replayed
+// under the write lock, so the projection agrees with the store before the
+// caller returns the append error.
+//
+// The per-run watermarks and in-flight claims are reset first so the replay
+// re-applies every durable row. The store cursor is left untouched, so a later
+// catch-up still sees rows appended after this read. Lock order matches
+// applyTail: s.mu, then mem.mu inside applyStoreEventLocked.
+func (s *StorageLedgerRepository) rebuildRunProjection(ctx context.Context, runID string) error {
+	events, err := s.store.Events(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("read events for %s: %w", runID, err)
+	}
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].RowID != events[j].RowID {
+			return events[i].RowID < events[j].RowID
+		}
+		return events[i].Sequence < events[j].Sequence
+	})
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.mem.DeleteRun(ctx, runID); err != nil && err != ErrNotFound {
+		return err
+	}
+	delete(s.applied, runID)
+	delete(s.allocated, runID)
+	for key := range s.inflight {
+		if key.runID == runID {
+			delete(s.inflight, key)
+		}
+	}
+	for _, evt := range events {
+		if err := s.applyStoreEventLocked(ctx, evt); err != nil {
+			return fmt.Errorf("rebuild projection for %s: %w", runID, err)
+		}
+		if evt.Kind == storageKindRunDeleted {
+			continue
+		}
+		s.applied[evt.RunID] = uint64(evt.Sequence)
+		// Keep new event IDs from colliding with replayed ones after a
+		// restart, exactly as applyTail does.
+		advanceStorageEventIDCounter(parseSuffixNum(evt.ID, "se-"))
+	}
+	return nil
+}
+
+// appendStoreEventOrRebuild appends the event and, on failure, rebuilds the
+// run's projection from the store so reads report only what is durable. The
+// append error is returned unchanged when the rebuild succeeds, so each caller
+// keeps its own error translation (for example storage.ErrDuplicate).
+func (s *StorageLedgerRepository) appendStoreEventOrRebuild(ctx context.Context, evt storage.Event) error {
+	err := s.appendStoreEvent(ctx, evt)
+	if err != nil {
+		if rerr := s.rebuildRunProjection(ctx, evt.RunID); rerr != nil {
+			return fmt.Errorf("store append: %v; rebuild projection: %w", err, rerr)
+		}
+	}
+	return err
+}
+
 // ---------------------------------------------------------------------------
 // Sequence allocation and append publication
 // ---------------------------------------------------------------------------

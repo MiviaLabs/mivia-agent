@@ -215,22 +215,23 @@ func (s *StorageLedgerRepository) CreateTask(ctx context.Context, snap TaskSnaps
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
 	}
-
+	// Validate in the projection first: a rejected task (duplicate ID, unknown
+	// or closed run) never reaches the store; a failed append rebuilds it.
+	if err := s.mem.CreateTask(ctx, snap); err != nil {
+		return err
+	}
 	payload, err := marshalTaskSnapshot(snap)
 	if err != nil {
+		_ = s.rebuildRunProjection(ctx, snap.RunID)
 		return fmt.Errorf("marshal task snapshot: %w", err)
 	}
-
-	storeEvt := s.newStoreEvent(snap.RunID, storageKindTaskCreated, payload)
-
-	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEventOrRebuild(ctx, s.newStoreEvent(snap.RunID, storageKindTaskCreated, payload)); err != nil {
 		if err == storage.ErrDuplicate {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("store append: %w", err)
 	}
-
-	return s.mem.CreateTask(ctx, snap)
+	return nil
 }
 
 func (s *StorageLedgerRepository) GetTask(ctx context.Context, runID, taskID string) (TaskSnapshot, error) {
@@ -264,20 +265,24 @@ func (s *StorageLedgerRepository) AppendEvent(ctx context.Context, event Lifecyc
 		s.mu.RUnlock()
 	}
 
+	// Validate in the projection first: a rejected event (duplicate ID,
+	// oversized payload, unknown run) never reaches the store; a failed
+	// append rebuilds it.
+	if err := s.mem.AppendEvent(ctx, event); err != nil {
+		return err
+	}
 	payload, err := marshalLifecycleEvent(event)
 	if err != nil {
+		_ = s.rebuildRunProjection(ctx, event.RunID)
 		return fmt.Errorf("marshal lifecycle event: %w", err)
 	}
-
-	storeEvt := s.newStoreEvent(event.RunID, storageKindLifecycleEvent, payload)
-	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEventOrRebuild(ctx, s.newStoreEvent(event.RunID, storageKindLifecycleEvent, payload)); err != nil {
 		if err == storage.ErrDuplicate {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("store append: %w", err)
 	}
-
-	return s.mem.AppendEvent(ctx, event)
+	return nil
 }
 
 func (s *StorageLedgerRepository) ListEvents(ctx context.Context, runID string) ([]LifecycleEvent, error) {
@@ -309,15 +314,15 @@ func (s *StorageLedgerRepository) CompareAndSetTaskStatus(ctx context.Context, r
 
 	payload, err := marshalStatusChange(taskID, newStatus, expectedVersion+1, completedAt)
 	if err != nil {
+		_ = s.rebuildRunProjection(ctx, runID)
 		return fmt.Errorf("marshal status change: %w", err)
 	}
-
-	storeEvt := s.newStoreEvent(runID, storageKindTaskStatusChanged, payload)
-
-	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
+	// The fenced append failed (claim taken by another holder, or a transient
+	// store error): the projection applied a status the durable history never
+	// recorded, so reads must report only what the store holds.
+	if err := s.appendStoreEventOrRebuild(ctx, s.newStoreEvent(runID, storageKindTaskStatusChanged, payload)); err != nil {
 		return fmt.Errorf("store append: %w", err)
 	}
-
 	return nil
 }
 
@@ -325,71 +330,42 @@ func (s *StorageLedgerRepository) SetTaskOutput(ctx context.Context, runID, task
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
 	}
-
+	// Validate in the projection first: an unknown run or task never reaches
+	// the store; a failed append rebuilds it.
+	if err := s.mem.SetTaskOutput(ctx, runID, taskID, outputRef, errorRef); err != nil {
+		return err
+	}
 	payload, err := marshalOutputRefs(taskID, outputRef, errorRef)
 	if err != nil {
+		_ = s.rebuildRunProjection(ctx, runID)
 		return fmt.Errorf("marshal output refs: %w", err)
 	}
-
-	storeEvt := s.newStoreEvent(runID, storageKindTaskOutputSet, payload)
-
-	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEventOrRebuild(ctx, s.newStoreEvent(runID, storageKindTaskOutputSet, payload)); err != nil {
 		return fmt.Errorf("store append: %w", err)
 	}
-
-	return s.mem.SetTaskOutput(ctx, runID, taskID, outputRef, errorRef)
+	return nil
 }
 
 func (s *StorageLedgerRepository) SetTaskAttempt(ctx context.Context, runID, taskID, attemptID, status string, finishedAt *time.Time) error {
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
 	}
-
+	// Validate and apply in the projection first via mem.SetTaskAttempt, which
+	// enforces the closed-run guard (ErrClosed) and the missing run/task
+	// checks (ErrNotFound) exactly as the memory repository does: a rejected
+	// attempt never reaches the store, and a failed append rebuilds the
+	// projection.
+	if err := s.mem.SetTaskAttempt(ctx, runID, taskID, attemptID, status, finishedAt); err != nil {
+		return err
+	}
 	payload, err := marshalAttemptEntry(taskID, attemptID, status, finishedAt)
 	if err != nil {
+		_ = s.rebuildRunProjection(ctx, runID)
 		return fmt.Errorf("marshal attempt entry: %w", err)
 	}
-
-	storeEvt := s.newStoreEvent(runID, storageKindTaskAttempt, payload)
-
-	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
+	if err := s.appendStoreEventOrRebuild(ctx, s.newStoreEvent(runID, storageKindTaskAttempt, payload)); err != nil {
 		return fmt.Errorf("store append: %w", err)
 	}
-
-	// Update mem's internal state directly (same package) - append or update attempt.
-	s.mem.mu.Lock()
-	defer s.mem.mu.Unlock()
-	rec, ok := s.mem.runs[runID]
-	if !ok {
-		return ErrNotFound
-	}
-	trec, ok := rec.tasks[taskID]
-	if !ok {
-		return ErrNotFound
-	}
-	for i := range trec.snapshot.Attempts {
-		if trec.snapshot.Attempts[i].AttemptID == attemptID {
-			trec.snapshot.Attempts[i].Status = status
-			if finishedAt != nil {
-				t := *finishedAt
-				trec.snapshot.Attempts[i].FinishedAt = &t
-			}
-			return nil
-		}
-	}
-	// Not found - append new attempt
-	att := AttemptSnapshot{
-		AttemptID:  attemptID,
-		TaskID:     taskID,
-		RunID:      runID,
-		AttemptNum: len(trec.snapshot.Attempts) + 1,
-		Status:     status,
-	}
-	if finishedAt != nil {
-		t := *finishedAt
-		att.FinishedAt = &t
-	}
-	trec.snapshot.Attempts = append(trec.snapshot.Attempts, att)
 	return nil
 }
 
