@@ -192,17 +192,20 @@ func assertFeatureDeliveryPreflightGate(t *testing.T, workflow definition.Workfl
 	assertTransition(t, workflow, "repair_preflight", "review", "succeeded")
 
 	// preflight_structure runs the repository's own layout gate (check_go_structure
-	// --strict) inside the sandbox so a change that violates the project's
-	// structure policy is caught in-loop with a repair agent, not by the
-	// delivery pre-commit hook hard-failing publication.
+	// --strict --worktree) inside the sandbox so a change that violates the
+	// project's structure policy is caught in-loop with a repair agent, not by
+	// the delivery pre-commit hook hard-failing publication. --worktree scans
+	// the filesystem: the sandbox git index is empty (git init, no add), so
+	// --all would check zero files and a new untracked test file would be
+	// invisible until delivery.
 	structure := featureDeliveryStep(t, workflow, "preflight_structure")
 	if structure.Kind != "evidence_gate" || structure.Verifier != "" || structure.Command == nil {
 		t.Fatalf("step preflight_structure = kind %q verifier %q command %#v; want evidence_gate with a sandboxed command", structure.Kind, structure.Verifier, structure.Command)
 	}
 	if structure.Command.Check != "go-structure" || structure.Command.Program != "python3" ||
 		len(structure.Command.Args) != 3 || structure.Command.Args[0] != "scripts/check_go_structure.py" ||
-		structure.Command.Args[1] != "--strict" || structure.Command.Args[2] != "--all" {
-		t.Fatalf("step preflight_structure command = %#v; want check=go-structure, program=python3, args=[scripts/check_go_structure.py --strict --all]", structure.Command)
+		structure.Command.Args[1] != "--strict" || structure.Command.Args[2] != "--worktree" {
+		t.Fatalf("step preflight_structure command = %#v; want check=go-structure, program=python3, args=[scripts/check_go_structure.py --strict --worktree]", structure.Command)
 	}
 	structureRepair := featureDeliveryStep(t, workflow, "repair_preflight_structure")
 	foundStructureEvidence := false
