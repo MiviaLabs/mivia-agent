@@ -73,6 +73,13 @@ func TestRouteAskQuotasDepthCycle(t *testing.T) {
 	if d := RouteAsk(p, RouteInput{FromRole: "a", ToRole: "b", TargetRunning: true, Cycle: true}); d.Reason != DeclineCycle {
 		t.Fatalf("cycle: %+v", d)
 	}
+	// Regression: cycle must win over quota and depth.
+	if d := RouteAsk(p, RouteInput{FromRole: "a", ToRole: "b", TargetRunning: true, Cycle: true, AsksUsedByTask: 2}); d.Reason != DeclineCycle {
+		t.Fatalf("cycle + quota: %+v", d)
+	}
+	if d := RouteAsk(p, RouteInput{FromRole: "a", ToRole: "b", TargetRunning: true, Cycle: true, ChainDepth: 2}); d.Reason != DeclineCycle {
+		t.Fatalf("cycle + depth: %+v", d)
+	}
 	if d := RouteAsk(p, RouteInput{
 		FromRole: "a", ToRole: "b", Blocking: false, TargetRunning: false,
 		ReferralSpawnsUsed: 1,
