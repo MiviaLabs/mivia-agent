@@ -53,6 +53,9 @@ func (c *sdkClient) CallTool(ctx context.Context, name string, arguments map[str
 	if err != nil {
 		return "", err
 	}
+	if result.IsError {
+		return "", fmt.Errorf("MCP tool returned an error")
+	}
 	parts := make([]string, 0, len(result.Content))
 	for _, content := range result.Content {
 		if text, ok := content.(*sdk.TextContent); ok {

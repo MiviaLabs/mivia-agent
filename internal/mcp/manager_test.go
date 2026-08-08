@@ -61,6 +61,31 @@ func TestStreamableHTTPDiscoversAndCallsTool(t *testing.T) {
 	}
 }
 
+func TestStreamableHTTPRejectsErrorToolResult(t *testing.T) {
+	server := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+	sdk.AddTool(server, &sdk.Tool{Name: "fail"}, func(context.Context, *sdk.CallToolRequest, struct{}) (*sdk.CallToolResult, any, error) {
+		return &sdk.CallToolResult{
+			Content: []sdk.Content{&sdk.TextContent{Text: "untrusted server failure"}},
+			IsError: true,
+		}, nil, nil
+	})
+	httpServer := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, &sdk.StreamableHTTPOptions{JSONResponse: true}))
+	defer httpServer.Close()
+
+	client, err := connectStreamableHTTP(context.Background(), config.MCPServerConfig{Transport: "streamable_http", URL: httpServer.URL})
+	if err != nil {
+		t.Fatalf("connectStreamableHTTP() error = %v", err)
+	}
+	defer client.Close()
+	result, err := client.CallTool(context.Background(), "fail", map[string]any{})
+	if err == nil {
+		t.Fatalf("CallTool() = %q, nil error; want tool-result error", result)
+	}
+	if result != "" {
+		t.Fatalf("CallTool() result = %q, want no untrusted error text", result)
+	}
+}
+
 func TestStdioDiscoversCallsAndReapsProcess(t *testing.T) {
 	t.Setenv("MIVIA_MCP_HELPER", "1")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
