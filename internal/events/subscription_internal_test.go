@@ -212,3 +212,133 @@ func TestDrainContainsHandlerPanics(t *testing.T) {
 		t.Fatalf("Panics = %d, want 1", got)
 	}
 }
+
+// Regression: subscription.drain (the ctx.Done teardown path) must not ack a
+// queued flush barrier while events remain buffered in the event channel. The
+// old drain select had case reply := <-s.flushCh: close(reply) beside the
+// event case, so when a Flush() raced a Close() the barrier was acked as soon
+// as the random select reached it: Flush() returned before events published
+// before it were delivered. drain must drain the event channel to empty
+// before acking a barrier (mirroring drainEvents), the same ordering the
+// deliver-loop flush path already fixes (TestFlushWaitsForEventsPublishedBeforeIt).
+//
+// The pre-fix drain acks a queued barrier with probability ~1/2 per select
+// while events are queued, so a single run is flaky; the 50-iteration loop
+// makes the failure effectively certain. The handler blocks on a goAhead
+// channel for every event (deterministic synchronization, no sleeps), so the
+// drain is held mid-drain while the barrier waits. When a barrier is acked
+// the handler is either blocked (stable count) or all events are done, so
+// reading the count at ack-receipt time detects a barrier acked while events
+// were still queued.
+func TestDrainDoesNotAckFlushBarrierWhileEventsQueued(t *testing.T) {
+	const (
+		events     = 3
+		iterations = 50
+	)
+	for i := 0; i < iterations; i++ {
+		var handled atomic.Int64
+		goAhead := make(chan struct{})
+		entered := make(chan struct{}, events)
+		s := &subscription{
+			handler: HandlerFunc(func(ctx context.Context, ev Event) {
+				handled.Add(1)
+				entered <- struct{}{}
+				<-goAhead
+			}),
+			ch:      make(chan Event, events),
+			done:    make(chan struct{}),
+			flushCh: make(chan chan struct{}, 1),
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		for j := 0; j < events; j++ {
+			s.ch <- NewEvent(KindStep)
+		}
+		barrier := make(chan struct{})
+		s.flushCh <- barrier
+
+		acked := make(chan struct{}, 1)
+		go func() { <-barrier; acked <- struct{}{} }()
+
+		drained := make(chan struct{})
+		go func() {
+			s.drain(ctx)
+			close(drained)
+		}()
+
+		released := 0
+		for released < events {
+			select {
+			case <-acked:
+				// A barrier was acked. It must only happen once the event
+				// channel is empty. The handler is either blocked (stable
+				// count) or everything is done, so this is exact. The pre-fix
+				// drain acks as soon as its random select reaches the barrier
+				// with events still queued.
+				if got := handled.Load(); got != events {
+					cancel()
+					t.Fatalf("iter %d: drain acked a flush barrier with %d/%d events handled", i, got, events)
+				}
+			case <-entered:
+				goAhead <- struct{}{}
+				released++
+			}
+		}
+		// Every queued event is handled: the barrier must ack and the drain
+		// must exit.
+		<-acked
+		<-drained
+		cancel()
+	}
+}
+
+// Regression: subscription.drain and drainEvents must honor the re-entrant
+// stopped flag like deliver() does. A handler that self-unsubscribes via
+// DeliveryFrom(ctx).Unsubscribe while the bus is closing must not be
+// re-invoked for events queued behind the current one - the documented
+// Delivery.Unsubscribe contract. The pre-fix drain and drainEvents had no
+// stopped check, so the close-drain re-invoked the handler for every event
+// still queued behind the self-unsubscribe.
+func TestDrainHonorsStoppedAfterSelfUnsubscribe(t *testing.T) {
+	bus := New()
+	t.Cleanup(bus.Close)
+
+	var calls atomic.Int64
+	var unsubscribed atomic.Bool
+	h := HandlerFunc(func(ctx context.Context, ev Event) {
+		if calls.Add(1) == 1 {
+			d, ok := DeliveryFrom(ctx)
+			if !ok {
+				return
+			}
+			d.Unsubscribe()
+			unsubscribed.Store(true)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &subscription{
+		handler: h,
+		ch:      make(chan Event, 4),
+		done:    make(chan struct{}),
+		flushCh: make(chan chan struct{}, 1),
+		cancel:  cancel,
+	}
+	// The handler context carries the re-entrant Delivery ticket exactly like
+	// deliver() builds it in newSubscription.
+	drainCtx := withDelivery(ctx, &Delivery{b: bus, s: s})
+
+	const events = 3
+	for j := 0; j < events; j++ {
+		s.ch <- NewEvent(KindStep)
+	}
+
+	s.drain(drainCtx)
+
+	if !unsubscribed.Load() {
+		t.Fatal("handler never self-unsubscribed via DeliveryFrom")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("self-unsubscribed handler invoked %d times during drain, want 1 (queued events must not be re-invoked)", got)
+	}
+}
