@@ -63,6 +63,7 @@ func recordStepResult(ctx context.Context, repo workflowledger.Repository, attem
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}
+	ctx = workflowledger.ContextWithRunID(ctx, attempt.RunID)
 	if len(result.EvidenceJSON) > workflowledger.MaxEvidenceBytes {
 		return fmt.Errorf("evidence exceeds %d bytes", workflowledger.MaxEvidenceBytes)
 	}
@@ -97,6 +98,7 @@ func CompleteExistingStepResult(ctx context.Context, repo workflowledger.Reposit
 	if repo == nil {
 		return fmt.Errorf("workflow ledger is nil")
 	}
+	ctx = workflowledger.ContextWithRunID(ctx, attempt.RunID)
 	if len(result.EvidenceJSON) > workflowledger.MaxEvidenceBytes {
 		return fmt.Errorf("evidence exceeds %d bytes", workflowledger.MaxEvidenceBytes)
 	}

@@ -64,7 +64,7 @@ func (c *coordinator) taskFromSnapshot(snap ledger.TaskSnapshot) (subagents.Task
 	return subagents.Task{
 		ID: snap.TaskID, Name: name, AgentName: snap.AgentName, AgentDigest: snap.AgentDigest,
 		Skill: snap.Skill, ProviderName: snap.ProviderName, Model: snap.Model, Scope: snap.Scope,
-		OutputSchema: snap.OutputSchema, DependsOn: snap.DependsOn,
+		OutputSchema: snap.OutputSchema, InputSchema: snap.InputSchema, DependsOn: snap.DependsOn,
 		Input: append(json.RawMessage(nil), snap.Input...), Depth: clampInt(snap.Depth, c.pool.MaxDepth()),
 		Budget: clampInt(snap.Budget, c.pool.MaxBudget()), Timeout: clampDuration(snap.Timeout, c.pool.Timeout(), time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second),
 	}, nil

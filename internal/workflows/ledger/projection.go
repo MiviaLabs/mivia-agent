@@ -156,7 +156,7 @@ func applyPanelPhase(proj *Projection, ev storage.Event) error {
 		if a.PanelExecution == nil {
 			return fmt.Errorf("panel phase has no panel attempt")
 		}
-		if IsTerminalAttemptStatus(a.Status) || p.Version != a.Version+1 || !validPanelTransition(a.PanelExecution.Phase, p.Phase, p.Synthesis) {
+		if IsTerminalAttemptStatus(a.Status) || p.Version != a.Version+1 || !validPanelTransitionWithWork(a.PanelExecution.Phase, p.Phase, p.Synthesis, true) {
 			return fmt.Errorf("invalid panel phase transition")
 		}
 		a.PanelExecution.Phase = p.Phase

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -15,7 +16,17 @@ import (
 
 // Validate checks that a durable panel task has the fields needed to rebuild work.
 func (s PanelTaskSpec) Validate() error {
-	if s.TaskName == "" || s.InputRef == "" || s.InputSchemaRef == "" || s.OutputSchemaRef == "" || s.AgentName == "" || s.AgentDigest == "" || s.Skill == "" || s.Scope == "" || s.Provider == "" || s.Model == "" || !isCoordinatorFingerprint(s.CoordinatorRequestFingerprint) {
+	return s.validate(false)
+}
+
+// validateLegacy accepts an event written before work fingerprints existed.
+// It still validates every other durable field. New admissions use Validate.
+func (s PanelTaskSpec) validateLegacy() error {
+	return s.validate(true)
+}
+
+func (s PanelTaskSpec) validate(allowMissingWorkFingerprint bool) error {
+	if s.TaskName == "" || s.InputRef == "" || s.InputSchemaRef == "" || s.OutputSchemaRef == "" || s.AgentName == "" || s.AgentDigest == "" || s.Skill == "" || s.Scope == "" || s.Provider == "" || s.Model == "" || !isCoordinatorFingerprint(s.CoordinatorRequestFingerprint) || (!allowMissingWorkFingerprint && !isCoordinatorFingerprint(s.WorkFingerprint)) {
 		return fmt.Errorf("incomplete panel task specification")
 	}
 	if !isSHA256(s.InputDigest) || !isSHA256(s.InputSchemaDigest) || !isSHA256(s.AgentDigest) || !isSHA256(s.OutputSchemaDigest) {
@@ -30,10 +41,40 @@ func (s PanelTaskSpec) Validate() error {
 	if s.WorkLimits.MaxTurns <= 0 || s.WorkLimits.MaxPromptTokens <= 0 || s.WorkLimits.MaxOutputTokens <= 0 || s.WorkLimits.MaxOutputPerCall <= 0 || s.WorkLimits.MaxToolCalls <= 0 {
 		return fmt.Errorf("incomplete panel work limits")
 	}
-	if !s.Policy.NoRetry || !s.Policy.FailInterrupted {
+	if !s.Policy.NoRetry || !s.Policy.FailInterrupted || s.Policy.RetryMaxRetries != 0 || s.Policy.RetryBaseBackoff != 0 || s.Policy.RetryMaxBackoff != 0 || s.Policy.RetryBackoffFactor != 0 || s.Policy.RetryJitterFraction != 0 {
 		return fmt.Errorf("panel task policy must disable retries and fail interruptions")
 	}
+	if s.WorkFingerprint != "" && s.WorkFingerprint != s.workFingerprint() {
+		return fmt.Errorf("invalid panel work fingerprint")
+	}
 	return nil
+}
+
+// workFingerprint covers durable work fields that the coordinator task model
+// does not carry, such as limits and the absolute deadline.
+func (s PanelTaskSpec) workFingerprint() string {
+	type work struct {
+		TaskName, InputRef, InputDigest, InputSchemaRef, InputSchemaDigest string
+		Budget                                                             int
+		Scope, AgentName, AgentDigest, Skill, Provider, Model              string
+		OutputSchemaDigest, OutputSchemaRef                                string
+		Timeout                                                            time.Duration
+		DeadlineAt                                                         time.Time
+		WorkLimits                                                         PanelWorkLimits
+		Policy                                                             coordledger.RunPolicy
+		CoordinatorRequestFingerprint                                      string
+	}
+	value, _ := json.Marshal(work{
+		TaskName: s.TaskName, InputRef: s.InputRef, InputDigest: s.InputDigest,
+		InputSchemaRef: s.InputSchemaRef, InputSchemaDigest: s.InputSchemaDigest,
+		Budget: s.Budget, Scope: s.Scope, AgentName: s.AgentName, AgentDigest: s.AgentDigest,
+		Skill: s.Skill, Provider: s.Provider, Model: s.Model,
+		OutputSchemaDigest: s.OutputSchemaDigest, OutputSchemaRef: s.OutputSchemaRef,
+		Timeout: s.Timeout, DeadlineAt: s.DeadlineAt, WorkLimits: s.WorkLimits,
+		Policy: s.Policy, CoordinatorRequestFingerprint: s.CoordinatorRequestFingerprint,
+	})
+	sum := sha256.Sum256(value)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func isCoordinatorFingerprint(value string) bool {
@@ -122,6 +163,7 @@ type PanelTaskSpec struct {
 	DeadlineAt                    time.Time             `json:"deadline_at"`
 	WorkLimits                    PanelWorkLimits       `json:"work_limits"`
 	Policy                        coordledger.RunPolicy `json:"policy"`
+	WorkFingerprint               string                `json:"work_fingerprint"`
 	CoordinatorRequestFingerprint string                `json:"coordinator_request_fingerprint"`
 }
 
@@ -204,7 +246,7 @@ func (p *PanelExecution) validateInitial(workflowRunID, attemptID string) error 
 			return fmt.Errorf("invalid panel member identity")
 		}
 		seen[member.MemberID] = struct{}{}
-		if err := member.Work.Validate(); err != nil {
+		if err := member.Work.validateLegacy(); err != nil {
 			return err
 		}
 	}

@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	coordledger "github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -33,6 +35,9 @@ func (p PanelCoordinator) EnsureMember(ctx context.Context, attemptID, memberID 
 	if err != nil {
 		return nil, err
 	}
+	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseMembersAdmitted); err != nil {
+		return nil, err
+	}
 	return p.ensure(ctx, member.CoordinatorRunID, member.TaskID, member.Work, false)
 }
 
@@ -41,14 +46,18 @@ func (p PanelCoordinator) EnsureTerminalMember(ctx context.Context, attemptID, m
 	if err != nil {
 		return nil, err
 	}
+	if err := p.requireTerminalPhase(ctx, attemptID); err != nil {
+		return nil, err
+	}
 	return p.ensure(ctx, member.CoordinatorRunID, member.TaskID, member.Work, true)
 }
 
 func (p PanelCoordinator) JoinMember(ctx context.Context, attemptID, memberID string, handle *coordinator.RunHandle) (*coordinator.RunResult, error) {
-	if _, err := p.member(ctx, attemptID, memberID); err != nil {
+	member, err := p.member(ctx, attemptID, memberID)
+	if err != nil {
 		return nil, err
 	}
-	return p.inner.Join(p.childContext(ctx), handle)
+	return p.join(ctx, member.CoordinatorRunID, member.TaskID, member.Work, handle)
 }
 
 func (p PanelCoordinator) ResumeMember(ctx context.Context, attemptID, memberID string) (*coordinator.RunHandle, error) {
@@ -56,14 +65,67 @@ func (p PanelCoordinator) ResumeMember(ctx context.Context, attemptID, memberID 
 	if err != nil {
 		return nil, err
 	}
-	return p.inner.ResumeInterruptedRun(p.childContext(ctx), member.CoordinatorRunID)
+	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseMembersAdmitted); err != nil {
+		return nil, err
+	}
+	return p.resume(ctx, member.CoordinatorRunID, member.TaskID, member.Work)
 }
 
 func (p PanelCoordinator) CancelMember(ctx context.Context, attemptID, memberID string, handle *coordinator.RunHandle) error {
-	if _, err := p.member(ctx, attemptID, memberID); err != nil {
+	member, err := p.member(ctx, attemptID, memberID)
+	if err != nil {
 		return err
 	}
-	return p.inner.Cancel(p.childContext(ctx), handle)
+	return p.cancel(ctx, member.CoordinatorRunID, member.TaskID, member.Work, handle)
+}
+
+func (p PanelCoordinator) EnsureSynthesis(ctx context.Context, attemptID string) (*coordinator.RunHandle, error) {
+	runID, taskID, work, err := p.synthesis(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseSynthesisAdmitted); err != nil {
+		return nil, err
+	}
+	return p.ensure(ctx, runID, taskID, work, false)
+}
+
+func (p PanelCoordinator) EnsureTerminalSynthesis(ctx context.Context, attemptID string) (*coordinator.RunHandle, error) {
+	runID, taskID, work, err := p.synthesis(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.requireTerminalPhase(ctx, attemptID); err != nil {
+		return nil, err
+	}
+	return p.ensure(ctx, runID, taskID, work, true)
+}
+
+func (p PanelCoordinator) JoinSynthesis(ctx context.Context, attemptID string, handle *coordinator.RunHandle) (*coordinator.RunResult, error) {
+	runID, taskID, work, err := p.synthesis(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	return p.join(ctx, runID, taskID, work, handle)
+}
+
+func (p PanelCoordinator) ResumeSynthesis(ctx context.Context, attemptID string) (*coordinator.RunHandle, error) {
+	runID, taskID, work, err := p.synthesis(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.requireRunnablePhase(ctx, attemptID, PanelPhaseSynthesisAdmitted); err != nil {
+		return nil, err
+	}
+	return p.resume(ctx, runID, taskID, work)
+}
+
+func (p PanelCoordinator) CancelSynthesis(ctx context.Context, attemptID string, handle *coordinator.RunHandle) error {
+	runID, taskID, work, err := p.synthesis(ctx, attemptID)
+	if err != nil {
+		return err
+	}
+	return p.cancel(ctx, runID, taskID, work, handle)
 }
 
 func (p PanelCoordinator) member(ctx context.Context, attemptID, memberID string) (PanelMemberExecution, error) {
@@ -82,23 +144,119 @@ func (p PanelCoordinator) member(ctx context.Context, attemptID, memberID string
 	return PanelMemberExecution{}, ErrNotFound
 }
 
+func (p PanelCoordinator) synthesis(ctx context.Context, attemptID string) (string, string, PanelTaskSpec, error) {
+	if p.repo == nil {
+		return "", "", PanelTaskSpec{}, ErrNotFound
+	}
+	attempt, err := p.repo.GetStepAttempt(ctx, p.workflowRunID, attemptID)
+	if err != nil || attempt.PanelExecution == nil || attempt.PanelExecution.Synthesis == nil {
+		return "", "", PanelTaskSpec{}, ErrNotFound
+	}
+	return attempt.PanelExecution.SynthesisRunID, attempt.PanelExecution.SynthesisTaskID, attempt.PanelExecution.Synthesis.Work.clone(), nil
+}
+
+func (p PanelCoordinator) requireRunnablePhase(ctx context.Context, attemptID string, want PanelPhase) error {
+	if p.repo == nil {
+		return ErrNotFound
+	}
+	if err := p.requireWorkflowClaim(ctx); err != nil {
+		return err
+	}
+	attempt, err := p.repo.GetStepAttempt(ctx, p.workflowRunID, attemptID)
+	if err != nil || attempt.PanelExecution == nil {
+		return ErrNotFound
+	}
+	if IsTerminalAttemptStatus(attempt.Status) || attempt.PanelExecution.Phase != want {
+		return coordledger.ErrConflict
+	}
+	return nil
+}
+
+func (p PanelCoordinator) requireTerminalPhase(ctx context.Context, attemptID string) error {
+	if p.repo == nil {
+		return ErrNotFound
+	}
+	if err := p.requireWorkflowClaim(ctx); err != nil {
+		return err
+	}
+	attempt, err := p.repo.GetStepAttempt(ctx, p.workflowRunID, attemptID)
+	if err != nil || attempt.PanelExecution == nil {
+		return ErrNotFound
+	}
+	if IsTerminalAttemptStatus(attempt.Status) || attempt.PanelExecution.Phase != PanelPhaseCancelPending {
+		return coordledger.ErrConflict
+	}
+	return nil
+}
+
+// requireWorkflowClaim refreshes the caller's workflow claim. The caller keeps
+// this claim while it dispatches panel children, so a different controller
+// cannot change the panel phase between its phase check and child admission.
+func (p PanelCoordinator) requireWorkflowClaim(ctx context.Context) error {
+	holder, ok := claimHolderFromContext(ctx)
+	if !ok {
+		return ErrClaimNotHeld
+	}
+	return p.repo.ClaimRun(ctx, p.workflowRunID, holder)
+}
+
 func (p PanelCoordinator) ensure(ctx context.Context, runID, taskID string, work PanelTaskSpec, terminal bool) (*coordinator.RunHandle, error) {
-	req, err := p.request(ctx, runID, taskID, work)
+	req, err := p.request(ctx, runID, taskID, work, terminal)
 	if err != nil {
 		return nil, err
 	}
 	if terminal {
 		return p.inner.EnsureTerminalSingleTaskRun(p.childContext(ctx), req, coordledger.TaskStatusCanceled)
 	}
-	return p.inner.EnsureSingleTaskRun(p.childContext(ctx), req)
+	h, err := p.inner.EnsureSingleTaskRun(p.childContext(ctx), req)
+	return h, err
 }
 
-func (p PanelCoordinator) request(ctx context.Context, runID, taskID string, work PanelTaskSpec) (coordinator.EnsureRunRequest, error) {
+func (p PanelCoordinator) join(ctx context.Context, runID, taskID string, work PanelTaskSpec, handle *coordinator.RunHandle) (*coordinator.RunResult, error) {
+	if err := p.requireWorkflowClaim(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := p.request(ctx, runID, taskID, work, true); err != nil {
+		return nil, err
+	}
+	if handle == nil || handle.RunID() != runID {
+		return nil, coordledger.ErrConflict
+	}
+	return p.inner.Join(p.childContext(ctx), handle)
+}
+
+func (p PanelCoordinator) resume(ctx context.Context, runID, taskID string, work PanelTaskSpec) (*coordinator.RunHandle, error) {
+	req, err := p.request(ctx, runID, taskID, work, false)
+	if err != nil {
+		return nil, err
+	}
+	req.ForceResume = true
+	h, err := p.inner.EnsureSingleTaskRun(p.childContext(ctx), req)
+	return h, err
+}
+
+func (p PanelCoordinator) cancel(ctx context.Context, runID, taskID string, work PanelTaskSpec, handle *coordinator.RunHandle) error {
+	if err := p.requireWorkflowClaim(ctx); err != nil {
+		return err
+	}
+	if _, err := p.request(ctx, runID, taskID, work, true); err != nil {
+		return err
+	}
+	if handle == nil || handle.RunID() != runID {
+		return coordledger.ErrConflict
+	}
+	return p.inner.Cancel(p.childContext(ctx), handle)
+}
+
+func (p PanelCoordinator) request(ctx context.Context, runID, taskID string, work PanelTaskSpec, allowExpired bool) (coordinator.EnsureRunRequest, error) {
 	if p.repo == nil {
 		return coordinator.EnsureRunRequest{}, fmt.Errorf("panel repository is nil")
 	}
-	if err := work.Validate(); err != nil {
+	if err := work.validateLegacy(); err != nil {
 		return coordinator.EnsureRunRequest{}, err
+	}
+	if !allowExpired && !time.Now().Before(work.DeadlineAt) {
+		return coordinator.EnsureRunRequest{}, coordledger.ErrConflict
 	}
 	input, inputSchema, outputSchema, err := panelWorkContent(ctx, p.repo, work)
 	if err != nil {
@@ -136,6 +294,13 @@ func panelWorkContent(ctx context.Context, loader interface {
 		return nil, nil, nil, coordledger.ErrConflict
 	}
 	if !json.Valid(data[0]) {
+		return nil, nil, nil, coordledger.ErrConflict
+	}
+	compiled, err := jschema.Compile(inputSchema)
+	if err != nil {
+		return nil, nil, nil, coordledger.ErrConflict
+	}
+	if _, err := compiled.ValidateJSONBytes(data[0]); err != nil {
 		return nil, nil, nil, coordledger.ErrConflict
 	}
 	return json.RawMessage(data[0]), inputSchema, outputSchema, nil

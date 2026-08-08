@@ -47,16 +47,23 @@ func TestSingleTaskAdmissionCreatesCompleteTuple(t *testing.T) {
 }
 
 func TestSingleTaskAdmissionRaceHasOneWinner(t *testing.T) {
-	assertSingleTaskAdmissionRace(t, storage.NewMemory())
+	store := storage.NewMemory()
+	assertSingleTaskAdmissionRace(t, store, store)
 }
 
 func TestSQLiteSingleTaskAdmissionRaceHasOneWinner(t *testing.T) {
-	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+	path := filepath.Join(t.TempDir(), "ledger.db")
+	first, err := storage.OpenSQLite(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	assertSingleTaskAdmissionRace(t, store)
+	second, err := storage.OpenSQLite(path)
+	if err != nil {
+		_ = first.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = first.Close(); _ = second.Close() })
+	assertSingleTaskAdmissionRace(t, first, second)
 }
 
 func TestSingleTaskAdmissionRejectsExistingRunAndClaim(t *testing.T) {
@@ -96,10 +103,10 @@ func TestSingleTaskAdmissionRejectsExistingRunAndClaim(t *testing.T) {
 	}
 }
 
-func assertSingleTaskAdmissionRace(t *testing.T, store storage.Store) {
+func assertSingleTaskAdmissionRace(t *testing.T, firstStore, secondStore storage.Store) {
 	t.Helper()
-	first := NewStorageLedgerRepository(store)
-	second := NewStorageLedgerRepository(store)
+	first := NewStorageLedgerRepository(firstStore)
+	second := NewStorageLedgerRepository(secondStore)
 	admission := queuedSingleAdmission("panel-race", "run-panel-race", "task-panel-race")
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -125,7 +132,7 @@ func assertSingleTaskAdmissionRace(t *testing.T, store storage.Store) {
 	if success != 1 || duplicate != 1 {
 		t.Fatalf("success=%d duplicate=%d", success, duplicate)
 	}
-	observer := NewStorageLedgerRepository(store)
+	observer := NewStorageLedgerRepository(firstStore)
 	tasks, err := observer.ListTasks(context.Background(), admission.Run.RunID)
 	if err != nil || len(tasks) != 1 {
 		t.Fatalf("tasks=%+v err=%v", tasks, err)

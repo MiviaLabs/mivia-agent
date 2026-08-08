@@ -44,4 +44,8 @@ func TestAbandonFenceRejectsEveryRunMutation(t *testing.T) {
 	if err := fence.CompareAndSetRunStatus(context.Background(), run.RunID, run.Version, workflowledger.RunStatusRunning, nil); err != workflowledger.ErrConflict {
 		t.Fatalf("error = %v, want ErrConflict", err)
 	}
+	ctx := workflowledger.ContextWithRunID(context.Background(), run.RunID)
+	if err := fence.StoreContent(ctx, "ref:fence", []byte("output")); err != workflowledger.ErrConflict {
+		t.Fatalf("store content error = %v, want ErrConflict", err)
+	}
 }

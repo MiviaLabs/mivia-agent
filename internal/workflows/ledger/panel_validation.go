@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
@@ -43,6 +44,13 @@ func (s *StorageRepository) validatePanelTaskContent(ctx context.Context, taskID
 	}
 	var inputSchema, outputSchema map[string]any
 	if json.Unmarshal(content[1], &inputSchema) != nil || json.Unmarshal(content[2], &outputSchema) != nil {
+		return ErrConflict
+	}
+	compiled, err := jschema.Compile(inputSchema)
+	if err != nil {
+		return ErrConflict
+	}
+	if _, err := compiled.ValidateJSONBytes(content[0]); err != nil {
 		return ErrConflict
 	}
 	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: json.RawMessage(content[0]), InputSchema: inputSchema, OutputSchema: outputSchema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model}

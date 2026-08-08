@@ -16,11 +16,17 @@ import (
 )
 
 func TestSQLiteSingleTaskTerminalAndRunnableAdmissionRace(t *testing.T) {
-	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+	path := filepath.Join(t.TempDir(), "ledger.db")
+	firstStore, err := storage.OpenSQLite(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	secondStore, err := storage.OpenSQLite(path)
+	if err != nil {
+		_ = firstStore.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = firstStore.Close(); _ = secondStore.Close() })
 	var calls atomic.Int32
 	dispatcher := runtime.New(runtime.Policy{})
 	if err := dispatcher.Register(runtime.Subagent, "worker", invoker(func(context.Context, runtime.Request) (json.RawMessage, error) {
@@ -29,8 +35,8 @@ func TestSQLiteSingleTaskTerminalAndRunnableAdmissionRace(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	first := New(ledger.NewStorageLedgerRepository(store), subagents.New(dispatcher, subagents.Policy{Workers: 1}))
-	second := New(ledger.NewStorageLedgerRepository(store), subagents.New(dispatcher, subagents.Policy{Workers: 1}))
+	first := New(ledger.NewStorageLedgerRepository(firstStore), subagents.New(dispatcher, subagents.Policy{Workers: 1}))
+	second := New(ledger.NewStorageLedgerRepository(secondStore), subagents.New(dispatcher, subagents.Policy{Workers: 1}))
 	req := EnsureRunRequest{RunID: NewRunID(), Tasks: []subagents.Task{{ID: "task-panel", Name: "worker", Input: json.RawMessage(`"work"`)}}, IdempotencyKey: "panel-admission"}
 
 	results := make(chan *RunHandle, 2)
@@ -69,7 +75,7 @@ func TestSQLiteSingleTaskTerminalAndRunnableAdmissionRace(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	observer := ledger.NewStorageLedgerRepository(store)
+	observer := ledger.NewStorageLedgerRepository(firstStore)
 	run, err := observer.GetRunByIdempotencyKey(context.Background(), scopedKey(context.Background(), req.IdempotencyKey))
 	if err != nil {
 		t.Fatal(err)

@@ -24,7 +24,7 @@ func panelDigest(value string) string {
 func validPanelTask(name string) PanelTaskSpec {
 	deadline := time.Now().Add(time.Minute).UTC()
 	input := fmt.Sprintf(`{"input":%q}`, name)
-	return PanelTaskSpec{
+	work := PanelTaskSpec{
 		TaskName: name, InputRef: "ref:input:" + name, InputDigest: panelDigest(input), InputSchemaRef: "ref:input-schema:" + name, InputSchemaDigest: panelDigest(`{}`),
 		Budget: 1, Scope: "panel", AgentName: "agent", AgentDigest: panelDigest("agent"), Skill: "skill", Provider: "provider", Model: "model",
 		OutputSchemaDigest: panelDigest(`{}`), OutputSchemaRef: "ref:output-schema:" + name, Timeout: time.Second, DeadlineAt: deadline,
@@ -32,6 +32,8 @@ func validPanelTask(name string) PanelTaskSpec {
 		Policy:                        coordledger.RunPolicy{NoRetry: true, FailInterrupted: true},
 		CoordinatorRequestFingerprint: "sha256:" + panelDigest("request:"+name),
 	}
+	work.WorkFingerprint = work.workFingerprint()
+	return work
 }
 
 func panelTaskWithID(t *testing.T, name, taskID string) PanelTaskSpec {
@@ -43,6 +45,7 @@ func panelTaskWithID(t *testing.T, name, taskID string) PanelTaskSpec {
 		t.Fatal(err)
 	}
 	work.CoordinatorRequestFingerprint = fingerprint
+	work.WorkFingerprint = work.workFingerprint()
 	return work
 }
 
@@ -153,6 +156,19 @@ func TestPanelChildIDsAreCanonicalAndDistinct(t *testing.T) {
 func TestPanelTaskSpecRejectsIncompleteWork(t *testing.T) {
 	if err := (PanelTaskSpec{}).Validate(); err == nil {
 		t.Fatal("incomplete work must fail")
+	}
+}
+
+func TestPanelTaskSpecRejectsChangedLimitsAndDeadline(t *testing.T) {
+	work := panelTaskWithID(t, "member", "task-member")
+	work.WorkLimits.MaxTurns++
+	if err := work.Validate(); err == nil {
+		t.Fatal("changed panel limits must fail the work fingerprint")
+	}
+	work = panelTaskWithID(t, "member", "task-member")
+	work.DeadlineAt = work.DeadlineAt.Add(time.Second)
+	if err := work.Validate(); err == nil {
+		t.Fatal("changed panel deadline must fail the work fingerprint")
 	}
 }
 

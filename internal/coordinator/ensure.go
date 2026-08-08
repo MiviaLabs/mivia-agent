@@ -132,6 +132,9 @@ func (c *coordinator) EnsureSingleTaskRun(ctx context.Context, req EnsureRunRequ
 	} else if !errors.Is(err, ledger.ErrNotFound) {
 		return nil, err
 	}
+	if req.ForceResume {
+		return nil, ledger.ErrNotFound
+	}
 	now := c.nowLocked()
 	task := req.Tasks[0]
 	attemptID := newAttemptID()

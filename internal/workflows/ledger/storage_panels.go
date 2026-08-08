@@ -58,30 +58,25 @@ func (s *StorageRepository) CompareAndSetPanelPhase(ctx context.Context, runID s
 			return err
 		}
 	}
-	previous := current.Clone()
 	next := current.Clone()
 	next.Version++
 	next.PanelExecution.Phase = to
 	if to == PanelPhaseSynthesisAdmitted {
 		next.PanelExecution.Synthesis = synthesis.clone()
 	}
-	p.Attempts[idx] = next
-	s.proj[runID] = p
 	s.mu.Unlock()
 
-	return s.appendPanelPhase(ctx, runID, attemptID, holder, to, synthesis, next.Version, idx, previous)
+	return s.appendPanelPhase(ctx, runID, attemptID, holder, to, synthesis, next, idx)
 }
 
-func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attemptID, holder string, to PanelPhase, synthesis *PanelSynthesisExecution, version uint64, idx int, previous StepAttempt) error {
-	payload, err := marshalPanelPhase(panelPhasePayload{AttemptID: attemptID, Version: version, Phase: to, Synthesis: synthesis.clone()})
+func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attemptID, holder string, to PanelPhase, synthesis *PanelSynthesisExecution, next StepAttempt, idx int) error {
+	payload, err := marshalPanelPhase(panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.clone()})
 	if err != nil {
-		s.restorePanelAttempt(ctx, runID, idx, previous)
 		return fmt.Errorf("marshal %s payload: %w", eventKindPanelPhaseSet, err)
 	}
-	evt := storage.Event{ID: EventID(runID, eventKindPanelPhaseSet, attemptID, strconv.FormatUint(version, 10)), RunID: runID, Sequence: int(s.nextSequence(runID)), Kind: eventKindPanelPhaseSet, Payload: payload}
+	evt := storage.Event{ID: EventID(runID, eventKindPanelPhaseSet, attemptID, strconv.FormatUint(next.Version, 10)), RunID: runID, Sequence: int(s.nextSequence(runID)), Kind: eventKindPanelPhaseSet, Payload: payload}
 	appender, ok := s.store.(storage.ExistingClaimAppender)
 	if !ok {
-		s.restorePanelAttempt(ctx, runID, idx, previous)
 		return fmt.Errorf("store does not support existing claim append")
 	}
 	err = appender.AppendWithExistingClaim(ctx, evt, holder)
@@ -89,13 +84,16 @@ func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attempt
 		err = ErrClaimHeld
 	}
 	if err != nil {
-		s.restorePanelAttempt(ctx, runID, idx, previous)
 		if errors.Is(err, storage.ErrDuplicate) {
 			return ErrConflict
 		}
 		return err
 	}
 	s.mu.Lock()
+	if p, ok := s.proj[runID]; ok && idx < len(p.Attempts) {
+		p.Attempts[idx] = next
+		s.proj[runID] = p
+	}
 	if uint64(evt.Sequence) > s.applied[runID] {
 		s.applied[runID] = uint64(evt.Sequence)
 	}
@@ -103,19 +101,20 @@ func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attempt
 	return nil
 }
 
-func (s *StorageRepository) restorePanelAttempt(ctx context.Context, runID string, idx int, previous StepAttempt) {
-	s.mu.Lock()
-	if p, ok := s.proj[runID]; ok && idx < len(p.Attempts) {
-		p.Attempts[idx] = previous
-		s.proj[runID] = p
-	}
-	s.mu.Unlock()
+func validPanelTransition(from, to PanelPhase, synthesis *PanelSynthesisExecution) bool {
+	return validPanelTransitionWithWork(from, to, synthesis, false)
 }
 
-func validPanelTransition(from, to PanelPhase, synthesis *PanelSynthesisExecution) bool {
+func validPanelTransitionWithWork(from, to PanelPhase, synthesis *PanelSynthesisExecution, allowMissingWorkFingerprint bool) bool {
 	switch {
 	case from == PanelPhaseMembersAdmitted && to == PanelPhaseSynthesisAdmitted:
-		return synthesis != nil && synthesis.Work.Validate() == nil
+		if synthesis == nil {
+			return false
+		}
+		if allowMissingWorkFingerprint {
+			return synthesis.Work.validateLegacy() == nil
+		}
+		return synthesis.Work.Validate() == nil
 	case from == PanelPhaseMembersAdmitted && to == PanelPhaseCancelPending:
 		return synthesis == nil
 	case from == PanelPhaseSynthesisAdmitted && to == PanelPhaseCancelPending:

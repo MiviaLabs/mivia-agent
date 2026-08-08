@@ -119,6 +119,8 @@ func (e *Engine) claimDelivery(ctx context.Context, runID string) (string, func(
 
 func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnapshot, snapshot workflowledger.Snapshot, policy delivery.Policy) (agenttools.DeliverResult, error) {
 	runID := run.RunID
+	ctx = workflowledger.ContextWithRunID(ctx, runID)
+	repo := e.ctrlRepo()
 	git, pr := e.Git, e.PR
 	if git == nil {
 		git = delivery.RealGit{}
@@ -142,8 +144,8 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		// refusals): settle the run to delivery_failed so it does not wedge in
 		// delivery_pending forever.
 		if delivery.IsRefusal(err) {
-			if fresh, getErr := e.Repo.GetRun(ctx, runID); getErr == nil {
-				_ = e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
+			if fresh, getErr := repo.GetRun(ctx, runID); getErr == nil {
+				_ = repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
 			}
 			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
 		}
@@ -155,23 +157,23 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		Branch: "wf/" + run.WorktreeName, GitCtx: gitCtx,
 		OriginURL: run.RemoteURL,
 	}
-	result, err := delivery.Deliver(deliveryCtx, e.Repo, git, pr, dreq)
+	result, err := delivery.Deliver(deliveryCtx, repo, git, pr, dreq)
 	if err != nil {
 		if delivery.IsRefusal(err) {
-			if fresh, getErr := e.Repo.GetRun(ctx, runID); getErr == nil {
-				_ = e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
+			if fresh, getErr := repo.GetRun(ctx, runID); getErr == nil {
+				_ = repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
 			}
 			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
 		}
 		return agenttools.DeliverResult{}, err
 	}
-	fresh, err := e.Repo.GetRun(ctx, runID)
+	fresh, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return agenttools.DeliverResult{}, err
 	}
 	if fresh.Status == workflowledger.RunStatusDeliveryPending {
 		now := time.Now()
-		if err := e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusSucceeded, &now); err != nil {
+		if err := repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusSucceeded, &now); err != nil {
 			return agenttools.DeliverResult{}, err
 		}
 	}

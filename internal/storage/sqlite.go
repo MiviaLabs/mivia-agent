@@ -98,6 +98,20 @@ func (s *SQLite) AppendBatch(ctx context.Context, events []Event) error {
 func (s *SQLite) AppendBatchForNewRun(ctx context.Context, runID string, events []Event) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	for attempt := 0; ; attempt++ {
+		err := s.appendBatchForNewRun(ctx, runID, events)
+		if !isSQLiteBusy(err) || attempt == 7 {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * time.Millisecond):
+		}
+	}
+}
+
+func (s *SQLite) appendBatchForNewRun(ctx context.Context, runID string, events []Event) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -133,6 +147,10 @@ func (s *SQLite) AppendBatchForNewRun(ctx context.Context, runID string, events 
 		}
 	}
 	return tx.Commit()
+}
+
+func isSQLiteBusy(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "SQLITE_BUSY") || strings.Contains(err.Error(), "database is locked"))
 }
 
 // AppendClaimed atomically checks the run claim and appends the event.

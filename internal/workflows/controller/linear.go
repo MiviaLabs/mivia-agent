@@ -247,6 +247,7 @@ func (c *LinearController) Run(ctx context.Context) (workflowledger.RunSnapshot,
 	if err := c.Start(ctx); err != nil {
 		return workflowledger.RunSnapshot{}, err
 	}
+	ctx = workflowledger.ContextWithRunID(ctx, c.RunID)
 	stored, err := c.Repo.GetRun(ctx, c.RunID)
 	if err != nil {
 		return workflowledger.RunSnapshot{}, err
@@ -296,6 +297,7 @@ func (c *LinearController) Run(ctx context.Context) (workflowledger.RunSnapshot,
 func (c *LinearController) Advance(ctx context.Context) (workflowledger.RunSnapshot, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	ctx = workflowledger.ContextWithRunID(ctx, c.RunID)
 	ctx = workflowledger.ContextWithClaimHolder(ctx, c.Holder)
 	if err := c.Repo.ClaimRun(ctx, c.RunID, c.Holder); err != nil {
 		return workflowledger.RunSnapshot{}, false, err

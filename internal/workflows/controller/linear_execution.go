@@ -116,6 +116,7 @@ func (c *LinearController) interruptAndRedispatch(ctx context.Context, run workf
 // Advance to interrupt and re-dispatch under the run claim. Idempotent: an
 // attempt that is already terminal (or no longer the latest) is a no-op.
 func (c *LinearController) JoinInFlightAttempt(ctx context.Context, attempt workflowledger.StepAttempt) error {
+	ctx = workflowledger.ContextWithRunID(ctx, c.RunID)
 	if workflowledger.IsTerminalAttemptStatus(attempt.Status) {
 		return nil
 	}

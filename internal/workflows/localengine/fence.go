@@ -43,6 +43,9 @@ func (f *abandonFence) isAbandoned(runID string) bool {
 }
 
 func (f *abandonFence) CreateRun(ctx context.Context, snap workflowledger.RunSnapshot, snapshotJSON []byte) error {
+	if f.isAbandoned(snap.RunID) {
+		return workflowledger.ErrConflict
+	}
 	return f.inner.CreateRun(ctx, snap, snapshotJSON)
 }
 
@@ -196,6 +199,9 @@ func (f *abandonFence) ClearRunClaim(ctx context.Context, runID string) error {
 }
 
 func (f *abandonFence) StoreContent(ctx context.Context, ref string, data []byte) error {
+	if runID, ok := workflowledger.RunIDFromContext(ctx); ok && f.isAbandoned(runID) {
+		return workflowledger.ErrConflict
+	}
 	return f.inner.StoreContent(ctx, ref, data)
 }
 
