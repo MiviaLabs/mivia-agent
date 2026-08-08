@@ -21,11 +21,18 @@ func addRootMCPTools(registry *tools.Registry, cfg *config.Resolved, selected *a
 	if registry == nil || cfg == nil || selected == nil || len(selected.EffectiveMCPServers) == 0 {
 		return func() {}, nil
 	}
+	return addMCPTools(registry, cfg, selected.EffectiveMCPServers)
+}
+
+func addMCPTools(registry *tools.Registry, cfg *config.Resolved, serverIDs []string) (func(), error) {
+	if registry == nil || cfg == nil || len(serverIDs) == 0 {
+		return func() {}, nil
+	}
 	manager, err := mcp.NewManager(cfg.MCP, mcp.ManagerOptions{})
 	if err != nil {
 		return nil, err
 	}
-	wrappers, err := manager.EnsureServers(context.Background(), selected.EffectiveMCPServers)
+	wrappers, err := manager.EnsureServers(context.Background(), serverIDs)
 	if err != nil {
 		_ = manager.Close()
 		return nil, err

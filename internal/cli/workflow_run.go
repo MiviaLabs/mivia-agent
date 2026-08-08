@@ -335,6 +335,16 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.Compil
 		cleanup()
 		return workflowBuildSetup{}, err
 	}
+	closeMCP, err := addMCPTools(authority, res, workflowMCPServers(wf, loaded.Registry))
+	if err != nil {
+		cleanup()
+		return workflowBuildSetup{}, err
+	}
+	previousCleanup := cleanup
+	cleanup = func() {
+		closeMCP()
+		previousCleanup()
+	}
 	remoteURL, err := workflowBuildRemoteURL(wf, identity, writeCapable, recorded)
 	if err != nil {
 		cleanup()
