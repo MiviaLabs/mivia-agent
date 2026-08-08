@@ -48,6 +48,75 @@ func TestFitTruncationDropsARefItCannotPrintWhole(t *testing.T) {
 	}
 }
 
+func TestFitTruncationNamesARefThatFitsExactly(t *testing.T) {
+	// The bug: when maxBytes equals the full ref notice exactly, the
+	// degenerate guard ('noticeBudget >= maxBytes') dropped the ref even
+	// though the notice fits - so the stored remainder became unreachable.
+	// The fixed guard ('>') keeps the ref at the exact boundary.
+	ref := "ref:output:" + strings.Repeat("a", 64)
+	body := strings.Repeat("x", 200)
+	total := len(body)
+	maxBytes := len(TruncationNotice(total, total, ref))
+
+	got := fitTruncation(body, total, maxBytes, ref, "")
+	if len(got) > maxBytes {
+		t.Fatalf("fitTruncation produced %d bytes, want <= %d", len(got), maxBytes)
+	}
+	if !strings.Contains(got, ref) {
+		t.Fatalf("full ref was not named when it fits exactly: %q", got)
+	}
+	if !strings.Contains(got, "use read_output") {
+		t.Fatalf("missing read_output guidance: %q", got)
+	}
+	if !strings.Contains(got, "truncated: kept") {
+		t.Fatalf("truncation not reported: %q", got)
+	}
+}
+
+func TestFitTruncationBoundaryProbes(t *testing.T) {
+	// DC-6 probe discipline around the exact-fit boundary: 0, 1, max-1, max,
+	// max+1, plus an empty-body exact fit. Every case must stay in budget and
+	// never emit a partial ref.
+	ref := "ref:output:" + strings.Repeat("a", 64)
+	body := strings.Repeat("x", 200)
+	total := len(body)
+	boundary := len(TruncationNotice(total, total, ref))
+
+	cases := []struct {
+		name     string
+		body     string
+		total    int
+		maxBytes int
+		ref      string
+		wantRef  bool
+	}{
+		{"boundary-1 drops the ref", body, total, boundary - 1, ref, false},
+		{"boundary names the ref in full", body, total, boundary, ref, true},
+		{"boundary+1 names the ref with content", body, total, boundary + 1, ref, true},
+		{"empty-body exact fit", "", 0, len(TruncationNotice(0, 0, ref)), ref, true},
+		{"degenerate zero", body, total, 0, ref, false},
+		{"degenerate one", body, total, 1, ref, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fitTruncation(tc.body, tc.total, tc.maxBytes, tc.ref, "")
+			if len(got) > tc.maxBytes {
+				t.Fatalf("len(got)=%d > maxBytes=%d: %q", len(got), tc.maxBytes, got)
+			}
+			if strings.Contains(got, "ref:") && !strings.Contains(got, tc.ref) {
+				t.Fatalf("partial ref emitted: %q", got)
+			}
+			if tc.wantRef {
+				if !strings.Contains(got, tc.ref) {
+					t.Fatalf("expected the full ref, got %q", got)
+				}
+			} else if strings.Contains(got, "ref:output:") {
+				t.Fatalf("expected no ref, got %q", got)
+			}
+		})
+	}
+}
+
 func TestFitTruncationClipsTheNoticeItself(t *testing.T) {
 	body := strings.Repeat("x", 200)
 	got := fitTruncation(body, len(body), 10, "", "")
