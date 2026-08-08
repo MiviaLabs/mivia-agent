@@ -52,6 +52,38 @@ func TestPackageLevelDefaultRedactsNothing(t *testing.T) {
 	}
 }
 
+// The process-wide default JSONValue must also be inert: a nil policy means
+// no redaction. This closes the coverage gap left by TestPackageLevelDefaultRedactsNothing,
+// which only exercises Text.
+func TestPackageLevelDefaultJSONValueRedactsNothing(t *testing.T) {
+	t.Cleanup(func() { SetPolicy(nil) })
+	SetPolicy(nil)
+
+	// Case 1: map with secret-like keys — all values must survive.
+	m := map[string]any{"api_key": "zzz-secret", "token": "abc123", "user": "alice"}
+	raw, _ := json.Marshal(JSONValue(m))
+	for _, want := range []string{"zzz-secret", "abc123", "alice"} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("nil policy elided %q from map JSON: %s", want, raw)
+		}
+	}
+
+	// Case 2: slice with string secrets — all values must survive.
+	sl := []any{"secret-42", "Bearer tok", "ordinary"}
+	raw, _ = json.Marshal(JSONValue(sl))
+	for _, want := range []string{"secret-42", "Bearer tok", "ordinary"} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("nil policy elided %q from slice JSON: %s", want, raw)
+		}
+	}
+
+	// Case 3: bare string — direct identity.
+	const bare = "token=abc123"
+	if got := JSONValue(bare); got != bare {
+		t.Fatalf("nil policy changed bare string: %q", got)
+	}
+}
+
 func TestPackageLevelJSONValueUsesInstalledPolicy(t *testing.T) {
 	t.Cleanup(func() { SetPolicy(nil) })
 	p, err := Compile([]string{`secret-[0-9]+`}, []string{"token"}, "<redacted>")
