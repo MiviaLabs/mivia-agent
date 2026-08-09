@@ -251,12 +251,13 @@ func assertWorstCaseCallWithinBudget(t *testing.T, d *Dispatcher, reg *tools.Reg
 func assertWorstCaseCoverage(t *testing.T, reg *tools.Registry, covered map[string]bool) {
 	t.Helper()
 	outOfHarness := map[string]string{
-		"run_command":      "result size is set by the allowlisted program, not by workspace data; bounded by max_output_bytes, which it declares",
-		"fetch_url":        "remote response; bounded by max_read_bytes, which it declares",
-		"search":           "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilySearchLargeAnswerReachesModelWhole",
-		"extract":          "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilyExtractLargePageReachesModelWhole",
-		"find_references":  "needs a type-checkable module; its self-truncation budget is pinned by TestFindReferencesBudgetClampedToConfiguredCap",
-		"go_to_definition": "needs a type-checkable module; its self-truncation budget is pinned by TestGoToDefinitionBudgetClampedToConfiguredCap and exercised against an oversized declaration by TestGoToDefinitionSelfTruncatesOversizedSource",
+		"run_command":         "result size is set by the allowlisted program, not by workspace data; bounded by max_output_bytes, which it declares",
+		"fetch_url":           "remote response; bounded by max_read_bytes, which it declares",
+		"search":              "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilySearchLargeAnswerReachesModelWhole",
+		"extract":             "remote response; bounded by max_tavily_response_bytes, which it declares and enforces on the wire read AND on every composed return path - pinned by TestRegression_TavilyExtractLargePageReachesModelWhole",
+		"find_references":     "needs a type-checkable module; its self-truncation budget is pinned by TestFindReferencesBudgetClampedToConfiguredCap",
+		"go_to_definition":    "needs a type-checkable module; its self-truncation budget is pinned by TestGoToDefinitionBudgetClampedToConfiguredCap and exercised against an oversized declaration by TestGoToDefinitionSelfTruncatesOversizedSource",
+		"find_symbol_context": "needs a type-checkable module; its self-truncation budget is pinned by TestFindSymbolContextOutputIsValidJSONAndWithinBudget and TestFindSymbolContextReportsReferenceAndByteTruncationHonestly",
 	}
 	for _, tool := range reg.List() {
 		name := tool.Name()
