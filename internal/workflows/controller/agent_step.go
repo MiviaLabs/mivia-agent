@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
@@ -220,6 +219,18 @@ type CoordinatorRunner struct {
 	// defaultJoinWatchdog; tests set it short to exercise the join-timeout
 	// path.
 	JoinWatchdog time.Duration
+	// progressEmitter is an optional sink for periodic step-heartbeat
+	// progress events emitted while a join is live. It is nil-safe and must
+	// be concurrency-safe: the join loop calls it from its own goroutine.
+	progressEmitter func(ProgressEvent)
+}
+
+// SetProgressEmitter wires an optional step-heartbeat emitter into the
+// runner. The emitter receives a ProgressStepHeartbeat per watchdog tick
+// while a join is live. Production wiring connects it to the controller's
+// progress sink (see newWorkflowController); tests may leave it nil.
+func (r *CoordinatorRunner) SetProgressEmitter(emitter func(ProgressEvent)) {
+	r.progressEmitter = emitter
 }
 
 var _ AgentStepRunner = (*CoordinatorRunner)(nil)
@@ -327,7 +338,7 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: spec.TaskID, EvidenceJSON: evidenceJSON}, fmt.Errorf("coordinator task identity does not match %q", spec.TaskID)
 	}
 	actualTaskID := spec.TaskID
-	joined, err := r.joinWithCancellation(ctx, spec, h)
+	joined, err := r.joinWithCancellation(ctx, spec, h, r.progressEmitter)
 	if err != nil {
 		// A canceled or expired wait still carries the child outcome when the
 		// coordinator settled: keep the result so the attempt records output
@@ -389,40 +400,6 @@ func extractTaskOutput(raw json.RawMessage) json.RawMessage {
 		return append(json.RawMessage(nil), envelope["output"]...)
 	}
 	return append(json.RawMessage(nil), raw...)
-}
-
-// maxErrorTextBytes bounds stored failure detail for one attempt.
-const maxErrorTextBytes = 4096
-
-// storeErrorText persists a bounded, tail-truncated error message
-// content-addressed and returns its reference. It returns "" when the cause
-// is nil or persistence fails: a failed attempt must still complete, so
-// missing detail never fails the attempt CAS.
-func storeErrorText(ctx context.Context, repo workflowledger.Repository, cause error) string {
-	if cause == nil {
-		return ""
-	}
-	text := truncateTail(cause.Error(), maxErrorTextBytes)
-	ref := "sha256:" + workflowledger.DigestHex([]byte(text))
-	if err := repo.StoreContent(ctx, ref, []byte(text)); err != nil {
-		return ""
-	}
-	return ref
-}
-
-// truncateTail keeps the last max bytes of s without splitting a UTF-8 rune.
-// Error chains read wrapper-first and root cause last, so the tail preserves
-// the root cause. Truncation is deterministic: identical input yields
-// identical output and therefore an identical content reference.
-func truncateTail(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	start := len(s) - max
-	for start < len(s) && !utf8.RuneStart(s[start]) {
-		start++
-	}
-	return s[start:]
 }
 
 func validateRequest(spec AgentStepRequest) error {

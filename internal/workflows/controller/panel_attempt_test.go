@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -75,7 +74,11 @@ func TestBuildPanelAttemptPinsEachMemberBindingAndDeadline(t *testing.T) {
 	}
 }
 
-func TestPanelMembersCompleteDoesNotReportWorkflowSuccess(t *testing.T) {
+// panelStepFixture builds a controller whose workflow starts with an
+// agent_panel step. It returns the controller, the workflow repository, and
+// the coordinator ledger so tests can assert settlement and dispatch.
+func panelStepFixture(t *testing.T, runID string) (*LinearController, workflowledger.Repository, coordledger.LedgerRepository, definition.Step) {
+	t.Helper()
 	step := definition.Step{
 		ID: "review", Kind: "agent_panel", Context: []definition.ContextBinding{{From: "inputs.task", As: "task", MaxBytes: 1024}},
 		Panel: &definition.AgentPanel{FailurePolicy: "require_all", Members: []definition.PanelMember{
@@ -98,18 +101,36 @@ func TestPanelMembersCompleteDoesNotReportWorkflowSuccess(t *testing.T) {
 	if err := dispatcher.Register(runtime.Subagent, "panel-reviewer", completedPanelHandler{}); err != nil {
 		t.Fatal(err)
 	}
-	coord := coordinator.New(coordledger.NewMemoryLedgerRepository(), subagents.New(dispatcher, subagents.Policy{Workers: 2}))
+	coordLedger := coordledger.NewMemoryLedgerRepository()
+	coord := coordinator.New(coordLedger, subagents.New(dispatcher, subagents.Policy{Workers: 2}))
 	repo := workflowledger.NewMemoryRepository()
 	wf := &compiler.CompiledWorkflow{Name: "panel", InitialStep: step.ID, Steps: []definition.Step{step}}
-	ctrl, err := NewLinearController(repo, NewCoordinatorRunner(coord), wf, nil, map[string]any{"task": "change"}, "wfr-panel-members", snapshot)
+	ctrl, err := NewLinearController(repo, NewCoordinatorRunner(coord), wf, nil, map[string]any{"task": "change"}, runID, snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return ctrl, repo, coordLedger, step
+}
+
+// TestPanelStepFailsClosedWithoutSynthesis: Wave 5 synthesis has no agent or
+// template definition surface, so the controller refuses the agent_panel step
+// instead of running members and leaving the attempt running forever (G9).
+// The run settles terminal failed with the refusal cause, and no member
+// coordinator run is dispatched.
+func TestPanelStepFailsClosedWithoutSynthesis(t *testing.T) {
+	ctrl, _, coordLedger, _ := panelStepFixture(t, "wfr-panel-fail-closed")
 	run, err := ctrl.Run(context.Background())
-	if !errors.Is(err, ErrPanelMembersComplete) {
-		t.Fatalf("Run error = %v, want panel-members-complete", err)
+	if err == nil || !strings.Contains(err.Error(), "agent_panel step") {
+		t.Fatalf("Run error = %v, want refusal cause", err)
 	}
-	if workflowledger.IsTerminalRunStatus(run.Status) {
-		t.Fatalf("Run status = %q, want nonterminal members-only phase", run.Status)
+	if !workflowledger.IsTerminalRunStatus(run.Status) || run.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("Run status = %q, want terminal failed", run.Status)
+	}
+	runs, err := coordLedger.ListRuns(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("member coordinator runs = %d, want none dispatched", len(runs))
 	}
 }

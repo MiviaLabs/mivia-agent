@@ -13,10 +13,15 @@ type Kind string
 
 const (
 	// Agent loop events (mirror agent.EventKind values).
-	KindAssistant         Kind = "assistant"
-	KindToolStart         Kind = "tool_start"
-	KindToolEnd           Kind = "tool_end"
-	KindStep              Kind = "step"
+	KindAssistant Kind = "assistant"
+	KindToolStart Kind = "tool_start"
+	KindToolEnd   Kind = "tool_end"
+	KindStep      Kind = "step"
+	// KindHeartbeat mirrors agent.EventHeartbeat: a wall-clock progress
+	// tick during model thinking, tool batches, and batch shaping. The
+	// root loop publishes the bare string "heartbeat". Use this constant
+	// to subscribe to it.
+	KindHeartbeat         Kind = "heartbeat"
 	KindPrune             Kind = "prune"
 	KindToolParallel      Kind = "tool_parallel"
 	KindSubagentStart     Kind = "subagent_start"
@@ -39,6 +44,33 @@ const (
 	KindSessionEnd   Kind = "session_end"
 	KindTurnStart    Kind = "turn_start"
 	KindTurnEnd      Kind = "turn_end"
+
+	// Workflow and invocation observability events. Run, step, and task
+	// identifiers ride in Event.Metadata; no Event fields are added.
+	// KindWorkflowRunStarted reports the start of one workflow run.
+	KindWorkflowRunStarted Kind = "workflow_run_started"
+	// KindWorkflowStepStarted reports the start of one workflow step.
+	KindWorkflowStepStarted Kind = "workflow_step_started"
+	// KindWorkflowStepHeartbeat is the progress tick of a running step.
+	KindWorkflowStepHeartbeat Kind = "workflow_step_heartbeat"
+	// KindWorkflowStepCompleted reports the completion of one workflow step.
+	KindWorkflowStepCompleted Kind = "workflow_step_completed"
+	// KindWorkflowGateResult reports the start of one workflow gate: the gate
+	// begin is published at gate_started time; the gate's outcome is published
+	// as step_completed when the attempt reaches its terminal status.
+	KindWorkflowGateResult Kind = "workflow_gate_result"
+	// KindWorkflowApprovalRequested reports a workflow approval request.
+	KindWorkflowApprovalRequested Kind = "workflow_approval_requested"
+	// KindWorkflowRunFinished reports the end of one workflow run.
+	KindWorkflowRunFinished Kind = "workflow_run_finished"
+	// KindWorkflowDeliveryStage reports one delivery stage of a workflow.
+	KindWorkflowDeliveryStage Kind = "workflow_delivery_stage"
+	// KindInvocationStarted reports the start of one invocation.
+	KindInvocationStarted Kind = "invocation_started"
+	// KindInvocationCompleted reports the completion of one invocation.
+	KindInvocationCompleted Kind = "invocation_completed"
+	// KindInvocationRetrying reports one retry of an invocation.
+	KindInvocationRetrying Kind = "invocation_retrying"
 
 	// UI/system events.
 	KindUIResize     Kind = "ui_resize"

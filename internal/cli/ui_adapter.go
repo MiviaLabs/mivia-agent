@@ -42,10 +42,14 @@ func NewUIAdapter(bus *events.Bus, bridge *streamBridge) *UIAdapter {
 	// Subscribe to all agent and system events.
 	allKinds := []events.Kind{
 		events.KindAssistant, events.KindToolStart, events.KindToolEnd,
-		events.KindStep, events.KindPrune, events.KindToolParallel,
+		events.KindStep, events.KindHeartbeat, events.KindPrune, events.KindToolParallel,
 		events.KindSubagentStart, events.KindSubagentEnd, events.KindSubagentHeartbeat,
 		events.KindSubagentDone,
 		events.KindTurnStart, events.KindTurnEnd,
+		events.KindWorkflowRunStarted, events.KindWorkflowStepStarted, events.KindWorkflowStepHeartbeat,
+		events.KindWorkflowStepCompleted, events.KindWorkflowGateResult, events.KindWorkflowApprovalRequested,
+		events.KindWorkflowRunFinished, events.KindWorkflowDeliveryStage,
+		events.KindInvocationStarted, events.KindInvocationCompleted, events.KindInvocationRetrying,
 		events.KindUIResize, events.KindUserInput, events.KindError,
 	}
 	bus.SubscribeMany(allKinds, a)

@@ -38,6 +38,9 @@ func (c *LinearController) settleHostFailure(ctx context.Context, run workflowle
 	if err := CompleteExistingStepResult(ctx, c.Repo, attempt, result, workflowledger.AttemptStatusFailed, route); err != nil {
 		return c.fail(ctx, run, err)
 	}
+	// The failed attempt is durable. Report the completion once with the
+	// failed status before deciding where the run goes next.
+	c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
 	if !c.hostFailureRepairable(ctx, step, route) {
 		return c.fail(ctx, run, hostErr)
 	}

@@ -39,6 +39,29 @@ func TestWorkflowEventsContinuationHintWithForeignEvents(t *testing.T) {
 	}
 }
 
+// TestWorkflowEventsRunResumedRendersDash verifies that observational events
+// without a payload timestamp (wf_run_resumed) render "-" in the CLI listing
+// instead of the zero instant, matching the tool surface's zero-guard.
+func TestWorkflowEventsRunResumedRendersDash(t *testing.T) {
+	root, _, repo, closeFn, ctx, run := openEventsFixtureWithRun(t, "wfr-cli-resumed")
+	if err := repo.RecordRunResumed(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	closeFn() // release the seeding connection; the command opens its own
+
+	var stdout strings.Builder
+	err := executeWorkflowEvents(run, root, filepath.Join(root, "config.toml"), 0, 0, &stdout, io.Discard)
+	if err != nil {
+		t.Fatalf("executeWorkflowEvents error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "run re-entered") {
+		t.Fatalf("stdout = %q, want the run re-entered summary", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "0001-01-01T00:00:00Z") {
+		t.Fatalf("stdout renders the zero instant; want '-' for a payload-less timestamp:\n%s", stdout.String())
+	}
+}
+
 // TestWorkflowEventsOffsetBeyondStream verifies that when offset exceeds the
 // decodable event stream, executeWorkflowEvents prints 'no events' and returns
 // nil. ListEvents clamps an offset past the trail to an empty slice, so no

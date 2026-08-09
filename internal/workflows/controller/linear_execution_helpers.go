@@ -181,6 +181,14 @@ func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.R
 	// fail-soft: a store failure returns "" and never masks the cause.
 	result := AgentStepResult{ErrorRef: storeErrorText(writeCtx, c.Repo, cause)}
 	_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, result, workflowledger.AttemptStatusFailed, RouteDecision{})
+	// The attempt is now recorded as failed. Report the completion once with
+	// the failed status. The controller resolves the step from the attempt,
+	// so every caller emits the same event.
+	step, ok := c.WorkflowStep(attempt.StepID)
+	if !ok {
+		step = definition.Step{ID: attempt.StepID}
+	}
+	c.emitStepCompleted(step, attempt, "failed")
 	return c.fail(writeCtx, run, cause)
 }
 

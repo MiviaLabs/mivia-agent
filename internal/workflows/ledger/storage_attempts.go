@@ -344,10 +344,12 @@ func (s *StorageRepository) SetStepAttemptPrompt(ctx context.Context, runID, att
 	return s.appendEvent(ctx, evt, rollback)
 }
 
-// SetStepAttemptExecution records the active child identity before dispatch.
-// This closes the crash window where a transient retry has a new child in
-// memory but the ledger still points at the old child.
-func (s *StorageRepository) SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID string) error {
+// SetStepAttemptExecution records the active child identity before dispatch,
+// together with the reason for the re-dispatch when one exists (a transient
+// retry records the provider error text that triggered it; an initial dispatch
+// records none). This closes the crash window where a transient retry has a
+// new child in memory but the ledger still points at the old child.
+func (s *StorageRepository) SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID, reason string) error {
 	if coordinatorRunID == "" || taskID == "" {
 		return fmt.Errorf("execution identity is incomplete")
 	}
@@ -401,7 +403,7 @@ func (s *StorageRepository) SetStepAttemptExecution(ctx context.Context, runID, 
 	s.proj[runID] = p
 	s.mu.Unlock()
 	now := cur.Executions[len(cur.Executions)-1].StartedAt
-	payload, err := marshalAttemptExecution(attemptExecutionPayload{AttemptID: attemptID, ExecutionNo: executionNo, CoordinatorRunID: coordinatorRunID, TaskID: taskID, CreatedAt: now})
+	payload, err := marshalAttemptExecution(attemptExecutionPayload{AttemptID: attemptID, ExecutionNo: executionNo, CoordinatorRunID: coordinatorRunID, TaskID: taskID, Reason: reason, CreatedAt: now})
 	if err != nil {
 		s.rollbackAndRebuild(ctx, runID, func() {
 			q := s.proj[runID]

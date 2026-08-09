@@ -240,3 +240,39 @@ func (s *StorageRepository) CompareAndSetRunStatus(ctx context.Context, runID st
 		s.proj[runID] = q
 	})
 }
+
+// RecordRunResumed appends the wf_run_resumed audit event for a run that a
+// controller is resuming (crash recovery, operator resume, or controller
+// re-entry). It mutates no run state: the event is purely observational, so
+// the projection ignores it. Returns ErrNotFound when the run is absent. The
+// deterministic event ID is (runID, kind) and the payload carries only the
+// run id, so a retried resume under the real clock appends at most one event
+// (the second write is the idempotent retry path of appendEvent).
+func (s *StorageRepository) RecordRunResumed(ctx context.Context, runID string) error {
+	if err := s.ensureBuilt(ctx); err != nil {
+		return err
+	}
+	lock := s.runLock(runID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	s.mu.Lock()
+	p, ok := s.proj[runID]
+	if !ok || !p.HasRun || p.Run == nil {
+		s.mu.Unlock()
+		return ErrNotFound
+	}
+	s.mu.Unlock()
+
+	// json.Marshal of the single-string payload cannot fail, so the error
+	// branch would be dead code (diff-coverage gate).
+	payload, _ := marshalRunResumed(runResumedPayload{RunID: runID})
+	evt := storage.Event{
+		ID:       EventID(runID, eventKindRunResumed),
+		RunID:    runID,
+		Sequence: int(s.nextSequence(runID)),
+		Kind:     eventKindRunResumed,
+		Payload:  payload,
+	}
+	return s.appendEvent(ctx, evt, nil)
+}

@@ -159,6 +159,12 @@ may be separate processes or hosts.
 |----|----------|-----------|---------|---------------|
 | INV-STORE-1 | Safety | A bare relative store path (no directory separator) opens as a database file in the current directory, never as a directory (DC-10): `OpenSQLite` must not `MkdirAll` a directory named like the DB file, which made the WAL PRAGMA fail and left a stray directory - with `[subagents] store_path` set to a bare name the ledger then silently fell back to the memory backend and the context store failed to open. Empty and whitespace-only paths are refused before any filesystem work; nested-relative and absolute paths keep their existing behavior | `TestOpenSQLiteBareFilenameOpensDatabaseFile`, `TestOpenSQLiteRejectsEmptyPath`, `TestOpenSQLitePathShapeBoundary` | |
 
+## Workflow observability invariants
+
+| ID | Category | Invariant | Test(s) | Last Verified |
+|----|----------|-----------|---------|---------------|
+| INV-WF-1 | Safety | Every workflow step attempt and every run transition is observable: a durable `wf_*` ledger event is written for run created/status/attempt started/completed/execution/resumed, and the controller emits a progress event at step start/end and run finish when a `ProgressSink` is attached | `TestLinearProgressStepStartedAndCompletedOnSuccess`, `TestPanelStepRefusalPersistsDurableCause`, `TestControllerRunEmitsRunFinished`, `TestStartNewResumeRecordsRunResumed` | |
+
 ## Liveness Gap Notes
 
 | ID | Gap | Mitigation | Feasibility |

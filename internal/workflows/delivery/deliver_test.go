@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -572,6 +573,74 @@ func TestDeliverTemplateInjectionSingleArgv(t *testing.T) {
 			t.Fatalf("title = %q, want the folded single line", got)
 		}
 	})
+}
+
+// TestDeliverStageCallbackRecordsNoDiffStages pins the stage observability
+// contract (G11): a delivery run with a Stage callback records each numbered
+// stage with a stable name, in order. The no_diff path is the cheapest: guard,
+// eligibility, then no_diff.
+func TestDeliverStageCallbackRecordsNoDiffStages(t *testing.T) {
+	ctx := context.Background()
+	_, _, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	pr := &fakePRClient{}
+	var stages []string
+	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"})
+	req.Stage = func(stage, detail string) { stages = append(stages, stage) }
+	res, err := Deliver(ctx, repo, RealGit{}, pr, req)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if res.Status != "no_diff" {
+		t.Fatalf("Result = %+v, want no_diff", res)
+	}
+	want := []string{"guard", "eligibility", "no_diff"}
+	if !reflect.DeepEqual(stages, want) {
+		t.Fatalf("stages = %v, want %v", stages, want)
+	}
+}
+
+// TestDeliverStageCallbackRecordsSuccessStages pins the full ordered stage
+// sequence of a publishing delivery: guard, eligibility, commit, push, pr,
+// success.
+func TestDeliverStageCallbackRecordsSuccessStages(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	pr := &fakePRClient{}
+	var stages []string
+	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"})
+	req.Stage = func(stage, detail string) { stages = append(stages, stage) }
+	res, err := Deliver(ctx, repo, RealGit{}, pr, req)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	want := []string{"guard", "eligibility", "commit", "push", "pr", "success"}
+	if !reflect.DeepEqual(stages, want) {
+		t.Fatalf("stages = %v, want %v", stages, want)
+	}
+}
+
+// TestDeliverStageCallbackRecordsFailedStage pins the failed stage on an
+// in-flight failure: a transient PR create failure records every stage up to
+// and including failed.
+func TestDeliverStageCallbackRecordsFailedStage(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"})
+	var stages []string
+	req.Stage = func(stage, detail string) { stages = append(stages, stage) }
+	pr := &failOncePRClient{fake: &fakePRClient{}}
+	if _, err := Deliver(ctx, repo, RealGit{}, pr, req); err == nil {
+		t.Fatal("Deliver error = nil, want the transient Create failure")
+	}
+	want := []string{"guard", "eligibility", "commit", "push", "pr", "failed"}
+	if !reflect.DeepEqual(stages, want) {
+		t.Fatalf("stages = %v, want %v", stages, want)
+	}
 }
 
 func TestFormatOutcome(t *testing.T) {

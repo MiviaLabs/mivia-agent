@@ -55,17 +55,95 @@ func joinBound(ctx context.Context, taskTimeout, watchdog time.Duration) time.Du
 	return bound
 }
 
+// joinWatchdogTickInterval returns the heartbeat poll interval for the join
+// watchdog: bound/8 capped at 30 seconds with a 100 ms floor. The floor
+// guards tiny bounds in tests so the ticker never runs faster than 100 ms.
+func joinWatchdogTickInterval(bound time.Duration) time.Duration {
+	interval := bound / 8
+	if interval > 30*time.Second {
+		interval = 30 * time.Second
+	}
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
+	}
+	return interval
+}
+
+// watchJoinLiveness runs the liveness-gated watchdog for one coordinator
+// join. The watchdog cancels the join when the child task is silent for
+// longer than the bound. The join start is the reference: a recorded
+// heartbeat counts only when it is newer than the join start, so a stale
+// pre-join entry from an earlier execution of the same task id can never
+// cancel a live re-dispatched child early. A child silent since the join
+// start is canceled at the bound. Each tick reports a step heartbeat to
+// the optional emitter while the join is still live. The returned stop
+// function ends the ticker and the watchdog goroutine.
+func watchJoinLiveness(joinCtx context.Context, cancel context.CancelFunc, taskID string, bound time.Duration, emit func(ProgressEvent)) (stop func()) {
+	anchor := time.Now()
+	ticker := time.NewTicker(joinWatchdogTickInterval(bound))
+	done := make(chan struct{})
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-joinCtx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				if emit != nil {
+					emit(ProgressEvent{Kind: ProgressStepHeartbeat, Detail: "running"})
+				}
+				last, ok := LastStepHeartbeat(taskID)
+				reference := anchor
+				if ok && last.After(anchor) {
+					reference = last
+				}
+				if time.Since(reference) > bound {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		ticker.Stop()
+	}
+}
+
 // joinWithCancellation joins the child run bounded by the controller-side
 // watchdog: min(remaining step/run deadline, task timeout when set, fixed
-// watchdog). On expiry the child is canceled and the canceled wait is given a
-// short settle window, exactly as for parent-ctx expiry; when the join bound
-// (not the parent ctx) fired, the error names the join timeout so the attempt
-// settles timed_out/failed instead of the controller blocking indefinitely.
-func (r *CoordinatorRunner) joinWithCancellation(ctx context.Context, spec AgentStepRequest, h *coordinator.RunHandle) (*coordinator.RunResult, error) {
+// watchdog). The watchdog is liveness-gated: a live child that emits
+// subagent heartbeats is never canceled by the watchdog; only a child
+// silent for the full bound is canceled. Each watchdog tick reports a
+// ProgressStepHeartbeat for the step to the optional emitter, so a still
+// running join stays observable. On expiry the child is canceled and the
+// canceled wait is given a short settle window, exactly as for parent-ctx
+// expiry; when the join bound (not the parent ctx) fired, the error names
+// the join timeout so the attempt settles timed_out/failed instead of the
+// controller blocking indefinitely.
+func (r *CoordinatorRunner) joinWithCancellation(ctx context.Context, spec AgentStepRequest, h *coordinator.RunHandle, emitters ...func(ProgressEvent)) (*coordinator.RunResult, error) {
 	watchdog := r.joinWatchdog()
 	bound := joinBound(ctx, spec.Timeout, watchdog)
-	joinCtx, joinCancel := context.WithTimeout(ctx, bound)
+	joinCtx, joinCancel := context.WithCancel(ctx)
 	defer joinCancel()
+	var emit func(ProgressEvent)
+	if len(emitters) > 0 {
+		capture := emitters[0]
+		emit = func(e ProgressEvent) {
+			if capture == nil {
+				return
+			}
+			e.StepID = spec.StepID
+			e.AttemptNo = spec.AttemptNo
+			e.TaskID = spec.TaskID
+			e.CoordinatorRunID = spec.CoordinatorRunID
+			capture(e)
+		}
+	}
+	stop := watchJoinLiveness(joinCtx, joinCancel, spec.TaskID, bound, emit)
+	defer stop()
 	result, err := r.Coordinator.Join(joinCtx, h)
 	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		return result, err

@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 )
 
 func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, maxContextTokens int, maxTokens *int, budget func() int) error {
@@ -197,7 +198,11 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 				Name: e.Name, Detail: e.Detail, Output: e.Output,
 				Origin: e.Origin,
 			})
-		case agent.EventSubagentHeartbeat, agent.EventSubagentDone:
+		case agent.EventSubagentHeartbeat:
+			// Feed the workflow join liveness watchdog.
+			controller.NoteStepHeartbeat(e.Origin.TaskID)
+			parentOnEvent(e)
+		case agent.EventSubagentDone:
 			parentOnEvent(e)
 		case agent.EventStep, agent.EventHeartbeat:
 			// Nested agent steps surface as heartbeats in the parent chrome;

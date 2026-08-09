@@ -87,3 +87,40 @@ func TestMultiStepHandlerStampsEventOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestStampEventOriginUsesTaskIdentityFromContext(t *testing.T) {
+	// Coordinator calls stamp the workflow attempt's task id (wft-...) on the
+	// context. Events must carry that id instead of the opaque runtime session
+	// token so bus, ledger, and attempt events share one correlation key. The
+	// identity needs a non-empty RunID: TaskIdentityFrom only reports ok when
+	// both RunID and TaskID are present.
+	reg := newTestRegistry()
+	comp := &multiStepMockCompleter{name: "test", responses: []string{"done"}}
+	var events []agent.Event
+	h := &MultiStepHandler{
+		Completer:    comp,
+		FullRegistry: reg,
+		Model:        "test-model",
+		MaxSteps:     3,
+		MaxTokens:    256,
+		OnEvent:      func(e agent.Event) { events = append(events, e) },
+	}
+
+	req := runtimeRequestForOriginTest()
+	ctx := runtime.ContextWithTaskIdentity(t.Context(), runtime.TaskIdentity{
+		RunID:  "run-wft-1",
+		TaskID: "wft-test-1",
+		Agent:  req.Name,
+	})
+	if _, err := h.Invoke(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 {
+		t.Fatal("handler emitted no events")
+	}
+	for i, e := range events {
+		if e.Origin.TaskID != "wft-test-1" {
+			t.Fatalf("event %d (%s) TaskID=%q want %q", i, e.Kind, e.Origin.TaskID, "wft-test-1")
+		}
+	}
+}

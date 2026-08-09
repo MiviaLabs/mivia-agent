@@ -23,6 +23,7 @@ const (
 	eventKindApprovalResolved = "wf_approval_resolved"
 	eventKindDeliveryUpserted = "wf_delivery_upserted"
 	eventKindRunDeleted       = "wf_run_deleted"
+	eventKindRunResumed       = "wf_run_resumed"
 )
 
 type panelPhasePayload struct {
@@ -30,6 +31,7 @@ type panelPhasePayload struct {
 	Version   uint64                   `json:"version"`
 	Phase     PanelPhase               `json:"phase"`
 	Synthesis *PanelSynthesisExecution `json:"synthesis,omitempty"`
+	CreatedAt time.Time                `json:"created_at"`
 }
 
 func marshalPanelPhase(p panelPhasePayload) ([]byte, error) { return json.Marshal(p) }
@@ -114,6 +116,7 @@ type attemptExecutionPayload struct {
 	ExecutionNo      int       `json:"execution_no,omitempty"`
 	CoordinatorRunID string    `json:"coordinator_run_id"`
 	TaskID           string    `json:"task_id"`
+	Reason           string    `json:"reason,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
@@ -156,6 +159,17 @@ type deliveryUpsertedPayload struct {
 type runDeletedPayload struct {
 	RunID     string    `json:"run_id"`
 	DeletedAt time.Time `json:"deleted_at"`
+}
+
+// runResumedPayload is the wf_run_resumed audit event payload: a controller
+// re-enters an existing run after a crash, an interrupt, or an operator
+// resume. The event is purely observational (the projection ignores it), so
+// the payload carries ONLY the run identity. The deterministic event ID is
+// (runID, kind) and the payload is byte-identical on every resume, so a
+// retried resume appends at most one event under the real clock; the event
+// row's append time is the resume instant.
+type runResumedPayload struct {
+	RunID string `json:"run_id"`
 }
 
 // Marshal helpers (json.Marshal of the payload structs).
@@ -239,6 +253,16 @@ func unmarshalDeliveryUpserted(data []byte) (deliveryUpsertedPayload, error) {
 func marshalRunDeleted(p runDeletedPayload) ([]byte, error) { return json.Marshal(p) }
 func unmarshalRunDeleted(data []byte) (runDeletedPayload, error) {
 	var p runDeletedPayload
+	err := json.Unmarshal(data, &p)
+	return p, err
+}
+
+// marshalRunResumed encodes the wf_run_resumed payload. It never stamps the
+// clock: the payload must be byte-identical across retried resumes so the
+// deterministic event ID dedupes them (idempotent append).
+func marshalRunResumed(p runResumedPayload) ([]byte, error) { return json.Marshal(p) }
+func unmarshalRunResumed(data []byte) (runResumedPayload, error) {
+	var p runResumedPayload
 	err := json.Unmarshal(data, &p)
 	return p, err
 }

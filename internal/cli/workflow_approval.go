@@ -33,6 +33,10 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 	if err := repo.ClearRunClaim(ctx, runID); err != nil {
 		return fmt.Errorf("clear stale workflow claim: %w", err)
 	}
+	before, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
 	ctrl, err := buildResolutionController(ctx, repo, runID)
 	if err != nil {
 		return err
@@ -45,12 +49,15 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 	if err != nil {
 		return err
 	}
+	emitCLIRunTerminalProgress(runID, before.Status, settled.Status, stderr)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
 	return nil
 }
 
 // executeWorkflowReject rejects one pending human_gate approval and fails the
-// run, mirroring executeWorkflowApprove's lock and controller flow.
+// run, mirroring executeWorkflowApprove's lock and controller flow. Like
+// approve, it reads the before-snapshot BEFORE building the controller, so an
+// unknown run fails fast at the before-read instead of inside the controller.
 func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason string, stdout, stderr io.Writer) error {
 	releaseExecution, repo, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
 	if err != nil {
@@ -61,6 +68,10 @@ func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason st
 	ctx := context.Background()
 	if err := repo.ClearRunClaim(ctx, runID); err != nil {
 		return fmt.Errorf("clear stale workflow claim: %w", err)
+	}
+	before, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
 	}
 	ctrl, err := buildResolutionController(ctx, repo, runID)
 	if err != nil {
@@ -74,8 +85,25 @@ func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason st
 	if err != nil {
 		return err
 	}
+	emitCLIRunTerminalProgress(runID, before.Status, settled.Status, stderr)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
 	return nil
+}
+
+// emitCLIRunTerminalProgress writes one run_finished JSON line to stderr when
+// an operator command TRANSITIONS the run from a non-terminal status to a
+// terminal status. The workflow controller emits the same event on its own
+// terminal paths; operator-driven settlements (cancel, approve, reject) emit
+// here so the non-interactive stream stays consistent. An idempotent command
+// on an already-terminal run (before == settled) never emits: the settlement
+// happened elsewhere and another run_finished would be a duplicate.
+func emitCLIRunTerminalProgress(runID string, before, settled workflowledger.RunStatus, stderr io.Writer) {
+	if stderr == nil || workflowledger.IsTerminalRunStatus(before) || !workflowledger.IsTerminalRunStatus(settled) {
+		return
+	}
+	(&workflowProgressWriter{w: stderr}).Emit(controller.ProgressEvent{
+		Kind: controller.ProgressRunFinished, RunID: runID, Detail: string(settled),
+	})
 }
 
 // executeWorkflowCancel cancels a non-terminal run (or no-ops on a terminal
@@ -92,16 +120,49 @@ func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Wri
 	if err := repo.ClearRunClaim(ctx, runID); err != nil {
 		return fmt.Errorf("clear stale workflow claim: %w", err)
 	}
-	if err := controller.CancelRun(ctx, repo, runID); err != nil {
+	before, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	attempts, err := controller.CancelRunWithAttempts(ctx, repo, runID)
+	if err != nil {
 		fmt.Fprintf(stderr, "workflow cancel failed: %v\n", err)
 		return err
 	}
+	// Terminal progress: one step_completed(canceled) JSON line per attempt
+	// the cancel settled, plus one run_finished line when the run reaches a
+	// terminal status, so consumers of the non-interactive stream see the
+	// operator cancel like any other run terminal event.
+	publishCanceledAttemptsCLI(runID, attempts, stderr)
 	settled, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
 	}
+	emitCLIRunTerminalProgress(runID, before.Status, settled.Status, stderr)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
 	return nil
+}
+
+// publishCanceledAttemptsCLI writes one step_completed(canceled) JSON line to
+// stderr per attempt an operator cancel settled, reusing the non-interactive
+// progress writer.
+func publishCanceledAttemptsCLI(runID string, attempts []workflowledger.StepAttempt, stderr io.Writer) {
+	if stderr == nil {
+		return
+	}
+	writer := &workflowProgressWriter{w: stderr}
+	for _, attempt := range attempts {
+		writer.Emit(controller.ProgressEvent{
+			Kind:             controller.ProgressStepCompleted,
+			RunID:            runID,
+			StepID:           attempt.StepID,
+			AttemptNo:        attempt.AttemptNo,
+			TaskID:           attempt.TaskID,
+			CoordinatorRunID: attempt.CoordinatorRunID,
+			Detail:           "canceled",
+			Timestamp:        time.Now(),
+		})
+	}
 }
 
 // openWorkflowResolutionContext opens the workspace, config, store, and the

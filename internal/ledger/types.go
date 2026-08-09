@@ -273,6 +273,11 @@ type LifecycleEvent struct {
 	Kind      string // e.g. "task_created", "task_completed", "run_canceled"
 	TaskID    string // empty for run-level events
 	AttemptID string // empty for task-level or run-level events
+	// SessionID is carried when the task's session is known; it is empty for
+	// run-level events and for cancel/recovery events where the task session is
+	// not retained. It lets a workflow run be correlated across surfaces
+	// (workflow run -> coordinator run -> bus).
+	SessionID string `json:"session_id,omitempty"`
 	Payload   []byte // bounded, redacted; nil for most events
 	CreatedAt time.Time
 }
@@ -286,6 +291,7 @@ func (e LifecycleEvent) Clone() LifecycleEvent {
 		Kind:      e.Kind,
 		TaskID:    e.TaskID,
 		AttemptID: e.AttemptID,
+		SessionID: e.SessionID,
 		CreatedAt: e.CreatedAt,
 		Payload:   nil,
 	}

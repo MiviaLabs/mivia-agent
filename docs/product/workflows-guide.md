@@ -212,6 +212,21 @@ Three levels of observability:
 | Audit trail | `workflow_events` or CLI `workflow events` | Ordered events with timestamps |
 | Deep inspect | `workflow_inspect` (agent tool) | Validated output, evidence, transition decision |
 
+#### Heartbeat cadence
+
+While a workflow step runs, three clocks keep it observable:
+
+- The run claim is refreshed every **100s** (`DefaultClaimLease` / 3).
+- The agent sub-step emits a **30s** `subagent_heartbeat`.
+- An `agent` step's join watchdog emits a `step_heartbeat` progress event once
+  per watchdog tick while the join is live: every `min(bound/8, 30s)`, i.e. up
+  to **30s**.
+
+Evidence gates and human gates are not on the heartbeat clock: they emit
+`gate_started` (evidence gates) or `approval_requested` (human gates) at start
+and `step_completed` at completion, never `step_heartbeat`. The full protocol
+is documented in `.mivia/rules/70-long-running-heartbeat.md`.
+
 ## The shipped workflow: feature-delivery
 
 The repository ships one workflow named `feature-delivery`. It runs a full plan, review, implement, and verify cycle:

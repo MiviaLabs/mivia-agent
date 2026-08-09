@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 )
 
 // Attribution chain: agent.Event.Origin (stamped by the subagent handler)
@@ -32,6 +33,27 @@ func TestOnEventForMultiStepPreservesOrigin(t *testing.T) {
 	}
 	if got[0].Kind != agent.EventSubagentStart || got[1].Kind != agent.EventSubagentEnd {
 		t.Fatalf("kinds not converted: %v %v", got[0].Kind, got[1].Kind)
+	}
+}
+
+func TestOnEventForMultiStepFeedsStepHeartbeatRegistry(t *testing.T) {
+	controller.ResetStepHeartbeats()
+	t.Cleanup(controller.ResetStepHeartbeats)
+
+	fwd := OnEventForMultiStep(func(agent.Event) {})
+	fwd(agent.Event{Kind: agent.EventSubagentHeartbeat, Origin: agent.EventOrigin{TaskID: "wft-abc"}})
+
+	got, ok := controller.LastStepHeartbeat("wft-abc")
+	if !ok {
+		t.Fatalf("no step heartbeat recorded for wft-abc")
+	}
+	if time.Since(got) > time.Minute {
+		t.Fatalf("step heartbeat not recent: %v", got)
+	}
+
+	fwd(agent.Event{Kind: agent.EventSubagentHeartbeat, Origin: agent.EventOrigin{}})
+	if _, ok := controller.LastStepHeartbeat(""); ok {
+		t.Fatal("empty task id must not record a step heartbeat")
 	}
 }
 

@@ -3,6 +3,7 @@ package ledger
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contentref"
@@ -80,8 +81,8 @@ func TestStorageRepository_SetStepAttemptExecutionPersistsRetryIdentity(t *testi
 			snap, raw := newRun(t, run)
 			requireErr(t, repo.CreateRun(ctx, snap, raw), nil, "CreateRun")
 			requireErr(t, repo.CreateStepAttempt(ctx, StepAttempt{AttemptID: "att-1", RunID: run, StepID: "plan", AttemptNo: 1, CoordinatorRunID: "coord-first", TaskID: "task-first"}), nil, "CreateStepAttempt")
-			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-retry", "task-retry"), nil, "SetStepAttemptExecution")
-			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-final", "task-final"), nil, "SetStepAttemptExecution")
+			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-retry", "task-retry", "provider overloaded: retry 1"), nil, "SetStepAttemptExecution")
+			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-final", "task-final", "provider overloaded: retry 2"), nil, "SetStepAttemptExecution")
 			got, err := repo.GetStepAttempt(ctx, run, "att-1")
 			if err != nil {
 				t.Fatal(err)
@@ -95,6 +96,29 @@ func TestStorageRepository_SetStepAttemptExecutionPersistsRetryIdentity(t *testi
 			for i, want := range []struct{ run, task string }{{"coord-first", "task-first"}, {"coord-retry", "task-retry"}, {"coord-final", "task-final"}} {
 				if got.Executions[i].ExecutionNo != i+1 || got.Executions[i].CoordinatorRunID != want.run || got.Executions[i].TaskID != want.task {
 					t.Fatalf("execution %d = %+v, want %s/%s", i+1, got.Executions[i], want.run, want.task)
+				}
+			}
+
+			// The transient-retry reasons are persisted in the audit trail:
+			// each SetStepAttemptExecution wrote a wf_attempt_execution event
+			// whose summary carries the reason text.
+			events, err := repo.ListEvents(ctx, run, 0, 0)
+			if err != nil {
+				t.Fatalf("ListEvents: %v", err)
+			}
+			summaries := []string{}
+			for _, ev := range events {
+				if ev.Kind == eventKindAttemptExecution {
+					summaries = append(summaries, ev.Summary)
+				}
+			}
+			if len(summaries) != 2 {
+				t.Fatalf("ListEvents has %d wf_attempt_execution events, want 2", len(summaries))
+			}
+			joined := strings.Join(summaries, " ")
+			for _, want := range []string{"coord-retry", "task-retry", "provider overloaded: retry 1", "coord-final", "task-final", "provider overloaded: retry 2"} {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("attempt_execution summaries %v, want one to contain %q", summaries, want)
 				}
 			}
 		})

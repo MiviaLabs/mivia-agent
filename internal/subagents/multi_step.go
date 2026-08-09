@@ -145,11 +145,19 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	callCtx, cancel := h.timeoutContext(ctx, req)
 	defer cancel()
 
+	// Attribution key: coordinator calls carry the workflow attempt's task id
+	// (wft-...) on the context. Use it so bus, ledger, and attempt events share
+	// one correlation key. Non-coordinator callers fall back to the request id.
+	taskID := req.ID
+	if id, ok := runtime.TaskIdentityFrom(ctx); ok && id.TaskID != "" {
+		taskID = id.TaskID
+	}
+
 	// Every event this loop emits - including heartbeats - is stamped with
 	// the run's identity so the parent UI can attribute it. Without the
 	// stamp, parallel subagents are indistinguishable downstream.
 	stamped := StampEventOrigin(h.OnEvent, agent.EventOrigin{
-		TaskID: req.ID,
+		TaskID: taskID,
 		Agent:  req.Name,
 		Depth:  req.Depth + 1,
 	})

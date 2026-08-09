@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -41,6 +43,10 @@ var (
 )
 
 func runWorkflow(args []string) error {
+	// fd-2 progress writes must degrade, not kill, the run: a broken stderr
+	// pipe (mivia workflow run 2> >(head -1)) would otherwise raise SIGPIPE
+	// and terminate the process before the run settles.
+	signal.Ignore(syscall.SIGPIPE)
 	return runWorkflowWithIO(args, os.Stdout, os.Stderr)
 }
 
@@ -121,6 +127,7 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	if err := workflowRunSetAdmission(built); err != nil {
 		return err
 	}
+	wireCLIWorkflowProgress(&built, stderr)
 	if err := built.Controller.Start(context.Background()); err != nil {
 		return err
 	}
@@ -407,10 +414,15 @@ func prepareWorkflowBuildRuntime(root, refBase string, wf *compiler.CompiledWork
 
 func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.Dispatcher, legacy ledger.LedgerRepository, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]any, runID string, runtime preparedWorkflowRuntime, identity workflowspace.Identity, baseline *verifier.GoModuleBaseline) (*controller.LinearController, error) {
 	coord := initCoordinator(dispatcher, res.Subagents, legacy)
-	ctrl, err := workflowBuildController(repo, controller.NewCoordinatorRunner(coord), wf, runtime.Steps, inputs, runID, runtime.Snapshot)
+	runner := controller.NewCoordinatorRunner(coord)
+	ctrl, err := workflowBuildController(repo, runner, wf, runtime.Steps, inputs, runID, runtime.Snapshot)
 	if err != nil {
 		return nil, err
 	}
+	// Wire the runner's step-heartbeat emitter into the controller's progress
+	// sink so a live agent-step join stays observable (a step_heartbeat per
+	// watchdog tick). EmitProgress is nil-safe when no sink is attached.
+	runner.SetProgressEmitter(func(e controller.ProgressEvent) { ctrl.EmitProgress(e) })
 	policy, err := secretpath.New(res.Tools.SecretPathPatterns, res.Tools.SecretPathExceptions)
 	if err != nil {
 		return nil, err

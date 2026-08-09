@@ -44,10 +44,11 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelRes
 	if err := e.claimOrTakeoverExpired(ctx, runID, holder); err != nil {
 		return agenttools.CancelResult{}, err
 	}
-	// CancelRun mints and claims its own holder internally; drop ours first so
-	// its claim succeeds. Never clear a foreign claim.
+	// CancelRunWithAttempts mints and claims its own holder internally; drop
+	// ours first so its claim succeeds. Never clear a foreign claim.
 	_ = e.Repo.ReleaseRun(context.Background(), runID, holder)
-	if err := controller.CancelRun(ctx, e.Repo, runID); err != nil {
+	attempts, err := controller.CancelRunWithAttempts(ctx, e.Repo, runID)
+	if err != nil {
 		// Context cancel may already have settled the run; treat terminal as success.
 		run, getErr := e.Repo.GetRun(ctx, runID)
 		if getErr == nil && workflowledger.IsTerminalRunStatus(run.Status) {
@@ -55,6 +56,9 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelRes
 		}
 		return agenttools.CancelResult{}, err
 	}
+	// Terminal progress: one step_completed(canceled) per attempt the cancel
+	// settled, so hosts observing the engine see the operator cancel.
+	emitCanceledAttempts(runID, attempts)
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
 		return agenttools.CancelResult{}, err

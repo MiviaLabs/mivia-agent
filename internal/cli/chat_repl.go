@@ -10,8 +10,11 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/mcp"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -84,7 +87,9 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 	}
 	// Phase 7: attach in-process workflow tools when .mivia/workflows/ exists.
 	// Pass res so the store path matches prepareWorkflowRun / CLI commands.
-	wireWorkflowToolOptions(&opts, ws.Abs, res)
+	// The bus provider is read when a controller attaches, so sess.EventBus
+	// (created later by runTUI) still receives workflow progress events.
+	wireWorkflowToolOptions(&opts, ws.Abs, res, func() *events.Bus { return sess.EventBus })
 	sess.Tools = tools.NewDefaultRegistry(opts)
 	return nil
 }
@@ -184,6 +189,10 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		AgentRegistry:             ctx.Registry,
 		DeferredTools:             plan.Candidates,
 		Session:                   sess,
+		// Sink publishes invocation lifecycle events to the session bus. The
+		// closure reads sess.EventBus at publish time, so it stays live when
+		// runTUI later installs the bus.
+		Sink: sessionInvocationSink(sess),
 	})
 	if err != nil {
 		closeMCP()
@@ -192,6 +201,14 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		releaseSessionLedgerRepo(state)
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
+	return attachBuiltSessionDispatcher(sess, state, dispatcher, mcpManager, plan, ctx, routing, closeMCP), nil
+}
+
+// attachBuiltSessionDispatcher wires a built dispatcher onto the session and
+// returns the cleanup closure. The remainder spool is the same instance the
+// registered read_output tool holds, so a truncation notice minted by the
+// root loop resolves for this session.
+func attachBuiltSessionDispatcher(sess *chat.Session, state *agentSessionState, dispatcher *runtime.Dispatcher, mcpManager *mcp.Manager, plan toolTierPlan, ctx agentSessionContext, routing sessionRouting, closeMCP func()) func() {
 	sess.SetDispatcher(dispatcher)
 	if state != nil {
 		state.MCPManager = mcpManager
@@ -201,11 +218,9 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		sess.SetSurfaceWidener(newSurfaceWidener(sess, routing.Resolved, state))
 		sess.SetAdmissionBinding(agentNameOf(ctx.Selected), plan.Digest)
 	}
-	// Same spool instance the registered read_output tool holds, so a
-	// truncation notice minted by the root loop resolves for this session.
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(sess.Tools))
 	cleanup := sessionSurfaceCleanup(sess, state)
-	return func() { cleanup(); closeMCP() }, nil
+	return func() { cleanup(); closeMCP() }
 }
 
 // adoptSessionLedgerRepo gives the SESSION ownership of the ledger store the

@@ -71,6 +71,44 @@ func seedCompletedAttempt(t *testing.T, repo workflowledger.Repository, runID st
 	return got
 }
 
+// seedRunningAttemptForStatus persists a run with one still-running attempt,
+// mirroring seedRunningAttempt's shape for the internal package.
+func seedRunningAttemptForStatus(t *testing.T, repo workflowledger.Repository, runID string) workflowledger.StepAttempt {
+	t.Helper()
+	ctx := context.Background()
+	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
+		Inputs: map[string]string{"task": "build"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
+		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
+		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
+		Status:         workflowledger.RunStatusPending, ActiveStepID: "one",
+		StartedAt: time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
+	}, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, 1, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{
+		AttemptID: "wfa-one-1", RunID: runID, StepID: "one", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusRunning,
+	}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetStepAttempt(ctx, runID, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
 // withKeyPolicy installs a redaction policy whose keyNames include api_key and
 // restores the previous policy when the test finishes.
 func withKeyPolicy(t *testing.T) {
@@ -448,5 +486,90 @@ func TestInspectPagingExpandingRedactionReachesTail(t *testing.T) {
 	}
 	if builder.String() != expected {
 		t.Fatalf("paged redacted text (%d bytes) differs from the full redacted artifact (%d bytes)", builder.Len(), len(expected))
+	}
+}
+
+// TestBuildStatusViewCompletedAttemptTiming pins G6 for the status view: a
+// completed attempt surfaces its ledger started and finished timestamps plus
+// the elapsed seconds computed from them.
+func TestBuildStatusViewCompletedAttemptTiming(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-status-timing-1"
+	attempt := seedCompletedAttempt(t, repo, runID, []byte(`{"ok":true}`))
+
+	view, err := buildStatusView(context.Background(), repo, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(view.Attempts))
+	}
+	av := view.Attempts[0]
+	wantStarted := attempt.StartedAt.UTC().Format(time.RFC3339)
+	if av.StartedAt != wantStarted {
+		t.Fatalf("StartedAt = %q, want %q", av.StartedAt, wantStarted)
+	}
+	if attempt.FinishedAt == nil {
+		t.Fatal("seeded attempt must be completed")
+	}
+	wantFinished := attempt.FinishedAt.UTC().Format(time.RFC3339)
+	if av.FinishedAt != wantFinished {
+		t.Fatalf("FinishedAt = %q, want %q", av.FinishedAt, wantFinished)
+	}
+	wantElapsed := int64(attempt.FinishedAt.Sub(attempt.StartedAt).Seconds())
+	if av.ElapsedSeconds != wantElapsed {
+		t.Fatalf("ElapsedSeconds = %d, want %d", av.ElapsedSeconds, wantElapsed)
+	}
+}
+
+// TestBuildStatusViewRunningAttemptTiming pins G6 for a live attempt: started
+// is set, finished stays empty, and elapsed is non-negative.
+func TestBuildStatusViewRunningAttemptTiming(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-status-timing-running-1"
+	attempt := seedRunningAttemptForStatus(t, repo, runID)
+
+	view, err := buildStatusView(context.Background(), repo, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(view.Attempts))
+	}
+	av := view.Attempts[0]
+	if av.StartedAt != attempt.StartedAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("StartedAt = %q, want %q", av.StartedAt, attempt.StartedAt.UTC().Format(time.RFC3339))
+	}
+	if av.FinishedAt != "" {
+		t.Fatalf("running attempt FinishedAt = %q, want empty", av.FinishedAt)
+	}
+	if av.ElapsedSeconds < 0 {
+		t.Fatalf("running attempt ElapsedSeconds = %d, want >= 0", av.ElapsedSeconds)
+	}
+}
+
+// TestBuildInspectViewAttemptTiming pins G6 for the inspect view: the same
+// three timing fields mirror the ledger attempt.
+func TestBuildInspectViewAttemptTiming(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-inspect-timing-1"
+	attempt := seedCompletedAttempt(t, repo, runID, []byte(`{"ok":true}`))
+
+	view, err := buildInspectView(context.Background(), repo, runID, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.StartedAt != attempt.StartedAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("StartedAt = %q, want %q", view.StartedAt, attempt.StartedAt.UTC().Format(time.RFC3339))
+	}
+	if attempt.FinishedAt == nil {
+		t.Fatal("seeded attempt must be completed")
+	}
+	if view.FinishedAt != attempt.FinishedAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("FinishedAt = %q, want %q", view.FinishedAt, attempt.FinishedAt.UTC().Format(time.RFC3339))
+	}
+	wantElapsed := int64(attempt.FinishedAt.Sub(attempt.StartedAt).Seconds())
+	if view.ElapsedSeconds != wantElapsed {
+		t.Fatalf("ElapsedSeconds = %d, want %d", view.ElapsedSeconds, wantElapsed)
 	}
 }

@@ -166,6 +166,67 @@ func TestCoordinator_SubscribeLifecycle_AllExpectedEvents(t *testing.T) {
 	}
 }
 
+func TestCoordinator_LifecycleEventsCarrySessionID(t *testing.T) {
+	// Cross-surface correlation: every task lifecycle event emitted for a
+	// dispatched task must carry the task's SessionID so workflow-run ->
+	// coordinator-run -> bus correlation is possible. run_created has no
+	// single task in hand and must stay empty.
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	c := New(repo, p)
+
+	const sessID = "sess-abc-123"
+	var mu sync.Mutex
+	taskEvents := make(map[string]ledger.LifecycleEvent) // kind -> first event of that kind
+	runCreatedSession := ""
+
+	c.SubscribeLifecycle(func(evt ledger.LifecycleEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		if evt.Kind == "run_created" {
+			runCreatedSession = evt.SessionID
+		}
+		if _, seen := taskEvents[evt.Kind]; !seen {
+			taskEvents[evt.Kind] = evt
+		}
+	})
+
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "t1", Name: "worker", SessionID: sessID},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Join(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	events := make(map[string]ledger.LifecycleEvent, len(taskEvents))
+	for k, v := range taskEvents {
+		events[k] = v
+	}
+	runCreated := runCreatedSession
+	mu.Unlock()
+
+	if runCreated != "" {
+		t.Fatalf("run_created event SessionID = %q, want empty (no single task in hand)", runCreated)
+	}
+
+	for _, kind := range []string{"task_created", "task_running", "task_completed"} {
+		evt, ok := events[kind]
+		if !ok {
+			t.Fatalf("missing %s lifecycle event", kind)
+		}
+		if evt.SessionID != sessID {
+			t.Errorf("%s event SessionID = %q, want %q (task %q)", kind, evt.SessionID, sessID, evt.TaskID)
+		}
+	}
+}
+
 func TestCoordinator_CancelEmitsEvents(t *testing.T) {
 	// Regression test for Bugs 8,9: cancel must emit cancel_requested and
 	// canceled events via SubscribeLifecycle.
@@ -237,17 +298,22 @@ func TestCoordinator_RetryEmitsRetryQueued(t *testing.T) {
 		JitterFraction: 0,
 	})
 
+	const sessID = "sess-retry-queued"
 	var mu sync.Mutex
 	eventKinds := make(map[string]int)
+	queuedSessionID := ""
 
 	c.SubscribeLifecycle(func(evt ledger.LifecycleEvent) {
 		mu.Lock()
+		defer mu.Unlock()
 		eventKinds[string(evt.Kind)]++
-		mu.Unlock()
+		if evt.Kind == "task_retry_queued" && queuedSessionID == "" {
+			queuedSessionID = evt.SessionID
+		}
 	})
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
-		{ID: "t1", Name: "flaky"},
+		{ID: "t1", Name: "flaky", SessionID: sessID},
 	}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -261,6 +327,7 @@ func TestCoordinator_RetryEmitsRetryQueued(t *testing.T) {
 	retryPending := eventKinds["task_retry_pending"]
 	retryQueued := eventKinds["task_retry_queued"]
 	taskCompleted := eventKinds["task_completed"]
+	gotSession := queuedSessionID
 	mu.Unlock()
 
 	// Must have at least one retry_pending and retry_queued (task fails twice
@@ -273,6 +340,9 @@ func TestCoordinator_RetryEmitsRetryQueued(t *testing.T) {
 	}
 	if taskCompleted != 1 {
 		t.Fatalf("expected 1 task_completed, got %d", taskCompleted)
+	}
+	if gotSession != sessID {
+		t.Fatalf("task_retry_queued SessionID = %q, want %q (the re-queued task's session must be carried)", gotSession, sessID)
 	}
 	t.Logf("retry events: retry_pending=%d, retry_queued=%d, completed=%d", retryPending, retryQueued, taskCompleted)
 }

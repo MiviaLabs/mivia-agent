@@ -103,6 +103,7 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttool
 		closeFn()
 		return resumePrepared{}, err
 	}
+	e.attachWorkflowProgressBus(built.Controller)
 	if err := prepareWorkflowResumeExecution(ctx, built, repo, req.RunID, req.Force, io.Discard); err != nil {
 		built.Dispatcher.Close()
 		finishExecution()
@@ -154,6 +155,10 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 			releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
 			return snap, err
 		})
+		// Delivery completion settles outside the controller (which parked at
+		// delivery_pending and emitted no run_finished), so publish the terminal
+		// event here once delivery actually succeeded.
+		e.publishDeliveredRunFinished(context.Background(), p.repo, p.runID)
 		e.mu.Lock()
 		active := e.active[p.runID]
 		delete(e.active, p.runID)
