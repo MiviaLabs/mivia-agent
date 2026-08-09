@@ -39,6 +39,7 @@ What mivia does and how to configure it. Owner: `product`.
 | [Coding agent mode](product/agent.md) | Coding agent tools, safety, and CLI modes |
 | [Workflows](product/workflows.md) | Product-facing workflow (plan/implement/review/verify) model |
 | [Workflow guide](product/workflows-guide.md) | Workflow user guide: CLI commands, agent tools, authoring, execution, and monitoring |
+| [Agent memory](product/memory.md) | Durable agent memory: scopes, tools, entry format, configuration |
 
 ## Architecture
 

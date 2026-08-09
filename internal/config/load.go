@@ -53,10 +53,14 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	return resolveLoaded(file, configPath, found, opts, mcpConfig, mcpWarnings)
+	memCfg, err := resolveMemoryConfig(file, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("config %s: %w", configPath, err)
+	}
+	return resolveLoaded(file, configPath, found, opts, mcpConfig, mcpWarnings, memCfg)
 }
 
-func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, mcpConfig MCPConfig, mcpWarnings []string) (*Resolved, error) {
+func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, mcpConfig MCPConfig, mcpWarnings []string, memCfg MemoryConfig) (*Resolved, error) {
 	providerName, pc, model, err := resolveProvider(file, opts)
 	if err != nil {
 		return nil, err
@@ -79,11 +83,10 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 	if storeBackend == "" {
 		storeBackend = "memory"
 	}
-	storePath := subagentCfg.StorePath
-	if storeBackend == "sqlite" && storePath == "" {
-		storePath = defaultStorePath()
-		subagentCfg.StorePath = storePath
+	if storeBackend == "sqlite" && subagentCfg.StorePath == "" {
+		subagentCfg.StorePath = defaultStorePath()
 	}
+	storePath := subagentCfg.StorePath
 	subagentCfg.StoreBackend = storeBackend
 	redactionPolicy, err := redact.Compile(
 		file.Privacy.RedactionPatterns,
@@ -122,6 +125,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		Privacy:          resolvePrivacyConfig(file.Privacy),
 		Context:          resolveContextConfig(file.Context),
 		Tools:            resolveToolsConfig(file.Tools),
+		Memory:           memCfg,
 		MCP:              mcpConfig,
 		MCPWarnings:      append([]string(nil), mcpWarnings...),
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),

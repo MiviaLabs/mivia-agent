@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -22,6 +23,11 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	installTestWorkflowBuilder(t)
+	store, err := memory.Open(memory.Config{Backend: memory.BackendMemory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
 	ws, err := workspace.Open(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -30,6 +36,7 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 		Workspace:    ws,
 		TavilyAPIKey: "test-key-not-real",
 		RunAllowlist: []string{"echo"}, // run_command is conditional on non-empty allowlist
+		Memory:       store,            // memory tools are conditional on a wired store
 	})
 	// Also register skill resource which default registry may not include.
 	// AllToolNames lists it; if not in reg, catalogue still claims it as known.

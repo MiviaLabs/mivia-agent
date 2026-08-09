@@ -56,6 +56,27 @@ const (
 // with them during test builds.
 func intPtr(v int) *int { return &v }
 
+// boolPtr returns a pointer to v, mirroring intPtr for the [memory] enabled
+// knob whose nil value means "enabled" (absent key).
+func boolPtr(v bool) *bool { return &v }
+
+// DefaultMemoryConfig is the resolved default for [memory] (plan 68).
+var DefaultMemoryConfig = MemoryConfig{
+	StoreBackend:     "sqlite",
+	MaxEntryBytes:    8192,
+	MaxEntries:       500,
+	MaxSearchResults: 8,
+}
+
+// [memory] bounds. Below the entry floor a memory cannot hold its template;
+// above the ceiling a save would dominate the store. max_search_results is
+// capped so one tool call stays a small, bounded read.
+const (
+	MinMemoryEntryBytes    = 256
+	MaxMemoryEntryBytes    = 65536
+	MaxMemorySearchResults = 50
+)
+
 // DefaultMessagingConfig is the resolved default for [subagents.messaging].
 var DefaultMessagingConfig = MessagingConfig{
 	// Enabled left nil so IsEnabled() returns true without allocating.
