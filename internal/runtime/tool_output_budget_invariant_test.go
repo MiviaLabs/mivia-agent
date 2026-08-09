@@ -189,6 +189,7 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 		{"list_dir", `{"path":"flat"}`},
 		{"glob", `{"pattern":"**/*.md"}`},
 		{"grep", `{"pattern":"NEEDLE"}`},
+		{"inspect_repository", `{"query":"NEEDLE","max_results":100,"context_lines":5}`},
 		{"read_file", `{"path":"wide.txt","offset":1,"limit":100000}`},
 		{"write_file", `{"path":"bulk.txt","content":"tiny\n"}`},
 		{"search_replace", `{"path":"edit-one.txt","old_string":"line 0 ","new_string":"LINE 0 "}`},

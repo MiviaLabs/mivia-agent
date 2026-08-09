@@ -92,6 +92,12 @@ type ToolsConfig struct {
 	// SearchIgnorePatterns adds directory/file names to skip during grep/glob walks.
 	// Extends the built-in defaults (.git, node_modules, vendor). Does not replace them.
 	SearchIgnorePatterns []string `toml:"search_ignore_patterns,omitempty"`
+	// MaxInspectRepositoryBytes caps the inspect_repository result envelope
+	// (bytes). Unlike MaxReadBytes/MaxOutputBytes there is no uncapped state:
+	// the tool's output must always be valid, bounded JSON. 0 or negative
+	// resolves to the built-in 64 KiB default. Values outside
+	// [MinInspectRepositoryBytes, MaxInspectRepositoryBytes] are rejected at load.
+	MaxInspectRepositoryBytes int `toml:"max_inspect_repository_bytes"`
 }
 
 // Validation for the two [tools] knobs that bound tool-result bytes: the
@@ -144,6 +150,12 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	if tc.MaxFetchKB <= 0 {
 		tc.MaxFetchKB = def.MaxFetchKB
 	}
+	// Like MaxTavilyResponseBytes: no valid "unlimited" state, so <=0 (unset or
+	// a typo'd negative) resolves to the built-in default rather than passing
+	// through.
+	if tc.MaxInspectRepositoryBytes <= 0 {
+		tc.MaxInspectRepositoryBytes = def.MaxInspectRepositoryBytes
+	}
 	// OOM guard: 0 / negative must not disable the backstop.
 	if tc.MemoryBackstopMB <= 0 {
 		tc.MemoryBackstopMB = DefaultMemoryBackstopMB
@@ -174,6 +186,15 @@ func validateToolResultBudgets(tc ToolsConfig) error {
 	if v := tc.BatchResultBudgetBytes; v > 0 && v < MinBatchResultBudgetBytes {
 		return fmt.Errorf("[tools] batch_result_budget_bytes must be 0 (off), %d (derive from the prompt budget), or >= %d, got %d",
 			BatchResultBudgetDerived, MinBatchResultBudgetBytes, v)
+	}
+	// inspect_repository's envelope must always be valid, bounded JSON: too
+	// small and the framing (provenance + one result) cannot fit; too large
+	// and it stops being a bounded read. resolveToolsConfig already replaced
+	// an unset-or-negative value with the built-in default before this runs,
+	// so a value seen here out of range is an explicit operator setting.
+	if v := tc.MaxInspectRepositoryBytes; v < MinInspectRepositoryBytes || v > MaxInspectRepositoryBytesLimit {
+		return fmt.Errorf("[tools] max_inspect_repository_bytes must be between %d and %d, got %d",
+			MinInspectRepositoryBytes, MaxInspectRepositoryBytesLimit, v)
 	}
 	return nil
 }

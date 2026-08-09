@@ -77,9 +77,10 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		MemoryBackstopBytes: tc.MemoryBackstopMB << 20,
 		// RedactToolArgs is NOT plumbed here - the single source of truth
 		// is the package atomic set by tools.SetRedactToolArgs at line 40.
-		SecretPathPatterns:   tc.SecretPathPatterns,
-		SecretPathExceptions: tc.SecretPathExceptions,
-		SearchIgnorePatterns: tc.SearchIgnorePatterns,
+		SecretPathPatterns:        tc.SecretPathPatterns,
+		SecretPathExceptions:      tc.SecretPathExceptions,
+		SearchIgnorePatterns:      tc.SearchIgnorePatterns,
+		MaxInspectRepositoryBytes: tc.MaxInspectRepositoryBytes,
 	}
 	// Phase 7: attach in-process workflow tools when .mivia/workflows/ exists.
 	// Pass res so the store path matches prepareWorkflowRun / CLI commands.

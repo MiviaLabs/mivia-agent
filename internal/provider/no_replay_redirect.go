@@ -5,6 +5,8 @@ import (
 	"net/http"
 )
 
+func (c *OpenAICompat) Name() string { return c.name }
+
 func checkNoReplayRedirect(req *http.Request, via []*http.Request) error {
 	if providerReplayDisabled(req.Context()) {
 		return http.ErrUseLastResponse

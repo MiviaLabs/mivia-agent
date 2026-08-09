@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,3 +146,105 @@ func (failingResultClient) CallTool(context.Context, string, map[string]any) (st
 	return "", errors.New("untrusted server diagnostic")
 }
 func (failingResultClient) Close() error { return nil }
+
+func TestSanitizeToolSchemaBoundsPostRedactionGrowth(t *testing.T) {
+	policy, err := redact.Compile([]string{"sk-"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The default placeholder is "[redacted]" (10 bytes); redaction replaces
+	// the matched span, so a short match like "sk-abc" grows to "[redacted]abc".
+	if redacted := policy.Text("sk-abc"); !strings.HasPrefix(redacted, "[redacted]") {
+		t.Fatalf("redact.Compile default placeholder differs; redacted value = %q", redacted)
+	}
+	// 64 properties x 1 nested "v" property = 128 total properties, the
+	// sanitizer's whole-schema complexity cap. The bridge sees at most 64
+	// properties per level and 20 enum values, so it stays within the
+	// per-level bridge caps (properties <= 128, enum <= 32).
+	schema := map[string]any{"type": "object", "properties": map[string]any{}}
+	properties := schema["properties"].(map[string]any)
+	for i := 0; i < 64; i++ {
+		enum := make([]any, 0, 20)
+		for j := 0; j < 20; j++ {
+			enum = append(enum, "sk-abc")
+		}
+		properties[fmt.Sprintf("p%d", i)] = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"v": map[string]any{"type": "string", "enum": enum},
+			},
+		}
+	}
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) >= 20000 {
+		t.Fatalf("precondition: raw schema marshal = %d bytes, want < 20000", len(raw))
+	}
+	redactedSchema, ok := policy.JSONValue(schema).(map[string]any)
+	if !ok {
+		t.Fatal("redaction did not yield a schema map")
+	}
+	encoded, err := json.Marshal(bridgeToolSchema(redactedSchema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) <= 20000 {
+		t.Fatalf("precondition: post-redaction bridged marshal = %d bytes, want > 20000", len(encoded))
+	}
+	if _, err := sanitizeToolSchema(schema, 20000, policy); err == nil || !strings.Contains(err.Error(), "MCP tool schema exceeds configured limit") {
+		t.Fatalf("sanitizeToolSchema(schema, 20000, policy) = %v, want error containing 'MCP tool schema exceeds configured limit'", err)
+	}
+	got, err := sanitizeToolSchema(schema, 40000, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["type"] != "object" {
+		t.Fatalf("sanitizeToolSchema(schema, 40000, policy) type = %#v, want 'object'", got["type"])
+	}
+}
+
+func TestScrubDescriptionTextStripsControlAndFormat(t *testing.T) {
+	if got := scrubDescriptionText("a\x01b"); got != "a b" {
+		t.Fatalf("scrubDescriptionText(\"a\\x01b\") = %q, want %q", got, "a b")
+	}
+	if got := scrubDescriptionText("a\u202eb"); got != "a b" {
+		t.Fatalf("scrubDescriptionText(\"a\\u202eb\") = %q, want %q", got, "a b")
+	}
+	policy, err := redact.Compile([]string{"secret"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := sanitizeToolDescription(" \x00 secret ", policy)
+	if strings.Contains(got, "secret") || !strings.Contains(got, "[redacted]") {
+		t.Fatalf("sanitizeToolDescription() = %q, want a trimmed redacted form without %q", got, "secret")
+	}
+}
+
+func TestComposeToolDescriptionRedactsRemoteNameInWholeString(t *testing.T) {
+	policy, err := redact.Compile([]string{"secret"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := composeToolDescription("repo", "secretTool", "safe body", 4096, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "secret") {
+		t.Fatalf("composeToolDescription() leaked the pattern in the composed text: %q", got)
+	}
+}
+
+func TestComposeToolDescriptionBoundsWholeString(t *testing.T) {
+	if _, err := composeToolDescription("repo", "t", "x", 30, nil); err == nil || !strings.Contains(err.Error(), "MCP tool description exceeds configured limit") {
+		t.Fatalf("composeToolDescription(repo, t, x, 30, nil) = %v, want error containing 'MCP tool description exceeds configured limit'", err)
+	}
+	got, err := composeToolDescription("repo", "t", strings.Repeat("x", 60), 4096, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == "" {
+		t.Fatal("composeToolDescription() returned an empty description")
+	}
+}
