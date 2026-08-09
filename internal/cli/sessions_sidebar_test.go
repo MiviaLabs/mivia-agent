@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestSessionsSidebarMoveSelectsSession(t *testing.T) {
@@ -167,10 +168,28 @@ func TestSessionsSidebarMarksExactActiveSession(t *testing.T) {
 		{Name: "same", Dir: "/one", MessageCount: 1},
 		{Name: "same", Dir: "/two", MessageCount: 2},
 	}
-	view := stripANSI(newSessionsSidebar().viewWithActive(rows, 28, 10, false, &rows[1]))
+	view := stripANSI(newSessionsSidebar().viewWithActive(rows, 28, 10, false, &rows[1], liveStatusIdle))
 
 	if got := strings.Count(view, "current"); got != 1 {
 		t.Fatalf("current markers = %d, want 1: %q", got, view)
+	}
+	if got := strings.Count(view, "●"); got != 1 {
+		t.Fatalf("status dots = %d, want 1: %q", got, view)
+	}
+	lines := strings.Split(view, "\n")
+	var activeLine string
+	for _, line := range lines {
+		if strings.Contains(line, "current") {
+			activeLine = line
+		}
+	}
+	if activeLine == "" || !strings.Contains(activeLine, "●") {
+		t.Fatalf("active duplicate-name row missing its dot: %q", view)
+	}
+	for _, line := range lines {
+		if line != activeLine && strings.Contains(line, "●") {
+			t.Fatalf("dot on a non-active row: %q", line)
+		}
 	}
 }
 
@@ -196,7 +215,7 @@ func TestSessionsSidebarNarrowRowsMapToTheirOwnMouseTarget(t *testing.T) {
 
 func TestSessionsSidebarKeepsCurrentMarkerAtNarrowWidth(t *testing.T) {
 	row := chat.SessionInfo{Name: "a-session-name-that-fills-the-sidebar"}
-	view := stripANSI(newSessionsSidebar().viewWithActive([]chat.SessionInfo{row}, 20, 10, false, &row))
+	view := stripANSI(newSessionsSidebar().viewWithActive([]chat.SessionInfo{row}, 20, 10, false, &row, liveStatusIdle))
 
 	if !strings.Contains(view, "current") {
 		t.Fatalf("active marker is not visible: %q", view)
@@ -223,5 +242,139 @@ func TestSessionsSidebarDoesNotHitClippedRows(t *testing.T) {
 	}
 	if _, ok := sidebar.cursorAt(rows, 20, 4, sidebarRowsY); ok {
 		t.Fatal("clipped saved-session row accepted a mouse hit")
+	}
+}
+
+// currentRowLine returns the first row line that carries the identity marker.
+func currentRowLine(view string) string {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "current") {
+			return line
+		}
+	}
+	return ""
+}
+
+func TestSessionsSidebarActiveRowShowsStatusDotInEveryStatus(t *testing.T) {
+	withANSI256(t)
+	statuses := []sidebarLiveStatus{liveStatusIdle, liveStatusThinking, liveStatusStreaming, liveStatusTools}
+	for _, status := range statuses {
+		row := chat.SessionInfo{Name: "alpha"}
+		view := newSessionsSidebar().viewWithActive([]chat.SessionInfo{row}, 28, 10, false, &row, status)
+		line := currentRowLine(view)
+		if !strings.Contains(line, "current") {
+			t.Fatalf("status %v: identity marker missing: %q", status, line)
+		}
+		want := sidebarLiveDot(status, true)
+		if !strings.Contains(line, want) {
+			t.Fatalf("status %v: row line %q missing styled dot %q", status, line, want)
+		}
+	}
+}
+
+func TestSessionsSidebarStatusDotDistinctPerStatus(t *testing.T) {
+	withANSI256(t)
+	cases := []struct {
+		status sidebarLiveStatus
+		glyph  string
+		color  string
+	}{
+		{liveStatusIdle, "●", brandColorIdle},
+		{liveStatusThinking, "◔", brandColorThinking},
+		{liveStatusStreaming, "◐", brandColorStream},
+		{liveStatusTools, "◉", brandColorTools},
+	}
+	seen := map[string]bool{}
+	for _, tc := range cases {
+		row := chat.SessionInfo{Name: "alpha"}
+		view := newSessionsSidebar().viewWithActive([]chat.SessionInfo{row}, 28, 10, false, &row, tc.status)
+		line := currentRowLine(view)
+		if !strings.Contains(line, tc.glyph) {
+			t.Fatalf("status %v: row line %q missing glyph %q", tc.status, line, tc.glyph)
+		}
+		// Lipgloss folds 256-color indices 0-15 into the basic 16-color SGR
+		// codes, so pin the mapped brand color through lipgloss itself rather
+		// than a fixed 38;5;<n>m form.
+		want := lipgloss.NewStyle().Foreground(lipgloss.Color(tc.color)).Render(tc.glyph)
+		if !strings.Contains(line, want) {
+			t.Fatalf("status %v: row line %q missing styled dot %q for color %s", tc.status, line, want, tc.color)
+		}
+		if seen[want] {
+			t.Fatalf("status %v: styled dot %q duplicates another status", tc.status, want)
+		}
+		seen[want] = true
+	}
+}
+
+func TestSessionsSidebarNonActiveRowsHaveNoDot(t *testing.T) {
+	rows := []chat.SessionInfo{{Name: "one"}, {Name: "two"}, {Name: "three"}}
+	view := stripANSI(newSessionsSidebar().viewWithActive(rows, 28, 10, false, &rows[1], liveStatusIdle))
+	lines := strings.Split(view, "\n")
+
+	if got := strings.Count(view, "current"); got != 1 {
+		t.Fatalf("current markers = %d, want 1: %q", got, view)
+	}
+	if got := strings.Count(view, "●"); got != 1 {
+		t.Fatalf("status dots = %d, want 1: %q", got, view)
+	}
+	for _, line := range lines {
+		switch {
+		case strings.Contains(line, "current"):
+			if !strings.Contains(line, "●") {
+				t.Fatalf("active row missing its dot: %q", line)
+			}
+		case strings.Contains(line, "one"), strings.Contains(line, "three"):
+			if strings.Contains(line, "●") {
+				t.Fatalf("non-active row shows a dot: %q", line)
+			}
+		}
+	}
+}
+
+func TestSessionsSidebarNarrowWidthKeepsIdentityDropsStatusColor(t *testing.T) {
+	withANSI256(t)
+	row := chat.SessionInfo{Name: "a-session-name-that-fills-the-sidebar"}
+	view := newSessionsSidebar().viewWithActive([]chat.SessionInfo{row}, 20, 10, false, &row, liveStatusStreaming)
+	line := currentRowLine(view)
+
+	if !strings.Contains(line, "current") {
+		t.Fatalf("identity marker missing at narrow width: %q", line)
+	}
+	if !strings.Contains(line, "◐") {
+		t.Fatalf("narrow row dropped the status glyph: %q", line)
+	}
+	if strings.Contains(line, "38;5;"+brandColorStream+"m") {
+		t.Fatalf("narrow row kept the status color: %q", line)
+	}
+	plain := stripANSI(line)
+	if strings.Count(plain, "\n") > 0 || runeWidth(plain) > 20 {
+		t.Fatalf("narrow row overflows or wraps: %q", plain)
+	}
+}
+
+func TestSessionsSidebarNilActiveRendersNoDot(t *testing.T) {
+	rows := []chat.SessionInfo{{Name: "one"}, {Name: "two"}}
+	view := stripANSI(newSessionsSidebar().viewWithActive(rows, 28, 10, false, nil, liveStatusIdle))
+
+	if strings.Contains(view, "current") {
+		t.Fatalf("nil active session renders an identity marker: %q", view)
+	}
+	for _, glyph := range []string{"●", "◔", "◐", "◉"} {
+		if strings.Contains(view, glyph) {
+			t.Fatalf("nil active session renders dot %q: %q", glyph, view)
+		}
+	}
+}
+
+func TestSessionsSidebarEmptyRowsRenderNoDot(t *testing.T) {
+	view := stripANSI(newSessionsSidebar().viewWithActive(nil, 28, 10, false, nil, liveStatusIdle))
+
+	if !strings.Contains(view, "no saved sessions") {
+		t.Fatalf("empty list missing its placeholder: %q", view)
+	}
+	for _, glyph := range []string{"●", "◔", "◐", "◉"} {
+		if strings.Contains(view, glyph) {
+			t.Fatalf("empty list renders dot %q: %q", glyph, view)
+		}
 	}
 }

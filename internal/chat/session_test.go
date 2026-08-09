@@ -491,11 +491,16 @@ func TestSendUserStaleTurnDoesNotOverwrite(t *testing.T) {
 	}
 
 	// Newer turn while first is still in-flight (simulates force-send overlap).
-	cancel1()
+	// The newer turn must start before the first is cancelled. A first turn
+	// that is cancelled while it is still the current turn keeps its user
+	// message (interrupted-turn adoption). Cancelling first leaves the result
+	// to goroutine scheduling. Ordering the newer turn first makes the
+	// stale-turn fence deterministic.
 	_, err := s.SendUser(context.Background(), "second", io.Discard)
 	if err != nil {
 		t.Fatalf("second SendUser: %v", err)
 	}
+	cancel1()
 
 	// Unblock first if it is still waiting (cancelled path may already have returned).
 	close(g.releaseFirst)

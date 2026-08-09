@@ -24,6 +24,62 @@ func sessionDeleteNotice(info chat.SessionInfo) string {
 	return "open this session in its workspace to delete it"
 }
 
+// sidebarLiveStatus is the activity state of the current session shown by
+// its row dot in the sessions sidebar.
+type sidebarLiveStatus int
+
+const (
+	// liveStatusIdle is the resting state: no turn in progress.
+	liveStatusIdle sidebarLiveStatus = iota
+	// liveStatusThinking is reasoning text accumulation.
+	liveStatusThinking
+	// liveStatusStreaming is assistant text flowing.
+	liveStatusStreaming
+	// liveStatusTools is an open tool row.
+	liveStatusTools
+)
+
+// sidebarStatusColorMinWidth is the minimum row width for a colored dot.
+// Below it the dot renders plain so the identity marker keeps its cells.
+const sidebarStatusColorMinWidth = 24
+
+// sidebarLiveDotGlyph returns the single-cell dot glyph for a status.
+func sidebarLiveDotGlyph(status sidebarLiveStatus) string {
+	switch status {
+	case liveStatusThinking:
+		return "◔"
+	case liveStatusStreaming:
+		return "◐"
+	case liveStatusTools:
+		return "◉"
+	default:
+		return "●"
+	}
+}
+
+// sidebarLiveDotColor returns the brand-ramp color for a status.
+func sidebarLiveDotColor(status sidebarLiveStatus) string {
+	switch status {
+	case liveStatusThinking:
+		return brandColorThinking
+	case liveStatusStreaming:
+		return brandColorStream
+	case liveStatusTools:
+		return brandColorTools
+	default:
+		return brandColorIdle
+	}
+}
+
+// sidebarLiveDot renders the status dot. Colored is false on narrow rows.
+func sidebarLiveDot(status sidebarLiveStatus, colored bool) string {
+	glyph := sidebarLiveDotGlyph(status)
+	if !colored {
+		return glyph
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(sidebarLiveDotColor(status))).Render(glyph)
+}
+
 // sessionsSidebar stores the session-list state for the left sidebar.
 type sessionsSidebar struct {
 	cursor          int
@@ -167,11 +223,12 @@ func (s *sessionsSidebar) doubleClick(cursor int, now time.Time) bool {
 
 // view renders the non-modal session picker without an active-session marker.
 func (s *sessionsSidebar) view(rows []chat.SessionInfo, width, height int, focused bool) string {
-	return s.viewWithActive(rows, width, height, focused, nil)
+	return s.viewWithActive(rows, width, height, focused, nil, liveStatusIdle)
 }
 
-// viewWithActive renders the non-modal session picker. The model owns the rows.
-func (s *sessionsSidebar) viewWithActive(rows []chat.SessionInfo, width, height int, focused bool, active *chat.SessionInfo) string {
+// viewWithActive renders the non-modal session picker. The model owns the
+// rows. Status is the live activity state of the active session.
+func (s *sessionsSidebar) viewWithActive(rows []chat.SessionInfo, width, height int, focused bool, active *chat.SessionInfo, status sidebarLiveStatus) string {
 	width = max(1, width)
 	height = max(1, height)
 	layout := newSidebarLayout(len(rows), width, height)
@@ -192,7 +249,7 @@ func (s *sessionsSidebar) viewWithActive(rows []chat.SessionInfo, width, height 
 	} else {
 		latestAuto := latestAutoSaveName(rows)
 		for i := s.scroll; i < end; i++ {
-			rowLines := s.renderSessionRow(rows[i], i+1 == s.cursor, width, focused, layout.showMetadata, sidebarSessionMatches(rows[i], active), latestAuto)
+			rowLines := s.renderSessionRow(rows[i], i+1 == s.cursor, width, focused, layout.showMetadata, sidebarSessionMatches(rows[i], active), latestAuto, status)
 			lines = append(lines, rowLines...)
 		}
 	}
@@ -220,17 +277,30 @@ func (s *sessionsSidebar) renderNewSession(rows []chat.SessionInfo, width int, f
 	return tuiAccentStyle.Render(sidebarPad(line, width))
 }
 
-func (s *sessionsSidebar) renderSessionRow(row chat.SessionInfo, selected bool, width int, focused, showMetadata, active bool, latestAuto string) []string {
+// renderSessionRow renders one session row. The active row shows the status
+// dot plus the unchanged identity text " current · ".
+func (s *sessionsSidebar) renderSessionRow(row chat.SessionInfo, selected bool, width int, focused, showMetadata, active bool, latestAuto string, status sidebarLiveStatus) []string {
 	marker := "  "
 	if selected {
 		marker = "▸ "
 	}
 	name := displaySessionName(row, latestAuto)
 	if active {
-		name = "● current · " + name
+		name = " current · " + name
 	}
-	line := marker + truncateToWidth(name, max(1, width-runeWidth(marker)))
-	line = sidebarPad(line, width)
+	// One cell is reserved for the dot on the active row. The plain name is
+	// truncated before the dot is added, so the dot color codes never enter
+	// the uniseg width math.
+	budget := max(1, width-runeWidth(marker))
+	if active {
+		budget = max(1, budget-1)
+	}
+	name = truncateToWidth(name, budget)
+	line := marker + name
+	if active {
+		line = marker + sidebarLiveDot(status, width >= sidebarStatusColorMinWidth) + name
+	}
+	line = line + strings.Repeat(" ", max(0, width-lipgloss.Width(line)))
 	if selected {
 		line = sidebarSelectedStyle(width, focused).Render(line)
 	}
