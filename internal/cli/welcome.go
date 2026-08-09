@@ -326,6 +326,30 @@ func (m *tuiModel) openSessionByName(name string) error {
 	return m.openSessionInfo(*si)
 }
 
+// worktreeRouteOpenable reports whether a worktree route row can be opened.
+// The sessions sidebar uses the same check to decide whether a broken route
+// may be deleted from the session list: openable rows route to /worktrees,
+// broken rows are deletable.
+func (m *tuiModel) worktreeRouteOpenable(si chat.SessionInfo) (bool, error) {
+	if !si.WorktreeInstance.IsZero() {
+		if err := m.validateSessionWorktree(si.Dir, si.WorktreeInstance); err != nil {
+			return false, err
+		}
+	}
+	dir, err := filepath.Abs(si.Dir)
+	if err != nil {
+		return false, fmt.Errorf("resolve worktree route: %w", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return false, fmt.Errorf("worktree route is unavailable: %w", err)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("worktree route is not a directory")
+	}
+	return true, nil
+}
+
 // openSessionInfo opens the exact selected session. Routes and snapshots can
 // have the same display name, so selection cannot use a name alone.
 func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
@@ -338,16 +362,12 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 		}
 	}
 	if si.WorktreeRoute {
+		if _, err := m.worktreeRouteOpenable(si); err != nil {
+			return err
+		}
 		dir, err := filepath.Abs(si.Dir)
 		if err != nil {
 			return fmt.Errorf("resolve worktree route: %w", err)
-		}
-		info, err := os.Stat(dir)
-		if err != nil {
-			return fmt.Errorf("worktree route is unavailable: %w", err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("worktree route is not a directory")
 		}
 		m.workspaceDir = dir
 		m.restartWorkspace = dir

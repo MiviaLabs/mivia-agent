@@ -179,60 +179,18 @@ func runWorktreeRemove(args []string, stdout io.Writer) error {
 		return fmt.Errorf("worktree remove: lock lifecycle: %w", err)
 	}
 	defer lock.Close()
-	if recovered, err := recoverManagedWorktreeRemovalLocked(repoRoot, args[0], worktreeConfig.BranchPrefix, lock.File()); err != nil {
-		return fmt.Errorf("worktree remove: recovery: %w", err)
-	} else if recovered {
-		fmt.Fprintf(stdout, "removed worktree %q\n", args[0])
-		return nil
-	}
-	worktree, err := vcs.Resolve(context.Background(), repoRoot, args[0])
+	removed, err := removeWorktreeLocked(repoRoot, args[0], worktreeConfig.BranchPrefix, lock.File())
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
-	if worktree == nil {
-		// The Git worktree is gone, but storage may still own rows for the
-		// name (a launch route or a live instance). Clean them so the zombie
-		// row disappears from the session list too.
-		cleaned, err := cleanupStaleWorktreeStorage(repoRoot, args[0])
-		if err != nil {
-			return fmt.Errorf("worktree remove: %w", err)
-		}
-		if cleaned {
-			sanitized, sanitizeErr := vcs.SanitizeName(args[0])
-			if sanitizeErr != nil {
-				return fmt.Errorf("worktree remove: %w", sanitizeErr)
-			}
-			fmt.Fprintf(stdout, "removed worktree %q\n", sanitized)
-			return nil
-		}
+	if !removed {
 		return fmt.Errorf("worktree remove: worktree %q not found", args[0])
 	}
-	if worktreeContainsCurrentDir(worktree.Path) {
-		return fmt.Errorf("worktree remove: cannot remove the current worktree")
-	}
-	instance, err := beginManagedWorktreeRemoval(repoRoot, worktree)
-	if errors.Is(err, errUnmanagedWorktree) {
-		// The worktree has no valid lifecycle binding (missing marker or no
-		// storage entry). Remove it directly so its HDD space is freed.
-		if err := removeUnmanagedWorktree(repoRoot, worktree, worktreeConfig.BranchPrefix, lock.File()); err != nil {
-			return fmt.Errorf("worktree remove: %w", err)
-		}
-		fmt.Fprintf(stdout, "removed worktree %q\n", worktree.Name)
-		return nil
-	}
+	sanitized, err := vcs.SanitizeName(args[0])
 	if err != nil {
-		return fmt.Errorf("worktree remove: begin session cleanup: %w", err)
-	}
-	if err := vcs.RemoveWithPrefixLease(context.Background(), repoRoot, args[0], worktreeConfig.BranchPrefix, lock.File()); err != nil {
-		if reactivateErr := reactivateManagedWorktree(repoRoot, instance); reactivateErr != nil {
-			return fmt.Errorf("worktree remove: %w; session lifecycle recovery failed: %v", err, reactivateErr)
-		}
 		return fmt.Errorf("worktree remove: %w", err)
 	}
-	if err := finishManagedWorktreeRemoval(repoRoot, instance); err != nil {
-		return fmt.Errorf("worktree remove: removed %q but could not clean its sessions: %w", worktree.Name, err)
-	}
-	fmt.Fprintf(stdout, "removed worktree %q\n", worktree.Name)
+	fmt.Fprintf(stdout, "removed worktree %q\n", sanitized)
 	return nil
 }
 

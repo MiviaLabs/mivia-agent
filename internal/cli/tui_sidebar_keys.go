@@ -1,9 +1,15 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
 func (m *tuiModel) handleSidebarKey(key string) bool {
@@ -56,7 +62,13 @@ func (m *tuiModel) handleSidebarKey(key string) bool {
 		}
 		if session, ok := sidebar.selected(m.sessions); ok {
 			if session.WorktreeRoute {
-				sidebar.notice = sessionDeleteNotice(session)
+				// A broken route (one that cannot be opened) is deletable from
+				// the list; a healthy worktree stays a /worktrees action.
+				if openable, _ := m.worktreeRouteOpenable(session); openable {
+					sidebar.notice = sessionDeleteNotice(session)
+				} else {
+					sidebar.confirm = confirmDeleteOne
+				}
 			} else {
 				sidebar.confirm = confirmDeleteOne
 			}
@@ -90,7 +102,20 @@ func (m *tuiModel) applySidebarSessionsConfirm() {
 			break
 		}
 		if session.WorktreeRoute {
-			sidebar.notice = sessionDeleteNotice(session)
+			// Re-check openability at confirm time: if the route became
+			// openable, keep the /worktrees guidance instead of deleting.
+			if openable, _ := m.worktreeRouteOpenable(session); openable {
+				sidebar.notice = sessionDeleteNotice(session)
+				break
+			}
+			if err := m.deleteWorktreeRoute(session); err != nil {
+				sidebar.notice = "delete failed: " + err.Error()
+				break
+			}
+			index := sidebar.cursor - 1
+			m.sessions = append(m.sessions[:index], m.sessions[index+1:]...)
+			sidebar.move(m.sessions, 0)
+			sidebar.notice = fmt.Sprintf("deleted %q", session.Name)
 			break
 		}
 		if err := m.deleteConversationGroup(session); err != nil {
@@ -133,4 +158,66 @@ func (m *tuiModel) applySidebarSessionsConfirm() {
 	if m.sessionSel >= len(m.sessions) {
 		m.sessionSel = max(0, len(m.sessions)-1)
 	}
+}
+
+// deleteWorktreeRoute removes the worktree a broken route row describes. It
+// runs under the lifecycle lock through the same removal path as the CLI, so
+// a broken route (missing marker, gone directory, or ghost storage rows) can
+// finally be deleted from the session list.
+func (m *tuiModel) deleteWorktreeRoute(si chat.SessionInfo) error {
+	if m.workspaceSwitchBusy() {
+		return fmt.Errorf("cannot delete while the agent is running")
+	}
+	root := m.resolveRepoRoot()
+	worktreeConfig, err := config.LoadWorktreeConfig(root)
+	if err != nil {
+		return err
+	}
+	lock, err := lockWorktreeLifecycle(root, si.Worktree)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	store, closeStore, err := m.worktreeLifecycleStore(root)
+	if err != nil {
+		return err
+	}
+	defer closeStore()
+	principal, err := worktreeRoutePrincipal(root)
+	if err != nil {
+		return err
+	}
+	if !si.WorktreeInstance.IsZero() {
+		live, err := store.LiveWorktreeInstance(context.Background(), principal, si.Worktree)
+		switch {
+		case err == nil && live.Instance != si.WorktreeInstance:
+			// A same-name replacement owns the name now. Refuse so the
+			// replacement is never removed through a stale route row.
+			return fmt.Errorf("worktree %q changed; refresh the session list", si.Worktree)
+		case err == nil:
+			// The route's instance is still live; remove it below.
+		case errors.Is(err, contextstate.ErrWorktreeDeleted):
+			// The instance is gone. Clean leftover rows; the stale row is
+			// dropped from the list even when storage holds nothing more.
+			if _, err := cleanupStaleWorktreeRows(store, principal, si.Worktree); err != nil {
+				return err
+			}
+			return nil
+		default:
+			return err
+		}
+	} else if worktree, err := vcs.Resolve(context.Background(), root, si.Worktree); err != nil {
+		return err
+	} else if worktree != nil {
+		// A legacy route has no instance binding. A live Git worktree for
+		// the name belongs to the user's /worktrees surface, never to a
+		// stale session-list row.
+		if _, err := os.Stat(worktree.Path); err == nil {
+			return fmt.Errorf("worktree %q exists; remove it with /worktrees", si.Worktree)
+		}
+	}
+	if _, err := removeWorktreeLocked(root, si.Worktree, worktreeConfig.BranchPrefix, lock.File()); err != nil {
+		return err
+	}
+	return nil
 }

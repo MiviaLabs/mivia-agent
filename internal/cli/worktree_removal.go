@@ -94,17 +94,28 @@ func cleanupStaleWorktreeRows(store *storage.SQLite, principal contextstate.Prin
 				return cleaned, err
 			}
 		}
+		// The legacy launch route (instance_id IS NULL) belongs to the name,
+		// not the instance, so DeleteWorktreeSessions leaves it behind.
+		removed, err := store.DeleteWorktreeRoute(context.Background(), principal, name)
+		if err != nil {
+			return cleaned, err
+		}
+		if removed > 0 {
+			cleaned = true
+		}
 	case errors.Is(err, contextstate.ErrWorktreeDeleted):
-		// No live instance row for the name.
+		// No live instance row for the name. Remove every route row, bound or
+		// legacy: a bound route of a dead instance would otherwise stay in
+		// storage forever and resurface as a zombie row.
+		removed, err := store.DeleteWorktreeRoutesByName(context.Background(), principal, name)
+		if err != nil {
+			return cleaned, err
+		}
+		if removed > 0 {
+			cleaned = true
+		}
 	default:
 		return cleaned, err
-	}
-	removed, err := store.DeleteWorktreeRoute(context.Background(), principal, name)
-	if err != nil {
-		return cleaned, err
-	}
-	if removed > 0 {
-		cleaned = true
 	}
 	return cleaned, nil
 }
@@ -145,4 +156,55 @@ func finishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, ins
 	// or the removed worktree stays visible in the session list forever.
 	_, err = store.DeleteWorktreeRoute(context.Background(), principal, instance.Worktree)
 	return err
+}
+
+// removeWorktreeLocked removes one worktree by name under an acquired
+// lifecycle lock. It runs deletion recovery, the managed removal, the
+// unmanaged fallback for worktrees without a storage binding, and ghost
+// cleanup for names whose Git worktree is gone. It reports whether the
+// worktree or its storage rows were removed.
+func removeWorktreeLocked(root, name, branchPrefix string, lease *os.File) (bool, error) {
+	if recovered, err := recoverManagedWorktreeRemovalLocked(root, name, branchPrefix, lease); err != nil {
+		return false, err
+	} else if recovered {
+		return true, nil
+	}
+	worktree, err := vcs.Resolve(context.Background(), root, name)
+	if err != nil {
+		return false, err
+	}
+	if worktree == nil {
+		// The Git worktree is gone. Clean storage rows for the name so a
+		// stale launch route disappears from the session list.
+		cleaned, err := cleanupStaleWorktreeStorage(root, name)
+		if err != nil {
+			return false, err
+		}
+		return cleaned, nil
+	}
+	if worktreeContainsCurrentDir(worktree.Path) {
+		return false, fmt.Errorf("cannot remove the current worktree")
+	}
+	instance, err := beginManagedWorktreeRemoval(root, worktree)
+	if errors.Is(err, errUnmanagedWorktree) {
+		// The worktree has no valid lifecycle binding (missing marker or no
+		// storage entry). Remove it directly so its HDD space is freed.
+		if err := removeUnmanagedWorktree(root, worktree, branchPrefix, lease); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := vcs.RemoveWithPrefixLease(context.Background(), root, worktree.Name, branchPrefix, lease); err != nil {
+		if reactivateErr := reactivateManagedWorktree(root, instance); reactivateErr != nil {
+			return false, fmt.Errorf("%w; session lifecycle recovery failed: %v", err, reactivateErr)
+		}
+		return false, err
+	}
+	if err := finishManagedWorktreeRemoval(root, instance); err != nil {
+		return false, fmt.Errorf("removed %q but could not clean its sessions: %w", worktree.Name, err)
+	}
+	return true, nil
 }

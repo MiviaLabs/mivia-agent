@@ -267,6 +267,26 @@ func (s *SQLite) DeleteWorktreeRoute(ctx context.Context, principal contextstate
 	return result.RowsAffected()
 }
 
+// DeleteWorktreeRoutesByName removes every launch route for one worktree
+// name, whether bound to an instance or legacy. It reports how many rows it
+// removed. Call it only when no live instance owns the name, so no active
+// route can be affected.
+func (s *SQLite) DeleteWorktreeRoutesByName(ctx context.Context, principal contextstate.Principal, worktree string) (int64, error) {
+	if err := principal.Validate(); err != nil {
+		return 0, err
+	}
+	if err := validateSessionCatalogName(worktree); err != nil {
+		return 0, err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	result, err := s.db.ExecContext(ctx, `DELETE FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=?`, principal.WorkspaceID, principal.SubjectID, worktree)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextstate.Principal, name string) error {
 	if err := principal.Validate(); err != nil {
 		return err
