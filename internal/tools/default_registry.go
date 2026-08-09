@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/codeintel"
+	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -60,6 +61,11 @@ type DefaultOptions struct {
 	// installed. Prefer tools.SetWorkflowToolsBuilder for production wiring so
 	// this package does not import workflow/ledger (storage test import cycle).
 	WorkflowTools []Tool
+
+	// Memory is the durable agent memory backend. When nil, the memory tools
+	// (memory_save, memory_search) are not registered. Wired by the CLI from
+	// the resolved [memory] config; never constructed by a workspace file.
+	Memory memory.Store
 }
 
 // defaultMemoryBackstopBytes is the OOM guard when MemoryBackstopBytes is unset.
@@ -258,6 +264,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	}
 	registerWebTools(register, opts, ws, patterns, exceptions)
 	registerCodeNavTools(register, opts, ws, patterns, exceptions)
+	registerMemoryTools(register, opts)
 	registerWorkflowTools(register, opts)
 }
 
@@ -345,6 +352,21 @@ func registerWebTools(register func(Tool), opts DefaultOptions, ws *workspace.Ro
 	if opts.TavilyAPIKey != "" {
 		register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{}, maxResultBytes: resolveWebResponseBudget(opts.MaxTavilyResponseBytes)})
 	}
+}
+
+// registerMemoryTools registers the durable memory tools when a memory store
+// is wired. The store is a session-level backend built by the CLI from the
+// [memory] config; without it the tools cannot succeed and are absent.
+func registerMemoryTools(register func(Tool), opts DefaultOptions) {
+	if opts.Memory == nil {
+		return
+	}
+	maxSearchBytes := memorySearchResultBytes
+	if opts.MaxToolResultBytes > 0 {
+		maxSearchBytes = min(maxSearchBytes, opts.MaxToolResultBytes)
+	}
+	register(&memorySaveTool{store: opts.Memory})
+	register(&memorySearchTool{store: opts.Memory, maxBytes: maxSearchBytes})
 }
 
 // registerCodeNavTools registers the code-intelligence tools when the

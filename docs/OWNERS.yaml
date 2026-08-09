@@ -96,3 +96,8 @@ topics:
     path: docs/product/workflows-guide.md
     owner: product
     description: Workflow user guide: CLI commands, agent tools, authoring, execution, and monitoring
+
+  memory:
+    path: docs/product/memory.md
+    owner: product
+    description: Durable agent memory: scopes, tools, entry format, configuration

@@ -102,6 +102,29 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 # system prompts - not required for agent files in .mivia/agents/.
 
 # ---------------------------------------------------------------------------
+# MEMORY - durable agent memory (plan 68)
+# ---------------------------------------------------------------------------
+# Agents save and search durable learnings (solutions, failures, conventions)
+# through memory_save and memory_search. Project memory lives in this
+# repository and is COMMITTED, so it travels with the repo. Before committing
+# the database, run a WAL checkpoint so recent writes are in the main file:
+#   PRAGMA wal_checkpoint(TRUNCATE);
+# Only the transient -wal/-shm sidecars are gitignored.
+#
+# org_id is USER-owned: it is honored only from ~/.mivia/mivia.toml. A
+# workspace file must never set it (any repo can ship this file, and a
+# repo-controlled value must not name the org store its agents write into).
+[memory]
+enabled = true
+store_backend = "sqlite"
+store_path = ".mivia/memory.db"
+# org_id = "github.com/MiviaLabs"   # set in the USER config, not here
+max_entry_bytes = 8192
+max_entries = 500
+max_search_results = 8
+# block_patterns = ["sk-[A-Za-z0-9]+"]   # config-only secret guard
+
+# ---------------------------------------------------------------------------
 # WORKTREES - branch names for Mivia-managed Git worktrees
 # ---------------------------------------------------------------------------
 [worktrees]
@@ -358,6 +381,10 @@ core = [
     "search",
     "fetch_url",
     "extract",
+    # Durable memory: the prompts order memory_search and memory_save, so
+    # their schemas ship always (check_core_tier_covers_prompted_tools).
+    "memory_save",
+    "memory_search",
     # Phase 7 workflow tools are default for the root session: the root
     # prompt names them as required process, so their schemas must ship
     # always, never deferred (check_core_tier_covers_prompted_tools).
