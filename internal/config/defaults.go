@@ -116,7 +116,19 @@ var DefaultToolsConfig = ToolsConfig{
 	// (max_tool_result_bytes) is the operator-configurable ceiling.
 	// OOM guard for uncapped volume tools; not a context-cost cap.
 	MemoryBackstopMB: 256,
+	// 64 KiB: enough for dozens of matches with short context windows while
+	// keeping inspect_repository's result a small, always-bounded JSON
+	// envelope. See MinInspectRepositoryBytes / MaxInspectRepositoryBytesLimit.
+	MaxInspectRepositoryBytes: 64 << 10,
 }
+
+// Bounds for [tools] max_inspect_repository_bytes. Below the floor the fixed
+// JSON envelope (provenance + one result) cannot fit; above the ceiling the
+// tool stops being a small, bounded read.
+const (
+	MinInspectRepositoryBytes      = 4 << 10
+	MaxInspectRepositoryBytesLimit = 256 << 10
+)
 
 // DefaultMemoryBackstopMB is the shipped OOM guard when memory_backstop_mb is
 // unset or non-positive (cannot be accidentally disabled via 0).
