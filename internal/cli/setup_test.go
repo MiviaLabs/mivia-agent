@@ -1,0 +1,217 @@
+package cli
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/envfile"
+)
+
+// runSetupCapture runs setup with controlled IO and returns the summary text.
+func runSetupCapture(t *testing.T, args []string, stdin string) (string, error) {
+	t.Helper()
+	var buf bytes.Buffer
+	err := runSetupWithIO(args, &buf, strings.NewReader(stdin))
+	return buf.String(), err
+}
+
+func TestSetupWritesKeyToNewEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	out, err := runSetupCapture(t, []string{
+		"--provider", "deepseek",
+		"--key", "sk-test-0000",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, "")
+	if err != nil {
+		t.Fatalf("setup error = %v", err)
+	}
+	if !strings.Contains(out, "provider:   deepseek") {
+		t.Fatalf("setup summary lacks the provider: %q", out)
+	}
+	entries, err := envfile.Load(envPath)
+	if err != nil {
+		t.Fatalf("load written env file: %v", err)
+	}
+	if entries["DEEPSEEK_API_KEY"] != "sk-test-0000" {
+		t.Fatalf("env key = %q, want sk-test-0000", entries["DEEPSEEK_API_KEY"])
+	}
+	st, err := os.Stat(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("env file mode = %o, want 600", perm)
+	}
+	if _, err := os.Stat(cfgPath); err != nil {
+		t.Fatalf("default config was not written: %v", err)
+	}
+	if raw, _ := os.ReadFile(cfgPath); !strings.Contains(string(raw), "deepseek-v4-flash") {
+		t.Fatalf("default config lacks the shipped model: %q", raw)
+	}
+}
+
+func TestSetupPreservesExistingEnvKeys(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(envPath, []byte("OTHER_KEY=keep-me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	if _, err := runSetupCapture(t, []string{
+		"--key", "sk-test-0001",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, ""); err != nil {
+		t.Fatalf("setup error = %v", err)
+	}
+	entries, err := envfile.Load(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries["OTHER_KEY"] != "keep-me" {
+		t.Fatalf("existing key lost: %#v", entries)
+	}
+	if entries["DEEPSEEK_API_KEY"] != "sk-test-0001" {
+		t.Fatalf("new key missing: %#v", entries)
+	}
+}
+
+func TestSetupReadsKeyFromEnvVar(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "sk-test-0002")
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	if _, err := runSetupCapture(t, []string{
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, ""); err != nil {
+		t.Fatalf("setup error = %v", err)
+	}
+	entries, err := envfile.Load(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries["DEEPSEEK_API_KEY"] != "sk-test-0002" {
+		t.Fatalf("env-var key not written: %#v", entries)
+	}
+}
+
+func TestSetupRequiresKeyWhenNonInteractive(t *testing.T) {
+	dir := t.TempDir()
+	_, err := runSetupCapture(t, []string{
+		"--env-file", filepath.Join(dir, ".env"),
+		"--config", filepath.Join(dir, "mivia.toml"),
+		"--yes",
+	}, "")
+	if err == nil {
+		t.Fatal("setup with no key returned nil error")
+	}
+	if !strings.Contains(err.Error(), "no API key") {
+		t.Fatalf("setup error = %v, want missing-key message", err)
+	}
+}
+
+func TestSetupSkipsConfigForOtherProvider(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	out, err := runSetupCapture(t, []string{
+		"--provider", "openrouter",
+		"--key", "sk-test-0003",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, "")
+	if err != nil {
+		t.Fatalf("setup error = %v", err)
+	}
+	if _, statErr := os.Stat(cfgPath); !os.IsNotExist(statErr) {
+		t.Fatalf("config written for a non-default provider (err=%v)", statErr)
+	}
+	if !strings.Contains(out, "[providers.openrouter]") {
+		t.Fatalf("summary lacks the provider guidance: %q", out)
+	}
+}
+
+func TestSetupKeepsExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	existing := "[provider]\nname = \"deepseek\"\n"
+	if err := os.WriteFile(cfgPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runSetupCapture(t, []string{
+		"--key", "sk-test-0004",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, ""); err != nil {
+		t.Fatalf("setup error = %v", err)
+	}
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != existing {
+		t.Fatalf("existing config changed: %q", raw)
+	}
+}
+
+func TestSetupArgErrors(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"unknown flag", []string{"--bogus"}, "unknown flag"},
+		{"provider missing value", []string{"--provider"}, "--provider requires"},
+		{"key missing value", []string{"--key"}, "--key requires"},
+		{"unexpected positional", []string{"extra"}, "unexpected argument"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runSetupCapture(t, append(tc.args,
+				"--env-file", filepath.Join(dir, ".env"),
+				"--config", filepath.Join(dir, "mivia.toml"),
+			), "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want contains %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestExecuteSetupWritesFiles(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	done := captureStdout(t)
+	defer done()
+	err := Execute([]string{"setup",
+		"--key", "sk-test-0005",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	})
+	_ = done()
+	if err != nil {
+		t.Fatalf("Execute([setup ...]) error = %v", err)
+	}
+	if _, statErr := os.Stat(envPath); statErr != nil {
+		t.Fatalf("env file missing after Execute: %v", statErr)
+	}
+	if _, statErr := os.Stat(cfgPath); statErr != nil {
+		t.Fatalf("config missing after Execute: %v", statErr)
+	}
+}
