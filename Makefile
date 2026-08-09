@@ -20,7 +20,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test structure-check commit-check go-check test test-changed race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke
+	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke release
 
 help:
 	@printf '%s\n' \
@@ -48,6 +48,7 @@ help:
 		'  make race              go test -race ./...' \
 		'  make vet               go vet ./...' \
 		'  make build             Build binary $(BINARY) from $(CMD_PKG)' \
+		'  make release           Build release binaries + checksums into dist/' \
 		'  make tidy              go mod tidy' \
 		'  make fmt               gofmt -w tracked Go files' \
 		'  make smoke             Fast workflow-engine smoke suite'
@@ -191,6 +192,9 @@ vet:
 
 build:
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
+
+release:
+	@scripts/release.sh
 
 tidy:
 	@go mod tidy
