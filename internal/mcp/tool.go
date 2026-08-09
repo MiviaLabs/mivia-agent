@@ -60,7 +60,11 @@ func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, 
 			return nil, fmt.Errorf("duplicate MCP tool %q", name)
 		}
 		seen[name] = true
-		description, schema, err := sanitizeToolMetadata(tool.Description, tool.Schema, maxDescriptionBytes, maxSchemaBytes, redaction)
+		description, err := composeToolDescription(serverID, tool.Name, tool.Description, maxDescriptionBytes, redaction)
+		if err != nil {
+			return nil, fmt.Errorf("MCP tool %q: %w", tool.Name, err)
+		}
+		schema, err := sanitizeToolSchema(tool.Schema, maxSchemaBytes, redaction)
 		if err != nil {
 			return nil, fmt.Errorf("MCP tool %q: %w", tool.Name, err)
 		}

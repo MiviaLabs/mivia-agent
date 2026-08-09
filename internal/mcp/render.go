@@ -15,35 +15,72 @@ const (
 )
 
 func sanitizeToolMetadata(description string, schema map[string]any, maxDescription, maxSchema int, redaction *redact.Policy) (string, map[string]any, error) {
-	description = strings.Map(func(value rune) rune {
-		if unicode.IsControl(value) {
+	d := sanitizeToolDescription(description, redaction)
+	if maxDescription > 0 && len(d) > maxDescription {
+		return "", nil, fmt.Errorf("MCP tool description exceeds configured limit")
+	}
+	s, err := sanitizeToolSchema(schema, maxSchema, redaction)
+	if err != nil {
+		return "", nil, err
+	}
+	return d, s, nil
+}
+
+// scrubDescriptionText replaces control and format characters with spaces.
+func scrubDescriptionText(s string) string {
+	return strings.Map(func(value rune) rune {
+		if unicode.IsControl(value) || unicode.In(value, unicode.Cf) {
 			return ' '
 		}
 		return value
-	}, description)
-	description = strings.TrimSpace(redaction.Text(description))
-	if maxDescription > 0 && len(description) > maxDescription {
-		return "", nil, fmt.Errorf("MCP tool description exceeds configured limit")
-	}
+	}, s)
+}
+
+// sanitizeToolDescription removes control characters, applies redaction, and
+// trims the result.
+func sanitizeToolDescription(description string, redaction *redact.Policy) string {
+	return strings.TrimSpace(redaction.Text(scrubDescriptionText(description)))
+}
+
+// sanitizeToolSchema copies the schema into a safe form and applies the size
+// limit to the schema after redaction and bridging.
+func sanitizeToolSchema(schema map[string]any, maxSchema int, redaction *redact.Policy) (map[string]any, error) {
 	if schema == nil {
 		schema = map[string]any{"type": "object"}
 	}
-	encoded, err := json.Marshal(schema)
-	if err != nil {
-		return "", nil, fmt.Errorf("marshal MCP tool schema: %w", err)
-	}
-	if maxSchema > 0 && len(encoded) > maxSchema {
-		return "", nil, fmt.Errorf("MCP tool schema exceeds configured limit")
-	}
 	redactedSchema, ok := redaction.JSONValue(schema).(map[string]any)
 	if !ok {
-		return "", nil, fmt.Errorf("redact MCP tool schema")
+		return nil, fmt.Errorf("redact MCP tool schema")
 	}
 	depth, properties := schemaComplexity(schema, 1)
 	if depth > maxSchemaDepth || properties > maxSchemaProperties {
-		return "", nil, fmt.Errorf("MCP tool schema is too complex")
+		return nil, fmt.Errorf("MCP tool schema is too complex")
 	}
-	return description, bridgeToolSchema(redactedSchema), nil
+	bridged := bridgeToolSchema(redactedSchema)
+	encoded, err := json.Marshal(bridged)
+	if err != nil {
+		return nil, fmt.Errorf("marshal MCP tool schema: %w", err)
+	}
+	if maxSchema > 0 && len(encoded) > maxSchema {
+		return nil, fmt.Errorf("MCP tool schema exceeds configured limit")
+	}
+	return bridged, nil
+}
+
+// composeToolDescription builds the model-facing text for a remote MCP tool.
+// The whole text is scrubbed and redacted before the size limit is checked.
+func composeToolDescription(serverID, remoteName, description string, maxBytes int, redaction *redact.Policy) (string, error) {
+	name := strings.TrimSpace(scrubDescriptionText(remoteName))
+	body := strings.TrimSpace(scrubDescriptionText(description))
+	if body == "" {
+		body = "The server provides no description."
+	}
+	full := fmt.Sprintf("MCP tool %q from server %q. %s", name, serverID, body)
+	full = strings.TrimSpace(redaction.Text(scrubDescriptionText(full)))
+	if maxBytes > 0 && len(full) > maxBytes {
+		return "", fmt.Errorf("MCP tool description exceeds configured limit")
+	}
+	return full, nil
 }
 
 // bridgeToolSchema copies the JSON Schema subset the host can safely expose.

@@ -185,6 +185,10 @@ headers = [{ name = "Authorization", value_env = "ISSUES_MCP_TOKEN" }]
 
 The configuration stores only environment variable names. It never stores secret values. A global server is available to an agent that omits `mcp_servers`. A named agent can set `mcp_servers = []` to deny all MCP servers, or list exact server IDs. Workspace agents can select only global servers. Child agents can only narrow their parent server list.
 
+An invalid server definition refuses configuration load. An invalid server definition has a bad ID, unsafe transport fields, or oversized bounds. A server that is unreachable or fails discovery at session start fails session startup. The error message names the server. MCP tools are never silently absent. A session either has a server's tools or reports the failure. This is deliberate fail-closed behavior. It is not configurable.
+
+Every MCP tool description in the model-facing tool list always states the remote tool name and the server ID. The description is never empty. If a server provides no description, the description is the constant sentence 'The server provides no description.' The composed description is scrubbed of control and format characters. The composed description is redacted under the configured [privacy] redaction patterns. The composed description is bounded by max_tool_description_bytes. Because the system adds provenance, a server description that fits the configured cap alone may now be refused. When the composed text exceeds the cap, the system refuses the description. This is deliberate tightening. The cap always bounds what the model sees.
+
 ## Tool safety policy
 
 `[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only source of the file-tool secret filter. Nothing is compiled into the binary, so an unconfigured workspace filters nothing. Recommended starting values ship in `.mivia/mivia.toml.example`. Patterns match case-insensitively as substrings of the workspace-relative path. Exceptions take precedence.
