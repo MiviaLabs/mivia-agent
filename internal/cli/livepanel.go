@@ -62,12 +62,16 @@ func (m *tuiModel) livePanelSections(termH int) (fleet, tools, thinking, stream 
 	if fleet+tools+thinking+stream == 0 {
 		return 0, 0, 0, 0
 	}
-	// Shrink bottom-up until the panel fits its ceiling and leaves the
-	// transcript at least a few rows on short terminals. The budget accounts
-	// for the "… n more" indicator rows a truncated section adds.
-	budget := livePanelMaxHeight - 2 // borders
-	if cap := max(1, termH/3); budget > cap {
-		budget = cap
+	// The panel is a fixed band for the whole turn. The content budget inside
+	// it is the band minus its two borders. Sections shrink bottom-up until
+	// the panel fits that budget and leaves the transcript at least a few
+	// rows on short terminals. The budget accounts for the "… n more"
+	// indicator rows a truncated section adds.
+	budget := m.livePanelBand(max(8, termH)) - 2
+	if budget < 2 {
+		// The band cannot hold a section with borders. Render it empty
+		// rather than let a section spill over it.
+		return 0, 0, 0, 0
 	}
 	indicators := func() int {
 		n := 0
@@ -94,34 +98,36 @@ func (m *tuiModel) livePanelSections(termH int) (fleet, tools, thinking, stream 
 		case tools > 0 && fleet > 0:
 			tools = 0
 		default:
-			return fleet, tools, thinking, stream
+			// Only a thinking window can be left, and even it cannot fit the
+			// budget. Drop the section rather than render over the band.
+			return 0, 0, 0, 0
 		}
 	}
 	return fleet, tools, thinking, stream
 }
 
-// livePanelHeight is the exact rendered height (0 when hidden).
-func (m *tuiModel) livePanelHeight() int {
-	f, t, th, s := m.livePanelSections(max(8, m.height))
-	rows := f + t + th + s
-	if rows == 0 {
+// livePanelBand is the fixed height the "now" panel holds for the duration
+// of one turn: constant while m.waiting, zero when idle. The two border rows
+// are included; the content budget inside the band is band - 2.
+func (m *tuiModel) livePanelBand(termH int) int {
+	if !m.waiting {
 		return 0
 	}
-	// "… n more" indicators when a section is truncated.
-	if len(m.subagents.ActiveRows()) > f && f > 0 {
-		rows++
-	}
-	if len(m.toolRows) > t && t > 0 {
-		rows++
-	}
-	return rows + 2 // top + bottom border
+	return min(livePanelMaxHeight, max(1, termH/3))
+}
+
+// livePanelHeight is the exact rendered height (0 when hidden). It is the
+// fixed turn band while m.waiting. renderLivePanel pads to it, so both layout
+// paths subtract a number the render always matches.
+func (m *tuiModel) livePanelHeight() int {
+	return m.livePanelBand(max(8, m.height))
 }
 
 // renderLivePanel draws the fixed live region. Line count always equals
 // livePanelHeight - layout math depends on it.
 func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
-	fleetN, toolN, thinkingN, streamN := m.livePanelSections(max(8, m.height))
-	if fleetN+toolN+thinkingN+streamN == 0 {
+	band := m.livePanelBand(max(8, m.height))
+	if band == 0 {
 		return ""
 	}
 	if width < 30 {
@@ -129,7 +135,10 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 	}
 	inner := width - 4
 	border := lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim))
+	contentRows := band - 2
 	var rows []string
+
+	fleetN, toolN, thinkingN, streamN := m.livePanelSections(max(8, m.height))
 
 	rows = append(rows, m.liveFleetRows(fleetN, inner, now)...)
 	rows = append(rows, m.liveToolRows(toolN, inner, now)...)
@@ -162,6 +171,13 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 			}
 			rows = append(rows, truncateToWidth(prefix+ln, inner))
 		}
+	}
+
+	// Pad short content with blank rows so the band keeps its exact height.
+	// No truncation clamp here: an over-budget section must fail the
+	// rendered==declared tests loudly, not be silently cut.
+	for len(rows) < contentRows {
+		rows = append(rows, "")
 	}
 
 	head := " now "
