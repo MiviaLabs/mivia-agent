@@ -28,7 +28,10 @@ Lock the scope. Identify:
 - the production and test files that need changes;
 - the affected interfaces and compatibility risks;
 - security, privacy, hook, and path-safety boundaries;
-- the host evidence gates needed after implementation.
+- the host evidence gates needed after implementation; note these are executed by the later
+  evidence-gate workflow steps (test_validate, verify, code_validate, preflight_validate,
+  preflight_structure) before delivery, so describe them as downstream delivery gates, never as
+  prerequisites of the review step, which runs before those gates.
 
 Make a small ordered plan. Include the test-first order. Include negative paths and structured
 input cases when they apply: empty, malformed, oversized, and duplicate input. State whether a
