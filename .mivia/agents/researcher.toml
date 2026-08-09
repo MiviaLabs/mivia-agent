@@ -1,7 +1,7 @@
 # Read-only workspace and web research specialist.
 name = "researcher"
 description = "Read-only researcher who maps evidence, dependencies, and relevant external references."
-tools = ["read_file", "list_dir", "grep", "glob", "find_references", "search", "fetch_url", "extract"]
+tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract"]
 skills = ["architecture-review", "bug-audit", "concurrency-review", "secure-change"]
 # High-volume read-only sweeps: cheapest model with a 1M window.
 provider = "deepseek"

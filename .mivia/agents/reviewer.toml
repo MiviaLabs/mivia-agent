@@ -1,7 +1,7 @@
 # General read-only engineering reviewer.
 name = "reviewer"
 description = "Read-only reviewer for architecture, correctness, concurrency, security, and regression risks."
-tools = ["read_file", "list_dir", "grep", "glob", "find_references", "search", "fetch_url", "extract", "workflow_inspect"]
+tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract", "workflow_inspect"]
 skills = ["architecture-review", "bug-audit", "concurrency-review", "secure-change", "simplification-review"]
 # Judge on Tencent Hy3 preview (OpenRouter): agentic-optimized with
 # configurable reasoning (high default). Deliberately a different provider

@@ -1,7 +1,7 @@
 # Read-only security and privacy reviewer.
 name = "security"
 description = "Read-only security reviewer for trust boundaries, secrets, authorization, and fail-closed behavior."
-tools = ["read_file", "list_dir", "grep", "glob", "find_references", "search", "fetch_url", "extract"]
+tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract"]
 skills = ["secure-change", "bug-audit"]
 # Deliberately a different provider than reviewer, so an adversarial
 # second opinion is not correlated with the first. Flash carries the same 1M

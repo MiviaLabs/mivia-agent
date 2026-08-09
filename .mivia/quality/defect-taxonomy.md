@@ -295,6 +295,43 @@ retried once on a prompt-too-long response.
 
 ---
 
+## DC-15 Static allowlist over a dynamically-named set
+
+**Mechanism.** A hand-authored list enumerates known names to grant a property (core
+tier, an allowlist, a denylist). A separate mechanism can add members to the domain
+that list ranges over, but those members get a name only at runtime (a hash, a remote
+identifier, a generated ID) that could not have been written into the list when it was
+authored. Membership defaults to false for anything the list cannot name, so every
+runtime-named member silently gets the "unlisted" outcome forever, with no error and no
+signal that the list is incomplete.
+
+**Evidence.** `388ed35`'s companion fix: `internal/cli/tool_tiers.go`'s `[tools] core`
+list is a hand-authored allowlist of compiled-in tool names. An MCP tool's name
+(`mcp__<server>__x<hex>`, `internal/mcp.EncodeToolName`) is a runtime hash of whatever
+the remote server reports, unknowable when `core` is written. Configuring `core` at all
+silently moved every MCP tool into the deferred tier - the tool an operator connected a
+server for became unreachable, because the model had to actively discover a tool it had
+no a-priori reason to know existed. `authorizedAgentTools` (`internal/cli/mcp_scope.go`)
+had already solved the identical problem for tool AUTHORIZATION, by granting membership
+through the parent domain (the selected server) instead of the individual name - the
+core-tier split was a second, independent path over the same tools that had not adopted
+that rule (DC-13's "one operation, one path" applies here too).
+
+**Probes.**
+- For each hand-authored list (allowlist, denylist, core/priority tier, routing table),
+  name the domain it ranges over. Can every member of that domain be named in advance,
+  or does anything in it get a name only at runtime?
+- If a runtime-named member exists, the list needs an explicit rule for it (grant
+  through a parent/selector the list CAN name, or refuse to silently exclude) - not
+  silent exclusion by omission.
+- When two mechanisms decide a related property over the same set (authorization vs.
+  visibility, admission vs. priority), grep for every other decision point over that
+  set and confirm each applies the same runtime-named-member rule, not just the first
+  one fixed.
+- A config change that "restricts" a static surface (naming a core tier, narrowing an
+  allowlist) must not have the side effect of silently blocking a dynamic surface that
+  shares the same authorization gate.
+
 ## Chain control
 
 The history shows chains: one class produced 35, 45, or 26 separate fixes. A chain

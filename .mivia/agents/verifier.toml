@@ -1,7 +1,7 @@
 # Verification specialist with command execution but no write tools.
 name = "verifier"
 description = "Verification specialist that runs project-native tests, quality gates, and evidence checks without editing files."
-tools = ["read_file", "list_dir", "grep", "glob", "find_references", "run_command"]
+tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "run_command"]
 skills = ["verify-change", "verify-code-change"]
 # Mechanical work (run gates, report evidence): cheapest adequate model.
 # Routed through OpenRouter rather than zai, which this machine cannot use.

@@ -386,4 +386,9 @@ func registerCodeNavTools(register func(Tool), opts DefaultOptions, ws *workspac
 		resolver: analyzer,
 		maxBytes: navMaxBytes,
 	})
+	register(&findSymbolContextTool{
+		ws:       ws,
+		resolver: analyzer,
+		maxBytes: navMaxBytes,
+	})
 }
