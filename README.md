@@ -18,23 +18,43 @@ Your files stay on your machine. mivia sends your prompts and the context it sel
 
 ## Quick start
 
-Requires Go 1.25+ and an API key for a supported provider (DeepSeek by default). mivia ships as source; there is no prebuilt binary yet.
+Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need an API key for a supported provider (DeepSeek by default).
+
+### Install
+
+Prebuilt binaries are attached to each [GitHub Release](https://github.com/MiviaLabs/mivia-agent/releases) (Linux, macOS, Windows; amd64 and arm64).
+
+From source with Go 1.25+:
+
+```bash
+go install github.com/MiviaLabs/mivia-agent/cmd/mivia@latest
+```
+
+Or build the latest source:
 
 ```bash
 git clone https://github.com/MiviaLabs/mivia-agent.git
 cd mivia-agent
 make build              # produces ./mivia
-
-export DEEPSEEK_API_KEY=sk-...
-./mivia doctor          # verify the key is visible; never prints it
-./mivia chat
 ```
+
+### First run
+
+```bash
+mivia setup             # writes your provider API key to ~/.mivia/.env (0600)
+mivia doctor            # verify the key is visible; never prints it
+mivia chat
+```
+
+`mivia setup` writes the key to an env file with owner-only permissions. It never prints the key value. For scripting, pass `--provider`, `--key`, and `--yes`; or set the key as an environment variable instead.
 
 One-shot mode:
 
 ```bash
 ./mivia chat -p "what does this project do?"
 ```
+
+Shell completions: `mivia completion bash|zsh|fish` prints a completion script for your shell.
 
 Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributing.md). Provider and config options: see [Configuration](docs/product/config.md).
 
