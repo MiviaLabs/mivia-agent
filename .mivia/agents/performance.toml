@@ -1,7 +1,7 @@
 # Measurement-driven performance reviewer with command execution, no writes.
 name = "performance"
 description = "Performance specialist that profiles and benchmarks scoped code with project-native tooling and reports measured findings without editing files."
-tools = ["read_file", "list_dir", "grep", "glob", "find_references", "run_command"]
+tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "run_command"]
 skills = ["performance-review", "concurrency-review"]
 # Measurement work is mechanical (run benchmarks, compare baselines); flash
 # is adequate and keeps repeated profiling rounds cheap.
