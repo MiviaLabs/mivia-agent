@@ -93,7 +93,7 @@ func (m *tuiModel) applySidebarSessionsConfirm() {
 			sidebar.notice = sessionDeleteNotice(session)
 			break
 		}
-		if err := m.session.DeleteSession(session.Reference()); err != nil {
+		if err := m.deleteConversationGroup(session); err != nil {
 			sidebar.notice = "delete failed: " + err.Error()
 			break
 		}
@@ -102,9 +102,14 @@ func (m *tuiModel) applySidebarSessionsConfirm() {
 		sidebar.move(m.sessions, 0)
 		sidebar.notice = fmt.Sprintf("deleted %q", session.Name)
 	case confirmPurgeAll:
-		remaining := make([]chat.SessionInfo, 0, len(m.sessions))
+		raw, err := m.session.ListSessions()
+		if err != nil {
+			sidebar.notice = "purge failed: " + err.Error()
+			break
+		}
+		remaining := make([]chat.SessionInfo, 0, len(raw))
 		deleted, failed := 0, 0
-		for _, session := range m.sessions {
+		for _, session := range raw {
 			if session.WorktreeRoute {
 				remaining = append(remaining, session)
 				continue
@@ -116,7 +121,7 @@ func (m *tuiModel) applySidebarSessionsConfirm() {
 			}
 			deleted++
 		}
-		m.sessions = remaining
+		m.sessions = collapseConversations(remaining)
 		sidebar.move(m.sessions, 0)
 		if failed > 0 {
 			sidebar.notice = fmt.Sprintf("purged %d sessions (%d failed)", deleted, failed)

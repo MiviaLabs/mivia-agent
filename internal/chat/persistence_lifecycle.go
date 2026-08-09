@@ -35,6 +35,7 @@ func (s *Session) ListSessions() ([]SessionInfo, error) {
 		for _, info := range infos {
 			out = append(out, sessionInfoFromCatalog(info))
 		}
+		fillSessionTitles(context.Background(), catalog, principal, out)
 		return out, nil
 	}
 	if s.SessionDir == "" && s.sessionStore == nil {

@@ -297,7 +297,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 		m.runLoadSlash(fields)
 		return true
 	case "/list":
-		sessions, err := m.session.ListSessions()
+		sessions, err := m.listSessions()
 		if err != nil {
 			m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("list error: " + err.Error()), Rendered: tuiErrorStyle.Render("list error: " + err.Error())})
 		} else if len(sessions) == 0 {
