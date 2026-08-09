@@ -178,7 +178,7 @@ func assertFeatureDeliveryPreflightGate(t *testing.T, workflow definition.Workfl
 	}
 	foundEvidence := false
 	for _, cb := range repair.Context {
-		if cb.From == "steps.preflight_validate.output" && cb.As == "failed_evidence" && cb.MaxBytes == 16000 {
+		if cb.From == "steps.preflight_validate.output" && cb.As == "failed_evidence" && cb.MaxBytes == 32768 {
 			foundEvidence = true
 			break
 		}
@@ -211,7 +211,7 @@ func assertFeatureDeliveryPreflightGate(t *testing.T, workflow definition.Workfl
 	structureRepair := featureDeliveryStep(t, workflow, "repair_preflight_structure")
 	foundStructureEvidence := false
 	for _, cb := range structureRepair.Context {
-		if cb.From == "steps.preflight_structure.output" && cb.As == "failed_evidence" && cb.MaxBytes == 16000 {
+		if cb.From == "steps.preflight_structure.output" && cb.As == "failed_evidence" && cb.MaxBytes == 32768 {
 			foundStructureEvidence = true
 			break
 		}
