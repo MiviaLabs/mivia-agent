@@ -127,3 +127,77 @@ func TestCallContextClampsToAbsoluteCeiling(t *testing.T) {
 		t.Fatalf("request not clamped to the 24h absolute ceiling: %s", until)
 	}
 }
+
+// TestRunCommandHugeTimeoutSecondsClampedBeforeMultiply pins the overflow
+// guard on the per-call timeout. A model-supplied timeout_seconds value too
+// large for time.Duration (>= maxDurationSeconds+1, about 292 years) wraps
+// negative when multiplied by time.Second, and the wrapped value bypasses the
+// `timeout > absoluteCeiling` clamp that sits after the multiply - the
+// command then runs under an already-expired context and dies before it
+// starts. The agent loop clamps its own copy of the arg (requestedToolTimeout
+// in internal/agent), so the tool must clamp the raw value the same way or
+// the two disagree on the very same call (DC-6/DC-7: a huge model-supplied
+// timeout_seconds must never wrap time.Duration negative).
+func TestRunCommandHugeTimeoutSecondsClampedBeforeMultiply(t *testing.T) {
+	tool := &runCommandTool{timeoutSec: 2}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*24*time.Hour)
+	defer cancel()
+
+	cases := []struct {
+		name        string
+		secs        int
+		wantCeiling bool // true expects the 24h absolute ceiling, false the static 2s cap
+	}{
+		{"zero means no override", 0, false},
+		{"negative means no override", -1, false},
+		{"max representable seconds", int(maxDurationSeconds), true},
+		// Red case: one second past the representable range overflowed the
+		// multiply and armed an already-expired context.
+		{"one past representable seconds", int(maxDurationSeconds + 1), true},
+		{"max int seconds", int(^uint64(0) >> 1), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			callCtx, callCancel := tool.callContext(ctx, tc.secs)
+			if callCancel == nil {
+				t.Fatal("expected a cancel func")
+			}
+			defer callCancel()
+			if err := callCtx.Err(); err != nil {
+				t.Fatalf("timeout_seconds=%d armed an already-expired context (%v); the command would die before running", tc.secs, err)
+			}
+			d, ok := callCtx.Deadline()
+			if !ok {
+				t.Fatal("expected a deadline")
+			}
+			until := time.Until(d)
+			if tc.wantCeiling {
+				if until > 25*time.Hour || until < 23*time.Hour {
+					t.Fatalf("timeout_seconds=%d not clamped to the 24h absolute ceiling: %s", tc.secs, until)
+				}
+			} else if until > 3*time.Second || until <= 0 {
+				t.Fatalf("timeout_seconds=%d should keep the static 2s cap, got %s", tc.secs, until)
+			}
+		})
+	}
+}
+
+// TestRunCommandHugeTimeoutSecondsCommandStillRuns is the end-to-end shape of
+// the same defect: with a huge (but syntactically valid) timeout_seconds the
+// command must still run to completion under the clamped ceiling. Before the
+// fix the overflowed context killed the command instantly, so the result
+// never carried the command's output.
+func TestRunCommandHugeTimeoutSecondsCommandStillRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh path")
+	}
+	out, _ := runTimeoutScenario(t, runTimeoutCase{
+		capSec: 2, parentSec: 30, argv: "echo done", timeoutSeconds: int(maxDurationSeconds + 1),
+	})
+	// runTimeoutScenario fatals on an Execute error internally, so the
+	// duration slot is deliberately discarded here (same shape as the other
+	// end-to-end case in this file).
+	if !strings.Contains(out, "done") || !strings.Contains(out, "exit=0") {
+		t.Fatalf("expected 'done' exit=0 under the clamp, got %q", out)
+	}
+}
