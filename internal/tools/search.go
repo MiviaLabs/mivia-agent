@@ -269,8 +269,29 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 	}
 	total := 0
 	errs := &walkErrors{maxErrs: 10}
+	err := walkFilteredFiles(ctx, ws, root, in.Glob, secretExceptions, secretPatterns, view, true, errs, func(path, rel string, _ os.FileInfo) error {
+		return scanFile(ctx, path, rel, re, in, &matches, &total, budget, maxMatches, errs)
+	})
+	return matches, errs, err
+}
 
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+// walkFilteredFiles walks root, visiting each non-ignored, non-secret,
+// glob-matching file exactly once, in filepath.WalkDir order. It is the
+// shared traversal policy for grep, glob, and inspect_repository:
+// ignore/secret/glob rules must not drift between them. errs accumulates both
+// walk-level errors (permission denied, unreadable regular-file stat) and any
+// the caller records from inside visit, so both land in the same trailer
+// notice.
+//
+// requireRegular gates the "not a regular file" check: grep and
+// inspect_repository read file content, so a symlink or device node is
+// unreadable content and correctly skipped as a walk error. glob only lists
+// matching paths - it never opens the file - so it must keep listing
+// symlinks and other non-regular entries exactly as it did before this
+// traversal was extracted; requireRegular=false skips the check entirely and
+// visit receives a nil info.
+func walkFilteredFiles(ctx context.Context, ws *workspace.Root, root, glob string, secretExceptions, secretPatterns []string, view ignoreView, requireRegular bool, errs *walkErrors, visit func(path, rel string, info os.FileInfo) error) error {
+	return filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			errs.add(path, walkErr)
 			return nil
@@ -293,20 +314,22 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 		if view.ShouldIgnoreFile(d.Name(), rel) {
 			return nil
 		}
-		if in.Glob != "" && !globMatches(in.Glob, rel, d.Name()) {
+		if glob != "" && !globMatches(glob, rel, d.Name()) {
 			return nil
 		}
 		if isSecretPath(rel, secretExceptions, secretPatterns) {
 			return nil
+		}
+		if !requireRegular {
+			return visit(path, rel, nil)
 		}
 		info, err := d.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			errs.add(rel, fmt.Errorf("not a regular file"))
 			return nil
 		}
-		return scanFile(ctx, path, rel, re, in, &matches, &total, budget, maxMatches, errs)
+		return visit(path, rel, info)
 	})
-	return matches, errs, err
 }
 
 type globTool struct {
@@ -416,41 +439,18 @@ func walkGlob(ctx context.Context, ws *workspace.Root, root, pattern string, max
 	}
 	total := 0
 	errs := &walkErrors{maxErrs: 10}
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	err := walkFilteredFiles(ctx, ws, root, pattern, secretExceptions, secretPatterns, view, false, errs, func(_, rel string, _ os.FileInfo) error {
+		need := len(rel)
+		if len(hits) > 0 {
+			need++
 		}
-		if walkErr != nil {
-			errs.add(path, walkErr)
-			return nil
+		if maxBytes > 0 && total+need > budget {
+			return errMaxBytes
 		}
-		rel := ws.Rel(path)
-		if d.IsDir() {
-			// Do not skip the walk root even if it matches ignore (explicit path).
-			if path != root && view.ShouldIgnoreDir(d.Name(), rel) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if view.ShouldIgnoreFile(d.Name(), rel) {
-			return nil
-		}
-		if isSecretPath(rel, secretExceptions, secretPatterns) {
-			return nil
-		}
-		if globMatches(pattern, rel, d.Name()) {
-			need := len(rel)
-			if len(hits) > 0 {
-				need++
-			}
-			if maxBytes > 0 && total+need > budget {
-				return errMaxBytes
-			}
-			hits = append(hits, rel)
-			total += need
-			if maxMatches > 0 && len(hits) >= maxMatches {
-				return errMaxMatches
-			}
+		hits = append(hits, rel)
+		total += need
+		if maxMatches > 0 && len(hits) >= maxMatches {
+			return errMaxMatches
 		}
 		return nil
 	})

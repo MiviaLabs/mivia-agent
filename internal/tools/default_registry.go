@@ -49,6 +49,11 @@ type DefaultOptions struct {
 	// It does not affect read tools.
 	WritePathDenylist    []string
 	SearchIgnorePatterns []string
+	// MaxInspectRepositoryBytes bounds inspect_repository's output envelope
+	// ([tools] max_inspect_repository_bytes). 0 at construction resolves to
+	// the built-in 64 KiB default; the config layer already resolves an
+	// unset-or-0 knob to that same default before this struct is built.
+	MaxInspectRepositoryBytes int
 
 	// WorkflowTools are pre-built Phase 7 workflow tools. They register only
 	// when the workspace has .mivia/workflows/ and no WorkflowToolsBuilder is
@@ -235,6 +240,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	register(&readFileTool{ws: ws, maxBytes: readMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	register(&listDirTool{ws: ws, maxEntries: opts.MaxListDirEntries, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, ignore: ignore})
 	registerSearchTools(register, ws, readClassMaxBytes, patterns, exceptions, ignore)
+	register(&inspectRepositoryTool{ws: ws, maxBytes: inspectRepositoryBudget(opts), secretPathExceptions: exceptions, secretPathPatterns: patterns, ignore: ignore})
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, writePathDenylist: opts.WritePathDenylist})
 	registerEditTools(register, opts, ws, patterns, exceptions, opts.WritePathDenylist)
 	// run_command is advertised only when the allowlist is non-empty: an empty
@@ -294,6 +300,26 @@ func readClassBudgets(opts DefaultOptions) (int, int) {
 		readClassMaxBytes = min(readClassMaxBytes, opts.MaxToolResultBytes)
 	}
 	return readMaxBytes, readClassMaxBytes
+}
+
+// defaultInspectRepositoryBytes is the OOM/output guard when
+// MaxInspectRepositoryBytes is unset at construction (0). The config layer
+// normally resolves this first (built-in 64 KiB default), so 0 here means a
+// caller built DefaultOptions directly rather than through config.
+const defaultInspectRepositoryBytes = 64 << 10
+
+// inspectRepositoryBudget resolves inspect_repository's result envelope
+// bound, clamped like the other read-class tools by an operator's
+// max_tool_result_bytes ceiling so the loop never has to tail-cut its JSON.
+func inspectRepositoryBudget(opts DefaultOptions) int {
+	budget := opts.MaxInspectRepositoryBytes
+	if budget <= 0 {
+		budget = defaultInspectRepositoryBytes
+	}
+	if opts.MaxToolResultBytes > 0 {
+		budget = min(budget, opts.MaxToolResultBytes)
+	}
+	return budget
 }
 
 // registerWebTools registers the network-backed tools. Their budgets are NOT
