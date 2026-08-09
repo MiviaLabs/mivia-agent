@@ -301,6 +301,17 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	if err != nil {
 		return agenttools.CancelResult{}, err
 	}
+	// Run-level terminal event: the operator cancel settled the run, so bus
+	// consumers see the same run_finished signal a controller-driven terminal
+	// would emit.
+	if workflowledger.IsTerminalRunStatus(run.Status) {
+		if sink := e.workflowProgressSink(); sink != nil {
+			sink.Emit(controller.ProgressEvent{
+				Kind: controller.ProgressRunFinished, RunID: runID, Detail: string(run.Status),
+				Timestamp: time.Now(),
+			})
+		}
+	}
 	return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
 }
 
@@ -382,6 +393,15 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 		return agenttools.DeliverResult{RunID: runID, Refused: true, Reason: "delivery requires allow_publish=true"}, nil
 	}
 	var stdout, stderr strings.Builder
+	// Read the run status BEFORE delivery: an idempotent re-deliver of an
+	// already-succeeded run must not re-publish the terminal event.
+	preStatus := workflowledger.RunStatus("")
+	if preRepo, preClose, preErr := openWorkflowReportContext(e.root, e.configPath); preErr == nil {
+		if pre, getErr := preRepo.GetRun(ctx, runID); getErr == nil {
+			preStatus = pre.Status
+		}
+		preClose()
+	}
 	if err := executeWorkflowDeliver(runID, e.root, e.configPath, allowPublish, false, &stdout, &stderr); err != nil {
 		// Prefer structured status when the ledger still opens after a refusal.
 		if result, ok := sessionDeliverResultFromLedger(ctx, e.root, e.configPath, runID, err); ok {
@@ -402,6 +422,14 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 	if rec, recErr := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(run.RunID, run.WorkflowDigest)); recErr == nil {
 		result.URL = rec.URL
 		result.Mode = rec.Mode
+	}
+	// The tool-deliver path settled the run outside the controller: publish
+	// the terminal run_finished event the controller would have emitted, so
+	// bus consumers observe the delivery completion. Gated on the run having
+	// been parked at delivery_pending before this call: a replay of an already
+	// delivered run is not a transition and must not re-emit.
+	if preStatus == workflowledger.RunStatusDeliveryPending {
+		e.publishDeliveredRunFinished(ctx, repo, runID)
 	}
 	return result, nil
 }

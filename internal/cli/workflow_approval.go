@@ -33,6 +33,10 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 	if err := repo.ClearRunClaim(ctx, runID); err != nil {
 		return fmt.Errorf("clear stale workflow claim: %w", err)
 	}
+	before, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
 	ctrl, err := buildResolutionController(ctx, repo, runID)
 	if err != nil {
 		return err
@@ -45,6 +49,7 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 	if err != nil {
 		return err
 	}
+	emitCLIRunTerminalProgress(runID, before.Status, settled.Status, stderr)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
 	return nil
 }
@@ -66,6 +71,10 @@ func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason st
 	if err != nil {
 		return err
 	}
+	before, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
 	if err := ctrl.Reject(ctx, approvalID, actor, reason); err != nil {
 		fmt.Fprintf(stderr, "workflow rejection failed: %v\n", err)
 		return err
@@ -74,8 +83,25 @@ func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason st
 	if err != nil {
 		return err
 	}
+	emitCLIRunTerminalProgress(runID, before.Status, settled.Status, stderr)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
 	return nil
+}
+
+// emitCLIRunTerminalProgress writes one run_finished JSON line to stderr when
+// an operator command TRANSITIONS the run from a non-terminal status to a
+// terminal status. The workflow controller emits the same event on its own
+// terminal paths; operator-driven settlements (cancel, approve, reject) emit
+// here so the non-interactive stream stays consistent. An idempotent command
+// on an already-terminal run (before == settled) never emits: the settlement
+// happened elsewhere and another run_finished would be a duplicate.
+func emitCLIRunTerminalProgress(runID string, before, settled workflowledger.RunStatus, stderr io.Writer) {
+	if stderr == nil || workflowledger.IsTerminalRunStatus(before) || !workflowledger.IsTerminalRunStatus(settled) {
+		return
+	}
+	(&workflowProgressWriter{w: stderr}).Emit(controller.ProgressEvent{
+		Kind: controller.ProgressRunFinished, RunID: runID, Detail: string(settled),
+	})
 }
 
 // executeWorkflowCancel cancels a non-terminal run (or no-ops on a terminal
@@ -92,19 +118,25 @@ func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Wri
 	if err := repo.ClearRunClaim(ctx, runID); err != nil {
 		return fmt.Errorf("clear stale workflow claim: %w", err)
 	}
+	before, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
 	attempts, err := controller.CancelRunWithAttempts(ctx, repo, runID)
 	if err != nil {
 		fmt.Fprintf(stderr, "workflow cancel failed: %v\n", err)
 		return err
 	}
 	// Terminal progress: one step_completed(canceled) JSON line per attempt
-	// the cancel settled, so consumers of the non-interactive stream see the
+	// the cancel settled, plus one run_finished line when the run reaches a
+	// terminal status, so consumers of the non-interactive stream see the
 	// operator cancel like any other run terminal event.
 	publishCanceledAttemptsCLI(runID, attempts, stderr)
 	settled, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
 	}
+	emitCLIRunTerminalProgress(runID, before.Status, settled.Status, stderr)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
 	return nil
 }
