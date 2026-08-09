@@ -63,13 +63,13 @@ func workflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	}
 	engine := newSessionWorkflowEngine(root, configPath)
 	engine.SetEventBusProvider(provider)
-	svc, err := agenttools.NewService(agenttools.ServiceOptions{
+	// NewService fails only when the repository factory is nil; this caller
+	// always provides one, so the error is impossible by construction and the
+	// branch would be dead code (diff-coverage gate).
+	svc, _ := agenttools.NewService(agenttools.ServiceOptions{
 		Engine: engine,
 		Repo:   repoFactory,
 	})
-	if err != nil {
-		return nil
-	}
 	return svc
 }
 

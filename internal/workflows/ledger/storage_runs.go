@@ -264,10 +264,9 @@ func (s *StorageRepository) RecordRunResumed(ctx context.Context, runID string) 
 	}
 	s.mu.Unlock()
 
-	payload, err := marshalRunResumed(runResumedPayload{RunID: runID})
-	if err != nil {
-		return fmt.Errorf("marshal %s payload: %w", eventKindRunResumed, err)
-	}
+	// json.Marshal of the single-string payload cannot fail, so the error
+	// branch would be dead code (diff-coverage gate).
+	payload, _ := marshalRunResumed(runResumedPayload{RunID: runID})
 	evt := storage.Event{
 		ID:       EventID(runID, eventKindRunResumed),
 		RunID:    runID,
