@@ -64,9 +64,8 @@ func waitForRetry(h *RunHandle, queue map[string]time.Time) error {
 		defer timer.Stop()
 		select {
 		case <-h.poolCtx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+			// The deferred Stop discards any fired timer value; waitForRetry
+			// returns immediately after this select, so a drain is unnecessary.
 		case <-timer.C:
 		}
 	}

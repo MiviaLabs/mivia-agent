@@ -55,7 +55,9 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 }
 
 // executeWorkflowReject rejects one pending human_gate approval and fails the
-// run, mirroring executeWorkflowApprove's lock and controller flow.
+// run, mirroring executeWorkflowApprove's lock and controller flow. Like
+// approve, it reads the before-snapshot BEFORE building the controller, so an
+// unknown run fails fast at the before-read instead of inside the controller.
 func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason string, stdout, stderr io.Writer) error {
 	releaseExecution, repo, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
 	if err != nil {
@@ -67,11 +69,11 @@ func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason st
 	if err := repo.ClearRunClaim(ctx, runID); err != nil {
 		return fmt.Errorf("clear stale workflow claim: %w", err)
 	}
-	ctrl, err := buildResolutionController(ctx, repo, runID)
+	before, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
 	}
-	before, err := repo.GetRun(ctx, runID)
+	ctrl, err := buildResolutionController(ctx, repo, runID)
 	if err != nil {
 		return err
 	}
