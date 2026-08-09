@@ -515,3 +515,10 @@ command = "/home/mac/.local/bin/codegraph"
 args = ["serve", "--mcp"]
 global = true
 timeout_seconds = 30
+
+[[mcp.servers]]
+id = "context7"
+transport = "streamable_http"
+url = "https://mcp.context7.com/mcp"
+global = true
+timeout_seconds = 30
