@@ -34,8 +34,18 @@ Check that the fuzz decision is explicit. Check that the report does not claim h
 the workflow context does not provide. Independently verify each claim by reading the cited
 source paths and the changed files.
 
-Request changes for any missing requirement, unsafe behavior, missing host gate, or unsupported
-claim. Do not approve a step only because it has a low-severity finding. Do not request changes
+Host evidence gates (go test/build/vet/fuzz, make verify, project invariants, structure checks)
+are executed by LATER workflow steps - test_validate, verify, code_validate, preflight_validate,
+and preflight_structure - which run the host commands and record results in the ledger. At this
+review step those gates have NOT run yet, so the absence of gate results in the implementation
+summary or the ledger is expected and must never be raised as a finding. Do not resolve
+test_validate/verify/code_validate/preflight_* attempts expecting records; they do not exist
+until the run reaches those steps. The only host-evidence defect you may raise here is a CLAIMED
+result the workflow context does not support, for example an implementation summary asserting a
+gate passed when no gate result is present in the workflow context.
+
+Request changes for any missing requirement, unsafe behavior, or unsupported claim, excluding
+host-gate absence as described above. Do not approve a step only because it has a low-severity finding. Do not request changes
 based on source you did not inspect. Return only the declared structured output. List every
 workspace path you independently inspected in `inspected`. Do not make a finding about source you
 did not read. Use `approved` only when no finding remains. Otherwise use `changes_requested` and
