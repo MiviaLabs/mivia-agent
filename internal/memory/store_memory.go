@@ -108,7 +108,14 @@ func (s *memStore) matchRows(rows []memRow, text string, limit int) []Result {
 	}
 	matched := make([]scored, 0, len(rows))
 	for _, row := range rows {
-		body := row.e.Good + "\n" + row.e.Bad + "\n" + row.e.Why
+		// Match the same text the sqlite backend searches: the rendered
+		// content includes the tags line and the references block, so the
+		// in-memory backend must include them too (backend parity).
+		body := strings.Join(row.e.Tags, ", ")
+		if len(row.e.References) > 0 {
+			body += "\n" + strings.Join(row.e.References, "\n")
+		}
+		body += "\n" + row.e.Good + "\n" + row.e.Bad + "\n" + row.e.Why
 		rank := rankMatch(row.e.Title, row.e.Summary, body, lowerText)
 		if rank < 0 {
 			continue

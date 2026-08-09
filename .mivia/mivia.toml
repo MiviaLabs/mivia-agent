@@ -106,10 +106,11 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 # ---------------------------------------------------------------------------
 # Agents save and search durable learnings (solutions, failures, conventions)
 # through memory_save and memory_search. Project memory lives in this
-# repository and is COMMITTED, so it travels with the repo. Before committing
-# the database, run a WAL checkpoint so recent writes are in the main file:
-#   PRAGMA wal_checkpoint(TRUNCATE);
-# Only the transient -wal/-shm sidecars are gitignored.
+# repository and is COMMITTED, so it travels with the repo. Every save runs a
+# WAL checkpoint, so the main database file is always current and safe to
+# commit at any time; only the transient -wal/-shm sidecars are gitignored.
+# Keep entries small: the repo's staged-file size gate (500 KiB) bounds how
+# much memory history this repository can carry in the committed database.
 #
 # org_id is USER-owned: it is honored only from ~/.mivia/mivia.toml. A
 # workspace file must never set it (any repo can ship this file, and a
@@ -122,7 +123,19 @@ store_path = ".mivia/memory.db"
 max_entry_bytes = 8192
 max_entries = 500
 max_search_results = 8
-# block_patterns = ["sk-[A-Za-z0-9]+"]   # config-only secret guard
+# This repository COMMITS its memory database, so it ships its own secret
+# guard: any memory whose rendered content matches one of these patterns is
+# refused at save. This is repo config choosing to protect a repo artifact -
+# still config-only, nothing compiled into the binary. Operators can extend
+# or remove this list in their own config.
+block_patterns = [
+  '(?i)sk-[A-Za-z0-9]{16,}',
+  '(?i)ghp_[A-Za-z0-9]{20,}',
+  '(?i)github_pat_[A-Za-z0-9_]{20,}',
+  '(?i)AKIA[0-9A-Z]{16}',
+  '(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----',
+  '(?i)(?:password|passwd|secret|api[_-]?key|token)[ \t]*[:=][ \t]*[^\s,;}\"]{8,}',
+]
 
 # ---------------------------------------------------------------------------
 # WORKTREES - branch names for Mivia-managed Git worktrees

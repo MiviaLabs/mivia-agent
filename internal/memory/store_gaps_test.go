@@ -183,19 +183,28 @@ func TestGapSaveInsertError(t *testing.T) {
 }
 
 var (
-	errGapCommit = errors.New("gap: commit failed")
-	errGapClose  = errors.New("gap: db close failed")
+	errGapCommit     = errors.New("gap: commit failed")
+	errGapClose      = errors.New("gap: db close failed")
+	errGapCount      = errors.New("gap: count query failed")
+	errGapCheckpoint = errors.New("gap: checkpoint failed")
+	errGapChmod      = errors.New("gap: chmod failed")
 )
 
 // gapSQLConnector is a minimal database/sql connector that lets a test force
-// transaction-commit failures (commitErr) and DB.Close failures (closeErr).
+// transaction-commit failures (commitErr), query failures (countErr,
+// checkpointErr), and DB.Close failures (closeErr). existsFalse makes the
+// idempotency probe report "not present" so Save proceeds to the capacity
+// COUNT query.
 type gapSQLConnector struct {
-	commitErr error
-	closeErr  error
+	commitErr     error
+	countErr      error
+	checkpointErr error
+	closeErr      error
+	existsFalse   bool
 }
 
 func (c gapSQLConnector) Connect(context.Context) (driver.Conn, error) {
-	return gapSQLConn{commitErr: c.commitErr}, nil
+	return gapSQLConn{commitErr: c.commitErr, countErr: c.countErr, checkpointErr: c.checkpointErr, existsFalse: c.existsFalse}, nil
 }
 
 func (c gapSQLConnector) Driver() driver.Driver { return gapSQLDriver{} }
@@ -208,7 +217,12 @@ type gapSQLDriver struct{}
 
 func (gapSQLDriver) Open(string) (driver.Conn, error) { return gapSQLConn{}, nil }
 
-type gapSQLConn struct{ commitErr error }
+type gapSQLConn struct {
+	commitErr     error
+	countErr      error
+	checkpointErr error
+	existsFalse   bool
+}
 
 func (gapSQLConn) Prepare(string) (driver.Stmt, error) {
 	return nil, errors.New("gap: Prepare not supported")
@@ -218,8 +232,25 @@ func (gapSQLConn) Close() error { return nil }
 
 func (c gapSQLConn) Begin() (driver.Tx, error) { return gapSQLTx{commitErr: c.commitErr}, nil }
 
-func (c gapSQLConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
-	return &gapSQLCountRows{}, nil
+func (c gapSQLConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	switch {
+	case c.checkpointErr != nil && strings.Contains(query, "wal_checkpoint"):
+		return nil, c.checkpointErr
+	case c.countErr != nil && strings.Contains(query, "COUNT"):
+		return nil, c.countErr
+	case strings.Contains(query, "wal_checkpoint"):
+		// The checkpoint pragma returns three columns (busy, log, checkpointed).
+		return &gapSQLCountRows{cols: []string{"busy", "log", "checkpointed"}}, nil
+	case strings.Contains(query, "EXISTS"):
+		// The idempotency probe reports 1 when the entry already exists.
+		value := int64(1)
+		if c.existsFalse {
+			value = 0
+		}
+		return &gapSQLCountRows{cols: []string{"exists"}, value: value}, nil
+	default:
+		return &gapSQLCountRows{cols: []string{"COUNT(*)"}}, nil
+	}
 }
 
 func (c gapSQLConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
@@ -231,23 +262,32 @@ type gapSQLTx struct{ commitErr error }
 func (t gapSQLTx) Commit() error   { return t.commitErr }
 func (t gapSQLTx) Rollback() error { return nil }
 
-type gapSQLCountRows struct{ done bool }
+type gapSQLCountRows struct {
+	done  bool
+	cols  []string
+	value int64
+}
 
-func (r *gapSQLCountRows) Columns() []string { return []string{"COUNT(*)"} }
+func (r *gapSQLCountRows) Columns() []string { return r.cols }
 func (r *gapSQLCountRows) Close() error      { return nil }
 func (r *gapSQLCountRows) Next(dest []driver.Value) error {
 	if r.done {
 		return io.EOF
 	}
 	r.done = true
-	dest[0] = int64(0)
+	// Fill every destination: Scan refuses NULL-to-int conversion, and the
+	// checkpoint pragma row has three integer columns.
+	for i := range dest {
+		dest[i] = r.value
+	}
 	return nil
 }
 
 func TestGapSaveCommitError(t *testing.T) {
 	// A fake driver whose transactions always fail at Commit exercises
-	// Save's tx.Commit() error branch.
-	db := sql.OpenDB(gapSQLConnector{commitErr: errGapCommit})
+	// Save's tx.Commit() error branch. existsFalse routes past the
+	// idempotent-hit branch so the capacity path's INSERT commit fails.
+	db := sql.OpenDB(gapSQLConnector{commitErr: errGapCommit, existsFalse: true})
 	s := &sqliteStore{
 		projectDB: db,
 		cfg:       Config{Backend: "sqlite", MaxEntryBytes: 8192, MaxEntries: 5, MaxSearchResults: 8},
@@ -347,6 +387,92 @@ func TestGapStoreClosePropagatesOrgDBError(t *testing.T) {
 	s := &sqliteStore{projectDB: projectDB, orgDB: orgDB, cfg: Config{Backend: "sqlite"}}
 	if err := s.Close(); !errors.Is(err, errGapClose) {
 		t.Fatalf("Close = %v, want %v", err, errGapClose)
+	}
+}
+
+func TestGapStoreCloseCheckpointError(t *testing.T) {
+	// Close runs wal_checkpoint(TRUNCATE) before closing; a checkpoint query
+	// failure must surface (durability-relevant on the committed DB).
+	db := sql.OpenDB(gapSQLConnector{checkpointErr: errGapCheckpoint})
+	s := &sqliteStore{projectDB: db, cfg: Config{Backend: "sqlite"}}
+	if err := s.Close(); !errors.Is(err, errGapCheckpoint) {
+		t.Fatalf("Close = %v, want checkpoint error %v", err, errGapCheckpoint)
+	}
+}
+
+func TestGapStoreSaveIdempotentCommitError(t *testing.T) {
+	// The idempotent-hit branch commits a read-only transaction; a commit
+	// failure there must surface.
+	db := sql.OpenDB(gapSQLConnector{commitErr: errGapCommit})
+	s := &sqliteStore{projectDB: db, cfg: Config{Backend: "sqlite", MaxEntries: 5}}
+	_, err := s.Save(context.Background(), testEntry("dup", ScopeProject))
+	if !errors.Is(err, errGapCommit) {
+		t.Fatalf("Save = %v, want commit error %v", err, errGapCommit)
+	}
+}
+
+func TestGapStoreSaveCountScanError(t *testing.T) {
+	// The capacity COUNT query failing must surface from Save.
+	db := sql.OpenDB(gapSQLConnector{countErr: errGapCount, existsFalse: true})
+	s := &sqliteStore{projectDB: db, cfg: Config{Backend: "sqlite", MaxEntries: 5}}
+	_, err := s.Save(context.Background(), testEntry("countfail", ScopeProject))
+	if !errors.Is(err, errGapCount) {
+		t.Fatalf("Save = %v, want count error %v", err, errGapCount)
+	}
+}
+
+func TestGapOpenSQLiteStoreOrgChmodError(t *testing.T) {
+	// The org store must fail closed (not silently stay world-readable) when
+	// the privacy chmod cannot be applied.
+	orig := chmodFile
+	t.Cleanup(func() { chmodFile = orig })
+	chmodFile = func(string, os.FileMode) error { return errGapChmod }
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      filepath.Join(t.TempDir(), "project.db"),
+		OrgPath:          filepath.Join(t.TempDir(), "org.db"),
+		OrgID:            "github.com/acme",
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	if _, err := Open(cfg); !errors.Is(err, errGapChmod) {
+		t.Fatalf("Open = %v, want chmod error %v", err, errGapChmod)
+	}
+}
+
+func TestGapOpenSQLiteStoreOrgDirChmodError(t *testing.T) {
+	// Same for the org directory: the file chmod succeeds, the directory
+	// chmod fails, and Open must still fail closed.
+	orig := chmodFile
+	t.Cleanup(func() { chmodFile = orig })
+	dir := t.TempDir()
+	orgPath := filepath.Join(dir, "org.db")
+	chmodFile = func(p string, _ os.FileMode) error {
+		if p == orgPath {
+			return nil // file chmod succeeds
+		}
+		return errGapChmod // directory chmod fails
+	}
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      filepath.Join(dir, "project.db"),
+		OrgPath:          orgPath,
+		OrgID:            "github.com/acme",
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	if _, err := Open(cfg); !errors.Is(err, errGapChmod) {
+		t.Fatalf("Open = %v, want chmod error %v", err, errGapChmod)
+	}
+}
+
+func TestGapCheckpointNilDB(t *testing.T) {
+	// A nil database is a no-op checkpoint (e.g. an unconfigured org store).
+	s := &sqliteStore{}
+	if err := s.checkpoint(context.Background(), nil); err != nil {
+		t.Fatalf("checkpoint(nil) = %v, want nil", err)
 	}
 }
 

@@ -102,7 +102,17 @@ the main file:
 PRAGMA wal_checkpoint(TRUNCATE);
 ```
 
-The transient `-wal` and `-shm` sidecar files are not committed.
+Since v0.15 the store runs this checkpoint automatically after every save and
+on close, so the main database file is always current and safe to commit at
+any time; the command above is only needed for files written by older
+versions. The transient `-wal` and `-shm` sidecar files are not committed.
+
+Two automated controls protect the committed artifact: `scripts/secret_scan.py`
+decodes the database and scans its text columns on every commit (staged,
+tracked, and base-range modes), and the `block_patterns` list in the repo's own
+`.mivia/mivia.toml` refuses common secret shapes at save time. Keep entries
+small: the repository's staged-file size gate (500 KiB) bounds how much memory
+history the committed database can carry.
 
 ### Org identity is user-owned
 

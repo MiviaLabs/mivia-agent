@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import argparse
 import re
+import sqlite3
 import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath
 
 
@@ -103,6 +105,9 @@ SELF_SKIP = {
     "scripts/secret-scan",
 }
 
+SQLITE_MAGIC = b"SQLite format 3\x00"
+SQLITE_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+
 PLACEHOLDER = re.compile(
     r"(?i)^(changeme|placeholder|your[_-]?|xxx+|todo|example|dummy|"
     r"<.*>|\$\{.*\}|null|none|false|true|0+|test|sample|redacted|"
@@ -127,6 +132,16 @@ def run_git(args: list[str], *, check: bool = True) -> subprocess.CompletedProce
         text=True,
         encoding="utf-8",
         errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=check,
+    )
+
+
+def run_git_bytes(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=check,
@@ -216,11 +231,9 @@ def range_paths(base: str, tip: str) -> list[str]:
     return [p for p in proc.stdout.split("\0") if p]
 
 
-def staged_blob(path: str) -> str | None:
-    proc = run_git(["show", f":{path}"], check=False)
+def staged_blob(path: str) -> bytes | None:
+    proc = run_git_bytes(["show", f":{path}"], check=False)
     if proc.returncode != 0:
-        return None
-    if "\0" in proc.stdout[:8192]:
         return None
     return proc.stdout
 
@@ -242,20 +255,59 @@ def added_lines(base: str, tip: str, path: str) -> str | None:
     return "\n".join(lines) + "\n"
 
 
-def read_tracked(path: str) -> str | None:
+def read_tracked(path: str) -> bytes | None:
     full = ROOT / path
     if not full.is_file():
         return None
     try:
-        data = full.read_bytes()
+        return full.read_bytes()
     except OSError:
         return None
-    if b"\0" in data[:8192]:
-        return None
+
+
+def is_sqlite(data: bytes) -> bool:
+    return data.startswith(SQLITE_MAGIC)
+
+
+def scan_sqlite(rel: str, data: bytes) -> list[str]:
+    """Scan the text columns of a SQLite memory database.
+
+    The repo commits .mivia/memory.db by design, and binary files are
+    invisible to the line-based scan (NUL check / binary diff), so a secret
+    saved via memory_save would otherwise sail into committed history.
+    Stdlib sqlite3 only; anything unreadable is treated as opaque binary.
+    """
+    hits: list[str] = []
     try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError:
-        return data.decode("utf-8", errors="replace")
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            tmp.write(data)
+            tmp.flush()
+            con = sqlite3.connect(f"file:{tmp.name}?mode=ro", uri=True)
+            try:
+                rows = con.execute(
+                    "SELECT id, scope, title, summary, content FROM memories"
+                ).fetchall()
+            finally:
+                con.close()
+    except (sqlite3.Error, OSError):
+        return []
+    for row_id, scope, title, summary, content in rows:
+        for col, value in (("title", title), ("summary", summary), ("content", content)):
+            if not value:
+                continue
+            for line_no, line in enumerate(value.splitlines(), start=1):
+                for name, pattern in PATTERNS:
+                    if match_line(name, pattern, line):
+                        hits.append(f"{rel}:{row_id} {col}:{line_no}: {name}")
+    return hits
+
+
+def scan_blob(rel: str, data: bytes) -> list[str]:
+    if is_sqlite(data):
+        return scan_sqlite(rel, data)
+    if b"\0" in data[:8192]:
+        return []
+    return scan_text(rel, data.decode("utf-8", errors="replace"))
 
 
 def scan_file(path: Path) -> list[str]:
@@ -263,16 +315,11 @@ def scan_file(path: Path) -> list[str]:
     rel = path.relative_to(ROOT).as_posix() if path.is_absolute() else path.as_posix()
     if should_skip_path(rel):
         return []
-    text = read_tracked(rel) if (ROOT / rel).is_file() else None
-    if text is None:
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            return [f"{rel}: unreadable: {exc}"]
-        if b"\0" in data[:8192]:
-            return []
-        text = data.decode("utf-8", errors="replace")
-    return scan_text(rel, text)
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        return [f"{rel}: unreadable: {exc}"]
+    return scan_blob(rel, data)
 
 
 def collect(args: argparse.Namespace) -> list[str]:
@@ -281,24 +328,30 @@ def collect(args: argparse.Namespace) -> list[str]:
         for path in staged_paths():
             if should_skip_path(path):
                 continue
-            text = staged_blob(path)
-            if text is None:
+            data = staged_blob(path)
+            if data is None:
                 continue
-            findings.extend(scan_text(path, text))
+            findings.extend(scan_blob(path, data))
         return findings
 
     if args.tracked:
         for path in tracked_paths():
             if should_skip_path(path):
                 continue
-            text = read_tracked(path)
-            if text is None:
+            data = read_tracked(path)
+            if data is None:
                 continue
-            findings.extend(scan_text(path, text))
+            findings.extend(scan_blob(path, data))
         return findings
 
     for path in range_paths(args.base, args.tip):
         if should_skip_path(path):
+            continue
+        # Binary files show no +/- lines in a diff; scan the whole tip blob.
+        if path.lower().endswith(SQLITE_SUFFIXES):
+            proc = run_git_bytes(["show", f"{args.tip}:{path}"], check=False)
+            if proc.returncode == 0:
+                findings.extend(scan_blob(path, proc.stdout))
             continue
         text = added_lines(args.base, args.tip, path)
         if text is None or text == "":

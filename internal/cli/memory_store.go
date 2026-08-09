@@ -34,11 +34,15 @@ func wireSessionMemory(opts *tools.DefaultOptions, root string, res *config.Reso
 // store_path resolves relative to the workspace root, so a repo owner can
 // keep the database inside the repository (for example ".mivia/memory.db")
 // and commit it to transport memories with the repo; "~" expands to the home
-// directory. The org store is user-level and fixed for v1.
+// directory. Relative paths must stay inside the workspace: ".." segments are
+// rejected so a repo-controlled config cannot route project writes to
+// user-level files. Absolute paths (including ~-expanded ones) are allowed
+// and are treated as repo-controlled config, like lifecycle hooks. The org
+// store is user-level and fixed for v1.
 //
 // The returned store lives for the session (process lifetime for the CLI);
-// SQLite closes cleanly on process exit and the WAL checkpoint runs on
-// normal shutdown.
+// every save runs a WAL checkpoint, so the main database file is always
+// current and safe to commit at any time.
 func openMemoryStore(root string, mc config.MemoryConfig) (memory.Store, error) {
 	projectPath := strings.TrimSpace(mc.StorePath)
 	if projectPath == "" {
@@ -46,7 +50,11 @@ func openMemoryStore(root string, mc config.MemoryConfig) (memory.Store, error) 
 	} else {
 		projectPath = config.ExpandPath(projectPath)
 		if !filepath.IsAbs(projectPath) {
-			projectPath = filepath.Join(root, projectPath)
+			cleaned := filepath.Clean(projectPath)
+			if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+				return nil, fmt.Errorf("memory store_path %q escapes the workspace root", mc.StorePath)
+			}
+			projectPath = filepath.Join(root, cleaned)
 		}
 	}
 	cfg := memory.Config{
