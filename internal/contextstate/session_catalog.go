@@ -99,7 +99,7 @@ type SessionFirstMessageSource interface {
 // A route is separate from a chat session because it has no model binding.
 type WorktreeRouteCatalog interface {
 	SaveWorktreeRoute(context.Context, Principal, string, string) error
-	DeleteWorktreeRoute(context.Context, Principal, string) error
+	DeleteWorktreeRoute(context.Context, Principal, string) (int64, error)
 }
 
 // WorktreeSessionCatalog controls a managed worktree session lifecycle.

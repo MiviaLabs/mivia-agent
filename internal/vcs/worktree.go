@@ -170,6 +170,23 @@ func RemoveWithPrefixLease(ctx context.Context, repoRoot string, name string, br
 	return nil
 }
 
+// Prune drops Git worktree registrations whose directories are gone. The
+// orphan removal path calls it after RemoveWithPrefixLease reports a missing
+// directory, so the stale entry disappears from the worktree list.
+func Prune(ctx context.Context, repoRoot string) error {
+	root, _ := filepath.Abs(repoRoot) // Abs only fails if Getwd fails; git errors otherwise
+	if err := ensureGitRepo(root); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "git", "worktree", "prune")
+	cmd.Dir = root
+	cmd.Env = pinnedEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return &gitCommandError{cmd: "worktree prune", output: string(out), err: err}
+	}
+	return nil
+}
+
 func runGitMutation(cmd *exec.Cmd, lease *os.File) ([]byte, error) {
 	var output bytes.Buffer
 	cmd.Stdout = &output

@@ -126,7 +126,7 @@ func TestDialogCoverageValidatesMissingMarkerStates(t *testing.T) {
 	if err := m.validateWorktreeWithoutMarker(*unmanaged); err == nil || !strings.Contains(err.Error(), "adoption") {
 		t.Fatalf("legacy validation error = %v", err)
 	}
-	if err := store.DeleteWorktreeRoute(context.Background(), principal, unmanaged.Name); err != nil {
+	if _, err := store.DeleteWorktreeRoute(context.Background(), principal, unmanaged.Name); err != nil {
 		t.Fatal(err)
 	}
 	instance := contextstate.WorktreeInstance{Worktree: unmanaged.Name, ID: "wt_1234567890abcdef"}

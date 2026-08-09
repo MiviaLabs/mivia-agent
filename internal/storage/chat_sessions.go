@@ -250,17 +250,21 @@ func (s *SQLite) SaveWorktreeRoute(ctx context.Context, principal contextstate.P
 }
 
 // DeleteWorktreeRoute removes a launch route after its Git worktree is gone.
-func (s *SQLite) DeleteWorktreeRoute(ctx context.Context, principal contextstate.Principal, worktree string) error {
+// It reports how many rows it removed.
+func (s *SQLite) DeleteWorktreeRoute(ctx context.Context, principal contextstate.Principal, worktree string) (int64, error) {
 	if err := principal.Validate(); err != nil {
-		return err
+		return 0, err
 	}
 	if err := validateSessionCatalogName(worktree); err != nil {
-		return err
+		return 0, err
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	_, err := s.db.ExecContext(ctx, `DELETE FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, worktree)
-	return err
+	result, err := s.db.ExecContext(ctx, `DELETE FROM worktree_routes WHERE workspace_id=? AND subject_id=? AND worktree=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, worktree)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextstate.Principal, name string) error {

@@ -157,15 +157,23 @@ func TestOpenWorktreeDialogListError(t *testing.T) {
 	}
 }
 
-func TestWorktreeDialogDeleteFailedNotice(t *testing.T) {
+// TestWorktreeDialogDeleteGhostRowSucceeds pins the new removal semantics: a
+// dialog row whose worktree path is already gone is an unmanaged ghost, so
+// confirming delete succeeds and cleans the storage row instead of failing.
+// The old defensive pin expected "delete failed" for this artificial row; the
+// unmanaged-removal fallback now treats it as already removed.
+func TestWorktreeDialogDeleteGhostRowSucceeds(t *testing.T) {
+	repoRoot := newWorktreeCommandRepo(t)
+	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
 	m := newReadyChatModel(30, 90)
+	m.workspaceDir = repoRoot
 	// Seed a row whose worktree does not exist on disk, then confirm delete.
 	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{{Name: "ghost", Path: "/nonexistent", Branch: "x"}})
 	m.worktreeDlg.cursor = 0
 	m.worktreeDlg.confirm = wtConfirmDelete
 	m.applyWorktreeConfirm()
-	if !strings.Contains(m.worktreeDlg.notice, "delete failed") {
-		t.Fatalf("notice = %q, want delete failed", m.worktreeDlg.notice)
+	if !strings.Contains(m.worktreeDlg.notice, "deleted") {
+		t.Fatalf("notice = %q, want deleted", m.worktreeDlg.notice)
 	}
 }
 

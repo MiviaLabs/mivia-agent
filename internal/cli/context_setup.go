@@ -289,7 +289,14 @@ func beginManagedWorktreeRemovalInStoreExpected(store *storage.SQLite, root stri
 	}
 	instance, err := readWorktreeMarker(wt.Path)
 	if err != nil {
-		return contextstate.WorktreeInstance{}, err
+		if requireExpected {
+			// A bound instance must still match its marker. Fail closed so a
+			// same-name replacement is never removed through a stale binding.
+			return contextstate.WorktreeInstance{}, contextstate.ErrWorktreeDeleted
+		}
+		// The marker is missing, malformed, or unreadable. The worktree may
+		// still occupy HDD space, so removal falls back to the unmanaged path.
+		return contextstate.WorktreeInstance{}, errUnmanagedWorktree
 	}
 	if instance.Worktree != wt.Name {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree marker name does not match")
@@ -318,41 +325,14 @@ func beginManagedWorktreeRemovalInStoreExpected(store *storage.SQLite, root stri
 		return contextstate.WorktreeInstance{}, err
 	}
 	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
+		if errors.Is(err, contextstate.ErrWorktreeDeleted) && !requireExpected {
+			// The marker names an instance storage no longer tracks. The
+			// physical worktree can still be removed to free HDD space.
+			return contextstate.WorktreeInstance{}, errUnmanagedWorktree
+		}
 		return contextstate.WorktreeInstance{}, err
 	}
 	return instance, store.BeginWorktreeDeletion(context.Background(), principal, instance)
-}
-
-func finishManagedWorktreeRemoval(root string, instance contextstate.WorktreeInstance) error {
-	return finishManagedWorktreeRemovalInStore(nil, root, instance)
-}
-
-func finishManagedWorktreeRemovalForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
-	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
-		return finishManagedWorktreeRemovalInStore(store, root, instance)
-	}
-	return finishManagedWorktreeRemoval(root, instance)
-}
-
-func finishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, instance contextstate.WorktreeInstance) error {
-	ownedStore := false
-	if store == nil {
-		var err error
-		store, err = openRepositoryContextStore(root)
-		if err != nil {
-			return err
-		}
-		ownedStore = true
-	}
-	if ownedStore {
-		defer store.Close()
-	}
-	principal, err := worktreeRoutePrincipal(root)
-	if err != nil {
-		return err
-	}
-	_, err = store.DeleteWorktreeSessions(context.Background(), principal, instance)
-	return err
 }
 
 func reactivateManagedWorktree(root string, instance contextstate.WorktreeInstance) error {
@@ -483,5 +463,6 @@ func removeWorktreeRouteInStore(store *storage.SQLite, root, name string) error 
 	// worktreeRoutePrincipal uses fixed valid identity fields and a fixed-size
 	// workspace digest. It cannot fail for a caller-supplied root.
 	principal, _ := worktreeRoutePrincipal(root)
-	return store.DeleteWorktreeRoute(context.Background(), principal, name)
+	_, err := store.DeleteWorktreeRoute(context.Background(), principal, name)
+	return err
 }

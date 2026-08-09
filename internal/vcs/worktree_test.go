@@ -647,3 +647,36 @@ func TestCurrentWorktreeNameFromMainTree(t *testing.T) {
 		t.Errorf("name = %q, want empty in the main tree", name)
 	}
 }
+
+// TestPruneRemovesStaleWorktreeEntry pins the fix where a worktree whose
+// directory is gone stays listed by git until `git worktree prune` runs.
+// The orphan removal path relies on Prune to clear the stale entry after
+// RemoveWithPrefixLease reports the directory as already gone.
+func TestPruneRemovesStaleWorktreeEntry(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	wt, err := Create(ctx, root, "prune-target", "HEAD")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := os.RemoveAll(wt.Path); err != nil {
+		t.Fatalf("RemoveAll worktree directory: %v", err)
+	}
+	resolved, err := Resolve(ctx, root, "prune-target")
+	if err != nil {
+		t.Fatalf("Resolve before prune: %v", err)
+	}
+	if resolved == nil {
+		t.Fatal("git still lists a worktree whose directory is gone")
+	}
+	if err := Prune(ctx, root); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	resolved, err = Resolve(ctx, root, "prune-target")
+	if err != nil {
+		t.Fatalf("Resolve after prune: %v", err)
+	}
+	if resolved != nil {
+		t.Fatalf("Resolve after prune = %+v, want nil", resolved)
+	}
+}
