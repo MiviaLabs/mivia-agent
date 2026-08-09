@@ -57,25 +57,16 @@ func TestStatusDetailAppendsContextOnlyWhileWaiting(t *testing.T) {
 	if got := m.statusDetail(); !strings.HasPrefix(got, "searching") || !strings.Contains(got, "ctx ") {
 		t.Fatalf("waiting statusDetail = %q, want stepDetail + ctx", got)
 	}
-	if got := m.composerDetail(); !strings.HasPrefix(got, "searching") || !strings.Contains(got, "ctx ") {
-		t.Fatalf("waiting composerDetail = %q, want stepDetail + ctx", got)
-	}
 
-	// Empty stepDetail: status bar keeps ctx, composer keeps "queued" fallback.
+	// Empty stepDetail: the status bar keeps the live ctx usage.
 	m.stepDetail = ""
 	if got := m.statusDetail(); !strings.Contains(got, "ctx ") {
 		t.Fatalf("waiting statusDetail with empty step = %q, want ctx", got)
-	}
-	if got := m.composerDetail(); got != "" {
-		t.Fatalf("waiting composerDetail with empty step = %q, want empty (queued fallback)", got)
 	}
 
 	m.waiting = false
 	m.stepDetail = "searching"
 	if got := m.statusDetail(); got != "searching" {
 		t.Fatalf("idle statusDetail = %q, want stepDetail unchanged", got)
-	}
-	if got := m.composerDetail(); got != "searching" {
-		t.Fatalf("idle composerDetail = %q, want stepDetail unchanged", got)
 	}
 }

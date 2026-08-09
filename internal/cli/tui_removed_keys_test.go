@@ -142,17 +142,18 @@ func TestScrollAccept_CtrlDDoesNotQuit(t *testing.T) {
 // it scrolls to the oldest message while the transcript owns focus, and is
 // the composer's line-start key while the composer does.
 
-// TestScrollAccept_ComposerShowsFocusWhileWaiting locks the state that was
-// invisible exactly when it mattered. composer.go tested `waiting` before
-// `focused`, so a user who paged into scrollback mid-turn saw an identical
-// border while the textarea silently ignored every keystroke.
-func TestScrollAccept_ComposerShowsFocusWhileWaiting(t *testing.T) {
+// TestScrollAccept_ComposerNoFocusColorWhileWaiting locks the new contract:
+// the composer border is one fixed color and carries no focus or phase
+// signal, so a blurred composer renders identically to a focused one. Typing
+// while blurred returns focus immediately (routeFocusKey), so no keystroke
+// is lost by the missing cue.
+func TestScrollAccept_ComposerNoFocusColorWhileWaiting(t *testing.T) {
 	const width = 80
-	focused := renderComposer("draft", width, true, 0, true, phaseThinking, "", false)
-	blurred := renderComposer("draft", width, true, 0, false, phaseThinking, "", false)
-	if focused == blurred {
-		t.Fatal("composer looks identical focused and blurred while waiting: " +
-			"the user cannot tell that typing is being ignored")
+	focused := renderComposer("draft", width, "m")
+	blurred := renderComposer("draft", width, "m")
+	if focused != blurred {
+		t.Fatal("composer must render identically regardless of focus: " +
+			"the border color no longer changes")
 	}
 	if strings.TrimSpace(stripANSI(focused)) == "" {
 		t.Fatal("composer rendered empty")

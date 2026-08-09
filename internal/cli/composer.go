@@ -43,36 +43,17 @@ func composerMaxHeight(termH int) int {
 }
 
 // renderComposer wraps textarea.View() in a lipgloss card.
-// States: idle focused, waiting (queue mode), empty draft.
-// The border glows with the agent's phase color (the state language);
-// a blurred composer goes dim regardless - keystrokes aren't landing here.
-// stepDetail and stalledWarning are heartbeat info for long-running tasks.
-// Outer width is always composerOuterWidth; inner matches composerInnerWidth.
-func renderComposer(taView string, width int, waiting bool, queueLen int, focused bool, phase brandPhase, stepDetail string, stalledWarning bool) string {
+// The card is a square-cornered border in one fixed color (no phase glow, no
+// focus flip); the only text on the border is the provider/model label at the
+// bottom-right. Outer width is always composerOuterWidth; inner matches
+// composerInnerWidth.
+func renderComposer(taView string, width int, modelLabel string) string {
 	width = composerOuterWidth(width)
 	innerW := composerInnerWidth(width)
-	_ = queueLen
 
-	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(brandColor(phase)))
-	if !focused {
-		// Blurred: the textarea is ignoring every keystroke. Testing `waiting`
-		// first once made this identical to the focused state, which is the
-		// one moment the difference matters.
-		borderStyle = tuiDimStyle
-	}
-
-	headerLabel := "you"
-	if waiting {
-		headerLabel = "you · queue"
-	}
-	if !focused {
-		// Blurred means the textarea drops every keystroke. Say it in text, not
-		// only in the border colour: a terminal with no colour profile renders
-		// every border style identically, which is how this state stayed invisible.
-		headerLabel += " · esc to type"
-	}
-	top := composerTopBorder(width, headerLabel, borderStyle)
-	bot := composerBottomBorder(width, waiting, borderStyle, stepDetail, stalledWarning)
+	borderStyle := tuiUserStyle
+	top := composerTopBorder(width, borderStyle)
+	bot := composerBottomBorder(width, borderStyle, modelLabel)
 
 	body := strings.TrimRight(taView, "\n")
 	if body == "" {
@@ -99,41 +80,22 @@ func renderComposer(taView string, width int, waiting bool, queueLen int, focuse
 	return b.String()
 }
 
-func composerTopBorder(width int, label string, border lipgloss.Style) string {
-	labW := lipgloss.Width(label)
-	dashN := width - 3 - labW - 1 - 1
-	if dashN < 1 {
-		dashN = 1
-	}
-	return border.Render("╭─ ") +
-		tuiUserLabel.Render(label) +
-		border.Render(" "+strings.Repeat("─", dashN)+"╮")
+// composerTopBorder renders the square top border line: ┌────┐
+func composerTopBorder(width int, border lipgloss.Style) string {
+	return border.Render("┌" + strings.Repeat("─", max(1, width-2)) + "┐")
 }
 
-func composerBottomBorder(width int, waiting bool, border lipgloss.Style, stepDetail string, stalledWarning bool) string {
-	if !waiting {
-		return border.Render("╰" + strings.Repeat("─", width-2) + "╯")
+// composerBottomBorder renders the square bottom border line with the
+// provider/model label right-aligned on it: └──── model ┘
+// The label is dropped when the terminal is too narrow to fit it.
+func composerBottomBorder(width int, border lipgloss.Style, modelLabel string) string {
+	labW := lipgloss.Width(modelLabel)
+	// "└" + dashes + " " + label + " ┘" must total width cells.
+	if labW+4 > width {
+		return border.Render("└" + strings.Repeat("─", max(1, width-2)) + "┘")
 	}
-	note := ""
-	if stalledWarning {
-		note = " ⚠ stalled "
-	} else if stepDetail != "" {
-		note = " " + stepDetail + " "
-	} else {
-		note = " queued "
-	}
-	noteW := lipgloss.Width(note)
-	fdash := width - 2 - 1 - noteW
-	if fdash < 1 {
-		return border.Render("╰" + strings.Repeat("─", width-2) + "╯")
-	}
-	if stalledWarning {
-		return border.Render("╰─") +
-			tuiErrorStyle.Render(note) +
-			border.Render(strings.Repeat("─", fdash-1)+"╯")
-	}
-	// The note carries the same phase glow as the border.
-	return border.Render("╰─") +
-		border.Render(note) +
-		border.Render(strings.Repeat("─", fdash-1)+"╯")
+	dashN := width - labW - 4
+	return border.Render("└"+strings.Repeat("─", dashN)) +
+		border.Render(" "+modelLabel+" ") +
+		border.Render("┘")
 }

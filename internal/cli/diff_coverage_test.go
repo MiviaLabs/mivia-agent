@@ -75,11 +75,11 @@ func TestUpdateChatModeReachesFootDrain(t *testing.T) {
 
 func TestBrandWorktreeChrome(t *testing.T) {
 	withANSI256(t)
-	work := renderWorkChrome(0, phaseStreaming, "m", time.Second, 0, 0, 0, 0, 60, "", "master", "wt-x")
+	work := renderWorkChrome(0, phaseStreaming, time.Second, 0, 0, 0, 0, 60, "", "master", "wt-x")
 	if !strings.Contains(work, "⊞ wt-x") {
 		t.Fatalf("renderWorkChrome must show the worktree: %q", work)
 	}
-	status := renderStatusBar(0, phaseIdle, "m", false, time.Second, 0, 0, 0, 0, 3, 60, "", "master", "wt-x")
+	status := renderStatusBar(0, phaseIdle, false, time.Second, 0, 0, 0, 0, 3, 60, "", "master", "wt-x")
 	if !strings.Contains(status, "⊞ wt-x") {
 		t.Fatalf("renderStatusBar must show the worktree: %q", status)
 	}

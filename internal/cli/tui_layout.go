@@ -51,7 +51,7 @@ func (m *tuiModel) updateFromDrain(d bridgeDrain) {
 			m.stepDetailAt = time.Now()
 		}
 		// Tool-batch heartbeats ("tools 0/2 done · 12s") are real progress -
-		// do not leave the composer footer stuck on "⚠ stalled".
+		// do not leave the hint line stuck on "⚠ stalled".
 		m.stalledWarning = false
 		// Prefer live counts from toolRows (authoritative) over raw heartbeat text.
 		if len(m.toolRows) > 0 {

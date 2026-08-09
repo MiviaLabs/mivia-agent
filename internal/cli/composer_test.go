@@ -4,156 +4,166 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
-// ─── Unit: renderComposer state machine ──────────────────────────────────
+// ─── Unit: renderComposer chrome ───────────────────────────────────────
 
-func TestRenderComposer_IdleFocused_ShowsYouLabel(t *testing.T) {
+func TestRenderComposer_SquareCornersAndNoHeaderLabel(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello", 40, false, 0, true, phaseIdle, "", false)
+	out := renderComposer("hello", 40, "provider/model")
 	plain := stripANSI(out)
-	if !strings.Contains(plain, "╭─") {
-		t.Fatalf("missing top-left corner in idle focused output:\n%q", plain)
+	if !strings.Contains(plain, "┌") || !strings.Contains(plain, "┐") {
+		t.Fatalf("missing square top corners:\n%q", plain)
 	}
-	if !strings.Contains(plain, " you ") {
-		t.Fatalf("expected ' you ' label in idle focused, got:\n%q", plain)
+	if !strings.Contains(plain, "└") || !strings.Contains(plain, "┘") {
+		t.Fatalf("missing square bottom corners:\n%q", plain)
+	}
+	if strings.ContainsAny(plain, "╭╮╰╯") {
+		t.Fatalf("rounded corners must not render:\n%q", plain)
+	}
+	if strings.Contains(plain, "you") {
+		t.Fatalf("'you' label must not render:\n%q", plain)
 	}
 	if !strings.Contains(plain, "hello") {
 		t.Fatalf("expected body content 'hello':\n%q", plain)
 	}
-	if !strings.Contains(plain, "╰") {
-		t.Fatalf("missing bottom border:\n%q", plain)
-	}
 	if strings.Contains(plain, "queued") {
-		t.Fatalf("idle focused must not show queue text:\n%q", plain)
+		t.Fatalf("composer must not carry status text:\n%q", plain)
 	}
 }
 
-func TestRenderComposer_IdleUnfocused_ShowsYouLabel(t *testing.T) {
+func TestRenderComposer_BottomRightShowsModelLabel(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello", 40, false, 0, false, phaseIdle, "", false)
+	out := renderComposer("hello", 40, "deepseek/deepseek-v4")
 	plain := stripANSI(out)
-	if !strings.Contains(plain, " you ") {
-		t.Fatalf("expected ' you ' label in idle unfocused:\n%q", plain)
+	lines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
+	bot := lines[len(lines)-1]
+	if !strings.HasPrefix(bot, "└") || !strings.HasSuffix(bot, "┘") {
+		t.Fatalf("bottom line must be square-bordered: %q", bot)
 	}
-	if strings.Contains(plain, "you · queue") {
-		t.Fatalf("idle must not show queue header:\n%q", plain)
+	if !strings.Contains(bot, "deepseek/deepseek-v4") {
+		t.Fatalf("bottom line must show the model label: %q", bot)
+	}
+	// Label sits on the right half of the line, not the left.
+	if idx := strings.Index(bot, "deepseek"); idx < len(bot)/2 {
+		t.Fatalf("model label must be right-aligned (idx %d of %d): %q", idx, len(bot), bot)
 	}
 }
 
-func TestRenderComposer_Waiting_ShowsQueueLabelAndQueuedFooter(t *testing.T) {
+func TestRenderComposer_LabelDroppedWhenNarrow(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello", 40, true, 2, false, phaseThinking, "", false)
+	out := renderComposer("x", 20, "a-very-long-provider/very-long-model-name")
 	plain := stripANSI(out)
-	if !strings.Contains(plain, "you · queue") {
-		t.Fatalf("waiting header must show 'you · queue':\n%q", plain)
+	lines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
+	bot := lines[len(lines)-1]
+	if !strings.HasPrefix(bot, "└") || !strings.HasSuffix(bot, "┘") {
+		t.Fatalf("narrow bottom line must still be square: %q", bot)
 	}
-	if !strings.Contains(plain, "queued") {
-		t.Fatalf("waiting footer must show 'queued':\n%q", plain)
-	}
-	if !strings.Contains(plain, "hello") {
-		t.Fatalf("body content 'hello' must be present:\n%q", plain)
+	if strings.Contains(bot, "provider") {
+		t.Fatalf("label must be dropped when too narrow: %q", bot)
 	}
 }
 
-func TestRenderComposer_Waiting_ShowsStepDetail(t *testing.T) {
-	t.Parallel()
-	out := renderComposer("draft", 50, true, 1, false, phaseTools, "searching", false)
-	plain := stripANSI(out)
-	if !strings.Contains(plain, "searching") {
-		t.Fatalf("waiting must show stepDetail 'searching':\n%q", plain)
+func TestRenderComposer_FixedColorNoPhaseOrFocusFlips(t *testing.T) {
+	// Not parallel: withANSI256 mutates the global lipgloss color profile.
+	withANSI256(t)
+	// The composer takes no phase or focus input anymore, and the border
+	// style is one fixed color: the raw output must contain exactly the user
+	// blue (256-color index 12) and no dim (8) or other foreground codes.
+	out := renderComposer("draft", 40, "m")
+	if !strings.Contains(out, "\x1b[94m") {
+		t.Fatalf("composer must render the fixed user blue (SGR 94):\n%q", out)
 	}
-	if strings.Contains(plain, "queued") {
-		t.Fatalf("stepDetail must override 'queued':\n%q", plain)
+	if strings.Contains(out, "\x1b[90m") {
+		t.Fatalf("composer must not dim the border:\n%q", out)
 	}
-}
-
-func TestRenderComposer_Waiting_StalledWarning(t *testing.T) {
-	t.Parallel()
-	out := renderComposer("draft", 50, true, 1, false, phaseThinking, "", true)
-	plain := stripANSI(out)
-	if !strings.Contains(plain, "stalled") {
-		t.Fatalf("stalled warning must appear in footer:\n%q", plain)
+	if strings.Contains(out, "38;5;") {
+		t.Fatalf("composer must not use phase colors (38;5;):\n%q", out)
 	}
 }
 
-func TestRenderComposer_NotWaiting_NoQueueFooter(t *testing.T) {
+func TestRenderComposer_EveryLineSpansFullWidth(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello", 30, false, 0, false, phaseIdle, "", false)
-	plain := stripANSI(out)
-	if strings.Contains(plain, "queued") {
-		t.Fatalf("non-waiting must not show queue footer:\n%q", plain)
-	}
-	if strings.Contains(plain, "you · queue") {
-		t.Fatalf("non-waiting must not show queue header:\n%q", plain)
+	for _, w := range []int{20, 30, 40, 80} {
+		out := renderComposer("hello", w, "provider/model")
+		plain := stripANSI(out)
+		lines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
+		for i, line := range lines {
+			if got := lipgloss.Width(line); got != w {
+				t.Fatalf("width=%d line %d rendered %d cells: %q", w, i, got, line)
+			}
+		}
 	}
 }
 
 func TestRenderComposer_NarrowTerminal_Clamps(t *testing.T) {
 	t.Parallel()
-	out := renderComposer("hello world", 10, false, 0, true, phaseIdle, "", false)
+	out := renderComposer("hello world", 10, "m")
 	plain := stripANSI(out)
-	if !strings.Contains(plain, "╭─") {
+	if !strings.Contains(plain, "┌") {
 		t.Fatalf("narrow terminal must still render top corner:\n%q", plain)
-	}
-	if !strings.Contains(plain, " you ") {
-		t.Fatalf("narrow terminal must show label:\n%q", plain)
 	}
 }
 
-// ─── Unit: composerBottomBorder direct tests ─────────────────────────────
+// ─── Unit: composerTopBorder direct tests ───────────────────────────────
 
-func TestComposerBottomBorder_NotWaiting(t *testing.T) {
+func TestComposerTopBorder_SquareNoLabel(t *testing.T) {
 	t.Parallel()
-	out := composerBottomBorder(40, false, tuiUserStyle, "", false)
+	out := stripANSI(composerTopBorder(40, tuiUserStyle))
+	if !strings.HasPrefix(out, "┌") || !strings.HasSuffix(out, "┐") {
+		t.Fatalf("top border must be square corners: %q", out)
+	}
+	if strings.Contains(out, "you") {
+		t.Fatalf("top border must not carry a label: %q", out)
+	}
+	if got := lipgloss.Width(out); got != 40 {
+		t.Fatalf("top border width = %d, want 40", got)
+	}
+}
+
+// ─── Unit: composerBottomBorder direct tests ────────────────────────────
+
+func TestComposerBottomBorder_SquareNoStatusText(t *testing.T) {
+	t.Parallel()
+	out := composerBottomBorder(40, tuiUserStyle, "provider/model")
 	plain := stripANSI(out)
-	if !strings.HasPrefix(plain, "╰") {
+	if !strings.HasPrefix(plain, "└") {
 		t.Fatalf("expected bottom-left corner, got %q", plain)
 	}
-	if !strings.HasSuffix(plain, "╯") {
+	if !strings.HasSuffix(plain, "┘") {
 		t.Fatalf("expected bottom-right corner, got %q", plain)
 	}
 	if strings.Contains(plain, "queued") {
-		t.Fatalf("non-waiting bottom must not have queued text:\n%q", plain)
+		t.Fatalf("bottom border must not carry status text:\n%q", plain)
+	}
+	if got := lipgloss.Width(plain); got != 40 {
+		t.Fatalf("bottom border width = %d, want 40: %q", got, plain)
 	}
 }
 
-func TestComposerBottomBorder_Waiting_DefaultQueued(t *testing.T) {
+func TestComposerBottomBorder_LabelRightAligned(t *testing.T) {
 	t.Parallel()
-	out := composerBottomBorder(40, true, tuiWaitingStyle, "", false)
-	plain := stripANSI(out)
-	if !strings.Contains(plain, "queued") {
-		t.Fatalf("waiting bottom must show 'queued':\n%q", plain)
+	out := stripANSI(composerBottomBorder(40, tuiUserStyle, "deepseek/v4"))
+	idx := strings.Index(out, "deepseek")
+	if idx < 20 {
+		t.Fatalf("label must sit on the right half (idx %d): %q", idx, out)
 	}
-}
-
-func TestComposerBottomBorder_Waiting_StepDetail(t *testing.T) {
-	t.Parallel()
-	out := composerBottomBorder(50, true, tuiWaitingStyle, "analyzing", false)
-	plain := stripANSI(out)
-	if !strings.Contains(plain, "analyzing") {
-		t.Fatalf("stepDetail 'analyzing' must appear:\n%q", plain)
-	}
-	if strings.Contains(plain, "queued") {
-		t.Fatalf("stepDetail must override 'queued':\n%q", plain)
-	}
-}
-
-func TestComposerBottomBorder_Waiting_StalledWarning(t *testing.T) {
-	t.Parallel()
-	out := composerBottomBorder(50, true, tuiWaitingStyle, "", true)
-	plain := stripANSI(out)
-	if !strings.Contains(plain, "stalled") {
-		t.Fatalf("stalled warning must appear:\n%q", plain)
+	if !strings.HasSuffix(out, "┘") {
+		t.Fatalf("bottom-right corner missing: %q", out)
 	}
 }
 
 func TestComposerBottomBorder_Narrow(t *testing.T) {
 	t.Parallel()
-	out := composerBottomBorder(5, true, tuiWaitingStyle, "", false)
+	out := composerBottomBorder(5, tuiUserStyle, "model")
 	plain := stripANSI(out)
-	if !strings.HasPrefix(plain, "╰") {
+	if !strings.HasPrefix(plain, "└") {
 		t.Fatalf("narrow border must still render, got %q", plain)
+	}
+	if got := lipgloss.Width(plain); got != 5 {
+		t.Fatalf("narrow border width = %d, want 5: %q", got, plain)
 	}
 }
 
@@ -205,11 +215,21 @@ func TestComposerMaxHeight(t *testing.T) {
 	}
 }
 
+// ─── Unit: composerModelLabel ───────────────────────────────────────────
+
+func TestComposerModelLabel_ProviderQualified(t *testing.T) {
+	t.Parallel()
+	m := newReadyChatModel(40, 80)
+	m.session = newTestSessionForModel("deepseek-v4")
+	if got := m.composerModelLabel(); got != "deepseek-v4" {
+		t.Fatalf("composerModelLabel without provider = %q, want model only", got)
+	}
+}
+
 // ─── Integration: TUI model in waiting state ────────────────────────────
 
 // TestTUIWaitingComposer_Visible verifies that waiting-state renders a
-// complete, visible composer. Catches regressions where the border uses
-// an invisible color (ANSI 8 "bright black").
+// complete, visible composer with the new square chrome and no "you" text.
 func TestTUIWaitingComposer_Visible(t *testing.T) {
 	m := newReadyChatModel(40, 80)
 	m.waiting = true
@@ -224,22 +244,19 @@ func TestTUIWaitingComposer_Visible(t *testing.T) {
 	}
 
 	plain := stripANSI(out)
-
-	// Must have "you · queue" label in header
-	if !strings.Contains(plain, "you · queue") {
-		t.Errorf("waiting state missing 'you · queue' header label")
-	}
-	// Must have "queued" in bottom border
-	if !strings.Contains(plain, "queued") {
-		t.Errorf("waiting state missing 'queued' footer indicator")
+	if strings.Contains(plain, "you") {
+		t.Errorf("composer must not show 'you' text:\n%q", plain)
 	}
 	// Textarea content must be visible
 	if !strings.Contains(plain, "test draft") {
 		t.Errorf("waiting state missing textarea content 'test draft'")
 	}
-	// Border corners must be present
-	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "╰") {
-		t.Errorf("waiting state composer missing border corners:\n%q", plain)
+	// Border corners must be square
+	if !strings.Contains(plain, "┌") || !strings.Contains(plain, "└") {
+		t.Errorf("waiting state composer missing square corners:\n%q", plain)
+	}
+	if strings.ContainsAny(plain, "╭╮╰╯") {
+		t.Errorf("waiting state composer must not use rounded corners:\n%q", plain)
 	}
 	// Output must not be all whitespace (invisible composer)
 	if len(strings.TrimSpace(plain)) == 0 {
@@ -259,14 +276,10 @@ func TestTUIWaitingComposer_IdleReturn(t *testing.T) {
 	out := m.View()
 	plain := stripANSI(out)
 
-	if strings.Contains(plain, "you · queue") {
-		t.Errorf("idle composer must not show 'you · queue':\n%q", plain)
-	}
 	if strings.Contains(plain, "queued") {
 		t.Errorf("idle composer must not show 'queued':\n%q", plain)
 	}
-	// Must still show label "you"
-	if !strings.Contains(plain, " you ") {
-		t.Errorf("idle composer must show ' you ' label:\n%q", plain)
+	if strings.Contains(plain, "you") {
+		t.Errorf("idle composer must not show 'you':\n%q", plain)
 	}
 }

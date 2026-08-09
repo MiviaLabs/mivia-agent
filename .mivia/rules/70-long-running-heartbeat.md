@@ -84,9 +84,9 @@ All rules are implemented as of 2025-07-17:
 | Handler timeout layering (tighter than parent only) | ✅ | `internal/subagents/multi_step.go:timeoutContext()` |
 | Heartbeat events emitted every 30s | ✅ | `internal/subagents/multi_step.go:emitHeartbeat()` |
 | Heartbeat visible in TUI status bar | ✅ | `internal/cli/brand.go:renderWorkChrome()` |
-| Heartbeat visible in composer bottom bar | ✅ | `internal/cli/composer.go:composerBottomBorder()` |
+| Stalled warning visible in TUI hint line | ✅ | `internal/cli/tui_view.go:chatViewLayout()` |
 | Event-bus heartbeat propagation | ✅ | `internal/subagents/multi_step.go:emitHeartbeat()` (30s) → `internal/cli/dispatcher_handlers.go:OnEventForMultiStep()` → `internal/cli/subagent_progress.go:emitSubagentProgress()` → `events.Bus` (interactive TUI only); workflow steps also emit `controller.ProgressSink` events |
-| Stalled detection (15s quiet since last activity; TUI footer warning only) | ✅ | `internal/cli/tui_layout.go:104` (`stallQuiet = 15 * time.Second`) |
+| Stalled detection (15s quiet since last activity; TUI hint-line warning) | ✅ | `internal/cli/tui_layout.go:104` (`stallQuiet = 15 * time.Second`) |
 | Enriched results (elapsed, steps, step_count) | ✅ | `internal/subagents/multi_step.go`, `internal/cli/dispatch.go` |
 | timeout_seconds override parameter | ✅ | `internal/cli/delegate.go`, `internal/cli/dispatch.go` |
 | Agent prompt awareness | ✅ | `internal/cli/prompt.go`, `.mivia/agents/*.toml` |
