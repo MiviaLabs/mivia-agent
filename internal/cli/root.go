@@ -38,6 +38,10 @@ func Execute(args []string) error {
 		return runWorkflow(args[1:])
 	case "worktree":
 		return runWorktree(args[1:])
+	case "completion":
+		return runCompletion(args[1:])
+	case "setup":
+		return runSetup(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (try %s help)", args[0], version.Binary)
 	}
@@ -88,6 +92,8 @@ Usage:
   %s worktree create <name> [--branch ref] [--workspace dir]
   %s worktree list [--workspace dir]
   %s worktree remove <name> [--workspace dir]
+  %s completion bash|zsh|fish
+  %s setup [--provider name] [--key value] [--env-file path] [--config path] [--yes]
   %s version [--json]
   %s help
 
@@ -109,7 +115,7 @@ Chat: /help /tools /hooks /exit /clear /new /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 func flagValue(args []string, names ...string) (string, []string, bool) {

@@ -90,6 +90,9 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 	// The bus provider is read when a controller attaches, so sess.EventBus
 	// (created later by runTUI) still receives workflow progress events.
 	wireWorkflowToolOptions(&opts, ws.Abs, res, func() *events.Bus { return sess.EventBus })
+	if err := wireSessionMemory(&opts, root, res); err != nil {
+		return err
+	}
 	sess.Tools = tools.NewDefaultRegistry(opts)
 	return nil
 }

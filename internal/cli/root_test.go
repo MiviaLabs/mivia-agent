@@ -154,3 +154,23 @@ func TestExecuteVersionDashVLowerNoJSON(t *testing.T) {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
 	}
 }
+
+// TestExecuteCompletionBash: `mivia completion bash` prints the bash script.
+func TestExecuteCompletionBash(t *testing.T) {
+	done := captureStdout(t)
+	defer done()
+	if err := Execute([]string{"completion", "bash"}); err != nil {
+		t.Fatalf("Execute([completion, bash]) error = %v", err)
+	}
+	if out := done(); !strings.Contains(out, "complete -F _mivia_completion mivia") {
+		t.Fatalf("Execute completion output lacks the bash directive:\n%s", out)
+	}
+}
+
+// TestExecuteCompletionNoArgs: `mivia completion` returns a usage error.
+func TestExecuteCompletionNoArgs(t *testing.T) {
+	err := Execute([]string{"completion"})
+	if err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Fatalf("Execute([completion]) error = %v, want usage line", err)
+	}
+}
