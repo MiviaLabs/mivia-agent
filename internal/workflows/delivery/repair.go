@@ -1,34 +1,22 @@
-package cli
+package delivery
 
 import (
 	"context"
 	"fmt"
 	"io"
 
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	ledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// deliveryRepairStepID is the step ID under which a failed delivery is
-// recorded. Delivery is not a step in the workflow graph, but the ledger
-// tracks the active step through attempts, so the re-entry needs an attempt to
-// carry the route.
-//
-// The name carries a "wf-" prefix so it cannot collide with a step a workflow
-// declares. A workflow step ID never starts with that prefix, because the
-// prefix is not a legal start for a declared ID. Sharing the name with a real
-// step would merge two histories: the synthetic failure would become that
-// step's latest attempt, show in workflow status as one of its attempts, and
-// pollute a steps.<id>.output binding.
-const deliveryRepairStepID = "wf-delivery"
-
-// maxDeliveryRepairs bounds the delivery -> repair -> success -> delivery
+// MaxDeliveryRepairs bounds the delivery -> repair -> success -> delivery
 // cycle. A rejection the named repair step cannot actually fix would otherwise
 // cycle until the step cap or the 24h run deadline is spent, and a run that
 // repairs at the last minute is destroyed rather than delivered.
-const maxDeliveryRepairs = 3
+const MaxDeliveryRepairs = 3
 
-// reopenForRepair returns a run whose delivery failed to the step the workflow
-// names in delivery.on_failure.
+// ReopenForRepair returns a run whose delivery failed to the step the workflow
+// names in delivery.on_failure (or delivery.on_pr_metadata_failure for a
+// PR-metadata defect).
 //
 // Delivery runs after the success terminal, outside the step graph. A delivery
 // that fails for a reason an agent can repair - a commit hook that rejects the
@@ -44,19 +32,20 @@ const maxDeliveryRepairs = 3
 //
 // The run then repairs, reaches its success terminal again, and delivers
 // again. Nothing here knows what the failure was or which step repairs it:
-// the workflow author names the step, so the mechanism stays generic.
-func reopenForRepair(ctx context.Context, repo workflowledger.Repository, runID, repairStep string, cause error, stdout io.Writer) error {
+// the workflow author names the step, so the mechanism stays generic. The
+// CLI and the local engine share this one implementation.
+func ReopenForRepair(ctx context.Context, repo ledger.Repository, runID, repairStep string, cause error, stdout io.Writer) error {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return fmt.Errorf("delivery failed: %v; list attempts for repair: %w", cause, err)
 	}
 	next := 1
 	for _, a := range attempts {
-		if a.StepID == deliveryRepairStepID && a.AttemptNo >= next {
+		if a.StepID == DeliveryRepairStepID && a.AttemptNo >= next {
 			next = a.AttemptNo + 1
 		}
 	}
-	if next > maxDeliveryRepairs {
+	if next > MaxDeliveryRepairs {
 		// The repair budget is spent. Settle the run terminal BEFORE returning:
 		// without this CAS the run stays delivery_pending forever - resume and
 		// cancel both refuse that status, and cleanup removes the worktree
@@ -69,7 +58,7 @@ func reopenForRepair(ctx context.Context, repo workflowledger.Repository, runID,
 		if err != nil {
 			return fmt.Errorf("delivery failed %d times and the repair step did not fix it: %w; read run status to settle: %w", next-1, cause, err)
 		}
-		if err := repo.CompareAndSetRunStatus(ctx, runID, current.Version, workflowledger.RunStatusDeliveryFailed, nil); err != nil {
+		if err := repo.CompareAndSetRunStatus(ctx, runID, current.Version, ledger.RunStatusDeliveryFailed, nil); err != nil {
 			return fmt.Errorf("delivery failed %d times and the repair step did not fix it: %w; settle run to delivery_failed: %w", next-1, cause, err)
 		}
 		return fmt.Errorf("delivery failed %d times and the repair step did not fix it: %w", next-1, cause)
@@ -84,16 +73,16 @@ func reopenForRepair(ctx context.Context, repo workflowledger.Repository, runID,
 	if err != nil {
 		return fmt.Errorf("delivery failed: %v; read run status for repair: %w", cause, err)
 	}
-	if err := repo.CompareAndSetRunStatus(ctx, runID, current.Version, workflowledger.RunStatusRunning, nil); err != nil {
+	if err := repo.CompareAndSetRunStatus(ctx, runID, current.Version, ledger.RunStatusRunning, nil); err != nil {
 		return fmt.Errorf("delivery failed: %v; return run to running: %w", cause, err)
 	}
 
-	attempt := workflowledger.StepAttempt{
+	attempt := ledger.StepAttempt{
 		RunID:     runID,
-		AttemptID: fmt.Sprintf("wfa-%s-%d", deliveryRepairStepID, next),
-		StepID:    deliveryRepairStepID,
+		AttemptID: fmt.Sprintf("wfa-%s-%d", DeliveryRepairStepID, next),
+		StepID:    DeliveryRepairStepID,
 		AttemptNo: next,
-		Status:    workflowledger.AttemptStatusRunning,
+		Status:    ledger.AttemptStatusRunning,
 	}
 	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
 		return fmt.Errorf("delivery failed: %v; record delivery attempt: %w", cause, err)
@@ -103,9 +92,9 @@ func reopenForRepair(ctx context.Context, repo workflowledger.Repository, runID,
 	if err != nil {
 		return fmt.Errorf("delivery failed: %v; read delivery attempt: %w", cause, err)
 	}
-	outcome := workflowledger.AttemptOutcome{
-		Status:   workflowledger.AttemptStatusFailed,
-		ErrorRef: storeDeliveryFailureText(ctx, repo, cause),
+	outcome := ledger.AttemptOutcome{
+		Status:   ledger.AttemptStatusFailed,
+		ErrorRef: StoreDeliveryFailureText(ctx, repo, cause),
 		ToStepID: repairStep,
 	}
 	if err := repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, fresh.Version, outcome); err != nil {
@@ -113,20 +102,20 @@ func reopenForRepair(ctx context.Context, repo workflowledger.Repository, runID,
 	}
 
 	fmt.Fprintf(stdout, "delivery failed: %v\n", cause)
-	fmt.Fprintf(stdout, "run_id=%s status=%s repairing at step %q\n", runID, workflowledger.RunStatusRunning, repairStep)
+	fmt.Fprintf(stdout, "run_id=%s status=%s repairing at step %q\n", runID, ledger.RunStatusRunning, repairStep)
 	fmt.Fprintf(stdout, "continue with: mivia workflow resume %s\n", runID)
 	return nil
 }
 
-// storeDeliveryFailureText puts the failure text in content-addressed storage
+// StoreDeliveryFailureText puts the failure text in content-addressed storage
 // and returns its ref. Fail-soft: an empty ref costs the repair agent its
 // evidence, but must not stop the re-entry.
-func storeDeliveryFailureText(ctx context.Context, repo workflowledger.Repository, cause error) string {
+func StoreDeliveryFailureText(ctx context.Context, repo ledger.Repository, cause error) string {
 	if cause == nil {
 		return ""
 	}
 	data := []byte(cause.Error())
-	ref := "sha256:" + workflowledger.DigestHex(data)
+	ref := "sha256:" + ledger.DigestHex(data)
 	if err := repo.StoreContent(ctx, ref, data); err != nil {
 		return ""
 	}

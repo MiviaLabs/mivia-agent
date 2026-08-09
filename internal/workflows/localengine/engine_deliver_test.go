@@ -50,6 +50,38 @@ to = "success"
 status = "succeeded"
 `
 
+// deliverMeRepairTOML is deliverMeTOML plus a delivery on_failure route so a
+// PR-metadata delivery failure can return the run to a repair step (the
+// engine's FromCompiled defaults OnPRMetadataFailure to delivery.on_failure).
+const deliverMeRepairTOML = `version = 1
+name = "deliver-me"
+initial_step = "one"
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 100
+
+[delivery]
+kind = "pull_request"
+mode = "draft"
+provider = "github"
+base = "main"
+on_failure = "one"
+
+[[steps]]
+id = "one"
+kind = "agent"
+agent = "one"
+on_failure = "failure"
+
+[[transitions]]
+from = "one"
+to = "success"
+[transitions.match]
+status = "succeeded"
+`
+
 // twoStepTOML is a non-delivery workflow used to exercise start/resume worktree
 // handling without publication.
 const twoStepTOML = `version = 1
@@ -395,14 +427,22 @@ func newSeededDeliveryFixture(t *testing.T) (repoRoot, originURL string, run wor
 }
 
 // createDeliveryPendingRun admits a pending run and CASes it along the
-// pending->running->delivery_pending chain. The snapshot carries the deliver-me
-// definition so Engine.Deliver can rebuild the compiled delivery policy.
+// pending->running->delivery_pending chain. The snapshot carries the
+// deliver-me definition so Engine.Deliver can rebuild the compiled delivery
+// policy.
 func createDeliveryPendingRun(t *testing.T, repo workflowledger.Repository, snap workflowledger.RunSnapshot) workflowledger.RunSnapshot {
+	t.Helper()
+	return createDeliveryPendingRunTOML(t, repo, snap, deliverMeTOML)
+}
+
+// createDeliveryPendingRunTOML is createDeliveryPendingRun parameterized by
+// the workflow definition TOML the snapshot carries.
+func createDeliveryPendingRunTOML(t *testing.T, repo workflowledger.Repository, snap workflowledger.RunSnapshot, toml string) workflowledger.RunSnapshot {
 	t.Helper()
 	ctx := context.Background()
 	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
 		SchemaVersion:    workflowledger.SnapshotSchemaVersion,
-		DefinitionTOML:   []byte(deliverMeTOML),
+		DefinitionTOML:   []byte(toml),
 		DefinitionDigest: "digest",
 		Inputs:           map[string]string{"task": "build"},
 		Delivery:         &workflowledger.DeliverySnapshot{Mode: "draft", Provider: "github", Base: "main"},
@@ -482,5 +522,143 @@ func writeFileT(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// seedEngineChangeSummary records a completed step attempt whose output JSON
+// is the agent's change summary (pr_title/pr_summary), so the delivery
+// engine's change-summary resolution can find it.
+func seedEngineChangeSummary(t *testing.T, repo workflowledger.Repository, runID, outputJSON string) {
+	t.Helper()
+	ctx := context.Background()
+	ref := "sha256:" + workflowledger.DigestHex([]byte(outputJSON))
+	if err := repo.StoreContent(ctx, ref, []byte(outputJSON)); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{
+		RunID: runID, StepID: "change-summary", AttemptID: "wfa-change-summary-1",
+		AttemptNo: 1, Status: workflowledger.AttemptStatusSucceeded, OutputRef: ref,
+	}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeEngineWorkspacePRTitlePolicy writes a pr-title.toml policy under the
+// worktree's .mivia/policy directory and excludes .mivia/ from the fixture's
+// index, so delivery reads the policy file but never commits it into the
+// delivered diff.
+func writeEngineWorkspacePRTitlePolicy(t *testing.T, repoRoot, worktreeRoot, content string) {
+	t.Helper()
+	exclude := filepath.Join(repoRoot, ".git", "info", "exclude")
+	f, err := os.OpenFile(exclude, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open git exclude: %v", err)
+	}
+	if _, err := f.WriteString("\n.mivia/\n"); err != nil {
+		f.Close()
+		t.Fatalf("append git exclude: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close git exclude: %v", err)
+	}
+	dir := filepath.Join(worktreeRoot, ".mivia", "policy")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pr-title.toml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write pr-title.toml: %v", err)
+	}
+}
+
+// newSeededDeliveryFixtureTOML is newSeededDeliveryFixture parameterized by
+// the workflow definition TOML the run snapshot carries.
+func newSeededDeliveryFixtureTOML(t *testing.T, toml string) (repoRoot, originURL string, run workflowledger.RunSnapshot, repo workflowledger.Repository) {
+	t.Helper()
+	repoRoot, originURL = newRealDeliveryRepo(t)
+	baseCommit := runGitOutT(t, repoRoot, "rev-parse", "HEAD")
+
+	worktreeRoot := filepath.Join(repoRoot, ".mivia", "worktrees", "wt-test")
+	runGitT(t, repoRoot, "worktree", "add", "-b", "wf/wt-test", worktreeRoot, baseCommit)
+	runGitT(t, worktreeRoot, "config", "user.email", "test@example.com")
+	runGitT(t, worktreeRoot, "config", "user.name", "Test")
+	// Uncommitted change so the intended diff is non-empty.
+	writeFileT(t, filepath.Join(worktreeRoot, "a.txt"), "base\nchanged\n")
+
+	repo = workflowledger.NewMemoryRepository()
+	run = createDeliveryPendingRunTOML(t, repo, workflowledger.RunSnapshot{
+		RunID: "wfr-test", WorkflowName: "deliver-me", WorkflowDigest: "digest",
+		ActiveStepID: "success", BaseRef: "main", BaseCommit: baseCommit,
+		WorktreeName: "wt-test", RemoteURL: originURL,
+	}, toml)
+	return repoRoot, originURL, run, repo
+}
+
+// TestEngineDeliverPRMetadataFailureRoutesToRepairStep: a delivery attempt
+// whose PR-metadata validation fails against the workspace pr-title policy is
+// a REPAIRABLE failure, so Engine.Deliver routes the run to the repair step
+// named by delivery.on_failure (the OnPRMetadataFailure default): the result
+// reports running, a wf-delivery attempt is recorded whose ErrorRef names the
+// policy violation, and no PR create happened (validation runs before any
+// commit). The refusal path is unchanged.
+func TestEngineDeliverPRMetadataFailureRoutesToRepairStep(t *testing.T) {
+	repoRoot, _, run, repo := newSeededDeliveryFixtureTOML(t, deliverMeRepairTOML)
+	writeEngineWorkspacePRTitlePolicy(t, repoRoot, filepath.Join(repoRoot, ".mivia", "worktrees", "wt-test"), `[title]
+pattern = '^[a-z]+\((?P<scope>[a-z]+)\): .+$'
+scopes = ["feat"]
+`)
+	seedEngineChangeSummary(t, repo, run.RunID, `{"pr_title": "feat(scope): add widget", "pr_summary": "Adds the widget."}`)
+	pr := &recordingPR{}
+	engine := &localengine.Engine{WorkspaceRoot: repoRoot, Repo: repo, PR: pr}
+
+	res, err := engine.Deliver(context.Background(), run.RunID, true)
+	if err != nil {
+		t.Fatalf("Engine.Deliver: %v", err)
+	}
+	if res.Status != string(workflowledger.RunStatusRunning) {
+		t.Fatalf("deliver result = %+v, want status running at the repair step", res)
+	}
+	fresh, err := repo.GetRun(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Status != workflowledger.RunStatusRunning {
+		t.Fatalf("run status = %q, want %q: a PR-metadata failure must not stop the run",
+			fresh.Status, workflowledger.RunStatusRunning)
+	}
+	if fresh.ActiveStepID != "one" {
+		t.Fatalf("active step = %q, want %q (the delivery.on_failure repair step)", fresh.ActiveStepID, "one")
+	}
+
+	attempts, err := repo.ListStepAttempts(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded *workflowledger.StepAttempt
+	for i := range attempts {
+		if attempts[i].StepID == delivery.DeliveryRepairStepID {
+			recorded = &attempts[i]
+		}
+	}
+	if recorded == nil {
+		t.Fatal("no wf-delivery attempt recorded; the PR-metadata failure must be in the run history")
+	}
+	if recorded.ToStepID != "one" {
+		t.Fatalf("delivery attempt route = %q, want %q", recorded.ToStepID, "one")
+	}
+	if recorded.ErrorRef == "" {
+		t.Fatal("delivery attempt has no ErrorRef; the repair agent would have no evidence")
+	}
+	body, err := repo.LoadContent(context.Background(), recorded.ErrorRef)
+	if err != nil {
+		t.Fatalf("load failure evidence: %v", err)
+	}
+	if !strings.Contains(string(body), "not allowed") {
+		t.Fatalf("failure evidence = %q, want it to name the pr-title policy violation", body)
+	}
+	// PR-metadata validation runs BEFORE any commit or push, so the PR client
+	// must not have been called.
+	if created := pr.createdPRs(); len(created) != 0 {
+		t.Fatalf("PR create calls = %d, want zero before metadata validation: %+v", len(created), created)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -490,7 +491,7 @@ func TestWorkflowDeliverTimeoutWithOnFailureStaysPending(t *testing.T) {
 	}
 	repairAttempts := 0
 	for _, a := range attempts {
-		if a.StepID == deliveryRepairStepID {
+		if a.StepID == delivery.DeliveryRepairStepID {
 			repairAttempts++
 		}
 	}
@@ -581,5 +582,153 @@ func TestWorkflowDeliverRefusalRecordsReason(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "delivery base") {
 		t.Fatalf("recorded refusal reason = %q, want it to name the base rewrite", body)
+	}
+}
+
+// appendWorkflowDeliveryOnPRMetadataFailure adds an on_pr_metadata_failure
+// route to the fixture's [delivery] block so a PR-metadata delivery failure
+// would re-enter the named step.
+func appendWorkflowDeliveryOnPRMetadataFailure(t *testing.T, root, step string) {
+	t.Helper()
+	path := filepath.Join(root, ".mivia", "workflows", "two-step.toml")
+	body := "on_pr_metadata_failure = \"" + step + "\"\n"
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(body); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedCLIChangeSummary records a completed step attempt whose output JSON is
+// the agent's change summary (pr_title/pr_summary), so the delivery engine's
+// change-summary resolution can find it.
+func seedCLIChangeSummary(t *testing.T, ctx context.Context, repo workflowledger.Repository, runID, outputJSON string) {
+	t.Helper()
+	ref := "sha256:" + workflowledger.DigestHex([]byte(outputJSON))
+	if err := repo.StoreContent(ctx, ref, []byte(outputJSON)); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{
+		RunID: runID, StepID: "change-summary", AttemptID: "wfa-change-summary-1",
+		AttemptNo: 1, Status: workflowledger.AttemptStatusSucceeded, OutputRef: ref,
+	}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedCLIWorkspacePRTitlePolicy writes a pr-title.toml policy under the run
+// worktree's .mivia/policy directory and excludes .mivia/ from the fixture's
+// index, so delivery reads the policy file but never commits it into the
+// delivered diff.
+func seedCLIWorkspacePRTitlePolicy(t *testing.T, root, runID string, repo workflowledger.Repository, content string) {
+	t.Helper()
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := vcs.Resolve(context.Background(), root, run.WorktreeName)
+	if err != nil || worktree == nil {
+		t.Fatalf("resolve run worktree = %+v, %v", worktree, err)
+	}
+	exclude := filepath.Join(root, ".git", "info", "exclude")
+	f, err := os.OpenFile(exclude, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open git exclude: %v", err)
+	}
+	if _, err := f.WriteString("\n.mivia/\n"); err != nil {
+		f.Close()
+		t.Fatalf("append git exclude: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close git exclude: %v", err)
+	}
+	dir := filepath.Join(worktree.Path, ".mivia", "policy")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pr-title.toml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write pr-title.toml: %v", err)
+	}
+}
+
+// TestWorkflowDeliverPRMetadataFailureRoutesToRepairStep: a delivery attempt
+// whose PR-metadata validation fails against the workspace pr-title policy is
+// a REPAIRABLE failure, so settleDeliveryError routes the run to the
+// on_pr_metadata_failure step: a wf-delivery attempt is recorded whose
+// ErrorRef names the policy violation, the run returns to running at the
+// repair step, and no push or PR create happened (validation runs before any
+// commit).
+func TestWorkflowDeliverPRMetadataFailureRoutesToRepairStep(t *testing.T) {
+	root, storePath, config, prRecorder := newDeliveryFixture(t)
+	appendWorkflowDeliveryOnFailure(t, root, "one")
+	appendWorkflowDeliveryOnPRMetadataFailure(t, root, "two")
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, runID, repo)
+	seedCLIChangeSummary(t, context.Background(), repo, runID, `{"pr_title": "feat(scope): add widget", "pr_summary": "Adds the widget."}`)
+	seedCLIWorkspacePRTitlePolicy(t, root, runID, repo, `[title]
+pattern = '^[a-z]+\((?P<scope>[a-z]+)\): .+$'
+scopes = ["feat"]
+`)
+
+	err := runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, io.Discard, io.Discard)
+	// A first repair route returns nil: delivery.ReopenForRepair prints and CASes the
+	// run, so a nil error means "routed", not "published" (the session repair
+	// loop relies on the same shape).
+	if err != nil {
+		t.Fatalf("deliver error = %v, want the repair route to succeed", err)
+	}
+
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run returns to running at the on_pr_metadata_failure step, exactly
+	// like an on_failure repair route.
+	if run.Status != workflowledger.RunStatusRunning {
+		t.Fatalf("run status = %q, want %q: a PR-metadata failure must not stop the run",
+			run.Status, workflowledger.RunStatusRunning)
+	}
+	if run.ActiveStepID != "two" {
+		t.Fatalf("active step = %q, want %q (the on_pr_metadata_failure step)", run.ActiveStepID, "two")
+	}
+
+	attempts, err := repo.ListStepAttempts(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded *workflowledger.StepAttempt
+	for i := range attempts {
+		if attempts[i].StepID == delivery.DeliveryRepairStepID {
+			recorded = &attempts[i]
+		}
+	}
+	if recorded == nil {
+		t.Fatal("no wf-delivery attempt recorded; the PR-metadata failure must be in the run history")
+	}
+	if recorded.ToStepID != "two" {
+		t.Fatalf("delivery attempt route = %q, want %q", recorded.ToStepID, "two")
+	}
+	if recorded.ErrorRef == "" {
+		t.Fatal("delivery attempt has no ErrorRef; the repair agent would have no evidence")
+	}
+	body, err := repo.LoadContent(context.Background(), recorded.ErrorRef)
+	if err != nil {
+		t.Fatalf("load failure evidence: %v", err)
+	}
+	if !strings.Contains(string(body), "not allowed") {
+		t.Fatalf("failure evidence = %q, want it to name the pr-title policy violation", body)
+	}
+	// PR-metadata validation runs BEFORE any commit or push, so the boundary
+	// clients must not have been called.
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero before metadata validation", creates, finds)
 	}
 }

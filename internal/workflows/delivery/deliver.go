@@ -100,26 +100,26 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 		return replayResult(existing), nil
 	}
 
-	// 4-9. Verify the pinned worktree and snapshot the intended diff. An
-	// empty intended diff settles as no_diff with no PR and no commit.
-	// The remote base is verified against the origin base recorded at
-	// admission (OriginBaseCommit) when present; otherwise the admitted
-	// local BaseCommit is the pin.
-	req.stage("eligibility", "verify the pinned worktree and intended diff")
-	originBase := run.OriginBaseCommit
-	if originBase == "" {
-		originBase = req.BaseCommit
-	}
-	head, porcelainEmpty, diffRef, repoSlug, err := verifyEligibility(ctx, repo, git, req, key, originBase)
+	head, porcelainEmpty, diffRef, repoSlug, originBase, noDiff, err := verifyEligibilityAndStage(ctx, repo, git, req, key, run)
 	if err != nil {
 		return Result{}, err
 	}
-	if diffRef == "" {
+	if noDiff {
 		req.stage("no_diff", "no diff to publish")
 		return Result{
 			Mode: req.Policy.Mode, BaseRef: req.Policy.Base, HeadRef: req.Branch,
 			Provider: "github", Status: "no_diff",
 		}, nil
+	}
+
+	// 10a. PR metadata: resolve the agent-provided title and summary, or fall
+	// back to the legacy title_template render, then validate the final title
+	// against the OPTIONAL workspace PR-title policy. This runs BEFORE any
+	// commit or push, so a metadata defect writes no delivery record and
+	// travels to the caller classifier unchanged.
+	title, body, err := validatePRMetadata(ctx, repo, req)
+	if err != nil {
+		return Result{}, err
 	}
 
 	// 10b. Optional workspace commit-message policy: validate the rendered
@@ -141,7 +141,26 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 	// 12-16. Push the branch, then find or create one PR. The admitted base
 	// pin travels with the publish so the post-create base check (AR-7) can
 	// verify the PR's base still contains the admitted commit.
-	return pushAndPublish(ctx, repo, git, pr, req, key, repoSlug, head, treeSHA, diffRef, originBase, existing)
+	return pushAndPublish(ctx, repo, git, pr, req, key, repoSlug, head, treeSHA, diffRef, originBase, existing, title, body)
+}
+
+// verifyEligibilityAndStage runs the eligibility verification (steps 4-9):
+// the pinned worktree checks and the intended-diff snapshot. An empty
+// intended diff settles as no_diff with no PR and no commit. The remote
+// base is verified against the origin base recorded at admission
+// (OriginBaseCommit) when present; otherwise the admitted local BaseCommit
+// is the pin.
+func verifyEligibilityAndStage(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key string, run ledger.RunSnapshot) (head string, porcelainEmpty bool, diffRef, repoSlug, originBase string, noDiff bool, err error) {
+	req.stage("eligibility", "verify the pinned worktree and intended diff")
+	originBase = run.OriginBaseCommit
+	if originBase == "" {
+		originBase = req.BaseCommit
+	}
+	head, porcelainEmpty, diffRef, repoSlug, err = verifyEligibility(ctx, repo, git, req, key, originBase)
+	if err != nil {
+		return "", false, "", "", "", false, err
+	}
+	return head, porcelainEmpty, diffRef, repoSlug, originBase, diffRef == "", nil
 }
 
 // deliveryRunGuard enforces the entry status: only a delivery_pending run may
@@ -371,14 +390,14 @@ func baseStillContains(ctx context.Context, git GitRunner, req Request, admitted
 // pushAndPublish pushes the delivery commit and finds or creates exactly one
 // PR, recording each stage durably. originBase is the admitted remote base
 // pin used by the post-create base verification (AR-7).
-func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, head, treeSHA, diffRef, originBase string, existing ledger.DeliveryRecord) (Result, error) {
+func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, head, treeSHA, diffRef, originBase string, existing ledger.DeliveryRecord, title, body string) (Result, error) {
 	// 12-13. Push the branch to origin and record the push.
 	if err := pushDeliveryBranch(ctx, repo, git, req, key, head, treeSHA, diffRef, existing); err != nil {
 		return Result{}, err
 	}
 
 	// 14-15a. Find or create the PR and verify the admitted base.
-	remoteID, url, err := findOrCreateAndVerifyPR(ctx, repo, git, pr, req, key, repoSlug, originBase, existing)
+	remoteID, url, err := findOrCreateAndVerifyPR(ctx, repo, git, pr, req, key, repoSlug, originBase, existing, title, body)
 	if err != nil {
 		return Result{}, err
 	}
@@ -426,15 +445,7 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 // reviewer flipped its draft state, while a genuinely foreign PR with the
 // wrong draft state is a permanent condition and settles as a refusal instead
 // of deadlocking the run in delivery_pending forever.
-func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, req Request, key, repoSlug string, existing ledger.DeliveryRecord) (*PRRef, error) {
-	title, err := req.Policy.RenderTitle(req.Inputs)
-	if err != nil {
-		markFailed(ctx, repo, key, req, err)
-		req.stage("failed", err.Error())
-		return nil, err
-	}
-	body := "Automated workflow delivery from Mivia.\n\nRun: " + req.RunID + "\nWorkflow digest: " + req.WorkflowDigest
-
+func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, req Request, key, repoSlug string, existing ledger.DeliveryRecord, title, body string) (*PRRef, error) {
 	found, err := pr.FindByHead(ctx, repoSlug, req.Branch)
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)

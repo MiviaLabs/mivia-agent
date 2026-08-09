@@ -143,21 +143,22 @@ func TestCoveragePushAndPublishPushedPRRecordUpsertFailure(t *testing.T) {
 	}
 }
 
-// TestCoverageFindOrCreatePRTitleRenderFailure executes the title-render
-// failure branch of findOrCreatePR (deliver.go:430-435): a non-empty title
+// TestCoveragePRMetadataTitleRenderFailure executes the legacy title-render
+// failure branch of validatePRMetadata (deliver.go): a non-empty title
 // template that renders to whitespace folds to an empty title, which
-// RenderTitle rejects. The failure happens before any PR API call; markFailed
-// persists a failed record and the "failed" stage fires at deliver.go:433.
-func TestCoverageFindOrCreatePRTitleRenderFailure(t *testing.T) {
+// RenderTitle rejects. The validation stage runs right after the no_diff gate
+// and BEFORE any commit or push, so the failure writes no delivery record, the
+// branch never reaches origin, and no PR API call happens.
+func TestCoveragePRMetadataTitleRenderFailure(t *testing.T) {
 	ctx := context.Background()
-	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
 	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
 
 	pol := defaultPolicy("draft")
 	// A non-empty title template that renders to whitespace folds to an empty
 	// title, which RenderTitle rejects ("title_template rendered an empty
-	// title"). The commit-message template stays valid, so the commit path
-	// completes and the failure lands exactly in findOrCreatePR.
+	// title"). The commit-message template stays valid, so any failure lands
+	// in validatePRMetadata, before the commit path.
 	pol.TitleTemplate = "{{ inputs.blank }}"
 
 	var stages []string
@@ -175,15 +176,11 @@ func TestCoverageFindOrCreatePRTitleRenderFailure(t *testing.T) {
 	if res != (Result{}) {
 		t.Fatalf("Result = %+v, want zero value on failure", res)
 	}
-	// The failure precedes any PR lookup/create.
+	// The failure precedes any commit, push, or PR lookup/create.
 	assertZeroCreates(t, pr)
-	// markFailed persisted the failed record.
-	rec := deliveryRecordByKey(t, repo, run)
-	if rec.Status != "failed" {
-		t.Fatalf("record status = %q, want failed", rec.Status)
-	}
-	// The "failed" stage fired at deliver.go:433 after push and pr.
-	want := []string{"guard", "eligibility", "commit", "push", "pr", "failed"}
+	assertNoRecord(t, repo, run)
+	assertNoBranchOnOrigin(t, repoRoot, originURL)
+	want := []string{"guard", "eligibility"}
 	if !reflect.DeepEqual(stages, want) {
 		t.Fatalf("stages = %v, want %v", stages, want)
 	}

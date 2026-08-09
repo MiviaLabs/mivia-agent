@@ -87,6 +87,7 @@ Machine-readable hook and agent policy:
 | `.mivia/policy/commit-message.json` | Conventional commits: types, scopes, subject length |
 | `.mivia/policy/agent-hook-bypass.json` | Blocked verification-bypass flags/env vars + corrective message |
 | `.mivia/policy/docs-ownership.json` | Required `docs/OWNERS.yaml`, forbidden duplicate titles, canonical path rules |
+| `.mivia/policy/pr-title.toml` | PR title and summary validation policy |
 
 ## Quality
 

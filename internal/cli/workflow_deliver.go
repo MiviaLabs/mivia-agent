@@ -188,9 +188,19 @@ func settleDeliveryError(ctx context.Context, repo workflowledger.Repository, ru
 	//
 	// What DOES reach a repair step is a rejection of the work itself: a
 	// commit hook that refuses the change, a gate that finds a violation.
+	//
+	// A PR-metadata failure is such a condition in the change: the agent's
+	// title or summary violates the workspace pr-title policy, so the agent
+	// can fix the metadata and the run returns to the step the workflow
+	// names in delivery.on_pr_metadata_failure (which defaults to
+	// on_failure). It is never a refusal and never a transport fault.
+	if delivery.IsPRMetadataError(err) && policy.OnPRMetadataFailure != "" {
+		recordAutoDeliveryFailure(ctx, repo, runID, err)
+		return delivery.ReopenForRepair(ctx, repo, runID, policy.OnPRMetadataFailure, err, stdout)
+	}
 	if policy.OnFailure != "" && !provider.IsTransient(err) {
 		recordAutoDeliveryFailure(ctx, repo, runID, err)
-		return reopenForRepair(ctx, repo, runID, policy.OnFailure, err, stdout)
+		return delivery.ReopenForRepair(ctx, repo, runID, policy.OnFailure, err, stdout)
 	}
 	return err
 }

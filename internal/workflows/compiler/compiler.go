@@ -29,14 +29,25 @@ type CompiledWorkflow struct {
 	LoopNames map[string]bool
 }
 
+// deliveryActive reports whether d declares an active pull_request delivery
+// policy: kind "pull_request" with an explicit mode other than "none". Runs
+// with an active policy settle at delivery_pending on their success route
+// instead of moving directly to succeeded. It is the single predicate every
+// layer uses to decide whether delivery runs at all: re-entry seeding in
+// validateGraph and the policy-shape checks in validateDelivery both key off
+// it.
+func deliveryActive(d *definition.Delivery) bool {
+	return d != nil &&
+		d.Kind == "pull_request" &&
+		d.Mode != "" && d.Mode != "none"
+}
+
 // DeliveryActive reports whether the workflow declares an active pull_request
 // delivery policy: kind "pull_request" with an explicit mode other than
 // "none". Runs with an active policy settle at delivery_pending on their
 // success route instead of moving directly to succeeded.
 func (c *CompiledWorkflow) DeliveryActive() bool {
-	return c != nil && c.Delivery != nil &&
-		c.Delivery.Kind == "pull_request" &&
-		c.Delivery.Mode != "" && c.Delivery.Mode != "none"
+	return c != nil && deliveryActive(c.Delivery)
 }
 
 // Compile validates a workflow definition and returns an immutable compiled
@@ -195,7 +206,8 @@ func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]boo
 			if strings.Contains(cb.From, "..") {
 				return fmt.Errorf("step %q: context from %q contains path traversal", s.ID, cb.From)
 			}
-			// Validate source format: inputs.<name> or steps.<id>.output
+			// Validate source format: inputs.<name>, steps.<id>.output, or
+			// delivery.failure
 			parts := strings.Split(cb.From, ".")
 			switch parts[0] {
 			case "inputs":
@@ -224,6 +236,10 @@ func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]boo
 				// (the runtime cap on actual output bytes stays the safety bound).
 				if !skipCycleValidation && cb.MaxBytes > definition.MaxEvidenceBindingBytes {
 					return fmt.Errorf("step %q: context binding %q max_bytes %d exceeds maximum of %d for prior step evidence", s.ID, cb.From, cb.MaxBytes, definition.MaxEvidenceBindingBytes)
+				}
+			case "delivery":
+				if len(parts) != 2 || parts[1] != "failure" {
+					return fmt.Errorf("step %q: context from %q invalid (expected delivery.failure)", s.ID, cb.From)
 				}
 			default:
 				return fmt.Errorf("step %q: context from %q invalid (must start with inputs. or steps.)", s.ID, cb.From)
@@ -320,6 +336,34 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 	if wf.Delivery == nil {
 		return nil
 	}
+	// pr_title_policy is a workflow-relative path. Reject an absolute path
+	// and any path with a parent-directory segment (".."). Split on "/" and
+	// compare each segment, so a name that merely contains ".." stays valid.
+	if p := wf.Delivery.PRTitlePolicy; p != "" {
+		if strings.HasPrefix(p, "/") {
+			return fmt.Errorf("delivery: pr_title_policy %q must be a relative path", p)
+		}
+		for _, segment := range strings.Split(p, "/") {
+			if segment == ".." {
+				return fmt.Errorf("delivery: pr_title_policy %q must not contain a parent-directory segment", p)
+			}
+		}
+	}
+	// on_pr_metadata_failure names the step that repairs PR-metadata delivery
+	// failures. A name that no step carries fails admission, like on_failure.
+	if m := wf.Delivery.OnPRMetadataFailure; m != "" && !stepExists(wf, m) {
+		return fmt.Errorf("delivery: on_pr_metadata_failure %q names no step", m)
+	}
+	// on_failure names the step the run returns to when delivery fails for a
+	// repairable reason. The existence checks for both targets run whether the
+	// policy is active or not: a non-empty name that no step carries is a
+	// typo, and a typo stays a typo even in an inactive block (kind "" or
+	// mode "none"). Reachability is a separate concern: validateGraph seeds
+	// re-entry targets only for an ACTIVE policy, so a step named only in an
+	// inactive block stays flagged unreachable.
+	if f := wf.Delivery.OnFailure; f != "" && !stepExists(wf, f) {
+		return fmt.Errorf("delivery: on_failure %q names no step", f)
+	}
 	switch wf.Delivery.Kind {
 	case "":
 		if wf.Delivery.Mode != "" && wf.Delivery.Mode != "none" {
@@ -338,13 +382,6 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 		}
 		if wf.Delivery.Base == "" {
 			return fmt.Errorf("delivery: base must be non-empty")
-		}
-		// on_failure names the step the run returns to when delivery fails
-		// for a repairable reason. A name that no step carries would only
-		// show itself at delivery time, after all the work is done, so it
-		// fails admission instead.
-		if wf.Delivery.OnFailure != "" && !stepExists(wf, wf.Delivery.OnFailure) {
-			return fmt.Errorf("delivery: on_failure %q names no step", wf.Delivery.OnFailure)
 		}
 		return nil
 	default:

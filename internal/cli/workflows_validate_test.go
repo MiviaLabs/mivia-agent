@@ -38,6 +38,19 @@ func TestValidateTemplateBindingsAllowsSyntheticRound(t *testing.T) {
 	}
 }
 
+// TestValidateTemplateBindingsAcceptsDeliveryFailure pins the host-injected
+// context source: a step that declares delivery.failure may read it as
+// evidence at admission, mirroring the controller's runtime binding.
+func TestValidateTemplateBindingsAcceptsDeliveryFailure(t *testing.T) {
+	step := definition.Step{ID: "repair", Kind: "agent", Context: []definition.ContextBinding{
+		{From: "delivery.failure", As: "delivery_hint", MaxBytes: 4096, Optional: true},
+	}}
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{step}}
+	if err := validateWorkflowTemplateBindings(wf, step, "hint={{ evidence.delivery_hint }}"); err != nil {
+		t.Fatalf("delivery.failure binding rejected at admission: %v", err)
+	}
+}
+
 func TestStepIsLoopBound(t *testing.T) {
 	step := definition.Step{ID: "review"}
 	if stepIsLoopBound(nil, step) {

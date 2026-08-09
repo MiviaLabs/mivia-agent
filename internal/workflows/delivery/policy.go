@@ -50,6 +50,12 @@ type Policy struct {
 	// OnFailure names the step the run returns to when delivery fails for a
 	// reason an agent can repair. Empty means the run holds for a person.
 	OnFailure string
+	// PRTitlePolicyPath is the workflow-relative path of the project PR-title
+	// policy. Empty selects the default .mivia/policy/pr-title.toml.
+	PRTitlePolicyPath string
+	// OnPRMetadataFailure names the step that repairs PR-metadata failures.
+	// Empty defaults to OnFailure.
+	OnPRMetadataFailure string
 }
 
 // clampMax returns v when positive, otherwise def.
@@ -67,6 +73,10 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		return Policy{}, false
 	}
 	d := wf.Delivery
+	onPRMetadataFailure := d.OnPRMetadataFailure
+	if onPRMetadataFailure == "" {
+		onPRMetadataFailure = d.OnFailure
+	}
 	return Policy{
 		Kind:                  d.Kind,
 		Mode:                  d.Mode,
@@ -77,6 +87,8 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		MaxTitleBytes:         clampMax(d.MaxTitleBytes, DefaultMaxTitleBytes),
 		MaxCommitMessageBytes: clampMax(d.MaxCommitMessageBytes, DefaultMaxCommitMessageBytes),
 		OnFailure:             d.OnFailure,
+		PRTitlePolicyPath:     d.PRTitlePolicy,
+		OnPRMetadataFailure:   onPRMetadataFailure,
 	}, true
 }
 

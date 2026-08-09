@@ -219,6 +219,51 @@ func TestFormatWorkflowShow_NoDelivery(t *testing.T) {
 	}
 }
 
+// TestFormatWorkflowShow_DeliveryPRMetadata pins the pr_title_policy and
+// on_pr_metadata_failure lines when the workflow sets them.
+func TestFormatWorkflowShow_DeliveryPRMetadata(t *testing.T) {
+	c := &compiler.CompiledWorkflow{
+		Name: "del-pr-metadata",
+		Delivery: &definition.Delivery{
+			Kind:                "pull_request",
+			Mode:                "draft",
+			Provider:            "github",
+			Base:                "main",
+			PRTitlePolicy:       "policy/pr-title.toml",
+			OnPRMetadataFailure: "plan",
+		},
+	}
+	result := FormatWorkflowShow(c)
+
+	if !contains(result, "  pr_title_policy: policy/pr-title.toml") {
+		t.Errorf("output missing pr_title_policy:\n%s", result)
+	}
+	if !contains(result, "  on_pr_metadata_failure: plan") {
+		t.Errorf("output missing on_pr_metadata_failure:\n%s", result)
+	}
+}
+
+// TestFormatWorkflowShow_DeliveryPRMetadataOmitted pins that the new lines are
+// absent when the fields are empty.
+func TestFormatWorkflowShow_DeliveryPRMetadataOmitted(t *testing.T) {
+	c := &compiler.CompiledWorkflow{
+		Name: "del-plain",
+		Delivery: &definition.Delivery{
+			Kind: "pull_request",
+			Mode: "draft",
+			Base: "main",
+		},
+	}
+	result := FormatWorkflowShow(c)
+
+	if contains(result, "pr_title_policy") {
+		t.Errorf("should not show pr_title_policy when empty:\n%s", result)
+	}
+	if contains(result, "on_pr_metadata_failure") {
+		t.Errorf("should not show on_pr_metadata_failure when empty:\n%s", result)
+	}
+}
+
 func TestFormatWorkflowShow_ContextBindingNoMaxBytes(t *testing.T) {
 	c := &compiler.CompiledWorkflow{
 		Name: "cb-test",

@@ -154,6 +154,15 @@ func wantBody(run workflowledger.RunSnapshot) string {
 	return "Automated workflow delivery from Mivia.\n\nRun: " + run.RunID + "\nWorkflow digest: " + run.WorkflowDigest
 }
 
+// assertNoBranchOnOrigin asserts the delivery branch never reached origin,
+// which pins that validation failures precede any push.
+func assertNoBranchOnOrigin(t *testing.T, repoRoot, originURL string) {
+	t.Helper()
+	if refs := runGitOut(t, repoRoot, "ls-remote", originURL); strings.Contains(refs, "refs/heads/wf/wt-test") {
+		t.Fatalf("ls-remote origin has refs/heads/wf/wt-test, want no push before validation:\n%s", refs)
+	}
+}
+
 func TestDeliverDraftHappyPath(t *testing.T) {
 	ctx := context.Background()
 	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
