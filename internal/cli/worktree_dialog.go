@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base32"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -277,67 +278,90 @@ func (m *tuiModel) applyWorktreeConfirm() {
 	d := m.worktreeDlg
 	switch d.confirm {
 	case wtConfirmDelete:
-		wt, ok := d.selected()
-		if !ok {
-			break
-		}
-		wtDir := m.resolveRepoRoot()
-		worktreeConfig, err := config.LoadWorktreeConfig(wtDir)
-		if err != nil {
-			d.setNotice("delete failed: "+err.Error(), true)
-			break
-		}
-		if m.handleWorktreeDeleteRecovery(wtDir, wt, worktreeConfig.BranchPrefix) {
-			break
-		}
-		if worktreeContainsCurrentDir(wt.Path) {
-			d.setNotice("cannot delete the current worktree", true)
-			break
-		}
-		lock, lockErr := lockWorktreeLifecycle(wtDir, wt.Name)
-		if lockErr != nil {
-			d.setNotice("delete failed: "+lockErr.Error(), true)
-			break
-		}
-		defer lock.Close()
-		expected, hasBinding := d.bindings[wt.Name]
-		if hasBinding {
-			current, validateErr := m.validateWorktreeSwitch(wt)
-			if validateErr != nil || expected.Err != nil || current != expected.Instance {
-				err := validateErr
-				if err == nil {
-					err = expected.Err
-				}
-				if err == nil {
-					err = contextstate.ErrWorktreeDeleted
-				}
-				d.setNotice("delete failed: "+err.Error(), true)
-				break
-			}
-		}
-		instance, err := beginManagedWorktreeRemovalForSessionExpected(m.session, wtDir, &wt, expected.Instance, hasBinding)
-		if err != nil {
-			d.setNotice("delete failed: "+err.Error(), true)
-			break
-		}
-		if err := vcs.RemoveWithPrefixLease(context.Background(), wtDir, wt.Name, worktreeConfig.BranchPrefix, lock.File()); err != nil {
-			if reactivateErr := reactivateManagedWorktreeForSession(m.session, wtDir, instance); reactivateErr != nil {
-				d.setNotice("delete failed: "+err.Error()+"; session lifecycle recovery failed: "+reactivateErr.Error(), true)
-			} else {
-				d.setNotice("delete failed: "+err.Error(), true)
-			}
-			break
-		}
-		if err := finishManagedWorktreeRemovalForSession(m.session, wtDir, instance); err != nil {
-			d.setNotice("deleted worktree but session cleanup failed: "+err.Error(), true)
-			break
-		}
-		name := wt.Name
-		d.removeAt(d.cursor)
-		d.setNotice(fmt.Sprintf("deleted %q", name), false)
-		m.refreshGitContext()
+		m.applyWorktreeDeleteConfirm(d)
 	}
 	d.confirm = wtConfirmNone
+}
+
+// applyWorktreeDeleteConfirm deletes the selected worktree row. The caller
+// clears the confirm state after it returns.
+func (m *tuiModel) applyWorktreeDeleteConfirm(d *worktreeDialog) {
+	wt, ok := d.selected()
+	if !ok {
+		return
+	}
+	wtDir := m.resolveRepoRoot()
+	worktreeConfig, err := config.LoadWorktreeConfig(wtDir)
+	if err != nil {
+		d.setNotice("delete failed: "+err.Error(), true)
+		return
+	}
+	if m.handleWorktreeDeleteRecovery(wtDir, wt, worktreeConfig.BranchPrefix) {
+		return
+	}
+	if worktreeContainsCurrentDir(wt.Path) {
+		d.setNotice("cannot delete the current worktree", true)
+		return
+	}
+	lock, lockErr := lockWorktreeLifecycle(wtDir, wt.Name)
+	if lockErr != nil {
+		d.setNotice("delete failed: "+lockErr.Error(), true)
+		return
+	}
+	defer lock.Close()
+	expected, hasBinding := d.bindings[wt.Name]
+	if hasBinding && !expected.Instance.IsZero() {
+		// Only a concrete binding protects against same-name replacement.
+		// An empty or broken binding (zero instance) means the worktree is
+		// unmanaged, so deletion falls back to the unmanaged path below.
+		current, validateErr := m.validateWorktreeSwitch(wt)
+		if validateErr != nil || expected.Err != nil || current != expected.Instance {
+			err := validateErr
+			if err == nil {
+				err = expected.Err
+			}
+			if err == nil {
+				err = contextstate.ErrWorktreeDeleted
+			}
+			d.setNotice("delete failed: "+err.Error(), true)
+			return
+		}
+	}
+	requireExpected := hasBinding && !expected.Instance.IsZero()
+	instance, err := beginManagedWorktreeRemovalForSessionExpected(m.session, wtDir, &wt, expected.Instance, requireExpected)
+	if errors.Is(err, errUnmanagedWorktree) {
+		// The worktree has no valid lifecycle binding (missing marker or no
+		// storage entry). Remove it directly so its HDD space is freed.
+		if err := removeUnmanagedWorktree(wtDir, &wt, worktreeConfig.BranchPrefix, lock.File()); err != nil {
+			d.setNotice("delete failed: "+err.Error(), true)
+		} else {
+			name := wt.Name
+			d.removeAt(d.cursor)
+			d.setNotice(fmt.Sprintf("deleted %q", name), false)
+			m.refreshGitContext()
+		}
+		return
+	}
+	if err != nil {
+		d.setNotice("delete failed: "+err.Error(), true)
+		return
+	}
+	if err := vcs.RemoveWithPrefixLease(context.Background(), wtDir, wt.Name, worktreeConfig.BranchPrefix, lock.File()); err != nil {
+		if reactivateErr := reactivateManagedWorktreeForSession(m.session, wtDir, instance); reactivateErr != nil {
+			d.setNotice("delete failed: "+err.Error()+"; session lifecycle recovery failed: "+reactivateErr.Error(), true)
+		} else {
+			d.setNotice("delete failed: "+err.Error(), true)
+		}
+		return
+	}
+	if err := finishManagedWorktreeRemovalForSession(m.session, wtDir, instance); err != nil {
+		d.setNotice("deleted worktree but session cleanup failed: "+err.Error(), true)
+		return
+	}
+	name := wt.Name
+	d.removeAt(d.cursor)
+	d.setNotice(fmt.Sprintf("deleted %q", name), false)
+	m.refreshGitContext()
 }
 
 // handleWorktreeDeleteRecovery resolves a recovery row during delete confirm.

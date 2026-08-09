@@ -77,7 +77,7 @@ func TestRegisterAdoptedWorktreeInstanceFailsWhenLegacyRouteChanges(t *testing.T
 	if err := store.BeginWorktreeAdoption(context.Background(), principal, instance, path); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.DeleteWorktreeRoute(context.Background(), principal, instance.Worktree); err != nil {
+	if _, err := store.DeleteWorktreeRoute(context.Background(), principal, instance.Worktree); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RegisterAdoptedWorktreeInstance(context.Background(), principal, instance, path); !errors.Is(err, contextstate.ErrWorktreeDeleted) {

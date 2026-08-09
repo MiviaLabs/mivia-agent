@@ -231,6 +231,7 @@ func listSessions(sess *chat.Session, term *Terminal) (bool, bool, error) {
 		term.WriteString(fmt.Sprintf("\nlist error: %v", err))
 		return true, false, nil
 	}
+	sessions = collapseConversations(sessions)
 	if len(sessions) == 0 {
 		term.WriteString("\n(no saved sessions)")
 		return true, false, nil

@@ -87,11 +87,19 @@ type SessionTitleCatalog interface {
 	SetSessionTitle(context.Context, Principal, string, string, WorktreeInstance) error
 }
 
+// SessionFirstMessageSource resolves the first user message of a live context
+// session for display titling. It is optional: a store that does not implement
+// it simply leaves sessions untitled. The lookup is subject-scoped, never
+// capability-scoped, so stale-capability rows (older runs) can still be titled.
+type SessionFirstMessageSource interface {
+	FirstUserMessage(context.Context, Principal, string) (string, error)
+}
+
 // WorktreeRouteCatalog stores launch routes for mivia-managed worktrees.
 // A route is separate from a chat session because it has no model binding.
 type WorktreeRouteCatalog interface {
 	SaveWorktreeRoute(context.Context, Principal, string, string) error
-	DeleteWorktreeRoute(context.Context, Principal, string) error
+	DeleteWorktreeRoute(context.Context, Principal, string) (int64, error)
 }
 
 // WorktreeSessionCatalog controls a managed worktree session lifecycle.
