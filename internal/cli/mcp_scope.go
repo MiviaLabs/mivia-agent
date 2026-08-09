@@ -22,11 +22,8 @@ func authorizedAgentTools(agent *agents.ResolvedAgent, registry *tools.Registry)
 		allowed[name] = struct{}{}
 	}
 	for _, tool := range registry.List() {
-		for _, serverID := range agent.EffectiveMCPServers {
-			if strings.HasPrefix(tool.Name(), "mcp__"+serverID+"__") {
-				allowed[tool.Name()] = struct{}{}
-				break
-			}
+		if isMCPServerTool(tool.Name(), agent) {
+			allowed[tool.Name()] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(allowed))
@@ -36,4 +33,24 @@ func authorizedAgentTools(agent *agents.ResolvedAgent, registry *tools.Registry)
 		}
 	}
 	return out
+}
+
+// isMCPServerTool reports whether name is a tool discovered from one of
+// agent's selected MCP servers - the "mcp__<serverID>__x<hex>" encoding
+// internal/mcp.EncodeToolName produces. Shared by authorizedAgentTools
+// (server selection grants AUTHORITY over its tools) and the core tool tier
+// (server selection also exempts its tools from deferral - see
+// withMCPServerToolsAlwaysCore in tool_tiers.go): both need the same rule
+// because an MCP tool's name is a runtime hash, never something an operator
+// or agent file can spell out ahead of time.
+func isMCPServerTool(name string, agent *agents.ResolvedAgent) bool {
+	if agent == nil {
+		return false
+	}
+	for _, serverID := range agent.EffectiveMCPServers {
+		if strings.HasPrefix(name, "mcp__"+serverID+"__") {
+			return true
+		}
+	}
+	return false
 }

@@ -139,6 +139,7 @@ test(s) and confirm they pass.
 | INV-ADM-3 | Safety | Name cap counts the total across both published and pending stages | `TestNameCapCountsTotalAcrossPublishedAndPending` | |
 | INV-ADM-4 | Safety | Name cap allows a fresh stage after a reset | `TestNameCapAllowsFreshStageAfterReset` | |
 | INV-ADM-5 | Safety | Perpetual deferral accumulation is capped to prevent unbounded growth | `TestPerpetualDeferralAccumulationCapped` | |
+| INV-ADM-6 | Safety | A configured core tier never defers an authorized MCP tool, even though the tier list cannot name the tool's runtime-hashed name (`DC-15`) | `TestPlanToolTiersNeverDefersAnAuthorizedMCPTool`, `TestWithMCPServerToolsAlwaysCoreDoesNotMutateTheConfiguredCoreSlice`, `TestRunConfiguredChatKeepsGlobalMCPToolInCoreTierEvenWithAConfiguredCoreList` | 2026-08-09 |
 
 ## Durable execution invariants
 
