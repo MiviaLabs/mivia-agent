@@ -141,6 +141,9 @@ func summarizeRunDeleted(ev storage.Event) (string, time.Time, bool) {
 }
 
 // summarizeRunResumed renders the summary for a wf_run_resumed event. The
+// phrase "re-entered" covers both real resumes and the duplicate-admission
+// path (StartNew with created=false also fires when a concurrent admission of
+// the same invocation key wins, in which case nothing was resumed). The
 // payload carries ONLY the run id: a deterministic event ID plus a
 // byte-identical payload make a retried resume idempotent under the real
 // clock, so no payload timestamp is persisted for this observational event
@@ -150,7 +153,7 @@ func summarizeRunResumed(ev storage.Event) (string, time.Time, bool) {
 	if err != nil {
 		return "", time.Time{}, false
 	}
-	return fmt.Sprintf("run resumed: %s", p.RunID), time.Time{}, true
+	return fmt.Sprintf("run re-entered: %s", p.RunID), time.Time{}, true
 }
 
 // errorRefSummary renders the error reference suffix for an attempt summary.

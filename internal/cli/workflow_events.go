@@ -29,7 +29,13 @@ func executeWorkflowEvents(runID, root, configPath string, limit, offset int, st
 		return err
 	}
 	for _, ev := range events {
-		fmt.Fprintf(stdout, "%d %s %s %s\n", ev.Sequence, ev.CreatedAt.UTC().Format(time.RFC3339), ev.Kind, ev.Summary)
+		// Some observational events (wf_run_resumed) carry no payload
+		// timestamp by design; render "-" instead of the zero instant.
+		ts := ev.CreatedAt.UTC().Format(time.RFC3339)
+		if ev.CreatedAt.IsZero() {
+			ts = "-"
+		}
+		fmt.Fprintf(stdout, "%d %s %s %s\n", ev.Sequence, ts, ev.Kind, ev.Summary)
 	}
 	if len(events) == 0 {
 		fmt.Fprintln(stdout, "no events")

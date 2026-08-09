@@ -55,7 +55,9 @@ const (
 	KindWorkflowStepHeartbeat Kind = "workflow_step_heartbeat"
 	// KindWorkflowStepCompleted reports the completion of one workflow step.
 	KindWorkflowStepCompleted Kind = "workflow_step_completed"
-	// KindWorkflowGateResult reports the outcome of one workflow gate.
+	// KindWorkflowGateResult reports the start of one workflow gate: the gate
+	// begin is published at gate_started time; the gate's outcome is published
+	// as step_completed when the attempt reaches its terminal status.
 	KindWorkflowGateResult Kind = "workflow_gate_result"
 	// KindWorkflowApprovalRequested reports a workflow approval request.
 	KindWorkflowApprovalRequested Kind = "workflow_approval_requested"
