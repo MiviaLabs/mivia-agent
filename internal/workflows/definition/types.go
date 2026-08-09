@@ -128,6 +128,14 @@ type Delivery struct {
 	//
 	// Empty keeps the old behavior: the run holds for a person.
 	OnFailure string `toml:"on_failure" json:"on_failure,omitempty"`
+	// PRTitlePolicy is the relative path to the project PR-title policy file.
+	// The path is relative to the workflow directory. An empty value selects
+	// the default policy at .mivia/policy/pr-title.toml.
+	PRTitlePolicy string `toml:"pr_title_policy" json:"pr_title_policy,omitempty"`
+	// OnPRMetadataFailure names the step that repairs PR-metadata delivery
+	// failures. PR metadata is the pull-request title and summary. An empty
+	// value makes the run use OnFailure for PR-metadata failures.
+	OnPRMetadataFailure string `toml:"on_pr_metadata_failure" json:"on_pr_metadata_failure,omitempty"`
 }
 
 // DiscoveredWorkflow is the result of discovering a workflow file.

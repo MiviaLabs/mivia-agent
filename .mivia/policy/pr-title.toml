@@ -1,0 +1,15 @@
+# PR-title policy for delivery pull requests. Mirrors the repo's own commit
+# convention type(scope): subject. Consulted by the delivery engine before any
+# push or PR create; validated by scripts/verify_agent_config.py.
+[title]
+pattern = '^(?P<type>feat|fix|docs|chore|refactor|test)(\((?P<scope>[a-z0-9-]+)\))?!?: .+$'
+min_chars = 10
+max_chars = 100
+scopes = ["cli", "agent", "mcp", "hooks", "ai", "docs", "security", "quality", "build", "ci", "test", "deps", "release"]
+
+[summary]
+required = true
+min_chars = 10
+max_chars = 500
+min_sentences = 2
+max_sentences = 2

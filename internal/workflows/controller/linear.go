@@ -13,8 +13,10 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
@@ -392,6 +394,27 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 			evidence[binding.As] = value
 			continue
 		}
+		// delivery.failure is a HOST-injected context source: the controller
+		// reads the latest wf-delivery failure hint from the ledger and places
+		// it directly into the step's evidence, so the repair agent never
+		// fetches it. Empty text resolves to "" like an optional-absent steps
+		// binding. The binding cap truncates rune-safely WITHOUT a marker; the
+		// full text stays on the wf-delivery attempt for workflow_inspect.
+		if len(parts) == 2 && parts[0] == "delivery" && parts[1] == "failure" {
+			text, err := delivery.LatestFailureText(ctx, c.Repo, c.RunID)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			threshold := binding.MaxBytes
+			if threshold <= 0 {
+				threshold = definition.MaxEvidenceBindingBytes
+			}
+			if len(text) > threshold {
+				text = textutil.TruncateRuneSafe(text, threshold)
+			}
+			evidence[binding.As] = text
+			continue
+		}
 		return nil, nil, nil, fmt.Errorf("unsupported context binding %q", binding.From)
 	}
 	return inputs, evidence, refs, nil
@@ -434,6 +457,12 @@ func maxBinding(step definition.Step) int {
 func validateBindingLimits(step definition.Step, inputs map[string]any, evidence map[string]any) error {
 	for _, binding := range step.Context {
 		if binding.MaxBytes <= 0 {
+			continue
+		}
+		// A delivery.failure binding is bounded by contextForStep's rune-safe
+		// truncation; re-measuring it here would reject the already-truncated
+		// text against the same cap (JSON quoting adds two bytes).
+		if strings.HasPrefix(binding.From, "delivery.") {
 			continue
 		}
 		var value any

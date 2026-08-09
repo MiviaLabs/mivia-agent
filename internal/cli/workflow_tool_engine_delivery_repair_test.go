@@ -152,7 +152,7 @@ func TestSessionAutoDeliveryRepairReadvancesController(t *testing.T) {
 // TestSessionAutoDeliveryRepairBoundedAfterRepeatedFailures proves the repair
 // loop is bounded: an always-failing delivery with on_failure set must not
 // spin the controller. Each failure routes one wf-delivery attempt; the fourth
-// failure exhausts maxDeliveryRepairs and settles delivery_failed (terminal).
+// failure exhausts delivery.MaxDeliveryRepairs and settles delivery_failed (terminal).
 // The controller is advanced exactly four times, then the goroutine exits.
 func TestSessionAutoDeliveryRepairBoundedAfterRepeatedFailures(t *testing.T) {
 	e, repo, p, runID, _ := newSessionAutoDeliveryRepairFixture(t)
@@ -272,7 +272,7 @@ func TestSessionAutoDeliveryRepairTransientStaysPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, a := range attempts {
-		if a.StepID == deliveryRepairStepID {
+		if a.StepID == delivery.DeliveryRepairStepID {
 			t.Fatalf("wf-delivery repair attempt recorded after a transient failure: %+v", a)
 		}
 	}

@@ -121,6 +121,12 @@ func formatDelivery(b *strings.Builder, c *compiler.CompiledWorkflow) {
 	if c.Delivery.Base != "" {
 		b.WriteString(fmt.Sprintf("  base:   %s\n", c.Delivery.Base))
 	}
+	if c.Delivery.PRTitlePolicy != "" {
+		b.WriteString(fmt.Sprintf("  pr_title_policy: %s\n", c.Delivery.PRTitlePolicy))
+	}
+	if c.Delivery.OnPRMetadataFailure != "" {
+		b.WriteString(fmt.Sprintf("  on_pr_metadata_failure: %s\n", c.Delivery.OnPRMetadataFailure))
+	}
 }
 
 // FormatWorkflowValidate formats a validation result for a single workflow.

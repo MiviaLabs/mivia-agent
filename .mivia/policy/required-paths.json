@@ -19,6 +19,7 @@
     ".mivia/policy/commit-message.json",
     ".mivia/policy/agent-hook-bypass.json",
     ".mivia/policy/docs-ownership.json",
+    ".mivia/policy/pr-title.toml",
     ".mivia/policy/required-paths.json",
     ".mivia/doctrines/evidence-before-claims.md",
     ".mivia/doctrines/verification-is-part-of-delivery.md",

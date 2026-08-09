@@ -456,6 +456,8 @@ commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs
 | `title_template` | Go text/template for PR title |
 | `commit_message_template` | Go text/template for commit message |
 | `on_failure` | Step to return to when delivery fails for a repairable reason |
+| `pr_title_policy` | Relative path to the project PR-title policy file (optional; default: `.mivia/policy/pr-title.toml`) |
+| `on_pr_metadata_failure` | Step to return to when the agent PR title or summary fails the policy check (optional; default: `on_failure`) |
 
 Publication requires the invoking user to grant `--allow-publish`. Without the grant, an eligible run finishes as `delivery_pending`.
 
@@ -474,6 +476,55 @@ push is not a condition in the change, and no agent can repair it, so the run
 stays at `delivery_pending` and a later delivery succeeds.
 
 If `on_failure` is empty, the run holds at `delivery_pending` for a person.
+
+## PR title and summary policy
+
+The workflow change-summary output requires two agent-provided fields.
+`pr_title` is the custom PR title. It is 1 to 256 characters. `pr_summary`
+is the PR summary. It has exactly two sentences per the project policy.
+
+A project can define a policy file at `.mivia/policy/pr-title.toml`. The
+file is optional. When it is absent, no policy checks run. The `[delivery]`
+section can name a different path with `pr_title_policy`.
+
+The policy file has a `[title]` section and a `[summary]` section.
+
+The `[title]` section supports:
+
+| Field | Meaning |
+|-------|---------|
+| `pattern` | RE2 regex for the title. It can carry an optional `(?P<scope>...)` named group. |
+| `min_chars` | Minimum title length. `0` means unset. |
+| `max_chars` | Maximum title length. `0` means unset. |
+| `scopes` | Allowed scope values. |
+
+The `[summary]` section supports:
+
+| Field | Meaning |
+|-------|---------|
+| `required` | Whether the summary is required. |
+| `min_chars` | Minimum summary length. `0` means unset. |
+| `max_chars` | Maximum summary length. `0` means unset. |
+| `min_sentences` | Minimum sentence count. `0` means unset. |
+| `max_sentences` | Maximum sentence count. `0` means unset. |
+
+The sentence-boundary rule is deterministic. A boundary is a terminator
+(`.`, `!`, `?`) followed by whitespace and an uppercase letter, or by the
+end of the text. Abbreviations and version numbers do not split a sentence.
+
+The title resolution order is fixed. Use the agent `pr_title` when it is
+non-empty. Otherwise use the rendered `title_template` fallback.
+
+The host validates the resolved title and the summary against the policy.
+Validation runs after the no-diff gate and before any commit, push, or PR
+create. A violation is a repairable `PRMetadataError`. The run routes to the
+`on_pr_metadata_failure` step. The feature-delivery workflow uses a dedicated
+`repair_pr_metadata` step.
+
+The repair step receives the failure text as a host-injected context
+binding `delivery.failure`. The template renders it as
+`{{ evidence.delivery_hint }}`. The agent never fetches the hint. The PR body
+includes the agent `pr_summary` followed by the standard provenance block.
 
 ## Run statuses
 

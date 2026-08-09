@@ -195,6 +195,25 @@ context = [
 ]
 on_failure = "failure"
 
+# repair_pr_metadata fixes only the PR title and summary when the host
+# rejects the agent's change-summary metadata (pr_title/pr_summary). The host
+# sends the rejection hint as delivery.failure evidence; the step rewrites the
+# metadata and feeds back through review, so the run converges and delivers.
+[[steps]]
+id = "repair_pr_metadata"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/repair-pr-metadata.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 12000 },
+  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
+]
+on_failure = "failure"
+
 [[steps]]
 id = "test_validate"
 kind = "evidence_gate"
@@ -408,16 +427,32 @@ from = "repair_preflight_structure"
 to = "review"
 match = { status = "succeeded" }
 
+[[transitions]]
+from = "repair_pr_metadata"
+to = "review"
+match = { status = "succeeded" }
+
 [delivery]
 kind = "pull_request"
 mode = "draft"
 provider = "github"
 base = "master"
 title_template = "feat: {{ inputs.task }}"
+# The PR title and summary come from the agent's change-summary output
+# (pr_title/pr_summary). The host validates them against the PR-title policy
+# before any push or PR create; a rejection routes to repair_pr_metadata,
+# which rewrites only the metadata and feeds back through review.
+#
+# pr_title_policy is optional and defaulted: an empty value selects the
+# default .mivia/policy/pr-title.toml, so this declaration is explicit.
+pr_title_policy = ".mivia/policy/pr-title.toml"
 # Delivery runs after the success terminal, outside the step graph. When it
 # fails for a reason an agent can repair - a commit hook that rejects the
 # change is the common one - the run returns to this step instead of stopping
 # with all of its work done. The step repairs the change, the run reaches
 # success again, and delivery runs again.
 on_failure = "repair_preflight_structure"
+# A PR-metadata failure (the host rejected pr_title/pr_summary) routes to the
+# dedicated repair step instead of the generic on_failure step.
+on_pr_metadata_failure = "repair_pr_metadata"
 commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs.task }}"

@@ -79,6 +79,7 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	assertFeatureDeliveryFindingsBindingsCapped(t, workflow)
 	assertFeatureDeliveryIntegrationGate(t, workflow)
 	assertFeatureDeliverySchemasRequireInspected(t, base, filepath.Join(root, "internal", "workflows", "testdata"))
+	assertFeatureDeliveryTemplatesInstructPRMetadata(t, root)
 }
 
 func committedWorkflowRoot(t *testing.T) string {
@@ -444,6 +445,7 @@ func assertFeatureDeliverySchemasRequireInspected(tb schemaContractTB, bases ...
 	for _, base := range bases {
 		assertFeatureDeliverySchemaCopyRequiresInspected(tb, base)
 		assertFeatureDeliverySchemaCopyCarriesFindingsContract(tb, base)
+		assertFeatureDeliverySchemaCopyRequiresPRMetadata(tb, base)
 	}
 }
 
@@ -518,7 +520,10 @@ func assertFeatureDeliverySchemaCopyRequiresInspected(tb schemaContractTB, base 
 	if err != nil {
 		tb.Fatalf("compile schema change-summary-v1.json from %s: %v", base, err)
 	}
-	noopOutput := `{"summary":"BLOCKED: no changes to implement","files_changed":[],"inspected":["internal/cli/feature_delivery_contract_test.go"]}`
+	// The probe output satisfies every other constraint (including the required
+	// pr_title/pr_summary and addressed_findings fields) so the rejection is
+	// specifically the empty files_changed, not a missing PR-metadata field.
+	noopOutput := `{"summary":"BLOCKED: no changes to implement","files_changed":[],"inspected":["internal/cli/feature_delivery_contract_test.go"],"addressed_findings":[],"pr_title":"feat: no-op change","pr_summary":"This change does nothing. It only tests the schema."}`
 	if _, err := compiled.ValidateJSONBytes([]byte(noopOutput)); err == nil {
 		tb.Fatalf("schema change-summary-v1.json in %s must reject empty files_changed (no-op output validated)", base)
 	}

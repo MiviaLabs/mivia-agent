@@ -37,11 +37,12 @@ func pushDeliveryBranch(ctx context.Context, repo ledger.Repository, git GitRunn
 
 // findOrCreateAndVerifyPR finds or creates the run's PR and closes the AR-7
 // TOCTOU: the PR's actual base must still contain the admitted origin base
-// commit. It returns the PR identity for the durable records.
-func findOrCreateAndVerifyPR(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, originBase string, existing ledger.DeliveryRecord) (string, string, error) {
+// commit. It returns the PR identity for the durable records. title and body
+// are the pre-validated PR metadata from the delivery request.
+func findOrCreateAndVerifyPR(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, originBase string, existing ledger.DeliveryRecord, title, body string) (string, string, error) {
 	// 14-15. Find or create the PR (ownership-aware reuse).
 	req.stage("pr", "find or create the pull request")
-	ref, err := findOrCreatePR(ctx, repo, pr, req, key, repoSlug, existing)
+	ref, err := findOrCreatePR(ctx, repo, pr, req, key, repoSlug, existing, title, body)
 	if err != nil {
 		return "", "", err
 	}

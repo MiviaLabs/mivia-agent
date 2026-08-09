@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -33,8 +34,8 @@ func TestFailedDeliveryReturnsTheRunToItsRepairStep(t *testing.T) {
 
 	cause := errors.New("pre-commit: check_go_structure: 1 hard violation(s)")
 	var stdout bytes.Buffer
-	if err := reopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", cause, &stdout); err != nil {
-		t.Fatalf("reopenForRepair() error = %v, want nil", err)
+	if err := delivery.ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", cause, &stdout); err != nil {
+		t.Fatalf("delivery.ReopenForRepair() error = %v, want nil", err)
 	}
 
 	after, err := repo.GetRun(ctx, run.RunID)
@@ -57,7 +58,7 @@ func TestFailedDeliveryReturnsTheRunToItsRepairStep(t *testing.T) {
 	}
 	var recorded *workflowledger.StepAttempt
 	for i := range attempts {
-		if attempts[i].StepID == deliveryRepairStepID {
+		if attempts[i].StepID == delivery.DeliveryRepairStepID {
 			recorded = &attempts[i]
 		}
 	}
@@ -99,7 +100,7 @@ func TestRepeatedDeliveryFailuresEachRecordAnAttempt(t *testing.T) {
 	casRunToDeliveryPending(t, ctx, repo, run.RunID)
 
 	var stdout bytes.Buffer
-	if err := reopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("first"), &stdout); err != nil {
+	if err := delivery.ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("first"), &stdout); err != nil {
 		t.Fatalf("first reopen: %v", err)
 	}
 	// The run is running again after the first repair; it reaches delivery
@@ -111,7 +112,7 @@ func TestRepeatedDeliveryFailuresEachRecordAnAttempt(t *testing.T) {
 	if err := repo.CompareAndSetRunStatus(ctx, run.RunID, backToPending.Version, workflowledger.RunStatusDeliveryPending, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := reopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("second"), &stdout); err != nil {
+	if err := delivery.ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("second"), &stdout); err != nil {
 		t.Fatalf("second reopen: %v", err)
 	}
 
@@ -121,7 +122,7 @@ func TestRepeatedDeliveryFailuresEachRecordAnAttempt(t *testing.T) {
 	}
 	count := 0
 	for _, a := range attempts {
-		if a.StepID == deliveryRepairStepID {
+		if a.StepID == delivery.DeliveryRepairStepID {
 			count++
 		}
 	}
@@ -145,8 +146,8 @@ func TestDeliveryRepairIsBounded(t *testing.T) {
 	casRunToDeliveryPending(t, ctx, repo, run.RunID)
 
 	var stdout bytes.Buffer
-	for i := 0; i < maxDeliveryRepairs; i++ {
-		if err := reopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("hook rejected"), &stdout); err != nil {
+	for i := 0; i < delivery.MaxDeliveryRepairs; i++ {
+		if err := delivery.ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("hook rejected"), &stdout); err != nil {
 			t.Fatalf("repair %d refused: %v", i+1, err)
 		}
 		back, err := repo.GetRun(ctx, run.RunID)
@@ -157,7 +158,7 @@ func TestDeliveryRepairIsBounded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := reopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("hook rejected"), &stdout); err == nil {
+	if err := delivery.ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("hook rejected"), &stdout); err == nil {
 		t.Fatal("the repair budget is spent; a further re-entry must fail")
 	}
 	// The budget-exhausted run must settle terminal instead of waiting at

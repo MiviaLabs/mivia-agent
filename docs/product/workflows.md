@@ -86,6 +86,9 @@ someone delivers it with the grant.
 Pull-request delivery is a terminal host policy - not a workflow step and not
 an agent tool.
 
+The agent provides the PR title and a two-sentence summary. The host validates
+them against the optional project policy before publishing.
+
 ## See also
 
 - [Workflow user guide](workflows-guide.md)

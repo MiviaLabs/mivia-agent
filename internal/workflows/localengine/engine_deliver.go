@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strconv"
 	"time"
@@ -173,6 +174,13 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 			}
 			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
 		}
+		res, handled, rerr := routePRMetadataRepair(ctx, repo, runID, policy, err)
+		if handled {
+			return res, nil
+		}
+		if rerr != nil {
+			return agenttools.DeliverResult{}, rerr
+		}
 		return agenttools.DeliverResult{}, err
 	}
 	fresh, err := repo.GetRun(ctx, runID)
@@ -190,6 +198,28 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		emitDeliveredRunFinished(runID)
 	}
 	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
+}
+
+// routePRMetadataRepair routes a PR-metadata delivery failure back into the
+// workflow when the policy names a repair step. A PR-metadata failure is a
+// condition in the change: the agent's title or summary violates the workspace
+// pr-title policy, so the agent can fix the metadata and the run returns to the
+// step the workflow names in delivery.on_pr_metadata_failure (which defaults to
+// on_failure). It is never a refusal and never a transport fault. The boolean
+// reports whether the failure was routed (handled); a non-nil error means the
+// routing itself failed and the caller must surface it.
+func routePRMetadataRepair(ctx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (agenttools.DeliverResult, bool, error) {
+	if !delivery.IsPRMetadataError(err) || policy.OnPRMetadataFailure == "" {
+		return agenttools.DeliverResult{}, false, nil
+	}
+	if rerr := delivery.ReopenForRepair(ctx, repo, runID, policy.OnPRMetadataFailure, err, io.Discard); rerr != nil {
+		return agenttools.DeliverResult{}, false, rerr
+	}
+	fresh, gerr := repo.GetRun(ctx, runID)
+	if gerr != nil {
+		return agenttools.DeliverResult{}, false, gerr
+	}
+	return agenttools.DeliverResult{RunID: runID, Status: string(fresh.Status)}, true, nil
 }
 
 // deliveryGitCtx resolves the run's delivery workspace and verifies its real

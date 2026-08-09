@@ -385,6 +385,56 @@ def main() -> None:
         if needle not in commit_hook:
             fail(f"scripts/git-hooks/commit-msg: missing agent-facing {needle!r}")
 
+    # PR-title policy (delivery PR metadata). Mirrors the delivery engine's
+    # loader (internal/workflows/delivery/prtitle.go): the shipped
+    # feature-delivery workflow declares this file, so the gate requires it,
+    # parses it as TOML, and rejects malformed rule shapes with a clear line.
+    pr_title_path = ROOT / ".mivia" / "policy" / "pr-title.toml"
+    if not pr_title_path.is_file():
+        fail(".mivia/policy/pr-title.toml: missing (the shipped feature-delivery workflow declares it)")
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+        fail(".mivia/policy/pr-title.toml: cannot validate on Python < 3.11 (tomllib unavailable)")
+    try:
+        with pr_title_path.open("rb") as handle:
+            pr_title = tomllib.load(handle)
+    except tomllib.TOMLDecodeError as exc:
+        fail(f".mivia/policy/pr-title.toml: not valid TOML: {exc}")
+    title_rule = pr_title.get("title")
+    summary_rule = pr_title.get("summary")
+    if not isinstance(title_rule, dict):
+        fail(".mivia/policy/pr-title.toml: missing [title] table")
+    if not isinstance(summary_rule, dict):
+        fail(".mivia/policy/pr-title.toml: missing [summary] table")
+    pattern = title_rule.get("pattern")
+    if not isinstance(pattern, str) or not pattern:
+        fail(".mivia/policy/pr-title.toml: title.pattern must be a non-empty string")
+    pr_scopes = title_rule.get("scopes")
+    if not isinstance(pr_scopes, list) or not pr_scopes:
+        fail(".mivia/policy/pr-title.toml: title.scopes must be a non-empty list")
+    for scope in pr_scopes:
+        if not isinstance(scope, str) or not scope.strip():
+            fail(f".mivia/policy/pr-title.toml: title.scopes must contain only non-empty strings, got {scope!r}")
+    # Positive-integer bounds with min <= max, when present. The delivery
+    # engine treats an absent (or zero/negative) bound as UNLIMITED, so a
+    # policy may omit a field; a present value must be a sane positive
+    # integer. bool is excluded because it subclasses int.
+    for table_name, rule, pairs in (
+        ("title", title_rule, [("min_chars", "max_chars")]),
+        ("summary", summary_rule, [("min_chars", "max_chars"), ("min_sentences", "max_sentences")]),
+    ):
+        for lo_key, hi_key in pairs:
+            lo = rule.get(lo_key)
+            hi = rule.get(hi_key)
+            for key, val in ((lo_key, lo), (hi_key, hi)):
+                if val is None:
+                    continue
+                if not isinstance(val, int) or isinstance(val, bool) or val <= 0:
+                    fail(f".mivia/policy/pr-title.toml: {table_name}.{key} must be a positive integer, got {val!r}")
+            if lo is not None and hi is not None and lo > hi:
+                fail(f".mivia/policy/pr-title.toml: {table_name}.{lo_key} ({lo}) exceeds {table_name}.{hi_key} ({hi})")
+
     bypass = json.loads(text(".mivia/policy/agent-hook-bypass.json"))
     if bypass.get("version") != 1:
         fail("agent-hook-bypass.json version must be 1")

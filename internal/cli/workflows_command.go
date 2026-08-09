@@ -264,6 +264,9 @@ func validateWorkflowFileReferences(base string, wf *compiler.CompiledWorkflow, 
 // value declared by its step context. It uses empty values because this check
 // validates binding names, not runtime output.
 //
+// The host-injected delivery.failure binding lands in evidence exactly like a
+// steps.<id>.output binding, mirroring the controller's runtime resolution.
+//
 // A loop-bound step also receives the synthetic inputs.round, which the
 // controller injects from the loop's durable iteration counter rather than
 // from a declared context binding (see roundInputForStep). Omitting it here
@@ -281,6 +284,10 @@ func validateWorkflowTemplateBindings(wf *compiler.CompiledWorkflow, step defini
 			continue
 		}
 		if strings.HasPrefix(binding.From, "steps.") {
+			evidence[binding.As] = ""
+			continue
+		}
+		if strings.HasPrefix(binding.From, "delivery.") {
 			evidence[binding.As] = ""
 		}
 	}

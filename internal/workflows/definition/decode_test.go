@@ -207,6 +207,49 @@ func TestParseWorkflowTOML_UnknownField(t *testing.T) {
 	}
 }
 
+// TestParseWorkflowTOML_DeliveryExtendedPolicyFields pins that the strict TOML
+// decoder accepts the pr_title_policy and on_pr_metadata_failure keys on a
+// delivery section and decodes them onto Delivery. The decoder rejects unknown
+// keys, so this test guards the decode side of the new optional fields.
+func TestParseWorkflowTOML_DeliveryExtendedPolicyFields(t *testing.T) {
+	data := []byte(`
+version = 1
+name = "delivery-extended"
+initial_step = "plan"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "worker"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }
+
+[delivery]
+kind = "pull_request"
+mode = "draft"
+provider = "github"
+base = "main"
+pr_title_policy = "policy/pr-title.toml"
+on_pr_metadata_failure = "plan"
+`)
+	wf, _, err := ParseWorkflowTOML(data, "delivery-extended.toml")
+	if err != nil {
+		t.Fatalf("ParseWorkflowTOML must accept the new delivery fields: %v", err)
+	}
+	if wf.Delivery == nil {
+		t.Fatal("delivery is nil, want non-nil")
+	}
+	if wf.Delivery.PRTitlePolicy != "policy/pr-title.toml" {
+		t.Errorf("PRTitlePolicy = %q, want policy/pr-title.toml", wf.Delivery.PRTitlePolicy)
+	}
+	if wf.Delivery.OnPRMetadataFailure != "plan" {
+		t.Errorf("OnPRMetadataFailure = %q, want plan", wf.Delivery.OnPRMetadataFailure)
+	}
+}
+
 func TestParseWorkflowTOML_EmptyStepID(t *testing.T) {
 	data, err := os.ReadFile("../testdata/invalid/empty-step-id.toml")
 	if err != nil {

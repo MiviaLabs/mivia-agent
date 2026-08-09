@@ -36,6 +36,16 @@ Return only the declared structured output. List every workspace path you inspec
 tests changed, security checks, fuzz decision, requested host gates, and known gaps. List every
 changed file in `files_changed`.
 
+## PR metadata
+
+Set `pr_title` and `pr_summary` in your structured output.
+
+Set `pr_title` to a custom PR title. Follow the project PR-title policy.
+The host validates `pr_title`.
+
+Set `pr_summary` to exactly two sentences. State what the change does in the first sentence.
+State why the change is needed in the second sentence.
+
 ## Output contract
 
 Reply with only a JSON object that satisfies the output schema appended to this task. Do not
