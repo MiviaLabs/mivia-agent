@@ -84,7 +84,7 @@ func (p *CommandProfile) Verify(ctx context.Context, req Request) (Result, error
 	}
 	if runErr != nil {
 		check.Status = "failed"
-		check.Class, check.Detail = failureEvidence(runErr)
+		check.Class, check.Detail, check.Failures = failureEvidence(runErr)
 		return Result{Status: "failed", Checks: []Check{check}}, nil
 	}
 	return Result{Status: "passed", Checks: []Check{check}}, nil

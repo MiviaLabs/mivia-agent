@@ -84,7 +84,7 @@ func (p *goProfile) Verify(ctx context.Context, req Request) (Result, error) {
 		}
 		if runErr != nil {
 			check.Status = "failed"
-			check.Class, check.Detail = failureEvidence(runErr)
+			check.Class, check.Detail, check.Failures = failureEvidence(runErr)
 			status = "failed"
 		}
 		checks = append(checks, check)
@@ -92,12 +92,12 @@ func (p *goProfile) Verify(ctx context.Context, req Request) (Result, error) {
 	return Result{Status: status, Checks: checks}, nil
 }
 
-func failureEvidence(err error) (string, string) {
+func failureEvidence(err error) (string, string, []string) {
 	var failure *commandFailure
 	if errors.As(err, &failure) {
-		return failure.class, failure.detail
+		return failure.class, failure.detail, failure.failures
 	}
-	return "source", "host verifier command failed"
+	return "source", "host verifier command failed", nil
 }
 
 func verifierWorkDir(workDir string) (string, error) {
