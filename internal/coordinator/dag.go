@@ -62,7 +62,7 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 		}
 		batchResults, err := c.pool.Run(h.poolCtx, batch)
 		runErr = joinError(runErr, err)
-		runErr = joinError(runErr, c.processResults(h, batchResults, results, retryQueue, retryStates))
+		runErr = joinError(runErr, c.processResults(h, batchResults, results, retryQueue, retryStates, tasks))
 		if h.poolCtx.Err() != nil {
 			// The run is being canceled. Tasks that never reached the pool have
 			// no result, so finalizeDAG would otherwise emit "missing" and
@@ -105,43 +105,6 @@ func (c *coordinator) probeRunClaim(h *RunHandle, tasks []subagents.Task, result
 	return nil
 }
 
-func (c *coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time) error {
-	var runErr error
-	for taskID, requeueAt := range queue {
-		if c.nowLocked().Before(requeueAt) {
-			continue
-		}
-		snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
-		if err != nil {
-			runErr = joinError(runErr, fmt.Errorf("read retry task %q: %w", taskID, err))
-			continue
-		}
-		if snap.Status != string(ledger.TaskStatusRetryPending) {
-			delete(queue, taskID)
-			continue
-		}
-		if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, taskID, snap.Version, string(ledger.TaskStatusQueued)); err != nil {
-			runErr = joinError(runErr, fmt.Errorf("re-queue retry task %q: %w", taskID, err))
-			continue
-		}
-		// The retry attempt was already minted by processResults when the task
-		// was moved to retry_pending. Do not mint a second attempt here — the
-		// processResults mintRetryAttempt is the single source of retry attempt
-		// identity and quota reset.
-		event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_retry_queued", TaskID: taskID, AttemptID: h.getAttempt(taskID)}
-		if err := c.repo.AppendEvent(h.poolCtx, event); err != nil {
-			runErr = joinError(runErr, fmt.Errorf("append retry event %q: %w", taskID, err))
-		} else {
-			c.emitLifecycleEvent(event)
-		}
-		if original := findTask(tasks, taskID); original != nil {
-			pending[taskID] = *original
-		}
-		delete(queue, taskID)
-	}
-	return runErr
-}
-
 func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Task, results map[string]subagents.Result) ([]subagents.Task, error) {
 	ready := make([]subagents.Task, 0, len(pending))
 	var runErr error
@@ -178,22 +141,6 @@ func (c *coordinator) collectReady(h *RunHandle, pending map[string]subagents.Ta
 		}
 	}
 	return ready, runErr
-}
-
-func waitForRetry(h *RunHandle, queue map[string]time.Time) error {
-	sleep := time.Until(earliestRequeue(queue))
-	if sleep > 0 {
-		timer := time.NewTimer(sleep)
-		defer timer.Stop()
-		select {
-		case <-h.poolCtx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-		case <-timer.C:
-		}
-	}
-	return h.poolCtx.Err()
 }
 
 func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending map[string]subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {
@@ -316,7 +263,7 @@ func (c *coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pen
 	if err != nil || h.policy().MaxRetries <= 0 || (snap.Status != string(ledger.TaskStatusFailed) && snap.Status != string(ledger.TaskStatusTimedOut)) {
 		return false
 	}
-	if c.transitionTaskToStatus(h, task.ID, string(ledger.TaskStatusRetryPending)) != nil {
+	if c.transitionTaskToStatus(h, task.ID, string(ledger.TaskStatusRetryPending), task.SessionID) != nil {
 		return false
 	}
 	state := retryState(task.ID, states, h.policy())
@@ -341,8 +288,14 @@ func buildBatch(ready []subagents.Task, pending map[string]subagents.Task, resul
 	return batch
 }
 
-func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) error {
+func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState, tasks ...[]subagents.Task) error {
 	var runErr error
+	// tasks is optional (the direct-call test path passes none): the retry
+	// transition carries the task's SessionID only when the task is in hand.
+	var taskSet []subagents.Task
+	if len(tasks) > 0 {
+		taskSet = tasks[0]
+	}
 	for _, result := range batch {
 		if !c.shouldRetryTask(h, mapStatus(result), result.TaskID, states) {
 			results[result.TaskID] = result
@@ -358,7 +311,7 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 			results[result.TaskID] = canceledResult(h, result.TaskID)
 			continue
 		}
-		if err := c.transitionTaskToStatus(h, result.TaskID, string(ledger.TaskStatusRetryPending)); err != nil {
+		if err := c.transitionTaskToStatus(h, result.TaskID, string(ledger.TaskStatusRetryPending), taskSessionID(taskSet, result.TaskID)); err != nil {
 			// The retry CAS can still lose to reconcileCancellation between the
 			// isCancelClaimed check above and this CAS. Re-check before treating
 			// it as a genuine error: a cancel-claimed task surfaces as canceled
@@ -425,7 +378,7 @@ func (c *coordinator) shouldRetryTask(h *RunHandle, status, taskID string, state
 	return state == nil || state.CanRetry()
 }
 
-func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string) error {
+func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string, sessionIDs ...string) error {
 	ctx := h.poolContext()
 	snap, err := c.repo.GetTask(ctx, h.runID, taskID)
 	if err != nil {
@@ -437,7 +390,14 @@ func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string
 	if err := c.repo.CompareAndSetTaskStatus(ctx, h.runID, taskID, snap.Version, status); err != nil {
 		return err
 	}
-	event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: taskID, AttemptID: h.getAttempt(taskID)}
+	// SessionID is carried when the caller has the task's session in hand; the
+	// variadic form keeps referral_spawn.go's bare calls compiling with an
+	// empty session (that task's session is not retained there).
+	sessionID := ""
+	if len(sessionIDs) > 0 {
+		sessionID = sessionIDs[0]
+	}
+	event := ledger.LifecycleEvent{ID: newEventID(), RunID: h.runID, Kind: "task_" + status, TaskID: taskID, AttemptID: h.getAttempt(taskID), SessionID: sessionID}
 	if err := c.repo.AppendEvent(ctx, event); err != nil {
 		return err
 	}
@@ -473,12 +433,13 @@ func findTask(tasks []subagents.Task, id string) *subagents.Task {
 	}
 	return nil
 }
-func earliestRequeue(queue map[string]time.Time) time.Time {
-	var earliest time.Time
-	for _, value := range queue {
-		if earliest.IsZero() || value.Before(earliest) {
-			earliest = value
-		}
+
+// taskSessionID returns the SessionID of the task with the given id, or an
+// empty string when the task is absent from the set (the caller did not have
+// the task in hand).
+func taskSessionID(tasks []subagents.Task, taskID string) string {
+	if t := findTask(tasks, taskID); t != nil {
+		return t.SessionID
 	}
-	return earliest
+	return ""
 }

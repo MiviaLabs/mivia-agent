@@ -70,7 +70,7 @@ func (s *StorageRepository) CompareAndSetPanelPhase(ctx context.Context, runID s
 }
 
 func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attemptID, holder string, to PanelPhase, synthesis *PanelSynthesisExecution, next StepAttempt, idx int) error {
-	payload, err := marshalPanelPhase(panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.clone()})
+	payload, err := marshalPanelPhase(panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.clone(), CreatedAt: s.now()})
 	if err != nil {
 		return fmt.Errorf("marshal %s payload: %w", eventKindPanelPhaseSet, err)
 	}

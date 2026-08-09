@@ -490,3 +490,141 @@ func TestListEventsAttemptPromptRefOnly(t *testing.T) {
 		})
 	}
 }
+
+// TestListEventsAttemptExecutionSummary: a wf_attempt_execution event lands in
+// the audit trail with a summary carrying the attempt id, the coordinator run
+// id, the task id, and the transient-retry reason when one was recorded.
+func TestListEventsAttemptExecutionSummary(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, json := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, json), nil, "CreateRun")
+			requireErr(t, repo.CreateStepAttempt(ctx, StepAttempt{AttemptID: "att-1", RunID: run, StepID: "plan", AttemptNo: 1}), nil, "CreateStepAttempt")
+			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-retry", "task-retry", "provider overloaded: rate limit"), nil, "SetStepAttemptExecution")
+
+			events, err := repo.ListEvents(ctx, run, 0, 0)
+			requireErr(t, err, nil, "ListEvents")
+			var found *EventRecord
+			for i := range events {
+				if events[i].Kind == eventKindAttemptExecution {
+					found = &events[i]
+				}
+			}
+			if found == nil {
+				t.Fatal("wf_attempt_execution event missing from the listing")
+			}
+			for _, want := range []string{"att-1", "coord-retry", "task-retry", "provider overloaded: rate limit"} {
+				if !strings.Contains(found.Summary, want) {
+					t.Fatalf("attempt_execution summary = %q, want it to contain %q", found.Summary, want)
+				}
+			}
+		})
+	}
+}
+
+// TestListEventsPanelPhaseSetSummary: a wf_panel_phase_set event lands in the
+// audit trail with a summary carrying the attempt id, the phase reached and
+// the version.
+func TestListEventsPanelPhaseSetSummary(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, raw := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, raw), nil, "CreateRun")
+			attempt := StepAttempt{AttemptID: "att-1", RunID: run, StepID: "review", AttemptNo: 1, PanelExecution: validPanelExecution(t, run, "att-1")}
+			storePanelExecution(t, repo, attempt.PanelExecution)
+			requireErr(t, repo.CreateStepAttempt(ctx, attempt), nil, "CreateStepAttempt")
+			synthesis := &PanelSynthesisExecution{Work: validSynthesisTask(t, run, attempt.AttemptID)}
+			storePanelTask(t, repo, synthesis.Work)
+			requireErr(t, repo.ClaimRun(ctx, run, "holder"), nil, "ClaimRun")
+			requireErr(t, repo.CompareAndSetPanelPhase(ContextWithClaimHolder(ctx, "holder"), run, attempt.AttemptID, 1, PanelPhaseMembersAdmitted, PanelPhaseSynthesisAdmitted, synthesis), nil, "CompareAndSetPanelPhase")
+
+			events, err := repo.ListEvents(ctx, run, 0, 0)
+			requireErr(t, err, nil, "ListEvents")
+			var found *EventRecord
+			for i := range events {
+				if events[i].Kind == eventKindPanelPhaseSet {
+					found = &events[i]
+				}
+			}
+			if found == nil {
+				t.Fatal("wf_panel_phase_set event missing from the listing")
+			}
+			if found.CreatedAt.IsZero() {
+				t.Fatal("wf_panel_phase_set CreatedAt is the zero timestamp; 'mivia workflow events' must not print epoch")
+			}
+			if !found.CreatedAt.Equal(fixedClock) {
+				t.Fatalf("wf_panel_phase_set CreatedAt = %v, want %v (clock-stamped from the payload)", found.CreatedAt, fixedClock)
+			}
+			for _, want := range []string{"att-1", string(PanelPhaseSynthesisAdmitted)} {
+				if !strings.Contains(found.Summary, want) {
+					t.Fatalf("panel_phase_set summary = %q, want it to contain %q", found.Summary, want)
+				}
+			}
+		})
+	}
+}
+
+// TestListEventsRunDeletedTombstone: the wf_run_deleted tombstone of a deleted
+// run becomes listable when the same run ID is re-admitted (a tombstone always
+// precedes a later run_created that reuses the idempotency key), so the audit
+// trail shows the deletion and the reincarnation.
+func TestListEventsRunDeletedTombstone(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, json := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, json), nil, "CreateRun")
+			requireErr(t, repo.DeleteRun(ctx, run), nil, "DeleteRun")
+			requireErr(t, repo.CreateRun(ctx, snap, json), nil, "re-CreateRun")
+
+			events, err := repo.ListEvents(ctx, run, 0, 0)
+			requireErr(t, err, nil, "ListEvents")
+			var found *EventRecord
+			for i := range events {
+				if events[i].Kind == eventKindRunDeleted {
+					found = &events[i]
+				}
+			}
+			if found == nil {
+				t.Fatal("wf_run_deleted tombstone missing from the reincarnated listing")
+			}
+			if !strings.Contains(found.Summary, run) {
+				t.Fatalf("run_deleted summary = %q, want it to contain the run id %q", found.Summary, run)
+			}
+		})
+	}
+}
+
+// TestListEventsRunResumedSummary: a wf_run_resumed event lands in the audit
+// trail with a summary carrying the run id.
+func TestListEventsRunResumedSummary(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, json := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, json), nil, "CreateRun")
+			requireErr(t, repo.RecordRunResumed(ctx, run), nil, "RecordRunResumed")
+
+			events, err := repo.ListEvents(ctx, run, 0, 0)
+			requireErr(t, err, nil, "ListEvents")
+			var found *EventRecord
+			for i := range events {
+				if events[i].Kind == eventKindRunResumed {
+					found = &events[i]
+				}
+			}
+			if found == nil {
+				t.Fatal("wf_run_resumed event missing from the listing")
+			}
+			if !strings.Contains(found.Summary, run) {
+				t.Fatalf("run_resumed summary = %q, want it to contain the run id %q", found.Summary, run)
+			}
+		})
+	}
+}

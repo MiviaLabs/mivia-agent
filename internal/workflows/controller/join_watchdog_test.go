@@ -81,9 +81,10 @@ func TestAgentStepJoinWatchdogSettlesNeverSettlingChild(t *testing.T) {
 	coordRepo := ledger.NewMemoryLedgerRepository()
 	coord := coordinator.New(coordRepo, p).WithRetryPolicy(coordinator.NoRetry)
 
-	// The watchdog is the ONLY bound here: no parent deadline (Background),
-	// no per-agent timeout (agentStepRequest derives none without a deadline),
-	// so the old code blocks in coordinator.Join forever.
+	// The watchdog is the ONLY bound here: no parent deadline (Background)
+	// and no per-agent timeout (agentStepRequest derives none without a
+	// deadline). The child never settles and never heartbeats, so the
+	// liveness-gated watchdog cancels the silent join at the full bound.
 	runner := NewCoordinatorRunner(coord)
 	runner.JoinWatchdog = 200 * time.Millisecond
 	ctrl, repo := newErrorController(t, runner, "wfr-join-watchdog")
@@ -123,5 +124,187 @@ func TestAgentStepJoinWatchdogSettlesNeverSettlingChild(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "join timed out") {
 		t.Fatalf("error content %q does not name the join timeout", body)
+	}
+}
+
+// TestJoinWatchdogDoesNotKillLiveChild pins the liveness gate of the join
+// watchdog: a child that emits subagent heartbeats for its task id is live
+// and must NEVER be canceled by the watchdog, no matter how long the join
+// runs. The watchdog cancels the join only when the child is silent for the
+// full bound. Heartbeats are registered for the task id on a ticker shorter
+// than the bound; once the heartbeats stop, the same watchdog must cancel
+// the now-silent child within the bound.
+func TestJoinWatchdogDoesNotKillLiveChild(t *testing.T) {
+	ResetStepHeartbeats()
+	defer ResetStepHeartbeats()
+
+	const taskID = "task-live-join"
+	const watchdog = 600 * time.Millisecond
+
+	d := runtime.New(runtime.Policy{})
+	handler := &neverSettlingHandler{}
+	if err := d.Register(runtime.Subagent, "dev", handler); err != nil {
+		t.Fatal(err)
+	}
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	coordRepo := ledger.NewMemoryLedgerRepository()
+	coord := coordinator.New(coordRepo, p).WithRetryPolicy(coordinator.NoRetry)
+
+	h, err := coord.EnsureRun(context.Background(), coordinator.EnsureRunRequest{
+		RunID:                coordinator.NewRunID(),
+		Tasks:                []subagents.Task{{ID: taskID, Name: "dev", AgentName: "dev"}},
+		IdempotencyKey:       "workflow-step/live-join",
+		NonInteractiveParent: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := AgentStepRequest{WorkflowRunID: "wfr-live-join", StepID: "one", AttemptNo: 1,
+		TaskID: taskID, CoordinatorRunID: h.RunID(), AgentName: "dev"}
+
+	stopHeartbeats := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopHeartbeats:
+				return
+			case <-ticker.C:
+				NoteStepHeartbeat(taskID)
+			}
+		}
+	}()
+
+	runner := NewCoordinatorRunner(coord)
+	runner.JoinWatchdog = watchdog
+	done := make(chan error, 1)
+	go func() {
+		_, joinErr := runner.joinWithCancellation(context.Background(), spec, h)
+		done <- joinErr
+	}()
+
+	// The child is live: the join must still be open after several watchdog
+	// bounds, because the last heartbeat is always far inside the bound.
+	select {
+	case joinErr := <-done:
+		t.Fatalf("join ended while the child was live: %v; want the watchdog to leave a live child alone", joinErr)
+	case <-time.After(1500 * time.Millisecond):
+	}
+
+	// The child goes silent: the watchdog must cancel the join within one
+	// bound plus one tick.
+	close(stopHeartbeats)
+	select {
+	case joinErr := <-done:
+		if joinErr == nil || !strings.Contains(joinErr.Error(), "join timed out") {
+			t.Fatalf("join error = %v, want it to name the join timeout", joinErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("join did not end after the child went silent; want a watchdog timeout")
+	}
+}
+
+// TestJoinWatchdogIgnoresStalePreJoinHeartbeat pins the anchor-bound of the
+// liveness reference: a heartbeat entry recorded BEFORE this join started (a
+// stale pre-join entry left by a previous execution of the same wft- TaskID
+// on a same-process resume) must never be used as the reference. The fresh
+// child's first heartbeat arrives well after the join start, so the watchdog
+// must NOT cancel the live re-dispatched child at the first tick.
+func TestJoinWatchdogIgnoresStalePreJoinHeartbeat(t *testing.T) {
+	ResetStepHeartbeats()
+	defer ResetStepHeartbeats()
+
+	const taskID = "task-stale-join"
+	const watchdog = 600 * time.Millisecond
+
+	// Record a stale pre-join heartbeat long before the join starts, exactly
+	// as a previous execution of the same task id would leave behind. The
+	// registry's unexported note takes an explicit time, so the entry is aged
+	// deterministically instead of sleeping (time.Sleep is banned in tests).
+	stepHeartbeats.note(taskID, time.Now().Add(-time.Hour))
+
+	// The fresh child's first heartbeat lands after the first watchdog tick,
+	// so the registry still holds only the stale pre-join entry at first tick.
+	coord, h, spec, stopHeartbeats := newJoinWatchdogHarness(t, taskID, "workflow-step/stale-join", "wfr-stale-join", 1, 300*time.Millisecond)
+
+	runner := NewCoordinatorRunner(coord)
+	runner.JoinWatchdog = watchdog
+	done := make(chan error, 1)
+	go func() {
+		_, joinErr := runner.joinWithCancellation(context.Background(), spec, h)
+		done <- joinErr
+	}()
+
+	// The first tick fires at ~100 ms (bound/8 floored at 100 ms). The stale
+	// entry is older than the bound, so the old code canceled the live child
+	// right here; the join must instead stay open because the reference is
+	// bounded by the join start, not the stale entry.
+	select {
+	case joinErr := <-done:
+		t.Fatalf("join ended at the first tick with a stale pre-join heartbeat: %v; want the reference bounded by the join start", joinErr)
+	case <-time.After(2500 * time.Millisecond):
+	}
+
+	// The child goes silent: the watchdog must cancel the join within one
+	// bound plus one tick.
+	close(stopHeartbeats)
+	select {
+	case joinErr := <-done:
+		if joinErr == nil || !strings.Contains(joinErr.Error(), "join timed out") {
+			t.Fatalf("join error = %v, want it to name the join timeout", joinErr)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("join did not end after the child went silent; want a watchdog timeout")
+	}
+}
+
+// TestJoinWatchdogFixedBoundFallbackForUnknownTask pins the fixed-bound
+// fallback of the liveness-gated watchdog: with NO registry entry for the
+// task id, the watchdog must cancel the silent child after the full bound,
+// exactly like the pre-liveness fixed bound. It must not time out early and
+// must not hang.
+func TestJoinWatchdogFixedBoundFallbackForUnknownTask(t *testing.T) {
+	ResetStepHeartbeats()
+	defer ResetStepHeartbeats()
+
+	const taskID = "task-unknown-join"
+	const watchdog = 200 * time.Millisecond
+
+	d := runtime.New(runtime.Policy{})
+	handler := &neverSettlingHandler{}
+	if err := d.Register(runtime.Subagent, "dev", handler); err != nil {
+		t.Fatal(err)
+	}
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	coordRepo := ledger.NewMemoryLedgerRepository()
+	coord := coordinator.New(coordRepo, p).WithRetryPolicy(coordinator.NoRetry)
+
+	h, err := coord.EnsureRun(context.Background(), coordinator.EnsureRunRequest{
+		RunID:                coordinator.NewRunID(),
+		Tasks:                []subagents.Task{{ID: taskID, Name: "dev", AgentName: "dev"}},
+		IdempotencyKey:       "workflow-step/unknown-join",
+		NonInteractiveParent: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := AgentStepRequest{WorkflowRunID: "wfr-unknown-join", StepID: "one", AttemptNo: 1,
+		TaskID: taskID, CoordinatorRunID: h.RunID(), AgentName: "dev"}
+
+	runner := NewCoordinatorRunner(coord)
+	runner.JoinWatchdog = watchdog
+	started := time.Now()
+	_, joinErr := runner.joinWithCancellation(context.Background(), spec, h)
+	elapsed := time.Since(started)
+
+	if joinErr == nil || !strings.Contains(joinErr.Error(), "join timed out") {
+		t.Fatalf("join error = %v, want it to name the join timeout", joinErr)
+	}
+	if elapsed < watchdog-50*time.Millisecond {
+		t.Fatalf("join ended after %s; want it to hold the full bound (~%s)", elapsed, watchdog)
+	}
+	if elapsed > 15*time.Second {
+		t.Fatalf("join ended after %s; want it bounded by the injected watchdog (~%s)", elapsed, watchdog)
 	}
 }

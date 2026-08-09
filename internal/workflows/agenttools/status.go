@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
@@ -39,22 +40,7 @@ func buildStatusView(ctx context.Context, repo workflowledger.Repository, runID 
 		return StatusView{}, err
 	}
 	for _, a := range attempts {
-		av := AttemptView{
-			Step:             a.StepID,
-			Attempt:          a.AttemptNo,
-			Status:           string(a.Status),
-			ToStep:           a.ToStepID,
-			OutputDigest:     a.OutputDigest,
-			OutputRef:        a.OutputRef,
-			ErrorRef:         a.ErrorRef,
-			CoordinatorRunID: a.CoordinatorRunID,
-			TaskID:           a.TaskID,
-			MatchDigest:      a.MatchDigest,
-		}
-		if v := extractVerdict(a); v != "" {
-			av.Verdict = v
-		}
-		view.Attempts = append(view.Attempts, av)
+		view.Attempts = append(view.Attempts, attemptView(a))
 	}
 	counters, err := repo.GetLoopCounters(ctx, runID)
 	if err != nil {
@@ -91,6 +77,49 @@ func buildStatusView(ctx context.Context, repo workflowledger.Repository, runID 
 		})
 	}
 	return view, nil
+}
+
+// attemptView renders one ledger attempt as an AttemptView, including the
+// RFC3339 UTC timestamps and the elapsed seconds from the ledger.
+func attemptView(a workflowledger.StepAttempt) AttemptView {
+	av := AttemptView{
+		Step:             a.StepID,
+		Attempt:          a.AttemptNo,
+		Status:           string(a.Status),
+		ToStep:           a.ToStepID,
+		OutputDigest:     a.OutputDigest,
+		OutputRef:        a.OutputRef,
+		ErrorRef:         a.ErrorRef,
+		CoordinatorRunID: a.CoordinatorRunID,
+		TaskID:           a.TaskID,
+		MatchDigest:      a.MatchDigest,
+		StartedAt:        formatTime(a.StartedAt),
+		FinishedAt:       formatTimePtr(a.FinishedAt),
+		ElapsedSeconds:   attemptElapsedSeconds(a),
+	}
+	if v := extractVerdict(a); v != "" {
+		av.Verdict = v
+	}
+	return av
+}
+
+// attemptElapsedSeconds returns the attempt's wall-clock duration in whole
+// seconds: finished minus started for a completed attempt, or elapsed since
+// start for a running one. Zero when the start time is unknown or the clock
+// is skewed (negative duration).
+func attemptElapsedSeconds(a workflowledger.StepAttempt) int64 {
+	if a.StartedAt.IsZero() {
+		return 0
+	}
+	end := time.Now()
+	if a.FinishedAt != nil {
+		end = *a.FinishedAt
+	}
+	d := end.Sub(a.StartedAt)
+	if d < 0 {
+		return 0
+	}
+	return int64(d.Seconds())
 }
 
 // extractVerdict pulls a gate verdict from decision JSON or stored output fields
@@ -156,6 +185,9 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 		OutputRef:        attempt.OutputRef,
 		OutputDigest:     attempt.OutputDigest,
 		ErrorRef:         attempt.ErrorRef,
+		StartedAt:        formatTime(attempt.StartedAt),
+		FinishedAt:       formatTimePtr(attempt.FinishedAt),
+		ElapsedSeconds:   attemptElapsedSeconds(attempt),
 	}
 	if len(attempt.EvidenceJSON) > 0 {
 		var evidence any

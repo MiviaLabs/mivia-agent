@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -80,7 +81,9 @@ func (c *LinearController) timeoutExpiredRun(ctx context.Context, run workflowle
 			return settled, routeErr
 		}
 	}
-	// Close an open human_gate attempt so terminal runs do not leave running attempts.
+	// Close an open human_gate attempt so terminal runs do not leave running
+	// attempts. In-flight agent attempts stay running: their runner owns the
+	// join contract and reports the final state when the child exits.
 	_ = c.timeoutOpenHumanAttempt(writeCtx, run)
 	run, err := c.Repo.GetRun(writeCtx, c.RunID)
 	if err != nil {
@@ -90,6 +93,10 @@ func (c *LinearController) timeoutExpiredRun(ctx context.Context, run workflowle
 	return got, err
 }
 
+// timeoutOpenHumanAttempt closes the open human_gate attempt as timed_out
+// when the run deadline expires. In-flight agent attempts stay running: the
+// runner owns the join contract and reports their final state when the child
+// exits, so the controller writes no ErrorRef for them.
 func (c *LinearController) timeoutOpenHumanAttempt(ctx context.Context, run workflowledger.RunSnapshot) error {
 	step, ok := c.WorkflowStep(run.ActiveStepID)
 	if !ok || step.Kind != "human_gate" {
@@ -103,5 +110,12 @@ func (c *LinearController) timeoutOpenHumanAttempt(ctx context.Context, run work
 	if !found || workflowledger.IsTerminalAttemptStatus(attempt.Status) {
 		return nil
 	}
-	return CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(ctx, c.Repo, context.DeadlineExceeded)}, workflowledger.AttemptStatusTimedOut, RouteDecision{})
+	// Record the deadline cause on the closed attempt so the CLI can explain
+	// the timeout.
+	err = CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(ctx, c.Repo, errors.New("workflow run deadline exceeded"))}, workflowledger.AttemptStatusTimedOut, RouteDecision{})
+	if err != nil {
+		return err
+	}
+	c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusTimedOut))
+	return nil
 }

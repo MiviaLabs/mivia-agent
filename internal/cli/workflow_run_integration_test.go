@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -65,6 +66,38 @@ func TestWorkflowRunLinearTwoStepExitCriterion(t *testing.T) {
 			_ = fresh.Close()
 		}
 		t.Fatalf("resume output=%q requests=%d before_requests=%d before=%+v attempts=%d fresh=%d", resumed.String(), requests.Load(), beforeRequests, before, len(after), freshCount)
+	}
+}
+
+// TestWorkflowRunProgressJSONLinesOnStderr checks that a workflow run prints
+// progress JSON lines to stderr while stdout keeps its two-field contract.
+func TestWorkflowRunProgressJSONLinesOnStderr(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"{\"ok\":true}"},"finish_reason":"stop"}]}`)
+	}))
+	t.Cleanup(server.Close)
+
+	root := t.TempDir()
+	storePath := filepath.Join(root, "workflow.db")
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	writeWorkflowRunFixture(t, root, server.URL, storePath)
+	var stdout strings.Builder
+	var stderr bytes.Buffer
+	if err := runWorkflowWithIO([]string{"run", "two-step", "--workspace", root, "--config", filepath.Join(root, "config.toml"), "--input", "task=compile"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("provider requests = %d, want 2", requests.Load())
+	}
+	fields := strings.Fields(stdout.String())
+	if len(fields) != 2 || !strings.HasPrefix(fields[0], "run_id=wfr-") || fields[1] != "status=succeeded" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `"step_started"`) || !strings.Contains(stderr.String(), `"run_finished"`) {
+		t.Fatalf("stderr progress lines missing step_started/run_finished: %q", stderr.String())
 	}
 }
 

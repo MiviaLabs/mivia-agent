@@ -77,6 +77,10 @@ func (f *abandonFence) DeleteRun(ctx context.Context, runID string) error {
 	return f.mutate(runID, func() error { return f.inner.DeleteRun(ctx, runID) })
 }
 
+func (f *abandonFence) RecordRunResumed(ctx context.Context, runID string) error {
+	return f.mutate(runID, func() error { return f.inner.RecordRunResumed(ctx, runID) })
+}
+
 func (f *abandonFence) CreateStepAttempt(ctx context.Context, attempt workflowledger.StepAttempt) error {
 	return f.mutate(attempt.RunID, func() error { return f.inner.CreateStepAttempt(ctx, attempt) })
 }
@@ -103,8 +107,10 @@ func (f *abandonFence) SetStepAttemptPrompt(ctx context.Context, runID, attemptI
 	return f.mutate(runID, func() error { return f.inner.SetStepAttemptPrompt(ctx, runID, attemptID, promptRef) })
 }
 
-func (f *abandonFence) SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID string) error {
-	return f.mutate(runID, func() error { return f.inner.SetStepAttemptExecution(ctx, runID, attemptID, coordinatorRunID, taskID) })
+func (f *abandonFence) SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID, reason string) error {
+	return f.mutate(runID, func() error {
+		return f.inner.SetStepAttemptExecution(ctx, runID, attemptID, coordinatorRunID, taskID, reason)
+	})
 }
 
 func (f *abandonFence) ListTransitions(ctx context.Context, runID string) ([]workflowledger.TransitionRecord, error) {

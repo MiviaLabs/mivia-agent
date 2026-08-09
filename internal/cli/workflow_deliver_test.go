@@ -499,6 +499,52 @@ func TestWorkflowDeliverTimeoutWithOnFailureStaysPending(t *testing.T) {
 	}
 }
 
+// TestWorkflowDeliveryStagePrinter pins the CLI stage printer (G11): each
+// delivery stage becomes one `delivery stage=<name> detail=<detail>` line on
+// stderr, and the printer is nil for io.Discard so silent CLI runs write
+// nothing.
+func TestWorkflowDeliveryStagePrinter(t *testing.T) {
+	var stderr strings.Builder
+	printStage := workflowDeliveryStagePrinter(&stderr)
+	if printStage == nil {
+		t.Fatal("workflowDeliveryStagePrinter(buffer) = nil, want a stage printer")
+	}
+	printStage("guard", "delivering run wfr-test")
+	printStage("no_diff", "no diff to publish")
+	want := "delivery stage=guard detail=delivering run wfr-test\ndelivery stage=no_diff detail=no diff to publish\n"
+	if stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+	if p := workflowDeliveryStagePrinter(io.Discard); p != nil {
+		t.Fatalf("workflowDeliveryStagePrinter(io.Discard) = %p, want nil (silent CLI runs)", p)
+	}
+}
+
+// TestWorkflowDeliverPrintsStagesToStderr pins the end-to-end wiring: the
+// `workflow deliver` path passes the stderr stage printer to delivery.Deliver,
+// so a successful delivery emits guard, eligibility, commit, push, pr, and
+// success lines on stderr.
+func TestWorkflowDeliverPrintsStagesToStderr(t *testing.T) {
+	root, storePath, config, _ := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, runID, repo)
+
+	var stdout, stderr strings.Builder
+	err := runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("deliver error = %v; stderr = %q", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "status=succeeded") {
+		t.Fatalf("deliver stdout = %q, want status=succeeded", stdout.String())
+	}
+	for _, stage := range []string{"guard", "eligibility", "commit", "push", "pr", "success"} {
+		if !strings.Contains(stderr.String(), "delivery stage="+stage) {
+			t.Fatalf("stderr = %q, want a delivery stage=%s line", stderr.String(), stage)
+		}
+	}
+}
+
 // TestWorkflowDeliverRefusalRecordsReason pins the contract with
 // recordDeliveryRefusal (workflow_delivery_record.go): a permanent refusal
 // settled through deliverRunWithStore must durably record the refusal reason

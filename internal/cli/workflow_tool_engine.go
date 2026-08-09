@@ -11,8 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -38,7 +37,11 @@ type sessionWorkflowEngine struct {
 	root       string
 	configPath string
 
-	mu     sync.Mutex
+	mu sync.Mutex
+	// bus supplies the session event bus lazily. The provider is read at
+	// controller attach time, not at wiring time: chat wires the engine before
+	// runTUI creates the bus, so a provider keeps that ordering irrelevant.
+	bus    func() *events.Bus
 	active map[string]*sessionActiveRun
 }
 
@@ -55,6 +58,42 @@ func newSessionWorkflowEngine(root, configPath string) *sessionWorkflowEngine {
 		configPath: configPath,
 		active:     make(map[string]*sessionActiveRun),
 	}
+}
+
+// SetEventBusProvider attaches the session event bus provider to the engine.
+// When a controller runs, its progress events are published onto the bus the
+// provider returns so the TUI and metrics can observe workflow lifecycle. The
+// provider is read at attach time, which lets a bus created after wiring (the
+// production order: wireWorkflowToolOptions runs before runTUI builds the bus)
+// still receive progress. A nil provider disables progress publishing.
+func (e *sessionWorkflowEngine) SetEventBusProvider(provider func() *events.Bus) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.bus = provider
+	e.mu.Unlock()
+}
+
+// SetEventBus attaches a fixed session event bus for callers that hold the bus
+// at wiring time (mainly tests). It wraps SetEventBusProvider.
+func (e *sessionWorkflowEngine) SetEventBus(bus *events.Bus) {
+	e.SetEventBusProvider(func() *events.Bus { return bus })
+}
+
+// attachWorkflowProgressBus publishes controller progress onto the engine
+// event bus. It must run before the controller starts. A nil sink or a nil
+// controller leaves the sink unset.
+func (e *sessionWorkflowEngine) attachWorkflowProgressBus(ctrl *controller.LinearController) {
+	if e == nil || ctrl == nil {
+		return
+	}
+	sink := e.workflowProgressSink()
+	if sink == nil {
+		return
+	}
+	// The sink is best-effort. A controller that already started refuses it.
+	_ = ctrl.SetProgressSink(sink)
 }
 
 // Start implements agenttools.Engine.
@@ -117,6 +156,7 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 		prepared.closeFn()
 		return agenttools.StartResult{}, err
 	}
+	e.attachWorkflowProgressBus(built.Controller)
 	created, err := built.Controller.StartNew(ctx)
 	if err != nil {
 		built.Cleanup()
@@ -153,6 +193,10 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 		sessionAutoDeliveryRepairLoop(runCtx, prepared.repo, prepared.root, prepared.res, prepared.store, runID, allowPublish, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return built.Controller.Run(ctx)
 		})
+		// Delivery completion settles outside the controller (which parked at
+		// delivery_pending and emitted no run_finished), so publish the terminal
+		// event here once delivery actually succeeded.
+		e.publishDeliveredRunFinished(context.Background(), prepared.repo, runID)
 		e.mu.Lock()
 		active := e.active[runID]
 		delete(e.active, runID)
@@ -237,10 +281,11 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 			return agenttools.CancelResult{}, err
 		}
 	}
-	// CancelRun mints and claims its own holder internally; drop ours first so
-	// its claim succeeds. Never clear a foreign claim.
+	// CancelRunWithAttempts mints and claims its own holder internally; drop
+	// ours first so its claim succeeds. Never clear a foreign claim.
 	_ = repo.ReleaseRun(context.Background(), runID, holder)
-	if err := controller.CancelRun(ctx, repo, runID); err != nil {
+	attempts, err := controller.CancelRunWithAttempts(ctx, repo, runID)
+	if err != nil {
 		// Context cancel or a prior settle may already leave the run terminal.
 		run, getErr := repo.GetRun(ctx, runID)
 		if getErr == nil && workflowledger.IsTerminalRunStatus(run.Status) {
@@ -248,6 +293,10 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 		}
 		return agenttools.CancelResult{}, err
 	}
+	// Terminal progress: one step_completed(canceled) per attempt the cancel
+	// settled, so TUI and metrics observe the operator cancel like any other
+	// run terminal event.
+	e.publishCanceledAttempts(runID, attempts)
 	run, err = repo.GetRun(ctx, runID)
 	if err != nil {
 		return agenttools.CancelResult{}, err
@@ -393,70 +442,4 @@ func inputsToRawFlags(inputs map[string]any) ([]string, error) {
 		}
 	}
 	return out, nil
-}
-
-// workflowToolSubagentConfig resolves the store config used by workflow tools.
-// It matches CLI workflow commands: prefer the session Resolved config, else
-// load the workspace config, then apply the workspace store-root default.
-func workflowToolSubagentConfig(root string, res *config.Resolved) config.SubagentConfig {
-	if res != nil {
-		applyWorkflowStoreRoot(res, root)
-		return res.Subagents
-	}
-	configPath := sessionEngineConfigPath(root, nil)
-	loaded, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: root, AllowMissingConfig: true})
-	if err != nil || loaded == nil {
-		return config.DefaultSubagentConfig
-	}
-	applyWorkflowStoreRoot(loaded, root)
-	return loaded.Subagents
-}
-
-// sessionEngineConfigPath is the config file identity for session workflow
-// tools. Prefer the session Resolved.ConfigPath (covers --config / MIVIA_CONFIG)
-// so read and mutate paths open the same store. Fall back to the workspace
-// project file when no session config is available.
-func sessionEngineConfigPath(root string, res *config.Resolved) string {
-	if res != nil && strings.TrimSpace(res.ConfigPath) != "" {
-		return res.ConfigPath
-	}
-	return workflowConfigPath(root, "")
-}
-
-// workflowToolService builds the in-process workflow tool service for a
-// workspace. res carries the session config identity when available; nil
-// falls back to the workspace project config. Returns nil when the workspace
-// has no .mivia/workflows/ or the service cannot be built.
-func workflowToolService(root string, res *config.Resolved) *agenttools.Service {
-	if !agenttools.HasWorkflows(root) {
-		return nil
-	}
-	cfg := workflowToolSubagentConfig(root, res)
-	configPath := sessionEngineConfigPath(root, res)
-	repoFactory := func(context.Context) (workflowledger.Repository, func(), error) {
-		_, repo, closeFn, err := openWorkflowStore(root, cfg)
-		return repo, closeFn, err
-	}
-	svc, err := agenttools.NewService(agenttools.ServiceOptions{
-		Engine: newSessionWorkflowEngine(root, configPath),
-		Repo:   repoFactory,
-	})
-	if err != nil {
-		return nil
-	}
-	return svc
-}
-
-// wireWorkflowToolOptions attaches Phase 7 workflow tools to DefaultOptions
-// when the workspace has .mivia/workflows/. Reads and mutates share one config
-// identity (session ConfigPath or workspace project file).
-func wireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved) {
-	if opts == nil {
-		return
-	}
-	svc := workflowToolService(root, res)
-	if svc == nil {
-		return
-	}
-	opts.WorkflowTools = wrapWorkflowTools(svc)
 }

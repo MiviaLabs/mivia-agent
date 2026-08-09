@@ -92,16 +92,43 @@ func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Wri
 	if err := repo.ClearRunClaim(ctx, runID); err != nil {
 		return fmt.Errorf("clear stale workflow claim: %w", err)
 	}
-	if err := controller.CancelRun(ctx, repo, runID); err != nil {
+	attempts, err := controller.CancelRunWithAttempts(ctx, repo, runID)
+	if err != nil {
 		fmt.Fprintf(stderr, "workflow cancel failed: %v\n", err)
 		return err
 	}
+	// Terminal progress: one step_completed(canceled) JSON line per attempt
+	// the cancel settled, so consumers of the non-interactive stream see the
+	// operator cancel like any other run terminal event.
+	publishCanceledAttemptsCLI(runID, attempts, stderr)
 	settled, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
 	return nil
+}
+
+// publishCanceledAttemptsCLI writes one step_completed(canceled) JSON line to
+// stderr per attempt an operator cancel settled, reusing the non-interactive
+// progress writer.
+func publishCanceledAttemptsCLI(runID string, attempts []workflowledger.StepAttempt, stderr io.Writer) {
+	if stderr == nil {
+		return
+	}
+	writer := &workflowProgressWriter{w: stderr}
+	for _, attempt := range attempts {
+		writer.Emit(controller.ProgressEvent{
+			Kind:             controller.ProgressStepCompleted,
+			RunID:            runID,
+			StepID:           attempt.StepID,
+			AttemptNo:        attempt.AttemptNo,
+			TaskID:           attempt.TaskID,
+			CoordinatorRunID: attempt.CoordinatorRunID,
+			Detail:           "canceled",
+			Timestamp:        time.Now(),
+		})
+	}
 }
 
 // openWorkflowResolutionContext opens the workspace, config, store, and the

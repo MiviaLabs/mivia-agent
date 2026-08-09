@@ -13,6 +13,12 @@ import (
 // 5 synthesis is not available to finish the workflow step.
 var ErrPanelMembersComplete = errors.New("panel members completed; synthesis is unavailable")
 
+// panelsEnabled gates agent_panel execution. Wave 5 synthesis has no agent or
+// template definition surface, so the controller fails panel steps closed:
+// running members without synthesis left the attempt running forever (G9).
+// The member-running code below stays dead until Wave 5 defines synthesis.
+const panelsEnabled = false
+
 func (c *LinearController) advancePanelStep(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step) (workflowledger.RunSnapshot, bool, error) {
 	attempts, err := c.Repo.ListStepAttempts(ctx, c.RunID)
 	if err != nil {
@@ -33,6 +39,16 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 		if err := c.Repo.CreateStepAttempt(ctx, attempt); err != nil {
 			return c.fail(ctx, run, err)
 		}
+		// Re-read the stored attempt: CreateStepAttempt records version 1 and
+		// the settle CAS below compares against that version.
+		stored, getErr := c.Repo.GetStepAttempt(ctx, c.RunID, attempt.AttemptID)
+		if getErr != nil {
+			return c.fail(ctx, run, getErr)
+		}
+		attempt = stored
+	}
+	if !panelsEnabled {
+		return c.refusePanelStep(ctx, run, step, attempt)
 	}
 	runner, ok := c.Runner.(*CoordinatorRunner)
 	if !ok || runner.Coordinator == nil {
@@ -51,4 +67,19 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 	// synthesis. Keep this attempt nonterminal so a successful panel does not
 	// take the failure route before that phase exists.
 	return run, false, nil
+}
+
+// refusePanelStep fails the panel attempt and its run closed with a durable
+// refusal cause. The attempt is settled failed exactly like the member-failure
+// path, so settleAgentAttempt persists the cause on the attempt ErrorRef. The
+// ProgressPanelRefused event carries the same cause.
+func (c *LinearController) refusePanelStep(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt) (workflowledger.RunSnapshot, bool, error) {
+	cause := fmt.Sprintf("agent_panel step %q is not supported (Wave 5 synthesis unavailable)", step.ID)
+	result := AgentStepResult{Status: "failed"}
+	runErr := errors.New(cause)
+	snapshot, done, settleErr := c.settleAgentAttempt(ctx, run, step, attempt, result, runErr)
+	c.emitProgress(ProgressEvent{
+		Kind: ProgressPanelRefused, StepID: step.ID, AttemptNo: attempt.AttemptNo, Detail: cause,
+	})
+	return snapshot, done, settleErr
 }

@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -151,6 +154,11 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		}
 		return agenttools.DeliverResult{}, err
 	}
+	// The engine has no event bus today (Engine carries no bus field), so the
+	// delivery Stage callback is left nil here and delivery.Deliver treats it
+	// as a no-op; the CLI deliver path is the primary stage consumer. When the
+	// engine gains a bus, wire Stage to publish events.Event{Kind:
+	// events.KindWorkflowDeliveryStage, Name: stage, Detail: detail} per call.
 	dreq := delivery.Request{
 		RunID: runID, WorkflowDigest: run.WorkflowDigest, Policy: policy,
 		Inputs: snapshot.Inputs, BaseCommit: run.BaseCommit,
@@ -176,6 +184,10 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		if err := repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusSucceeded, &now); err != nil {
 			return agenttools.DeliverResult{}, err
 		}
+		// Delivery completion settles outside the controller (which parked at
+		// delivery_pending and emitted no run_finished), so publish the
+		// terminal event here.
+		emitDeliveredRunFinished(runID)
 	}
 	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
 }
@@ -233,4 +245,101 @@ func (e *Engine) settleRunFailure(runID string, runErr error) {
 		return
 	}
 	_ = e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusFailed, nil)
+}
+
+// progressSink is the package progress sink for localengine terminal
+// operations. Cancel and delivery-completion settle outside a controller (the
+// only other progress source), so those paths publish through this hook.
+// Hosts wire it once at startup with SetProgressSink, typically with a bus
+// adapter such as NewBusProgressSink; nil disables publishing.
+var progressSink controller.ProgressSink
+
+// SetProgressSink wires the package progress sink. Call it once at startup,
+// before any run, from a single goroutine. A nil sink disables publishing.
+func SetProgressSink(s controller.ProgressSink) {
+	progressSink = s
+}
+
+// NewBusProgressSink adapts a controller progress sink to an events.Bus: each
+// terminal progress event is published as one events.Event with the workflow
+// kind mapping and run/step attribution, mirroring the session engine's
+// workflowBusProgressSink adapter.
+func NewBusProgressSink(bus *events.Bus) controller.ProgressSink {
+	return busProgressSink{bus: bus}
+}
+
+// busProgressSink publishes controller progress events onto an events.Bus.
+type busProgressSink struct {
+	bus *events.Bus
+}
+
+// Emit publishes one controller progress event onto the bus.
+func (s busProgressSink) Emit(e controller.ProgressEvent) {
+	if s.bus == nil {
+		return
+	}
+	s.bus.Publish(events.Event{
+		Kind:      localProgressKind(e.Kind),
+		Timestamp: e.Timestamp,
+		Name:      "workflow",
+		Detail:    e.Detail,
+		AgentTask: e.TaskID,
+		AgentName: "workflow:" + e.StepID,
+		Metadata: map[string]string{
+			"run_id":             e.RunID,
+			"step":               e.StepID,
+			"attempt":            strconv.Itoa(e.AttemptNo),
+			"coordinator_run_id": e.CoordinatorRunID,
+			"task_id":            e.TaskID,
+		},
+	})
+}
+
+// localProgressKind maps one localengine terminal progress kind onto the
+// session event kind. Unrecognised kinds fall back to a heartbeat tick.
+func localProgressKind(k controller.ProgressKind) events.Kind {
+	switch k {
+	case controller.ProgressStepCompleted:
+		return events.KindWorkflowStepCompleted
+	case controller.ProgressRunFinished, controller.ProgressRunFailed:
+		return events.KindWorkflowRunFinished
+	default:
+		return events.KindWorkflowStepHeartbeat
+	}
+}
+
+// emitProgress delivers one terminal progress event to the package progress
+// sink. A nil sink makes the call a no-op.
+func emitProgress(e controller.ProgressEvent) {
+	if progressSink == nil {
+		return
+	}
+	if e.Timestamp.IsZero() {
+		e.Timestamp = time.Now()
+	}
+	progressSink.Emit(e)
+}
+
+// emitDeliveredRunFinished publishes run_finished(succeeded) after delivery
+// CASes the run to succeeded.
+func emitDeliveredRunFinished(runID string) {
+	emitProgress(controller.ProgressEvent{
+		Kind: controller.ProgressRunFinished, RunID: runID, Detail: "succeeded",
+	})
+}
+
+// emitCanceledAttempts publishes one step_completed(canceled) per attempt an
+// operator cancel settled.
+func emitCanceledAttempts(runID string, attempts []workflowledger.StepAttempt) {
+	for _, attempt := range attempts {
+		emitProgress(controller.ProgressEvent{
+			Kind:             controller.ProgressStepCompleted,
+			RunID:            runID,
+			StepID:           attempt.StepID,
+			AttemptNo:        attempt.AttemptNo,
+			TaskID:           attempt.TaskID,
+			CoordinatorRunID: attempt.CoordinatorRunID,
+			Detail:           "canceled",
+		})
+	}
 }

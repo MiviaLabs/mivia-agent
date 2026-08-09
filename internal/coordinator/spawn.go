@@ -72,6 +72,8 @@ func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string,
 		return nil, fmt.Errorf("claim run %q: %w", runID, err)
 	}
 
+	// run_created has no single task in hand, so SessionID is deliberately left
+	// empty: run-level events are correlated via RunID, not caller session.
 	event := ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "run_created"}
 	if err := c.repo.AppendEvent(ctx, event); err != nil {
 		c.releaseAndDeleteRun(ctx, runID)
@@ -247,7 +249,7 @@ func (c *coordinator) createTask(ctx context.Context, runID string, task subagen
 	if err := c.repo.CreateTask(ctx, snap); err != nil {
 		return namedTask{}, fmt.Errorf("create task %q: %w", taskID, err)
 	}
-	event := ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "task_created", TaskID: taskID}
+	event := ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "task_created", TaskID: taskID, SessionID: task.SessionID}
 	if err := c.repo.AppendEvent(ctx, event); err != nil {
 		return namedTask{}, fmt.Errorf("create task event %q: %w", taskID, err)
 	}

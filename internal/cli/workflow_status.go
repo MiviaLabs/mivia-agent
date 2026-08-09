@@ -83,6 +83,17 @@ func printWorkflowAttempts(ctx context.Context, stdout io.Writer, repo workflowl
 		if a.OutputRef != "" {
 			line += " output " + a.OutputRef
 		}
+		if !a.StartedAt.IsZero() {
+			line += " started=" + a.StartedAt.UTC().Format(time.RFC3339)
+		}
+		if a.FinishedAt != nil {
+			line += " finished=" + a.FinishedAt.UTC().Format(time.RFC3339)
+			if !a.StartedAt.IsZero() {
+				line += fmt.Sprintf(" elapsed=%ds", int64(a.FinishedAt.Sub(a.StartedAt).Seconds()))
+			}
+		} else if !a.StartedAt.IsZero() {
+			line += fmt.Sprintf(" elapsed=%ds", int64(time.Since(a.StartedAt).Seconds()))
+		}
 		fmt.Fprintln(stdout, line)
 		printAttemptError(ctx, stdout, repo, failedAttemptDiagnosticRef(a))
 	}

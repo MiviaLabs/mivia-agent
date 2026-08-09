@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
 // Lifecycle kind for agent-to-agent message announcements (plan 53.01).
@@ -82,12 +83,21 @@ func (c *coordinator) PostTaskMessage(ctx context.Context, runID, taskID string,
 	// and by TestAssertPayloadIsAnnouncement / integration assertions.
 	raw, _ := json.Marshal(announce)
 
+	// SessionID carries the calling principal's session when the task is in
+	// hand: the child tool context stamps the caller (the task's session), so a
+	// child-posted message correlates to its task's surface. It stays empty
+	// when no caller is in the context.
+	sessionID := ""
+	if caller, ok := runtime.CallerFrom(ctx); ok {
+		sessionID = caller.SessionID
+	}
 	evt := ledger.LifecycleEvent{
 		ID:        newEventID(),
 		RunID:     runID,
 		Kind:      LifecycleKindTaskMessage,
 		TaskID:    taskID,
 		AttemptID: "", // attempt stamped by callers in later phases when known
+		SessionID: sessionID,
 		Payload:   raw,
 		CreatedAt: c.nowLocked(),
 	}

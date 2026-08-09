@@ -98,7 +98,7 @@ func (c *coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagen
 		}
 		evt := ledger.LifecycleEvent{
 			ID: newEventID(), RunID: h.runID, Kind: "task_" + newStatus,
-			TaskID: t.ID, AttemptID: h.getAttempt(t.ID),
+			TaskID: t.ID, AttemptID: h.getAttempt(t.ID), SessionID: t.SessionID,
 		}
 		if err := c.repo.AppendEvent(persistCtx, evt); err != nil {
 			*runErr = joinError(*runErr, fmt.Errorf("append task %q event: %w", t.ID, err))

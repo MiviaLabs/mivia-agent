@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -39,6 +40,9 @@ func (c *LinearController) advanceAgentStep(ctx context.Context, run workflowled
 	if err != nil {
 		return run, false, err
 	}
+	// A fresh attempt is now admitted. Report the step as started once, with
+	// the attempt's child identity, before the controller dispatches it.
+	c.emitStepStarted(step, attempt)
 	return c.executeAgentAttempt(ctx, run, step, runtime, attempt, attempts)
 }
 
@@ -93,6 +97,14 @@ func (c *LinearController) interruptAndRedispatch(ctx context.Context, run workf
 	if !ok {
 		return c.reconcileTerminalAttempt(writeCtx, run, fresh)
 	}
+	// admitAttempt recorded the stale in-flight attempt as interrupted. Report
+	// that completion, then report the fresh attempt as started before it
+	// dispatches: the stale attempt must not die silently and the fresh child
+	// must never run without a step_started.
+	if !workflowledger.IsTerminalAttemptStatus(attempt.Status) {
+		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusInterrupted))
+	}
+	c.emitStepStarted(step, fresh)
 	attempts, err = c.Repo.ListStepAttempts(writeCtx, c.RunID)
 	if err != nil {
 		return run, false, err
@@ -200,7 +212,7 @@ func (c *LinearController) runStepWithTransientRetry(ctx context.Context, req Ag
 	for i := 0; runErr != nil && i < maxTransientStepRetries && isTransientProviderError(runErr); i++ {
 		retryTaskID := newWorkflowTaskID()
 		retryRunID := coordinator.NewRunID()
-		if err := c.Repo.SetStepAttemptExecution(ctx, c.RunID, attempt.AttemptID, retryRunID, retryTaskID); err != nil {
+		if err := c.Repo.SetStepAttemptExecution(ctx, c.RunID, attempt.AttemptID, retryRunID, retryTaskID, truncateReason(runErr.Error())); err != nil {
 			return AgentStepResult{}, fmt.Errorf("persist transient retry identity: %w", err)
 		}
 		log.Printf("workflow: run %s step %s attempt %d transient provider failure: %v; retrying in %s", c.RunID, step.ID, attempt.AttemptNo, runErr, stepTransientRetryBackoff(i))
@@ -310,6 +322,9 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
 	status, runErr, route, degraded, err := c.settleAttemptOutcome(writeCtx, step, &result, runErr)
+	// The outcome is now classified. Report the attempt as completed once
+	// with its terminal status. Every path below records the outcome.
+	c.emitStepCompleted(step, attempt, string(status))
 	if status == workflowledger.AttemptStatusSucceeded {
 		if err = c.completeSucceededRoute(writeCtx, attempt, result, route); err != nil {
 			if isLoopAccountError(err) {
@@ -359,6 +374,20 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 // 10/30/60s backoff give a flaky provider roughly two minutes to recover
 // before the step fails.
 const maxTransientStepRetries = 3
+
+// truncateReason bounds the transient-retry reason recorded in the audit
+// trail to 512 bytes without splitting a UTF-8 rune.
+func truncateReason(s string) string {
+	const maxReasonBytes = 512
+	if len(s) <= maxReasonBytes {
+		return s
+	}
+	cut := maxReasonBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
 
 // isTransientProviderError reports whether a step failure is a transport
 // fault: a call that never delivered an answer, which a fresh subagent run may

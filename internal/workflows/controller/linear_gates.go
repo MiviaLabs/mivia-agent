@@ -28,6 +28,15 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 	if !ok {
 		return c.reconcileTerminalAttempt(ctx, run, attempt)
 	}
+	// Report the gate start before the host verifier runs. The detail is the
+	// verifier name, or the step kind when the gate uses a command profile.
+	gateDetail := step.Verifier
+	if gateDetail == "" {
+		gateDetail = step.Kind
+	}
+	c.emitProgress(ProgressEvent{
+		Kind: ProgressGateStarted, StepID: step.ID, AttemptNo: attempt.AttemptNo, Detail: gateDetail,
+	})
 	result, verifyErr := profile.Verify(ctx, verifier.Request{
 		WorkDir:        c.WorkDir,
 		StepID:         step.ID,
@@ -68,13 +77,16 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 			route = failureRoute(step)
 		}
 		_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output, ErrorRef: storeErrorText(writeCtx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route)
+		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
 		return c.fail(writeCtx, run, err)
 	}
-	if err := c.completeSucceededRoute(writeCtx, attempt, AgentStepResult{Output: output}, route); err != nil {
-		if isLoopAccountError(err) {
-			return settleAfterRoute(ctx, c, run, route)
-		}
-		return c.fail(writeCtx, run, err)
+	routeErr := c.completeSucceededRoute(writeCtx, attempt, AgentStepResult{Output: output}, route)
+	if routeErr == nil || isLoopAccountError(routeErr) {
+		// The attempt is durably succeeded; a loop under-count continues.
+		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusSucceeded))
+	}
+	if routeErr != nil && !isLoopAccountError(routeErr) {
+		return c.fail(writeCtx, run, routeErr)
 	}
 	return settleAfterRoute(ctx, c, run, route)
 }
@@ -102,11 +114,15 @@ func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflo
 		if completeErr := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output, ErrorRef: storeErrorText(writeCtx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
 			return c.fail(writeCtx, run, completeErr)
 		}
+		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
 		return c.fail(writeCtx, run, err)
 	}
 	if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output}, workflowledger.AttemptStatusFailed, route); err != nil {
 		return c.fail(writeCtx, run, err)
 	}
+	// The failed attempt is durable. Report the completion once with the
+	// failed status before the run advances to the repair route.
+	c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
 	// Increment the loop counter after the repair route is durable. A failed
 	// increment under-counts (one extra allowed iteration) rather than blocking
 	// repair. This mirrors the crash-after-complete policy in
@@ -188,6 +204,12 @@ func (c *LinearController) pauseHumanGate(ctx context.Context, run workflowledge
 		if err != nil {
 			return run, false, err
 		}
+		// Report the park when the run transitions to waiting_approval.
+		// Re-entry while already parked skips the CAS and stays quiet.
+		c.emitProgress(ProgressEvent{
+			Kind: ProgressApprovalRequested, StepID: step.ID, AttemptNo: attempt.AttemptNo,
+			Detail: humanGateApprovalID(step.ID, attempt.AttemptNo),
+		})
 	}
 	return run, true, nil
 }
