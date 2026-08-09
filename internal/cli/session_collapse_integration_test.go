@@ -283,7 +283,7 @@ func TestIntegrationSessionListDisplaysTitlesNotRawIDs(t *testing.T) {
 	if len(m.sessions) != 1 {
 		t.Fatalf("list length = %d, want 1", len(m.sessions))
 	}
-	view := stripANSI(newSessionsSidebar().viewWithActive(m.sessions, 40, 10, true, nil))
+	view := stripANSI(newSessionsSidebar().viewWithActive(m.sessions, 40, 10, true, nil, liveStatusIdle))
 	if !strings.Contains(view, "readable first message for display") {
 		t.Fatalf("sidebar does not show the derived title:\n%s", view)
 	}
