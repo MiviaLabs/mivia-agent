@@ -110,6 +110,9 @@ func (e Entry) validateMetadata() error {
 	if utf8.RuneCountInString(title) > maxTitleLen {
 		return fmt.Errorf("title must be at most %d characters", maxTitleLen)
 	}
+	if hasLineControl(title) {
+		return fmt.Errorf("title must not contain line breaks")
+	}
 	if e.Scope != ScopeProject && e.Scope != ScopeOrg {
 		return fmt.Errorf("scope must be \"project\" or \"org\", got %q", e.Scope)
 	}
@@ -147,7 +150,7 @@ func (e Entry) validateBody() error {
 	if utf8.RuneCountInString(e.Bad) > maxBodyFieldLen {
 		return fmt.Errorf("bad must be at most %d characters", maxBodyFieldLen)
 	}
-	for _, field := range []string{e.Title, e.Summary, e.Good, e.Bad, e.Why} {
+	for _, field := range []string{e.Summary, e.Good, e.Bad, e.Why} {
 		if hasControlChars(field) {
 			return fmt.Errorf("content contains a control character")
 		}
@@ -163,8 +166,8 @@ func (e Entry) validateCollections() error {
 		if tag == "" || utf8.RuneCountInString(tag) > maxTagLen {
 			return fmt.Errorf("each tag must be 1-%d characters", maxTagLen)
 		}
-		if hasControlChars(tag) {
-			return fmt.Errorf("tag contains a control character")
+		if hasLineControl(tag) {
+			return fmt.Errorf("tag must not contain line breaks")
 		}
 	}
 	if len(e.References) > maxReferences {
@@ -174,8 +177,8 @@ func (e Entry) validateCollections() error {
 		if ref == "" || utf8.RuneCountInString(ref) > maxReferenceLen {
 			return fmt.Errorf("each reference must be 1-%d characters", maxReferenceLen)
 		}
-		if hasControlChars(ref) {
-			return fmt.Errorf("reference contains a control character")
+		if hasLineControl(ref) {
+			return fmt.Errorf("reference must not contain line breaks")
 		}
 	}
 	return nil
@@ -209,6 +212,18 @@ func (e Entry) validateSizeAndPatterns(lim Limits) error {
 func hasControlChars(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] < 0x20 && s[i] != '\n' && s[i] != '\t' {
+			return true
+		}
+	}
+	return false
+}
+
+// hasLineControl reports whether s contains a control character INCLUDING LF
+// and TAB. Title, tags, and references are stored on one line, so a line
+// break in them would corrupt the rendered template and the Parse round-trip.
+func hasLineControl(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 {
 			return true
 		}
 	}

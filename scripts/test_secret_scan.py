@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import sqlite3
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -112,6 +115,58 @@ def test_skips_own_sources() -> None:
     assert mod.should_skip_path("scripts/test_secret_scan.py")
 
 
+def test_scans_sqlite_memory_db() -> None:
+    """A committed memory DB is binary-invisible to the line scan; the sqlite
+    reader must catch secrets stored via memory_save."""
+    mod = load_scanner()
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        con = sqlite3.connect(path)
+        try:
+            con.execute(
+                "CREATE TABLE memories (id TEXT PRIMARY KEY, scope TEXT, org TEXT, "
+                "title TEXT, summary TEXT, verdict TEXT, tags TEXT, created TEXT, "
+                "content TEXT, created_at TEXT)"
+            )
+            con.execute(
+                "INSERT INTO memories VALUES ('x','project','','Padded title',"
+                "'summary with ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789','good',"
+                "'','','','')"
+            )
+            con.commit()
+        finally:
+            con.close()
+        findings = mod.scan_blob(".mivia/memory.db", Path(path).read_bytes())
+        assert any("github_pat" in f for f in findings), findings
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_scan_ignores_clean_db() -> None:
+    mod = load_scanner()
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        con = sqlite3.connect(path)
+        try:
+            con.execute(
+                "CREATE TABLE memories (id TEXT PRIMARY KEY, scope TEXT, org TEXT, "
+                "title TEXT, summary TEXT, verdict TEXT, tags TEXT, created TEXT, "
+                "content TEXT, created_at TEXT)"
+            )
+            con.execute(
+                "INSERT INTO memories VALUES ('x','project','','A clean title',"
+                "'nothing secret here','good','','','','')"
+            )
+            con.commit()
+        finally:
+            con.close()
+        assert mod.scan_blob(".mivia/memory.db", Path(path).read_bytes()) == []
+    finally:
+        os.unlink(path)
+
+
 def main() -> None:
     test_tracked_clean()
     test_detects_aws_key()
@@ -122,6 +177,8 @@ def main() -> None:
     test_ignores_placeholders()
     test_allows_redacted_placeholder()
     test_skips_own_sources()
+    test_scans_sqlite_memory_db()
+    test_sqlite_scan_ignores_clean_db()
     print("test_secret_scan: ok")
 
 

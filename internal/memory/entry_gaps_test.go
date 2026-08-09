@@ -19,8 +19,9 @@ func baseGapEntry() Entry {
 }
 
 // TestGapValidateRejectsControlCharInTag covers the tag control-character
-// branch of Validate: a tag that passes the length checks but contains a C0
-// control character must be refused.
+// branch of Validate: a tag that passes the length checks but contains a line
+// break (or other C0 control) must be refused, because tags are stored on one
+// line and a break would corrupt the rendered template.
 func TestGapValidateRejectsControlCharInTag(t *testing.T) {
 	e := baseGapEntry()
 	e.Tags = []string{"alpha\x00"}
@@ -28,14 +29,15 @@ func TestGapValidateRejectsControlCharInTag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected tag control-character rejection")
 	}
-	if !strings.Contains(err.Error(), "tag contains a control character") {
+	if !strings.Contains(err.Error(), "tag must not contain line breaks") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 // TestGapValidateRejectsControlCharInReference covers the reference
 // control-character branch of Validate: a reference that passes the length
-// checks but contains a C0 control character must be refused.
+// checks but contains a line break (or other C0 control) must be refused,
+// because references are stored on one line each.
 func TestGapValidateRejectsControlCharInReference(t *testing.T) {
 	e := baseGapEntry()
 	e.References = []string{"https://example.com/ref\x01"}
@@ -43,7 +45,7 @@ func TestGapValidateRejectsControlCharInReference(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected reference control-character rejection")
 	}
-	if !strings.Contains(err.Error(), "reference contains a control character") {
+	if !strings.Contains(err.Error(), "reference must not contain line breaks") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

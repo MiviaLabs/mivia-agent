@@ -108,6 +108,30 @@ func TestOpenMemoryStoreExpandsTilde(t *testing.T) {
 	}
 }
 
+func TestOpenMemoryStoreRejectsEscapingStorePath(t *testing.T) {
+	root := t.TempDir()
+	enabled := true
+	for _, bad := range []string{"../escape.db", "../../../tmp/escape.db"} {
+		mc := config.MemoryConfig{Enabled: &enabled, StoreBackend: "sqlite", StorePath: bad}
+		store, err := openMemoryStore(root, mc)
+		if err == nil {
+			store.Close()
+			t.Fatalf("store_path %q must be rejected (escapes the workspace)", bad)
+		}
+		if !strings.Contains(err.Error(), "escapes") {
+			t.Errorf("store_path %q error = %q, want a workspace-escape message", bad, err)
+		}
+	}
+	// Absolute store_path stays allowed (repo-controlled config, like hooks).
+	abs := filepath.Join(t.TempDir(), "abs.db")
+	mc := config.MemoryConfig{Enabled: &enabled, StoreBackend: "sqlite", StorePath: abs}
+	store, err := openMemoryStore(root, mc)
+	if err != nil {
+		t.Fatalf("absolute store_path must be allowed: %v", err)
+	}
+	store.Close()
+}
+
 func TestMemoryStoreErrorSurfacesFromConfigureChatWorkspace(t *testing.T) {
 	root := t.TempDir()
 	res := memoryTestResolved(true)

@@ -238,3 +238,29 @@ func TestMemorySearchSearchResultMaxClampedByStore(t *testing.T) {
 		t.Errorf("results = %d, want 5 (store has 5)", len(parsed))
 	}
 }
+
+func TestMemorySaveTrimsMetadata(t *testing.T) {
+	store := memoryTestStore(t, "")
+	reg := memoryTestRegistry(t, store)
+	ctx := context.Background()
+	saveArgs := json.RawMessage(`{"title":"  trimmed title  ","summary":"  trimmed summary  ","tags":["  go  ","concurrency  "],"why":"x"}`)
+	if _, err := reg.Execute(ctx, "memory_save", saveArgs); err != nil {
+		t.Fatal(err)
+	}
+	res, err := store.Search(ctx, memory.Query{Text: "trimmed title", Scope: memory.ScopeProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("search = %d results, want 1", len(res))
+	}
+	if res[0].Title != "trimmed title" {
+		t.Errorf("stored title = %q, want trimmed", res[0].Title)
+	}
+	if res[0].Snippet != "trimmed summary" {
+		t.Errorf("stored summary = %q, want trimmed", res[0].Snippet)
+	}
+	if len(res[0].Tags) != 2 || res[0].Tags[0] != "go" || res[0].Tags[1] != "concurrency" {
+		t.Errorf("tags = %v, want [go concurrency]", res[0].Tags)
+	}
+}

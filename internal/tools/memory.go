@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
@@ -76,12 +77,23 @@ func (t *memorySaveTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if in.Verdict != "" {
 		verdict = memory.Verdict(in.Verdict)
 	}
+	// Trim metadata once so the stored title/summary/tags agree with the
+	// rendered content (which Render trims): padded metadata would degrade
+	// exact-title ranking and leak stray whitespace into results.
+	title := strings.TrimSpace(in.Title)
+	summary := strings.TrimSpace(in.Summary)
+	tags := make([]string, 0, len(in.Tags))
+	for _, tag := range in.Tags {
+		if trimmed := strings.TrimSpace(tag); trimmed != "" {
+			tags = append(tags, trimmed)
+		}
+	}
 	entry := memory.Entry{
-		Title:      in.Title,
+		Title:      title,
 		Scope:      scope,
 		Verdict:    verdict,
-		Tags:       in.Tags,
-		Summary:    in.Summary,
+		Tags:       tags,
+		Summary:    summary,
 		Good:       in.Good,
 		Bad:        in.Bad,
 		Why:        in.Why,

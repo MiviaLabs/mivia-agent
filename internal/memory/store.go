@@ -170,16 +170,35 @@ func openSQLiteStore(cfg Config) (*sqliteStore, error) {
 		return nil, fmt.Errorf("memory project store %s: %w", projectPath, err)
 	}
 	s := &sqliteStore{projectDB: projectDB, cfg: cfg}
-	if orgPath := strings.TrimSpace(cfg.OrgPath); orgPath != "" {
+	// The org store is created only when an org identity is configured: with no
+	// org_id the feature is project-only, and an unconfigured org must not
+	// create side-effect files (or fail the session) in the user's home.
+	if orgPath := strings.TrimSpace(cfg.OrgPath); orgPath != "" && cfg.OrgID != "" {
 		orgDB, err := openMemoryDB(orgPath)
 		if err != nil {
 			projectDB.Close()
 			return nil, fmt.Errorf("memory org store %s: %w", orgPath, err)
 		}
+		// The org store is user-owned (not repo content): keep it private so
+		// other local users cannot read or write org memories on shared machines.
+		if err := chmodFile(orgPath, 0o600); err != nil {
+			orgDB.Close()
+			projectDB.Close()
+			return nil, fmt.Errorf("memory org store %s: %w", orgPath, err)
+		}
+		if err := chmodFile(filepath.Dir(orgPath), 0o700); err != nil {
+			orgDB.Close()
+			projectDB.Close()
+			return nil, fmt.Errorf("memory org dir %s: %w", filepath.Dir(orgPath), err)
+		}
 		s.orgDB = orgDB
 	}
 	return s, nil
 }
+
+// chmodFile is a test seam: the OS-error branches of openSQLiteStore are not
+// reachable with a real filesystem (an owner can always chmod its own files).
+var chmodFile = os.Chmod
 
 func openMemoryDB(path string) (*sql.DB, error) {
 	dir := filepath.Dir(path)
@@ -248,6 +267,19 @@ func (s *sqliteStore) Save(ctx context.Context, e Entry) (Result, error) {
 		return Result{}, err
 	}
 	defer tx.Rollback()
+	// Idempotency first, so an identical re-save at capacity returns the
+	// existing result instead of a spurious "store is full" error (parity with
+	// memStore, which checks the id before the cap).
+	var exists int
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?)", id).Scan(&exists); err != nil {
+		return Result{}, err
+	}
+	if exists == 1 {
+		if err := tx.Commit(); err != nil {
+			return Result{}, err
+		}
+		return Result{ID: id, Scope: e.Scope, Org: org, Title: e.Title, Verdict: e.Verdict, Tags: append([]string(nil), e.Tags...), Created: e.Created, Snippet: e.Summary}, nil
+	}
 	var count int
 	where := "scope = ? AND org = ?"
 	args := []any{string(e.Scope), org}
@@ -267,7 +299,29 @@ func (s *sqliteStore) Save(ctx context.Context, e Entry) (Result, error) {
 	if err := tx.Commit(); err != nil {
 		return Result{}, err
 	}
+	// Checkpoint after every write so the main database file is always current:
+	// the project DB is designed to be committed to the repo, and a stale main
+	// file (with recent writes stranded in the gitignored -wal) would silently
+	// ship a database missing the latest memories. The write itself is already
+	// durable in WAL, so a checkpoint failure is not fatal for the save.
+	s.checkpoint(ctx, db)
 	return Result{ID: id, Scope: e.Scope, Org: org, Title: e.Title, Verdict: e.Verdict, Tags: append([]string(nil), e.Tags...), Created: e.Created, Snippet: e.Summary}, nil
+}
+
+// checkpoint runs PRAGMA wal_checkpoint(TRUNCATE), folding committed WAL
+// frames back into the main database file. Errors are returned for Close (a
+// durability-relevant failure) and ignored for per-Save calls, where the write
+// is already durable in WAL.
+func (s *sqliteStore) checkpoint(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return nil
+	}
+	var busy, log, checkpointed int
+	err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *sqliteStore) Search(ctx context.Context, q Query) ([]Result, error) {
@@ -359,11 +413,17 @@ func (s *sqliteStore) Count(ctx context.Context, scope Scope) (int, error) {
 func (s *sqliteStore) Close() error {
 	var first error
 	if s.projectDB != nil {
-		if err := s.projectDB.Close(); err != nil {
+		if err := s.checkpoint(context.Background(), s.projectDB); err != nil && first == nil {
+			first = err
+		}
+		if err := s.projectDB.Close(); err != nil && first == nil {
 			first = err
 		}
 	}
 	if s.orgDB != nil {
+		if err := s.checkpoint(context.Background(), s.orgDB); err != nil && first == nil {
+			first = err
+		}
 		if err := s.orgDB.Close(); err != nil && first == nil {
 			first = err
 		}
