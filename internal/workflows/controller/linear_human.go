@@ -51,6 +51,7 @@ func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, 
 		if err := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(ctx, c.Repo, rejectErr)}, workflowledger.AttemptStatusFailed, route); err != nil {
 			return err
 		}
+		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
 		run, err = c.Repo.GetRun(ctx, c.RunID)
 		if err != nil {
 			return err
@@ -73,6 +74,7 @@ func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, 
 		if completeErr := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{Output: raw, ErrorRef: storeErrorText(ctx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
 			return completeErr
 		}
+		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
 		run, getErr := c.Repo.GetRun(ctx, c.RunID)
 		if getErr != nil {
 			return getErr
@@ -85,6 +87,7 @@ func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, 
 	if err := c.completeSucceededRoute(ctx, attempt, AgentStepResult{Output: raw, ValidatedOutput: output}, route); err != nil {
 		return err
 	}
+	c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusSucceeded))
 	return c.finishHumanRunStatus(ctx, run, workflowledger.StepAttempt{ToStepID: route.ToStepID, Status: workflowledger.AttemptStatusSucceeded}, decision)
 }
 

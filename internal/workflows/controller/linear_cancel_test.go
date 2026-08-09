@@ -152,3 +152,116 @@ func TestCancelRunMissingRun(t *testing.T) {
 		t.Fatalf("CancelRun on a missing run = %v, want ErrNotFound", err)
 	}
 }
+
+// TestCancelRunWithAttemptsReturnsCanceledAttemptsWithErrorRef: the exported
+// CancelRunWithAttempts must return every attempt it canceled with the
+// canceled status and the operator-cancel ErrorRef set, while leaving terminal
+// attempts untouched.
+func TestCancelRunWithAttemptsReturnsCanceledAttemptsWithErrorRef(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	runID := "wfr-cancel-attempts-return"
+	run := workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusPending, ActiveStepID: "one"}
+	if err := repo.CreateRun(ctx, run, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range []workflowledger.StepAttempt{
+		{AttemptID: "wfa-one-1", RunID: runID, StepID: "one", AttemptNo: 1, Status: workflowledger.AttemptStatusRunning},
+		{AttemptID: "wfa-one-2", RunID: runID, StepID: "one", AttemptNo: 2, Status: workflowledger.AttemptStatusRunning},
+	} {
+		if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A terminal attempt must be left untouched and excluded from the result.
+	if err := repo.CompleteStepAttempt(ctx, runID, "wfa-one-2", 1, workflowledger.AttemptOutcome{Status: workflowledger.AttemptStatusSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	canceled, err := CancelRunWithAttempts(ctx, repo, runID)
+	if err != nil {
+		t.Fatalf("CancelRunWithAttempts: %v", err)
+	}
+	if len(canceled) != 1 {
+		t.Fatalf("canceled attempts = %d, want exactly 1: %+v", len(canceled), canceled)
+	}
+	if canceled[0].AttemptID != "wfa-one-1" || canceled[0].Status != workflowledger.AttemptStatusCanceled {
+		t.Fatalf("canceled attempt = %+v, want wfa-one-1 canceled", canceled[0])
+	}
+	if canceled[0].ErrorRef == "" {
+		t.Fatal("canceled attempt ErrorRef is empty, want operator-cancel detail")
+	}
+	raw, err := repo.LoadContent(ctx, canceled[0].ErrorRef)
+	if err != nil {
+		t.Fatalf("LoadContent: %v", err)
+	}
+	if !strings.Contains(string(raw), "canceled by operator") {
+		t.Fatalf("error ref content = %q, want text containing 'canceled by operator'", raw)
+	}
+	storedRun, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedRun.Status != workflowledger.RunStatusCanceled {
+		t.Fatalf("run status = %q, want canceled", storedRun.Status)
+	}
+	attempts, err := repo.ListStepAttempts(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts[0].Status != workflowledger.AttemptStatusCanceled || attempts[1].Status != workflowledger.AttemptStatusSucceeded {
+		t.Fatalf("stored attempts = %+v, want canceled and untouched succeeded", attempts)
+	}
+}
+
+// TestCancelRunMarksInFlightAttemptWithErrorRef verifies that CancelRun
+// completes an in-flight attempt as canceled and persists an operator-cancel
+// detail ref on the attempt.
+func TestCancelRunMarksInFlightAttemptWithErrorRef(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	runID := "wfr-cancel-errorref"
+	run := workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusPending, ActiveStepID: "one"}
+	if err := repo.CreateRun(ctx, run, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{AttemptID: "wfa-one-1", RunID: runID, StepID: "one", AttemptNo: 1, Status: workflowledger.AttemptStatusRunning}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := CancelRun(ctx, repo, runID); err != nil {
+		t.Fatalf("CancelRun: %v", err)
+	}
+	attempts, err := repo.ListStepAttempts(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != workflowledger.AttemptStatusCanceled {
+		t.Fatalf("attempts = %+v, want one canceled attempt", attempts)
+	}
+	if attempts[0].ErrorRef == "" {
+		t.Fatal("attempt ErrorRef is empty, want operator-cancel detail")
+	}
+	raw, err := repo.LoadContent(ctx, attempts[0].ErrorRef)
+	if err != nil {
+		t.Fatalf("LoadContent: %v", err)
+	}
+	if !strings.Contains(string(raw), "canceled by operator") {
+		t.Fatalf("error ref content = %q, want text containing 'canceled by operator'", raw)
+	}
+}

@@ -126,6 +126,13 @@ type SessionDispatcherOpts struct {
 	// the session that produced it. Nil mints one, which is what a genuinely
 	// new session wants.
 	RemainderSpool *remainder.Spool
+
+	// Sink, when set, receives one runtime.Event per invocation lifecycle
+	// step (started, retrying, completed) with bounded audit metadata. Nil
+	// disables sink delivery and keeps every other caller unchanged. The sink
+	// runs on the invoking goroutine, so it must be cheap and safe for
+	// concurrent calls.
+	Sink func(runtime.Event)
 }
 
 // resultBudgets are the two operator byte knobs every nested loop needs: the
@@ -207,6 +214,7 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 		// gate a subagent escapes is not a gate.
 		PreInvokeHook:  preHook,
 		PostInvokeHook: postHook,
+		Sink:           opts.Sink,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)

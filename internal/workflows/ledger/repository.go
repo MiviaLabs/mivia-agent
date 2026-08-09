@@ -92,8 +92,11 @@ type Repository interface {
 	SetStepAttemptPrompt(ctx context.Context, runID, attemptID, promptRef string) error
 
 	// SetStepAttemptExecution durably records the child identity used by the
-	// current execution of an attempt. It is idempotent for the same identity.
-	SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID string) error
+	// current execution of an attempt, together with the reason for a
+	// re-dispatch when one exists (a transient retry records the provider
+	// error text that triggered it; an initial dispatch records none). It is
+	// idempotent for the same identity.
+	SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID, reason string) error
 
 	// ListTransitions returns the route decisions derived from completed
 	// attempts, ordered by event sequence.
@@ -142,6 +145,12 @@ type Repository interface {
 	// must hold the execution lock and a claim (or otherwise guarantee no
 	// concurrent writer) before calling.
 	DeleteRun(ctx context.Context, runID string) error
+
+	// RecordRunResumed appends the wf_run_resumed audit event for a run that
+	// is being resumed (crash recovery, operator resume, or controller
+	// re-entry). It mutates no run state; the event is purely observational.
+	// Returns ErrNotFound when the run is absent.
+	RecordRunResumed(ctx context.Context, runID string) error
 
 	// ClaimRun acquires the exclusive execution claim on a run. Returns
 	// ErrClaimHeld if another holder owns it. Same-holder refresh succeeds.

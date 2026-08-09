@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -94,111 +93,45 @@ func (s *StorageRepository) ListEvents(ctx context.Context, runID string, limit,
 	return decodable[start:end], nil
 }
 
-// summarizeAttemptPrompt renders the bounded, ref-only summary for a
-// wf_attempt_prompt event. The typed payload carries ONLY attempt identity and
-// the content ref; a payload missing either identifier is not decodable, and no
-// prompt text is ever rendered into the audit trail.
-func summarizeAttemptPrompt(ev storage.Event) (string, time.Time, bool) {
-	p, err := unmarshalAttemptPrompt(ev.Payload)
-	if err != nil || p.AttemptID == "" || p.PromptRef == "" {
-		return "", time.Time{}, false
-	}
-	return fmt.Sprintf("attempt %s prompt ref %s", p.AttemptID, p.PromptRef), p.CreatedAt, true
-}
-
-// summarizeLoopIncremented renders the bounded summary for a loop event.
-func summarizeLoopIncremented(ev storage.Event) (string, time.Time, bool) {
-	p, err := unmarshalLoopIncremented(ev.Payload)
-	if err != nil {
-		return "", time.Time{}, false
-	}
-	return fmt.Sprintf("loop incremented: %s -> %d", p.LoopName, p.Iterations), p.CreatedAt, true
-}
-
-// summarizeApprovalResolved renders the bounded summary for an approval event.
-func summarizeApprovalResolved(ev storage.Event) (string, time.Time, bool) {
-	p, err := unmarshalApprovalResolved(ev.Payload)
-	if err != nil {
-		return "", time.Time{}, false
-	}
-	summary := fmt.Sprintf("approval resolved: %s %s by %s", p.ApprovalID, p.Status, p.Actor)
-	if p.Reason != "" {
-		summary += " reason: " + p.Reason
-	}
-	return summary, p.CreatedAt, true
-}
-
 // summarizeEvent decodes one wf_* event into a bounded display summary.
-// It returns ok=false for unknown kinds and undecodable payloads.
+// It returns ok=false for unknown kinds and undecodable payloads. The per-kind
+// summary builders live in events_summary.go; this function only dispatches.
 func summarizeEvent(ev storage.Event) (EventRecord, bool) {
 	var summary string
 	var createdAt time.Time
 	var ok bool
 	switch ev.Kind {
 	case eventKindRunCreated:
-		p, err := unmarshalRunCreated(ev.Payload)
-		if err != nil {
-			return EventRecord{}, false
-		}
-		summary = fmt.Sprintf("run created: workflow %q digest %s", p.Run.WorkflowName, p.Run.WorkflowDigest)
-		createdAt = p.CreatedAt
+		summary, createdAt, ok = summarizeRunCreated(ev)
 	case eventKindRunStatusChanged:
-		p, err := unmarshalRunStatusChanged(ev.Payload)
-		if err != nil {
-			return EventRecord{}, false
-		}
-		summary = fmt.Sprintf("status changed: %s (version %d)", p.Status, p.Version)
-		createdAt = p.CreatedAt
+		summary, createdAt, ok = summarizeRunStatusChanged(ev)
 	case eventKindAttemptStarted:
-		p, err := unmarshalAttemptStarted(ev.Payload)
-		if err != nil {
-			return EventRecord{}, false
-		}
-		summary = fmt.Sprintf("attempt started: step %q attempt %d (%s)", p.Attempt.StepID, p.Attempt.AttemptNo, p.Attempt.AttemptID)
-		createdAt = p.CreatedAt
+		summary, createdAt, ok = summarizeAttemptStarted(ev)
 	case eventKindAttemptCompleted:
-		p, err := unmarshalAttemptCompleted(ev.Payload)
-		if err != nil {
-			return EventRecord{}, false
-		}
-		summary = fmt.Sprintf("attempt completed: %s -> %s (transition %d, match %s, output %s%s)",
-			p.Status, p.ToStepID, p.TransitionIndex, shortDigest(p.MatchDigest), shortRef(p.OutputRef), errorRefSummary(p.ErrorRef))
-		createdAt = p.CreatedAt
+		summary, createdAt, ok = summarizeAttemptCompleted(ev)
 	case eventKindAttemptPrompt:
 		summary, createdAt, ok = summarizeAttemptPrompt(ev)
-		if !ok {
-			return EventRecord{}, false
-		}
+	case eventKindAttemptExecution:
+		summary, createdAt, ok = summarizeAttemptExecution(ev)
+	case eventKindPanelPhaseSet:
+		summary, createdAt, ok = summarizePanelPhase(ev)
 	case eventKindLoopIncremented:
 		summary, createdAt, ok = summarizeLoopIncremented(ev)
-		if !ok {
-			return EventRecord{}, false
-		}
 	case eventKindApprovalCreated:
-		p, err := unmarshalApprovalCreated(ev.Payload)
-		if err != nil {
-			return EventRecord{}, false
-		}
-		summary = fmt.Sprintf("approval created: %s (step %q)", p.Approval.ApprovalID, p.Approval.StepID)
-		createdAt = p.CreatedAt
+		summary, createdAt, ok = summarizeApprovalCreated(ev)
 	case eventKindApprovalResolved:
 		summary, createdAt, ok = summarizeApprovalResolved(ev)
-		if !ok {
-			return EventRecord{}, false
-		}
 	case eventKindDeliveryUpserted:
-		p, err := unmarshalDeliveryUpserted(ev.Payload)
-		if err != nil {
-			return EventRecord{}, false
-		}
-		d := p.Delivery
-		summary = fmt.Sprintf("delivery %s: %s (mode %s, base %s)", d.IdempotencyKey, d.Status, d.Mode, d.BaseRef)
-		if d.URL != "" {
-			summary += " url: " + d.URL
-		}
-		createdAt = p.CreatedAt
+		summary, createdAt, ok = summarizeDeliveryUpserted(ev)
+	case eventKindRunDeleted:
+		summary, createdAt, ok = summarizeRunDeleted(ev)
+	case eventKindRunResumed:
+		summary, createdAt, ok = summarizeRunResumed(ev)
 	default:
 		// Foreign or unknown kind: tolerate like the projection does.
+		return EventRecord{}, false
+	}
+	if !ok {
 		return EventRecord{}, false
 	}
 	return EventRecord{
@@ -208,45 +141,4 @@ func summarizeEvent(ev storage.Event) (EventRecord, bool) {
 		CreatedAt: createdAt,
 		Summary:   truncateSummary(summary),
 	}, true
-}
-
-// errorRefSummary renders the error reference suffix for an attempt summary.
-func errorRefSummary(ref string) string {
-	if ref == "" {
-		return ""
-	}
-	return " error " + ref
-}
-
-// shortDigest renders a digest prefix for display; empty stays empty.
-func shortDigest(digest string) string {
-	if digest == "" {
-		return "-"
-	}
-	if len(digest) > 12 {
-		return digest[:12]
-	}
-	return digest
-}
-
-// shortRef renders a content reference for display; empty stays empty.
-func shortRef(ref string) string {
-	if ref == "" {
-		return "-"
-	}
-	return ref
-}
-
-// truncateSummary bounds one summary to MaxEventSummaryBytes without splitting
-// a UTF-8 rune.
-func truncateSummary(s string) string {
-	if len(s) <= MaxEventSummaryBytes {
-		return s
-	}
-	const ellipsis = "…"
-	cut := MaxEventSummaryBytes - len(ellipsis)
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + ellipsis
 }

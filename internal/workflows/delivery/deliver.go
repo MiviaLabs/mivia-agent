@@ -34,6 +34,13 @@ type Request struct {
 	Branch         string
 	GitCtx         GitContext
 	OriginURL      string
+	// Stage is an optional observability callback. Deliver invokes it once
+	// per numbered delivery stage with a stable stage name ("guard",
+	// "eligibility", "no_diff", "commit", "push", "pr", "success",
+	// "failed") and a free-form detail. It is nil-safe: a nil Stage is a
+	// silent no-op. The CLI prints these lines to stderr. The session engine
+	// publishes them to the events bus when a bus is wired.
+	Stage func(stage, detail string)
 }
 
 // Result is the durable outcome of a delivery attempt.
@@ -44,6 +51,14 @@ type Result struct {
 // maxDiffBytes bounds one stored diff snapshot.
 const maxDiffBytes = 64 << 10
 
+// stage emits one delivery stage observation. It is nil-safe: a host without
+// a Stage callback observes nothing.
+func (req Request) stage(name, detail string) {
+	if req.Stage != nil {
+		req.Stage(name, detail)
+	}
+}
+
 // Deliver performs one delivery attempt for a delivery_pending run. Refusals
 // (RefusalError) are permanent and are only returned BEFORE this attempt
 // writes any delivery record: eligibility failures and retry-path
@@ -53,6 +68,9 @@ const maxDiffBytes = 64 << 10
 // with the record marked failed, so the run stays delivery_pending for a
 // retry.
 func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request) (Result, error) {
+	// 0. Stage observability begins at the entry guard.
+	req.stage("guard", fmt.Sprintf("delivering run %s", req.RunID))
+
 	// 1. Only a delivery_pending run may be delivered; a delivery_failed run
 	// is re-opened for re-eligibility via the single enforcing CAS.
 	run, err := deliveryRunGuard(ctx, repo, req)
@@ -87,6 +105,7 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 	// The remote base is verified against the origin base recorded at
 	// admission (OriginBaseCommit) when present; otherwise the admitted
 	// local BaseCommit is the pin.
+	req.stage("eligibility", "verify the pinned worktree and intended diff")
 	originBase := run.OriginBaseCommit
 	if originBase == "" {
 		originBase = req.BaseCommit
@@ -96,6 +115,7 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 		return Result{}, err
 	}
 	if diffRef == "" {
+		req.stage("no_diff", "no diff to publish")
 		return Result{
 			Mode: req.Policy.Mode, BaseRef: req.Policy.Base, HeadRef: req.Branch,
 			Provider: "github", Status: "no_diff",
@@ -112,6 +132,7 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 	// 11. Commit the intended change (fresh attempt) or resume the recorded
 	// delivery commit (retry). All retry-path verification happens BEFORE
 	// any record write in this attempt.
+	req.stage("commit", "commit the intended change or resume the delivery commit")
 	head, treeSHA, err := commitOrResume(ctx, repo, git, req, key, existing, head, porcelainEmpty, diffRef)
 	if err != nil {
 		return Result{}, err
@@ -351,47 +372,15 @@ func baseStillContains(ctx context.Context, git GitRunner, req Request, admitted
 // PR, recording each stage durably. originBase is the admitted remote base
 // pin used by the post-create base verification (AR-7).
 func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRClient, req Request, key, repoSlug, head, treeSHA, diffRef, originBase string, existing ledger.DeliveryRecord) (Result, error) {
-	// 12. Push the branch to origin.
-	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
-		"push", "origin", "HEAD:refs/heads/"+req.Branch); err != nil {
-		markFailed(ctx, repo, key, req, err)
+	// 12-13. Push the branch to origin and record the push.
+	if err := pushDeliveryBranch(ctx, repo, git, req, key, head, treeSHA, diffRef, existing); err != nil {
 		return Result{}, err
 	}
 
-	// 13. Record the push. CommitSHA is the adopted head; TreeSHA is the
-	// recorded tree; DiffRef is this attempt's deterministic diff snapshot.
-	// A known PR identity from a previous attempt is carried over so the
-	// durable pushed record never ERASES it (the projection is latest-wins;
-	// an identity-less rewrite would make the next retry misjudge the run's
-	// own PR as foreign).
-	rec := deliveryRecord(req, key, "pushed")
-	rec.CommitSHA = head
-	rec.DiffRef = diffRef
-	rec.TreeSHA = treeSHA
-	rec.RemoteID = existing.RemoteID
-	rec.URL = existing.URL
-	if err := repo.UpsertDelivery(ctx, rec); err != nil {
-		return Result{}, err
-	}
-
-	// 14-15. Find or create the PR (ownership-aware reuse).
-	ref, err := findOrCreatePR(ctx, repo, pr, req, key, repoSlug, existing)
+	// 14-15a. Find or create the PR and verify the admitted base.
+	remoteID, url, err := findOrCreateAndVerifyPR(ctx, repo, git, pr, req, key, repoSlug, originBase, existing)
 	if err != nil {
 		return Result{}, err
-	}
-	remoteID, url := ref.RemoteID, ref.URL
-
-	// 15a. AR-7: close the TOCTOU between eligibility and PR creation. The
-	// PR's actual base must still contain the admitted origin base; a remote
-	// rewrite in that window must not settle succeeded. The PR may already
-	// exist; this check only prevents the success settle. Skipped when the
-	// client reports no base OID (fake/unknown).
-	if ref.BaseRefOID != "" {
-		if aerr := baseStillContains(ctx, git, req, originBase, ref.BaseRefOID); aerr != nil {
-			rerr := &RefusalError{Reason: fmt.Sprintf("PR %s base %s does not contain the admitted base commit %s (%v)", ref.RemoteID, ref.BaseRefOID, originBase, aerr)}
-			markFailed(ctx, repo, key, req, rerr)
-			return Result{}, rerr
-		}
 	}
 
 	// 15b. Persist the PR identity in a pushed record when it is newly
@@ -400,7 +389,7 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	// misjudging it as foreign. Skipped when the existing record already
 	// carries this PR (the retry absorbs the plain pushed record).
 	if existing.RemoteID != remoteID {
-		rec = deliveryRecord(req, key, "pushed")
+		rec := deliveryRecord(req, key, "pushed")
 		rec.CommitSHA = head
 		rec.DiffRef = diffRef
 		rec.TreeSHA = treeSHA
@@ -408,12 +397,13 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 		rec.URL = url
 		if err := repo.UpsertDelivery(ctx, rec); err != nil {
 			markFailed(ctx, repo, key, req, err)
+			req.stage("failed", err.Error())
 			return Result{}, err
 		}
 	}
 
 	// 16. Record success and return the durable outcome.
-	rec = deliveryRecord(req, key, "succeeded")
+	rec := deliveryRecord(req, key, "succeeded")
 	rec.CommitSHA = head
 	rec.DiffRef = diffRef
 	rec.TreeSHA = treeSHA
@@ -422,6 +412,7 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	if err := repo.UpsertDelivery(ctx, rec); err != nil {
 		return Result{}, err
 	}
+	req.stage("success", fmt.Sprintf("PR %s %s", remoteID, url))
 	return Result{
 		Mode: req.Policy.Mode, BaseRef: req.Policy.Base, HeadRef: req.Branch,
 		CommitSHA: head, Provider: "github", RemoteID: remoteID, URL: url,
@@ -439,6 +430,7 @@ func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, re
 	title, err := req.Policy.RenderTitle(req.Inputs)
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
+		req.stage("failed", err.Error())
 		return nil, err
 	}
 	body := "Automated workflow delivery from Mivia.\n\nRun: " + req.RunID + "\nWorkflow digest: " + req.WorkflowDigest
@@ -446,6 +438,7 @@ func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, re
 	found, err := pr.FindByHead(ctx, repoSlug, req.Branch)
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
+		req.stage("failed", err.Error())
 		return nil, err
 	}
 	if found == nil {
@@ -455,6 +448,7 @@ func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, re
 		})
 		if cerr != nil {
 			markFailed(ctx, repo, key, req, cerr)
+			req.stage("failed", cerr.Error())
 			return nil, cerr
 		}
 		return &created, nil
@@ -467,6 +461,7 @@ func findOrCreatePR(ctx context.Context, repo ledger.Repository, pr PRClient, re
 	case found.Draft != wantDraft:
 		rerr := &RefusalError{Reason: fmt.Sprintf("existing PR %s draft state does not match delivery mode %q and is not this run's PR", found.RemoteID, req.Policy.Mode)}
 		markFailed(ctx, repo, key, req, rerr)
+		req.stage("failed", rerr.Error())
 		return nil, rerr
 	default:
 		return found, nil

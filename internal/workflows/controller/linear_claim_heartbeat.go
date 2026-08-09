@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"log"
 	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -9,8 +11,10 @@ import (
 
 var claimHeartbeatInterval = workflowledger.DefaultClaimLease / 3
 
-// startClaimHeartbeat refreshes the claim while one step executes. If another
-// holder takes the claim, it cancels the step context before more work starts.
+// startClaimHeartbeat refreshes the claim while one step executes.
+// When another holder takes the claim, it cancels the step context.
+// A transient claim error does not cancel the step. The ticker retries
+// on the next interval.
 func (c *LinearController) startClaimHeartbeat(cancel context.CancelFunc) func() {
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -22,8 +26,11 @@ func (c *LinearController) startClaimHeartbeat(cancel context.CancelFunc) func()
 			select {
 			case <-ticker.C:
 				if err := c.Repo.ClaimRun(context.Background(), c.RunID, c.Holder); err != nil {
-					cancel()
-					return
+					if errors.Is(err, workflowledger.ErrClaimHeld) {
+						cancel()
+						return
+					}
+					log.Printf("workflow: run %s claim refresh failed (continuing): %v", c.RunID, err)
 				}
 			case <-stop:
 				return

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +72,7 @@ type LinearController struct {
 	ModuleBaseline *verifier.GoModuleBaseline
 	SecretPolicy   secretpath.Policy
 	PanelLimiter   *PanelActorLimiter
+	progress       ProgressSink
 	admission      Admission
 	forceResume    bool
 	now            func() time.Time
@@ -93,6 +95,17 @@ func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner,
 		return nil, fmt.Errorf("workflow snapshot is empty")
 	}
 	return &LinearController{Repo: repo, Runner: runner, Workflow: wf, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now, PanelLimiter: NewPanelActorLimiter()}, nil
+}
+
+// SetProgressSink sets the workflow progress sink before Start.
+func (c *LinearController) SetProgressSink(sink ProgressSink) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	c.progress = sink
+	return nil
 }
 
 // SetVerifiers sets the host verifier catalogue before Start.
@@ -203,56 +216,14 @@ func (c *LinearController) StartNew(ctx context.Context) (bool, error) {
 		if !sameAdmission(run, snap) {
 			return false, fmt.Errorf("workflow run %q already exists with different admission data", c.RunID)
 		}
+		// Record the resume on the audit trail. The record is best-effort:
+		// a failure must not fail StartNew.
+		if err := c.Repo.RecordRunResumed(ctx, c.RunID); err != nil {
+			log.Printf("workflow run %q resume record failed: %v", c.RunID, err)
+		}
 	}
 	c.started = true
 	return created, nil
-}
-
-func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
-	admittedAt := c.now()
-	snap := workflowledger.RunSnapshot{
-		RunID: c.RunID, InvocationKey: c.admission.InvocationKey, WorkflowName: c.Workflow.Name, WorkflowDigest: c.admittedWorkflowDigest(),
-		SnapshotDigest: workflowledger.SnapshotDigest(c.Snapshot), InputDigest: c.admission.InputDigest,
-		Status: workflowledger.RunStatusPending, ActiveStepID: c.Workflow.InitialStep,
-		BaseRef: c.admission.BaseRef, BaseCommit: c.admission.BaseCommit,
-		OriginBaseCommit: c.admission.OriginBaseCommit, WorktreeName: c.admission.WorktreeName,
-		RemoteURL: c.admission.RemoteURL, StartedAt: admittedAt,
-	}
-	if c.admission.DeadlineAt != nil {
-		deadline := *c.admission.DeadlineAt
-		snap.DeadlineAt = &deadline
-	} else if c.Workflow.Limits.MaxDurationSeconds > 0 {
-		deadline := admittedAt.Add(time.Duration(c.Workflow.Limits.MaxDurationSeconds) * time.Second)
-		snap.DeadlineAt = &deadline
-	}
-	return snap
-}
-
-// admittedWorkflowDigest returns the digest to compare against the stored run:
-// the recorded one for a resume, this binary's for a fresh admission. A fresh
-// admission keeps the full guard, so two concurrent admissions of different
-// workflows still collide.
-func (c *LinearController) admittedWorkflowDigest() string {
-	if c.admission.WorkflowDigest != "" {
-		return c.admission.WorkflowDigest
-	}
-	return c.Workflow.Digest
-}
-
-func sameAdmission(stored, candidate workflowledger.RunSnapshot) bool {
-	return stored.InvocationKey == candidate.InvocationKey && stored.WorkflowName == candidate.WorkflowName && stored.WorkflowDigest == candidate.WorkflowDigest &&
-		stored.SnapshotDigest == candidate.SnapshotDigest && stored.InputDigest == candidate.InputDigest &&
-		stored.BaseRef == candidate.BaseRef && stored.BaseCommit == candidate.BaseCommit &&
-		stored.OriginBaseCommit == candidate.OriginBaseCommit &&
-		stored.WorktreeName == candidate.WorktreeName && stored.RemoteURL == candidate.RemoteURL &&
-		sameDeadline(stored.DeadlineAt, candidate.DeadlineAt)
-}
-
-func sameDeadline(left, right *time.Time) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return left.Equal(*right)
 }
 
 // Run advances until the run reaches a terminal status.
@@ -301,6 +272,12 @@ func (c *LinearController) Run(ctx context.Context) (workflowledger.RunSnapshot,
 			return snap, err
 		}
 		if done {
+			// A terminal run emits exactly one run_finished. Non-terminal parks
+			// (waiting_approval, delivery_pending) are pauses, not finishes:
+			// no event is emitted until the run reaches a terminal status.
+			if workflowledger.IsTerminalRunStatus(snap.Status) {
+				c.emitRunFinished(string(snap.Status))
+			}
 			return snap, nil
 		}
 		if step, ok := c.WorkflowStep(snap.ActiveStepID); ok && step.Kind == "agent_panel" {
@@ -426,6 +403,7 @@ func (c *LinearController) fail(ctx context.Context, run workflowledger.RunSnaps
 
 func (c *LinearController) failWithStatus(ctx context.Context, run workflowledger.RunSnapshot, cause error, status workflowledger.RunStatus) (workflowledger.RunSnapshot, bool, error) {
 	if !workflowledger.IsTerminalRunStatus(run.Status) {
+		c.emitRunFailed(cause.Error())
 		if err := c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, status, nil); err != nil {
 			return run, false, fmt.Errorf("workflow failed: %v: %w", cause, err)
 		}

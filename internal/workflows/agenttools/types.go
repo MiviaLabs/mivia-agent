@@ -125,6 +125,9 @@ type AttemptView struct {
 	TaskID           string `json:"task_id,omitempty"`
 	Verdict          string `json:"verdict,omitempty"`
 	MatchDigest      string `json:"match_digest,omitempty"`
+	StartedAt        string `json:"started_at,omitempty"`
+	FinishedAt       string `json:"finished_at,omitempty"`
+	ElapsedSeconds   int64  `json:"elapsed_seconds,omitempty"`
 }
 
 // LoopView is one named loop counter.
@@ -194,6 +197,9 @@ type InspectView struct {
 	ErrorText         string          `json:"error_text,omitempty"`
 	EvidenceSelection any             `json:"evidence_selection,omitempty"`
 	Transition        *TransitionView `json:"transition,omitempty"`
+	StartedAt         string          `json:"started_at,omitempty"`
+	FinishedAt        string          `json:"finished_at,omitempty"`
+	ElapsedSeconds    int64           `json:"elapsed_seconds,omitempty"`
 }
 
 // TransitionView is the durable route decision for one attempt.

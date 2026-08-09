@@ -162,16 +162,20 @@ func TestTaskSnapshot_Clone(t *testing.T) {
 
 func TestLifecycleEvent_Clone(t *testing.T) {
 	evt := LifecycleEvent{
-		ID:      "e1",
-		RunID:   "r1",
-		Kind:    "task_created",
-		Payload: []byte("data"),
+		ID:        "e1",
+		RunID:     "r1",
+		Kind:      "task_created",
+		SessionID: "sess-1",
+		Payload:   []byte("data"),
 	}
 	clone := evt.Clone()
 	evt.Payload[0] = 'X'
 
 	if string(clone.Payload) != "data" {
 		t.Fatal("clone payload was mutated")
+	}
+	if clone.SessionID != "sess-1" {
+		t.Fatalf("clone SessionID = %q, want %q", clone.SessionID, "sess-1")
 	}
 }
 

@@ -180,6 +180,10 @@ func (c *coordinator) appendAskDeclinedEvent(runID, askerTaskID, askID string) {
 	if h := c.HandleForRun(runID); h != nil {
 		attemptID = h.getAttempt(askerTaskID)
 	}
+	// SessionID stays empty: the asker's session is not retained at the
+	// decline site (it lives only on the asker's in-memory task during that
+	// task's execution, and the ledger never persists caller identity). The
+	// decline is correlated via TaskID + the ask_id payload.
 	evt := ledger.LifecycleEvent{
 		ID:        newEventID(),
 		RunID:     runID,

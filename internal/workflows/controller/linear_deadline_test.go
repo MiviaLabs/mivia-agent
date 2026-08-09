@@ -111,6 +111,70 @@ func TestAdvanceExpiredDeadlineDoesNotDispatch(t *testing.T) {
 	}
 }
 
+// TestDeadlineExpiryClosesHumanGateAttemptWithErrorRef verifies that a human
+// gate attempt left running at deadline expiry completes as timed_out with a
+// persisted deadline cause and a step_completed progress event.
+func TestDeadlineExpiryClosesHumanGateAttemptWithErrorRef(t *testing.T) {
+	start := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
+	repo := workflowledger.NewMemoryRepository()
+	sink := &recordingProgressSink{}
+	ctrl, err := NewLinearController(repo, &linearRunner{}, humanOnlyWorkflow(t), nil, map[string]any{"task": "x"}, "wfr-deadline-human", []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetTimeSource(func() time.Time { return start }); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetProgressSink(sink); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ctrl.Run(context.Background())
+	if err != nil || got.Status != workflowledger.RunStatusWaitingApproval {
+		t.Fatalf("run = %+v, err=%v, want waiting_approval", got, err)
+	}
+	ctrl.now = func() time.Time { return start.Add(2 * time.Hour) }
+	settled, err := ctrl.Run(context.Background())
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("expired run: %v", err)
+	}
+	if settled.Status != workflowledger.RunStatusTimedOut {
+		t.Fatalf("status = %q, want timed_out", settled.Status)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, ok := latestAttempt(attempts, "approve_me")
+	if !ok {
+		t.Fatal("missing human gate attempt")
+	}
+	if attempt.Status != workflowledger.AttemptStatusTimedOut {
+		t.Fatalf("human attempt status = %q, want timed_out", attempt.Status)
+	}
+	if attempt.ErrorRef == "" {
+		t.Fatal("human attempt ErrorRef is empty, want deadline detail")
+	}
+	raw, err := repo.LoadContent(context.Background(), attempt.ErrorRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "deadline exceeded") {
+		t.Fatalf("error ref content = %q, want text containing 'deadline exceeded'", raw)
+	}
+	var completed bool
+	for _, e := range sink.take() {
+		if e.Kind == ProgressStepCompleted && e.StepID == "approve_me" && e.Detail == string(workflowledger.AttemptStatusTimedOut) {
+			completed = true
+		}
+	}
+	if !completed {
+		t.Fatal("no step_completed progress event for the timed out human gate")
+	}
+}
+
 type deadlineGetRunRepository struct {
 	workflowledger.Repository
 	mu       sync.Mutex

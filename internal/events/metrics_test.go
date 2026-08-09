@@ -274,11 +274,15 @@ func declaredKinds() map[Kind]bool {
 	// package events so all Kind constants are in scope — if a Kind is renamed
 	// or removed, this compilation unit fails to compile, catching drift.
 	for _, k := range []Kind{
-		KindAssistant, KindToolStart, KindToolEnd, KindStep, KindPrune,
+		KindAssistant, KindToolStart, KindToolEnd, KindStep, KindHeartbeat, KindPrune,
 		KindToolParallel, KindSubagentStart, KindSubagentEnd, KindSubagentHeartbeat,
 		KindSubagentDone, KindThinking, KindCompaction,
 		KindCacheUsage, KindTokenUsage,
 		KindSessionStart, KindSessionEnd, KindTurnStart, KindTurnEnd,
+		KindWorkflowRunStarted, KindWorkflowStepStarted, KindWorkflowStepHeartbeat,
+		KindWorkflowStepCompleted, KindWorkflowGateResult, KindWorkflowApprovalRequested,
+		KindWorkflowRunFinished, KindWorkflowDeliveryStage,
+		KindInvocationStarted, KindInvocationCompleted, KindInvocationRetrying,
 		KindUIResize, KindUserInput, KindUIReady, KindConfigChange,
 		KindError,
 	} {

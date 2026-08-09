@@ -107,6 +107,7 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish b
 	if err := workflowResumeSetForce(built); err != nil {
 		return err
 	}
+	wireCLIWorkflowProgress(&built, stderr)
 	if err := prepareWorkflowResumeExecution(ctx, built, repo, runID, force, stdout); err != nil {
 		return err
 	}

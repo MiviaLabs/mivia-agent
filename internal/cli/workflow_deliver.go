@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
@@ -130,6 +131,7 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 		Inputs: snapshot.Inputs, BaseCommit: run.BaseCommit, Branch: "wf/" + run.WorktreeName,
 		GitCtx:    delivery.GitContext{Dir: identity.Root, GitDir: gitDir},
 		OriginURL: run.RemoteURL,
+		Stage:     workflowDeliveryStagePrinter(stderr),
 	}
 	// Bound one delivery attempt: a hung git push or gh call must not block
 	// the CLI forever. The claim and status CAS stay on the caller's context.
@@ -139,7 +141,20 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 	if err != nil {
 		return settleDeliveryError(ctx, repo, runID, policy, stdout, deliveryCtx, result, err)
 	}
-	return settleDeliverySuccess(ctx, repo, runID, result, stdout)
+	return settleDeliverySuccess(ctx, repo, runID, result, stdout, stderr)
+}
+
+// workflowDeliveryStagePrinter returns the delivery stage observer for the
+// CLI deliver path: one `delivery stage=<name> detail=<detail>` line per
+// stage on stderr. It returns nil for io.Discard so silent CLI runs write
+// nothing. The deliver path is single-threaded, so no mutex guards the writer.
+func workflowDeliveryStagePrinter(stderr io.Writer) func(stage, detail string) {
+	if stderr == nil || stderr == io.Discard {
+		return nil
+	}
+	return func(stage, detail string) {
+		fmt.Fprintf(stderr, "delivery stage=%s detail=%s\n", stage, detail)
+	}
 }
 
 // settleDeliveryError handles a failed delivery attempt: it prints the
@@ -295,8 +310,10 @@ func settleDeliveryRefusal(ctx context.Context, repo workflowledger.Repository, 
 }
 
 // settleDeliverySuccess CASes a delivered run to succeeded (when it is still
-// waiting) and prints the outcome.
-func settleDeliverySuccess(ctx context.Context, repo workflowledger.Repository, runID string, result delivery.Result, stdout io.Writer) error {
+// waiting) and prints the outcome. A transition to succeeded emits one
+// run_finished(succeeded) progress line on stderr so non-interactive
+// consumers see the terminal event.
+func settleDeliverySuccess(ctx context.Context, repo workflowledger.Repository, runID string, result delivery.Result, stdout, stderr io.Writer) error {
 	fresh, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
@@ -306,6 +323,10 @@ func settleDeliverySuccess(ctx context.Context, repo workflowledger.Repository, 
 		if err := repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusSucceeded, &now); err != nil {
 			return err
 		}
+		(&workflowProgressWriter{w: stderr}).Emit(controller.ProgressEvent{
+			Kind: controller.ProgressRunFinished, RunID: runID, Detail: "succeeded",
+			Timestamp: time.Now(),
+		})
 	}
 	fmt.Fprintln(stdout, delivery.FormatOutcome(result, nil))
 	return nil
