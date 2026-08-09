@@ -202,11 +202,10 @@ func deriveBrandPhase(waiting bool, openTools int, streamLen int, queueLen int, 
 
 // renderWorkChrome builds the single status line while the agent is active:
 //
-//	◆ mivia model ─── phase · elapsed · detail · tools · queue
+//	◆ mivia ─── phase · elapsed · detail · tools · queue
 func renderWorkChrome(
 	_ int,
 	phase brandPhase,
-	modelName string,
 	elapsed time.Duration,
 	openTools int,
 	doneTools int,
@@ -218,7 +217,7 @@ func renderWorkChrome(
 	gitWorktree string,
 ) string {
 	color := brandColor(phase)
-	left := simpleStateDiamond(phase) + " " + brandNameStyled() + " " + tuiDimStyle.Render(modelName) + " "
+	left := simpleStateDiamond(phase) + " " + brandNameStyled() + " "
 
 	core := []string{
 		" " + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)),
@@ -305,7 +304,6 @@ func nanoFirstLine(frame int, color string) string {
 func renderStatusBar(
 	frame int,
 	phase brandPhase,
-	modelName string,
 	waiting bool,
 	elapsed time.Duration,
 	openTools, doneTools, totalTools int,
@@ -317,9 +315,9 @@ func renderStatusBar(
 	gitWorktree string,
 ) string {
 	if waiting {
-		return renderWorkChrome(frame, phase, modelName, elapsed, openTools, doneTools, totalTools, queueLen, width, stepDetail, gitBranch, gitWorktree)
+		return renderWorkChrome(frame, phase, elapsed, openTools, doneTools, totalTools, queueLen, width, stepDetail, gitBranch, gitWorktree)
 	}
-	left := simpleStateDiamond(phase) + " " + brandNameStyled() + " " + tuiDimStyle.Render(modelName) + " "
+	left := simpleStateDiamond(phase) + " " + brandNameStyled() + " "
 	right := tuiDimStyle.Render(fmt.Sprintf(" %d msgs · /help ", msgCount))
 	if queueLen > 0 {
 		right = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(

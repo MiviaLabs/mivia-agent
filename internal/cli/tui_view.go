@@ -54,21 +54,26 @@ func (m *tuiModel) renderChatView() string {
 	return base
 }
 
+// composerModelLabel is the provider-qualified model shown at the
+// bottom-right of the composer border. Falls back to the shortened model
+// name when the provider is unknown.
+func (m *tuiModel) composerModelLabel() string {
+	if m.session == nil {
+		return m.modelName
+	}
+	sel := m.session.CurrentSelection()
+	model := shortenModel(sel.Model)
+	if strings.TrimSpace(sel.ProviderName) == "" {
+		return model
+	}
+	return sel.ProviderName + "/" + model
+}
+
 // statusDetail is the status-bar stepDetail chrome. During an active turn it
 // appends the live context usage so context growth is visible without opening
 // /status; idle returns stepDetail as-is.
 func (m *tuiModel) statusDetail() string {
 	if !m.waiting {
-		return m.stepDetail
-	}
-	return appendCtxSuffix(m.stepDetail, m.liveCtxPercent())
-}
-
-// composerDetail is the composer footer's stepDetail. Context usage is
-// appended only when a stepDetail is present so the footer keeps its "queued"
-// fallback on empty detail; the status bar always shows the live usage.
-func (m *tuiModel) composerDetail() string {
-	if !m.waiting || m.stepDetail == "" {
 		return m.stepDetail
 	}
 	return appendCtxSuffix(m.stepDetail, m.liveCtxPercent())
@@ -137,7 +142,7 @@ func (m *tuiModel) renderChatPane() string {
 	phase := deriveBrandPhase(m.waiting, open, m.streamBuf.Len(), len(m.pendingQueue), false, time.Since(m.turnStart))
 
 	header := renderStatusBar(
-		m.logoFrame, phase, m.modelName, m.waiting, time.Since(m.turnStart),
+		m.logoFrame, phase, m.waiting, time.Since(m.turnStart),
 		open, done, total, len(m.pendingQueue), m.session.MessagesCount(), m.width,
 		m.statusDetail(), m.gitBranch, m.gitWorktreeName,
 	)
@@ -216,7 +221,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	for inputH > 1 {
 		m.textarea.SetHeight(inputH)
 		m.textarea.SetWidth(composerInnerWidth(composerW))
-		probe := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, phase, m.composerDetail(), m.stalledWarning)
+		probe := renderComposer(m.textarea.View(), composerW, m.composerModelLabel())
 		if lipgloss.Height(header)+lipgloss.Height(probe)+1+minVp+padRows <= termH {
 			break
 		}
@@ -224,7 +229,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	}
 	m.textarea.SetHeight(inputH)
 	m.textarea.SetWidth(composerInnerWidth(composerW))
-	input := renderComposer(m.textarea.View(), composerW, m.waiting, len(m.pendingQueue), m.focus == focusComposer, phase, m.composerDetail(), m.stalledWarning)
+	input := renderComposer(m.textarea.View(), composerW, m.composerModelLabel())
 	// Hint line on a diet: the keys that matter in THIS state, plus live
 	// counts. Seven competing segments read as a junk drawer; /help is the
 	// full reference and is one keystroke away.
@@ -233,7 +238,11 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 		hintParts[0] = " ↑↓ select · tab insert · enter run eligible command · esc dismiss "
 	}
 	if m.waiting {
-		hintParts[0] = " type to queue · ctrl+g agents · ctrl+c cancel "
+		if m.stalledWarning {
+			hintParts[0] = "· ctrl+g agents · ctrl+c cancel "
+		} else {
+			hintParts[0] = " type to queue · ctrl+g agents · ctrl+c cancel "
+		}
 	}
 	if !m.mouseEnabled {
 		// Mouse capture is released: the terminal owns selection again. Say so
@@ -241,8 +250,8 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 		hintParts = []string{tuiAccentStyle.Render(" select mode ") +
 			tuiDimStyle.Render(" drag to select, then copy as usual · F2 back ")}
 	}
-	// Copy/paste acknowledgements are shown here while idle. The composer
-	// footer renders stepDetail only during a turn, which is exactly when
+	// Copy/paste acknowledgements are shown here while idle. The status bar
+	// shows stepDetail only during a turn, which is exactly when
 	// nobody is copying: every copy made at rest was silent, and silence
 	// after a copy is indistinguishable from a broken key.
 	// The arm prompt is sourced from the arm itself, not from a notice TTL:
@@ -262,6 +271,9 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 		}
 	}
 	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
+	if m.stalledWarning {
+		hint = tuiErrorStyle.Render(" ⚠ stalled ") + hint
+	}
 	remain := max(minVp, termH-lipgloss.Height(header)-m.livePanelHeight()-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
 	return chatViewLayout{termH: termH, viewportHeight: remain, input: input, hint: hint}
 }
@@ -292,7 +304,7 @@ func (m *tuiModel) viewWelcome() string {
 	}
 
 	// Status
-	left := brandNameStyled() + " " + tuiDimStyle.Render(m.modelName)
+	left := brandNameStyled()
 	right := tuiDimStyle.Render(" welcome ")
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	spacerN := w - lw - rw
@@ -315,7 +327,7 @@ func (m *tuiModel) viewWelcome() string {
 	if !m.suggest.open {
 		return base
 	}
-	input := renderComposer(m.textarea.View(), w, false, 0, true, phaseWelcome, "", false)
+	input := renderComposer(m.textarea.View(), w, m.composerModelLabel())
 	composerTop := max(1, lipgloss.Height(base)-1-lipgloss.Height(input))
 	panel, size := renderSuggestPanel(m.suggest, w, max(0, composerTop-1))
 	if panel == "" {
@@ -381,7 +393,7 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 	inputH := min(composerMaxHeight(h), max(1, m.textarea.LineCount()))
 	m.textarea.SetWidth(composerInnerWidth(w))
 	m.textarea.SetHeight(inputH)
-	input := renderComposer(m.textarea.View(), w, false, 0, true, phaseWelcome, "", false)
+	input := renderComposer(m.textarea.View(), w, m.composerModelLabel())
 	inputLines := lipgloss.Height(input)
 	// Single instruction line, primary action first. The old centered tag
 	// under the hero repeated this and cost the picker a row.
@@ -393,7 +405,7 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 	for inputH > 1 && heroLines+inputLines+welcomeChromeLines > h {
 		inputH--
 		m.textarea.SetHeight(inputH)
-		input = renderComposer(m.textarea.View(), w, false, 0, true, phaseWelcome, "", false)
+		input = renderComposer(m.textarea.View(), w, m.composerModelLabel())
 		inputLines = lipgloss.Height(input)
 	}
 
