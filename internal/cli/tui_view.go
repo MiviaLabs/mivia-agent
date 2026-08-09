@@ -98,6 +98,23 @@ func appendCtxSuffix(detail string, percent int) string {
 	return detail + " · " + suffix
 }
 
+// sidebarLiveStatus derives the sessions-sidebar dot state from the live
+// turn state. Open tools outrank streaming; streaming outranks thinking.
+// Waiting with no data yet reads as thinking, the closest working state.
+func (m *tuiModel) sidebarLiveStatus() sidebarLiveStatus {
+	if !m.waiting {
+		return liveStatusIdle
+	}
+	open, _, _ := countTools(m.toolRows)
+	if open > 0 {
+		return liveStatusTools
+	}
+	if m.streamBuf.Len() > 0 {
+		return liveStatusStreaming
+	}
+	return liveStatusThinking
+}
+
 func (m *tuiModel) renderBaseChatView() string {
 	pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil)
 	if !pane.sidebarVisible {
@@ -109,7 +126,7 @@ func (m *tuiModel) renderBaseChatView() string {
 	m.width = pane.chatWidth
 	chat := m.renderChatPane()
 	m.width = width
-	sidebar := m.sessionsSidebar.viewWithActive(m.sessions, pane.sidebarWidth, max(1, m.height), m.focus == focusSidebar, m.activeSession)
+	sidebar := m.sessionsSidebar.viewWithActive(m.sessions, pane.sidebarWidth, max(1, m.height), m.focus == focusSidebar, m.activeSession, m.sidebarLiveStatus())
 	padding := paneSpacer(pane.dividerPadding, max(1, m.height))
 	divider := sidebarDivider(pane.dividerWidth, max(1, m.height))
 	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, padding, divider, padding, chat)

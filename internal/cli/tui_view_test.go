@@ -310,3 +310,99 @@ func TestLayoutAndViewAgreeOnViewportHeight(t *testing.T) {
 		}
 	}
 }
+
+// sidebarPrefix is the first sidebarWidth columns of a joined view line.
+// The sidebar renders before the divider lane, so the row identity and the
+// status dot always live in this prefix and nowhere else on the line.
+func sidebarPrefix(line string) string {
+	if len(line) > 28 {
+		return line[:28]
+	}
+	return line
+}
+
+// sidebarRowLine returns the first view line whose sidebar prefix contains
+// the session name.
+func sidebarRowLine(t *testing.T, view, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(sidebarPrefix(line), name) {
+			return line
+		}
+	}
+	t.Fatalf("sidebar row %q not found:\n%s", name, view)
+	return ""
+}
+
+func TestSessionsSidebarLiveStatusReflectsTurnState(t *testing.T) {
+	m := newReadyChatModel(24, 80)
+	m.sessionsSidebar = newSessionsSidebar()
+	m.sessions = []chat.SessionInfo{{Name: "alpha"}, {Name: "beta"}}
+
+	cases := []struct {
+		name        string
+		waiting     bool
+		thinking    string
+		stream      string
+		toolRows    []toolRow
+		wantGlyph   string
+		wantCurrent bool
+	}{
+		{name: "idle", waiting: false, wantGlyph: "●", wantCurrent: true},
+		{name: "thinking", waiting: true, thinking: "reasoning text", wantGlyph: "◔", wantCurrent: true},
+		{name: "streaming", waiting: true, stream: "streamed words", wantGlyph: "◐", wantCurrent: true},
+		{name: "tools", waiting: true, toolRows: []toolRow{{Name: "t", Detail: `{}`, Start: time.Now()}}, wantGlyph: "◉", wantCurrent: true},
+		{name: "waiting no data", waiting: true, wantGlyph: "◔", wantCurrent: true},
+		{name: "precedence", waiting: true, thinking: "reasoning text", stream: "streamed words", toolRows: []toolRow{{Name: "t", Detail: `{}`, Start: time.Now()}}, wantGlyph: "◉", wantCurrent: true},
+		{name: "nil active", waiting: false, wantGlyph: "", wantCurrent: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m.activeSession = &m.sessions[1]
+			if tc.name == "nil active" {
+				m.activeSession = nil
+			}
+			m.waiting = tc.waiting
+			m.thinkingBuf.Reset()
+			m.thinkingBuf.WriteString(tc.thinking)
+			m.streamBuf.Reset()
+			m.streamBuf.WriteString(tc.stream)
+			m.toolRows = tc.toolRows
+			if len(tc.toolRows) > 0 {
+				m.toolPanel.Focused = true
+				m.toolPanel.Selected = 0
+				m.toolPanel.ordered = orderToolIndices(m.toolRows)
+			}
+
+			view := stripANSI(m.View())
+			alphaLine := sidebarRowLine(t, view, "alpha")
+			betaLine := sidebarRowLine(t, view, "beta")
+
+			if tc.wantCurrent {
+				if !strings.Contains(sidebarPrefix(betaLine), "current") {
+					t.Fatalf("%s: active row missing identity marker: %q", tc.name, betaLine)
+				}
+				if !strings.Contains(sidebarPrefix(betaLine), tc.wantGlyph) {
+					t.Fatalf("%s: active row missing dot %q: %q", tc.name, tc.wantGlyph, betaLine)
+				}
+			} else {
+				for _, glyph := range []string{"●", "◔", "◐", "◉"} {
+					if strings.Contains(sidebarPrefix(betaLine), glyph) || strings.Contains(sidebarPrefix(alphaLine), glyph) {
+						t.Fatalf("%s: dot %q rendered with nil active: %q", tc.name, glyph, view)
+					}
+				}
+				if strings.Contains(view, "current") {
+					t.Fatalf("%s: identity marker with nil active: %q", tc.name, view)
+				}
+			}
+			if strings.Contains(sidebarPrefix(alphaLine), "current") {
+				t.Fatalf("%s: non-active row shows identity marker: %q", tc.name, alphaLine)
+			}
+			for _, glyph := range []string{"●", "◔", "◐", "◉"} {
+				if strings.Contains(sidebarPrefix(alphaLine), glyph) {
+					t.Fatalf("%s: non-active row shows dot %q: %q", tc.name, glyph, alphaLine)
+				}
+			}
+		})
+	}
+}
