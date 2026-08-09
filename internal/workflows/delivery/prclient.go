@@ -162,6 +162,12 @@ func (GitHubCLI) Create(ctx context.Context, repo string, in PRInput) (PRRef, er
 // use (gh 2.46 rejects it with "Unknown JSON field"), which fails delivery
 // after every gate has already passed. The REST payload's base.sha carries the
 // same value and is not gated on the local gh build.
+//
+// The gh api invocation carries EXACTLY ONE positional endpoint: real gh
+// declares `Args: cobra.ExactArgs(1)` on the api subcommand, so a doubled
+// endpoint argument is refused with "accepts 1 arg(s), received 2" (DC-14).
+// runGH's op label is used only in error messages; the argv itself must
+// carry the "api" subcommand as its first gh argument.
 func baseRefOID(ctx context.Context, repo, number string) (string, error) {
 	out, err := runGH(ctx, "api", "api", "repos/"+repo+"/pulls/"+number)
 	if err != nil {

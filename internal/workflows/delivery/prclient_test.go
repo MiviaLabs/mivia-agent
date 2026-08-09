@@ -67,6 +67,13 @@ func TestParseOwnerRepo(t *testing.T) {
 // does. gh 2.46 has no such field on pr list or pr view and fails with
 // "Unknown JSON field". A double that accepted it let a delivery-breaking
 // regression ship green, so faithfulness here is the point, not pedantry.
+//
+// It is faithful on the `api` subcommand too: real gh declares
+// `Args: cobra.ExactArgs(1)` (one positional endpoint) and refuses anything
+// else with "accepts 1 arg(s), received N". The double enforces the same
+// shape, so a doubled endpoint argument - which a permissive double accepts
+// and a real gh rejects (DC-14) - fails the tests exactly as it fails in
+// production.
 func writeFakeGH(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -80,6 +87,10 @@ for arg in "$@"; do
   esac
 done
 if [ "$1" = "api" ]; then
+  if [ "$#" -ne 2 ]; then
+    printf 'accepts 1 arg(s), received %d\n' "$(($# - 1))" >&2
+    exit 1
+  fi
   printf '%s\n' "$@" > "${GH_API_ARGS_FILE:-/dev/null}"
   if [ -n "$GH_API_EXIT" ]; then
     printf '%s\n' "${GH_API_EXIT_MSG:-gh api failed}" >&2
@@ -417,6 +428,64 @@ func TestGitHubCLICreateBaseRefOID(t *testing.T) {
 		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
 		if _, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in); err == nil {
 			t.Fatal("Create error = nil, want a missing base.sha error")
+		}
+	})
+}
+
+// TestGitHubCLIAPIExactOnePositionalEndpoint pins the DC-14 interface
+// contract of the gh api boundary. Real gh declares
+// `Args: cobra.ExactArgs(1)` on the api subcommand: exactly ONE positional
+// endpoint. The old invocation passed a doubled "api" positional
+// (`gh api api repos/<repo>/pulls/<n>`), which the fake gh accepted - a
+// double more permissive than the real interface - so every delivery attempt
+// died at the base-commit read after all gates had passed, with the run stuck
+// delivery_pending forever. The faithful double now refuses the doubled shape
+// exactly as real gh does, and the fixed code passes exactly one endpoint.
+func TestGitHubCLIAPIExactOnePositionalEndpoint(t *testing.T) {
+	writeFakeGH(t)
+	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("GH_API_ARGS_FILE", filepath.Join(t.TempDir(), "api-args.txt"))
+	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
+
+	// The double must refuse the buggy doubled-endpoint shape with real gh's
+	// exact-args error, so a regression to the old invocation cannot pass
+	// green behind a permissive fake (DC-14).
+	t.Run("faithful double refuses a doubled endpoint", func(t *testing.T) {
+		if _, err := runGH(context.Background(), "api", "api", "api", "repos/owner/repo/pulls/7"); err == nil {
+			t.Fatal("runGH with a doubled api endpoint = nil error, want the real gh exact-args refusal")
+		} else if !strings.Contains(err.Error(), "accepts 1 arg(s), received 2") {
+			t.Fatalf("doubled-endpoint error = %v, want the cobra exact-args message", err)
+		}
+	})
+
+	t.Run("FindByHead passes exactly one endpoint", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `[{"number":12,"url":"https://github.com/o/r/pull/12","isDraft":true,"headRepositoryOwner":{"login":"owner"}}]`)
+		t.Setenv("GH_STDOUT_API", `{"base":{"sha":"aaa111"}}`)
+		got, err := (GitHubCLI{}).FindByHead(context.Background(), "owner/repo", "feature/x")
+		if err != nil {
+			t.Fatalf("FindByHead rejected by a faithful gh: %v", err)
+		}
+		if got == nil || got.BaseRefOID != "aaa111" {
+			t.Fatalf("FindByHead = %+v, want the owner PR with BaseRefOID aaa111", got)
+		}
+		if gotArgs := readRecordedAPIArgs(t); !slices.Equal(gotArgs, []string{"api", "repos/owner/repo/pulls/12"}) {
+			t.Errorf("api argv = %q, want exactly one endpoint %q", gotArgs, "repos/owner/repo/pulls/12")
+		}
+	})
+
+	t.Run("Create passes exactly one endpoint", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `https://github.com/owner/repo/pull/7`+"\n")
+		t.Setenv("GH_STDOUT_API", `{"base":{"sha":"beef123"}}`)
+		in := PRInput{Base: "main", Head: "feature/x", Title: "t", Body: "b"}
+		got, err := (GitHubCLI{}).Create(context.Background(), "owner/repo", in)
+		if err != nil {
+			t.Fatalf("Create rejected by a faithful gh: %v", err)
+		}
+		if got.BaseRefOID != "beef123" {
+			t.Fatalf("Create BaseRefOID = %q, want beef123", got.BaseRefOID)
+		}
+		if gotArgs := readRecordedAPIArgs(t); !slices.Equal(gotArgs, []string{"api", "repos/owner/repo/pulls/7"}) {
+			t.Errorf("api argv = %q, want exactly one endpoint %q", gotArgs, "repos/owner/repo/pulls/7")
 		}
 	})
 }
