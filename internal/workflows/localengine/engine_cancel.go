@@ -73,7 +73,11 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelRes
 func (e *Engine) claimOrTakeoverExpired(ctx context.Context, runID, holder string) error {
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) {
-			if takeoverErr := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); takeoverErr != nil {
+			takeoverErr := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease)
+			if errors.Is(takeoverErr, workflowledger.ErrClaimNotHeld) {
+				return e.Repo.ClaimRun(ctx, runID, holder)
+			}
+			if takeoverErr != nil {
 				return fmt.Errorf("workflow run %q is claimed by another executor; cancel refused", runID)
 			}
 			return nil
