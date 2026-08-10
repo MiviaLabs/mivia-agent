@@ -223,6 +223,13 @@ func (s *workflowsSidebar) renderRunRow(row workflowRunRow, selected bool, width
 		line = sidebarSelectedStyle(width, focused).Render(line)
 	}
 	step := row.run.ActiveStepID
+	if workflowledger.IsTerminalStepID(step) {
+		// The derived active step for a run at or after the success/failure
+		// terminal is the reserved terminal step ("success"/"failure"), which
+		// is not a declared step. Show the run's settled status instead of a
+		// phantom step id ("step success" reads like a real step).
+		step = string(row.run.Status)
+	}
 	if step == "" {
 		step = "-"
 	}

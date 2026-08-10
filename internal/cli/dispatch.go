@@ -48,6 +48,16 @@ func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
 // the longest task in the batch, so the call outlives the work it is waiting on.
 const dispatchOrchestrationSlackSec = 15
 
+// timeoutHint is the model-facing guidance for timeout_seconds on the
+// orchestration tools (dispatch_tasks, spawn_agent, delegate). It names the
+// effective default so agents omit the parameter (or pass 0) instead of
+// guessing a small budget, and states the raise-only rule so a guessed value
+// never tightens a tool's own declared budget.
+func timeoutHint() string {
+	return fmt.Sprintf("Omit or pass 0 to use the configured default (%.0fh). A value may only extend the budget, never shorten it.",
+		float64(config.DefaultOrchestrationTimeoutSec)/3600)
+}
+
 // dispatchOrchestrationSec picks the wall-clock budget for the whole
 // dispatch_tasks invocation from config, batch timeout_seconds, and any
 // per-task timeout_seconds (max wins). Always positive.
@@ -82,7 +92,7 @@ func (t *dispatchTasksTool) Description() string {
 		"costs you the others. " +
 		"Recommended: 2-4 tasks at once. " +
 		"If dispatch_tasks fails, retry with fewer tasks or switch to spawn_agent. " +
-		"Use timeout_seconds to set a per-batch budget (0 uses config default or a finite safety ceiling). " +
+		"Use timeout_seconds to set a per-batch budget: " + timeoutHint() + " " +
 		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
 		"For large results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
@@ -98,7 +108,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 			},
 			"timeout_seconds": map[string]any{
 				"type":        "integer",
-				"description": "Per-task timeout budget in seconds. 0 uses config default; runtime always applies a finite safety ceiling so batches cannot hang forever. Raise for long multi-step work.",
+				"description": "Per-task timeout budget in seconds. " + timeoutHint(),
 			},
 		},
 		"required":             []string{"tasks"},

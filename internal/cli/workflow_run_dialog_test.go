@@ -262,6 +262,115 @@ func TestBuildWorkflowRunView(t *testing.T) {
 	}
 }
 
+// TestBuildWorkflowRunViewElapsedUsesFinishedAt pins that a finished run's
+// elapsed time freezes at FinishedAt - StartedAt instead of growing with the
+// wall clock: a delivered run's elapsed must not keep counting forever while
+// the dialog stays open.
+func TestBuildWorkflowRunViewElapsedUsesFinishedAt(t *testing.T) {
+	started := time.Now().Add(-2 * time.Hour)
+	finished := started.Add(5 * time.Minute)
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-ELAPSED1", WorkflowName: "alpha", Status: workflowledger.RunStatusSucceeded,
+		StartedAt: started, FinishedAt: &finished,
+	}
+	// The wall clock moved two hours past start; the finished run's elapsed
+	// must stay frozen at the five minutes it actually ran.
+	view, err := buildWorkflowRunView(run, nil, nil, nil, started.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := strings.Join(view.header, "\n")
+	want := "elapsed " + formatDuration(5*time.Minute)
+	if !strings.Contains(header, want) {
+		t.Fatalf("finished-run header missing the frozen elapsed %q:\n%s", want, header)
+	}
+	if strings.Contains(header, "elapsed "+formatDuration(2*time.Hour)) {
+		t.Fatalf("finished-run elapsed must not grow with the wall clock:\n%s", header)
+	}
+}
+
+// TestBuildWorkflowRunViewElapsedRunningUsesNow pins the live case: a running
+// run (no FinishedAt) keeps counting from the wall clock. The finished-run
+// freeze is only correct when the running case still counts.
+func TestBuildWorkflowRunViewElapsedRunningUsesNow(t *testing.T) {
+	started := time.Now().Add(-2 * time.Minute)
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-ELAPSED2", WorkflowName: "alpha", Status: workflowledger.RunStatusRunning,
+		StartedAt: started,
+	}
+	view, err := buildWorkflowRunView(run, nil, nil, nil, started.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := strings.Join(view.header, "\n")
+	if !strings.Contains(header, "elapsed "+formatDuration(2*time.Minute)) {
+		t.Fatalf("running-run header missing the live elapsed:\n%s", header)
+	}
+}
+
+// TestBuildWorkflowRunViewElapsedDeliverySettledUsesLastAttempt pins the
+// delivery-settled case: a delivery_pending/delivery_failed run is NOT
+// terminal (the ledger persists FinishedAt only for terminal statuses), so
+// its elapsed must freeze at the latest completed attempt instead of
+// counting the delivery wait forever.
+func TestBuildWorkflowRunViewElapsedDeliverySettledUsesLastAttempt(t *testing.T) {
+	started := time.Now().Add(-59 * time.Hour)
+	lastFinished := started.Add(2 * time.Hour)
+	attempts := []workflowledger.StepAttempt{
+		{StepID: "one", AttemptNo: 1, Status: workflowledger.AttemptStatusSucceeded, StartedAt: started, FinishedAt: &lastFinished},
+	}
+	for _, status := range []workflowledger.RunStatus{workflowledger.RunStatusDeliveryPending, workflowledger.RunStatusDeliveryFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			run := workflowledger.RunSnapshot{
+				RunID: "wfr-ELAPSED3", WorkflowName: "alpha", Status: status,
+				StartedAt: started, ActiveStepID: "success",
+			}
+			// The wall clock moved 59 hours past start; the settled run's
+			// elapsed must stay frozen at the two hours its steps ran.
+			view, err := buildWorkflowRunView(run, nil, attempts, nil, started.Add(59*time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			header := strings.Join(view.header, "\n")
+			if !strings.Contains(header, "elapsed "+formatDuration(2*time.Hour)) {
+				t.Fatalf("settled-run header missing the frozen elapsed:\n%s", header)
+			}
+			if strings.Contains(header, "elapsed "+formatDuration(59*time.Hour)) {
+				t.Fatalf("settled-run elapsed must not count the delivery wait:\n%s", header)
+			}
+		})
+	}
+}
+
+// TestBuildWorkflowRunViewShowsDeliveryRecord pins that the dialog surfaces
+// the run's durable delivery record: status, PR url, and commit. A delivered
+// run at delivery_pending then explains itself instead of looking like the
+// PR never happened.
+func TestBuildWorkflowRunViewShowsDeliveryRecord(t *testing.T) {
+	run := workflowledger.RunSnapshot{RunID: "wfr-DELREC1", WorkflowName: "alpha", Status: workflowledger.RunStatusDeliveryPending, StartedAt: time.Now()}
+	cases := []struct {
+		name string
+		rec  workflowledger.DeliveryRecord
+		want string
+	}{
+		{"succeeded with url", workflowledger.DeliveryRecord{Status: "succeeded", URL: "https://example.com/pull/74", CommitSHA: "40718667a7b2d59bf751195374c622fc02ab60fb"}, "delivery: succeeded · https://example.com/pull/74 · commit 40718667a7b2"},
+		{"pending with commit", workflowledger.DeliveryRecord{Status: "pending", CommitSHA: "95520b476b2c"}, "delivery: pending · commit 95520b476b2c"},
+		{"failed without url", workflowledger.DeliveryRecord{Status: "failed"}, "delivery: failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), []workflowledger.DeliveryRecord{tc.rec})
+			if err != nil {
+				t.Fatal(err)
+			}
+			header := strings.Join(view.header, "\n")
+			if !strings.Contains(header, tc.want) {
+				t.Fatalf("header missing %q:\n%s", tc.want, header)
+			}
+		})
+	}
+}
+
 // TestWorkflowRunDialogRendersStepMarkers pins the visible markers and state
 // tags for done/active/waiting steps plus the "here" marker on the active step.
 func TestWorkflowRunDialogRendersStepMarkers(t *testing.T) {

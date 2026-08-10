@@ -437,7 +437,11 @@ max_workers = 0                    # 0 = unlimited (one goroutine per task)
 max_depth = 0                      # 0 = unlimited nesting depth
 max_fanout = 0                     # 0 = unlimited parallel sub-tasks per level
 nested_steps = 0                   # 0 = unlimited sub-agent loop steps
-# default_timeout_seconds = 0      # per-agent timeout (0 = use safety bound: 12 hours)
+# default_timeout_seconds is the per-agent default budget. 43200s = 12 hours,
+# the same safety bound an unset-or-0 value selects; it is written out so the
+# default is visible and a smaller value never slips in silently. Batches and
+# tasks may still raise it per call; they never lower it below this floor.
+default_timeout_seconds = 43200
 # default_budget = 0               # cost budget per sub-agent run (0 = unlimited)
 max_audit_rounds = 0               # ADLC audit loop cap; 0 = unlimited
 

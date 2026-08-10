@@ -88,6 +88,57 @@ func TestPrepareToolTasks_PerCallTimeoutClampedToTaskDeadline(t *testing.T) {
 	}
 }
 
+// TestPrepareToolTasks_PerCallTimeoutBelowCapabilityKeepsCapability pins the
+// raise-only rule: a model-supplied timeout_seconds BELOW the tool's own
+// capability budget must not tighten the loop's per-call budget. Tools that
+// declare a long budget (dispatch_tasks, run_command) contract their own hang
+// bound; a small guessed value would kill long multi-step work the tool
+// promised to support.
+func TestPrepareToolTasks_PerCallTimeoutBelowCapabilityKeepsCapability(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&perCallTimeoutTool{name: "slow", cap: 2 * time.Second, work: time.Millisecond})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tasks := prepareToolTasks(ctx, []provider.ToolCall{
+		tc("1", "slow", `{"timeout_seconds":1}`),
+	}, reg, 60*time.Second, 0)
+	defer func() {
+		for _, task := range tasks {
+			task.cancel()
+		}
+	}()
+
+	if tasks[0].timeout != 2*time.Second {
+		t.Fatalf("timeout_seconds=1 vs capability 2s: budget=%s, want the capability 2s (raise-only)", tasks[0].timeout)
+	}
+}
+
+// TestExecuteToolsParallel_PerCallTimeoutBelowCapabilityDoesNotKillWork drives
+// real execution through the loop budget site: capability 3s, work 1.5s,
+// explicit timeout_seconds=1. The call must COMPLETE; a tightening budget
+// would kill it mid-work at 1s.
+func TestExecuteToolsParallel_PerCallTimeoutBelowCapabilityDoesNotKillWork(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&perCallTimeoutTool{name: "slow", cap: 3 * time.Second, work: 1500 * time.Millisecond})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	results := executeToolsParallel(ctx, []provider.ToolCall{
+		tc("1", "slow", `{"timeout_seconds":1}`),
+	}, reg, Options{ToolTimeout: 60 * time.Second, MaxConcurrentTools: 1})
+
+	if len(results) != 1 {
+		t.Fatalf("results=%d, want 1", len(results))
+	}
+	if results[0].err != nil {
+		t.Fatalf("timeout_seconds=1 tightened below the 3s capability and killed the work: %v result=%q", results[0].err, results[0].result)
+	}
+	if !strings.Contains(results[0].result, "done") {
+		t.Fatalf("result=%q, want completed work", results[0].result)
+	}
+}
+
 // TestExecuteToolsParallel_PerCallTimeoutSecondsBeatsCapability drives real
 // execution through the loop budget site: capability 2s, work 3s, explicit
 // timeout_seconds=5, 30s task deadline. The call must COMPLETE; without the

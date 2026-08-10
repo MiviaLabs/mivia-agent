@@ -73,6 +73,29 @@ func TestWorkflowsSidebarRowShowsDotNameAndStep(t *testing.T) {
 	}
 }
 
+// TestWorkflowsSidebarTerminalStepShowsStatus pins that a run at or after
+// the success/failure terminal never renders the reserved terminal step id
+// ("success"/"failure") as a step: the derived active step for such a run is
+// a marker of completion, not a declared step, so the metadata line shows
+// the run's settled status instead.
+func TestWorkflowsSidebarTerminalStepShowsStatus(t *testing.T) {
+	s := newWorkflowsSidebar()
+	s.rows = []workflowRunRow{
+		{run: workflowledger.RunSnapshot{RunID: "wfr-TERM1", WorkflowName: "alpha", Status: workflowledger.RunStatusSucceeded, ActiveStepID: "success"}},
+		{run: workflowledger.RunSnapshot{RunID: "wfr-TERM2", WorkflowName: "beta", Status: workflowledger.RunStatusDeliveryPending, ActiveStepID: "success"}},
+		{run: workflowledger.RunSnapshot{RunID: "wfr-TERM3", WorkflowName: "gamma", Status: workflowledger.RunStatusFailed, ActiveStepID: "failure"}},
+	}
+	view := stripANSI(s.view(28, 20, false))
+	if strings.Contains(view, "step success\n") {
+		t.Fatalf("reserved terminal step rendered as a real step:\n%s", view)
+	}
+	for _, want := range []string{"step succeeded", "step delivery_pending", "step failed"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("terminal row missing %q:\n%s", want, view)
+		}
+	}
+}
+
 // TestWorkflowsSidebarSelectedRowExpands pins the selected-row detail lines:
 // description and next step render below the metadata line.
 func TestWorkflowsSidebarSelectedRowExpands(t *testing.T) {

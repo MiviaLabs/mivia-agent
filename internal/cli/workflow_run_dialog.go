@@ -4,24 +4,20 @@
 // state (done / active / pending / failed / waiting / canceled / timed_out /
 // interrupted), and the run-control actions that actually exist for the run's
 // status. Every action routes through an existing fenced engine/tool surface;
-// the dialog never mutates run state and never claims a run. The interactive
-// half (key handling, rendering, action dispatch) lives in
-// workflow_run_dialog_keys.go; this file owns the derived content and the
-// async ledger data flow.
+// the dialog never mutates run state and never claims a run. This file owns
+// the derived content; the async ledger data flow lives in
+// workflow_run_dialog_load.go and the interactive half (key handling,
+// rendering, action dispatch) in workflow_run_dialog_keys.go.
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/events"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -77,8 +73,10 @@ type workflowRunView struct {
 // already parsed and compiled by the existing definition.ParseWorkflowTOML +
 // compiler.Compile path (workflowCompiledByName), never re-parsed here. A
 // missing definition degrades to header facts plus a notice, never an error;
-// an empty run id is the only error (the run vanished before open).
-func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.CompiledWorkflow, attempts []workflowledger.StepAttempt, approvals []workflowledger.ApprovalRecord, now time.Time) (*workflowRunView, error) {
+// an empty run id is the only error (the run vanished before open). The
+// variadic deliveries carry the run's durable delivery records; existing
+// call sites that render no delivery records need no change.
+func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.CompiledWorkflow, attempts []workflowledger.StepAttempt, approvals []workflowledger.ApprovalRecord, now time.Time, deliveries ...[]workflowledger.DeliveryRecord) (*workflowRunView, error) {
 	if run.RunID == "" {
 		return nil, errors.New("workflow run not found")
 	}
@@ -91,10 +89,44 @@ func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.Com
 	if !run.StartedAt.IsZero() {
 		started := run.StartedAt.Local().Format("2006-01-02 15:04:05")
 		elapsed := ""
-		if d := now.Sub(run.StartedAt); d >= 0 {
+		end := now
+		if run.FinishedAt != nil {
+			// Terminal runs froze their finish time at settlement; the
+			// elapsed must never grow past it.
+			end = *run.FinishedAt
+		} else if workflowRunStepGraphDone(run.Status) {
+			// delivery_pending/delivery_failed runs are NOT terminal, so the
+			// ledger persists no FinishedAt for them (it stamps one only for
+			// terminal statuses). Their step graph is complete, so the
+			// elapsed freezes at the latest completed attempt instead of
+			// counting the delivery wait forever.
+			var lastAttemptFinish *time.Time
+			for i := range attempts {
+				if attempts[i].FinishedAt != nil && (lastAttemptFinish == nil || attempts[i].FinishedAt.After(*lastAttemptFinish)) {
+					fin := *attempts[i].FinishedAt
+					lastAttemptFinish = &fin
+				}
+			}
+			if lastAttemptFinish != nil {
+				end = *lastAttemptFinish
+			}
+		}
+		if d := end.Sub(run.StartedAt); d >= 0 {
 			elapsed = " · elapsed " + formatDuration(d)
 		}
 		v.header = append(v.header, "started: "+started+elapsed)
+	}
+	for i := range deliveries {
+		for _, rec := range deliveries[i] {
+			line := "delivery: " + rec.Status
+			if rec.URL != "" {
+				line += " · " + rec.URL
+			}
+			if rec.CommitSHA != "" {
+				line += " · commit " + shortDigest(rec.CommitSHA)
+			}
+			v.header = append(v.header, line)
+		}
 	}
 	pendingApproval := ""
 	for i := range approvals {
@@ -111,6 +143,16 @@ func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.Com
 	}
 	v.steps = buildWorkflowRunSteps(compiled, run, attempts, approvals)
 	return v, nil
+}
+
+// workflowRunStepGraphDone reports whether the run's step graph completed
+// while the run itself is not terminal: delivery_pending (work done, waiting
+// to publish) and delivery_failed (work done, publication refused or failed).
+// The ledger persists FinishedAt only for terminal statuses, so these runs
+// carry no finish time of their own; callers freeze their elapsed at the
+// latest completed step attempt.
+func workflowRunStepGraphDone(status workflowledger.RunStatus) bool {
+	return status == workflowledger.RunStatusDeliveryPending || status == workflowledger.RunStatusDeliveryFailed
 }
 
 // buildWorkflowRunSteps maps each compiled step (declaration order) to its
@@ -299,144 +341,3 @@ const (
 	workflowConfirmDelete
 	workflowConfirmCleanup
 )
-
-// workflowRunDialogRefreshMsg carries one fresh ledger read for an open
-// workflow-run dialog. The read ran off the update goroutine (tea.Cmd); a
-// failed read keeps the previous view and the handler may surface a notice.
-type workflowRunDialogRefreshMsg struct {
-	runID string
-	data  workflowRunDialogData
-	err   error
-}
-
-// workflowRunDialogData is one fresh ledger read: the run snapshot, its typed
-// attempts and approvals, and the compiled definition from the workspace.
-type workflowRunDialogData struct {
-	run       workflowledger.RunSnapshot
-	compiled  *compiler.CompiledWorkflow
-	attempts  []workflowledger.StepAttempt
-	approvals []workflowledger.ApprovalRecord
-}
-
-// workflowRunDialogLoad reads one run's fresh ledger records and its compiled
-// definition. The definition lookup reuses workflowCompiledByName (the same
-// discover+parse+compile path as the sidebar); a missing or broken definition
-// degrades to compiled=nil, never an error. A vanished run returns
-// workflowledger.ErrNotFound so the dialog can keep stale content with a
-// notice.
-func workflowRunDialogLoad(root, configPath, runID string) (workflowRunDialogData, error) {
-	repo, closeFn, err := openWorkflowReportContext(root, configPath)
-	if err != nil {
-		return workflowRunDialogData{}, err
-	}
-	defer closeFn()
-	ctx := context.Background()
-	run, err := repo.GetRun(ctx, runID)
-	if err != nil {
-		return workflowRunDialogData{}, err
-	}
-	attempts, err := repo.ListStepAttempts(ctx, runID)
-	if err != nil {
-		return workflowRunDialogData{}, err
-	}
-	approvals, err := repo.ListApprovals(ctx, runID)
-	if err != nil {
-		return workflowRunDialogData{}, err
-	}
-	return workflowRunDialogData{
-		run: run, compiled: workflowCompiledByName(root)[run.WorkflowName],
-		attempts: attempts, approvals: approvals,
-	}, nil
-}
-
-// refreshWorkflowRunDialog returns a tea.Cmd that re-reads one run's ledger
-// data off the update goroutine when the dialog is open and the 2s throttle
-// window has passed. It mirrors refreshWorkflowsSidebar: a throttled call
-// marks the dialog dirty and returns nil, a closed dialog is a no-op, and a
-// failed read is carried on the message so the handler keeps the previous
-// view.
-func (m *tuiModel) refreshWorkflowRunDialog() tea.Cmd {
-	dlg := m.workflowRunDlg
-	if dlg == nil {
-		return nil
-	}
-	now := time.Now()
-	if now.Sub(dlg.lastRefresh) < workflowRunDialogRefreshInterval {
-		dlg.dirty = true
-		return nil
-	}
-	dlg.lastRefresh = now
-	root := m.resolveRepoRoot()
-	configPath := sessionEngineConfigPath(root, m.config)
-	runID := dlg.runID
-	return func() tea.Msg {
-		data, err := workflowRunDialogLoad(root, configPath, runID)
-		return workflowRunDialogRefreshMsg{runID: runID, data: data, err: err}
-	}
-}
-
-// workflowRunDialogActionMsg reports one confirmed action's outcome. err
-// carries a refusal (e.g. a live foreign claim) as a notice; a nil err means
-// the action settled and the run must be re-read so status, steps, and action
-// hints reflect the new state.
-type workflowRunDialogActionMsg struct {
-	runID  string
-	action workflowConfirmAction
-	result string
-	err    error
-}
-
-// openWorkflowRunDialog opens the run-detail modal for one sidebar row. The
-// first fresh ledger read runs off the update goroutine as a tea.Cmd
-// (delivered via workflowRunDialogRefreshMsg); the returned command must be
-// drained by the caller (sidebar key or mouse path). The dialog renders a
-// loading placeholder until that read lands.
-func (m *tuiModel) openWorkflowRunDialog(row workflowRunRow) tea.Cmd {
-	m.closeSuggest()
-	root := m.resolveRepoRoot()
-	dlg := &workflowRunDialog{
-		runID:      row.run.RunID,
-		root:       root,
-		configPath: sessionEngineConfigPath(root, m.config),
-	}
-	if svc := m.workflowDialogService(); svc != nil {
-		dlg.engine = svc.Engine()
-	}
-	m.workflowRunDlg = dlg
-	// The dialog owns the screen while open; keep the workflows sidebar as the
-	// underlying focus so esc restores it (setFocus falls back to the composer
-	// when the sidebar is not visible).
-	m.setFocus(focusWorkflowsSidebar)
-	m.hitMap.invalidate()
-	cmd := m.refreshWorkflowRunDialog()
-	m.pendingWorkflowDialogCmd = cmd
-	return cmd
-}
-
-// takePendingWorkflowDialogCmd drains the async first-read command queued by
-// an open path that has no tea.Cmd return of its own (sidebar key handler,
-// sidebar mouse). Returns nil when nothing is queued.
-func (m *tuiModel) takePendingWorkflowDialogCmd() []tea.Cmd {
-	if m.pendingWorkflowDialogCmd == nil {
-		return nil
-	}
-	cmd := m.pendingWorkflowDialogCmd
-	m.pendingWorkflowDialogCmd = nil
-	return []tea.Cmd{cmd}
-}
-
-// workflowDialogService returns the workflow tool service the dialog routes
-// actions through, building it once from the session's own config identity
-// when the workspace has workflows (same factory and store as the session
-// workflow tools). Tests may pre-set m.workflowSvc to a recording service.
-func (m *tuiModel) workflowDialogService() *agenttools.Service {
-	if m.workflowSvc != nil {
-		return m.workflowSvc
-	}
-	root := m.resolveRepoRoot()
-	if root == "" {
-		return nil
-	}
-	m.workflowSvc = workflowToolServiceWithBus(root, m.config, func() *events.Bus { return m.eventBus })
-	return m.workflowSvc
-}

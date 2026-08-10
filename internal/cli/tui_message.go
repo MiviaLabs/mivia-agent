@@ -77,7 +77,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 					dlg.setNotice("run no longer exists", true)
 				}
 			} else {
-				view, err := buildWorkflowRunView(msg.data.run, msg.data.compiled, msg.data.attempts, msg.data.approvals, time.Now())
+				view, err := buildWorkflowRunView(msg.data.run, msg.data.compiled, msg.data.attempts, msg.data.approvals, time.Now(), msg.data.deliveries)
 				if err == nil {
 					dlg.view = view
 					dlg.dirty = false

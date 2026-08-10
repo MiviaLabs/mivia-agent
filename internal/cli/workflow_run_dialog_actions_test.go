@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -475,5 +478,196 @@ func TestWorkflowRunDialogCleanupActionRefusesActiveRun(t *testing.T) {
 	}
 	if !strings.Contains(actionMsg.err.Error(), "cleanup requires a finished run") {
 		t.Fatalf("cleanup refusal = %v", actionMsg.err)
+	}
+}
+
+// snapshotDialogSnapshotTOML is the two-step definition frozen in a run's
+// admitted snapshot. The workspace file changed AFTER the run started (it
+// gained a third step); the dialog must describe the RUN, so its step list
+// comes from the snapshot, never the changed file.
+const snapshotDialogSnapshotTOML = `version = 1
+name = "test-wf"
+initial_step = "one"
+
+[[steps]]
+id = "one"
+kind = "agent"
+agent = "one"
+
+[[steps]]
+id = "two"
+kind = "agent"
+agent = "two"
+
+[[transitions]]
+from = "one"
+to = "two"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "two"
+to = "success"
+match = { status = "succeeded" }
+`
+
+// snapshotDialogCurrentTOML is the workspace definition after the run was
+// admitted: it gained a third step that the run never executed.
+const snapshotDialogCurrentTOML = `version = 1
+name = "test-wf"
+initial_step = "one"
+
+[[steps]]
+id = "one"
+kind = "agent"
+agent = "one"
+
+[[steps]]
+id = "two"
+kind = "agent"
+agent = "two"
+
+[[steps]]
+id = "three"
+kind = "agent"
+agent = "three"
+
+[[transitions]]
+from = "one"
+to = "two"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "two"
+to = "three"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "three"
+to = "success"
+match = { status = "succeeded" }
+`
+
+// newSnapshotDialogFixture builds a workspace whose run snapshot freezes
+// snapshotDialogSnapshotTOML while the on-disk definition is
+// snapshotDialogCurrentTOML, with succeeded attempts for the snapshot's two
+// steps and the run settled at delivery_pending. It returns the root and
+// config path that workflowRunDialogLoad resolves.
+func newSnapshotDialogFixture(t *testing.T, runID string) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.toml")
+	configBody := `[provider]
+name = "openrouter"
+[providers.openrouter]
+base_url = "https://example.com"
+api_key_env = "WORKFLOW_EVENTS_TEST_KEY"
+models = [{ name = "test/model", context_window_tokens = 128000 }]
+[subagents]
+store_backend = "sqlite"
+`
+	if err := os.WriteFile(configPath, []byte(configBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	work, err := workspace.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyPrivacyPolicy(res)
+	applyWorkflowStoreRoot(res, work.Abs)
+	store, _, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closeFn)
+	repo := workflowledger.NewStorageRepository(store)
+	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte(snapshotDialogSnapshotTOML), DefinitionDigest: "snap-dialog",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	// CreateRun admits only pending runs; advance through running to
+	// delivery_pending like the controller does.
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: "test-wf", Status: workflowledger.RunStatusPending, ActiveStepID: "one",
+	}, snapshotJSON); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusDeliveryPending, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct{ id, to string }{{"one", "two"}, {"two", "success"}} {
+		attemptID := "wfa-" + step.id + "-1"
+		if err := repo.CreateStepAttempt(ctx, workflowledger.StepAttempt{
+			AttemptID: attemptID, RunID: runID, StepID: step.id, AttemptNo: 1,
+			CoordinatorRunID: "coord-" + step.id, TaskID: "task-" + step.id,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompleteStepAttempt(ctx, runID, attemptID, 1, workflowledger.AttemptOutcome{
+			Status: workflowledger.AttemptStatusSucceeded, ToStepID: step.to,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeWorkflowDefinition(t, root, "test-wf", snapshotDialogCurrentTOML)
+	return root, configPath
+}
+
+// TestWorkflowRunDialogLoadPrefersSnapshotDefinition pins the dialog's
+// definition source: the step list and states come from the run's admitted
+// snapshot definition, never the changed workspace file. A run admitted
+// under a two-step definition whose workspace file later gained a third step
+// must show exactly the two snapshot steps, both done - the third step never
+// appears as a phantom pending row, and the run's own steps never read
+// pending just because the file on disk moved on.
+func TestWorkflowRunDialogLoadPrefersSnapshotDefinition(t *testing.T) {
+	root, configPath := newSnapshotDialogFixture(t, "wfr-SNAPDLG1")
+	data, err := workflowRunDialogLoad(root, configPath, "wfr-SNAPDLG1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.compiled == nil {
+		t.Fatal("dialog load resolved no compiled definition")
+	}
+	if len(data.compiled.Steps) != 2 {
+		t.Fatalf("compiled steps = %d, want the 2 snapshot steps (the current file declares 3)", len(data.compiled.Steps))
+	}
+	view, err := buildWorkflowRunView(data.run, data.compiled, data.attempts, data.approvals, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.steps) != 2 {
+		t.Fatalf("view steps = %d, want 2 from the snapshot definition", len(view.steps))
+	}
+	for i, want := range []string{"one", "two"} {
+		if view.steps[i].id != want || view.steps[i].state != workflowStepDone {
+			t.Fatalf("step %d = %#v, want %s done", i, view.steps[i], want)
+		}
+	}
+	d := &workflowRunDialog{runID: "wfr-SNAPDLG1", view: view}
+	panel, _ := d.ViewAt(90, 24)
+	text := stripANSI(panel)
+	if strings.Contains(text, "three") {
+		t.Fatalf("dialog leaked a step from the changed workspace definition:\n%s", text)
+	}
+	if strings.Contains(text, "[pending]") {
+		t.Fatalf("finished snapshot steps must not render pending:\n%s", text)
 	}
 }
