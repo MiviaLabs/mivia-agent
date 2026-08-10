@@ -128,7 +128,7 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 			return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
 		}
 		if strings.HasPrefix(strings.TrimSpace(stderr.String()), "bwrap:") {
-			return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
+			return hostFailure(fmt.Errorf("sandbox command failed: %w: %s", err, boundedDiagnostic(stderr.Bytes())))
 		}
 		return sourceCommandFailure(stdout.String()+stderr.String(), err)
 	}
