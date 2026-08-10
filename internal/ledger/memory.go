@@ -30,8 +30,7 @@ type MemoryLedgerRepository struct {
 }
 
 type memoryClaim struct {
-	holder     string
-	acquiredAt time.Time
+	holder string
 }
 
 type runRecord struct {
