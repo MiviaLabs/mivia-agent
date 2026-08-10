@@ -29,13 +29,14 @@ func (e *Engine) Interrupt(runID string) error {
 		e.fence.abandon(runID)
 	}
 	active, ok := e.active[runID]
-	if ok {
-		delete(e.active, runID)
-	}
 	_, delivering := e.delivering[runID]
 	e.mu.Unlock()
 	// Mark open attempts interrupted before the dying controller can cancel them.
 	if err := e.markOpenAttemptsInterrupted(ctx, runID); err != nil {
+		if ok {
+			active.cancel()
+			<-active.done
+		}
 		return err
 	}
 	// Clear the claim ONLY when this engine owns the controller (the run is

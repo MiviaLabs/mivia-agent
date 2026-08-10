@@ -3,6 +3,7 @@ package localengine_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,6 +24,41 @@ type interruptGateRepository struct {
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
+}
+
+var errInterruptedAttemptPersist = errors.New("injected interrupted attempt persistence failure")
+
+// interruptedAttemptFailRepository fails the persistence write that Interrupt
+// uses to mark an open attempt as interrupted.
+type interruptedAttemptFailRepository struct {
+	workflowledger.Repository
+}
+
+func (r *interruptedAttemptFailRepository) CompleteStepAttempt(ctx context.Context, runID, attemptID string, expectedVersion uint64, outcome workflowledger.AttemptOutcome) error {
+	if outcome.Status == workflowledger.AttemptStatusInterrupted {
+		return errInterruptedAttemptPersist
+	}
+	return r.Repository.CompleteStepAttempt(ctx, runID, attemptID, expectedVersion, outcome)
+}
+
+// interruptBlockingRunner reports when its step starts and when its context
+// ends. It proves that Interrupt joins the active controller on an error path.
+type interruptBlockingRunner struct {
+	started chan struct{}
+	stopped chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *interruptBlockingRunner) RunStep(ctx context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, error) {
+	r.once.Do(func() { close(r.started) })
+	defer close(r.stopped)
+	select {
+	case <-ctx.Done():
+		return controller.AgentStepResult{}, ctx.Err()
+	case <-r.release:
+		return controller.AgentStepResult{CoordinatorRunID: "coord-" + req.StepID, TaskID: req.TaskID, Output: json.RawMessage(`{"ok":true}`), EvidenceJSON: []byte(`[]`)}, nil
+	}
 }
 
 func (g *interruptGateRepository) arm() { g.armed.Store(true) }
@@ -151,5 +187,45 @@ func resumeAndSucceed(t *testing.T, engine *localengine.Engine, gate *interruptG
 func TestInterruptFencesBeforeMarkingAttempts(t *testing.T) {
 	for cycle := 0; cycle < 2; cycle++ {
 		runInterruptFenceCycle(t, cycle)
+	}
+}
+
+// TestInterruptStopsControllerAfterAttemptPersistenceError keeps the active
+// controller handle until Interrupt cancels and joins it. Regression: Interrupt
+// removed the handle, then returned an attempt-persistence error without
+// canceling the controller.
+func TestInterruptStopsControllerAfterAttemptPersistenceError(t *testing.T) {
+	runner := &interruptBlockingRunner{
+		started: make(chan struct{}),
+		stopped: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(runner.release)
+	engine := &localengine.Engine{
+		WorkspaceRoot: writeTwoStepWorkspace(t),
+		Repo:          &interruptedAttemptFailRepository{Repository: workflowledger.NewMemoryRepository()},
+		NewRunner: func() controller.AgentStepRunner {
+			return runner
+		},
+	}
+	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+		Workflow: "two-step",
+		Inputs:   map[string]any{"task": "x"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("step did not start")
+	}
+	if err := engine.Interrupt(started.RunID); !errors.Is(err, errInterruptedAttemptPersist) {
+		t.Fatalf("Interrupt error = %v, want interrupted-attempt persistence error", err)
+	}
+	select {
+	case <-runner.stopped:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Interrupt returned before it stopped the active controller")
 	}
 }
