@@ -1,20 +1,22 @@
 // Live panel - the "Stable Stage" fix.
 //
-// Everything that changes while the agent works renders HERE, in a fixed
-// region between the transcript and the composer: agent fleet, active tools,
-// thinking, and the streaming answer tail. The viewport above holds
-// immutable history only.
+// Everything that changes while the agent works renders HERE, as a paint-only
+// overlay over the top of the transcript viewport: agent fleet, active tools,
+// thinking, and the streaming answer tail. The viewport below holds immutable
+// history only, at its full height.
 //
 // Why: live state used to be concatenated into the viewport content and
 // rebuilt every tick, so the transcript's height changed constantly and the
 // scroll anchor chased it - the whole chat visibly jumped up and down, and
-// reading an earlier message mid-turn was impossible. A fixed-height region
-// outside the viewport cannot move the transcript at all.
+// reading an earlier message mid-turn was impossible. The panel used to be a
+// reserved band between the transcript and the composer; it is now an overlay
+// that holds no layout space at all, so the transcript never moves while the
+// agent works and the constant-band invariant is trivially satisfied: during
+// a turn the layout never changes.
 //
-// Height discipline: livePanelHeight is the single source of truth, consumed
-// by BOTH layout paths (Update's layout() and View's chatViewLayout).
-// Sections are priority-ordered and shrink bottom-up on short terminals so
-// the panel never squeezes the transcript below its floor.
+// Height discipline: livePanelHeight is the single source of truth for the
+// overlay height. Sections are priority-ordered and shrink bottom-up on short
+// terminals so the overlay never exceeds its cap.
 package cli
 
 import (
@@ -26,7 +28,7 @@ import (
 )
 
 const (
-	livePanelMaxHeight = 14 // hard ceiling including borders
+	livePanelMaxHeight = 8 // hard ceiling including borders
 	liveMaxFleetRows   = 3
 	liveMaxToolRows    = 4
 	liveMaxStreamRows  = 5
@@ -106,9 +108,10 @@ func (m *tuiModel) livePanelSections(termH int) (fleet, tools, thinking, stream 
 	return fleet, tools, thinking, stream
 }
 
-// livePanelBand is the fixed height the "now" panel holds for the duration
-// of one turn: constant while m.waiting, zero when idle. The two border rows
-// are included; the content budget inside the band is band - 2.
+// livePanelBand is the height the "now" panel paints for the duration of one
+// turn: constant while m.waiting, zero when idle. The two border rows are
+// included; the content budget inside the band is band - 2. The panel is an
+// overlay, so this height is a paint rectangle, not a layout reservation.
 func (m *tuiModel) livePanelBand(termH int) int {
 	if !m.waiting {
 		return 0
@@ -116,15 +119,24 @@ func (m *tuiModel) livePanelBand(termH int) int {
 	return min(livePanelMaxHeight, max(1, termH/3))
 }
 
-// livePanelHeight is the exact rendered height (0 when hidden). It is the
-// fixed turn band while m.waiting. renderLivePanel pads to it, so both layout
-// paths subtract a number the render always matches.
+// livePanelHeight is the exact painted height (0 when hidden). It is the
+// fixed overlay height for the whole turn. renderLivePanel pads to it, so the
+// overlay is always a stable rectangle of this many rows.
 func (m *tuiModel) livePanelHeight() int {
 	return m.livePanelBand(max(8, m.height))
 }
 
-// renderLivePanel draws the fixed live region. Line count always equals
-// livePanelHeight - layout math depends on it.
+// livePanelOverlayRect is the terminal-cell rectangle the live panel paints
+// over: the top of the chat pane, one row below the status header, spanning
+// the chat pane width. pane.chatX keeps the sessions sidebar clear, so the
+// overlay never covers it.
+func (m *tuiModel) livePanelOverlayRect() rect {
+	pane := newChatPaneLayout(max(1, m.width), m.sessionsSidebar != nil)
+	return rect{x: pane.chatX, y: 1, w: pane.chatWidth, h: m.livePanelHeight()}
+}
+
+// renderLivePanel draws the paint-only live overlay. Line count always equals
+// livePanelHeight - the overlay is a stable rectangle of that many rows.
 func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 	band := m.livePanelBand(max(8, m.height))
 	if band == 0 {
