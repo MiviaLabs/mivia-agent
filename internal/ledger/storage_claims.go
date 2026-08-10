@@ -65,6 +65,17 @@ func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, 
 	s.mu.RUnlock()
 	var err error
 	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
+		// Only the current holder may release (repository.go contract; the
+		// memory backend and the workflows ledger already enforce this). The
+		// fenced release below uses the STORED claim (this instance's
+		// in-memory snapshot of it), so without this gate a wrong or empty
+		// holder freed a live executor's claim and got nil instead of
+		// ErrClaimNotHeld (DC-2: a release any caller may perform is a claim
+		// any caller may steal). The refusal writes nothing, so the claim
+		// survives it and the correct holder still releases.
+		if claim.Holder != holder {
+			return ErrClaimNotHeld
+		}
 		err = fenced.ReleaseClaimFenced(ctx, claim)
 	} else {
 		err = s.store.ReleaseClaim(ctx, runID, holder)

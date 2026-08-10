@@ -170,11 +170,17 @@ func TestStorageClaimsTranslateFencedErrors(t *testing.T) {
 	if err := repo.ClaimRun(ctx, "run", "two"); !errors.Is(err, ErrClaimHeld) {
 		t.Fatalf("claim conflict: %v", err)
 	}
-	if err := repo.ReleaseRun(ctx, "run", "two"); err != nil {
-		t.Fatalf("release uses stored fence: %v", err)
+	// Only the holder may release (repository.go contract; the memory backend
+	// and the workflows ledger agree): the non-holder is refused, the claim
+	// stays held, and the holder then releases it.
+	if err := repo.ReleaseRun(ctx, "run", "two"); !errors.Is(err, ErrClaimNotHeld) {
+		t.Fatalf("release by non-holder: got %v, want ErrClaimNotHeld", err)
 	}
-	if err := repo.ReleaseRun(ctx, "run", "one"); !errors.Is(err, ErrClaimNotHeld) {
-		t.Fatalf("missing release: %v", err)
+	if err := repo.ClaimRun(ctx, "run", "three"); !errors.Is(err, ErrClaimHeld) {
+		t.Fatalf("claim after refused release: got %v, want ErrClaimHeld", err)
+	}
+	if err := repo.ReleaseRun(ctx, "run", "one"); err != nil {
+		t.Fatalf("release by holder: %v", err)
 	}
 	if err := repo.TakeoverExpiredRunClaim(ctx, "missing", "two", time.Minute); !errors.Is(err, ErrClaimNotHeld) {
 		t.Fatalf("missing takeover: %v", err)
