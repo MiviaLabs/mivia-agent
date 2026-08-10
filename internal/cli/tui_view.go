@@ -21,6 +21,13 @@ func (m *tuiModel) View() string {
 
 func (m *tuiModel) renderChatView() string {
 	base := m.renderBaseChatView()
+	// The live "now" panel is a paint-only overlay over the top of the
+	// transcript: it holds no layout band, so the viewport keeps its full
+	// height while the agent works and the transcript never reflows. It is
+	// applied before dialogs and the suggest popup, which paint above it.
+	if live := m.renderLivePanel(max(1, m.chatPaneWidth()), time.Now()); live != "" {
+		base = overlayAt(base, live, m.livePanelOverlayRect(), max(1, m.width), max(8, m.height))
+	}
 	if m.modelDlg != nil {
 		m.modelDlg.busy = m.waiting
 		panel, layout := m.modelDlg.ViewAt(max(1, m.width), max(1, m.height))
@@ -177,26 +184,18 @@ func (m *tuiModel) renderChatPane() string {
 		hint += renderScrollIndicator(true, m.width, m.waiting)
 	}
 
-	// Live panel: fixed region between transcript and composer holding
-	// everything that moves (agents, tools, thinking, stream tail). Keeping
-	// it outside the viewport is what stops the transcript from jumping.
-	live := m.renderLivePanel(m.width, time.Now())
-	liveH := 0
-	if live != "" {
-		liveH = lipgloss.Height(live)
-	}
-
-	composerY0 := lipgloss.Height(header) + lipgloss.Height(body) + liveH
+	// The live "now" panel is a paint-only overlay drawn over the top of the
+	// transcript in renderChatView. It holds no layout band here, so the
+	// composer and hint sit directly below the full-height viewport and the
+	// hit map needs no live-panel zone: clicks over the overlay resolve to
+	// the transcript beneath it.
+	composerY0 := lipgloss.Height(header) + lipgloss.Height(body)
 	// Composer card with vertical breathing room (no horizontal padding - aligns with viewport user cards).
 	paddedInput := lipgloss.NewStyle().Padding(1, 0).Render(input)
 	composerY1 := composerY0 + lipgloss.Height(paddedInput) + lipgloss.Height(hint) - 1
 	m.hitMap.rebuild(m.width, termH, lipgloss.Height(header), lipgloss.Height(body), 1, 0, composerY0, composerY1, m.chatBlockRanges, m.viewport.YOffset)
 
-	parts := []string{header, body}
-	if live != "" {
-		parts = append(parts, live)
-	}
-	parts = append(parts, paddedInput, hint)
+	parts := []string{header, body, paddedInput, hint}
 	// Append run dashboard panel if open and has runs.
 	if m.runDash != nil && m.runDash.isOpen() {
 		dash := m.runDash.renderPanel(m.width)
@@ -305,7 +304,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	if m.stalledWarning {
 		hint = tuiErrorStyle.Render(" ⚠ stalled ") + hint
 	}
-	remain := max(minVp, termH-lipgloss.Height(header)-m.livePanelHeight()-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
+	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
 	return chatViewLayout{termH: termH, viewportHeight: remain, input: input, hint: hint}
 }
 

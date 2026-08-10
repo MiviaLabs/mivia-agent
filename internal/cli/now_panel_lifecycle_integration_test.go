@@ -210,3 +210,50 @@ func TestIntegrationNowPanelDropsFinishedTool(t *testing.T) {
 		t.Fatal("finished tool must commit to the transcript, not disappear")
 	}
 }
+
+func TestIntegrationLivePanelDoesNotShrinkViewport(t *testing.T) {
+	// The "now" panel is a paint-only overlay: it must not reserve a layout
+	// band, so the transcript viewport keeps its full height while the panel
+	// is visible. layout() (Update path) and View() must agree, idle or not.
+	m := newReadyChatModel(40, 100)
+	m.messages = []string{"one", "two", "three"}
+	m.renderVP()
+	m.layout()
+	idleLayout := m.viewport.Height
+	m.View()
+	idleView := m.viewport.Height
+	if idleLayout != idleView {
+		t.Fatalf("idle: layout()=%d View()=%d - the two paths disagree", idleLayout, idleView)
+	}
+	if got := m.renderLivePanel(100, time.Now()); got != "" {
+		t.Fatal("idle: renderLivePanel must be empty")
+	}
+
+	m.waiting = true
+	m.turnStart = time.Now()
+	m.toolRows = []toolRow{{Name: "run_command", Detail: `{"cmd":"go test"}`, Status: "running", Start: time.Now()}}
+	m.streamBuf.WriteString("streaming answer")
+	m.subagents.Apply(events.Event{Kind: events.KindSubagentStart, Name: "grep"}.
+		WithAgentAttribution("t1", "audit", 1), time.Now())
+	if m.livePanelHeight() == 0 {
+		t.Fatal("precondition: the panel must be visible while waiting")
+	}
+	m.layout()
+	waitLayout := m.viewport.Height
+	m.View()
+	waitView := m.viewport.Height
+	if waitLayout != idleLayout {
+		t.Fatalf("layout() viewport shrank while the panel is visible: idle=%d waiting=%d", idleLayout, waitLayout)
+	}
+	if waitView != idleView {
+		t.Fatalf("View() viewport shrank while the panel is visible: idle=%d waiting=%d", idleView, waitView)
+	}
+
+	// The waiting frame paints the overlay top-aligned on the row below the
+	// one-line status header, while the transcript viewport keeps its full
+	// height.
+	plain := strings.Split(stripANSI(m.View()), "\n")
+	if !strings.Contains(plain[1], " now · ") {
+		t.Fatalf("overlay header missing on the row below the status header:\n%s", strings.Join(plain[:4], "\n"))
+	}
+}

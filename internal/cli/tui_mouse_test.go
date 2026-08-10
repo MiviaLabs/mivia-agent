@@ -111,6 +111,57 @@ func TestTUIMouseHitTranscriptBlockClick(t *testing.T) {
 	}
 }
 
+// TestTUIMouseOverLivePanelOverlayPassesThroughToTranscript verifies that
+// the live panel is a paint-only overlay: it adds no hit-map zone, so every
+// row it paints resolves to the transcript beneath it (no dead zone that
+// swallows clicks) and a click inside the overlay selects the block under it.
+func TestTUIMouseOverLivePanelOverlayPassesThroughToTranscript(t *testing.T) {
+	m := journeyModel(t)
+	m.enterChatMode()
+	m.width = 80
+	m.height = 40
+	m.waiting = true
+	m.turnStart = time.Now()
+	m.toolRows = []toolRow{{Name: "run_command", Detail: `{"cmd":"go test"}`, Status: "running", Start: time.Now()}}
+	m.streamBuf.WriteString("streaming answer")
+
+	m.blocks = []ChatBlock{
+		{ID: "turn-1-block-1", Kind: ChatBlockAssistant, Text: "Hello, world!"},
+	}
+	m.layout()
+	m.renderVP()
+	m.View() // rebuilds the hit map
+
+	H := m.livePanelHeight()
+	if H == 0 {
+		t.Fatal("precondition: the live panel must be visible while waiting")
+	}
+	for y := 1; y <= H; y++ {
+		z, ok := m.hitMap.hit(y)
+		if !ok || z.kind != hitTranscript {
+			t.Fatalf("row %d over the overlay: ok=%v kind=%v, want hitTranscript (no dead zone)", y, ok, z.kind)
+		}
+	}
+
+	// A click inside the overlay selects the transcript block underneath.
+	ranges := m.chatBlockRanges
+	blockRange, ok := ranges["turn-1-block-1"]
+	if !ok {
+		t.Fatal("turn-1-block-1 not found in chatBlockRanges after renderVP")
+	}
+	hitY := blockRange[0] + 1 - m.viewport.YOffset
+	if hitY < 1 || hitY > H {
+		t.Fatalf("block top row %d not under the overlay [1,%d]", hitY, H)
+	}
+	m.Update(tea.MouseMsg{X: 1, Y: hitY, Type: tea.MouseLeft})
+	if m.selectedBlockID != "turn-1-block-1" {
+		t.Fatalf("click inside the overlay selected %q, want the transcript block underneath", m.selectedBlockID)
+	}
+	if m.focus != focusScrollback {
+		t.Fatalf("focus=%v, want focusScrollback after clicking through the overlay", m.focus)
+	}
+}
+
 // TestTUIMouseDoubleClickTogglesWorkGroup is TDD for double-click activate.
 // Enter toggles; mouse must too (second click within 400ms).
 func TestTUIMouseDoubleClickTogglesWorkGroup(t *testing.T) {

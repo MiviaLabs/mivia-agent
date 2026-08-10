@@ -14,10 +14,12 @@ func (m *tuiModel) layout() {
 	const borderChrome = 2 // top + bottom border
 	inputHeight := min(composerMaxHeight(m.height), max(1, m.textarea.LineCount()))
 	composerH := inputHeight + borderChrome + composerPadRows
-	// The live panel sits between transcript and composer while the agent
-	// works. Both layout paths subtract the same declared height or the
-	// viewport is sized differently in each and the frame clips.
-	avail := m.height - statusH - m.livePanelHeight() - composerH - hintH
+	// The live "now" panel is a paint-only overlay over the transcript top
+	// (renderChatView). It holds no layout band, so the viewport spans the
+	// full available height whether the panel is visible or not. Both layout
+	// paths subtract the same terms or the viewport is sized differently in
+	// each and the frame clips.
+	avail := m.height - statusH - composerH - hintH
 	if avail < 5 {
 		avail = 5
 	}
@@ -250,8 +252,8 @@ func (m *tuiModel) renderVP() {
 // Live content (thinking, tools, stream tail, planning indicator) used to be
 // concatenated into the viewport here, which made the transcript's height
 // change on every tick and the scroll anchor chase it - the chat visibly
-// jumped. That content now renders in the fixed live panel above the
-// composer (livepanel.go); the viewport holds committed history only.
+// jumped. That content now renders in a paint-only live panel overlay
+// (livepanel.go); the viewport holds committed history only.
 func (m *tuiModel) renderStreamVP() {
 	m.renderVP()
 }
