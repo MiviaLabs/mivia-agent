@@ -63,7 +63,7 @@ func (c *coordinator) reclaimAbandonedRun(runID string) bool {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// Probe the claim: a successful ClaimRun proves the run was unclaimed.
-	if err := c.claimRun(cleanupCtx, runID); err != nil {
+	if err := c.repo.ClaimRun(cleanupCtx, runID, c.holderID); err != nil {
 		if !errors.Is(err, ledger.ErrClaimHeld) {
 			// A transient probe failure is a no-reclaim: the caller treats
 			// the key as contended.

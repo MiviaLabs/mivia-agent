@@ -425,14 +425,14 @@ func (s *StorageLedgerRepository) DeleteRun(ctx context.Context, runID string) e
 		return err
 	}
 	tombstone := s.newStoreEvent(runID, storageKindRunDeleted, []byte(`{"run_id":"`+runID+`"}`))
-	atomicDeleter, ok := s.store.(storage.AtomicRunDeleter)
-	if !ok {
-		return fmt.Errorf("store does not support atomic run deletion")
-	}
 	s.mu.RLock()
 	claim := s.claimedRuns[runID]
 	s.mu.RUnlock()
-	if err := atomicDeleter.AppendAndDeleteRun(ctx, tombstone, claim); err != nil {
+	if err := s.store.AppendAndDeleteRun(ctx, tombstone, claim); err != nil {
+		s.clearInflight(runID, uint64(tombstone.Sequence))
+		if rebuildErr := s.rebuildRunProjection(ctx, runID); rebuildErr != nil {
+			return fmt.Errorf("store delete run %q: %v; rebuild projection: %w", runID, err, rebuildErr)
+		}
 		if errors.Is(err, storage.ErrClaimHeld) {
 			return ErrClaimHeld
 		}

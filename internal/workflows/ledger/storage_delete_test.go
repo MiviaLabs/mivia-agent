@@ -323,9 +323,5 @@ func (s *failDeleteStore) AppendAndDeleteRun(ctx context.Context, tombstone stor
 		s.remaining--
 		return errPhysicalDelete
 	}
-	atomicDeleter, ok := s.Store.(storage.AtomicRunDeleter)
-	if !ok {
-		return errors.New("wrapped store does not support atomic run deletion")
-	}
-	return atomicDeleter.AppendAndDeleteRun(ctx, tombstone, claim)
+	return s.Store.AppendAndDeleteRun(ctx, tombstone, claim)
 }

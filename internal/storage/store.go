@@ -45,6 +45,10 @@ type Store interface {
 	// AppendClaimed appends an event when its run is unclaimed or holder owns
 	// the current claim. It returns ErrClaimHeld when another holder owns it.
 	AppendClaimed(ctx context.Context, event Event, holder string) error
+	// AppendAndDeleteRun atomically appends a deletion tombstone and removes
+	// prior events and the claim for the same run. The supplied claim authorizes
+	// the append when the run has an active claim.
+	AppendAndDeleteRun(context.Context, Event, Claim) error
 	Events(context.Context, string) ([]Event, error)
 	// EventsSince returns the events of a run whose sequence is strictly
 	// greater than afterSequence, ordered by ascending sequence. It is the
@@ -84,13 +88,6 @@ type Store interface {
 	Count(context.Context) (int, error)
 	ListRunIDs(context.Context) ([]string, error)
 	Close() error
-}
-
-// AtomicRunDeleter atomically appends a deletion tombstone and removes the
-// prior event history and claim for the same run. The supplied claim authorizes
-// the append when the run has an active claim.
-type AtomicRunDeleter interface {
-	AppendAndDeleteRun(context.Context, Event, Claim) error
 }
 
 // ExistingClaimAppender appends only when holder owns an existing claim.

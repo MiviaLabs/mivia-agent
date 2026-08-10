@@ -75,6 +75,27 @@ func TestStorageLedgerDeleteRunRetriesAfterPhysicalDeleteFailure(t *testing.T) {
 	}
 }
 
+func TestStorageLedgerDeleteRunFailureReleasesInflightSequence(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	failing := &failAtomicDeleteStore{Store: store, remaining: 1}
+	reader := NewStorageLedgerRepository(failing)
+	if err := reader.CreateRun(ctx, "", RunSnapshot{RunID: "run", Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.DeleteRun(ctx, "run"); !errors.Is(err, errAtomicDelete) {
+		t.Fatalf("DeleteRun with injected failure = %v, want physical delete error", err)
+	}
+
+	writer := NewStorageLedgerRepository(store)
+	if err := writer.CreateTask(ctx, TaskSnapshot{RunID: "run", TaskID: "task", Status: string(TaskStatusQueued)}); err != nil {
+		t.Fatalf("CreateTask after failed delete: %v", err)
+	}
+	if _, err := reader.GetTask(ctx, "run", "task"); err != nil {
+		t.Fatalf("GetTask after catch-up: %v", err)
+	}
+}
+
 var errAtomicDelete = errors.New("injected atomic delete failure")
 
 type failAtomicDeleteStore struct {
@@ -87,11 +108,7 @@ func (s *failAtomicDeleteStore) AppendAndDeleteRun(ctx context.Context, tombston
 		s.remaining--
 		return errAtomicDelete
 	}
-	atomicDeleter, ok := s.Store.(storage.AtomicRunDeleter)
-	if !ok {
-		return errors.New("wrapped store does not support atomic run deletion")
-	}
-	return atomicDeleter.AppendAndDeleteRun(ctx, tombstone, claim)
+	return s.Store.AppendAndDeleteRun(ctx, tombstone, claim)
 }
 
 func TestDeleteRunKeepsChangesCursorMonotonic(t *testing.T) {
