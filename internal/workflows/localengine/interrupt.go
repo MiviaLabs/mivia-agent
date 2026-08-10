@@ -39,6 +39,10 @@ func (e *Engine) Interrupt(runID string) error {
 		}
 		return err
 	}
+	if ok {
+		active.cancel()
+		<-active.done
+	}
 	// Clear the claim ONLY when this engine owns the controller (the run is
 	// tracked in e.active): an abandoned controller's claim is the stale-owner
 	// residue a resume must be able to claim over. A run that is mid-delivery
@@ -47,10 +51,6 @@ func (e *Engine) Interrupt(runID string) error {
 	// and enable double-publish while the delivery keeps publishing.
 	if ok && !delivering {
 		_ = e.Repo.ClearRunClaim(ctx, runID)
-	}
-	if ok {
-		active.cancel()
-		<-active.done
 	}
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {

@@ -41,6 +41,23 @@ func (r *interruptedAttemptFailRepository) CompleteStepAttempt(ctx context.Conte
 	return r.Repository.CompleteStepAttempt(ctx, runID, attemptID, expectedVersion, outcome)
 }
 
+// clearAfterStopRepository records whether Interrupt clears its claim before
+// the active controller stops.
+type clearAfterStopRepository struct {
+	workflowledger.Repository
+	stopped           <-chan struct{}
+	clearedBeforeStop atomic.Bool
+}
+
+func (r *clearAfterStopRepository) ClearRunClaim(ctx context.Context, runID string) error {
+	select {
+	case <-r.stopped:
+	default:
+		r.clearedBeforeStop.Store(true)
+	}
+	return r.Repository.ClearRunClaim(ctx, runID)
+}
+
 // interruptBlockingRunner reports when its step starts and when its context
 // ends. It proves that Interrupt joins the active controller on an error path.
 type interruptBlockingRunner struct {
@@ -227,5 +244,47 @@ func TestInterruptStopsControllerAfterAttemptPersistenceError(t *testing.T) {
 	case <-runner.stopped:
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("Interrupt returned before it stopped the active controller")
+	}
+}
+
+// TestInterruptStopsControllerBeforeClearingClaim prevents another engine from
+// resuming a run while the interrupted controller can still do external work.
+// Regression: Interrupt cleared the claim before it canceled and joined the
+// controller.
+func TestInterruptStopsControllerBeforeClearingClaim(t *testing.T) {
+	runner := &interruptBlockingRunner{
+		started: make(chan struct{}),
+		stopped: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(runner.release)
+	repo := &clearAfterStopRepository{
+		Repository: workflowledger.NewMemoryRepository(),
+		stopped:    runner.stopped,
+	}
+	engine := &localengine.Engine{
+		WorkspaceRoot: writeTwoStepWorkspace(t),
+		Repo:          repo,
+		NewRunner: func() controller.AgentStepRunner {
+			return runner
+		},
+	}
+	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+		Workflow: "two-step",
+		Inputs:   map[string]any{"task": "x"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("step did not start")
+	}
+	if err := engine.Interrupt(started.RunID); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if repo.clearedBeforeStop.Load() {
+		t.Fatal("Interrupt cleared the run claim before it stopped the active controller")
 	}
 }
