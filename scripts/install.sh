@@ -41,11 +41,17 @@ else
   install_dir=${HOME:?HOME is required}/.local/bin
 fi
 
+case "$install_dir" in
+  /*) ;;
+  *) install_dir="$(mkdir -p "$install_dir" && CDPATH= cd -- "$install_dir" && pwd -P)" ;;
+esac
+
 version_number=${version#v}
 archive="mivia_${version_number}_${goos}_${goarch}.tar.gz"
 base="https://github.com/MiviaLabs/mivia-agent/releases/download/${version}"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/mivia-install.XXXXXX")"
-trap 'rm -rf "$tmp"' EXIT INT TERM
+path_lock=
+trap 'if [ -n "$path_lock" ]; then rm -f "$path_lock"; fi; rm -rf "$tmp"' EXIT INT TERM
 
 download() {
   url=$1
@@ -72,7 +78,69 @@ mkdir -p "$install_dir"
 tar -xzf "$tmp/$archive" -C "$tmp"
 install -m 0755 "$tmp/mivia" "$install_dir/mivia"
 printf 'installed mivia %s to %s/mivia\n' "$version" "$install_dir"
-case ":${PATH}:" in
-  *:"$install_dir":*) ;;
-  *) printf 'add %s to PATH before running mivia\n' "$install_dir" >&2;;
-esac
+
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+path_command() {
+  case "$1" in
+    fish) printf "set -gx PATH %s \$PATH" "$(shell_quote "$install_dir")";;
+    *) printf 'export PATH=%s:"$PATH"' "$(shell_quote "$install_dir")";;
+  esac
+}
+
+if [ "${MIVIA_NO_PATH_UPDATE:-}" != 1 ]; then
+  case ":${PATH}:" in
+    *:"$install_dir":*)
+      printf '%s is already on PATH\n' "$install_dir"
+      ;;
+    *)
+      shell_name=${SHELL##*/}
+      case "$shell_name" in
+        bash)
+          if [ -n "${MIVIA_SHELL_RC:-}" ]; then profile=$MIVIA_SHELL_RC
+          elif [ -f "${HOME:?HOME is required}/.bash_profile" ]; then profile=$HOME/.bash_profile
+          elif [ -f "$HOME/.bash_login" ]; then profile=$HOME/.bash_login
+          elif [ -f "$HOME/.profile" ]; then profile=$HOME/.profile
+          else profile=$HOME/.bashrc
+          fi
+          ;;
+        zsh) profile=${MIVIA_SHELL_RC:-${HOME:?HOME is required}/.zshrc} ;;
+        fish) profile=${MIVIA_SHELL_RC:-${HOME:?HOME is required}/.config/fish/config.fish} ;;
+        *) profile=${MIVIA_SHELL_RC:-${HOME:?HOME is required}/.profile} ;;
+      esac
+      marker='# mivia installer: PATH'
+      path_line="$(path_command "$shell_name")"
+      if ! mkdir -p "$(dirname "$profile")" 2>/dev/null; then
+        printf 'warning: cannot update PATH in %s\n' "$profile" >&2
+        printf 'run this command, then open a new shell: %s\n' "$path_line" >&2
+      elif [ -L "$profile" ] || { [ -f "$profile" ] && [ ! -w "$profile" ]; }; then
+        printf 'warning: cannot update PATH in %s\n' "$profile" >&2
+        printf 'run this command, then open a new shell: %s\n' "$path_line" >&2
+      else
+        path_lock="$profile.mivia.lock"
+        if ! (set -C; : >"$path_lock") 2>/dev/null; then
+          printf 'warning: another installer is updating %s\n' "$profile" >&2
+          printf 'run this command, then open a new shell: %s\n' "$path_line" >&2
+        elif grep -F -q "$marker" "$profile" 2>/dev/null &&
+          grep -F -q "$path_line" "$profile" 2>/dev/null; then
+          printf 'PATH setup already exists in %s\n' "$profile"
+          rm -f "$path_lock"
+          path_lock=
+        elif printf '\n%s\n%s\n' "$marker" "$path_line" >>"$profile" 2>/dev/null; then
+          printf 'added %s to PATH in %s\n' "$install_dir" "$profile"
+          printf 'open a new shell or run: . %s\n' "$profile"
+          rm -f "$path_lock"
+          path_lock=
+        else
+          printf 'warning: cannot update PATH in %s\n' "$profile" >&2
+          printf 'run this command, then open a new shell: %s\n' "$path_line" >&2
+        fi
+      fi
+      ;;
+  esac
+else
+  printf 'PATH update skipped by MIVIA_NO_PATH_UPDATE\n' >&2
+  printf 'run this command, then open a new shell: %s\n' "$(path_command "${SHELL##*/}")" >&2
+fi

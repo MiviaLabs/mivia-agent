@@ -72,14 +72,36 @@ def main() -> None:
             "shutil.copy2(os.path.join(os.environ['FIXTURE'], url.rsplit('/', 1)[-1]), out)\n",
         )
         env = dict(unsupported, PATH=str(fake_bin) + ":" + base_path)
-        env["MIVIA_INSTALL_DIR"] = str(temp / "install")
+        env["MIVIA_INSTALL_DIR"] = str(temp / "install's bin")
         env["MIVIA_VERSION"] = "v1.2.3"
         env["FIXTURE"] = str(fixture)
+        env["HOME"] = str(temp / "home")
+        env["SHELL"] = "/bin/bash"
         result = run(env)
         if result.returncode != 0:
             raise AssertionError(f"valid archive was rejected: {result.stderr}")
-        if (temp / "install/mivia").read_bytes() != binary.read_bytes():
+        if (temp / "install's bin/mivia").read_bytes() != binary.read_bytes():
             raise AssertionError("installer wrote the wrong binary")
+        profile = temp / "home/.bashrc"
+        profile_text = profile.read_text(encoding="utf-8")
+        escaped_install_dir = str(temp / "install's bin").replace("'", "'\\''")
+        expected_path_line = f"export PATH='{escaped_install_dir}':\"$PATH\""
+        if profile_text.count("# mivia installer: PATH") != 1 or expected_path_line not in profile_text:
+            raise AssertionError("installer did not add an idempotent PATH entry")
+
+        archive.write_bytes(archive.read_bytes())
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        (fixture / "checksums.txt").write_text(
+            f"{digest}  {archive.name}\n", encoding="utf-8"
+        )
+        result = run(env)
+        if result.returncode != 0 or profile.read_text(encoding="utf-8") != profile_text:
+            raise AssertionError("installer duplicated the PATH entry")
+
+        no_path_env = dict(env, MIVIA_NO_PATH_UPDATE="1", MIVIA_SHELL_RC=str(temp / "no-path.rc"))
+        result = run(no_path_env)
+        if result.returncode != 0 or (temp / "no-path.rc").exists():
+            raise AssertionError("installer did not honor MIVIA_NO_PATH_UPDATE=1")
 
         archive.write_bytes(b"tampered archive")
         result = run(env)

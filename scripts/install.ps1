@@ -3,10 +3,13 @@ param(
   [Parameter(Mandatory = $true)]
   [ValidatePattern('^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$')]
   [string]$Version,
-  [string]$InstallDir = "$env:LOCALAPPDATA\mivia\bin"
+  [string]$InstallDir = "$env:LOCALAPPDATA\mivia\bin",
+  [switch]$NoPathUpdate
 )
 
 $ErrorActionPreference = 'Stop'
+$InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
+if ($InstallDir.Length -gt 3) { $InstallDir = $InstallDir -replace '[\\/]+$', '' }
 $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
 switch ($arch.ToUpperInvariant()) {
   'AMD64' { $goarch = 'amd64' }
@@ -36,8 +39,21 @@ try {
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
   Copy-Item (Join-Path $extract 'mivia.exe') (Join-Path $InstallDir 'mivia.exe') -Force
   Write-Output "installed mivia $Version to $InstallDir\mivia.exe"
-  if (-not (($env:Path -split ';') -contains $InstallDir)) {
-    Write-Warning "Add $InstallDir to PATH before running mivia."
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $pathEntries = @($userPath -split ';' | Where-Object { $_ -ne '' })
+  $pathPresent = $pathEntries | Where-Object { $_.Equals($InstallDir, [StringComparison]::OrdinalIgnoreCase) }
+  if ($pathPresent) {
+    Write-Output "$InstallDir is already on the user PATH"
+  } elseif ($NoPathUpdate) {
+    Write-Warning "PATH update skipped. Add $InstallDir to the user PATH."
+  } else {
+    try {
+      [Environment]::SetEnvironmentVariable('Path', (($pathEntries + $InstallDir) -join ';'), 'User')
+      Write-Output "added $InstallDir to the user PATH"
+      Write-Output 'Open a new terminal before you run mivia.'
+    } catch {
+      Write-Warning "Cannot update the user PATH. Add $InstallDir to the user PATH."
+    }
   }
 }
 finally {

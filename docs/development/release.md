@@ -39,9 +39,9 @@ MIVIA_VERSION=v0.1.0 sh /tmp/mivia-install.sh
 
 The installer detects the operating system and CPU architecture. It installs to `$XDG_BIN_DIR`, or `$HOME/.local/bin` by default. Set `MIVIA_INSTALL_DIR` or pass a directory argument to select another path.
 
-The installer downloads only the selected version. It downloads `checksums.txt` over HTTPS. It compares the downloaded archive with its SHA-256 entry before extraction. It does not require `sudo`.
+If the install directory is not on `PATH`, the installer adds it to the user shell profile. It writes only to a user-owned profile. It does not use `sudo`. Open a new shell, or source the reported profile, before you run `mivia`. Set `MIVIA_NO_PATH_UPDATE=1` to skip this change. The installer then prints the command to run manually.
 
-Add the install directory to `PATH` if the installer reports that it is missing.
+The installer downloads only the selected version. It downloads `checksums.txt` over HTTPS. It compares the downloaded archive with its SHA-256 entry before extraction. It does not require `sudo`.
 
 ## Install Windows
 
@@ -56,7 +56,7 @@ Get-Content .\mivia-install.ps1
 .\mivia-install.ps1 -Version $version
 ```
 
-The installer supports amd64 and arm64. It installs to `$env:LOCALAPPDATA\mivia\bin` by default. Use `-InstallDir` to select another user-owned directory. Add that directory to `PATH` before you run `mivia`.
+The installer supports amd64 and arm64. It installs to `$env:LOCALAPPDATA\mivia\bin` by default. Use `-InstallDir` to select another user-owned directory. The installer adds this directory to the user PATH. Open a new terminal before you run `mivia`. Use `-NoPathUpdate` to skip the PATH change.
 
 The installer downloads a pinned archive and `checksums.txt`. It compares the archive SHA-256 value before extraction. It does not require administrator rights.
 

@@ -36,7 +36,7 @@ sed -n '1,240p' /tmp/mivia-install.sh
 MIVIA_VERSION=v0.1.0 sh /tmp/mivia-install.sh
 ```
 
-The installer uses a user-owned directory and verifies the archive checksum. It does not use an unpinned release.
+The installer uses a user-owned directory and verifies the archive checksum. It adds the directory to your shell profile when needed. Open a new shell before you run `mivia`. Set `MIVIA_NO_PATH_UPDATE=1` to skip the profile change. It does not use an unpinned release.
 
 From source with Go 1.25+:
 
