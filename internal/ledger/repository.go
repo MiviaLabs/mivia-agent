@@ -110,3 +110,8 @@ type LedgerRepository interface {
 	// Returns ErrContentNotFound if the ref is unknown.
 	LoadContent(ctx context.Context, ref string) ([]byte, error)
 }
+
+// LeaseRepository can take a claim only after its heartbeat expires.
+type LeaseRepository interface {
+	TakeoverExpiredRunClaim(context.Context, string, string, time.Duration) error
+}

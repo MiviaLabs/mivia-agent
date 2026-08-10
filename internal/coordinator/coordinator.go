@@ -23,7 +23,9 @@ func (c *coordinator) executeRun(h *RunHandle, tasks []subagents.Task) {
 // task being dispatched again.
 func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, seed map[string]subagents.Result) {
 	defer close(h.done)
+	stopHeartbeat := c.startClaimHeartbeat(h)
 	defer func() {
+		stopHeartbeat()
 		// Release the execution claim once the run reaches a terminal state.
 		// A failed release is non-fatal: the claim will be released on Close().
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

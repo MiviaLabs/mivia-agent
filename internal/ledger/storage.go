@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -35,7 +36,7 @@ type StorageLedgerRepository struct {
 	// claimedRuns tracks the set of runs this instance has claimed, so Close()
 	// can release them all (simulating crash cleanup). Each entry maps runID
 	// to the holder value used when claiming.
-	claimedRuns map[string]string // runID → holder
+	claimedRuns map[string]storage.Claim // runID → fenced claim
 	// applied is the highest store sequence per run that has been folded into
 	// the in-memory projection. It replaces the old one-shot `built` flag.
 	applied map[string]uint64
@@ -83,18 +84,22 @@ func (s *StorageLedgerRepository) nowLocked() time.Time {
 func (s *StorageLedgerRepository) Close() error {
 	s.mu.Lock()
 	s.closed = true
-	claims := make(map[string]string, len(s.claimedRuns))
-	for runID, holder := range s.claimedRuns {
-		claims[runID] = holder
+	claims := make(map[string]storage.Claim, len(s.claimedRuns))
+	for runID, claim := range s.claimedRuns {
+		claims[runID] = claim
 	}
-	s.claimedRuns = make(map[string]string)
+	s.claimedRuns = make(map[string]storage.Claim)
 	s.mu.Unlock()
 
 	// Release all claims held by this instance.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	for runID, holder := range claims {
-		_ = s.store.ReleaseClaim(ctx, runID, holder)
+	for runID, claim := range claims {
+		if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
+			_ = fenced.ReleaseClaimFenced(ctx, claim)
+		} else {
+			_ = s.store.ReleaseClaim(ctx, runID, claim.Holder)
+		}
 	}
 
 	if s.ownsStore {
@@ -420,16 +425,30 @@ func (s *StorageLedgerRepository) DeleteRun(ctx context.Context, runID string) e
 		return err
 	}
 	tombstone := s.newStoreEvent(runID, storageKindRunDeleted, []byte(`{"run_id":"`+runID+`"}`))
-	if err := s.appendStoreEvent(ctx, tombstone); err != nil {
-		return fmt.Errorf("store append run_deleted: %w", err)
-	}
-	if err := s.store.DeleteRun(ctx, runID, tombstone.Sequence-1); err != nil {
+	s.mu.RLock()
+	claim := s.claimedRuns[runID]
+	s.mu.RUnlock()
+	if err := s.store.AppendAndDeleteRun(ctx, tombstone, claim); err != nil {
+		s.clearInflight(runID, uint64(tombstone.Sequence))
+		if rebuildErr := s.rebuildRunProjection(ctx, runID); rebuildErr != nil {
+			return fmt.Errorf("store delete run %q: %v; rebuild projection: %w", runID, err, rebuildErr)
+		}
+		if errors.Is(err, storage.ErrClaimHeld) {
+			return ErrClaimHeld
+		}
 		return fmt.Errorf("store delete run %q: %w", runID, err)
 	}
 	if err := s.mem.DeleteRun(ctx, runID); err != nil {
 		return err
 	}
 	s.mu.Lock()
+	// Mirror the store's claim-row removal (AppendAndDeleteRun deleted it):
+	// without this, the stale fenced claim in claimedRuns forces a later
+	// same-ID recreation's first append onto the fenced path with a dead
+	// claim, failing with ErrClaimHeld forever on this instance. A recreated
+	// run is unclaimed; if another instance claims it, the unfenced append
+	// still fails closed because the claim row exists.
+	delete(s.claimedRuns, runID)
 	delete(s.applied, runID)
 	delete(s.allocated, runID)
 	for key := range s.inflight {

@@ -116,6 +116,50 @@ func TestResumeRefusesRunHeldByAnotherExecutor(t *testing.T) {
 	}
 }
 
+func TestResumeInterruptedRunTakesExpiredClaim(t *testing.T) {
+	task := ledger.TaskSnapshot{
+		RunID: "run-x", TaskID: "t1", HandlerName: "worker", AgentName: "worker", AgentDigest: "test-digest",
+		Input: json.RawMessage(`{"p":1}`), Status: string(ledger.TaskStatusRunning), Version: 1,
+		Attempts: []ledger.AttemptSnapshot{{AttemptID: "a1", TaskID: "t1", RunID: "run-x", AttemptNum: 1, Status: string(ledger.TaskStatusRunning)}},
+	}
+	c1, c2, _ := twoProcessFixture(t, []ledger.TaskSnapshot{task})
+	if err := c1.repo.ClaimRun(context.Background(), "run-x", c1.holderID); err != nil {
+		t.Fatal(err)
+	}
+	c2.claimLease = 0
+	h, err := c2.resumeInterruptedRun(context.Background(), "run-x", []subagents.Task{{ID: "t1", Name: "worker", AgentName: "worker", AgentDigest: "test-digest", Input: json.RawMessage(`{"p":1}`)}})
+	if err != nil {
+		t.Fatalf("resume expired claim: %v", err)
+	}
+	if _, err := c2.Join(context.Background(), h); err != nil {
+		t.Fatalf("join resumed run: %v", err)
+	}
+}
+
+func TestCancelRecoveredTakesExpiredClaim(t *testing.T) {
+	task := ledger.TaskSnapshot{
+		RunID: "run-x", TaskID: "t1", HandlerName: "worker",
+		Input: json.RawMessage(`{}`), Status: string(ledger.TaskStatusQueued), Version: 1,
+		Attempts: []ledger.AttemptSnapshot{{AttemptID: "a1", TaskID: "t1", RunID: "run-x", AttemptNum: 1, Status: string(ledger.TaskStatusQueued)}},
+	}
+	c1, c2, repo := twoProcessFixture(t, []ledger.TaskSnapshot{task})
+	if err := c1.repo.ClaimRun(context.Background(), "run-x", c1.holderID); err != nil {
+		t.Fatal(err)
+	}
+	c2.claimLease = 0
+	h := c2.newRunHandle("run-x", "", map[string]string{"t1": "a1"}, "", true)
+	if err := c2.Cancel(context.Background(), h); err != nil {
+		t.Fatalf("cancel expired claim: %v", err)
+	}
+	got, err := repo.GetTask(context.Background(), "run-x", "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != string(ledger.TaskStatusCanceled) {
+		t.Fatalf("task status = %q, want canceled", got.Status)
+	}
+}
+
 // TestClaimReleasedOnRunCompletion verifies that when a run completes, the
 // claim is released so another coordinator can claim the run.
 func TestClaimReleasedOnRunCompletion(t *testing.T) {

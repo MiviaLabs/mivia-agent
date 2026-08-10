@@ -39,9 +39,8 @@ func (e *Engine) Delete(ctx context.Context, runID string) (agenttools.DeleteRes
 	if err := e.claimOrTakeoverExpired(ctx, runID, holder); err != nil {
 		return agenttools.DeleteResult{}, err
 	}
-	// DeleteRun appends the wf_run_deleted tombstone claim-fenced to holder,
-	// then the store removes the run's prior events AND the claim row, so no
-	// release is needed (or possible) after success.
+	// DeleteRun atomically appends the wf_run_deleted tombstone and removes the
+	// run's prior events and claim row. No release is needed after success.
 	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 	if err := e.Repo.DeleteRun(ctx, runID); err != nil {
 		return agenttools.DeleteResult{}, err

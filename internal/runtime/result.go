@@ -101,10 +101,7 @@ func (d *Dispatcher) deliverTerminal(req Request, meta Metadata, err error, reas
 	// ID-keyed waiter state, even on its failure/block/cancel paths: stealing
 	// the channel would strand the true owner's waiter.
 	if !req.SkipDedup {
-		if waiter := d.waiters[req.ID]; waiter != nil {
-			delete(d.waiters, req.ID)
-			waiter <- result
-		}
+		d.deliverIDWaitersLocked(req.ID, result)
 	}
 	d.mu.Unlock()
 	return result

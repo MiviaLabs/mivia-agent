@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -40,10 +41,17 @@ func (s *StorageRepository) DeleteRun(ctx context.Context, runID string) error {
 		return err
 	}
 	tombstone := storage.Event{ID: EventID(runID, eventKindRunDeleted, fmt.Sprintf("%d", seq)), RunID: runID, Sequence: int(seq), Kind: eventKindRunDeleted, Payload: payload}
-	if err := s.appendEvent(ctx, tombstone, func() { s.proj[runID] = prev }); err != nil {
-		return fmt.Errorf("append run_deleted: %w", err)
+	holder, bound := claimHolderFromContext(ctx)
+	if !bound {
+		s.mu.RLock()
+		holder = s.claimedRuns[runID]
+		s.mu.RUnlock()
 	}
-	if err := s.store.DeleteRun(ctx, runID, int(seq-1)); err != nil {
+	if err := s.store.AppendAndDeleteRun(ctx, tombstone, storage.Claim{RunID: runID, Holder: holder}); err != nil {
+		s.rollbackAndRebuild(ctx, runID, func() { s.proj[runID] = prev })
+		if errors.Is(err, storage.ErrClaimHeld) {
+			return ErrClaimHeld
+		}
 		return fmt.Errorf("store delete run %q: %w", runID, err)
 	}
 	s.mu.Lock()

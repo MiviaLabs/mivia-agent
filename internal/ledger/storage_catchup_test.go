@@ -56,6 +56,10 @@ func (c *countingStore) DeleteRun(ctx context.Context, runID string, throughSequ
 	return c.inner.DeleteRun(ctx, runID, throughSequence)
 }
 
+func (c *countingStore) AppendAndDeleteRun(ctx context.Context, tombstone storage.Event, claim storage.Claim) error {
+	return c.inner.AppendAndDeleteRun(ctx, tombstone, claim)
+}
+
 func (c *countingStore) Changes(ctx context.Context, afterCursor uint64) (map[string]int, uint64, error) {
 	c.mu.Lock()
 	c.probeCalls++

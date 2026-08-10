@@ -207,7 +207,13 @@ func prepareWorkflowResumeExecution(ctx context.Context, built workflowControlle
 }
 
 // claimWorkflowResumeHandoff acquires the final controller claim without an
-// unowned clear-and-claim window. A forced resume replaces the claim atomically.
+// unowned clear-and-claim window. --force is the operator override for crash
+// recovery: it replaces the claim atomically (TakeoverRunClaim), so a fresh
+// claim left by a killed executor does not brick resume until lease expiry. A
+// forced takeover is still fenced: the displaced holder's fenced writes fail
+// with ErrClaimHeld after the takeover. Without force, only an expired claim
+// is taken over; a fresh claim within its lease belongs to a live holder and
+// is refused.
 func claimWorkflowResumeHandoff(ctx context.Context, repo workflowledger.Repository, runID, holder string, force bool) error {
 	if force {
 		return repo.TakeoverRunClaim(ctx, runID, holder)
@@ -422,9 +428,12 @@ func reconcileWorkflowTerminal(ctx context.Context, repo workflowledger.Reposito
 		plan.TerminalStatus = workflowledger.RunStatusDeliveryPending
 	}
 	if !workflowledger.IsTerminalRunStatus(plan.Run.Status) && plan.TerminalStatus != plan.Run.Status {
-		if err := repo.ClearRunClaim(ctx, runID); err != nil {
+		holder := newWorkflowCancelHolder()
+		if err := claimWorkflowOperator(ctx, repo, runID, holder); err != nil {
 			return false, err
 		}
+		defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
+		ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 		from := plan.Run
 		// waiting_approval has no direct edge to a terminal status (the edge
 		// table only allows running/failed/canceled/timed_out); step through

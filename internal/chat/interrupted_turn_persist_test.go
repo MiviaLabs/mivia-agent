@@ -2,7 +2,9 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -185,6 +187,103 @@ func TestNoMessageLossInterruptedPlainLegacyTurnIsPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertInterruptedPlainPersisted(t, loaded, partial, question)
+}
+
+type countingFailureStore struct {
+	SessionStore
+	err   error
+	calls int
+}
+
+func (s *countingFailureStore) Save(string, []provider.Message, string, string) error {
+	s.calls++
+	return s.err
+}
+
+func TestCompletedPlainLegacyTurnReportsAutosaveFailure(t *testing.T) {
+	const question = "prove it"
+	const answer = "Both fixes work."
+	want := errors.New("disk full")
+	store := &countingFailureStore{err: want}
+	sess := NewSession(&config.Resolved{Model: "test-model", SystemPrompt: "sys"}, &fakeCompleter{out: answer})
+	sess.SetSessionStore(store, nil)
+	sess.SessionDir = t.TempDir()
+	before := sess.contextRevision
+
+	reply, err := sess.SendUser(context.Background(), question, io.Discard)
+	if !errors.Is(err, ErrPersistence) {
+		t.Fatalf("error = %v, want ErrPersistence", err)
+	}
+	if reply != answer {
+		t.Fatalf("reply = %q, want %q", reply, answer)
+	}
+	assertInterruptedPlainPersisted(t, sess.MessagesCopy(), answer, question)
+	if store.calls != 1 {
+		t.Fatalf("save calls = %d, want 1", store.calls)
+	}
+	if got := sess.contextRevision; got != before {
+		t.Fatalf("revision = %+v, want unchanged %+v", got, before)
+	}
+}
+
+func TestInterruptedPlainLegacyTurnReportsAutosaveFailure(t *testing.T) {
+	const partial = "Both fixes work. Here is the pro"
+	const question = "prove it"
+	root := filepath.Join(t.TempDir(), "sessions")
+	store, err := NewFileSessionStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewSaveManager(store, "test-model", "test-provider")
+	sess := NewSession(&config.Resolved{Model: "test-model", SystemPrompt: "sys"}, plainInterruptedCompleter{partial: partial})
+	sess.SetSessionStore(store, mgr)
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root, []byte("blocks session directories"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := sess.contextRevision
+
+	reply, err := sess.SendUser(context.Background(), question, io.Discard)
+	if !errors.Is(err, ErrPersistence) {
+		t.Fatalf("error = %v, want ErrPersistence", err)
+	}
+	if !strings.Contains(reply, partial) {
+		t.Fatalf("reply = %q, want it to contain %q", reply, partial)
+	}
+	assertInterruptedPlainPersisted(t, sess.MessagesCopy(), partial, question)
+	if mgr.turnSaveName == "" {
+		t.Fatal("the save manager did not start the turn save")
+	}
+	if got := sess.contextRevision; got != before {
+		t.Fatalf("revision = %+v, want unchanged %+v", got, before)
+	}
+	if got := mgr.Metrics().SaveAfterTurnCount; got != 0 {
+		t.Fatalf("successful save count = %d, want 0", got)
+	}
+}
+
+func TestPlainPersistenceErrorIgnoresOnlyStaleSaves(t *testing.T) {
+	persistenceErr := errors.New("save failed")
+	tests := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{name: "nil"},
+		{name: "stale operation", err: ErrStaleOperation},
+		{name: "stale autosave", err: ErrStaleAutosave},
+		{name: "persistence", err: persistenceErr, want: persistenceErr},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := plainPersistenceError(test.err)
+			if !errors.Is(got, test.want) || (got == nil) != (test.want == nil) {
+				t.Fatalf("error = %v, want %v", got, test.want)
+			}
+		})
+	}
 }
 
 // TestNoMessageLossInterruptedPlainContextTurnIsPersisted locks the

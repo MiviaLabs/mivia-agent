@@ -233,6 +233,14 @@ func (f *flushSQLite) DeleteRun(ctx context.Context, runID string, throughSequen
 	return f.store.DeleteRun(ctx, runID, throughSequence)
 }
 
+func (f *flushSQLite) AppendAndDeleteRun(ctx context.Context, tombstone Event, claim Claim) error {
+	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
+	if f.err != nil {
+		return f.err
+	}
+	return f.store.AppendAndDeleteRun(ctx, tombstone, claim)
+}
+
 func (f *flushSQLite) Changes(ctx context.Context, afterCursor uint64) (map[string]int, uint64, error) {
 	f.once.Do(func() { f.store, f.err = OpenSQLite(filepath.Join(f.dir, "events.db")) })
 	if f.err != nil {

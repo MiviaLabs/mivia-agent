@@ -95,4 +95,24 @@ func TestCloneCopiesCoreTools(t *testing.T) {
 	}
 }
 
+func TestCoreToolsChangeDefinitionDigest(t *testing.T) {
+	agents := []ResolvedAgent{
+		{Name: "a"},
+		{Name: "a", CoreTools: strsPtr()},
+		{Name: "a", CoreTools: strsPtr("read_file")},
+		{Name: "a", CoreTools: strsPtr("grep")},
+	}
+	seen := make(map[string]struct{}, len(agents))
+	for _, agent := range agents {
+		digest, err := agent.DefinitionDigest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := seen[digest]; exists {
+			t.Fatalf("CoreTools value %#v did not change the definition digest", agent.CoreTools)
+		}
+		seen[digest] = struct{}{}
+	}
+}
+
 func strPtr(s string) *string { return &s }

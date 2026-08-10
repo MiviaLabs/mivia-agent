@@ -149,13 +149,12 @@ type deliveryUpsertedPayload struct {
 	CreatedAt time.Time      `json:"created_at"`
 }
 
-// runDeletedPayload is the wf_run_deleted tombstone payload. The tombstone is
-// appended BEFORE the run's prior events are hard-deleted, so a second
-// repository instance over the same store converges to "deleted" (its
-// watermark is forced past the tombstone and the projection rebuild clears
-// the run). A later incarnation of the same wfr- ID starts after the
-// tombstone, so its event IDs and sequences cannot collide with the deleted
-// incarnation's.
+// runDeletedPayload is the wf_run_deleted tombstone payload. The store appends
+// it in the same transaction that deletes prior events. A second repository
+// instance converges to "deleted" because its watermark advances past the
+// tombstone and the projection rebuild clears the run. A later incarnation
+// starts after the tombstone. Its event IDs and sequences cannot collide with
+// the deleted incarnation's IDs and sequences.
 type runDeletedPayload struct {
 	RunID     string    `json:"run_id"`
 	DeletedAt time.Time `json:"deleted_at"`

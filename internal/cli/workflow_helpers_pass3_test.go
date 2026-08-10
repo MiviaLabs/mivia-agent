@@ -17,12 +17,20 @@ import (
 
 type workflowFailureRepository struct {
 	workflowledger.Repository
+	claimErr     error
 	clearErr     error
 	takeoverErr  error
 	casErr       error
 	getErr       error
 	failGetAfter int
 	getCalls     int
+}
+
+func (r *workflowFailureRepository) ClaimRun(ctx context.Context, runID, holder string) error {
+	if r.claimErr != nil {
+		return r.claimErr
+	}
+	return r.Repository.ClaimRun(ctx, runID, holder)
 }
 
 func (r *workflowFailureRepository) ClearRunClaim(ctx context.Context, runID string) error {
@@ -71,9 +79,9 @@ func TestReconcileWorkflowTerminalRepositoryFailures(t *testing.T) {
 		wrap func(workflowledger.Repository) workflowledger.Repository
 	}{
 		{
-			name: "clear claim",
+			name: "claim",
 			wrap: func(repo workflowledger.Repository) workflowledger.Repository {
-				return &workflowFailureRepository{Repository: repo, clearErr: errors.New("clear failed")}
+				return &workflowFailureRepository{Repository: repo, claimErr: errors.New("claim failed")}
 			},
 		},
 		{

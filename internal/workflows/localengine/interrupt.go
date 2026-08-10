@@ -25,31 +25,59 @@ func (e *Engine) Interrupt(runID string) error {
 	// run to failed on the version conflict before the fence exists.
 	_ = e.ctrlRepo()
 	e.mu.Lock()
+	if resumeDone := e.resuming[runID]; resumeDone != nil {
+		e.mu.Unlock()
+		<-resumeDone
+		return e.Interrupt(runID)
+	}
+	_, delivering := e.delivering[runID]
 	if e.fence != nil {
 		e.fence.abandon(runID)
 	}
 	active, ok := e.active[runID]
-	if ok {
-		delete(e.active, runID)
+	if !ok && !delivering {
+		e.mu.Unlock()
+		return fmt.Errorf("workflow run %q is not active in this engine", runID)
 	}
-	_, delivering := e.delivering[runID]
+	if ok {
+		if e.interrupting == nil {
+			e.interrupting = make(map[string]uint)
+		}
+		e.interrupting[runID]++
+	}
 	e.mu.Unlock()
+	if ok {
+		defer e.finishInterrupt(runID)
+	}
 	// Mark open attempts interrupted before the dying controller can cancel them.
 	if err := e.markOpenAttemptsInterrupted(ctx, runID); err != nil {
+		if ok {
+			active.cancel()
+			<-active.done
+		}
 		return err
 	}
-	// Clear the claim ONLY when this engine owns the controller (the run is
+	if ok {
+		active.cancel()
+		<-active.done
+	}
+	// Release the claim ONLY when this engine owns the controller (the run is
 	// tracked in e.active): an abandoned controller's claim is the stale-owner
 	// residue a resume must be able to claim over. A run that is mid-delivery
 	// (this engine's delivery goroutine, or another host's publisher) or not
 	// active here is left alone - clearing would strip a live delivery claim
 	// and enable double-publish while the delivery keeps publishing.
+	//
+	// The release is holder-scoped to the interrupted controller's OWN holder:
+	// the controller goroutine already released the claim (engine.go, before
+	// close(done)), so a claim row still present here belongs either to this
+	// controller (a failed release) or to a FOREIGN resume that won the claim
+	// in the release-to-cleanup window. A holder-scoped ReleaseRun removes
+	// only the former and never strips the latter - a blind ClearRunClaim
+	// would delete a live foreign claim and neutralize the fence for the
+	// foreign executor (or let a third executor double-run the step).
 	if ok && !delivering {
-		_ = e.Repo.ClearRunClaim(ctx, runID)
-	}
-	if ok {
-		active.cancel()
-		<-active.done
+		_ = e.Repo.ReleaseRun(ctx, runID, active.ctrl.Holder)
 	}
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
@@ -59,6 +87,16 @@ func (e *Engine) Interrupt(runID string) error {
 		return fmt.Errorf("interrupt left run %q terminal (%s); want non-terminal for resume", runID, run.Status)
 	}
 	return nil
+}
+
+func (e *Engine) finishInterrupt(runID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.interrupting[runID] > 1 {
+		e.interrupting[runID]--
+		return
+	}
+	delete(e.interrupting, runID)
 }
 
 func (e *Engine) markOpenAttemptsInterrupted(ctx context.Context, runID string) error {

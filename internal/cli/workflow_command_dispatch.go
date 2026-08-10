@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -62,7 +63,7 @@ func runWorkflowCommandDeliver(args []string, workspaceRoot, configPath string, 
 	if len(rest) != 1 {
 		return fmt.Errorf("workflow deliver: expected one run ID")
 	}
-	return executeWorkflowDeliver(rest[0], workspaceRoot, configPath, allowPublish, force, stdout, stderr)
+	return executeWorkflowDeliver(context.Background(), rest[0], workspaceRoot, configPath, allowPublish, force, stdout, stderr)
 }
 
 func runWorkflowCommandResume(args []string, workspaceRoot, configPath string, force bool, stdout, stderr io.Writer) error {

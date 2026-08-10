@@ -24,6 +24,16 @@ type blockingGit struct {
 	after   func(ctx context.Context, gc delivery.GitContext, args ...string) (string, error)
 }
 
+type cancelClaimCountRepo struct {
+	workflowledger.Repository
+	claimCalls int
+}
+
+func (r *cancelClaimCountRepo) ClaimRun(ctx context.Context, runID, holder string) error {
+	r.claimCalls++
+	return r.Repository.ClaimRun(ctx, runID, holder)
+}
+
 func (g *blockingGit) Run(ctx context.Context, gc delivery.GitContext, args ...string) (string, error) {
 	g.once.Do(func() { close(g.entered) })
 	select {
@@ -122,6 +132,31 @@ func TestEngineCancelDoesNotClearLiveDeliveryClaim(t *testing.T) {
 	}
 	// The delivery goroutine released its claim on exit.
 	claimNowFree(t, engine.Repo, run.RunID)
+}
+
+func TestEngineCancelKeepsClaimThroughSettlement(t *testing.T) {
+	ctx := context.Background()
+	base := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = base.Close() })
+	const runID = "wfr-cancel-claim-handoff"
+	if err := base.CreateRun(ctx, workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusPending}, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	run, err := base.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := base.CompareAndSetRunStatus(ctx, runID, run.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	repo := &cancelClaimCountRepo{Repository: base}
+	engine := &localengine.Engine{Repo: repo}
+	if _, err := engine.Cancel(ctx, runID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if repo.claimCalls != 1 {
+		t.Fatalf("ClaimRun calls = %d, want 1; cancel must not release then reclaim", repo.claimCalls)
+	}
 }
 
 // TestEngineCancelRefusesFreshForeignClaim: a fresh claim held by another host

@@ -30,9 +30,6 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 	defer closeFn()
 	defer releaseExecution()
 	ctx := context.Background()
-	if err := repo.ClearRunClaim(ctx, runID); err != nil {
-		return fmt.Errorf("clear stale workflow claim: %w", err)
-	}
 	before, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
@@ -41,6 +38,11 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 	if err != nil {
 		return err
 	}
+	if err := claimWorkflowOperator(ctx, repo, runID, ctrl.Holder); err != nil {
+		return err
+	}
+	defer func() { _ = repo.ReleaseRun(context.Background(), runID, ctrl.Holder) }()
+	ctx = workflowledger.ContextWithClaimHolder(ctx, ctrl.Holder)
 	if err := ctrl.Approve(ctx, approvalID, actor); err != nil {
 		fmt.Fprintf(stderr, "workflow approval failed: %v\n", err)
 		return err
@@ -66,9 +68,6 @@ func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason st
 	defer closeFn()
 	defer releaseExecution()
 	ctx := context.Background()
-	if err := repo.ClearRunClaim(ctx, runID); err != nil {
-		return fmt.Errorf("clear stale workflow claim: %w", err)
-	}
 	before, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
@@ -77,6 +76,11 @@ func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason st
 	if err != nil {
 		return err
 	}
+	if err := claimWorkflowOperator(ctx, repo, runID, ctrl.Holder); err != nil {
+		return err
+	}
+	defer func() { _ = repo.ReleaseRun(context.Background(), runID, ctrl.Holder) }()
+	ctx = workflowledger.ContextWithClaimHolder(ctx, ctrl.Holder)
 	if err := ctrl.Reject(ctx, approvalID, actor, reason); err != nil {
 		fmt.Fprintf(stderr, "workflow rejection failed: %v\n", err)
 		return err
@@ -108,7 +112,7 @@ func emitCLIRunTerminalProgress(runID string, before, settled workflowledger.Run
 
 // executeWorkflowCancel cancels a non-terminal run (or no-ops on a terminal
 // run), mirroring controller.CancelRun's contract: the caller holds the
-// workflow execution file lock and clears a stale claim first.
+// workflow execution file lock and a live execution claim.
 func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Writer) error {
 	releaseExecution, repo, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
 	if err != nil {
@@ -117,14 +121,17 @@ func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Wri
 	defer closeFn()
 	defer releaseExecution()
 	ctx := context.Background()
-	if err := repo.ClearRunClaim(ctx, runID); err != nil {
-		return fmt.Errorf("clear stale workflow claim: %w", err)
+	holder := newWorkflowCancelHolder()
+	if err := claimWorkflowOperator(ctx, repo, runID, holder); err != nil {
+		return err
 	}
+	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
+	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 	before, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
 	}
-	attempts, err := controller.CancelRunWithAttempts(ctx, repo, runID)
+	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, runID, holder)
 	if err != nil {
 		fmt.Fprintf(stderr, "workflow cancel failed: %v\n", err)
 		return err
@@ -141,6 +148,24 @@ func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Wri
 	emitCLIRunTerminalProgress(runID, before.Status, settled.Status, stderr)
 	fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
 	return nil
+}
+
+func claimWorkflowOperator(ctx context.Context, repo workflowledger.Repository, runID, holder string) error {
+	err := repo.ClaimRun(ctx, runID, holder)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, workflowledger.ErrClaimHeld) {
+		return err
+	}
+	err = repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
+	if errors.Is(err, workflowledger.ErrClaimNotHeld) {
+		return repo.ClaimRun(ctx, runID, holder)
+	}
+	if errors.Is(err, workflowledger.ErrClaimHeld) {
+		return fmt.Errorf("workflow run %q is claimed by another executor", runID)
+	}
+	return err
 }
 
 // publishCanceledAttemptsCLI writes one step_completed(canceled) JSON line to

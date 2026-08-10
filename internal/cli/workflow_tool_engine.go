@@ -275,16 +275,20 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) {
 			if takeoverErr := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease); takeoverErr != nil {
+				if errors.Is(takeoverErr, workflowledger.ErrClaimNotHeld) {
+					if retryErr := repo.ClaimRun(ctx, runID, holder); retryErr == nil {
+						goto cancelClaimed
+					}
+				}
 				return agenttools.CancelResult{}, fmt.Errorf("workflow run %q is claimed by another executor; cancel refused", runID)
 			}
 		} else {
 			return agenttools.CancelResult{}, err
 		}
 	}
-	// CancelRunWithAttempts mints and claims its own holder internally; drop
-	// ours first so its claim succeeds. Never clear a foreign claim.
-	_ = repo.ReleaseRun(context.Background(), runID, holder)
-	attempts, err := controller.CancelRunWithAttempts(ctx, repo, runID)
+cancelClaimed:
+	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
+	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, runID, holder)
 	if err != nil {
 		// Context cancel or a prior settle may already leave the run terminal.
 		run, getErr := repo.GetRun(ctx, runID)
@@ -363,14 +367,8 @@ func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string) (agent
 	// publish) and enable double-publish. Claim instead; an expired lease may
 	// be taken over, a fresh foreign claim is refused outright.
 	holder := newWorkflowDeleteHolder()
-	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
-		if errors.Is(err, workflowledger.ErrClaimHeld) {
-			if takeoverErr := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease); takeoverErr != nil {
-				return agenttools.DeleteResult{}, fmt.Errorf("workflow run %q is claimed by another executor; delete refused", runID)
-			}
-		} else {
-			return agenttools.DeleteResult{}, err
-		}
+	if err := claimWorkflowOperator(ctx, repo, runID, holder); err != nil {
+		return agenttools.DeleteResult{}, fmt.Errorf("workflow run %q is claimed by another executor; delete refused", runID)
 	}
 	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 	if err := repo.DeleteRun(ctx, runID); err != nil {
@@ -402,7 +400,7 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 		}
 		preClose()
 	}
-	if err := executeWorkflowDeliver(runID, e.root, e.configPath, allowPublish, false, &stdout, &stderr); err != nil {
+	if err := executeWorkflowDeliver(ctx, runID, e.root, e.configPath, allowPublish, false, &stdout, &stderr); err != nil {
 		// Prefer structured status when the ledger still opens after a refusal.
 		if result, ok := sessionDeliverResultFromLedger(ctx, e.root, e.configPath, runID, err); ok {
 			return result, nil

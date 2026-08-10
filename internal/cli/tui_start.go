@@ -212,7 +212,7 @@ func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (str
 		} else {
 			_, err = m.session.SendUserWithEventAndPersistedText(ctx, turnSent, display, bridge, agentEventBridgeCallback(bridge))
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && cancellationCanReplaceTurnError(err) {
 			err = context.Canceled
 		}
 		m.pushStopHookOutput(ctx, bridge, turnID)

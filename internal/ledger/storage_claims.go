@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -23,20 +24,52 @@ func newHolderID() string {
 }
 
 func (s *StorageLedgerRepository) ClaimRun(ctx context.Context, runID string, holder string) error {
-	if err := s.store.ClaimRun(ctx, runID, holder); err != nil {
+	claim := storage.Claim{RunID: runID, Holder: holder}
+	var err error
+	// The fenced store insert and the closed check share ONE critical section:
+	// either the insert commits and Close's claim snapshot collects and
+	// releases it before the store closes, or Close wins and the claim is
+	// refused before it touches the store. Without this serialization, a claim
+	// acquired while Close runs is released by the closed-path compensation
+	// against an already-closed store, the release error is discarded, and the
+	// claim row survives the shutdown (a dead owner's fresh claim that blocks
+	// the next process for the lease duration).
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
+		claim, err = fenced.ClaimRunFenced(ctx, runID, holder)
+	} else {
+		err = s.store.ClaimRun(ctx, runID, holder)
+	}
+	if err != nil {
+		s.mu.Unlock()
 		if errors.Is(err, storage.ErrClaimHeld) {
 			return ErrClaimHeld
 		}
 		return err
 	}
-	s.mu.Lock()
-	s.claimedRuns[runID] = holder
+	s.claimedRuns[runID] = claim
 	s.mu.Unlock()
 	return nil
 }
 
 func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, holder string) error {
-	if err := s.store.ReleaseClaim(ctx, runID, holder); err != nil {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
+	s.mu.RLock()
+	claim := s.claimedRuns[runID]
+	s.mu.RUnlock()
+	var err error
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
+		err = fenced.ReleaseClaimFenced(ctx, claim)
+	} else {
+		err = s.store.ReleaseClaim(ctx, runID, holder)
+	}
+	if err != nil {
 		if errors.Is(err, storage.ErrClaimNotHeld) {
 			return ErrClaimNotHeld
 		}
@@ -48,23 +81,61 @@ func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, 
 	return nil
 }
 
+func (s *StorageLedgerRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
+	fenced, ok := s.store.(storage.FencedLeaseStore)
+	if !ok {
+		return ErrClaimHeld
+	}
+	// Same serialization as ClaimRun: the takeover and the closed check share
+	// one critical section so a takeover racing Close can never leave a claim
+	// row behind a closed store.
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	claim, err := fenced.TakeoverExpiredClaimFenced(ctx, runID, holder, maxAge)
+	if err != nil {
+		s.mu.Unlock()
+		if errors.Is(err, storage.ErrClaimHeld) {
+			return ErrClaimHeld
+		}
+		if errors.Is(err, storage.ErrClaimNotHeld) {
+			return ErrClaimNotHeld
+		}
+		return err
+	}
+	s.claimedRuns[runID] = claim
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *StorageLedgerRepository) ClearRunClaim(ctx context.Context, runID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
+	}
 	if err := s.store.ClearClaim(ctx, runID); err != nil {
 		return err
 	}
 	// Mirror the workflows ledger: drop the in-memory holder so this instance
 	// stops claiming the run (its subsequent fenced writes fail closed).
-	s.mu.Lock()
 	delete(s.claimedRuns, runID)
-	s.mu.Unlock()
 	return nil
 }
 
 func (s *StorageLedgerRepository) StoreContent(ctx context.Context, ref string, data []byte) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
 	return s.store.PutContent(ctx, ref, data)
 }
 
 func (s *StorageLedgerRepository) LoadContent(ctx context.Context, ref string) ([]byte, error) {
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
 	data, err := s.store.GetContent(ctx, ref)
 	if err != nil {
 		if errors.Is(err, storage.ErrContentNotFound) {

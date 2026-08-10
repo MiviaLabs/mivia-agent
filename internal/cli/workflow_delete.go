@@ -33,14 +33,8 @@ func executeWorkflowDelete(runID, root, configPath string, stdout, stderr io.Wri
 		return fmt.Errorf("workflow run %q is %q; cancel it before delete", runID, run.Status)
 	}
 	holder := newWorkflowDeleteHolder()
-	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
-		if errors.Is(err, workflowledger.ErrClaimHeld) {
-			if takeoverErr := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease); takeoverErr != nil {
-				return fmt.Errorf("workflow run %q is claimed by another executor; delete refused", runID)
-			}
-		} else {
-			return err
-		}
+	if err := claimWorkflowOperator(ctx, repo, runID, holder); err != nil {
+		return fmt.Errorf("workflow run %q is claimed by another executor; delete refused", runID)
 	}
 	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 	if err := repo.DeleteRun(ctx, runID); err != nil {
