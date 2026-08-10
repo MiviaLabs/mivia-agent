@@ -24,36 +24,35 @@ func newHolderID() string {
 }
 
 func (s *StorageLedgerRepository) ClaimRun(ctx context.Context, runID string, holder string) error {
-	if err := s.checkOpen(); err != nil {
-		return err
-	}
 	claim := storage.Claim{RunID: runID, Holder: holder}
 	var err error
+	// The fenced store insert and the closed check share ONE critical section:
+	// either the insert commits and Close's claim snapshot collects and
+	// releases it before the store closes, or Close wins and the claim is
+	// refused before it touches the store. Without this serialization, a claim
+	// acquired while Close runs is released by the closed-path compensation
+	// against an already-closed store, the release error is discarded, and the
+	// claim row survives the shutdown (a dead owner's fresh claim that blocks
+	// the next process for the lease duration).
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
 	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
 		claim, err = fenced.ClaimRunFenced(ctx, runID, holder)
 	} else {
 		err = s.store.ClaimRun(ctx, runID, holder)
 	}
 	if err != nil {
+		s.mu.Unlock()
 		if errors.Is(err, storage.ErrClaimHeld) {
 			return ErrClaimHeld
 		}
 		return err
 	}
-	s.mu.Lock()
-	closed := s.closed
-	if !closed {
-		s.claimedRuns[runID] = claim
-	}
+	s.claimedRuns[runID] = claim
 	s.mu.Unlock()
-	if closed {
-		if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
-			_ = fenced.ReleaseClaimFenced(ctx, claim)
-		} else {
-			_ = s.store.ReleaseClaim(ctx, runID, holder)
-		}
-		return ErrClosed
-	}
 	return nil
 }
 
@@ -83,33 +82,31 @@ func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, 
 }
 
 func (s *StorageLedgerRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
-	if err := s.checkOpen(); err != nil {
-		return err
-	}
 	fenced, ok := s.store.(storage.FencedLeaseStore)
 	if !ok {
 		return ErrClaimHeld
 	}
-	claim, err := fenced.TakeoverExpiredClaimFenced(ctx, runID, holder, maxAge)
-	if errors.Is(err, storage.ErrClaimHeld) {
-		return ErrClaimHeld
-	}
-	if errors.Is(err, storage.ErrClaimNotHeld) {
-		return ErrClaimNotHeld
-	}
-	if err != nil {
-		return err
-	}
+	// Same serialization as ClaimRun: the takeover and the closed check share
+	// one critical section so a takeover racing Close can never leave a claim
+	// row behind a closed store.
 	s.mu.Lock()
-	closed := s.closed
-	if !closed {
-		s.claimedRuns[runID] = claim
-	}
-	s.mu.Unlock()
-	if closed {
-		_ = fenced.ReleaseClaimFenced(ctx, claim)
+	if s.closed {
+		s.mu.Unlock()
 		return ErrClosed
 	}
+	claim, err := fenced.TakeoverExpiredClaimFenced(ctx, runID, holder, maxAge)
+	if err != nil {
+		s.mu.Unlock()
+		if errors.Is(err, storage.ErrClaimHeld) {
+			return ErrClaimHeld
+		}
+		if errors.Is(err, storage.ErrClaimNotHeld) {
+			return ErrClaimNotHeld
+		}
+		return err
+	}
+	s.claimedRuns[runID] = claim
+	s.mu.Unlock()
 	return nil
 }
 

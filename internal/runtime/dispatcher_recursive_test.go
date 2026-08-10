@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -43,5 +44,34 @@ func TestDispatcherRecursiveDuplicateDoesNotReleaseOtherWaiters(t *testing.T) {
 	waiter := <-waiterDone
 	if owner.Err != nil || waiter.Err != nil || waiter.Metadata.Status != "duplicate" {
 		t.Fatalf("results = owner:%+v waiter:%+v", owner, waiter)
+	}
+}
+
+// TestDispatcherSkipDedupCallWithParentIDMayExecute: a SkipDedup call never
+// reads or writes the ID-keyed dedup state, so its ID equaling its parent's ID
+// cannot self-deadlock and must execute. Regression: the recursion guard moved
+// before reserve rejected every ParentID==ID call, including read-class tool
+// calls (SkipDedup) whose model-supplied ID happened to equal the enclosing
+// agent call's ID (TestLedgerReadPageIsNotTailCutByTheAgentLoop).
+func TestDispatcherSkipDedupCallWithParentIDMayExecute(t *testing.T) {
+	d := New(Policy{})
+	var calls atomic.Int32
+	if err := d.Register(Tool, "t", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
+		calls.Add(1)
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	result := d.Invoke(context.Background(), Request{ID: "same", ParentID: "same", Kind: Tool, Name: "t", SkipDedup: true})
+	if result.Err != nil {
+		t.Fatalf("SkipDedup call with ParentID == ID = %+v, want execution", result)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+	// The non-SkipDedup form is still rejected as recursive.
+	rejected := d.Invoke(context.Background(), Request{ID: "same", ParentID: "same", Kind: Tool, Name: "t"})
+	if rejected.Err == nil {
+		t.Fatal("non-SkipDedup call with ParentID == ID succeeded; want recursive rejection")
 	}
 }

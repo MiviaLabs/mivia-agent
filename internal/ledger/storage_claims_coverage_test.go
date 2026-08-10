@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -72,6 +73,12 @@ func TestStorageClaimsRejectClosedRepository(t *testing.T) {
 	}
 }
 
+// TestStorageClaimsRejectClaimThatRacesClose pins the ClaimRun-vs-Close
+// invariant: after the race, the repository is closed and NO claim survives it
+// (a peer claim on the same run succeeds). Either legal outcome is accepted -
+// ClaimRun returning ErrClosed (Close won the serialized section) or nil with
+// the claim collected and released by Close's snapshot (ClaimRun won). The
+// outcome must never be a leaked claim row.
 func TestStorageClaimsRejectClaimThatRacesClose(t *testing.T) {
 	ctx := context.Background()
 	store := &blockedFencedClaimStore{
@@ -86,15 +93,58 @@ func TestStorageClaimsRejectClaimThatRacesClose(t *testing.T) {
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- repo.Close() }()
 	close(store.release)
-	if err := <-claimDone; !errors.Is(err, ErrClosed) {
-		t.Fatalf("ClaimRun racing Close = %v, want ErrClosed", err)
+	if err := <-claimDone; err != nil && !errors.Is(err, ErrClosed) {
+		t.Fatalf("ClaimRun racing Close = %v, want nil or ErrClosed", err)
 	}
 	if err := <-closeDone; err != nil {
 		t.Fatal(err)
 	}
 	peer := NewBorrowedStorageLedgerRepository(store)
 	if err := peer.ClaimRun(ctx, "run", "peer"); err != nil {
-		t.Fatalf("peer ClaimRun after close race = %v, want success", err)
+		t.Fatalf("peer ClaimRun after close race = %v, want success (no claim may survive Close)", err)
+	}
+}
+
+// TestStorageClaimsCloseRaceLeaksNoClaimOnOwnedStore proves the same invariant
+// on an OWNED SQLite store, where the post-close compensating release could
+// fail against the closed database and leave a durable claim row. The fix
+// serializes the fenced insert with the closed check, so either the claim is
+// registered before Close's snapshot (and Close releases it while the store is
+// still open) or ClaimRun is refused before touching the store.
+func TestStorageClaimsCloseRaceLeaksNoClaimOnOwnedStore(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ledger.db")
+	inner, err := storage.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := &blockedFencedClaimStore{
+		Store:   inner,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	repo := NewStorageLedgerRepository(blocked)
+	claimDone := make(chan error, 1)
+	go func() { claimDone <- repo.ClaimRun(ctx, "run", "owner") }()
+	<-blocked.entered
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- repo.Close() }()
+	close(blocked.release)
+	if err := <-claimDone; err != nil && !errors.Is(err, ErrClosed) {
+		t.Fatalf("ClaimRun racing Close = %v, want nil or ErrClosed", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatal(err)
+	}
+	// Reopen the same file: no claim row may survive the shutdown race.
+	reopened, err := storage.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	peer := NewBorrowedStorageLedgerRepository(reopened)
+	if err := peer.ClaimRun(ctx, "run", "peer"); err != nil {
+		t.Fatalf("peer ClaimRun after owned-store close race = %v, want success (the claim row must not survive)", err)
 	}
 }
 

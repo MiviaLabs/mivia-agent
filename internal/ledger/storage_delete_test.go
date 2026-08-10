@@ -38,6 +38,48 @@ func TestDeletedRunDoesNotResurrectInNextProcess(t *testing.T) {
 	}
 }
 
+// TestDeleteRunThenRecreateSameIDWithOwnClaim pins the claimed-delete pairing:
+// DeleteRun must mirror the store's claim-row removal in the in-memory
+// claimedRuns map, so a same-instance recreation of the same run ID starts
+// from a clean slate. Regression: DeleteRun dropped the store claim row
+// (AppendAndDeleteRun) but kept the stale fenced claim in claimedRuns, so the
+// recreation's run_created append took the fenced path with a dead claim and
+// failed with ErrClaimHeld forever on that instance (the workflow controller
+// re-dispatches a persisted CoordinatorRunID on retry).
+func TestDeleteRunThenRecreateSameIDWithOwnClaim(t *testing.T) {
+	ctx := context.Background()
+	t.Run("memory", func(t *testing.T) {
+		recreateAfterClaimedDelete(t, ctx, NewBorrowedStorageLedgerRepository(storage.NewMemory()), "run-x")
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		recreateAfterClaimedDelete(t, ctx, NewBorrowedStorageLedgerRepository(store), "run-x")
+	})
+}
+
+func recreateAfterClaimedDelete(t *testing.T, ctx context.Context, repo *StorageLedgerRepository, runID string) {
+	t.Helper()
+	if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: runID, Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClaimRun(ctx, runID, "holder-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteRun(ctx, runID); err != nil {
+		t.Fatalf("DeleteRun with own claim held: %v", err)
+	}
+	if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: runID, Status: RunStatusCreated}); err != nil {
+		t.Fatalf("recreate same run ID after claimed delete: %v", err)
+	}
+	if _, err := repo.GetRun(ctx, runID); err != nil {
+		t.Fatalf("GetRun after recreate: %v", err)
+	}
+}
+
 func TestStorageLedgerDeleteRunRetriesAfterPhysicalDeleteFailure(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "ledger.db")

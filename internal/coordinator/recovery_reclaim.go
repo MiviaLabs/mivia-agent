@@ -45,32 +45,35 @@ const (
 // gate (recoverByIdempotencyKey) admits only 'created + zero tasks' runs older
 // than the grace period - a state no live creator occupies (the gap between the
 // durable CreateRun and the first durable CreateTask is milliseconds). The
-// claim is probed first - ClaimRun with our own holder succeeds only when no
-// other holder owns the run.
-//
-// A held claim is not proof of a crashed creator. A live creator can pause
-// between ClaimRun and CreateTask. Reclaim refuses a held claim so it never
-// clears a live owner and deletes live work.
+// claim is acquired lease-aware: a free claim is taken directly, and a held
+// claim is taken over only when its lease has expired. A live holder refreshes
+// its claim on its heartbeat, so an expired claim belongs to a creator that
+// crashed between ClaimRun and the first CreateTask (DC-4) and never
+// heartbeated - reclaiming it restores the key instead of refusing forever. A
+// fresh, heartbeated live claim is refused so reclaim never clears a live
+// owner and deletes live work.
 //
 // R4-1: reclaim is the atomicity boundary for the idempotency key across
 // processes. Only the process whose probe claim succeeded AND whose DeleteRun
 // succeeded has actually deleted the run, so only it may proceed to create the
 // replacement. Everyone else must observe the contention and back off rather
 // than racing into their own CreateRun - two creators would both execute the
-// keyed work. On probe error, re-probe failure, or delete failure the run is
-// left untouched and the caller must treat the key as contended.
+// keyed work. On probe error or delete failure the run is left untouched and
+// the caller must treat the key as contended.
 func (c *coordinator) reclaimAbandonedRun(runID string) bool {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// Probe the claim: a successful ClaimRun proves the run was unclaimed.
-	if err := c.repo.ClaimRun(cleanupCtx, runID, c.holderID); err != nil {
-		if !errors.Is(err, ledger.ErrClaimHeld) {
+	// Acquire the claim lease-aware (probe, then takeover only when the
+	// holder's lease expired): a successful claim proves the run was unclaimed
+	// or that the previous holder is dead.
+	if err := c.claimRun(cleanupCtx, runID); err != nil {
+		if errors.Is(err, ledger.ErrClaimHeld) {
+			log.Printf("coordinator: reclaim abandoned run %q: claim is held by a live owner; refusing", runID)
+		} else {
 			// A transient probe failure is a no-reclaim: the caller treats
 			// the key as contended.
 			log.Printf("coordinator: reclaim abandoned run %q: claim probe: %v", runID, err)
-			return false
 		}
-		log.Printf("coordinator: reclaim abandoned run %q: claim is held; refusing to clear a possibly live owner", runID)
 		return false
 	}
 	if err := c.repo.DeleteRun(cleanupCtx, runID); err != nil {

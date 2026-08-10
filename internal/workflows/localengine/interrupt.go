@@ -61,14 +61,23 @@ func (e *Engine) Interrupt(runID string) error {
 		active.cancel()
 		<-active.done
 	}
-	// Clear the claim ONLY when this engine owns the controller (the run is
+	// Release the claim ONLY when this engine owns the controller (the run is
 	// tracked in e.active): an abandoned controller's claim is the stale-owner
 	// residue a resume must be able to claim over. A run that is mid-delivery
 	// (this engine's delivery goroutine, or another host's publisher) or not
 	// active here is left alone - clearing would strip a live delivery claim
 	// and enable double-publish while the delivery keeps publishing.
+	//
+	// The release is holder-scoped to the interrupted controller's OWN holder:
+	// the controller goroutine already released the claim (engine.go, before
+	// close(done)), so a claim row still present here belongs either to this
+	// controller (a failed release) or to a FOREIGN resume that won the claim
+	// in the release-to-cleanup window. A holder-scoped ReleaseRun removes
+	// only the former and never strips the latter - a blind ClearRunClaim
+	// would delete a live foreign claim and neutralize the fence for the
+	// foreign executor (or let a third executor double-run the step).
 	if ok && !delivering {
-		_ = e.Repo.ClearRunClaim(ctx, runID)
+		_ = e.Repo.ReleaseRun(ctx, runID, active.ctrl.Holder)
 	}
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {

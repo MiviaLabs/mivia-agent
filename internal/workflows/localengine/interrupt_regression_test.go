@@ -41,39 +41,41 @@ func (r *interruptedAttemptFailRepository) CompleteStepAttempt(ctx context.Conte
 	return r.Repository.CompleteStepAttempt(ctx, runID, attemptID, expectedVersion, outcome)
 }
 
-// clearAfterStopRepository records whether Interrupt clears its claim before
-// the active controller stops.
-type clearAfterStopRepository struct {
+// releaseAfterStopRepository records whether Interrupt releases the claim
+// before the active controller stops.
+type releaseAfterStopRepository struct {
 	workflowledger.Repository
-	stopped           <-chan struct{}
-	clearedBeforeStop atomic.Bool
+	stopped            <-chan struct{}
+	releasedBeforeStop atomic.Bool
 }
 
-func (r *clearAfterStopRepository) ClearRunClaim(ctx context.Context, runID string) error {
+func (r *releaseAfterStopRepository) ReleaseRun(ctx context.Context, runID, holder string) error {
 	select {
 	case <-r.stopped:
 	default:
-		r.clearedBeforeStop.Store(true)
+		r.releasedBeforeStop.Store(true)
 	}
-	return r.Repository.ClearRunClaim(ctx, runID)
+	return r.Repository.ReleaseRun(ctx, runID, holder)
 }
 
-// clearGateRepository pauses claim cleanup after Interrupt stops the controller.
-type clearGateRepository struct {
+// releaseGateRepository pauses the claim release after Interrupt stops the
+// controller, so a test can attempt a concurrent force-resume while Interrupt
+// is still in progress (its interrupting gate is armed).
+type releaseGateRepository struct {
 	workflowledger.Repository
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
 }
 
-func (r *clearGateRepository) ClearRunClaim(ctx context.Context, runID string) error {
+func (r *releaseGateRepository) ReleaseRun(ctx context.Context, runID, holder string) error {
 	r.once.Do(func() { close(r.entered) })
 	select {
 	case <-r.release:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return r.Repository.ClearRunClaim(ctx, runID)
+	return r.Repository.ReleaseRun(ctx, runID, holder)
 }
 
 // interruptBlockingRunner reports when its step starts and when its context
@@ -265,18 +267,18 @@ func TestInterruptStopsControllerAfterAttemptPersistenceError(t *testing.T) {
 	}
 }
 
-// TestInterruptStopsControllerBeforeClearingClaim prevents another engine from
+// TestInterruptStopsControllerBeforeClaimRelease prevents another engine from
 // resuming a run while the interrupted controller can still do external work.
 // Regression: Interrupt cleared the claim before it canceled and joined the
 // controller.
-func TestInterruptStopsControllerBeforeClearingClaim(t *testing.T) {
+func TestInterruptStopsControllerBeforeClaimRelease(t *testing.T) {
 	runner := &interruptBlockingRunner{
 		started: make(chan struct{}),
 		stopped: make(chan struct{}),
 		release: make(chan struct{}),
 	}
 	defer close(runner.release)
-	repo := &clearAfterStopRepository{
+	repo := &releaseAfterStopRepository{
 		Repository: workflowledger.NewMemoryRepository(),
 		stopped:    runner.stopped,
 	}
@@ -302,20 +304,22 @@ func TestInterruptStopsControllerBeforeClearingClaim(t *testing.T) {
 	if err := engine.Interrupt(started.RunID); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
-	if repo.clearedBeforeStop.Load() {
-		t.Fatal("Interrupt cleared the run claim before it stopped the active controller")
+	if repo.releasedBeforeStop.Load() {
+		t.Fatal("Interrupt released the run claim before it stopped the active controller")
 	}
 }
 
 // TestInterruptBlocksResumeDuringClaimCleanup keeps a new controller from
-// taking over the claim while Interrupt clears the old controller claim.
+// starting while Interrupt is still in progress: the interrupting gate is armed
+// for the whole cleanup, so a concurrent force-resume is refused until
+// Interrupt finishes.
 func TestInterruptBlocksResumeDuringClaimCleanup(t *testing.T) {
 	runner := &interruptBlockingRunner{
 		started: make(chan struct{}),
 		stopped: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	repo := &clearGateRepository{
+	repo := &releaseGateRepository{
 		Repository: workflowledger.NewMemoryRepository(),
 		entered:    make(chan struct{}),
 		release:    make(chan struct{}),
@@ -411,5 +415,74 @@ func TestInterruptRefusesForeignActiveRun(t *testing.T) {
 	}
 	if err := owner.Interrupt(started.RunID); err != nil {
 		t.Fatalf("owner Interrupt: %v", err)
+	}
+}
+
+// foreignClaimOnReleaseRepository simulates a foreign resume winning the run
+// claim in the release-to-cleanup window: immediately after the interrupted
+// controller's holder-scoped release frees the claim, it acquires the claim for
+// a foreign holder, exactly the interleaving a concurrent resume on another
+// host can hit between the controller's ReleaseRun and Interrupt's cleanup.
+type foreignClaimOnReleaseRepository struct {
+	workflowledger.Repository
+	foreignClaimed bool
+}
+
+func (r *foreignClaimOnReleaseRepository) ReleaseRun(ctx context.Context, runID, holder string) error {
+	err := r.Repository.ReleaseRun(ctx, runID, holder)
+	// Only simulate the takeover once, and only when this release actually
+	// freed the claim (the controller's own holder-scoped release).
+	if err == nil && !r.foreignClaimed {
+		r.foreignClaimed = true
+		if cerr := r.Repository.ClaimRun(ctx, runID, "foreign-resumer"); cerr != nil {
+			panic("foreign claim after controller release: " + cerr.Error())
+		}
+	}
+	return err
+}
+
+// TestInterruptDoesNotStripForeignResumeClaim: Interrupt's claim cleanup must
+// release by the interrupted controller's OWN holder, never delete the claim
+// row blind. Regression: Interrupt called ClearRunClaim after <-active.done,
+// so a claim acquired by a foreign resume in the release-to-cleanup window was
+// stripped and the foreign executor's fenced writes failed (or a third
+// executor double-ran the step).
+func TestInterruptDoesNotStripForeignResumeClaim(t *testing.T) {
+	runner := &interruptBlockingRunner{
+		started: make(chan struct{}),
+		stopped: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(runner.release)
+	base := workflowledger.NewMemoryRepository()
+	repo := &foreignClaimOnReleaseRepository{Repository: base}
+	engine := &localengine.Engine{
+		WorkspaceRoot: writeTwoStepWorkspace(t),
+		Repo:          repo,
+		NewRunner: func() controller.AgentStepRunner {
+			return runner
+		},
+	}
+	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+		Workflow: "two-step",
+		Inputs:   map[string]any{"task": "x"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("step did not start")
+	}
+	if err := engine.Interrupt(started.RunID); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if !repo.foreignClaimed {
+		t.Fatal("test setup did not reach the foreign-claim window")
+	}
+	// The foreign resume's claim must survive Interrupt's cleanup.
+	if err := base.ClaimRun(context.Background(), started.RunID, "third-executor"); !errors.Is(err, workflowledger.ErrClaimHeld) {
+		t.Fatalf("claim after Interrupt = %v, want ErrClaimHeld (the foreign claim must survive)", err)
 	}
 }

@@ -280,7 +280,7 @@ func (d *Dispatcher) register(k Kind, name string, h Handler, ceiling int) error
 	d.policy.Allow[k][name] = true
 	return nil
 }
-func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
+func (d *Dispatcher) Invoke(ctx context.Context, req Request) (result Result) {
 	started := time.Now()
 	if req.ID == "" {
 		sum := sha256.Sum256(append([]byte(req.Name), req.Input...))
@@ -294,16 +294,17 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	if err := d.validateRequest(req); err != nil {
 		return d.preReservationFailure(req, meta, started, err)
 	}
-	if req.ParentID == req.ID {
+	// A call whose ID equals its own parent's ID would register as a waiter on
+	// the parent's marker and self-deadlock; reject it pre-reservation. A
+	// SkipDedup call never touches that state, so it cannot deadlock and must
+	// execute (read-class tool calls legitimately reuse the enclosing ID).
+	if req.ParentID == req.ID && !req.SkipDedup {
 		return d.preReservationFailure(req, meta, started, fmt.Errorf("duplicate or recursive invocation %q", req.ID))
 	}
 	res, err := d.reserve(req, meta.InputHash)
 	if err != nil {
 		return d.preReservationFailure(req, meta, started, err)
 	}
-	// From here the invocation holds a real reservation. Only the owner (a
-	// non-dup reservation) may complete its flight entry or write the dedup
-	// bucket; dups return the owner's recorded result instead.
 	finish := func(err error) Result {
 		r := d.terminalFailure(req, meta, started, err)
 		if !res.dup {
@@ -311,12 +312,12 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 		}
 		return r
 	}
-	// Only the invocation that reserved the ID owns the active marker. A
-	// duplicate waiter may cancel while the owner is still running; it must not
-	// make the ID look available to a third caller. A SkipDedup call never
-	// registered the marker and must not delete it.
+	// The owner removes its active marker and drains late ID-keyed waiters in
+	// one critical section (releaseIDKeyed); dups and SkipDedup never set it.
+	// The closure (not a direct call) is required so the named return `result`
+	// is read at defer RUN time, not when the defer statement executes.
 	if !res.dup && !req.SkipDedup {
-		defer func() { d.mu.Lock(); delete(d.active, req.ID); d.mu.Unlock() }()
+		defer func() { d.releaseIDKeyed(req, result) }()
 	}
 	if res.dup {
 		return waitDuplicateResult(ctx, req, res.waiter)
@@ -327,28 +328,19 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	if !res.allowed {
 		return finish(fmt.Errorf("permission denied for %q", req.Name))
 	}
-	// The gate sits after reserve and before execute. A block therefore happens
-	// with the budget already charged and the active marker installed; the
-	// deferred cleanup above still runs and blockedResult still delivers to
-	// waiters, so a blocked call cannot wedge a duplicate waiter.
 	verdict := d.preInvoke(ctx, req)
 	if verdict.Denied {
 		blocked := d.blockedResult(req, meta, started, verdict.Reason)
 		blocked.HookRuns = verdict.Runs
-		// Resolve any in-flight duplicate waiters with the block, but do NOT
-		// record it in the turn bucket: an admission verdict can legitimately
-		// change mid-turn and the re-issued call must be re-evaluated.
+		// Resolve in-flight waiters with the block, but do NOT record it: an
+		// admission verdict can change mid-turn and must be re-evaluated.
 		d.mu.Lock()
 		d.completeTurnInFlight(req, blocked)
 		d.mu.Unlock()
-		return blocked
+		result = blocked
+		return
 	}
-	result := d.execute(ctx, req, res, started, meta, fail)
-	// An allowing PreToolUse hook can still have advisory text - that is what
-	// additionalContext is for - and it is merged with the reactive event's
-	// rather than replaced by it. Reading the verdict's Context and then
-	// discarding it is what this layer used to do, which made the field a
-	// documented feature that reached nothing.
+	result = d.execute(ctx, req, res, started, meta, fail)
 	post := d.postInvoke(ctx, req, result)
 	result.HookContext = boundHookContext(joinHookContext(verdict.Context, post.Context))
 	result.HookRuns = append(verdict.Runs, post.Runs...)

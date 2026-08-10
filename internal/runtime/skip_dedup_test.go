@@ -212,14 +212,34 @@ func TestDispatcherSkipDedupSkipsInFlightCollapse(t *testing.T) {
 	close(ctrlRelease)
 	cr1 := <-ctrlResults
 	cr2 := <-ctrlResults
-	if cr1.Err != nil || cr2.Err != nil {
-		t.Fatalf("control results errored: cr1=%+v cr2=%+v", cr1, cr2)
+	assertSkipDedupControlCollapse(t, cr1, cr2, &ctrlCalls)
+}
+
+// assertSkipDedupControlCollapse verifies the non-SkipDedup control: exactly
+// one call executed and the other received the owner's result as duplicate.
+// The two results arrive in nondeterministic order, so they are counted, not
+// ordered.
+func assertSkipDedupControlCollapse(t *testing.T, cr1, cr2 Result, calls *atomic.Int32) {
+	t.Helper()
+	var completed, duplicates int
+	for _, r := range []Result{cr1, cr2} {
+		if r.Err != nil {
+			t.Fatalf("control results errored: %+v", r)
+		}
+		switch r.Metadata.Status {
+		case "completed":
+			completed++
+		case "duplicate":
+			duplicates++
+		default:
+			t.Fatalf("control result status = %q, want completed or duplicate", r.Metadata.Status)
+		}
 	}
-	if got := ctrlCalls.Load(); got != 1 {
+	if completed != 1 || duplicates != 1 {
+		t.Fatalf("control results: completed=%d duplicate=%d, want exactly one of each", completed, duplicates)
+	}
+	if got := calls.Load(); got != 1 {
 		t.Fatalf("control concurrent handler executed %d times, want exactly 1", got)
-	}
-	if cr2.Metadata.Status != "duplicate" {
-		t.Fatalf("control concurrent second status = %q, want duplicate", cr2.Metadata.Status)
 	}
 }
 

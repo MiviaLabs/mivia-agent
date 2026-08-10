@@ -286,6 +286,78 @@ func TestSpawnRefusesClaimedAbandonedKey(t *testing.T) {
 	}
 }
 
+// TestSpawnReclaimsExpiredClaimedAbandonedKeyAndExecutesWork pins the DC-4
+// crash-window recovery: a creator that crashed between ClaimRun and the first
+// CreateTask leaves an old 'created + zero tasks' run with a durable claim that
+// no live process ever refreshes. Once that claim is older than the claim
+// lease, the lease-aware reclaim (claimRun -> TakeoverExpiredRunClaim) takes it
+// over and reclaims the run, so Spawn converges and executes the keyed work
+// exactly once instead of reporting ErrIdempotencyKeyContended forever.
+func TestSpawnReclaimsExpiredClaimedAbandonedKeyAndExecutesWork(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	// The run must be OLDER than the abandoned-run grace period for the
+	// caller-side gate to consider it abandoned.
+	now := time.Now().Add(-2 * abandonedRunGracePeriod)
+	seedAbandonedRun(t, store, now)
+	// Crash between ClaimRun and the first CreateTask: the dead process's
+	// claim row survives on the abandoned run. Seeded at the STORE level so
+	// the seed repository's Close does not release it.
+	if err := store.ClaimRun(ctx, "run-abandoned", "dead-process-holder"); err != nil {
+		t.Fatalf("seed stale claim: %v", err)
+	}
+
+	fresh := ledger.NewStorageLedgerRepository(store)
+	fresh.SetTimeSource(func() time.Time { return now })
+
+	invoked := make(chan struct{}, 1)
+	d := runtime.New(runtime.Policy{})
+	if err := d.Register(runtime.Subagent, "worker", invoker(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		invoked <- struct{}{}
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
+	// The dead holder never heartbeats, so its claim is expired at any lease
+	// boundary: the lease-aware reclaim must take it over.
+	c.claimLease = 0
+
+	h, err := c.Spawn(ctx, []subagents.Task{idempotencyTask()}, "K")
+	if err != nil {
+		t.Fatalf("Spawn against expired-claim abandoned keyed run: %v; want the claim taken over and the work executed", err)
+	}
+	if h.runID == "run-abandoned" {
+		t.Fatalf("Spawn resolved to the abandoned run %q; want a fresh run under the same key", h.runID)
+	}
+	joinCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	res, err := c.Join(joinCtx, h)
+	if err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	if res.Err != nil {
+		t.Fatalf("run result error: %v", res.Err)
+	}
+	select {
+	case <-invoked:
+	default:
+		t.Fatal("worker was never invoked: the expired-claim abandoned-key spawn did not dispatch its task")
+	}
+	snap, err := c.Inspect(ctx, h)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if snap.Status != ledger.RunStatusCompleted {
+		t.Fatalf("run status = %q, want %q", snap.Status, ledger.RunStatusCompleted)
+	}
+	assertKeyResolvesTo(t, fresh, "K", h.runID)
+}
+
 // TestReclaimClaimsOldAbandonedRunDespiteForeignClaim pins the C4 amendment at
 // the recoverByIdempotencyKey boundary: an OLD 'created + zero tasks' run whose
 // claim is held by ANY other holder is provably abandoned - the claim row can
@@ -466,15 +538,34 @@ func TestReclaimSkipsClaimedLiveRun(t *testing.T) {
 	}
 }
 
-func TestReclaimRefusesExpiredForeignClaim(t *testing.T) {
+// TestReclaimTakesOverExpiredForeignClaim pins the lease-aware reclaim: a
+// claim whose lease has expired belongs to a dead holder (a creator that
+// crashed between ClaimRun and the first CreateTask never heartbeats), so the
+// takeover path reclaims the run instead of refusing forever. claimLease=0
+// means "any claim is expired", the boundary the refusal must defer to.
+func TestReclaimTakesOverExpiredForeignClaim(t *testing.T) {
 	c, runID := reclaimGuardCoordinator(t, time.Now().Add(-2*abandonedRunGracePeriod), "other-holder")
 	c.claimLease = 0
 
+	if !c.reclaimAbandonedRun(runID) {
+		t.Fatal("reclaim refused an expired foreign claim; the lease takeover must reclaim it")
+	}
+	if _, err := c.repo.GetRun(context.Background(), runID); !errors.Is(err, ledger.ErrNotFound) {
+		t.Fatalf("GetRun after reclaimed expired claim = %v, want ErrNotFound", err)
+	}
+}
+
+// TestReclaimRefusesFreshForeignClaim pins the live-owner guard: a fresh claim
+// within its lease belongs to a live holder and is never cleared, so the run is
+// left untouched and the key stays contended for the caller to retry.
+func TestReclaimRefusesFreshForeignClaim(t *testing.T) {
+	c, runID := reclaimGuardCoordinator(t, time.Now().Add(-2*abandonedRunGracePeriod), "other-holder")
+
 	if c.reclaimAbandonedRun(runID) {
-		t.Fatal("reclaim deleted a run with a foreign expired claim")
+		t.Fatal("reclaim deleted a run with a fresh foreign claim; a live holder must be left alone")
 	}
 	if _, err := c.repo.GetRun(context.Background(), runID); err != nil {
-		t.Fatalf("GetRun after failed reclaim: %v", err)
+		t.Fatalf("GetRun after refused reclaim: %v", err)
 	}
 }
 

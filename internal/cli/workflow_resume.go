@@ -207,8 +207,17 @@ func prepareWorkflowResumeExecution(ctx context.Context, built workflowControlle
 }
 
 // claimWorkflowResumeHandoff acquires the final controller claim without an
-// unowned clear-and-claim window. It takes over only an expired claim.
-func claimWorkflowResumeHandoff(ctx context.Context, repo workflowledger.Repository, runID, holder string, _ bool) error {
+// unowned clear-and-claim window. --force is the operator override for crash
+// recovery: it replaces the claim atomically (TakeoverRunClaim), so a fresh
+// claim left by a killed executor does not brick resume until lease expiry. A
+// forced takeover is still fenced: the displaced holder's fenced writes fail
+// with ErrClaimHeld after the takeover. Without force, only an expired claim
+// is taken over; a fresh claim within its lease belongs to a live holder and
+// is refused.
+func claimWorkflowResumeHandoff(ctx context.Context, repo workflowledger.Repository, runID, holder string, force bool) error {
+	if force {
+		return repo.TakeoverRunClaim(ctx, runID, holder)
+	}
 	err := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
 	if errors.Is(err, workflowledger.ErrClaimNotHeld) {
 		err = repo.ClaimRun(ctx, runID, holder)

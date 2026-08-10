@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -36,7 +37,10 @@ func TestWorkflowForceResumeStopsBeforeClaimWorkWhenLockIsHeld(t *testing.T) {
 	}
 }
 
-func TestWorkflowForceResumeRefusesFreshClaim(t *testing.T) {
+// TestWorkflowResumeWithoutForceRefusesFreshClaim: without --force, a fresh
+// claim within its lease belongs to a live executor and the resume handoff is
+// refused (the lease-bounded takeover path).
+func TestWorkflowResumeWithoutForceRefusesFreshClaim(t *testing.T) {
 	ctx := context.Background()
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
@@ -47,8 +51,33 @@ func TestWorkflowForceResumeRefusesFreshClaim(t *testing.T) {
 	if err := repo.ClaimRun(ctx, runID, "live-owner"); err != nil {
 		t.Fatal(err)
 	}
-	if err := claimWorkflowResumeHandoff(ctx, repo, runID, "resumer", true); err == nil || !strings.Contains(err.Error(), "still active") {
-		t.Fatalf("forced resume of a fresh claim = %v, want active-claim refusal", err)
+	if err := claimWorkflowResumeHandoff(ctx, repo, runID, "resumer", false); err == nil || !strings.Contains(err.Error(), "still active") {
+		t.Fatalf("resume without force of a fresh claim = %v, want active-claim refusal", err)
+	}
+}
+
+// TestWorkflowForceResumeTakesOverFreshClaim: --force is the operator override
+// for crash recovery - a fresh claim left by a killed executor is taken over
+// unconditionally so resume can recover the run immediately. Regression: the
+// branch dropped the override and bricked recovery until lease expiry while the
+// refusal message still advertised --force as the remedy.
+func TestWorkflowForceResumeTakesOverFreshClaim(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	const runID = "wfr-force-fresh"
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusPending}, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClaimRun(ctx, runID, "live-owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := claimWorkflowResumeHandoff(ctx, repo, runID, "resumer", true); err != nil {
+		t.Fatalf("forced resume of a fresh claim = %v, want takeover", err)
+	}
+	// The claim now belongs to the resumer; a third party is still fenced.
+	if err := repo.ClaimRun(ctx, runID, "third"); !errors.Is(err, workflowledger.ErrClaimHeld) {
+		t.Fatalf("claim after forced takeover = %v, want ErrClaimHeld", err)
 	}
 }
 

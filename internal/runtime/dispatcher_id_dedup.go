@@ -23,3 +23,15 @@ func (d *Dispatcher) deliverIDWaitersLocked(id string, result Result) {
 	delete(d.waiters, id)
 	deliverWaiters(waiters, result)
 }
+
+// releaseIDKeyed removes the owner's active marker and drains every ID-keyed
+// waiter that registered after the owner's terminal delivery, in ONE critical
+// section. A waiter that saw the marker is answered with the owner's final
+// result; a caller that sees no marker becomes a new owner instead. The caller
+// must be the owner reservation (non-dup, non-SkipDedup).
+func (d *Dispatcher) releaseIDKeyed(req Request, result Result) {
+	d.mu.Lock()
+	delete(d.active, req.ID)
+	d.deliverIDWaitersLocked(req.ID, result)
+	d.mu.Unlock()
+}

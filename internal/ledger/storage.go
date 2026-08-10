@@ -442,6 +442,13 @@ func (s *StorageLedgerRepository) DeleteRun(ctx context.Context, runID string) e
 		return err
 	}
 	s.mu.Lock()
+	// Mirror the store's claim-row removal (AppendAndDeleteRun deleted it):
+	// without this, the stale fenced claim in claimedRuns forces a later
+	// same-ID recreation's first append onto the fenced path with a dead
+	// claim, failing with ErrClaimHeld forever on this instance. A recreated
+	// run is unclaimed; if another instance claims it, the unfenced append
+	// still fails closed because the claim row exists.
+	delete(s.claimedRuns, runID)
 	delete(s.applied, runID)
 	delete(s.allocated, runID)
 	for key := range s.inflight {
