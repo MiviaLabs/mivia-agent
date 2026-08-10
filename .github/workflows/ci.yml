@@ -122,6 +122,18 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
+      - name: Prepare isolated test home
+        run: |
+          ci_root="$(mktemp -d /private/tmp/mivia-ci.XXXXXX)"
+          test_home="$ci_root/home"
+          test_tmp="$ci_root/tmp"
+          echo "HOME=$test_home" >> "$GITHUB_ENV"
+          echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
+          echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"
+          module_cache="$(go env GOMODCACHE)"
+          mkdir -p "$test_home" "$test_tmp" "$test_home/.mivia" "$test_home/go/pkg"
+          : > "$test_home/.mivia/.env"
+          ln -s "$module_cache" "$test_home/go/pkg/mod"
       - name: Test, vet, and build
         run: |
           go test ./... -count=1

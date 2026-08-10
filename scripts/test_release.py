@@ -87,6 +87,7 @@ def main() -> None:
 
     if not powershell_test_path.is_file():
         raise AssertionError(f"{powershell_test_path}: missing PowerShell installer test")
+    macos_ci = ci.split("  verify-macos:", 1)[1].split("\n  verify-windows:", 1)[0]
     for fragment in (
         "branches: [master]",
         "if: github.event_name == 'pull_request'",
@@ -98,6 +99,16 @@ def main() -> None:
         "scripts/test_installers.ps1",
     ):
         require(ci, fragment, ci_path)
+    for fragment in (
+        "Prepare isolated test home",
+        'ci_root="$(mktemp -d /private/tmp/mivia-ci.XXXXXX)"',
+        'echo "HOME=$test_home" >> "$GITHUB_ENV"',
+        'echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"',
+        'echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"',
+        ': > "$test_home/.mivia/.env"',
+        'ln -s "$module_cache" "$test_home/go/pkg/mod"',
+    ):
+        require(macos_ci, fragment, ci_path)
 
     result = subprocess.run(
         ["bash", str(release_path)], cwd=ROOT, capture_output=True, text=True
