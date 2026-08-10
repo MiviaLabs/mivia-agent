@@ -22,7 +22,7 @@ jobs:
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
       - name: Install workflow verifier sandbox
-        run: sudo apt-get update && sudo apt-get install --yes bubblewrap
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap ripgrep
       # bwrap --unshare-all needs unprivileged user namespaces; GitHub's
       # Ubuntu 24.04 image restricts them via AppArmor, which makes every
       # sandboxed command die with "bwrap: Creating new namespace failed".

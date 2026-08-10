@@ -22,14 +22,18 @@ def main() -> None:
         print("FAIL: no test references found in .mivia/invariants.md")
         sys.exit(1)
 
-    result = subprocess.run(
-        ["rg", "-n", "^func Test", "-g", "*_test.go"],
-        capture_output=True, text=True, cwd=ROOT,
-    )
-    existing = set(re.findall(r"func (Test\w+)", result.stdout))
-    # rg is a fast path only: Homebrew's ripgrep on macOS can return zero
-    # matches for a tree full of tests, so an empty result falls back to a
-    # stdlib walk instead of reporting the tests as missing.
+    try:
+        result = subprocess.run(
+            ["rg", "-n", "^func Test", "-g", "*_test.go"],
+            capture_output=True, text=True, cwd=ROOT,
+        )
+        existing = set(re.findall(r"func (Test\w+)", result.stdout))
+    except (OSError, ValueError):
+        existing = set()
+    # rg is a fast path only: it may be absent (not every runner ships it) or
+    # return zero matches for a tree full of tests (Homebrew's ripgrep on
+    # macOS), so any non-positive result falls back to a stdlib walk instead
+    # of reporting the tests as missing.
     if not existing:
         existing = set()
         skip = {".git", "testdata", "node_modules", "vendor"}
@@ -37,11 +41,6 @@ def main() -> None:
             if skip & set(path.relative_to(ROOT).parts):
                 continue
             existing.update(re.findall(r"(?m)^func (Test\w+)", path.read_text(encoding="utf-8")))
-    refs_with_pkg = {}
-    for file, funcs in re.findall(
-        r"^(.+?):func (Test\w+)", result.stdout, re.MULTILINE
-    ):
-        pass
 
     missing = {t for t in refs if t not in existing}
     found = refs - missing
