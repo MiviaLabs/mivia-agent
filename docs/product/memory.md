@@ -14,9 +14,13 @@ A memory has one of two scopes.
 | `project` | This workspace only | `<workspace>/.mivia/memory.db` by default |
 | `org` | Every project of the org on this machine | `~/.mivia/memory/org.db` (user level) |
 
-Project memory never leaks into other projects. Org memory is shared across
-the org's projects, so one agent can record a solution in one repo and another
-agent finds it in the next repo.
+The default project path is inside the current workspace. This keeps default
+project memory separate from other projects. A custom `store_path` can point
+outside the workspace, and SQLite follows symlinks. Treat a custom path as
+shared data and verify its target before use.
+
+Org memory is shared across the org's projects, so one agent can record a
+solution in one repo and another agent finds it in the next repo.
 
 ## Tools
 
@@ -102,10 +106,14 @@ the main file:
 PRAGMA wal_checkpoint(TRUNCATE);
 ```
 
-Since v0.15 the store runs this checkpoint automatically after every save and
-on close, so the main database file is always current and safe to commit at
-any time; the command above is only needed for files written by older
-versions. The transient `-wal` and `-shm` sidecar files are not committed.
+The store attempts this checkpoint after every save and on close. A concurrent
+SQLite reader can keep the write-ahead log active. Before you commit a memory
+database, stop other mivia processes, run the checkpoint, and confirm that no
+`-wal` or `-shm` sidecar contains newer data. Do not commit those sidecar files.
+
+Project memory databases can contain proprietary information. The project
+database path does not provide a cross-user privacy boundary. Protect the file
+and its parent directory with local filesystem permissions.
 
 Two automated controls protect the committed artifact: `scripts/secret_scan.py`
 decodes the database and scans its text columns on every commit (staged,

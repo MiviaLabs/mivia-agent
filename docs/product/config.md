@@ -10,12 +10,13 @@ mivia doctor   # confirms mivia can find the key; never prints it
 mivia chat
 ```
 
-Default provider: DeepSeek, model `deepseek-v4-flash`. No further config
-needed for that path.
+Default provider: DeepSeek, model `deepseek-v4-flash`. Run `mivia setup` or
+copy the example settings file before `doctor` or `chat`; an API key alone
+does not create the required model catalog.
 
 ## Where mivia looks for settings
 
-mivia reads the first settings file it finds, in this order:
+mivia reads the first existing settings file it finds, in this order:
 
 1. The file named by `$MIVIA_CONFIG`.
 2. `./.mivia/mivia.toml` (the project folder).
@@ -28,7 +29,7 @@ API keys live in an env file (`NAME=value` lines) or in the process environment.
 1. `./.env`
 2. `~/.mivia/.env`
 
-Process environment variables always win over the env file.
+Non-empty process environment variables win over values in the env file.
 
 The workspace `.env` stays beside the project files at `./.env`. Tools such as direnv and Docker Compose already use that location. Only the user-level env file lives in `~/.mivia/`.
 
@@ -86,46 +87,21 @@ api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
 
-## Any OpenAI-compatible provider
+## Provider support
 
-mivia works with any provider that uses the OpenAI-compatible API. Examples include OpenAI, xAI (Grok), and Kimi (Moonshot AI). Add a `[providers.<name>]` block in the same shape.
-
-```toml
-[providers.openai]
-models = [
-  { name = "gpt-4o-mini", context_window_tokens = 128000 },
-  { name = "gpt-4o", context_window_tokens = 128000 },
-]
-default_model = "gpt-4o-mini"
-api_key_env = "OPENAI_API_KEY"
-base_url = "https://api.openai.com/v1"
-```
-
-```toml
-[providers.xai]
-models = [{ name = "grok-code-fast-1", context_window_tokens = 256000 }]
-default_model = "grok-code-fast-1"
-api_key_env = "XAI_API_KEY"
-base_url = "https://api.x.ai/v1"
-```
-
-```toml
-[providers.kimi]
-models = [{ name = "kimi-k3", context_window_tokens = 1048576 }]
-default_model = "kimi-k3"
-api_key_env = "MOONSHOT_API_KEY"
-base_url = "https://api.moonshot.ai/v1"
-```
+mivia currently supports `deepseek`, `openrouter`, and `zai`. Do not add an
+arbitrary OpenAI-compatible provider name. The provider registry rejects names
+that it does not support.
 
 z.ai serves two OpenAI-compatible endpoints. A key works on exactly one of them. Pay-as-you-go keys use `https://api.z.ai/api/paas/v4`. GLM Coding Plan keys use `https://api.z.ai/api/coding/paas/v4`. A Coding Plan key on the pay-as-you-go endpoint fails every request with code `1113`. mivia reports the code and what it means. It never forwards z.ai's own error text.
 
 ## Explicit model catalog
 
-Every provider must declare a non-empty `models` list. Each entry has a provider-local `name`, a `context_window_tokens` value, and an optional positive `max_output_tokens` value. The list is the complete catalog. `--model`, `/model`, the TUI picker, and resumed sessions may select only its entries. `default_model` sets the startup default and must be in `models`. If it is not, the first entry is used.
+Every provider must declare a non-empty `models` list. Each entry has a provider-local `name`, a `context_window_tokens` value, and an optional positive `max_output_tokens` value. The list is the complete catalog. `--model`, `/model`, the TUI picker, and resumed sessions may select only its entries. `default_model` sets the startup default and must be in `models`. An invalid value is rejected.
 
 An empty list, a missing list, or a remote model registry is invalid. mivia does not discover models remotely and does not accept arbitrary model names. Model IDs stay intact, including slash-containing IDs such as `openai/gpt-4o-mini`. Duplicate IDs are allowed across providers but not within one provider. Providers without credentials stay visible in the catalog but are disabled for selection.
 
-`context_window_tokens` is the model's physical prompt-plus-completion limit. `max_output_tokens` is the response ceiling and must stay below the context window. The usable prompt budget keeps the tighter of this value and `[chat].max_tokens`, further limited by `max_prompt_tokens` when set. `config show` and `doctor` show each catalog entry as `provider/model:context_window_tokens` and the active usable prompt budget.
+`context_window_tokens` is the model's physical prompt-plus-completion limit. `max_output_tokens` is the response ceiling and must stay below the context window. The usable prompt budget keeps the tighter of this value and `[chat].max_tokens`, further limited by `max_prompt_tokens` when set. `config show` shows each catalog entry as `provider/model:context_window_tokens`.
 
 ```bash
 DEEPSEEK_API_KEY=sk-REPLACE-ME
@@ -135,7 +111,7 @@ ZAI_API_KEY=sk-REPLACE-ME
 
 ## Installed binary
 
-Create `~/.mivia/mivia.toml` and, if you want, `~/.mivia/.env` with the settings above. Leave the root-level `env_file` unset to use the default `~/.mivia/.env`. Or set the API key in the process environment and run with the built-in defaults. There is no `config init` command.
+Create `~/.mivia/mivia.toml` and, if you want, `~/.mivia/.env` with the settings above. Leave the root-level `env_file` unset to use the default `~/.mivia/.env`. There is no `config init` command.
 
 ## Worktree branches
 
@@ -160,12 +136,13 @@ Named agents are separate TOML files, one definition per file. User-owned defini
 
 ## MCP servers
 
-Configure Model Context Protocol (MCP) servers in `~/.mivia/mivia.toml` or in the project `.mivia/mivia.toml`. A project server is explicit project authority. It can start a local process or call the configured HTTP endpoint.
+Configure Model Context Protocol (MCP) servers in `~/.mivia/mivia.toml` or in the project `.mivia/mivia.toml`. A project server can start a local process or call the configured HTTP endpoint. Review it before use.
 
 When user and project files define the same server ID, the project definition replaces the complete user definition. mivia does not merge command arguments, environment names, URLs, or headers between definitions.
 
 ```toml
 [mcp]
+# MCP is disabled unless this is true.
 enabled = true
 
 [[mcp.servers]]
@@ -183,11 +160,19 @@ url = "https://mcp.example.test/mcp"
 headers = [{ name = "Authorization", value_env = "ISSUES_MCP_TOKEN" }]
 ```
 
-The configuration stores only environment variable names. It never stores secret values. A global server is available to an agent that omits `mcp_servers`. A named agent can set `mcp_servers = []` to deny all MCP servers, or list exact server IDs. Workspace agents can select only global servers. Child agents can only narrow their parent server list.
+The configuration stores only environment variable names. It never stores secret values. A global server is available to a root agent that omits `mcp_servers`. A named agent can set `mcp_servers = []` to deny all MCP servers, or list exact server IDs. Workspace agents can select only global servers. A child that omits `mcp_servers` inherits its parent server list; it can only narrow that list.
 
-An invalid server definition refuses configuration load. An invalid server definition has a bad ID, unsafe transport fields, or oversized bounds. A server that is unreachable or fails discovery at session start fails session startup. The error message names the server. MCP tools are never silently absent. A session either has a server's tools or reports the failure. This is deliberate fail-closed behavior. It is not configurable.
+An invalid server definition refuses configuration load. An invalid server definition has a bad ID, unsafe transport fields, or oversized bounds. Stdio commands must use absolute paths. HTTP URLs and transport fields must pass the configured validation rules. A server is connected lazily when an allowed agent selects it. If connection or discovery fails, that selection fails and names the server. MCP tools are never silently absent. This is deliberate fail-closed behavior. It is not configurable.
 
-Every MCP tool description in the model-facing tool list always states the remote tool name and the server ID. The description is never empty. If a server provides no description, the description is the constant sentence 'The server provides no description.' The composed description is scrubbed of control and format characters. The composed description is redacted under the configured [privacy] redaction patterns. The composed description is bounded by max_tool_description_bytes. Because the system adds provenance, a server description that fits the configured cap alone may now be refused. When the composed text exceeds the cap, the system refuses the description. This is deliberate tightening. The cap always bounds what the model sees.
+`startup_timeout_seconds` bounds initial MCP connection work. Each server's
+`timeout_seconds` bounds discovery and calls. Server count, tool count,
+description size, schema size, and result size have configured limits. Stdio
+passes only named environment variables that exist. HTTP headers are omitted
+when their named environment variables do not exist. MCP exposes text result
+content only. It bounds result content and refuses or truncates content when
+the configured limit requires it. Remote error details are not passed through.
+
+Every MCP tool description sent to the model states the remote tool name and the server ID. The description is never empty. If a server provides no description, mivia uses the sentence 'The server provides no description.' mivia removes control and format characters, applies the configured [privacy] redaction patterns, and bounds the description by `max_tool_description_bytes`. A description that exceeds the cap is refused.
 
 ## Tool safety policy
 
@@ -214,7 +199,7 @@ That state includes each task's full input payload, recorded for recovery suppor
 Two consequences worth knowing before you enable it:
 
 - Task inputs and results are written unredacted at rest, even when `[privacy]` patterns are configured. Treat the chosen store location as sensitive workspace data. Do not put secrets in task prompts.
-- Authority is deliberately not stored. Permissions, scopes, roles, and caller identity are never written to the ledger and never restored from it. A resumed run runs under the identity and permissions of whoever resumes it. Editing the store file cannot grant privilege. Resource limits (timeout, budget, depth) are restored but clamped to your current configuration.
+- Permissions, scopes, roles, and caller identity are deliberately not stored. They are never written to the run record or restored from it. A resumed run uses the permissions of whoever resumes it. Editing the store file cannot grant new permissions. Resource limits (timeout, budget, depth) are restored but clamped to your current configuration.
 
 ## Interactive turn ceiling
 

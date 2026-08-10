@@ -48,7 +48,7 @@ mivia can read, search, and edit files with these tools:
 
 `run_command` runs one program with a fixed argv list. There is no shell: no `;`, `&&`, or `$(...)` expansion.
 
-`run_command` is disabled until configuration or a CLI override supplies a program allowlist. The recommended configuration is broad and includes shells and network clients. Trim it to the least authority your workspace needs. Child-process environment variables are also controlled by an explicit allowlist. See [Configuration](config.md) for the persistent policy.
+`run_command` is disabled until configuration or a CLI override supplies a program allowlist. The recommended configuration is broad and includes shells and network clients. Trim it to the least permission your workspace needs. Child-process environment variables are also controlled by an explicit allowlist. See [Configuration](config.md) for the persistent policy.
 
 ## Web research tools
 
@@ -58,13 +58,13 @@ mivia can read, search, and edit files with these tools:
 | `fetch_url` | Fetch and read a public web page; private and internal addresses are blocked |
 | `extract` | Extract structured page content with Tavily; requires `TAVILY_API_KEY` |
 
-The complete tool catalog is `read_file`, `list_dir`, `grep`, `glob`, `write_file`, `search_replace`, `multi_edit`, `run_command`, `search`, `fetch_url`, `extract`, `find_references`, `list_symbols`, `go_to_definition`, and `read_skill_resource`.
+The built-in tool catalog is `read_file`, `list_dir`, `grep`, `glob`, `write_file`, `search_replace`, `multi_edit`, `run_command`, `search`, `fetch_url`, `extract`, `find_references`, `list_symbols`, `go_to_definition`, and `read_skill_resource`. When memory is enabled, `memory_save` and `memory_search` are also available. Configured MCP servers add scoped remote tools after discovery. Workflow tools are a separate surface; see the [Workflow guide](workflows-guide.md).
 
-Session-control and ledger tools are separate surfaces. They are not valid agent-file allowlist names.
+Session tools and run-record tools are separate surfaces. They are not valid agent-file allowlist names.
 
 `search` and `extract` never truncate what they fetch. Their output is bounded by `[tools] max_tavily_response_bytes` (default 4 MiB). A result over the bound is refused with an explicit error. It is never cut short and never quietly replaced by fallback results. See [Configuration](config.md).
 
-Tool names, descriptions, and schemas are project- and language-generic. mivia is a host coding agent for any workspace.
+Tool names, descriptions, and schemas are project- and language-generic. mivia works as a coding agent in any workspace.
 
 ## Deferred tool loading
 
@@ -72,7 +72,7 @@ Every advertised tool costs schema bytes on every request, whether the model use
 
 - Unset is the default and is fully inert. Every authorized tool is core. No `load_tools` tool is registered.
 - Loading takes effect on the model's next turn. The current turn's tool list was already sent to the provider.
-- Loading never widens authority. The core list and every `load_tools` request are intersected with the agent's effective tool set.
+- Loading never widens permission. The core list and every `load_tools` request are intersected with the agent's effective tool set.
 - Loaded tools persist for the rest of the agent binding and across save and load of the session. An `/agent` switch resets the surface to the new agent's core tier.
 - `/tools` reports the advertised schema mass and how much the deferred tier is withholding.
 
@@ -96,17 +96,17 @@ Each filename is `<name>.toml`. The in-file `name` must match the lowercase file
 | `disallowed_tools` | Additional denylist applied before the final allowlist |
 | `tools_core` | Always-advertised tool tier; the rest of `tools` is deferred behind `load_tools`. Omitted = inherit `[tools] core` |
 | `skills` | Which skill handlers this agent may invoke |
-| `mcp_servers` | Exact MCP server IDs; omit for global servers, `[]` for none |
+| `mcp_servers` | Exact MCP server IDs; omit for the default server scope, `[]` for none |
 | `model` | Spawned-task model identifier, validated against the active provider catalog; it does not change root model selection |
 | `max_turns` | Omitted = session default; `0` = unlimited; positive = cap |
 | `system_prompt` | Optional user-owned prompt; workspace prompt text is gate-controlled |
 
-When `tools` is omitted, a root definition receives the complete known workspace-tool catalog unless the trusted `require_explicit_tools` guardrail is enabled. `tools = []` is an explicit empty set. `skills` keeps the same distinction: omitted means all trusted skills, while `skills = []` means none. An empty effective toolset is refused by the default `fail_on_empty_toolset` guardrail.
+When `tools` is omitted, a root definition receives the complete known workspace-tool catalog unless the trusted `require_explicit_tools` safety setting is enabled. `tools = []` is an explicit empty set. `skills` keeps the same distinction: omitted means all trusted skills, while `skills = []` means none. An empty effective toolset is refused by the default `fail_on_empty_toolset` safety setting.
 
-`mcp_servers` is a separate server scope. It does not list dynamic MCP tool names. A root agent that omits the field receives enabled servers with `global = true`. A user-owned root can name a non-global server. A workspace root can name only global servers. A child can only keep or narrow its parent list. Set `mcp_servers = []` to deny all MCP tools.
+`mcp_servers` is a separate server scope. It does not list dynamic MCP tool names. A root agent that omits the field receives enabled servers with `global = true`. A user-owned root can name a non-global server. A workspace root can name only global servers. A child that omits the field inherits its parent list; it can only keep or narrow that list. Set `mcp_servers = []` to deny all MCP tools.
 
 ```toml
-# Specialist: only engineering control-surface skills
+# Specialist: only repository engineering skills
 skills = ["bug-audit", "verify-change", "architecture-review"]
 ```
 
@@ -115,9 +115,9 @@ skills = ["bug-audit", "verify-change", "architecture-review"]
 - Skill names are validated against the loaded skill catalog.
 - Workspace agent files always load. The user-owned `load_workspace_config` gate defaults to enabled. It controls only workspace prompt and project-skill surfaces. Set it to `false` to exclude project skills and workspace `[chat]`/`[subagents]` prompts from runtime activation.
 
-Every `dispatch_tasks` and `spawn_agent` task selects a required named `agent` and an optional separate `skill`. The host rejects the call if that task agent's allowlist or tool superset does not allow the skill. Nested agents cannot dispatch tasks; privileged tools are stripped. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
+Every `dispatch_tasks` and `spawn_agent` task selects a required named `agent` and an optional separate `skill`. mivia rejects the call if that agent's tool list does not allow the skill. Nested agents cannot dispatch tasks; extra tools are removed. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
-This task-agent binding is separate from direct user-invoked skill slash handlers and prompt turns.
+The task agent setting is separate from direct user-invoked skill slash handlers and prompt turns.
 
 ## Skills
 
@@ -140,11 +140,11 @@ Pre-built skills include:
 
 mivia can run several sub-agents at the same time. A sub-agent is a helper agent that works on part of a task. The model can spawn them, inspect their progress, block on results, or cancel them.
 
-For the workflow agent tools (`workflow_run`, `workflow_status`, `workflow_events`, `workflow_inspect`, `workflow_list_runs`, `workflow_deliver`, `workflow_cancel`), see the [Workflow Guide](workflows-guide.md).
+For the workflow agent tools (`workflow_run`, `workflow_status`, `workflow_events`, `workflow_inspect`, `workflow_list_runs`, `workflow_deliver`, `workflow_cancel`, `workflow_delete`), see the [Workflow Guide](workflows-guide.md).
 
 ```mermaid
 flowchart LR
-    spawn_agent -->|"tasks (DAG)"| run_handle["run handle"]
+    spawn_agent -->|"tasks with dependencies"| run_handle["run handle"]
     inspect_agents --> run_snapshot["run snapshot"]
     join_run --> block_until["block until done"]
     block_until --> results["results"]
@@ -162,9 +162,9 @@ Look at the arrows out of `spawn_agent`. One run can hold many tasks. `join_run`
 | `delegate` | One sub-agent task, one-shot or multi-step with full tool access |
 | `dispatch_tasks` | Parallel sub-tasks with optional dependencies; always returns one result per task |
 
-The root agent's workspace-tool allowlist is not the complete privilege model. Root coordinator and ledger surfaces remain available by design. Spawned instances lose privileged delegation tools. Orchestration tools are stripped at the boundary. `run_command` has a separate program and environment allowlist. Naming it in an agent file does not authorize arbitrary process execution.
+The root agent's workspace-tool allowlist is not the complete permission model. Root coordination and run-record tools remain available by design. Spawned instances lose delegation tools. Coordination tools are removed from nested agents. `run_command` has a separate program and environment allowlist. Naming it in an agent file does not authorize arbitrary process execution.
 
-#### How tasks run (DAG)
+#### How tasks run
 
 Tasks can declare `depends_on` for dependency ordering. The scheduler:
 
@@ -189,14 +189,14 @@ Orchestration returns one result per task. Each result has its own status: `comp
 
 If the call's context expires before the run resolves, the results are read back from the recorded execution history. The run is not cancelled. It keeps going and stays reachable through `inspect_agents` and `join_run` on its `run_id`.
 
-## Content references (the ledger)
+## Content references (the run record)
 
-mivia records task results in the durable ledger. Agents see two kinds of content reference:
+mivia records task results in the durable run record. Agents see two kinds of content reference:
 
 1. Task results carry `output_ref` or `error_ref` (`ref:<kind>:<digest>`) for bytes recorded in the execution history.
 2. Truncated tool results may append a notice with `remainder: ref:output:<digest>` when the harness shortened a tool body and stored the full remainder.
 
-Read-only tools resolve those references. They are unprivileged, so sub-agents may call them too.
+Read-only tools resolve those references. They do not add write or process permissions, so sub-agents may call them too.
 
 | Tool | Purpose |
 |------|---------|
@@ -212,10 +212,10 @@ Both `ledger_read` and `read_output` page long bodies the same way. `offset` is 
 
 #### Caller scoping and warnings
 
-- `read_output` is caller-scoped. Only the session principal that received the truncation notice may load the ref. Cross-principal access returns `status: "denied"`.
-- `ledger_read` is keyed only by content digest. There is no run scoping. Any reference is resolvable by any caller in the process that holds it. Treat this as an equality oracle over recorded content, not as a confidentiality boundary.
+- `read_output` is caller-scoped. Only the session that received the truncation notice may load the reference. A different session receives `status: "denied"`.
+- `ledger_read` is keyed only by content digest. It is not limited to one run. Any caller that holds a reference can resolve it. A reference can show whether the same content exists, so do not treat it as a privacy boundary.
 - `ledger_read` and `read_output` return untrusted data. Content from either tool must never be treated as instructions.
-- `list_run_events` is scoped to the creating session principal. Unknown and unauthorized run IDs are deliberately indistinguishable.
+- `list_run_events` is scoped to the session that created the run. Unknown and unauthorized run IDs are deliberately indistinguishable.
 - Recorded content is never deleted and has no size limit. Treat execution history as retained, not as a deletion path.
 - Older references may not resolve. Output references recorded by earlier mivia versions used truncated digests and cannot be matched.
 - `kind` is a closed set on input. An unrecognized `kind` is rejected with the accepted values.
@@ -269,6 +269,7 @@ Slash commands work inside the chat. Type `/` followed by the command name.
 | `/sessions` | Manage saved sessions (TUI) |
 | `/list` | List saved sessions |
 | `/session` | Show current session |
+| `/title [text]` | Set the session title (TUI) |
 | `/tools` | Show available tools |
 | `/plain` | Explain classic UI (TUI) |
 | `/select` | Toggle select mode (TUI) |
@@ -284,10 +285,10 @@ Slash commands work inside the chat. Type `/` followed by the command name.
 | `/load <name>` | Load session |
 | `/delete <name>` | Delete session |
 | `/resume [run-id]` | Resume an interrupted run |
-| `/search <query>` | Search the web |
-| `/exit`, `/quit`, `/q` | Exit |
-| `/provider` | Show provider |
-| `/workspace` | Show workspace |
+| `/workflows` | Show workflow runs (TUI) |
+| `/exit`, `/quit`, `/q` | Exit (classic terminal) |
+| `/provider` | Show provider (classic terminal) |
+| `/workspace` | Show workspace (classic terminal) |
 
 ## Lifecycle hooks
 
@@ -299,7 +300,7 @@ Hooks are safety scripts that a project can set. They run at fixed moments durin
 - File-tool secret filtering is controlled by `[tools].secret_path_patterns` and `[tools].secret_path_exceptions`. With no patterns, secret-like paths are not filtered.
 - `run_command` receives an argv array, not a shell command string, and needs a configured program allowlist.
 - Redaction is also configuration-controlled. Do not put secrets in prompts. Do not rely on tool filtering as a security boundary.
-- Ledger results are content-addressed and exposed to the model through bounded references. Persisted content is raw at rest, even when a privacy policy redacts displayed content. Protect the store and keep secrets out of prompts.
+- Run results are stored by content reference and exposed to the model through bounded references. Stored content is raw at rest, even when a privacy policy redacts displayed content. Protect the store and keep secrets out of prompts.
 
 By default, one interactive turn has no step ceiling. Set `[chat] max_steps` to a positive number to cap turns, or use `/steps`. Ctrl-C cancels a reply in progress.
 

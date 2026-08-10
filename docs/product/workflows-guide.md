@@ -1,7 +1,7 @@
 # Workflow Guide
 
 CLI commands and agent tools for running workflows. See [Workflows](workflows.md)
-for the concepts (workflow, ledger, gate, worktree).
+for the concepts (workflow, run record, checks, and worktree).
 
 ```bash
 mivia workflows list                                                          # list workflows
@@ -49,11 +49,11 @@ mivia workflow status wfr-ABCDEF1234
 mivia workflow events wfr-ABCDEF1234
 mivia workflow events wfr-ABCDEF1234 --limit 20 --offset 0
 
-# Approve or reject a human gate
-mivia workflow approve wfr-ABCDEF1234 approval-1 --actor operator
-mivia workflow reject wfr-ABCDEF1234 approval-1 --actor operator --reason "incomplete"
+# Approve or reject a human check
+mivia workflow approve wfr-ABCDEF1234 approval-1 --actor alice
+mivia workflow reject wfr-ABCDEF1234 approval-1 --actor alice --reason "incomplete"
 
-# Deliver a completed run (requires explicit publish grant)
+# Deliver a completed run (requires explicit publish approval)
 mivia workflow deliver wfr-ABCDEF1234 --allow-publish
 
 # Cancel a running or waiting run
@@ -61,6 +61,9 @@ mivia workflow cancel wfr-ABCDEF1234
 
 # Clean up a terminal run
 mivia workflow cleanup wfr-ABCDEF1234
+
+# Delete a settled run and its stored record
+mivia workflow delete wfr-ABCDEF1234
 ```
 
 A run without `--allow-publish` finishes as `delivery_pending`. It stays there until someone delivers it with the grant.
@@ -76,7 +79,7 @@ A run without `--allow-publish` finishes as `delivery_pending`. It stays there u
 
 ## Worktrees
 
-A write-capable run works in a worktree; your own files never change. Each worktree branch gets a prefix from `[worktrees].branch_prefix` (default `mivia/`).
+A write-capable run works in a worktree; your own files never change. Manually created worktrees use `[worktrees].branch_prefix` (default `mivia/`). Workflow-run worktrees use the fixed `wf/` branch prefix.
 
 ```bash
 # Create a worktree with a branch, for example mivia/fix
@@ -99,7 +102,7 @@ mivia worktree adopt fix
 
 ## Agent tools
 
-When `.mivia/workflows/` exists, seven agent tools become available. The model can call these to start, monitor, inspect, deliver, and cancel workflow runs from within a chat session.
+When `.mivia/workflows/` exists, eight agent tools become available. The model can call these to start, monitor, inspect, deliver, cancel, and delete workflow runs from within a chat session.
 
 Write tools:
 
@@ -108,6 +111,7 @@ Write tools:
 | `workflow_run` | Start or resume a workflow run |
 | `workflow_deliver` | Deliver a `delivery_pending` run |
 | `workflow_cancel` | Cancel a running or waiting run |
+| `workflow_delete` | Delete a settled workflow run and its durable run record |
 
 Read tools:
 
@@ -128,7 +132,7 @@ Start a new run or resume an interrupted run.
 |-----------|------|----------|-------------|
 | `workflow` | string | yes (new run) | Workflow name from `.mivia/workflows/` |
 | `inputs` | object | varies | Key-value map matching the workflow's input contract |
-| `allow_publish` | boolean | no | Grant publication permission (default: `false`) |
+| `allow_publish` | boolean | no | Allow publishing (default: `false`) |
 | `resume` | boolean | no | Resume from durable snapshot (default: `false`) |
 | `run_id` | string | yes (resume) | Existing run ID to resume |
 | `force` | boolean | no | Clear a stale execution claim when resuming |
@@ -188,7 +192,7 @@ Deliver a completed workflow run that is waiting for publication.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `run_id` | string | yes | Workflow run ID |
-| `allow_publish` | boolean | yes (must be `true`) | Grant publication permission |
+| `allow_publish` | boolean | yes (must be `true`) | Allow publishing |
 
 The tool refuses delivery without explicit `allow_publish=true`. This permission is never implicit. An eligible run without the grant finishes as `delivery_pending` until delivery is called with the grant.
 
@@ -278,10 +282,10 @@ duration limits.
 | `plan`, `plan_tests`, `implement`, and all `repair_*` steps | `agent` | `workflow-engineer` + `workflow-feature-delivery` | Plan, write tests, change files, and repair failed evidence. |
 | `plan_review`, `test_plan_review`, `review`, and `review_integration` | `agent_gate` | `reviewer` + `secure-change` | Challenge plans and review the change before automated gates. |
 | `test_validate`, `verify`, `code_validate`, `preflight_validate`, and `preflight_structure` | `evidence_gate` | Fixed verifier or fixed command | Run the required checks outside the implementation agent. |
-| `delivery` | Host delivery policy | Not an agent step | Create a draft GitHub pull request after `success`, with explicit publication permission. |
+| `delivery` | Delivery policy | Not an agent step | Create a draft GitHub pull request after `success`, only after explicit publish approval. |
 
 The workflow starts in an isolated worktree. It stores the compiled workflow,
-inputs, templates, schemas, and resolved agent bindings in the ledger. A
+inputs, templates, schemas, and resolved agent bindings in the run record. A
 resumed run uses that saved snapshot. It does not silently use later workflow
 or agent changes.
 
@@ -291,7 +295,7 @@ Use this map when you need to inspect or change the shipped workflow.
 
 | Concern | Source | Change with care |
 |---------|--------|------------------|
-| Step order, routes, limits, and delivery policy | [`.mivia/workflows/feature-delivery.toml`](../../.mivia/workflows/feature-delivery.toml) | This file is the workflow contract. It cannot grant provider, tool, or publication authority. |
+| Step order, routes, limits, and delivery policy | [`.mivia/workflows/feature-delivery.toml`](../../.mivia/workflows/feature-delivery.toml) | This file is the workflow contract. It cannot grant provider, tool, or publish permission. |
 | Agent prompts | [`.mivia/workflows/templates/`](../../.mivia/workflows/templates/) | Each template defines the task for one workflow step. |
 | Structured step results | [`.mivia/workflows/schemas/`](../../.mivia/workflows/schemas/) | Routes use these validated fields, not free-form prose. |
 | Implementation agent | [`.mivia/agents/workflow-engineer.toml`](../../.mivia/agents/workflow-engineer.toml) | This agent can edit its isolated worktree. It cannot run commands or publish. |
@@ -300,7 +304,7 @@ Use this map when you need to inspect or change the shipped workflow.
 
 ### Agent models
 
-The shipped workflow uses two separate model bindings. This separation gives
+The shipped workflow uses two separate model settings. This separation gives
 the review gates an independent provider from the implementation steps.
 
 | Agent | Provider | Model | Used by |
@@ -310,7 +314,7 @@ the review gates an independent provider from the implementation steps.
 
 The agent file selects its provider and model. The provider catalog in
 `.mivia/mivia.toml` must declare that model. The run records the resolved
-provider and model at admission. A resume fails if an agent binding changed.
+provider and model when the run starts. A resume fails if an agent setting changed.
 
 ### Run the shipped workflow in this repository
 
@@ -326,7 +330,7 @@ TASK
 
 Use `mivia workflow status <run-id>` and `mivia workflow events <run-id>` to
 monitor the run. Use the general CLI form shown earlier when you do not want
-to grant publication permission.
+to grant publish approval.
 
 The evidence gates use fixed verifier profiles:
 
@@ -551,7 +555,7 @@ A workflow file is untrusted repository input. Anyone can edit it. It may name a
 - a model provider, endpoint, credential, or tool allowlist;
 - a shell command, URL, environment variable, or secret;
 - a Git base target outside runtime policy;
-- publication permission.
+- publish permission.
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 
@@ -570,7 +574,7 @@ Before a run starts, the compiler checks the workflow file:
 
 ## Resume
 
-Interrupted runs can be resumed from the durable ledger snapshot. The snapshot contains the compiled workflow, templates, schemas, inputs, and resolved agent digests. Use `--force` to clear a stale execution claim.
+Interrupted runs can be resumed from the durable run-record snapshot. The snapshot contains the compiled workflow, templates, schemas, inputs, and resolved agent digests. Use `--force` to clear a stale run claim.
 
 ## See also
 

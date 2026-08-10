@@ -14,7 +14,7 @@
 
 mivia reads, searches, and edits files in your project. It runs commands, such as your test suite. It can also run multi-step workflows in an isolated worktree, with a durable run record for every step.
 
-Your files stay on your machine. mivia sends your prompts and the context it selects to the AI provider you configure; nothing else leaves your machine.
+Your files stay on your machine by default. mivia sends prompts and selected context to the AI provider you configure. Web search, configured MCP servers, lifecycle hooks, and workflow delivery can also contact external services or run configured local programs. Review those settings before use.
 
 ## Quick start
 
@@ -46,7 +46,7 @@ mivia doctor            # verify the key is visible; never prints it
 mivia chat
 ```
 
-`mivia setup` writes the key to an env file with owner-only permissions. It never prints the key value. For scripting, pass `--provider`, `--key`, and `--yes`; or set the key as an environment variable instead.
+`mivia setup` writes the key to an env file with owner-only permissions. It never prints the key value. For scripting, set the key as an environment variable and pass `--provider`. Avoid `--key` because shell history and process inspection can expose command arguments.
 
 One-shot mode:
 
@@ -57,6 +57,7 @@ One-shot mode:
 Shell completions: `mivia completion bash|zsh|fish` prints a completion script for your shell.
 
 Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributing.md). Provider and config options: see [Configuration](docs/product/config.md).
+Successful workflow runs stop at `delivery_pending` until you pass the explicit `--allow-publish` flag. See the [Workflow guide](docs/product/workflows-guide.md).
 
 <p align="center">
   <img src="docs/mivia-welcome.png" alt="mivia TUI welcome screen" width="32%">
@@ -68,6 +69,8 @@ Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributin
 
 - Chat with tool access: read, search, edit files; run allowed commands.
 - Web search.
+- Durable project and organization memory, with an optional SQLite file that you can commit with the project.
+- Configurable MCP servers over stdio and Streamable HTTP, scoped per agent.
 - Workflows: durable, multi-step processes with retries and evidence gates.
 - Worktrees: isolated checkouts for a workflow run, so your working tree stays clean.
 - Agents and skills: named specialists you can route work to.
@@ -84,19 +87,20 @@ flowchart LR
     Chat --> Agents["agents & skills"]
     Chat --> Workflows["workflows"]
     Workflows --> Worktree["worktree"]
-    Workflows --> Ledger["run ledger"]
+    Workflows --> Ledger["run record"]
     Chat --> Provider["AI provider"]
 ```
 
-Everything under `mivia chat` runs locally except the `AI provider` edge, which carries only your prompt and selected context.
+Most work under `mivia chat` runs locally. The provider, web search, configured MCP servers, lifecycle hooks, and workflow delivery are separate data or execution paths. Review their settings before use.
 
 ## Docs
 
 | Guide | Covers |
 |-------|--------|
 | [Product overview](docs/product/overview.md) | What mivia is, plain-language walkthrough |
-| [Configuration](docs/product/config.md) | Providers, keys, settings |
+| [Configuration](docs/product/config.md) | Providers, keys, settings, and MCP servers |
 | [Coding agent mode](docs/product/agent.md) | Chat, tools, agents, skills |
+| [Memory](docs/product/memory.md) | Durable project and organization memory |
 | [Workflows](docs/product/workflows.md) | Step-by-step processes |
 | [Workflow guide](docs/product/workflows-guide.md) | Workflow commands, the built-in workflow |
 | [Security and privacy](docs/security/overview.md) | Data handling |

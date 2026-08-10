@@ -2,7 +2,7 @@
 
 Four rules cover almost everything:
 
-1. Your API key lives in your environment. It never goes into your project files and never into git.
+1. Your API key lives in the process environment or an env file. Keep env files out of git.
 2. Tools that can run other programs are off until you turn them on.
 3. Secret filtering and redaction are off until you configure them.
 4. Treat a project you did not write like untrusted code.
@@ -13,11 +13,11 @@ mivia never stores credentials in the settings file. API keys live in the proces
 
 A secret scan runs on every commit. It checks staged and tracked files. If a real key appears in the tree, the commit is blocked.
 
-## MCP server authority
+## MCP server permissions
 
-MCP server definitions contain only environment variable names. mivia passes only named variables to a stdio server. HTTP header values also come only from named environment variables. A project MCP server is explicit project authority. It can start its configured executable or call its configured endpoint. A project definition with the same ID replaces the complete user definition. Review project MCP configuration before use.
+MCP server definitions contain only environment variable names. mivia passes only named variables to a stdio server. HTTP header values also come only from named environment variables. A project MCP server can start its configured executable or call its configured endpoint. A project definition with the same ID replaces the complete user definition. Review project MCP configuration before use.
 
-MCP tool descriptions, schemas, errors, and results are untrusted server data. mivia bounds metadata and results before model exposure. It exposes text result content only. It does not treat MCP data as host instructions.
+MCP tool descriptions, schemas, errors, and results are untrusted server data. mivia bounds metadata and results before it sends them to the model. It exposes text result content only. It does not treat MCP data as local instructions.
 
 ## Deny by default
 
@@ -27,7 +27,7 @@ Powerful tools stay off until you configure them.
 - Child processes inherit no environment until `[tools].env_allowlist` names the variables.
 - These allowlists are configuration-only. There is no built-in list to extend or replace.
 
-With nothing configured, nothing is filtered and nothing is redacted. This fails open on purpose for the operator: the operator sees tool previews, `run_command` output, event bodies, and audit metadata intact.
+With nothing configured, nothing is filtered and nothing is redacted. The user then sees tool previews, `run_command` output, event bodies, and audit metadata intact.
 
 `prompt` and `reasoning` are never redacted. They are the agent's own instructions and deliberation, not the user's secrets. Eliding them made audit metadata useless for reconstructing agent behavior while protecting nothing.
 
@@ -47,7 +47,7 @@ Tool argument redaction is opt-in. Set `[privacy] redact_tool_args = true` in TO
 
 `[subagents].store_backend = "sqlite"` persists orchestration state. The store includes each task's full input payload. Task inputs and results are written unredacted at rest, even when `[privacy]` patterns are configured. Treat the chosen store location as sensitive workspace data. Do not put secrets in task prompts.
 
-Authority is deliberately not stored. Permissions, scopes, roles, and caller identity are never written to the ledger and never restored from it. A resumed run runs under the identity and permissions of whoever resumes it. Editing the store file cannot grant privilege.
+Permissions, scopes, roles, and caller identity are deliberately not stored. They are never written to the run record or restored from it. A resumed run uses the permissions of whoever resumes it. Editing the store file cannot grant new permissions.
 
 ## Workspace agent files load unconditionally
 
@@ -70,23 +70,23 @@ Treat `.mivia/mivia.toml` like the agent files. Review it before running, or poi
 
 ## Credential-routing protection
 
-A workspace-declared `provider` or `model` selection in an agent definition is ignored at resolve time unless the operator opted in. The agent then inherits the session provider. This stops a definition from routing your prompts, tool results, and file contents to a foreign vendor's endpoint on your own credentials. The definition still loads, so its prompt, tools, and skills survive. Only the binding is stripped. Operators who accept the multi-vendor risk restore the old behavior with `allow_workspace_agent_providers = true` under `[agents]` in the user-only `~/.mivia/mivia.toml`. Workspace `[agents]` can never authorize it.
+A workspace-declared `provider` or `model` selection in an agent definition is ignored unless the user opts in. The agent then inherits the session provider. This stops a definition from routing prompts, tool results, and file contents to another provider with your credentials. The definition still loads, so its prompt, tools, and skills survive. Users who accept the risk of several providers can restore the old behavior with `allow_workspace_agent_providers = true` under `[agents]` in the user-only `~/.mivia/mivia.toml`. Workspace `[agents]` cannot enable it.
 
 ## Agent skill allowlists
 
 Agent definitions may restrict skill invocation with `skills = [...]`. Omit = all trusted skills. `[]` = none. The allowlist is enforced at the selected task-agent boundary (`dispatch_tasks`, `spawn_agent`, skill resume). It is not enforced by trusting skill Markdown. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
-## Typed runtime identity
+## Runtime identity
 
-Lifecycle events may carry an allowlisted identity payload. It has the selected definition name and source, an opaque disposable instance ID, and a session-local model-generation number. Its purpose is operator correlation without exposing definition paths, digests, prompts, tool sets, user or model content, or raw errors.
+Lifecycle events may carry an allowlisted identity payload. It has the selected definition name and source, an opaque disposable instance ID, and a session-local model-generation number. Its purpose is local event correlation without exposing definition paths, digests, prompts, tool sets, user or model content, or raw errors.
 
-The identity is for local correlation only. Its owner is the active CLI session. Retention is the in-process event bus. Closing the session or bus drops it. It is not a durable identity record and it does not resume a saved root chat. Only the separate, explicitly confirmed task-ledger resume flow re-executes interrupted work.
+The identity is for local correlation only. The active CLI session owns it. The process drops it when the session or event bus closes. It is not a durable identity record and it does not resume a saved root chat. Only the separate, explicitly confirmed task resume flow re-executes interrupted work.
 
 The provider-independent `mivia agents list`, `mivia agents explain`, and `mivia doctor` views expose source and bounded diagnostics without provider credentials. None of these views prints prompts, digests, credentials, or agent content. Runtime events omit source paths as well as tool and content payloads.
 
-## No PII
+## Personal data
 
-mivia does not collect personal data. There is no general PII collection without explicit design approval. mivia never logs credentials or raw provider payloads containing secrets.
+mivia does not collect personal data as a general product feature. mivia never logs credentials or raw provider payloads that contain secrets.
 
 ## See also
 

@@ -35,10 +35,10 @@ What mivia does and how to configure it. Owner: `product`.
 | Doc | Covers |
 |-----|--------|
 | [Product overview](product/overview.md) | Product vision and scope for the mivia CLI agent |
-| [Configuration](product/config.md) | TOML config, env credentials, provider defaults |
+| [Configuration](product/config.md) | TOML config, env credentials, provider defaults, and MCP servers |
 | [Coding agent mode](product/agent.md) | Coding agent tools, safety, and CLI modes |
-| [Workflows](product/workflows.md) | Product-facing workflow (plan/implement/review/verify) model |
-| [Workflow guide](product/workflows-guide.md) | Workflow user guide: CLI commands, agent tools, authoring, execution, and monitoring |
+| [Workflows](product/workflows.md) | Workflow model: plan, implement, review, and verify |
+| [Workflow guide](product/workflows-guide.md) | CLI commands, agent tools, authoring, execution, and monitoring |
 | [Agent memory](product/memory.md) | Durable agent memory: scopes, tools, entry format, configuration |
 
 ## Architecture
