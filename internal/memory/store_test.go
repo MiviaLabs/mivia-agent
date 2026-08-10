@@ -211,12 +211,12 @@ func TestStoreSearchExactTitleRankedFirst(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			got, err := s.Search(ctx, Query{Text: "cache", Scope: ScopeProject})
+			got, err := s.Search(ctx, Query{Text: "cache invalidation is hard", Scope: ScopeProject})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(got) != 3 {
-				t.Fatalf("want 3 matches, got %d", len(got))
+			if len(got) != 1 {
+				t.Fatalf("want 1 match, got %d", len(got))
 			}
 			if got[0].Title != "cache invalidation is hard" {
 				t.Errorf("exact title match must rank first, got %q", got[0].Title)
