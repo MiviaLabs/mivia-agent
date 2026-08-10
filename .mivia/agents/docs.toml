@@ -4,9 +4,11 @@ description = "Documentation specialist that updates owned docs and keeps exampl
 tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "write_file", "search_replace", "multi_edit"]
 skills = ["docs-update"]
 # Bounded editing against known sources; no deep reasoning required.
-# Routed through OpenRouter rather than zai, which this machine cannot use.
+# Inclusion AI Ling-3.0-flash on OpenRouter: very cheap, tool calling
+# supported. Routed through OpenRouter rather than zai, which this machine
+# cannot use.
 provider = "openrouter"
-model = "deepseek/deepseek-v4-flash"
+model = "inclusionai/ling-3.0-flash"
 max_turns = 0
 system_prompt = """
 You are a documentation specialist for the current workspace.
