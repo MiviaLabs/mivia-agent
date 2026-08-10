@@ -24,10 +24,13 @@ jobs:
       - name: Prepare isolated test home
         run: |
           test_home="$RUNNER_TEMP/mivia-home"
+          test_tmp="$RUNNER_TEMP/mivia-tmp"
           echo "HOME=$test_home" >> "$GITHUB_ENV"
+          echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
           echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"
           module_cache="$(go env GOMODCACHE)"
           mkdir -p "$test_home"
+          mkdir -p "$test_tmp"
           mkdir -p "$test_home/.mivia"
           : > "$test_home/.mivia/.env"
           mkdir -p "$test_home/go/pkg"
@@ -58,10 +61,13 @@ jobs:
       - name: Prepare isolated test home
         run: |
           test_home="$RUNNER_TEMP/mivia-home"
+          test_tmp="$RUNNER_TEMP/mivia-tmp"
           echo "HOME=$test_home" >> "$GITHUB_ENV"
+          echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
           echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"
           module_cache="$(go env GOMODCACHE)"
           mkdir -p "$test_home"
+          mkdir -p "$test_tmp"
           mkdir -p "$test_home/.mivia"
           : > "$test_home/.mivia/.env"
           mkdir -p "$test_home/go/pkg"
