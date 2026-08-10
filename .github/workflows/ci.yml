@@ -18,13 +18,6 @@ jobs:
           python-version: "3.12"
       - name: Install semgrep
         run: pip install semgrep
-      - name: Check required tools
-        # Runner images drift; fail fast with a clear message instead of a
-        # confusing mid-pipeline error when a prerequisite is missing.
-        run: |
-          for tool in go git python3 rg semgrep bwrap; do
-            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
-          done
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
@@ -37,6 +30,14 @@ jobs:
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+      - name: Check required tools
+        # Runner images drift; fail fast with a clear message instead of a
+        # confusing mid-pipeline error when a prerequisite is missing. Runs
+        # AFTER the install steps so rg and bwrap are present to check.
+        run: |
+          for tool in go git python3 rg semgrep bwrap; do
+            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
+          done
       - name: Prepare isolated test home
         run: |
           ci_root="$(mktemp -d /tmp/mivia-ci.XXXXXX)"
@@ -72,15 +73,16 @@ jobs:
           python-version: "3.12"
       - name: Install semgrep
         run: pip install semgrep
-      - name: Check required tools
-        run: |
-          for tool in go git python3 rg semgrep; do
-            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
-          done
       - name: Install ripgrep
         # make invariants drives the coverage script with `rg`; macOS runners
         # do not ship it (Linux runners do).
         run: brew install ripgrep
+      - name: Check required tools
+        # Runs after the install steps so rg is present to check.
+        run: |
+          for tool in go git python3 rg semgrep; do
+            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
+          done
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
