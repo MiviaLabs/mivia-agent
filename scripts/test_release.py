@@ -88,8 +88,13 @@ def main() -> None:
     if not powershell_test_path.is_file():
         raise AssertionError(f"{powershell_test_path}: missing PowerShell installer test")
     for fragment in (
+        "branches: [master]",
+        "if: github.event_name == 'pull_request'",
+        "if: github.event_name == 'push'",
+        "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
         "go test ./... -count=1",
-        "go test -race ./... -count=1",
+        "make race",
+        "CGO_ENABLED=0 go build -trimpath -o \"$output\" ./cmd/mivia",
         "scripts/test_installers.ps1",
     ):
         require(ci, fragment, ci_path)

@@ -1,6 +1,6 @@
 package cli
 
-// The idle ctrl+c state machine.
+// The ctrl+c cancel/quit state machine - running-turn and idle.
 //
 // ctrl+c keeps its terminal meaning while a turn is running: it cancels, and
 // nothing else (handleChatCancel). At rest it used to quit on the first press,
@@ -19,6 +19,7 @@ package cli
 // Otherwise a ctrl+c minutes later would exit with no warning at all.
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -126,3 +127,90 @@ func (m *tuiModel) takeQueuedSlashCmds() []tea.Cmd {
 	m.queuedSlashCmds = nil
 	return cmds
 }
+
+// handleChatCancel handles the ctrl+c key for cancelling the current turn or quitting.
+// Cancel preserves the partial story (interim, status, tools) and appends a
+// cancelled footer - web-like stop, not wipe (Phase E).
+//
+// Stage 1 (waiting): cancel the current turn, show cancelled state.
+// Stage 2 (cancelling, agent still unwinding): set quitRequested; quit when
+// agentDone (worker Finish already drained) or when the next Done arrives.
+// Stage 2b (quitRequested already): force Quit - never strand on hung tools.
+// Stage 3 (fully idle): quit immediately.
+func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
+	if m.waiting {
+		// Stage 1: first Ctrl+C - cancel the turn.
+		m.mu.Lock()
+		if m.cancel != nil {
+			m.cancel()
+		}
+		br := m.bridge
+		if br != nil {
+			// Finish (not Close) so any final drain is coherent; fence drops later events.
+			br.Finish(context.Canceled)
+		}
+		m.mu.Unlock()
+		if br != nil {
+			// Stage-1 Finish is drained here; mark agentDone only when the
+			// *worker* later Finishes again, or when we observe Done with
+			// quitRequested. Do not set agentDone from this synthetic Finish
+			// alone - worker may still be running tools.
+			m.updateFromDrain(br.Drain())
+		}
+		cmds := m.finishStream(context.Canceled)
+		m.cancelling = true
+		// Synthetic stage-1 Finish was drained above and cleared bridge.done.
+		// agentDone stays false until worker Finish is drained (or force quit).
+		m.textarea.Reset()
+		return true, false, cmds
+	}
+	if m.quitRequested {
+		// Stage 2b: user already asked to quit once after cancel; force exit.
+		// Hung tools / missed Done must not pin the TUI forever.
+		m.cancelling = false
+		m.quitRequested = false
+		m.appendInfo("(force quit)")
+		m.renderVP()
+		return true, false, []tea.Cmd{tea.Quit}
+	}
+	if m.cancelling {
+		// Stage 2: second Ctrl+C while agent goroutine may still be unwinding.
+		if m.agentDone {
+			// Worker Finish already observed (possibly before quitRequested).
+			// Quit immediately - waiting for another Done strands the session.
+			m.cancelling = false
+			m.quitRequested = false
+			return true, false, []tea.Cmd{tea.Quit}
+		}
+		m.quitRequested = true
+		m.appendInfo("(quitting after cancel completes…)")
+		m.renderVP()
+		// Backup: wait for workerWG with timeout, then quit even if Done was missed.
+		return true, false, []tea.Cmd{m.waitAgentThenQuitCmd()}
+	}
+	// Stage 3: fully idle - copy a selection, protect a draft, or arm the
+	// quit (tui_cancel.go). Never an unguarded exit on one keystroke.
+	return m.handleIdleCancel()
+}
+
+// waitAgentThenQuitCmd waits for the agent worker to finish (or timeout), then
+// emits tea.Quit if quitRequested is still set. Prevents permanent strand when
+// bridge Done was drained before quitRequested without agentDone.
+func (m *tuiModel) waitAgentThenQuitCmd() tea.Cmd {
+	return func() tea.Msg {
+		done := make(chan struct{})
+		go func() {
+			m.workerWG.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(8 * time.Second):
+			// Hung tools after cancel: do not block exit forever.
+		}
+		return agentQuitReadyMsg{}
+	}
+}
+
+// agentQuitReadyMsg is delivered when the post-cancel quit waiter finishes.
+type agentQuitReadyMsg struct{}

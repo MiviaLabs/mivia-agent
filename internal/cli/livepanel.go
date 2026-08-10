@@ -28,14 +28,16 @@ import (
 )
 
 const (
-	livePanelMaxHeight = 8 // hard ceiling including borders
+	livePanelMaxHeight = 6 // hard ceiling including borders
 	liveMaxFleetRows   = 3
 	liveMaxToolRows    = 4
 	liveMaxStreamRows  = 5
 	// liveMaxThinkingRows is the rolling chain-of-thought window: the last few
 	// reasoning lines, newest at the bottom. One line was too little to read
-	// as thought; the whole buffer would drown the panel.
-	liveMaxThinkingRows = 4
+	// as thought; the whole buffer would drown the panel. The label plus the
+	// 3-line tail is 4 rows, which fits the band-2 = 4 content budget at the
+	// cap, so a thinking-only turn is not a blank panel.
+	liveMaxThinkingRows = 3
 )
 
 // livePanelSections computes how many rows each section gets at the current

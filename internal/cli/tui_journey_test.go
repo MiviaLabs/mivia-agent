@@ -102,7 +102,7 @@ func journeyModel(t *testing.T) *tuiModel {
 		width:                 80,
 		height:                40,
 		ready:                 true,
-		thinkingExpandDefault: true,
+		thinkingExpandDefault: false,
 	}
 	return m
 }

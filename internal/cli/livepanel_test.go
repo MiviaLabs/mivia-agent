@@ -129,6 +129,10 @@ func TestLivePanelHiddenWhenIdle(t *testing.T) {
 }
 
 func TestLivePanelShowsAgentsToolsThinkingAndStream(t *testing.T) {
+	// At height 34 the band is capped at livePanelMaxHeight (6), so the
+	// content budget inside the band is band-2 = 4 rows. All four sections
+	// cannot fit at once: fleet+tools+stream survive and thinking drops
+	// first (sections shrink bottom-up, thinking is the lowest priority).
 	m := newReadyChatModel(34, 90)
 	m.waiting = true
 	m.turnStart = time.Now()
@@ -139,14 +143,47 @@ func TestLivePanelShowsAgentsToolsThinkingAndStream(t *testing.T) {
 	m.streamBuf.WriteString("The timeout was the outer deadline firing early.")
 
 	panel := stripANSI(m.renderLivePanel(90, time.Now()))
-	for _, want := range []string{"audit", "run_command", "thinking", "outer deadline"} {
+	for _, want := range []string{"audit", "run_command", "outer deadline"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("live panel missing %q:\n%s", want, panel)
 		}
 	}
+	if strings.Contains(panel, "▾ thinking") {
+		t.Fatalf("thinking must drop first under the 4-row content budget:\n%s", panel)
+	}
 	// Declared height must equal rendered height - both layout paths use it.
 	if got := strings.Count(panel, "\n") + 1; got != m.livePanelHeight() {
 		t.Fatalf("rendered %d lines, declared %d:\n%s", got, m.livePanelHeight(), panel)
+	}
+}
+
+func TestLivePanelFitsThinkingWhenStreamAbsent(t *testing.T) {
+	// Without stream content the four content rows hold fleet+tools+thinking
+	// (1+1+2) exactly, so thinking renders after tools instead of dropping.
+	m := newReadyChatModel(34, 90)
+	m.waiting = true
+	m.turnStart = time.Now()
+	m.subagents.Apply(events.Event{Kind: events.KindSubagentStart, Name: "grep"}.
+		WithAgentAttribution("t1", "audit", 1), time.Now())
+	m.toolRows = []toolRow{{Name: "run_command", Detail: `{"cmd":"go test"}`, Status: "running", Start: time.Now()}}
+	m.thinkingBuf.WriteString("weighing the budget change")
+
+	panel := stripANSI(m.renderLivePanel(90, time.Now()))
+	pos := func(marker string) int {
+		t.Helper()
+		idx := strings.Index(panel, marker)
+		if idx < 0 {
+			t.Fatalf("marker %q missing from the overlay:\n%s", marker, panel)
+		}
+		return idx
+	}
+	fleet, tools, thinking := pos("audit"), pos("run_command"), pos("▾ thinking")
+	if !(fleet < tools && tools < thinking) {
+		t.Fatalf("order must be fleet < tools < thinking, got %d < %d < %d:\n%s",
+			fleet, tools, thinking, panel)
+	}
+	if got := strings.Count(panel, "\n") + 1; got != m.livePanelHeight() {
+		t.Fatalf("rendered %d lines, declared %d", got, m.livePanelHeight())
 	}
 }
 
@@ -171,11 +208,12 @@ func TestLivePanelHeightBounded(t *testing.T) {
 	}
 }
 
-func TestLivePanelPriorityOrderAtCapEight(t *testing.T) {
+func TestLivePanelPriorityOrderAtCapSix(t *testing.T) {
 	// At termH=24 the band formula reaches the cap boundary exactly
-	// (24/3 == 8 == livePanelMaxHeight). With every section populated the
-	// overlay renders its full 8 rows and the priority order holds from top
-	// to bottom: fleet < tools < thinking < stream.
+	// (24/3 == 8 >= livePanelMaxHeight == 6). With every section populated
+	// the overlay renders its full 6 rows and the priority order holds from
+	// top to bottom: fleet < tools < stream, with thinking dropped first
+	// (5 rows of content do not fit the band-2 = 4 content budget).
 	m := newReadyChatModel(24, 90)
 	m.waiting = true
 	m.turnStart = time.Now()
@@ -192,6 +230,9 @@ func TestLivePanelPriorityOrderAtCapEight(t *testing.T) {
 	if got := strings.Count(panel, "\n") + 1; got != livePanelMaxHeight {
 		t.Fatalf("rendered %d lines, want %d", got, livePanelMaxHeight)
 	}
+	if strings.Contains(panel, "▾ thinking") {
+		t.Fatalf("thinking must drop first under the 4-row content budget:\n%s", panel)
+	}
 	pos := func(marker string) int {
 		t.Helper()
 		idx := strings.Index(panel, marker)
@@ -200,10 +241,10 @@ func TestLivePanelPriorityOrderAtCapEight(t *testing.T) {
 		}
 		return idx
 	}
-	fleet, tools, thinking, stream := pos("audit"), pos("run_command"), pos("▾ thinking"), pos("outer deadline")
-	if !(fleet < tools && tools < thinking && thinking < stream) {
-		t.Fatalf("priority order must be fleet < tools < thinking < stream, got %d < %d < %d < %d:\n%s",
-			fleet, tools, thinking, stream, panel)
+	fleet, tools, stream := pos("audit"), pos("run_command"), pos("outer deadline")
+	if !(fleet < tools && tools < stream) {
+		t.Fatalf("surviving order must be fleet < tools < stream, got %d < %d < %d:\n%s",
+			fleet, tools, stream, panel)
 	}
 }
 

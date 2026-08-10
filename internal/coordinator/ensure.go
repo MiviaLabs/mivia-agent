@@ -427,6 +427,9 @@ func (c *coordinator) resumeEmptyRun(ctx context.Context, runID, key, fingerprin
 		tasks[i].ID = task.taskID
 	}
 	h := c.newRunHandle(runID, key, attempts, fingerprint, false, nonInteractiveRunOpts(req)...)
+	h.mu.Lock()
+	h.localActor = true
+	h.mu.Unlock()
 	go c.executeRun(h, tasks)
 	return h, nil
 }

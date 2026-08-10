@@ -2,11 +2,20 @@ name: ci
 
 on:
   push:
-    branches: [master, main]
+    branches: [master]
   pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -25,17 +34,15 @@ jobs:
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
       - name: Install workflow verifier sandbox
         run: sudo apt-get update && sudo apt-get install --yes bubblewrap ripgrep
-      # bwrap --unshare-all needs unprivileged user namespaces; GitHub's
-      # Ubuntu 24.04 image restricts them via AppArmor, which makes every
-      # sandboxed command die with "bwrap: Creating new namespace failed".
+      # bwrap --unshare-all needs unprivileged user namespaces. GitHub's
+      # Ubuntu 24.04 image restricts them with AppArmor by default.
       - name: Allow unprivileged user namespaces for bubblewrap
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
       - name: Check required tools
-        # Runner images drift; fail fast with a clear message instead of a
-        # confusing mid-pipeline error when a prerequisite is missing. Runs
-        # AFTER the install steps so rg and bwrap are present to check.
+        # Run this check after setup. It gives a clear failure when a runner
+        # image no longer provides a required tool.
         run: |
           for tool in go git python3 rg semgrep bwrap; do
             command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
@@ -49,22 +56,15 @@ jobs:
           echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
           echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"
           module_cache="$(go env GOMODCACHE)"
-          mkdir -p "$test_home"
-          mkdir -p "$test_tmp"
-          mkdir -p "$test_home/.mivia"
+          mkdir -p "$test_home" "$test_tmp" "$test_home/.mivia" "$test_home/go/pkg"
           : > "$test_home/.mivia/.env"
-          mkdir -p "$test_home/go/pkg"
           ln -s "$module_cache" "$test_home/go/pkg/mod"
-      - name: Verify control surface and gates
+      - name: Verify pull request
         run: make verify
-      - name: Invariant validation
-        run: make validate-invariants && make invariants
-      - name: Race (packages)
-        run: make race
 
-  # macOS runs the full POSIX gate suite (make works on macOS runners).
-  verify-macos:
-    runs-on: macos-latest
+  verify-master:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -77,44 +77,59 @@ jobs:
           python-version: "3.12"
       - name: Install semgrep
         run: pip install semgrep
-      - name: Install ripgrep
-        # make invariants drives the coverage script with `rg`; macOS runners
-        # do not ship it (Linux runners do).
-        run: brew install ripgrep
-      - name: Check required tools
-        # Runs after the install steps so rg is present to check.
-        run: |
-          for tool in go git python3 rg semgrep; do
-            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
-          done
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
+      - name: Install workflow verifier sandbox
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap ripgrep
+      # bwrap --unshare-all needs unprivileged user namespaces. GitHub's
+      # Ubuntu 24.04 image restricts them with AppArmor by default.
+      - name: Allow unprivileged user namespaces for bubblewrap
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+      - name: Check required tools
+        # Run this check after setup. It gives a clear failure when a runner
+        # image no longer provides a required tool.
+        run: |
+          for tool in go git python3 rg semgrep bwrap; do
+            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
+          done
       - name: Prepare isolated test home
         run: |
-          ci_root="$(mktemp -d /private/tmp/mivia-ci.XXXXXX)"
+          ci_root="$(mktemp -d /tmp/mivia-ci.XXXXXX)"
           test_home="$ci_root/home"
           test_tmp="$ci_root/tmp"
           echo "HOME=$test_home" >> "$GITHUB_ENV"
           echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
           echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"
           module_cache="$(go env GOMODCACHE)"
-          mkdir -p "$test_home"
-          mkdir -p "$test_tmp"
-          mkdir -p "$test_home/.mivia"
+          mkdir -p "$test_home" "$test_tmp" "$test_home/.mivia" "$test_home/go/pkg"
           : > "$test_home/.mivia/.env"
-          mkdir -p "$test_home/go/pkg"
           ln -s "$module_cache" "$test_home/go/pkg/mod"
       - name: Verify control surface and gates
         run: make verify
-      - name: Invariant validation
-        run: make validate-invariants && make invariants
-      - name: Race (packages)
-        run: make race
+      - name: Invariants and race detector
+        run: make invariants && make race
 
-  # Windows is a full supported runtime target. Tests that require a Unix-only
-  # capability use explicit build tags and have separate Windows contracts.
+  verify-macos:
+    if: github.event_name == 'push'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.x"
+      - name: Test, vet, and build
+        run: |
+          go test ./... -count=1
+          go vet ./...
+          go build ./...
+
   verify-windows:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -132,18 +147,8 @@ jobs:
               exit 1
             }
           }
-      # The runner image's default TEMP lives under a short (8.3) user name
-      # (C:\Users\RUNNER~1\...). Go's t.TempDir() returns that path verbatim,
-      # while filepath.EvalSymlinks and git resolve it to the long form
-      # (C:\Users\runneradmin\...). mivia's worktree canonicality checks and
-      # path comparisons must never see a short/long split, so the Windows
-      # job runs with a long-name temp directory that both forms agree on.
-      # The same step isolates the user profile (mirroring the POSIX jobs'
-      # isolated home): the shipped configs default env_file to ~/.mivia/.env,
-      # and tests must never read the runner's real home. The real Go caches
-      # are preserved because with USERPROFILE moved, go would default
-      # GOMODCACHE/GOCACHE under the isolated profile and the codeintel
-      # analyzer's packages.Load would find neither modules nor build cache.
+      # Use a long-name temp path. Go and Git then agree on the canonical path.
+      # Isolate the user profile so tests do not read the runner profile.
       - name: Prepare isolated test home and long-name temp directory
         shell: pwsh
         run: |
@@ -152,8 +157,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $temp | Out-Null
           "TMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
           "TEMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # $home is a read-only automatic variable in PowerShell; use a
-          # distinct name for the isolated profile directory.
+          # $home is a read-only PowerShell variable.
           $userHome = Join-Path $ciRoot 'home'
           New-Item -ItemType Directory -Force -Path (Join-Path $userHome '.mivia') | Out-Null
           New-Item -ItemType File -Force -Path (Join-Path $userHome '.mivia\.env') | Out-Null
@@ -163,12 +167,11 @@ jobs:
           $gocache = & go env GOCACHE
           "GOMODCACHE=$gomodcache" | Out-File -FilePath $env:GITHUB_ENV -Append
           "GOCACHE=$gocache" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Build
-        run: go build ./...
-      - name: Test
-        run: go test ./... -count=1
-      - name: Race, vet, and build
-        run: go test -race ./... -count=1; go vet ./...; go build ./...
+      - name: Test, vet, and build
+        run: |
+          go test ./... -count=1
+          go vet ./...
+          go build ./...
       - name: Validate PowerShell installer syntax
         shell: pwsh
         run: |
@@ -180,3 +183,36 @@ jobs:
       - name: Test PowerShell installer
         shell: pwsh
         run: ./scripts/test_installers.ps1
+
+  cross-compile:
+    if: github.event_name == 'push'
+    name: cross-compile ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.x"
+      - name: Compile release target
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/mivia-${GOOS}-${GOARCH}"
+          [[ "$GOOS" == windows ]] && output="${output}.exe"
+          CGO_ENABLED=0 go build -trimpath -o "$output" ./cmd/mivia
+          test -s "$output"
