@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,7 +20,10 @@ import (
 func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolved) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	return oneShotContext(ctx, sess, prompt, toolsOn, res)
+}
 
+func oneShotContext(ctx context.Context, sess *chat.Session, prompt string, toolsOn bool, res *config.Resolved) error {
 	mode := "chat"
 	if toolsOn {
 		mode = "agent"
@@ -49,20 +53,29 @@ func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolv
 	for _, note := range sess.TakeAdmissionNotes() {
 		fmt.Fprintf(os.Stderr, "%s\n", note)
 	}
+	if shouldPrintOneShotOutput(ctx, err) {
+		fmt.Fprint(os.Stdout, raw.String())
+		if !strings.HasSuffix(raw.String(), "\n") {
+			fmt.Fprintln(os.Stdout)
+		}
+	}
 	if err != nil {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && cancellationCanReplaceTurnError(err) {
 			fmt.Fprintln(os.Stderr, "\n(cancelled)")
 			return nil
 		}
 		return err
 	}
-	// raw already has ANSI from MarkdownWriter
-	fmt.Fprint(os.Stdout, raw.String())
-	if !strings.HasSuffix(raw.String(), "\n") {
-		fmt.Fprintln(os.Stdout)
-	}
 	fmt.Fprintf(os.Stderr, "%s  ─ done · %s ─%s\n", ansiDim, formatDuration(time.Since(start)), ansiDimEnd)
 	return nil
+}
+
+func shouldPrintOneShotOutput(ctx context.Context, err error) bool {
+	return err == nil || errors.Is(err, chat.ErrPersistence) || (ctx.Err() != nil && cancellationCanReplaceTurnError(err))
+}
+
+func cancellationCanReplaceTurnError(err error) bool {
+	return err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // stderrTerm adapts stderr for ChatRenderer in one-shot mode.
@@ -117,7 +130,7 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 	input.RenderInPlace(term)
 	close(done)
 	if err != nil {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && cancellationCanReplaceTurnError(err) {
 			renderer.PrintInfo("(cancelled - still in session; /exit to quit)")
 			return nil
 		}

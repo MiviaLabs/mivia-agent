@@ -351,7 +351,7 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal) error
 	close(done)
 	cancel()
 	fmt.Fprintln(os.Stdout)
-	if interrupted {
+	if interrupted && cancellationCanReplaceTurnError(err) {
 		fmt.Fprintln(os.Stderr, "(cancelled)")
 		return nil
 	}
