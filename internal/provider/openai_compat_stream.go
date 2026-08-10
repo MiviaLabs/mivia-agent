@@ -93,7 +93,9 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 1024*1024)
 
-	for sc.Scan() {
+	// The cancel check runs before the scan so a line the scanner accepted
+	// still reaches the writer if the context fires while it is processed.
+	for {
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -101,6 +103,9 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 			}
 			return "", "", nil, nil, "", false, nil, ctx.Err()
 		default:
+		}
+		if !sc.Scan() {
+			break
 		}
 		line := sc.Text()
 		if line == "" || !strings.HasPrefix(line, "data:") {
@@ -143,20 +148,30 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 	// argument JSON. Text-only streams without a finish signal are usable
 	// as-is: the content was fully received via streaming deltas.
 	if len(toolsByIdx) > 0 && !sawDone && finishReason == "" {
-		// Tool calls without a finish signal may be incomplete.
-		// Check that all tool calls have an ID and name (minimum viable).
-		for _, tc := range toolsByIdx {
-			if tc.ID == "" || tc.Function.Name == "" {
-				return "", "", nil, nil, "", false, nil, &TransientError{Err: fmt.Errorf("%s: stream ended without a completion signal (truncated tool call)", c.name)}
-			}
-			args := strings.TrimSpace(tc.Function.Arguments)
-			if args != "" && !json.Valid([]byte(args)) {
-				return "", "", nil, nil, "", false, nil, fmt.Errorf("%s: stream ended without a completion signal (tool call %q has malformed arguments)", c.name, tc.ID)
-			}
+		// Tool calls without a finish signal may be incomplete; require the
+		// minimum viable structure (ID + name, valid argument JSON).
+		if err := validateTruncatedToolCalls(toolsByIdx, c.name); err != nil {
+			return "", "", nil, nil, "", false, nil, err
 		}
 		// All tool calls have minimum structure; treat as complete.
 	}
 	return content.String(), reasoning.String(), webSearch, orderedToolCalls(toolsByIdx), finishReason, received, usage, nil
+}
+
+// validateTruncatedToolCalls rejects tool-call fragments that ended without a
+// completion signal and lack the minimum viable structure: every call needs an
+// ID and a name, and arguments must be valid JSON when present.
+func validateTruncatedToolCalls(toolsByIdx map[int]*ToolCall, name string) error {
+	for _, tc := range toolsByIdx {
+		if tc.ID == "" || tc.Function.Name == "" {
+			return &TransientError{Err: fmt.Errorf("%s: stream ended without a completion signal (truncated tool call)", name)}
+		}
+		args := strings.TrimSpace(tc.Function.Arguments)
+		if args != "" && !json.Valid([]byte(args)) {
+			return fmt.Errorf("%s: stream ended without a completion signal (tool call %q has malformed arguments)", name, tc.ID)
+		}
+	}
+	return nil
 }
 
 func (c *OpenAICompat) applyStreamChunk(

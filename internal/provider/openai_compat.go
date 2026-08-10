@@ -336,7 +336,9 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 1024*1024)
 
-	for sc.Scan() {
+	// The cancel check runs before the scan so a line the scanner accepted
+	// still reaches the writer if the context fires while it is processed.
+	for {
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -344,6 +346,9 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 			}
 			return full.String(), ctx.Err()
 		default:
+		}
+		if !sc.Scan() {
+			break
 		}
 		line := sc.Text()
 		if line == "" || !strings.HasPrefix(line, "data:") {
@@ -374,13 +379,10 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 			continue
 		}
 		delta := chunk.Choices[0].Delta.Content
-		if delta != "" {
-			received = true
-		}
-		if chunk.Choices[0].FinishReason != "" {
-			received = true
-		}
-		if chunk.Usage != nil {
+		if delta != "" || chunk.Choices[0].Delta.ReasoningContent != "" || chunk.Choices[0].FinishReason != "" || chunk.Usage != nil {
+			// A reasoning-only stream (thinking deltas, then [DONE]) is a
+			// delivered answer: count it like readTurnStream's reasoning
+			// payload, or the no-tools path re-bills the turn non-streamed.
 			received = true
 		}
 		if delta == "" {
@@ -438,62 +440,4 @@ func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w
 		}
 	}
 	return content, nil
-}
-
-// doJSON makes the call and repeats it while the response body arrives
-// incomplete. A truncated body still carries status 200, so the retry
-// transport treats it as a success and only the decode below finds the cut.
-func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBody, error) {
-	if req.DisableProviderReplay {
-		return c.doJSONOnce(ctx, req)
-	}
-	return retryOnIncompleteBody(ctx, func() (*chatResponseBody, error) {
-		return c.doJSONOnce(ctx, req)
-	})
-}
-
-func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatResponseBody, error) {
-	httpReq, err := c.newRequest(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.client.Do(httpReq)
-	if err != nil {
-		err = markTransientReadDeadline(ctx, req.Timeout, err)
-		return nil, asTransient(fmt.Errorf("%s: request failed: %w", c.name, err))
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.httpError(resp)
-	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, asTransient(fmt.Errorf("%s: read response: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, req.Timeout, err), deadlineLabel(req.Timeout)))
-		}
-		return nil, asTransient(fmt.Errorf("%s: read response: %w", c.name, err))
-	}
-	if len(raw) > maxJSONResponseBytes {
-		return nil, fmt.Errorf("%s: response exceeds %d byte limit", c.name, maxJSONResponseBytes)
-	}
-	if c.errorParser != nil {
-		parserBody := raw
-		if len(parserBody) > 4096 {
-			parserBody = parserBody[:4096]
-		}
-		if err := c.errorParser(resp.StatusCode, parserBody); err != nil {
-			return nil, err
-		}
-	}
-	var body chatResponseBody
-	if err := json.Unmarshal(raw, &body); err != nil {
-		// Left unwrapped on purpose: a decode failure is not by itself a
-		// transport fault (IsTransient excludes JSON syntax errors, because at
-		// agent-output parsing sites they are bad answers). retryOnIncompleteBody
-		// retries a body that was provably cut and marks the final error
-		// TransientError when its per-call budget is spent, where the cut is
-		// known.
-		return nil, fmt.Errorf("%s: decode response: %w", c.name, err)
-	}
-	return &body, nil
 }
