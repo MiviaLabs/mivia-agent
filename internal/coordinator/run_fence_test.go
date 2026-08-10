@@ -287,13 +287,13 @@ func TestSpawnRefusesConcurrentRunID(t *testing.T) {
 
 	d := runtime.New(runtime.Policy{})
 	_ = d.Register(runtime.Subagent, "worker", staticHandler{out: json.RawMessage(`{"ok":true}`)})
-	p := subagents.New(d, subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second})
-	c1 := New(repo1, p).(*coordinator)
-	c2 := New(repo2, p).(*coordinator)
+	policy := subagents.Policy{Workers: 1, MaxDepth: 3, MaxBudget: 1000, Timeout: 5 * time.Second}
+	c1 := New(repo1, subagents.New(d, policy)).(*coordinator)
+	c2 := New(repo2, subagents.New(d, policy)).(*coordinator)
 
 	var mu sync.Mutex
 	calls := 0
-	handler := &blockUntilCallHandler{block: make(chan struct{}), seen: make(chan struct{})}
+	handler := &blockUntilCallHandler{block: make(chan struct{}), seen: make(chan struct{}, 1)}
 	_ = d.Register(runtime.Subagent, "blocker", handler)
 
 	// Spawn a run from c1 that will block on the handler.
