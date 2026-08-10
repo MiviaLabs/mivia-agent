@@ -128,7 +128,10 @@ func (s *Session) saveAfterTurn(token OperationToken) error {
 	}
 	msgs := make([]provider.Message, len(s.Messages))
 	copy(msgs, s.Messages)
-	hasContent := len(msgs) > 1
+	// A lone user message is real content (TestHasContent_UserOnly): the
+	// per-turn crash snapshot must not drop the question just because the
+	// transcript has no system prompt and no assistant reply yet.
+	hasContent := hasContent(msgs)
 	s.mu.Unlock()
 	if !hasContent {
 		return nil
