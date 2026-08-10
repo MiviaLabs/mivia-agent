@@ -613,3 +613,186 @@ func TestMultiStepTimeoutUsesTighterRequestTimeout(t *testing.T) {
 		t.Fatalf("deadline=%v, want request timeout near 10ms", deadline)
 	}
 }
+
+// scriptedStepCompleter returns one scripted provider.Response after another and
+// finally failErr, implementing provider.Completer for the loop's ChatTurn path.
+// It lets a regression test make step 1 a non-terminal content-then-tools turn
+// (recording lastText in the loop) and then inject the interrupt or provider
+// error on the very next call - the exact mid-LLM-call failure the fix
+// classifies.
+type scriptedStepCompleter struct {
+	name      string
+	steps     []provider.Response
+	failErr   error
+	callCount int
+}
+
+func (m *scriptedStepCompleter) Name() string { return m.name }
+
+func (m *scriptedStepCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if m.callCount < len(m.steps) {
+		resp := m.steps[m.callCount]
+		m.callCount++
+		return &resp, nil
+	}
+	return nil, m.failErr
+}
+
+func (m *scriptedStepCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	return "", m.failErr
+}
+
+func (m *scriptedStepCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	return "", m.failErr
+}
+
+// TestMultiStepHandlerInterruptedStatusAndPartialOutput pins DC-9/DC-12 for the
+// sub-agent result envelope. When a child LLM call is interrupted mid-run by
+// cancellation (cancel_run/Ctrl+C/force-send) or the task deadline
+// (context.DeadlineExceeded), the pool and the coordinator ledger already
+// record "canceled"/"timed_out" (subagents.go resultStatus,
+// coordinator/record_results.go), and agent.Loop.Run returns the partial reply
+// it had already produced. buildResult must report the same vocabulary and keep
+// that partial output instead of labeling every interrupt status:"error" and
+// deleting the output. A genuine provider failure must still be "error" with
+// the output deleted so no raw provider body leaks (the pinned guarantee in
+// TestMultiStepHandlerFailureOmitsRawProviderBodyAndRefs).
+func TestMultiStepHandlerInterruptedStatusAndPartialOutput(t *testing.T) {
+	partial := "Analysis so far: the multi-step handler wraps agent.Loop."
+
+	t.Run("canceled_keeps_partial", func(t *testing.T) {
+		testInterruptedSubagentKeepsPartial(t, partial, context.Canceled, "canceled")
+	})
+	t.Run("timed_out_keeps_partial", func(t *testing.T) {
+		testInterruptedSubagentKeepsPartial(t, partial, context.DeadlineExceeded, "timed_out")
+	})
+	t.Run("canceled_no_partial", func(t *testing.T) {
+		testInterruptedSubagentCanceledNoPartial(t)
+	})
+	t.Run("genuine_error_still_error", func(t *testing.T) {
+		testInterruptedSubagentGenuineError(t)
+	})
+}
+
+// testInterruptedSubagentKeepsPartial drives the canceled/timed_out mid-run
+// case: a step-1 content+tools reply precedes the interrupt, so the partial
+// reply must survive and the envelope must report the pool vocabulary.
+func testInterruptedSubagentKeepsPartial(t *testing.T, partial string, failErr error, wantStatus string) {
+	t.Helper()
+	steps := []provider.Response{{
+		Content:   partial,
+		ToolCalls: []provider.ToolCall{readFileToolCall()},
+	}}
+	result, err := invokeInterruptedSubagent(t, steps, failErr)
+	if result == nil {
+		t.Fatalf("%v mid-run must return a payload, got nil (err=%v)", failErr, err)
+	}
+	if !errors.Is(err, failErr) {
+		t.Fatalf("err = %v, want %v", err, failErr)
+	}
+	parsed := assertSafeSubagentEnvelope(t, result)
+	if parsed["status"] != wantStatus {
+		t.Fatalf("status = %v, want %s (payload %s)", parsed["status"], wantStatus, result)
+	}
+	out, ok := parsed["output"].(string)
+	if !ok || !strings.Contains(out, "Analysis so far") {
+		t.Fatalf("partial reply lost on %s: output = %v (payload %s)", wantStatus, parsed["output"], result)
+	}
+}
+
+// testInterruptedSubagentCanceledNoPartial covers boundary 0: cancellation
+// fires on the very first LLM call - zero completed steps, so there is no
+// partial text to keep, but the envelope must still report canceled and keep
+// the output field.
+func testInterruptedSubagentCanceledNoPartial(t *testing.T) {
+	t.Helper()
+	result, err := invokeInterruptedSubagent(t, nil, context.Canceled)
+	if result == nil {
+		t.Fatalf("canceled before any step must still return a payload, got nil (err=%v)", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	parsed := assertSafeSubagentEnvelope(t, result)
+	if parsed["status"] != "canceled" {
+		t.Fatalf("status = %v, want canceled (payload %s)", parsed["status"], result)
+	}
+	if _, ok := parsed["output"]; !ok {
+		t.Fatalf("canceled envelope must keep the output field (may be empty): %s", result)
+	}
+	if _, ok := parsed["step_count"]; !ok {
+		t.Fatalf("canceled envelope missing step_count: %s", result)
+	}
+}
+
+// testInterruptedSubagentGenuineError is the negative path: a real provider
+// failure keeps status "error" with the output deleted, so the raw provider
+// body never leaks.
+func testInterruptedSubagentGenuineError(t *testing.T) {
+	t.Helper()
+	raw := errors.New("provider body should not escape: raw prompt and tool output")
+	result, err := invokeInterruptedSubagent(t, nil, raw)
+	if err == nil {
+		t.Fatal("expected operational error")
+	}
+	parsed := assertSafeSubagentEnvelope(t, result)
+	if parsed["status"] != "error" {
+		t.Fatalf("status = %v, want error (payload %s)", parsed["status"], result)
+	}
+	if _, ok := parsed["output"]; ok {
+		t.Fatalf("genuine failure must delete output so the raw body cannot leak: %s", result)
+	}
+}
+
+// readFileToolCall returns a harmless read_file tool call the scripted
+// completer emits before the interrupt or failure fires.
+func readFileToolCall() provider.ToolCall {
+	tc := provider.ToolCall{ID: "read-1", Type: "function"}
+	tc.Function.Name = "read_file"
+	tc.Function.Arguments = `{"path":"multi_step.go"}`
+	return tc
+}
+
+// invokeInterruptedSubagent runs the multi-step handler against a scripted
+// completer that plays the given steps and then fails with failErr.
+func invokeInterruptedSubagent(t *testing.T, steps []provider.Response, failErr error) (json.RawMessage, error) {
+	t.Helper()
+	comp := &scriptedStepCompleter{name: "test", steps: steps, failErr: failErr}
+	h := &MultiStepHandler{
+		Completer:    comp,
+		FullRegistry: newTestRegistry(),
+		Model:        "test-model",
+		SystemPrompt: "Test sub-agent.",
+		MaxSteps:     3,
+		MaxTokens:    1024,
+	}
+	return h.Invoke(context.Background(), runtime.Request{
+		Name:  "multi_step",
+		Input: json.RawMessage(`"analyze the module"`),
+	})
+}
+
+// assertSafeSubagentEnvelope verifies the result payload is valid JSON, mints
+// no content references, and never leaks the raw provider body.
+func assertSafeSubagentEnvelope(t *testing.T, result json.RawMessage) map[string]any {
+	t.Helper()
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	for _, key := range []string{"error_ref", "output_ref"} {
+		if _, ok := parsed[key]; ok {
+			t.Fatalf("unstorable content reference emitted: %v", parsed)
+		}
+	}
+	if strings.Contains(string(result), "ref:") {
+		t.Fatalf("content reference leaked in result: %s", result)
+	}
+	if strings.Contains(string(result), "provider body should not escape") {
+		t.Fatalf("raw provider body leaked in result: %s", result)
+	}
+	return parsed
+}

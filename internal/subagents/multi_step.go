@@ -289,16 +289,31 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 		"step_count": stepCount,
 	}
 	if err != nil {
-		result["status"] = "error"
 		// No content reference is emitted here. This layer has no repository, so
 		// nothing stores the error or partial reply bytes under any key, and a
 		// reference whose bytes nothing holds is worse than none: it hands the
 		// model a pointer that cannot resolve. The resolvable reference for this
 		// same task already exists on the correct path - the coordinator mints
 		// and stores it from subagents.Result.Output/.Err.
-		delete(result, "output")
-		if errors.Is(err, ErrSchemaViolation) {
+		//
+		// Interrupts get the pool/ledger vocabulary (canceled/timed_out) and
+		// keep the partial reply the loop had already produced (DC-9/DC-12):
+		// agent.Loop.Run returns lastText on an interrupted step, and the pool
+		// records the same classification in Result.Status. Only genuine
+		// failures (schema violation included) are "error" with the output
+		// deleted, so a raw provider body can never leak.
+		switch {
+		case errors.Is(err, context.Canceled):
+			result["status"] = "canceled"
+		case errors.Is(err, context.DeadlineExceeded):
+			result["status"] = "timed_out"
+		case errors.Is(err, ErrSchemaViolation):
+			result["status"] = "error"
 			result["schema"] = "violation"
+			delete(result, "output")
+		default:
+			result["status"] = "error"
+			delete(result, "output")
 		}
 	} else {
 		result["status"] = "completed"
