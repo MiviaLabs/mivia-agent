@@ -239,6 +239,31 @@ func TestTUIMouseDoubleClickTogglesToolBlock(t *testing.T) {
 	}
 }
 
+// TestTUIMouseDoubleClickTogglesThinkingBlock extends the same pattern to a
+// committed thinking block: the per-block toggle keeps working after the
+// collapsed-by-default change.
+func TestTUIMouseDoubleClickTogglesThinkingBlock(t *testing.T) {
+	m := newSmokeModel(t)
+	m.mode = modeChat
+	m.width = 80
+	m.height = 40
+	m.ready = true
+	m.blocks = []ChatBlock{
+		{ID: "th-1", Kind: ChatBlockThinking, Text: "line1\nline2\nline3", Collapsed: true},
+	}
+	m.renderVP()
+	if !m.blocks[0].Collapsed {
+		t.Fatal("start collapsed")
+	}
+	m.handleTranscriptBlockClick("th-1")
+	m.lastClickBlockID = "th-1"
+	m.lastClickAt = time.Now()
+	m.handleTranscriptBlockClick("th-1")
+	if m.blocks[0].Collapsed {
+		t.Fatal("double-click should expand thinking block")
+	}
+}
+
 // TestTUIMouseHitComposerClick verifies that clicking the composer zone sets
 // focus to the composer.
 func TestTUIMouseHitComposerClick(t *testing.T) {

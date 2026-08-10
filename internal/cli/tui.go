@@ -239,7 +239,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		sessionSel:            0,
 		sessionScroll:         0,
 		hitMap:                tuiHitMap{version: 1},
-		thinkingExpandDefault: true, // chat-like: show thinking body when committed
+		thinkingExpandDefault: false, // chat-like: committed thinking blocks collapse by default
 		followOutput:          true,
 		workGroupCollapsed:    map[string]bool{},
 		// Auto-enable mouse when the host terminal looks capable (TTY + TERM).
@@ -430,6 +430,11 @@ func (m *tuiModel) adjustThinkingScroll(blockID string, dir int) bool {
 	// History block.
 	block := m.blockByID(blockID)
 	if block == nil || block.Kind != ChatBlockThinking {
+		return false
+	}
+	// Only an expanded block scrolls: a collapsed block is a one-line
+	// summary with nothing to scroll, and wheel + j/k must agree on that.
+	if block.Collapsed {
 		return false
 	}
 	n := len(strings.Split(block.Text, "\n"))
