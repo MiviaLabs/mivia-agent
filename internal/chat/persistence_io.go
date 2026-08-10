@@ -41,6 +41,9 @@ func writeJSONL(path string, msgs []provider.Message) error {
 // Uses a unique temp file per call via os.CreateTemp to prevent races
 // when multiple goroutines save to the same session directory.
 func writeMetaJSON(dir string, meta sessionMeta) error {
+	if strings.TrimSpace(dir) == "" {
+		return fmt.Errorf("metadata directory is required")
+	}
 	f, err := os.CreateTemp(dir, ".meta-*.tmp")
 	if err != nil {
 		return err
