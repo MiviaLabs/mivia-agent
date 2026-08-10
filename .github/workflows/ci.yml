@@ -58,6 +58,10 @@ jobs:
           python-version: "3.12"
       - name: Install semgrep
         run: pip install semgrep
+      - name: Install ripgrep
+        # make invariants drives the coverage script with `rg`; macOS runners
+        # do not ship it (Linux runners do).
+        run: brew install ripgrep
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
@@ -98,13 +102,29 @@ jobs:
       # (C:\Users\runneradmin\...). mivia's worktree canonicality checks and
       # path comparisons must never see a short/long split, so the Windows
       # job runs with a long-name temp directory that both forms agree on.
-      - name: Prepare long-name temp directory
+      # The same step isolates the user profile (mirroring the POSIX jobs'
+      # isolated home): the shipped configs default env_file to ~/.mivia/.env,
+      # and tests must never read the runner's real home. The real Go caches
+      # are preserved because with USERPROFILE moved, go would default
+      # GOMODCACHE/GOCACHE under the isolated profile and the codeintel
+      # analyzer's packages.Load would find neither modules nor build cache.
+      - name: Prepare isolated test home and long-name temp directory
         shell: pwsh
         run: |
-          $temp = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'mivia-ci-temp'
+          $ciRoot = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'mivia-ci-temp'
+          $temp = Join-Path $ciRoot 'tmp'
           New-Item -ItemType Directory -Force -Path $temp | Out-Null
           "TMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
           "TEMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $home = Join-Path $ciRoot 'home'
+          New-Item -ItemType Directory -Force -Path (Join-Path $home '.mivia') | Out-Null
+          New-Item -ItemType File -Force -Path (Join-Path $home '.mivia\.env') | Out-Null
+          "USERPROFILE=$home" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "HOME=$home" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $gomodcache = & go env GOMODCACHE
+          $gocache = & go env GOCACHE
+          "GOMODCACHE=$gomodcache" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "GOCACHE=$gocache" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build
         run: go build ./...
       - name: Test
