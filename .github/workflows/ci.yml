@@ -81,8 +81,8 @@ jobs:
       - name: Race (packages)
         run: make race
 
-  # Windows runs Go build + tests only. The make-based gates are POSIX shell
-  # scripts and are not portable; the Go toolchain is the portable core.
+  # Windows compiles the full source tree. The POSIX-oriented integration
+  # suite runs on Linux and macOS. This job runs a portable runtime smoke test.
   verify-windows:
     runs-on: windows-latest
     steps:
@@ -101,7 +101,15 @@ jobs:
           "GOPATH=$(go env GOPATH)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           New-Item -ItemType Directory -Force -Path "$testHome\.mivia" | Out-Null
           New-Item -ItemType File -Force -Path "$testHome\.mivia\.env" | Out-Null
-      - name: Test
-        run: go test ./... -count=1
-      - name: Vet and build
-        run: go vet ./...; go build ./...
+      - name: Compile all tests and build
+        run: go test ./... -run '^$'; go vet ./...; go build ./...
+      - name: Run portable runtime smoke tests
+        run: go test ./cmd/mivia ./internal/version -count=1
+      - name: Validate PowerShell installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/install.ps1), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
