@@ -22,21 +22,33 @@ Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need 
 
 ### Install
 
-Tagged [GitHub Releases](https://github.com/MiviaLabs/mivia-agent/releases) provide archives for Linux, macOS, and Windows. Each release supports amd64 and arm64. See the [release guide](docs/development/release.md) for checksum verification and installers.
+Tagged [GitHub Releases](https://github.com/MiviaLabs/mivia-agent/releases) provide archives for Linux, macOS, and Windows. Each release supports amd64 and arm64. See the [release guide](docs/development/release.md) for release checks and pinned installs.
 
-To install a pinned release on Linux or macOS, download the installer, inspect it, and run it with the release tag:
-
-Replace `v0.1.0` with a published release tag. The example works after that release exists.
+Install the latest stable release on Linux or macOS:
 
 ```bash
-curl --fail --silent --show-error --location \
-  https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh \
-  -o /tmp/mivia-install.sh
-sed -n '1,240p' /tmp/mivia-install.sh
-MIVIA_VERSION=v0.1.0 sh /tmp/mivia-install.sh
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.sh | bash
+mivia --version
 ```
 
-The installer uses a user-owned directory and verifies the archive checksum. It adds the directory to your shell profile when needed. Open a new shell before you run `mivia`. Set `MIVIA_NO_PATH_UPDATE=1` to skip the profile change. It does not use an unpinned release.
+Install the latest stable release in Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.ps1 | iex
+mivia --version
+```
+
+The installers verify the archive checksum before extraction. They use a user-owned directory and do not require administrator rights. Unix installs update a shell profile. A child `bash` process cannot update the parent shell, so open a new shell or source the reported profile. PowerShell also updates the current process when it can.
+
+For a pinned release, inspect the script before you run it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh -o /tmp/mivia-install.sh
+sed -n '1,240p' /tmp/mivia-install.sh
+sh /tmp/mivia-install.sh v0.1.0
+```
+
+Use `MIVIA_NO_PATH_UPDATE=1` on Unix or `-NoPathUpdate` in PowerShell to skip PATH changes. Latest installation requires at least one published stable release. Pre-release tags require an explicit version.
 
 From source with Go 1.25+:
 

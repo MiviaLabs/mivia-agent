@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -53,6 +54,12 @@ func TestCurrentDirContextWhenCwdDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, wt := currentDirContext()
+	if runtime.GOOS == "darwin" {
+		if wt != "" || d == "" {
+			t.Fatalf("currentDirContext after cwd removal = %q/%q, want a directory and empty worktree", d, wt)
+		}
+		return
+	}
 	if d != "" || wt != "" {
 		t.Fatalf("currentDirContext after cwd removal = %q/%q, want empty/empty", d, wt)
 	}

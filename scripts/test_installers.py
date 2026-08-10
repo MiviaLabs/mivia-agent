@@ -56,12 +56,17 @@ def main() -> None:
         archive = fixture / "mivia_1.2.3_linux_amd64.tar.gz"
         binary = fixture / "mivia"
         binary.write_bytes(b"test mivia binary")
+        (fixture / "README.md").write_text("mivia test\n", encoding="utf-8")
+        (fixture / "LICENSE").write_text("test license\n", encoding="utf-8")
         with tarfile.open(archive, "w:gz") as output:
             output.add(binary, arcname="mivia")
+            output.add(fixture / "README.md", arcname="README.md")
+            output.add(fixture / "LICENSE", arcname="LICENSE")
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         (fixture / "checksums.txt").write_text(
             f"{digest}  {archive.name}\n", encoding="utf-8"
         )
+        (fixture / "mivia-version.txt").write_text("v1.2.3\n", encoding="utf-8")
         write_executable(
             fake_bin / "curl",
             "#!/usr/bin/env python3\n"
@@ -86,8 +91,19 @@ def main() -> None:
         profile_text = profile.read_text(encoding="utf-8")
         escaped_install_dir = str(temp / "install's bin").replace("'", "'\\''")
         expected_path_line = f"export PATH='{escaped_install_dir}':\"$PATH\""
-        if profile_text.count("# mivia installer: PATH") != 1 or expected_path_line not in profile_text:
+        if profile_text.splitlines().count("# mivia installer: PATH") != 1 or expected_path_line not in profile_text:
             raise AssertionError("installer did not add an idempotent PATH entry")
+
+        profile.write_text(
+            "before\n# mivia installer: PATH\nexport PATH='/old/bin':\"$PATH\"\n# mivia installer: PATH END\nafter\n",
+            encoding="utf-8",
+        )
+        latest_env = dict(env)
+        latest_env.pop("MIVIA_VERSION")
+        result = run(latest_env)
+        latest_text = profile.read_text(encoding="utf-8")
+        if result.returncode != 0 or latest_text.count(expected_path_line) != 1 or "'/old/bin'" in latest_text:
+            raise AssertionError("latest install did not repair the stale PATH block")
 
         archive.write_bytes(archive.read_bytes())
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -95,8 +111,18 @@ def main() -> None:
             f"{digest}  {archive.name}\n", encoding="utf-8"
         )
         result = run(env)
-        if result.returncode != 0 or profile.read_text(encoding="utf-8") != profile_text:
+        if result.returncode != 0 or profile.read_text(encoding="utf-8") != latest_text:
             raise AssertionError("installer duplicated the PATH entry")
+
+        (fixture / "checksums.txt").write_text(
+            f"{digest}  {archive.name}\n{digest}  {archive.name}\n", encoding="utf-8"
+        )
+        result = run(env)
+        if result.returncode == 0 or "duplicate checksums" not in result.stderr:
+            raise AssertionError("installer accepted duplicate checksum records")
+        (fixture / "checksums.txt").write_text(
+            f"{digest}  {archive.name}\n", encoding="utf-8"
+        )
 
         no_path_env = dict(env, MIVIA_NO_PATH_UPDATE="1", MIVIA_SHELL_RC=str(temp / "no-path.rc"))
         result = run(no_path_env)

@@ -5,16 +5,16 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: read
-  id-token: write
-  attestations: write
-
 jobs:
   validate:
     name: validate release tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - name: Validate tag
         shell: bash
         env:
@@ -25,11 +25,16 @@ jobs:
             echo "invalid release tag: $RELEASE_TAG" >&2
             exit 1
           }
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${{ github.sha }}"
 
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
     needs: validate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -41,10 +46,10 @@ jobs:
           - { goos: windows, goarch: amd64 }
           - { goos: windows, goarch: arm64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
       - name: Build archive
@@ -89,10 +94,10 @@ jobs:
           test -s "$GITHUB_WORKSPACE/$archive"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
       - name: Attest archive
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
-          subject-path: mivia_*
-      - uses: actions/upload-artifact@v4
+          subject-path: mivia_*_${{ matrix.goos }}_${{ matrix.goarch }}.*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mivia-${{ matrix.goos }}-${{ matrix.goarch }}
           path: mivia_*
@@ -105,7 +110,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
           merge-multiple: true
@@ -124,7 +132,10 @@ jobs:
             test -s "dist/$archive"
           done
           test "$(find dist -maxdepth 1 -type f \( -name 'mivia_*.tar.gz' -o -name 'mivia_*.zip' \) | wc -l)" -eq 6
-          (cd dist && sha256sum mivia_*) > dist/checksums.txt
+          cp scripts/install.sh scripts/install.ps1 dist/
+          if [[ "${GITHUB_REF_NAME}" != *-* ]]; then printf '%s\n' "$GITHUB_REF_NAME" > dist/mivia-version.txt; fi
+          archives=(mivia_${version}_linux_amd64.tar.gz mivia_${version}_linux_arm64.tar.gz mivia_${version}_darwin_amd64.tar.gz mivia_${version}_darwin_arm64.tar.gz mivia_${version}_windows_amd64.zip mivia_${version}_windows_arm64.zip)
+          (cd dist && sha256sum "${archives[@]}") > dist/checksums.txt
           (cd dist && sha256sum -c checksums.txt)
       - name: Create release
         env:
@@ -141,4 +152,7 @@ jobs:
           if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
             release_args+=(--prerelease --latest=false)
           fi
-          gh release create "${GITHUB_REF_NAME}" "${release_args[@]}" mivia_* checksums.txt
+          archives=(mivia_*.tar.gz mivia_*.zip)
+          assets=("${archives[@]}" checksums.txt install.sh install.ps1)
+          [[ "${GITHUB_REF_NAME}" == *-* ]] || assets+=(mivia-version.txt)
+          gh release create "${GITHUB_REF_NAME}" "${release_args[@]}" "${assets[@]}"

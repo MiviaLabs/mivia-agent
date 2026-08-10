@@ -35,7 +35,11 @@ def main() -> None:
         "goos: darwin",
         "goos: windows",
         "merge-multiple: true",
-        "actions/attest-build-provenance@v2",
+        "actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45",
+        "mivia-version.txt",
+        "scripts/install.ps1",
+        "persist-credentials: false",
+        "github.sha",
         "--verify-tag",
         '--repo "${GITHUB_REPOSITORY}"',
         "needs: validate",
@@ -53,6 +57,8 @@ def main() -> None:
         "refs/tags/${requested}^{commit}",
         "go run -trimpath",
         "checksums.txt",
+        "mivia-version.txt",
+        "install.ps1",
     ):
         require(release, fragment, release_path)
 

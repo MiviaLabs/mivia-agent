@@ -56,7 +56,7 @@ fi
 build_root="$(mktemp -d "${TMPDIR:-/tmp}/mivia-release.XXXXXX")"
 trap 'rm -rf "$build_root"' EXIT
 mkdir -p "$dist"
-find "$dist" -maxdepth 1 -type f \( -name 'mivia_*.tar.gz' -o -name 'mivia_*.zip' -o -name checksums.txt \) -delete
+find "$dist" -maxdepth 1 -type f \( -name 'mivia_*.tar.gz' -o -name 'mivia_*.zip' -o -name checksums.txt -o -name install.sh -o -name install.ps1 -o -name mivia-version.txt \) -delete
 
 version_output="$(env -u GOOS -u GOARCH CGO_ENABLED=0 go run -trimpath \
   -ldflags "$ldflags" ./cmd/mivia version --json)"
@@ -122,6 +122,10 @@ else
   command -v shasum >/dev/null 2>&1 || { printf 'release: sha256sum or shasum is required\n' >&2; exit 1; }
   (cd "$dist" && shasum -a 256 mivia_*) > "${dist}/checksums.txt"
 fi
+cp scripts/install.sh scripts/install.ps1 "$dist/"
+if [[ "$tag" != *-* ]]; then
+  printf '%s\n' "$tag" >"$dist/mivia-version.txt"
+fi
 
 printf 'release: created %d archives in %s\n' "$expected" "$dist"
-printf 'release: publish only after review with gh release create %s --verify-tag --generate-notes dist/mivia_* dist/checksums.txt\n' "$tag"
+printf 'release: publish only after review with gh release create %s --verify-tag --generate-notes dist/mivia_* dist/checksums.txt dist/install.sh dist/install.ps1\n' "$tag"

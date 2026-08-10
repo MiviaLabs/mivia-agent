@@ -14,38 +14,54 @@ Unix targets use `.tar.gz` archives. Windows targets use `.zip` archives. Each a
 
 ## Create a release
 
-Use an annotated semantic version tag. The tag must point to the release commit.
+Use a semantic version tag. The tag must point to the release commit.
 
 ```bash
 git tag -a v0.1.0 -m "mivia v0.1.0"
 git push origin v0.1.0
 ```
 
-The release workflow validates the tag, builds all six targets, checks each embedded version, creates archives, creates `checksums.txt`, and publishes the GitHub Release. The workflow also creates GitHub build provenance attestations.
+The release workflow validates the tag identity, builds all six targets, checks each embedded version, creates archives, creates `checksums.txt`, and publishes the GitHub Release. It also publishes both installer scripts. A stable release publishes `mivia-version.txt`. The workflow creates GitHub build provenance attestations for each archive.
 
 The workflow does not publish a release for an invalid tag. It does not create a missing tag. Release tags must not be changed after publication.
 
 ## Install Linux or macOS
 
-Use a pinned version. Download the installer to a file before you run it. Inspect the file first. Replace `v0.1.0` with a published release tag. The example works after that release exists.
+Install the latest stable release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.sh | bash
+mivia --version
+```
+
+The installer resolves one stable release from `mivia-version.txt`. It then downloads the archive and checksum from that exact tag. It fails clearly before the first stable release exists. It never selects a pre-release by default.
+
+For a pinned release, download the script from the same tag. Inspect the file before you run it:
 
 ```bash
 curl --fail --silent --show-error --location \
   https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh \
   -o /tmp/mivia-install.sh
 sed -n '1,240p' /tmp/mivia-install.sh
-MIVIA_VERSION=v0.1.0 sh /tmp/mivia-install.sh
+sh /tmp/mivia-install.sh v0.1.0
 ```
 
 The installer detects the operating system and CPU architecture. It installs to `$XDG_BIN_DIR`, or `$HOME/.local/bin` by default. Set `MIVIA_INSTALL_DIR` or pass a directory argument to select another path.
 
-If the install directory is not on `PATH`, the installer adds it to the user shell profile. It writes only to a user-owned profile. It does not use `sudo`. Open a new shell, or source the reported profile, before you run `mivia`. Set `MIVIA_NO_PATH_UPDATE=1` to skip this change. The installer then prints the command to run manually.
+The install directory precedence is: a directory argument, `MIVIA_INSTALL_DIR`, `XDG_BIN_DIR`, then `$HOME/.local/bin`. If the directory is not on `PATH`, the installer updates the selected user shell profile. It does not use `sudo`. Open a new shell, or source the reported profile, before you run `mivia`. Set `MIVIA_NO_PATH_UPDATE=1` to skip this change. The installer then prints the command to run manually.
 
 The installer downloads only the selected version. It downloads `checksums.txt` over HTTPS. It compares the downloaded archive with its SHA-256 entry before extraction. It does not require `sudo`.
 
 ## Install Windows
 
-Use PowerShell. Download the script from the same release tag before you run it.
+Install the latest stable release:
+
+```powershell
+irm https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.ps1 | iex
+mivia --version
+```
+
+For a pinned release, use the version parameter after you inspect the script:
 
 ```powershell
 $version = 'v0.1.0'
@@ -56,7 +72,7 @@ Get-Content .\mivia-install.ps1
 .\mivia-install.ps1 -Version $version
 ```
 
-The installer supports amd64 and arm64. It installs to `$env:LOCALAPPDATA\mivia\bin` by default. Use `-InstallDir` to select another user-owned directory. The installer adds this directory to the user PATH. Open a new terminal before you run `mivia`. Use `-NoPathUpdate` to skip the PATH change.
+The installer supports amd64 and arm64. It installs to `$env:LOCALAPPDATA\mivia\bin` by default. Use `-InstallDir` to select another user-owned directory. The installer updates only the user PATH and the current PowerShell process. Other terminals need a restart. Use `-NoPathUpdate` to skip the PATH change.
 
 The installer downloads a pinned archive and `checksums.txt`. It compares the archive SHA-256 value before extraction. It does not require administrator rights.
 
@@ -111,10 +127,10 @@ Homebrew, Scoop, and WinGet metadata are not active yet. Do not use package-mana
 
 ## Release integrity
 
-GitHub Release assets include SHA-256 checksums. GitHub Actions creates build provenance attestations for the archives. Verify an attestation with the GitHub CLI when the release provides one:
+GitHub Release assets include SHA-256 checksums. GitHub Actions creates build provenance attestations for the archives. Verify an archive after you download it:
 
 ```bash
 gh attestation verify mivia_0.1.0_linux_amd64.tar.gz --repo MiviaLabs/mivia-agent
 ```
 
-Treat a checksum mismatch, missing archive, or missing attestation as a release failure. Report installation failures in the repository issue tracker. Do not include API keys, memory contents, or private workspace data in an issue.
+Treat a checksum mismatch, missing archive, or failed attestation verification as a release failure. Report installation failures in the repository issue tracker. Do not include API keys, memory contents, or private workspace data in an issue.

@@ -133,13 +133,13 @@ pre-push:
 	@.githooks/pre-push
 
 fmt:
-	@mapfile -t files < <(git ls-files '*.go' 2>/dev/null || true); \
-	if (($${#files[@]}==0)); then mapfile -t files < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
+	@files=(); while IFS= read -r file; do files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
+	if (($${#files[@]}==0)); then while IFS= read -r file; do files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
 	if (($${#files[@]})); then gofmt -w "$${files[@]}"; fi
 
 fmt-check:
-	@mapfile -t files < <(git ls-files '*.go' 2>/dev/null || true); \
-	if (($${#files[@]}==0)); then mapfile -t files < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
+	@files=(); while IFS= read -r file; do files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
+	if (($${#files[@]}==0)); then while IFS= read -r file; do files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
 	if (($${#files[@]})); then \
 		unformatted="$$(gofmt -l "$${files[@]}")"; \
 		if [[ -n "$$unformatted" ]]; then \
