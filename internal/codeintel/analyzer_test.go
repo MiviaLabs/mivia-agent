@@ -154,7 +154,9 @@ func TestReferencesResolvesFullyQualifiedPath(t *testing.T) {
 	for _, loc := range result.Locations {
 		if loc.Role == RoleDefinition {
 			foundDef = true
-			if !strings.Contains(loc.Path, "tools/") {
+			// Windows paths use backslashes; the package directory is the
+			// segment named "tools" regardless of separator.
+			if !strings.Contains(filepath.ToSlash(loc.Path), "tools/") {
 				t.Errorf("definition for tools.NewRegistry resolved outside tools package: %s", loc.Path)
 			}
 		}
