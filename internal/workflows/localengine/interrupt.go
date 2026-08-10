@@ -25,17 +25,26 @@ func (e *Engine) Interrupt(runID string) error {
 	// run to failed on the version conflict before the fence exists.
 	_ = e.ctrlRepo()
 	e.mu.Lock()
+	if resumeDone := e.resuming[runID]; resumeDone != nil {
+		e.mu.Unlock()
+		<-resumeDone
+		return e.Interrupt(runID)
+	}
+	_, delivering := e.delivering[runID]
 	if e.fence != nil {
 		e.fence.abandon(runID)
 	}
 	active, ok := e.active[runID]
+	if !ok && !delivering {
+		e.mu.Unlock()
+		return fmt.Errorf("workflow run %q is not active in this engine", runID)
+	}
 	if ok {
 		if e.interrupting == nil {
 			e.interrupting = make(map[string]uint)
 		}
 		e.interrupting[runID]++
 	}
-	_, delivering := e.delivering[runID]
 	e.mu.Unlock()
 	if ok {
 		defer e.finishInterrupt(runID)

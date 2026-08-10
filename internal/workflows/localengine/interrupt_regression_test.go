@@ -364,3 +364,49 @@ func TestInterruptBlocksResumeDuringClaimCleanup(t *testing.T) {
 		t.Fatalf("Interrupt: %v", err)
 	}
 }
+
+// TestInterruptRefusesForeignActiveRun prevents one engine from changing the
+// open attempt of a controller that another engine owns.
+func TestInterruptRefusesForeignActiveRun(t *testing.T) {
+	runner := &interruptBlockingRunner{
+		started: make(chan struct{}),
+		stopped: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(runner.release)
+	repo := workflowledger.NewMemoryRepository()
+	var runners atomic.Int32
+	owner := &localengine.Engine{
+		WorkspaceRoot: writeTwoStepWorkspace(t),
+		Repo:          repo,
+		NewRunner: func() controller.AgentStepRunner {
+			if runners.Add(1) == 1 {
+				return runner
+			}
+			return &localengine.StaticStepRunner{Output: json.RawMessage(`{"ok":true}`)}
+		},
+	}
+	started, err := owner.Start(context.Background(), agenttools.StartRequest{
+		Workflow: "two-step",
+		Inputs:   map[string]any{"task": "x"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("step did not start")
+	}
+	foreign := &localengine.Engine{Repo: repo}
+	if err := foreign.Interrupt(started.RunID); err == nil {
+		t.Fatal("foreign Interrupt succeeded for an active run")
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), started.RunID)
+	if err != nil {
+		t.Fatalf("ListStepAttempts: %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != workflowledger.AttemptStatusRunning {
+		t.Fatalf("attempts = %+v, want one running attempt", attempts)
+	}
+}

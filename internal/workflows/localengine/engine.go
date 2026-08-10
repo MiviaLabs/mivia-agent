@@ -50,6 +50,7 @@ type Engine struct {
 	mu           sync.Mutex
 	active       map[string]*activeRun
 	interrupting map[string]uint
+	resuming     map[string]chan struct{}
 	admitting    map[string]chan struct{}
 	fence        *abandonFence
 	// worktrees records the resolved git worktree identity per run (Root +
@@ -223,20 +224,11 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	if !workflowledger.IsResumableRunStatus(run.Status) {
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q status %s is not resumable", req.RunID, run.Status)
 	}
-	// Never resume a run this engine is already executing: tearing the live
-	// run down to "resume" it would cancel mid-step work and corrupt the
-	// interrupted state it was supposed to recover. The caller must wait for
-	// the active run to settle first.
-	e.mu.Lock()
-	_, activeHere := e.active[req.RunID]
-	interrupting := e.interrupting[req.RunID] != 0
-	e.mu.Unlock()
-	if activeHere {
-		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is already executing in this engine; cancel it first", req.RunID)
+	resumeDone, err := e.reserveResume(req.RunID)
+	if err != nil {
+		return agenttools.StartResult{}, err
 	}
-	if interrupting {
-		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is being interrupted in this engine; wait for it to finish", req.RunID)
-	}
+	defer e.finishResume(req.RunID, resumeDone)
 	if err := e.prepareResumeWorktree(ctx, run); err != nil {
 		return agenttools.StartResult{}, err
 	}
@@ -279,7 +271,7 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, force bool) error {
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) && force {
-			if err := e.Repo.TakeoverRunClaim(ctx, runID, holder); err != nil {
+			if err := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); err != nil {
 				return err
 			}
 		} else if errors.Is(err, workflowledger.ErrClaimHeld) {
