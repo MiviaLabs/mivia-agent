@@ -8,6 +8,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Pin TLS 1.2: PowerShell 5.1 may otherwise negotiate TLS 1.0/1.1 for the
+# downloads below. The -bor keeps TLS 1.3 when the runtime already supports it.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("mivia-install-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {
