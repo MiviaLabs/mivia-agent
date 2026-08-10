@@ -6,9 +6,11 @@ mivia is a local CLI coding agent. It runs in your terminal, reads and edits
 files in your project, runs commands such as your test suite, and can drive
 multi-step workflows in an isolated worktree with a durable run record.
 
-mivia runs on your machine. Your files stay there. mivia sends your prompt
-and the context it selects to the AI provider you configure - nothing else
-leaves your machine.
+mivia runs on your machine. Your files stay there by default. mivia sends your
+prompt and selected context to the AI provider you configure. Web search,
+configured MCP servers, lifecycle hooks, and workflow delivery can also
+contact external services or run configured local programs. Review those
+settings before use.
 
 ## The pieces
 
@@ -40,7 +42,7 @@ A skill is a reusable task template (`SKILL.md`) an agent can invoke - things
 like `bug-audit`, `architecture-review`, or `feature-delivery` ship with the
 repository.
 
-mivia can run several sub-agents concurrently as DAG tasks: `spawn_agent`,
+mivia can run several sub-agents concurrently as tasks with dependencies: `spawn_agent`,
 `dispatch_tasks`, `inspect_agents`, `join_run`, and `cancel_run` give the
 model orchestration control over a batch of tasks with dependencies, one
 result per task, and idempotent retries.
@@ -77,23 +79,22 @@ every tunable.
 ## Workflows
 
 A workflow is a TOML-defined, multi-step process - plan, implement, review,
-verify - that runs in an isolated worktree with a durable ledger recording
-every step. Interrupted runs resume from that ledger.
+verify - that runs in an isolated worktree with a durable run record for every
+step. Interrupted runs resume from that record.
 
 See [Workflows](workflows.md) and the [Workflow guide](workflows-guide.md).
 
 ## Security and privacy
 
-Your API key stays in your environment, never in project files. Powerful
-tools (`run_command`, secret-path filtering, redaction) are off until you
-configure them.
+Your API key stays in the process environment or an env file. It does not go
+in the TOML settings file. Powerful tools (`run_command`, secret-path
+filtering, redaction) are off until you configure them.
 
 See [Security and privacy](../security/overview.md).
 
 ## What mivia is not
 
 - Not a cloud service. It runs on your machine.
-- No hosted control plane; the hosted multi-tenant platform is a separate product.
 - MCP client support uses stdio and Streamable HTTP servers that the user or project configures.
 - Not a replacement for every vendor coding agent.
 

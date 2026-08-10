@@ -6,12 +6,12 @@ that must follow the same path every time - plan, implement, review, verify.
 Terms used throughout:
 
 - **Workflow**: a fixed step sequence that runs one task start to finish.
-- **Ledger**: the durable record of a run. Survives crashes and restarts.
+- **Run record**: the durable record of a run. It survives crashes and restarts.
 - **Gate**: a check a step must pass before the run advances.
 - **Worktree**: an isolated checkout the run works in; your own files never change.
 
 A run starts in a fresh worktree, runs its steps there, and records each
-result in the ledger.
+result in the run record.
 
 ## What a workflow file contains
 
@@ -51,7 +51,7 @@ repair.
 
 ## Where the run works
 
-A write-capable run creates a host-owned worktree at a recorded base commit.
+A write-capable run creates a mivia-managed worktree at a recorded base commit.
 It never writes to your checkout. If the run stops, resume it from the saved
 snapshot: compiled workflow, templates, schemas, inputs, and resolved agent
 digests.
@@ -62,24 +62,24 @@ A workflow file is untrusted repository input - anyone can edit it. It may
 name an existing agent or a registered verifier profile. It cannot define or
 override:
 
-- a model provider, endpoint, credential, tool allowlist, skill permission, or agent authority;
+- a model provider, endpoint, credential, tool allowlist, skill permission, or agent permission;
 - a shell command, URL, environment variable, or secret;
 - a Git base target outside runtime policy;
-- publication permission.
+- publish permission.
 
 A reviewer must return schema-valid structured evidence. Prose is never a
 routing signal; routing uses only typed, validated results.
 
-## The ledger
+## The run record
 
-The ledger holds the run's ordered, timestamped record: results, and the
+The run record holds the run's ordered, timestamped results and the
 evidence each gate used. It is durable, so a run survives a crash. Inspect it
 from the CLI or from an agent session.
 
 ## Delivery
 
 Delivery is the last step, and optional. Modes: `none`, `draft`, `ready`.
-Publication also requires the invoking user to grant `--allow-publish`.
+Publishing also requires the user to pass `--allow-publish`.
 Without it, an eligible run finishes as `delivery_pending` and waits until
 someone delivers it with the grant.
 
