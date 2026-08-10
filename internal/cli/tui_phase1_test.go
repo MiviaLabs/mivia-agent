@@ -161,7 +161,7 @@ func TestStreamVPIncludesToolPanel(t *testing.T) {
 	m.toolPanel.Selected = 0
 	m.streamBuf.WriteString("searching...")
 
-	// Live tool rows render in the fixed live panel above the composer, not
+	// Live tool rows render in the paint-only live panel overlay, not
 	// inside the viewport: keeping them out of the transcript is what stops
 	// the chat from jumping while the agent works.
 	m.renderStreamVP()

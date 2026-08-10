@@ -132,8 +132,8 @@ func TestAwaitingFirstActivityPlanning(t *testing.T) {
 	m.height = 40
 	m.layout()
 	m.renderStreamVP()
-	// The planning affordance lives in the live panel (fixed region), not in
-	// the transcript.
+	// The planning affordance lives in the live panel (paint-only overlay),
+	// not in the transcript.
 	plain := stripANSI(m.View())
 	if !strings.Contains(plain, "planning") {
 		t.Fatalf("expected planning affordance, got %q", plain)

@@ -23,9 +23,10 @@ import (
 const maxVerifierDiagnosticBytes = 16 << 10
 
 type commandFailure struct {
-	class  string
-	detail string
-	err    error
+	class    string
+	detail   string
+	failures []string
+	err      error
 }
 
 func (e *commandFailure) Error() string { return e.err.Error() }
@@ -129,8 +130,7 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 		if strings.HasPrefix(strings.TrimSpace(stderr.String()), "bwrap:") {
 			return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
 		}
-		detail := boundedDiagnostic([]byte(stdout.String() + stderr.String()))
-		return &commandFailure{class: "source", detail: detail, err: fmt.Errorf("source check failed: %w", err)}
+		return sourceCommandFailure(stdout.String()+stderr.String(), err)
 	}
 	return nil
 }

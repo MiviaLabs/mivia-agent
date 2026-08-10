@@ -9,8 +9,113 @@ import (
 )
 
 // Stable Stage: the viewport holds immutable history only; everything alive
-// renders in a fixed panel above the composer. The transcript must not
-// change height while the agent works - that motion was the scroll jumping.
+// renders in a paint-only overlay over the transcript top. The overlay holds
+// no layout band, so the transcript never changes height while the agent
+// works - that motion was the scroll jumping.
+
+func TestLivePanelBandFormula(t *testing.T) {
+	// The "now" panel is a paint-only overlay for the whole turn. Its height
+	// is min(livePanelMaxHeight, max(1, termH/3)) with termH floored at 8,
+	// the same budget the sections use. Idle is zero. The rendered line count
+	// always equals the declared height, even when the overlay is empty.
+	for _, h := range []int{8, 11, 12, 20, 24, 30, 34, 40, 44, 60} {
+		band := min(livePanelMaxHeight, max(1, max(8, h)/3))
+
+		// Busy content while waiting: every section populated.
+		m := newReadyChatModel(h, 90)
+		m.waiting = true
+		m.turnStart = time.Now()
+		m.subagents.Apply(events.Event{Kind: events.KindSubagentStart, Name: "grep"}.
+			WithAgentAttribution("t1", "audit", 1), time.Now())
+		m.toolRows = []toolRow{{Name: "run_command", Detail: `{"cmd":"go test"}`, Status: "running", Start: time.Now()}}
+		m.thinkingBuf.WriteString("weighing the budget change")
+		m.streamBuf.WriteString("The timeout was the outer deadline firing early.")
+		if got := m.livePanelHeight(); got != band {
+			t.Fatalf("height=%d: busy livePanelHeight=%d, want band %d", h, got, band)
+		}
+		panel := stripANSI(m.renderLivePanel(90, time.Now()))
+		if got := strings.Count(panel, "\n") + 1; got != band {
+			t.Fatalf("height=%d: busy render is %d lines, declared %d", h, got, band)
+		}
+		// Top-aligned priority order survives inside the overlay: the fleet row
+		// stays visible as soon as the overlay has a content row, and the stream
+		// tail once the budget can hold it.
+		if band >= 4 && !strings.Contains(panel, "audit") {
+			t.Fatalf("height=%d: fleet content must stay visible:\n%s", h, panel)
+		}
+		if band >= 6 && !strings.Contains(panel, "outer deadline") {
+			t.Fatalf("height=%d: stream content must stay visible:\n%s", h, panel)
+		}
+
+		// Empty overlay while waiting: still the full height (blank rows), so
+		// the panel never disappears mid-turn.
+		m2 := newReadyChatModel(h, 90)
+		m2.waiting = true
+		m2.turnStart = time.Now()
+		if got := m2.livePanelHeight(); got != band {
+			t.Fatalf("height=%d: empty livePanelHeight=%d, want band %d", h, got, band)
+		}
+		panel = stripANSI(m2.renderLivePanel(90, time.Now()))
+		if got := strings.Count(panel, "\n") + 1; got != band {
+			t.Fatalf("height=%d: empty render is %d lines, declared %d", h, got, band)
+		}
+
+		// Idle: no band at all.
+		m3 := newReadyChatModel(h, 90)
+		m3.waiting = false
+		if got := m3.livePanelHeight(); got != 0 {
+			t.Fatalf("height=%d: idle livePanelHeight=%d, want 0", h, got)
+		}
+		if got := m3.renderLivePanel(90, time.Now()); got != "" {
+			t.Fatalf("height=%d: idle render must be empty", h)
+		}
+	}
+}
+
+func TestLivePanelHeightConstantDuringTurn(t *testing.T) {
+	// The core fix: the band appears once at turn start and disappears once
+	// at turn end. While waiting, livePanelHeight() and the rendered line
+	// count stay the same as sections come and go.
+	m := newReadyChatModel(34, 90)
+	m.waiting = true
+	m.turnStart = time.Now()
+	band := min(livePanelMaxHeight, max(1, max(8, m.height)/3))
+	if got := m.livePanelHeight(); got != band {
+		t.Fatalf("band=%d, want %d", got, band)
+	}
+	assertBand := func(step string) {
+		t.Helper()
+		if got := m.livePanelHeight(); got != band {
+			t.Fatalf("%s: livePanelHeight=%d changed from %d", step, got, band)
+		}
+		panel := stripANSI(m.renderLivePanel(90, time.Now()))
+		if got := strings.Count(panel, "\n") + 1; got != band {
+			t.Fatalf("%s: rendered %d lines, declared %d", step, got, band)
+		}
+	}
+	now := time.Now()
+
+	assertBand("empty")
+	m.subagents.Apply(events.Event{Kind: events.KindSubagentStart, Name: "grep"}.
+		WithAgentAttribution("t1", "audit", 1), now)
+	assertBand("fleet")
+	m.toolRows = []toolRow{{Name: "run_command", Detail: `{"cmd":"go test"}`, Status: "running", Start: now}}
+	assertBand("tools")
+	m.streamBuf.WriteString("partial answer streaming in")
+	assertBand("stream")
+	m.toolRows = nil
+	assertBand("tools finished")
+	m.subagents.Apply(events.Event{Kind: events.KindSubagentDone}.
+		WithAgentAttribution("t1", "audit", 1), now)
+	assertBand("fleet finished")
+	m.waiting = false
+	if got := m.livePanelHeight(); got != 0 {
+		t.Fatalf("idle livePanelHeight=%d, want 0", got)
+	}
+	if got := m.renderLivePanel(90, time.Now()); got != "" {
+		t.Fatal("idle render must be empty")
+	}
+}
 
 func TestLivePanelHiddenWhenIdle(t *testing.T) {
 	m := newReadyChatModel(30, 80)
@@ -63,6 +168,42 @@ func TestLivePanelHeightBounded(t *testing.T) {
 	panel := stripANSI(m.renderLivePanel(90, time.Now()))
 	if got := strings.Count(panel, "\n") + 1; got != m.livePanelHeight() {
 		t.Fatalf("rendered %d lines, declared %d", got, m.livePanelHeight())
+	}
+}
+
+func TestLivePanelPriorityOrderAtCapEight(t *testing.T) {
+	// At termH=24 the band formula reaches the cap boundary exactly
+	// (24/3 == 8 == livePanelMaxHeight). With every section populated the
+	// overlay renders its full 8 rows and the priority order holds from top
+	// to bottom: fleet < tools < thinking < stream.
+	m := newReadyChatModel(24, 90)
+	m.waiting = true
+	m.turnStart = time.Now()
+	m.subagents.Apply(events.Event{Kind: events.KindSubagentStart, Name: "grep"}.
+		WithAgentAttribution("t1", "audit", 1), time.Now())
+	m.toolRows = []toolRow{{Name: "run_command", Detail: `{"cmd":"go test"}`, Status: "running", Start: time.Now()}}
+	m.thinkingBuf.WriteString("weighing the budget change")
+	m.streamBuf.WriteString("The timeout was the outer deadline firing early.")
+
+	if got := m.livePanelHeight(); got != livePanelMaxHeight {
+		t.Fatalf("livePanelHeight=%d, want cap %d at termH=24", got, livePanelMaxHeight)
+	}
+	panel := stripANSI(m.renderLivePanel(90, time.Now()))
+	if got := strings.Count(panel, "\n") + 1; got != livePanelMaxHeight {
+		t.Fatalf("rendered %d lines, want %d", got, livePanelMaxHeight)
+	}
+	pos := func(marker string) int {
+		t.Helper()
+		idx := strings.Index(panel, marker)
+		if idx < 0 {
+			t.Fatalf("marker %q missing from the overlay:\n%s", marker, panel)
+		}
+		return idx
+	}
+	fleet, tools, thinking, stream := pos("audit"), pos("run_command"), pos("▾ thinking"), pos("outer deadline")
+	if !(fleet < tools && tools < thinking && thinking < stream) {
+		t.Fatalf("priority order must be fleet < tools < thinking < stream, got %d < %d < %d < %d:\n%s",
+			fleet, tools, thinking, stream, panel)
 	}
 }
 

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -80,9 +79,7 @@ func suggestOverlayRect(m *tuiModel, panel string, panelSize rect) rect {
 }
 
 func (m *tuiModel) suggestComposerTop() int {
-	liveH := 0
-	if live := m.renderLivePanel(max(1, m.width), time.Now()); live != "" {
-		liveH = lipgloss.Height(live)
-	}
-	return 1 + m.viewport.Height + liveH
+	// The live panel is an overlay and holds no layout band, so the composer
+	// sits directly below the full-height viewport.
+	return 1 + m.viewport.Height
 }

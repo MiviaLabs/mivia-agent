@@ -21,6 +21,11 @@ type Check struct {
 	Status string `json:"status"`          // passed | failed | skipped
 	Class  string `json:"class,omitempty"` // source | host
 	Detail string `json:"detail,omitempty"`
+	// Failures is a bounded, language-agnostic list of failing items the gate
+	// detected in its output (test names, compile errors, assertion
+	// messages). It is complete even when Detail is truncated, so a repair
+	// step always learns what must be fixed.
+	Failures []string `json:"failures,omitempty"`
 }
 
 // Result is schema-shaped verification evidence (verification-v1).

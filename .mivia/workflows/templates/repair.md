@@ -4,6 +4,13 @@ Repair the bounded feature `{{ inputs.task }}` after this host evidence failure:
 
 {{ evidence.failed_evidence }}
 
+The failed gate evidence above is a verification report. Every failed check carries a
+`failures` field: a bounded list of the failing items the gate detected in its output (test
+names, compile errors, and assertion messages, extracted with language-agnostic markers).
+The `detail` field may be truncated, but the `failures` list is complete for every failed
+check. Fix exactly the items named in `failures` and make their assertions pass. Do not
+change unrelated code.
+
 Use this approved delivery plan:
 
 {{ evidence.plan }}
