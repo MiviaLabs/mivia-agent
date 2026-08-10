@@ -78,6 +78,10 @@ func cancellationCanReplaceTurnError(err error) bool {
 	return err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
+func shouldReportChatCancellation(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && cancellationCanReplaceTurnError(err)
+}
+
 // stderrTerm adapts stderr for ChatRenderer in one-shot mode.
 type stderrTerm struct{}
 
@@ -130,7 +134,7 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 	input.RenderInPlace(term)
 	close(done)
 	if err != nil {
-		if ctx.Err() != nil && cancellationCanReplaceTurnError(err) {
+		if shouldReportChatCancellation(ctx, err) {
 			renderer.PrintInfo("(cancelled - still in session; /exit to quit)")
 			return nil
 		}

@@ -271,16 +271,6 @@ func TestEnsureRunSurfacesRepositoryFailures(t *testing.T) {
 		set      func(*ensureFailingRepository, string)
 	}{
 		{"list tasks", 1, false, func(r *ensureFailingRepository, _ string) { r.listErr = want }},
-		// Clear is only attempted when a claim is actually held (probe-first
-		// discipline); seed a stale claim so the clear path is exercised.
-		{"clear full claim", 1, true, func(r *ensureFailingRepository, runID string) {
-			_ = r.ClaimRun(context.Background(), runID, "stale-holder")
-			r.clearErr = want
-		}},
-		{"clear empty claim", 0, true, func(r *ensureFailingRepository, runID string) {
-			_ = r.ClaimRun(context.Background(), runID, "stale-holder")
-			r.clearErr = want
-		}},
 		{"claim empty run", 0, false, func(r *ensureFailingRepository, _ string) { r.claimErr = want }},
 		{"repair task", 0, false, func(r *ensureFailingRepository, _ string) { r.createTaskErr = want }},
 	} {
@@ -424,17 +414,11 @@ func TestEnsureRunEmptyAdmissionClaimPolicy(t *testing.T) {
 			}
 			c := newIdempotencyCoordinator(repo)
 			h, err := c.EnsureRun(context.Background(), EnsureRunRequest{RunID: runID, Tasks: []subagents.Task{task}, IdempotencyKey: "step", ForceResume: force})
-			if !force {
-				if !errors.Is(err, ErrRunHeldByAnotherExecutor) {
-					t.Fatalf("error = %v, want ErrRunHeldByAnotherExecutor", err)
-				}
-				return
+			if !errors.Is(err, ErrRunHeldByAnotherExecutor) {
+				t.Fatalf("force=%v error = %v, want ErrRunHeldByAnotherExecutor", force, err)
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := c.Join(context.Background(), h); err != nil {
-				t.Fatal(err)
+			if h != nil {
+				t.Fatal("held run returned a handle")
 			}
 		})
 	}
@@ -476,7 +460,7 @@ func TestEnsureRunRefusesHeldRunWithoutForce(t *testing.T) {
 	}
 }
 
-func TestEnsureRunForceClearsClaimOnlyAfterTupleValidation(t *testing.T) {
+func TestEnsureRunForceValidatesTupleThenRefusesLiveClaim(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	task := idempotencyTask()
 	runID := NewRunID()
@@ -499,12 +483,8 @@ func TestEnsureRunForceClearsClaimOnlyAfterTupleValidation(t *testing.T) {
 	if err := repo.ClaimRun(context.Background(), runID, "other"); err != nil {
 		t.Fatal(err)
 	}
-	h, err := c.EnsureRun(context.Background(), EnsureRunRequest{RunID: runID, Tasks: []subagents.Task{task}, IdempotencyKey: "step", ForceResume: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.Join(context.Background(), h); err != nil {
-		t.Fatal(err)
+	if _, err := c.EnsureRun(context.Background(), EnsureRunRequest{RunID: runID, Tasks: []subagents.Task{task}, IdempotencyKey: "step", ForceResume: true}); !errors.Is(err, ErrRunHeldByAnotherExecutor) {
+		t.Fatalf("live claim error = %v, want ErrRunHeldByAnotherExecutor", err)
 	}
 }
 

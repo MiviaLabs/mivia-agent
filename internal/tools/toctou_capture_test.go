@@ -75,6 +75,36 @@ func TestRunCommandDualStreamSharedCaptureBudget(t *testing.T) {
 	}
 }
 
+// Regression: the memory backstop limits capture when max_output_bytes is zero.
+func TestRunCommandMemoryBackstopLimitsUncappedCapture(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh path")
+	}
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const backstop = 4096
+	reg := NewDefaultRegistry(DefaultOptions{
+		Workspace: ws, RunAllowlist: []string{"sh"},
+		RunTimeoutSec: 2, MemoryBackstopBytes: backstop,
+	})
+	raw, _ := json.Marshal(map[string]any{
+		"argv": []string{"sh", "-c", `dd if=/dev/zero bs=1024 count=200 2>/dev/null | tr '\0' A; dd if=/dev/zero bs=1024 count=200 2>/dev/null | tr '\0' B >&2`},
+	})
+	out, err := reg.Execute(context.Background(), "run_command", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "truncated at 4096 bytes") {
+		t.Fatalf("result has no true backstop notice: %q", out[:min(len(out), 300)])
+	}
+	if len(out) > backstop+1024 {
+		t.Fatalf("result len=%d exceeds backstop + header slack", len(out))
+	}
+}
+
 // Regression: openRegularFile does not block on FIFO (Unix O_NONBLOCK).
 func TestOpenRegularFileFIFONoHang(t *testing.T) {
 	if runtime.GOOS == "windows" {

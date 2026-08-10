@@ -215,6 +215,17 @@ func TestCancellationCanReplaceOnlyCancellationErrors(t *testing.T) {
 	}
 }
 
+func TestShouldReportChatCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if !shouldReportChatCancellation(ctx, context.Canceled) {
+		t.Fatal("canceled turn did not report session cancellation")
+	}
+	if shouldReportChatCancellation(context.Background(), context.Canceled) {
+		t.Fatal("live turn reported session cancellation")
+	}
+}
+
 // captureStderr redirects os.Stderr for the duration of a test and returns a
 // reader for what was written.
 func captureStderr(t *testing.T) func() string {

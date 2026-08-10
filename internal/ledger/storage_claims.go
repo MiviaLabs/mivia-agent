@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -23,20 +24,36 @@ func newHolderID() string {
 }
 
 func (s *StorageLedgerRepository) ClaimRun(ctx context.Context, runID string, holder string) error {
-	if err := s.store.ClaimRun(ctx, runID, holder); err != nil {
+	claim := storage.Claim{RunID: runID, Holder: holder}
+	var err error
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
+		claim, err = fenced.ClaimRunFenced(ctx, runID, holder)
+	} else {
+		err = s.store.ClaimRun(ctx, runID, holder)
+	}
+	if err != nil {
 		if errors.Is(err, storage.ErrClaimHeld) {
 			return ErrClaimHeld
 		}
 		return err
 	}
 	s.mu.Lock()
-	s.claimedRuns[runID] = holder
+	s.claimedRuns[runID] = claim
 	s.mu.Unlock()
 	return nil
 }
 
 func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, holder string) error {
-	if err := s.store.ReleaseClaim(ctx, runID, holder); err != nil {
+	s.mu.RLock()
+	claim := s.claimedRuns[runID]
+	s.mu.RUnlock()
+	var err error
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
+		err = fenced.ReleaseClaimFenced(ctx, claim)
+	} else {
+		err = s.store.ReleaseClaim(ctx, runID, holder)
+	}
+	if err != nil {
 		if errors.Is(err, storage.ErrClaimNotHeld) {
 			return ErrClaimNotHeld
 		}
@@ -44,6 +61,27 @@ func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, 
 	}
 	s.mu.Lock()
 	delete(s.claimedRuns, runID)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *StorageLedgerRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
+	fenced, ok := s.store.(storage.FencedLeaseStore)
+	if !ok {
+		return ErrClaimHeld
+	}
+	claim, err := fenced.TakeoverExpiredClaimFenced(ctx, runID, holder, maxAge)
+	if errors.Is(err, storage.ErrClaimHeld) {
+		return ErrClaimHeld
+	}
+	if errors.Is(err, storage.ErrClaimNotHeld) {
+		return ErrClaimNotHeld
+	}
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.claimedRuns[runID] = claim
 	s.mu.Unlock()
 	return nil
 }

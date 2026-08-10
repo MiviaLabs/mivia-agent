@@ -402,7 +402,7 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 		}
 		preClose()
 	}
-	if err := executeWorkflowDeliver(runID, e.root, e.configPath, allowPublish, false, &stdout, &stderr); err != nil {
+	if err := executeWorkflowDeliver(ctx, runID, e.root, e.configPath, allowPublish, false, &stdout, &stderr); err != nil {
 		// Prefer structured status when the ledger still opens after a refusal.
 		if result, ok := sessionDeliverResultFromLedger(ctx, e.root, e.configPath, runID, err); ok {
 			return result, nil

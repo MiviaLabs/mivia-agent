@@ -1,15 +1,18 @@
 package ledger
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 func (m *MemoryLedgerRepository) ClaimRun(_ context.Context, runID, holder string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.claims[runID]
-	if ok && existing != holder {
+	if ok && existing.holder != holder {
 		return ErrClaimHeld
 	}
-	m.claims[runID] = holder
+	m.claims[runID] = memoryClaim{holder: holder, acquiredAt: m.now()}
 	return nil
 }
 
@@ -17,10 +20,24 @@ func (m *MemoryLedgerRepository) ReleaseRun(_ context.Context, runID, holder str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.claims[runID]
-	if !ok || existing != holder {
+	if !ok || existing.holder != holder {
 		return ErrClaimNotHeld
 	}
 	delete(m.claims, runID)
+	return nil
+}
+
+func (m *MemoryLedgerRepository) TakeoverExpiredRunClaim(_ context.Context, runID, holder string, maxAge time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.claims[runID]
+	if !ok {
+		return ErrClaimNotHeld
+	}
+	if m.now().Sub(existing.acquiredAt) < maxAge {
+		return ErrClaimHeld
+	}
+	m.claims[runID] = memoryClaim{holder: holder, acquiredAt: m.now()}
 	return nil
 }
 

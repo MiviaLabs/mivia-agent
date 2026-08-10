@@ -160,13 +160,9 @@ func TestCancelRecoveredRefusesLiveClaimOnRunningTask(t *testing.T) {
 	auditCloseStore(t, store)
 }
 
-// TestReclaimDeleteSucceedsInForceResumeClearWindow documents the residual
-// bounded window in probe-then-clear force-resume: if the reclaimer's
-// DeleteRun lands between B's ClearRunClaim and re-claim, the delete
-// succeeds and B's resume fails cleanly (CreateTask on a deleted run) rather
-// than corrupting state. The fence backstop (T2b) blocks the delete once B
-// re-claims.
-func TestReclaimDeleteSucceedsInForceResumeClearWindow(t *testing.T) {
+// TestExpiredTakeoverFencesStaleOwnerWrite proves that takeover is atomic.
+// The stale owner cannot write after the fence value changes.
+func TestExpiredTakeoverFencesStaleOwnerWrite(t *testing.T) {
 	ctx := context.Background()
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
 	if err != nil {
@@ -190,19 +186,11 @@ func TestReclaimDeleteSucceedsInForceResumeClearWindow(t *testing.T) {
 	if err := repoB.ClaimRun(ctx, "run-x", "holder-b"); !errors.Is(err, ledger.ErrClaimHeld) {
 		t.Fatalf("B probe claim: %v", err)
 	}
-	if err := repoB.ClearRunClaim(ctx, "run-x"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repoA.DeleteRun(ctx, "run-x"); err != nil {
-		t.Fatalf("A DeleteRun in the clear window failed: %v", err)
-	}
-	if err := repoB.ClaimRun(ctx, "run-x", "holder-b"); err != nil {
+	if err := repoB.TakeoverExpiredRunClaim(ctx, "run-x", "holder-b", 0); err != nil {
 		t.Fatalf("B reclaim: %v", err)
 	}
-	// B's resume then creates a task on the deleted run: the append passes
-	// (fence holder B) but the projection has no run -> clean ErrNotFound.
-	if err := repoB.CreateTask(ctx, ledger.TaskSnapshot{RunID: "run-x", TaskID: "t1", HandlerName: "worker", Status: string(ledger.TaskStatusQueued), Version: 1}); err == nil {
-		t.Fatal("B CreateTask on a deleted run succeeded; want a clean failure")
+	if err := repoA.DeleteRun(ctx, "run-x"); !errors.Is(err, ledger.ErrClaimHeld) {
+		t.Fatalf("stale owner write error = %v, want ErrClaimHeld", err)
 	}
 	_ = repoA.Close()
 	_ = repoB.Close()

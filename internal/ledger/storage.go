@@ -35,7 +35,7 @@ type StorageLedgerRepository struct {
 	// claimedRuns tracks the set of runs this instance has claimed, so Close()
 	// can release them all (simulating crash cleanup). Each entry maps runID
 	// to the holder value used when claiming.
-	claimedRuns map[string]string // runID → holder
+	claimedRuns map[string]storage.Claim // runID → fenced claim
 	// applied is the highest store sequence per run that has been folded into
 	// the in-memory projection. It replaces the old one-shot `built` flag.
 	applied map[string]uint64
@@ -83,18 +83,22 @@ func (s *StorageLedgerRepository) nowLocked() time.Time {
 func (s *StorageLedgerRepository) Close() error {
 	s.mu.Lock()
 	s.closed = true
-	claims := make(map[string]string, len(s.claimedRuns))
-	for runID, holder := range s.claimedRuns {
-		claims[runID] = holder
+	claims := make(map[string]storage.Claim, len(s.claimedRuns))
+	for runID, claim := range s.claimedRuns {
+		claims[runID] = claim
 	}
-	s.claimedRuns = make(map[string]string)
+	s.claimedRuns = make(map[string]storage.Claim)
 	s.mu.Unlock()
 
 	// Release all claims held by this instance.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	for runID, holder := range claims {
-		_ = s.store.ReleaseClaim(ctx, runID, holder)
+	for runID, claim := range claims {
+		if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
+			_ = fenced.ReleaseClaimFenced(ctx, claim)
+		} else {
+			_ = s.store.ReleaseClaim(ctx, runID, claim.Holder)
+		}
 	}
 
 	if s.ownsStore {
