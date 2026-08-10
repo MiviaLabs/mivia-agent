@@ -86,8 +86,8 @@ func TestStorageClaimsRejectClaimThatRacesClose(t *testing.T) {
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- repo.Close() }()
 	close(store.release)
-	if err := <-claimDone; err != nil {
-		t.Fatalf("ClaimRun racing Close = %v, want success before Close completes", err)
+	if err := <-claimDone; !errors.Is(err, ErrClosed) {
+		t.Fatalf("ClaimRun racing Close = %v, want ErrClosed", err)
 	}
 	if err := <-closeDone; err != nil {
 		t.Fatal(err)

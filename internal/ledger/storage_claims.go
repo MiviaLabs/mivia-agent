@@ -24,10 +24,8 @@ func newHolderID() string {
 }
 
 func (s *StorageLedgerRepository) ClaimRun(ctx context.Context, runID string, holder string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return ErrClosed
+	if err := s.checkOpen(); err != nil {
+		return err
 	}
 	claim := storage.Claim{RunID: runID, Holder: holder}
 	var err error
@@ -42,7 +40,20 @@ func (s *StorageLedgerRepository) ClaimRun(ctx context.Context, runID string, ho
 		}
 		return err
 	}
-	s.claimedRuns[runID] = claim
+	s.mu.Lock()
+	closed := s.closed
+	if !closed {
+		s.claimedRuns[runID] = claim
+	}
+	s.mu.Unlock()
+	if closed {
+		if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
+			_ = fenced.ReleaseClaimFenced(ctx, claim)
+		} else {
+			_ = s.store.ReleaseClaim(ctx, runID, holder)
+		}
+		return ErrClosed
+	}
 	return nil
 }
 
@@ -72,10 +83,8 @@ func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, 
 }
 
 func (s *StorageLedgerRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return ErrClosed
+	if err := s.checkOpen(); err != nil {
+		return err
 	}
 	fenced, ok := s.store.(storage.FencedLeaseStore)
 	if !ok {
@@ -91,22 +100,31 @@ func (s *StorageLedgerRepository) TakeoverExpiredRunClaim(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	s.claimedRuns[runID] = claim
+	s.mu.Lock()
+	closed := s.closed
+	if !closed {
+		s.claimedRuns[runID] = claim
+	}
+	s.mu.Unlock()
+	if closed {
+		_ = fenced.ReleaseClaimFenced(ctx, claim)
+		return ErrClosed
+	}
 	return nil
 }
 
 func (s *StorageLedgerRepository) ClearRunClaim(ctx context.Context, runID string) error {
-	if err := s.checkOpen(); err != nil {
-		return err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
 	}
 	if err := s.store.ClearClaim(ctx, runID); err != nil {
 		return err
 	}
 	// Mirror the workflows ledger: drop the in-memory holder so this instance
 	// stops claiming the run (its subsequent fenced writes fail closed).
-	s.mu.Lock()
 	delete(s.claimedRuns, runID)
-	s.mu.Unlock()
 	return nil
 }
 
