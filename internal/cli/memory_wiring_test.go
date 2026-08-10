@@ -24,9 +24,11 @@ func TestConfigureChatWorkspaceWiresMemoryTools(t *testing.T) {
 	root := t.TempDir()
 	res := memoryTestResolved(true)
 	sess := chat.NewSession(res, nil)
-	if err := configureChatWorkspace(sess, root, true, res); err != nil {
+	memClose, err := configureChatWorkspace(sess, root, true, res)
+	if err != nil {
 		t.Fatalf("configureChatWorkspace: %v", err)
 	}
+	defer memClose()
 	for _, name := range []string{"memory_save", "memory_search"} {
 		if _, ok := sess.Tools.Get(name); !ok {
 			t.Errorf("%s not registered when memory is enabled", name)
@@ -38,9 +40,11 @@ func TestConfigureChatWorkspaceOmitsMemoryToolsWhenDisabled(t *testing.T) {
 	root := t.TempDir()
 	res := memoryTestResolved(false)
 	sess := chat.NewSession(res, nil)
-	if err := configureChatWorkspace(sess, root, true, res); err != nil {
+	memClose, err := configureChatWorkspace(sess, root, true, res)
+	if err != nil {
 		t.Fatalf("configureChatWorkspace: %v", err)
 	}
+	defer memClose()
 	if _, ok := sess.Tools.Get("memory_save"); ok {
 		t.Fatal("memory_save must not register when memory is disabled")
 	}
@@ -53,9 +57,11 @@ func TestConfigureChatWorkspaceMemoryDisabledStillConfiguresOtherTools(t *testin
 	root := t.TempDir()
 	res := memoryTestResolved(false)
 	sess := chat.NewSession(res, nil)
-	if err := configureChatWorkspace(sess, root, true, res); err != nil {
+	memClose, err := configureChatWorkspace(sess, root, true, res)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer memClose()
 	if _, ok := sess.Tools.Get("read_file"); !ok {
 		t.Fatal("disabling memory must not disable the file tools")
 	}
@@ -139,7 +145,7 @@ func TestMemoryStoreErrorSurfacesFromConfigureChatWorkspace(t *testing.T) {
 	// Resolved must still fail loudly at wiring, not silently drop the tools.
 	res.Memory.StoreBackend = "bogus"
 	sess := chat.NewSession(res, nil)
-	err := configureChatWorkspace(sess, root, true, res)
+	_, err := configureChatWorkspace(sess, root, true, res)
 	if err == nil {
 		t.Fatal("an invalid memory backend must fail the workspace wiring")
 	}

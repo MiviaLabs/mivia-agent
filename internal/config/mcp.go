@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -290,7 +291,13 @@ func validateMCPServer(server MCPServerConfig) error {
 	}
 	switch server.Transport {
 	case "stdio":
-		if !filepath.IsAbs(server.Command) {
+		// A command that is absolute in either path convention is accepted.
+		// The shipped project config uses a POSIX-absolute command that has
+		// no Windows drive letter; rejecting it on Windows would make the
+		// whole repository config unloadable there. The command itself is
+		// still never resolved from PATH, and a server whose command cannot
+		// run on this platform fails cleanly at connect time.
+		if !filepath.IsAbs(server.Command) && !path.IsAbs(server.Command) {
 			return fmt.Errorf("stdio command must be absolute")
 		}
 		if server.URL != "" {

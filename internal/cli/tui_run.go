@@ -28,6 +28,13 @@ func (e *workspaceRestart) Error() string {
 	return "restart chat in workspace " + e.dir
 }
 
+// tuiInputOption is a test seam. When set, runTUI passes the option it
+// returns to the tea program, so a test can supply a deterministic input
+// (a pty on Unix, a pipe on Windows). Without it, bubbletea falls back to
+// opening the controlling terminal when stdin is not one, which does not
+// exist under a Windows CI runner. The seam is never set in production.
+var tuiInputOption func() tea.ProgramOption
+
 func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *agentSessionState, resumeSessionName string) error {
 	defer func() {
 		err := sess.SaveLast()
@@ -60,6 +67,9 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	opts := []tea.ProgramOption{tea.WithAltScreen()}
 	if model.mouseEnabled {
 		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	if tuiInputOption != nil {
+		opts = append(opts, tuiInputOption())
 	}
 	p := tea.NewProgram(model, opts...)
 	_, err := p.Run()

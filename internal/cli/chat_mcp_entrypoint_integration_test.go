@@ -192,7 +192,7 @@ enabled = true
 [[mcp.servers]]
 id = "repo"
 transport = "stdio"
-command = "` + helperBinary + `"
+command = "` + tomlPathLiteral(helperBinary) + `"
 args = ["-test.run=^TestMCPStdioHelper$"]
 env = ["MIVIA_CLI_MCP_HELPER"]
 global = true

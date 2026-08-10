@@ -644,7 +644,7 @@ models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
 
 [subagents]
 store_backend = "sqlite"
-store_path = "` + storePath + `"
+store_path = "` + tomlPathLiteral(storePath) + `"
 `
 }
 

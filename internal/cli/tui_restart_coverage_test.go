@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -24,14 +25,30 @@ func TestRunTUIReturnsRequestedWorkspaceRestart(t *testing.T) {
 	}
 	inputWriter, input, err := pty.Open()
 	if err != nil {
-		t.Fatal(err)
+		// creack/pty is Unix-only; on Windows a pipe input is enough because
+		// the injected updateMessageImpl short-circuits the program before
+		// any real input is read.
+		if runtime.GOOS != "windows" {
+			t.Fatal(err)
+		}
+		reader, pipeWriter, pipeErr := os.Pipe()
+		if pipeErr != nil {
+			t.Fatal(pipeErr)
+		}
+		input = reader
+		inputWriter = pipeWriter
 	}
 	oldInput := os.Stdin
 	os.Stdin = input
+	origInputOption := tuiInputOption
+	tuiInputOption = func() tea.ProgramOption { return tea.WithInput(input) }
 	t.Cleanup(func() {
+		tuiInputOption = origInputOption
 		os.Stdin = oldInput
 		_ = input.Close()
-		_ = inputWriter.Close()
+		if inputWriter != nil {
+			_ = inputWriter.Close()
+		}
 	})
 	session := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
 	err = runTUI(session, &config.Resolved{}, false, nil, "")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -215,7 +216,13 @@ func TestDialogCoverageSwitchUtilities(t *testing.T) {
 	if !worktreeContainsCurrentDir(cwd) {
 		t.Fatal("current directory was not detected")
 	}
-	if err := os.Remove(cwd); err != nil {
+	if runtime.GOOS == "windows" {
+		// Windows cannot delete its process working directory; inject the
+		// deleted-CWD state through the getwd seam instead.
+		orig := getwdWorktreeSwitch
+		getwdWorktreeSwitch = func() (string, error) { return "", os.ErrNotExist }
+		t.Cleanup(func() { getwdWorktreeSwitch = orig })
+	} else if err := os.Remove(cwd); err != nil {
 		t.Fatal(err)
 	}
 	if !worktreeContainsCurrentDir(t.TempDir()) {
@@ -426,6 +433,26 @@ func TestDialogCoverageMissingMarkerRejectsClosedStore(t *testing.T) {
 }
 
 func TestDialogCoverageRelativePathsFailWithDeletedWorkingDirectory(t *testing.T) {
+	m := newReadyChatModel(30, 90)
+	m.worktreeDlg = newWorktreeDialog(nil)
+	if runtime.GOOS == "windows" {
+		// Windows cannot delete its process working directory, so the
+		// deleted-CWD state is injected through the seam the production code
+		// uses: a working directory that can no longer be resolved. This
+		// exercises the same fail-closed branch the Unix test reaches by
+		// removing the directory.
+		orig := getwdWorktreeSwitch
+		getwdWorktreeSwitch = func() (string, error) { return "", os.ErrNotExist }
+		t.Cleanup(func() { getwdWorktreeSwitch = orig })
+		m.restartInWorkspace("relative")
+		if m.worktreeDlg == nil || !m.worktreeDlg.noticeErr {
+			t.Fatal("relative restart did not fail closed")
+		}
+		if !worktreeContainsCurrentDir("relative") {
+			t.Fatal("relative containment did not fail closed")
+		}
+		return
+	}
 	old, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -437,20 +464,20 @@ func TestDialogCoverageRelativePathsFailWithDeletedWorkingDirectory(t *testing.T
 	if err := os.Chdir(cwd); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
 	if err := os.Remove(cwd); err != nil {
 		t.Fatal(err)
 	}
-	m := newReadyChatModel(30, 90)
-	m.worktreeDlg = newWorktreeDialog(nil)
 	m.restartInWorkspace("relative")
 	if m.worktreeDlg == nil || !m.worktreeDlg.noticeErr {
 		t.Fatal("relative restart did not fail closed")
 	}
 	if !worktreeContainsCurrentDir("relative") {
 		t.Fatal("relative containment did not fail closed")
-	}
-	if err := os.Chdir(old); err != nil {
-		t.Fatal(err)
 	}
 }
 

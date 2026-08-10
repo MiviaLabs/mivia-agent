@@ -283,8 +283,8 @@ func analyzerEnv() []string {
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
 		switch key {
-		case "PATH", "HOME", "USER", "TMPDIR",
-			"GOROOT", "GOCACHE", "GOMODCACHE",
+		case "PATH", "HOME", "USER", "TMPDIR", "TMP", "TEMP", "PATHEXT", "USERPROFILE",
+			"GOROOT", "GOCACHE", "GOMODCACHE", "GOENV", "GOWORK",
 			"GOFLAGS", "GOOS", "GOARCH", "GOVERSION":
 			filtered = append(filtered, e)
 		}

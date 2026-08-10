@@ -309,6 +309,11 @@ func canonicalMarkerRoot(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Expand Windows 8.3 short names so the raw and the resolved path use
+	// the same rendering; otherwise a short-name path (for example under a
+	// TEMP directory that the OS created with a short user name) is
+	// indistinguishable from a symlink redirect.
+	abs = workspace.LongPath(abs)
 	canonical, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		return "", fmt.Errorf("resolve worktree root: %w", err)

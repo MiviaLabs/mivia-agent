@@ -334,7 +334,7 @@ models = [{ name = "test/model", context_window_tokens = 128000 }]
 max_workers = 1
 default_timeout_seconds = 30
 store_backend = "sqlite"
-store_path = "` + storePath + `"
+store_path = "` + tomlPathLiteral(storePath) + `"
 `
 	writeFile(filepath.Join(root, "config.toml"), config)
 	for _, name := range []string{"one", "two"} {

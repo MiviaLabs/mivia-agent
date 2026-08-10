@@ -21,6 +21,8 @@ jobs:
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
+      - name: Install workflow verifier sandbox
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap
       - name: Prepare isolated test home
         run: |
           ci_root="$(mktemp -d /tmp/mivia-ci.XXXXXX)"
@@ -90,6 +92,19 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
+      # The runner image's default TEMP lives under a short (8.3) user name
+      # (C:\Users\RUNNER~1\...). Go's t.TempDir() returns that path verbatim,
+      # while filepath.EvalSymlinks and git resolve it to the long form
+      # (C:\Users\runneradmin\...). mivia's worktree canonicality checks and
+      # path comparisons must never see a short/long split, so the Windows
+      # job runs with a long-name temp directory that both forms agree on.
+      - name: Prepare long-name temp directory
+        shell: pwsh
+        run: |
+          $temp = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'mivia-ci-temp'
+          New-Item -ItemType Directory -Force -Path $temp | Out-Null
+          "TMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TEMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build
         run: go build ./...
       - name: Test

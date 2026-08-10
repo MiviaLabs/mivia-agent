@@ -69,6 +69,17 @@ func (m *tuiModel) workspaceSwitchBusy() bool {
 }
 
 func (m *tuiModel) restartInWorkspace(dir string) {
+	if !filepath.IsAbs(dir) {
+		cwd, err := getwdWorktreeSwitch()
+		if err != nil {
+			m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
+			return
+		}
+		if _, err := statWorktreeSwitchPath(cwd); err != nil {
+			m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
+			return
+		}
+	}
 	abs, err := absWorktreeSwitchPath(dir)
 	if err != nil {
 		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)

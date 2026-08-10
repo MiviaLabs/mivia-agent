@@ -85,6 +85,7 @@ func openInteractiveAgentSession(t *testing.T, root string, comp provider.Comple
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
+	var memClose func()
 	if runOpts != nil {
 		ws, err := workspace.Open(root)
 		if err != nil {
@@ -100,7 +101,9 @@ func openInteractiveAgentSession(t *testing.T, root string, comp provider.Comple
 		// Supply one so the default path mirrors a workspace that can run
 		// programs and the helper's registry includes run_command.
 		res.Tools.RunAllowlist = []string{"sh"}
-		if err := configureChatWorkspace(sess, root, true, res); err != nil {
+		var err error
+		memClose, err = configureChatWorkspace(sess, root, true, res)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -117,9 +120,15 @@ func openInteractiveAgentSession(t *testing.T, root string, comp provider.Comple
 	if _, ok := sess.Tools.Get("dispatch_tasks"); !ok {
 		t.Fatal("dispatch_tasks missing from session tools")
 	}
-	return sess, cleanup
+	// The memory store is session-owned: close it after the dispatcher
+	// cleanup so Windows can remove the session's temp database.
+	return sess, func() {
+		cleanup()
+		if memClose != nil {
+			memClose()
+		}
+	}
 }
-
 func toolResultsContain(sess *chat.Session, substr string) bool {
 	for _, m := range sess.MessagesCopy() {
 		if m.Role == provider.RoleTool && strings.Contains(m.Content, substr) {
@@ -231,14 +240,15 @@ func TestInteractiveAgentSession_DefaultWiringRegistersDelegation(t *testing.T) 
 	res := &config.Resolved{Model: "test-model", SystemPrompt: "sys", Subagents: config.DefaultSubagentConfig}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
-	if err := configureChatWorkspace(sess, root, true, res); err != nil {
+	memClose, err := configureChatWorkspace(sess, root, true, res)
+	if err != nil {
 		t.Fatal(err)
 	}
 	cleanup, err := attachSessionDispatcher(sess, root, res.Model, res.Subagents, &agentSessionState{AllowProjectSkills: true}, nil, sessionRouting{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cleanup()
+	defer func() { cleanup(); memClose() }()
 
 	start := time.Now()
 	reply, err := sess.SendUser(context.Background(), "delegate ping", io.Discard)

@@ -21,12 +21,14 @@ import (
 
 // clipboardReadTools are the local clipboard readers, in preference order.
 // Mirrors clipboardTools (the write side) so copy and paste agree about
-// which clipboard they are talking to.
+// which clipboard they are talking to. The Windows reader uses PowerShell
+// because clip.exe can only write.
 var clipboardReadTools = [][]string{
 	{"wl-paste", "--no-newline"},
 	{"xclip", "-selection", "clipboard", "-o"},
 	{"xsel", "--clipboard", "--output"},
 	{"pbpaste"},
+	{"powershell", "-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard -Raw"},
 }
 
 // errNoClipboardTool reports that no local clipboard reader is installed.

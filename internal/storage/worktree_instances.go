@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 var _ contextstate.WorktreeSessionCatalog = (*SQLite)(nil)
@@ -111,7 +112,7 @@ func (s *SQLite) ValidateActiveWorktreeInstance(ctx context.Context, principal c
 	if err != nil {
 		return err
 	}
-	if filepath.Clean(found) != filepath.Clean(canonicalPath) {
+	if filepath.Clean(workspace.LongPath(found)) != filepath.Clean(workspace.LongPath(canonicalPath)) {
 		return contextstate.ErrWorktreeDeleted
 	}
 	return nil
@@ -271,6 +272,11 @@ func validateWorktreeInstancePath(principal contextstate.Principal, instance con
 	if err := validateWorktreeInstance(principal, instance); err != nil {
 		return err
 	}
+	// Expand Windows 8.3 short names before comparing: git and
+	// filepath.EvalSymlinks report the long form, so a short-name input
+	// would otherwise be rejected as non-canonical for naming the same
+	// directory.
+	canonicalPath = workspace.LongPath(canonicalPath)
 	if !filepath.IsAbs(canonicalPath) || !contextstate.ValidSessionDir(canonicalPath) {
 		return fmt.Errorf("%w: invalid worktree path", contextstate.ErrInvalidDTO)
 	}

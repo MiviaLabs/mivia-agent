@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -341,8 +342,13 @@ func TestRuntimeCoverageRepositoryContextAndIdentityErrors(t *testing.T) {
 	if err := os.Chdir(removed); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(removed); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS != "windows" {
+		// Windows cannot delete its process working directory; there the
+		// identity probe simply runs from the (valid) directory it chdir'd
+		// into, which is the closest supported-platform contract.
+		if err := os.Remove(removed); err != nil {
+			t.Fatal(err)
+		}
 	}
 	_ = contextWorkspaceID(".")
 	if err := os.Chdir(oldDir); err != nil {

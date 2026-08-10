@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,7 +85,11 @@ func TestIntegration_MultiEditAppliesBatchAndReachesModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0o755 {
+	// Windows has no Unix permission bits: os.WriteFile(0755) reports
+	// 0666 there because the mode only tracks the read-only attribute.
+	// The mode-preservation contract is Unix-specific, so it is asserted
+	// only where the filesystem can express it.
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o755 {
 		t.Fatalf("mode after edit = %04o, want 0755", st.Mode().Perm())
 	}
 }
