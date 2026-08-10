@@ -18,6 +18,13 @@ jobs:
           python-version: "3.12"
       - name: Install semgrep
         run: pip install semgrep
+      - name: Check required tools
+        # Runner images drift; fail fast with a clear message instead of a
+        # confusing mid-pipeline error when a prerequisite is missing.
+        run: |
+          for tool in go git python3 rg semgrep bwrap; do
+            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
+          done
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
@@ -65,6 +72,11 @@ jobs:
           python-version: "3.12"
       - name: Install semgrep
         run: pip install semgrep
+      - name: Check required tools
+        run: |
+          for tool in go git python3 rg semgrep; do
+            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
+          done
       - name: Install ripgrep
         # make invariants drives the coverage script with `rg`; macOS runners
         # do not ship it (Linux runners do).
@@ -103,6 +115,15 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
+      - name: Check required tools
+        shell: pwsh
+        run: |
+          foreach ($t in @('go', 'git', 'python3', 'pwsh')) {
+            if (-not (Get-Command $t -ErrorAction SilentlyContinue)) {
+              Write-Error "missing required tool: $t"
+              exit 1
+            }
+          }
       # The runner image's default TEMP lives under a short (8.3) user name
       # (C:\Users\RUNNER~1\...). Go's t.TempDir() returns that path verbatim,
       # while filepath.EvalSymlinks and git resolve it to the long form
