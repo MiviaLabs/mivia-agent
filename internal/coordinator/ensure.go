@@ -302,7 +302,7 @@ func (c *coordinator) joinSingleTaskAdmission(ctx context.Context, req EnsureRun
 			return nil, err
 		}
 	}
-	if err := c.repo.ClaimRun(ctx, run.RunID, c.holderID); errors.Is(err, ledger.ErrClaimHeld) {
+	if err := c.claimRun(ctx, run.RunID); errors.Is(err, ledger.ErrClaimHeld) {
 		h := c.newRunHandle(run.RunID, key, latestAttempts(tasks), fingerprint, true, nonInteractiveRunOpts(req)...)
 		go c.watchJoinedRun(h)
 		return h, nil

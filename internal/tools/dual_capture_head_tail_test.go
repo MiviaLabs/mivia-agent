@@ -135,3 +135,14 @@ func TestDualCaptureDoesNotAllocateDefaultTailBeforeOutputNeedsIt(t *testing.T) 
 		t.Fatalf("small output allocated tail: bytes=%d tags=%d", len(d.ring), len(d.ringOut))
 	}
 }
+
+func TestDualCaptureBackstopIncludesStreamTagMemory(t *testing.T) {
+	const max = 600
+	d := newDualCapture(max)
+	if _, err := d.Stdout().Write([]byte(strings.Repeat("x", max))); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(d.stdoutHead) + len(d.stderrHead) + len(d.ring) + len(d.ringOut); got > max {
+		t.Fatalf("capture allocation = %d, want <= %d", got, max)
+	}
+}
