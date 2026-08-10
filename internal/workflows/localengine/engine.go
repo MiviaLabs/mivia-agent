@@ -271,12 +271,16 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, force bool) error {
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) && force {
-			if err := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); err != nil {
+			if err := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); errors.Is(err, workflowledger.ErrClaimNotHeld) {
+				return e.Repo.ClaimRun(ctx, runID, holder)
+			} else if err != nil {
 				return err
 			}
 		} else if errors.Is(err, workflowledger.ErrClaimHeld) {
 			if takeoverErr := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); takeoverErr == nil {
 				return nil
+			} else if errors.Is(takeoverErr, workflowledger.ErrClaimNotHeld) {
+				return e.Repo.ClaimRun(ctx, runID, holder)
 			}
 			return fmt.Errorf("workflow run %q is executing on another host; wait for its lease to expire or force-resume", runID)
 		} else {
