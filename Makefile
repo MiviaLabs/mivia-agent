@@ -103,10 +103,10 @@ semgrep-validate:
 semgrep-test:
 	@python3 scripts/test_semgrep_rules.py
 
+# Bound worker domains because default per-CPU workers can fail with
+# io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK.
 semgrep:
 	@if command -v semgrep >/dev/null 2>&1; then \
-		# -j 2 bounds worker domains: default per-CPU workers fail \
-		# io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK; \
 		out="$$(semgrep --config semgrep/agent-standards.yml --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 . 2>&1)"; rc=$$?; \
 		printf '%s\n' "$$out"; \
 		if [ "$$rc" -ne 0 ] && printf '%s' "$$out" | grep -qE 'semgrep-core exited with|Uncaught exn in Core_scan\.scan|engine was killed|Cannot allocate memory io_uring_queue_init'; then \

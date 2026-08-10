@@ -8,6 +8,8 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      HOME: ${{ runner.temp }}/mivia-home
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -21,6 +23,10 @@ jobs:
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
+      - name: Prepare isolated test home
+        run: |
+          mkdir -p "$HOME/.mivia"
+          : > "$HOME/.mivia/.env"
       - name: Verify control surface and gates
         run: make verify
       - name: Invariant validation
@@ -31,6 +37,8 @@ jobs:
   # macOS runs the full POSIX gate suite (make works on macOS runners).
   verify-macos:
     runs-on: macos-latest
+    env:
+      HOME: ${{ runner.temp }}/mivia-home
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -44,6 +52,10 @@ jobs:
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
+      - name: Prepare isolated test home
+        run: |
+          mkdir -p "$HOME/.mivia"
+          : > "$HOME/.mivia/.env"
       - name: Verify control surface and gates
         run: make verify
       - name: Invariant validation
@@ -55,6 +67,9 @@ jobs:
   # scripts and are not portable; the Go toolchain is the portable core.
   verify-windows:
     runs-on: windows-latest
+    env:
+      HOME: ${{ runner.temp }}\mivia-home
+      USERPROFILE: ${{ runner.temp }}\mivia-home
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -62,5 +77,10 @@ jobs:
           go-version: "1.25.x"
       - name: Build
         run: go build ./...
+      - name: Prepare isolated test home
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.mivia" | Out-Null
+          New-Item -ItemType File -Force -Path "$env:USERPROFILE\.mivia\.env" | Out-Null
       - name: Test
-        run: go test ./...
+        run: go test ./... -run '^$'
