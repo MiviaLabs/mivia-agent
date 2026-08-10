@@ -28,6 +28,21 @@ func (c failingLineCompleter) ChatTurn(context.Context, provider.Request) (*prov
 	return nil, c.err
 }
 
+type processCancelCompleter struct{ cancel func() }
+
+func (processCancelCompleter) Name() string { return "process-cancel" }
+func (c processCancelCompleter) Chat(context.Context, provider.Request) (string, error) {
+	c.cancel()
+	return "", context.Canceled
+}
+func (c processCancelCompleter) ChatStream(context.Context, provider.Request, io.Writer) (string, error) {
+	return c.Chat(context.Background(), provider.Request{})
+}
+func (c processCancelCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
+	c.cancel()
+	return nil, context.Canceled
+}
+
 // TestLineModeReportsTurnFailures pins that the classic line-mode REPL returns
 // a turn's error instead of swallowing it. It asked ctx.Err() after calling its
 // own cancel(), so every turn printed "(cancelled)" and returned nil - which is
@@ -223,6 +238,31 @@ func TestShouldReportChatCancellation(t *testing.T) {
 	}
 	if shouldReportChatCancellation(context.Background(), context.Canceled) {
 		t.Fatal("live turn reported session cancellation")
+	}
+}
+
+func TestProcessLineChatReportsInterruptedTurn(t *testing.T) {
+	previous := classicTurnContext
+	var cancel context.CancelFunc
+	classicTurnContext = func(context.Context) (context.Context, context.CancelFunc) {
+		ctx, next := context.WithCancel(context.Background())
+		cancel = next
+		return ctx, next
+	}
+	t.Cleanup(func() { classicTurnContext = previous })
+
+	session := chat.NewSession(&config.Resolved{Model: "model", SystemPrompt: "sys"}, processCancelCompleter{cancel: func() { cancel() }})
+	session.UseTools = true
+	session.Tools = tools.NewRegistry()
+	out := newMockTerminal()
+	term := &Terminal{out: out, width: 80, height: 24}
+	renderer := NewChatRenderer(term, "model")
+	err := processLineChat("question", session, &config.Resolved{}, false, term, renderer, NewInputBuffer(" > "), "model")
+	if err != nil {
+		t.Fatalf("interrupted turn error = %v", err)
+	}
+	if !strings.Contains(out.String(), "cancelled - still in session") {
+		t.Fatalf("output = %q", out.String())
 	}
 }
 

@@ -82,6 +82,8 @@ func shouldReportChatCancellation(ctx context.Context, err error) bool {
 	return ctx.Err() != nil && cancellationCanReplaceTurnError(err)
 }
 
+var classicTurnContext = context.WithCancel
+
 // stderrTerm adapts stderr for ChatRenderer in one-shot mode.
 type stderrTerm struct{}
 
@@ -96,7 +98,7 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 	if stop {
 		return err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := classicTurnContext(context.Background())
 	defer cancel()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
