@@ -43,7 +43,7 @@ var (
 // workflow execution file lock (beginWorkflowExecution also installs hooks)
 // before handing off to deliverRunWithStore, which must NOT re-acquire the
 // lock. On success it prints the settled run status like executeWorkflowRun.
-func executeWorkflowDeliver(runID, root, configPath string, allowPublish, force bool, stdout, stderr io.Writer) error {
+func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string, allowPublish, force bool, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
@@ -68,7 +68,6 @@ func executeWorkflowDeliver(runID, root, configPath string, allowPublish, force 
 		return err
 	}
 	defer finishExecution()
-	ctx := context.Background()
 	if err := deliverRunWithStore(ctx, work.Abs, res, store, repo, runID, allowPublish, force, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "workflow delivery failed: %v\n", err)
 		return err

@@ -302,7 +302,7 @@ func (c *coordinator) joinSingleTaskAdmission(ctx context.Context, req EnsureRun
 			return nil, err
 		}
 	}
-	if err := c.repo.ClaimRun(ctx, run.RunID, c.holderID); errors.Is(err, ledger.ErrClaimHeld) {
+	if err := c.claimRun(ctx, run.RunID); errors.Is(err, ledger.ErrClaimHeld) {
 		h := c.newRunHandle(run.RunID, key, latestAttempts(tasks), fingerprint, true, nonInteractiveRunOpts(req)...)
 		go c.watchJoinedRun(h)
 		return h, nil
@@ -441,30 +441,15 @@ func nonInteractiveRunOpts(req EnsureRunRequest) []runHandleOption {
 	return opts
 }
 
-// claimForResume acquires the execution claim for a (force-)resume without
-// ever wiping a LIVE claim blindly. ClaimRun is probed first; only a claim
-// that is actually held is cleared, and only once - a second ErrClaimHeld
-// means another executor holds the run right now, so force-resume refuses
-// too. The probe claim (same holder) is kept where the caller executes the
-// run itself; the interrupted-run path's own ClaimRun is a same-holder
-// refresh, so the run stays exclusively ours across the resume handoff.
+// claimForResume acquires a free or expired execution claim. Force resume does
+// not clear a live claim. The interrupted-run path refreshes the same lease.
 func (c *coordinator) claimForResume(ctx context.Context, runID string, force bool) error {
-	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
-		if errors.Is(err, ledger.ErrClaimHeld) && force {
-			if err := c.repo.ClearRunClaim(ctx, runID); err != nil {
-				return fmt.Errorf("ensure run: clear run claim: %w", err)
-			}
-			if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
-				if errors.Is(err, ledger.ErrClaimHeld) {
-					return ErrRunHeldByAnotherExecutor
-				}
-				return fmt.Errorf("ensure run: reclaim run: %w", err)
-			}
-		} else if errors.Is(err, ledger.ErrClaimHeld) {
+	_ = force
+	if err := c.claimRun(ctx, runID); err != nil {
+		if errors.Is(err, ledger.ErrClaimHeld) {
 			return ErrRunHeldByAnotherExecutor
-		} else {
-			return fmt.Errorf("ensure run: claim run: %w", err)
 		}
+		return fmt.Errorf("ensure run: claim run: %w", err)
 	}
 	return nil
 }

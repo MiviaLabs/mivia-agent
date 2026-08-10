@@ -103,15 +103,15 @@ func TestReclaimAbandonedRunReProbeFailureIsNoReclaim(t *testing.T) {
 	if c.reclaimAbandonedRun("run-x") {
 		t.Fatal("reclaim succeeded despite a failed re-probe; only the winner of the clear+re-probe race may delete")
 	}
-	if repo.probes != 2 {
-		t.Fatalf("ClaimRun calls = %d, want 2 (one probe, one re-probe after the clear)", repo.probes)
+	if repo.probes != 1 {
+		t.Fatalf("ClaimRun calls = %d, want 1", repo.probes)
 	}
-	// The stale claim was cleared; the run itself was NOT deleted.
+	// The held claim remains; reclaim must not clear a possibly live owner.
 	if _, err := repo.GetRun(ctx, "run-x"); err != nil {
 		t.Fatalf("run %q deleted after a failed re-probe: %v; a no-reclaim must leave the run untouched", "run-x", err)
 	}
-	if err := repo.MemoryLedgerRepository.ClaimRun(ctx, "run-x", "winner-holder"); err != nil {
-		t.Fatalf("stale claim not cleared: %v; the dead holder's claim must not survive the clear", err)
+	if err := repo.MemoryLedgerRepository.ClaimRun(ctx, "run-x", "winner-holder"); !errors.Is(err, ledger.ErrClaimHeld) {
+		t.Fatalf("claim error = %v, want ErrClaimHeld", err)
 	}
 }
 

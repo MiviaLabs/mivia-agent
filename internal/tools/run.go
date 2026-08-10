@@ -224,6 +224,7 @@ func (t *runCommandTool) buildCommand(callCtx context.Context, bin string, comma
 type runCapture struct {
 	stdout, stderr string
 	truncated      bool
+	limit          int
 	runErr         error
 }
 
@@ -233,7 +234,12 @@ type runCapture struct {
 // streams and the wait error (nil for a clean exit; child failures surface in
 // the result body instead).
 func (t *runCommandTool) runCapture(cmd *exec.Cmd, callCtx context.Context, scope commandScope) runCapture {
-	cap := newDualCapture(t.maxOut)
+	limit := t.ResultBudgetBytes()
+	cap := newDualCapture(limit)
+	if t.maxOut <= 0 {
+		cap = newMemoryBoundDualCapture(limit)
+		limit = cap.headQuota + cap.tailQuota
+	}
 	cmd.Stdout = cap.Stdout()
 	cmd.Stderr = cap.Stderr()
 	var runErr error
@@ -249,7 +255,8 @@ func (t *runCommandTool) runCapture(cmd *exec.Cmd, callCtx context.Context, scop
 	return runCapture{
 		stdout:    cap.StdoutString(),
 		stderr:    cap.StderrString(),
-		truncated: t.maxOut > 0 && cap.Truncated(),
+		truncated: cap.Truncated(),
+		limit:     limit,
 		runErr:    runErr,
 	}
 }
@@ -279,7 +286,7 @@ func (t *runCommandTool) composeResult(argv []string, callCtx context.Context, r
 		hasOutput = true
 	}
 	if capture.truncated {
-		body.WriteString(fmt.Sprintf("\n... truncated at %d bytes", t.maxOut))
+		body.WriteString(fmt.Sprintf("\n... truncated at %d bytes", capture.limit))
 	}
 	if !hasOutput && !capture.truncated {
 		return header + "(no output)"

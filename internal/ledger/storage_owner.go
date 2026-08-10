@@ -23,7 +23,7 @@ func NewBorrowedStorageLedgerRepository(store storage.Store) *StorageLedgerRepos
 func newStorageLedgerRepository(store storage.Store, ownsStore bool) *StorageLedgerRepository {
 	return &StorageLedgerRepository{
 		store: store, mem: NewMemoryLedgerRepository(), ownsStore: ownsStore,
-		holder: newHolderID(), claimedRuns: make(map[string]string),
+		holder: newHolderID(), claimedRuns: make(map[string]storage.Claim),
 		applied: make(map[string]uint64), allocated: make(map[string]uint64),
 		inflight: make(map[inflightKey]struct{}), now: time.Now,
 	}

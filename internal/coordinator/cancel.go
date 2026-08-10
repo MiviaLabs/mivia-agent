@@ -164,7 +164,7 @@ func (c *coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {
 	//
 	// Only a claim that is free or already ours is taken (refreshed), and it
 	// is released with our holder at the end.
-	if err := c.repo.ClaimRun(ctx, h.runID, c.holderID); err != nil {
+	if err := c.claimRun(ctx, h.runID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
 			return fmt.Errorf("cannot cancel recovered run %q: execution claim is held by another executor; refusing to clear a possibly live claim", h.runID)
 		}

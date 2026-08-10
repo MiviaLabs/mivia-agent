@@ -23,9 +23,8 @@ import (
 // flight key owns the execution, and every identical call that arrives while
 // it runs waits on a per-waiter channel and receives the owner's result. A
 // dedup hit skips the budget charge by design - the tool 'did not run', so the
-// duplicate cannot consume cumulative budget. Close resets the in-flight table
-// without delivering to its waiters: active calls must be canceled first (see
-// Dispatcher.Close).
+// duplicate cannot consume cumulative budget. Close resolves in-flight waiters
+// with a closed result before it releases the table.
 
 // maxTurnBuckets bounds the per-turn dedup cache. TurnIDs advance
 // monotonically per session; keeping only the most recent few turns bounds
@@ -149,6 +148,9 @@ func (d *Dispatcher) recordTurnResult(req Request, result Result) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.closed {
+		return
+	}
 	// Resolve the flight-keyed entry (only the owner may) before writing the
 	// bucket: a waiter attached while the call was in flight must receive this
 	// result even though the bucket is about to answer the next identical call.

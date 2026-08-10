@@ -51,11 +51,12 @@ func highlightLine(line string, lang string, inMulti bool) (string, bool) {
 			// Look for close.
 			idx := strings.Index(line, def.multiLineR)
 			if idx >= 0 {
-				after := line[idx+len(def.multiLineR):]
 				// Render commented portion dim, then process the rest normally.
-				before := line[:idx]
-				rest, _ := highlightLine(after, lang, false)
-				return fmt.Sprintf("  %s%s%s%s%s%s", ansiBgDark, ansiDim, ansiItalic, before, ansiReset, rest), false
+				endIdx := idx + len(def.multiLineR)
+				comment := line[:endIdx]
+				rest, nextMulti := highlightLine(line[endIdx:], lang, false)
+				rest = strings.TrimPrefix(rest, "  ")
+				return fmt.Sprintf("  %s%s%s%s%s%s%s", ansiBgDark, ansiDim, ansiItalic, comment, ansiReset, rest, ansiReset), nextMulti
 			}
 			return fmt.Sprintf("  %s%s%s%s%s", ansiBgDark, ansiDim, ansiItalic, line, ansiReset), true
 		}

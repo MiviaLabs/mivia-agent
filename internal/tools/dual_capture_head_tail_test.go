@@ -122,3 +122,27 @@ func TestRunCommandFailingBuildKeepsErrorTail(t *testing.T) {
 		t.Fatalf("expected truncation/elision signal under tight max_output_bytes:\n%s", out[:min(len(out), 400)])
 	}
 }
+
+func TestDualCaptureDoesNotAllocateDefaultTailBeforeOutputNeedsIt(t *testing.T) {
+	d := newMemoryBoundDualCapture(defaultMemoryBackstopBytes)
+	if len(d.ring) != 0 || len(d.ringOut) != 0 {
+		t.Fatalf("default tail allocated eagerly: bytes=%d tags=%d", len(d.ring), len(d.ringOut))
+	}
+	if _, err := d.Stdout().Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.ring) != 0 || len(d.ringOut) != 0 {
+		t.Fatalf("small output allocated tail: bytes=%d tags=%d", len(d.ring), len(d.ringOut))
+	}
+}
+
+func TestDualCaptureBackstopIncludesStreamTagMemory(t *testing.T) {
+	const max = 600
+	d := newMemoryBoundDualCapture(max)
+	if _, err := d.Stdout().Write([]byte(strings.Repeat("x", max))); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(d.stdoutHead) + len(d.stderrHead) + len(d.ring) + len(d.ringOut); got > max {
+		t.Fatalf("capture allocation = %d, want <= %d", got, max)
+	}
+}

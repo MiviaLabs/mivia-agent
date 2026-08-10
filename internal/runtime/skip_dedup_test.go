@@ -212,14 +212,34 @@ func TestDispatcherSkipDedupSkipsInFlightCollapse(t *testing.T) {
 	close(ctrlRelease)
 	cr1 := <-ctrlResults
 	cr2 := <-ctrlResults
-	if cr1.Err != nil || cr2.Err != nil {
-		t.Fatalf("control results errored: cr1=%+v cr2=%+v", cr1, cr2)
+	assertSkipDedupControlCollapse(t, cr1, cr2, &ctrlCalls)
+}
+
+// assertSkipDedupControlCollapse verifies the non-SkipDedup control: exactly
+// one call executed and the other received the owner's result as duplicate.
+// The two results arrive in nondeterministic order, so they are counted, not
+// ordered.
+func assertSkipDedupControlCollapse(t *testing.T, cr1, cr2 Result, calls *atomic.Int32) {
+	t.Helper()
+	var completed, duplicates int
+	for _, r := range []Result{cr1, cr2} {
+		if r.Err != nil {
+			t.Fatalf("control results errored: %+v", r)
+		}
+		switch r.Metadata.Status {
+		case "completed":
+			completed++
+		case "duplicate":
+			duplicates++
+		default:
+			t.Fatalf("control result status = %q, want completed or duplicate", r.Metadata.Status)
+		}
 	}
-	if got := ctrlCalls.Load(); got != 1 {
+	if completed != 1 || duplicates != 1 {
+		t.Fatalf("control results: completed=%d duplicate=%d, want exactly one of each", completed, duplicates)
+	}
+	if got := calls.Load(); got != 1 {
 		t.Fatalf("control concurrent handler executed %d times, want exactly 1", got)
-	}
-	if cr2.Metadata.Status != "duplicate" {
-		t.Fatalf("control concurrent second status = %q, want duplicate", cr2.Metadata.Status)
 	}
 }
 
@@ -285,8 +305,8 @@ func TestResultIsDuplicate(t *testing.T) {
 
 // TestSkipDedupMixedWaiterSteal pins the audit finding: a failing SkipDedup
 // call that reuses an in-flight owner's ID must NOT steal or delete the
-// ID-keyed waiter channel (deliverTerminal gate). The owner's registration
-// must survive, and the owner's own completion must be the one to deliver.
+// ID-keyed waiters (deliverTerminal gate). The duplicate's registration must
+// survive, and the owner's own completion must be the one to deliver.
 func TestSkipDedupMixedWaiterSteal(t *testing.T) {
 	d := New(Policy{})
 	entered := make(chan struct{})
@@ -309,34 +329,43 @@ func TestSkipDedupMixedWaiterSteal(t *testing.T) {
 	}
 	input := json.RawMessage(`{"x":1}`)
 
-	// Owner: non-SkipDedup, ID "same", in flight (registers the ID-keyed waiter).
+	// Owner: non-SkipDedup, ID "same", in flight.
 	ownerDone := make(chan Result, 1)
 	go func() {
-		ownerDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", Input: input})
+		ownerDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", Input: input, Budget: 1})
 	}()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
 		t.Fatal("owner never entered the handler")
 	}
+	waiterDone := make(chan Result, 1)
+	go func() {
+		waiterDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", Input: input, Budget: 1})
+	}()
+	waitForIDKeyedWaiterRegistered(t, d, "same", "same")
 
 	// Intruder: SkipDedup, same ID, failing handler. Its terminal path must
-	// not read or delete the ID-keyed waiter channel.
+	// not read or delete the ID-keyed waiter.
 	intruder := d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "boom", Input: input, SkipDedup: true})
 	if intruder.Err == nil {
 		t.Fatal("intruder invocation should fail")
 	}
 	d.mu.Lock()
-	_, stillThere := d.waiters["same"]
+	waiterCount := len(d.waiters["same"])
 	d.mu.Unlock()
-	if !stillThere {
-		t.Fatal("a failing SkipDedup call stole the ID-keyed waiter channel")
+	if waiterCount != 1 {
+		t.Fatalf("ID-keyed waiter count = %d, want 1", waiterCount)
 	}
 
 	close(release)
 	owner := <-ownerDone
+	waiter := <-waiterDone
 	if owner.Err != nil || string(owner.Output) != `{"ok":true}` {
 		t.Fatalf("owner result = err=%v out=%s, want success", owner.Err, owner.Output)
+	}
+	if waiter.Err != nil || waiter.Metadata.Status != "duplicate" {
+		t.Fatalf("waiter result = %+v, want duplicate success", waiter)
 	}
 }
 

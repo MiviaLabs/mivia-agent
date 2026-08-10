@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -14,9 +15,10 @@ import (
 // both into the session and persist, then hand the partial back instead of the
 // error. Only a still-current turn may persist (stale-turn fence); otherwise it
 // returns ok=false and the caller keeps today's drop-everything error path.
-func (s *Session) adoptInterruptedPlainTurn(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string) (string, bool) {
+// A save failure returns with the partial reply.
+func (s *Session) adoptInterruptedPlainTurn(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string) (string, bool, error) {
 	if !isInterruptedTurn(ctx, err) || !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
-		return "", false
+		return "", false, nil
 	}
 	s.mu.Lock()
 	replaceNewestUserText(prepared, snapshot.messages[len(snapshot.messages)-1].Content, persistedText)
@@ -25,8 +27,18 @@ func (s *Session) adoptInterruptedPlainTurn(ctx context.Context, err error, snap
 		s.Messages = append(s.Messages, provider.Message{Role: provider.RoleAssistant, Content: partial, CreatedAt: time.Now()})
 	}
 	s.mu.Unlock()
-	_ = s.saveAfterTurn(snapshot.token)
-	return partial, true
+	return partial, true, s.persistPlainLegacyTurn(snapshot.token)
+}
+
+func (s *Session) persistPlainLegacyTurn(token OperationToken) error {
+	return plainPersistenceError(s.saveAfterTurn(token))
+}
+
+func plainPersistenceError(err error) error {
+	if errors.Is(err, ErrStaleOperation) || errors.Is(err, ErrStaleAutosave) {
+		return nil
+	}
+	return err
 }
 
 // commitInterruptedPlainContext handles the errored ChatStream path of a plain

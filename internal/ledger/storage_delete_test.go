@@ -38,6 +38,121 @@ func TestDeletedRunDoesNotResurrectInNextProcess(t *testing.T) {
 	}
 }
 
+// TestDeleteRunThenRecreateSameIDWithOwnClaim pins the claimed-delete pairing:
+// DeleteRun must mirror the store's claim-row removal in the in-memory
+// claimedRuns map, so a same-instance recreation of the same run ID starts
+// from a clean slate. Regression: DeleteRun dropped the store claim row
+// (AppendAndDeleteRun) but kept the stale fenced claim in claimedRuns, so the
+// recreation's run_created append took the fenced path with a dead claim and
+// failed with ErrClaimHeld forever on that instance (the workflow controller
+// re-dispatches a persisted CoordinatorRunID on retry).
+func TestDeleteRunThenRecreateSameIDWithOwnClaim(t *testing.T) {
+	ctx := context.Background()
+	t.Run("memory", func(t *testing.T) {
+		recreateAfterClaimedDelete(t, ctx, NewBorrowedStorageLedgerRepository(storage.NewMemory()), "run-x")
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		recreateAfterClaimedDelete(t, ctx, NewBorrowedStorageLedgerRepository(store), "run-x")
+	})
+}
+
+func recreateAfterClaimedDelete(t *testing.T, ctx context.Context, repo *StorageLedgerRepository, runID string) {
+	t.Helper()
+	if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: runID, Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClaimRun(ctx, runID, "holder-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteRun(ctx, runID); err != nil {
+		t.Fatalf("DeleteRun with own claim held: %v", err)
+	}
+	if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: runID, Status: RunStatusCreated}); err != nil {
+		t.Fatalf("recreate same run ID after claimed delete: %v", err)
+	}
+	if _, err := repo.GetRun(ctx, runID); err != nil {
+		t.Fatalf("GetRun after recreate: %v", err)
+	}
+}
+
+func TestStorageLedgerDeleteRunRetriesAfterPhysicalDeleteFailure(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ledger.db")
+	store, err := storage.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := &failAtomicDeleteStore{Store: store, remaining: 1}
+	repo := NewStorageLedgerRepository(failing)
+	if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: "deleted", Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteRun(ctx, "deleted"); !errors.Is(err, errAtomicDelete) {
+		t.Fatalf("DeleteRun with injected failure = %v, want physical delete error", err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("close failed store: %v", err)
+	}
+	reopenedStore, err := storage.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopenedStore.Close() })
+	reopened := NewStorageLedgerRepository(reopenedStore)
+	if err := reopened.DeleteRun(ctx, "deleted"); err != nil {
+		t.Fatalf("DeleteRun retry after reopen: %v", err)
+	}
+	events, err := reopenedStore.Events(ctx, "deleted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Kind != storageKindRunDeleted {
+		t.Fatalf("events after retry = %#v, want only the deletion tombstone", events)
+	}
+}
+
+func TestStorageLedgerDeleteRunFailureReleasesInflightSequence(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	failing := &failAtomicDeleteStore{Store: store, remaining: 1}
+	reader := NewStorageLedgerRepository(failing)
+	if err := reader.CreateRun(ctx, "", RunSnapshot{RunID: "run", Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.DeleteRun(ctx, "run"); !errors.Is(err, errAtomicDelete) {
+		t.Fatalf("DeleteRun with injected failure = %v, want physical delete error", err)
+	}
+
+	writer := NewStorageLedgerRepository(store)
+	if err := writer.CreateTask(ctx, TaskSnapshot{RunID: "run", TaskID: "task", Status: string(TaskStatusQueued)}); err != nil {
+		t.Fatalf("CreateTask after failed delete: %v", err)
+	}
+	if _, err := reader.GetTask(ctx, "run", "task"); err != nil {
+		t.Fatalf("GetTask after catch-up: %v", err)
+	}
+}
+
+var errAtomicDelete = errors.New("injected atomic delete failure")
+
+type failAtomicDeleteStore struct {
+	storage.Store
+	remaining int
+}
+
+func (s *failAtomicDeleteStore) AppendAndDeleteRun(ctx context.Context, tombstone storage.Event, claim storage.Claim) error {
+	if s.remaining > 0 {
+		s.remaining--
+		return errAtomicDelete
+	}
+	return s.Store.AppendAndDeleteRun(ctx, tombstone, claim)
+}
+
 func TestDeleteRunKeepsChangesCursorMonotonic(t *testing.T) {
 	ctx := context.Background()
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))

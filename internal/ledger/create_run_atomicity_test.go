@@ -58,6 +58,10 @@ func (f *failingAppendStore) DeleteRun(ctx context.Context, runID string, throug
 	return f.inner.DeleteRun(ctx, runID, throughSequence)
 }
 
+func (f *failingAppendStore) AppendAndDeleteRun(ctx context.Context, tombstone storage.Event, claim storage.Claim) error {
+	return f.inner.AppendAndDeleteRun(ctx, tombstone, claim)
+}
+
 func (f *failingAppendStore) Changes(ctx context.Context, afterCursor uint64) (map[string]int, uint64, error) {
 	return f.inner.Changes(ctx, afterCursor)
 }

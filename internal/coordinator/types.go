@@ -219,6 +219,8 @@ type coordinator struct {
 	spawnMu         sync.Mutex
 	resumeMu        sync.Mutex // serializes resume admission within this coordinator
 	holderID        string     // random per-process ID for run execution claims
+	claimLease      time.Duration
+	claimHeartbeat  time.Duration
 	now             func() time.Time
 	nowMu           sync.RWMutex
 	retryMu         sync.RWMutex
@@ -250,8 +252,9 @@ func New(repo ledger.LedgerRepository, pool *subagents.Pool) Coordinator {
 	c := &coordinator{
 		repo: repo, pool: pool, names: ledger.NewDisplayNameGenerator(),
 		handles: map[string]*RunHandle{}, handlesByRun: map[string]*RunHandle{},
-		holderID: newCoordinatorHolderID(),
-		now:      time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy,
+		holderID:   newCoordinatorHolderID(),
+		claimLease: defaultRunClaimLease, claimHeartbeat: defaultRunClaimLease / 3,
+		now: time.Now, handleRetention: 10 * time.Minute, retryPolicy: DefaultRetryPolicy,
 		// Pre-allocate so ParkQuestion / CountPendingQuestions never race on
 		// lazy nil-init of the questions pointer (plan 53.02 concurrency).
 		questions:       &questionRegistry{byKey: map[string]*pendingQuestion{}},

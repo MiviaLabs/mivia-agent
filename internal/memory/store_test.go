@@ -206,7 +206,7 @@ func TestStoreSearchExactTitleRankedFirst(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			s := newTestStore(t, backend, "")
 			ctx := context.Background()
-			for _, title := range []string{"cache invalidation is hard", "cache layers overview", "the cache key"} {
+			for _, title := range []string{"cache invalidation is hard", "cache", "the cache key"} {
 				if _, err := s.Save(ctx, testEntry(title, ScopeProject)); err != nil {
 					t.Fatal(err)
 				}
@@ -218,7 +218,7 @@ func TestStoreSearchExactTitleRankedFirst(t *testing.T) {
 			if len(got) != 3 {
 				t.Fatalf("want 3 matches, got %d", len(got))
 			}
-			if got[0].Title != "cache invalidation is hard" {
+			if got[0].Title != "cache" {
 				t.Errorf("exact title match must rank first, got %q", got[0].Title)
 			}
 		})

@@ -22,6 +22,7 @@ type Claim struct {
 	RunID      string
 	Holder     string
 	AcquiredAt string
+	Fence      uint64
 }
 
 type Event struct {
@@ -44,6 +45,10 @@ type Store interface {
 	// AppendClaimed appends an event when its run is unclaimed or holder owns
 	// the current claim. It returns ErrClaimHeld when another holder owns it.
 	AppendClaimed(ctx context.Context, event Event, holder string) error
+	// AppendAndDeleteRun atomically appends a deletion tombstone and removes
+	// prior events and the claim for the same run. The supplied claim authorizes
+	// the append when the run has an active claim.
+	AppendAndDeleteRun(context.Context, Event, Claim) error
 	Events(context.Context, string) ([]Event, error)
 	// EventsSince returns the events of a run whose sequence is strictly
 	// greater than afterSequence, ordered by ascending sequence. It is the
@@ -105,6 +110,14 @@ type NewRunBatchAppender interface {
 // LeaseStore is the optional extension used by workflow recovery.
 type LeaseStore interface {
 	TakeoverExpiredClaim(context.Context, string, string, time.Duration) error
+}
+
+// FencedLeaseStore guards stale writes after an expired claim changes owner.
+type FencedLeaseStore interface {
+	ClaimRunFenced(context.Context, string, string) (Claim, error)
+	TakeoverExpiredClaimFenced(context.Context, string, string, time.Duration) (Claim, error)
+	AppendClaimedFenced(context.Context, Event, Claim) error
+	ReleaseClaimFenced(context.Context, Claim) error
 }
 
 type Memory struct {
@@ -249,6 +262,28 @@ func (m *Memory) EventsSince(_ context.Context, runID string, afterSequence int)
 func (m *Memory) DeleteRun(_ context.Context, runID string, throughSequence int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.deleteRunLocked(runID, throughSequence)
+	return nil
+}
+
+// AppendAndDeleteRun appends a deletion tombstone and deletes earlier events
+// and the claim while holding one lock.
+func (m *Memory) AppendAndDeleteRun(_ context.Context, tombstone Event, claim Claim) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.claims[tombstone.RunID]; ok &&
+		(claim.Holder == "" || current.Holder != claim.Holder ||
+			(claim.Fence != 0 && current.Fence != claim.Fence)) {
+		return ErrClaimHeld
+	}
+	if err := m.appendLocked(tombstone); err != nil {
+		return err
+	}
+	m.deleteRunLocked(tombstone.RunID, tombstone.Sequence-1)
+	return nil
+}
+
+func (m *Memory) deleteRunLocked(runID string, throughSequence int) {
 	events := m.events[runID]
 	kept := events[:0]
 	for _, event := range events {
@@ -266,7 +301,6 @@ func (m *Memory) DeleteRun(_ context.Context, runID string, throughSequence int)
 		m.maxSeq[runID] = kept[len(kept)-1].Sequence
 	}
 	delete(m.claims, runID)
-	return nil
 }
 
 func (m *Memory) Changes(_ context.Context, afterCursor uint64) (map[string]int, uint64, error) {
@@ -306,17 +340,29 @@ func (m *Memory) ListRunIDs(_ context.Context) ([]string, error) {
 func (m *Memory) Close() error { return nil }
 
 func (m *Memory) ClaimRun(_ context.Context, runID, holder string) error {
+	_, err := m.ClaimRunFenced(context.Background(), runID, holder)
+	return err
+}
+
+func (m *Memory) ClaimRunFenced(_ context.Context, runID, holder string) (Claim, error) {
 	if holder == "" {
-		return ErrClaimNotHeld
+		return Claim{}, ErrClaimNotHeld
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.claims[runID]
 	if ok && existing.Holder != holder {
-		return ErrClaimHeld
+		return Claim{}, ErrClaimHeld
 	}
-	m.claims[runID] = Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339)}
-	return nil
+	if existing.Fence == 0 {
+		existing.Fence = 1
+	}
+	if !ok {
+		existing = Claim{RunID: runID, Holder: holder, Fence: 1}
+	}
+	existing.AcquiredAt = time.Now().UTC().Format(time.RFC3339Nano)
+	m.claims[runID] = existing
+	return existing, nil
 }
 
 func (m *Memory) TakeoverClaim(_ context.Context, runID, holder string) error {
@@ -330,22 +376,54 @@ func (m *Memory) TakeoverClaim(_ context.Context, runID, holder string) error {
 }
 
 func (m *Memory) TakeoverExpiredClaim(_ context.Context, runID, holder string, maxAge time.Duration) error {
+	_, err := m.TakeoverExpiredClaimFenced(context.Background(), runID, holder, maxAge)
+	return err
+}
+
+func (m *Memory) TakeoverExpiredClaimFenced(_ context.Context, runID, holder string, maxAge time.Duration) (Claim, error) {
 	if holder == "" {
-		return ErrClaimNotHeld
+		return Claim{}, ErrClaimNotHeld
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.claims[runID]
 	if !ok {
-		return ErrClaimNotHeld
+		return Claim{}, ErrClaimNotHeld
 	}
 	if ok {
-		when, err := time.Parse(time.RFC3339, existing.AcquiredAt)
+		when, err := time.Parse(time.RFC3339Nano, existing.AcquiredAt)
 		if err != nil || time.Since(when) < maxAge {
-			return ErrClaimHeld
+			return Claim{}, ErrClaimHeld
 		}
 	}
-	m.claims[runID] = Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339)}
+	existing.Holder = holder
+	existing.Fence++
+	if existing.Fence == 0 {
+		existing.Fence = 1
+	}
+	existing.AcquiredAt = time.Now().UTC().Format(time.RFC3339Nano)
+	m.claims[runID] = existing
+	return existing, nil
+}
+
+func (m *Memory) AppendClaimedFenced(_ context.Context, e Event, claim Claim) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.claims[e.RunID]
+	if !ok || current.Holder != claim.Holder || current.Fence != claim.Fence {
+		return ErrClaimHeld
+	}
+	return m.appendLocked(e)
+}
+
+func (m *Memory) ReleaseClaimFenced(_ context.Context, claim Claim) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.claims[claim.RunID]
+	if !ok || current.Holder != claim.Holder || current.Fence != claim.Fence {
+		return ErrClaimNotHeld
+	}
+	delete(m.claims, claim.RunID)
 	return nil
 }
 

@@ -14,6 +14,9 @@ type reservation struct {
 func (d *Dispatcher) reserve(req Request, inputHash string) (reservation, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.closed {
+		return reservation{}, errDispatcherClosed
+	}
 	// The fingerprint check stays FIRST: a reused ID with different input must
 	// always error, even when the content would otherwise dedup. A SkipDedup
 	// call never reads or writes ID-keyed dedup state, so it is exempt.
@@ -65,11 +68,13 @@ func (d *Dispatcher) reserve(req Request, inputHash string) (reservation, error)
 	// and cannot leave an active marker or waiter channel behind.
 	if !req.SkipDedup {
 		_, res.dup = d.active[req.ID]
-		res.waiter = d.waiters[req.ID]
+		if res.dup {
+			res.waiter = make(chan Result, 1)
+			d.waiters[req.ID] = append(d.waiters[req.ID], res.waiter)
+		}
 	}
 	if res.handler != nil && !res.dup && !req.SkipDedup {
 		d.active[req.ID] = struct{}{}
-		d.waiters[req.ID] = make(chan Result, 1)
 		d.fingerprints[req.ID] = inputHash
 	}
 	// The call that will actually execute owns the flight key: an identical call

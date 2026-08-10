@@ -318,6 +318,35 @@ func TestHighlightMultiLineComment(t *testing.T) {
 	if !strings.Contains(got, ansiCyan) {
 		t.Fatal("expected cyan keyword after comment")
 	}
+
+	for _, test := range []struct {
+		line string
+		want string
+	}{
+		{line: "comment */", want: "  comment */"},
+		{line: "comment */var x int", want: "  comment */var x int"},
+	} {
+		rendered, inMulti := highlightLine(test.line, "go", true)
+		if inMulti {
+			t.Fatalf("highlightLine(%q) remained in a multi-line comment", test.line)
+		}
+		if plain := stripANSI(rendered); plain != test.want {
+			t.Fatalf("highlightLine(%q) = %q, want %q", test.line, plain, test.want)
+		}
+	}
+
+	rendered, _ := highlightLine("comment */plain", "go", true)
+	if !strings.Contains(rendered, ansiReset+ansiBgDark+"plain") {
+		t.Fatalf("code after comment close lost its background: %q", rendered)
+	}
+
+	rendered, inMulti := highlightLine("old */ code /* new", "go", true)
+	if !inMulti {
+		t.Fatal("a new comment after the close delimiter did not update comment state")
+	}
+	if plain := stripANSI(rendered); plain != "  old */ code /* new" {
+		t.Fatalf("nested comment transition = %q, want exact input text", plain)
+	}
 }
 
 // TestHighlightCodeBlockInMarkdown tests the pre-processing function.

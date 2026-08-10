@@ -428,8 +428,8 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 		// persist, then hand the partial back instead of the error. Only a
 		// still-current turn may persist (stale-turn fence). Non-interrupted
 		// errors keep today's drop-everything behavior.
-		if partial, ok := s.adoptInterruptedPlainTurn(ctx, err, snapshot, prepared, persistedText, captured.String()); ok {
-			return partial, nil
+		if partial, ok, persistErr := s.adoptInterruptedPlainTurn(ctx, err, snapshot, prepared, persistedText, captured.String()); ok {
+			return partial, persistErr
 		}
 		return "", err
 	}
@@ -443,7 +443,9 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 		s.Messages = append(s.Messages, provider.Message{Role: provider.RoleAssistant, Content: reply, CreatedAt: time.Now()})
 	}
 	s.mu.Unlock()
-	_ = s.saveAfterTurn(snapshot.token)
+	if err := s.persistPlainLegacyTurn(snapshot.token); err != nil {
+		return reply, err
+	}
 	return reply, nil
 }
 

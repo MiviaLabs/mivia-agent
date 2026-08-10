@@ -47,10 +47,12 @@ type Engine struct {
 	// DeliveryTimeout bounds one deliver call. Zero uses 2 minutes.
 	DeliveryTimeout time.Duration
 
-	mu        sync.Mutex
-	active    map[string]*activeRun
-	admitting map[string]chan struct{}
-	fence     *abandonFence
+	mu           sync.Mutex
+	active       map[string]*activeRun
+	interrupting map[string]uint
+	resuming     map[string]chan struct{}
+	admitting    map[string]chan struct{}
+	fence        *abandonFence
 	// worktrees records the resolved git worktree identity per run (Root +
 	// MainRoot + admission pins), so delivery can pin GitCtx to the run's real
 	// git directory instead of the caller checkout. Recorded at start and
@@ -205,6 +207,11 @@ func (e *Engine) finishInvocationAdmission(runID string, done chan struct{}) {
 }
 
 func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+	resumeDone, err := e.reserveResume(req.RunID)
+	if err != nil {
+		return agenttools.StartResult{}, err
+	}
+	defer e.finishResume(req.RunID, resumeDone)
 	run, err := e.Repo.GetRun(ctx, req.RunID)
 	if err != nil {
 		if errors.Is(err, workflowledger.ErrNotFound) {
@@ -221,16 +228,6 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	}
 	if !workflowledger.IsResumableRunStatus(run.Status) {
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q status %s is not resumable", req.RunID, run.Status)
-	}
-	// Never resume a run this engine is already executing: tearing the live
-	// run down to "resume" it would cancel mid-step work and corrupt the
-	// interrupted state it was supposed to recover. The caller must wait for
-	// the active run to settle first.
-	e.mu.Lock()
-	_, activeHere := e.active[req.RunID]
-	e.mu.Unlock()
-	if activeHere {
-		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is already executing in this engine; cancel it first", req.RunID)
 	}
 	if err := e.prepareResumeWorktree(ctx, run); err != nil {
 		return agenttools.StartResult{}, err
@@ -274,12 +271,16 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, force bool) error {
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) && force {
-			if err := e.Repo.TakeoverRunClaim(ctx, runID, holder); err != nil {
+			if err := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); errors.Is(err, workflowledger.ErrClaimNotHeld) {
+				return e.Repo.ClaimRun(ctx, runID, holder)
+			} else if err != nil {
 				return err
 			}
 		} else if errors.Is(err, workflowledger.ErrClaimHeld) {
 			if takeoverErr := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); takeoverErr == nil {
 				return nil
+			} else if errors.Is(takeoverErr, workflowledger.ErrClaimNotHeld) {
+				return e.Repo.ClaimRun(ctx, runID, holder)
 			}
 			return fmt.Errorf("workflow run %q is executing on another host; wait for its lease to expire or force-resume", runID)
 		} else {

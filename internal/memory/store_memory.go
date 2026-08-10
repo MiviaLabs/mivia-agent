@@ -108,15 +108,13 @@ func (s *memStore) matchRows(rows []memRow, text string, limit int) []Result {
 	}
 	matched := make([]scored, 0, len(rows))
 	for _, row := range rows {
-		// Match the same text the sqlite backend searches: the rendered
-		// content includes the tags line and the references block, so the
-		// in-memory backend must include them too (backend parity).
-		body := strings.Join(row.e.Tags, ", ")
-		if len(row.e.References) > 0 {
-			body += "\n" + strings.Join(row.e.References, "\n")
-		}
-		body += "\n" + row.e.Good + "\n" + row.e.Bad + "\n" + row.e.Why
-		rank := rankMatch(row.e.Title, row.e.Summary, body, lowerText)
+		// Backend parity: the sqlite backend searches lower(content), and the
+		// content column holds the FULL rendered Markdown (e.Render(), stored
+		// by Save on both backends). The in-memory backend must search the same
+		// text, so a query matching only rendered metadata - the verdict or
+		// scope line, the created line, a section heading, tags, or references
+		// - returns the same results on both backends.
+		rank := rankMatch(row.e.Title, row.e.Summary, row.e.Render(), lowerText)
 		if rank < 0 {
 			continue
 		}

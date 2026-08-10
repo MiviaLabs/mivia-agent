@@ -51,11 +51,15 @@ func OpenSQLite(path string) (*SQLite, error) {
 		db.Close()
 		return nil, err
 	}
-	for _, q := range []string{`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, sequence INTEGER NOT NULL, kind TEXT NOT NULL, payload BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(run_id, sequence))`, `CREATE TABLE IF NOT EXISTS run_claims (run_id TEXT PRIMARY KEY, holder TEXT NOT NULL, acquired_at TEXT NOT NULL)`, `CREATE TABLE IF NOT EXISTS content (ref TEXT PRIMARY KEY, data BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`, `CREATE TABLE IF NOT EXISTS spool_grants (ref TEXT NOT NULL, principal TEXT NOT NULL, PRIMARY KEY (ref, principal))`} {
+	for _, q := range []string{`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, sequence INTEGER NOT NULL, kind TEXT NOT NULL, payload BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(run_id, sequence))`, `CREATE TABLE IF NOT EXISTS run_claims (run_id TEXT PRIMARY KEY, holder TEXT NOT NULL, acquired_at TEXT NOT NULL, fence INTEGER NOT NULL DEFAULT 1)`, `CREATE TABLE IF NOT EXISTS content (ref TEXT PRIMARY KEY, data BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`, `CREATE TABLE IF NOT EXISTS spool_grants (ref TEXT NOT NULL, principal TEXT NOT NULL, PRIMARY KEY (ref, principal))`} {
 		if _, err = db.Exec(q); err != nil {
 			db.Close()
 			return nil, err
 		}
+	}
+	if _, err = db.Exec(`ALTER TABLE run_claims ADD COLUMN fence INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("migrate run claim fence: %w", err)
 	}
 	if err := migrateContextSchema(db); err != nil {
 		db.Close()
@@ -243,6 +247,47 @@ func (s *SQLite) DeleteRun(ctx context.Context, id string, through int) error {
 	}
 	return tx.Commit()
 }
+
+// AppendAndDeleteRun appends a deletion tombstone and deletes earlier events
+// and the claim in one SQLite transaction.
+func (s *SQLite) AppendAndDeleteRun(ctx context.Context, tombstone Event, claim Claim) error {
+	if len(tombstone.Payload) == 0 {
+		return fmt.Errorf("empty payload")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	var holder string
+	var fence uint64
+	err = tx.QueryRowContext(ctx, `SELECT holder, fence FROM run_claims WHERE run_id=?`, tombstone.RunID).Scan(&holder, &fence)
+	if err != nil && err != sql.ErrNoRows {
+		_ = tx.Rollback()
+		return err
+	}
+	if err == nil && (claim.Holder == "" || holder != claim.Holder || (claim.Fence != 0 && fence != claim.Fence)) {
+		_ = tx.Rollback()
+		return ErrClaimHeld
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO events(id,run_id,sequence,kind,payload) VALUES(?,?,?,?,?)`, tombstone.ID, tombstone.RunID, tombstone.Sequence, tombstone.Kind, tombstone.Payload); err != nil {
+		_ = tx.Rollback()
+		if isConstraint(err) {
+			return ErrDuplicate
+		}
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM events WHERE run_id = ? AND sequence < ?`, tombstone.RunID, tombstone.Sequence); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM run_claims WHERE run_id = ?`, tombstone.RunID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
 func (s *SQLite) events(ctx context.Context, q string, args ...any) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -307,18 +352,22 @@ func (s *SQLite) ListRunIDs(ctx context.Context) ([]string, error) {
 }
 func (s *SQLite) Close() error { return s.db.Close() }
 func (s *SQLite) ClaimRun(ctx context.Context, id, h string) error {
+	_, err := s.ClaimRunFenced(ctx, id, h)
+	return err
+}
+func (s *SQLite) ClaimRunFenced(ctx context.Context, id, h string) (Claim, error) {
 	if h == "" {
-		return ErrClaimNotHeld
+		return Claim{}, ErrClaimNotHeld
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO run_claims(run_id, holder, acquired_at) VALUES(?, ?, datetime('now')) ON CONFLICT(run_id) DO UPDATE SET acquired_at=excluded.acquired_at WHERE run_claims.holder = excluded.holder`, id, h)
+	var claim Claim
+	err := s.db.QueryRowContext(ctx, `INSERT INTO run_claims(run_id, holder, acquired_at, fence) VALUES(?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 1) ON CONFLICT(run_id) DO UPDATE SET acquired_at=excluded.acquired_at WHERE run_claims.holder = excluded.holder RETURNING run_id, holder, acquired_at, fence`, id, h).Scan(&claim.RunID, &claim.Holder, &claim.AcquiredAt, &claim.Fence)
+	if err == sql.ErrNoRows {
+		return Claim{}, ErrClaimHeld
+	}
 	if err != nil {
-		return fmt.Errorf("claim run %q: %w", id, err)
+		return Claim{}, fmt.Errorf("claim run %q: %w", id, err)
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrClaimHeld
-	}
-	return nil
+	return claim, nil
 }
 func (s *SQLite) TakeoverClaim(ctx context.Context, id, h string) error {
 	if h == "" {
@@ -332,25 +381,59 @@ func (s *SQLite) TakeoverClaim(ctx context.Context, id, h string) error {
 }
 
 func (s *SQLite) TakeoverExpiredClaim(ctx context.Context, id, h string, maxAge time.Duration) error {
+	_, err := s.TakeoverExpiredClaimFenced(ctx, id, h, maxAge)
+	return err
+}
+func (s *SQLite) TakeoverExpiredClaimFenced(ctx context.Context, id, h string, maxAge time.Duration) (Claim, error) {
 	if h == "" {
-		return ErrClaimNotHeld
+		return Claim{}, ErrClaimNotHeld
 	}
-	seconds := int64(maxAge / time.Second)
-	res, err := s.db.ExecContext(ctx, `UPDATE run_claims SET holder = ?, acquired_at = datetime('now') WHERE run_id = ? AND unixepoch(acquired_at) <= unixepoch('now') - ?`, h, id, seconds)
-	if err != nil {
-		return fmt.Errorf("take over expired claim %q: %w", id, err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	millis := maxAge.Milliseconds()
+	var claim Claim
+	err := s.db.QueryRowContext(ctx, `UPDATE run_claims SET holder = ?, acquired_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), fence = fence + 1 WHERE run_id = ? AND julianday(acquired_at) <= julianday('now') - (? / 86400000.0) RETURNING run_id, holder, acquired_at, fence`, h, id, millis).Scan(&claim.RunID, &claim.Holder, &claim.AcquiredAt, &claim.Fence)
+	if err == sql.ErrNoRows {
 		var found int
 		err := s.db.QueryRowContext(ctx, `SELECT 1 FROM run_claims WHERE run_id = ?`, id).Scan(&found)
 		if err == sql.ErrNoRows {
-			return ErrClaimNotHeld
+			return Claim{}, ErrClaimNotHeld
 		}
 		if err != nil {
-			return fmt.Errorf("read expired claim %q: %w", id, err)
+			return Claim{}, fmt.Errorf("read expired claim %q: %w", id, err)
 		}
+		return Claim{}, ErrClaimHeld
+	}
+	if err != nil {
+		return Claim{}, fmt.Errorf("take over expired claim %q: %w", id, err)
+	}
+	return claim, nil
+}
+
+func (s *SQLite) AppendClaimedFenced(ctx context.Context, e Event, claim Claim) error {
+	if len(e.Payload) == 0 {
+		return fmt.Errorf("empty payload")
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO events(id,run_id,sequence,kind,payload) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM run_claims WHERE run_id=? AND holder=? AND fence=?)`, e.ID, e.RunID, e.Sequence, e.Kind, e.Payload, e.RunID, claim.Holder, claim.Fence)
+	if err != nil {
+		if isConstraint(err) {
+			return ErrDuplicate
+		}
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
 		return ErrClaimHeld
+	}
+	return nil
+}
+
+func (s *SQLite) ReleaseClaimFenced(ctx context.Context, claim Claim) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM run_claims WHERE run_id=? AND holder=? AND fence=?`, claim.RunID, claim.Holder, claim.Fence)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrClaimNotHeld
 	}
 	return nil
 }

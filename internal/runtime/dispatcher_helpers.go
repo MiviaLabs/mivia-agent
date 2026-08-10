@@ -1,6 +1,31 @@
 package runtime
 
-import "context"
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+var errDispatcherClosed = errors.New("dispatcher is closed")
+
+func (d *Dispatcher) isClosed() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.closed
+}
+
+func (d *Dispatcher) preReservationFailure(req Request, meta Metadata, started time.Time, err error) Result {
+	failedReq := req
+	failedReq.SkipDedup = true
+	return d.terminalFailure(failedReq, meta, started, err)
+}
+
+func (d *Dispatcher) terminalFailure(req Request, meta Metadata, started time.Time, err error) Result {
+	if errors.Is(err, errDispatcherClosed) {
+		return dispatcherClosedResult(req)
+	}
+	return d.failResult(req, meta, started, err, nil)
+}
 
 // joinHookContext keeps both events' advice, separated. Neither event may
 // silence the other: a PreToolUse note about the workspace and a PostToolUse
@@ -22,10 +47,37 @@ func joinHookContext(pre, post string) string {
 func waitDuplicateResult(ctx context.Context, req Request, waiter chan Result) Result {
 	select {
 	case result := <-waiter:
+		if errors.Is(result.Err, errDispatcherClosed) {
+			return dispatcherClosedResult(req)
+		}
 		result.Metadata.Status = "duplicate"
 		return result
 	case <-ctx.Done():
 		return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Err: ctx.Err(), Metadata: Metadata{ID: req.ID, Name: req.Name, Kind: string(req.Kind), Status: "canceled"}}
+	}
+}
+
+func dispatcherClosedResult(req Request) Result {
+	return Result{
+		ID:   req.ID,
+		Name: req.Name,
+		Kind: req.Kind,
+		Err:  errDispatcherClosed,
+		Metadata: Metadata{
+			ID:     req.ID,
+			Name:   req.Name,
+			Kind:   string(req.Kind),
+			Status: "closed",
+		},
+	}
+}
+
+func deliverWaiters(waiters []chan Result, result Result) {
+	for _, waiter := range waiters {
+		select {
+		case waiter <- result:
+		default:
+		}
 	}
 }
 

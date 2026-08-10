@@ -106,7 +106,7 @@ func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, li
 	// Acquire an exclusive claim BEFORE any mutation. If another executor
 	// already holds the claim, refuse the resume entirely - the ledger must
 	// not be touched by a process that will then refuse the run.
-	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
+	if err := c.claimRun(ctx, runID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
 			return nil, ErrRunHeldByAnotherExecutor
 		}

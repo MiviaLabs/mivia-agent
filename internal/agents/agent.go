@@ -151,6 +151,7 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		InputSchema                                        map[string]any `json:",omitempty"`
 		AllowEmptyTools                                    bool           `json:",omitempty"`
 		EffectiveMCPServers                                []string       `json:",omitempty"`
+		CoreTools                                          *[]string      `json:",omitempty"`
 	}
 	payload, err := json.Marshal(definition{
 		Name: a.Name, Description: a.Description, Model: a.Model,
@@ -161,6 +162,7 @@ func (a ResolvedAgent) DefinitionDigest() (string, error) {
 		Provider: a.Provider, TimeoutSeconds: a.TimeoutSeconds, MaxTokens: a.MaxTokens,
 		OutputSchema: a.OutputSchema, InputSchema: a.InputSchema,
 		AllowEmptyTools: a.AllowEmptyTools,
+		CoreTools:       a.CoreTools,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal agent definition %q: %w", a.Name, err)

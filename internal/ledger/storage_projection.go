@@ -457,9 +457,14 @@ func (s *StorageLedgerRepository) isInflightLocked(runID string, sequence uint64
 // which both this writer and a catch-up would apply the same event.
 func (s *StorageLedgerRepository) appendStoreEvent(ctx context.Context, evt storage.Event) error {
 	s.mu.Lock()
-	holder := s.claimedRuns[evt.RunID]
+	claim := s.claimedRuns[evt.RunID]
 	s.mu.Unlock()
-	err := s.store.AppendClaimed(ctx, evt, holder)
+	var err error
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
+		err = fenced.AppendClaimedFenced(ctx, evt, claim)
+	} else {
+		err = s.store.AppendClaimed(ctx, evt, claim.Holder)
+	}
 	if errors.Is(err, storage.ErrClaimHeld) {
 		err = ErrClaimHeld
 	}
