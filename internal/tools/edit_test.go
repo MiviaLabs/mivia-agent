@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,9 @@ func fileMode(t *testing.T, abs string) os.FileMode {
 // executable bit. An agent that edits a hook or a Makefile helper and silently
 // makes it non-executable breaks the build in a way the diff does not show.
 func TestSearchReplacePreservesFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; every file mode reads back as 0666")
+	}
 	ws, reg := setupWS(t)
 	abs := writeEditFixture(t, ws.Abs, "hook.sh", "#!/bin/sh\necho old\n", 0o755)
 
@@ -62,6 +66,9 @@ func TestSearchReplacePreservesFileMode(t *testing.T) {
 // A restrictive mode must survive too: the old os.WriteFile(0644) call site
 // would have widened a 0600 file had the file been recreated under it.
 func TestSearchReplacePreservesRestrictiveFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; every file mode reads back as 0666")
+	}
 	ws, reg := setupWS(t)
 	abs := writeEditFixture(t, ws.Abs, "private.txt", "secret old\n", 0o600)
 
@@ -75,6 +82,9 @@ func TestSearchReplacePreservesRestrictiveFileMode(t *testing.T) {
 }
 
 func TestMultiEditPreservesFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; every file mode reads back as 0666")
+	}
 	ws, reg := setupWS(t)
 	abs := writeEditFixture(t, ws.Abs, "hook.sh", "#!/bin/sh\necho a\necho b\n", 0o755)
 

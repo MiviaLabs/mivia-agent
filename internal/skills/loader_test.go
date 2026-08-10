@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -428,6 +429,9 @@ func TestLoadMarkdownRejectsSymlinkedSkillsRoot(t *testing.T) {
 }
 
 func TestLoadMarkdownRejectsHardLinkedSkillFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hard-link detection relies on Unix inode link counts")
+	}
 	root := t.TempDir()
 	dir := filepath.Join(root, "linked")
 	if err := os.Mkdir(dir, 0o755); err != nil {

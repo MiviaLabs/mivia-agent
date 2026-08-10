@@ -20,7 +20,7 @@ import (
 func TestManagerEnsuresOnlyRequestedServerOnce(t *testing.T) {
 	var connects atomic.Int32
 	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
-		ID: "repository", Transport: "stdio", Command: "/bin/echo",
+		ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t),
 	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
 		connects.Add(1)
 		return fakeRemoteClient{}, nil
@@ -42,7 +42,7 @@ func TestManagerEnsuresOnlyRequestedServerOnce(t *testing.T) {
 func TestManagerCloseCancelsBlockingDiscovery(t *testing.T) {
 	client := &blockingDiscoveryClient{started: make(chan struct{}), canceled: make(chan struct{})}
 	manager, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
-		ID: "repository", Transport: "stdio", Command: "/bin/echo",
+		ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t),
 	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
 		return client, nil
 	}})
@@ -264,7 +264,7 @@ func TestHeaderTransportStripsHeadersFromMarkedRedirect(t *testing.T) {
 
 func TestManagerRejectsMoreToolsThanConfigured(t *testing.T) {
 	m, err := NewManager(config.MCPConfig{Enabled: true, MaxToolsPerServer: 1, Servers: []config.MCPServerConfig{{
-		ID: "repository", Transport: "stdio", Command: "/bin/echo",
+		ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t),
 	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
 		return toolListClient{tools: []remoteTool{{Name: "one"}, {Name: "two"}}}, nil
 	}})
@@ -279,7 +279,7 @@ func TestManagerRejectsMoreToolsThanConfigured(t *testing.T) {
 func TestManagerMemoizesFailedDiscovery(t *testing.T) {
 	var connects atomic.Int32
 	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
-		ID: "repository", Transport: "stdio", Command: "/bin/echo",
+		ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t),
 	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
 		connects.Add(1)
 		return nil, errors.New("dial failure")
@@ -299,7 +299,7 @@ func TestManagerMemoizesFailedDiscovery(t *testing.T) {
 
 func TestManagerAppliesServerTimeout(t *testing.T) {
 	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
-		ID: "repository", Transport: "stdio", Command: "/bin/echo", TimeoutSeconds: 1,
+		ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t), TimeoutSeconds: 1,
 	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
 		return fakeRemoteClient{}, nil
 	}})
@@ -316,7 +316,7 @@ func TestManagerAppliesServerTimeout(t *testing.T) {
 
 func TestManagerOwnsDiscoveredTool(t *testing.T) {
 	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
-		ID: "repository", Transport: "stdio", Command: "/bin/echo",
+		ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t),
 	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
 		return toolListClient{tools: []remoteTool{{Name: "read"}}}, nil
 	}})

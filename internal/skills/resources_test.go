@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -79,6 +80,9 @@ func TestActivationRejectsBinaryAndOversizedResources(t *testing.T) {
 }
 
 func TestActivationRejectsHardLinkedResource(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hard-link detection relies on Unix inode link counts")
+	}
 	root := t.TempDir()
 	dir := filepath.Join(root, "review")
 	if err := os.Mkdir(dir, 0o755); err != nil {
@@ -154,6 +158,13 @@ func TestProjectOverrideBindsItsOwnResource(t *testing.T) {
 }
 
 func TestActivationPinsResourceDirectoryAcrossReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// The pin holds the resource directory open (os.Root); Windows cannot
+		// rename a directory while it is open, so the replacement this test
+		// simulates is impossible there and the pin is exercised by
+		// TestActivationRejectsReplacedSkillDirectory instead.
+		t.Skip("Windows cannot rename a directory with an open handle")
+	}
 	root := t.TempDir()
 	dir := filepath.Join(root, "review")
 	if err := os.Mkdir(dir, 0o755); err != nil {

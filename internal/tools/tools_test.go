@@ -467,8 +467,10 @@ func TestRedactToolArgs_RespectsPrivacyConfig(t *testing.T) {
 
 	_, reg := setupWS(t)
 	secret := "super-secret-arg-value"
+	// git rev-parse fails without echoing its argument, so only the argv
+	// redaction can reveal the secret - the property the test pins.
 	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
-		`{"argv":["false","`+secret+`"]}`,
+		`{"argv":["git","rev-parse","--verify","`+secret+`"]}`,
 	))
 	if err != nil {
 		t.Fatal(err)
@@ -488,7 +490,7 @@ func TestRedactToolArgs_DefaultsToFalse(t *testing.T) {
 	_, reg := setupWS(t)
 	visible := "my-visible-arg"
 	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(
-		`{"argv":["false","`+visible+`"]}`,
+		`{"argv":["git","`+visible+`"]}`,
 	))
 	if err != nil {
 		t.Fatal(err)

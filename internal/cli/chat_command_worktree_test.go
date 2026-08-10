@@ -15,13 +15,16 @@ func TestRunConfiguredChatRestartsWithCreatedWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(originalDir) })
 	original := runConfiguredChatOnceImpl
 	t.Cleanup(func() { runConfiguredChatOnceImpl = original })
 	originalLoad := loadConfigForRestart
 	t.Cleanup(func() { loadConfigForRestart = originalLoad })
 
 	worktree := t.TempDir()
+	// runConfiguredChat chdirs into the restart worktree and leaves it there;
+	// the cwd restore must therefore run BEFORE the temp dir is removed,
+	// because Windows refuses to remove a directory that is a process's cwd.
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
 	before := &config.Resolved{StorePath: "before"}
 	after := &config.Resolved{StorePath: "after"}
 	loads := 0
@@ -77,13 +80,14 @@ func TestRunConfiguredChatCarriesResumeSessionAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(originalDir) })
 	original := runConfiguredChatOnceImpl
 	t.Cleanup(func() { runConfiguredChatOnceImpl = original })
 	originalLoad := loadConfigForRestart
 	t.Cleanup(func() { loadConfigForRestart = originalLoad })
 
 	worktree := t.TempDir()
+	// Same cwd-restore ordering as TestRunConfiguredChatRestartsWithCreatedWorktree.
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
 	loadConfigForRestart = func(config.LoadOptions) (*config.Resolved, error) {
 		return &config.Resolved{}, nil
 	}
@@ -308,6 +312,9 @@ func TestRunConfiguredChatKeepsRelativeEnvConfigOnRestart(t *testing.T) {
 	t.Cleanup(func() { loadConfigForRestart = originalLoad })
 
 	worktree := t.TempDir()
+	// Restore the cwd before the temp dir is removed (see
+	// TestRunConfiguredChatRestartsWithCreatedWorktree for the ordering rule).
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
 	wantConfig := filepath.Join(originalDir, "config", "mivia.toml")
 	loadConfigForRestart = func(opts config.LoadOptions) (*config.Resolved, error) {
 		if opts.ConfigPath != wantConfig {

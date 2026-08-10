@@ -18,7 +18,10 @@ import (
 func TestRunAllowlist(t *testing.T) {
 	_, reg := setupWS(t)
 	ctx := context.Background()
-	out, err := reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["echo","hi"]}`))
+	// git prints "git: 'hi' is not a git command" (argv visible in the result
+	// header), and exits non-zero - it stands in for echo on Windows where
+	// echo/false are shell builtins, not executables.
+	out, err := reg.Execute(ctx, "run_command", json.RawMessage(`{"argv":["git","hi"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +44,10 @@ func TestRunCommandShowsArgumentsByDefault(t *testing.T) {
 	t.Cleanup(func() { SetRedactToolArgs(false) })
 	_, reg := setupWS(t)
 	marker := "visible-arg-xyz"
-	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["false",%q]}`, marker)))
+	// git prints its unknown-command error (which echoes the argument) and
+	// exits non-zero; it stands in for false on Windows where false is a
+	// shell builtin, not an executable.
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["git",%q]}`, marker)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +64,10 @@ func TestRunCommandRedactsArgumentsWhenEnabled(t *testing.T) {
 	t.Cleanup(func() { SetRedactToolArgs(false) })
 	_, reg := setupWS(t)
 	secret := "person@example.com"
-	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["false",%q]}`, secret)))
+	// git rev-parse fails without echoing its argument ("fatal: not a git
+	// repository"), so the arg-redaction mode is what keeps the secret out of
+	// the output body - the same property false had on Unix.
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["git","rev-parse","--verify",%q]}`, secret)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +99,9 @@ func TestFormatArgvAndEnvParse(t *testing.T) {
 
 func TestRunCommandCapturesFailure(t *testing.T) {
 	_, reg := setupWS(t)
-	// false exits 1 but is allowlisted
-	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(`{"argv":["false"]}`))
+	// git exits 1 for an unknown subcommand but is allowlisted; the exit
+	// status must surface in the result body.
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(`{"argv":["git"]}`))
 	// Execute returns nil error so model sees stdout/stderr; check status in body.
 	if err != nil {
 		t.Fatalf("unexpected exec error: %v", err)
@@ -281,7 +291,7 @@ func TestRunCommandRedactsOutputWithConfiguredPolicy(t *testing.T) {
 	useRedactionPolicy(t, []string{credentialPattern})
 	_, reg := setupWS(t)
 	for _, secret := range []string{"sk-abc123XYZ", "ghp_abc123def456", "github_pat_abc123"} {
-		out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["echo",%q]}`, secret)))
+		out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["git",%q]}`, secret)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,7 +311,7 @@ func TestRunCommandRedactsArgvHeaderWithConfiguredPolicy(t *testing.T) {
 	useRedactionPolicy(t, []string{credentialPattern})
 	_, reg := setupWS(t)
 	const secret = "ghp_headerleak123"
-	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["false",%q]}`, secret)))
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["git",%q]}`, secret)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +335,7 @@ func TestRunCommandWithNoPolicyRedactsNothing(t *testing.T) {
 	// Assembled rather than written literally so the repo secret scanner
 	// does not flag an obviously fake fixture.
 	secret := "sk-" + "ant-unconfigured-workspace-token"
-	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["echo",%q]}`, secret)))
+	out, err := reg.Execute(context.Background(), "run_command", json.RawMessage(fmt.Sprintf(`{"argv":["git",%q]}`, secret)))
 	if err != nil {
 		t.Fatal(err)
 	}

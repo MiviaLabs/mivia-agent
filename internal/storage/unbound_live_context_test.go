@@ -80,7 +80,8 @@ func seedDeletingManagedContext(t *testing.T) (*SQLite, contextstate.Principal, 
 	}
 	principal := mustCleanupPrincipal(t, "session", "subject")
 	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
-	if err := registerCleanupInstance(context.Background(), store, principal, instance, "/repo/.mivia/worktrees/wt-a"); err != nil {
+	worktreeDir := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
+	if err := registerCleanupInstance(context.Background(), store, principal, instance, worktreeDir); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}

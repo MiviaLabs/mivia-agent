@@ -21,7 +21,7 @@ func TestDeleteWorktreeSessionsAllowsExactLateSubjectCleanup(t *testing.T) {
 	replacementOwner := mustCleanupPrincipal(t, "replacement-session", "retained-subject")
 	old := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
 	replacement := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_2222222222222222"}
-	oldPath := "/repo/.mivia/worktrees/wt-a"
+	oldPath := filepath.Join(t.TempDir(), "worktrees", "wt-a")
 	if err := registerCleanupInstance(ctx, store, owner, old, oldPath); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +89,7 @@ func assertLateSubjectCleanup(t *testing.T, store *SQLite, owner, retained, repl
 	if deleted, err := store.DeleteWorktreeSessions(ctx, retained, old); err != nil || deleted != 0 {
 		t.Fatalf("repeated late cleanup = %d, %v; want 0, nil", deleted, err)
 	}
+	creatingPath := filepath.Join(t.TempDir(), "worktrees", "wt-creating")
 	for _, invalid := range []contextstate.WorktreeInstance{
 		replacement,
 		{Worktree: "wt-creating", ID: "wt_3333333333333333"},
@@ -96,7 +97,7 @@ func assertLateSubjectCleanup(t *testing.T, store *SQLite, owner, retained, repl
 		{Worktree: "wt-wrong", ID: old.ID},
 	} {
 		if invalid.Worktree == "wt-creating" {
-			if err := store.BeginWorktreeCreation(ctx, owner, invalid, "/repo/.mivia/worktrees/wt-creating"); err != nil {
+			if err := store.BeginWorktreeCreation(ctx, owner, invalid, creatingPath); err != nil {
 				t.Fatal(err)
 			}
 		}
