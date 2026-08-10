@@ -403,7 +403,18 @@ func hostModuleCache(goPath string) (string, error) {
 		return "", fmt.Errorf("resolve host home for Go module cache: %w", err)
 	}
 	command := exec.Command(goPath, "env", "GOMODCACHE")
+	// `go env GOMODCACHE` defaults to $HOME/go/pkg/mod only when GOPATH is
+	// unset. Preserve the host GOPATH (and an explicit GOMODCACHE) so a host
+	// whose Go paths live outside the home directory - a CI runner with
+	// GOPATH=/home/runner/go, or a developer with a custom GOPATH - reports
+	// the cache the modules were actually downloaded into, not a phantom
+	// directory under the sandboxed home.
 	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home}
+	for _, key := range []string{"GOPATH", "GOMODCACHE"} {
+		if value := os.Getenv(key); value != "" {
+			command.Env = append(command.Env, key+"="+value)
+		}
+	}
 	output, err := command.Output()
 	if err != nil {
 		return "", fmt.Errorf("resolve host Go module cache: %w", err)
