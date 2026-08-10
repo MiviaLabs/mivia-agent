@@ -20,7 +20,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test structure-check commit-check go-check test test-changed race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke release
+	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke release release-test
 
 help:
 	@printf '%s\n' \
@@ -48,7 +48,8 @@ help:
 		'  make race              go test -race ./...' \
 		'  make vet               go vet ./...' \
 		'  make build             Build binary $(BINARY) from $(CMD_PKG)' \
-		'  make release           Build release binaries + checksums into dist/' \
+		'  make release           Build release archives + checksums into dist/' \
+		'  make release-test      Check release and installer contracts' \
 		'  make tidy              go mod tidy' \
 		'  make fmt               gofmt -w tracked Go files' \
 		'  make smoke             Fast workflow-engine smoke suite'
@@ -57,7 +58,7 @@ install-hooks hooks:
 	@scripts/install_git_hooks.sh
 
 # Offline gates only - no network required beyond local tool installs.
-verify: verify-agent docs-check secret-scan structure-check \
+verify: verify-agent docs-check release-test secret-scan structure-check \
 	semgrep-validate semgrep-test hook-test agent-hook-test \
 	validate-invariants semgrep go-check verifier-integration diff-coverage
 
@@ -195,6 +196,10 @@ build:
 
 release:
 	@scripts/release.sh
+
+release-test:
+	@python3 scripts/test_release.py
+	@python3 scripts/test_installers.py
 
 tidy:
 	@go mod tidy

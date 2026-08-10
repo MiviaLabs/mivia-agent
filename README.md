@@ -22,13 +22,29 @@ Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need 
 
 ### Install
 
-Prebuilt binaries are attached to each [GitHub Release](https://github.com/MiviaLabs/mivia-agent/releases) (Linux, macOS, Windows; amd64 and arm64).
+Tagged [GitHub Releases](https://github.com/MiviaLabs/mivia-agent/releases) provide archives for Linux, macOS, and Windows. Each release supports amd64 and arm64. See the [release guide](docs/development/release.md) for checksum verification and installers.
+
+To install a pinned release on Linux or macOS, download the installer, inspect it, and run it with the release tag:
+
+Replace `v0.1.0` with a published release tag. The example works after that release exists.
+
+```bash
+curl --fail --silent --show-error --location \
+  https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh \
+  -o /tmp/mivia-install.sh
+sed -n '1,240p' /tmp/mivia-install.sh
+MIVIA_VERSION=v0.1.0 sh /tmp/mivia-install.sh
+```
+
+The installer uses a user-owned directory and verifies the archive checksum. It does not use an unpinned release.
 
 From source with Go 1.25+:
 
 ```bash
 go install github.com/MiviaLabs/mivia-agent/cmd/mivia@latest
 ```
+
+This method requires a published semantic version tag. Use a release archive when Go is not installed.
 
 Or build the latest source:
 
