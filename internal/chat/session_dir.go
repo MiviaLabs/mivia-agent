@@ -22,6 +22,9 @@ func currentDirContext() (dir, worktree string) {
 	if err != nil {
 		return "", ""
 	}
+	if _, err := os.Stat(dir); err != nil {
+		return "", ""
+	}
 	wt, _ := vcs.CurrentWorktreeName(context.Background(), dir)
 	return dir, wt
 }

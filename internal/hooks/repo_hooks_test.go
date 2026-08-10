@@ -58,6 +58,12 @@ func TestRepoHookScriptsExistAndAreExecutable(t *testing.T) {
 				t.Errorf("%s hook names %s, which is not there: %v", group.Event, program, err)
 				continue
 			}
+			if runtime.GOOS == "windows" {
+				// Git checkouts on Windows carry no permission bits, so argv
+				// executability cannot be asserted; the scripts still exist
+				// and are invoked through an interpreter on that platform.
+				continue
+			}
 			if info.Mode()&0o111 == 0 {
 				t.Errorf("%s is not executable (mode %v); argv execution has no shell to fall back on",
 					program, info.Mode())

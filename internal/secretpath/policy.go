@@ -3,6 +3,7 @@ package secretpath
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -57,7 +58,10 @@ func (p Policy) Match(rel string) bool {
 
 func normalizeException(value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if value == "" || filepath.IsAbs(value) {
+	// Both path conventions: on Windows, "/x" is not filepath.IsAbs (no drive
+	// letter) but still escapes the workspace root the way a leading "/" does
+	// on Unix, so it must be rejected too.
+	if value == "" || filepath.IsAbs(value) || path.IsAbs(value) {
 		return "", fmt.Errorf("secret path exception is invalid")
 	}
 	normalized := normalizePath(value)

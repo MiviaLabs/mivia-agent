@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 var (
@@ -68,6 +69,17 @@ func (m *tuiModel) workspaceSwitchBusy() bool {
 }
 
 func (m *tuiModel) restartInWorkspace(dir string) {
+	if !filepath.IsAbs(dir) {
+		cwd, err := getwdWorktreeSwitch()
+		if err != nil {
+			m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
+			return
+		}
+		if _, err := statWorktreeSwitchPath(cwd); err != nil {
+			m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
+			return
+		}
+	}
 	abs, err := absWorktreeSwitchPath(dir)
 	if err != nil {
 		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
@@ -104,9 +116,9 @@ func worktreeContainsCurrentDir(path string) bool {
 
 func (m *tuiModel) resolveWorkspaceDir() string {
 	dir := m.workspaceDir
-	if dir != "" && strings.HasPrefix(dir, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			dir = strings.Replace(dir, "~", home, 1)
+	if dir == "~" || strings.HasPrefix(dir, "~"+string(filepath.Separator)) {
+		if home, err := workspace.UserHomeDir(); err == nil {
+			dir = filepath.Join(home, strings.TrimPrefix(dir, "~"))
 		}
 	}
 	if dir == "" {

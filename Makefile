@@ -20,7 +20,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test structure-check commit-check go-check test test-changed race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke release
+	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke release release-test
 
 help:
 	@printf '%s\n' \
@@ -48,7 +48,8 @@ help:
 		'  make race              go test -race ./...' \
 		'  make vet               go vet ./...' \
 		'  make build             Build binary $(BINARY) from $(CMD_PKG)' \
-		'  make release           Build release binaries + checksums into dist/' \
+		'  make release           Build release archives + checksums into dist/' \
+		'  make release-test      Check release and installer contracts' \
 		'  make tidy              go mod tidy' \
 		'  make fmt               gofmt -w tracked Go files' \
 		'  make smoke             Fast workflow-engine smoke suite'
@@ -57,7 +58,7 @@ install-hooks hooks:
 	@scripts/install_git_hooks.sh
 
 # Offline gates only - no network required beyond local tool installs.
-verify: verify-agent docs-check secret-scan structure-check \
+verify: verify-agent docs-check release-test secret-scan structure-check \
 	semgrep-validate semgrep-test hook-test agent-hook-test \
 	validate-invariants semgrep go-check verifier-integration diff-coverage
 
@@ -102,10 +103,10 @@ semgrep-validate:
 semgrep-test:
 	@python3 scripts/test_semgrep_rules.py
 
+# Bound worker domains because default per-CPU workers can fail with
+# io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK.
 semgrep:
 	@if command -v semgrep >/dev/null 2>&1; then \
-		# -j 2 bounds worker domains: default per-CPU workers fail \
-		# io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK; \
 		out="$$(semgrep --config semgrep/agent-standards.yml --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 . 2>&1)"; rc=$$?; \
 		printf '%s\n' "$$out"; \
 		if [ "$$rc" -ne 0 ] && printf '%s' "$$out" | grep -qE 'semgrep-core exited with|Uncaught exn in Core_scan\.scan|engine was killed|Cannot allocate memory io_uring_queue_init'; then \
@@ -132,13 +133,13 @@ pre-push:
 	@.githooks/pre-push
 
 fmt:
-	@mapfile -t files < <(git ls-files '*.go' 2>/dev/null || true); \
-	if (($${#files[@]}==0)); then mapfile -t files < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
+	@files=(); while IFS= read -r file; do files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
+	if (($${#files[@]}==0)); then while IFS= read -r file; do files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
 	if (($${#files[@]})); then gofmt -w "$${files[@]}"; fi
 
 fmt-check:
-	@mapfile -t files < <(git ls-files '*.go' 2>/dev/null || true); \
-	if (($${#files[@]}==0)); then mapfile -t files < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
+	@files=(); while IFS= read -r file; do files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
+	if (($${#files[@]}==0)); then while IFS= read -r file; do files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
 	if (($${#files[@]})); then \
 		unformatted="$$(gofmt -l "$${files[@]}")"; \
 		if [[ -n "$$unformatted" ]]; then \
@@ -195,6 +196,10 @@ build:
 
 release:
 	@scripts/release.sh
+
+release-test:
+	@python3 scripts/test_release.py
+	@python3 scripts/test_installers.py
 
 tidy:
 	@go mod tidy

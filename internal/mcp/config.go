@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -34,11 +35,15 @@ func ValidateServerConfig(server config.MCPServerConfig) error {
 	}
 	switch server.Transport {
 	case "stdio":
-		if !filepath.IsAbs(server.Command) {
+		// Accept a command that is absolute in either path convention; the
+		// shipped project config carries a POSIX-absolute command that has
+		// no Windows drive letter. The command is still never resolved from
+		// PATH, and one that cannot run on this platform fails at connect.
+		if !filepath.IsAbs(server.Command) && !path.IsAbs(server.Command) {
 			return fmt.Errorf("stdio command must be absolute")
 		}
 		info, err := os.Stat(server.Command)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		if err != nil || !isExecutableFile(info) {
 			return fmt.Errorf("stdio command must be an executable regular file")
 		}
 		if server.URL != "" {

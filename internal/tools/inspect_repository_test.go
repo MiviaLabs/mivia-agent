@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -384,7 +385,9 @@ func TestInspectRepositoryLargeProvenancePathsStillRespectsByteCap(t *testing.T)
 	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxInspectRepositoryBytes: testMinInspectRepositoryBytes})
 	paths := make([]string, 0, 40)
 	for i := 0; i < 40; i++ {
-		name := "d" + strings.Repeat("x", 60) + string(rune('a'+i))
+		// Two-digit suffix keeps names distinct without running past 'z' into
+		// characters that are illegal in Windows file names (e.g. '|').
+		name := fmt.Sprintf("d%s%02d", strings.Repeat("x", 60), i)
 		writeFile(t, ws.Abs, name+"/f.txt", "needle\n")
 		paths = append(paths, name)
 	}

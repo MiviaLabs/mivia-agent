@@ -141,6 +141,24 @@ func TestIsUnder(t *testing.T) {
 	}
 }
 
+func TestSameExistingPathUsesFileIdentity(t *testing.T) {
+	dir := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("create directory link: %v", err)
+		}
+		t.Fatal(err)
+	}
+	same, err := SameExistingPath(dir, alias)
+	if err != nil {
+		t.Fatalf("SameExistingPath: %v", err)
+	}
+	if !same {
+		t.Fatalf("SameExistingPath(%q, %q) = false, want true", dir, alias)
+	}
+}
+
 // TestResolveContainmentTable locks the workspace containment contract
 // (DC-10): Resolve evaluates symlinks BEFORE the isUnder check, so every
 // escape variant - relative .., absolute outside, a symlink inside the

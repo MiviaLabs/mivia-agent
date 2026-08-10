@@ -28,11 +28,16 @@ func runGitOut(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// gitConfig sets the test identity in a repo.
+// gitConfig sets the test identity in a repo and pins line endings to LF:
+// the delivery git context reads no system config (GIT_CONFIG_NOSYSTEM=1),
+// so a Windows autocrlf checkout would otherwise produce CRLF working trees
+// that the pinned status/diff commands report as modifications. Fixtures
+// must be deterministic on every machine.
 func gitConfig(t *testing.T, dir string) {
 	t.Helper()
 	runGit(t, dir, "config", "user.email", "test@example.com")
 	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "core.autocrlf", "false")
 }
 
 // createRunWithStatus admits a run (CreateRun only admits pending) and CASes

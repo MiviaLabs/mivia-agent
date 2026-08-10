@@ -55,7 +55,7 @@ func tuiHelpNotes() []helpSection {
 				{key: "Type while busy", desc: "Queues the message; empty Enter force-sends it"},
 				{key: "Shift+drag", desc: "Selects text without leaving mouse capture (Option on iTerm2)"},
 				{key: "Mouse", desc: "Wheel scrolls, click selects, right-click copies (MIVIA_MOUSE=0/1)"},
-				{key: "Copy delivery", desc: "wl-copy/xclip/xsel/pbcopy, else OSC 52 (tmux: set-clipboard on)"},
+				{key: "Copy delivery", desc: "wl-copy/xclip/xsel/pbcopy/clip, else OSC 52 (tmux: set-clipboard on)"},
 				{key: "Ctrl+O (welcome)", desc: "Continue the last session"},
 			},
 		},

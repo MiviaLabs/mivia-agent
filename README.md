@@ -22,13 +22,42 @@ Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need 
 
 ### Install
 
-Prebuilt binaries are attached to each [GitHub Release](https://github.com/MiviaLabs/mivia-agent/releases) (Linux, macOS, Windows; amd64 and arm64).
+Tagged [GitHub Releases](https://github.com/MiviaLabs/mivia-agent/releases) provide archives for Linux, macOS, and Windows. Each release supports amd64 and arm64. See the [release guide](docs/development/release.md) for release checks and pinned installs.
+
+Install the latest stable release on Linux or macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.sh | bash
+```
+
+Open a new shell, or source the profile that the installer reports. Then run `mivia --version`.
+
+Install the latest stable release in Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.ps1 | iex
+mivia --version
+```
+
+The installers verify the archive checksum before extraction. They use a user-owned directory and do not require administrator rights. Unix installs update a shell profile. A child `bash` process cannot update the parent shell, so open a new shell or source the reported profile. PowerShell also updates the current process when it can.
+
+For a pinned release, inspect the script before you run it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh -o /tmp/mivia-install.sh
+sed -n '1,240p' /tmp/mivia-install.sh
+sh /tmp/mivia-install.sh v0.1.0
+```
+
+Use `MIVIA_NO_PATH_UPDATE=1` on Unix or `-NoPathUpdate` in PowerShell to skip PATH changes. Latest installation requires at least one published stable release. Pre-release tags require an explicit version.
 
 From source with Go 1.25+:
 
 ```bash
 go install github.com/MiviaLabs/mivia-agent/cmd/mivia@latest
 ```
+
+This method requires a published semantic version tag. Use a release archive when Go is not installed.
 
 Or build the latest source:
 

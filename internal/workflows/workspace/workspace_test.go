@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	baseworkspace "github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func TestEnsureReadOnlyUsesCallerCheckout(t *testing.T) {
@@ -24,7 +25,10 @@ func TestEnsureReadOnlyUsesCallerCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if got.Root != nested {
+	// workspace.Open resolves the root (filepath.EvalSymlinks), which on
+	// Windows also expands 8.3 short names; compare against the same
+	// rendering so a short-name temp path does not fail the check.
+	if got.Root != baseworkspace.LongPath(nested) {
 		t.Fatalf("Root = %q, want %q", got.Root, nested)
 	}
 	if got.MainRoot != "" || got.BaseCommit != "" || got.WorktreeName != "" || got.Branch != "" {
@@ -38,7 +42,7 @@ func TestEnsureReadOnlyDoesNotRequireGit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if got != (Identity{Root: root}) {
+	if got != (Identity{Root: baseworkspace.LongPath(root)}) {
 		t.Fatalf("identity = %+v, want only Root %q", got, root)
 	}
 }

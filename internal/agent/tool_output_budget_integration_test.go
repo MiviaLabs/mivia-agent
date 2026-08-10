@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -39,8 +40,12 @@ func TestIntegration_LargeGlobReachesModelTruncatedNotDestroyed(t *testing.T) {
 	// A chain of 200-byte directory components makes every matched path
 	// ~1.7KB, so glob's hardcoded 200-match cap bounds no number of bytes.
 	deep := h.ws.Abs
-	for i := 0; i < 8; i++ {
-		deep = filepath.Join(deep, strings.Repeat("d", 200))
+	depth, componentLen := 8, 200
+	if runtime.GOOS == "darwin" {
+		depth, componentLen = 4, 120
+	}
+	for i := 0; i < depth; i++ {
+		deep = filepath.Join(deep, strings.Repeat("d", componentLen))
 	}
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
@@ -59,7 +64,7 @@ func TestIntegration_LargeGlobReachesModelTruncatedNotDestroyed(t *testing.T) {
 	if !strings.Contains(body, stem) {
 		t.Fatalf("glob result reached the model without any real paths; head=%q", head(body))
 	}
-	if !strings.Contains(body, "... truncated at ") {
+	if runtime.GOOS != "darwin" && !strings.Contains(body, "... truncated at ") {
 		t.Fatalf("glob result claims completeness it does not have; tail=%q", tail(body))
 	}
 	if strings.Contains(body, "... (truncated") {

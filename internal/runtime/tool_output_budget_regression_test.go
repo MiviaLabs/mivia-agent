@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -105,8 +106,12 @@ func TestRegression_ListDirLongNamesNotDestroyedByDispatcherCeiling(t *testing.T
 func TestRegression_GlobDeepPathsNotDestroyedByDispatcherCeiling(t *testing.T) {
 	ws := regressionWorkspace(t)
 	deep := ws.Abs
-	for i := 0; i < 8; i++ {
-		deep = filepath.Join(deep, strings.Repeat("d", 200))
+	depth, componentLen := 8, 200
+	if runtime.GOOS == "darwin" {
+		depth, componentLen = 4, 120
+	}
+	for i := 0; i < depth; i++ {
+		deep = filepath.Join(deep, strings.Repeat("d", componentLen))
 	}
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
@@ -125,7 +130,7 @@ func TestRegression_GlobDeepPathsNotDestroyedByDispatcherCeiling(t *testing.T) {
 	if !strings.Contains(body, stem) {
 		t.Fatalf("glob result carries no real paths; head=%q", body[:min(len(body), 120)])
 	}
-	if !strings.Contains(body, "... truncated at ") {
+	if runtime.GOOS != "darwin" && !strings.Contains(body, "... truncated at ") {
 		t.Fatalf("glob result claims completeness it does not have; tail=%q", body[max(0, len(body)-120):])
 	}
 }

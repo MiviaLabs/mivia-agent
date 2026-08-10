@@ -9,8 +9,28 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
+
+// patternCache memoizes compiled classifier patterns. Compilation is a pure
+// function of the pattern string and *regexp.Regexp is safe for concurrent
+// use, so entries never need invalidation. Patterns come only from workspace
+// config, which bounds the cache. Failed compiles are not cached, so an
+// invalid pattern keeps failing closed on every call.
+var patternCache sync.Map // string -> *regexp.Regexp
+
+func compiledPattern(pattern string) (*regexp.Regexp, error) {
+	if cached, ok := patternCache.Load(pattern); ok {
+		return cached.(*regexp.Regexp), nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+	cached, _ := patternCache.LoadOrStore(pattern, re)
+	return cached.(*regexp.Regexp), nil
+}
 
 // contentRefDomain separates payload keys from every other digest this package
 // mints, and versions the derivation itself.
@@ -100,7 +120,7 @@ func (policy RedactionPolicy) Classify(data []byte) error {
 		if strings.TrimSpace(pattern) == "" {
 			return invalid("redaction.patterns", "must not contain empty patterns")
 		}
-		re, err := regexp.Compile(pattern)
+		re, err := compiledPattern(pattern)
 		if err != nil {
 			return invalid("redaction.patterns", "contains an invalid classifier")
 		}

@@ -1,64 +1,108 @@
 name: release
 
-# Builds release binaries for every supported platform on a version tag and
-# publishes a GitHub Release with checksums. Trigger: git tag v0.1.0 && git push origin v0.1.0
 on:
   push:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-
 jobs:
+  validate:
+    name: validate release tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || {
+            echo "invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          }
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${{ github.sha }}"
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-          - os: ubuntu-latest
-            goos: linux
-            goarch: arm64
-          - os: macos-latest
-            goos: darwin
-            goarch: amd64
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-          - os: windows-latest
-            goos: windows
-            goarch: arm64
-    runs-on: ${{ matrix.os }}
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
-      - name: Build
+      - name: Build archive
+        shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          commit="$(git rev-parse --short HEAD)"
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          commit="$(git rev-parse --short=12 HEAD)"
           pkg="$(go list -m)/internal/version"
-          exe="mivia"
-          [ "${GOOS}" = "windows" ] && exe="mivia.exe"
-          mkdir -p dist
+          binary="mivia"
+          [[ "$GOOS" == windows ]] && binary="mivia.exe"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          output="mivia_${version}_${GOOS}_${GOARCH}"
+          mkdir -p "$work/$output"
           CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-X ${pkg}.Version=${tag} -X ${pkg}.Commit=${commit} -X ${pkg}.Dirty=clean" \
-            -o "dist/${exe}" ./cmd/mivia
-      - uses: actions/upload-artifact@v4
+            -ldflags "-X ${pkg}.Version=${version} -X ${pkg}.Commit=${commit} -X ${pkg}.Dirty=clean" \
+            -o "$work/$output/$binary" ./cmd/mivia
+          version_output="$(env -u GOOS -u GOARCH CGO_ENABLED=0 go run -trimpath \
+            -ldflags "-X ${pkg}.Version=${version} -X ${pkg}.Commit=${commit} -X ${pkg}.Dirty=clean" \
+            ./cmd/mivia version --json)"
+          VERSION_OUTPUT="$version_output" EXPECTED_VERSION="$version" python3 - <<'PY'
+          import json
+          import os
+          data = json.loads(os.environ["VERSION_OUTPUT"])
+          assert data["binary"] == "mivia"
+          assert data["version"] == os.environ["EXPECTED_VERSION"]
+          PY
+          grep -a -F "$version" "$work/$output/$binary" >/dev/null
+          cp README.md LICENSE "$work/$output/"
+          if [[ "$GOOS" == windows ]]; then
+            (cd "$work/$output" && zip -q -X "$GITHUB_WORKSPACE/${output}.zip" "$binary" README.md LICENSE)
+            archive="${output}.zip"
+          else
+            tar -C "$work/$output" -czf "$GITHUB_WORKSPACE/${output}.tar.gz" "$binary" README.md LICENSE
+            archive="${output}.tar.gz"
+          fi
+          test -s "$GITHUB_WORKSPACE/$archive"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+      - name: Attest archive
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: mivia_*_${{ matrix.goos }}_${{ matrix.goarch }}.*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mivia-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/
+          path: mivia_*
           if-no-files-found: error
 
   release:
@@ -68,20 +112,49 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
-      - name: Flatten and checksum
+          merge-multiple: true
+      - name: Validate artifacts and checksums
+        shell: bash
         run: |
-          find dist -type f \( -name 'mivia' -o -name 'mivia.exe' \) -exec mv {} dist/ \;
-          cd dist
-          sha256sum mivia* > checksums.txt
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for archive in \
+            "mivia_${version}_linux_amd64.tar.gz" \
+            "mivia_${version}_linux_arm64.tar.gz" \
+            "mivia_${version}_darwin_amd64.tar.gz" \
+            "mivia_${version}_darwin_arm64.tar.gz" \
+            "mivia_${version}_windows_amd64.zip" \
+            "mivia_${version}_windows_arm64.zip"; do
+            test -s "dist/$archive"
+          done
+          test "$(find dist -maxdepth 1 -type f \( -name 'mivia_*.tar.gz' -o -name 'mivia_*.zip' \) | wc -l)" -eq 6
+          cp scripts/install.sh scripts/install.ps1 dist/
+          if [[ "${GITHUB_REF_NAME}" != *-* ]]; then printf '%s\n' "$GITHUB_REF_NAME" > dist/mivia-version.txt; fi
+          archives=(mivia_${version}_linux_amd64.tar.gz mivia_${version}_linux_arm64.tar.gz mivia_${version}_darwin_amd64.tar.gz mivia_${version}_darwin_arm64.tar.gz mivia_${version}_windows_amd64.zip mivia_${version}_windows_arm64.zip)
+          (cd dist && sha256sum "${archives[@]}") > dist/checksums.txt
+          (cd dist && sha256sum -c checksums.txt)
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           cd dist
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "mivia ${GITHUB_REF_NAME#v}" \
-            --generate-notes \
-            mivia* checksums.txt
+          release_args=(
+            --repo "${GITHUB_REPOSITORY}"
+            --verify-tag
+            --title "mivia ${GITHUB_REF_NAME#v}"
+            --generate-notes
+          )
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            release_args+=(--prerelease --latest=false)
+          fi
+          archives=(mivia_*.tar.gz mivia_*.zip)
+          assets=("${archives[@]}" checksums.txt install.sh install.ps1)
+          [[ "${GITHUB_REF_NAME}" == *-* ]] || assets+=(mivia-version.txt)
+          gh release create "${GITHUB_REF_NAME}" "${release_args[@]}" "${assets[@]}"

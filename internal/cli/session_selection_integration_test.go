@@ -30,7 +30,8 @@ func persistedSessionForSelection(t *testing.T) (*chat.Session, *config.Resolved
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
-	if err := configureChatWorkspace(sess, root, true, res); err != nil {
+	memClose, err := configureChatWorkspace(sess, root, true, res)
+	if err != nil {
 		t.Fatalf("configure workspace: %v", err)
 	}
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
@@ -40,10 +41,13 @@ func persistedSessionForSelection(t *testing.T) (*chat.Session, *config.Resolved
 	if err != nil {
 		t.Fatalf("attach dispatcher: %v", err)
 	}
+	// The memory store is session-owned: close it after the dispatcher
+	// cleanup so Windows can remove the session's temp database.
+	finish := func() { cleanup(); memClose() }
 	sess.SessionDir = workspace.SessionsDir(root)
 	store, err := chat.NewFileSessionStore(sess.SessionDir)
 	if err != nil {
-		cleanup()
+		finish()
 		t.Fatalf("session store: %v", err)
 	}
 	sess.SetSessionStore(store, chat.NewSaveManager(store, res.Model, comp.Name()))
@@ -52,16 +56,16 @@ func persistedSessionForSelection(t *testing.T) (*chat.Session, *config.Resolved
 		provider.Message{Role: provider.RoleAssistant, Content: "previous answer"},
 	)
 	if err := sess.Save("previous"); err != nil {
-		cleanup()
+		finish()
 		t.Fatalf("save session: %v", err)
 	}
 	infos, err := sess.ListSessions()
 	if err != nil {
-		cleanup()
+		finish()
 		t.Fatalf("list sessions: %v", err)
 	}
 	_ = sess.Clear()
-	return sess, res, infos, cleanup
+	return sess, res, infos, finish
 }
 
 func TestIntegrationSplashEnterLoadsPersistedSession(t *testing.T) {

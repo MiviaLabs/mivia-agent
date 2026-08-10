@@ -218,7 +218,10 @@ func openDurableLedgerRepo(cfg config.SubagentConfig, w io.Writer) (repo ledger.
 	}
 	sqlStore, err := storage.OpenSQLite(cfg.StorePath)
 	if err != nil {
-		fmt.Fprintf(w, "warning: failed to open SQLite store %q: %v; falling back to memory backend\n", cfg.StorePath, err)
+		// %s with explicit quotes, not %q: %q Go-quotes the path, doubling
+		// Windows backslashes, so a warning that names the configured path
+		// would no longer contain it verbatim.
+		fmt.Fprintf(w, "warning: failed to open SQLite store \"%s\": %v; falling back to memory backend\n", cfg.StorePath, err)
 		return repo, nil
 	}
 	storageRepo := ledger.NewStorageLedgerRepository(sqlStore)
@@ -240,7 +243,7 @@ func openSharedSQLite(cfg config.SubagentConfig, w io.Writer) (*storage.SQLite, 
 	store, err := storage.OpenSQLite(cfg.StorePath)
 	if err != nil {
 		if w != nil {
-			fmt.Fprintf(w, "warning: failed to open shared SQLite store %q: %v\n", cfg.StorePath, err)
+			fmt.Fprintf(w, "warning: failed to open shared SQLite store \"%s\": %v\n", cfg.StorePath, err)
 		}
 		return nil, err
 	}

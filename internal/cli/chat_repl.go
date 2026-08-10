@@ -10,14 +10,12 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/mcp"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func chatFlags(args []string) (noTools, plainUI, staleBypass bool, rest []string) {
@@ -38,63 +36,6 @@ func chatFlags(args []string) (noTools, plainUI, staleBypass bool, rest []string
 		}
 	}
 	return noTools, plainUI, staleBypass, rest
-}
-
-// configureChatWorkspace installs the session tool registry for chat.
-// res supplies tool policy and the subagent store path so Phase 7 workflow
-// tools open the same ledger as CLI workflow commands.
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved) error {
-	if !useTools {
-		return nil
-	}
-	ws, err := workspace.Open(root)
-	if err != nil {
-		return fmt.Errorf("workspace: %w", err)
-	}
-	var tc config.ToolsConfig
-	var tavilyKey string
-	if res != nil {
-		tc = res.Tools
-		tavilyKey = res.TavilyAPIKey
-	}
-	opts := tools.DefaultOptions{
-		Workspace:                ws,
-		TavilyAPIKey:             tavilyKey,
-		RunAllowlist:             tc.RunAllowlist,
-		RunAllowlistOnly:         tc.RunAllowlistOnly,
-		RunBlocklist:             tc.RunBlocklist,
-		DisableTools:             tc.DisableTools,
-		EnvAllowlist:             tc.EnvAllowlist,
-		EnvAllowlistOnly:         tc.EnvAllowlistOnly,
-		EnvBlocklist:             tc.EnvBlocklist,
-		EnvAllowKeywordBlocklist: tc.EnvAllowKeywordBlocklist,
-		RunTimeoutSec:            tc.RunTimeoutSec,
-		MaxReadBytes:             tc.MaxReadBytes,
-		MaxWriteKB:               tc.MaxWriteKB,
-		MaxOutputBytes:           tc.MaxOutputBytes,
-		MaxListDirEntries:        tc.MaxListDirEntries,
-		MaxToolResultBytes:       tc.MaxToolResultBytes,
-		MaxTavilyResponseBytes:   tc.MaxTavilyResponseBytes,
-		MaxFetchKB:               tc.MaxFetchKB,
-		// MiB → bytes; resolveToolsConfig already settled 0 → default 256.
-		MemoryBackstopBytes: tc.MemoryBackstopMB << 20,
-		// RedactToolArgs is NOT plumbed here - the single source of truth
-		// is the package atomic set by tools.SetRedactToolArgs at line 40.
-		SecretPathPatterns:        tc.SecretPathPatterns,
-		SecretPathExceptions:      tc.SecretPathExceptions,
-		SearchIgnorePatterns:      tc.SearchIgnorePatterns,
-		MaxInspectRepositoryBytes: tc.MaxInspectRepositoryBytes,
-	}
-	// Phase 7: attach in-process workflow tools when .mivia/workflows/ exists.
-	// Pass res so the store path matches prepareWorkflowRun / CLI commands.
-	// The bus provider is read when a controller attaches, so sess.EventBus
-	// (created later by runTUI) still receives workflow progress events.
-	wireWorkflowToolOptions(&opts, ws.Abs, res, func() *events.Bus { return sess.EventBus })
-	if err := wireSessionMemory(&opts, root, res); err != nil {
-		return err
-	}
-	sess.Tools = tools.NewDefaultRegistry(opts)
-	return nil
 }
 
 // attachSessionDispatcher wires NewSessionDispatcher onto the session using the

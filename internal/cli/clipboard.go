@@ -58,12 +58,13 @@ func osc52Copy(text string) string {
 }
 
 // clipboardTools are the local clipboard writers, in preference order.
-// Wayland first, then X11, then macOS.
+// Wayland first, then X11, macOS, then Windows.
 var clipboardTools = [][]string{
 	{"wl-copy"},
 	{"xclip", "-selection", "clipboard"},
 	{"xsel", "--clipboard", "--input"},
 	{"pbcopy"},
+	{"clip"},
 }
 
 // clipboardToolCommand returns a command that writes text to the system

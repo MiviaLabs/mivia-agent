@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -46,8 +47,10 @@ func TestSetupWritesKeyToNewEnvFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := st.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("env file mode = %o, want 600", perm)
+	// Windows has no Unix permission bits; a mode of 0600 is reported as
+	// 0666 there, so the exact-bit contract is asserted only on Unix.
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
+		t.Fatalf("env file mode = %o, want 600", st.Mode().Perm())
 	}
 	if _, err := os.Stat(cfgPath); err != nil {
 		t.Fatalf("default config was not written: %v", err)

@@ -130,6 +130,12 @@ func openLifecycleLockFileIn(dirHandle windows.Handle, path string) (*os.File, e
 	attrs.RootDirectory = anchor
 	attrs.ObjectName = relativeName
 	attrs.Attributes = windows.OBJ_CASE_INSENSITIVE
+	// The lock file handle grants FILE_SHARE_READ so other handles (Lstat,
+	// Stat) can still inspect the file while the lock is held. Write access
+	// is not shared, so a second lock's GENERIC_WRITE open fails with
+	// STATUS_SHARING_VIOLATION and the retry loop below reports "lock is
+	// busy" - which is exactly the exclusivity the lock needs. Sharing
+	// nothing would make even an Lstat fail with a raw sharing violation.
 	for range 100 {
 		var handle windows.Handle
 		var io windows.IO_STATUS_BLOCK
@@ -140,7 +146,7 @@ func openLifecycleLockFileIn(dirHandle windows.Handle, path string) (*os.File, e
 			&io,
 			nil,
 			windows.FILE_ATTRIBUTE_NORMAL,
-			0,
+			windows.FILE_SHARE_READ,
 			windows.FILE_OPEN_IF,
 			windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT,
 			0,

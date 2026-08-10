@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -261,11 +262,23 @@ func TestWorkflowRunLoadsSourceHooksAndExecutesToolsInWorktree(t *testing.T) {
 	setWorkflowAgentTools(t, root, "write_file")
 	initWorkflowGitRepo(t, root)
 	marker := filepath.Join(root, "hook-ran")
-	script := filepath.Join(root, "hook.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf x >> \""+marker+"\"\n"), 0o700); err != nil {
-		t.Fatal(err)
+	var hookScript string
+	if runtime.GOOS == "windows" {
+		// A .cmd hook is what can actually execute on Windows; .sh scripts
+		// have no argv fallback there.
+		hookScript = filepath.Join(root, "hook.cmd")
+		if err := os.WriteFile(hookScript, []byte("@echo off\r\nset /p \"=x\" <nul >> \""+marker+"\"\r\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		hookScript = filepath.Join(root, "hook.sh")
+		if err := os.WriteFile(hookScript, []byte("#!/bin/sh\nprintf x >> \""+marker+"\"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
-	hookConfig := "[[hooks]]\nevent = \"PostToolUse\"\nmatcher = \"^write_file$\"\n[[hooks.handlers]]\ntype = \"command\"\nargv = [\"" + script + "\"]\n"
+	// argv paths go through ToSlash so backslashes in a Windows temp path
+	// cannot escape the TOML double-quoted string.
+	hookConfig := "[[hooks]]\nevent = \"PostToolUse\"\nmatcher = \"^write_file$\"\n[[hooks.handlers]]\ntype = \"command\"\nargv = [\"" + filepath.ToSlash(hookScript) + "\"]\n"
 	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), []byte(hookConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +347,7 @@ models = [{ name = "test/model", context_window_tokens = 128000 }]
 max_workers = 1
 default_timeout_seconds = 30
 store_backend = "sqlite"
-store_path = "` + storePath + `"
+store_path = "` + tomlPathLiteral(storePath) + `"
 `
 	writeFile(filepath.Join(root, "config.toml"), config)
 	for _, name := range []string{"one", "two"} {

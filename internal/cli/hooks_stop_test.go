@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,15 +15,19 @@ import (
 // given shell body.
 func stopSession(t *testing.T, body string) string {
 	t.Helper()
-	if os.Getenv("GOOS") == "windows" {
-		t.Skip("POSIX fixture")
-	}
 	dir := t.TempDir()
-	script := filepath.Join(dir, "stop.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+	scriptName, scriptBody := "stop.sh", "#!/bin/sh\n"+body
+	if runtime.GOOS == "windows" {
+		// Windows cannot execute POSIX shell scripts; run the same fixture
+		// as a cmd.exe batch file so the Stop hook behavior is exercised on
+		// the supported platform contract.
+		scriptName, scriptBody = "stop.cmd", windowsStopHookBody(body)
+	}
+	script := filepath.Join(dir, scriptName)
+	if err := os.WriteFile(script, []byte(scriptBody), 0o700); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
-	groups, err := hooks.Parse([]byte("[[hooks]]\nevent = \"Stop\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./stop.sh\"]\n"),
+	groups, err := hooks.Parse([]byte("[[hooks]]\nevent = \"Stop\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./"+scriptName+"\"]\n"),
 		filepath.Join(dir, "mivia.toml"))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -32,6 +37,25 @@ func stopSession(t *testing.T, body string) string {
 	sessionHookState.Store(session)
 	t.Cleanup(func() { sessionHookState.Store(previous) })
 	return dir
+}
+
+// windowsStopHookBody translates the POSIX stop-hook fixture bodies to batch
+// syntax so the same behaviors are exercised on Windows: a printf+exit body
+// becomes an echo+exit /b body, and the bounded-output loop becomes a batch
+// for /l loop that writes 40,000 characters without a newline.
+func windowsStopHookBody(body string) string {
+	if strings.HasPrefix(body, "i=0\nwhile") {
+		return "@echo off\r\nfor /l %%i in (1,1,4000) do @<nul set /p \"=0123456789\"\r\nexit /b 0\r\n"
+	}
+	trimmed := strings.TrimSuffix(body, "\n")
+	if strings.HasPrefix(trimmed, "printf '") {
+		if marker := strings.LastIndex(trimmed, "\nexit "); marker >= 0 {
+			text := strings.TrimSuffix(trimmed[len("printf '"):marker], "'")
+			exitCode := trimmed[marker+len("\nexit "):]
+			return "@echo off\r\necho " + text + "\r\nexit /b " + exitCode + "\r\n"
+		}
+	}
+	return "@echo off\r\n" + strings.ReplaceAll(trimmed, "\n", "\r\n") + "\r\n"
 }
 
 func TestStopHookOutputBecomesAnAttributedContinuationPrompt(t *testing.T) {

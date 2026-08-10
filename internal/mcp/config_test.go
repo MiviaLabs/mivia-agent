@@ -8,7 +8,7 @@ import (
 
 func TestValidateServerConfig(t *testing.T) {
 	valid := config.MCPServerConfig{
-		ID: "repository", Transport: "stdio", Command: "/bin/echo", Args: []string{"serve"}, Env: []string{"TOKEN"},
+		ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t), Args: []string{"serve"}, Env: []string{"TOKEN"},
 	}
 	if err := ValidateServerConfig(valid); err != nil {
 		t.Fatalf("ValidateServerConfig(valid) error = %v", err)
@@ -22,7 +22,7 @@ func TestValidateServerConfig(t *testing.T) {
 }
 
 func TestValidateServerConfigRejectsUnsafeHeadersAndArguments(t *testing.T) {
-	base := config.MCPServerConfig{ID: "repository", Transport: "stdio", Command: "/bin/echo"}
+	base := config.MCPServerConfig{ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t)}
 	base.Args = []string{"line\nbreak"}
 	if err := ValidateServerConfig(base); err == nil {
 		t.Fatal("ValidateServerConfig accepted a control character in an argument")

@@ -87,7 +87,10 @@ func setupDoctorJSONTest(t *testing.T) (configPath, workspace string, cleanup fu
 func writeDoctorConfigWithEnvPath(t *testing.T, dir, envPath string) string {
 	t.Helper()
 	path := filepath.Join(dir, "mivia.toml")
-	body := "env_file = \"" + envPath + "\"\n\n" +
+	// Windows paths contain backslashes; TOML treats them as escapes ("\U"
+	// in "C:\Users" is not valid), so double them for a literal backslash.
+	envLiteral := strings.ReplaceAll(envPath, `\`, `\\`)
+	body := "env_file = \"" + envLiteral + "\"\n\n" +
 		"[provider]\n" +
 		"name = \"deepseek\"\n\n" +
 		"[providers.deepseek]\n" +

@@ -3,6 +3,7 @@ package compiler
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -214,6 +215,9 @@ func TestValidateAgentReferences_InfoErrorSkipsEntry(t *testing.T) {
 	// A read-only agents directory (0o400, read but no search) lets os.ReadDir
 	// list entries but makes entry.Info() fail, so every entry is skipped and
 	// the referenced agent is reported as missing.
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits, so a directory cannot be made unsearchable")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("permission checks are bypassed when running as root")
 	}

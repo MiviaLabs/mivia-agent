@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -12,8 +13,39 @@ import (
 // writeFakeTool installs an executable shell stub on PATH for clipboard tests.
 func writeFakeTool(t *testing.T, dir, name, body string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		writeWindowsFakeTool(t, dir, name, body)
+		return
+	}
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatalf("write fake %s: %v", name, err)
+	}
+}
+
+// writeWindowsFakeTool installs a cmd.exe stub named <name>.cmd on PATH for
+// clipboard tests. Windows resolves "wl-copy" to wl-copy.cmd through PATHEXT
+// and exec.Command runs .cmd files through cmd.exe, so the same preference
+// and fall-through logic is exercised. The POSIX bodies used by the tests
+// are translated to batch syntax: a body that discards stdin succeeds,
+// "exit 1" fails, and a printf-style echo body prints its literal text
+// (the read path trims CRLF).
+func writeWindowsFakeTool(t *testing.T, dir, name, body string) {
+	t.Helper()
+	var lines []string
+	switch {
+	case body == "/bin/cat > /dev/null":
+		lines = []string{"@echo off", "rem discard stdin", "exit /b 0"}
+	case body == "exit 1":
+		lines = []string{"@echo off", "exit /b 1"}
+	case strings.HasPrefix(body, "/usr/bin/printf '") && strings.HasSuffix(body, "'"):
+		text := strings.TrimSuffix(strings.TrimPrefix(body, "/usr/bin/printf '"), "'")
+		lines = []string{"@echo off", "@echo " + text}
+	default:
+		t.Fatalf("no Windows translation for fake tool body %q", body)
+	}
+	path := filepath.Join(dir, name+".cmd")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\r\n")+"\r\n"), 0o600); err != nil {
 		t.Fatalf("write fake %s: %v", name, err)
 	}
 }

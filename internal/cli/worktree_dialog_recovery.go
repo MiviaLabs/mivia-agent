@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -152,6 +153,16 @@ func (m *tuiModel) abandonStaleWorktreeCreation(store *storage.SQLite, root stri
 		return false, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return true, fmt.Errorf("inspect expected worktree path: %w", err)
+	}
+	// A path whose parent is a regular file can never materialize, even
+	// though Windows reports it as ERROR_PATH_NOT_FOUND (mapped to
+	// IsNotExist) instead of "not a directory". Only the parent stat tells
+	// the two apart, so treat that as an inspect error rather than silently
+	// abandoning a creation that may still be in flight.
+	if parent := filepath.Dir(info.CanonicalPath); parent != info.CanonicalPath {
+		if st, statErr := os.Stat(parent); statErr == nil && !st.IsDir() {
+			return true, fmt.Errorf("inspect expected worktree path: parent is not a directory")
+		}
 	}
 	principal, _ := worktreeRoutePrincipal(root)
 	if err := store.AbandonWorktreeCreation(context.Background(), principal, info.Instance); err != nil {

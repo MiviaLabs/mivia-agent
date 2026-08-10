@@ -101,6 +101,15 @@ func validateAgentSkillReference(stepID, memberID, agentName, skillName string, 
 func discoverAgentFiles(agentsDir string) (map[string]bool, error) {
 	known := make(map[string]bool)
 
+	// A regular file where the agents directory should be must be an error,
+	// not an empty directory. Windows reports the read of "<file>" as an
+	// empty listing (FindFirstFile succeeds on a file), and a missing
+	// "<file>/child" as ERROR_PATH_NOT_FOUND (os.IsNotExist), so only the
+	// explicit stat distinguishes the two on that platform.
+	if info, statErr := os.Stat(agentsDir); statErr == nil && !info.IsDir() {
+		return nil, fmt.Errorf("reading agents directory %s: not a directory", agentsDir)
+	}
+
 	entries, err := os.ReadDir(agentsDir)
 	if os.IsNotExist(err) {
 		return known, nil

@@ -32,6 +32,7 @@ func TestDeletedRunDoesNotResurrectInNextProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayed := NewStorageLedgerRepository(reopened)
+	t.Cleanup(func() { _ = replayed.Close() })
 	if _, err := replayed.GetRun(ctx, "deleted"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetRun after replay error = %v, want ErrNotFound", err)
 	}
@@ -43,6 +44,7 @@ func TestDeleteRunKeepsChangesCursorMonotonic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	writer := NewStorageLedgerRepository(store)
 	reader := NewStorageLedgerRepository(store)
 	if err := writer.CreateRun(ctx, "", RunSnapshot{RunID: "deleted", Status: RunStatusCreated}); err != nil {
@@ -68,6 +70,7 @@ func TestDeleteRunConvergesInASecondReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	writer := NewStorageLedgerRepository(store)
 	reader := NewStorageLedgerRepository(store)
 	if err := writer.CreateRun(ctx, "", RunSnapshot{RunID: "deleted", Status: RunStatusCreated}); err != nil {
@@ -90,6 +93,7 @@ func TestDeleteRunAllowsSameIDToBeRecreatedAndCaughtUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	writer := NewStorageLedgerRepository(store)
 	reader := NewStorageLedgerRepository(store)
 	if err := writer.CreateRun(ctx, "", RunSnapshot{RunID: "recreated", DisplayName: "first", Status: RunStatusCreated}); err != nil {

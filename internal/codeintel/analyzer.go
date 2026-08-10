@@ -276,16 +276,37 @@ func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilt
 	return locations, truncated
 }
 
-// analyzerEnv returns environment that blocks network access.
+// analyzerEnv returns the environment for the go commands the analyzer spawns,
+// filtered to the variables those commands need and hardened so they cannot
+// reach the network (GOPROXY=off, no proxy or GOPRIVATE inheritance).
+//
+// LocalAppData matters on Windows: when GOCACHE is not set in the parent
+// environment (which go test deliberately omits), cmd/go locates its build
+// cache as %LocalAppData%\go-build. Without the variable the go command dies
+// with "build cache is required, but could not be located" and every
+// packages.Load returns zero packages - which the analyzer would report as
+// "symbol not found". Unix needs no equivalent: cmd/go falls back to
+// $HOME/.cache/go-build, and HOME is passed through.
+//
+// Windows env names are case-insensitive and the variable is spelled
+// LOCALAPPDATA; match with EqualFold so either spelling survives the filter.
 func analyzerEnv() []string {
 	env := os.Environ()
 	var filtered []string
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
-		switch key {
-		case "PATH", "HOME", "USER", "TMPDIR",
-			"GOROOT", "GOCACHE", "GOMODCACHE",
-			"GOFLAGS", "GOOS", "GOARCH", "GOVERSION":
+		matched := false
+		for _, want := range []string{
+			"PATH", "HOME", "USER", "TMPDIR", "TMP", "TEMP", "PATHEXT", "USERPROFILE",
+			"LOCALAPPDATA", "GOROOT", "GOCACHE", "GOMODCACHE", "GOENV", "GOWORK",
+			"GOFLAGS", "GOOS", "GOARCH", "GOVERSION",
+		} {
+			if strings.EqualFold(key, want) {
+				matched = true
+				break
+			}
+		}
+		if matched {
 			filtered = append(filtered, e)
 		}
 	}

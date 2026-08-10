@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -56,8 +57,14 @@ func TestProbePRToolRefusesUnknownProvider(t *testing.T) {
 // TestPrToolProbeDefaultRunsRealBinary exercises the default probe closure so
 // the real exec path is covered, not only the injected double.
 func TestPrToolProbeDefaultRunsRealBinary(t *testing.T) {
-	if err := prToolProbe("true"); err != nil {
-		t.Fatalf("probe of /usr/bin/true failed: %v", err)
+	probe := "true"
+	if runtime.GOOS == "windows" {
+		// No `true` binary exists on Windows; cmd.exe is the always-present
+		// probe target and exercises the same LookPath path.
+		probe = "cmd"
+	}
+	if err := prToolProbe(probe); err != nil {
+		t.Fatalf("probe of %s failed: %v", probe, err)
 	}
 	if err := prToolProbe("mivia-no-such-binary-probe"); err == nil {
 		t.Fatal("probe of a missing binary returned nil")
