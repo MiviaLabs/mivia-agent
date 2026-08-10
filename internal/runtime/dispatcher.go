@@ -131,7 +131,7 @@ type Dispatcher struct {
 	toolCeilings map[string]int
 	active       map[string]struct{}
 	completed    map[string]Result
-	waiters      map[string]chan Result
+	waiters      map[string][]chan Result
 	// turnResults dedups identical Tool invocations within one logical turn
 	// (same tool+input, fresh call ID); see turn_dedup.go. inFlight tracks
 	// identical Tool invocations still executing under their flight key, so a
@@ -169,13 +169,12 @@ func New(policy Policy) *Dispatcher {
 	if policy.MaxOutputBytes <= 0 {
 		policy.MaxOutputBytes = outputCeilingFloor
 	}
-	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, toolCeilings: map[string]int{}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, turnResults: map[string]map[string]Result{}, inFlight: map[string]*inFlightEntry{}, policy: policy}
+	return &Dispatcher{handlers: map[Kind]map[string]Handler{Tool: {}, Skill: {}, Subagent: {}}, toolCeilings: map[string]int{}, active: map[string]struct{}{}, completed: map[string]Result{}, waiters: map[string][]chan Result{}, fingerprints: map[string]string{}, spent: map[string]int{}, resources: map[string]chan struct{}{}, turnResults: map[string]map[string]Result{}, inFlight: map[string]*inFlightEntry{}, policy: policy}
 }
 
-// Close releases retained invocation state at the end of a session. Active
-// calls are owned by their contexts and must be canceled by the caller first:
-// the in-flight dedup table is reset without delivering to its waiters, so an
-// in-flight duplicate waiter is stranded unless its context is canceled.
+// Close releases retained invocation state at the end of a session. It wakes
+// duplicate callers with a closed result. Active owners continue under their
+// caller-owned contexts, but cannot restore released dispatcher state.
 func (d *Dispatcher) Close() {
 	d.mu.Lock()
 	if d.closed {
@@ -183,6 +182,15 @@ func (d *Dispatcher) Close() {
 		return
 	}
 	d.closed = true
+	closed := Result{Err: errDispatcherClosed, Metadata: Metadata{Status: "closed"}}
+	for _, waiters := range d.waiters {
+		deliverWaiters(waiters, closed)
+	}
+	for _, entry := range d.inFlight {
+		deliverWaiters(entry.waiters, closed)
+	}
+	d.active = map[string]struct{}{}
+	d.waiters = map[string][]chan Result{}
 	d.completed = map[string]Result{}
 	d.fingerprints = map[string]string{}
 	d.spent = map[string]int{}
@@ -279,25 +287,22 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 		req.ID = hex.EncodeToString(sum[:8])
 	}
 	meta := Metadata{ID: req.ID, ParentID: req.ParentID, TurnID: req.TurnID, Name: req.Name, Kind: string(req.Kind), Scope: req.Scope, InputHash: hash(req.Input)}
-	// Pre-reservation failures (validation, reservation) can never be the owner
-	// of a flight entry and must not touch the in-flight table or the dedup
-	// bucket: a DIFFERENT caller with identical content and a failing budget
-	// must not tear down or poison the real owner's entry.
-	fail := func(err error) Result {
-		return d.failResult(req, meta, started, err, nil)
+	if d.isClosed() {
+		return dispatcherClosedResult(req)
 	}
+	fail := func(err error) Result { return d.failedInvocation(req, meta, started, err) }
 	if err := d.validateRequest(req); err != nil {
-		return fail(err)
+		return d.failedInvocation(req, meta, started, err)
 	}
 	res, err := d.reserve(req, meta.InputHash)
 	if err != nil {
-		return fail(err)
+		return d.failedInvocation(req, meta, started, err)
 	}
 	// From here the invocation holds a real reservation. Only the owner (a
 	// non-dup reservation) may complete its flight entry or write the dedup
 	// bucket; dups return the owner's recorded result instead.
 	finish := func(err error) Result {
-		r := d.failResult(req, meta, started, err, nil)
+		r := d.failedInvocation(req, meta, started, err)
 		if !res.dup {
 			d.recordTurnResult(req, r)
 		}
@@ -376,6 +381,10 @@ func (d *Dispatcher) validateRequest(req Request) error {
 // slot (one holder at a time). Returns a release function the caller must run.
 func (d *Dispatcher) acquireScope(ctx context.Context, scope string) (func(), error) {
 	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, errDispatcherClosed
+	}
 	resource := d.resources[scope]
 	if resource == nil {
 		resource = make(chan struct{}, 1)
@@ -464,31 +473,6 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	d.completeIDKeyed(req, result)
 	d.mu.Unlock()
 	return result
-}
-
-// completeIDKeyed records a result for the ID-keyed completed map and delivers
-// it to any ID-keyed waiter. The caller must hold d.mu.
-//
-// The completed map is read only for calls OUTSIDE the turn-scoped dedup
-// (turnDedupKey == "" - see reserve): a turn-scoped Tool call is answered by
-// the step-aware turn bucket, so recording it here would be dead retention of
-// the full Result - Output bytes up to the per-tool ceiling - for the whole
-// session until Close. The ID-keyed waiter delivery is separate and stays
-// ungated: a same-ID turn-scoped duplicate with a different step collapses on
-// the active/waiter path and must still receive the owner's result. A
-// SkipDedup call never reads or writes ID-keyed dedup state: it registered no
-// waiter and must not steal the channel.
-func (d *Dispatcher) completeIDKeyed(req Request, result Result) {
-	if req.SkipDedup {
-		return
-	}
-	if key, _ := turnDedupKey(req); key == "" {
-		d.completed[req.ID] = result
-	}
-	if waiter := d.waiters[req.ID]; waiter != nil {
-		delete(d.waiters, req.ID)
-		waiter <- result
-	}
 }
 
 func ephemeralMarker(h Handler, req Request) string {
