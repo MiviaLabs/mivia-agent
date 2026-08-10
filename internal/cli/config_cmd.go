@@ -20,7 +20,10 @@ func runConfig(args []string) error {
 }
 
 func runConfigShow(args []string) error {
-	cfgPath, rest, _ := flagValue(args, "--config")
+	cfgPath, rest, _, err := flagValue(args, "--config")
+	if err != nil {
+		return err
+	}
 	if len(rest) > 0 {
 		return fmt.Errorf("config show: unexpected arguments: %v", rest)
 	}
