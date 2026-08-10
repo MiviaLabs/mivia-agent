@@ -290,19 +290,22 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 	if d.isClosed() {
 		return dispatcherClosedResult(req)
 	}
-	fail := func(err error) Result { return d.failedInvocation(req, meta, started, err) }
+	fail := func(err error) Result { return d.terminalFailure(req, meta, started, err) }
 	if err := d.validateRequest(req); err != nil {
-		return d.failedInvocation(req, meta, started, err)
+		return d.preReservationFailure(req, meta, started, err)
+	}
+	if req.ParentID == req.ID {
+		return d.preReservationFailure(req, meta, started, fmt.Errorf("duplicate or recursive invocation %q", req.ID))
 	}
 	res, err := d.reserve(req, meta.InputHash)
 	if err != nil {
-		return d.failedInvocation(req, meta, started, err)
+		return d.preReservationFailure(req, meta, started, err)
 	}
 	// From here the invocation holds a real reservation. Only the owner (a
 	// non-dup reservation) may complete its flight entry or write the dedup
 	// bucket; dups return the owner's recorded result instead.
 	finish := func(err error) Result {
-		r := d.failedInvocation(req, meta, started, err)
+		r := d.terminalFailure(req, meta, started, err)
 		if !res.dup {
 			d.recordTurnResult(req, r)
 		}
@@ -316,9 +319,6 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) Result {
 		defer func() { d.mu.Lock(); delete(d.active, req.ID); d.mu.Unlock() }()
 	}
 	if res.dup {
-		if req.ParentID == req.ID {
-			return finish(fmt.Errorf("duplicate or recursive invocation %q", req.ID))
-		}
 		return waitDuplicateResult(ctx, req, res.waiter)
 	}
 	if res.handler == nil {

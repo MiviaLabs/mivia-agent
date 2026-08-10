@@ -14,7 +14,13 @@ func (d *Dispatcher) isClosed() bool {
 	return d.closed
 }
 
-func (d *Dispatcher) failedInvocation(req Request, meta Metadata, started time.Time, err error) Result {
+func (d *Dispatcher) preReservationFailure(req Request, meta Metadata, started time.Time, err error) Result {
+	failedReq := req
+	failedReq.SkipDedup = true
+	return d.terminalFailure(failedReq, meta, started, err)
+}
+
+func (d *Dispatcher) terminalFailure(req Request, meta Metadata, started time.Time, err error) Result {
 	if errors.Is(err, errDispatcherClosed) {
 		return dispatcherClosedResult(req)
 	}
