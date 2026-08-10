@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -298,5 +299,207 @@ func TestIntegrationWorkflowsSidebarToggleCloseAndRefuse(t *testing.T) {
 	}
 	if m.workflowsSidebar != nil {
 		t.Fatal("narrow terminal opened the workflows sidebar")
+	}
+}
+
+// deliverWorkflowDialogRefresh runs the returned command and delivers the
+// workflowRunDialogRefreshMsg back through Update, mirroring
+// deliverWorkflowsRefresh. The open dialog's first read and every throttled
+// refresh land through this helper.
+func deliverWorkflowDialogRefresh(t *testing.T, m *tuiModel, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	var msgs []tea.Msg
+	switch out := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range out {
+			if c == nil {
+				continue
+			}
+			if msg := c(); msg != nil {
+				msgs = append(msgs, msg)
+			}
+		}
+	default:
+		if out != nil {
+			msgs = append(msgs, out)
+		}
+	}
+	for _, msg := range msgs {
+		if _, ok := msg.(workflowRunDialogRefreshMsg); ok {
+			_, _ = m.Update(msg)
+		}
+	}
+}
+
+// openIntegrationWorkflowDialog opens the /workflows sidebar, refreshes it,
+// and opens the run-detail dialog for the selected (only) row, delivering the
+// first async ledger read so the dialog has a real view.
+func openIntegrationWorkflowDialog(t *testing.T, m *tuiModel) {
+	t.Helper()
+	m.handleSlash("/workflows")
+	m.workflowsSidebar.lastRefresh = time.Time{}
+	_, cmd := m.Update(uiTickMsg{})
+	deliverWorkflowsRefresh(t, m, cmd)
+	if len(m.workflowsSidebar.rows) != 1 {
+		t.Fatalf("rows = %d, want the seeded run", len(m.workflowsSidebar.rows))
+	}
+	if !m.handleWorkflowsSidebarKey("enter") {
+		t.Fatal("enter was not handled")
+	}
+	if m.workflowRunDlg == nil {
+		t.Fatal("enter did not open the run dialog")
+	}
+	cmd = m.takePendingWorkflowDialogCmd()[0]
+	deliverWorkflowDialogRefresh(t, m, cmd)
+	if m.workflowRunDlg.view == nil {
+		t.Fatal("dialog has no view after the first refresh")
+	}
+}
+
+// TestIntegrationWorkflowRunDialogOpensByEnter covers the open-by-enter
+// journey: enter on a sidebar row opens the dialog, the async first read
+// builds a view with header facts and the compiled step list, and the run's
+// status drives the available actions.
+func TestIntegrationWorkflowRunDialogOpensByEnter(t *testing.T) {
+	m, _, _, closeFn := integrationWorkflowModel(t)
+	defer closeFn()
+	openIntegrationWorkflowDialog(t, m)
+
+	if m.workflowRunDlg.runID != "wfr-INTEG1" {
+		t.Fatalf("dialog run = %s, want wfr-INTEG1", m.workflowRunDlg.runID)
+	}
+	if m.focus != focusWorkflowsSidebar {
+		t.Fatalf("focus = %v, want workflows sidebar", m.focus)
+	}
+	panel, _ := m.workflowRunDlg.ViewAt(90, 24)
+	text := stripANSI(panel)
+	for _, want := range []string{"workflow: test-wf", "description: Runs the test workflow.", "run: wfr-INTEG1", "status: pending", "steps (2):", "▶ [active] start", "[pending] review"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("dialog missing %q:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(stripANSI(m.workflowRunDlg.footer()), "c cancel") {
+		t.Fatalf("pending run footer missing cancel:\n%s", stripANSI(m.workflowRunDlg.footer()))
+	}
+}
+
+// TestIntegrationWorkflowRunDialogOpensByDoubleClick covers the open-by-
+// double-click journey: a second click on the same row within the window
+// selects and opens the dialog (a single click only selects).
+func TestIntegrationWorkflowRunDialogOpensByDoubleClick(t *testing.T) {
+	m, _, _, closeFn := integrationWorkflowModel(t)
+	defer closeFn()
+	m.workflowsSidebar = newWorkflowsSidebar()
+	m.workflowsSidebar.rows = []workflowRunRow{{run: workflowledger.RunSnapshot{
+		RunID: "wfr-INTEG1", WorkflowName: "test-wf", Status: workflowledger.RunStatusPending, ActiveStepID: "start",
+	}}}
+	m.setFocus(focusScrollback)
+	pane := newChatPaneLayout(m.width, false, true)
+	x := pane.rightSidebarX() + 1
+
+	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: workflowsRowsY})
+	if m.workflowRunDlg != nil {
+		t.Fatal("single click must not open the dialog")
+	}
+	_, cmd := m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: workflowsRowsY})
+	if m.workflowRunDlg == nil {
+		t.Fatal("double-click did not open the run dialog")
+	}
+	if m.workflowRunDlg.runID != "wfr-INTEG1" {
+		t.Fatalf("dialog run = %s, want wfr-INTEG1", m.workflowRunDlg.runID)
+	}
+	deliverWorkflowDialogRefresh(t, m, cmd)
+	if m.workflowRunDlg.view == nil {
+		t.Fatal("dialog has no view after the double-click first read")
+	}
+}
+
+// TestIntegrationWorkflowRunDialogRefreshesWhileOpen pins the refresh-while-
+// open journey: a heartbeat event passes the updateMessageImpl gate and issues
+// a throttled dialog refresh, and a rapid second event defers instead of
+// issuing a second read.
+func TestIntegrationWorkflowRunDialogRefreshesWhileOpen(t *testing.T) {
+	m, repo, ctx, closeFn := integrationWorkflowModel(t)
+	defer closeFn()
+	openIntegrationWorkflowDialog(t, m)
+	if m.workflowRunDlg.view.run.Status != workflowledger.RunStatusPending {
+		t.Fatalf("initial status = %s, want pending", m.workflowRunDlg.view.run.Status)
+	}
+
+	// Advance the run: pending -> running with an attempt on the active step.
+	stored, err := repo.GetRun(ctx, "wfr-INTEG1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, "wfr-INTEG1", stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make the dialog throttle window fresh so the rapid event below is
+	// deterministically deferred regardless of how slowly the setup ran.
+	m.workflowRunDlg.lastRefresh = time.Now()
+
+	// A rapid heartbeat inside the dialog throttle window defers: the dialog
+	// is marked dirty and no refresh command is issued.
+	_, _ = m.Update(uiEventMsg{event: workflowHeartbeatEvent("task-dlg-1")})
+	if !m.workflowRunDlg.dirty {
+		t.Fatal("rapid event did not mark the dialog dirty")
+	}
+
+	// Once the window expires, the next tick refreshes exactly once and the
+	// view reflects the new status.
+	m.workflowRunDlg.lastRefresh = time.Time{}
+	_, cmd := m.Update(uiTickMsg{})
+	deliverWorkflowDialogRefresh(t, m, cmd)
+	if m.workflowRunDlg.view.run.Status != workflowledger.RunStatusRunning {
+		t.Fatalf("status after refresh = %s, want running", m.workflowRunDlg.view.run.Status)
+	}
+}
+
+// TestIntegrationWorkflowRunDialogEnterNoOpOnEmptyList pins the negative path:
+// enter on an empty /workflows list is a no-op and never opens a dialog.
+func TestIntegrationWorkflowRunDialogEnterNoOpOnEmptyList(t *testing.T) {
+	m, _, _, closeFn := integrationWorkflowModel(t)
+	defer closeFn()
+	m.workflowsSidebar = newWorkflowsSidebar()
+	m.setFocus(focusWorkflowsSidebar)
+	if m.handleWorkflowsSidebarKey("enter") {
+		t.Fatal("enter on an empty list must be a no-op")
+	}
+	if m.workflowRunDlg != nil {
+		t.Fatal("empty list opened a run dialog")
+	}
+}
+
+// TestIntegrationWorkflowRunDialogEscCloseRestoresFocus pins that esc (and q)
+// close the dialog and restore the workflows sidebar focus.
+func TestIntegrationWorkflowRunDialogEscCloseRestoresFocus(t *testing.T) {
+	m, _, _, closeFn := integrationWorkflowModel(t)
+	defer closeFn()
+	openIntegrationWorkflowDialog(t, m)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.workflowRunDlg != nil {
+		t.Fatal("esc did not close the dialog")
+	}
+	if m.focus != focusWorkflowsSidebar {
+		t.Fatalf("focus after esc = %v, want workflows sidebar", m.focus)
+	}
+
+	// Re-open from the still-open sidebar and close with q.
+	if !m.handleWorkflowsSidebarKey("enter") {
+		t.Fatal("re-open enter was not handled")
+	}
+	cmd := m.takePendingWorkflowDialogCmd()[0]
+	deliverWorkflowDialogRefresh(t, m, cmd)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if m.workflowRunDlg != nil {
+		t.Fatal("q did not close the dialog")
+	}
+	if m.focus != focusWorkflowsSidebar {
+		t.Fatalf("focus after q = %v, want workflows sidebar", m.focus)
 	}
 }

@@ -47,6 +47,10 @@ func (m *tuiModel) renderChatView() string {
 		panel, layout := m.worktreeDlg.ViewAt(max(1, m.width), max(1, m.height))
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
 	}
+	if m.workflowRunDlg != nil {
+		panel, layout := m.workflowRunDlg.ViewAt(max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
+	}
 	if m.overlay != nil {
 		panel, layout := m.overlay.ViewAt(max(1, m.width), max(1, m.height))
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))

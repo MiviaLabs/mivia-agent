@@ -165,7 +165,7 @@ func TestWorkflowsSidebarHeaderAndFooter(t *testing.T) {
 	if !strings.Contains(view, " Workflows · 3 runs") {
 		t.Fatalf("header missing the run count:\n%s", view)
 	}
-	if !strings.Contains(view, "Enter info") || !strings.Contains(view, "Esc close") {
+	if !strings.Contains(view, "Enter details") || !strings.Contains(view, "Esc close") {
 		t.Fatalf("footer missing key hints:\n%s", view)
 	}
 }
