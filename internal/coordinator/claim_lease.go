@@ -19,7 +19,11 @@ func (c *coordinator) claimRun(ctx context.Context, runID string) error {
 	if !ok {
 		return err
 	}
-	return lease.TakeoverExpiredRunClaim(ctx, runID, c.holderID, c.claimLease)
+	err = lease.TakeoverExpiredRunClaim(ctx, runID, c.holderID, c.claimLease)
+	if errors.Is(err, ledger.ErrClaimNotHeld) {
+		return c.repo.ClaimRun(ctx, runID, c.holderID)
+	}
+	return err
 }
 
 func (c *coordinator) startClaimHeartbeat(h *RunHandle) func() {

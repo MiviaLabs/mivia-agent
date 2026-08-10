@@ -112,8 +112,14 @@ type dualCapture struct {
 func newDualCapture(max int) *dualCapture {
 	d := &dualCapture{max: max}
 	if max > 0 {
-		// ringOut uses one byte per tail byte. Reserve that metadata inside the
-		// memory bound: output (head+tail) is 3/5 and tags are at most 2/5.
+		d.headQuota, d.tailQuota = splitCaptureBudget(max)
+	}
+	return d
+}
+
+func newMemoryBoundDualCapture(max int) *dualCapture {
+	d := &dualCapture{max: max}
+	if max > 0 {
 		d.headQuota, d.tailQuota = splitCaptureBudget(max * 3 / 5)
 	}
 	return d

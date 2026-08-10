@@ -236,6 +236,9 @@ type runCapture struct {
 func (t *runCommandTool) runCapture(cmd *exec.Cmd, callCtx context.Context, scope commandScope) runCapture {
 	limit := t.ResultBudgetBytes()
 	cap := newDualCapture(limit)
+	if t.maxOut <= 0 {
+		cap = newMemoryBoundDualCapture(limit)
+	}
 	cmd.Stdout = cap.Stdout()
 	cmd.Stderr = cap.Stderr()
 	var runErr error

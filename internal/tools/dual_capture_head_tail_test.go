@@ -124,7 +124,7 @@ func TestRunCommandFailingBuildKeepsErrorTail(t *testing.T) {
 }
 
 func TestDualCaptureDoesNotAllocateDefaultTailBeforeOutputNeedsIt(t *testing.T) {
-	d := newDualCapture(defaultMemoryBackstopBytes)
+	d := newMemoryBoundDualCapture(defaultMemoryBackstopBytes)
 	if len(d.ring) != 0 || len(d.ringOut) != 0 {
 		t.Fatalf("default tail allocated eagerly: bytes=%d tags=%d", len(d.ring), len(d.ringOut))
 	}
@@ -138,7 +138,7 @@ func TestDualCaptureDoesNotAllocateDefaultTailBeforeOutputNeedsIt(t *testing.T) 
 
 func TestDualCaptureBackstopIncludesStreamTagMemory(t *testing.T) {
 	const max = 600
-	d := newDualCapture(max)
+	d := newMemoryBoundDualCapture(max)
 	if _, err := d.Stdout().Write([]byte(strings.Repeat("x", max))); err != nil {
 		t.Fatal(err)
 	}
