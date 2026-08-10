@@ -409,4 +409,7 @@ func TestInterruptRefusesForeignActiveRun(t *testing.T) {
 	if len(attempts) != 1 || attempts[0].Status != workflowledger.AttemptStatusRunning {
 		t.Fatalf("attempts = %+v, want one running attempt", attempts)
 	}
+	if err := owner.Interrupt(started.RunID); err != nil {
+		t.Fatalf("owner Interrupt: %v", err)
+	}
 }
