@@ -72,7 +72,7 @@ func suggestOverlayRect(m *tuiModel, panel string, panelSize rect) rect {
 	if panel == "" || panelSize.w <= 0 || panelSize.h <= 0 {
 		return rect{}
 	}
-	pane := newChatPaneLayout(termW, m.sessionsSidebar != nil)
+	pane := newChatPaneLayout(termW, m.sessionsSidebar != nil, m.workflowsSidebar != nil)
 	composerTop := m.suggestComposerTop()
 	y := max(1, composerTop-panelSize.h)
 	x := pane.chatX + max(0, min(2, pane.chatWidth-panelSize.w))

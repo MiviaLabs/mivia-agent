@@ -18,6 +18,7 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 	if m.mode != modeChat {
 		return nil
 	}
+	var cmds []tea.Cmd
 	// Attributed subagent events feed the tracker regardless of the phase
 	// gates below: they arrive before the first drain sets m.waiting, and a
 	// dropped start leaves the fleet box empty for the rest of the turn.
@@ -39,6 +40,20 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 		m.stepDetail = detail
 		m.stepDetailAt = time.Now()
 		m.stalledWarning = false
+
+	case events.KindWorkflowRunStarted, events.KindWorkflowStepStarted, events.KindWorkflowStepHeartbeat,
+		events.KindWorkflowStepCompleted, events.KindWorkflowGateResult, events.KindWorkflowApprovalRequested,
+		events.KindWorkflowRunFinished:
+		// Workflow progress refreshes the /workflows sidebar when it is open.
+		// refreshWorkflowsSidebar returns a tea.Cmd so the ledger read runs
+		// off the update goroutine, and it throttles to at most one read per
+		// interval; a closed sidebar makes this a no-op. Events for runs
+		// started in other terminals reach the sidebar through the uiTickMsg
+		// path instead, because they do not pass the updateMessageImpl gate
+		// above.
+		if cmd := m.refreshWorkflowsSidebar(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case events.KindError:
 		m.stepDetail = "error: " + ev.Detail
@@ -77,7 +92,7 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 	default:
 		// Ignore KindAssistant/Tool*/Prune/Parallel - applied via bridge drain.
 	}
-	return nil
+	return cmds
 }
 
 // publishTurnEnd emits KindTurnEnd on the session bus (if any). Turn finish
