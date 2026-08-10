@@ -29,8 +29,17 @@ func (e *Engine) Interrupt(runID string) error {
 		e.fence.abandon(runID)
 	}
 	active, ok := e.active[runID]
+	if ok {
+		if e.interrupting == nil {
+			e.interrupting = make(map[string]uint)
+		}
+		e.interrupting[runID]++
+	}
 	_, delivering := e.delivering[runID]
 	e.mu.Unlock()
+	if ok {
+		defer e.finishInterrupt(runID)
+	}
 	// Mark open attempts interrupted before the dying controller can cancel them.
 	if err := e.markOpenAttemptsInterrupted(ctx, runID); err != nil {
 		if ok {
@@ -60,6 +69,16 @@ func (e *Engine) Interrupt(runID string) error {
 		return fmt.Errorf("interrupt left run %q terminal (%s); want non-terminal for resume", runID, run.Status)
 	}
 	return nil
+}
+
+func (e *Engine) finishInterrupt(runID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.interrupting[runID] > 1 {
+		e.interrupting[runID]--
+		return
+	}
+	delete(e.interrupting, runID)
 }
 
 func (e *Engine) markOpenAttemptsInterrupted(ctx context.Context, runID string) error {

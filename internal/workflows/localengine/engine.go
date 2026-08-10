@@ -47,10 +47,11 @@ type Engine struct {
 	// DeliveryTimeout bounds one deliver call. Zero uses 2 minutes.
 	DeliveryTimeout time.Duration
 
-	mu        sync.Mutex
-	active    map[string]*activeRun
-	admitting map[string]chan struct{}
-	fence     *abandonFence
+	mu           sync.Mutex
+	active       map[string]*activeRun
+	interrupting map[string]uint
+	admitting    map[string]chan struct{}
+	fence        *abandonFence
 	// worktrees records the resolved git worktree identity per run (Root +
 	// MainRoot + admission pins), so delivery can pin GitCtx to the run's real
 	// git directory instead of the caller checkout. Recorded at start and
@@ -228,9 +229,13 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	// the active run to settle first.
 	e.mu.Lock()
 	_, activeHere := e.active[req.RunID]
+	interrupting := e.interrupting[req.RunID] != 0
 	e.mu.Unlock()
 	if activeHere {
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is already executing in this engine; cancel it first", req.RunID)
+	}
+	if interrupting {
+		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is being interrupted in this engine; wait for it to finish", req.RunID)
 	}
 	if err := e.prepareResumeWorktree(ctx, run); err != nil {
 		return agenttools.StartResult{}, err

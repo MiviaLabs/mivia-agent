@@ -58,6 +58,24 @@ func (r *clearAfterStopRepository) ClearRunClaim(ctx context.Context, runID stri
 	return r.Repository.ClearRunClaim(ctx, runID)
 }
 
+// clearGateRepository pauses claim cleanup after Interrupt stops the controller.
+type clearGateRepository struct {
+	workflowledger.Repository
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *clearGateRepository) ClearRunClaim(ctx context.Context, runID string) error {
+	r.once.Do(func() { close(r.entered) })
+	select {
+	case <-r.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return r.Repository.ClearRunClaim(ctx, runID)
+}
+
 // interruptBlockingRunner reports when its step starts and when its context
 // ends. It proves that Interrupt joins the active controller on an error path.
 type interruptBlockingRunner struct {
@@ -286,5 +304,63 @@ func TestInterruptStopsControllerBeforeClearingClaim(t *testing.T) {
 	}
 	if repo.clearedBeforeStop.Load() {
 		t.Fatal("Interrupt cleared the run claim before it stopped the active controller")
+	}
+}
+
+// TestInterruptBlocksResumeDuringClaimCleanup keeps a new controller from
+// taking over the claim while Interrupt clears the old controller claim.
+func TestInterruptBlocksResumeDuringClaimCleanup(t *testing.T) {
+	runner := &interruptBlockingRunner{
+		started: make(chan struct{}),
+		stopped: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	repo := &clearGateRepository{
+		Repository: workflowledger.NewMemoryRepository(),
+		entered:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	defer close(runner.release)
+	var runners atomic.Int32
+	engine := &localengine.Engine{
+		WorkspaceRoot: writeTwoStepWorkspace(t),
+		Repo:          repo,
+		NewRunner: func() controller.AgentStepRunner {
+			if runners.Add(1) == 1 {
+				return runner
+			}
+			return &localengine.StaticStepRunner{Output: json.RawMessage(`{"ok":true}`)}
+		},
+	}
+	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+		Workflow: "two-step",
+		Inputs:   map[string]any{"task": "x"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("step did not start")
+	}
+	interruptDone := make(chan error, 1)
+	go func() { interruptDone <- engine.Interrupt(started.RunID) }()
+	select {
+	case <-repo.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Interrupt did not start claim cleanup")
+	}
+	_, err = engine.Start(context.Background(), agenttools.StartRequest{
+		RunID:  started.RunID,
+		Resume: true,
+		Force:  true,
+	})
+	if err == nil {
+		t.Fatal("force resume succeeded while Interrupt cleared the old claim")
+	}
+	close(repo.release)
+	if err := <-interruptDone; err != nil {
+		t.Fatalf("Interrupt: %v", err)
 	}
 }
