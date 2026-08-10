@@ -132,7 +132,10 @@ func elisionNotice(originalBytes int) string {
 }
 
 // sizeBucketLabel rounds n up to the next power of two and renders it as
-// KiB or MiB (powers of 1024).
+// KiB or MiB (powers of 1024). The ceiling saturates at the largest
+// representable power of two (1<<(intSize-2)): for bodies above that the
+// label reports the saturated bucket, because the true ceiling is not
+// representable as a positive int.
 func sizeBucketLabel(n int) string {
 	if n <= 0 {
 		return "0 KiB"
@@ -153,14 +156,26 @@ func sizeBucketLabel(n int) string {
 	return fmt.Sprintf("%d KiB", bucket/kib)
 }
 
+// maxInt is the largest value representable by int — the exact stdlib
+// definition of math.MaxInt (Go 1.17+), written out so 32-bit and 64-bit
+// builds agree without an import.
+const maxInt = int(^uint(0) >> 1)
+
+// ceilPowerOfTwo rounds n up to the smallest power of two >= n, saturating at
+// the largest representable power of two (1<<(intSize-2)) so a doubling can
+// never overflow int. For n above that saturation point the true ceiling is
+// not representable as a positive int, so the saturated value is returned.
 func ceilPowerOfTwo(n int) int {
 	if n <= 1 {
 		return 1
 	}
 	p := 1
 	for p < n {
-		// Cap before shift overflow on large inputs.
-		if p >= 1<<30 {
+		// Saturate at the largest representable power of two: doubling p from
+		// 1<<(intSize-2) would wrap to a negative int (then to 0) and spin
+		// forever, and returning a value below n would break the ceiling
+		// contract.
+		if p > maxInt>>1 {
 			return p
 		}
 		p <<= 1

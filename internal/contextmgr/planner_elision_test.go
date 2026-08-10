@@ -306,6 +306,11 @@ func TestPlanCompactInvalidIdempotencyKey(t *testing.T) {
 	}
 }
 
+// intSize is 32 on 32-bit platforms and 64 on 64-bit platforms, evaluated at
+// compile time with no import. It guards the 1<<31 boundary assertions, which
+// are unrepresentable as a 32-bit int.
+const intSize = 32 << (^uint(0) >> 63)
+
 func TestSizeBucketAndCeilPowerEdges(t *testing.T) {
 	if got := sizeBucketLabel(1); got != "1 KiB" {
 		t.Fatalf("sizeBucketLabel(1)=%q", got)
@@ -316,9 +321,25 @@ func TestSizeBucketAndCeilPowerEdges(t *testing.T) {
 	if got := ceilPowerOfTwo(1); got != 1 {
 		t.Fatalf("ceilPowerOfTwo(1)=%d", got)
 	}
-	// Overflow guard: n larger than 1<<30 should stop at the cap.
-	if got := ceilPowerOfTwo(1<<30 + 1); got != 1<<30 {
-		t.Fatalf("ceilPowerOfTwo overflow cap=%d", got)
+	// Saturation guard: the ceiling saturates at the largest representable
+	// power of two, 1<<(intSize-2). 1<<31 is a representable power of two
+	// only on 64-bit ints, so the >1<<30 cases are guarded by intSize.
+	if intSize == 64 {
+		if got := ceilPowerOfTwo(1<<30 + 1); int64(got) != int64(1)<<31 {
+			t.Fatalf("ceilPowerOfTwo(1<<30+1)=%d, want %d", got, int64(1)<<31)
+		}
+		// Pin the observable notice: a body just over 1 GiB must read as
+		// "about 2048 MiB", never the understated 1024 MiB.
+		if got := sizeBucketLabel(1<<30 + 1); got != "2048 MiB" {
+			t.Fatalf("sizeBucketLabel(1<<30+1)=%q, want 2048 MiB", got)
+		}
+	}
+	// No-hang saturation at the type boundary: ceilPowerOfTwo(maxInt) must
+	// equal the largest representable power of two and must terminate. The
+	// unguarded doubling loop would wrap p negative (then to 0) and spin
+	// forever.
+	if got := ceilPowerOfTwo(int(^uint(0) >> 1)); got != 1<<(intSize-2) {
+		t.Fatalf("ceilPowerOfTwo(maxInt)=%d, want %d", got, 1<<(intSize-2))
 	}
 }
 
