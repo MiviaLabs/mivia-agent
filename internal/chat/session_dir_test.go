@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -39,10 +40,24 @@ func TestCurrentDirContextNonGit(t *testing.T) {
 	}
 }
 
-// TestCurrentDirContextWhenCwdDeleted covers the os.Getwd error branch of
-// currentDirContext: with the process cwd removed, Getwd fails and the
-// function reports no directory instead of panicking.
+// TestCurrentDirContextWhenCwdDeleted returns no path after CWD removal.
 func TestCurrentDirContextWhenCwdDeleted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows cannot delete its process working directory, so the
+		// deleted-CWD state cannot be constructed there. The equivalent
+		// supported-platform contract: currentDirContext resolves a valid
+		// working directory and reports no worktree outside a git repo.
+		base := t.TempDir()
+		t.Chdir(base)
+		d, wt := currentDirContext()
+		if d == "" || filepath.Clean(d) != filepath.Clean(base) {
+			t.Fatalf("dir = %q, want %q", d, base)
+		}
+		if wt != "" {
+			t.Fatalf("worktree = %q, want empty outside a git repo", wt)
+		}
+		return
+	}
 	base := t.TempDir()
 	gone := filepath.Join(base, "gone")
 	if err := os.MkdirAll(gone, 0o755); err != nil {

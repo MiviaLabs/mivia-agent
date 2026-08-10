@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolved) error {
@@ -208,8 +210,15 @@ func shortenWorkspacePath() string {
 	if err != nil || wd == "" {
 		return ""
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(wd, home) {
-		return "~" + strings.TrimPrefix(wd, home)
+	if home, err := workspace.UserHomeDir(); err == nil && home != "" {
+		if rel, err := filepath.Rel(home, wd); err == nil {
+			if rel == "." {
+				return "~"
+			}
+			if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return filepath.Join("~", rel)
+			}
+		}
 	}
 	return wd
 }

@@ -17,7 +17,7 @@ func TestWorkflowForceResumeStopsBeforeClaimWorkWhenLockIsHeld(t *testing.T) {
 	rootPath := t.TempDir()
 	storePath := filepath.Join(rootPath, "context.db")
 	configPath := filepath.Join(rootPath, "config.toml")
-	config := "[provider]\nname = \"openrouter\"\n\n[providers.openrouter]\nbase_url = \"http://127.0.0.1\"\napi_key_env = \"WORKFLOW_LOCK_KEY\"\nmodels = [{ name = \"test/model\", context_window_tokens = 128000 }]\n\n[subagents]\nstore_backend = \"sqlite\"\nstore_path = \"" + storePath + "\"\n"
+	config := "[provider]\nname = \"openrouter\"\n\n[providers.openrouter]\nbase_url = \"http://127.0.0.1\"\napi_key_env = \"WORKFLOW_LOCK_KEY\"\nmodels = [{ name = \"test/model\", context_window_tokens = 128000 }]\n\n[subagents]\nstore_backend = \"sqlite\"\nstore_path = \"" + tomlPathLiteral(storePath) + "\"\n"
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}

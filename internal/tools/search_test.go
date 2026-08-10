@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -99,6 +100,9 @@ func TestGrepTruncationStaysValidUTF8(t *testing.T) {
 }
 
 func TestGrepErrorReporting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits, so a file cannot be made unreadable")
+	}
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

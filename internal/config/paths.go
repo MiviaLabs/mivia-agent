@@ -14,13 +14,13 @@ func ExpandPath(p string) string {
 		return p
 	}
 	if p == "~" {
-		if home, err := os.UserHomeDir(); err == nil {
+		if home, err := workspace.UserHomeDir(); err == nil {
 			return home
 		}
 		return p
 	}
 	if strings.HasPrefix(p, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
+		if home, err := workspace.UserHomeDir(); err == nil {
 			return filepath.Join(home, p[2:])
 		}
 	}
@@ -40,7 +40,7 @@ func UserEnvPath() string {
 }
 
 func userPath(name string) string {
-	home, err := os.UserHomeDir()
+	home, err := workspace.UserHomeDir()
 	if err != nil {
 		return ""
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -15,8 +16,15 @@ import (
 func installFailingWorktreeListGit(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
-	git := filepath.Join(bin, "git")
+	name := "git"
 	script := "#!/bin/sh\nif [ \"$1\" = \"rev-parse\" ]; then exit 0; fi\nexit 3\n"
+	if runtime.GOOS == "windows" {
+		// Windows cannot execute POSIX shell scripts; cmd.exe runs the same
+		// fixture as a batch file, resolved through PATHEXT as git.cmd.
+		name = "git.cmd"
+		script = "@if \"%1\"==\"rev-parse\" exit /b 0\r\nexit /b 3\r\n"
+	}
+	git := filepath.Join(bin, name)
 	if err := os.WriteFile(git, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

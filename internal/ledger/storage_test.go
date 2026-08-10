@@ -515,6 +515,11 @@ func newTestSQLiteRepo(t *testing.T) *StorageLedgerRepository {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	repo := NewStorageLedgerRepository(store)
+	// Close the store before the temp dir is removed (t.Cleanup runs in LIFO
+	// order, so registering after t.TempDir() releases the SQLite handle first;
+	// on Windows an open handle makes RemoveAll fail with 'used by another
+	// process'). repo.Close closes the underlying store (storage.go).
+	t.Cleanup(func() { _ = repo.Close() })
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	repo.SetTimeSource(func() time.Time { return now })
 	return repo
@@ -569,6 +574,7 @@ func TestStorageLedger_SQLiteCloseRunThenRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	ctx := context.Background()
 
 	repo1 := NewStorageLedgerRepository(store)

@@ -169,6 +169,7 @@ func TestSpawnReclaimsAbandonedKeyAndExecutesWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	// The seeded run must be OLDER than the abandoned-run grace period for the
 	// round-3 gate to consider it abandoned. A relative age (not a fixed
 	// calendar date) keeps the reclaim path testable regardless of wall clock.
@@ -250,6 +251,7 @@ func TestSpawnReclaimsStaleClaimedAbandonedKeyAndExecutesWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	// The run must be OLDER than the abandoned-run grace period for the
 	// caller-side gate to consider it abandoned; the claim on it is then
 	// provably stale (no live creator occupies this state for 60s).
@@ -346,6 +348,7 @@ func TestListInterruptedRunsDropsStaleClaimedAbandonedRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	now := time.Now().Add(-2 * abandonedRunGracePeriod)
 	seedAbandonedRun(t, store, now)
 	if err := store.ClaimRun(ctx, "run-abandoned", "dead-process-holder"); err != nil {
@@ -574,6 +577,10 @@ func concurrentSpawnCoordinators(t *testing.T, createdAt time.Time, invoked func
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Close the store before the temp dir is removed: the coordinators and
+	// repos built below share this handle, and on Windows an open SQLite file
+	// makes t.TempDir()'s RemoveAll fail.
+	t.Cleanup(func() { _ = store.Close() })
 	// Seed through a borrowed repository: its Close simulates a process restart
 	// (a fresh projection replaying the durable events) without closing the
 	// store underneath the live repositories.

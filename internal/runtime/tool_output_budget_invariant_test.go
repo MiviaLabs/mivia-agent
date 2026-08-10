@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -34,7 +35,12 @@ import (
 func buildWorstCaseWorkspace(t *testing.T) *workspace.Root {
 	t.Helper()
 	ws := regressionWorkspace(t)
-	const nameLen = 255 // NAME_MAX
+	nameLen := 255 // NAME_MAX
+	depth := 12
+	if runtime.GOOS == "darwin" {
+		// macOS has a lower total path budget than Linux runners.
+		nameLen, depth = 80, 6
+	}
 
 	writeMaxNamedFiles := func(dir, stem string, count int, filler byte) {
 		t.Helper()
@@ -53,7 +59,7 @@ func buildWorstCaseWorkspace(t *testing.T) *workspace.Root {
 	writeMaxNamedFiles(filepath.Join(ws.Abs, "flat"), "n", 1600, 'x')
 	// Chain of maximum-length components: 12 x 256 = 3072 bytes of prefix.
 	deep := ws.Abs
-	for i := 0; i < 12; i++ {
+	for i := 0; i < depth; i++ {
 		deep = filepath.Join(deep, strings.Repeat("d", nameLen))
 	}
 	writeMaxNamedFiles(deep, "f", 300, 'y')

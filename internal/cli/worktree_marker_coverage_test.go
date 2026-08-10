@@ -59,7 +59,7 @@ func TestMarkerCoverageExcludeReadAndReplaceErrors(t *testing.T) {
 	}
 	defer root.Close()
 	content, mode, err := readWorktreeMarkerExclude(root, "missing")
-	if err != nil || content != nil || mode != 0o600 {
+	if err != nil || content != nil || (runtime.GOOS != "windows" && mode != 0o600) {
 		t.Fatalf("missing exclude = %q, %o, %v", content, mode, err)
 	}
 	if err := root.Mkdir("directory", 0o700); err != nil {
@@ -72,7 +72,9 @@ func TestMarkerCoverageExcludeReadAndReplaceErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	content, mode, err = readWorktreeMarkerExclude(root, "exclude")
-	if err != nil || string(content) != "initial" || mode != 0o640 {
+	// Windows cannot express Unix permission bits: a 0640 write reports
+	// 0666 there because the mode only tracks the read-only attribute.
+	if err != nil || string(content) != "initial" || (runtime.GOOS != "windows" && mode != 0o640) {
 		t.Fatalf("exclude = %q, %o, %v", content, mode, err)
 	}
 	if _, _, err := createWorktreeMarkerExcludeTemp(root, "missing", 0o600); err == nil {

@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -219,13 +220,17 @@ func TestEmitDirCountsAnUnreadableDepthCutChild(t *testing.T) {
 	ctx := context.Background()
 
 	// Not a directory: reading its children fails with something other than
-	// "does not exist", which is what the unreadable notice counts.
-	notDir := &treeWalkState{}
-	if err := tool.emitDir(ctx, notDir, dir, "file.txt", "file.txt", "", 1, 1); err != nil {
-		t.Fatal(err)
-	}
-	if notDir.unreadable != 1 {
-		t.Fatalf("unreadable = %d, want 1", notDir.unreadable)
+	// "does not exist", which is what the unreadable notice counts. Windows
+	// maps "not a directory" onto the not-exist family (ERROR_DIRECTORY), so
+	// the distinction this subcase pins is untestable there.
+	if runtime.GOOS != "windows" {
+		notDir := &treeWalkState{}
+		if err := tool.emitDir(ctx, notDir, dir, "file.txt", "file.txt", "", 1, 1); err != nil {
+			t.Fatal(err)
+		}
+		if notDir.unreadable != 1 {
+			t.Fatalf("unreadable = %d, want 1", notDir.unreadable)
+		}
 	}
 
 	// Vanished between listing and descent: a race, not an unreadable entry.

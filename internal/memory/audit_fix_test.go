@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -149,6 +150,9 @@ func TestSQLiteOrgStoreNotCreatedWithoutOrgID(t *testing.T) {
 }
 
 func TestSQLiteOrgStorePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
 	dir := t.TempDir()
 	orgPath := filepath.Join(dir, "org.db")
 	cfg := Config{

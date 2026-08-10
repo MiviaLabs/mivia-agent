@@ -9,11 +9,13 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Install semgrep
@@ -21,6 +23,38 @@ jobs:
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
+      - name: Install workflow verifier sandbox
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap ripgrep
+      # bwrap --unshare-all needs unprivileged user namespaces; GitHub's
+      # Ubuntu 24.04 image restricts them via AppArmor, which makes every
+      # sandboxed command die with "bwrap: Creating new namespace failed".
+      - name: Allow unprivileged user namespaces for bubblewrap
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+      - name: Check required tools
+        # Runner images drift; fail fast with a clear message instead of a
+        # confusing mid-pipeline error when a prerequisite is missing. Runs
+        # AFTER the install steps so rg and bwrap are present to check.
+        run: |
+          for tool in go git python3 rg semgrep bwrap; do
+            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
+          done
+      - name: Prepare isolated test home
+        run: |
+          ci_root="$(mktemp -d /tmp/mivia-ci.XXXXXX)"
+          test_home="$ci_root/home"
+          test_tmp="$ci_root/tmp"
+          echo "HOME=$test_home" >> "$GITHUB_ENV"
+          echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
+          echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"
+          module_cache="$(go env GOMODCACHE)"
+          mkdir -p "$test_home"
+          mkdir -p "$test_tmp"
+          mkdir -p "$test_home/.mivia"
+          : > "$test_home/.mivia/.env"
+          mkdir -p "$test_home/go/pkg"
+          ln -s "$module_cache" "$test_home/go/pkg/mod"
       - name: Verify control surface and gates
         run: make verify
       - name: Invariant validation
@@ -32,18 +66,45 @@ jobs:
   verify-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Install semgrep
         run: pip install semgrep
+      - name: Install ripgrep
+        # make invariants drives the coverage script with `rg`; macOS runners
+        # do not ship it (Linux runners do).
+        run: brew install ripgrep
+      - name: Check required tools
+        # Runs after the install steps so rg is present to check.
+        run: |
+          for tool in go git python3 rg semgrep; do
+            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
+          done
       - name: chmod scripts
         run: |
           chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
+      - name: Prepare isolated test home
+        run: |
+          ci_root="$(mktemp -d /private/tmp/mivia-ci.XXXXXX)"
+          test_home="$ci_root/home"
+          test_tmp="$ci_root/tmp"
+          echo "HOME=$test_home" >> "$GITHUB_ENV"
+          echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
+          echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"
+          module_cache="$(go env GOMODCACHE)"
+          mkdir -p "$test_home"
+          mkdir -p "$test_tmp"
+          mkdir -p "$test_home/.mivia"
+          : > "$test_home/.mivia/.env"
+          mkdir -p "$test_home/go/pkg"
+          ln -s "$module_cache" "$test_home/go/pkg/mod"
       - name: Verify control surface and gates
         run: make verify
       - name: Invariant validation
@@ -51,16 +112,71 @@ jobs:
       - name: Race (packages)
         run: make race
 
-  # Windows runs Go build + tests only. The make-based gates are POSIX shell
-  # scripts and are not portable; the Go toolchain is the portable core.
+  # Windows is a full supported runtime target. Tests that require a Unix-only
+  # capability use explicit build tags and have separate Windows contracts.
   verify-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
+      - name: Check required tools
+        shell: pwsh
+        run: |
+          foreach ($t in @('go', 'git', 'python3', 'pwsh')) {
+            if (-not (Get-Command $t -ErrorAction SilentlyContinue)) {
+              Write-Error "missing required tool: $t"
+              exit 1
+            }
+          }
+      # The runner image's default TEMP lives under a short (8.3) user name
+      # (C:\Users\RUNNER~1\...). Go's t.TempDir() returns that path verbatim,
+      # while filepath.EvalSymlinks and git resolve it to the long form
+      # (C:\Users\runneradmin\...). mivia's worktree canonicality checks and
+      # path comparisons must never see a short/long split, so the Windows
+      # job runs with a long-name temp directory that both forms agree on.
+      # The same step isolates the user profile (mirroring the POSIX jobs'
+      # isolated home): the shipped configs default env_file to ~/.mivia/.env,
+      # and tests must never read the runner's real home. The real Go caches
+      # are preserved because with USERPROFILE moved, go would default
+      # GOMODCACHE/GOCACHE under the isolated profile and the codeintel
+      # analyzer's packages.Load would find neither modules nor build cache.
+      - name: Prepare isolated test home and long-name temp directory
+        shell: pwsh
+        run: |
+          $ciRoot = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'mivia-ci-temp'
+          $temp = Join-Path $ciRoot 'tmp'
+          New-Item -ItemType Directory -Force -Path $temp | Out-Null
+          "TMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TEMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # $home is a read-only automatic variable in PowerShell; use a
+          # distinct name for the isolated profile directory.
+          $userHome = Join-Path $ciRoot 'home'
+          New-Item -ItemType Directory -Force -Path (Join-Path $userHome '.mivia') | Out-Null
+          New-Item -ItemType File -Force -Path (Join-Path $userHome '.mivia\.env') | Out-Null
+          "USERPROFILE=$userHome" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "HOME=$userHome" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $gomodcache = & go env GOMODCACHE
+          $gocache = & go env GOCACHE
+          "GOMODCACHE=$gomodcache" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "GOCACHE=$gocache" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build
         run: go build ./...
       - name: Test
-        run: go test ./...
+        run: go test ./... -count=1
+      - name: Race, vet, and build
+        run: go test -race ./... -count=1; go vet ./...; go build ./...
+      - name: Validate PowerShell installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/install.ps1), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+      - name: Test PowerShell installer
+        shell: pwsh
+        run: ./scripts/test_installers.ps1

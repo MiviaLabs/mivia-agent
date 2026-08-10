@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -31,8 +32,15 @@ func TestCurrentCommitAndResolveCommit(t *testing.T) {
 
 func TestIsAncestorSurfacesMergeBaseFailure(t *testing.T) {
 	bin := t.TempDir()
-	git := filepath.Join(bin, "git")
+	name := "git"
 	script := "#!/bin/sh\nif [ \"$1\" = \"rev-parse\" ]; then echo 0123456789012345678901234567890123456789; exit 0; fi\nexit 2\n"
+	if runtime.GOOS == "windows" {
+		// Windows cannot execute POSIX shell scripts; cmd.exe runs the same
+		// fixture as a batch file, resolved through PATHEXT as git.cmd.
+		name = "git.cmd"
+		script = "@if \"%1\"==\"rev-parse\" (echo 0123456789012345678901234567890123456789 & exit /b 0)\r\nexit /b 2\r\n"
+	}
+	git := filepath.Join(bin, name)
 	if err := os.WriteFile(git, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

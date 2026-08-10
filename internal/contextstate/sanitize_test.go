@@ -3,6 +3,7 @@ package contextstate
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -40,6 +41,55 @@ func TestClassify(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCompiledPatternCache(t *testing.T) {
+	t.Parallel()
+
+	t.Run("repeated calls reuse the compiled regexp", func(t *testing.T) {
+		first, err := compiledPattern(`cache-reuse-\d+`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := compiledPattern(`cache-reuse-\d+`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first != second {
+			t.Error("second call must return the cached *regexp.Regexp, not a fresh compile")
+		}
+	})
+
+	t.Run("invalid pattern fails closed on every call", func(t *testing.T) {
+		policy := RedactionPolicy{Configured: true, Patterns: []string{"[invalid"}}
+		for i := 0; i < 3; i++ {
+			if err := policy.Classify([]byte("hello")); err == nil {
+				t.Fatalf("call %d: invalid pattern must keep rejecting", i+1)
+			}
+		}
+	})
+
+	t.Run("concurrent classification is safe", func(t *testing.T) {
+		policy := RedactionPolicy{Configured: true, Patterns: []string{`concurrent-\d+`, `token=\S+`}}
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 200; j++ {
+					if err := policy.Classify([]byte("an ordinary sentence")); err != nil {
+						t.Errorf("clean text rejected: %v", err)
+						return
+					}
+					if err := policy.Classify([]byte("has token=hunter2")); err == nil {
+						t.Error("flagged text accepted")
+						return
+					}
+				}
+			}()
+		}
+		wg.Wait()
+	})
 }
 
 func TestContextError(t *testing.T) {

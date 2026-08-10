@@ -305,7 +305,8 @@ func TestWorktreeCatalogWriteFailureCoverage(t *testing.T) {
 		store, principal := openContextTestStore(t)
 		defer store.Close()
 		instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
-		if err := registerCleanupInstance(context.Background(), store, principal, instance, "/repo/.mivia/worktrees/wt-a"); err != nil {
+		worktreeDir := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
+		if err := registerCleanupInstance(context.Background(), store, principal, instance, worktreeDir); err != nil {
 			t.Fatal(err)
 		}
 		mustCoverageTrigger(t, store, `CREATE TRIGGER block_managed_admission BEFORE INSERT ON chat_session_admissions BEGIN SELECT RAISE(ABORT,'blocked'); END`)
@@ -330,7 +331,8 @@ func TestWorktreeCleanupFailureCoverage(t *testing.T) {
 			store, principal := openContextTestStore(t)
 			defer store.Close()
 			instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
-			if err := registerCleanupInstance(context.Background(), store, principal, instance, "/repo/.mivia/worktrees/wt-a"); err != nil {
+			worktreeDir := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
+			if err := registerCleanupInstance(context.Background(), store, principal, instance, worktreeDir); err != nil {
 				t.Fatal(err)
 			}
 			if err := store.SaveSession(context.Background(), principal, "managed", []byte(`[]`), "model", "provider", 0, 0, 0, contextstate.SessionSaveOptions{WorktreeInstance: instance}); err != nil {

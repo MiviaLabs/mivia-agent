@@ -27,10 +27,11 @@ func TestWorktreeSessionCatalogFencesDeletingInstance(t *testing.T) {
 		t.Fatal("SQLite does not implement WorktreeSessionCatalog")
 	}
 	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
-	if err := catalog.BeginWorktreeCreation(context.Background(), principal, instance, "/repo/.mivia/worktrees/wt-a"); err != nil {
+	worktreeDir := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
+	if err := catalog.BeginWorktreeCreation(context.Background(), principal, instance, worktreeDir); err != nil {
 		t.Fatalf("BeginWorktreeCreation: %v", err)
 	}
-	if err := catalog.RegisterWorktreeInstance(context.Background(), principal, instance, "/repo/.mivia/worktrees/wt-a"); err != nil {
+	if err := catalog.RegisterWorktreeInstance(context.Background(), principal, instance, worktreeDir); err != nil {
 		t.Fatalf("RegisterWorktreeInstance: %v", err)
 	}
 	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t), WorktreeInstance: instance}); err != nil {
@@ -102,14 +103,17 @@ func TestDeleteWorktreeSessionsDeletesOnlyExactCatalogKeys(t *testing.T) {
 	}
 	targetInstance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	otherInstance := contextstate.WorktreeInstance{Worktree: "wt-b", ID: "wt_fedcba0987654321"}
+	targetPath := filepath.Join(t.TempDir(), "worktrees", targetInstance.Worktree)
+	otherInstancePath := filepath.Join(t.TempDir(), "worktrees", otherInstance.Worktree)
+	otherWorkspacePath := filepath.Join(t.TempDir(), "worktrees", targetInstance.Worktree)
 	registrations := []struct {
 		principal contextstate.Principal
 		instance  contextstate.WorktreeInstance
 		path      string
 	}{
-		{target, targetInstance, "/repo/.mivia/worktrees/wt-a"},
-		{target, otherInstance, "/repo/.mivia/worktrees/wt-b"},
-		{otherWorkspace, targetInstance, "/other-repo/.mivia/worktrees/wt-a"},
+		{target, targetInstance, targetPath},
+		{target, otherInstance, otherInstancePath},
+		{otherWorkspace, targetInstance, otherWorkspacePath},
 	}
 	for _, registration := range registrations {
 		if err := store.BeginWorktreeCreation(ctx, registration.principal, registration.instance, registration.path); err != nil {
@@ -180,7 +184,7 @@ func TestWorktreeCreationLifecycleActivatesOnlyItsCreatingInstance(t *testing.T)
 		t.Fatal(err)
 	}
 	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
-	path := "/repo/.mivia/worktrees/wt-a"
+	path := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
 	if _, err := store.db.Exec(`INSERT INTO worktree_instances(workspace_id,worktree,instance_id,canonical_path,state,created_at,updated_at) VALUES(?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`, principal.WorkspaceID, instance.Worktree, instance.ID, path, contextstate.WorktreeCreating); err != nil {
 		t.Fatalf("seed creating instance: %v", err)
 	}
@@ -282,7 +286,7 @@ func TestLoadWorktreeRejectsAnotherActiveInstance(t *testing.T) {
 	first := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	second := contextstate.WorktreeInstance{Worktree: "wt-b", ID: "wt_fedcba0987654321"}
 	for _, instance := range []contextstate.WorktreeInstance{first, second} {
-		path := "/repo/.mivia/worktrees/" + instance.Worktree
+		path := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
 		if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
 			t.Fatal(err)
 		}
@@ -310,7 +314,7 @@ func TestWorktreeSnapshotsWithSameNameRemainSeparate(t *testing.T) {
 	}
 	instances := []contextstate.WorktreeInstance{{Worktree: "wt-a", ID: "wt_1234567890abcdef"}, {Worktree: "wt-b", ID: "wt_fedcba0987654321"}}
 	for _, instance := range instances {
-		path := "/repo/.mivia/worktrees/" + instance.Worktree
+		path := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
 		if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
 			t.Fatal(err)
 		}
@@ -345,7 +349,7 @@ func TestWorktreeAdmissionsWithSameNameRemainSeparate(t *testing.T) {
 	}
 	instances := []contextstate.WorktreeInstance{{Worktree: "wt-a", ID: "wt_1234567890abcdef"}, {Worktree: "wt-b", ID: "wt_fedcba0987654321"}}
 	for index, instance := range instances {
-		path := "/repo/.mivia/worktrees/" + instance.Worktree
+		path := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
 		if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
 			t.Fatal(err)
 		}
@@ -543,7 +547,8 @@ func TestSQLiteChatSessionCatalogListsWorktreeRoutesOnlyForTheirOwner(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveWorktreeRoute(context.Background(), principal, "wt-a", "/repo/.mivia/worktrees/wt-a"); err != nil {
+	worktreeDir := filepath.Join(t.TempDir(), "worktrees", "wt-a")
+	if err := store.SaveWorktreeRoute(context.Background(), principal, "wt-a", worktreeDir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -551,7 +556,7 @@ func TestSQLiteChatSessionCatalogListsWorktreeRoutesOnlyForTheirOwner(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].Name != "worktree:wt-a" || list[0].Dir != "/repo/.mivia/worktrees/wt-a" || list[0].Worktree != "wt-a" {
+	if len(list) != 1 || list[0].Name != "worktree:wt-a" || list[0].Dir != worktreeDir || list[0].Worktree != "wt-a" {
 		t.Fatalf("worktree route list = %+v, want its one route", list)
 	}
 	otherList, err := store.ListSessions(context.Background(), other)
@@ -616,7 +621,7 @@ func TestSQLiteChatSessionCatalogHidesRouteWhenWorktreeHasSession(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	const worktreeDir = "/repo/.mivia/worktrees/wt-a"
+	worktreeDir := filepath.Join(t.TempDir(), "worktrees", "wt-a")
 	if err := store.SaveWorktreeRoute(context.Background(), principal, "wt-a", worktreeDir); err != nil {
 		t.Fatal(err)
 	}

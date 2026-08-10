@@ -109,7 +109,7 @@ type LoadedAgentFile struct {
 
 // UserAgentsDir returns ~/.mivia/agents without checking the filesystem.
 func UserAgentsDir() string {
-	home, err := os.UserHomeDir()
+	home, err := workspace.UserHomeDir()
 	if err != nil || home == "" {
 		return ""
 	}

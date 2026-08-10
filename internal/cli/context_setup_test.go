@@ -239,17 +239,10 @@ func TestOpenRepositoryContextStoreIgnoresLegacyStore(t *testing.T) {
 }
 
 func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) {
-	original, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(original) })
 	repoRoot := newWorktreeCommandRepo(t)
 	storePath := contextStorePath(repoRoot, config.DefaultSubagentConfig)
 	invocation := chatInvocation{repositorySessionStorePath: storePath}
-	if err := os.Chdir(repoRoot); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(repoRoot)
 	rootSession := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
 	rootStore, err := setupChatSessionContext(rootSession, repoRoot, invocation, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
@@ -278,9 +271,7 @@ func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) 
 	if err := worktreeStore.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chdir(worktree.Path); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(worktree.Path)
 	model := newTUIModel(chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{}), nil, true)
 	store, err := setupChatSessionContext(model.session, worktree.Path, invocation, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {

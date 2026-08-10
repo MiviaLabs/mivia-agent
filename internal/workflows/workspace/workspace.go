@@ -4,7 +4,6 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -77,8 +76,11 @@ func EnsureRecorded(ctx context.Context, sourceRoot string, recorded Identity) (
 	if err != nil {
 		return Identity{}, err
 	}
-	if recorded.MainRoot != "" && filepath.Clean(recorded.MainRoot) != filepath.Clean(mainRoot) {
-		return Identity{}, fmt.Errorf("workflow main root is %q, want %q", mainRoot, recorded.MainRoot)
+	if recorded.MainRoot != "" {
+		same, err := baseworkspace.SameExistingPath(recorded.MainRoot, mainRoot)
+		if err != nil || !same {
+			return Identity{}, fmt.Errorf("workflow main root is %q, want %q", mainRoot, recorded.MainRoot)
+		}
 	}
 	recorded.MainRoot = mainRoot
 	if recorded.BaseCommit == "" {
@@ -99,8 +101,11 @@ func Resolve(ctx context.Context, sourceRoot string, recorded Identity) (Identit
 	if err != nil {
 		return Identity{}, err
 	}
-	if recorded.MainRoot != "" && filepath.Clean(recorded.MainRoot) != filepath.Clean(mainRoot) {
-		return Identity{}, fmt.Errorf("workflow main root is %q, want %q", mainRoot, recorded.MainRoot)
+	if recorded.MainRoot != "" {
+		same, err := baseworkspace.SameExistingPath(recorded.MainRoot, mainRoot)
+		if err != nil || !same {
+			return Identity{}, fmt.Errorf("workflow main root is %q, want %q", mainRoot, recorded.MainRoot)
+		}
 	}
 	recorded.MainRoot = mainRoot
 	return validateWorktree(ctx, recorded)

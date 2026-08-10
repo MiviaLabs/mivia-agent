@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -42,7 +43,15 @@ func TestWorktreeMarkerRejectsFIFOWithoutBlocking(t *testing.T) {
 }
 
 func TestWorktreeMarkerRejectsSocket(t *testing.T) {
-	root := t.TempDir()
+	base := "/tmp"
+	if runtime.GOOS == "darwin" {
+		base = "/private/tmp"
+	}
+	root, err := os.MkdirTemp(base, "mivia-socket-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	if err := os.Mkdir(filepath.Join(root, ".mivia"), 0o700); err != nil {
 		t.Fatal(err)
 	}

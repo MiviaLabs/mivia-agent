@@ -315,49 +315,6 @@ func verifyEligibility(ctx context.Context, repo ledger.Repository, git GitRunne
 	return head, porcelainEmpty, diffRef, repoSlug, nil
 }
 
-// intendedDiff resolves HEAD and the intended change against the admitted
-// base: committed work (base..HEAD) plus uncommitted work (porcelain). An
-// empty intended diff settles as no_diff (record written here) and reports
-// noDiff=true. It returns the porcelain text for the diff snapshot too.
-func intendedDiff(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key string) (head string, porcelainEmpty bool, diffText, porcelain string, noDiff bool, err error) {
-	out, err := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD")
-	if err != nil {
-		return "", false, "", "", false, fmt.Errorf("cannot resolve HEAD: %w", err)
-	}
-	head = strings.TrimSpace(out)
-	porcelain, err = git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "status", "--porcelain")
-	if err != nil {
-		return "", false, "", "", false, fmt.Errorf("status --porcelain failed: %w", err)
-	}
-	porcelainEmpty = strings.TrimSpace(porcelain) == ""
-	if head != req.BaseCommit {
-		committed, derr := git.Run(ctx, req.GitCtx, "diff", "--stat", req.BaseCommit+"..HEAD")
-		if derr != nil {
-			return "", false, "", "", false, fmt.Errorf("git diff --stat failed: %w", derr)
-		}
-		if committed == "" && porcelainEmpty {
-			// Nothing to publish: no committed change and a clean worktree.
-			if err := repo.UpsertDelivery(ctx, deliveryRecord(req, key, "no_diff")); err != nil {
-				return "", false, "", "", false, err
-			}
-			return head, true, "", "", true, nil
-		}
-		return head, porcelainEmpty, committed, porcelain, false, nil
-	}
-	stat, derr := git.Run(ctx, req.GitCtx, "diff", "--no-ext-diff", "--no-textconv", "--stat", req.BaseCommit)
-	if derr != nil {
-		return "", false, "", "", false, fmt.Errorf("git diff --stat failed: %w", derr)
-	}
-	if porcelainEmpty {
-		// Nothing to publish: a clean worktree at the base commit.
-		if err := repo.UpsertDelivery(ctx, deliveryRecord(req, key, "no_diff")); err != nil {
-			return "", false, "", "", false, err
-		}
-		return head, true, "", "", true, nil
-	}
-	return head, porcelainEmpty, stat, porcelain, false, nil
-}
-
 // baseStillContains reports whether the pull request's current base commit
 // still contains the base commit this run was admitted against. It returns nil
 // when the base only moved forward, and an error that names the cause when the

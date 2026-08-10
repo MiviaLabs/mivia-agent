@@ -271,7 +271,7 @@ api_key_env = "WORKFLOW_TEST_KEY"
 models = [{ name = "test/model", context_window_tokens = 128000 }]
 [subagents]
 store_backend = "sqlite"
-store_path = "` + filepath.Join(root, "store.db") + `"
+store_path = "` + tomlPathLiteral(filepath.Join(root, "store.db")) + `"
 `
 	if err := os.WriteFile(goodConfig, []byte(configBody), 0o600); err != nil {
 		t.Fatal(err)

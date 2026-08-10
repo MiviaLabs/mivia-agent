@@ -30,7 +30,7 @@ func TestRealGitRunsWithPinnedEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rev-parse: %v", err)
 	}
-	top := strings.TrimSpace(got)
+	top := filepath.Clean(filepath.FromSlash(strings.TrimSpace(got)))
 	want, err := filepath.EvalSymlinks(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -220,6 +220,11 @@ func initRepo(t *testing.T) string {
 	runGit(t, root, "init", "-b", "main")
 	runGit(t, root, "config", "user.email", "test@example.com")
 	runGit(t, root, "config", "user.name", "Test")
+	// Pin line endings to LF: the delivery git context reads no system
+	// config (GIT_CONFIG_NOSYSTEM=1), so a Windows autocrlf checkout would
+	// otherwise produce CRLF working trees that look like diffs. The fixture
+	// must be deterministic on every machine.
+	runGit(t, root, "config", "core.autocrlf", "false")
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

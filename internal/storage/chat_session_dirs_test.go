@@ -45,7 +45,8 @@ func TestSessionDirsRoundTrip(t *testing.T) {
 	if err := migrateContextSchema(store.db); err != nil {
 		t.Fatalf("migrate to v5: %v", err)
 	}
-	opts := contextstate.SessionSaveOptions{Dir: "/repo/.mivia/worktrees/wt-a", Worktree: "wt-a"}
+	worktreeDir := filepath.Join(t.TempDir(), "worktrees", "wt-a")
+	opts := contextstate.SessionSaveOptions{Dir: worktreeDir, Worktree: "wt-a"}
 	if err := store.SaveSession(ctx, principal, "snap", []byte(`[{"role":"user"}]`), "m", "p", 1, 1, 1, opts); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
@@ -170,14 +171,15 @@ func TestEnsureSessionRecordsDir(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	binding := contextstate.BindingRevision{Provider: "p", Model: "m", Generation: 1}
-	if err := store.EnsureSession(ctx, contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: "/repo/.mivia/worktrees/wt-a", Worktree: "wt-a"}); err != nil {
+	worktreeDir := filepath.Join(t.TempDir(), "worktrees", "wt-a")
+	if err := store.EnsureSession(ctx, contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: worktreeDir, Worktree: "wt-a"}); err != nil {
 		t.Fatalf("EnsureSession: %v", err)
 	}
 	_, info, err := store.LoadSession(ctx, principal, principal.SessionID)
 	if err != nil {
 		t.Fatalf("LoadSession by session id: %v", err)
 	}
-	if info.Dir != "/repo/.mivia/worktrees/wt-a" || info.Worktree != "wt-a" {
+	if info.Dir != worktreeDir || info.Worktree != "wt-a" {
 		t.Fatalf("context session Dir/Worktree = %q/%q, want the recorded values", info.Dir, info.Worktree)
 	}
 }
@@ -193,7 +195,8 @@ func TestEnsureSessionDirSurfacesInListSessions(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	binding := contextstate.BindingRevision{Provider: "p", Model: "m", Generation: 1}
-	if err := store.EnsureSession(ctx, contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: "/repo/.mivia/worktrees/wt-a", Worktree: "wt-a"}); err != nil {
+	worktreeDir := filepath.Join(t.TempDir(), "worktrees", "wt-a")
+	if err := store.EnsureSession(ctx, contextstate.EnsureSessionRequest{Principal: principal, Binding: binding, Dir: worktreeDir, Worktree: "wt-a"}); err != nil {
 		t.Fatalf("EnsureSession: %v", err)
 	}
 	// A session appears in the picker only after its first committed turn
@@ -208,7 +211,7 @@ func TestEnsureSessionDirSurfacesInListSessions(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("ListSessions = %+v, want the live session listed", list)
 	}
-	if list[0].Dir != "/repo/.mivia/worktrees/wt-a" || list[0].Worktree != "wt-a" {
+	if list[0].Dir != worktreeDir || list[0].Worktree != "wt-a" {
 		t.Fatalf("live session Dir/Worktree = %q/%q, want the recorded values", list[0].Dir, list[0].Worktree)
 	}
 }

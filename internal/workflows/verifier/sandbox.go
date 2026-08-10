@@ -128,7 +128,7 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 			return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
 		}
 		if strings.HasPrefix(strings.TrimSpace(stderr.String()), "bwrap:") {
-			return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
+			return hostFailure(fmt.Errorf("sandbox command failed: %w: %s", err, boundedDiagnostic(stderr.Bytes())))
 		}
 		return sourceCommandFailure(stdout.String()+stderr.String(), err)
 	}
@@ -403,7 +403,18 @@ func hostModuleCache(goPath string) (string, error) {
 		return "", fmt.Errorf("resolve host home for Go module cache: %w", err)
 	}
 	command := exec.Command(goPath, "env", "GOMODCACHE")
+	// `go env GOMODCACHE` defaults to $HOME/go/pkg/mod only when GOPATH is
+	// unset. Preserve the host GOPATH (and an explicit GOMODCACHE) so a host
+	// whose Go paths live outside the home directory - a CI runner with
+	// GOPATH=/home/runner/go, or a developer with a custom GOPATH - reports
+	// the cache the modules were actually downloaded into, not a phantom
+	// directory under the sandboxed home.
 	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home}
+	for _, key := range []string{"GOPATH", "GOMODCACHE"} {
+		if value := os.Getenv(key); value != "" {
+			command.Env = append(command.Env, key+"="+value)
+		}
+	}
 	output, err := command.Output()
 	if err != nil {
 		return "", fmt.Errorf("resolve host Go module cache: %w", err)
@@ -424,10 +435,18 @@ func copyRequiredModule(cacheRoot, destination, modulePath, version string) erro
 	if err != nil {
 		return fmt.Errorf("escape module version %q: %w", version, err)
 	}
+	// The extracted source tree only exists for modules the host build
+	// actually compiled. With pruned module graphs a host legitimately lacks
+	// it for modules that provide no packages for the host platform (a
+	// windows-only dependency on a Linux machine is never downloaded), so a
+	// missing tree is not a provision failure: the sandboxed command itself
+	// reports go's normal missing-module error if it truly needs the source.
 	source := filepath.Join(cacheRoot, escapedPath+"@"+escapedVersion)
 	target := filepath.Join(destination, escapedPath+"@"+escapedVersion)
-	if _, err := copySandboxTree(source, target, secretpath.Policy{}); err != nil {
-		return fmt.Errorf("provision module %s@%s: %w", modulePath, version, err)
+	if _, statErr := os.Stat(source); statErr == nil {
+		if _, err := copySandboxTree(source, target, secretpath.Policy{}); err != nil {
+			return fmt.Errorf("provision module %s@%s: %w", modulePath, version, err)
+		}
 	}
 	return copyRequiredModuleMetadata(cacheRoot, destination, escapedPath, escapedVersion)
 }
@@ -438,8 +457,16 @@ func copyRequiredModuleMetadata(cacheRoot, destination, escapedPath, escapedVers
 	if err := os.MkdirAll(filepath.Dir(targetBase), 0o700); err != nil {
 		return fmt.Errorf("create verifier module metadata: %w", err)
 	}
+	// Each artifact is copied when the host cache has it. The .mod file is
+	// what a pruned graph needs for every module; .zip/.ziphash exist only
+	// for modules whose source the host build fetched. A missing artifact is
+	// left for the sandboxed command to report in go's own terms.
 	for _, suffix := range []string{".info", ".mod", ".zip", ".ziphash"} {
-		if err := copyRegularFile(sourceBase+suffix, targetBase+suffix); err != nil {
+		source := sourceBase + suffix
+		if _, statErr := os.Stat(source); statErr != nil {
+			continue
+		}
+		if err := copyRegularFile(source, targetBase+suffix); err != nil {
 			return fmt.Errorf("copy verifier module metadata %s: %w", suffix, err)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -736,8 +737,18 @@ func TestWorktreeDialogReactivatesBorrowedStoreAfterGitRemovalFailure(t *testing
 		t.Fatal(err)
 	}
 	binDir := t.TempDir()
-	gitWrapper := "#!/bin/sh\nif [ \"$1\" = worktree ] && [ \"$2\" = remove ]; then exit 1; fi\nexec \"" + gitPath + "\" \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte(gitWrapper), 0o700); err != nil {
+	var gitWrapper string
+	var wrapperPath string
+	if runtime.GOOS == "windows" {
+		// Git is resolved via PATHEXT, so the shim must carry a .cmd extension
+		// to intercept lookups. %* preserves the original command line.
+		wrapperPath = filepath.Join(binDir, "git.cmd")
+		gitWrapper = "@echo off\r\nif \"%1\"==\"worktree\" if \"%2\"==\"remove\" exit /b 1\r\n\"" + gitPath + "\" %*\r\n"
+	} else {
+		wrapperPath = filepath.Join(binDir, "git")
+		gitWrapper = "#!/bin/sh\nif [ \"$1\" = worktree ] && [ \"$2\" = remove ]; then exit 1; fi\nexec \"" + gitPath + "\" \"$@\"\n"
+	}
+	if err := os.WriteFile(wrapperPath, []byte(gitWrapper), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))

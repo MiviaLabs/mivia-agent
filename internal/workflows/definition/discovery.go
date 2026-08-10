@@ -16,6 +16,14 @@ import (
 // rejection, files read through a pinned root). Returns an empty slice (not
 // an error) when the workflows directory does not exist.
 func DiscoverWorkflows(workspaceRoot string) ([]DiscoveredWorkflow, error) {
+	// A workspace path that names a regular file is an error, not an empty
+	// discovery. The check runs before the workflows-directory open because
+	// Windows reports the missing "<file>/.mivia" path as ERROR_PATH_NOT_FOUND
+	// (os.IsNotExist), the same error as a genuinely missing directory; only
+	// the explicit stat distinguishes the two on that platform.
+	if info, statErr := os.Stat(workspaceRoot); statErr == nil && !info.IsDir() {
+		return nil, fmt.Errorf("workspace is not a directory: %s", workspaceRoot)
+	}
 	dir := workspace.NamespacePath(workspaceRoot, "workflows")
 	// NamespacePath always returns a non-empty path ("" root resolves to the
 	// cwd), so there is no empty-dir early return to guard.

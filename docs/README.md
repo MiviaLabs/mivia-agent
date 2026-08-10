@@ -68,6 +68,7 @@ How to work in this repository. Owner: `quality`.
 | [Agent workflow](development/agent-workflow.md) | How agents must work in this repository |
 | [Agent self-prompt](development/agent-self-prompt.md) | Self-contained system prompt reference for agent rebuilds |
 | [Terminal input](development/terminal-input.md) | Per-terminal manual verification for TUI keys, paste, mouse and clipboard |
+| [Release](development/release.md) | Release archives, installers, package-manager status, and verification |
 
 ## Security
 

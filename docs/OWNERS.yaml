@@ -79,6 +79,11 @@ topics:
     owner: quality
     description: Human contributor guide
 
+  release:
+    path: docs/development/release.md
+    owner: quality
+    description: Public release archives, installers, and verification
+
   # ADRs are prohibited in this repository. Architecture decisions belong in
   # canonical owned documentation paths.
 

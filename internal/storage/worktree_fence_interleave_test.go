@@ -274,10 +274,11 @@ func runWorktreeFenceInterleaving(t *testing.T, tc fenceInterleaveCase) {
 
 func seedActiveWorktreeInstance(t *testing.T, store *SQLite, principal contextstate.Principal, instance contextstate.WorktreeInstance) {
 	t.Helper()
-	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, "/repo/.mivia/worktrees/"+instance.Worktree); err != nil {
+	worktreeDir := filepath.Join(t.TempDir(), "worktrees", instance.Worktree)
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, worktreeDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, "/repo/.mivia/worktrees/"+instance.Worktree); err != nil {
+	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, worktreeDir); err != nil {
 		t.Fatal(err)
 	}
 }

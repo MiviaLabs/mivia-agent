@@ -234,6 +234,10 @@ func validateWorktreeBranchPrefix(prefix, sanitisedName string) error {
 // The main worktree is filtered out.
 func List(ctx context.Context, repoRoot string) ([]WorktreeInfo, error) {
 	root, _ := filepath.Abs(repoRoot) // Abs only fails if Getwd fails; git errors otherwise
+	// Expand Windows 8.3 short names before comparing: git prints the long
+	// form, so a short-form root would otherwise produce a prefix that no
+	// listed worktree path starts with and List would silently return none.
+	root = workspace.LongPath(root)
 	if err := ensureGitRepo(root); err != nil {
 		return nil, err
 	}
@@ -285,12 +289,15 @@ func MainRepoRoot(dir string) (string, error) {
 
 // mainWorktreeFromListing returns the first "worktree " path from a porcelain
 // listing; git names the main working tree first. Kept separate from
-// MainRepoRoot so the no-match branch is unit-testable.
+// MainRepoRoot so the no-match branch is unit-testable. Git for Windows
+// prints paths with forward slashes and resolved (long-form) names, so the
+// returned path is normalized to the native separator form before any
+// filepath join or prefix comparison sees it.
 func mainWorktreeFromListing(out, dir string) (string, error) {
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "worktree ") {
-			return strings.TrimPrefix(line, "worktree "), nil
+			return filepath.Clean(filepath.FromSlash(strings.TrimPrefix(line, "worktree "))), nil
 		}
 	}
 	return "", NotGitRepoError{Dir: dir}
@@ -305,7 +312,9 @@ func RepoRoot(dir string) (string, error) {
 	if err != nil {
 		return "", NotGitRepoError{Dir: dir}
 	}
-	return strings.TrimSpace(string(out)), nil
+	// Git prints forward slashes on every platform; normalize to the native
+	// form so callers join and compare it against local paths.
+	return filepath.Clean(filepath.FromSlash(strings.TrimSpace(string(out)))), nil
 }
 
 // CurrentWorktreeName returns the mivia worktree name if dir is inside a
@@ -320,8 +329,9 @@ func CurrentWorktreeName(ctx context.Context, dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	wtDir := workspace.WorktreesDir(root)
+	wtDir := workspace.LongPath(workspace.WorktreesDir(root))
 	abs, _ := filepath.Abs(dir)
+	abs = workspace.LongPath(abs)
 	prefix := wtDir + string(filepath.Separator)
 	for {
 		if !strings.HasPrefix(abs, prefix) {
@@ -450,7 +460,10 @@ func parseWorktreeList(output, wtPrefix string) ([]WorktreeInfo, error) {
 		if key, val, ok := strings.Cut(line, " "); ok {
 			switch key {
 			case "worktree":
-				wt.path = val
+				// Git for Windows prints forward-slash, long-form paths;
+				// normalize to the native form so the prefix comparison
+				// below and filepath.Base agree with local joins.
+				wt.path = filepath.Clean(filepath.FromSlash(val))
 			case "branch":
 				wt.branch = strings.TrimPrefix(val, "refs/heads/")
 			case "HEAD":
