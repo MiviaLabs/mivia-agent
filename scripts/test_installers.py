@@ -114,6 +114,20 @@ def main() -> None:
         if result.returncode != 0 or profile.read_text(encoding="utf-8") != latest_text:
             raise AssertionError("installer duplicated the PATH entry")
 
+        prerelease = fixture / "mivia_1.2.3-rc.1_linux_amd64.tar.gz"
+        prerelease.write_bytes(archive.read_bytes())
+        prerelease_digest = hashlib.sha256(prerelease.read_bytes()).hexdigest()
+        (fixture / "checksums.txt").write_text(
+            f"{prerelease_digest}  {prerelease.name}\n", encoding="utf-8"
+        )
+        prerelease_env = dict(env, MIVIA_VERSION="v1.2.3-rc.1")
+        result = run(prerelease_env)
+        if result.returncode != 0:
+            raise AssertionError(f"explicit prerelease was rejected: {result.stderr}")
+        (fixture / "checksums.txt").write_text(
+            f"{digest}  {archive.name}\n", encoding="utf-8"
+        )
+
         (fixture / "checksums.txt").write_text(
             f"{digest}  {archive.name}\n{digest}  {archive.name}\n", encoding="utf-8"
         )
@@ -124,10 +138,53 @@ def main() -> None:
             f"{digest}  {archive.name}\n", encoding="utf-8"
         )
 
+        with tarfile.open(archive, "w:gz") as output:
+            output.add(binary, arcname="mivia")
+            output.add(binary, arcname="mivia")
+            output.add(fixture / "LICENSE", arcname="LICENSE")
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        (fixture / "checksums.txt").write_text(
+            f"{digest}  {archive.name}\n", encoding="utf-8"
+        )
+        result = run(env)
+        if result.returncode == 0 or "archive contents are unsafe or unexpected" not in result.stderr:
+            raise AssertionError("installer accepted a duplicate archive member")
+
+        with tarfile.open(archive, "w:gz") as output:
+            output.add(binary, arcname="mivia")
+            output.add(fixture / "README.md", arcname="README.md")
+            output.add(fixture / "LICENSE", arcname="LICENSE")
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        (fixture / "checksums.txt").write_text(
+            f"{digest}  {archive.name}\n", encoding="utf-8"
+        )
+
         no_path_env = dict(env, MIVIA_NO_PATH_UPDATE="1", MIVIA_SHELL_RC=str(temp / "no-path.rc"))
         result = run(no_path_env)
         if result.returncode != 0 or (temp / "no-path.rc").exists():
             raise AssertionError("installer did not honor MIVIA_NO_PATH_UPDATE=1")
+
+        malformed_profile = temp / "malformed.rc"
+        malformed_text = "before\n# mivia installer: PATH\nkeep this line\n"
+        malformed_profile.write_text(malformed_text, encoding="utf-8")
+        malformed_env = dict(env, MIVIA_SHELL_RC=str(malformed_profile))
+        result = run(malformed_env)
+        if result.returncode != 0 or malformed_profile.read_text(encoding="utf-8") != malformed_text:
+            raise AssertionError("installer changed a malformed PATH profile block")
+
+        locked_profile = temp / "locked.rc"
+        lock_path = Path(str(locked_profile) + ".mivia.lock")
+        lock_path.write_text("held", encoding="utf-8")
+        locked_env = dict(env, MIVIA_SHELL_RC=str(locked_profile))
+        result = run(locked_env)
+        if result.returncode != 0 or not lock_path.exists():
+            raise AssertionError("installer removed a lock that it did not create")
+
+        no_shell_env = dict(no_path_env)
+        no_shell_env.pop("SHELL")
+        result = run(no_shell_env)
+        if result.returncode != 0:
+            raise AssertionError(f"installer rejected an unset SHELL: {result.stderr}")
 
         archive.write_bytes(b"tampered archive")
         result = run(env)

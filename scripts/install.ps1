@@ -19,10 +19,13 @@ if (-not $Version) {
     $versionPointer = $true
   } catch { throw 'install: no stable release is published yet' }
 }
+$Version = $Version.Trim()
+if ($Version -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$') {
+  throw 'install: version must use semantic version format'
+}
 if ($versionPointer -and $Version -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
   throw 'install: latest release pointer is not a stable semantic version'
 }
-$Version = $Version.Trim()
 $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 if ($InstallDir.Length -gt 3) { $InstallDir = $InstallDir -replace '[\\/]+$', '' }
 $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
@@ -72,11 +75,11 @@ $base = "https://github.com/MiviaLabs/mivia-agent/releases/download/$Version"
   $pathEntries = @($userPath -split ';' | Where-Object { $_ -ne '' })
   $pathPresent = $pathEntries | Where-Object { ([System.IO.Path]::GetFullPath($_.TrimEnd('\'))).Equals($InstallDir, [StringComparison]::OrdinalIgnoreCase) }
   $currentPathPresent = $env:Path -split ';' | Where-Object { $_.Equals($InstallDir, [StringComparison]::OrdinalIgnoreCase) }
-  if ($pathPresent) {
+  if ($NoPathUpdate) {
+    Write-Warning "PATH update skipped. Add $InstallDir to the user PATH."
+  } elseif ($pathPresent) {
     if (-not $currentPathPresent) { $env:Path = "$InstallDir;$env:Path" }
     Write-Output "$InstallDir is already on the user PATH"
-  } elseif ($NoPathUpdate) {
-    Write-Warning "PATH update skipped. Add $InstallDir to the user PATH."
   } else {
     try {
       [Environment]::SetEnvironmentVariable('Path', (($pathEntries + $InstallDir) -join ';'), 'User')

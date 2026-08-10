@@ -14,6 +14,22 @@ type Root struct {
 	Abs string
 }
 
+// SameExistingPath reports whether two existing paths name the same file.
+func SameExistingPath(a, b string) (bool, error) {
+	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
+		return false, fmt.Errorf("path must not be empty")
+	}
+	infoA, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	infoB, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(infoA, infoB), nil
+}
+
 // Open resolves rootPath (default ".") to an absolute workspace root.
 func Open(rootPath string) (*Root, error) {
 	if strings.TrimSpace(rootPath) == "" {

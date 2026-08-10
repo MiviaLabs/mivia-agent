@@ -6,6 +6,7 @@ usage() {
 }
 
 version="${MIVIA_VERSION:-${1:-}}"
+version_from_pointer=0
 if [ -n "${MIVIA_INSTALL_DIR:-}" ] && [ -n "${2:-}" ]; then
   usage
   exit 2
@@ -70,12 +71,14 @@ if [ -z "$version" ]; then
     exit 1
   }
   version="$(tr -d '\r\n' <"$tmp/mivia-version.txt")"
+  version_from_pointer=1
 fi
-if ! printf '%s\n' "$version" | awk '
-  $0 ~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { found = 1 }
+if ! printf '%s\n' "$version" | awk -v stable="$version_from_pointer" '
+  stable && $0 ~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ { found = 1 }
+  !stable && $0 ~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?([+][0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/ { found = 1 }
   END { exit found ? 0 : 1 }
 '; then
-  printf 'install: latest release pointer is not a stable semantic version\n' >&2
+  printf 'install: version is not a valid semantic version\n' >&2
   exit 1
 fi
 
@@ -96,11 +99,16 @@ actual="$(if command -v sha256sum >/dev/null 2>&1; then sha256sum "$tmp/$archive
 mkdir -p "$install_dir"
 tar -tzf "$tmp/$archive" >"$tmp/members"
 member_count=0
+seen_mivia=0
+seen_readme=0
+seen_license=0
 valid_members=1
 while IFS= read -r member; do
   member_count=$((member_count + 1))
   case "$member" in
-    mivia|README.md|LICENSE) ;;
+    mivia) seen_mivia=$((seen_mivia + 1));;
+    README.md) seen_readme=$((seen_readme + 1));;
+    LICENSE) seen_license=$((seen_license + 1));;
     *) valid_members=0 ;;
   esac
 done <"$tmp/members"
@@ -108,9 +116,9 @@ unsafe_members=0
 tar -tvzf "$tmp/$archive" >"$tmp/member-details"
 while IFS= read -r detail; do
   first=${detail%${detail#?}}
-  case "$first" in l|h|s) unsafe_members=1;; esac
+  case "$first" in -) ;; *) unsafe_members=1;; esac
 done <"$tmp/member-details"
-if [ "$member_count" -ne 3 ] || [ "$valid_members" -ne 1 ] || [ "$unsafe_members" -ne 0 ]; then
+if [ "$member_count" -ne 3 ] || [ "$seen_mivia" -ne 1 ] || [ "$seen_readme" -ne 1 ] || [ "$seen_license" -ne 1 ] || [ "$valid_members" -ne 1 ] || [ "$unsafe_members" -ne 0 ]; then
   printf 'install: archive contents are unsafe or unexpected\n' >&2
   exit 1
 fi
@@ -137,11 +145,21 @@ update_profile() {
   marker='# mivia installer: PATH'
   end_marker='# mivia installer: PATH END'
   path_line=$(path_command "$shell_name")
-  if [ -f "$profile" ]; then
-    marker_count=$(grep -F -x "$marker" "$profile" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$marker_count" -eq 1 ] &&
-      grep -F -x "$path_line" "$profile" >/dev/null 2>&1 &&
-      grep -F -x "$end_marker" "$profile" >/dev/null 2>&1; then
+  if [ -f "$profile" ] && grep -F -x -e "$marker" -e "$end_marker" "$profile" >/dev/null 2>&1; then
+    if ! awk -v start="$marker" -v end="$end_marker" '
+      $0 == start { starts++; if (inside || finished) bad = 1; inside = 1; next }
+      $0 == end { ends++; if (!inside) bad = 1; inside = 0; finished = 1; next }
+      END { exit !(starts == 1 && ends == 1 && !inside && !bad) }
+    ' "$profile"; then
+      return 1
+    fi
+    awk -v start="$marker" -v end="$end_marker" '
+      $0 == start { inside = 1; next }
+      inside && $0 == end { exit }
+      inside { print }
+    ' "$profile" >"$tmp/profile-block"
+    if [ "$(wc -l <"$tmp/profile-block" | tr -d '[:space:]')" -eq 1 ] &&
+      grep -F -x "$path_line" "$tmp/profile-block" >/dev/null 2>&1; then
       return 0
     fi
   fi
@@ -164,7 +182,8 @@ if [ "${MIVIA_NO_PATH_UPDATE:-}" != 1 ]; then
       printf '%s is already on PATH\n' "$install_dir"
       ;;
     *)
-      shell_name=${SHELL##*/}
+      shell_name=${SHELL:-sh}
+      shell_name=${shell_name##*/}
       case "$shell_name" in
         bash)
           if [ -n "${MIVIA_SHELL_RC:-}" ]; then profile=$MIVIA_SHELL_RC
@@ -186,11 +205,13 @@ if [ "${MIVIA_NO_PATH_UPDATE:-}" != 1 ]; then
         printf 'warning: cannot update PATH in %s\n' "$profile" >&2
         printf 'run this command, then open a new shell: %s\n' "$path_line" >&2
       else
-        path_lock="$profile.mivia.lock"
-        if ! (set -C; : >"$path_lock") 2>/dev/null; then
+        lock_candidate="$profile.mivia.lock"
+        if ! (set -C; : >"$lock_candidate") 2>/dev/null; then
           printf 'warning: another installer is updating %s\n' "$profile" >&2
           printf 'run this command, then open a new shell: %s\n' "$path_line" >&2
-        elif update_profile "$profile" 2>/dev/null; then
+        else
+          path_lock=$lock_candidate
+          if update_profile "$profile" 2>/dev/null; then
           printf 'added %s to PATH in %s\n' "$install_dir" "$profile"
           if [ "$shell_name" = fish ]; then
             printf 'open a new shell or run: source %s\n' "$profile"
@@ -199,14 +220,16 @@ if [ "${MIVIA_NO_PATH_UPDATE:-}" != 1 ]; then
           fi
           rm -f "$path_lock"
           path_lock=
-        else
+          else
           printf 'warning: cannot update PATH in %s\n' "$profile" >&2
           printf 'run this command, then open a new shell: %s\n' "$path_line" >&2
+          fi
         fi
       fi
       ;;
   esac
 else
   printf 'PATH update skipped by MIVIA_NO_PATH_UPDATE\n' >&2
-  printf 'run this command, then open a new shell: %s\n' "$(path_command "${SHELL##*/}")" >&2
+  shell_name=${SHELL:-sh}
+  printf 'run this command, then open a new shell: %s\n' "$(path_command "${shell_name##*/}")" >&2
 fi

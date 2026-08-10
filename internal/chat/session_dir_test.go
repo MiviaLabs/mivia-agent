@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -40,9 +39,7 @@ func TestCurrentDirContextNonGit(t *testing.T) {
 	}
 }
 
-// TestCurrentDirContextWhenCwdDeleted covers the os.Getwd error branch of
-// currentDirContext: with the process cwd removed, Getwd fails and the
-// function reports no directory instead of panicking.
+// TestCurrentDirContextWhenCwdDeleted returns no path after CWD removal.
 func TestCurrentDirContextWhenCwdDeleted(t *testing.T) {
 	base := t.TempDir()
 	gone := filepath.Join(base, "gone")
@@ -54,12 +51,6 @@ func TestCurrentDirContextWhenCwdDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, wt := currentDirContext()
-	if runtime.GOOS == "darwin" {
-		if wt != "" || d == "" {
-			t.Fatalf("currentDirContext after cwd removal = %q/%q, want a directory and empty worktree", d, wt)
-		}
-		return
-	}
 	if d != "" || wt != "" {
 		t.Fatalf("currentDirContext after cwd removal = %q/%q, want empty/empty", d, wt)
 	}

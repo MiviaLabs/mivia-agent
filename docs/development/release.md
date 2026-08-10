@@ -31,8 +31,9 @@ Install the latest stable release:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.sh | bash
-mivia --version
 ```
+
+Open a new shell, or source the profile that the installer reports. Then run `mivia --version`.
 
 The installer resolves one stable release from `mivia-version.txt`. It then downloads the archive and checksum from that exact tag. It fails clearly before the first stable release exists. It never selects a pre-release by default.
 

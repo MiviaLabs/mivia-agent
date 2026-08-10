@@ -20,10 +20,13 @@ def main() -> None:
     release_path = ROOT / "scripts/release.sh"
     install_path = ROOT / "scripts/install.sh"
     powershell_path = ROOT / "scripts/install.ps1"
+    powershell_test_path = ROOT / "scripts/test_installers.ps1"
+    ci_path = ROOT / ".github/workflows/ci.yml"
     workflow = workflow_path.read_text(encoding="utf-8")
     release = release_path.read_text(encoding="utf-8")
     install = install_path.read_text(encoding="utf-8")
     powershell = powershell_path.read_text(encoding="utf-8")
+    ci = ci_path.read_text(encoding="utf-8")
 
     for command, path in (("bash", release_path), ("sh", install_path)):
         result = subprocess.run([command, "-n", str(path)], capture_output=True, text=True)
@@ -81,6 +84,15 @@ def main() -> None:
         "unsupported architecture",
     ):
         require(powershell, fragment, powershell_path)
+
+    if not powershell_test_path.is_file():
+        raise AssertionError(f"{powershell_test_path}: missing PowerShell installer test")
+    for fragment in (
+        "go test ./... -count=1",
+        "go test -race ./... -count=1",
+        "scripts/test_installers.ps1",
+    ):
+        require(ci, fragment, ci_path)
 
     result = subprocess.run(
         ["bash", str(release_path)], cwd=ROOT, capture_output=True, text=True

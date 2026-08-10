@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 var (
@@ -104,9 +105,9 @@ func worktreeContainsCurrentDir(path string) bool {
 
 func (m *tuiModel) resolveWorkspaceDir() string {
 	dir := m.workspaceDir
-	if dir != "" && strings.HasPrefix(dir, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			dir = strings.Replace(dir, "~", home, 1)
+	if dir == "~" || strings.HasPrefix(dir, "~"+string(filepath.Separator)) {
+		if home, err := workspace.UserHomeDir(); err == nil {
+			dir = filepath.Join(home, strings.TrimPrefix(dir, "~"))
 		}
 	}
 	if dir == "" {

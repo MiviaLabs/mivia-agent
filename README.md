@@ -28,8 +28,9 @@ Install the latest stable release on Linux or macOS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.sh | bash
-mivia --version
 ```
+
+Open a new shell, or source the profile that the installer reports. Then run `mivia --version`.
 
 Install the latest stable release in Windows PowerShell:
 

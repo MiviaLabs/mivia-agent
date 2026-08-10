@@ -44,6 +44,18 @@ func TestUserSkillsDirUsesMiviaHomeNamespace(t *testing.T) {
 	}
 }
 
+func TestUserHomeDirUsesHomeOnAllPlatforms(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	got, err := UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	if got != home {
+		t.Fatalf("UserHomeDir = %q, want %q", got, home)
+	}
+}
+
 // legacyNamespace is the directory mivia used to claim in every user repo.
 // It carries no meaning to the binary now: agents read and edit it with the
 // ordinary file tools, exactly as they would any other workspace path.

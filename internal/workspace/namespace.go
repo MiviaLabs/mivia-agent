@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Namespace is the tool-scoped directory mivia owns beneath a root. Under a
@@ -19,6 +21,19 @@ import (
 // one place is what keeps the name changeable and keeps a second convention
 // from growing back a call site at a time.
 const Namespace = ".mivia"
+
+// UserHomeDir returns the user-home directory. HOME is a cross-platform
+// override for tests and portable automation.
+func UserHomeDir() (string, error) {
+	if home, ok := os.LookupEnv("HOME"); ok {
+		home = strings.TrimSpace(home)
+		if home == "" {
+			return "", fmt.Errorf("HOME is empty")
+		}
+		return filepath.Abs(home)
+	}
+	return os.UserHomeDir()
+}
 
 // NamespacePath joins elem beneath the namespace directory in root. An empty
 // root resolves relative to the process working directory.
@@ -40,7 +55,7 @@ func SkillsDir(root string) string { return NamespacePath(root, "skills") }
 // directory yields an empty path so callers can warn and continue without
 // treating optional user customization as a startup failure.
 func UserSkillsDir() string {
-	home, err := os.UserHomeDir()
+	home, err := UserHomeDir()
 	if err != nil || home == "" {
 		return ""
 	}
@@ -65,7 +80,7 @@ func MemoryDBPath(root string) string { return NamespacePath(root, "memory.db") 
 // unavailable home directory yields an empty path so callers can disable the
 // org store.
 func OrgMemoryDBPath() string {
-	home, err := os.UserHomeDir()
+	home, err := UserHomeDir()
 	if err != nil || home == "" {
 		return ""
 	}
