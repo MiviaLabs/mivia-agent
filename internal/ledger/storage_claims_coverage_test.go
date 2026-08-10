@@ -32,6 +32,29 @@ func TestStorageClaimsFallbackStore(t *testing.T) {
 	}
 }
 
+func TestStorageClaimsRejectClosedRepository(t *testing.T) {
+	ctx := context.Background()
+	repo := NewStorageLedgerRepository(storage.NewMemory())
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClaimRun(ctx, "run", "owner"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ClaimRun after Close = %v, want ErrClosed", err)
+	}
+}
+
+func TestStorageClaimsFallbackStoreDeletesRun(t *testing.T) {
+	ctx := context.Background()
+	store := &unfencedClaimStore{Store: storage.NewMemory()}
+	repo := NewStorageLedgerRepository(store)
+	if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: "run", Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteRun(ctx, "run"); err != nil {
+		t.Fatalf("DeleteRun through Store adapter: %v", err)
+	}
+}
+
 func TestStorageClaimsTranslateFencedErrors(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemory()

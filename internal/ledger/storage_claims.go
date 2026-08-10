@@ -24,6 +24,9 @@ func newHolderID() string {
 }
 
 func (s *StorageLedgerRepository) ClaimRun(ctx context.Context, runID string, holder string) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
 	claim := storage.Claim{RunID: runID, Holder: holder}
 	var err error
 	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
@@ -44,6 +47,9 @@ func (s *StorageLedgerRepository) ClaimRun(ctx context.Context, runID string, ho
 }
 
 func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, holder string) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
 	s.mu.RLock()
 	claim := s.claimedRuns[runID]
 	s.mu.RUnlock()
@@ -66,6 +72,9 @@ func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, 
 }
 
 func (s *StorageLedgerRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
 	fenced, ok := s.store.(storage.FencedLeaseStore)
 	if !ok {
 		return ErrClaimHeld
@@ -87,6 +96,9 @@ func (s *StorageLedgerRepository) TakeoverExpiredRunClaim(ctx context.Context, r
 }
 
 func (s *StorageLedgerRepository) ClearRunClaim(ctx context.Context, runID string) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
 	if err := s.store.ClearClaim(ctx, runID); err != nil {
 		return err
 	}
@@ -99,10 +111,16 @@ func (s *StorageLedgerRepository) ClearRunClaim(ctx context.Context, runID strin
 }
 
 func (s *StorageLedgerRepository) StoreContent(ctx context.Context, ref string, data []byte) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
 	return s.store.PutContent(ctx, ref, data)
 }
 
 func (s *StorageLedgerRepository) LoadContent(ctx context.Context, ref string) ([]byte, error) {
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
 	data, err := s.store.GetContent(ctx, ref)
 	if err != nil {
 		if errors.Is(err, storage.ErrContentNotFound) {

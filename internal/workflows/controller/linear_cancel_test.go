@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -150,6 +151,22 @@ func TestCancelRunMissingRun(t *testing.T) {
 	t.Cleanup(func() { _ = repo.Close() })
 	if err := CancelRun(ctx, repo, "wfr-missing"); err != workflowledger.ErrNotFound {
 		t.Fatalf("CancelRun on a missing run = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCancelRunWithAttemptsWithClaimKeepsClaim(t *testing.T) {
+	ctx := context.Background()
+	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusRunning)
+	const holder = "cancel-holder"
+	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
+	if _, err := CancelRunWithAttemptsWithClaim(ctx, repo, runID, holder); err != nil {
+		t.Fatalf("CancelRunWithAttemptsWithClaim: %v", err)
+	}
+	if err := repo.ClaimRun(ctx, runID, "other-holder"); !errors.Is(err, workflowledger.ErrClaimHeld) {
+		t.Fatalf("claim after cancel settlement = %v, want ErrClaimHeld", err)
 	}
 }
 

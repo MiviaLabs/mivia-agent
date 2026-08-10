@@ -33,11 +33,23 @@ func CancelRunWithAttempts(ctx context.Context, repo workflowledger.Repository, 
 		return nil, fmt.Errorf("workflow ledger is nil")
 	}
 	holder := newWorkflowHolder()
-	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
 		return nil, err
 	}
 	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
+	return CancelRunWithAttemptsWithClaim(ctx, repo, runID, holder)
+}
+
+// CancelRunWithAttemptsWithClaim settles a run with holder's existing claim.
+// The caller must hold the claim and release it after this function returns.
+func CancelRunWithAttemptsWithClaim(ctx context.Context, repo workflowledger.Repository, runID, holder string) ([]workflowledger.StepAttempt, error) {
+	if repo == nil {
+		return nil, fmt.Errorf("workflow ledger is nil")
+	}
+	if holder == "" {
+		return nil, fmt.Errorf("workflow claim holder is required")
+	}
+	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {

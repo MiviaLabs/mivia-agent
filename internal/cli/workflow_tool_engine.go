@@ -281,10 +281,8 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 			return agenttools.CancelResult{}, err
 		}
 	}
-	// CancelRunWithAttempts mints and claims its own holder internally; drop
-	// ours first so its claim succeeds. Never clear a foreign claim.
-	_ = repo.ReleaseRun(context.Background(), runID, holder)
-	attempts, err := controller.CancelRunWithAttempts(ctx, repo, runID)
+	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
+	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, runID, holder)
 	if err != nil {
 		// Context cancel or a prior settle may already leave the run terminal.
 		run, getErr := repo.GetRun(ctx, runID)

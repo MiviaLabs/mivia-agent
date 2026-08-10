@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -32,6 +33,22 @@ func TestWorkflowForceResumeStopsBeforeClaimWorkWhenLockIsHeld(t *testing.T) {
 	err = runWorkflowWithIO([]string{"resume", "wfr-contended", "--force", "--workspace", rootPath, "--config", configPath}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "workflow execution lock") {
 		t.Fatalf("contended force resume error = %v, want execution lock failure", err)
+	}
+}
+
+func TestWorkflowForceResumeRefusesFreshClaim(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	const runID = "wfr-force-fresh"
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusPending}, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClaimRun(ctx, runID, "live-owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := claimWorkflowResumeHandoff(ctx, repo, runID, "resumer", true); err == nil || !strings.Contains(err.Error(), "still active") {
+		t.Fatalf("forced resume of a fresh claim = %v, want active-claim refusal", err)
 	}
 }
 

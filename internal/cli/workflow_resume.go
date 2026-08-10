@@ -207,11 +207,8 @@ func prepareWorkflowResumeExecution(ctx context.Context, built workflowControlle
 }
 
 // claimWorkflowResumeHandoff acquires the final controller claim without an
-// unowned clear-and-claim window. A forced resume replaces the claim atomically.
-func claimWorkflowResumeHandoff(ctx context.Context, repo workflowledger.Repository, runID, holder string, force bool) error {
-	if force {
-		return repo.TakeoverRunClaim(ctx, runID, holder)
-	}
+// unowned clear-and-claim window. It takes over only an expired claim.
+func claimWorkflowResumeHandoff(ctx context.Context, repo workflowledger.Repository, runID, holder string, _ bool) error {
 	err := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
 	if errors.Is(err, workflowledger.ErrClaimNotHeld) {
 		err = repo.ClaimRun(ctx, runID, holder)

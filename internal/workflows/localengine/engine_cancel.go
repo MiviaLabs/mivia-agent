@@ -44,10 +44,8 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelRes
 	if err := e.claimOrTakeoverExpired(ctx, runID, holder); err != nil {
 		return agenttools.CancelResult{}, err
 	}
-	// CancelRunWithAttempts mints and claims its own holder internally; drop
-	// ours first so its claim succeeds. Never clear a foreign claim.
-	_ = e.Repo.ReleaseRun(context.Background(), runID, holder)
-	attempts, err := controller.CancelRunWithAttempts(ctx, e.Repo, runID)
+	defer func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }()
+	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, e.Repo, runID, holder)
 	if err != nil {
 		// Context cancel may already have settled the run; treat terminal as success.
 		run, getErr := e.Repo.GetRun(ctx, runID)
