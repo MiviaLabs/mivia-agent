@@ -127,7 +127,7 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 		case eventKindDeliveryUpserted:
 			err = applyDeliveryUpserted(&proj, st, ev)
 		case eventKindRunDeleted:
-			err = applyRunDeleted(&proj)
+			err = applyRunDeleted(&proj, st)
 		}
 		if err != nil {
 			return Projection{}, err
@@ -146,8 +146,14 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 // tombstone is the durable deletion marker: folding it empties every read
 // surface (GetRun/ListRuns/ListEvents report the run absent), and a later
 // incarnation of the same run ID replays from an empty projection.
-func applyRunDeleted(proj *Projection) error {
+func applyRunDeleted(proj *Projection, st *rebuildState) error {
 	*proj = Projection{}
+	*st = rebuildState{
+		attemptIdx:  make(map[string]int),
+		loopIdx:     make(map[loopKey]int),
+		approvalIdx: make(map[string]int),
+		deliveryIdx: make(map[string]int),
+	}
 	return nil
 }
 
