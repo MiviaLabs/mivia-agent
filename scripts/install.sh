@@ -137,13 +137,13 @@ update_profile() {
   marker='# mivia installer: PATH'
   end_marker='# mivia installer: PATH END'
   path_line=$(path_command "$shell_name")
-  if [ -f "$profile" ] && awk -v start="$marker" -v path="$path_line" -v end="$end_marker" '
-    $0 == start {seen_start=1; next}
-    seen_start && $0 == path {seen_path=1; next}
-    seen_path && $0 == end {found=1}
-    END {exit found ? 0 : 1}
-  ' "$profile"; then
-    return 0
+  if [ -f "$profile" ]; then
+    marker_count=$(grep -F -x "$marker" "$profile" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$marker_count" -eq 1 ] &&
+      grep -F -x "$path_line" "$profile" >/dev/null 2>&1 &&
+      grep -F -x "$end_marker" "$profile" >/dev/null 2>&1; then
+      return 0
+    fi
   fi
   if [ -f "$profile" ]; then
     cleaned="$profile.mivia.$$"
