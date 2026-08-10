@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -424,10 +425,17 @@ func (s *StorageLedgerRepository) DeleteRun(ctx context.Context, runID string) e
 		return err
 	}
 	tombstone := s.newStoreEvent(runID, storageKindRunDeleted, []byte(`{"run_id":"`+runID+`"}`))
-	if err := s.appendStoreEvent(ctx, tombstone); err != nil {
-		return fmt.Errorf("store append run_deleted: %w", err)
+	atomicDeleter, ok := s.store.(storage.AtomicRunDeleter)
+	if !ok {
+		return fmt.Errorf("store does not support atomic run deletion")
 	}
-	if err := s.store.DeleteRun(ctx, runID, tombstone.Sequence-1); err != nil {
+	s.mu.RLock()
+	claim := s.claimedRuns[runID]
+	s.mu.RUnlock()
+	if err := atomicDeleter.AppendAndDeleteRun(ctx, tombstone, claim); err != nil {
+		if errors.Is(err, storage.ErrClaimHeld) {
+			return ErrClaimHeld
+		}
 		return fmt.Errorf("store delete run %q: %w", runID, err)
 	}
 	if err := s.mem.DeleteRun(ctx, runID); err != nil {

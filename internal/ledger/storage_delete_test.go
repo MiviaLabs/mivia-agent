@@ -38,6 +38,62 @@ func TestDeletedRunDoesNotResurrectInNextProcess(t *testing.T) {
 	}
 }
 
+func TestStorageLedgerDeleteRunRetriesAfterPhysicalDeleteFailure(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ledger.db")
+	store, err := storage.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := &failAtomicDeleteStore{Store: store, remaining: 1}
+	repo := NewStorageLedgerRepository(failing)
+	if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: "deleted", Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteRun(ctx, "deleted"); !errors.Is(err, errAtomicDelete) {
+		t.Fatalf("DeleteRun with injected failure = %v, want physical delete error", err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("close failed store: %v", err)
+	}
+	reopenedStore, err := storage.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopenedStore.Close() })
+	reopened := NewStorageLedgerRepository(reopenedStore)
+	if err := reopened.DeleteRun(ctx, "deleted"); err != nil {
+		t.Fatalf("DeleteRun retry after reopen: %v", err)
+	}
+	events, err := reopenedStore.Events(ctx, "deleted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Kind != storageKindRunDeleted {
+		t.Fatalf("events after retry = %#v, want only the deletion tombstone", events)
+	}
+}
+
+var errAtomicDelete = errors.New("injected atomic delete failure")
+
+type failAtomicDeleteStore struct {
+	storage.Store
+	remaining int
+}
+
+func (s *failAtomicDeleteStore) AppendAndDeleteRun(ctx context.Context, tombstone storage.Event, claim storage.Claim) error {
+	if s.remaining > 0 {
+		s.remaining--
+		return errAtomicDelete
+	}
+	atomicDeleter, ok := s.Store.(storage.AtomicRunDeleter)
+	if !ok {
+		return errors.New("wrapped store does not support atomic run deletion")
+	}
+	return atomicDeleter.AppendAndDeleteRun(ctx, tombstone, claim)
+}
+
 func TestDeleteRunKeepsChangesCursorMonotonic(t *testing.T) {
 	ctx := context.Background()
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))

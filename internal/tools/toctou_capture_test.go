@@ -97,7 +97,7 @@ func TestRunCommandMemoryBackstopLimitsUncappedCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "truncated at 4096 bytes") {
+	if !strings.Contains(out, "truncated at 2457 bytes") {
 		t.Fatalf("result has no true backstop notice: %q", out[:min(len(out), 300)])
 	}
 	if len(out) > backstop+1024 {

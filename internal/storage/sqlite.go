@@ -247,6 +247,47 @@ func (s *SQLite) DeleteRun(ctx context.Context, id string, through int) error {
 	}
 	return tx.Commit()
 }
+
+// AppendAndDeleteRun appends a deletion tombstone and deletes earlier events
+// and the claim in one SQLite transaction.
+func (s *SQLite) AppendAndDeleteRun(ctx context.Context, tombstone Event, claim Claim) error {
+	if len(tombstone.Payload) == 0 {
+		return fmt.Errorf("empty payload")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	var holder string
+	var fence uint64
+	err = tx.QueryRowContext(ctx, `SELECT holder, fence FROM run_claims WHERE run_id=?`, tombstone.RunID).Scan(&holder, &fence)
+	if err != nil && err != sql.ErrNoRows {
+		_ = tx.Rollback()
+		return err
+	}
+	if err == nil && (claim.Holder == "" || holder != claim.Holder || (claim.Fence != 0 && fence != claim.Fence)) {
+		_ = tx.Rollback()
+		return ErrClaimHeld
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO events(id,run_id,sequence,kind,payload) VALUES(?,?,?,?,?)`, tombstone.ID, tombstone.RunID, tombstone.Sequence, tombstone.Kind, tombstone.Payload); err != nil {
+		_ = tx.Rollback()
+		if isConstraint(err) {
+			return ErrDuplicate
+		}
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM events WHERE run_id = ? AND sequence < ?`, tombstone.RunID, tombstone.Sequence); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM run_claims WHERE run_id = ?`, tombstone.RunID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
 func (s *SQLite) events(ctx context.Context, q string, args ...any) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {

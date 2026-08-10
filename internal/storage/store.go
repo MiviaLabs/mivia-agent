@@ -86,6 +86,13 @@ type Store interface {
 	Close() error
 }
 
+// AtomicRunDeleter atomically appends a deletion tombstone and removes the
+// prior event history and claim for the same run. The supplied claim authorizes
+// the append when the run has an active claim.
+type AtomicRunDeleter interface {
+	AppendAndDeleteRun(context.Context, Event, Claim) error
+}
+
 // ExistingClaimAppender appends only when holder owns an existing claim.
 // Unlike Store.AppendClaimed, an unclaimed run is refused.
 type ExistingClaimAppender interface {
@@ -258,6 +265,28 @@ func (m *Memory) EventsSince(_ context.Context, runID string, afterSequence int)
 func (m *Memory) DeleteRun(_ context.Context, runID string, throughSequence int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.deleteRunLocked(runID, throughSequence)
+	return nil
+}
+
+// AppendAndDeleteRun appends a deletion tombstone and deletes earlier events
+// and the claim while holding one lock.
+func (m *Memory) AppendAndDeleteRun(_ context.Context, tombstone Event, claim Claim) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.claims[tombstone.RunID]; ok &&
+		(claim.Holder == "" || current.Holder != claim.Holder ||
+			(claim.Fence != 0 && current.Fence != claim.Fence)) {
+		return ErrClaimHeld
+	}
+	if err := m.appendLocked(tombstone); err != nil {
+		return err
+	}
+	m.deleteRunLocked(tombstone.RunID, tombstone.Sequence-1)
+	return nil
+}
+
+func (m *Memory) deleteRunLocked(runID string, throughSequence int) {
 	events := m.events[runID]
 	kept := events[:0]
 	for _, event := range events {
@@ -275,7 +304,6 @@ func (m *Memory) DeleteRun(_ context.Context, runID string, throughSequence int)
 		m.maxSeq[runID] = kept[len(kept)-1].Sequence
 	}
 	delete(m.claims, runID)
-	return nil
 }
 
 func (m *Memory) Changes(_ context.Context, afterCursor uint64) (map[string]int, uint64, error) {

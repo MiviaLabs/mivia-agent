@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
 // ---------------------------------------------------------------------------
@@ -108,6 +111,20 @@ func TestStorageRepository_DeleteRunClearsClaim(t *testing.T) {
 			requireErr(t, repo.ClaimRun(ctx, run, "holder-1"), nil, "ClaimRun")
 			requireErr(t, repo.DeleteRun(ctx, run), nil, "DeleteRun")
 			requireErr(t, repo.ClaimRun(ctx, run, "holder-2"), nil, "ClaimRun after delete")
+		})
+	}
+}
+
+func TestStorageRepository_DeleteRunUsesContextClaimHolder(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, json := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, json), nil, "CreateRun")
+			requireErr(t, repo.store.ClaimRun(ctx, run, "context-holder"), nil, "store ClaimRun")
+			deleteCtx := ContextWithClaimHolder(ctx, "context-holder")
+			requireErr(t, repo.DeleteRun(deleteCtx, run), nil, "DeleteRun with context holder")
 		})
 	}
 }
@@ -250,4 +267,65 @@ func TestStorageRepository_DeleteRunLeavesContentUntouched(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStorageRepository_DeleteRunRetriesAfterPhysicalDeleteFailure verifies
+// that an atomic deletion failure leaves a retryable durable run.
+func TestStorageRepository_DeleteRunRetriesAfterPhysicalDeleteFailure(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "wf.db")
+	store, err := storage.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	failing := &failDeleteStore{Store: store, remaining: 1}
+	repo := NewStorageRepository(failing)
+	repo.SetTimeSource(nowFixed)
+
+	run := runID(t)
+	snap, json := newRun(t, run)
+	requireErr(t, repo.CreateRun(ctx, snap, json), nil, "CreateRun")
+	if err := repo.DeleteRun(ctx, run); !errors.Is(err, errPhysicalDelete) {
+		t.Fatalf("DeleteRun with injected failure = %v, want physical delete error", err)
+	}
+
+	// Close only the store. This simulates a process stop after the failure.
+	if err := store.Close(); err != nil {
+		t.Fatalf("close failed store: %v", err)
+	}
+
+	reopenedStore, err := storage.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("reopen sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = reopenedStore.Close() })
+	reopened := NewStorageRepository(reopenedStore)
+	reopened.SetTimeSource(nowFixed)
+
+	requireErr(t, reopened.DeleteRun(ctx, run), nil, "DeleteRun retry after reopen")
+	if events, err := reopenedStore.Events(ctx, run); err != nil {
+		t.Fatalf("Events after retry: %v", err)
+	} else if len(events) != 1 || events[0].Kind != eventKindRunDeleted {
+		t.Fatalf("Events after retry = %#v, want only the deletion tombstone", events)
+	}
+	requireErr(t, reopenedStore.ClaimRun(ctx, run, "second-holder"), nil, "ClaimRun after retry")
+}
+
+var errPhysicalDelete = errors.New("injected physical delete failure")
+
+type failDeleteStore struct {
+	storage.Store
+	remaining int
+}
+
+func (s *failDeleteStore) AppendAndDeleteRun(ctx context.Context, tombstone storage.Event, claim storage.Claim) error {
+	if s.remaining > 0 {
+		s.remaining--
+		return errPhysicalDelete
+	}
+	atomicDeleter, ok := s.Store.(storage.AtomicRunDeleter)
+	if !ok {
+		return errors.New("wrapped store does not support atomic run deletion")
+	}
+	return atomicDeleter.AppendAndDeleteRun(ctx, tombstone, claim)
 }

@@ -238,6 +238,7 @@ func (t *runCommandTool) runCapture(cmd *exec.Cmd, callCtx context.Context, scop
 	cap := newDualCapture(limit)
 	if t.maxOut <= 0 {
 		cap = newMemoryBoundDualCapture(limit)
+		limit = cap.headQuota + cap.tailQuota
 	}
 	cmd.Stdout = cap.Stdout()
 	cmd.Stderr = cap.Stderr()
