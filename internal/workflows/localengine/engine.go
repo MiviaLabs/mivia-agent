@@ -207,6 +207,11 @@ func (e *Engine) finishInvocationAdmission(runID string, done chan struct{}) {
 }
 
 func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+	resumeDone, err := e.reserveResume(req.RunID)
+	if err != nil {
+		return agenttools.StartResult{}, err
+	}
+	defer e.finishResume(req.RunID, resumeDone)
 	run, err := e.Repo.GetRun(ctx, req.RunID)
 	if err != nil {
 		if errors.Is(err, workflowledger.ErrNotFound) {
@@ -224,11 +229,6 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	if !workflowledger.IsResumableRunStatus(run.Status) {
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q status %s is not resumable", req.RunID, run.Status)
 	}
-	resumeDone, err := e.reserveResume(req.RunID)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	defer e.finishResume(req.RunID, resumeDone)
 	if err := e.prepareResumeWorktree(ctx, run); err != nil {
 		return agenttools.StartResult{}, err
 	}
