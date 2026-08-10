@@ -283,7 +283,7 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 		return true, true, nil
 	}
 	if handled := m.handleWorkflowsSidebarKey(key); handled {
-		return true, true, nil
+		return true, true, m.takePendingWorkflowDialogCmd()
 	}
 	// Dashboard keys take priority when the dashboard panel is open. Only
 	// non-typable keys are bound: a bare rune here is swallowed before it can

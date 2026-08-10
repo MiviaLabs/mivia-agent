@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -81,6 +82,15 @@ type tuiModel struct {
 	sessionsSidebar *sessionsSidebar
 	// workflowsSidebar is the workflow-run list sidebar (nil = closed).
 	workflowsSidebar *workflowsSidebar
+	// workflowRunDlg is the workflow-run detail modal (nil = closed).
+	workflowRunDlg *workflowRunDialog
+	// workflowSvc is the in-process workflow tool service the run dialog
+	// routes actions through (nil when the workspace has no workflows).
+	workflowSvc *agenttools.Service
+	// pendingWorkflowDialogCmd carries the dialog's first async ledger read
+	// from an open path that has no tea.Cmd return of its own (sidebar key
+	// and mouse double-click).
+	pendingWorkflowDialogCmd tea.Cmd
 	// activeSession identifies the saved session loaded into this TUI. Nil means
 	// the current chat has no saved-session identity.
 	activeSession *chat.SessionInfo

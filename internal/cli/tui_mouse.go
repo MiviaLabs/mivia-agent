@@ -166,7 +166,9 @@ func (m *tuiModel) handleSessionsSidebarMouse(msg tea.MouseMsg, width int) {
 }
 
 // handleWorkflowsSidebarMouse applies one mouse event to the workflows
-// sidebar: wheel moves the cursor, a click selects the row and takes focus.
+// sidebar: wheel moves the cursor, a single click selects the row and takes
+// focus, and a double-click on a row selects and opens its run-detail dialog
+// (mirroring the sessions sidebar and transcript block double-click pattern).
 func (m *tuiModel) handleWorkflowsSidebarMouse(msg tea.MouseMsg, width int) {
 	sidebar := m.workflowsSidebar
 	if sidebar == nil {
@@ -184,7 +186,15 @@ func (m *tuiModel) handleWorkflowsSidebarMouse(msg tea.MouseMsg, width int) {
 		if !ok {
 			return
 		}
-		sidebar.cursor = cursor
+		now := time.Now()
+		if sidebar.doubleClick(cursor, now) {
+			sidebar.cursor = cursor
+			if row, ok := sidebar.selected(sidebar.rows); ok {
+				m.openWorkflowRunDialog(row)
+			}
+		} else {
+			sidebar.cursor = cursor
+		}
 		m.setFocus(focusWorkflowsSidebar)
 	}
 }
@@ -240,6 +250,9 @@ func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
 		visible := m.worktreeDlg.visibleRows(max(1, m.width), max(1, m.height))
 		m.worktreeDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
 		m.worktreeDlg.clampScrollTo(visible)
+	}
+	if m.workflowRunDlg != nil && wheel {
+		m.workflowRunDlg.move(delta*max(1, m.viewport.MouseWheelDelta), max(1, m.width), max(1, m.height))
 	}
 	return true
 }

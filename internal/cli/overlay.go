@@ -327,6 +327,9 @@ func (m *tuiModel) routeModalKey(key string) (bool, bool, []tea.Cmd) {
 	if m.effortDlg != nil {
 		return m.handleEffortDialogKey(key)
 	}
+	if m.workflowRunDlg != nil {
+		return m.handleWorkflowRunDialogKey(key)
+	}
 	if m.worktreeDlg != nil {
 		return m.handleWorktreeDialogKey(key)
 	}
@@ -334,7 +337,7 @@ func (m *tuiModel) routeModalKey(key string) (bool, bool, []tea.Cmd) {
 }
 
 func (m *tuiModel) closeModal() {
-	if m.overlay == nil && m.modelDlg == nil && m.agentDlg == nil && m.effortDlg == nil && m.worktreeDlg == nil {
+	if m.overlay == nil && m.modelDlg == nil && m.agentDlg == nil && m.effortDlg == nil && m.worktreeDlg == nil && m.workflowRunDlg == nil {
 		return
 	}
 	m.overlay = nil
@@ -342,6 +345,7 @@ func (m *tuiModel) closeModal() {
 	m.agentDlg = nil
 	m.effortDlg = nil
 	m.worktreeDlg = nil
+	m.workflowRunDlg = nil
 	m.hitMap.invalidate()
 }
 
