@@ -178,11 +178,33 @@ func TestSuggestPopupStaysInsideChatPaneWithSessionsSidebar(t *testing.T) {
 	m.textarea.SetCursor(1)
 	m.syncSuggest()
 
-	pane := newChatPaneLayout(m.width, true)
+	pane := newChatPaneLayout(m.width, true, false)
 	panel, size := renderSuggestPanel(m.suggest, pane.chatWidth, max(0, m.suggestComposerTop()-1))
 	got := suggestOverlayRect(m, panel, size)
 	if got.x < pane.chatX || got.x+got.w > pane.chatX+pane.chatWidth {
 		t.Fatalf("suggestion rect %#v is outside chat pane %#v", got, pane)
+	}
+}
+
+// TestSuggestWorkflowsCommandInCatalog pins that /workflows is discoverable
+// through the TUI slash catalog.
+func TestSuggestWorkflowsCommandInCatalog(t *testing.T) {
+	m := newReadyChatModel(24, 80)
+	m.textarea.SetValue("/work")
+	m.textarea.SetCursor(5)
+	m.syncSuggest()
+	if !m.suggest.open {
+		t.Fatal("suggestions did not open for /work")
+	}
+	found := false
+	for _, c := range m.suggest.commands {
+		if c.Name == "/workflows" && c.Surface == slashSurfaceTUI && c.AutoExecute {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("/workflows missing from suggestions: %#v", m.suggest.commands)
 	}
 }
 

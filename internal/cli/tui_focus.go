@@ -7,6 +7,7 @@ const (
 	focusComposer tuiFocus = iota
 	focusScrollback
 	focusSidebar
+	focusWorkflowsSidebar
 )
 
 func (f tuiFocus) String() string {
@@ -15,6 +16,8 @@ func (f tuiFocus) String() string {
 		return "scrollback"
 	case focusSidebar:
 		return "sidebar"
+	case focusWorkflowsSidebar:
+		return "workflows"
 	default:
 		return "composer"
 	}
@@ -40,6 +43,9 @@ func (m *tuiModel) nextTUIFocus(current tuiFocus, reverse bool) tuiFocus {
 	panes := []tuiFocus{focusComposer, focusScrollback}
 	if m.sidebarVisible() {
 		panes = append(panes, focusSidebar)
+	}
+	if m.workflowsSidebarVisible() {
+		panes = append(panes, focusWorkflowsSidebar)
 	}
 	for i, pane := range panes {
 		if pane != current {
@@ -94,6 +100,9 @@ func (m *tuiModel) setFocus(focus tuiFocus) {
 	if focus == focusSidebar && !m.sidebarVisible() {
 		focus = focusComposer
 	}
+	if focus == focusWorkflowsSidebar && !m.workflowsSidebarVisible() {
+		focus = focusComposer
+	}
 	m.focus = focus
 	if focus == focusComposer {
 		m.textarea.Focus()
@@ -104,5 +113,11 @@ func (m *tuiModel) setFocus(focus tuiFocus) {
 }
 
 func (m *tuiModel) sidebarVisible() bool {
-	return m.sessionsSidebar != nil && newChatPaneLayout(m.width, true).sidebarVisible
+	return m.sessionsSidebar != nil && newChatPaneLayout(m.width, m.sessionsSidebar != nil, m.workflowsSidebar != nil).sidebarVisible
+}
+
+// workflowsSidebarVisible reports whether the workflows sidebar is open and
+// the terminal is wide enough to draw it.
+func (m *tuiModel) workflowsSidebarVisible() bool {
+	return m.workflowsSidebar != nil && newChatPaneLayout(m.width, m.sessionsSidebar != nil, m.workflowsSidebar != nil).rightSidebarVisible
 }

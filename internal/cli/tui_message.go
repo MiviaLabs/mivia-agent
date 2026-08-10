@@ -2,7 +2,6 @@ package cli
 
 import (
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -34,7 +33,28 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.uiAdapter != nil {
 			cmds = append(cmds, m.uiAdapter.PollCmd())
 		}
+		// Runs started or advanced in other terminals reach the /workflows
+		// sidebar here. refreshWorkflowsSidebar throttles internally and
+		// returns a tea.Cmd, so this tick starts at most one ledger read per
+		// interval and that read runs off the update goroutine.
+		if cmd := m.refreshWorkflowsSidebar(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		return m, tea.Batch(cmds...)
+	case workflowsSidebarRefreshMsg:
+		// The ledger read ran off the update goroutine. Apply the rows only
+		// while the sidebar is still open (it may have been closed while the
+		// read was in flight); a failed read keeps the previous rows. The
+		// adapter poll chain is re-issued by the event or tick that triggered
+		// the refresh, so nothing more is needed here.
+		if m.workflowsSidebar != nil && msg.err == nil {
+			sidebar := m.workflowsSidebar
+			sidebar.rows = msg.rows
+			sidebar.dirty = false
+			sidebar.move(msg.rows, 0)
+			m.renderVP()
+		}
+		return m, nil
 	case tuiTickMsg:
 		if m.mode == modeChat && msg.bridge == m.bridge {
 			cmds = append(cmds, m.drainBridgeAndMaybeFinish()...)
@@ -58,6 +78,9 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 		m.clampModalState()
 		if m.focus == focusSidebar && !m.sidebarVisible() {
+			m.setFocus(focusComposer)
+		}
+		if m.focus == focusWorkflowsSidebar && !m.workflowsSidebarVisible() {
 			m.setFocus(focusComposer)
 		}
 		if m.mode == modeChat {
@@ -268,214 +291,6 @@ func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
 		return cmds
 	}
 	return nil
-}
-
-// handleMouseMsg updates selection/scroll from mouse input.
-// Returns true when the welcome-mode branch fully handled the event.
-func (m *tuiModel) handleMouseMsg(msg tea.MouseMsg, skipViewport *bool) bool {
-	if m.mode == modeWelcome {
-		if msg.Type == tea.MouseWheelUp {
-			if m.sessionSel > 0 {
-				m.sessionSel--
-			}
-		} else if msg.Type == tea.MouseWheelDown {
-			if m.sessionSel < len(m.sessions)-1 {
-				m.sessionSel++
-			}
-		} else if msg.Type == tea.MouseLeft {
-			idx := m.sessionIndexAtY(msg.Y)
-			if idx >= 0 {
-				now := time.Now()
-				if idx == m.lastClickIdx && now.Sub(m.lastClickAt) < 400*time.Millisecond {
-					m.sessionSel = idx
-					if err := m.openSelectedSession(); err == nil {
-						m.textarea.Placeholder = composerPlaceholder
-					} else {
-						m.welcomeNotice = "open failed: " + err.Error()
-					}
-					m.lastClickIdx = -1
-				} else {
-					m.sessionSel = idx
-					m.lastClickIdx = idx
-					m.lastClickAt = now
-				}
-			}
-		}
-		return true
-	}
-	if m.handleSidebarMouse(msg, skipViewport) {
-		return true
-	}
-	pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil)
-	if pane.sidebarVisible && msg.X >= pane.sidebarWidth && msg.X < pane.chatX {
-		// The divider and its padding are not interactive panes.
-		*skipViewport = true
-		return true
-	}
-	zone, hit := m.hitMap.hit(msg.Y)
-	if hit && zone.blockID != "" && (msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown) {
-		dir := 1
-		if msg.Type == tea.MouseWheelUp {
-			dir = -1
-		}
-		if m.adjustThinkingScroll(zone.blockID, dir) {
-			m.renderVP()
-			*skipViewport = true
-			m.noteUserScrolledUp()
-			return false
-		}
-	}
-	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelUp {
-		m.viewport.ScrollUp(m.viewport.MouseWheelDelta)
-		m.noteUserScrolledUp()
-		*skipViewport = true
-	}
-	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelDown {
-		m.viewport.ScrollDown(m.viewport.MouseWheelDelta)
-		if m.viewport.AtBottom() {
-			m.followOutput = true
-		}
-		*skipViewport = true
-	}
-	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseLeft {
-		if zone.blockID != "" {
-			m.handleTranscriptBlockClick(zone.blockID)
-		}
-	}
-	if hit && zone.kind == hitComposer && msg.Type == tea.MouseLeft {
-		m.selectedBlockID = ""
-		m.lastClickBlockID = ""
-		m.setFocus(focusComposer)
-		m.renderVP() // clear selection chrome
-	}
-	return false
-}
-
-// handleSidebarMouse routes input in the visible sidebar. Divider padding is
-// not part of either pane, so it remains inert.
-func (m *tuiModel) handleSidebarMouse(msg tea.MouseMsg, skipViewport *bool) bool {
-	pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil)
-	if !pane.sidebarVisible || msg.X < 0 || msg.X >= pane.sidebarWidth {
-		return false
-	}
-	*skipViewport = true
-	sidebar := m.sessionsSidebar
-	if sidebar.confirm != confirmNone {
-		return true
-	}
-	switch msg.Type {
-	case tea.MouseWheelUp:
-		sidebar.move(m.sessions, -1)
-		m.setFocus(focusSidebar)
-	case tea.MouseWheelDown:
-		sidebar.move(m.sessions, 1)
-		m.setFocus(focusSidebar)
-	case tea.MouseLeft:
-		cursor, ok := sidebar.cursorAt(m.sessions, pane.sidebarWidth, m.height, msg.Y)
-		if !ok {
-			return true
-		}
-		now := time.Now()
-		if sidebar.doubleClick(cursor, now) {
-			sidebar.cursor = cursor
-			if sidebar.selectsNewSession(m.sessions) {
-				m.startNewSession()
-			} else if m.workspaceSwitchBusy() {
-				m.appendInfo("(finish the current turn before opening a session)")
-			} else if session, ok := sidebar.selected(m.sessions); ok {
-				if err := m.openSessionInfo(session); err != nil {
-					m.appendInfo("open failed: " + err.Error())
-					m.renderVP()
-				}
-			}
-		} else {
-			sidebar.cursor = cursor
-		}
-		m.setFocus(focusSidebar)
-	}
-	return true
-}
-
-func mouseWheelDelta(msg tea.MouseMsg) (int, bool) {
-	if tea.MouseEvent(msg).IsWheel() {
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			return -1, true
-		case tea.MouseButtonWheelDown:
-			return 1, true
-		}
-	}
-	switch msg.Type {
-	case tea.MouseWheelUp:
-		return -1, true
-	case tea.MouseWheelDown:
-		return 1, true
-	default:
-		return 0, false
-	}
-}
-
-// handleModalMouse is the first mouse router. It consumes every modal event;
-// only wheel events are turned into modal navigation. Nothing can fall through
-// to transcript copy, hit-map selection, textarea focus, or viewport scrolling.
-func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
-	if !m.modalOpen() {
-		return false
-	}
-	delta, wheel := mouseWheelDelta(msg)
-	if m.overlay != nil && m.overlay.prefs.pager && wheel {
-		layout := m.overlay.layout(max(1, m.width), max(1, m.height))
-		m.overlay.renderedRows = m.overlay.rowsForLayout(max(1, layout.innerW), layout.pageH)
-		m.overlay.scroll(delta*max(1, m.viewport.MouseWheelDelta), max(1, layout.pageH))
-	}
-	if m.modelDlg != nil {
-		if wheel {
-			m.modelDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
-		}
-		if msg.Type == tea.MouseLeft || msg.Button == tea.MouseButtonLeft {
-			if row, ok := m.modelDlg.rowAtY(msg.Y, max(1, m.width), max(1, m.height)); ok {
-				for i, candidate := range m.modelDlg.rows {
-					if candidate == row && !candidate.header {
-						m.modelDlg.cursor = i
-						break
-					}
-				}
-			}
-		}
-	}
-	if m.worktreeDlg != nil && wheel {
-		visible := m.worktreeDlg.visibleRows(max(1, m.width), max(1, m.height))
-		m.worktreeDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
-		m.worktreeDlg.clampScrollTo(visible)
-	}
-	return true
-}
-
-// handleTranscriptBlockClick selects a chat block (or work: group). A second
-// click on the same ID within 400ms activates (toggle collapse) - same as Enter.
-// Root cause of “double-click does nothing”: mouse only set selection before.
-func (m *tuiModel) handleTranscriptBlockClick(blockID string) {
-	const doubleClick = 400 * time.Millisecond
-	now := time.Now()
-	// Double-click (or second click on same id within window) → activate.
-	if blockID == m.lastClickBlockID && now.Sub(m.lastClickAt) < doubleClick {
-		m.selectedBlockID = blockID
-		m.setFocus(focusScrollback)
-		_ = m.toggleSelectedBlock() // renderVP inside when successful
-		m.lastClickBlockID = ""
-		m.lastClickAt = time.Time{}
-		// If toggle no-op'd (divider), still refresh chrome.
-		if m.selectedBlockID == blockID {
-			m.renderVP()
-		}
-		return
-	}
-	// First click: select + chrome only.
-	m.selectedBlockID = blockID
-	m.setFocus(focusScrollback)
-	m.lastClickBlockID = blockID
-	m.lastClickAt = now
-	m.renderVP()
 }
 
 func (m *tuiModel) handleSlash(cmd string) bool {

@@ -143,6 +143,9 @@ func executeWorkflowRuns(root, configPath, statusFilter string, limit int, stdou
 		line := fmt.Sprintf("%s  %-16s %-16s %s", r.RunID, r.WorkflowName, r.Status, started)
 		if r.ActiveStepID != "" {
 			line += "  step=" + r.ActiveStepID
+			if next := workflowNextStep(root, r); next != "" {
+				line += "  next=" + next
+			}
 		}
 		fmt.Fprintln(stdout, line)
 	}
