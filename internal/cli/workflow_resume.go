@@ -419,9 +419,12 @@ func reconcileWorkflowTerminal(ctx context.Context, repo workflowledger.Reposito
 		plan.TerminalStatus = workflowledger.RunStatusDeliveryPending
 	}
 	if !workflowledger.IsTerminalRunStatus(plan.Run.Status) && plan.TerminalStatus != plan.Run.Status {
-		if err := repo.ClearRunClaim(ctx, runID); err != nil {
+		holder := newWorkflowCancelHolder()
+		if err := claimWorkflowOperator(ctx, repo, runID, holder); err != nil {
 			return false, err
 		}
+		defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
+		ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
 		from := plan.Run
 		// waiting_approval has no direct edge to a terminal status (the edge
 		// table only allows running/failed/canceled/timed_out); step through

@@ -24,8 +24,10 @@ func newHolderID() string {
 }
 
 func (s *StorageLedgerRepository) ClaimRun(ctx context.Context, runID string, holder string) error {
-	if err := s.checkOpen(); err != nil {
-		return err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
 	}
 	claim := storage.Claim{RunID: runID, Holder: holder}
 	var err error
@@ -40,9 +42,7 @@ func (s *StorageLedgerRepository) ClaimRun(ctx context.Context, runID string, ho
 		}
 		return err
 	}
-	s.mu.Lock()
 	s.claimedRuns[runID] = claim
-	s.mu.Unlock()
 	return nil
 }
 
@@ -72,8 +72,10 @@ func (s *StorageLedgerRepository) ReleaseRun(ctx context.Context, runID string, 
 }
 
 func (s *StorageLedgerRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
-	if err := s.checkOpen(); err != nil {
-		return err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
 	}
 	fenced, ok := s.store.(storage.FencedLeaseStore)
 	if !ok {
@@ -89,9 +91,7 @@ func (s *StorageLedgerRepository) TakeoverExpiredRunClaim(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
 	s.claimedRuns[runID] = claim
-	s.mu.Unlock()
 	return nil
 }
 

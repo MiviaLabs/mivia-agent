@@ -11,6 +11,35 @@ import (
 
 type unfencedClaimStore struct{ storage.Store }
 
+type blockedFencedClaimStore struct {
+	storage.Store
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockedFencedClaimStore) ClaimRunFenced(ctx context.Context, runID, holder string) (storage.Claim, error) {
+	select {
+	case <-s.entered:
+		return s.Store.(storage.FencedLeaseStore).ClaimRunFenced(ctx, runID, holder)
+	default:
+		close(s.entered)
+		<-s.release
+	}
+	return s.Store.(storage.FencedLeaseStore).ClaimRunFenced(ctx, runID, holder)
+}
+
+func (s *blockedFencedClaimStore) TakeoverExpiredClaimFenced(ctx context.Context, runID, holder string, maxAge time.Duration) (storage.Claim, error) {
+	return s.Store.(storage.FencedLeaseStore).TakeoverExpiredClaimFenced(ctx, runID, holder, maxAge)
+}
+
+func (s *blockedFencedClaimStore) AppendClaimedFenced(ctx context.Context, event storage.Event, claim storage.Claim) error {
+	return s.Store.(storage.FencedLeaseStore).AppendClaimedFenced(ctx, event, claim)
+}
+
+func (s *blockedFencedClaimStore) ReleaseClaimFenced(ctx context.Context, claim storage.Claim) error {
+	return s.Store.(storage.FencedLeaseStore).ReleaseClaimFenced(ctx, claim)
+}
+
 func TestStorageClaimsFallbackStore(t *testing.T) {
 	ctx := context.Background()
 	store := &unfencedClaimStore{Store: storage.NewMemory()}
@@ -40,6 +69,32 @@ func TestStorageClaimsRejectClosedRepository(t *testing.T) {
 	}
 	if err := repo.ClaimRun(ctx, "run", "owner"); !errors.Is(err, ErrClosed) {
 		t.Fatalf("ClaimRun after Close = %v, want ErrClosed", err)
+	}
+}
+
+func TestStorageClaimsRejectClaimThatRacesClose(t *testing.T) {
+	ctx := context.Background()
+	store := &blockedFencedClaimStore{
+		Store:   storage.NewMemory(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	repo := NewStorageLedgerRepository(store)
+	claimDone := make(chan error, 1)
+	go func() { claimDone <- repo.ClaimRun(ctx, "run", "owner") }()
+	<-store.entered
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- repo.Close() }()
+	close(store.release)
+	if err := <-claimDone; err != nil {
+		t.Fatalf("ClaimRun racing Close = %v, want success before Close completes", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatal(err)
+	}
+	peer := NewBorrowedStorageLedgerRepository(store)
+	if err := peer.ClaimRun(ctx, "run", "peer"); err != nil {
+		t.Fatalf("peer ClaimRun after close race = %v, want success", err)
 	}
 }
 
