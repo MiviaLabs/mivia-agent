@@ -149,7 +149,7 @@ HEAD 1234567
 
 malformed line without a space
 `
-	prefix := "/repo/.mivia/worktrees/"
+	prefix := filepath.Join("/repo", ".mivia", "worktrees") + string(filepath.Separator)
 	got, err := parseWorktreeList(out, prefix)
 	if err != nil {
 		t.Fatalf("parseWorktreeList: %v", err)
@@ -201,8 +201,9 @@ func TestResolveNotGitRepo(t *testing.T) {
 // first worktree line wins and a listing without one yields NotGitRepoError.
 func TestMainWorktreeFromListing(t *testing.T) {
 	got, err := mainWorktreeFromListing("worktree /repo\nbranch refs/heads/main\n", "")
-	if err != nil || got != "/repo" {
-		t.Fatalf("mainWorktreeFromListing = %q, %v; want /repo", got, err)
+	want := filepath.Clean(filepath.FromSlash("/repo"))
+	if err != nil || got != want {
+		t.Fatalf("mainWorktreeFromListing = %q, %v; want %q", got, err, want)
 	}
 	if _, err := mainWorktreeFromListing("bare\n", "/nowhere"); err == nil {
 		t.Fatal("expected NotGitRepoError for a listing without a worktree line")
@@ -276,7 +277,7 @@ func TestRemoveGitCommandFailure(t *testing.T) {
 // the final worktree block when the input does not end with a trailing blank line.
 // This is the regression test for the bug where the last block was silently dropped.
 func TestParseWorktreeListFlushesLastBlock(t *testing.T) {
-	prefix := "/repo/.mivia/worktrees/"
+	prefix := filepath.Join("/repo", ".mivia", "worktrees") + string(filepath.Separator)
 
 	// (a) Single block with no trailing newline at all.
 	a := "worktree /repo/.mivia/worktrees/wt-a\nbranch refs/heads/wt/wt-a\nHEAD abc1234"
@@ -335,7 +336,7 @@ func TestParseWorktreeListEmptyInput(t *testing.T) {
 // current block. A valid block following malformed lines must still parse
 // correctly.
 func TestParseWorktreeListMalformedKeys(t *testing.T) {
-	prefix := "/repo/.mivia/worktrees/"
+	prefix := filepath.Join("/repo", ".mivia", "worktrees") + string(filepath.Separator)
 	out := `bare
 locked reason
 worktree /repo/.mivia/worktrees/wt-x

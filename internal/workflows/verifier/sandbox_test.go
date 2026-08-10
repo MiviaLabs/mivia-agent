@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -38,7 +39,11 @@ func TestSandboxPreservesExecutableFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode()&0o111 == 0 {
+	// Windows has no Unix permission bits: a 0700 source is reported as
+	// 0666 there because the mode only tracks the read-only attribute, so
+	// the exec-bit contract is asserted only where the filesystem can
+	// express it (the copy itself is still verified as a regular file).
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		t.Fatalf("sandbox copied non-executable file mode %v", info.Mode())
 	}
 }
@@ -251,6 +256,14 @@ func TestSandboxDisablesGoWorkspaceMode(t *testing.T) {
 }
 
 func TestSandboxedCommandClassifiesStdoutBwrapPrefixAsSource(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// The test runs a sandboxed command through a bwrap passthrough
+		// stub. Bubblewrap is a Linux-only capability (namespaces), so the
+		// sandbox cannot execute on Windows; the equivalent supported
+		// contract is the host-class classification the sibling tests
+		// cover. macOS runs the stub through POSIX sh like Linux.
+		t.Skip("bwrap sandbox is a Linux-only capability; the unavailable classification is covered by the sibling tests")
+	}
 	stubBubblewrapPath(t, writeFakeBwrapPassthrough(t))
 	stubGitPath(t, writeFakeGit(t))
 

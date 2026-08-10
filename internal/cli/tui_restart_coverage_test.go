@@ -39,7 +39,15 @@ func TestRunTUIReturnsRequestedWorkspaceRestart(t *testing.T) {
 		inputWriter = pipeWriter
 	}
 	oldInput := os.Stdin
-	os.Stdin = input
+	// On Unix the pty slave is also made the process stdin so any code that
+	// probes the controlling terminal sees the pty. On Windows the pipe must
+	// NOT become os.Stdin: bubbletea treats an input whose fd equals
+	// os.Stdin's fd as console input and then tries to open CONIN$, which
+	// does not exist under a CI runner. Leaving os.Stdin alone routes the
+	// pipe through the plain cancel-reader path instead.
+	if runtime.GOOS != "windows" {
+		os.Stdin = input
+	}
 	origInputOption := tuiInputOption
 	tuiInputOption = func() tea.ProgramOption { return tea.WithInput(input) }
 	t.Cleanup(func() {

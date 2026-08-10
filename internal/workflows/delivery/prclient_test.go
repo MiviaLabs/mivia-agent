@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -77,7 +78,24 @@ func TestParseOwnerRepo(t *testing.T) {
 func writeFakeGH(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	scheme := `#!/bin/sh
+	scheme := fakeGHScript()
+	name := "gh"
+	if runtime.GOOS == "windows" {
+		name = "gh.cmd"
+		scheme = fakeGHScriptWindows()
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(scheme), 0o755); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// fakeGHScript returns the POSIX fake gh double. See the contract in the
+// writeFakeGH doc comment; the Windows translation lives in
+// prclient_fakegh_windows_test.go.
+func fakeGHScript() string {
+	return `#!/bin/sh
 for arg in "$@"; do
   case "$arg" in
     *baseRefOid*)
@@ -111,11 +129,6 @@ if [ -n "$GH_EXIT" ]; then
 fi
 printf '%s' "$GH_STDOUT"
 `
-	path := filepath.Join(dir, "gh")
-	if err := os.WriteFile(path, []byte(scheme), 0o755); err != nil {
-		t.Fatalf("write fake gh: %v", err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func readRecordedArgs(t *testing.T) []string {
@@ -138,7 +151,45 @@ func readRecordedFileArgs(t *testing.T, envName string) []string {
 	if text == "" {
 		return nil
 	}
+	if runtime.GOOS == "windows" {
+		// The gh.cmd double records argv space-joined (batch cannot split
+		// arguments onto separate lines without re-splitting comma lists
+		// like --json a,b). cmd.exe preserves the quoting exec.Command
+		// applied, so a quote-aware split recovers the same argv.
+		return splitQuotedFields(text)
+	}
 	return strings.Split(text, "\n")
+}
+
+// splitQuotedFields splits text into fields on whitespace, honoring double
+// quotes (which are dropped), so an argv recorded by cmd.exe as %* parses
+// back into the original arguments even when one of them contains spaces.
+func splitQuotedFields(text string) []string {
+	text = strings.TrimSpace(text) // echo %* appends CRLF
+	var fields []string
+	var cur strings.Builder
+	inQuote := false
+	for i := 0; i < len(text); i++ {
+		switch c := text[i]; {
+		case c == '"':
+			inQuote = !inQuote
+		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
+			if !inQuote {
+				if cur.Len() > 0 {
+					fields = append(fields, cur.String())
+					cur.Reset()
+				}
+				continue
+			}
+			cur.WriteByte(c)
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		fields = append(fields, cur.String())
+	}
+	return fields
 }
 
 // assertGHEnv checks that the fake gh child ran with prompts disabled
@@ -150,7 +201,8 @@ func assertGHEnv(t *testing.T) {
 		t.Fatalf("read recorded env: %v", err)
 	}
 	seenPrompt := false
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
 		if strings.HasPrefix(line, "GIT_DIR=") || strings.HasPrefix(line, "GIT_TERMINAL_PROMPT=") {
 			t.Errorf("env leaks pinned variable %q", line)
 		}

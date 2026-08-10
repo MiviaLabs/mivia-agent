@@ -234,6 +234,10 @@ func validateWorktreeBranchPrefix(prefix, sanitisedName string) error {
 // The main worktree is filtered out.
 func List(ctx context.Context, repoRoot string) ([]WorktreeInfo, error) {
 	root, _ := filepath.Abs(repoRoot) // Abs only fails if Getwd fails; git errors otherwise
+	// Expand Windows 8.3 short names before comparing: git prints the long
+	// form, so a short-form root would otherwise produce a prefix that no
+	// listed worktree path starts with and List would silently return none.
+	root = workspace.LongPath(root)
 	if err := ensureGitRepo(root); err != nil {
 		return nil, err
 	}
@@ -308,7 +312,9 @@ func RepoRoot(dir string) (string, error) {
 	if err != nil {
 		return "", NotGitRepoError{Dir: dir}
 	}
-	return strings.TrimSpace(string(out)), nil
+	// Git prints forward slashes on every platform; normalize to the native
+	// form so callers join and compare it against local paths.
+	return filepath.Clean(filepath.FromSlash(strings.TrimSpace(string(out)))), nil
 }
 
 // CurrentWorktreeName returns the mivia worktree name if dir is inside a

@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"unsafe"
@@ -52,5 +53,20 @@ func openMarkerExcludeLockFile(root *os.Root, path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.NewFile(uintptr(handle), filepath.Base(path)), nil
+	file := os.NewFile(uintptr(handle), filepath.Base(path))
+	// FILE_OPEN_REPARSE_POINT opens the reparse point itself instead of
+	// following it, so a final-component symlink must be rejected after the
+	// open, matching the Unix O_NOFOLLOW contract: the lock is a place where
+	// an attacker would plant a link, and the handle must never name the
+	// link's target.
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		file.Close()
+		return nil, fmt.Errorf("Git exclude lock is a symlink")
+	}
+	return file, nil
 }

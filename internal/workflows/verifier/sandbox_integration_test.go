@@ -15,7 +15,11 @@ import (
 
 func TestSandboxRunsRepositoryProfile(t *testing.T) {
 	if _, err := sandboxBubblewrapPath(); err != nil {
-		t.Fatalf("bubblewrap is unavailable: %v", err)
+		// Bubblewrap is a Linux-only capability. The test proves the real
+		// sandbox executes a repository profile; on platforms (or machines)
+		// where the capability cannot exist it skips, exactly like the
+		// sibling gate test below.
+		t.Skipf("bubblewrap is unavailable: %v", err)
 	}
 	root := sandboxRepositoryRoot(t)
 	baseline, err := CaptureGoModuleBaseline(root)
