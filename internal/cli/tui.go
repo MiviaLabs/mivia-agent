@@ -79,6 +79,8 @@ type tuiModel struct {
 	overlay *blockOverlay
 	// sessionsSidebar is the session list sidebar (nil = closed).
 	sessionsSidebar *sessionsSidebar
+	// workflowsSidebar is the workflow-run list sidebar (nil = closed).
+	workflowsSidebar *workflowsSidebar
 	// activeSession identifies the saved session loaded into this TUI. Nil means
 	// the current chat has no saved-session identity.
 	activeSession *chat.SessionInfo

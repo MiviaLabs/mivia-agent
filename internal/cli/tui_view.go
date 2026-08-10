@@ -45,7 +45,7 @@ func (m *tuiModel) renderChatView() string {
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
 	}
 	if m.suggest.open {
-		pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil)
+		pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil, m.workflowsSidebar != nil)
 		panel, size := renderSuggestPanel(m.suggest, max(1, pane.chatWidth), max(0, m.suggestComposerTop()-1))
 		if panel != "" {
 			return overlayAt(base, panel, suggestOverlayRect(m, panel, size), max(1, m.width), max(8, m.height))
@@ -121,8 +121,8 @@ func (m *tuiModel) sidebarLiveStatus() sidebarLiveStatus {
 }
 
 func (m *tuiModel) renderBaseChatView() string {
-	pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil)
-	if !pane.sidebarVisible {
+	pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil, m.workflowsSidebar != nil)
+	if !pane.sidebarVisible && !pane.rightSidebarVisible {
 		return m.renderChatPane()
 	}
 	// The chat renderer uses m.width as its layout input. Scope the temporary
@@ -131,10 +131,23 @@ func (m *tuiModel) renderBaseChatView() string {
 	m.width = pane.chatWidth
 	chat := m.renderChatPane()
 	m.width = width
-	sidebar := m.sessionsSidebar.viewWithActive(m.sessions, pane.sidebarWidth, max(1, m.height), m.focus == focusSidebar, m.activeSession, m.sidebarLiveStatus())
 	padding := paneSpacer(pane.dividerPadding, max(1, m.height))
 	divider := sidebarDivider(pane.dividerWidth, max(1, m.height))
-	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, padding, divider, padding, chat)
+	var parts []string
+	if pane.sidebarVisible {
+		parts = append(parts,
+			m.sessionsSidebar.viewWithActive(m.sessions, pane.sidebarWidth, max(1, m.height), m.focus == focusSidebar, m.activeSession, m.sidebarLiveStatus()),
+			padding, divider, padding,
+		)
+	}
+	parts = append(parts, chat)
+	if pane.rightSidebarVisible && m.workflowsSidebar != nil {
+		parts = append(parts,
+			padding, divider, padding,
+			m.workflowsSidebar.view(pane.rightSidebarWidth, max(1, m.height), m.focus == focusWorkflowsSidebar),
+		)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
 func (m *tuiModel) renderChatPane() string {
@@ -193,11 +206,29 @@ func (m *tuiModel) renderChatPane() string {
 	}
 	out := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	outLines := strings.Split(out, "\n")
+	// JoinVertical pads every line to the widest part, and the fixed hint
+	// string can exceed the chat pane once a sidebar shrinks it (the
+	// /workflows right sidebar drops the pane below the hint width). Bound
+	// the block to the pane width so the horizontal sidebar composition stays
+	// exact; lines at or under the width pass through untouched.
+	//
+	// Only a sidebar needs this bound: without one, renderChatPane is the
+	// whole frame and there is no horizontal composition to keep exact.
+	// Clamping there would wrap a long hint (the select-mode line plus the
+	// quit arm notice) onto a second line, push the frame past termH, and
+	// the bottom trim below would drop the quit-arm/notice tail from view.
+	if m.sessionsSidebar != nil || m.workflowsSidebar != nil {
+		for i := range outLines {
+			if lipgloss.Width(outLines[i]) > m.width {
+				outLines[i] = lipgloss.NewStyle().MaxWidth(max(1, m.width)).Render(outLines[i])
+			}
+		}
+	}
 	if len(outLines) > termH {
 		// Prefer keeping status (top) - drop from middle by trimming body.
-		out = strings.Join(outLines[:termH], "\n")
+		outLines = outLines[:termH]
 	}
-	return out
+	return strings.Join(outLines, "\n")
 }
 
 type chatViewLayout struct {

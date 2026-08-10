@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -216,7 +217,7 @@ func TestTUIMouseSidebarDividerLanesDoNotReachEitherPane(t *testing.T) {
 	m.mode = modeChat
 	m.sessionsSidebar = newSessionsSidebar()
 	m.setFocus(focusScrollback)
-	pane := newChatPaneLayout(m.width, true)
+	pane := newChatPaneLayout(m.width, true, false)
 	m.hitMap.rebuild(m.width, m.height, 0, 0, 0, -1, 1, 1, nil, 0)
 
 	for x := pane.sidebarWidth; x < pane.chatX; x++ {
@@ -342,5 +343,65 @@ func TestTUIMouseStaleCoordinates(t *testing.T) {
 
 	if _, ok := h.hit(5); ok {
 		t.Fatal("stale hit-map coordinate remained active after invalidation")
+	}
+}
+
+// TestTUIMouseRightSidebarRowsSelectAndWheelMove covers the right-sidebar
+// region: click-to-focus, row selection, and wheel movement.
+func TestTUIMouseRightSidebarRowsSelectAndWheelMove(t *testing.T) {
+	m := newReadyChatModel(24, 100)
+	m.mode = modeChat
+	m.workflowsSidebar = newWorkflowsSidebar()
+	m.workflowsSidebar.rows = []workflowRunRow{
+		{run: workflowledger.RunSnapshot{RunID: "wfr-1", WorkflowName: "alpha", Status: workflowledger.RunStatusRunning, ActiveStepID: "start"}},
+		{run: workflowledger.RunSnapshot{RunID: "wfr-2", WorkflowName: "beta", Status: workflowledger.RunStatusPending}},
+	}
+	m.setFocus(focusScrollback)
+	m.hitMap.rebuild(m.width, m.height, 0, 0, 0, -1, 1, 1, nil, 0)
+	pane := newChatPaneLayout(m.width, false, true)
+
+	// Rows start at y=workflowsRowsY; row 0 occupies lines y=2..3.
+	x := pane.rightSidebarX() + 1
+	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: workflowsRowsY})
+	if m.focus != focusWorkflowsSidebar {
+		t.Fatalf("click focus = %v, want workflows sidebar", m.focus)
+	}
+	if m.workflowsSidebar.cursor != 0 {
+		t.Fatalf("click cursor = %d, want first row", m.workflowsSidebar.cursor)
+	}
+
+	// Click the second row.
+	m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: workflowsRowsY + 2})
+	if m.workflowsSidebar.cursor != 1 {
+		t.Fatalf("click cursor = %d, want second row", m.workflowsSidebar.cursor)
+	}
+
+	// Wheel up moves back to the first row.
+	m.Update(tea.MouseMsg{Type: tea.MouseWheelUp, X: x, Y: workflowsRowsY + 2})
+	if m.workflowsSidebar.cursor != 0 {
+		t.Fatalf("wheel cursor = %d, want first row", m.workflowsSidebar.cursor)
+	}
+}
+
+// TestTUIMouseRightSidebarDividerLanesStayInert covers the right divider
+// region: it stops viewport input and changes no focus.
+func TestTUIMouseRightSidebarDividerLanesStayInert(t *testing.T) {
+	m := newReadyChatModel(24, 100)
+	m.mode = modeChat
+	m.workflowsSidebar = newWorkflowsSidebar()
+	m.setFocus(focusScrollback)
+	pane := newChatPaneLayout(m.width, false, true)
+	m.hitMap.rebuild(m.width, m.height, 0, 0, 0, -1, 1, 1, nil, 0)
+
+	for x := pane.chatX + pane.chatWidth; x < pane.rightSidebarX(); x++ {
+		skipViewport := false
+		m.setFocus(focusScrollback)
+		m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: 1}, &skipViewport)
+		if !skipViewport {
+			t.Fatalf("x %d: right divider lane did not stop viewport input", x)
+		}
+		if m.focus != focusScrollback {
+			t.Fatalf("x %d: right divider lane changed focus to %v", x, m.focus)
+		}
 	}
 }

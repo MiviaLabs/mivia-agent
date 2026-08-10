@@ -50,6 +50,8 @@ const (
 	scopeOverlay
 	// scopeSessions applies inside the /sessions manager.
 	scopeSessions
+	// scopeWorkflows applies inside the /workflows manager.
+	scopeWorkflows
 	// scopeWelcome applies on the welcome screen.
 	scopeWelcome
 )
@@ -68,6 +70,8 @@ func (s keyScope) String() string {
 		return "overlay"
 	case scopeSessions:
 		return "sessions"
+	case scopeWorkflows:
+		return "workflows"
 	case scopeWelcome:
 		return "welcome"
 	default:
@@ -166,6 +170,11 @@ var keyRegistry = []binding{
 	{keys: []string{"end", "G"}, scope: scopeSessions, group: "In /sessions", help: "Last session"},
 	{keys: []string{"y", "n"}, scope: scopeSessions, group: "In /sessions", help: "Confirm / cancel a delete or purge"},
 	{keys: []string{"esc", "q"}, scope: scopeSessions, group: "In /sessions", help: "Close"},
+
+	// ── Workflows manager ────────────────────────────────────────────────
+	{keys: []string{"up", "down", "j", "k"}, scope: scopeWorkflows, group: "In /workflows", help: "Move"},
+	{keys: []string{"enter"}, scope: scopeWorkflows, group: "In /workflows", help: "Print the run id and status"},
+	{keys: []string{"esc"}, scope: scopeWorkflows, group: "In /workflows", help: "Close"},
 
 	// ── Worktrees manager (shares navigation, enter, d, y/n, esc with /sessions) ─
 	{keys: []string{"b"}, scope: scopeSessions, group: "In /worktrees", help: "Switch to main tree"},

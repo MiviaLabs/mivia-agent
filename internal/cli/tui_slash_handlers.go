@@ -49,6 +49,8 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return m.handleTuiMiscSlash(cmd, fields)
 	case "/resume":
 		return m.handleTuiResumeSlash(cmd, fields)
+	case "/workflows":
+		return m.handleTuiWorkflowsSlash()
 	case "/hooks":
 		m.appendInfo(hooksSlashOutput(fields))
 		return true
@@ -258,7 +260,7 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 		} else {
 			m.appendInfo("sessions refresh failed: " + err.Error())
 		}
-		if !newChatPaneLayout(m.width, true).sidebarVisible {
+		if !newChatPaneLayout(m.width, true, m.workflowsSidebar != nil).sidebarVisible {
 			m.appendInfo("sessions sidebar needs a wider terminal")
 			return true
 		}
@@ -273,6 +275,31 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 	default:
 		return false
 	}
+}
+
+// handleTuiWorkflowsSlash toggles the workflow-run sidebar. The first use
+// opens it, the second closes it; esc closes it too. It refuses when the
+// right sidebar does not fit next to the chat pane.
+func (m *tuiModel) handleTuiWorkflowsSlash() bool {
+	if m.workflowsSidebar != nil {
+		m.workflowsSidebar = nil
+		m.setFocus(focusComposer)
+		m.layout()
+		m.renderVP()
+		return true
+	}
+	if !newChatPaneLayout(m.width, m.sessionsSidebar != nil, true).rightSidebarVisible {
+		m.appendInfo("workflows sidebar needs a wider terminal")
+		return true
+	}
+	m.workflowsSidebar = newWorkflowsSidebar()
+	// The first population is async: the ledger read runs off the update
+	// goroutine and is triggered by the next uiTickMsg heartbeat (or a
+	// workflow event), so opening the sidebar never blocks on the ledger.
+	m.setFocus(focusWorkflowsSidebar)
+	m.layout()
+	m.renderVP()
+	return true
 }
 
 // handleTuiSessionStoreSlash handles /save, /load, /list, /delete, /session.

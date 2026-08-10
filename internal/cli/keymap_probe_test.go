@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // Router → registry: find keys the handlers really act on.
@@ -45,12 +46,16 @@ func fingerprint(m *tuiModel) string {
 	if m.sessionsSidebar != nil {
 		sidebar = fmt.Sprintf("%d/%d/%s/%d", m.sessionsSidebar.cursor, m.sessionsSidebar.confirm, m.sessionsSidebar.notice, m.sessionsSidebar.scroll)
 	}
+	workflows := ""
+	if m.workflowsSidebar != nil {
+		workflows = fmt.Sprintf("%d/%d", m.workflowsSidebar.cursor, m.workflowsSidebar.scroll)
+	}
 	ov := ""
 	if m.overlay != nil {
 		ov = fmt.Sprintf("%d", m.overlay.yOffset)
 	}
-	return fmt.Sprintf("dash=%s sidebar=%s ov=%s suggest=%v/%d/%d sel=%d mode=%d focus=%d block=%s mouse=%v draft=%q vp=%d follow=%v",
-		dash, sidebar, ov, m.suggest.open, len(m.suggest.commands), m.suggest.selected, m.sessionSel, m.mode, m.focus, m.selectedBlockID,
+	return fmt.Sprintf("dash=%s sidebar=%s workflows=%s ov=%s suggest=%v/%d/%d sel=%d mode=%d focus=%d block=%s mouse=%v draft=%q vp=%d follow=%v",
+		dash, sidebar, workflows, ov, m.suggest.open, len(m.suggest.commands), m.suggest.selected, m.sessionSel, m.mode, m.focus, m.selectedBlockID,
 		m.mouseEnabled, m.textarea.Value(), m.viewport.YOffset, m.followOutput)
 }
 
@@ -95,6 +100,19 @@ func boundKeyProbes(t *testing.T) []keyProbe {
 		m.setFocus(focusSidebar)
 	}, func(m *tuiModel, key string) {
 		m.handleSidebarKey(key)
+	})...)
+
+	// Workflows manager (non-modal right sidebar).
+	all = append(all, probeSurface(t, scopeWorkflows, func(m *tuiModel) {
+		m.width = 100
+		m.workflowsSidebar = newWorkflowsSidebar()
+		m.workflowsSidebar.rows = []workflowRunRow{
+			{run: workflowledger.RunSnapshot{RunID: "wfr-1", WorkflowName: "one", Status: workflowledger.RunStatusRunning}},
+			{run: workflowledger.RunSnapshot{RunID: "wfr-2", WorkflowName: "two", Status: workflowledger.RunStatusPending}},
+		}
+		m.setFocus(focusWorkflowsSidebar)
+	}, func(m *tuiModel, key string) {
+		m.handleWorkflowsSidebarKey(key)
 	})...)
 
 	// Block/help/status overlay.

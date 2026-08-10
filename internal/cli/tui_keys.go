@@ -282,6 +282,9 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	if handled := m.handleSidebarKey(key); handled {
 		return true, true, nil
 	}
+	if handled := m.handleWorkflowsSidebarKey(key); handled {
+		return true, true, nil
+	}
 	// Dashboard keys take priority when the dashboard panel is open. Only
 	// non-typable keys are bound: a bare rune here is swallowed before it can
 	// reach the composer, so "k"/"j" made words like "just" untypable and "r"
@@ -306,7 +309,7 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	}
 	// Tab cycles focusable bubbles in history (not only pane toggle).
 	if key == "tab" || key == "shift+tab" {
-		if m.sidebarVisible() {
+		if m.sidebarVisible() || m.workflowsSidebarVisible() {
 			m.setFocus(m.nextTUIFocus(m.focus, key == "shift+tab"))
 			return true, true, nil
 		}
