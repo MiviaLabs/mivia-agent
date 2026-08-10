@@ -113,10 +113,6 @@ func newDualCapture(max int) *dualCapture {
 	d := &dualCapture{max: max}
 	if max > 0 {
 		d.headQuota, d.tailQuota = splitCaptureBudget(max)
-		if d.tailQuota > 0 {
-			d.ring = make([]byte, d.tailQuota)
-			d.ringOut = make([]bool, d.tailQuota)
-		}
 	}
 	return d
 }
@@ -185,6 +181,7 @@ func (d *dualCapture) writeBounded(out bool, p []byte) {
 // Peak retained bytes never exceed tailQuota; no per-write heap growth.
 // Marks truncated/elide only when bytes are actually discarded.
 func (d *dualCapture) pushTail(out bool, p []byte) {
+	d.ensureTailCapacity(len(p))
 	// If this write alone is larger than the ring, only the last tailQuota matter.
 	if len(p) >= d.tailQuota {
 		droppedPrior := d.ringLen > 0
@@ -193,7 +190,7 @@ func (d *dualCapture) pushTail(out bool, p []byte) {
 			d.truncated = true
 			if droppedPrior {
 				for i := 0; i < d.ringLen; i++ {
-					idx := (d.ringStart + i) % d.tailQuota
+					idx := (d.ringStart + i) % len(d.ring)
 					if d.ringOut[idx] {
 						d.stdoutElide = true
 					} else {
@@ -209,6 +206,9 @@ func (d *dualCapture) pushTail(out bool, p []byte) {
 				}
 			}
 		}
+		if len(d.ring) < d.tailQuota {
+			d.ensureTailCapacity(d.tailQuota)
+		}
 		copy(d.ring, p[len(p)-d.tailQuota:])
 		for i := range d.ringOut {
 			d.ringOut[i] = out
@@ -218,6 +218,9 @@ func (d *dualCapture) pushTail(out bool, p []byte) {
 		return
 	}
 	for _, b := range p {
+		if d.ringLen == len(d.ring) && len(d.ring) < d.tailQuota {
+			d.ensureTailCapacity(d.ringLen + len(p))
+		}
 		if d.ringLen == d.tailQuota {
 			// Drop oldest — actual middle discard.
 			d.truncated = true
@@ -227,14 +230,40 @@ func (d *dualCapture) pushTail(out bool, p []byte) {
 			} else {
 				d.stderrElide = true
 			}
-			d.ringStart = (d.ringStart + 1) % d.tailQuota
+			d.ringStart = (d.ringStart + 1) % len(d.ring)
 			d.ringLen--
 		}
-		idx := (d.ringStart + d.ringLen) % d.tailQuota
+		idx := (d.ringStart + d.ringLen) % len(d.ring)
 		d.ring[idx] = b
 		d.ringOut[idx] = out
 		d.ringLen++
 	}
+}
+
+func (d *dualCapture) ensureTailCapacity(required int) {
+	if d.tailQuota <= 0 || len(d.ring) >= required || len(d.ring) == d.tailQuota {
+		return
+	}
+	next := len(d.ring) * 2
+	if next < 4096 {
+		next = 4096
+	}
+	if next < required {
+		next = required
+	}
+	if next > d.tailQuota {
+		next = d.tailQuota
+	}
+	ring := make([]byte, next)
+	ringOut := make([]bool, next)
+	for i := 0; i < d.ringLen; i++ {
+		idx := (d.ringStart + i) % len(d.ring)
+		ring[i] = d.ring[idx]
+		ringOut[i] = d.ringOut[idx]
+	}
+	d.ring = ring
+	d.ringOut = ringOut
+	d.ringStart = 0
 }
 
 func (d *dualCapture) streamTail(out bool) []byte {
@@ -243,7 +272,7 @@ func (d *dualCapture) streamTail(out bool) []byte {
 	}
 	var tail []byte
 	for i := 0; i < d.ringLen; i++ {
-		idx := (d.ringStart + i) % d.tailQuota
+		idx := (d.ringStart + i) % len(d.ring)
 		if d.ringOut[idx] == out {
 			tail = append(tail, d.ring[idx])
 		}

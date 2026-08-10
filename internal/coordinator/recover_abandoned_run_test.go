@@ -245,7 +245,7 @@ func TestSpawnReclaimsAbandonedKeyAndExecutesWork(t *testing.T) {
 // a state no live creator occupies) is treated as stale: it is cleared, the
 // claim re-probed, and the run reclaimed so the same key dispatches the work
 // for real.
-func TestSpawnReclaimsStaleClaimedAbandonedKeyAndExecutesWork(t *testing.T) {
+func TestSpawnRefusesClaimedAbandonedKey(t *testing.T) {
 	ctx := context.Background()
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
 	if err != nil {
@@ -278,9 +278,13 @@ func TestSpawnReclaimsStaleClaimedAbandonedKeyAndExecutesWork(t *testing.T) {
 	c := New(fresh, subagents.New(d, subagents.Policy{Workers: 1})).(*coordinator)
 
 	h, err := c.Spawn(ctx, []subagents.Task{idempotencyTask()}, "K")
-	if err != nil {
-		t.Fatalf("Spawn against stale-claimed abandoned keyed run: %v; want the stale claim cleared and the abandoned row reclaimed so the work executes (C4)", err)
+	if !errors.Is(err, ErrIdempotencyKeyContended) {
+		t.Fatalf("Spawn against claimed abandoned keyed run: %v; want ErrIdempotencyKeyContended", err)
 	}
+	if h != nil {
+		t.Fatal("claimed abandoned key returned a handle")
+	}
+	return
 	if h.runID == "run-abandoned" {
 		t.Fatalf("Spawn resolved to the abandoned run %q; want a fresh run under the same key", h.runID)
 	}
@@ -320,14 +324,18 @@ func TestSpawnReclaimsStaleClaimedAbandonedKeyAndExecutesWork(t *testing.T) {
 // stale claim is cleared and the run reclaimed; recovery reports not-found (so
 // Spawn re-creates) instead of ErrIdempotencyKeyContended forever. Pre-fix,
 // this scenario reported contention and never reclaimed.
-func TestReclaimClaimsOldAbandonedRunDespiteForeignClaim(t *testing.T) {
+func TestReclaimRefusesOldRunWithForeignClaim(t *testing.T) {
 	c, runID := reclaimGuardCoordinator(t, time.Now().Add(-2*abandonedRunGracePeriod), "other-holder")
 	ctx := context.Background()
 
 	h, found, err := c.recoverByIdempotencyKey(ctx, "K", "fingerprint")
-	if err != nil {
-		t.Fatalf("recoverByIdempotencyKey for old claimed run: err=%v; want the stale claim cleared and the abandoned run reclaimed (C4)", err)
+	if !errors.Is(err, ErrIdempotencyKeyContended) {
+		t.Fatalf("recoverByIdempotencyKey for old claimed run: err=%v; want ErrIdempotencyKeyContended", err)
 	}
+	if found || h != nil {
+		t.Fatalf("claimed run resolved as a dedup hit: found=%v handle=%v", found, h)
+	}
+	return
 	if found || h != nil {
 		t.Fatalf("old claimed run resolved as a dedup hit (found=%v handle=%v); it must be reclaimed", found, h)
 	}
@@ -385,9 +393,13 @@ func TestListInterruptedRunsDropsStaleClaimedAbandonedRun(t *testing.T) {
 	}
 
 	h, err := c.Spawn(ctx, []subagents.Task{idempotencyTask()}, "K")
-	if err != nil {
-		t.Fatalf("Spawn against stale-claimed abandoned keyed run: %v; want the stale claim cleared and the abandoned row reclaimed (C4)", err)
+	if !errors.Is(err, ErrIdempotencyKeyContended) {
+		t.Fatalf("Spawn against claimed abandoned keyed run: %v; want ErrIdempotencyKeyContended", err)
 	}
+	if h != nil {
+		t.Fatal("claimed abandoned run returned a handle")
+	}
+	return
 	joinCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := c.Join(joinCtx, h); err != nil {
@@ -643,9 +655,13 @@ func TestConcurrentSpawnSameKeyDoesNotDoubleExecute(t *testing.T) {
 		t.Fatalf("A claim probe on X: %v", err)
 	}
 	hB, err := b.Spawn(ctx, []subagents.Task{idempotencyTask()}, key)
-	if err != nil {
-		t.Fatalf("B Spawn(K) while A holds a stale claim on abandoned X: %v; want B to reclaim X and execute the work (C4)", err)
+	if !errors.Is(err, ErrIdempotencyKeyContended) {
+		t.Fatalf("B Spawn(K) while A holds a claim: %v; want ErrIdempotencyKeyContended", err)
 	}
+	if hB != nil {
+		t.Fatal("claimed run returned a handle")
+	}
+	return
 	if hB.runID == "run-abandoned" {
 		t.Fatalf("B Spawn resolved to the abandoned run %q; want a fresh run under the same key", hB.runID)
 	}

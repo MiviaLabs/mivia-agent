@@ -48,17 +48,9 @@ const (
 // claim is probed first - ClaimRun with our own holder succeeds only when no
 // other holder owns the run.
 //
-// R3-2 amendment (C4, DC-2/DC-4): because the run is provably abandoned, a
-// claim row on it is provably stale. A holder can only have acquired the claim
-// by crashing between ClaimRun and the first CreateTask (DC-4 - the run is
-// 'created' with zero tasks, so no task was ever written), or by being another
-// reclaimer in the act of deleting the run. Either way the claim does not
-// protect live work, so on ErrClaimHeld the stale claim is cleared
-// (ClearRunClaim) and the claim re-probed. If the re-probe succeeds, DeleteRun
-// proceeds - its claim-fenced tombstone append is the backstop against a racing
-// reclaimer that stole the re-probe, and the storage backend removes the claim
-// row unconditionally. If the re-probe fails (another reclaimer won the race),
-// the run is left to that winner and we report no-reclaim.
+// A held claim is not proof of a crashed creator. A live creator can pause
+// between ClaimRun and CreateTask. Reclaim refuses a held claim so it never
+// clears a live owner and deletes live work.
 //
 // R4-1: reclaim is the atomicity boundary for the idempotency key across
 // processes. Only the process whose probe claim succeeded AND whose DeleteRun
@@ -78,25 +70,8 @@ func (c *coordinator) reclaimAbandonedRun(runID string) bool {
 			log.Printf("coordinator: reclaim abandoned run %q: claim probe: %v", runID, err)
 			return false
 		}
-		// The run is provably abandoned ('created', zero tasks, older than the
-		// grace period), so its claim row is provably stale - the holder
-		// crashed between ClaimRun and the first CreateTask (DC-4), or is
-		// another reclaimer about to delete the run. Clear the stale claim and
-		// re-probe. DeleteRun's claim fence is the backstop: if another
-		// reclaimer wins the re-probe, our DeleteRun is refused, and if we win
-		// it, theirs is.
-		log.Printf("coordinator: reclaim abandoned run %q: claim held by another holder but run is provably abandoned; clearing stale claim and re-probing", runID)
-		if err := c.repo.ClearRunClaim(cleanupCtx, runID); err != nil {
-			log.Printf("coordinator: reclaim abandoned run %q: clear stale claim: %v", runID, err)
-			return false
-		}
-		if err := c.repo.ClaimRun(cleanupCtx, runID, c.holderID); err != nil {
-			// Another reclaimer won the clear+re-probe race; the run stays
-			// with it and the caller treats the key as contended. Never
-			// delete a run whose claim we do not hold.
-			log.Printf("coordinator: reclaim abandoned run %q: re-probe after clearing stale claim: %v", runID, err)
-			return false
-		}
+		log.Printf("coordinator: reclaim abandoned run %q: claim is held; refusing to clear a possibly live owner", runID)
+		return false
 	}
 	if err := c.repo.DeleteRun(cleanupCtx, runID); err != nil {
 		log.Printf("coordinator: reclaim abandoned run %q: %v", runID, err)
