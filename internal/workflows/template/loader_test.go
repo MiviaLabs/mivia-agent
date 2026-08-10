@@ -78,6 +78,33 @@ func TestLoadTemplates_DoubleDotInName(t *testing.T) {
 	}
 }
 
+func TestLoadTemplates_LeadingDoubleDotDirectory(t *testing.T) {
+	dir := t.TempDir()
+	previousDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousDir) })
+
+	if err := os.Mkdir("..templates", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("..templates", "plan.md"), []byte("# plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := LoadTemplates("..templates")
+	if err != nil {
+		t.Fatalf("load valid directory: %v", err)
+	}
+	if m["plan.md"] != "# plan" {
+		t.Errorf("plan.md content = %q, want %q", m["plan.md"], "# plan")
+	}
+}
+
 func TestLoadTemplates_ReadsMdFiles(t *testing.T) {
 	td := templatesDir(t)
 	m, err := LoadTemplates(td)
