@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"strings"
+	"time"
 
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -40,6 +44,12 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.refreshWorkflowsSidebar(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		// The open run-detail dialog keeps refreshing on the same tick, with
+		// its own throttle window, so a run's status and steps stay live
+		// while the dialog is open.
+		if cmd := m.refreshWorkflowRunDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		return m, tea.Batch(cmds...)
 	case workflowsSidebarRefreshMsg:
 		// The ledger read ran off the update goroutine. Apply the rows only
@@ -55,6 +65,57 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.renderVP()
 		}
 		return m, nil
+	case workflowRunDialogRefreshMsg:
+		// The dialog's ledger read ran off the update goroutine. Apply it
+		// only while the dialog is still open for the same run. A vanished
+		// run keeps the previous view with a notice; any other read failure
+		// keeps the previous view silently (mirrors workflowsSidebarRefreshMsg).
+		if m.workflowRunDlg != nil && msg.runID == m.workflowRunDlg.runID {
+			dlg := m.workflowRunDlg
+			if msg.err != nil {
+				if errors.Is(msg.err, workflowledger.ErrNotFound) {
+					dlg.setNotice("run no longer exists", true)
+				}
+			} else {
+				view, err := buildWorkflowRunView(msg.data.run, msg.data.compiled, msg.data.attempts, msg.data.approvals, time.Now(), msg.data.deliveries)
+				if err == nil {
+					dlg.view = view
+					dlg.dirty = false
+					m.renderVP()
+				}
+			}
+		}
+		return m, nil
+	case workflowRunDialogActionMsg:
+		d := m.workflowRunDlg
+		if d == nil || msg.runID != d.runID {
+			return m, nil
+		}
+		d.confirm = workflowConfirmNone
+		if msg.action == workflowConfirmDelete && msg.err == nil {
+			// The run's durable record is gone; close the dialog and refresh
+			// the sidebar so the row disappears.
+			m.workflowRunDlg = nil
+			m.setFocus(focusWorkflowsSidebar)
+			m.hitMap.invalidate()
+			if m.workflowsSidebar != nil {
+				m.workflowsSidebar.lastRefresh = time.Time{}
+				cmds = append(cmds, m.refreshWorkflowsSidebar())
+			}
+			m.appendInfo(fmt.Sprintf("deleted workflow run %s", msg.runID))
+			return m, tea.Batch(cmds...)
+		}
+		if msg.err != nil {
+			d.setNotice(msg.err.Error(), true)
+			return m, nil
+		}
+		d.setNotice(msg.result, false)
+		// Re-read the run so status, steps, and action hints reflect the
+		// settled state; the dialog's own throttle window is reset so the
+		// read is issued now rather than waiting for the next tick.
+		d.lastRefresh = time.Time{}
+		cmds = append(cmds, m.refreshWorkflowRunDialog())
+		return m, tea.Batch(cmds...)
 	case tuiTickMsg:
 		if m.mode == modeChat && msg.bridge == m.bridge {
 			cmds = append(cmds, m.drainBridgeAndMaybeFinish()...)
@@ -188,8 +249,12 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.handleMouseMsg(msg, &skipViewport) {
+			// A sidebar double-click may have opened the run dialog and
+			// queued its first async ledger read; drain it into the batch.
+			cmds = append(cmds, m.takePendingWorkflowDialogCmd()...)
 			break
 		}
+		cmds = append(cmds, m.takePendingWorkflowDialogCmd()...)
 	}
 	// Welcome and chat both use the composer; gating on modeChat only broke
 	// typing on the welcome screen (↑↓ still worked via handleWelcomeKey).
@@ -227,7 +292,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) modalOpen() bool {
-	return m.overlay != nil || m.modelDlg != nil || m.agentDlg != nil || m.effortDlg != nil || m.worktreeDlg != nil
+	return m.overlay != nil || m.modelDlg != nil || m.agentDlg != nil || m.effortDlg != nil || m.worktreeDlg != nil || m.workflowRunDlg != nil
 }
 
 func (m *tuiModel) clampModalState() {
@@ -249,6 +314,9 @@ func (m *tuiModel) clampModalState() {
 	if m.worktreeDlg != nil {
 		layout := m.worktreeDlg.layout(max(1, m.width), max(1, m.height))
 		m.worktreeDlg.clampScroll(layout.pageH)
+	}
+	if m.workflowRunDlg != nil {
+		m.workflowRunDlg.clampScroll(max(1, m.width), max(1, m.height))
 	}
 }
 

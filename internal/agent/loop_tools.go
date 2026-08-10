@@ -336,12 +336,15 @@ func prepareToolTasks(ctx context.Context, calls []provider.ToolCall, reg *tools
 		raw := json.RawMessage(call.Function.Arguments)
 		capability := reg.Capability(call.Function.Name, raw)
 		callTimeout := resolveToolCallTimeout(timeout, capability.Timeout)
-		// A model-supplied per-call timeout_seconds overrides the capability
-		// default: it may extend or tighten the budget the loop arms for this
-		// call, clamped to the enclosing step/task deadline so a huge request
-		// can never outlive the turn that owns it. Without the param the
-		// capability stays the default and the hang bound is unchanged.
-		if requested := requestedToolTimeout(raw); requested > 0 {
+		// A model-supplied per-call timeout_seconds only RAISES the budget the
+		// loop arms for this call, clamped to the enclosing step/task deadline
+		// so a huge request can never outlive the turn that owns it. It never
+		// tightens below the tool's own capability (or default) budget: tools
+		// that declare a long budget (dispatch_tasks, run_command) contract
+		// their own hang bound, and a small value an agent guesses would kill
+		// long multi-step work the tool promised to support. Without the param
+		// the capability stays the default and the hang bound is unchanged.
+		if requested := requestedToolTimeout(raw); requested > callTimeout {
 			callTimeout = clampToDeadline(ctx, requested)
 		}
 		// Only the timeout DURATION is fixed here. The clock starts in the

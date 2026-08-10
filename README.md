@@ -92,6 +92,8 @@ Successful workflow runs stop at `delivery_pending` until you pass the explicit 
   <img src="docs/mivia-welcome.png" alt="mivia TUI welcome screen" width="32%">
   <img src="docs/mivia-help.png" alt="mivia TUI help dialog" width="32%">
   <img src="docs/mivia-models.png" alt="mivia TUI model selection dialog" width="32%">
+  <img src="docs/mivia-sessions-workflows.png" alt="mivia TUI sessions and workflows view" width="32%">
+  <img src="docs/mivia-workflow-details.png" alt="mivia TUI workflow details view" width="32%">
 </p>
 
 ## What it does

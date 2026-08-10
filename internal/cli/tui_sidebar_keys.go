@@ -223,8 +223,9 @@ func (m *tuiModel) deleteWorktreeRoute(si chat.SessionInfo) error {
 }
 
 // handleWorkflowsSidebarKey routes keys while the /workflows sidebar has
-// focus. j/k/up/down move the cursor, enter prints the run id and status as a
-// transcript info line (no modal), and esc closes the sidebar.
+// focus. j/k/up/down move the cursor, enter opens the run-detail dialog for
+// the selected row (a no-op on an empty list: unhandled so no dialog opens
+// and no command is queued), and esc closes the sidebar.
 func (m *tuiModel) handleWorkflowsSidebarKey(key string) bool {
 	if m.focus != focusWorkflowsSidebar || !m.workflowsSidebarVisible() {
 		return false
@@ -241,10 +242,11 @@ func (m *tuiModel) handleWorkflowsSidebarKey(key string) bool {
 	case "down", "j":
 		sidebar.move(sidebar.rows, 1)
 	case "enter":
-		if row, ok := sidebar.selected(sidebar.rows); ok {
-			m.appendInfo(fmt.Sprintf("workflow run %s · %s", row.run.RunID, row.run.Status))
-			m.renderVP()
+		row, ok := sidebar.selected(sidebar.rows)
+		if !ok {
+			return false
 		}
+		m.openWorkflowRunDialog(row)
 	default:
 		return false
 	}

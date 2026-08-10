@@ -66,6 +66,19 @@ func (s *Service) SetEngine(engine Engine) {
 	s.mu.Unlock()
 }
 
+// Engine returns the mutating engine, or nil when none is configured. The
+// dialog surfaces use it to route cancel/resume/deliver/delete through the
+// session engine instance so in-process controllers started by this session
+// can be stopped before the fenced ledger settlement.
+func (s *Service) Engine() Engine {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.engine
+}
+
 func (s *Service) getEngine() Engine {
 	s.mu.Lock()
 	defer s.mu.Unlock()

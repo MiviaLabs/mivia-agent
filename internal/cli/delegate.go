@@ -56,7 +56,7 @@ func (t *delegateTool) Description() string {
 		"dispatch_tasks. For complex multi-step work needing file access, set multi_step=true. " +
 		"By default the sub-agent makes one LLM call (no tools) and returns structured results. " +
 		"Set multi_step=true to give the sub-agent full tool access (read, write, search, run). " +
-		"Use timeout_seconds to set a budget (0 uses config default or a finite safety ceiling). " +
+		"Use timeout_seconds to set a budget: " + timeoutHint() + " " +
 		"Use for: analyzing code, summarizing findings, parallel research (one-shot), " +
 		"or complex multi-step work needing tools (multi_step=true). " +
 		"Heartbeat/progress events appear in the UI during long-running tasks. " +
@@ -77,7 +77,7 @@ func (t *delegateTool) Parameters() map[string]any {
 			},
 			"timeout_seconds": map[string]any{
 				"type":        "integer",
-				"description": "Timeout budget in seconds. 0 uses config default; runtime always applies a finite safety ceiling. Raise for complex multi-step work.",
+				"description": "Timeout budget in seconds. " + timeoutHint(),
 			},
 		},
 		"required":             []string{"task"},

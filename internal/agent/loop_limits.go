@@ -23,8 +23,9 @@ const DefaultToolTimeout = 60 * time.Second
 // falls back to DefaultToolTimeout so the loop never waits unbounded.
 //
 // This is the DEFAULT resolution: a model-supplied per-call timeout_seconds in
-// the call's own params outranks both (see prepareToolTasks /
-// requestedToolTimeout), clamped to the enclosing step/task deadline.
+// the call's own params may RAISE it (see prepareToolTasks /
+// requestedToolTimeout), clamped to the enclosing step/task deadline; it never
+// tightens below the resolved budget.
 func resolveToolCallTimeout(defaultTimeout, capabilityTimeout time.Duration) time.Duration {
 	if capabilityTimeout > 0 {
 		return capabilityTimeout

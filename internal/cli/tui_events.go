@@ -19,41 +19,21 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 		return nil
 	}
 	var cmds []tea.Cmd
-	// Attributed subagent events feed the tracker regardless of the phase
-	// gates below: they arrive before the first drain sets m.waiting, and a
-	// dropped start leaves the fleet box empty for the rest of the turn.
-	if ev.AgentTask != "" {
-		m.subagents.Apply(ev, time.Now())
-	}
+	m.trackSubagentEvent(ev)
 
 	switch ev.Kind {
 	case events.KindSubagentStart, events.KindSubagentEnd, events.KindSubagentDone:
-		// Tool rows are owned by the bridge path; the tracker was already
-		// fed above (fleet box / ledger data spine). Done retires the run
-		// from the live agent view there - nothing further to do here.
+		// Tool rows are owned by the bridge path; the tracker was already fed
+		// by trackSubagentEvent above. Done retires the run from the live
+		// agent view there - nothing further to do here.
 
 	case events.KindStep, events.KindSubagentHeartbeat:
-		detail := ev.Detail
-		if ev.AgentName != "" {
-			detail = "◆ " + ev.AgentName + " · " + detail
-		}
-		m.stepDetail = detail
-		m.stepDetailAt = time.Now()
-		m.stalledWarning = false
+		m.applyStepEvent(ev)
 
 	case events.KindWorkflowRunStarted, events.KindWorkflowStepStarted, events.KindWorkflowStepHeartbeat,
 		events.KindWorkflowStepCompleted, events.KindWorkflowGateResult, events.KindWorkflowApprovalRequested,
 		events.KindWorkflowRunFinished:
-		// Workflow progress refreshes the /workflows sidebar when it is open.
-		// refreshWorkflowsSidebar returns a tea.Cmd so the ledger read runs
-		// off the update goroutine, and it throttles to at most one read per
-		// interval; a closed sidebar makes this a no-op. Events for runs
-		// started in other terminals reach the sidebar through the uiTickMsg
-		// path instead, because they do not pass the updateMessageImpl gate
-		// above.
-		if cmd := m.refreshWorkflowsSidebar(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		cmds = append(cmds, m.applyWorkflowProgressEvent()...)
 
 	case events.KindError:
 		m.stepDetail = "error: " + ev.Detail
@@ -63,36 +43,79 @@ func (m *tuiModel) applyEvent(ev events.Event) []tea.Cmd {
 	// TurnEnd is intentionally ignored for finish - bridge.Finish drives it.
 	// (Idempotent finishStream would also tolerate dual finish.)
 	case events.KindTurnEnd:
-		// Backup finish only if bridge drain never saw done (should be rare).
-		if !m.waiting {
-			return nil
-		}
-		if ev.TurnID != "" && m.activeTurnID != "" && ev.TurnID != m.activeTurnID {
-			return nil
-		}
-		// Only finish here when the bridge is fully drained. bridge.Finish
-		// (tui_start.go) strictly precedes publishTurnEnd, so this event can
-		// arrive while the bridge still holds the final stream chunk and an
-		// unconsumed Done. Finishing now would commit only the drained prefix
-		// and lose the tail: finishStream flips waiting=false, and the later
-		// drain writes the tail into streamBuf with no one to commit it.
-		// Skip instead - the self-perpetuating pollCmd tick (80ms) drains the
-		// bridge and finishes via d.Done, so the tail lands in m.blocks.
-		// An empty/nil bridge counts as drained, keeping this as the rescue
-		// path for a lost bridge notify / bus-only TurnEnd.
-		m.mu.Lock()
-		bridge := m.bridge
-		m.mu.Unlock()
-		if bridge != nil && bridge.Pending() {
-			return nil
-		}
-		// Still finish so UI cannot stick waiting if bridge notify was lost.
-		return m.finishStream(turnEndError(ev))
+		return m.applyTurnEndEvent(ev)
 
 	default:
 		// Ignore KindAssistant/Tool*/Prune/Parallel - applied via bridge drain.
 	}
 	return cmds
+}
+
+// trackSubagentEvent feeds the subagent tracker for attributed events. It
+// runs regardless of the phase gates in applyEvent: attributed events arrive
+// before the first drain sets m.waiting, and a dropped start leaves the fleet
+// box empty for the rest of the turn.
+func (m *tuiModel) trackSubagentEvent(ev events.Event) {
+	if ev.AgentTask != "" {
+		m.subagents.Apply(ev, time.Now())
+	}
+}
+
+// applyStepEvent records the latest step/heartbeat detail for the status bar.
+func (m *tuiModel) applyStepEvent(ev events.Event) {
+	detail := ev.Detail
+	if ev.AgentName != "" {
+		detail = "◆ " + ev.AgentName + " · " + detail
+	}
+	m.stepDetail = detail
+	m.stepDetailAt = time.Now()
+	m.stalledWarning = false
+}
+
+// applyWorkflowProgressEvent refreshes the /workflows sidebar and the open
+// run-detail dialog on workflow progress events. Each refresh returns a
+// tea.Cmd so the ledger read runs off the update goroutine, and both throttle
+// to at most one read per interval; a closed sidebar or dialog is a no-op.
+// Events for runs started in other terminals reach the sidebar through the
+// uiTickMsg path instead, because they do not pass the updateMessageImpl gate.
+func (m *tuiModel) applyWorkflowProgressEvent() []tea.Cmd {
+	var cmds []tea.Cmd
+	if cmd := m.refreshWorkflowsSidebar(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if cmd := m.refreshWorkflowRunDialog(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	return cmds
+}
+
+// applyTurnEndEvent is the backup finish path for a KindTurnEnd that arrives
+// without the bridge drain ever observing done (should be rare).
+func (m *tuiModel) applyTurnEndEvent(ev events.Event) []tea.Cmd {
+	if !m.waiting {
+		return nil
+	}
+	if ev.TurnID != "" && m.activeTurnID != "" && ev.TurnID != m.activeTurnID {
+		return nil
+	}
+	// Only finish here when the bridge is fully drained. bridge.Finish
+	// (tui_start.go) strictly precedes publishTurnEnd, so this event can
+	// arrive while the bridge still holds the final stream chunk and an
+	// unconsumed Done. Finishing now would commit only the drained prefix
+	// and lose the tail: finishStream flips waiting=false, and the later
+	// drain writes the tail into streamBuf with no one to commit it.
+	// Skip instead - the self-perpetuating pollCmd tick (80ms) drains the
+	// bridge and finishes via d.Done, so the tail lands in m.blocks.
+	// An empty/nil bridge counts as drained, keeping this as the rescue
+	// path for a lost bridge notify / bus-only TurnEnd.
+	m.mu.Lock()
+	bridge := m.bridge
+	m.mu.Unlock()
+	if bridge != nil && bridge.Pending() {
+		return nil
+	}
+	// Still finish so UI cannot stick waiting if bridge notify was lost.
+	return m.finishStream(turnEndError(ev))
 }
 
 // publishTurnEnd emits KindTurnEnd on the session bus (if any). Turn finish

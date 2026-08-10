@@ -30,11 +30,15 @@ type workflowsSidebar struct {
 	dirty       bool
 	lastRefresh time.Time
 	rows        []workflowRunRow
+	// lastClickCursor/lastClickAt drive the double-click-to-open activation
+	// window (mirrors the sessions sidebar and transcript blocks).
+	lastClickCursor int
+	lastClickAt     time.Time
 }
 
 const (
 	workflowsRowsY      = 2 // after title (0) and divider (1)
-	workflowsChromeRows = 3 // title, divider, footer
+	workflowsChromeRows = 3 // title, divider, footer (the footer may wrap to a second line)
 )
 
 // workflowRunRowLines is the number of terminal lines one row occupies. The
@@ -70,7 +74,7 @@ func workflowRunDot(status workflowledger.RunStatus) sidebarLiveStatus {
 }
 
 func newWorkflowsSidebar() *workflowsSidebar {
-	return &workflowsSidebar{}
+	return &workflowsSidebar{lastClickCursor: -1}
 }
 
 // move clamps the cursor by delta within [0, len(rows)].
@@ -170,7 +174,9 @@ func (s *workflowsSidebar) view(width, height int, focused bool) string {
 	height = max(1, height)
 	rows := s.rows
 	s.move(rows, 0)
-	space := max(1, height-workflowsChromeRows)
+	footer := s.footerLines(width)
+	chrome := workflowsChromeRows + len(footer) - 1
+	space := max(1, height-chrome)
 	if len(rows) > 0 {
 		s.clampScroll(rows, space)
 	}
@@ -192,7 +198,9 @@ func (s *workflowsSidebar) view(width, height int, focused bool) string {
 			lines = append(lines, s.renderRunRow(rows[i], i == s.cursor, width, focused)...)
 		}
 	}
-	lines = append(lines, tuiDimStyle.Render(sidebarPad(s.footer(), width)))
+	for _, line := range footer {
+		lines = append(lines, tuiDimStyle.Render(sidebarPad(line, width)))
+	}
 	return lipgloss.NewStyle().Width(width).Height(height).Render(strings.Join(lines, "\n"))
 }
 
@@ -215,6 +223,13 @@ func (s *workflowsSidebar) renderRunRow(row workflowRunRow, selected bool, width
 		line = sidebarSelectedStyle(width, focused).Render(line)
 	}
 	step := row.run.ActiveStepID
+	if workflowledger.IsTerminalStepID(step) {
+		// The derived active step for a run at or after the success/failure
+		// terminal is the reserved terminal step ("success"/"failure"), which
+		// is not a declared step. Show the run's settled status instead of a
+		// phantom step id ("step success" reads like a real step).
+		step = string(row.run.Status)
+	}
 	if step == "" {
 		step = "-"
 	}
@@ -231,12 +246,42 @@ func (s *workflowsSidebar) renderRunRow(row workflowRunRow, selected bool, width
 	return lines
 }
 
+// doubleClick reports a second click on the same row within the activation
+// window and consumes the state, so a stale (out-of-window) click never opens
+// the run dialog (mirrors the sessions sidebar pattern).
+func (s *workflowsSidebar) doubleClick(cursor int, now time.Time) bool {
+	double := cursor == s.lastClickCursor && now.Sub(s.lastClickAt) < 400*time.Millisecond
+	s.lastClickCursor = cursor
+	s.lastClickAt = now
+	if double {
+		s.lastClickCursor = -1
+		s.lastClickAt = time.Time{}
+	}
+	return double
+}
+
 // footer returns the key hints line.
 func (s *workflowsSidebar) footer() string {
 	if len(s.rows) == 0 {
 		return " /workflows · Esc close"
 	}
-	return " ↑↓ · Enter info · Esc close"
+	return " ↑↓ · Enter details · Esc close"
+}
+
+// footerLines returns the footer hints as one or two lines. The full hint
+// line (" ↑↓ · Enter details · Esc close") is 34 columns wide, wider than the
+// 20-28 column sidebar, so it wraps onto a second line instead of truncating
+// the readable "Esc close" pair; the wrapped lines each stay inside the
+// sidebar width (20 columns at the minimum).
+func (s *workflowsSidebar) footerLines(width int) []string {
+	text := s.footer()
+	if runeWidth(text) <= width {
+		return []string{text}
+	}
+	if len(s.rows) == 0 {
+		return []string{" /workflows ·", " Esc close"}
+	}
+	return []string{"↑↓ · Enter details", " · Esc close"}
 }
 
 // workflowSidebarLoad reads the ledger and the workspace definitions once and
