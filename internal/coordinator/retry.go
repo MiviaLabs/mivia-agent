@@ -79,6 +79,18 @@ func (p RetryPolicy) EffectiveBackoff(attempt int) time.Duration {
 		jitter := 1.0 - jitterRange + (rand.Float64() * 2.0 * jitterRange)
 		backoff *= jitter
 	}
+	// Clamp below the int64 conversion boundary. An out-of-range float64
+	// converts to a negative time.Duration (MinInt64 on amd64/arm64), so an
+	// uncapped policy (MaxBackoff 0) or a jitter-pushed value would schedule
+	// the retry in the past: flushRetries re-queues immediately and the pool
+	// storms instead of backing off. float64(math.MaxInt64) itself rounds UP
+	// to 2^63 and still converts negative, so the clamp sits at the largest
+	// float64 strictly below 2^63: 2^63 - 2048 (= math.MaxInt64 - 2047), which
+	// converts to a positive in-range time.Duration.
+	const maxBackoffFloat = float64(math.MaxInt64 - 2047)
+	if backoff > maxBackoffFloat {
+		backoff = maxBackoffFloat
+	}
 	return time.Duration(backoff)
 }
 
