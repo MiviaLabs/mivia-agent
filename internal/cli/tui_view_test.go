@@ -311,6 +311,88 @@ func TestLayoutAndViewAgreeOnViewportHeight(t *testing.T) {
 	}
 }
 
+func TestViewportHeightIgnoresLivePanel(t *testing.T) {
+	// The live panel is a paint-only overlay: it must not reserve layout
+	// space. layout() (Update path) and chatViewLayout (View path) must size
+	// the viewport identically whether the panel is visible or not.
+	for _, h := range []int{20, 30, 40, 44} {
+		m := newReadyChatModel(h, 80)
+		m.messages = []string{"one", "two", "three"}
+		m.renderVP()
+		m.layout()
+		idleLayout := m.viewport.Height
+		m.View()
+		idleView := m.viewport.Height
+
+		m.waiting = true
+		m.turnStart = time.Now()
+		m.toolRows = []toolRow{{Name: "run_command", Detail: `{"cmd":"go test"}`, Status: "running", Start: time.Now()}}
+		m.streamBuf.WriteString("streaming answer")
+		if m.livePanelHeight() == 0 {
+			t.Fatalf("height=%d: panel must be visible while waiting", h)
+		}
+		m.layout()
+		waitLayout := m.viewport.Height
+		m.View()
+		waitView := m.viewport.Height
+
+		if idleLayout != waitLayout {
+			t.Fatalf("height=%d: layout() viewport %d idle vs %d waiting - the panel reserved a band", h, idleLayout, waitLayout)
+		}
+		if idleView != waitView {
+			t.Fatalf("height=%d: View() viewport %d idle vs %d waiting - the panel reserved a band", h, idleView, waitView)
+		}
+	}
+}
+
+func TestLivePanelOverlayDoesNotReflowTranscript(t *testing.T) {
+	// The overlay paints over the transcript top without shifting it: the
+	// viewport content is byte-identical idle vs waiting, and every transcript
+	// row below the overlay region is byte-identical to the idle frame.
+	m := newReadyChatModel(40, 80)
+	var lines []string
+	for i := 0; i < 40; i++ {
+		lines = append(lines, "transcript line "+strings.Repeat("z", 16))
+	}
+	m.messages = lines
+	m.View()     // size the viewport through the View path while idle
+	m.renderVP() // settle content and scroll at the sized height before capture
+	idleHeight := m.viewport.Height
+	idleVP := m.viewport.View()
+	idleLines := strings.Split(stripANSI(m.View()), "\n")
+
+	m.waiting = true
+	m.turnStart = time.Now()
+	m.toolRows = []toolRow{{Name: "run_command", Detail: `{"cmd":"go test"}`, Status: "running", Start: time.Now()}}
+	m.streamBuf.WriteString("streaming answer")
+	m.renderVP()
+	m.View() // size the viewport through the View path while waiting
+	waitHeight := m.viewport.Height
+	waitVP := m.viewport.View()
+	waitLines := strings.Split(stripANSI(m.View()), "\n")
+
+	if idleHeight != waitHeight {
+		t.Fatalf("viewport height %d idle vs %d waiting - the overlay must not shrink the viewport", idleHeight, waitHeight)
+	}
+	if idleVP != waitVP {
+		t.Fatal("viewport content changed when the overlay appeared - the overlay must not reflow the transcript")
+	}
+	H := m.livePanelHeight()
+	if H == 0 {
+		t.Fatal("precondition: the overlay must be visible while waiting")
+	}
+	if !strings.Contains(waitLines[1], " now · ") {
+		t.Fatalf("overlay header must sit on the row below the status header:\n%s", strings.Join(waitLines[:4], "\n"))
+	}
+	// Transcript rows below the overlay are byte-identical to the idle frame:
+	// painting must not shift or reflow anything beneath it.
+	for y := H + 1; y <= idleHeight; y++ {
+		if waitLines[y] != idleLines[y] {
+			t.Fatalf("transcript row %d reflowed under the overlay:\nidle:   %q\nwaiting: %q", y, idleLines[y], waitLines[y])
+		}
+	}
+}
+
 // sidebarPrefix is the first sidebarWidth columns of a joined view line.
 // The sidebar renders before the divider lane, so the row identity and the
 // status dot always live in this prefix and nowhere else on the line.
