@@ -480,11 +480,13 @@ func TestChatStreamExplicitEmptyFinishReasonStillFallsBack(t *testing.T) {
 
 // FuzzReadStreamReceived compares the received-flag behaviour of readStream
 // against readTurnStream for identical single-chunk JSON inputs on their shared
-// dimensions. Chunks whose delta carries tool_calls, reasoning_content, or
-// web_search are skipped: readTurnStream tracks those in its payload computation
-// (len(toolsByIdx)>0, reasoning.Len()>0, len(webSearch)>0) while readStream —
-// the simple no-tools path — does not; disagreement on those dimensions is an
-// expected scope difference, not a bug.
+// dimensions. reasoning_content is a shared dimension: readStream counts a
+// non-empty delta as a completion signal exactly like readTurnStream's payload
+// computation (reasoning.Len()>0) does. Chunks whose delta carries tool_calls
+// or web_search are still skipped: readTurnStream tracks those in its payload
+// (len(toolsByIdx)>0, len(webSearch)>0) while the no-tools readStream cannot
+// receive them, so disagreement on those dimensions is an expected scope
+// difference, not a bug.
 func FuzzReadStreamReceived(f *testing.F) {
 	seeds := []string{
 		`{"choices":[{"delta":{}}]}`,
@@ -494,6 +496,8 @@ func FuzzReadStreamReceived(f *testing.F) {
 		`{"choices":[{"delta":{},"finish_reason":""}]}`,
 		`{"choices":[],"usage":{"prompt_tokens":1}}`,
 		`{"choices":[{"delta":{"content":"x"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1}}`,
+		`{"choices":[{"delta":{"reasoning_content":"think"}}]}`,
+		`{"choices":[{"delta":{"reasoning_content":"think"},"finish_reason":"stop"}]}`,
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -511,9 +515,8 @@ func FuzzReadStreamReceived(f *testing.F) {
 		// Skip chunks whose delta carries dimensions readTurnStream
 		// tracks but readStream does not.
 		hasToolCalls := len(body.Choices) > 0 && len(body.Choices[0].Delta.ToolCalls) > 0
-		hasReasoning := len(body.Choices) > 0 && body.Choices[0].Delta.ReasoningContent != ""
 		hasWebSearch := len(body.Choices) > 0 && len(body.Choices[0].Delta.WebSearch) > 0
-		if hasToolCalls || hasReasoning || hasWebSearch {
+		if hasToolCalls || hasWebSearch {
 			t.Skip()
 		}
 
@@ -524,17 +527,22 @@ func FuzzReadStreamReceived(f *testing.F) {
 		if len(body.Choices) > 0 && body.Choices[0].Delta.Content != "" {
 			contentLen = 1 // content.Len() > 0 in readTurnStream
 		}
-		payload := contentLen > 0 // reasoning, webSearch, tools all excluded
+		reasoningLen := 0
+		if len(body.Choices) > 0 && body.Choices[0].Delta.ReasoningContent != "" {
+			reasoningLen = 1 // reasoning.Len() > 0 in readTurnStream
+		}
+		payload := contentLen > 0 || reasoningLen > 0 // webSearch, tools excluded
 		finishReason := ""
 		if len(body.Choices) > 0 {
 			finishReason = body.Choices[0].FinishReason
 		}
 		readTurnReceived := payload || finishReason != "" || body.Usage != nil
 
-		// readStream received on shared dimensions (after the fix):
+		// readStream received on shared dimensions:
 		//   (a) delta.Content != ""
-		//   (b) FinishReason != ""
-		//   (c) Usage != nil
+		//   (b) delta.ReasoningContent != ""
+		//   (c) FinishReason != ""
+		//   (d) Usage != nil
 		// Empty-choices usage guard: Usage != nil sets received=true even
 		// when len(chunk.Choices) == 0.
 		var readStreamReceived bool
@@ -544,6 +552,7 @@ func FuzzReadStreamReceived(f *testing.F) {
 			}
 		} else {
 			readStreamReceived = body.Choices[0].Delta.Content != "" ||
+				body.Choices[0].Delta.ReasoningContent != "" ||
 				body.Choices[0].FinishReason != "" ||
 				body.Usage != nil
 		}

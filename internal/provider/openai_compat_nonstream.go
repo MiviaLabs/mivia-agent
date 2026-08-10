@@ -1,0 +1,68 @@
+package provider
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+)
+
+// doJSON makes the call and repeats it while the response body arrives
+// incomplete. A truncated body still carries status 200, so the retry
+// transport treats it as a success and only the decode below finds the cut.
+func (c *OpenAICompat) doJSON(ctx context.Context, req Request) (*chatResponseBody, error) {
+	if req.DisableProviderReplay {
+		return c.doJSONOnce(ctx, req)
+	}
+	return retryOnIncompleteBody(ctx, func() (*chatResponseBody, error) {
+		return c.doJSONOnce(ctx, req)
+	})
+}
+
+func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatResponseBody, error) {
+	httpReq, err := c.newRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		err = markTransientReadDeadline(ctx, req.Timeout, err)
+		return nil, asTransient(fmt.Errorf("%s: request failed: %w", c.name, err))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.httpError(resp)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, asTransient(fmt.Errorf("%s: read response: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, req.Timeout, err), deadlineLabel(req.Timeout)))
+		}
+		return nil, asTransient(fmt.Errorf("%s: read response: %w", c.name, err))
+	}
+	if len(raw) > maxJSONResponseBytes {
+		return nil, fmt.Errorf("%s: response exceeds %d byte limit", c.name, maxJSONResponseBytes)
+	}
+	if c.errorParser != nil {
+		parserBody := raw
+		if len(parserBody) > 4096 {
+			parserBody = parserBody[:4096]
+		}
+		if err := c.errorParser(resp.StatusCode, parserBody); err != nil {
+			return nil, err
+		}
+	}
+	var body chatResponseBody
+	if err := json.Unmarshal(raw, &body); err != nil {
+		// Left unwrapped on purpose: a decode failure is not by itself a
+		// transport fault (IsTransient excludes JSON syntax errors, because at
+		// agent-output parsing sites they are bad answers). retryOnIncompleteBody
+		// retries a body that was provably cut and marks the final error
+		// TransientError when its per-call budget is spent, where the cut is
+		// known.
+		return nil, fmt.Errorf("%s: decode response: %w", c.name, err)
+	}
+	return &body, nil
+}
