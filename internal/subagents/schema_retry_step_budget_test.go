@@ -101,3 +101,87 @@ func TestSchemaRetryStepBudgetNotStarvedByHeartbeats(t *testing.T) {
 		t.Fatalf("step_count = %v, want %v (real steps, not heartbeat counts)", got, want)
 	}
 }
+
+// TestSchemaRetryRespectsWorkLimitsMaxTurns pins the turn-budget accounting
+// for schema-mode corrective re-entries. MaxTurns bounds the WHOLE invocation
+// (runtime.WorkLimits: "bounds cumulative work for one task"), corrective
+// re-entries included. Pre-fix, runValidatedReply charged re-entries only
+// against the handler MaxSteps and each loop.Run re-applied MaxTurns as a
+// fresh full per-call budget, so a task with MaxTurns=2 and distinct invalid
+// replies burned 3 model calls (attempt 0 plus two re-entries, each granted a
+// fresh cap of 2) instead of <= 2.
+func TestSchemaRetryRespectsWorkLimitsMaxTurns(t *testing.T) {
+	run := func(t *testing.T, handlerMaxSteps int, replies []string) (map[string]any, int, error) {
+		t.Helper()
+		c := &scriptedSchemaCompleter{replies: replies}
+		reg := tools.NewRegistry()
+		h := &subagents.MultiStepHandler{
+			Completer:      c,
+			FullRegistry:   reg,
+			Model:          "m",
+			MaxSteps:       handlerMaxSteps,
+			SchemaRetryMax: 2,
+			OutputSchema:   schemaObject(),
+		}
+		input, _ := json.Marshal("do the work")
+		out, err := h.Invoke(context.Background(), runtime.Request{
+			ID: "task-max-turns", Name: "worker", Kind: runtime.Subagent, Input: input,
+			OutputSchema: schemaObject(),
+			WorkLimits:   runtime.WorkLimits{MaxTurns: 2},
+		})
+		var payload map[string]any
+		if len(out) > 0 {
+			_ = json.Unmarshal(out, &payload)
+		}
+		return payload, c.i, err
+	}
+
+	// Three DISTINCT invalid candidates, so the byte-identical no-progress
+	// fail-fast (TestMultiStepSchemaNoProgressFailsFast path) cannot mask the
+	// budget defect: each candidate earns its own corrective re-entry.
+	distinctInvalid := []string{`nope`, `still nope`, `and again`}
+
+	t.Run("finite handler MaxSteps above MaxTurns", func(t *testing.T) {
+		payload, calls, err := run(t, 10, distinctInvalid)
+		if !errors.Is(err, subagents.ErrSchemaViolation) {
+			t.Fatalf("err=%v, want ErrSchemaViolation", err)
+		}
+		if calls > 2 {
+			t.Fatalf("got %d model calls with MaxTurns=2, want <= 2 (MaxTurns bounds the whole invocation, retries included)", calls)
+		}
+		if payload["schema"] != "violation" {
+			t.Fatalf("schema=%v payload=%#v", payload["schema"], payload)
+		}
+	})
+
+	t.Run("unlimited handler MaxSteps", func(t *testing.T) {
+		// MaxSteps=0 is the default shape of the plain multi_step and skill
+		// handlers; MaxTurns must still bound the whole invocation.
+		payload, calls, err := run(t, 0, distinctInvalid)
+		if !errors.Is(err, subagents.ErrSchemaViolation) {
+			t.Fatalf("err=%v, want ErrSchemaViolation", err)
+		}
+		if calls > 2 {
+			t.Fatalf("got %d model calls with MaxTurns=2, want <= 2 (MaxTurns bounds the whole invocation, retries included)", calls)
+		}
+		if payload["schema"] != "violation" {
+			t.Fatalf("schema=%v payload=%#v", payload["schema"], payload)
+		}
+	})
+
+	t.Run("success within budget", func(t *testing.T) {
+		// Guard against over-restriction: one corrective re-entry inside the
+		// MaxTurns budget must still complete with schema ok and exactly 2
+		// calls.
+		payload, calls, err := run(t, 10, []string{`not json`, `{"ok":true}`})
+		if err != nil {
+			t.Fatalf("success within budget must not be blocked: %v", err)
+		}
+		if payload["schema"] != "ok" {
+			t.Fatalf("want schema ok, got %#v", payload)
+		}
+		if calls != 2 {
+			t.Fatalf("got %d model calls, want exactly 2", calls)
+		}
+	})
+}

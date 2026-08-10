@@ -49,6 +49,18 @@ func (h *MultiStepHandler) runValidatedReply(
 	if retryMax <= 0 {
 		retryMax = 2
 	}
+	// effectiveSteps is the step budget for the WHOLE invocation, initial
+	// attempt and corrective re-entries combined. Each loop.Run re-applies
+	// opts.WorkLimits.MaxTurns as a fresh per-call cap (agent.Loop.Run), so
+	// without folding it in here every re-entry would re-grant a full turn
+	// budget and a task could exceed its declared MaxTurns
+	// (runtime.WorkLimits: "bounds cumulative work for one task"; rule
+	// 50-08: children inherit remaining budget). Byte-identical when MaxTurns
+	// is 0/unset or >= remainingSteps.
+	effectiveSteps := remainingSteps
+	if turns := opts.WorkLimits.MaxTurns; turns > 0 && (effectiveSteps <= 0 || turns < effectiveSteps) {
+		effectiveSteps = turns
+	}
 	userTurn := taskPrompt
 	// lastInvalid is the normalized (fence-stripped) candidate that failed
 	// validation on the previous iteration. A byte-identical repeat means the
@@ -59,10 +71,11 @@ func (h *MultiStepHandler) runValidatedReply(
 	for attempt := 0; ; attempt++ {
 		opts.PreserveWorkLimits = attempt > 0
 		// Each loop.Run resets its local MaxSteps counter, so shrink MaxSteps
-		// to remaining budget — re-entry must not extend step allowance.
-		if remainingSteps > 0 {
+		// to the remaining effective budget — re-entry must not extend step
+		// allowance.
+		if effectiveSteps > 0 {
 			used := int(stepCount.Load())
-			left := remainingSteps - used
+			left := effectiveSteps - used
 			if left <= 0 {
 				return "", nil, fmt.Errorf("%w: no step budget remaining for schema retry", ErrSchemaViolation)
 			}
