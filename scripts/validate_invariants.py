@@ -31,11 +31,15 @@ def collect_test_names() -> set[str]:
             cwd=REPO,
             check=False,
         )
-        if result.returncode in (0, 1):
+        if result.returncode in (0, 1) and result.stdout.strip():
             return set(re.findall(r"func (Test\w+)", result.stdout))
     except (OSError, ValueError):
         pass
 
+    # Empty rg output is NOT evidence the tests are absent: on some platforms
+    # (e.g. Homebrew ripgrep on macOS) the same invocation returns zero matches
+    # for a tree that plainly contains tests. The stdlib walk is the source of
+    # truth for the gate; rg is only a fast path.
     names: set[str] = set()
     skip = {".git", "testdata", "node_modules", "vendor"}
     for path in REPO.rglob("*_test.go"):

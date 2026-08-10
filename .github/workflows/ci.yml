@@ -123,11 +123,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path $temp | Out-Null
           "TMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
           "TEMP=$temp" | Out-File -FilePath $env:GITHUB_ENV -Append
-          $home = Join-Path $ciRoot 'home'
-          New-Item -ItemType Directory -Force -Path (Join-Path $home '.mivia') | Out-Null
-          New-Item -ItemType File -Force -Path (Join-Path $home '.mivia\.env') | Out-Null
-          "USERPROFILE=$home" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "HOME=$home" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # $home is a read-only automatic variable in PowerShell; use a
+          # distinct name for the isolated profile directory.
+          $userHome = Join-Path $ciRoot 'home'
+          New-Item -ItemType Directory -Force -Path (Join-Path $userHome '.mivia') | Out-Null
+          New-Item -ItemType File -Force -Path (Join-Path $userHome '.mivia\.env') | Out-Null
+          "USERPROFILE=$userHome" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "HOME=$userHome" | Out-File -FilePath $env:GITHUB_ENV -Append
           $gomodcache = & go env GOMODCACHE
           $gocache = & go env GOCACHE
           "GOMODCACHE=$gomodcache" | Out-File -FilePath $env:GITHUB_ENV -Append

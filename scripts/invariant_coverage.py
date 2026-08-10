@@ -27,6 +27,16 @@ def main() -> None:
         capture_output=True, text=True, cwd=ROOT,
     )
     existing = set(re.findall(r"func (Test\w+)", result.stdout))
+    # rg is a fast path only: Homebrew's ripgrep on macOS can return zero
+    # matches for a tree full of tests, so an empty result falls back to a
+    # stdlib walk instead of reporting the tests as missing.
+    if not existing:
+        existing = set()
+        skip = {".git", "testdata", "node_modules", "vendor"}
+        for path in ROOT.rglob("*_test.go"):
+            if skip & set(path.relative_to(ROOT).parts):
+                continue
+            existing.update(re.findall(r"(?m)^func (Test\w+)", path.read_text(encoding="utf-8")))
     refs_with_pkg = {}
     for file, funcs in re.findall(
         r"^(.+?):func (Test\w+)", result.stdout, re.MULTILINE
