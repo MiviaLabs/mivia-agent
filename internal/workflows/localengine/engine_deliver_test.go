@@ -75,6 +75,10 @@ kind = "agent"
 agent = "one"
 on_failure = "failure"
 
+context = [
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
+]
+
 [[transitions]]
 from = "one"
 to = "success"

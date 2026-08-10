@@ -375,7 +375,7 @@ kind = "agent"
 agent = "one"
 template = "templates/one.md"
 output_schema = "schemas/out.json"
-context = [{ from = "inputs.task", as = "task", max_bytes = 100 }]
+context = [{ from = "inputs.task", as = "task", max_bytes = 100 }, { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true }]
 
 [[steps]]
 id = "two"
@@ -383,7 +383,7 @@ kind = "agent"
 agent = "two"
 template = "templates/two.md"
 output_schema = "schemas/out.json"
-context = [{ from = "steps.one.output", as = "previous", max_bytes = 100 }]
+context = [{ from = "steps.one.output", as = "previous", max_bytes = 100 }, { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true }]
 
 [[transitions]]
 from = "one"

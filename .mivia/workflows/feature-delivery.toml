@@ -192,6 +192,12 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.preflight_structure.output", as = "failed_evidence", max_bytes = 32768 },
+  # A delivery rejection (the common commit-hook refusal) routes here via
+  # delivery.on_failure. The rejection text must reach the repair agent
+  # deterministically as delivery_hint: without it, this step sees only the
+  # PASSING gate output and delivery re-fails identically forever. The
+  # compiler refuses a delivery re-entry step that omits this binding.
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
 on_failure = "failure"
 
@@ -450,7 +456,9 @@ pr_title_policy = ".mivia/policy/pr-title.toml"
 # fails for a reason an agent can repair - a commit hook that rejects the
 # change is the common one - the run returns to this step instead of stopping
 # with all of its work done. The step repairs the change, the run reaches
-# success again, and delivery runs again.
+# success again, and delivery runs again. The step MUST bind delivery.failure
+# (compiler-enforced): the rejection text is its only deterministic hint, and
+# without it delivery re-fails identically forever.
 on_failure = "repair_preflight_structure"
 # A PR-metadata failure (the host rejected pr_title/pr_summary) routes to the
 # dedicated repair step instead of the generic on_failure step.

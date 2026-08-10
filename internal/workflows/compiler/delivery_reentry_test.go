@@ -22,7 +22,10 @@ func TestCompile_DeliveryReentryStepReachable(t *testing.T) {
 		Steps: []definition.Step{
 			{ID: "plan", Kind: "agent", Agent: "planner"},
 			{ID: "review", Kind: "agent_gate", Agent: "reviewer"},
-			{ID: "repair_pr_metadata", Kind: "agent", Agent: "engineer", Template: "templates/repair-pr-metadata.md"},
+			{ID: "repair_pr_metadata", Kind: "agent", Agent: "engineer", Template: "templates/repair-pr-metadata.md",
+				Context: []definition.ContextBinding{
+					{From: "delivery.failure", As: "delivery_hint", MaxBytes: 8192, Optional: true},
+				}},
 		},
 		Transitions: []definition.Transition{
 			{From: "plan", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},
@@ -52,7 +55,10 @@ func TestCompile_DeliveryOnFailureReentryStepReachable(t *testing.T) {
 		InitialStep: "plan",
 		Steps: []definition.Step{
 			{ID: "plan", Kind: "agent", Agent: "planner"},
-			{ID: "repair", Kind: "agent", Agent: "engineer"},
+			{ID: "repair", Kind: "agent", Agent: "engineer",
+				Context: []definition.ContextBinding{
+					{From: "delivery.failure", As: "delivery_hint", MaxBytes: 8192, Optional: true},
+				}},
 		},
 		Transitions: []definition.Transition{
 			{From: "plan", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
