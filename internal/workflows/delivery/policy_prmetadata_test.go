@@ -15,8 +15,14 @@ func newCompiledPRMetadataWorkflow(t *testing.T, prTitlePolicy, onFailure, onPRM
 		Name: "pr-metadata-fields", Version: 1, InitialStep: "plan",
 		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
 		Steps: []definition.Step{
-			{ID: "plan", Kind: "agent", Agent: "planner"},
-			{ID: "review", Kind: "agent_gate", Agent: "reviewer"},
+			{ID: "plan", Kind: "agent", Agent: "planner",
+				Context: []definition.ContextBinding{
+					{From: "delivery.failure", As: "delivery_hint", MaxBytes: 8192, Optional: true},
+				}},
+			{ID: "review", Kind: "agent_gate", Agent: "reviewer",
+				Context: []definition.ContextBinding{
+					{From: "delivery.failure", As: "delivery_hint", MaxBytes: 8192, Optional: true},
+				}},
 		},
 		Transitions: []definition.Transition{
 			{From: "plan", To: "review", Match: definition.MatchCriteria{Status: "succeeded"}},

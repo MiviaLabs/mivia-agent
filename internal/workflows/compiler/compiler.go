@@ -29,19 +29,6 @@ type CompiledWorkflow struct {
 	LoopNames map[string]bool
 }
 
-// deliveryActive reports whether d declares an active pull_request delivery
-// policy: kind "pull_request" with an explicit mode other than "none". Runs
-// with an active policy settle at delivery_pending on their success route
-// instead of moving directly to succeeded. It is the single predicate every
-// layer uses to decide whether delivery runs at all: re-entry seeding in
-// validateGraph and the policy-shape checks in validateDelivery both key off
-// it.
-func deliveryActive(d *definition.Delivery) bool {
-	return d != nil &&
-		d.Kind == "pull_request" &&
-		d.Mode != "" && d.Mode != "none"
-}
-
 // DeliveryActive reports whether the workflow declares an active pull_request
 // delivery policy: kind "pull_request" with an explicit mode other than
 // "none". Runs with an active policy settle at delivery_pending on their
@@ -152,6 +139,16 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 	// Delivery config validation
 	if err := validateDelivery(wf); err != nil {
 		errs = append(errs, err.Error())
+	}
+
+	// Delivery re-entry steps must bind delivery.failure so the repair agent
+	// deterministically sees the rejection that routed it (admission-only,
+	// like the evidence-cap check: an in-flight run admitted under an earlier
+	// policy is never stranded).
+	if !skipCycleValidation {
+		if err := validateDeliveryReentryHints(wf); err != nil {
+			errs = append(errs, err.Error())
+		}
 	}
 
 	// Limits validation
@@ -329,64 +326,6 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool, s
 	}
 
 	return nil
-}
-
-// validateDelivery checks that the delivery configuration is structurally valid.
-func validateDelivery(wf *definition.WorkflowFile) error {
-	if wf.Delivery == nil {
-		return nil
-	}
-	// pr_title_policy is a workflow-relative path. Reject an absolute path
-	// and any path with a parent-directory segment (".."). Split on "/" and
-	// compare each segment, so a name that merely contains ".." stays valid.
-	if p := wf.Delivery.PRTitlePolicy; p != "" {
-		if strings.HasPrefix(p, "/") {
-			return fmt.Errorf("delivery: pr_title_policy %q must be a relative path", p)
-		}
-		for _, segment := range strings.Split(p, "/") {
-			if segment == ".." {
-				return fmt.Errorf("delivery: pr_title_policy %q must not contain a parent-directory segment", p)
-			}
-		}
-	}
-	// on_pr_metadata_failure names the step that repairs PR-metadata delivery
-	// failures. A name that no step carries fails admission, like on_failure.
-	if m := wf.Delivery.OnPRMetadataFailure; m != "" && !stepExists(wf, m) {
-		return fmt.Errorf("delivery: on_pr_metadata_failure %q names no step", m)
-	}
-	// on_failure names the step the run returns to when delivery fails for a
-	// repairable reason. The existence checks for both targets run whether the
-	// policy is active or not: a non-empty name that no step carries is a
-	// typo, and a typo stays a typo even in an inactive block (kind "" or
-	// mode "none"). Reachability is a separate concern: validateGraph seeds
-	// re-entry targets only for an ACTIVE policy, so a step named only in an
-	// inactive block stays flagged unreachable.
-	if f := wf.Delivery.OnFailure; f != "" && !stepExists(wf, f) {
-		return fmt.Errorf("delivery: on_failure %q names no step", f)
-	}
-	switch wf.Delivery.Kind {
-	case "":
-		if wf.Delivery.Mode != "" && wf.Delivery.Mode != "none" {
-			return fmt.Errorf("delivery: kind is empty but mode %q is set; use kind = \"pull_request\" or mode = \"none\"", wf.Delivery.Mode)
-		}
-		return nil
-	case "pull_request":
-		switch wf.Delivery.Mode {
-		case "none", "draft", "ready":
-			// valid
-		default:
-			return fmt.Errorf("delivery: mode %q is not valid (must be one of: none, draft, ready)", wf.Delivery.Mode)
-		}
-		if wf.Delivery.Provider == "" {
-			return fmt.Errorf("delivery: provider must be non-empty")
-		}
-		if wf.Delivery.Base == "" {
-			return fmt.Errorf("delivery: base must be non-empty")
-		}
-		return nil
-	default:
-		return fmt.Errorf("delivery: kind %q is not recognized (must be \"pull_request\" or empty)", wf.Delivery.Kind)
-	}
 }
 
 // stepExists reports whether the workflow declares a step with this ID.

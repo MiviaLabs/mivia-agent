@@ -32,6 +32,11 @@ func TestCompile_DeliveryExtendedPolicyFields(t *testing.T) {
 			PRTitlePolicy:       "policy/pr-title.toml",
 			OnPRMetadataFailure: "plan",
 		}
+		// The re-entry step must bind delivery.failure (compiler-enforced), so
+		// a PR-metadata rejection deterministically reaches the repair agent.
+		wf.Steps[0].Context = []definition.ContextBinding{
+			{From: "delivery.failure", As: "delivery_hint", MaxBytes: 8192, Optional: true},
+		}
 		cw, err := Compile(wf)
 		if err != nil {
 			t.Fatalf("unexpected compile error: %v", err)
@@ -106,6 +111,10 @@ func TestCompile_DeliveryOnPRMetadataFailureValidation(t *testing.T) {
 	t.Run("existing step id compiles", func(t *testing.T) {
 		wf := base()
 		wf.Delivery.OnPRMetadataFailure = "plan"
+		// The re-entry step must bind delivery.failure (compiler-enforced).
+		wf.Steps[0].Context = []definition.ContextBinding{
+			{From: "delivery.failure", As: "delivery_hint", MaxBytes: 8192, Optional: true},
+		}
 		if _, err := Compile(wf); err != nil {
 			t.Fatalf("unexpected compile error: %v", err)
 		}
