@@ -33,6 +33,9 @@ mivia workflow run feature-delivery --input task="add rate limiter middleware"
 mivia workflow runs
 mivia workflow runs --status running --limit 20
 
+# Watch runs until every matched run is terminal
+mivia workflow runs --watch
+
 # Resume an interrupted run
 mivia workflow resume wfr-ABCDEF1234
 
@@ -70,12 +73,13 @@ A run without `--allow-publish` finishes as `delivery_pending`. It stays there u
 
 ## Shared flags
 
-| Flag | Applies to | Default |
-|------|------------|---------|
-| `--workspace <dir>` | all commands | `.` |
-| `--config <path>` | `workflow *` commands | user default |
-| `--force` | `workflow resume` | false |
-| `--allow-publish` | `workflow run`, `workflow deliver`, `workflow resume` | false |
+| Flag | Applies to | Default | Description |
+|------|------------|---------|-------------|
+| `--workspace <dir>` | all commands | `.` | Directory that owns the repository and run store |
+| `--config <path>` | `workflow *` commands | user default | Config file path |
+| `--force` | `workflow resume` | false | Clear a stale execution claim when resuming |
+| `--allow-publish` | `workflow run`, `workflow deliver`, `workflow resume` | false | Grant publish approval for the run |
+| `--watch` | `workflow runs` | false | Poll every 5s; return when every matched run is terminal |
 
 ## Worktrees
 
@@ -263,7 +267,10 @@ flowchart TD
     preflight_structure -->|passed| success
     preflight_structure -->|failed| repair_preflight_structure
     repair_preflight_structure --> review
+    repair_pr_metadata --> review
     success -->|draft PR| delivery
+    delivery -->|hook rejects| repair_preflight_structure
+    delivery -->|PR metadata rejected| repair_pr_metadata
 ```
 
 Look at the right side of the diagram. Five gates run the tests and checks. Each failed gate sends the run back for repair. The repairs feed into review again.
@@ -274,8 +281,9 @@ The workflow first creates and challenges a change plan. It then creates and
 challenges a test plan. Only then does it change files. The reviewer checks the
 implementation twice: once for the change and once for cross-layer effects.
 Each failed automated check routes to a focused repair step, then to review
-again. A run can continue to repair while it stays inside its attempt and
-duration limits.
+again. A rejected PR title or summary routes to the dedicated metadata repair
+step, which rewrites only the metadata and feeds back through review. A run can
+continue to repair while it stays inside its attempt and duration limits.
 
 | Steps | Kind | Agent and skill | Purpose |
 |------|------|-----------------|---------|
@@ -370,7 +378,7 @@ Limits:
 
 ```toml
 [limits]
-max_step_attempts = 16    # 0-100
+max_step_attempts = 16    # 0-10000
 max_duration_seconds = 10800  # 0-86400
 ```
 
@@ -435,7 +443,7 @@ max_iterations = -1
 | `match.status` | Step completion status to match |
 | `match.output` | Output field values to match (no expressions, regexes, or negation) |
 | `loop` | Named loop for back-edges (globally unique) |
-| `max_iterations` | Loop cap: `>0` (max 100) or `-1` (unlimited) |
+| `max_iterations` | Loop cap: `>0` (max 1000) or `-1` (unlimited) |
 
 A transition matches only a closed attempt status and declared output-schema fields. Zero or multiple matches fails closed.
 
