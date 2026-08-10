@@ -49,6 +49,31 @@ func TestParseLevelIsCaseAndSpaceSensitive(t *testing.T) {
 	}
 }
 
+// The parser runs on operator-typed strings of unbounded size. A huge level
+// must fail closed with an error, never panic: the contract states no length
+// cap, and the exact-match map lookup must not assume one.
+func TestParseLevelHandlesOversizedInputNoPanic(t *testing.T) {
+	if _, err := ParseLevel(strings.Repeat("x", 4<<20)); err == nil {
+		t.Fatal("ParseLevel of a 4 MiB non-vocabulary string must fail")
+	}
+}
+
+// ParseLevel errors print to stderr and may carry a level exactly as the
+// operator typed it, before validation has rejected it. %q must escape a raw
+// ESC so the message cannot recolour or clear the reader's terminal.
+func TestParseLevelErrorEscapesControlBytes(t *testing.T) {
+	_, err := ParseLevel("\x1b[31mred")
+	if err == nil {
+		t.Fatal("ParseLevel of a control-byte level must fail")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b") {
+		t.Fatalf("raw ESC reached the error text: %q", err)
+	}
+	if !strings.Contains(err.Error(), `\x1b`) {
+		t.Fatalf("error must show the escaped form, got %q", err)
+	}
+}
+
 func TestActiveIsTrueForEveryNamedLevel(t *testing.T) {
 	for _, level := range []Level{Off, Minimal, Low, Medium, High, XHigh, Max} {
 		if !level.Active() {
@@ -58,7 +83,7 @@ func TestActiveIsTrueForEveryNamedLevel(t *testing.T) {
 }
 
 func TestParseDialectAcceptsEveryNamedDialect(t *testing.T) {
-	for _, want := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectThinking, DialectThinkingEffort, DialectNone} {
+	for _, want := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectThinking, DialectThinkingEffort, DialectThinkingPreserved, DialectNone} {
 		got, err := ParseDialect(string(want))
 		if err != nil {
 			t.Fatalf("ParseDialect(%q): unexpected error: %v", want, err)
@@ -84,6 +109,40 @@ func TestParseDialectRejectsUnknownValue(t *testing.T) {
 		t.Fatal("ParseDialect(\"qwen\") must fail")
 	} else if !strings.Contains(err.Error(), "qwen") {
 		t.Fatalf("error must name the rejected value, got %v", err)
+	}
+}
+
+// A dialect is spelled exactly as configured, the same rule as levels.
+// Accepting a case or space variant here would make the config surface
+// silently forgiving in one place and strict in every other closed TOML object.
+func TestParseDialectIsCaseAndSpaceSensitive(t *testing.T) {
+	for _, bad := range []string{"OPENAI", " openai", "openai "} {
+		if _, err := ParseDialect(bad); err == nil {
+			t.Fatalf("ParseDialect(%q) must fail", bad)
+		}
+	}
+}
+
+// Same no-panic contract as the level parser: a huge dialect string is a plain
+// map miss, never a bound or a slice to trip over.
+func TestParseDialectHandlesOversizedInputNoPanic(t *testing.T) {
+	if _, err := ParseDialect(strings.Repeat("x", 4<<20)); err == nil {
+		t.Fatal("ParseDialect of a 4 MiB non-vocabulary string must fail")
+	}
+}
+
+// The dialect error also renders operator-typed input, so %q must escape a raw
+// ESC there too; a terminal-control byte in a config error is not an error.
+func TestParseDialectErrorEscapesControlBytes(t *testing.T) {
+	_, err := ParseDialect("\x1b[31mred")
+	if err == nil {
+		t.Fatal("ParseDialect of a control-byte dialect must fail")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b") {
+		t.Fatalf("raw ESC reached the error text: %q", err)
+	}
+	if !strings.Contains(err.Error(), `\x1b`) {
+		t.Fatalf("error must show the escaped form, got %q", err)
 	}
 }
 
@@ -164,6 +223,16 @@ func TestFormatLevelsQuotedEscapesControlBytes(t *testing.T) {
 	got := FormatLevelsQuoted([]Level{Level("\x1b[31mred"), Level("a\nb")})
 	if strings.ContainsAny(got, "\x1b\n") {
 		t.Fatalf("raw control bytes reached the rendering: %q", got)
+	}
+}
+
+// Duplicates render verbatim. The renderer stays dumb: config's
+// checkReasoningEfforts rejects a repeated level before any catalog set reaches
+// this function, so deduplicating here would hide a config error behind a
+// silently "fixed" UI line.
+func TestFormatLevelsRendersDuplicatesAsIs(t *testing.T) {
+	if got := FormatLevels([]Level{High, High, Low}); got != "high, high, low" {
+		t.Fatalf("duplicate set = %q, want every element rendered as-is", got)
 	}
 }
 
@@ -291,5 +360,17 @@ func TestResolveSequencesDeepSeekDefault(t *testing.T) {
 				t.Fatalf("Resolve(\"deepseek\", %+v) = %+v, want %+v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// An explicit DialectNone is a deliberate statement and must win over a
+// provider's vetted default. Resolve keeps the pair exactly as written so
+// config's explicit-none refusal sees what the operator configured rather than
+// a default it would have to undo, and the encoder's nil fall-through sends
+// nothing (INV-AG-36).
+func TestResolveExplicitNoneWinsOverProviderDefault(t *testing.T) {
+	in := Setting{Level: High, Dialect: DialectNone}
+	if got := Resolve("deepseek", in); got != in {
+		t.Fatalf("Resolve(\"deepseek\", {high, none}) = %+v, want the explicit none kept", got)
 	}
 }
