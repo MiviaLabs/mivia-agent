@@ -586,3 +586,57 @@ func TestWorkflowsSidebarDoubleClickStaleClickDoesNotActivate(t *testing.T) {
 		t.Fatal("stale click must not activate")
 	}
 }
+
+// TestBuildWorkflowRunViewShowsHeartbeatLine pins the dialog's last-heartbeat
+// header line: a fresh heartbeat renders the age, a stale one renders the age
+// with a stale marker, and a run with no running attempt renders none. The
+// fresh line uses the info style and the stale line the error style, so
+// freshness is visually distinct.
+func TestBuildWorkflowRunViewShowsHeartbeatLine(t *testing.T) {
+	run := workflowledger.RunSnapshot{RunID: "wfr-HBL1", WorkflowName: "alpha", Status: workflowledger.RunStatusRunning, ActiveStepID: "plan", StartedAt: time.Now().Add(-10 * time.Minute)}
+	now := time.Now()
+	attempt := func(hbAt time.Time) []workflowledger.StepAttempt {
+		return []workflowledger.StepAttempt{{AttemptID: "att-hb", RunID: run.RunID, StepID: "plan", AttemptNo: 1, Status: workflowledger.AttemptStatusRunning, StartedAt: now.Add(-2 * time.Minute), LastHeartbeatAt: hbAt}}
+	}
+
+	// Fresh: the age renders with the info style and no stale marker.
+	fresh, err := buildWorkflowRunView(run, nil, attempt(now.Add(-12*time.Second)), nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshLine := "last heartbeat: " + formatDuration(12*time.Second) + " ago"
+	header := strings.Join(fresh.header, "\n")
+	if !strings.Contains(header, freshLine) {
+		t.Fatalf("header missing %q:\n%s", freshLine, header)
+	}
+	if !strings.Contains(header, tuiInfoStyle.Render(freshLine)) {
+		t.Fatalf("fresh heartbeat line not styled with the info style:\n%q", header)
+	}
+	if strings.Contains(header, "stale") || strings.Contains(header, "last heartbeat: none") {
+		t.Fatalf("fresh header carries a stale marker:\n%s", header)
+	}
+
+	// Stale: the age renders with a stale marker and the error style.
+	stale, err := buildWorkflowRunView(run, nil, attempt(now.Add(-3*time.Minute)), nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleLine := "last heartbeat: " + formatDuration(3*time.Minute) + " ago · stale"
+	header = strings.Join(stale.header, "\n")
+	if !strings.Contains(header, staleLine) {
+		t.Fatalf("header missing %q:\n%s", staleLine, header)
+	}
+	if !strings.Contains(header, tuiErrorStyle.Render(staleLine)) {
+		t.Fatalf("stale heartbeat line not styled with the error style:\n%q", header)
+	}
+
+	// No running attempt: the line renders none.
+	none, err := buildWorkflowRunView(run, nil, nil, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header = strings.Join(none.header, "\n")
+	if !strings.Contains(header, "last heartbeat: none") {
+		t.Fatalf("heartbeat-less header missing the none line:\n%s", header)
+	}
+}

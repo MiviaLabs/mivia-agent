@@ -1,6 +1,7 @@
 package agenttools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -519,6 +520,76 @@ func TestBuildStatusViewCompletedAttemptTiming(t *testing.T) {
 	wantElapsed := int64(attempt.FinishedAt.Sub(attempt.StartedAt).Seconds())
 	if av.ElapsedSeconds != wantElapsed {
 		t.Fatalf("ElapsedSeconds = %d, want %d", av.ElapsedSeconds, wantElapsed)
+	}
+}
+
+// TestBuildStatusViewRunningAttemptHeartbeat pins the liveness surface of the
+// status view: a running attempt with a recorded heartbeat carries its RFC3339
+// instant plus a non-negative staleness in seconds, and the JSON envelope
+// exposes both under the documented tag names.
+func TestBuildStatusViewRunningAttemptHeartbeat(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-status-heartbeat-1"
+	attempt := seedRunningAttemptForStatus(t, repo, runID)
+
+	ctx := context.Background()
+	hb := time.Now().Add(-time.Hour)
+	if err := repo.SetStepAttemptHeartbeat(ctx, runID, attempt.AttemptID, hb); err != nil {
+		t.Fatal(err)
+	}
+
+	view, err := buildStatusView(ctx, repo, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(view.Attempts))
+	}
+	av := view.Attempts[0]
+	wantHB := hb.UTC().Format(time.RFC3339)
+	if av.LastHeartbeatAt != wantHB {
+		t.Fatalf("LastHeartbeatAt = %q, want %q", av.LastHeartbeatAt, wantHB)
+	}
+	if av.LastHeartbeatStalenessSeconds < 3599 || av.LastHeartbeatStalenessSeconds > 3601 {
+		t.Fatalf("LastHeartbeatStalenessSeconds = %d, want ~3600", av.LastHeartbeatStalenessSeconds)
+	}
+
+	raw, err := json.Marshal(av)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"last_heartbeat_at", "last_heartbeat_staleness_seconds"} {
+		if !bytes.Contains(raw, []byte(`"`+key+`"`)) {
+			t.Fatalf("JSON envelope %s omits %q", raw, key)
+		}
+	}
+}
+
+// TestBuildStatusViewNoHeartbeatIsZero pins the backward-compatible default:
+// an attempt with no heartbeat records renders an empty last_heartbeat_at and
+// zero staleness, and the JSON envelope omits both fields.
+func TestBuildStatusViewNoHeartbeatIsZero(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-status-no-heartbeat-1"
+	seedRunningAttemptForStatus(t, repo, runID)
+
+	view, err := buildStatusView(context.Background(), repo, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	av := view.Attempts[0]
+	if av.LastHeartbeatAt != "" {
+		t.Fatalf("LastHeartbeatAt = %q, want empty", av.LastHeartbeatAt)
+	}
+	if av.LastHeartbeatStalenessSeconds != 0 {
+		t.Fatalf("LastHeartbeatStalenessSeconds = %d, want 0", av.LastHeartbeatStalenessSeconds)
+	}
+	raw, err := json.Marshal(av)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"last_heartbeat_at"`)) || bytes.Contains(raw, []byte(`"last_heartbeat_staleness_seconds"`)) {
+		t.Fatalf("JSON envelope must omit absent heartbeat fields: %s", raw)
 	}
 }
 

@@ -103,19 +103,21 @@ func resolvedDeliveryError(ctx context.Context, repo workflowledger.Repository, 
 // RFC3339 UTC timestamps and the elapsed seconds from the ledger.
 func attemptView(a workflowledger.StepAttempt) AttemptView {
 	av := AttemptView{
-		Step:             a.StepID,
-		Attempt:          a.AttemptNo,
-		Status:           string(a.Status),
-		ToStep:           a.ToStepID,
-		OutputDigest:     a.OutputDigest,
-		OutputRef:        a.OutputRef,
-		ErrorRef:         a.ErrorRef,
-		CoordinatorRunID: a.CoordinatorRunID,
-		TaskID:           a.TaskID,
-		MatchDigest:      a.MatchDigest,
-		StartedAt:        formatTime(a.StartedAt),
-		FinishedAt:       formatTimePtr(a.FinishedAt),
-		ElapsedSeconds:   attemptElapsedSeconds(a),
+		Step:                          a.StepID,
+		Attempt:                       a.AttemptNo,
+		Status:                        string(a.Status),
+		ToStep:                        a.ToStepID,
+		OutputDigest:                  a.OutputDigest,
+		OutputRef:                     a.OutputRef,
+		ErrorRef:                      a.ErrorRef,
+		CoordinatorRunID:              a.CoordinatorRunID,
+		TaskID:                        a.TaskID,
+		MatchDigest:                   a.MatchDigest,
+		StartedAt:                     formatTime(a.StartedAt),
+		FinishedAt:                    formatTimePtr(a.FinishedAt),
+		ElapsedSeconds:                attemptElapsedSeconds(a),
+		LastHeartbeatAt:               formatTime(a.LastHeartbeatAt),
+		LastHeartbeatStalenessSeconds: attemptHeartbeatStaleness(a),
 	}
 	if v := extractVerdict(a); v != "" {
 		av.Verdict = v
@@ -136,6 +138,21 @@ func attemptElapsedSeconds(a workflowledger.StepAttempt) int64 {
 		end = *a.FinishedAt
 	}
 	d := end.Sub(a.StartedAt)
+	if d < 0 {
+		return 0
+	}
+	return int64(d.Seconds())
+}
+
+// attemptHeartbeatStaleness returns the seconds since the attempt's latest
+// heartbeat, or 0 when none is recorded or the clock is skewed (a future
+// heartbeat reads as fresh). Heartbeats only exist for RUNNING attempts, so a
+// completed attempt carries 0 unless its final tick was persisted.
+func attemptHeartbeatStaleness(a workflowledger.StepAttempt) int64 {
+	if a.LastHeartbeatAt.IsZero() {
+		return 0
+	}
+	d := time.Since(a.LastHeartbeatAt)
 	if d < 0 {
 		return 0
 	}

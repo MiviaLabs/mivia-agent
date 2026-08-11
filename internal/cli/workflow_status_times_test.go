@@ -81,3 +81,61 @@ func TestWorkflowStatusCommandAttemptTiming(t *testing.T) {
 		t.Fatalf("status output missing started for the running attempt:\n%s", out)
 	}
 }
+
+// TestWorkflowStatusCommandAttemptHeartbeat pins the liveness surface of the
+// status report: a running attempt with a recorded heartbeat carries
+// last_heartbeat=<RFC3339> plus a staleness note, and an attempt without one
+// renders last_heartbeat=-.
+func TestWorkflowStatusCommandAttemptHeartbeat(t *testing.T) {
+	root, configPath, storePath, raw, run := newGatedApprovalWorkspace(t)
+	seedAttemptTimingHistory(t, storePath, raw, run)
+
+	// Record a heartbeat on the running review attempt, then close the store
+	// so the status command reopens the ledger from disk.
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := workflowledger.NewStorageRepository(store)
+	attempts, err := repo.ListStepAttempts(t.Context(), run.RunID)
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	reviewID := ""
+	for _, a := range attempts {
+		if a.StepID == "review" {
+			reviewID = a.AttemptID
+		}
+	}
+	if reviewID == "" {
+		_ = store.Close()
+		t.Fatal("running review attempt is missing")
+	}
+	hb := time.Now().Add(-60 * time.Second)
+	if err := repo.SetStepAttemptHeartbeat(t.Context(), run.RunID, reviewID, hb); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout strings.Builder
+	if err := runWorkflowWithIO([]string{"status", run.RunID, "--workspace", root, "--config", configPath}, &stdout, io.Discard); err != nil {
+		t.Fatalf("workflow status error = %v", err)
+	}
+	out := stdout.String()
+	want := fmt.Sprintf("last_heartbeat=%s (60s ago)", hb.UTC().Format(time.RFC3339))
+	if !strings.Contains(out, want) {
+		t.Fatalf("status output missing %q:\n%s", want, out)
+	}
+	// The completed attempt recorded no heartbeat and must render the dash
+	// placeholder on the same line.
+	if !strings.Contains(out, "  one #1 succeeded -> review started=") {
+		t.Fatalf("status output missing the completed attempt:\n%s", out)
+	}
+	if !strings.Contains(out, "last_heartbeat=-") {
+		t.Fatalf("status output missing last_heartbeat=- for the no-heartbeat attempt:\n%s", out)
+	}
+}

@@ -16,11 +16,15 @@ import (
 
 // workflowRunRow is one workflow run in the /workflows sidebar. description
 // and nextStep are resolved from the workspace definition at refresh time;
-// both are empty when the definition is missing or unreadable.
+// both are empty when the definition is missing or unreadable. heartbeatAt
+// is the active attempt's LastHeartbeatAt for RUNNING runs only (zero for
+// every other status), loaded by workflowSidebarLoad so the row can pulse
+// while fresh and mark stale when the heartbeat ages out.
 type workflowRunRow struct {
 	run         workflowledger.RunSnapshot
 	description string
 	nextStep    string
+	heartbeatAt time.Time
 }
 
 // workflowsSidebar stores the workflow-run list state for the right sidebar.
@@ -71,6 +75,62 @@ func workflowRunDot(status workflowledger.RunStatus) sidebarLiveStatus {
 	default:
 		return liveStatusIdle
 	}
+}
+
+// heartbeatPulseGlyph is the brighter half of the pulsing heartbeat dot; the
+// other half reuses the thinking glyph so the two read as one live dot
+// blinking brighter across uiTick renders.
+const heartbeatPulseGlyph = "◕"
+
+// heartbeatPulsePeriod is one half-cycle of the pulsing heartbeat dot: the
+// dot alternates glyphs every period so a fresh run visibly animates across
+// uiTick renders without a ledger read.
+const heartbeatPulsePeriod = 400 * time.Millisecond
+
+// heartbeatPulsePhase reports which half of the pulse cycle now is in. It is
+// derived from the wall clock so rendering animates across ticks without
+// sidebar state or extra ledger reads.
+func heartbeatPulsePhase(now time.Time) bool {
+	return int(now.UnixNano()/int64(heartbeatPulsePeriod))%2 == 0
+}
+
+// sidebarPulseDot renders the pulsing dot for a running run with a fresh
+// heartbeat: the thinking glyph in the thinking color on one half-cycle and
+// the brighter variant in the stream color on the other.
+func sidebarPulseDot(now time.Time, colored bool) string {
+	glyph, color := sidebarLiveDotGlyph(liveStatusThinking), brandColorThinking
+	if !heartbeatPulsePhase(now) {
+		glyph, color = heartbeatPulseGlyph, brandColorStream
+	}
+	if !colored {
+		return glyph
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(glyph)
+}
+
+// sidebarStaleDot renders the stale marker for a running run whose heartbeat
+// is older than the freshness window or absent: a dimmed '!' that reads
+// distinctly from the live pulse and from idle dots.
+func sidebarStaleDot(colored bool) string {
+	if !colored {
+		return "!"
+	}
+	return tuiDimStyle.Render("!")
+}
+
+// renderRunDot returns the row's status dot. A running run with a fresh
+// heartbeat pulses across uiTick renders; a running run with a stale or
+// missing heartbeat shows the stale marker; every other status keeps the
+// static workflowRunDot glyph.
+func (s *workflowsSidebar) renderRunDot(row workflowRunRow, colored bool) string {
+	if row.run.Status != workflowledger.RunStatusRunning {
+		return sidebarLiveDot(workflowRunDot(row.run.Status), colored)
+	}
+	now := time.Now()
+	if !workflowHeartbeatFresh(row.heartbeatAt, now, workflowHeartbeatFreshWindow) {
+		return sidebarStaleDot(colored)
+	}
+	return sidebarPulseDot(now, colored)
 }
 
 func newWorkflowsSidebar() *workflowsSidebar {
@@ -216,7 +276,7 @@ func (s *workflowsSidebar) renderRunRow(row workflowRunRow, selected bool, width
 	// before the dot enters the width math (mirrors the sessions sidebar).
 	budget = max(1, budget-1)
 	name := truncateToWidth(row.run.WorkflowName, budget)
-	dot := sidebarLiveDot(workflowRunDot(row.run.Status), width >= sidebarStatusColorMinWidth)
+	dot := s.renderRunDot(row, width >= sidebarStatusColorMinWidth)
 	line := marker + dot + name
 	line = line + strings.Repeat(" ", max(0, width-lipgloss.Width(line)))
 	if selected {
@@ -286,9 +346,11 @@ func (s *workflowsSidebar) footerLines(width int) []string {
 
 // workflowSidebarLoad reads the ledger and the workspace definitions once and
 // returns the workflow-run rows for the sidebar, active statuses above
-// terminal runs and newest first inside each group. A broken definition
-// directory degrades to rows without description or next step; a ledger read
-// failure is returned so the caller keeps the previous rows.
+// terminal runs and newest first inside each group. Running runs additionally
+// carry the active attempt's LastHeartbeatAt so the row can pulse while fresh
+// and mark stale when the heartbeat ages out. A broken definition directory
+// degrades to rows without description or next step; a ledger read failure is
+// returned so the caller keeps the previous rows.
 var workflowSidebarLoad = func(root, configPath string) ([]workflowRunRow, error) {
 	repo, closeFn, err := openWorkflowReportContext(root, configPath)
 	if err != nil {
@@ -309,6 +371,9 @@ var workflowSidebarLoad = func(root, configPath string) ([]workflowRunRow, error
 				row.nextStep = nextStepAfterActive(cw, r.ActiveStepID)
 			}
 		}
+		if r.Status == workflowledger.RunStatusRunning {
+			row.heartbeatAt = workflowSidebarActiveHeartbeat(context.Background(), repo, r)
+		}
 		rows = append(rows, row)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -320,6 +385,20 @@ var workflowSidebarLoad = func(root, configPath string) ([]workflowRunRow, error
 		return rows[i].run.StartedAt.After(rows[j].run.StartedAt)
 	})
 	return rows, nil
+}
+
+// workflowSidebarActiveHeartbeat returns the active attempt's LastHeartbeatAt
+// for a running run: the newest running attempt on the run's active step,
+// falling back to the newest running attempt overall. It reads one attempt
+// list per running run only, keeping the sidebar's heartbeat ledger cost
+// bounded (terminal and pending runs never trigger a read). A failed read
+// degrades to zero (stale), never an error.
+func workflowSidebarActiveHeartbeat(ctx context.Context, repo workflowledger.Repository, run workflowledger.RunSnapshot) time.Time {
+	attempts, err := repo.ListStepAttempts(ctx, run.RunID)
+	if err != nil {
+		return time.Time{}
+	}
+	return workflowActiveAttemptHeartbeat(run, attempts)
 }
 
 // workflowCompiledByName discovers and compiles every workflow definition in

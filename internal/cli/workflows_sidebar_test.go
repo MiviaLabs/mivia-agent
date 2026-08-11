@@ -57,7 +57,9 @@ func TestWorkflowsSidebarActiveFirstOrdering(t *testing.T) {
 }
 
 // TestWorkflowsSidebarRowShowsDotNameAndStep pins the row shape: status dot,
-// workflow name, and the active step with "-" when the step is empty.
+// workflow name, and the active step with "-" when the step is empty. A
+// running row without a heartbeat reads stale, so its dot is the stale
+// marker.
 func TestWorkflowsSidebarRowShowsDotNameAndStep(t *testing.T) {
 	s := newWorkflowsSidebar()
 	s.rows = workflowTestRows()
@@ -68,8 +70,8 @@ func TestWorkflowsSidebarRowShowsDotNameAndStep(t *testing.T) {
 	if !strings.Contains(view, "step -") {
 		t.Fatalf("stepless row missing the dash fallback:\n%s", view)
 	}
-	if !strings.Contains(view, "◔") {
-		t.Fatalf("running row missing its status dot:\n%s", view)
+	if !strings.Contains(view, "!") {
+		t.Fatalf("heartbeat-less running row missing the stale marker:\n%s", view)
 	}
 }
 
@@ -361,4 +363,160 @@ func TestWorkflowsSidebarRefreshMsgAppliesRows(t *testing.T) {
 	// A closed sidebar ignores the message without panicking.
 	m.workflowsSidebar = nil
 	_, _ = m.Update(workflowsSidebarRefreshMsg{rows: rows})
+}
+
+// TestWorkflowHeartbeatFresh pins the freshness predicate shared by the
+// sidebar dot and the dialog heartbeat line: a zero heartbeat is never
+// fresh, one inside the window is fresh, and one at or past the window edge
+// is stale.
+func TestWorkflowHeartbeatFresh(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name        string
+		heartbeatAt time.Time
+		window      time.Duration
+		want        bool
+	}{
+		{"zero heartbeat is never fresh", time.Time{}, workflowHeartbeatFreshWindow, false},
+		{"fresh well inside the window", now.Add(-10 * time.Second), workflowHeartbeatFreshWindow, true},
+		{"fresh exactly at the window edge", now.Add(-workflowHeartbeatFreshWindow), workflowHeartbeatFreshWindow, true},
+		{"stale past the window", now.Add(-workflowHeartbeatFreshWindow - time.Second), workflowHeartbeatFreshWindow, false},
+		{"future heartbeat (clock skew) is fresh", now.Add(5 * time.Second), workflowHeartbeatFreshWindow, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workflowHeartbeatFresh(tc.heartbeatAt, now, tc.window); got != tc.want {
+				t.Fatalf("workflowHeartbeatFresh = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHeartbeatPulsePhaseAlternates pins that the pulse phase flips every
+// heartbeatPulsePeriod, so a fresh heartbeat dot visibly animates across
+// uiTick renders without sidebar state or extra ledger reads.
+func TestHeartbeatPulsePhaseAlternates(t *testing.T) {
+	start := time.Unix(0, 0)
+	if !heartbeatPulsePhase(start) {
+		t.Fatalf("phase at t=0 = false, want true")
+	}
+	if heartbeatPulsePhase(start.Add(heartbeatPulsePeriod)) {
+		t.Fatalf("phase did not flip after one period")
+	}
+	if !heartbeatPulsePhase(start.Add(2 * heartbeatPulsePeriod)) {
+		t.Fatalf("phase did not flip back after two periods")
+	}
+}
+
+// TestWorkflowsSidebarRunDotHeartbeatStates pins the heartbeat dot states: a
+// fresh heartbeat pulses (both pulse glyphs render across phases), a stale or
+// missing heartbeat shows the stale marker, and non-running statuses keep the
+// static status dot.
+func TestWorkflowsSidebarRunDotHeartbeatStates(t *testing.T) {
+	// The pulse dot must alternate glyphs across the two phases.
+	phaseA := sidebarPulseDot(time.Unix(0, 0), false)
+	phaseB := sidebarPulseDot(time.Unix(0, 0).Add(heartbeatPulsePeriod), false)
+	if phaseA == phaseB {
+		t.Fatalf("pulse dot must alternate across phases, both %q", phaseA)
+	}
+	for _, glyph := range []string{phaseA, phaseB} {
+		if glyph != "◔" && glyph != heartbeatPulseGlyph {
+			t.Fatalf("pulse dot glyph %q, want the thinking glyph or %q", glyph, heartbeatPulseGlyph)
+		}
+	}
+	if got := sidebarStaleDot(false); got != "!" {
+		t.Fatalf("stale dot = %q, want !", got)
+	}
+
+	s := newWorkflowsSidebar()
+	s.rows = []workflowRunRow{
+		{run: workflowledger.RunSnapshot{RunID: "wfr-HBD1", WorkflowName: "alpha", Status: workflowledger.RunStatusRunning, ActiveStepID: "plan"}, heartbeatAt: time.Now().Add(-5 * time.Second)},
+		{run: workflowledger.RunSnapshot{RunID: "wfr-HBD2", WorkflowName: "beta", Status: workflowledger.RunStatusRunning, ActiveStepID: "plan"}, heartbeatAt: time.Now().Add(-2 * workflowHeartbeatFreshWindow)},
+		{run: workflowledger.RunSnapshot{RunID: "wfr-HBD3", WorkflowName: "gamma", Status: workflowledger.RunStatusSucceeded, ActiveStepID: "success"}},
+	}
+	view := stripANSI(s.view(28, 20, false))
+	if !strings.Contains(view, "!") {
+		t.Fatalf("stale running row missing the stale marker:\n%s", view)
+	}
+	if !strings.Contains(view, "●") {
+		t.Fatalf("terminal row lost the static idle dot:\n%s", view)
+	}
+	if !strings.Contains(view, "◔") && !strings.Contains(view, heartbeatPulseGlyph) {
+		t.Fatalf("fresh running row missing the pulsing dot:\n%s", view)
+	}
+}
+
+// TestWorkflowActiveAttemptHeartbeat pins the active-attempt heartbeat
+// derivation: the newest running attempt on the run's active step wins; a run
+// with no running attempt on the active step falls back to the newest running
+// attempt overall; terminal and non-running attempts never count.
+func TestWorkflowActiveAttemptHeartbeat(t *testing.T) {
+	run := workflowledger.RunSnapshot{RunID: "wfr-ATT1", ActiveStepID: "plan"}
+	hb := time.Unix(1000, 0)
+	attempt := func(id, step string, status workflowledger.AttemptStatus, started, hbAt time.Time) workflowledger.StepAttempt {
+		return workflowledger.StepAttempt{AttemptID: id, RunID: run.RunID, StepID: step, Status: status, StartedAt: started, LastHeartbeatAt: hbAt}
+	}
+	cases := []struct {
+		name     string
+		attempts []workflowledger.StepAttempt
+		want     time.Time
+	}{
+		{"no attempts", nil, time.Time{}},
+		{"active-step running attempt wins over another step", []workflowledger.StepAttempt{
+			attempt("att-1", "other", workflowledger.AttemptStatusRunning, time.Unix(1, 0), hb),
+			attempt("att-2", "plan", workflowledger.AttemptStatusRunning, time.Unix(2, 0), hb.Add(time.Second)),
+		}, hb.Add(time.Second)},
+		{"newest running attempt wins on the active step", []workflowledger.StepAttempt{
+			attempt("att-1", "plan", workflowledger.AttemptStatusRunning, time.Unix(1, 0), hb),
+			attempt("att-2", "plan", workflowledger.AttemptStatusRunning, time.Unix(2, 0), hb.Add(time.Second)),
+		}, hb.Add(time.Second)},
+		{"falls back to the newest running attempt off the active step", []workflowledger.StepAttempt{
+			attempt("att-1", "plan", workflowledger.AttemptStatusSucceeded, time.Unix(3, 0), hb),
+			attempt("att-2", "other", workflowledger.AttemptStatusRunning, time.Unix(2, 0), hb.Add(time.Second)),
+		}, hb.Add(time.Second)},
+		{"terminal attempts never count", []workflowledger.StepAttempt{
+			attempt("att-1", "plan", workflowledger.AttemptStatusSucceeded, time.Unix(2, 0), hb),
+		}, time.Time{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workflowActiveAttemptHeartbeat(run, tc.attempts); !got.Equal(tc.want) {
+				t.Fatalf("workflowActiveAttemptHeartbeat = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWorkflowSidebarLoadLoadsRunningAttemptHeartbeat pins that
+// workflowSidebarLoad reads the active attempt's LastHeartbeatAt for RUNNING
+// runs only: a running run carries its heartbeat, while pending and terminal
+// runs stay zero.
+func TestWorkflowSidebarLoadLoadsRunningAttemptHeartbeat(t *testing.T) {
+	root, _, repo, closeFn, ctx, _ := openEventsFixtureWithRun(t, "wfr-HBLOAD1")
+	defer closeFn()
+	writeWorkflowDefinition(t, root, "test-wf", testWorkflowDefinition)
+	stored, err := repo.GetRun(ctx, "wfr-HBLOAD1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, "wfr-HBLOAD1", stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateStepAttempt(ctx, workflowledger.StepAttempt{AttemptID: "att-hb", RunID: "wfr-HBLOAD1", StepID: "start", AttemptNo: 1}); err != nil {
+		t.Fatal(err)
+	}
+	hb := time.Now().Add(-5 * time.Second)
+	if err := repo.SetStepAttemptHeartbeat(ctx, "wfr-HBLOAD1", "att-hb", hb); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := workflowSidebarLoad(root, filepath.Join(root, "config.toml"))
+	if err != nil {
+		t.Fatalf("workflowSidebarLoad: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if !rows[0].heartbeatAt.Equal(hb) {
+		t.Fatalf("rows[0].heartbeatAt = %v, want %v", rows[0].heartbeatAt, hb)
+	}
 }

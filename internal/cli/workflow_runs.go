@@ -135,12 +135,16 @@ func executeWorkflowRuns(root, configPath, statusFilter string, limit int, stdou
 		fmt.Fprintln(stdout, "no runs")
 		return nil
 	}
+	ctx := context.Background()
 	for _, r := range runs {
 		started := ""
 		if !r.StartedAt.IsZero() {
 			started = r.StartedAt.UTC().Format(time.RFC3339)
 		}
 		line := fmt.Sprintf("%s  %-16s %-16s %s", r.RunID, r.WorkflowName, r.Status, started)
+		if hb := runHeartbeatFreshness(ctx, repo, r); hb != "" {
+			line += "  " + hb
+		}
 		if r.ActiveStepID != "" {
 			line += "  step=" + r.ActiveStepID
 			if next := workflowNextStep(root, r); next != "" {
@@ -150,6 +154,38 @@ func executeWorkflowRuns(root, configPath, statusFilter string, limit int, stdou
 		fmt.Fprintln(stdout, line)
 	}
 	return nil
+}
+
+// runHeartbeatFreshness renders the last-heartbeat freshness column for one
+// run row: "hb <Ns>" when the run's active attempt recorded a heartbeat, or
+// "hb -" when the run is in flight but no heartbeat has been recorded yet.
+// Terminal runs and read failures carry no column (""), so the listing never
+// fails on a missing or locked run.
+func runHeartbeatFreshness(ctx context.Context, repo workflowledger.Repository, r workflowledger.RunSnapshot) string {
+	if r.ActiveStepID == "" || workflowledger.IsTerminalRunStatus(r.Status) {
+		return ""
+	}
+	attempts, err := repo.ListStepAttempts(ctx, r.RunID)
+	if err != nil {
+		return ""
+	}
+	// The active attempt is the newest attempt recorded for the active step
+	// (attempts are ordered by event sequence).
+	var hb time.Time
+	for i := len(attempts) - 1; i >= 0; i-- {
+		if attempts[i].StepID == r.ActiveStepID {
+			hb = attempts[i].LastHeartbeatAt
+			break
+		}
+	}
+	if hb.IsZero() {
+		return "hb -"
+	}
+	d := time.Since(hb)
+	if d < 0 {
+		d = 0
+	}
+	return fmt.Sprintf("hb %ds", int64(d.Seconds()))
 }
 
 // workflowRunStatusNames returns the accepted status values, sorted, for
