@@ -101,13 +101,21 @@ func (d *Delivery) Flush() {
 // and terminates).
 //
 // Delivery.Close NEVER waits on a subscription whose delivery goroutine is
-// currently running a handler. Such a goroutine may itself be parked inside a
-// concurrent close (waiting on the shared sync.Once.Do until the first close
-// body returns), so waiting on its done channel would deadlock; it drains and
-// exits on its own once its handler returns, so skipping it loses no
-// liveness. The shared Once body itself only marks the bus closed and
-// cancels the shutdown context: it must not wait or mutate b.subs, because a
-// concurrent close attempt parks inside Do until that body returns.
+// currently running a handler, and never waits on one whose goroutine starts
+// delivering after the delivering check: in both cases its done channel
+// cannot close until the handler returns. A delivering goroutine may itself
+// be parked inside a concurrent close (waiting on the shared sync.Once.Do
+// until the first close body returns) or inside a Delivery.Flush that
+// barriers this caller's own subscription, so waiting on its done channel
+// would deadlock; it drains and exits on its own once its handler returns, so
+// skipping it loses no liveness. The wait is TOCTOU-free: under deliveringMu
+// Close snapshots the subscription's deliveringChange channel (closed on
+// every delivering false->true transition in handle()), re-checks
+// delivering, then selects on {done, changed} — the moment the goroutine
+// starts running a handler, the select abandons the wait. The shared Once
+// body itself only marks the bus closed and cancels the shutdown context: it
+// must not wait or mutate b.subs, because a concurrent close attempt parks
+// inside Do until that body returns.
 func (d *Delivery) Close() {
 	b := d.b
 	b.close.Do(func() {
@@ -136,9 +144,31 @@ func (d *Delivery) Close() {
 	// goroutine may be parked inside a concurrent close on behalf of its
 	// handler, so waiting on its done channel could deadlock. It exits on its
 	// own after that handler returns.
+	//
+	// The delivering check is TOCTOU-free. Under deliveringMu we snapshot the
+	// subscription's deliveringChange channel (closed and replaced on every
+	// delivering false->true transition in handle(), before the handler runs)
+	// and then re-check delivering. If the goroutine is idle at the check we
+	// wait on either done (it exited while idle — safe) or the snapshotted
+	// change channel: the moment the goroutine starts running a handler the
+	// select abandons the wait, because that handler may wait on this caller
+	// via a concurrent close or a Delivery.Flush barriering this caller's
+	// subscription. It drains and exits on its own once its handler returns,
+	// so Delivery.Close never waits on a subscription whose goroutine starts
+	// delivering after the check.
 	for _, s := range others {
-		if !s.delivering.Load() {
-			<-s.done
+		s.deliveringMu.Lock()
+		changed := s.deliveringChange
+		s.deliveringMu.Unlock()
+		if s.delivering.Load() {
+			continue
+		}
+		select {
+		case <-s.done:
+			// Goroutine exited while idle: nothing left to wait for.
+		case <-changed:
+			// Goroutine started running a handler while we waited: it exits
+			// on its own once the handler returns, so never wait on it.
 		}
 	}
 

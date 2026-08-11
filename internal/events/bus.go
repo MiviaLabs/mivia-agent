@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"reflect"
 	"sync"
 )
 
@@ -99,7 +100,11 @@ func (b *Bus) subscribe(kind Kind, h Handler, bufSize int) {
 // Unsubscribe removes a specific handler from the given Kind's subscriber
 // list. It stops the handler's delivery goroutine after draining any
 // remaining queued events. If the handler was never subscribed, this is a
-// no-op. Comparison uses pointer identity (handler == target).
+// no-op. Comparison uses pointer identity for comparable handler types and
+// function code-pointer identity for HandlerFunc (two closures of one
+// literal compare equal — best effort, strictly better than a runtime panic
+// on interface equality). Unsubscribe never panics, so the bus lock is
+// always released even for uncomparable handler types.
 //
 // Unsubscribe blocks until the target's queued events have been drained and
 // its delivery goroutine has exited, for every caller. Handlers must NOT call
@@ -116,7 +121,7 @@ func (b *Bus) Unsubscribe(kind Kind, target Handler) {
 	}
 	subs := b.subs[kind]
 	for i, s := range subs {
-		if s.handler == target {
+		if sameHandler(s.handler, target) {
 			b.subs[kind] = append(subs[:i], subs[i+1:]...)
 			b.mu.Unlock()
 			// Join outside the lock: the delivery goroutine may need to run
@@ -205,4 +210,36 @@ func (b *Bus) Close() {
 	b.mu.Lock()
 	b.subs = nil
 	b.mu.Unlock()
+}
+
+// sameHandler reports whether two Handler values denote the same handler.
+// Interface equality (a == b) panics at runtime when both dynamic types are
+// identical and uncomparable — Go function types such as HandlerFunc are
+// uncomparable, so comparing two HandlerFunc values panics. This helper never
+// panics: comparable dynamic types use interface == (pointer identity for
+// pointer handlers), differing dynamic types are never equal, and identical
+// uncomparable function types fall back to code-pointer identity
+// (reflect.Value.Pointer, which is documented to be zero iff the func value
+// is nil, so nil funcs are handled without a panic). Any other uncomparable
+// dynamic Kind is never equal.
+func sameHandler(a, b Handler) bool {
+	at := reflect.TypeOf(a)
+	bt := reflect.TypeOf(b)
+	if at == nil || bt == nil {
+		// At least one nil interface: == never panics (no dynamic type to
+		// compare) and is true only when both sides are nil.
+		return a == b
+	}
+	if at != bt {
+		return false
+	}
+	if at.Comparable() {
+		return a == b
+	}
+	// Identical, uncomparable dynamic types. Function types (HandlerFunc) are
+	// the reachable case in this package: compare code pointers.
+	if at.Kind() == reflect.Func {
+		return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+	}
+	return false
 }

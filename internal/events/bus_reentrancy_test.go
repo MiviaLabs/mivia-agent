@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -362,6 +363,187 @@ func TestDeliveryCloseRacingExternalCloseHandlerWins(t *testing.T) {
 	case <-externalDone:
 	case <-time.After(8 * time.Second):
 		t.Fatal("external Bus.Close deadlocked after the handler closed the bus")
+	}
+}
+
+// closeRaceSubB is the hand-built subscription registered on the bus by
+// TestDeliveryCloseDoesNotWaitOnSubThatStartsDelivering. Its delivery
+// goroutine is test-driven; its delivering transition is gated until Close
+// has passed the delivering check.
+type closeRaceSubB struct {
+	sub        *subscription
+	gate       chan struct{}
+	driverDone chan struct{}
+}
+
+// newCloseRaceSubB registers subB on the bus and starts its test-driven
+// delivery goroutine. The driver waits for the bus shutdown context
+// (cancelled by Close's sync.Once body) and then for gate, so subB's
+// delivering transition is gated until Close has passed the delivering check.
+// subB's handler calls DeliveryFrom(ctx).Flush(), which barriers every other
+// subscription (subA).
+func newCloseRaceSubB(bus *Bus) *closeRaceSubB {
+	subB := &subscription{
+		handler: HandlerFunc(func(ctx context.Context, ev Event) {
+			if d, ok := DeliveryFrom(ctx); ok {
+				d.Flush() // barriers every other subscription (subA)
+			}
+		}),
+		ch:               make(chan Event, 1),
+		done:             make(chan struct{}),
+		flushCh:          make(chan chan struct{}, 1),
+		deliveringChange: make(chan struct{}),
+	}
+	subBCtx, subBCancel := context.WithCancel(bus.ctx)
+	subB.cancel = subBCancel
+	bus.mu.Lock()
+	bus.subs[KindToolStart] = append(bus.subs[KindToolStart], subB)
+	bus.mu.Unlock()
+
+	c := &closeRaceSubB{sub: subB, gate: make(chan struct{})}
+	c.driverDone = make(chan struct{})
+	go func() {
+		defer close(c.driverDone)
+		// Close's sync.Once body cancelled the bus ctx: subB's delivering
+		// transition is gated until Close has passed the delivering check.
+		<-subBCtx.Done()
+		// The test opened the gate only after confirming Close released b.mu
+		// with b.closed set: Close is entering the wait loop.
+		<-c.gate
+		c.sub.handle(withDelivery(subBCtx, &Delivery{b: bus, s: c.sub}), NewEvent(KindToolStart))
+		close(c.sub.done)
+	}()
+	return c
+}
+
+// waitForCloseEnteringWaitLoop blocks until Close has run its sync.Once body
+// (b.closed set) and released b.mu after collecting the others list: it is
+// entering the wait loop, whose delivering.Load executes before the gated
+// driver can reach Store.
+func waitForCloseEnteringWaitLoop(t *testing.T, i int, bus *Bus) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if bus.mu.TryLock() {
+			closedFlag := bus.closed
+			bus.mu.Unlock()
+			if closedFlag {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("iter %d: Close never finished its once body and collection", i)
+		}
+		// Yield instead of sleeping: this goroutine must not stall the Close
+		// goroutine that briefly holds b.mu between its once body and the
+		// others-list collection (mivia.go.tests-no-time-sleep forbids
+		// time.Sleep in tests). Deterministic lock-state synchronization: the
+		// loop only observes the b.mu/closed state Close itself publishes.
+		runtime.Gosched()
+	}
+}
+
+// runDeliveryCloseNoWaitIteration runs one iteration of the close TOCTOU
+// regression: subA is a real bus subscription whose handler calls
+// DeliveryFrom(ctx).Close(); subB's delivering transition is gated until
+// Close has passed the delivering check, then subB's handler Flushes every
+// other subscription (subA). Pre-fix Close commits to <-subB.done and hangs;
+// post-fix its select fires on subB's deliveringChange and it skips subB.
+func runDeliveryCloseNoWaitIteration(t *testing.T, i int) {
+	t.Helper()
+	bus := New()
+
+	subAEntered := make(chan struct{})
+	noTicket := make(chan struct{})
+	subADone := make(chan struct{})
+	bus.Subscribe(KindToolStart, HandlerFunc(func(ctx context.Context, ev Event) {
+		close(subAEntered)
+		d, ok := DeliveryFrom(ctx)
+		if !ok {
+			close(noTicket)
+			return
+		}
+		d.Close()
+		close(subADone)
+	}))
+
+	subB := newCloseRaceSubB(bus)
+
+	// Trigger subA's handler; its Delivery.Close runs the wait loop.
+	bus.Publish(NewEvent(KindToolStart))
+	select {
+	case <-subAEntered:
+	case <-noTicket:
+		t.Fatalf("iter %d: subA DeliveryFrom returned false inside HandleEvent", i)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("iter %d: subA handler never entered HandleEvent", i)
+	}
+
+	// Confirm Close has run its once body and released b.mu after collecting
+	// the others list (it is entering the wait loop).
+	waitForCloseEnteringWaitLoop(t, i, bus)
+
+	// Open the gate: subB transitions to delivering and its handler Flushes
+	// every other subscription (subA), whose delivery goroutine is blocked
+	// inside Close.
+	close(subB.gate)
+
+	// Post-fix, Close returns once subB's transition fires the snapshotted
+	// deliveringChange channel; pre-fix it hangs on <-subB.done forever.
+	select {
+	case <-subADone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("iter %d: Delivery.Close deadlocked waiting on subB (delivering TOCTOU)", i)
+	}
+	// subB's Flush must also complete (cleared subs map, or subA's goroutine,
+	// now returned from Close, acks the barrier).
+	select {
+	case <-subB.driverDone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("iter %d: subB driver did not finish (Flush blocked on subA barrier)", i)
+	}
+
+	bus.mu.Lock()
+	subsCleared := bus.subs == nil
+	bus.mu.Unlock()
+	if !subsCleared {
+		t.Fatalf("iter %d: bus.subs not cleared after Delivery.Close returned", i)
+	}
+}
+
+// Regression: Delivery.Close must not deadlock against a subscription whose
+// delivery goroutine starts running a handler after Close's delivering check.
+// The old Close checked s.delivering.Load() and then committed to <-s.done
+// without re-checking (a TOCTOU race): a subscription idle at the check but
+// about to deliver can be joined. If that handler calls Delivery.Flush, it
+// barriers every OTHER subscription — including the caller's own, whose
+// delivery goroutine is blocked inside Close waiting on the joined
+// goroutine's done — so the barrier can never be acked and Close hangs
+// forever. The fixed Close snapshots the subscription's deliveringChange
+// channel (closed on every delivering false->true transition in handle())
+// under deliveringMu, re-checks delivering, and selects on {<-s.done,
+// <-changed}: the moment the joined goroutine starts delivering, the select
+// abandons the wait (it exits on its own once its handler returns).
+//
+// subA is a real bus subscription whose handler calls DeliveryFrom(ctx)
+// .Close(). subB is a hand-built subscription registered on the bus with a
+// test-driven delivery goroutine whose delivering transition is gated until
+// Close has passed the delivering check: the driver waits for the bus
+// shutdown context (cancelled by Close's sync.Once body), and the test opens
+// the gate only after confirming Close released b.mu with b.closed set
+// (Close has collected the others list and is entering the wait loop, whose
+// delivering.Load executes before the just-released driver can reach
+// Store). subB's handler calls DeliveryFrom(ctx).Flush(), which barriers
+// every other subscription — including subA, whose delivery goroutine is
+// blocked inside Close and can never ack while Close waits. Pre-fix the
+// iteration deadlocks and times out; post-fix Close's select fires on
+// subB's deliveringChange, Close skips subB and returns, and subB's Flush
+// sees the cleared subs map (or subA's goroutine, now returned from Close,
+// acks the barrier).
+func TestDeliveryCloseDoesNotWaitOnSubThatStartsDelivering(t *testing.T) {
+	const iterations = 50
+	for i := 0; i < iterations; i++ {
+		runDeliveryCloseNoWaitIteration(t, i)
 	}
 }
 
