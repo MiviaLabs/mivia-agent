@@ -94,6 +94,10 @@ func (m *tuiModel) routePastedInput() (skipTextarea, skipViewport bool) {
 	if m.overlay != nil || m.worktreeDlg != nil {
 		return true, true
 	}
+	// A paste mutates the draft. The history picker is only valid over the
+	// untouched composer origin, so dismiss it: Enter-recall must never
+	// replace freshly pasted text.
+	m.closeHistory()
 	if m.mode == modeChat {
 		m.setFocus(focusComposer)
 	} else {

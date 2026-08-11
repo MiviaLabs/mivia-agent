@@ -241,6 +241,8 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 			return true
 		}
 		m.msgOffset = 0
+		m.sentHistory = nil
+		m.closeHistory()
 		m.appendInfo("history cleared")
 		return true
 	case "/new":
@@ -387,6 +389,10 @@ func (m *tuiModel) runLoadSlash(fields []string) {
 		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiErrorStyle.Render("load error: " + err.Error()), Rendered: tuiErrorStyle.Render("load error: " + err.Error())})
 		return
 	}
+	// A load is a session switch like /new: never offer the previous
+	// session's sent texts in the history picker (privacy across sessions).
+	m.sentHistory = nil
+	m.closeHistory()
 	m.activeSession = nil
 	if err := m.refreshSessionList(); err != nil {
 		m.appendInfo("sessions refresh failed: " + err.Error())

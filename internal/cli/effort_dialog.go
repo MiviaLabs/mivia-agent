@@ -176,6 +176,7 @@ func (d *effortDialog) selected() (reasoning.Level, bool) {
 
 func (m *tuiModel) openEffortDialog() {
 	m.closeSuggest()
+	m.closeHistory()
 	m.effortDlg = newEffortDialog(
 		m.session.CurrentModel(),
 		m.session.ReasoningChoices(),

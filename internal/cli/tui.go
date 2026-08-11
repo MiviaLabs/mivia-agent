@@ -65,9 +65,14 @@ type tuiModel struct {
 	mu              sync.Mutex
 	workerWG        sync.WaitGroup
 	// UI state
-	toolPanel          toolPanelState // windowed tool strip (scroll/select/focus/hit)
-	focus              tuiFocus
-	suggest            suggestState
+	toolPanel toolPanelState // windowed tool strip (scroll/select/focus/hit)
+	focus     tuiFocus
+	suggest   suggestState
+	// sentHistory records the user's sent message texts for this session,
+	// newest appended last. It feeds the Up-arrow history picker.
+	sentHistory []string
+	// history is the composer message-history picker overlay state.
+	history            historyState
 	liveThinkingScroll int               // scroll offset for live streaming thinking block
 	pendingQueue       []string          // sent text queued while agent is busy
 	pendingQueueLabels []string          // matching short display text for queued turns

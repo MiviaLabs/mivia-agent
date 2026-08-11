@@ -54,6 +54,8 @@ const (
 	scopeWorkflows
 	// scopeWelcome applies on the welcome screen.
 	scopeWelcome
+	// scopeHistory applies while the composer message-history picker is open.
+	scopeHistory
 )
 
 func (s keyScope) String() string {
@@ -74,6 +76,8 @@ func (s keyScope) String() string {
 		return "workflows"
 	case scopeWelcome:
 		return "welcome"
+	case scopeHistory:
+		return "history"
 	default:
 		return "global"
 	}
@@ -115,6 +119,12 @@ var keyRegistry = []binding{
 	{keys: []string{"enter"}, scope: scopeSuggest, group: "In slash suggestions", help: "Insert, then run eligible built-ins"},
 	{keys: []string{"esc", "shift+tab"}, scope: scopeSuggest, group: "In slash suggestions", help: "Dismiss"},
 	{keys: []string{"pgup", "pgdown", "home", "end"}, scope: scopeSuggest, group: "In slash suggestions", help: "Dismiss and navigate"},
+
+	// ── Message history picker ───────────────────────────────────────────
+	{keys: []string{"up", "ctrl+p"}, scope: scopeHistory, group: "In message history", help: "Previous message"},
+	{keys: []string{"down", "ctrl+n"}, scope: scopeHistory, group: "In message history", help: "Next message"},
+	{keys: []string{"enter", "tab"}, scope: scopeHistory, group: "In message history", help: "Recall selected message"},
+	{keys: []string{"esc", "shift+tab"}, scope: scopeHistory, group: "In message history", help: "Dismiss"},
 
 	// ── Cancel & quit ────────────────────────────────────────────────────
 	{keys: []string{"ctrl+c"}, scope: scopeGlobal, group: "Cancel & quit", help: "Cancel the turn · at rest: copy, clear draft, or arm quit"},

@@ -55,12 +55,8 @@ func (m *tuiModel) renderChatView() string {
 		panel, layout := m.overlay.ViewAt(max(1, m.width), max(1, m.height))
 		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
 	}
-	if m.suggest.open {
-		pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil, m.workflowsSidebar != nil)
-		panel, size := renderSuggestPanel(m.suggest, max(1, pane.chatWidth), max(0, m.suggestComposerTop()-1))
-		if panel != "" {
-			return overlayAt(base, panel, suggestOverlayRect(m, panel, size), max(1, m.width), max(8, m.height))
-		}
+	if panel, size := m.renderComposerPopup(); panel != "" {
+		return overlayAt(base, panel, suggestOverlayRect(m, panel, size), max(1, m.width), max(8, m.height))
 	}
 	return base
 }
@@ -270,6 +266,9 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	hintParts := []string{" enter send · shift+drag or F2 to select · /help "}
 	if m.suggest.open {
 		hintParts[0] = " ↑↓ select · tab insert · enter run eligible command · esc dismiss "
+	}
+	if m.history.open {
+		hintParts[0] = " ↑↓ select · enter recall · esc dismiss "
 	}
 	if m.waiting {
 		if m.stalledWarning {

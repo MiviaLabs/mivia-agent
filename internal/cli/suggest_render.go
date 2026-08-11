@@ -2,44 +2,14 @@ package cli
 
 import (
 	"fmt"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 func renderSuggestPanel(state suggestState, termW, maxH int) (string, rect) {
 	if !state.open || len(state.commands) == 0 || termW <= 0 || maxH < 1 {
 		return "", rect{}
 	}
-	w := min(termW, max(24, min(72, termW-4)))
-	if maxH < 3 {
-		command := state.commands[state.selected]
-		row := "› " + command.Name
-		if command.ArgsHint != "" {
-			row += " " + command.ArgsHint
-		}
-		if remaining := len(state.commands) - 1; remaining > 0 {
-			row += fmt.Sprintf("  +%d", remaining)
-		}
-		return fitDialogRow(row, w), rect{w: w, h: 1}
-	}
-	visible := min(suggestWindowRows, len(state.commands))
-	h := min(maxH, visible+2)
-	if h < 2 {
-		return "", rect{}
-	}
-	pageRows := max(0, h-2)
-	start := 0
-	if state.selected >= pageRows && pageRows > 0 {
-		start = state.selected - pageRows + 1
-	}
-	rows := make([]string, 0, pageRows)
-	for i := 0; i < pageRows && start+i < len(state.commands); i++ {
-		index := start + i
-		command := state.commands[index]
-		prefix := "  "
-		if index == state.selected {
-			prefix = "› "
-		}
+	items := make([]string, 0, len(state.commands))
+	for _, command := range state.commands {
 		glyph := "•"
 		if command.Kind == slashKindSkill {
 			glyph = glyphLozenge
@@ -51,19 +21,13 @@ func renderSuggestPanel(state suggestState, termW, maxH int) (string, rect) {
 		if command.ArgsHint != "" {
 			label += " " + command.ArgsHint
 		}
-		row := prefix + glyph + " " + label
+		item := glyph + " " + label
 		if command.Description != "" {
-			row += "  " + command.Description
+			item += "  " + command.Description
 		}
-		rows = append(rows, row)
+		items = append(items, item)
 	}
-	footer := ""
-	if remaining := len(state.commands) - (start + len(rows)); remaining > 0 {
-		footer = fmt.Sprintf("+%d more", remaining)
-	}
-	l := dialogLayout{rect: rect{w: w, h: h}, innerW: max(0, w-4), pageH: pageRows, frameCols: 4, frameRows: 2}
-	panel := renderDialogFrame(" commands "+fmt.Sprintf("(%d)", len(state.commands)), rows, footer, l)
-	return panel, rect{w: lipgloss.Width(panel), h: lipgloss.Height(panel)}
+	return renderOverlayWindow(items, state.selected, suggestWindowRows, termW, maxH, " commands "+fmt.Sprintf("(%d)", len(state.commands)), "")
 }
 
 func suggestOverlayRect(m *tuiModel, panel string, panelSize rect) rect {

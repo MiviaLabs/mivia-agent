@@ -206,6 +206,7 @@ func (d *modelDialog) selected() (modelDialogRow, bool) {
 
 func (m *tuiModel) openModelDialog() {
 	m.closeSuggest()
+	m.closeHistory()
 	var groups []config.ProviderModelGroup
 	if m.config != nil {
 		groups = m.config.ModelCatalog()

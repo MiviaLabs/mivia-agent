@@ -241,6 +241,8 @@ func (m *tuiModel) beginNewSession() {
 	m.cancelling = false
 	m.quitRequested = false
 	m.agentDone = false
+	m.sentHistory = nil
+	m.closeHistory()
 }
 
 // resetForNewSession starts a fresh conversation while preserving the old one
@@ -395,6 +397,8 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 	if err := m.session.Load(si.Reference()); err != nil {
 		return err
 	}
+	m.sentHistory = nil
+	m.closeHistory()
 	active := si
 	m.activeSession = &active
 	m.modelName = shortenModel(m.session.CurrentModel())

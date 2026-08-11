@@ -108,6 +108,7 @@ func (m *tuiModel) setFocus(focus tuiFocus) {
 		m.textarea.Focus()
 	} else {
 		m.closeSuggest()
+		m.closeHistory()
 		m.textarea.Blur()
 	}
 }

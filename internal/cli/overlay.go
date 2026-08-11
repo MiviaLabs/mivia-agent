@@ -311,6 +311,7 @@ func (o *blockOverlay) View(w, h int) string {
 
 func (m *tuiModel) setOverlay(o *blockOverlay) {
 	m.closeSuggest()
+	m.closeHistory()
 	m.overlay = o
 	m.hitMap.invalidate()
 }
