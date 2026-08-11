@@ -40,7 +40,7 @@ func (c *LinearController) selectRoute(ctx context.Context, step definition.Step
 	if decision.Loop != "" {
 		if err := c.checkLoopCap(ctx, decision.Loop, decision.MaxIterations); err != nil {
 			route.ToStepID = failureTarget(step)
-			return route, err
+			return route, loopExhaustedRouteError(err, step.ID)
 		}
 	}
 	return route, nil
@@ -72,7 +72,7 @@ func (c *LinearController) selectEvidenceFailureRoute(ctx context.Context, step 
 	if decision.Loop != "" {
 		if err := c.checkLoopCap(ctx, decision.Loop, decision.MaxIterations); err != nil {
 			route.ToStepID = failureTarget(step)
-			return route, err
+			return route, loopExhaustedRouteError(err, step.ID)
 		}
 	}
 	return route, nil
@@ -82,11 +82,39 @@ func failureRoute(step definition.Step) RouteDecision {
 	return RouteDecision{ToStepID: failureTarget(step), TransitionIndex: -1}
 }
 
+// loopExhaustedRouteError attaches the refused step to the loop-exhaustion
+// hint without losing the typed error, so callers can recover the structured
+// fields with errors.As while the message names the step.
+func loopExhaustedRouteError(err error, stepID string) error {
+	var loopErr *loopExhaustedError
+	if errors.As(err, &loopErr) {
+		loopErr.StepID = stepID
+		return loopErr
+	}
+	return fmt.Errorf("%w (step %q)", err, stepID)
+}
+
 func failureTarget(step definition.Step) string {
 	if step.OnFailure != "" {
 		return step.OnFailure
 	}
 	return "failure"
+}
+
+// loopExhaustedError is the deterministic recovery hint produced when a
+// repair loop spends its budget. Its message names the loop, the cap, the
+// iterations spent, and the step whose route was refused, so a human or a
+// resumed run can recover the verified work without re-reading the whole
+// ledger (R2 Phase 1: the routing stays terminal, the evidence is enriched).
+type loopExhaustedError struct {
+	LoopName      string
+	Iterations    int
+	MaxIterations int
+	StepID        string
+}
+
+func (e *loopExhaustedError) Error() string {
+	return fmt.Sprintf("loop %q exhausted: max_iterations=%d (iterations=%d) (step %q)", e.LoopName, e.MaxIterations, e.Iterations, e.StepID)
 }
 
 // checkLoopCap refuses a back-edge when the durable counter already hit the cap.
@@ -104,7 +132,7 @@ func (c *LinearController) checkLoopCap(ctx context.Context, loopName string, ma
 		}
 	}
 	if maxIterations >= 0 && current >= maxIterations {
-		return fmt.Errorf("loop %q exhausted: max_iterations=%d", loopName, maxIterations)
+		return &loopExhaustedError{LoopName: loopName, Iterations: current, MaxIterations: maxIterations}
 	}
 	return nil
 }

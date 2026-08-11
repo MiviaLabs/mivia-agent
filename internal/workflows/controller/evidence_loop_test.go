@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -18,46 +19,7 @@ import (
 // declared cap. Before the fix, routeEvidenceFailure never incremented the
 // loop counter, so checkLoopCap always read zero and the loop ran unbounded.
 func TestEvidenceGateRepairLoopRespectsMaxIterations(t *testing.T) {
-	wf := &definition.WorkflowFile{
-		Version: 1, Name: "evidence-loop", InitialStep: "verify",
-		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
-		// No global limit: the per-loop cap must be the sole bound.
-		Limits: definition.Limits{MaxStepAttempts: 0},
-		Steps: []definition.Step{
-			{ID: "verify", Kind: "evidence_gate", Verifier: "always-fails", OnFailure: "failure"},
-			{ID: "implement", Kind: "agent", Agent: "dev", OnFailure: "failure",
-				Context: []definition.ContextBinding{{From: "steps.verify.output", As: "failed_evidence", Optional: true}}},
-		},
-		Transitions: []definition.Transition{
-			{From: "implement", To: "verify", Match: definition.MatchCriteria{Status: "succeeded"}},
-			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}}},
-			{From: "verify", To: "implement", Match: definition.MatchCriteria{Status: "failed"}, Loop: "repair", MaxIterations: 2},
-		},
-	}
-	compiled, err := compiler.Compile(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{
-		name:   "always-fails",
-		result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "test", Status: "failed", Class: "source"}}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
-		"implement#*": verifiedJSON(`{"summary":"repair"}`),
-	}}
-	repo := workflowledger.NewMemoryRepository()
-	ctrl, err := NewLinearController(repo, runner, compiled, map[string]StepRuntime{
-		"implement": {Agent: agents.ResolvedAgent{Name: "dev"}},
-	}, map[string]any{"task": "x"}, "wfr-evidence-loop-cap", []byte("snap"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ctrl.SetVerifiers(cat); err != nil {
-		t.Fatal(err)
-	}
+	repo, ctrl := newEvidenceLoopController(t, "evidence-loop", "wfr-evidence-loop-cap", "failure")
 	got, err := ctrl.Run(context.Background())
 	if err == nil {
 		t.Fatalf("run succeeded = %+v; want loop-exhausted failure", got)
@@ -65,6 +27,8 @@ func TestEvidenceGateRepairLoopRespectsMaxIterations(t *testing.T) {
 	if !strings.Contains(err.Error(), "loop \"repair\" exhausted") {
 		t.Fatalf("error = %v; want loop exhausted", err)
 	}
+	// The failure must carry the structured recovery hint (R2 Phase 1).
+	assertLoopExhaustionHint(t, err)
 	if got.Status != workflowledger.RunStatusFailed {
 		t.Fatalf("status = %q, want failed", got.Status)
 	}
@@ -106,7 +70,7 @@ func TestEvidenceGateRepairLoopRespectsMaxIterations(t *testing.T) {
 // the run-fail CAS could resume into past a spent loop budget. Before the fix,
 // routeEvidenceFailure's error branch persisted ToStepID "implement".
 func TestEvidenceGateLoopExhaustedPersistsTerminalRoute(t *testing.T) {
-	repo, ctrl := newEvidenceLoopNonTerminalController(t)
+	repo, ctrl := newEvidenceLoopController(t, "evidence-loop-nonterminal", "wfr-evidence-loop-nonterminal", "implement")
 	got, err := ctrl.Run(context.Background())
 	if err == nil {
 		t.Fatalf("run succeeded = %+v; want loop-exhausted failure", got)
@@ -127,21 +91,23 @@ func TestEvidenceGateLoopExhaustedPersistsTerminalRoute(t *testing.T) {
 	assertEvidenceLoopTerminalRoute(t, repo, ctrl.RunID)
 }
 
-// newEvidenceLoopNonTerminalController builds the loop-exhaustion fixture whose
-// evidence_gate names the NON-TERMINAL on_failure step "implement": the repair
-// loop is capped at 2 iterations, so the refused attempt exercises the
-// routeEvidenceFailure error branch with an un-honored failureTarget.
-func newEvidenceLoopNonTerminalController(t *testing.T) (*workflowledger.StorageRepository, *LinearController) {
+// newEvidenceLoopController builds the loop-exhaustion fixture for an
+// evidence_gate repair loop capped at 2 iterations. onFailure names the gate's
+// on_failure step ("failure" for the terminal test, "implement" for the
+// non-terminal route test). The verifier always fails and the repair step
+// always reports success, so the loop spends its budget deterministically.
+func newEvidenceLoopController(t *testing.T, name, runID, onFailure string) (*workflowledger.StorageRepository, *LinearController) {
 	t.Helper()
 	wf := &definition.WorkflowFile{
-		Version: 1, Name: "evidence-loop-nonterminal", InitialStep: "verify",
+		Version: 1, Name: name, InitialStep: "verify",
 		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
 		// No global limit: the per-loop cap must be the sole bound.
 		Limits: definition.Limits{MaxStepAttempts: 0},
 		Steps: []definition.Step{
-			// OnFailure names the NON-TERMINAL repair step "implement", so a
-			// spent loop budget would persist "implement" without the guard.
-			{ID: "verify", Kind: "evidence_gate", Verifier: "always-fails", OnFailure: "implement"},
+			// OnFailure names the step the refused route must NOT take when the
+			// loop budget is spent (a crash between persist and the run-fail CAS
+			// must not resume into the un-honored failureTarget).
+			{ID: "verify", Kind: "evidence_gate", Verifier: "always-fails", OnFailure: onFailure},
 			{ID: "implement", Kind: "agent", Agent: "dev", OnFailure: "failure",
 				Context: []definition.ContextBinding{{From: "steps.verify.output", As: "failed_evidence", Optional: true}}},
 		},
@@ -168,7 +134,7 @@ func newEvidenceLoopNonTerminalController(t *testing.T) (*workflowledger.Storage
 	repo := workflowledger.NewMemoryRepository()
 	ctrl, err := NewLinearController(repo, runner, compiled, map[string]StepRuntime{
 		"implement": {Agent: agents.ResolvedAgent{Name: "dev"}},
-	}, map[string]any{"task": "x"}, "wfr-evidence-loop-nonterminal", []byte("snap"))
+	}, map[string]any{"task": "x"}, runID, []byte("snap"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,3 +207,20 @@ func assertEvidenceLoopTerminalRoute(t *testing.T, repo *workflowledger.StorageR
 }
 
 func verifiedJSON(s string) json.RawMessage { return json.RawMessage(s) }
+
+// assertLoopExhaustionHint checks the structured recovery hint carried by a
+// loop-exhausted failure: loop name, cap, spent iterations, and the step whose
+// route was refused (R2 Phase 1).
+func assertLoopExhaustionHint(t *testing.T, err error) {
+	t.Helper()
+	var loopErr *loopExhaustedError
+	if !errors.As(err, &loopErr) {
+		t.Fatalf("error %v does not carry the structured loop-exhaustion hint", err)
+	}
+	if loopErr.LoopName != "repair" || loopErr.MaxIterations != 2 || loopErr.Iterations != 2 || loopErr.StepID != "verify" {
+		t.Fatalf("loop hint = %+v, want loop=repair max=2 iterations=2 step=verify", loopErr)
+	}
+	if !strings.Contains(err.Error(), `(step "verify")`) {
+		t.Fatalf("error = %v; want the refused step named in the recovery hint", err)
+	}
+}
