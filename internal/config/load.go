@@ -314,9 +314,7 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 	// Probe the raw bytes for an explicit [subagents] inline_output_bytes key:
 	// the main decode cannot tell an explicit 0 from an absent key, and
 	// resolveSubagentConfig must preserve an explicit 0 ("always use refs").
-	if err := probeInlineOutputBytes(data, &file); err != nil {
-		return File{}, path, false, fmt.Errorf("parse config %s: %w", path, err)
-	}
+	probeInlineOutputBytes(data, &file)
 	// Raw bytes are the only place model keys still exist; see auditModelKeys.
 	if err := auditModelKeys(data); err != nil {
 		return File{}, path, false, fmt.Errorf("parse config %s: %w", path, err)
@@ -327,21 +325,18 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 // probeInlineOutputBytes re-parses data for an explicit [subagents]
 // inline_output_bytes key and records its presence on file.Subagents. A *int
 // field keeps presence (nil = absent) distinct from value (0 is a real
-// "always use refs" configuration). The main decode already accepted data, so
-// this probe cannot fail for any input that reached it; the wrapped error
-// mirrors the main decode's "parse config" message. Mirrors the
-// loadWorktreeConfigPath probe pattern in worktree_config.go.
-func probeInlineOutputBytes(data []byte, file *File) error {
+// "always use refs" configuration). The main decode already accepted data
+// into the superset File struct, so re-unmarshalling the same bytes into this
+// narrower probe struct cannot fail; the error is discarded rather than
+// plumbed through as an untestable path.
+func probeInlineOutputBytes(data []byte, file *File) {
 	var probe struct {
 		Subagents struct {
 			InlineOutputBytes *int `toml:"inline_output_bytes"`
 		} `toml:"subagents"`
 	}
-	if err := toml.Unmarshal(data, &probe); err != nil {
-		return err
-	}
+	_ = toml.Unmarshal(data, &probe)
 	file.Subagents.inlineOutputBytesSet = probe.Subagents.InlineOutputBytes != nil
-	return nil
 }
 
 // loadSelectedWorktreeConfig reads the selected config file again to preserve
