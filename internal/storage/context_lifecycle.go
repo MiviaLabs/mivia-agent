@@ -260,8 +260,28 @@ func (s *SQLite) PruneContextPayloads(ctx context.Context, now time.Time, limit 
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	result, err := s.db.ExecContext(ctx, `DELETE FROM context_payloads WHERE ref IN (SELECT ref FROM context_payloads WHERE revoked=1 AND expires_at <= ? ORDER BY ref LIMIT ?)`, now.UTC().Format(time.RFC3339Nano), limit)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return 0, err
+	}
+	// Child chunk rows must go before their parents: context_payload_chunks.ref
+	// references context_payloads.ref without ON DELETE CASCADE (schema v3), so
+	// deleting parents first aborts the whole statement with FOREIGN KEY
+	// constraint failed. Both statements select the identical candidate set
+	// (revoked=1 AND expires_at <= now, ORDER BY ref LIMIT ?), and the single
+	// transaction keeps the prune all-or-nothing: no partial GC, no orphaned
+	// parents or chunks, and the operation stays idempotent and re-runnable.
+	cutoff := now.UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM context_payload_chunks WHERE ref IN (SELECT ref FROM context_payloads WHERE revoked=1 AND expires_at <= ? ORDER BY ref LIMIT ?)`, cutoff, limit); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM context_payloads WHERE ref IN (SELECT ref FROM context_payloads WHERE revoked=1 AND expires_at <= ? ORDER BY ref LIMIT ?)`, cutoff, limit)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	count, _ := result.RowsAffected()
