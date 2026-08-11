@@ -190,3 +190,27 @@ func TestCommandProfileName(t *testing.T) {
 		t.Fatal("profile must stringify")
 	}
 }
+
+// TestCommandProfileSurfacesContextErrorFromRun verifies that a context error
+// surfaced by a sandboxed run is returned to the controller instead of being
+// swallowed into a failed host-class check with a nil error. Regression for
+// verifier-gate-deadline-swallowed-as-host-failure.
+func TestCommandProfileSurfacesContextErrorFromRun(t *testing.T) {
+	profile, err := NewCommandProfile("gate", "make", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := profile.(*CommandProfile)
+	ctx, cancel := context.WithCancel(context.Background())
+	cp.run = func(ctx context.Context, workDir, program string, args ...string) error {
+		cancel()
+		return hostFailure(ctx.Err())
+	}
+	result, err := cp.Verify(ctx, Request{WorkDir: t.TempDir()})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Verify err = %v, want context.Canceled", err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("result status = %q, want failed", result.Status)
+	}
+}
