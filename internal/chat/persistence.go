@@ -368,33 +368,50 @@ func (s *Session) publishLoadedSession(token OperationToken, binding ModelBindin
 		return fmt.Errorf("saved provider/model has no usable prompt budget")
 	}
 	binding.ModelGeneration = s.binding.ModelGeneration + 1
+	outgoing := s.prefixIdentity
 	old := s.publishBindingLocked(binding)
 	s.invalidateLocked()
 	s.turnID++
 	s.Messages = provider.RepairToolPairing(msgs)
+	// A loaded session republishes the binding: recapture and emit exactly
+	// one reset so the restore is observable and the cache stays fresh
+	// (audit RC-1, INV-68-2).
+	incoming := s.capturePrefixIdentityLocked()
+	s.prefixIdentity = incoming
+	reset := s.buildPrefixResetLocked(outgoing, incoming, false)
 	s.mu.Unlock()
 	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
 		old.Dispatcher.Close()
 	}
+	publishPrefixResetEvent(s.EventBus, s.SessionID, reset)
 	return nil
 }
 
 func (s *Session) publishLoadedMessages(token OperationToken, msgs []provider.Message, model string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !s.tokenCurrentLocked(token) {
+		s.mu.Unlock()
 		return ErrStaleOperation
 	}
 	if len(s.catalog) > 0 {
+		s.mu.Unlock()
 		return fmt.Errorf("session binding factory is required for configured model catalogs")
 	}
 	s.turnID++
 	s.invalidateLocked()
 	s.Messages = provider.RepairToolPairing(msgs)
 	previousModel := s.binding.Model
+	outgoing := s.prefixIdentity
 	s.restoreModelLocked(model)
 	if s.binding.Model != previousModel {
 		s.binding.ModelGeneration++
 	}
+	// A restored model is wire-affecting: recapture and emit exactly one
+	// reset when the model changed (audit RC-1, INV-68-2).
+	incoming := s.capturePrefixIdentityLocked()
+	s.prefixIdentity = incoming
+	reset := s.buildPrefixResetLocked(outgoing, incoming, false)
+	s.mu.Unlock()
+	publishPrefixResetEvent(s.EventBus, s.SessionID, reset)
 	return nil
 }

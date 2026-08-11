@@ -1,28 +1,37 @@
 package chat
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // PrefixIdentity is the session's byte-prefix stability identity (plan 68).
-// The seven wire-affecting fields are exactly the inputs to the stable request
-// prefix that the four trigger events can change: provider/model (temperature
-// rides with the model), the effective reasoning dial, the tool-schema digest,
-// and the system-prompt digest. Equality of those fields is necessary and
-// sufficient for byte-equal request prefixes (INV-68-1). The two generation
-// counters ride along as observability only: they never gate equality by
-// themselves, because a republish that only advances a counter is byte-stable
-// and must not emit a false reset (INV-68-2, test-plan correction 4).
+// The wire-affecting fields are exactly the inputs to the stable request
+// prefix that the trigger events can change: provider/model (temperature rides
+// with the model), the effective reasoning dial (level and provider-resolved
+// dialect), the tool-schema digest, and the system-prompt digest. Equality of
+// those fields is necessary and sufficient for byte-equal request prefixes
+// (INV-68-1). The two generation counters ride along as observability only:
+// they never gate equality by themselves, because a republish that only
+// advances a counter is byte-stable and must not emit a false reset (INV-68-2,
+// test-plan correction 4).
 //
 // Temperature is a VALUE PAIR (HasTemperature + Temperature), never *float64:
 // pointer-identity == comparison would make two identities with equal values
 // held at different addresses compare unequal (AR-3).
+//
+// ReasoningDialect is part of the identity because the provider-resolved
+// dialect changes the wire shape (reasoningFields emits different JSON per
+// dialect); a same-name binding republish whose profile dialect differs must
+// not compare equal (audit RC-2).
 type PrefixIdentity struct {
 	ProviderName           string
 	Model                  string
 	ModelGeneration        uint64
 	AgentSurfaceGeneration uint64
 	ReasoningLevel         string
+	ReasoningDialect       string
 	HasTemperature         bool
 	Temperature            float64
 	ToolSchemaDigest       string
@@ -33,11 +42,13 @@ type PrefixIdentity struct {
 // session state captureBindingFence reads plus the reasoning dial, the
 // temperature value pair, and the two content digests. Callers must hold s.mu.
 //
-// INV-68-8: this runs ONLY at the four trigger events (NewSession,
-// SwitchBinding, TryPublishAgentSurface, SetReasoningEffort) and the result is
-// cached on the session between them; it is never reached from
-// captureOperationTokenLocked or any per-turn SaveAfterTurn path. The capture
-// counter is how the INV-68-8 test proves that.
+// INV-68-8: this runs at the four trigger events (NewSession, SwitchBinding,
+// TryPublishAgentSurface, SetReasoningEffort) and at the host-side mutation
+// complements that keep the cache from going stale (PublishAgentSurface,
+// SetAgentSettings, RefreshPrefixIdentity, SelectModel, publishLoaded*). It is
+// never reached from captureOperationTokenLocked or any per-turn
+// SaveAfterTurn path; the capture counter is how the INV-68-8 test proves
+// that.
 func (s *Session) capturePrefixIdentityLocked() PrefixIdentity {
 	s.prefixIdentityCaptures++
 	// The /effort offset folds into the identity's ModelGeneration so an
@@ -45,7 +56,17 @@ func (s *Session) capturePrefixIdentityLocked() PrefixIdentity {
 	// coincides with the model default. The offset never touches
 	// binding.ModelGeneration, so fencing, context-state binding revisions,
 	// and surface-generation checks are unaffected.
-	return PrefixIdentity{ProviderName: s.binding.ProviderName, Model: s.binding.Model, ModelGeneration: s.binding.ModelGeneration + s.prefixGeneration, AgentSurfaceGeneration: s.binding.AgentSurfaceGeneration, ReasoningLevel: string(s.effectiveReasoningLocked()), HasTemperature: s.Temperature != nil, Temperature: temperatureValue(s.Temperature), ToolSchemaDigest: toolSchemaDigest(s.Tools), SystemPromptDigest: systemPromptDigest(s.SystemPrompt)}
+	return PrefixIdentity{ProviderName: s.binding.ProviderName, Model: s.binding.Model, ModelGeneration: s.binding.ModelGeneration + s.prefixGeneration, AgentSurfaceGeneration: s.binding.AgentSurfaceGeneration, ReasoningLevel: string(s.effectiveReasoningLocked()), ReasoningDialect: s.reasoningDialectLocked(), HasTemperature: s.Temperature != nil, Temperature: temperatureValue(s.Temperature), ToolSchemaDigest: toolSchemaDigest(s.Tools), SystemPromptDigest: systemPromptDigest(s.SystemPrompt)}
+}
+
+// reasoningDialectLocked resolves the wire dialect the effective level will
+// use against the bound provider, the same resolution ReasoningSetting
+// performs. The dialect is wire-affecting, so it is part of the identity
+// (audit RC-2).
+func (s *Session) reasoningDialectLocked() string {
+	profile := s.binding.Profile
+	profile.Reasoning = s.effectiveReasoningLocked()
+	return string(reasoning.Resolve(s.binding.ProviderName, config.ModelReasoning(profile)).Dialect)
 }
 
 func temperatureValue(t *float64) float64 {
@@ -96,7 +117,7 @@ func prefixResetCategories(out, in PrefixIdentity, surfacePublication bool) []st
 		out.HasTemperature != in.HasTemperature || out.Temperature != in.Temperature {
 		cats = append(cats, "model")
 	}
-	if out.ReasoningLevel != in.ReasoningLevel {
+	if out.ReasoningLevel != in.ReasoningLevel || out.ReasoningDialect != in.ReasoningDialect {
 		cats = append(cats, "reasoning")
 	}
 	if out.ToolSchemaDigest != in.ToolSchemaDigest {

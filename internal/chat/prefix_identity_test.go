@@ -70,7 +70,9 @@ func TestPrefixIdentityStableAcrossEqualBindingCaptures(t *testing.T) {
 // TestPrefixIdentityDistinctFromBindingFencePurpose pins AR-1: BindingFence
 // and captureBindingFence stay exactly as they were (a four-field async-fence
 // type), OperationToken.Binding stays a BindingFence, and PrefixIdentity is a
-// distinct nine-field value type with its own observability purpose.
+// distinct ten-field value type with its own observability purpose (field 10,
+// ReasoningDialect, was added by audit RC-2: the provider-resolved dialect is
+// wire-affecting and invisible to BindingFence, exactly like ReasoningLevel).
 func TestPrefixIdentityDistinctFromBindingFencePurpose(t *testing.T) {
 	s := prefixSession(t)
 	binding := s.CurrentBinding()
@@ -84,10 +86,10 @@ func TestPrefixIdentityDistinctFromBindingFencePurpose(t *testing.T) {
 	token := s.currentSaveToken()
 	var _ BindingFence = token.Binding
 
-	// PrefixIdentity is a distinct nine-field value type; BindingFence stays
+	// PrefixIdentity is a distinct ten-field value type; BindingFence stays
 	// four fields. Distinctness is structural: the two are not assignable.
-	if n := reflect.TypeOf(PrefixIdentity{}).NumField(); n != 9 {
-		t.Fatalf("PrefixIdentity has %d fields, want 9", n)
+	if n := reflect.TypeOf(PrefixIdentity{}).NumField(); n != 10 {
+		t.Fatalf("PrefixIdentity has %d fields, want 10 (RC-2 added ReasoningDialect)", n)
 	}
 	if n := reflect.TypeOf(BindingFence{}).NumField(); n != 4 {
 		t.Fatalf("BindingFence has %d fields, want 4 (AR-1: unchanged)", n)

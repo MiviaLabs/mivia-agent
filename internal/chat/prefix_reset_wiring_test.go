@@ -246,3 +246,153 @@ func containsCategory(cats []string, want string) bool {
 	}
 	return false
 }
+
+// TestPublishAgentSurfaceRecapturesIdentity pins audit RC-1: the host-side
+// /agent publication path (PublishAgentSurface) must recapture the identity and
+// emit one reset, and the cache must stay fresh so the NEXT tool admission does
+// not re-report the earlier prompt change as a false system_prompt/agent_switch
+// reset.
+func TestPublishAgentSurfaceRecapturesIdentity(t *testing.T) {
+	s := prefixResetSession(t)
+	collect, _ := prefixResetSubscriber(t, s)
+
+	reg := tools.NewRegistry()
+	reg.Register(fixedBodyTool{name: "read_file"})
+	s.PublishAgentSurface("you are the NEW agent", 4, reg, nil, nil)
+	got := collect()
+	if len(got) != 1 || got[0].PrefixReset == nil {
+		t.Fatalf("PublishAgentSurface events = %d, want exactly 1 typed reset", len(got))
+	}
+	if !containsCategory(got[0].PrefixReset.Categories, "system_prompt") || !containsCategory(got[0].PrefixReset.Categories, "agent_switch") {
+		t.Fatalf("categories = %v, want system_prompt + agent_switch", got[0].PrefixReset.Categories)
+	}
+
+	// A pure tool admission right after must NOT re-report the prompt.
+	wider := tools.NewRegistry()
+	wider.Register(fixedBodyTool{name: "read_file"})
+	wider.Register(fixedBodyTool{name: "grep"})
+	if !s.TryPublishAgentSurface(AgentSurfacePublication{Prompt: "you are the NEW agent", Registry: wider}) {
+		t.Fatal("tool admission refused")
+	}
+	got = collect()
+	if len(got) != 1 || got[0].PrefixReset == nil {
+		t.Fatalf("tool admission events = %d, want exactly 1", len(got))
+	}
+	for _, forbidden := range []string{"system_prompt", "agent_switch"} {
+		if containsCategory(got[0].PrefixReset.Categories, forbidden) {
+			t.Fatalf("pure admission re-reported %q from the stale cache: %v", forbidden, got[0].PrefixReset.Categories)
+		}
+	}
+	if !containsCategory(got[0].PrefixReset.Categories, "tool_admission") {
+		t.Fatalf("categories = %v, want tool_admission", got[0].PrefixReset.Categories)
+	}
+}
+
+// TestSetReasoningEffortEmitsPrefixReset pins audit RC-3: an accepted /effort
+// change is wire-affecting and must emit exactly one reset naming "reasoning";
+// the clear path emits one too; a same-level no-op emits nothing.
+func TestSetReasoningEffortEmitsPrefixReset(t *testing.T) {
+	s := prefixResetSession(t)
+	collect, _ := prefixResetSubscriber(t, s)
+
+	if err := s.SetReasoningEffort(reasoning.Low); err != nil {
+		t.Fatalf("SetReasoningEffort(Low): %v", err)
+	}
+	got := collect()
+	if len(got) != 1 || got[0].PrefixReset == nil {
+		t.Fatalf("effort-change events = %d, want exactly 1", len(got))
+	}
+	if !containsCategory(got[0].PrefixReset.Categories, "reasoning") {
+		t.Fatalf("categories = %v, want reasoning", got[0].PrefixReset.Categories)
+	}
+
+	if err := s.SetReasoningEffort(""); err != nil {
+		t.Fatalf("clear effort: %v", err)
+	}
+	got = collect()
+	if len(got) != 1 || got[0].PrefixReset == nil || !containsCategory(got[0].PrefixReset.Categories, "reasoning") {
+		t.Fatalf("clear path events = %v, want exactly 1 reasoning reset", got)
+	}
+
+	// High is already effective after the clear: setting it is a no-op on the
+	// wire-affecting subset, so nothing may be emitted (INV-68-2).
+	if err := s.SetReasoningEffort(reasoning.High); err != nil {
+		t.Fatalf("same-level effort: %v", err)
+	}
+	if got := collect(); len(got) != 0 {
+		t.Fatalf("same-level effort emitted %d reset events, want 0", len(got))
+	}
+}
+
+// TestPrefixIdentityIncludesReasoningDialect pins audit RC-2: a same-name
+// binding republish whose provider-resolved dialect differs changes the wire
+// reasoning shape, so the identity must differ and a reset must name
+// "reasoning".
+func TestPrefixIdentityIncludesReasoningDialect(t *testing.T) {
+	s := prefixResetSession(t)
+	collect, _ := prefixResetSubscriber(t, s)
+
+	before := s.PrefixIdentity()
+	binding := s.PublishedBinding()
+	binding.Profile.ReasoningDialect = reasoning.DialectThinkingPreserved
+	if err := s.SwitchBinding(binding); err != nil {
+		t.Fatalf("dialect republish: %v", err)
+	}
+	after := s.PrefixIdentity()
+	if after == before {
+		t.Fatal("identity unchanged though the wire reasoning dialect changed")
+	}
+	if after.ReasoningDialect != string(reasoning.DialectThinkingPreserved) {
+		t.Fatalf("dialect = %q, want %q", after.ReasoningDialect, reasoning.DialectThinkingPreserved)
+	}
+	got := collect()
+	if len(got) != 1 || got[0].PrefixReset == nil || !containsCategory(got[0].PrefixReset.Categories, "reasoning") {
+		t.Fatalf("dialect republish events = %v, want exactly 1 reasoning reset", got)
+	}
+}
+
+// TestSelectModelEmitsPrefixReset pins audit RC-1: SelectModel renames the
+// selection, which is wire-affecting; it must emit exactly one reset naming
+// "model" and leave the cache fresh.
+func TestSelectModelEmitsPrefixReset(t *testing.T) {
+	s := prefixResetSession(t)
+	collect, _ := prefixResetSubscriber(t, s)
+
+	if !s.SelectModel(wiringModelB) {
+		t.Fatal("SelectModel refused")
+	}
+	got := collect()
+	if len(got) != 1 || got[0].PrefixReset == nil {
+		t.Fatalf("SelectModel events = %d, want exactly 1", len(got))
+	}
+	if !containsCategory(got[0].PrefixReset.Categories, "model") {
+		t.Fatalf("categories = %v, want model", got[0].PrefixReset.Categories)
+	}
+}
+
+// TestRefreshPrefixIdentityAfterToolSurfaceWrite pins audit RC-1's attach
+// path: a direct sess.Tools write (CLI attach) followed by RefreshPrefixIdentity
+// emits a tools reset, and the fresh cache makes the following no-op republish
+// silent instead of a false reset.
+func TestRefreshPrefixIdentityAfterToolSurfaceWrite(t *testing.T) {
+	s := prefixResetSession(t)
+	collect, _ := prefixResetSubscriber(t, s)
+
+	reg := tools.NewRegistry()
+	reg.Register(fixedBodyTool{name: "read_file"})
+	s.Tools = reg
+	s.RefreshPrefixIdentity()
+	got := collect()
+	if len(got) != 1 || got[0].PrefixReset == nil || !containsCategory(got[0].PrefixReset.Categories, "tools") {
+		t.Fatalf("attach refresh events = %v, want exactly 1 tools reset", got)
+	}
+
+	binding := s.CurrentBinding()
+	binding.Profile = wiringProfile(wiringModelA)
+	if err := s.SwitchBinding(binding); err != nil {
+		t.Fatalf("no-op republish: %v", err)
+	}
+	if got := collect(); len(got) != 0 {
+		t.Fatalf("no-op republish after refresh emitted %d events, want 0", len(got))
+	}
+}

@@ -260,6 +260,10 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	// always empty.
 	warnDisabledAgentTools(ctx.Selected, disabledForAgent(ctx.Selected, sess.Tools))
 	sess.Tools = tieredRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions, plan, nil)
+	// Same attach-time refresh: the scoped tool surface changed the wire
+	// prefix; applyDeferredToolPrompt below republishes the prompt through
+	// SetAgentSettings, which also recaptures (audit RC-1).
+	sess.RefreshPrefixIdentity()
 	applyDeferredToolPrompt(sess, routing.Resolved, plan)
 	// Rebuild the skill policy against the final live authority registry (plan
 	// 43) so a skill requiring a disabled/denied tool cannot activate, and store
