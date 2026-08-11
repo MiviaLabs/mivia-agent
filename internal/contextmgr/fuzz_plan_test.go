@@ -1,9 +1,11 @@
 package contextmgr
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -13,6 +15,30 @@ import (
 func fuzzPlanHistories() [][]provider.Message {
 	callOld := plannerToolCall("call-old", "read_file", `{"path":"old.txt"}`)
 	callNew := plannerToolCall("call-new", "read_file", `{"path":"new.txt"}`)
+	// Oversized-unit history: the old exchange is a 10-message unit
+	// (assistant with 9 calls + 9 results) that exceeds the default-8
+	// recent-tail cap. Before the break fix the tail walk skipped the unit and
+	// then filled the older "old objective", leaving a hole in the retained
+	// optional tail. All bodies are below the elision floor so the unit
+	// reaches retention unmodified.
+	oldCalls := make([]provider.ToolCall, 9)
+	for i := range oldCalls {
+		oldCalls[i] = plannerToolCall(fmt.Sprintf("call-old-%d", i), "read_file", `{"path":"old.txt"}`)
+	}
+	oversized := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "old objective"},
+		{Role: provider.RoleAssistant, ToolCalls: oldCalls},
+	}
+	for _, call := range oldCalls {
+		oversized = append(oversized, provider.Message{Role: provider.RoleTool, ToolCallID: call.ID, Name: call.Function.Name, Content: "result"})
+	}
+	oversized = append(oversized,
+		provider.Message{Role: provider.RoleAssistant, Content: "done"},
+		provider.Message{Role: provider.RoleUser, Content: "current objective"},
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{callNew}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: callNew.ID, Name: callNew.Function.Name, Content: "small"},
+	)
 	return [][]provider.Message{
 		{
 			{Role: provider.RoleSystem, Content: "system"},
@@ -39,18 +65,23 @@ func fuzzPlanHistories() [][]provider.Message {
 			{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{callNew}},
 			{Role: provider.RoleTool, ToolCallID: callNew.ID, Name: callNew.Function.Name, Content: "small"},
 		},
+		oversized,
 	}
 }
 
 // FuzzPlanInvariants asserts the planner's documented postconditions on every
 // input: no panic, and on success the retained set stays tool-paired, stays
 // within the budget, never grows the prompt, and keeps the latest user
-// objective. Errors are allowed; they are how the planner refuses.
+// objective. It additionally asserts that the retained OPTIONAL tail is a
+// contiguous suffix of the newest optional messages (DC-6): an older optional
+// message kept while a newer optional unit was dropped is a hole. Errors are
+// allowed; they are how the planner refuses.
 func FuzzPlanInvariants(f *testing.F) {
 	histories := fuzzPlanHistories()
 	f.Add(int64(0), int64(65536), int64(0), true)
 	f.Add(int64(1), int64(65536), int64(64), false)
 	f.Add(int64(2), int64(65536), int64(64), true)
+	f.Add(int64(3), int64(65536), int64(0), true)
 	f.Fuzz(func(t *testing.T, historyBytes, budgetBytes, tailBytes int64, force bool) {
 		mod := func(value, base int64) int { return int(((value % base) + base) % base) }
 		index := mod(historyBytes, int64(len(histories)))
@@ -61,12 +92,13 @@ func FuzzPlanInvariants(f *testing.F) {
 		if tail == 66 {
 			tail = -1
 		}
-		plan, err := Plan(PlanInput{
+		input := PlanInput{
 			Messages:   histories[index],
 			Budget:     budget,
 			RecentTail: tail,
 			Force:      force,
-		})
+		}
+		plan, err := Plan(input)
 		if err != nil {
 			return
 		}
@@ -82,5 +114,66 @@ func FuzzPlanInvariants(f *testing.F) {
 		if !containsPlannerMessage(plan.Messages, provider.RoleUser, "current objective") {
 			t.Fatal("current objective was not retained")
 		}
+		// The retained optional tail must be a contiguous suffix of the newest
+		// optional messages: an older optional message kept while a newer
+		// optional unit was dropped is a hole (DC-6).
+		if plan.Compacted && !optionalTailIsSuffix(input, plan) {
+			t.Fatal("retained optional tail has a hole: an older optional message was kept while a newer optional unit was dropped")
+		}
 	})
+}
+
+// optionalTailIsSuffix reports whether the retained optional messages of a
+// compacted plan form a contiguous suffix of the optional messages in the
+// pre-retention (post-elision) state. It replicates only the deterministic
+// elision pipeline (currentObjective -> mandatoryIndexes -> elideToolResults)
+// to learn the pre-retention fingerprints; the retention selection itself is
+// read from the real Plan result, so the check observes behavior instead of
+// re-implementing the walk under test. All seeded histories have distinct
+// message fingerprints, so membership and sequence comparison are exact.
+func optionalTailIsSuffix(input PlanInput, plan PlanResult) bool {
+	working := cloneMessages(input.Messages)
+	_, objectiveIndex, err := currentObjective(working, input.CurrentObjective)
+	if err != nil {
+		// Plan already succeeded on this input, so the replicated pipeline
+		// cannot fail; refuse to assert rather than misreport.
+		return true
+	}
+	mandatory := mandatoryIndexes(working, objectiveIndex)
+	working, _ = elideToolResults(working, objectiveIndex, mandatory)
+	fingerprint := func(message provider.Message) string {
+		b, err := contextstate.MarshalCanonical(plannerMessages([]provider.Message{message}))
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+	mandatoryFP := make(map[string]struct{}, len(mandatory))
+	origOptional := make([]string, 0, len(working))
+	for index, message := range working {
+		fp := fingerprint(message)
+		if _, ok := mandatory[index]; ok {
+			mandatoryFP[fp] = struct{}{}
+			continue
+		}
+		origOptional = append(origOptional, fp)
+	}
+	retainedOptional := make([]string, 0, len(plan.Messages))
+	for _, message := range plan.Messages {
+		fp := fingerprint(message)
+		if _, ok := mandatoryFP[fp]; ok {
+			continue
+		}
+		retainedOptional = append(retainedOptional, fp)
+	}
+	if len(retainedOptional) > len(origOptional) {
+		return false
+	}
+	suffix := origOptional[len(origOptional)-len(retainedOptional):]
+	for index := range retainedOptional {
+		if retainedOptional[index] != suffix[index] {
+			return false
+		}
+	}
+	return true
 }

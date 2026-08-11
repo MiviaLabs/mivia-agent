@@ -167,8 +167,17 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	tailCount := 0
 	for unitIndex := len(units) - 1; unitIndex >= 0; unitIndex-- {
 		unit := units[unitIndex]
-		if unitSelected(unit, selected) || tailCount+len(unit) > tailLimit {
+		if unitSelected(unit, selected) {
 			continue
+		}
+		// The recent-tail cap stops the newest-to-oldest walk: an optional
+		// unit that would exceed the cap is dropped along with everything
+		// older, so the retained optional tail stays a contiguous suffix of
+		// the newest messages (DC-6). Continuing here skipped past the
+		// oversized unit and then filled OLDER units, leaving a hole in the
+		// retained tail.
+		if tailCount+len(unit) > tailLimit {
+			break
 		}
 		// Estimate cost incrementally: only compute the marginal cost of
 		// adding this unit rather than re-estimating the entire selection.
