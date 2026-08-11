@@ -38,8 +38,9 @@ type runRecord struct {
 	closed    bool
 	tasks     map[string]*taskRecord
 	events    []LifecycleEvent
-	sequences map[string]uint64 // runID -> next sequence
-	idemKeys  map[string]string // idempotency key -> runID
+	eventIDs  map[string]struct{} // event ID index, kept in lockstep with events
+	sequences map[string]uint64   // runID -> next sequence
+	idemKeys  map[string]string   // idempotency key -> runID
 }
 
 type taskRecord struct {
@@ -83,6 +84,7 @@ func (m *MemoryLedgerRepository) CreateRun(_ context.Context, key string, snapsh
 		snapshot:  snapshot.Clone(),
 		tasks:     map[string]*taskRecord{},
 		events:    make([]LifecycleEvent, 0, 16),
+		eventIDs:  map[string]struct{}{},
 		sequences: map[string]uint64{},
 		idemKeys:  map[string]string{},
 	}
@@ -204,11 +206,9 @@ func (m *MemoryLedgerRepository) AppendEvent(_ context.Context, event LifecycleE
 	if len(event.Payload) > maxEventPayload {
 		return fmt.Errorf("event payload exceeds %d bytes", maxEventPayload)
 	}
-	// Check duplicate by event ID
-	for _, ev := range rec.events {
-		if ev.ID == event.ID {
-			return ErrDuplicate
-		}
+	// Check duplicate by event ID via the per-run index (O(1)).
+	if _, ok := rec.eventIDs[event.ID]; ok {
+		return ErrDuplicate
 	}
 	seq := rec.sequences[event.RunID] + 1
 	event.Sequence = seq
@@ -222,6 +222,7 @@ func (m *MemoryLedgerRepository) AppendEvent(_ context.Context, event LifecycleE
 	}
 	rec.sequences[event.RunID] = seq
 	rec.events = append(rec.events, event.Clone())
+	rec.eventIDs[event.ID] = struct{}{}
 	return nil
 }
 
