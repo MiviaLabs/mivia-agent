@@ -30,17 +30,24 @@ import (
 // attempts are spent, and the controller self-settles a run whose deadline
 // expires, so the loop can never spin.
 //
+// Delivery authorization comes from the workflow itself: a run settles at
+// delivery_pending only when its workflow declares a [delivery] policy, and
+// that policy is the publication grant. No allow_publish flag is consulted -
+// the harness must publish a delivery-defined workflow always, without flags
+// or manual overrides. deliverRunWithStore independently refuses a run whose
+// workflow has no active delivery policy.
+//
 // advance runs one controller pass. Callers wire it to Controller.Run (start)
 // or workflowResumeRun (resume). The first pass returns the run's settled
 // snapshot; a later pass continues from the repair step.
-func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string, allowPublish bool, advance func(context.Context) (workflowledger.RunSnapshot, error)) {
+func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string, advance func(context.Context) (workflowledger.RunSnapshot, error)) {
 	snap, err := advance(runCtx)
 	if err != nil {
 		settleSessionRunFailure(repo, runID, err)
 		return
 	}
 	for {
-		if snap.Status != workflowledger.RunStatusDeliveryPending || !allowPublish {
+		if snap.Status != workflowledger.RunStatusDeliveryPending {
 			return
 		}
 		deliverErr := deliverRunWithStore(context.Background(), root, res, store, repo, runID, true, false, io.Discard, io.Discard)

@@ -176,10 +176,10 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 		}
 		return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 	}
-	return e.launchStartedWorkflow(ctx, prepared, built, runID, req.Workflow, req.AllowPublish, finishExecution)
+	return e.launchStartedWorkflow(ctx, prepared, built, runID, req.Workflow, finishExecution)
 }
 
-func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepared *preparedWorkflowRun, built workflowControllerBuild, runID, workflow string, allowPublish bool, finishExecution func()) (agenttools.StartResult, error) {
+func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepared *preparedWorkflowRun, built workflowControllerBuild, runID, workflow string, finishExecution func()) (agenttools.StartResult, error) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	e.mu.Lock()
@@ -190,7 +190,7 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 	e.mu.Unlock()
 	go func() {
 		defer close(done)
-		sessionAutoDeliveryRepairLoop(runCtx, prepared.repo, prepared.root, prepared.res, prepared.store, runID, allowPublish, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
+		sessionAutoDeliveryRepairLoop(runCtx, prepared.repo, prepared.root, prepared.res, prepared.store, runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return built.Controller.Run(ctx)
 		})
 		// Delivery completion settles outside the controller (which parked at

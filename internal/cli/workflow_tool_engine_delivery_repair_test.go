@@ -128,7 +128,7 @@ func TestSessionAutoDeliveryRepairReadvancesController(t *testing.T) {
 	}
 	workflowDeliverGit = gate
 
-	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionEngineIdle(t, e, runID)
@@ -172,7 +172,7 @@ func TestSessionAutoDeliveryRepairBoundedAfterRepeatedFailures(t *testing.T) {
 	}
 	workflowDeliverGit = plainErrorDeliverGit{msg: "test delivery keeps failing"}
 
-	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionEngineIdle(t, e, runID)
@@ -218,7 +218,7 @@ func TestSessionAutoDeliveryRepairStepFailsTerminal(t *testing.T) {
 	}
 	workflowDeliverGit = plainErrorDeliverGit{msg: "test delivery keeps failing"}
 
-	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionEngineIdle(t, e, runID)
@@ -255,7 +255,7 @@ func TestSessionAutoDeliveryRepairTransientStaysPending(t *testing.T) {
 	}
 	workflowDeliverGit = transientDeliverGit{err: &provider.TransientError{Err: errors.New("connection reset")}}
 
-	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionEngineIdle(t, e, runID)
@@ -312,7 +312,7 @@ func TestSessionAutoDeliveryRepairCancelDuringLoop(t *testing.T) {
 	}
 	workflowDeliverGit = plainErrorDeliverGit{msg: "test delivery keeps failing"}
 
-	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	e.stopActive(context.Background(), runID)
@@ -355,7 +355,7 @@ func TestSessionAutoDeliveryRepairHappyPathFirstDeliverySucceeds(t *testing.T) {
 	// delivery, which uses the same RealGit path).
 	workflowDeliverGit = delivery.RealGit{}
 
-	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionEngineIdle(t, e, runID)
@@ -375,27 +375,25 @@ func TestSessionAutoDeliveryRepairHappyPathFirstDeliverySucceeds(t *testing.T) {
 	}
 }
 
-// TestSessionAutoDeliveryRepairAllowPublishFalse proves the loop does not
-// deliver or re-advance when allow_publish is false: the run stays
-// delivery_pending (retryable via the operator deliver path), the controller
-// is advanced exactly once, and no PR client call happens. A failing git stub
-// proves delivery is never attempted.
-func TestSessionAutoDeliveryRepairAllowPublishFalse(t *testing.T) {
+// TestSessionAutoDeliveryRepairIgnoresPublishFlag proves delivery
+// authorization comes from the workflow's [delivery] policy, not from any
+// allow_publish flag: the session launch path carries no flag at all, the run
+// settles delivery_pending on the first controller pass, and the repair loop
+// publishes it. The PR client must record exactly one create and the run must
+// settle succeeded.
+func TestSessionAutoDeliveryRepairIgnoresPublishFlag(t *testing.T) {
 	e, repo, p, runID, prRecorder := newSessionAutoDeliveryRepairFixture(t)
 	var advanceCalls atomic.Int32
 	prevRun := workflowResumeRun
-	prevGit := workflowDeliverGit
-	t.Cleanup(func() {
-		workflowResumeRun = prevRun
-		workflowDeliverGit = prevGit
-	})
+	t.Cleanup(func() { workflowResumeRun = prevRun })
 	workflowResumeRun = func(ctx context.Context, _ workflowControllerBuild) (workflowledger.RunSnapshot, error) {
 		advanceCalls.Add(1)
 		return settleRepairReadvance(ctx, repo, runID)
 	}
-	workflowDeliverGit = plainErrorDeliverGit{msg: "must not be used without allow-publish"}
+	// workflowDeliverGit stays at its test default (RealGit): the fixture
+	// origin accepts the PR, so delivery must succeed on the first attempt.
 
-	if _, err := e.launchResume(context.Background(), p, false); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionEngineIdle(t, e, runID)
@@ -404,13 +402,13 @@ func TestSessionAutoDeliveryRepairAllowPublishFalse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != workflowledger.RunStatusDeliveryPending {
-		t.Fatalf("run status = %q, want delivery_pending (not published, not repaired)", run.Status)
+	if run.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run status = %q, want succeeded (workflow delivery policy grants publish, no flag consulted)", run.Status)
 	}
 	if got := advanceCalls.Load(); got != 1 {
-		t.Fatalf("advance calls = %d, want 1 (no re-advance without allow_publish)", got)
+		t.Fatalf("advance calls = %d, want 1 (one controller pass; the first delivery succeeds)", got)
 	}
-	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
-		t.Fatalf("PR client calls: creates=%d finds=%d, want zero when allow_publish is false", creates, finds)
+	if creates, finds := prRecorder.calls(); creates != 1 || finds != 1 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want one create and one find", creates, finds)
 	}
 }
