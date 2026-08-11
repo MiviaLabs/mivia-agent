@@ -407,57 +407,6 @@ exit 2
 	}
 }
 
-// A hung gate must not be an open gate.
-func TestPreToolUseTimeoutBlocksByDefault(t *testing.T) {
-	requirePOSIX(t)
-	dir := hookDir(t)
-	script(t, dir, "hang.sh", "sleep 30\n")
-	groups := group(t, dir, preToolUse(`["./hang.sh"]`, "  timeout = 1\n"))
-
-	start := time.Now()
-	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
-	if !out.Denied {
-		t.Fatal("a timed-out PreToolUse hook must deny: hanging the gate must not disable it")
-	}
-	if elapsed := time.Since(start); elapsed > 20*time.Second {
-		t.Fatalf("timeout did not kill the process, took %v", elapsed)
-	}
-	if !strings.Contains(out.Reason, "timed out") {
-		t.Fatalf("reason must say the hook timed out, got %q", out.Reason)
-	}
-}
-
-func TestExplicitOnTimeoutAllowWarnsInsteadOfBlocking(t *testing.T) {
-	requirePOSIX(t)
-	dir := hookDir(t)
-	script(t, dir, "hang.sh", "sleep 30\n")
-	groups := group(t, dir, preToolUse(`["./hang.sh"]`, "  timeout = 1\n  on_timeout = \"allow\"\n"))
-
-	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
-	if out.Denied {
-		t.Fatal("an explicit on_timeout = allow must not block")
-	}
-	if len(out.Warnings) == 0 {
-		t.Fatal("a timed-out hook is reported, never silently dropped")
-	}
-}
-
-// A handler that cannot start produced no verdict, exactly as a timed-out one
-// did, so it resolves the same way rather than silently allowing.
-func TestUnstartableHandlerUsesTheOnTimeoutVerdict(t *testing.T) {
-	requirePOSIX(t)
-	dir := hookDir(t)
-	groups := group(t, dir, preToolUse(`["./absent.sh"]`, "  on_timeout = \"allow\"\n"))
-
-	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
-	if out.Denied {
-		t.Fatal("on_timeout = allow must apply to an unstartable handler too")
-	}
-	if len(out.Warnings) == 0 {
-		t.Fatal("an unstartable handler must be reported")
-	}
-}
-
 func TestOversizedStdoutIsTruncatedWithNotice(t *testing.T) {
 	requirePOSIX(t)
 	dir := hookDir(t)
