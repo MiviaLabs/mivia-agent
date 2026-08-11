@@ -19,6 +19,7 @@ func AllToolNames() []string {
 		"glob",
 		"inspect_repository",
 		"write_file",
+		"delete_file",
 		"search_replace",
 		MultiEditToolName,
 		RunCommandToolName,

@@ -200,6 +200,7 @@ func TestWorstCaseWorkspaceToolOutputStaysWithinBudget(t *testing.T) {
 		{"write_file", `{"path":"bulk.txt","content":"tiny\n"}`},
 		{"search_replace", `{"path":"edit-one.txt","old_string":"line 0 ","new_string":"LINE 0 "}`},
 		{"multi_edit", `{"path":"edit-many.txt","edits":[{"old_string":"line 0 ","new_string":"LINE 0 "},{"old_string":"line 1 ","new_string":"LINE 1 "},{"old_string":"m","new_string":"M","replace_all":true}]}`},
+		{"delete_file", `{"path":"wide.txt"}`},
 		{"list_symbols", `{"path":"outline.go"}`},
 	}
 	covered := map[string]bool{}

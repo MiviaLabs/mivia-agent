@@ -144,6 +144,9 @@ type DeliveryView struct {
 	URL            string `json:"url,omitempty"`
 	CommitSHA      string `json:"commit_sha,omitempty"`
 	ErrorRef       string `json:"error_ref,omitempty"`
+	// ErrorText carries the resolved failure hint for a failed delivery, so
+	// the run status surfaces why delivery is pending without an extra lookup.
+	ErrorText string `json:"error_text,omitempty"`
 }
 
 // ApprovalView is one human-gate approval summary.

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -183,7 +184,7 @@ func FormatCorrective(validateErr error, redact func(string) string) string {
 		"Reply again with ONLY valid JSON matching the schema. Errors:\n" +
 		strings.Join(lines, "\n")
 	if len(msg) > MaxCorrectiveBytes {
-		msg = msg[:MaxCorrectiveBytes]
+		msg = textutil.TruncateRuneSafe(msg, MaxCorrectiveBytes)
 	}
 	if redact != nil {
 		msg = redact(msg)
@@ -224,7 +225,7 @@ func FormatCorrectiveWithSchema(validateErr error, schema map[string]any, redact
 		room = 0
 	}
 	if len(joined) > room {
-		joined = joined[:room]
+		joined = textutil.TruncateRuneSafe(joined, room)
 	}
 	msg := prefix + joined + schemaSection
 	if redact != nil {
@@ -491,7 +492,7 @@ func formatValidationErr(err error) string {
 	}
 	s := err.Error()
 	if len(s) > MaxCorrectiveBytes {
-		return s[:MaxCorrectiveBytes]
+		return textutil.TruncateRuneSafe(s, MaxCorrectiveBytes)
 	}
 	return s
 }
