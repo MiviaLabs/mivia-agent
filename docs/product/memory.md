@@ -66,7 +66,8 @@ created: 2026-08-09
 The `verdict` is one of `good`, `bad`, `mixed`, `neutral`. Fields have size
 limits: title 120 characters, summary 400, why 1000, each worked/did-not-work
 field 2000, up to 8 tags and 8 references. The rendered entry is capped at
-`max_entry_bytes` (8192 by default).
+`max_entry_bytes` (8192 by default). Tags are stored comma-separated, so a
+tag must not itself contain a comma.
 
 `memory_save` refuses entries that contain control characters (except line
 feed and tab) or content that matches a `block_patterns` regex. It also

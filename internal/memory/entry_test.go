@@ -185,6 +185,62 @@ func TestEntryValidateRejectsControlCharacters(t *testing.T) {
 	}
 }
 
+// TestEntryValidateRejectsCommaInTag is the negative path for the comma-tag
+// corruption: the stored template renders tags as ", "-joined single-line
+// items and Parse/splitTags split on ",", so a comma inside one tag would
+// silently split it into several tags on the next read. Validation must
+// refuse a comma in a tag with an error naming the comma.
+func TestEntryValidateRejectsCommaInTag(t *testing.T) {
+	e := Entry{
+		Title:   "T",
+		Scope:   ScopeProject,
+		Verdict: VerdictGood,
+		Created: "2026-08-09",
+		Summary: "S",
+		Why:     "W",
+		Tags:    []string{"a,b"},
+	}
+	err := e.Validate(Limits{})
+	if err == nil {
+		t.Fatal("tag containing a comma must be refused")
+	}
+	if !strings.Contains(err.Error(), "comma") {
+		t.Fatalf("error must mention the comma, got %v", err)
+	}
+}
+
+// TestEntryTagRoundTripLegalPunctuation is the positive path for the same
+// class: legal punctuation that is NOT a comma (for example "C++") must
+// survive the Render -> Parse round-trip unchanged. Rejecting commas must
+// not corrupt or refuse tags that merely contain punctuation.
+func TestEntryTagRoundTripLegalPunctuation(t *testing.T) {
+	e := Entry{
+		Title:   "T",
+		Scope:   ScopeProject,
+		Verdict: VerdictGood,
+		Created: "2026-08-09",
+		Summary: "S",
+		Why:     "W",
+		Tags:    []string{"go", "C++", "sql"},
+	}
+	if err := e.Validate(Limits{}); err != nil {
+		t.Fatalf("legal punctuation tags must validate: %v", err)
+	}
+	parsed, err := Parse([]byte(e.Render()))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []string{"go", "C++", "sql"}
+	if len(parsed.Tags) != len(want) {
+		t.Fatalf("round trip tags = %v, want %v", parsed.Tags, want)
+	}
+	for i := range want {
+		if parsed.Tags[i] != want[i] {
+			t.Errorf("round trip tags = %v, want %v (tag %d corrupted)", parsed.Tags, want, i)
+		}
+	}
+}
+
 func TestEntryValidateSizeCap(t *testing.T) {
 	e := Entry{
 		Title:   "T",

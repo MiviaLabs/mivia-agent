@@ -11,10 +11,13 @@ import (
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-// entryID is a content-addressed id: identical scope+title+content produce
-// the same id, which makes an identical re-save idempotent.
-func entryID(scope Scope, title, rendered string) string {
-	sum := sha256.Sum256([]byte(string(scope) + "\x00" + title + "\x00" + rendered))
+// entryID is a content-addressed id: identical scope+org+title+content
+// produce the same id, which makes an identical re-save idempotent within
+// one (scope, org) namespace. The org identity is part of the hash, so two
+// org IDs sharing one database file cannot collide on the same content: an
+// identical entry saved under org B must not resolve to org A's row.
+func entryID(scope Scope, org, title, rendered string) string {
+	sum := sha256.Sum256([]byte(string(scope) + "\x00" + org + "\x00" + title + "\x00" + rendered))
 	return hex.EncodeToString(sum[:16])
 }
 
