@@ -8,12 +8,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
-// retryRequeueProbeInterval bounds how often flushRetries re-probes a re-queue
-// CAS that keeps failing. A failed entry is rescheduled to now plus this
-// interval instead of being left with an elapsed requeueAt, so waitForRetry
-// sleeps instead of returning nil immediately — an elapsed requeueAt would
-// make the caller loop busy-spin flushRetries at 100% CPU against a
-// persistently failing CAS. Bounded and strictly positive by construction.
+// retryRequeueProbeInterval bounds how often flushRetries re-probes an entry
+// whose read or re-queue CAS keeps failing. A failed entry is rescheduled to
+// now plus this interval instead of being left with an elapsed requeueAt, so
+// waitForRetry sleeps instead of returning nil immediately — an elapsed
+// requeueAt would make the caller loop busy-spin flushRetries at 100% CPU
+// against a persistently failing read or CAS. Bounded and strictly positive by
+// construction.
 const retryRequeueProbeInterval = time.Second
 
 // flushRetries re-queues every retry task whose backoff elapsed: the ledger
@@ -29,6 +30,15 @@ func (c *coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending
 		snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
 		if err != nil {
 			runErr = joinError(runErr, fmt.Errorf("read retry task %q: %w", taskID, err))
+			// The task stays in the retry queue (a failed read must not drop or
+			// re-pend it), but its entry must be rescheduled to a bounded
+			// future probe time: an elapsed requeueAt left in place makes
+			// waitForRetry compute sleep <= 0 and return nil immediately, so
+			// the caller loop busy-spins flushRetries at 100% CPU against a
+			// persistently failing read (e.g. SQLite busy/locked). Rescheduling
+			// bounds re-probing to one probe per retryRequeueProbeInterval and
+			// keeps error growth to one join per interval.
+			queue[taskID] = c.nowLocked().Add(retryRequeueProbeInterval)
 			continue
 		}
 		if snap.Status != string(ledger.TaskStatusRetryPending) {
