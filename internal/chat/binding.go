@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -108,6 +109,12 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 	s.catalog = res.ModelCatalog()
 	s.binding = ModelBinding{ProviderName: providerName, Model: res.Model, Completer: c, Profile: profile, PromptBudgetTokens: ctxBudget, ModelGeneration: 1}
 	s.resetSystem()
+	// NewSession is one of the four identity-capture triggers (INV-68-8): the
+	// cache must be primed before any switch or publication can compare
+	// against it.
+	s.mu.Lock()
+	s.refreshPrefixIdentityLocked()
+	s.mu.Unlock()
 	return s
 }
 
@@ -173,55 +180,29 @@ func (s *Session) PublishedBinding() ModelBinding {
 
 // SwitchBinding atomically publishes a fully prepared idle binding.
 func (s *Session) SwitchBinding(binding ModelBinding) error {
-	name, err := config.NormalizeModelName(binding.Model)
+	binding, current, err := s.prepareSwitchBinding(binding)
 	if err != nil {
-		closeUnpublishedDispatcher(binding.Dispatcher, nil)
-		return err
-	}
-	if strings.TrimSpace(binding.ProviderName) == "" || binding.Completer == nil {
-		closeUnpublishedDispatcher(binding.Dispatcher, nil)
-		return fmt.Errorf("incomplete model binding")
-	}
-	binding.Model = name
-	current, err := s.switchPreflight()
-	if err != nil {
-		closeUnpublishedDispatcher(binding.Dispatcher, current)
 		return err
 	}
 	s.contextPublishMu.Lock()
 	defer s.contextPublishMu.Unlock()
 	s.mu.Lock()
 	if s.activeTurns > 0 {
-		current := s.binding.Dispatcher
-		s.mu.Unlock()
-		closeUnpublishedDispatcher(binding.Dispatcher, current)
-		return fmt.Errorf("model switching is unavailable while work is active")
+		return s.refuseSwitchLocked(binding, s.binding.Dispatcher, errors.New("model switching is unavailable while work is active"))
 	}
 	if s.switching {
-		current := s.binding.Dispatcher
-		s.mu.Unlock()
-		closeUnpublishedDispatcher(binding.Dispatcher, current)
-		return fmt.Errorf("model switching is unavailable while session surface is changing")
+		return s.refuseSwitchLocked(binding, s.binding.Dispatcher, errors.New("model switching is unavailable while session surface is changing"))
 	}
 	if binding.AgentSurfaceGeneration != 0 && binding.AgentSurfaceGeneration != s.agentSurfaceGeneration {
-		current := s.binding.Dispatcher
-		s.mu.Unlock()
-		closeUnpublishedDispatcher(binding.Dispatcher, current)
-		return fmt.Errorf("model binding was prepared for an outdated agent surface")
+		return s.refuseSwitchLocked(binding, s.binding.Dispatcher, errors.New("model binding was prepared for an outdated agent surface"))
 	}
 	if !s.bindingAllowsLocked(binding.ProviderName, binding.Model) {
-		current := s.binding.Dispatcher
-		s.mu.Unlock()
-		closeUnpublishedDispatcher(binding.Dispatcher, current)
-		return fmt.Errorf("model is not configured for provider %s", binding.ProviderName)
+		return s.refuseSwitchLocked(binding, s.binding.Dispatcher, fmt.Errorf("model is not configured for provider %s", binding.ProviderName))
 	}
 	binding.RequestedPromptTokens = s.requestedPromptCap
 	binding.PromptBudgetTokens = promptBudget(binding.Profile, s.MaxTokens, s.operatorPromptCap, s.requestedPromptCap)
 	if binding.PromptBudgetTokens <= 0 {
-		current := s.binding.Dispatcher
-		s.mu.Unlock()
-		closeUnpublishedDispatcher(binding.Dispatcher, current)
-		return fmt.Errorf("model has no usable prompt budget")
+		return s.refuseSwitchLocked(binding, s.binding.Dispatcher, errors.New("model has no usable prompt budget"))
 	}
 	binding.ModelGeneration = s.binding.ModelGeneration + 1
 	contextStore := s.contextStore
@@ -232,25 +213,56 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 	expectedBinding := captureBindingRevision(s.binding)
 	newBinding := captureBindingRevision(binding)
 	if err := s.advanceBindingIfNeeded(contextEnabled, contextStore, contextPrincipal, contextWorktree, contextExpected, expectedBinding, newBinding, "switch"); err != nil {
-		s.mu.Unlock()
-		closeUnpublishedDispatcher(binding.Dispatcher, current)
-		return fmt.Errorf("advance context binding: %w", err)
+		return s.refuseSwitchLocked(binding, current, fmt.Errorf("advance context binding: %w", err))
 	}
 	// Reasoning replay is provider-scoped: chain-of-thought belongs to the
 	// provider that produced it, so a generation that moves to a different
 	// provider drops the bytes rather than ship another provider's reasoning
 	// to a backend that never produced it (see stripReasoningForProviderSwitch).
 	s.stripReasoningForProviderSwitch(binding)
+	outgoing := s.prefixIdentity
 	old := s.publishBindingLocked(binding)
 	s.invalidateLocked()
 	if contextEnabled {
 		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
 	}
+	// SwitchBinding is one of the four identity-capture triggers (INV-68-8).
+	// The incoming identity reflects the newly published binding; when the
+	// wire-affecting subset changed, exactly one KindPrefixReset event is
+	// built under the lock and published after unlock (INV-68-2).
+	incoming := s.capturePrefixIdentityLocked()
+	s.prefixIdentity = incoming
+	reset := s.buildPrefixResetLocked(outgoing, incoming, false)
+	bus := s.EventBus
 	s.mu.Unlock()
+	publishPrefixResetEvent(bus, s.SessionID, reset)
 	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
 		old.Dispatcher.Close()
 	}
 	return nil
+}
+
+// prepareSwitchBinding validates and normalizes an incoming binding before the
+// switch critical section, closing the candidate dispatcher on any refusal. It
+// returns the normalized binding and the active dispatcher snapshot captured by
+// preflight; the caller must not reuse the candidate after an error.
+func (s *Session) prepareSwitchBinding(binding ModelBinding) (ModelBinding, *runtime.Dispatcher, error) {
+	name, err := config.NormalizeModelName(binding.Model)
+	if err != nil {
+		closeUnpublishedDispatcher(binding.Dispatcher, nil)
+		return binding, nil, err
+	}
+	if strings.TrimSpace(binding.ProviderName) == "" || binding.Completer == nil {
+		closeUnpublishedDispatcher(binding.Dispatcher, nil)
+		return binding, nil, fmt.Errorf("incomplete model binding")
+	}
+	binding.Model = name
+	current, err := s.switchPreflight()
+	if err != nil {
+		closeUnpublishedDispatcher(binding.Dispatcher, current)
+		return binding, current, err
+	}
+	return binding, current, nil
 }
 
 // stripReasoningForProviderSwitch drops reasoning_content from the in-memory
@@ -295,6 +307,16 @@ func closeUnpublishedDispatcher(candidate, current *runtime.Dispatcher) {
 	if candidate != nil && candidate != current {
 		candidate.Close()
 	}
+}
+
+// refuseSwitchLocked refuses a switch whose preconditions fail under the
+// session lock: it closes the unpublished candidate (unless it is the active
+// dispatcher) and releases the lock. Callers hold s.mu and must return the
+// error immediately.
+func (s *Session) refuseSwitchLocked(binding ModelBinding, current *runtime.Dispatcher, err error) error {
+	s.mu.Unlock()
+	closeUnpublishedDispatcher(binding.Dispatcher, current)
+	return err
 }
 
 // SetBindingFactory wires CLI-owned provider construction for exact session

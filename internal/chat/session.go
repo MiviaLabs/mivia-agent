@@ -175,6 +175,15 @@ type Session struct {
 	// snapshot capture. Provider calls remain lock-free; only the durable
 	// compare-and-swap and its in-memory adoption are serialized.
 	contextPublishMu sync.Mutex
+	// prefixIdentity is the cached byte-prefix stability identity (plan 68),
+	// refreshed only at NewSession, SwitchBinding, TryPublishAgentSurface and
+	// SetReasoningEffort (INV-68-8). prefixIdentityCaptures counts captures so
+	// the INV-68-8 test can prove per-turn save paths never recapture.
+	// prefixGeneration is the /effort offset folded into the identity's
+	// ModelGeneration (gap B13); it never touches binding.ModelGeneration.
+	prefixIdentity         PrefixIdentity
+	prefixIdentityCaptures uint64
+	prefixGeneration       uint64
 }
 
 // TurnOptions supplies an invocation-local capability surface. It never

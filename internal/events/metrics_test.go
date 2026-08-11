@@ -277,7 +277,7 @@ func declaredKinds() map[Kind]bool {
 		KindAssistant, KindToolStart, KindToolEnd, KindStep, KindHeartbeat, KindPrune,
 		KindToolParallel, KindSubagentStart, KindSubagentEnd, KindSubagentHeartbeat,
 		KindSubagentDone, KindThinking, KindCompaction,
-		KindCacheUsage, KindTokenUsage,
+		KindCacheUsage, KindTokenUsage, KindPrefixReset,
 		KindSessionStart, KindSessionEnd, KindTurnStart, KindTurnEnd,
 		KindWorkflowRunStarted, KindWorkflowStepStarted, KindWorkflowStepHeartbeat,
 		KindWorkflowStepCompleted, KindWorkflowGateResult, KindWorkflowApprovalRequested,
