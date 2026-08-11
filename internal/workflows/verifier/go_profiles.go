@@ -80,7 +80,7 @@ func (p *goProfile) Verify(ctx context.Context, req Request) (Result, error) {
 		if p.run != nil {
 			runErr = p.run(ctx, workDir, command.program, command.args...)
 		} else {
-			runErr = runSandboxedCommand(ctx, workDir, req.ModuleBaseline, p.policy, command.program, command.args...)
+			runErr = runVerifierCommand(ctx, workDir, req.ModuleBaseline, p.policy, command.program, command.args...)
 		}
 		if runErr != nil {
 			check.Status = "failed"
@@ -116,5 +116,5 @@ func runFixedCommand(ctx context.Context, workDir, program string, args ...strin
 	if err != nil {
 		return err
 	}
-	return runSandboxedCommand(ctx, workDir, baseline, secretpath.Policy{}, program, args...)
+	return runVerifierCommand(ctx, workDir, baseline, secretpath.Policy{}, program, args...)
 }

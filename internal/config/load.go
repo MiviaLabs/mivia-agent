@@ -71,13 +71,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		return nil, err
 	}
 	key, keySet := envfile.Lookup(pc.APIKeyEnv, envMap)
-	activeProfile := ModelSpec{Name: model, ContextWindowTokens: maxContextWindowTokens}
-	for _, profile := range pc.Models {
-		if profile.Name == model {
-			activeProfile = profile
-			break
-		}
-	}
+	activeProfile := activeModelProfile(pc, model)
 	activePromptBudget := EffectivePromptTokens(activeProfile, file.Chat.MaxTokens, promptCap(file.Chat.MaxPromptTokens), 0)
 	subagentCfg := resolveSubagentConfig(file.Subagents)
 	storeBackend := subagentCfg.StoreBackend
@@ -127,6 +121,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		Context:          resolveContextConfig(file.Context),
 		Tools:            resolveToolsConfig(file.Tools),
 		Memory:           memCfg,
+		Harness:          file.Harness,
 		MCP:              mcpConfig,
 		MCPWarnings:      append([]string(nil), mcpWarnings...),
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),

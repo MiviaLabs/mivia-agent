@@ -66,6 +66,13 @@ Protected actions: commit (policy-gated), push, open PR, deploy, release, live s
 - Shell out only to allowlisted tools where policy defines allowlists; argv that may carry secrets is scrubbed through the configured redaction policy (none by default).
 - Subagent / concurrent work follows `.mivia/rules/50-concurrency-subagents.md` (shared MCP, caps, no process farm).
 
+## Workflow Verifier Sandbox
+
+- Every workflow verifier/evidence-gate command runs inside a bubblewrap (bwrap) sandbox by default (`internal/workflows/verifier/sandbox.go`): an isolated filesystem and network namespace, so a command a workflow or repair agent runs cannot touch the real host filesystem, network, or credentials.
+- `[harness] sandbox = false` in `mivia.toml` is the explicit, host-local escape hatch for a machine that cannot run bwrap (missing unprivileged user namespaces, missing binary). It runs verifier commands directly on the host with no isolation. It is a harness-wide setting, not per-project or per-verifier.
+- Default is enabled everywhere, including CI. Do not disable it in CI or in any shared/automated environment — it exists for a developer's own machine, never for a pipeline that runs untrusted or agent-authored commands unattended.
+- Disabling it logs a warning once at workflow-controller startup (`applyHarnessSandboxSetting` in `internal/cli/workflow_run_build.go`).
+
 ## Authz And Tenancy (when product surfaces exist)
 
 - Deny-by-default access control; explicit allowlists.

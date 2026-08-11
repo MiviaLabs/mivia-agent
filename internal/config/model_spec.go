@@ -218,3 +218,17 @@ func decodeReasoningEfforts(value *unstable.Node) ([]reasoning.Level, error) {
 	}
 	return efforts, nil
 }
+
+// activeModelProfile finds the configured model's own ModelSpec (context
+// window, output cap, reasoning support), falling back to a bare profile
+// with only the default context window when the active model was not
+// declared under [providers.<name>].models - a provider-qualified name
+// still resolves to a runtime, just without profile-specific limits.
+func activeModelProfile(pc ProviderConfig, model string) ModelSpec {
+	for _, profile := range pc.Models {
+		if profile.Name == model {
+			return profile
+		}
+	}
+	return ModelSpec{Name: model, ContextWindowTokens: maxContextWindowTokens}
+}

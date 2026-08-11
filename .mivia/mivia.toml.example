@@ -480,6 +480,24 @@ redaction_key_names = ["password", "token", "secret", "api_key", "authorization"
 redaction_placeholder = "[redacted]"
 
 # ---------------------------------------------------------------------------
+# Harness
+# ---------------------------------------------------------------------------
+[harness]
+# Every workflow verifier/evidence-gate command (go build/test/vet, or a
+# project's own preflight check) normally runs inside a bubblewrap (bwrap)
+# sandbox: an isolated filesystem and network namespace, so a command a
+# workflow or repair agent runs cannot touch the real host filesystem,
+# network, or credentials. This is a security boundary, not a convenience --
+# see .mivia/rules/10-security-privacy.md before turning it off.
+#
+# bwrap requires unprivileged user namespaces, which some hosts do not have
+# enabled (kernel/AppArmor restrictions, or bwrap not installed). Setting
+# this to false is the explicit escape hatch for that host: verifier
+# commands then run directly, with none of the isolation above. Omit this
+# key, or leave it true, everywhere else, including CI.
+# sandbox = true
+
+# ---------------------------------------------------------------------------
 # AGENTS — definitions live under .mivia/agents/ (not inline here)
 # ---------------------------------------------------------------------------
 # Workspace agent files always load from <ws>/.mivia/agents/*.toml, even when
