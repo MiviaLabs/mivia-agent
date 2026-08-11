@@ -22,7 +22,7 @@ func TestWorkflowRunDialogConfirmGating(t *testing.T) {
 	m := newReadyChatModel(40, 100)
 	rec := &recordingWorkflowEngine{}
 	run := workflowledger.RunSnapshot{RunID: "wfr-CONF1", WorkflowName: "alpha", Status: workflowledger.RunStatusRunning}
-	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now())
+	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestWorkflowRunDialogRefusalClearsConfirmAndShowsNotice(t *testing.T) {
 	m := newReadyChatModel(40, 100)
 	rec := &recordingWorkflowEngine{err: errors.New("workflow run is claimed by another executor; cancel refused")}
 	run := workflowledger.RunSnapshot{RunID: "wfr-REF1", WorkflowName: "alpha", Status: workflowledger.RunStatusRunning}
-	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now())
+	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestWorkflowRunDialogActionKeysRouteToEngine(t *testing.T) {
 			m := newReadyChatModel(40, 100)
 			rec := &recordingWorkflowEngine{}
 			run := workflowledger.RunSnapshot{RunID: "wfr-KEY1", WorkflowName: "alpha", Status: tc.status}
-			view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now())
+			view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -280,6 +280,60 @@ func TestWorkflowRunDialogActionMsgDeleteClosesDialog(t *testing.T) {
 	}
 }
 
+// TestWorkflowRunDialogLoadCarriesDeliveryClaim pins that the dialog load
+// reads the run's execution claim for a delivery_pending run (fresh claim =
+// delivery in flight) and leaves claimOK=false when no claim is held. The
+// claim probe is read-only: it never disturbs the held claim.
+func TestWorkflowRunDialogLoadCarriesDeliveryClaim(t *testing.T) {
+	root, _, repo, closeFn, ctx, _ := openEventsFixtureWithRun(t, "wfr-DLVC1")
+	defer closeFn()
+	writeWorkflowDefinition(t, root, "test-wf", testWorkflowDefinition)
+	stored, err := repo.GetRun(ctx, "wfr-DLVC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, "wfr-DLVC1", stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	running, err := repo.GetRun(ctx, "wfr-DLVC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, "wfr-DLVC1", running.Version, workflowledger.RunStatusDeliveryPending, nil); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "config.toml")
+	if err := repo.ClaimRun(ctx, "wfr-DLVC1", "wfdel-abc"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := workflowRunDialogLoad(root, configPath, "wfr-DLVC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !data.claimOK {
+		t.Fatalf("claimOK = false, want true for a claimed delivery_pending run")
+	}
+	if data.claimAt.IsZero() {
+		t.Fatal("claimAt is zero")
+	}
+	// The probe must not have disturbed the claim: a second holder still fails.
+	if err := repo.ClaimRun(ctx, "wfr-DLVC1", "wfdel-other"); err == nil {
+		t.Fatal("claim probe disturbed the held claim")
+	}
+
+	// Without a claim, the same load reads claimOK=false (waiting for delivery).
+	if err := repo.ClearRunClaim(ctx, "wfr-DLVC1"); err != nil {
+		t.Fatal(err)
+	}
+	data, err = workflowRunDialogLoad(root, configPath, "wfr-DLVC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.claimOK {
+		t.Fatal("claimOK = true after the claim was released")
+	}
+}
+
 // TestWorkflowRunDialogApproveActionResolvesApproval drives the approve action
 // end-to-end against a real ledger: the pending human-gate approval resolves
 // through the bounded controller path and the run is re-readable afterwards.
@@ -297,7 +351,7 @@ func TestWorkflowRunDialogApproveActionResolvesApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := buildWorkflowRunView(data.run, data.compiled, data.attempts, data.approvals, time.Now())
+	view, err := buildWorkflowRunView(data.run, data.compiled, data.attempts, data.approvals, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +410,7 @@ func TestWorkflowRunDialogRejectActionSettlesRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := buildWorkflowRunView(data.run, data.compiled, data.attempts, data.approvals, time.Now())
+	view, err := buildWorkflowRunView(data.run, data.compiled, data.attempts, data.approvals, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +459,7 @@ func TestWorkflowRunDialogCloseDrainsPendingCmd(t *testing.T) {
 // footer never advertises a key that always refuses.
 func TestWorkflowRunDialogHidesEngineActionsWithoutEngine(t *testing.T) {
 	run := workflowledger.RunSnapshot{RunID: "wfr-NOENG1", WorkflowName: "alpha", Status: workflowledger.RunStatusRunning}
-	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now())
+	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +479,7 @@ func TestWorkflowRunDialogHidesEngineActionsWithoutEngine(t *testing.T) {
 func TestWorkflowRunDialogApproveWithoutPendingApprovalRefuses(t *testing.T) {
 	m := newReadyChatModel(40, 100)
 	run := workflowledger.RunSnapshot{RunID: "wfr-APPNONE1", WorkflowName: "alpha", Status: workflowledger.RunStatusWaitingApproval}
-	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now())
+	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +509,7 @@ func TestWorkflowRunDialogCleanupActionRefusesActiveRun(t *testing.T) {
 	}
 	m.config = res
 	run := workflowledger.RunSnapshot{RunID: "wfr-CLEAN1", WorkflowName: "alpha", Status: workflowledger.RunStatusSucceeded}
-	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now())
+	view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +703,7 @@ func TestWorkflowRunDialogLoadPrefersSnapshotDefinition(t *testing.T) {
 	if len(data.compiled.Steps) != 2 {
 		t.Fatalf("compiled steps = %d, want the 2 snapshot steps (the current file declares 3)", len(data.compiled.Steps))
 	}
-	view, err := buildWorkflowRunView(data.run, data.compiled, data.attempts, data.approvals, time.Now())
+	view, err := buildWorkflowRunView(data.run, data.compiled, data.attempts, data.approvals, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}

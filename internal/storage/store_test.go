@@ -87,3 +87,23 @@ func itoa(i int) string {
 	}
 	return string(buf[pos:])
 }
+
+// TestSQLiteGetClaimErrorAfterClose pins the GetClaim error branch: a closed
+// store surfaces the read failure instead of fabricating a claim or a silent
+// empty result.
+func TestSQLiteGetClaimErrorAfterClose(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "claims.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimRun(ctx, "wfr-x", "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetClaim(ctx, "wfr-x"); err == nil {
+		t.Fatal("GetClaim on a closed store must error")
+	}
+}

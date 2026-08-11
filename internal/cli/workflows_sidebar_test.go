@@ -446,6 +446,28 @@ func TestWorkflowsSidebarRunDotHeartbeatStates(t *testing.T) {
 	}
 }
 
+// TestWorkflowsSidebarRunDotDeliveryClaimStates pins the delivery_pending dot
+// states: a fresh execution claim pulses (a delivery attempt is in flight), a
+// stale claim shows the stale marker (a delivery crashed mid-publish), and no
+// claim keeps the static streaming dot (waiting for a delivery).
+func TestWorkflowsSidebarRunDotDeliveryClaimStates(t *testing.T) {
+	s := newWorkflowsSidebar()
+	run := workflowledger.RunSnapshot{RunID: "wfr-DLV1", WorkflowName: "alpha", Status: workflowledger.RunStatusDeliveryPending}
+	now := time.Now()
+	pulse := s.renderRunDot(workflowRunRow{run: run, claimAt: now.Add(-5 * time.Second), claimOK: true}, false)
+	if pulse != "◔" && pulse != heartbeatPulseGlyph {
+		t.Fatalf("fresh-claim delivery_pending dot = %q, want a pulse glyph", pulse)
+	}
+	stale := s.renderRunDot(workflowRunRow{run: run, claimAt: now.Add(-workflowledger.DefaultClaimLease - time.Minute), claimOK: true}, false)
+	if stale != "!" {
+		t.Fatalf("stale-claim delivery_pending dot = %q, want the stale marker", stale)
+	}
+	waiting := s.renderRunDot(workflowRunRow{run: run}, false)
+	if waiting == "!" || waiting == "◔" || waiting == heartbeatPulseGlyph {
+		t.Fatalf("no-claim delivery_pending dot = %q, want the static streaming dot", waiting)
+	}
+}
+
 // TestWorkflowActiveAttemptHeartbeat pins the active-attempt heartbeat
 // derivation: the newest running attempt on the run's active step wins; a run
 // with no running attempt on the active step falls back to the newest running
@@ -518,5 +540,52 @@ func TestWorkflowSidebarLoadLoadsRunningAttemptHeartbeat(t *testing.T) {
 	}
 	if !rows[0].heartbeatAt.Equal(hb) {
 		t.Fatalf("rows[0].heartbeatAt = %v, want %v", rows[0].heartbeatAt, hb)
+	}
+}
+
+// TestWorkflowSidebarLoadCarriesDeliveryClaim pins that workflowSidebarLoad
+// reads the run's execution claim for DELIVERY_PENDING runs: a held claim
+// yields claimOK=true with its acquired_at (delivery in flight), and a run
+// without a claim reads claimOK=false (waiting for a delivery).
+func TestWorkflowSidebarLoadCarriesDeliveryClaim(t *testing.T) {
+	root, _, repo, closeFn, ctx, _ := openEventsFixtureWithRun(t, "wfr-DLVS1")
+	defer closeFn()
+	writeWorkflowDefinition(t, root, "test-wf", testWorkflowDefinition)
+	stored, err := repo.GetRun(ctx, "wfr-DLVS1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, "wfr-DLVS1", stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	running, err := repo.GetRun(ctx, "wfr-DLVS1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, "wfr-DLVS1", running.Version, workflowledger.RunStatusDeliveryPending, nil); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "config.toml")
+	if err := repo.ClaimRun(ctx, "wfr-DLVS1", "wfdel-abc"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := workflowSidebarLoad(root, configPath)
+	if err != nil {
+		t.Fatalf("workflowSidebarLoad: %v", err)
+	}
+	var claimed bool
+	for _, row := range rows {
+		if row.run.RunID == "wfr-DLVS1" {
+			claimed = row.claimOK
+			if !row.claimOK {
+				t.Fatal("delivery_pending row with a held claim must carry claimOK=true")
+			}
+			if row.claimAt.IsZero() {
+				t.Fatal("delivery_pending row claimAt is zero")
+			}
+		}
+	}
+	if !claimed {
+		t.Fatal("the delivery_pending run was not found in the sidebar rows")
 	}
 }

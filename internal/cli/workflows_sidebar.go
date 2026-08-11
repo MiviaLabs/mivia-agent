@@ -19,12 +19,18 @@ import (
 // both are empty when the definition is missing or unreadable. heartbeatAt
 // is the active attempt's LastHeartbeatAt for RUNNING runs only (zero for
 // every other status), loaded by workflowSidebarLoad so the row can pulse
-// while fresh and mark stale when the heartbeat ages out.
+// while fresh and mark stale when the heartbeat ages out. claimAt/claimOK
+// carry the run's execution claim for DELIVERY_PENDING runs only: a fresh
+// claim means a delivery attempt is in flight (pulse), a stale claim means
+// a delivery crashed mid-publish (stale marker), and no claim means the run
+// waits for a delivery (static streaming dot).
 type workflowRunRow struct {
 	run         workflowledger.RunSnapshot
 	description string
 	nextStep    string
 	heartbeatAt time.Time
+	claimAt     time.Time
+	claimOK     bool
 }
 
 // workflowsSidebar stores the workflow-run list state for the right sidebar.
@@ -120,17 +126,30 @@ func sidebarStaleDot(colored bool) string {
 
 // renderRunDot returns the row's status dot. A running run with a fresh
 // heartbeat pulses across uiTick renders; a running run with a stale or
-// missing heartbeat shows the stale marker; every other status keeps the
-// static workflowRunDot glyph.
+// missing heartbeat shows the stale marker. A delivery_pending run with a
+// fresh execution claim pulses (a delivery attempt is in flight), with a
+// stale claim shows the stale marker (a delivery crashed mid-publish), and
+// with no claim keeps the static streaming dot (waiting for a delivery).
+// Every other status keeps the static workflowRunDot glyph.
 func (s *workflowsSidebar) renderRunDot(row workflowRunRow, colored bool) string {
-	if row.run.Status != workflowledger.RunStatusRunning {
+	now := time.Now()
+	switch {
+	case row.run.Status == workflowledger.RunStatusRunning:
+		if !workflowHeartbeatFresh(row.heartbeatAt, now, workflowHeartbeatFreshWindow) {
+			return sidebarStaleDot(colored)
+		}
+		return sidebarPulseDot(now, colored)
+	case row.run.Status == workflowledger.RunStatusDeliveryPending && row.claimOK:
+		// The delivery claim lease is the ledger's own definition of alive: a
+		// claim inside DefaultClaimLease is a live delivery attempt, one past
+		// it (recovery clears these later) is a crashed delivery.
+		if !workflowHeartbeatFresh(row.claimAt, now, workflowledger.DefaultClaimLease) {
+			return sidebarStaleDot(colored)
+		}
+		return sidebarPulseDot(now, colored)
+	default:
 		return sidebarLiveDot(workflowRunDot(row.run.Status), colored)
 	}
-	now := time.Now()
-	if !workflowHeartbeatFresh(row.heartbeatAt, now, workflowHeartbeatFreshWindow) {
-		return sidebarStaleDot(colored)
-	}
-	return sidebarPulseDot(now, colored)
 }
 
 func newWorkflowsSidebar() *workflowsSidebar {
@@ -348,9 +367,11 @@ func (s *workflowsSidebar) footerLines(width int) []string {
 // returns the workflow-run rows for the sidebar, active statuses above
 // terminal runs and newest first inside each group. Running runs additionally
 // carry the active attempt's LastHeartbeatAt so the row can pulse while fresh
-// and mark stale when the heartbeat ages out. A broken definition directory
-// degrades to rows without description or next step; a ledger read failure is
-// returned so the caller keeps the previous rows.
+// and mark stale when the heartbeat ages out; delivery_pending runs carry
+// their execution claim (fresh claim = delivery in flight, stale = crashed
+// delivery, none = waiting). A broken definition directory degrades to rows
+// without description or next step; a ledger read failure is returned so the
+// caller keeps the previous rows.
 var workflowSidebarLoad = func(root, configPath string) ([]workflowRunRow, error) {
 	repo, closeFn, err := openWorkflowReportContext(root, configPath)
 	if err != nil {
@@ -373,6 +394,12 @@ var workflowSidebarLoad = func(root, configPath string) ([]workflowRunRow, error
 		}
 		if r.Status == workflowledger.RunStatusRunning {
 			row.heartbeatAt = workflowSidebarActiveHeartbeat(context.Background(), repo, r)
+		}
+		if r.Status == workflowledger.RunStatusDeliveryPending {
+			if _, at, ok, err := repo.GetRunClaim(context.Background(), r.RunID); err == nil && ok {
+				row.claimAt = at
+				row.claimOK = true
+			}
 		}
 		rows = append(rows, row)
 	}

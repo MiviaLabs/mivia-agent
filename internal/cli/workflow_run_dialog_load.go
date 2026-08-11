@@ -28,14 +28,19 @@ type workflowRunDialogRefreshMsg struct {
 }
 
 // workflowRunDialogData is one fresh ledger read: the run snapshot, its typed
-// attempts, approvals, and delivery records, and the compiled definition from
-// the workspace (preferring the definition the run was admitted with).
+// attempts, approvals, and delivery records, the compiled definition from the
+// workspace (preferring the definition the run was admitted with), and the
+// run's execution claim for delivery_pending liveness (claimOK=false when the
+// run holds no claim or the read failed; a read surface never fails the
+// dialog over a claim probe).
 type workflowRunDialogData struct {
 	run        workflowledger.RunSnapshot
 	compiled   *compiler.CompiledWorkflow
 	attempts   []workflowledger.StepAttempt
 	approvals  []workflowledger.ApprovalRecord
 	deliveries []workflowledger.DeliveryRecord
+	claimAt    time.Time
+	claimOK    bool
 }
 
 // workflowRunDialogLoad reads one run's fresh ledger records and its compiled
@@ -77,10 +82,21 @@ func workflowRunDialogLoad(root, configPath, runID string) (workflowRunDialogDat
 			compiled = snapshotCompiled
 		}
 	}
-	return workflowRunDialogData{
+	data := workflowRunDialogData{
 		run: run, compiled: compiled,
 		attempts: attempts, approvals: approvals, deliveries: deliveries,
-	}, nil
+	}
+	if run.Status == workflowledger.RunStatusDeliveryPending {
+		// A fresh claim means a delivery attempt is in flight, a stale one a
+		// crashed delivery, and no claim that the run waits for a delivery.
+		// The claim probe is read-only and best-effort: a failed read renders
+		// as "waiting", never an error.
+		if _, at, ok, err := repo.GetRunClaim(ctx, runID); err == nil && ok {
+			data.claimAt = at
+			data.claimOK = true
+		}
+	}
+	return data, nil
 }
 
 // compileWorkflowRunSnapshot compiles the definition a run was admitted with

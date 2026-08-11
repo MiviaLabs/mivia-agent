@@ -56,6 +56,15 @@ type workflowDialogAction struct {
 	needsEngine bool // cancel/resume/deliver/delete route through the engine
 }
 
+// workflowRunDeliveryClaim is one run's execution claim as read for the
+// delivery liveness surface: ok=false means the run holds no claim (for a
+// delivery_pending run, waiting for a delivery attempt). It is a pure read -
+// observing a claim never acquires, refreshes, or releases it.
+type workflowRunDeliveryClaim struct {
+	at time.Time
+	ok bool
+}
+
 // workflowRunView is the immutable content snapshot one dialog render is
 // based on.
 type workflowRunView struct {
@@ -75,8 +84,10 @@ type workflowRunView struct {
 // missing definition degrades to header facts plus a notice, never an error;
 // an empty run id is the only error (the run vanished before open). The
 // variadic deliveries carry the run's durable delivery records; existing
-// call sites that render no delivery records need no change.
-func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.CompiledWorkflow, attempts []workflowledger.StepAttempt, approvals []workflowledger.ApprovalRecord, now time.Time, deliveries ...[]workflowledger.DeliveryRecord) (*workflowRunView, error) {
+// call sites that render no delivery records need no change. claim carries
+// the run's execution claim read for delivery_pending liveness (fresh claim =
+// delivery in flight, stale = crashed delivery, none = waiting).
+func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.CompiledWorkflow, attempts []workflowledger.StepAttempt, approvals []workflowledger.ApprovalRecord, now time.Time, claim workflowRunDeliveryClaim, deliveries ...[]workflowledger.DeliveryRecord) (*workflowRunView, error) {
 	if run.RunID == "" {
 		return nil, errors.New("workflow run not found")
 	}
@@ -116,11 +127,14 @@ func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.Com
 		}
 		v.header = append(v.header, "started: "+started+elapsed)
 	}
-	hb := workflowRunHeartbeatHeaderLine(run, attempts, now)
+	hb := workflowRunHeartbeatHeaderLine(run, attempts, now, claim)
 	v.header = append(v.header, hb)
 	for i := range deliveries {
 		for _, rec := range deliveries[i] {
 			line := "delivery: " + rec.Status
+			if rec.RemoteID != "" {
+				line += " · PR #" + rec.RemoteID
+			}
 			if rec.URL != "" {
 				line += " · " + rec.URL
 			}
@@ -199,11 +213,18 @@ func workflowActiveAttemptHeartbeat(run workflowledger.RunSnapshot, attempts []w
 	return any.LastHeartbeatAt
 }
 
-// workflowRunHeartbeatHeaderLine renders the dialog's last-heartbeat header
-// line for one run: the age when a running attempt recorded a heartbeat
-// (styled info when fresh, error with a stale marker when aged out), or a
-// dimmed "none" line when no running attempt carries one.
-func workflowRunHeartbeatHeaderLine(run workflowledger.RunSnapshot, attempts []workflowledger.StepAttempt, now time.Time) string {
+// workflowRunHeartbeatHeaderLine renders the dialog's heartbeat header line
+// for one run. A delivery_pending run shows its delivery liveness instead of
+// an attempt heartbeat: a fresh claim means a delivery attempt is in flight,
+// a stale claim means a delivery crashed mid-publish, and no claim means the
+// run waits for a delivery. For every other status the line reports the last
+// running-attempt heartbeat: the age when a running attempt recorded a
+// heartbeat (styled info when fresh, error with a stale marker when aged
+// out), or a dimmed "none" line when no running attempt carries one.
+func workflowRunHeartbeatHeaderLine(run workflowledger.RunSnapshot, attempts []workflowledger.StepAttempt, now time.Time, claim workflowRunDeliveryClaim) string {
+	if run.Status == workflowledger.RunStatusDeliveryPending {
+		return workflowDeliveryClaimLine(claim, now)
+	}
 	hb := workflowActiveAttemptHeartbeat(run, attempts)
 	if hb.IsZero() {
 		return tuiDimStyle.Render("last heartbeat: none")
@@ -214,6 +235,26 @@ func workflowRunHeartbeatHeaderLine(run workflowledger.RunSnapshot, attempts []w
 	}
 	line := "last heartbeat: " + formatDuration(ago) + " ago"
 	if workflowHeartbeatFresh(hb, now, workflowHeartbeatFreshWindow) {
+		return tuiInfoStyle.Render(line)
+	}
+	return tuiErrorStyle.Render(line + " · stale")
+}
+
+// workflowDeliveryClaimLine renders the delivery liveness header line for a
+// delivery_pending run from its execution claim. The claim lease is the
+// ledger's own definition of alive: a claim inside DefaultClaimLease is a
+// live delivery attempt, one past it (recovery clears these later) is a
+// crashed delivery. A zero claim reads as waiting for a delivery.
+func workflowDeliveryClaimLine(claim workflowRunDeliveryClaim, now time.Time) string {
+	if !claim.ok {
+		return tuiDimStyle.Render("delivery: waiting")
+	}
+	ago := now.Sub(claim.at)
+	if ago < 0 {
+		ago = 0
+	}
+	line := "delivery: in flight · claim " + formatDuration(ago) + " ago"
+	if workflowHeartbeatFresh(claim.at, now, workflowledger.DefaultClaimLease) {
 		return tuiInfoStyle.Render(line)
 	}
 	return tuiErrorStyle.Render(line + " · stale")

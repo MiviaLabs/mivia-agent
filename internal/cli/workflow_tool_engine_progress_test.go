@@ -42,6 +42,7 @@ var workflowEventKinds = []events.Kind{
 	events.KindWorkflowGateResult,
 	events.KindWorkflowApprovalRequested,
 	events.KindWorkflowRunFinished,
+	events.KindWorkflowDeliveryStage,
 }
 
 // newRecordingWorkflowBus builds a bus with a recording handler subscribed to
@@ -77,6 +78,8 @@ func TestWorkflowBusProgressSinkPublishesKinds(t *testing.T) {
 		{name: "run finished", kind: controller.ProgressRunFinished, want: events.KindWorkflowRunFinished},
 		{name: "run failed", kind: controller.ProgressRunFailed, want: events.KindWorkflowRunFinished},
 		{name: "panel refused", kind: controller.ProgressPanelRefused, want: events.KindWorkflowStepCompleted},
+		{name: "delivery stage", kind: controller.ProgressDeliveryStage, want: events.KindWorkflowDeliveryStage},
+		{name: "delivery refused", kind: controller.ProgressDeliveryRefused, want: events.KindWorkflowDeliveryStage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

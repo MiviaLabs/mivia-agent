@@ -112,6 +112,16 @@ type LeaseStore interface {
 	TakeoverExpiredClaim(context.Context, string, string, time.Duration) error
 }
 
+// ClaimReader is the optional extension for reading a run's current execution
+// claim without mutating it. It backs read-only liveness probes (sidebar claim
+// age, delivery_pending heartbeat); a backend that cannot expose claims simply
+// does not implement it.
+type ClaimReader interface {
+	// GetClaim returns the current claim for runID. ErrClaimNotHeld when the
+	// run has no claim.
+	GetClaim(context.Context, string) (Claim, error)
+}
+
 // FencedLeaseStore guards stale writes after an expired claim changes owner.
 type FencedLeaseStore interface {
 	ClaimRunFenced(context.Context, string, string) (Claim, error)
@@ -446,6 +456,16 @@ func (m *Memory) ClearClaim(_ context.Context, runID string) error {
 	defer m.mu.Unlock()
 	delete(m.claims, runID)
 	return nil
+}
+
+func (m *Memory) GetClaim(_ context.Context, runID string) (Claim, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	claim, ok := m.claims[runID]
+	if !ok {
+		return Claim{}, ErrClaimNotHeld
+	}
+	return claim, nil
 }
 
 func (m *Memory) PutContent(_ context.Context, ref string, data []byte) error {

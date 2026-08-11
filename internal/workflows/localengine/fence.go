@@ -189,6 +189,12 @@ func (f *abandonFence) ClearRunClaim(ctx context.Context, runID string) error {
 	return f.mutate(runID, func() error { return f.inner.ClearRunClaim(ctx, runID) })
 }
 
+func (f *abandonFence) GetRunClaim(ctx context.Context, runID string) (string, time.Time, bool, error) {
+	// GetRunClaim is a pure read: it must never abort a mutation. The fence
+	// guards WRITES only, so the probe passes through unfenced.
+	return f.inner.GetRunClaim(ctx, runID)
+}
+
 func (f *abandonFence) StoreContent(ctx context.Context, ref string, data []byte) error {
 	if runID, ok := workflowledger.RunIDFromContext(ctx); ok {
 		return f.mutate(runID, func() error { return f.inner.StoreContent(ctx, ref, data) })

@@ -61,6 +61,8 @@ func workflowProgressKind(k controller.ProgressKind) events.Kind {
 		return events.KindWorkflowRunFinished
 	case controller.ProgressPanelRefused:
 		return events.KindWorkflowStepCompleted
+	case controller.ProgressDeliveryStage, controller.ProgressDeliveryRefused:
+		return events.KindWorkflowDeliveryStage
 	default:
 		return events.KindWorkflowStepHeartbeat
 	}

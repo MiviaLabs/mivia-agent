@@ -108,6 +108,45 @@ func (s *StorageRepository) ClearRunClaim(ctx context.Context, runID string) err
 	return nil
 }
 
+// GetRunClaim reads the run's current execution claim as a pure liveness
+// probe: the holder and the claim's last acquired_at (the holder refreshes
+// acquired_at on every heartbeat, so it is the claim's liveness tick). It
+// never acquires, refreshes, or releases a claim, so observing a run can
+// never disturb its holder. ok=false means the run has no claim (or the
+// backend cannot expose claims); err is reserved for backend failures and
+// means the caller must not trust ok.
+func (s *StorageRepository) GetRunClaim(ctx context.Context, runID string) (holder string, acquiredAt time.Time, ok bool, err error) {
+	if err := s.checkOpen(); err != nil {
+		return "", time.Time{}, false, err
+	}
+	reader, readable := s.store.(storage.ClaimReader)
+	if !readable {
+		return "", time.Time{}, false, nil
+	}
+	claim, err := reader.GetClaim(ctx, runID)
+	if err != nil {
+		if errors.Is(err, storage.ErrClaimNotHeld) {
+			return "", time.Time{}, false, nil
+		}
+		return "", time.Time{}, false, err
+	}
+	at, err := parseClaimAcquiredAt(claim.AcquiredAt)
+	if err != nil {
+		return "", time.Time{}, false, fmt.Errorf("read claim %q acquired_at: %w", runID, err)
+	}
+	return claim.Holder, at, true, nil
+}
+
+// parseClaimAcquiredAt parses a claim's acquired_at timestamp. The SQLite
+// backend stores RFC3339 with millisecond precision; legacy rows may carry
+// the space-separated form.
+func parseClaimAcquiredAt(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02 15:04:05", s)
+}
+
 // StoreContent persists bytes under a content-addressed reference.
 func (s *StorageRepository) StoreContent(ctx context.Context, ref string, data []byte) error {
 	if err := s.checkOpen(); err != nil {

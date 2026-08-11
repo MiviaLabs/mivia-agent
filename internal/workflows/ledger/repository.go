@@ -177,6 +177,13 @@ type Repository interface {
 	// terminal runs).
 	ClearRunClaim(ctx context.Context, runID string) error
 
+	// GetRunClaim reads the run's current execution claim as a read-only
+	// liveness probe: the holder and the claim's last acquired_at (the
+	// holder's heartbeat refreshes it). ok=false means the run has no claim
+	// or the backend cannot expose claims; err is reserved for backend
+	// failures. It never mutates claim state.
+	GetRunClaim(ctx context.Context, runID string) (holder string, acquiredAt time.Time, ok bool, err error)
+
 	// StoreContent persists bytes under a content-addressed reference
 	// (shared content store; idempotent).
 	StoreContent(ctx context.Context, ref string, data []byte) error
