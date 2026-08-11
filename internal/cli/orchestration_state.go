@@ -260,6 +260,21 @@ func closeSharedSQLite(store *storage.SQLite) error {
 	return store.Close()
 }
 
+// poolLimitsFromConfig maps the [subagents] config contract onto pool
+// limits. Config zero means unlimited (see resolveSubagentConfig and the
+// mivia.toml comments); the pool primitive would otherwise substitute its
+// safe defaults for zero and silently cap agent-planned DAGs.
+func poolLimitsFromConfig(cfg config.SubagentConfig) (maxDepth, maxFanout int) {
+	maxDepth, maxFanout = cfg.MaxDepth, cfg.MaxFanout
+	if maxDepth == 0 {
+		maxDepth = subagents.Unlimited
+	}
+	if maxFanout == 0 {
+		maxFanout = subagents.Unlimited
+	}
+	return maxDepth, maxFanout
+}
+
 // initCoordinator lazily creates the Coordinator singleton with an in-memory
 // or durable ledger repository and a subagent pool backed by the given dispatcher.
 // Safe for concurrent calls; only the first invocation initialises the
@@ -268,6 +283,7 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	if existing, ok := coordinators.Load(d); ok {
 		return existing.(coordinator.Coordinator)
 	}
+	poolDepth, poolFanout := poolLimitsFromConfig(cfg)
 	repo := defaultOrchestrationRepo
 	// ownedStore is the store THIS call opened, and the only one the close hook
 	// below may close. A caller-supplied repository outlives the dispatcher -
@@ -286,8 +302,8 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	}
 	pool := subagents.New(d, subagents.Policy{
 		Workers:   cfg.MaxWorkers,
-		MaxDepth:  cfg.MaxDepth,
-		MaxFanout: cfg.MaxFanout,
+		MaxDepth:  poolDepth,
+		MaxFanout: poolFanout,
 		MaxBudget: cfg.DefaultBudget,
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
 	})
