@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -74,9 +75,28 @@ func buildStatusView(ctx context.Context, repo workflowledger.Repository, runID 
 			URL:            d.URL,
 			CommitSHA:      d.CommitSHA,
 			ErrorRef:       d.ErrorRef,
+			ErrorText:      resolvedDeliveryError(ctx, repo, d.ErrorRef),
 		})
 	}
 	return view, nil
+}
+
+// deliveryErrorHintMax bounds one resolved delivery failure text.
+const deliveryErrorHintMax = 4 << 10
+
+// resolvedDeliveryError resolves a failed delivery's stored error text so the
+// status view surfaces the failure hint automatically. Fail-soft: an empty or
+// unresolvable ref yields an empty string; a missing hint must not block the
+// status view (DC-9).
+func resolvedDeliveryError(ctx context.Context, repo workflowledger.Repository, ref string) string {
+	if ref == "" {
+		return ""
+	}
+	body, err := repo.LoadContent(ctx, ref)
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+	return textutil.TruncateRuneSafe(string(body), deliveryErrorHintMax)
 }
 
 // attemptView renders one ledger attempt as an AttemptView, including the

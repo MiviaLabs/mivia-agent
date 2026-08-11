@@ -573,3 +573,64 @@ func TestBuildInspectViewAttemptTiming(t *testing.T) {
 		t.Fatalf("ElapsedSeconds = %d, want %d", view.ElapsedSeconds, wantElapsed)
 	}
 }
+
+// TestStatusViewSurfacesDeliveryErrorText pins that a failed delivery's
+// stored failure text is resolved into the status view, so the harness shows
+// the error hint automatically instead of an opaque error_ref.
+func TestStatusViewSurfacesDeliveryErrorText(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	ctx := context.Background()
+	const runID = "wfr-errhint"
+	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
+		Inputs: map[string]string{"task": "build"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
+		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
+		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
+		Status:         workflowledger.RunStatusPending,
+		StartedAt:      time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
+	}, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	// Advance to delivery_pending through the legal transitions: a run cannot
+	// be created directly in delivery_pending (pending -> running ->
+	// delivery_pending).
+	for _, next := range []workflowledger.RunStatus{
+		workflowledger.RunStatusRunning,
+		workflowledger.RunStatusDeliveryPending,
+	} {
+		run, getErr := repo.GetRun(ctx, runID)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if casErr := repo.CompareAndSetRunStatus(ctx, runID, run.Version, next, nil); casErr != nil {
+			t.Fatal(casErr)
+		}
+	}
+	errText := "git push origin HEAD:refs/heads/wf/x: signal: killed: verify_agent_config: ok"
+	ref := "sha256:" + workflowledger.DigestHex([]byte(errText))
+	if err := repo.StoreContent(ctx, ref, []byte(errText)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertDelivery(ctx, workflowledger.DeliveryRecord{
+		RunID: runID, IdempotencyKey: "wfdel:k", Mode: "draft", BaseRef: "master",
+		HeadRef: "wf/x", Provider: "github", Status: "failed", ErrorRef: ref,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := buildStatusView(ctx, repo, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Delivery) != 1 {
+		t.Fatalf("delivery views = %d, want 1", len(view.Delivery))
+	}
+	if view.Delivery[0].ErrorText != errText {
+		t.Fatalf("error text = %q, want %q", view.Delivery[0].ErrorText, errText)
+	}
+}

@@ -3,9 +3,39 @@ package delivery
 import (
 	"context"
 	"fmt"
+	"time"
 
 	ledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
+
+// maxPushAttempts bounds how many times a failed branch push is retried
+// before the attempt is recorded failed. A push that dies mid-hook (for
+// example the repo's pre-push verify gate under memory pressure) is a
+// transport-class failure: the branch state on origin is unchanged, so a
+// bounded retry is idempotent and can succeed once the load drops. A
+// permanent refusal never reaches this loop (refusals return before commit).
+const maxPushAttempts = 3
+
+// pushRetryDelay returns the backoff for retry attempt n (1-based). It is a
+// package variable so tests can shorten the wait.
+var pushRetryDelay = func(attempt int) time.Duration {
+	if attempt <= 1 {
+		return 2 * time.Second
+	}
+	return 10 * time.Second
+}
+
+// waitCtx sleeps for d or returns ctx.Err() when the context ends first.
+func waitCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // pushDeliveryBranch pushes the delivery commit to origin and records the
 // push durably. CommitSHA is the adopted head; TreeSHA is the recorded tree;
@@ -13,10 +43,25 @@ import (
 // from a previous attempt is carried over so the durable pushed record never
 // ERASES it.
 func pushDeliveryBranch(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, head, treeSHA, diffRef string, existing ledger.DeliveryRecord) error {
-	// 12. Push the branch to origin.
+	// 12. Push the branch to origin, retrying transport-class failures with a
+	// bounded backoff so a transient kill (OOM, network) does not strand the
+	// run at delivery_pending with no automatic recovery.
 	req.stage("push", fmt.Sprintf("push branch %s to origin", req.Branch))
-	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
-		"push", "origin", "HEAD:refs/heads/"+req.Branch); err != nil {
+	var err error
+	for attempt := 1; attempt <= maxPushAttempts; attempt++ {
+		if _, err = git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
+			"push", "origin", "HEAD:refs/heads/"+req.Branch); err == nil {
+			break
+		}
+		req.stage("push_retry", fmt.Sprintf("push attempt %d/%d failed: %v", attempt, maxPushAttempts, err))
+		if attempt == maxPushAttempts {
+			break
+		}
+		if werr := waitCtx(ctx, pushRetryDelay(attempt)); werr != nil {
+			return werr
+		}
+	}
+	if err != nil {
 		markFailed(ctx, repo, key, req, err)
 		req.stage("failed", err.Error())
 		return err
