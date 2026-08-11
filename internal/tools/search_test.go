@@ -508,3 +508,215 @@ func TestWalkErrors(t *testing.T) {
 		t.Errorf("maxErrs=0 should produce empty notice, got %q", notice)
 	}
 }
+
+// parseTruncatedCount returns the number of entries a byte-truncated result
+// delivered before its "... truncated at N bytes" notice, derived from the
+// actual output rather than replicated budget arithmetic, so an offset
+// boundary in a regression test tracks the real capped prefix.
+func parseTruncatedCount(t *testing.T, out string) int {
+	t.Helper()
+	for i, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "... truncated at ") {
+			return i
+		}
+	}
+	t.Fatalf("byte truncation notice missing in output: %q", out)
+	return 0
+}
+
+// Defect (DC-9 false negative): when a byte-capped grep/glob walk is cut off
+// at the byte budget (errMaxBytes), the collected set is only a partial
+// prefix. Paginating that walk with offset >= len(collected) used to return a
+// bare "no matches" - a dishonest status that silently dropped the byte
+// truncation notice the adjacent empty-result branches explicitly preserve.
+// These tests pin the corrected behavior: the truncated + offset-past-end
+// page reports the byte notice, never "no matches", and stays within the
+// declared budget.
+func TestGrepOffsetPastTruncatedMatchesReportsByteNotice(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManyMatchingLines(t, ws.Abs, "zzz.txt", 100)
+	tool := &grepTool{ws: ws, maxMatches: 0, maxBytes: 1024}
+	ctx := context.Background()
+
+	base, err := tool.Execute(ctx, json.RawMessage(`{"pattern":"match"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := parseTruncatedCount(t, base)
+	if n == 0 {
+		t.Fatalf("byte-capped walk collected no entries; base output: %q", base)
+	}
+	for _, offset := range []int{n, n + 1, n + 100} {
+		args, _ := json.Marshal(map[string]any{"pattern": "match", "offset": offset})
+		out, err := tool.Execute(ctx, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == "no matches" {
+			t.Fatalf("offset=%d: byte-truncated walk reported a false negative", offset)
+		}
+		if !strings.HasPrefix(out, "... truncated at 1024 bytes") {
+			t.Fatalf("offset=%d: byte truncation notice missing; got %q", offset, out)
+		}
+		if len(out) > 1024 {
+			t.Fatalf("offset=%d: result is %d bytes, over the %d-byte budget", offset, len(out), 1024)
+		}
+	}
+}
+
+func TestGlobOffsetPastTruncatedHitsReportsByteNotice(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeNamedFiles(t, ws.Abs, 100, 60, ".md")
+	tool := &globTool{ws: ws, maxMatches: 0, maxBytes: 1024}
+	ctx := context.Background()
+
+	base, err := tool.Execute(ctx, json.RawMessage(`{"pattern":"**/*.md"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := parseTruncatedCount(t, base)
+	if n == 0 {
+		t.Fatalf("byte-capped walk collected no entries; base output: %q", base)
+	}
+	for _, offset := range []int{n, n + 1, n + 100} {
+		args, _ := json.Marshal(map[string]any{"pattern": "**/*.md", "offset": offset})
+		out, err := tool.Execute(ctx, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == "no matches" {
+			t.Fatalf("offset=%d: byte-truncated walk reported a false negative", offset)
+		}
+		if !strings.HasPrefix(out, "... truncated at 1024 bytes") {
+			t.Fatalf("offset=%d: byte truncation notice missing; got %q", offset, out)
+		}
+		if len(out) > 1024 {
+			t.Fatalf("offset=%d: result is %d bytes, over the %d-byte budget", offset, len(out), 1024)
+		}
+	}
+}
+
+// A budget below the truncation-reserve floor collects zero entries while
+// err==errMaxBytes (the first match trips the cap). offset>0 on that walk
+// must still report the byte notice - TestSearchToolsReportBudgetWhenNothingFits
+// pins the offset=0 case; these pin that an offset does not turn the same
+// truncated walk into a false "no matches".
+func TestGrepTinyBudgetZeroFitOffsetStillReportsByteNotice(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManyMatchingLines(t, ws.Abs, "zzz.txt", 100)
+	tool := &grepTool{ws: ws, maxMatches: 0, maxBytes: 64}
+	ctx := context.Background()
+
+	for _, offset := range []int{1, 5} {
+		args, _ := json.Marshal(map[string]any{"pattern": "match", "offset": offset})
+		out, err := tool.Execute(ctx, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == "no matches" {
+			t.Fatalf("offset=%d: zero-fit byte-capped walk reported a false negative", offset)
+		}
+		if !strings.HasPrefix(out, "... truncated at 64 bytes") {
+			t.Fatalf("offset=%d: byte truncation notice missing; got %q", offset, out)
+		}
+	}
+}
+
+func TestGlobTinyBudgetZeroFitOffsetStillReportsByteNotice(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeNamedFiles(t, ws.Abs, 3, 40, ".md")
+	tool := &globTool{ws: ws, maxMatches: 0, maxBytes: 40}
+	ctx := context.Background()
+
+	for _, offset := range []int{1, 5} {
+		args, _ := json.Marshal(map[string]any{"pattern": "**/*.md", "offset": offset})
+		out, err := tool.Execute(ctx, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == "no matches" {
+			t.Fatalf("offset=%d: zero-fit byte-capped walk reported a false negative", offset)
+		}
+		if !strings.HasPrefix(out, "... truncated at 40 bytes") {
+			t.Fatalf("offset=%d: byte truncation notice missing; got %q", offset, out)
+		}
+	}
+}
+
+// Negative pins of the unchanged convention: an offset past the end of an
+// UNTRUNCATED result - uncapped (maxBytes=0, DC-5 zero-means-unlimited) or
+// capped-but-complete (err==nil) - still returns exactly "no matches". The
+// fix must not invent a byte notice where no truncation happened.
+func TestGrepOffsetPastEndUntruncatedStillNoMatches(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManyMatchingLines(t, ws.Abs, "zzz.txt", 3)
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		tool *grepTool
+	}{
+		{"uncapped", &grepTool{ws: ws, maxMatches: 0, maxBytes: 0}},
+		{"capped_untruncated", &grepTool{ws: ws, maxMatches: 0, maxBytes: 1024}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, offset := range []int{3, 5} { // == len(collected) and > len(collected)
+				args, _ := json.Marshal(map[string]any{"pattern": "match", "offset": offset})
+				out, err := tc.tool.Execute(ctx, args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if out != "no matches" {
+					t.Fatalf("offset=%d: untruncated walk must keep the 'no matches' convention; got %q", offset, out)
+				}
+			}
+		})
+	}
+}
+
+func TestGlobOffsetPastEndUntruncatedStillNoMatches(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeNamedFiles(t, ws.Abs, 3, 12, ".md")
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		tool *globTool
+	}{
+		{"uncapped", &globTool{ws: ws, maxMatches: 0, maxBytes: 0}},
+		{"capped_untruncated", &globTool{ws: ws, maxMatches: 0, maxBytes: 1024}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, offset := range []int{3, 5} { // == len(collected) and > len(collected)
+				args, _ := json.Marshal(map[string]any{"pattern": "**/*.md", "offset": offset})
+				out, err := tc.tool.Execute(ctx, args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if out != "no matches" {
+					t.Fatalf("offset=%d: untruncated walk must keep the 'no matches' convention; got %q", offset, out)
+				}
+			}
+		})
+	}
+}
