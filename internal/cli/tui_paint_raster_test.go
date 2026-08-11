@@ -288,8 +288,16 @@ func TestPaintRaster_TimingBudgetToMarker(t *testing.T) {
 	// Nudge standard renderer as well (may produce additional snaps).
 	pp.send(tea.WindowSizeMsg{Width: cols, Height: rows})
 
+	// filled > 0 is part of the match criteria, not just a later assertion:
+	// plain is the raw, unbounded write, while grid/filled are clipped to
+	// rows. A snap can contain the marker in plain (e.g. a line pushed past
+	// the visible rows) while painting nothing into the bounded grid: that
+	// is a real, valid Program write, just not the "authoritative raster
+	// frame" this test needs. Matching on marker text alone let such a snap
+	// win the newest-first scan and fail the filled-cell assertions below
+	// even though a later, fully-painted snap with the marker existed.
 	sn, ok := pp.sink.findSince(start, func(s paintSnap) bool {
-		return strings.Contains(s.plain, marker) || gridContains(s.grid, marker)
+		return s.filled > 0 && (strings.Contains(s.plain, marker) || gridContains(s.grid, marker))
 	})
 	if !ok {
 		t.Fatalf("no raster snap with marker; snaps=%d", pp.sink.snapshotCount())
