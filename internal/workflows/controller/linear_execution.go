@@ -137,7 +137,17 @@ func (c *LinearController) JoinInFlightAttempt(ctx context.Context, attempt work
 	}
 	runtime, ok := c.Steps[attempt.StepID]
 	if !ok {
-		return fmt.Errorf("step %q has no snapshotted runtime", attempt.StepID)
+		// Non-agent steps (evidence_gate, human_gate) dispatch no coordinator
+		// child, so there is nothing to join: leave the attempt in-flight and
+		// let Advance's admitAttempt mark it interrupted and admit a fresh one
+		// (the documented "nothing to join" contract). Only an agent-family
+		// step with a genuinely missing runtime is a hard error.
+		switch step.Kind {
+		case "agent", "agent_panel", "agent_gate":
+			return fmt.Errorf("step %q has no snapshotted runtime", attempt.StepID)
+		default:
+			return nil
+		}
 	}
 	run, err := c.Repo.GetRun(ctx, c.RunID)
 	if err != nil {
