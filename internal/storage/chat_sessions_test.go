@@ -455,6 +455,133 @@ func TestPruneWorktreeSessionSnapshotsDeletesOnlyExactCatalogKey(t *testing.T) {
 	}
 }
 
+func TestDeleteWorktreeSessionSnapshotRemovesAllSideTableRows(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, instance, path, deleteKey := seedDeleteWorktreeSnapshotPair(t, store)
+	assertDeleteWorktreeSnapshotMissingIsNoop(t, store, principal, instance)
+	if err := store.DeleteWorktreeSessionSnapshot(context.Background(), principal, "delete-me", instance); err != nil {
+		t.Fatal(err)
+	}
+	assertDeleteWorktreeSnapshotClearsAllSideTables(t, store, principal, instance, path, deleteKey)
+	assertDeleteWorktreeSnapshotResaveMintsFreshRows(t, store, principal, instance, path, deleteKey)
+}
+
+func seedDeleteWorktreeSnapshotPair(t *testing.T, store *SQLite) (contextstate.Principal, contextstate.WorktreeInstance, string, string) {
+	t.Helper()
+	principal, err := contextstate.NewPrincipal("workspace", "session", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
+	path := filepath.Join(t.TempDir(), instance.Worktree)
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, path); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"delete-me", "keep"} {
+		if err := store.SaveSession(context.Background(), principal, name, []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: path, Worktree: instance.Worktree, WorktreeInstance: instance}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveWorktreeSessionAdmission(context.Background(), principal, name, contextstate.SessionAdmission{Agent: "agent", Digest: "digest", Names: []string{"tool"}}, instance); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var deleteKey string
+	if err := store.db.QueryRow(`SELECT storage_key FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity='snapshot' AND name='delete-me'`, principal.WorkspaceID, principal.SubjectID, instance.ID).Scan(&deleteKey); err != nil {
+		t.Fatal(err)
+	}
+	return principal, instance, path, deleteKey
+}
+
+// assertDeleteWorktreeSnapshotMissingIsNoop covers the negative path: a name
+// with no catalog key removes nothing and reports ErrSessionNotFound before
+// any delete runs.
+func assertDeleteWorktreeSnapshotMissingIsNoop(t *testing.T, store *SQLite, principal contextstate.Principal, instance contextstate.WorktreeInstance) {
+	t.Helper()
+	if err := store.DeleteWorktreeSessionSnapshot(context.Background(), principal, "missing", instance); !errors.Is(err, contextstate.ErrSessionNotFound) {
+		t.Fatalf("DeleteWorktreeSessionSnapshot(missing) = %v, want ErrSessionNotFound", err)
+	}
+	for _, name := range []string{"delete-me", "keep"} {
+		if _, _, err := store.LoadWorktreeSession(context.Background(), principal, name, instance); err != nil {
+			t.Fatalf("LoadWorktreeSession(%q) after negative path: %v", name, err)
+		}
+	}
+}
+
+// assertDeleteWorktreeSnapshotClearsAllSideTables covers the success path: the
+// deleted snapshot leaves no rows in any of the four tables, while the sibling
+// snapshot keeps its dir and admission.
+func assertDeleteWorktreeSnapshotClearsAllSideTables(t *testing.T, store *SQLite, principal contextstate.Principal, instance contextstate.WorktreeInstance, path, deleteKey string) {
+	t.Helper()
+	if _, _, err := store.LoadWorktreeSession(context.Background(), principal, "delete-me", instance); !errors.Is(err, contextstate.ErrSessionNotFound) {
+		t.Fatalf("LoadWorktreeSession(delete-me) after delete = %v, want ErrSessionNotFound", err)
+	}
+	if record, err := store.LoadWorktreeSessionAdmission(context.Background(), principal, "delete-me", instance); err != nil || len(record.Names) != 0 {
+		t.Fatalf("LoadWorktreeSessionAdmission(delete-me) after delete = %#v, %v", record, err)
+	}
+	checks := []struct {
+		table string
+		where string
+		args  []any
+	}{
+		{"chat_sessions", "name=? AND instance_id=?", []any{deleteKey, instance.ID}},
+		{"chat_session_admissions", "name=? AND instance_id=?", []any{deleteKey, instance.ID}},
+		{"chat_session_dirs", "name=? AND instance_id=?", []any{deleteKey, instance.ID}},
+		{"worktree_catalog_keys", "name=? AND storage_key=? AND entity='snapshot'", []any{"delete-me", deleteKey}},
+	}
+	for _, check := range checks {
+		var count int
+		if err := store.db.QueryRow(`SELECT count(*) FROM `+check.table+` WHERE workspace_id=? AND subject_id=? AND `+check.where, append([]any{principal.WorkspaceID, principal.SubjectID}, check.args...)...).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Errorf("%s retains %d rows for the deleted snapshot", check.table, count)
+		}
+	}
+	if _, info, err := store.LoadWorktreeSession(context.Background(), principal, "keep", instance); err != nil || info.Dir != path || info.Worktree != instance.Worktree || info.WorktreeInstance != instance {
+		t.Fatalf("LoadWorktreeSession(keep) = info %+v, err %v", info, err)
+	}
+	record, err := store.LoadWorktreeSessionAdmission(context.Background(), principal, "keep", instance)
+	if err != nil || len(record.Names) != 1 || record.Names[0] != "tool" {
+		t.Fatalf("LoadWorktreeSessionAdmission(keep) = %#v, %v", record, err)
+	}
+}
+
+// assertDeleteWorktreeSnapshotResaveMintsFreshRows covers re-entry: re-saving
+// the deleted name mints a fresh key and rebuilds its rows, so save/delete
+// cycles stay bounded.
+func assertDeleteWorktreeSnapshotResaveMintsFreshRows(t *testing.T, store *SQLite, principal contextstate.Principal, instance contextstate.WorktreeInstance, path, deleteKey string) {
+	t.Helper()
+	if err := store.SaveSession(context.Background(), principal, "delete-me", []byte(`[{}]`), "model", "provider", 1, 1, 1, contextstate.SessionSaveOptions{Dir: path, Worktree: instance.Worktree, WorktreeInstance: instance}); err != nil {
+		t.Fatal(err)
+	}
+	var freshKey string
+	if err := store.db.QueryRow(`SELECT storage_key FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity='snapshot' AND name='delete-me'`, principal.WorkspaceID, principal.SubjectID, instance.ID).Scan(&freshKey); err != nil {
+		t.Fatal(err)
+	}
+	if freshKey == deleteKey {
+		t.Fatalf("re-save reused storage key %q, want a fresh key after delete", freshKey)
+	}
+	for _, table := range []string{"chat_sessions", "chat_session_dirs", "worktree_catalog_keys"} {
+		var count int
+		if err := store.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE workspace_id=? AND subject_id=? AND instance_id=?`, principal.WorkspaceID, principal.SubjectID, instance.ID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 2 {
+			t.Errorf("%s row count after re-save = %d, want 2", table, count)
+		}
+	}
+}
+
 func mustBinding(t *testing.T) contextstate.BindingRevision {
 	t.Helper()
 	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
