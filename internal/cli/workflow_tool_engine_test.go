@@ -215,7 +215,7 @@ func TestSessionResumeAllowPublishDelivers(t *testing.T) {
 		store:      store,
 		res:        res,
 	}
-	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	// Wait for background controller+deliver to finish.
@@ -238,70 +238,6 @@ func TestSessionResumeAllowPublishDelivers(t *testing.T) {
 	if len(rec.Dirs()) == 0 {
 		t.Fatal("resume with allow_publish=true did not enter host deliver (no git Dir recorded)")
 	}
-}
-
-// TestSessionResumeWithoutAllowPublishSkipsDeliver proves the grant is not
-// implicit on resume.
-func TestSessionResumeWithoutAllowPublishSkipsDeliver(t *testing.T) {
-	root, storePath, configPath, _ := newDeliveryFixture(t)
-	runID := runFixtureToDeliveryPending(t, root, configPath)
-
-	prevRun := workflowResumeRun
-	prevGit := workflowDeliverGit
-	t.Cleanup(func() {
-		workflowResumeRun = prevRun
-		workflowDeliverGit = prevGit
-	})
-	workflowResumeRun = func(context.Context, workflowControllerBuild) (workflowledger.RunSnapshot, error) {
-		return workflowledger.RunSnapshot{
-			RunID:  runID,
-			Status: workflowledger.RunStatusDeliveryPending,
-		}, nil
-	}
-	rec := &recordingDeliverGit{}
-	workflowDeliverGit = rec
-
-	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	applyWorkflowStoreRoot(res, root)
-	store, repo, closeFn, err := openWorkflowStore(root, res.Subagents)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(closeFn)
-	finish, err := beginWorkflowExecution(root, contextStorePath(root, res.Subagents), runID)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	e := newSessionWorkflowEngine(root, configPath)
-	p := resumePrepared{
-		runID: runID, workflow: "two-step", root: root,
-		built: workflowControllerBuild{Dispatcher: workflowTestDispatcher{}}, closeFn: func() {}, finishExec: finish,
-		repo: repo, store: store, res: res,
-	}
-	if _, err := e.launchResume(context.Background(), p, false); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		e.mu.Lock()
-		active, ok := e.active[runID]
-		e.mu.Unlock()
-		if !ok {
-			break
-		}
-		select {
-		case <-active.done:
-		case <-time.After(20 * time.Millisecond):
-		}
-	}
-	if dirs := rec.Dirs(); len(dirs) != 0 {
-		t.Fatalf("resume without allow_publish entered deliver: dirs=%v", dirs)
-	}
-	_ = storePath
 }
 
 // TestWorkflowToolSubagentConfigLoadsWorkspaceWhenResNil covers the fallback
@@ -464,7 +400,7 @@ func TestSessionAutoDeliveryRefusalRecordedNotDiscarded(t *testing.T) {
 		store:      store,
 		res:        res,
 	}
-	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionEngineIdle(t, e, runID)
@@ -546,7 +482,7 @@ func TestSessionAutoDeliveryTransientFailureRecordedNotDiscarded(t *testing.T) {
 		store:      store,
 		res:        res,
 	}
-	if _, err := e.launchResume(context.Background(), p, true); err != nil {
+	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionEngineIdle(t, e, runID)

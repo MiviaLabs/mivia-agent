@@ -54,7 +54,7 @@ func TestSessionLaunchResumeReleasesHandoffClaimAfterRunFailure(t *testing.T) {
 		finishExec: func() {},
 		closeFn:    func() { close(closed) },
 	}
-	if _, err := engine.launchResume(ctx, prepared, false); err != nil {
+	if _, err := engine.launchResume(ctx, prepared); err != nil {
 		t.Fatalf("launchResume() error = %v", err)
 	}
 	<-started

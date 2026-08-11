@@ -9,8 +9,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -167,6 +169,7 @@ func prepareWorkflowBuildRuntime(root, refBase string, wf *compiler.CompiledWork
 }
 
 func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.Dispatcher, legacy ledger.LedgerRepository, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]any, runID string, runtime preparedWorkflowRuntime, identity workflowspace.Identity, baseline *verifier.GoModuleBaseline) (*controller.LinearController, error) {
+	applyHarnessSandboxSetting(res.Harness)
 	coord := initCoordinator(dispatcher, res.Subagents, legacy)
 	runner := controller.NewCoordinatorRunner(coord)
 	ctrl, err := workflowBuildController(repo, runner, wf, runtime.Steps, inputs, runID, runtime.Snapshot)
@@ -199,6 +202,27 @@ func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.D
 		}
 	}
 	return ctrl, nil
+}
+
+// warnSandboxDisabledOnce prints the escape-hatch warning at most once per
+// process: newWorkflowController may run more than once across resume/retry
+// paths within a single CLI invocation, and the operator only needs to hear
+// this at startup, not on every workflow build.
+var warnSandboxDisabledOnce sync.Once
+
+// applyHarnessSandboxSetting installs the process-wide verifier sandbox
+// toggle from [harness] sandbox. This is a harness-level setting, not a
+// per-verifier or per-run one: it decides HOW every evidence-gate command
+// this process runs is executed, regardless of which project or verifier
+// declared it.
+func applyHarnessSandboxSetting(hc config.HarnessConfig) {
+	enabled := hc.SandboxEnabled()
+	verifier.SetSandboxEnabled(enabled)
+	if !enabled {
+		warnSandboxDisabledOnce.Do(func() {
+			fmt.Fprintln(os.Stderr, "warning: [harness] sandbox = false — evidence-gate commands run directly on the host with no filesystem, network, or environment isolation")
+		})
+	}
 }
 
 func workflowAdmission(setup workflowBuildSetup, inputs map[string]string, recorded *workflowledger.RunSnapshot) controller.Admission {

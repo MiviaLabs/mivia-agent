@@ -61,11 +61,8 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 		return hostFailure(fmt.Errorf("bubblewrap is required for workflow verification: %w", err))
 	}
 	goMode := program == "go"
-	if goMode && (baseline == nil || len(baseline.GoMod) == 0) {
-		return hostFailure(fmt.Errorf("workflow verifier module baseline is missing"))
-	}
-	if !goMode && !IsBareProgramName(program) {
-		return hostFailure(fmt.Errorf("sandbox rejects non-bare program %q", program))
+	if err := validateVerifierProgram(goMode, baseline, program); err != nil {
+		return hostFailure(err)
 	}
 	exePath, toolchainPath, goRoot, err := resolveSandboxExecutable(goMode, baseline, program)
 	if err != nil {
@@ -89,7 +86,7 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 		if err := provisionModuleCache(copyRoot, modulesRoot, baseline, toolchainPath); err != nil {
 			return hostFailure(err)
 		}
-		if buildCacheRoot, err = prepareVerifierBuildCache(); err != nil {
+		if buildCacheRoot, err = prepareVerifierBuildCache(baseline); err != nil {
 			return hostFailure(err)
 		}
 	}

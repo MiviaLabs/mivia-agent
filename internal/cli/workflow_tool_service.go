@@ -63,6 +63,18 @@ func workflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	}
 	engine := newSessionWorkflowEngine(root, configPath)
 	engine.SetEventBusProvider(provider)
+	// A workflow that declares a [delivery] policy grants publication: the
+	// harness must honor it always, without flags or manual overrides. When
+	// the harness wires its workflow surface (a non-nil event-bus provider
+	// marks production wiring; tests pass nil), recover runs left unfinished
+	// by an earlier session (restart or crash): publish delivery_pending runs
+	// and resume pending/running/waiting_approval runs whose claim is free or
+	// expired. The sweep is one-shot; per run it is serialized by the
+	// execution file lock and fenced by the run claim, so it never races a
+	// live executor, and delivery refuses runs without an active policy.
+	if provider != nil {
+		go engine.reconcileParkedRuns(context.Background())
+	}
 	// NewService fails only when the repository factory is nil; this caller
 	// always provides one, so the error is impossible by construction and the
 	// branch would be dead code (diff-coverage gate).
@@ -78,6 +90,9 @@ func workflowToolServiceWithBus(root string, res *config.Resolved, provider func
 // identity (session ConfigPath or workspace project file). provider supplies
 // the session event bus for workflow progress lazily, so a bus created after
 // wiring is still observed. nil disables progress publishing.
+//
+// The parked-delivery sweep (see workflowToolServiceWithBus) already runs when
+// provider != nil, so no sweep is launched here.
 func wireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved, provider func() *events.Bus) {
 	if opts == nil {
 		return

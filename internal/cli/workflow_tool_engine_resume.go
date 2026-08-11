@@ -31,7 +31,7 @@ func (e *sessionWorkflowEngine) resumeCLI(ctx context.Context, req agenttools.St
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
-	return e.launchResume(ctx, prepared, req.AllowPublish)
+	return e.launchResume(ctx, prepared)
 }
 
 func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttools.StartRequest) (resumePrepared, error) {
@@ -123,7 +123,7 @@ func refuseNonResumable(run workflowledger.RunSnapshot) error {
 	return nil
 }
 
-func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepared, allowPublish bool) (agenttools.StartResult, error) {
+func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepared) (agenttools.StartResult, error) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	e.mu.Lock()
@@ -145,7 +145,7 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 		// holder is harmless: ReleaseRun is a no-op when the caller is not the
 		// current holder.
 		defer releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
-		sessionAutoDeliveryRepairLoop(runCtx, p.repo, p.root, p.res, p.store, p.runID, allowPublish, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
+		sessionAutoDeliveryRepairLoop(runCtx, p.repo, p.root, p.res, p.store, p.runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			snap, err := workflowResumeRun(ctx, p.built)
 			// Release the preflight handoff claim BEFORE settling: settle
 			// claims the run with its own holder, so a still-held handoff (the

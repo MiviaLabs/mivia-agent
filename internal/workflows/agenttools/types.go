@@ -75,7 +75,11 @@ type StartRequest struct {
 	// InvocationKey identifies one caller request across retries. When set for
 	// a new run, the engine derives a stable run ID and admits it once.
 	InvocationKey string
-	// AllowPublish defaults false. It is never implicit.
+	// AllowPublish is the explicit publication gate for the workflow_deliver
+	// tool and the CLI --allow-publish flag. The session harness does NOT
+	// consult it for auto-delivery: a workflow whose [delivery] policy is
+	// active is published automatically (the policy is the publication
+	// grant), so a delivery-capable run is never stranded by a missing flag.
 	AllowPublish bool
 	// Resume, when true, resumes RunID from the durable ledger snapshot.
 	Resume bool

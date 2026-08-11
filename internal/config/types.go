@@ -22,6 +22,7 @@ type File struct {
 	Integrations IntegrationsConfig        `toml:"integrations"`
 	MCP          MCPConfig                 `toml:"mcp"`
 	Memory       MemoryConfig              `toml:"memory"`
+	Harness      HarnessConfig             `toml:"harness"`
 }
 
 // MemoryConfig configures durable agent memory (plan 68).
@@ -377,6 +378,8 @@ type Resolved struct {
 	MCPWarnings []string
 	// Memory is the resolved [memory] configuration.
 	Memory MemoryConfig
+	// Harness is the resolved [harness] configuration.
+	Harness HarnessConfig
 
 	// TavilyAPIKey is the Tavily web search API key (set via TAVILY_API_KEY env).
 	// When set, the search tool uses Tavily as the primary web search engine.

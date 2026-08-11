@@ -80,7 +80,7 @@ func (p *CommandProfile) Verify(ctx context.Context, req Request) (Result, error
 	if p.run != nil {
 		runErr = p.run(ctx, workDir, p.program, p.args...)
 	} else {
-		runErr = runSandboxedCommand(ctx, workDir, req.ModuleBaseline, p.policy, p.program, p.args...)
+		runErr = runVerifierCommand(ctx, workDir, req.ModuleBaseline, p.policy, p.program, p.args...)
 	}
 	if runErr != nil {
 		check.Status = "failed"
