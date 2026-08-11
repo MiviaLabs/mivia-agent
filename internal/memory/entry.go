@@ -169,6 +169,9 @@ func (e Entry) validateCollections() error {
 		if hasLineControl(tag) {
 			return fmt.Errorf("tag must not contain line breaks")
 		}
+		if strings.Contains(tag, ",") {
+			return fmt.Errorf("tag must not contain a comma")
+		}
 	}
 	if len(e.References) > maxReferences {
 		return fmt.Errorf("references must have at most %d items", maxReferences)

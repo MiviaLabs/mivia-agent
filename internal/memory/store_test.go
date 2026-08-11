@@ -433,4 +433,83 @@ func TestStoreSaveFillsCreatedDate(t *testing.T) {
 	}
 }
 
+// TestStoreOrgIdempotencyRespectsOrgNamespace is the regression test for the
+// cross-org idempotency collision: entryID() once hashed scope+title+content
+// with no org, and the sqlite idempotency probe matched on id alone, so the
+// identical entry saved under two org ids on a shared org.db file produced
+// the same id and org B's save answered org A's row with dishonest success,
+// storing no row for B. The content-addressed identity must be
+// org-namespaced: identical content under different org ids gets distinct
+// ids, each org keeps exactly its own row, and B's search returns B's row.
+func TestStoreOrgIdempotencyRespectsOrgNamespace(t *testing.T) {
+	dir := t.TempDir()
+	orgPath := filepath.Join(dir, "org.db")
+	open := func(orgID string) Store {
+		t.Helper()
+		s, err := Open(Config{
+			Backend:          "sqlite",
+			ProjectPath:      filepath.Join(dir, "project.db"),
+			OrgPath:          orgPath,
+			OrgID:            orgID,
+			MaxEntryBytes:    8192,
+			MaxEntries:       50,
+			MaxSearchResults: 8,
+		})
+		if err != nil {
+			t.Fatalf("Open %q: %v", orgID, err)
+		}
+		t.Cleanup(func() { _ = s.Close() })
+		return s
+	}
+	a := open("github.com/acme")
+	b := open("github.com/beta")
+	ctx := context.Background()
+	identical := testEntry("shared-learning", ScopeOrg)
+	ra, err := a.Save(ctx, identical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, err := b.Save(ctx, identical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ra.ID == rb.ID {
+		t.Errorf("identical entry saved under different org ids must get different ids, both %q", ra.ID)
+	}
+	for name, s := range map[string]Store{"a": a, "b": b} {
+		if n, err := s.Count(ctx, ScopeOrg); err != nil || n != 1 {
+			t.Errorf("%s count = %d, %v; want 1 (each org owns exactly its own row)", name, n, err)
+		}
+	}
+	got, err := b.Search(ctx, Query{Text: "shared-learning", Scope: ScopeOrg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Org != "github.com/beta" {
+		t.Errorf("B search = %+v, want exactly B's row", got)
+	}
+}
+
+// TestStoreSaveRejectsCommaInTag is the regression test for the comma-tag
+// corruption: Render() joins tags with ", " while Parse/splitTags split on
+// ",", so a legal comma-containing tag silently split into several tags on
+// the next read. Save must refuse a comma tag before any transaction, so no
+// partial row is written on either backend.
+func TestStoreSaveRejectsCommaInTag(t *testing.T) {
+	for _, backend := range []string{"sqlite", "memory"} {
+		t.Run(backend, func(t *testing.T) {
+			s := newTestStore(t, backend, "")
+			ctx := context.Background()
+			e := testEntry("tagged", ScopeProject)
+			e.Tags = []string{"a,b"}
+			if _, err := s.Save(ctx, e); err == nil || !strings.Contains(err.Error(), "comma") {
+				t.Fatalf("Save with a comma tag must fail naming the comma, got %v", err)
+			}
+			if n, err := s.Count(ctx, ScopeProject); err != nil || n != 0 {
+				t.Errorf("count = %d, %v; want 0 (no partial write)", n, err)
+			}
+		})
+	}
+}
+
 var errNoRows = errors.New("no rows")
