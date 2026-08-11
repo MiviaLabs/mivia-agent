@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -686,3 +687,17 @@ func (c *blockingCloseClient) CallTool(context.Context, string, map[string]any) 
 	return "", nil
 }
 func (c *blockingCloseClient) Close() error { return nil }
+
+type closeSignalingClient struct {
+	once   sync.Once
+	closed chan struct{}
+}
+
+func (c *closeSignalingClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (c *closeSignalingClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	return "", nil
+}
+func (c *closeSignalingClient) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return nil
+}
