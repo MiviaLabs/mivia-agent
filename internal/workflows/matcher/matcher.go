@@ -23,7 +23,10 @@ type Decision struct {
 	ToStepID        string
 	Loop            string
 	MaxIterations   int
-	MatchDigest     string
+	// PartialTarget is the loop-exhaustion escape declared on the selected
+	// transition, forwarded from definition.Transition.
+	PartialTarget string
+	MatchDigest   string
 	// Selected holds the exact status and output field values used for the match.
 	Selected map[string]string
 	// Outcome is "matched", "zero_match", "multi_match", or "invalid_output".
@@ -76,6 +79,7 @@ func Match(fromStep, status string, output map[string]any, transitions []definit
 			ToStepID:        h.tr.To,
 			Loop:            h.tr.Loop,
 			MaxIterations:   h.tr.MaxIterations,
+			PartialTarget:   h.tr.PartialTarget,
 			MatchDigest:     h.digest,
 			Selected:        h.sel,
 			Outcome:         "matched",
@@ -99,6 +103,7 @@ func Match(fromStep, status string, output map[string]any, transitions []definit
 				ToStepID:        best.tr.To,
 				Loop:            best.tr.Loop,
 				MaxIterations:   best.tr.MaxIterations,
+				PartialTarget:   best.tr.PartialTarget,
 				MatchDigest:     best.digest,
 				Selected:        best.sel,
 				Outcome:         "matched",

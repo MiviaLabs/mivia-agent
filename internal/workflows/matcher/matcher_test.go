@@ -189,3 +189,20 @@ func TestMatchEmptyStatusRejected(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestDecisionCarriesPartialTarget(t *testing.T) {
+	transitions := []definition.Transition{
+		{From: "review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded"}, Loop: "repair", MaxIterations: 2, PartialTarget: "deliver"},
+		{From: "review", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}}},
+	}
+	d, err := Match("review", "succeeded", map[string]any{"verdict": "changes_requested"}, transitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.PartialTarget != "deliver" {
+		t.Fatalf("Decision.PartialTarget = %q, want %q", d.PartialTarget, "deliver")
+	}
+	if d.ToStepID != "implement" {
+		t.Fatalf("Decision.ToStepID = %q, want %q", d.ToStepID, "implement")
+	}
+}

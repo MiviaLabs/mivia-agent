@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -377,6 +378,21 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 				return nil, nil, nil, fmt.Errorf("missing input %q", parts[1])
 			}
 			inputs[binding.As] = value
+			continue
+		}
+		if len(parts) == 2 && parts[0] == "run" && parts[1] == "salvage" {
+			// run.salvage binds the verified outputs preserved when a repair
+			// loop exhausted (R2 Phase 2). The partial_target step reads the
+			// content-addressed refs to recover or deliver the verified work.
+			salvaged, err := c.salvageLoopSuccesses(ctx)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			raw, err := json.Marshal(salvaged)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			evidence[binding.As] = string(raw)
 			continue
 		}
 		if len(parts) == 3 && parts[0] == "steps" && parts[2] == "output" {

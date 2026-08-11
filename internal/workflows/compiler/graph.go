@@ -21,6 +21,11 @@ func validateGraph(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
 		if stepIDs[t.To] {
 			adj[t.From] = append(adj[t.From], t.To)
 		}
+		// partial_target is a real route the run can take when a loop
+		// exhausts; a step reachable only through it is not an orphan.
+		if t.PartialTarget != "" && stepIDs[t.PartialTarget] {
+			adj[t.From] = append(adj[t.From], t.PartialTarget)
+		}
 	}
 
 	// BFS reachability from initial_step
@@ -121,6 +126,9 @@ func validateCycles(wf *definition.WorkflowFile) error {
 			continue
 		}
 		adj[t.From] = append(adj[t.From], t.To)
+		if t.PartialTarget != "" && stepIDs[t.PartialTarget] {
+			adj[t.From] = append(adj[t.From], t.PartialTarget)
+		}
 	}
 
 	// Detect a cycle with a three-color DFS (white/gray/black).
