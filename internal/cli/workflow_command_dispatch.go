@@ -11,7 +11,10 @@ import (
 // each command owns its arity and flag validation here.
 
 func runWorkflowCommandRun(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
-	inputs, rest, _ := flagVar(args, "--input")
+	inputs, rest, _, err := flagVar(args, "--input")
+	if err != nil {
+		return err
+	}
 	allowPublish, rest, err := parseWorkflowBoolFlag(rest, "--allow-publish")
 	if err != nil {
 		return err
