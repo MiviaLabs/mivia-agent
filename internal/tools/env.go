@@ -3,11 +3,16 @@ package tools
 import "strings"
 
 func (t *runCommandTool) filterEnv(env []string) []string {
+	return filterEnvFor(env, t.envExact, t.envPrefix, t.envBlockedExact, t.envKeywordBlock)
+}
+
+// filterEnvFor computes the minimal environment for a child process from the
+// workspace env policy. It is the single shared implementation for run_command
+// and get_diagnostics: the two tools must never drift apart on what a child
+// process may see (locked plan v2 item 11, review gate rev2 finding 2).
+func filterEnvFor(env []string, exactSet map[string]bool, prefixSet []string, blockedExact map[string]bool, keywordBlock []string) []string {
 	// A nil exactSet is an empty allowlist, not a request for defaults: with
 	// nothing configured, no variable is passed through.
-	exactSet := t.envExact
-	prefixSet := t.envPrefix
-
 	var out []string
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
@@ -23,10 +28,10 @@ func (t *runCommandTool) filterEnv(env []string) []string {
 			if !matched {
 				continue
 			}
-			if t.envBlockedExact != nil && t.envBlockedExact[uk] {
+			if blockedExact != nil && blockedExact[uk] {
 				continue
 			}
-			if t.containsBlockedKeyword(uk) {
+			if containsBlockedKeyword(uk, keywordBlock) {
 				continue
 			}
 		}
@@ -38,8 +43,8 @@ func (t *runCommandTool) filterEnv(env []string) []string {
 // containsBlockedKeyword screens variables admitted by a prefix rule. It is
 // subtractive only: an exact env_allowlist entry is never dropped, so a build
 // that genuinely needs FOO_TOKEN names it outright.
-func (t *runCommandTool) containsBlockedKeyword(s string) bool {
-	for _, kw := range t.envKeywordBlock {
+func containsBlockedKeyword(s string, keywordBlock []string) bool {
+	for _, kw := range keywordBlock {
 		if kw != "" && strings.Contains(s, strings.ToUpper(kw)) {
 			return true
 		}

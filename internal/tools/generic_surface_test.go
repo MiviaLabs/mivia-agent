@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -85,6 +86,17 @@ func TestToolSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 	if len(texts) == 0 {
 		t.Fatal("expected registered tools")
 	}
+	assertNoLanguageBias(t, texts)
+}
+
+// assertNoLanguageBias is the shared rule-60 gate for model-facing tool text.
+// texts maps tool name -> flattened Description plus parameter descriptions,
+// so a failure names the offending tool and pattern.
+// TestToolSurfaceIsProjectAndLanguageGeneric runs the whole registry through
+// it; conditionally registered tools (e.g. get_diagnostics) pin their own
+// surface with it too.
+func assertNoLanguageBias(t *testing.T, texts map[string]string) {
+	t.Helper()
 	var failures []string
 	for name, text := range texts {
 		for _, p := range languageBiasPatterns {
@@ -191,4 +203,89 @@ func TestOpenAIToolsJSONHasNoLanguageBias(t *testing.T) {
 			t.Fatalf("OpenAITools() payload matches language bias %q", p.name)
 		}
 	}
+}
+
+// get_diagnostics is conditionally registered: it exists only when a
+// workspace configures [tools] diagnostics_command whose argv[0] is on the
+// run_command allowlist. The whole-surface test above therefore never sees it
+// in an unconfigured registry, so pin its surface here with the tool actually
+// registered (rule 60).
+func TestGetDiagnosticsSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
+	prog := onPathDiagnosticsProgram(t)
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := NewDefaultRegistry(DefaultOptions{
+		Workspace:          ws,
+		RunAllowlist:       []string{prog},
+		DiagnosticsCommand: []string{prog},
+	})
+	tool, ok := reg.Get(GetDiagnosticsToolName)
+	if !ok {
+		t.Fatalf("get_diagnostics must register when DiagnosticsCommand=%q is on the run allowlist", prog)
+	}
+
+	// The model-facing surface: Description plus flattened parameter schemas.
+	desc := tool.Description()
+	text := desc + "\n" + strings.Join(flattenSchemaDescriptions(tool.Parameters()), "\n")
+	assertNoLanguageBias(t, map[string]string{GetDiagnosticsToolName: text})
+
+	// Rule 60 point 5: never this product's path or module in a Description().
+	for _, product := range []string{"cmd/mivia", "github.com/MiviaLabs", "mivia-agent"} {
+		if strings.Contains(desc, product) {
+			t.Errorf("get_diagnostics Description must not name product path/module %q, got %q", product, desc)
+		}
+	}
+	// Rule 60 point 2: examples span multiple ecosystems, never a single one.
+	if ecosystemsNamed(desc) < 2 {
+		t.Errorf("get_diagnostics Description must name multi-ecosystem examples, got %q", desc)
+	}
+}
+
+// onPathDiagnosticsProgram returns a bare program name that resolves on PATH,
+// which is the registration precondition for get_diagnostics (the surface
+// test never executes the command). It skips when none of the candidates is
+// available, mirroring requirePOSIXDiagnostics's portability stance.
+func onPathDiagnosticsProgram(t *testing.T) string {
+	t.Helper()
+	for _, candidate := range []string{"sh", "bash", "go", "python3", "python", "node", "npm", "git", "make"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return candidate
+		}
+	}
+	t.Skip("no on-PATH bare program available to register get_diagnostics")
+	return ""
+}
+
+// multiEcosystemExamplePatterns match whole-word ecosystem example commands
+// in Description() prose. Word boundaries keep "cmake" or "makefile" from
+// ever counting as "make", so each match is a genuinely distinct ecosystem.
+var multiEcosystemExamplePatterns = []struct {
+	name string
+	re   *regexp.Regexp
+}{
+	{"make", regexp.MustCompile(`(?i)\bmake\b`)},
+	{"npm", regexp.MustCompile(`(?i)\bnpm\b`)},
+	{"pytest", regexp.MustCompile(`(?i)\bpytest\b`)},
+	{"cargo", regexp.MustCompile(`(?i)\bcargo\b`)},
+	{"mvn", regexp.MustCompile(`(?i)\bmvn\b`)},
+	{"gradle", regexp.MustCompile(`(?i)\bgradle\b`)},
+	{"rake", regexp.MustCompile(`(?i)\brake\b`)},
+	{"dotnet", regexp.MustCompile(`(?i)\bdotnet\b`)},
+	{"cmake", regexp.MustCompile(`(?i)\bcmake\b`)},
+	{"flutter", regexp.MustCompile(`(?i)\bflutter\b`)},
+}
+
+// ecosystemsNamed returns how many distinct ecosystem example markers appear
+// in the text. One marker is a single-ecosystem example; the rule requires
+// multiple.
+func ecosystemsNamed(text string) int {
+	count := 0
+	for _, p := range multiEcosystemExamplePatterns {
+		if p.re.MatchString(text) {
+			count++
+		}
+	}
+	return count
 }

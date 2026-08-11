@@ -171,3 +171,64 @@ func TestFindReferencesRegisteredLimitDefault(t *testing.T) {
 		t.Fatalf("find_references registered limit = %d, want 50", fr.limit)
 	}
 }
+
+// newCapRegistryWithDiagnostics builds a default registry like newCapRegistry
+// over a temp workspace, additionally wiring a get_diagnostics command:
+// argv[0] is on the run_command allowlist and resolvable on PATH, so
+// registerDiagnosticsTool registers the tool (get_diagnostics is advertised
+// only when its configured command can run). The command never executes in
+// these budget pins; it only has to register.
+func newCapRegistryWithDiagnostics(t *testing.T, capBytes int, argv ...string) *Registry {
+	t.Helper()
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewDefaultRegistry(DefaultOptions{
+		Workspace:          ws,
+		MaxToolResultBytes: capBytes,
+		MaxReadBytes:       256 * 1024,
+		DiagnosticsCommand: argv,
+		RunAllowlist:       []string{argv[0]},
+	})
+}
+
+// TestGetDiagnosticsBudgetClampedToConfiguredCap pins that a configured cap
+// clamps get_diagnostics' result-envelope budget (diagnosticsDefaultBudget)
+// down to the cap, so the tool's declared budget stays under the loop's
+// result ceiling and the loop never has to tail-cut its JSON envelope.
+func TestGetDiagnosticsBudgetClampedToConfiguredCap(t *testing.T) {
+	requirePOSIXDiagnostics(t)
+	reg := newCapRegistryWithDiagnostics(t, 2048, "sh", "-c", "true")
+	tool, ok := reg.Get(GetDiagnosticsToolName)
+	if !ok {
+		t.Fatal("get_diagnostics not registered")
+	}
+	gd := tool.(*getDiagnosticsTool)
+	if gd.maxBytes != 2048 {
+		t.Fatalf("get_diagnostics budget = %d, want clamped to configured cap 2048", gd.maxBytes)
+	}
+	if got := gd.ResultBudgetBytes(); got != 2048 {
+		t.Fatalf("ResultBudgetBytes = %d, want 2048", got)
+	}
+}
+
+// TestGetDiagnosticsBudgetUnclampedWithoutCap pins the uncapped default: no
+// configured max_tool_result_bytes leaves get_diagnostics' result-envelope
+// budget at the 256 KiB dispatcher ceiling floor (diagnosticsDefaultBudget),
+// so the tool's declared budget can never raise the shared output ceiling.
+func TestGetDiagnosticsBudgetUnclampedWithoutCap(t *testing.T) {
+	requirePOSIXDiagnostics(t)
+	reg := newCapRegistryWithDiagnostics(t, 0, "sh", "-c", "true")
+	tool, ok := reg.Get(GetDiagnosticsToolName)
+	if !ok {
+		t.Fatal("get_diagnostics not registered")
+	}
+	gd := tool.(*getDiagnosticsTool)
+	if gd.maxBytes != 256*1024 {
+		t.Fatalf("get_diagnostics budget = %d, want 256 KiB with no configured cap", gd.maxBytes)
+	}
+	if got := gd.ResultBudgetBytes(); got != 256*1024 {
+		t.Fatalf("ResultBudgetBytes = %d, want 256 KiB", got)
+	}
+}

@@ -66,6 +66,14 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	if hasEffectiveTool(workflowEngineer, tools.RunCommandToolName) {
 		t.Fatalf("workflow-engineer must not have %q", tools.RunCommandToolName)
 	}
+	// get_diagnostics is a command-running tool like run_command. Workflow
+	// steps run no commands by design (the evidence gates execute checks in
+	// the verifier sandbox), so it must stay out of the step agent's toolset
+	// too; workflowDefaultRegistry deliberately does not map
+	// DiagnosticsCommand.
+	if hasEffectiveTool(workflowEngineer, tools.GetDiagnosticsToolName) {
+		t.Fatalf("workflow-engineer must not have %q", tools.GetDiagnosticsToolName)
+	}
 
 	assertFeatureDeliveryAgentSteps(t, workflow)
 	assertFeatureDeliveryEvidenceGates(t, workflow)

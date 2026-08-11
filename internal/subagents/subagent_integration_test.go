@@ -390,6 +390,93 @@ func TestSubagentParallelTasks(t *testing.T) {
 	}
 }
 
+// TestSubagentPoolConcurrentIdenticalEditsDoNotDuplicateFile is the
+// end-to-end reproduction of the reported symptom: two independent
+// subagent tasks (distinct Owner, so distinct dispatcher ParentID -
+// see TestDispatcherNoDedupAcrossDifferentParentIDs, which pins that the
+// dispatcher provides no dedup across different ParentIDs) both decide to
+// apply the identical search_replace edit to the same file, through the
+// real Pool -> Dispatcher -> tools.Registry stack. Task B runs only after
+// Task A's edit has landed (Workers: 1 serializes the pool), matching the
+// reported scenario - one agent applies a fix, a second agent (unaware, or
+// wrongly believing the first agent had NOT already done it) applies the
+// identical fix again - rather than a true data race, which can also
+// produce a lost update (only one write survives) instead of a duplicate
+// and would make the assertion flaky for the wrong reason. Each task still
+// gets its own httptest server so the two agents' step sequences cannot
+// race against a shared step counter. The edit tools have no idempotency
+// check (see the tools-package RED tests), so this is expected to fail
+// today: the inserted text is duplicated.
+func TestSubagentPoolConcurrentIdenticalEditsDoNotDuplicateFile(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	if _, err := reg.Execute(context.Background(), "write_file", json.RawMessage(
+		`{"path":"f.go","content":"func foo() {\n\treturn\n}\n"}`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+
+	editArgs := `{"path":"f.go","old_string":"func foo() {","new_string":"func foo() {\n\textra()"}`
+
+	d := runtime.New(runtime.Policy{})
+	toolDisp, err := runtime.NewToolDispatcher(reg, runtime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mkHandler := func(t *testing.T, callID string) *MultiStepHandler {
+		srv := subagentHTTPServer(t, []struct {
+			content   string
+			toolCalls []provider.ToolCall
+		}{
+			{content: "Applying the fix", toolCalls: []provider.ToolCall{mkTC(callID, "search_replace", editArgs)}},
+			{content: "Fix applied"},
+		})
+		t.Cleanup(srv.Close)
+		comp := provider.NewOpenAICompatWithOptions(provider.CompatOptions{Name: "test-sub-" + callID, BaseURL: srv.URL, APIKey: "test-key"})
+		return &MultiStepHandler{
+			Completer: comp, FullRegistry: reg, Dispatcher: toolDisp,
+			Model: "sub-model", MaxSteps: 3, ToolTimeout: 5 * time.Second, MaxTokens: 100,
+		}
+	}
+	if err := d.Register(runtime.Subagent, "edit_task_a", mkHandler(t, "call_a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Register(runtime.Subagent, "edit_task_b", mkHandler(t, "call_b")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Workers: 1 serializes the pool so Task B's edit is issued only after
+	// Task A's has fully landed - see the comment above for why this is
+	// deliberate rather than Workers: 2 (true concurrency can race into a
+	// lost update instead of a duplicate, which would flake the assertion).
+	p := New(d, Policy{Workers: 1})
+	results, err := p.Run(context.Background(), []Task{
+		{ID: "t1", Name: "edit_task_a", Owner: "task-A", TurnID: "turn:1", Input: json.RawMessage(`"apply the fix"`), Budget: 3},
+		{ID: "t2", Name: "edit_task_b", Owner: "task-B", TurnID: "turn:1", Input: json.RawMessage(`"apply the fix"`), Budget: 3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range results {
+		if r.Err != nil {
+			t.Fatalf("task %s error: %v", r.TaskID, r.Err)
+		}
+	}
+
+	got, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"f.go"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(got, "extra()"); n != 1 {
+		t.Fatalf("extra() appears %d times after two concurrent sibling subagents applied the identical edit, want 1 (content=%q)", n, got)
+	}
+}
+
 // TestSubagentEventsThroughOnEvent verifies events from the subagent
 // tool execution are propagated through the OnEvent callback.
 func TestSubagentEventsThroughOnEvent(t *testing.T) {

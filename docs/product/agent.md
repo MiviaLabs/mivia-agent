@@ -50,6 +50,8 @@ mivia can read, search, and edit files with these tools:
 
 `run_command` is disabled until configuration or a CLI override supplies a program allowlist. The recommended configuration is broad and includes shells and network clients. Trim it to the least permission your workspace needs. Child-process environment variables are also controlled by an explicit allowlist. See [Configuration](config.md) for the persistent policy.
 
+The `get_diagnostics` tool runs a workspace-declared diagnostics command and returns a normalized JSON envelope of findings, each with `file`, `line`, `severity`, and `message` fields. It is configured through `[tools] diagnostics_command` with a multi-ecosystem argv such as `["make", "lint"]`, `["npm", "run", "lint"]`, or `["pytest", "--output", "json"]`. The tool is registered only when `diagnostics_command` is set and its argv[0] is on the effective run allowlist; an unset or empty configuration leaves the tool unregistered. The tool's entire captured output (stdout and stderr) is redacted before parsing per the workspace privacy policy, so credentials hidden in raw output can never reach a result row. The result envelope is bounded by a 256 KiB default budget that feeds the derived per-tool output ceiling without raising the global cap; an over-budget result is refused with a bounded error envelope naming the bound — never tail-cut, never invalid JSON.
+
 ## Web research tools
 
 | Tool | What it does |

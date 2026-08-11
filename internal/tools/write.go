@@ -177,6 +177,11 @@ type searchReplaceTool struct {
 	writePathDenylist    []string
 }
 
+// afterSearchReplaceRead, when non-nil, runs once per Execute call right
+// after the file is read and before the replacement is computed or written.
+// See its call site for why it exists.
+var afterSearchReplaceRead func()
+
 func (t *searchReplaceTool) Capability(args json.RawMessage) Capability {
 	// Capability.MaxResultBytes is deliberately NOT declared: the agent loop
 	// treats it as a wire truncation bound and would tail-cut the "…"
@@ -261,29 +266,56 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	default:
 	}
 	content := string(data)
-	count := strings.Count(content, in.OldString)
-	if count == 0 {
-		return "", fmt.Errorf("old_string not found in %s", in.Path)
+	// afterSearchReplaceRead is a test seam: it lets a test force two
+	// concurrent search_replace calls to both finish reading before either
+	// writes, deterministically reproducing the lost-update race that an
+	// unsynchronized read-then-write allows in production (no artificial
+	// delay needed to catch the window). Nil in production.
+	if afterSearchReplaceRead != nil {
+		afterSearchReplaceRead()
 	}
-	if count > 1 && !in.ReplaceAll {
-		return "", fmt.Errorf("old_string found %d times; pass replace_all=true or make old_string unique", count)
+	if alreadyApplied(content, in.NewString) {
+		return fmt.Sprintf("no change to %s (edit already applied: new_string already present)", rel), nil
 	}
-	var next string
-	if in.ReplaceAll {
-		next = strings.ReplaceAll(content, in.OldString, in.NewString)
-	} else {
-		next = strings.Replace(content, in.OldString, in.NewString, 1)
+	next, n, err := computeSearchReplace(content, in.OldString, in.NewString, in.Path, in.ReplaceAll)
+	if err != nil {
+		return "", err
 	}
 	if err := rewriteRegularFileContents(abs, next, st.Mode().Perm()); err != nil {
 		return "", err
 	}
-	n := 1
-	if in.ReplaceAll {
-		n = count
-	}
 	matchAt := strings.Index(content, in.OldString)
 	oldLine := strings.Count(content[:matchAt], "\n") + 1
 	return formatSearchReplaceResultAt(t.ws.Rel(abs), n, in.OldString, in.NewString, content, next, oldLine, t.maxBytes), nil
+}
+
+// alreadyApplied reports whether new_string is already present in content,
+// meaning this exact edit already landed - most often a retried/re-issued
+// call, or a second agent applying the same fix independently. old_string is
+// frequently a substring of new_string (an anchor line the edit extends), so
+// without this check old_string would still match post-edit and a reapply
+// would silently duplicate the inserted text instead of no-op'ing. Always
+// false for new_string == "" (a deletion edit), where "already applied"
+// can't be distinguished from "there was never anything to delete".
+func alreadyApplied(content, newString string) bool {
+	return newString != "" && strings.Contains(content, newString)
+}
+
+// computeSearchReplace validates old_string's match count against
+// replaceAll and returns the replaced content plus the number of
+// replacements made.
+func computeSearchReplace(content, oldString, newString, path string, replaceAll bool) (string, int, error) {
+	count := strings.Count(content, oldString)
+	if count == 0 {
+		return "", 0, fmt.Errorf("old_string not found in %s", path)
+	}
+	if count > 1 && !replaceAll {
+		return "", 0, fmt.Errorf("old_string found %d times; pass replace_all=true or make old_string unique", count)
+	}
+	if replaceAll {
+		return strings.ReplaceAll(content, oldString, newString), count, nil
+	}
+	return strings.Replace(content, oldString, newString, 1), 1, nil
 }
 
 // guardEditFileSize refuses an in-place edit whose whole-file read would blow
