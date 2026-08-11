@@ -53,6 +53,12 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 	if f := wf.Delivery.OnFailure; f != "" && !stepExists(wf, f) {
 		return fmt.Errorf("delivery: on_failure %q names no step", f)
 	}
+	// max_repairs is a non-negative repair-cycle budget. Zero selects the
+	// delivery package default; a negative value is a config error and cannot
+	// mean "unbounded" (unbounded repair cycles burn the run deadline).
+	if wf.Delivery.MaxRepairs < 0 {
+		return fmt.Errorf("delivery: max_repairs must be >= 0 (zero selects the default); got %d", wf.Delivery.MaxRepairs)
+	}
 	switch wf.Delivery.Kind {
 	case "":
 		if wf.Delivery.Mode != "" && wf.Delivery.Mode != "none" {

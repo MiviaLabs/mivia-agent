@@ -453,4 +453,9 @@ pr_title_policy = ".mivia/policy/pr-title.toml"
 on_failure = "repair_preflight_structure"
 # A PR-metadata rejection routes to the dedicated metadata repair step.
 on_pr_metadata_failure = "repair_pr_metadata"
+# max_repairs bounds the delivery -> repair -> success -> delivery cycle: how
+# many times a rejected delivery may route back into the repair step before
+# the run settles terminal (delivery_failed) with the last rejection recorded.
+# The default is 5; set it lower to fail fast or higher for stubborn gates.
+max_repairs = 5
 commit_message_template = "fix(agent): bug-fix delivery\n\nDelivers: {{ inputs.scope }}"

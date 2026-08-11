@@ -151,9 +151,12 @@ func TestSessionAutoDeliveryRepairReadvancesController(t *testing.T) {
 
 // TestSessionAutoDeliveryRepairBoundedAfterRepeatedFailures proves the repair
 // loop is bounded: an always-failing delivery with on_failure set must not
-// spin the controller. Each failure routes one wf-delivery attempt; the fourth
-// failure exhausts delivery.MaxDeliveryRepairs and settles delivery_failed (terminal).
-// The controller is advanced exactly four times, then the goroutine exits.
+// spin the controller. Each failure routes one wf-delivery attempt; the
+// (MaxDeliveryRepairs+1)-th failure exhausts the repair budget and settles
+// delivery_failed (terminal). The controller is advanced exactly one more
+// time than the budget, then the goroutine exits. The budget default is
+// configurable via delivery.max_repairs; the assertion tracks the constant so
+// the test stays correct when the default changes.
 func TestSessionAutoDeliveryRepairBoundedAfterRepeatedFailures(t *testing.T) {
 	e, repo, p, runID, _ := newSessionAutoDeliveryRepairFixture(t)
 	var advanceCalls atomic.Int32
@@ -181,8 +184,9 @@ func TestSessionAutoDeliveryRepairBoundedAfterRepeatedFailures(t *testing.T) {
 	if run.Status != workflowledger.RunStatusDeliveryFailed {
 		t.Fatalf("run status = %q, want delivery_failed after the repair budget is spent", run.Status)
 	}
-	if got := advanceCalls.Load(); got != 4 {
-		t.Fatalf("advance calls = %d, want 4 (one per repair attempt, then the budget settle)", got)
+	want := int32(delivery.MaxDeliveryRepairs + 1)
+	if got := advanceCalls.Load(); got != want {
+		t.Fatalf("advance calls = %d, want %d (one per repair attempt, then the budget settle)", got, want)
 	}
 }
 

@@ -101,6 +101,47 @@ func TestFromCompiled(t *testing.T) {
 	})
 }
 
+// TestFromCompiledMaxRepairs pins the repair-cycle budget plumbing: the
+// workflow TOML's delivery.max_repairs is snapshotted into Policy.MaxRepairs,
+// and zero or negative values select the package default (negative values are
+// rejected at admission; the policy clamps defensively).
+func TestFromCompiledMaxRepairs(t *testing.T) {
+	t.Run("default when unset", func(t *testing.T) {
+		cw := newCompiledPRWorkflow(t, "draft")
+		p, ok := FromCompiled(cw)
+		if !ok {
+			t.Fatal("ok = false for draft mode, want true")
+		}
+		if p.MaxRepairs != DefaultMaxDeliveryRepairs {
+			t.Fatalf("MaxRepairs = %d, want the default %d", p.MaxRepairs, DefaultMaxDeliveryRepairs)
+		}
+	})
+
+	t.Run("configured value flows through", func(t *testing.T) {
+		cw := newCompiledPRWorkflow(t, "draft")
+		cw.Delivery.MaxRepairs = 7
+		p, ok := FromCompiled(cw)
+		if !ok {
+			t.Fatal("ok = false")
+		}
+		if p.MaxRepairs != 7 {
+			t.Fatalf("MaxRepairs = %d, want 7", p.MaxRepairs)
+		}
+	})
+
+	t.Run("negative clamps to default", func(t *testing.T) {
+		cw := newCompiledPRWorkflow(t, "draft")
+		cw.Delivery.MaxRepairs = -1
+		p, ok := FromCompiled(cw)
+		if !ok {
+			t.Fatal("ok = false")
+		}
+		if p.MaxRepairs != DefaultMaxDeliveryRepairs {
+			t.Fatalf("MaxRepairs = %d, want the default %d for a negative config", p.MaxRepairs, DefaultMaxDeliveryRepairs)
+		}
+	})
+}
+
 // testFromCompiledRejects is a table-driven helper that verifies FromCompiled
 // returns ok=false for degenerate workflow inputs.
 func testFromCompiledRejects(t *testing.T, name string, wf *compiler.CompiledWorkflow) {

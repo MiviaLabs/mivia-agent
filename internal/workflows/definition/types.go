@@ -136,6 +136,14 @@ type Delivery struct {
 	// failures. PR metadata is the pull-request title and summary. An empty
 	// value makes the run use OnFailure for PR-metadata failures.
 	OnPRMetadataFailure string `toml:"on_pr_metadata_failure" json:"on_pr_metadata_failure,omitempty"`
+	// MaxRepairs bounds the delivery -> repair -> success -> delivery cycle:
+	// how many times a delivery failure may route back into the workflow's
+	// repair step before the run settles terminal (delivery_failed) with the
+	// last rejection recorded. A rejection the named repair step cannot fix
+	// must not cycle until the step cap or the run deadline is spent. Zero
+	// selects the delivery package default (delivery.MaxDeliveryRepairs).
+	// Negative values are rejected at admission.
+	MaxRepairs int `toml:"max_repairs" json:"max_repairs,omitempty"`
 }
 
 // DiscoveredWorkflow is the result of discovering a workflow file.
