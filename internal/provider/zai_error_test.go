@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -106,6 +107,114 @@ func TestZAIErrorParserOtherCodesDoNotWrapPromptTooLong(t *testing.T) {
 	}
 	if errors.Is(err, ErrPromptTooLong) {
 		t.Fatalf("code 1211 must not wrap ErrPromptTooLong: %v", err)
+	}
+}
+
+// A prompt-too-long rejection whose message exceeds 4096 bytes must still be
+// read in full and wrapped in ErrPromptTooLong. The non-stream path used to
+// truncate the error body to 4096 bytes before parsing, so json.Unmarshal
+// failed on the cut JSON, code 1261 was never read, and the call failed with
+// empty choices instead of letting the agent loop compact and retry.
+func TestZAIOversizedPromptTooLongBodyWrapsSentinelOnHTTP200(t *testing.T) {
+	body := `{"code":1261,"message":"` + strings.Repeat("x", 6000) + `"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	comp, err := NewZAI(Options{BaseURL: srv.URL, APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = comp.Chat(context.Background(), Request{Model: "glm-5.2", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("expected ErrPromptTooLong on HTTP 200, got: %v", err)
+	}
+}
+
+// The same oversized rejection on the non-200 path: httpError used to read
+// only 4096 bytes, so the cut body lost code 1261 and the caller saw a bare
+// status instead of the sentinel that triggers compact-and-retry.
+func TestZAIOversizedPromptTooLongBodyWrapsSentinelOnHTTP400(t *testing.T) {
+	body := `{"code":1261,"message":"` + strings.Repeat("x", 6000) + `"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	comp, err := NewZAI(Options{BaseURL: srv.URL, APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = comp.Chat(context.Background(), Request{Model: "glm-5.2", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("expected ErrPromptTooLong on HTTP 400, got: %v", err)
+	}
+}
+
+// Negative path: an oversized body carrying a non-1261 code must not wrap the
+// sentinel. Only a genuine prompt-too-long rejection earns the retry path.
+func TestZAIOversizedOtherCodeBodyDoesNotWrapSentinel(t *testing.T) {
+	body := `{"code":1211,"message":"` + strings.Repeat("x", 6000) + `"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	comp, err := NewZAI(Options{BaseURL: srv.URL, APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = comp.Chat(context.Background(), Request{Model: "glm-5.2", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("code 1211 must not wrap ErrPromptTooLong: %v", err)
+	}
+}
+
+// The parser stays total over structured input: an empty or malformed body
+// decodes to nothing, so it reports the status only - no sentinel, no phantom
+// code, no panic - and a clean 200 with a malformed body is not a failure.
+func TestZAIErrorParserStaysTotalOnMalformedBodies(t *testing.T) {
+	for _, body := range []string{"", "{", `{"code":`} {
+		err := zaiErrorParser(http.StatusBadRequest, []byte(body))
+		if err == nil {
+			t.Fatalf("body %q: expected an error", body)
+		}
+		if errors.Is(err, ErrPromptTooLong) {
+			t.Fatalf("body %q must not wrap ErrPromptTooLong: %v", body, err)
+		}
+		if strings.Contains(err.Error(), "1261") {
+			t.Fatalf("body %q: phantom code reported: %v", body, err)
+		}
+	}
+	if err := zaiErrorParser(http.StatusOK, []byte("{")); err != nil {
+		t.Fatalf("malformed body on 200 should pass cleanly, got: %v", err)
+	}
+}
+
+// z.ai may carry a code both flat and nested. The flat field wins
+// (zaiErrorCode checks it first), so a flat 1261 with a nested 1211 is a
+// prompt-too-long rejection, and a flat 1211 with a nested 1261 is not.
+func TestZAIErrorParserFlatCodeWinsOverNested(t *testing.T) {
+	err := zaiErrorParser(http.StatusBadRequest, []byte(`{"code":1261,"message":"m","error":{"code":1211,"message":"nested"}}`))
+	if err == nil || !errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("flat 1261 must wrap ErrPromptTooLong despite nested 1211: %v", err)
+	}
+	err = zaiErrorParser(http.StatusBadRequest, []byte(`{"code":1211,"message":"m","error":{"code":1261,"message":"nested"}}`))
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if errors.Is(err, ErrPromptTooLong) {
+		t.Fatalf("flat 1211 must not wrap ErrPromptTooLong despite nested 1261: %v", err)
 	}
 }
 
@@ -360,4 +469,82 @@ func TestRetryStopsWhenRetryAfterExceedsMaxDelay(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("retried inside a window it cannot wait out (%d calls)", calls)
 	}
+}
+
+// Deterministic fuzz target for zaiErrorParser (native Go fuzz, repo
+// convention FuzzXxx(f *testing.F) with a seed corpus). The input is
+// "<status>\n<body>". It pins the 1261 → ErrPromptTooLong invariant across
+// arbitrary wire bodies: whenever the body decodes to an envelope carrying
+// code 1261 and it is not a clean HTTP-200 pass (a completion with choices, or
+// a chunk with neither message nor error), the parser must wrap
+// ErrPromptTooLong - the sentinel the agent loop's compact-and-retry keys on.
+// Empty and malformed bodies must never panic: the parser is total, and a
+// non-200 status always yields a status-only error.
+func FuzzZAIErrorParser(f *testing.F) {
+	seeds := []string{
+		"400\n" + `{"code":1261,"message":"m"}`,
+		"400\n" + `{"code":"1261","message":"m"}`,
+		"400\n" + `{"error":{"code":"1261","message":"m"}}`,
+		"400\n" + `{"error":{"code":1261,"message":"m"}}`,
+		"400\n" + `{"code":1261,"message":"` + strings.Repeat("x", 6000) + `"}`,
+		"200\n" + `{"code":1261,"message":"m"}`,
+		"200\n" + `{"choices":[{"delta":{"content":"hi"}}]}`,
+		"200\n" + `{"id":"x","created":1730000000}`,
+		"400\n" + ``,
+		"400\n" + `{`,
+		"400\n" + `{"code":1211,"message":"m"}`,
+		"200\n" + ``,
+		"200\n" + `{`,
+	}
+	for _, s := range seeds {
+		f.Add([]byte(s))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		status, body, ok := parseZAIErrorFuzzInput(data)
+		if !ok {
+			t.Skip()
+		}
+		err := zaiErrorParser(status, body)
+		var envelope zaiErrorEnvelope
+		if json.Unmarshal(body, &envelope) != nil {
+			// Malformed body: the parser must be total - never panic, and a
+			// non-200 status must still report a status-only error.
+			if status != http.StatusOK && err == nil {
+				t.Fatalf("malformed body on non-200 status parsed as success")
+			}
+			return
+		}
+		code, hasCode := zaiErrorCode(envelope)
+		if !hasCode || code != 1261 {
+			return
+		}
+		// Mirror the parser's clean-pass conditions exactly: on HTTP 200 a
+		// completion (choices) or a chunk with neither message nor error is
+		// not a failure. Any other 1261-carrying body is a rejection and must
+		// wrap the sentinel.
+		cleanPass := status == http.StatusOK && (len(envelope.Choices) != 0 || (envelope.Message == "" && len(envelope.Error) == 0))
+		if cleanPass {
+			return
+		}
+		if err == nil {
+			t.Fatalf("code 1261 on a non-clean pass (status %d) parsed as success: %s", status, body)
+		}
+		if !errors.Is(err, ErrPromptTooLong) {
+			t.Fatalf("code 1261 must wrap ErrPromptTooLong: %v", err)
+		}
+	})
+}
+
+// parseZAIErrorFuzzInput decodes "<status>\n<body>"; ok is false when the
+// input has no newline or a non-numeric status (the harness skips it).
+func parseZAIErrorFuzzInput(data []byte) (status int, body []byte, ok bool) {
+	lines := strings.SplitN(string(data), "\n", 2)
+	if len(lines) != 2 {
+		return 0, nil, false
+	}
+	status, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil {
+		return 0, nil, false
+	}
+	return status, []byte(lines[1]), true
 }

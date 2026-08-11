@@ -39,8 +39,10 @@ func providerReplayDisabled(ctx context.Context) bool {
 	return value
 }
 
-// maxErrorPeekBytes bounds how much of an error body NonRetryable sees. It
-// matches the cap the error parsers use, so both read the same prefix.
+// maxErrorPeekBytes bounds how much of an error body the transport peek
+// (peekBody) reads for 429/503 transient classification. The error parsers now
+// read the full body (bounded by maxJSONResponseBytes), so this cap is
+// transport-only and no longer matches the parser prefix.
 const maxErrorPeekBytes = 4096
 
 // errNonReplayableBody marks a request the transport cannot retry: it carries a

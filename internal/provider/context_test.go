@@ -390,6 +390,56 @@ func TestPruneMessagesKeepTurnsPrunesInsideNewestTurn(t *testing.T) {
 	}
 }
 
+// A plain assistant reply between two dropped tool exchanges is context, not
+// part of any exchange: it must survive pruning when it fits the budget. The
+// old contiguous-region cut removed the whole span between the first dropped
+// block's start and the last dropped block's end, silently dropping such
+// replies even when the budget had room for them.
+func TestPruneMessagesKeepTurnsKeepsPlainAssistantBetweenDroppedExchanges(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "go"},
+	}
+	msgs = append(msgs, toolCallMsg("call_0", "data")...)
+	msgs = append(msgs, Message{Role: RoleAssistant, Content: "interim note"})
+	msgs = append(msgs, toolCallMsg("call_1", "data")...)
+	msgs = append(msgs, toolCallMsg("call_2", "data")...)
+
+	// Budget = system + user + the plain reply + the newest exchange. The two
+	// older exchanges must be dropped, but the plain reply fits and must stay.
+	budget := MessageTokens(msgs[0]) + MessageTokens(msgs[1]) + MessageTokens(msgs[4]) +
+		MessageTokens(msgs[7]) + MessageTokens(msgs[8])
+	pruned := PruneMessagesKeepTurns(msgs, budget)
+
+	if got := MessagesTokens(pruned); got > budget {
+		t.Fatalf("pruner left %d tokens over a %d budget", got, budget)
+	}
+	if pruned[0].Role != RoleSystem || pruned[1].Role != RoleUser {
+		t.Fatalf("turn header lost: %s, %s", pruned[0].Role, pruned[1].Role)
+	}
+	// The plain assistant reply between the dropped exchanges must survive.
+	found := false
+	for _, m := range pruned {
+		if m.Role == RoleAssistant && len(m.ToolCalls) == 0 {
+			if m.Content != "interim note" {
+				t.Fatalf("unexpected plain assistant reply %q", m.Content)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("plain assistant reply between dropped exchanges was pruned")
+	}
+	// The newest exchange must survive: it is the one the model is answering.
+	last := pruned[len(pruned)-1]
+	if last.Role != RoleTool || last.ToolCallID != "call_2" {
+		t.Fatalf("newest exchange dropped, last=%+v", last)
+	}
+	if err := ValidateToolPairing(pruned); err != nil {
+		t.Fatalf("pruned history is not validly paired: %v", err)
+	}
+}
+
 // Dropping an assistant tool_call without its results (or the reverse) makes
 // the API reject the entire request, so an exchange has to move as one unit.
 func TestPruneMessagesKeepTurnsNeverSplitsToolExchanges(t *testing.T) {
