@@ -115,7 +115,11 @@ func (m *tuiModel) applyTurnEndEvent(ev events.Event) []tea.Cmd {
 		return nil
 	}
 	// Still finish so UI cannot stick waiting if bridge notify was lost.
-	return m.finishStream(turnEndError(ev))
+	cmds := m.finishStream(turnEndError(ev))
+	// This rescue path drains the queue like the tick drain; keep the queue
+	// manager's selection valid and close it at zero (INV-TUI-16).
+	m.clampQueueManager()
+	return cmds
 }
 
 // publishTurnEnd emits KindTurnEnd on the session bus (if any). Turn finish

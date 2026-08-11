@@ -72,7 +72,7 @@ func (m *tuiModel) disarmQuit() {
 //
 // Returns handled=false for every other key, so modal routing is unchanged.
 func (m *tuiModel) handleModalEscapeKey(key string) ([]tea.Cmd, bool) {
-	modalOpen := m.overlay != nil || m.modelDlg != nil || m.effortDlg != nil || m.worktreeDlg != nil || m.workflowRunDlg != nil
+	modalOpen := m.modalOpen()
 	switch key {
 	case "ctrl+q":
 		return []tea.Cmd{tea.Quit}, true
@@ -138,6 +138,11 @@ func (m *tuiModel) takeQueuedSlashCmds() []tea.Cmd {
 // Stage 2b (quitRequested already): force Quit - never strand on hung tools.
 // Stage 3 (fully idle): quit immediately.
 func (m *tuiModel) handleChatCancel() (bool, bool, []tea.Cmd) {
+	// A queue edit in progress is aborted like esc: the original item returns
+	// to the queue (cancel keeps the queue) before the staged cancel proceeds.
+	if m.editingQueued {
+		m.restoreQueueEdit()
+	}
 	if m.waiting {
 		// Stage 1: first Ctrl+C - cancel the turn.
 		m.mu.Lock()

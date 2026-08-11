@@ -292,7 +292,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) modalOpen() bool {
-	return m.overlay != nil || m.modelDlg != nil || m.agentDlg != nil || m.effortDlg != nil || m.worktreeDlg != nil || m.workflowRunDlg != nil
+	return m.overlay != nil || m.modelDlg != nil || m.agentDlg != nil || m.effortDlg != nil || m.worktreeDlg != nil || m.workflowRunDlg != nil || m.queueMgr.open
 }
 
 func (m *tuiModel) clampModalState() {
@@ -318,6 +318,7 @@ func (m *tuiModel) clampModalState() {
 	if m.workflowRunDlg != nil {
 		m.workflowRunDlg.clampScroll(max(1, m.width), max(1, m.height))
 	}
+	m.clampQueueManager()
 }
 
 // drainBridgeAndMaybeFinish pulls coalesced stream/tool/thinking/done from the
@@ -344,6 +345,10 @@ func (m *tuiModel) drainBridgeAndMaybeFinish() []tea.Cmd {
 		// finishStream is a no-op (waiting already false after cancel).
 		m.agentDone = true
 		cmds := m.finishStream(d.DoneErr)
+		// Turn-end auto-drain may have consumed queue items while the queue
+		// manager was open; keep its selection valid and close it at zero so
+		// an invisible modal never owns keys (INV-TUI-16).
+		m.clampQueueManager()
 		if m.quitRequested {
 			// Agent goroutine is done, bridge is drained, SaveLast will
 			// run through the runTUI defer. Send the quit now.

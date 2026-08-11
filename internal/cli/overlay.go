@@ -338,7 +338,7 @@ func (m *tuiModel) routeModalKey(key string) (bool, bool, []tea.Cmd) {
 }
 
 func (m *tuiModel) closeModal() {
-	if m.overlay == nil && m.modelDlg == nil && m.agentDlg == nil && m.effortDlg == nil && m.worktreeDlg == nil && m.workflowRunDlg == nil {
+	if m.overlay == nil && m.modelDlg == nil && m.agentDlg == nil && m.effortDlg == nil && m.worktreeDlg == nil && m.workflowRunDlg == nil && !m.queueMgr.open {
 		return
 	}
 	m.overlay = nil
@@ -347,6 +347,9 @@ func (m *tuiModel) closeModal() {
 	m.effortDlg = nil
 	m.worktreeDlg = nil
 	m.workflowRunDlg = nil
+	m.queueMgr = queueMgrState{}
+	m.editingQueued = false
+	m.editMemory = queuedItem{}
 	m.hitMap.invalidate()
 }
 

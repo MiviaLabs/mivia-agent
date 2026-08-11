@@ -29,11 +29,11 @@ var candidateKeys = []string{
 	"up", "down", "left", "right", "pgup", "pgdown", "home", "end",
 	"shift+home", "shift+end", "enter", "esc", "tab", "shift+tab", " ",
 	"backspace", "delete", "f1", "f2", "f3",
-	"a", "b", "d", "f", "g", "j", "k", "n", "o", "q", "u", "y",
+	"a", "b", "d", "e", "f", "g", "j", "k", "n", "o", "q", "u", "y",
 	"G", "P", "N", "Y",
 	"ctrl+a", "ctrl+c", "ctrl+d", "ctrl+e", "ctrl+g", "ctrl+k", "ctrl+l",
 	"ctrl+n", "ctrl+o", "ctrl+p", "ctrl+q", "ctrl+r", "ctrl+t", "ctrl+u", "ctrl+v", "ctrl+w",
-	"ctrl+y", "ctrl+left", "ctrl+right",
+	"ctrl+y", "ctrl+left", "ctrl+right", "ctrl+up", "ctrl+down",
 }
 
 // fingerprint captures the state a probe watches for change.
@@ -54,8 +54,9 @@ func fingerprint(m *tuiModel) string {
 	if m.overlay != nil {
 		ov = fmt.Sprintf("%d", m.overlay.yOffset)
 	}
-	return fmt.Sprintf("dash=%s sidebar=%s workflows=%s ov=%s suggest=%v/%d/%d sel=%d mode=%d focus=%d block=%s mouse=%v draft=%q vp=%d follow=%v",
-		dash, sidebar, workflows, ov, m.suggest.open, len(m.suggest.commands), m.suggest.selected, m.sessionSel, m.mode, m.focus, m.selectedBlockID,
+	queue := fmt.Sprintf("%v/%d/%d/%v", m.queueMgr.open, m.queueMgr.selected, len(m.pendingQueue), m.editingQueued)
+	return fmt.Sprintf("dash=%s sidebar=%s workflows=%s ov=%s queue=%s suggest=%v/%d/%d sel=%d mode=%d focus=%d block=%s mouse=%v draft=%q vp=%d follow=%v",
+		dash, sidebar, workflows, ov, queue, m.suggest.open, len(m.suggest.commands), m.suggest.selected, m.sessionSel, m.mode, m.focus, m.selectedBlockID,
 		m.mouseEnabled, m.textarea.Value(), m.viewport.YOffset, m.followOutput)
 }
 
@@ -140,7 +141,18 @@ func boundKeyProbes(t *testing.T) []keyProbe {
 
 	// Run dashboard (visible, transcript focused - the only state in which it
 	// owns keys).
-	all = append(all, probeSurface(t, scopeDashboard, func(m *tuiModel) {
+	all = append(all, dashboardScopeProbes(t)...)
+
+	// Queue manager (modal popup).
+	all = append(all, queueScopeProbes(t)...)
+
+	return all
+}
+
+// dashboardScopeProbes drives candidate keys through the visible run
+// dashboard while the transcript side has focus.
+func dashboardScopeProbes(t *testing.T) []keyProbe {
+	return probeSurface(t, scopeDashboard, func(m *tuiModel) {
 		m.runDash = newRunDashboard()
 		m.runDash.handleEvent(ledger.LifecycleEvent{RunID: "r1", Kind: "run_created"})
 		m.runDash.handleEvent(ledger.LifecycleEvent{RunID: "r2", Kind: "run_created"})
@@ -153,7 +165,20 @@ func boundKeyProbes(t *testing.T) []keyProbe {
 				m.handleChatKey(key, false)
 			}
 		}
-	})...)
+	})
+}
 
-	return all
+// queueScopeProbes drives candidate keys through the queue manager surface.
+// The head item is a slash command so the probe's enter (steer) runs it
+// locally via handleSlash and never starts a real turn or leaks a worker
+// goroutine.
+func queueScopeProbes(t *testing.T) []keyProbe {
+	return probeSurface(t, scopeQueue, func(m *tuiModel) {
+		m.pendingQueue = []string{"/help", "second message"}
+		m.pendingQueueLabels = []string{"/help", "second message"}
+		m.pendingSkillTurns = []*skillSlashSpec{nil, nil}
+		m.queueMgr = queueMgrState{open: true, selected: 0}
+	}, func(m *tuiModel, key string) {
+		m.handleQueueManagerKey(key)
+	})
 }

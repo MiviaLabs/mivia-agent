@@ -231,9 +231,7 @@ func (m *tuiModel) beginNewSession() {
 	m.messages = nil
 	m.blocks = nil
 	m.msgOffset = 0
-	m.pendingQueue = nil
-	m.pendingQueueLabels = nil
-	m.pendingSkillTurns = nil
+	m.resetQueueState()
 	m.toolRows = nil
 	m.toolPanel = toolPanelState{Selected: -1}
 	m.streamBuf.Reset()
@@ -397,6 +395,7 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 	if err := m.session.Load(si.Reference()); err != nil {
 		return err
 	}
+	m.resetQueueState()
 	m.sentHistory = nil
 	m.closeHistory()
 	active := si

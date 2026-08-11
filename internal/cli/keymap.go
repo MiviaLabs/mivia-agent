@@ -13,7 +13,8 @@ package cli
 // key, including ones bound below it:
 //
 //	1. sessions dialog (and its confirm prompt)
-//	2. block/help/status overlay
+//	2. block/help/status overlay, and the queue manager popup (both own
+//	   every key while open)
 //	3. run dashboard - only while drawn AND the transcript has focus
 //	4. focus cycling, block actions, and the global chords below
 //	5. focus scope: composer keys when composing, scrollback keys when reading
@@ -56,6 +57,8 @@ const (
 	scopeWelcome
 	// scopeHistory applies while the composer message-history picker is open.
 	scopeHistory
+	// scopeQueue applies while the queue manager popup is open (modal).
+	scopeQueue
 )
 
 func (s keyScope) String() string {
@@ -78,6 +81,8 @@ func (s keyScope) String() string {
 		return "welcome"
 	case scopeHistory:
 		return "history"
+	case scopeQueue:
+		return "queue"
 	default:
 		return "global"
 	}
@@ -111,6 +116,7 @@ var keyRegistry = []binding{
 	// ── Sending ──────────────────────────────────────────────────────────
 	{keys: []string{"enter"}, scope: scopeComposer, group: "Sending", help: "Send message"},
 	{keys: []string{"alt+enter"}, scope: scopeComposer, group: "Sending", help: "Insert newline"},
+	{keys: []string{"ctrl+up"}, scope: scopeComposer, group: "Sending", help: "Open the message queue manager"},
 
 	// ── Slash suggestions ────────────────────────────────────────────────
 	{keys: []string{"up", "ctrl+p"}, scope: scopeSuggest, group: "In slash suggestions", help: "Previous command"},
@@ -125,6 +131,14 @@ var keyRegistry = []binding{
 	{keys: []string{"down", "ctrl+n"}, scope: scopeHistory, group: "In message history", help: "Next message"},
 	{keys: []string{"enter", "tab"}, scope: scopeHistory, group: "In message history", help: "Recall selected message"},
 	{keys: []string{"esc", "shift+tab"}, scope: scopeHistory, group: "In message history", help: "Dismiss"},
+
+	// ── Message queue manager (modal popup) ───────────────────────────────
+	{keys: []string{"up", "ctrl+p"}, scope: scopeQueue, group: "In message queue", help: "Previous message"},
+	{keys: []string{"down", "ctrl+n"}, scope: scopeQueue, group: "In message queue", help: "Next message"},
+	{keys: []string{"enter"}, scope: scopeQueue, group: "In message queue", help: "Send the selected message now"},
+	{keys: []string{"d"}, scope: scopeQueue, group: "In message queue", help: "Delete the selected message"},
+	{keys: []string{"e"}, scope: scopeQueue, group: "In message queue", help: "Edit the selected message"},
+	{keys: []string{"esc", "q"}, scope: scopeQueue, group: "In message queue", help: "Close"},
 
 	// ── Cancel & quit ────────────────────────────────────────────────────
 	{keys: []string{"ctrl+c"}, scope: scopeGlobal, group: "Cancel & quit", help: "Cancel the turn · at rest: copy, clear draft, or arm quit"},
