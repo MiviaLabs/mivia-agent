@@ -83,7 +83,7 @@ func TestActiveIsTrueForEveryNamedLevel(t *testing.T) {
 }
 
 func TestParseDialectAcceptsEveryNamedDialect(t *testing.T) {
-	for _, want := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectThinking, DialectThinkingEffort, DialectThinkingPreserved, DialectNone} {
+	for _, want := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectOpenRouterOnOff, DialectThinking, DialectThinkingEffort, DialectThinkingPreserved, DialectNone} {
 		got, err := ParseDialect(string(want))
 		if err != nil {
 			t.Fatalf("ParseDialect(%q): unexpected error: %v", want, err)
@@ -91,6 +91,20 @@ func TestParseDialectAcceptsEveryNamedDialect(t *testing.T) {
 		if got != want {
 			t.Fatalf("ParseDialect(%q) = %q, want %q", want, got, want)
 		}
+	}
+}
+
+// OpenRouter's canonical on/off toggle is its own named dialect spelling,
+// distinct from the graded openrouter dialect: it parses like any other named
+// dialect and round-trips the exact value the operator configured.
+func TestParseDialectAcceptsOpenRouterOnOff(t *testing.T) {
+	const name = "openrouter_onoff"
+	got, err := ParseDialect(name)
+	if err != nil {
+		t.Fatalf("ParseDialect(%q): unexpected error: %v", name, err)
+	}
+	if got != Dialect(name) {
+		t.Fatalf("ParseDialect(%q) = %q, want %q", name, got, Dialect(name))
 	}
 }
 
@@ -233,6 +247,19 @@ func TestFormatLevelsQuotedEscapesControlBytes(t *testing.T) {
 func TestFormatLevelsRendersDuplicatesAsIs(t *testing.T) {
 	if got := FormatLevels([]Level{High, High, Low}); got != "high, high, low" {
 		t.Fatalf("duplicate set = %q, want every element rendered as-is", got)
+	}
+}
+
+// The on/off dialect is a two-state toggle: its wire body carries no depth
+// value, so it must never claim to grade even though OpenRouter's graded
+// dialect (openrouter) does.
+func TestCanGradeOpenRouterOnOff(t *testing.T) {
+	dialect, err := ParseDialect("openrouter_onoff")
+	if err != nil {
+		t.Fatalf("ParseDialect(%q): unexpected error: %v", "openrouter_onoff", err)
+	}
+	if dialect.CanGrade() {
+		t.Fatalf("%q only toggles thinking on or off and must not claim to grade", dialect)
 	}
 }
 

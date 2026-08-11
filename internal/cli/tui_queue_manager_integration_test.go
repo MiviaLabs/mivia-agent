@@ -263,3 +263,219 @@ func TestBeginNewSessionResetsQueue(t *testing.T) {
 		t.Fatalf("beginNewSession must reset queue+manager+edit state")
 	}
 }
+
+// queueEditSnapshot captures the queue-edit surface inside one program Update
+// (race-free), so turn-end assertions read a single consistent state.
+type queueEditSnapshot struct {
+	pending  []string
+	editing  bool
+	draft    string
+	requests int
+}
+
+func snapshotQueueEdit(sp *scrollProgram, completer *queueDrainCompleter) queueEditSnapshot {
+	var s queueEditSnapshot
+	sp.probe(func(m *tuiModel) {
+		s.pending = append([]string(nil), m.pendingQueue...)
+		s.editing = m.editingQueued
+		s.draft = m.textarea.Value()
+		s.requests = len(completer.Requests())
+	})
+	return s
+}
+
+// TestIntegrationQueueEditSurvivesTurnEnd pins the RED state for the queue
+// edit flow: when a turn ends while the user is editing a queued item
+// (editingQueued), finishStream must NOT auto-drain the rest of the queue.
+// Today the drain calls startAIWithPrepared, whose textarea.Reset() wipes the
+// edited draft and whose new turn sends the queued B as request 2.
+func TestIntegrationQueueEditSurvivesTurnEnd(t *testing.T) {
+	completer := &queueDrainCompleter{release: make(chan struct{}), firstDone: make(chan struct{})}
+	session := queueSessionHarness(t, completer)
+	sp := startScrollProgram(t, func(m *tuiModel) {
+		m.session = session
+		m.toolsOn = true
+		m.waiting = false
+	})
+	sp.send(keyRunes("first question"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.waiting }) {
+		t.Fatal("first turn never started")
+	}
+
+	sp.send(keyRunes("A"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	sp.send(keyRunes("B"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return len(m.pendingQueue) == 2 }) {
+		t.Fatal("A and B were not queued")
+	}
+
+	sp.send(tea.KeyMsg{Type: tea.KeyCtrlUp})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.queueMgr.open }) {
+		t.Fatal("ctrl+up did not open the queue manager")
+	}
+	sp.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.editingQueued }) {
+		t.Fatal("e did not start the queue edit")
+	}
+	sp.send(keyRunes(" modified"))
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.textarea.Value() == "A modified" }) {
+		t.Fatal("edited draft did not land in the composer")
+	}
+
+	close(completer.release)
+	if !sp.waitUntil(4*time.Second, func(m *tuiModel) bool { return !m.waiting }) {
+		t.Fatal("first turn never ended")
+	}
+
+	st := snapshotQueueEdit(sp, completer)
+	if len(st.pending) != 1 || st.pending[0] != "B" {
+		t.Fatalf("turn end must leave the non-edited item queued, got %v", st.pending)
+	}
+	if !st.editing {
+		t.Fatal("turn end must keep the queue edit active")
+	}
+	if st.draft != "A modified" {
+		t.Fatalf("turn end must preserve the edited draft, got %q", st.draft)
+	}
+	if st.requests != 1 {
+		t.Fatalf("turn end must not send the queued item while editing, requests=%d", st.requests)
+	}
+}
+
+// TestIntegrationQueueEditEnterSendsEditedWhenIdle drives the idle-Enter path
+// of the queue edit after the turn ends: Enter sends the edited text as the
+// next turn and clears the edit, and only when that turn ends does the
+// remaining queued item auto-drain.
+func TestIntegrationQueueEditEnterSendsEditedWhenIdle(t *testing.T) {
+	completer := &queueDrainCompleter{release: make(chan struct{}), firstDone: make(chan struct{})}
+	session := queueSessionHarness(t, completer)
+	sp := startScrollProgram(t, func(m *tuiModel) {
+		m.session = session
+		m.toolsOn = true
+		m.waiting = false
+	})
+	sp.send(keyRunes("first question"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.waiting }) {
+		t.Fatal("first turn never started")
+	}
+
+	sp.send(keyRunes("A"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	sp.send(keyRunes("B"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return len(m.pendingQueue) == 2 }) {
+		t.Fatal("A and B were not queued")
+	}
+
+	sp.send(tea.KeyMsg{Type: tea.KeyCtrlUp})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.queueMgr.open }) {
+		t.Fatal("ctrl+up did not open the queue manager")
+	}
+	sp.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.editingQueued }) {
+		t.Fatal("e did not start the queue edit")
+	}
+	sp.send(keyRunes(" modified"))
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.textarea.Value() == "A modified" }) {
+		t.Fatal("edited draft did not land in the composer")
+	}
+
+	close(completer.release)
+	if !sp.waitUntil(4*time.Second, func(m *tuiModel) bool { return !m.waiting }) {
+		t.Fatal("first turn never ended")
+	}
+
+	// Enter while idle sends the edited text as the next turn. The edit must
+	// clear and the untouched item must stay queued until that turn ends; the
+	// combined condition is checked in one probe so the turn-2 drain cannot
+	// race the assertions.
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	if !sp.waitUntil(4*time.Second, func(m *tuiModel) bool {
+		return len(completer.Requests()) == 2 && !m.editingQueued && len(m.pendingQueue) == 1 && m.pendingQueue[0] == "B"
+	}) {
+		st := snapshotQueueEdit(sp, completer)
+		t.Fatalf("enter while idle must send the edited text with B still queued: pending=%v editing=%v draft=%q requests=%d", st.pending, st.editing, st.draft, st.requests)
+	}
+
+	// The edited turn ends and the remaining queued item auto-drains.
+	if !sp.waitUntil(4*time.Second, func(m *tuiModel) bool {
+		return len(completer.Requests()) == 3 && len(m.pendingQueue) == 0 && !m.waiting
+	}) {
+		st := snapshotQueueEdit(sp, completer)
+		t.Fatalf("queued B must auto-drain after the edited turn: pending=%v editing=%v draft=%q requests=%d", st.pending, st.editing, st.draft, st.requests)
+	}
+
+	reqs := completer.Requests()
+	if len(reqs) != 3 {
+		t.Fatalf("expected exactly 3 provider requests, got %d", len(reqs))
+	}
+	edited := reqs[1].Messages[len(reqs[1].Messages)-1]
+	if edited.Content != "A modified" {
+		t.Fatalf("request 2 must carry the edited text, last message=%q", edited.Content)
+	}
+	queued := reqs[2].Messages[len(reqs[2].Messages)-1]
+	if queued.Content != "B" {
+		t.Fatalf("request 3 must carry the auto-drained item, last message=%q", queued.Content)
+	}
+}
+
+// TestIntegrationQueueEditEscRestoresOriginal drives the esc path of the queue
+// edit after the turn ends: esc aborts the edit, returning the ORIGINAL item
+// at its original queue index and restoring the pre-edit composer draft.
+func TestIntegrationQueueEditEscRestoresOriginal(t *testing.T) {
+	completer := &queueDrainCompleter{release: make(chan struct{}), firstDone: make(chan struct{})}
+	session := queueSessionHarness(t, completer)
+	sp := startScrollProgram(t, func(m *tuiModel) {
+		m.session = session
+		m.toolsOn = true
+		m.waiting = false
+	})
+	sp.send(keyRunes("first question"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.waiting }) {
+		t.Fatal("first turn never started")
+	}
+
+	sp.send(keyRunes("A"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	sp.send(keyRunes("B"))
+	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return len(m.pendingQueue) == 2 }) {
+		t.Fatal("A and B were not queued")
+	}
+
+	sp.send(tea.KeyMsg{Type: tea.KeyCtrlUp})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.queueMgr.open }) {
+		t.Fatal("ctrl+up did not open the queue manager")
+	}
+	sp.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.editingQueued }) {
+		t.Fatal("e did not start the queue edit")
+	}
+	sp.send(keyRunes(" modified"))
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return m.textarea.Value() == "A modified" }) {
+		t.Fatal("edited draft did not land in the composer")
+	}
+
+	close(completer.release)
+	if !sp.waitUntil(4*time.Second, func(m *tuiModel) bool { return !m.waiting }) {
+		t.Fatal("first turn never ended")
+	}
+
+	// Esc aborts the edit: the ORIGINAL text returns at index 0 and the
+	// pre-edit (empty) composer draft is restored.
+	sp.send(tea.KeyMsg{Type: tea.KeyEsc})
+	if !sp.waitUntil(2*time.Second, func(m *tuiModel) bool { return !m.editingQueued }) {
+		t.Fatal("esc did not end the queue edit")
+	}
+	st := snapshotQueueEdit(sp, completer)
+	if len(st.pending) != 2 || st.pending[0] != "A" || st.pending[1] != "B" {
+		t.Fatalf("esc must restore the original item at index 0, got %v", st.pending)
+	}
+	if st.draft != "" {
+		t.Fatalf("esc must restore the pre-edit composer draft, got %q", st.draft)
+	}
+}

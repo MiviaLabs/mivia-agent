@@ -20,3 +20,23 @@ func TestNewOpenRouterAppliesDefaultsAndOverrides(t *testing.T) {
 		t.Fatalf("client=%+v", client)
 	}
 }
+
+// TestNewOpenRouterEnablesReasoningReplay pins OpenRouter's reasoning replay
+// contract: assistant reasoning_content must be echoed back on subsequent
+// tool-call turns using the wire field name "reasoning".
+func TestNewOpenRouterEnablesReasoningReplay(t *testing.T) {
+	comp, err := NewOpenRouter(Options{APIKey: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, ok := comp.(*OpenAICompat)
+	if !ok {
+		t.Fatalf("NewOpenRouter must return *OpenAICompat, got %T", comp)
+	}
+	if !client.replayReasoning {
+		t.Fatalf("NewOpenRouter must set replayReasoning, got %v", client.replayReasoning)
+	}
+	if client.replayReasoningField != "reasoning" {
+		t.Fatalf("NewOpenRouter must set replayReasoningField=%q, got %q", "reasoning", client.replayReasoningField)
+	}
+}

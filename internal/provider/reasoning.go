@@ -32,6 +32,12 @@ func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[s
 			return map[string]any{"reasoning": map[string]any{"enabled": false}}
 		}
 		return map[string]any{"reasoning": map[string]any{"effort": string(level)}}
+	case reasoning.DialectOpenRouterOnOff:
+		// On/off-only OpenRouter models (no reasoning_effort surface, e.g.
+		// poolside/laguna-s-2.1): every active level is thinking on, every
+		// off is thinking off. Sending enabled alone avoids an effort value
+		// the endpoint does not support.
+		return map[string]any{"reasoning": map[string]any{"enabled": level != reasoning.Off}}
 	case reasoning.DialectThinking:
 		return map[string]any{"thinking": thinkingObject(level, false)}
 	case reasoning.DialectThinkingEffort:

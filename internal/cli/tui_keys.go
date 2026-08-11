@@ -310,10 +310,11 @@ func (m *tuiModel) handleTabCycle(key string) (bool, bool, []tea.Cmd) {
 		m.setFocus(m.nextTUIFocus(m.focus, key == "shift+tab"))
 		return true, true, nil
 	}
-	if m.cycleChatFocus(key == "shift+tab") {
-		return true, false, nil
-	}
-	return false, false, nil
+	// cycleChatFocus returns true for every focus state (it wraps to the
+	// composer or the live tool strip when nothing else is focusable), so the
+	// call's side effects are the point and tab is always consumed here.
+	m.cycleChatFocus(key == "shift+tab")
+	return true, false, nil
 }
 
 // handleChatToggleKey handles the mode/panel toggles, which share the shape

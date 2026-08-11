@@ -63,6 +63,10 @@ const (
 	DialectOpenAI Dialect = "openai"
 	// DialectOpenRouter sends OpenRouter's canonical nested reasoning object.
 	DialectOpenRouter Dialect = "openrouter"
+	// DialectOpenRouterOnOff sends OpenRouter's canonical reasoning object
+	// carrying ONLY enabled true/false - for models with no reasoning_effort
+	// surface (e.g. poolside/laguna-s-2.1).
+	DialectOpenRouterOnOff Dialect = "openrouter_onoff"
 	// DialectThinking sends a thinking object gating the mode on or off.
 	DialectThinking Dialect = "thinking"
 	// DialectThinkingEffort sends the thinking object plus reasoning_effort,
@@ -80,8 +84,9 @@ const (
 )
 
 var dialects = map[Dialect]struct{}{
-	DialectOpenAI: {}, DialectOpenRouter: {}, DialectThinking: {},
-	DialectThinkingEffort: {}, DialectThinkingPreserved: {}, DialectNone: {},
+	DialectOpenAI: {}, DialectOpenRouter: {}, DialectOpenRouterOnOff: {},
+	DialectThinking: {}, DialectThinkingEffort: {}, DialectThinkingPreserved: {},
+	DialectNone: {},
 }
 
 // ParseDialect validates a configured dialect. The empty string is accepted
@@ -92,7 +97,7 @@ func ParseDialect(s string) (Dialect, error) {
 	}
 	dialect := Dialect(s)
 	if _, ok := dialects[dialect]; !ok {
-		return "", fmt.Errorf("unknown reasoning dialect %q (want openai, openrouter, thinking, thinking_effort, thinking_preserved, or none)", s)
+		return "", fmt.Errorf("unknown reasoning dialect %q (want openai, openrouter, openrouter_onoff, thinking, thinking_effort, thinking_preserved, or none)", s)
 	}
 	return dialect, nil
 }
@@ -100,7 +105,8 @@ func ParseDialect(s string) (Dialect, error) {
 // CanGrade reports whether this dialect can put DEPTH on the wire, as opposed
 // to only switching thinking on or off. DialectThinking cannot: its body is a
 // thinking object with one of two types, so every non-Off level it carries
-// produces byte-identical JSON. Config uses this to refuse a model that offers
+// produces byte-identical JSON. DialectOpenRouterOnOff cannot either: its wire
+// body carries only enabled true/false. Config uses this to refuse a model that offers
 // graded levels its dialect would flatten, which would leave /effort reporting
 // a change the request never made.
 //
@@ -112,6 +118,8 @@ func (d Dialect) CanGrade() bool {
 	switch d {
 	case DialectOpenAI, DialectOpenRouter, DialectThinkingEffort, DialectThinkingPreserved:
 		return true
+	case DialectOpenRouterOnOff:
+		return false
 	default:
 		return false
 	}

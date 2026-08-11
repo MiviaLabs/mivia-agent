@@ -67,7 +67,7 @@ func (t *deleteFileTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if rel == "." {
 		return "", fmt.Errorf("refusing to delete the workspace root")
 	}
-	if isWriteDeniedPath(rel, t.writePathDenylist) {
+	if writePathDenied(t.ws, in.Path, rel, t.writePathDenylist) {
 		return "", fmt.Errorf("deleting protected path is blocked")
 	}
 	select {

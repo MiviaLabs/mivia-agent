@@ -157,7 +157,9 @@ func (m *tuiModel) finishStream(err error) []tea.Cmd {
 	// finding m.cancel=nil and racing away before the agent goroutine finishes.
 
 	// Cancel keeps the queue but does not auto-send the next item (stop = stop).
-	if err != context.Canceled && len(m.pendingQueue) > 0 {
+	// While editing a queued item, the queue stays put until the user completes
+	// (Enter -> handleQueueEditEnter) or cancels (Esc -> restoreQueueEdit).
+	if err != context.Canceled && len(m.pendingQueue) > 0 && !m.editingQueued {
 		m.sendNextQueued()
 		cmds := m.takeQueuedSlashCmds()
 		if m.waiting {

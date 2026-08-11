@@ -33,5 +33,11 @@ func NewOpenRouter(opts Options) (Completer, error) {
 		// The value comes from the vetted table config validates against; see
 		// defaultReasoningDialect.
 		Reasoning: defaultReasoningDialect("openrouter"),
+		// Reasoning models on OpenRouter degrade in multi-turn tool loops when
+		// prior thinking is not echoed; replay assistant reasoning under the
+		// canonical wire field "reasoning" so the openrouter path captures and
+		// replays it on tool-call turns.
+		RequiresReasoningReplay: true,
+		ReplayReasoningField:    "reasoning",
 	}), nil
 }

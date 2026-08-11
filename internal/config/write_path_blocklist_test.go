@@ -48,7 +48,7 @@ func TestValidateWritePathBlocklist(t *testing.T) {
 	if err := validateWritePathBlocklist(valid); err != nil {
 		t.Fatalf("valid blocklist rejected: %v", err)
 	}
-	for _, bad := range []string{".", "", "   ", "go.mod/..", "/etc/passwd", "..", "a/../.."} {
+	for _, bad := range []string{".", "", "   ", "go.mod/..", "/etc/passwd", "..", "a/../..", "../policy", "dir/../../policy"} {
 		tc := ToolsConfig{WritePathBlocklist: []string{bad}}
 		if err := validateWritePathBlocklist(tc); err == nil {
 			t.Fatalf("blocklist entry %q accepted, want load error", bad)

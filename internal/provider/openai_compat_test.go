@@ -175,6 +175,33 @@ func TestChatTurnPropagatesProviderMetadata(t *testing.T) {
 	}
 }
 
+func TestChatTurnDecodesOpenRouterReasoning(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"reasoning only", `{"choices":[{"message":{"content":"answer","reasoning":"thought text"},"finish_reason":"stop"}]}`, "thought text"},
+		{"precedence reasoning_content wins", `{"choices":[{"message":{"content":"answer","reasoning_content":"from_reasoning_content","reasoning":"from_reasoning"},"finish_reason":"stop"}]}`, "from_reasoning_content"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+			c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: srv.URL, APIKey: "k"})
+			resp, err := c.ChatTurn(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.ReasoningContent != tt.want {
+				t.Fatalf("ReasoningContent=%q, want %q", resp.ReasoningContent, tt.want)
+			}
+		})
+	}
+}
+
 func TestChatTurnRetainsNestedWebSearchWhenTopLevelIsAbsent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"answer","web_search":[{"title":"nested"}]},"finish_reason":"stop"}]}`))

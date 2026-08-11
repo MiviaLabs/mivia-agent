@@ -40,6 +40,13 @@ type OpenAICompat struct {
 	// never changes what is sent on the wire: every provider this client
 	// talks to caches automatically server-side with no request-side control.
 	cacheUsageEnabled bool
+	// cacheMarkersEnabled mirrors CompatOptions.CacheMarkersEnabled: when true
+	// the client sends explicit cache_control markers (Anthropic-style) on the
+	// stable prefix. Immutable mirror of a construction-time option, safe to
+	// read without synchronization. Default false, and no current provider
+	// factory sets it - poolside/laguna does NOT support caching on
+	// OpenRouter - so this is infrastructure for future cache-capable models.
+	cacheMarkersEnabled bool
 	// reasoning is this provider's default wire dialect for reasoning control.
 	// Set once at construction and never mutated. Empty means the provider has
 	// no vetted default, so only a request naming its own dialect sends
@@ -49,6 +56,9 @@ type OpenAICompat struct {
 	// Default false: non-adopting providers never see the field, so request
 	// bodies stay byte-identical. Set once at construction and never mutated.
 	replayReasoning bool
+	// replayReasoningField is the replay wire field; empty = "reasoning_content".
+	// Set once at construction and never mutated.
+	replayReasoningField string
 	// rejectReasoningLessToolTurns drops assistant tool-call turns that lack
 	// reasoning_content (D2 documented-400 gate). Independent of replay:
 	// DeepSeek sets both; z.ai sets replay only so reasoning=off tool turns
@@ -77,6 +87,10 @@ type CompatOptions struct {
 	// accounting into Response.CacheUsage. It never changes the outgoing
 	// request.
 	CacheUsageEnabled bool
+	// CacheMarkersEnabled requests explicit cache_control markers on the
+	// stable prefix. Default false; no factory sets it (laguna has no
+	// OpenRouter caching) - infrastructure for future cache-capable models.
+	CacheMarkersEnabled bool
 	// Reasoning is this provider's default reasoning wire dialect, used when a
 	// request carries a level but names no dialect of its own. Empty means the
 	// provider has no vetted default and an unqualified level sends nothing.
@@ -87,6 +101,8 @@ type CompatOptions struct {
 	// thinking). Default false: the field is never emitted, so existing request
 	// bodies are byte-identical.
 	RequiresReasoningReplay bool
+	// ReplayReasoningField is the replay wire field; empty = "reasoning_content".
+	ReplayReasoningField string
 	// RejectReasoningLessToolTurns is the documented-400 DROP gate (DeepSeek
 	// ONLY). When true, assistant tool-call turns with empty ReasoningContent
 	// are dropped with their tool results at emit. Independent of
@@ -110,8 +126,10 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		extraBody:                    cloneBodyMap(opts.ExtraBody),
 		errorParser:                  opts.ErrorParser,
 		cacheUsageEnabled:            opts.CacheUsageEnabled,
+		cacheMarkersEnabled:          opts.CacheMarkersEnabled,
 		reasoning:                    opts.Reasoning,
 		replayReasoning:              opts.RequiresReasoningReplay,
+		replayReasoningField:         opts.ReplayReasoningField,
 		rejectReasoningLessToolTurns: opts.RejectReasoningLessToolTurns,
 		client: &http.Client{
 			Timeout:       DefaultHTTPTimeout,
@@ -167,8 +185,10 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		extraBody:                    cloneBodyMap(options.ExtraBody),
 		errorParser:                  options.ErrorParser,
 		cacheUsageEnabled:            options.CacheUsageEnabled,
+		cacheMarkersEnabled:          options.CacheMarkersEnabled,
 		reasoning:                    options.Reasoning,
 		replayReasoning:              options.RequiresReasoningReplay,
+		replayReasoningField:         options.ReplayReasoningField,
 		rejectReasoningLessToolTurns: options.RejectReasoningLessToolTurns,
 		client: &http.Client{
 			Timeout:       DefaultHTTPTimeout,
@@ -206,17 +226,28 @@ type streamToolCallDelta struct {
 	} `json:"function"`
 }
 
+// reasoningDetailWire is one reasoning_details entry; text or summary types.
+type reasoningDetailWire struct {
+	Type    string `json:"type,omitempty"`
+	Text    string `json:"text,omitempty"`
+	Summary string `json:"summary,omitempty"`
+}
+
 type chatResponseBody struct {
 	Choices []struct {
 		Message struct {
-			Content          string            `json:"content"`
-			ReasoningContent string            `json:"reasoning_content"`
-			ToolCalls        []ToolCall        `json:"tool_calls"`
-			WebSearch        []WebSearchResult `json:"web_search"`
+			Content          string                `json:"content"`
+			ReasoningContent string                `json:"reasoning_content"`
+			Reasoning        string                `json:"reasoning"`
+			ReasoningDetails []reasoningDetailWire `json:"reasoning_details"`
+			ToolCalls        []ToolCall            `json:"tool_calls"`
+			WebSearch        []WebSearchResult     `json:"web_search"`
 		} `json:"message"`
 		Delta struct {
 			Content          string                `json:"content"`
 			ReasoningContent string                `json:"reasoning_content"`
+			Reasoning        string                `json:"reasoning"`
+			ReasoningDetails []reasoningDetailWire `json:"reasoning_details"`
 			ToolCalls        []streamToolCallDelta `json:"tool_calls"`
 			WebSearch        []WebSearchResult     `json:"web_search"`
 		} `json:"delta"`
@@ -237,7 +268,11 @@ func (c *OpenAICompat) cacheUsage(usage *usageWire) CacheUsage {
 	if !c.cacheUsageEnabled {
 		return CacheUsage{}
 	}
-	return deriveCacheUsage(usage, CacheStyleImplicit)
+	style := CacheStyleImplicit
+	if c.cacheMarkersEnabled {
+		style = CacheStyleExplicit
+	}
+	return deriveCacheUsage(usage, style)
 }
 
 // Chat non-streaming text-only convenience.
@@ -283,13 +318,35 @@ func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, er
 	}
 	return &Response{
 		Content:          ch.Message.Content,
-		ReasoningContent: ch.Message.ReasoningContent,
+		ReasoningContent: resolveReasoningContent(ch.Message.ReasoningContent, ch.Message.Reasoning, ch.Message.ReasoningDetails),
 		ToolCalls:        ch.Message.ToolCalls,
 		FinishReason:     ch.FinishReason,
 		WebSearch:        webSearch,
 		CacheUsage:       c.cacheUsage(body.Usage),
 		TokenUsage:       deriveTokenUsage(body.Usage),
 	}, nil
+}
+
+// resolveReasoningContent surfaces the strongest reasoning signal a provider
+// returned for one assistant message, in precedence order: the canonical
+// resolveReasoningContent picks the response reasoning with precedence
+// reasoning_content > reasoning > reasoning_details concatenation.
+func resolveReasoningContent(reasoningContent, reasoning string, details []reasoningDetailWire) string {
+	if reasoningContent != "" {
+		return reasoningContent
+	}
+	if reasoning != "" {
+		return reasoning
+	}
+	var b strings.Builder
+	for _, d := range details {
+		if d.Text != "" {
+			b.WriteString(d.Text)
+		} else if d.Summary != "" {
+			b.WriteString(d.Summary)
+		}
+	}
+	return b.String()
 }
 
 // ChatStream streams SSE text deltas to w. With tools present, uses ChatTurn
@@ -379,10 +436,9 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 			continue
 		}
 		delta := chunk.Choices[0].Delta.Content
-		if delta != "" || chunk.Choices[0].Delta.ReasoningContent != "" || chunk.Choices[0].FinishReason != "" || chunk.Usage != nil {
-			// A reasoning-only stream (thinking deltas, then [DONE]) is a
-			// delivered answer: count it like readTurnStream's reasoning
-			// payload, or the no-tools path re-bills the turn non-streamed.
+		streamDelta := chunk.Choices[0].Delta
+		// Any delivered wire shape (content/reasoning/finish/usage) must not re-bill.
+		if deltaCountsAsReceived(delta, streamDelta.ReasoningContent, streamDelta.Reasoning, chunk.Choices[0].FinishReason, streamDelta.ReasoningDetails, chunk.Usage) {
 			received = true
 		}
 		if delta == "" {

@@ -34,7 +34,11 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 }
 
 // checkReservedExtras refuses operator-supplied extras that would overwrite
-// fields this client owns.
+// fields this client owns. The cache-marker keys are reserved too: this
+// client emits cache_control on the stable prefix when CacheMarkersEnabled,
+// so an extraBody smuggling its own marker (or a prompt_cache_* alias some
+// OpenAI-compatible dialects honor) could inject a conflicting or
+// unvetted cache instruction onto the wire.
 func (c *OpenAICompat) checkReservedExtras() error {
 	for key := range c.extraHeaders {
 		for _, reserved := range []string{"Authorization", "Content-Type", "Accept", "Idempotency-Key"} {
@@ -45,7 +49,7 @@ func (c *OpenAICompat) checkReservedExtras() error {
 	}
 	for key := range c.extraBody {
 		switch key {
-		case "model", "messages", "stream":
+		case "model", "messages", "stream", "cache_control", "prompt_cache_breakpoint", "prompt_cache_options":
 			return fmt.Errorf("%s: extra body field %q is reserved", c.name, key)
 		}
 	}
@@ -93,7 +97,99 @@ func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 	for key, value := range c.reasoningFields(req) {
 		body[key] = value
 	}
+	// Dialects that replay assistant reasoning under a non-default wire field
+	// (e.g. OpenRouter's "reasoning") get the key renamed here. The gate is
+	// deliberately narrow: replay off, an empty field, or the legacy field
+	// itself all leave the merged map untouched, so non-adopting request
+	// bodies stay byte-identical to the pre-rename layout.
+	if c.replayReasoning && c.replayReasoningField != "" && c.replayReasoningField != "reasoning_content" {
+		renameReasoningContentKey(body, c.replayReasoningField)
+	}
+	// A client with cache markers enabled emits an explicit Anthropic-style
+	// cache_control marker on the stable prefix. The gate is narrow: when the
+	// option is off nothing is touched, so non-adopting request bodies stay
+	// byte-identical to the pre-marker layout.
+	if c.cacheMarkersEnabled {
+		markStablePrefixCacheControl(body)
+	}
 	return json.Marshal(body)
+}
+
+// markStablePrefixCacheControl rewrites the stable prefix - every system
+// message and the FIRST user message - from plain string content to
+// Anthropic-style content parts carrying an explicit cache marker: exactly
+// [{"type":"text","text":<content>,"cache_control":{"type":"ephemeral"}}].
+// It runs on the decoded map, so only string contents are converted and
+// already-part content is left alone. Tool results and assistant turns are
+// deliberately never marked: a tool result could pin mutable tool output into
+// a provider-side cache, and assistant turns are not part of the stable
+// prefix. Only the CacheMarkersEnabled gate in marshalBody ever calls it.
+func markStablePrefixCacheControl(body map[string]any) {
+	messages, ok := body["messages"].([]any)
+	if !ok {
+		return
+	}
+	firstUserSeen := false
+	for _, entry := range messages {
+		msg, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch msg["role"] {
+		case "system":
+			markMessageContent(msg)
+		case "user":
+			if !firstUserSeen {
+				markMessageContent(msg)
+				firstUserSeen = true
+			}
+		}
+	}
+}
+
+// markMessageContent converts one message's string content into a single text
+// content part carrying the ephemeral cache marker. Non-string content (or an
+// absent content field) is left untouched.
+func markMessageContent(msg map[string]any) {
+	content, ok := msg["content"].(string)
+	if !ok {
+		return
+	}
+	msg["content"] = []any{map[string]any{
+		"type":          "text",
+		"text":          content,
+		"cache_control": map[string]any{"type": "ephemeral"},
+	}}
+}
+
+// renameReasoningContentKey rewrites replayed assistant reasoning inside the
+// merged request map from the legacy "reasoning_content" key to the dialect's
+// field name, preserving the value. It runs on the decoded map, so messages
+// without a reasoning key are untouched, and only the post-pass gate above
+// ever calls it.
+func renameReasoningContentKey(body map[string]any, field string) {
+	messages, ok := body["messages"].([]any)
+	if !ok {
+		return
+	}
+	for _, entry := range messages {
+		msg, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		// Defense-in-depth: reasoning_content is only ever emitted on
+		// assistant messages by toAPIMessages; skip anything else so a
+		// future extraBody injection cannot be renamed into the new key.
+		if msg["role"] != "assistant" {
+			continue
+		}
+		value, present := msg["reasoning_content"]
+		if !present {
+			continue
+		}
+		delete(msg, "reasoning_content")
+		msg[field] = value
+	}
 }
 
 func (c *OpenAICompat) setHeaders(httpReq *http.Request, req Request, raw []byte) {

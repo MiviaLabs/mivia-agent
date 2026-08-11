@@ -109,6 +109,21 @@ models = [{ name = "glm-4.6", context_window_tokens = 200000, reasoning_efforts 
 	}
 }
 
+// The openrouter_onoff dialect is non-gradable (reasoning.enabled only), so it
+// accepts exactly one graded level plus off - the shape poolside/laguna-s-2.1
+// declares. This pins that a new dialect joins the closed set without breaking
+// the deliverability check for its intended model entry.
+func TestOpenRouterOnOffDialectAcceptsSingleGradedLevel(t *testing.T) {
+	if _, err := loadReasoningCatalog(t, `[provider]
+name = "openrouter"
+
+[providers.openrouter]
+models = [{ name = "poolside/laguna-s-2.1", context_window_tokens = 1048576, max_output_tokens = 131072, reasoning_efforts = ["off", "max"], reasoning = "max", reasoning_dialect = "openrouter_onoff" }]
+`); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
 // The graded set is deliverable once the dialect can express it.
 func TestGradedEffortsAcceptedOnThinkingEffort(t *testing.T) {
 	if _, err := loadReasoningCatalog(t, `[provider]
