@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -467,16 +468,33 @@ func validEnvName(name string) bool {
 	return true
 }
 
+// maxBaseURLLength bounds provider base_url. Every shipped and real-world
+// base_url is well under 200 bytes; the cap exists so a huge-but-well-formed
+// value cannot slip past the structural checks below.
+const maxBaseURLLength = 8 << 10
+
 func validateBaseURL(raw string) error {
-	allowInsecure := os.Getenv("MIVIA_ALLOW_INSECURE_HTTP") == "1"
-	if strings.HasPrefix(raw, "https://") {
-		return nil
+	if len(raw) > maxBaseURLLength {
+		return fmt.Errorf("base_url is invalid")
 	}
-	if allowInsecure && strings.HasPrefix(raw, "http://") {
-		return nil
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Fixed literal on purpose: url.Parse's error quotes the raw value,
+		// and a base_url may carry credentials or control characters.
+		return fmt.Errorf("base_url is invalid")
 	}
-	if strings.HasPrefix(raw, "http://") {
+	if !u.IsAbs() || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return fmt.Errorf("base_url is invalid")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if os.Getenv("MIVIA_ALLOW_INSECURE_HTTP") == "1" {
+			return nil
+		}
 		return fmt.Errorf("base_url must use https (set MIVIA_ALLOW_INSECURE_HTTP=1 for local http mocks)")
+	default:
+		return fmt.Errorf("base_url must be an absolute https URL")
 	}
-	return fmt.Errorf("base_url must be an absolute https URL")
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -624,4 +625,169 @@ enabled = true
 	if res.Subagents.Messaging.MaxBodyBytes != 2048 {
 		t.Fatalf("MaxBodyBytes default = %d", res.Subagents.Messaging.MaxBodyBytes)
 	}
+}
+
+// TestLoadRejectsMalformedBaseURL is the regression for DC-9/DC-13: the old
+// prefix-only check accepted these values and every request failed at runtime.
+// Each must now be refused at load, without echoing the raw value.
+func TestLoadRejectsMalformedBaseURL(t *testing.T) {
+	oversized := "https://" + strings.Repeat("a", 10<<10) + ".example.com/v1"
+	tests := []struct {
+		name      string
+		tomlValue string // spelling inside the TOML file
+		rawValue  string // decoded value; the error must not echo it
+	}{
+		{name: "port-only host", tomlValue: "https://:443", rawValue: "https://:443"},
+		{name: "empty authority", tomlValue: "https:///v1", rawValue: "https:///v1"},
+		{name: "embedded space in host", tomlValue: "https://exa mple.com", rawValue: "https://exa mple.com"},
+		// \u007f is the TOML escape for DEL (precedent: the models test).
+		{name: "control character in host", tomlValue: "https://exa\\u007fmple.com", rawValue: "https://exa\u007fmple.com"},
+		{name: "userinfo carries credentials", tomlValue: "https://user:pass@api.deepseek.com/v1", rawValue: "https://user:pass@api.deepseek.com/v1"},
+		{name: "fragment is not an endpoint", tomlValue: "https://api.deepseek.com/v1#frag", rawValue: "https://api.deepseek.com/v1#frag"},
+		{name: "oversized value", tomlValue: oversized, rawValue: oversized},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, tt.tomlValue)})
+			if err == nil {
+				t.Fatalf("Load accepted malformed base_url %q", tt.rawValue)
+			}
+			if !strings.Contains(err.Error(), "base_url") {
+				t.Fatalf("error does not name base_url: %v", err)
+			}
+			if strings.Contains(err.Error(), tt.rawValue) {
+				t.Fatalf("error echoed the raw base_url value: %v", err)
+			}
+		})
+	}
+}
+
+func writeBaseURLConfig(t *testing.T, baseURL string) string {
+	t.Helper()
+	return writeCatalogConfig(t, "[provider]\nname = \"deepseek\"\n\n[providers.deepseek]\nbase_url = \""+baseURL+"\"\nmodels = [{ name = \"deepseek-v4-flash\", context_window_tokens = 128000 }]\n\n[chat]\nmax_tokens = 8192\n", "DEEPSEEK_API_KEY=test-key\n")
+}
+
+// TestLoadAcceptsValidBaseURL guards an over-strict fix: a valid https URL
+// keeps loading (trimmed) and an omitted base_url keeps the registry default.
+func TestLoadAcceptsValidBaseURL(t *testing.T) {
+	res, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, "https://api.deepseek.com/v1/")})
+	if err != nil {
+		t.Fatalf("valid https base_url rejected: %v", err)
+	}
+	if res.BaseURL != "https://api.deepseek.com/v1" {
+		t.Fatalf("BaseURL = %q, want trimmed %q", res.BaseURL, "https://api.deepseek.com/v1")
+	}
+
+	res, err = Load(LoadOptions{ConfigPath: writeMinimalConfig(t, "")})
+	if err != nil {
+		t.Fatalf("empty base_url rejected: %v", err)
+	}
+	if res.BaseURL != "https://api.deepseek.com/v1" {
+		t.Fatalf("empty base_url did not default to the registry URL: %q", res.BaseURL)
+	}
+}
+
+// TestValidateBaseURLRejectsHostlessUnit pins the refusal of empty and
+// hostless values. "https://" was already refused at load (resolveLoaded
+// trims it to "https:"), so it stays a guard case, not a RED case.
+func TestValidateBaseURLRejectsHostlessUnit(t *testing.T) {
+	if err := validateBaseURL(""); err == nil || !strings.Contains(err.Error(), "base_url") {
+		t.Fatalf("validateBaseURL(\"\") = %v", err)
+	}
+	if err := validateBaseURL("https://"); err == nil || !strings.Contains(err.Error(), "base_url") {
+		t.Fatalf("validateBaseURL(\"https://\") = %v", err)
+	}
+
+	if _, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, "https://")}); err == nil || !strings.Contains(err.Error(), "base_url") {
+		t.Fatalf("hostless https base_url accepted at load: %v", err)
+	}
+}
+
+// TestLoadHTTPBaseURLEnvGate pins the http gate: refused without
+// MIVIA_ALLOW_INSECURE_HTTP=1, accepted with it, never loosening structure.
+func TestLoadHTTPBaseURLEnvGate(t *testing.T) {
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "")
+	if _, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, "http://127.0.0.1:9/v1")}); err == nil || !strings.Contains(err.Error(), "base_url") {
+		t.Fatalf("http base_url accepted without MIVIA_ALLOW_INSECURE_HTTP=1: %v", err)
+	}
+
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	res, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, "http://127.0.0.1:9/v1")})
+	if err != nil {
+		t.Fatalf("http base_url rejected with MIVIA_ALLOW_INSECURE_HTTP=1: %v", err)
+	}
+	if res.BaseURL != "http://127.0.0.1:9/v1" {
+		t.Fatalf("BaseURL = %q", res.BaseURL)
+	}
+
+	if _, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, "http://")}); err == nil {
+		t.Fatal("hostless http base_url accepted with MIVIA_ALLOW_INSECURE_HTTP=1")
+	}
+}
+
+// TestValidateBaseURLLengthBoundary pins the DC-6 length guard at its edge:
+// exactly maxBaseURLLength loads, one byte past the cap is refused.
+func TestValidateBaseURLLengthBoundary(t *testing.T) {
+	host := strings.Repeat("a", maxBaseURLLength-len("https://")-len(".example.com/v1"))
+	exact := "https://" + host + ".example.com/v1"
+	over := "https://" + host + "a.example.com/v1"
+	if len(exact) != maxBaseURLLength || len(over) != maxBaseURLLength+1 {
+		t.Fatalf("boundary fixtures: exact=%d over=%d", len(exact), len(over))
+	}
+
+	if err := validateBaseURL(exact); err != nil {
+		t.Fatalf("validateBaseURL(exactly maxBaseURLLength) = %v", err)
+	}
+	if err := validateBaseURL(over); err == nil {
+		t.Fatal("validateBaseURL(maxBaseURLLength+1) accepted")
+	}
+
+	if _, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, exact)}); err != nil {
+		t.Fatalf("Load rejected base_url of exactly maxBaseURLLength: %v", err)
+	}
+	if _, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, over)}); err == nil {
+		t.Fatal("Load accepted base_url of maxBaseURLLength+1")
+	}
+}
+
+// FuzzValidateBaseURLNeverPanics asserts validateBaseURL never panics and that
+// an accepted value always satisfies the structural contract (absolute, https
+// or http, non-empty host, no userinfo, no fragment, bounded length). The
+// property is independent of the http gate, which only narrows the set.
+func FuzzValidateBaseURLNeverPanics(f *testing.F) {
+	seedValidateBaseURLCorpus(f)
+	f.Fuzz(func(t *testing.T, raw string) {
+		if err := validateBaseURL(raw); err != nil {
+			return
+		}
+		u, perr := url.Parse(raw)
+		if perr != nil {
+			t.Fatalf("accepted base_url does not parse: %v", perr)
+		}
+		if !u.IsAbs() || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+			t.Fatalf("accepted base_url violates the structural contract")
+		}
+		if u.Scheme != "https" && u.Scheme != "http" {
+			t.Fatalf("accepted base_url has scheme %q", u.Scheme)
+		}
+		if len(raw) > maxBaseURLLength {
+			t.Fatalf("accepted base_url exceeds maxBaseURLLength")
+		}
+	})
+}
+
+// seedValidateBaseURLCorpus primes the target: empty, malformed, and valid.
+func seedValidateBaseURLCorpus(f *testing.F) {
+	f.Add("")
+	f.Add("https://")
+	f.Add("https://:443")
+	f.Add("https:///v1")
+	f.Add("https://exa mple.com")
+	f.Add("https://exa\x7fmple.com")
+	f.Add("https://user:pass@api.deepseek.com/v1")
+	f.Add("https://api.deepseek.com/v1#frag")
+	f.Add("ftp://example.com")
+	f.Add("https://api.deepseek.com/v1")
+	f.Add("http://127.0.0.1:9/v1")
+	f.Add("https://" + strings.Repeat("a", maxBaseURLLength+1) + ".example.com/v1")
 }
