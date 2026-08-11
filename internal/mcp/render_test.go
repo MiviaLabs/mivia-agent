@@ -131,6 +131,41 @@ func TestDiscoveredToolHidesRemoteError(t *testing.T) {
 	}
 }
 
+func TestDiscoveredToolPreservesCancellationIdentity(t *testing.T) {
+	tool := discoveredTool{remoteName: "result", client: canceledResultClient{}}
+	got, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Execute() error = %v, want a context.Canceled identity", err)
+	}
+	if got != "" {
+		t.Fatalf("Execute() result = %q, want empty on error", got)
+	}
+}
+
+func TestDiscoveredToolPreservesTimeoutIdentity(t *testing.T) {
+	tool := discoveredTool{remoteName: "result", client: timedOutResultClient{}}
+	got, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Execute() error = %v, want a context.DeadlineExceeded identity", err)
+	}
+	if got != "" {
+		t.Fatalf("Execute() result = %q, want empty on error", got)
+	}
+}
+
+func TestDiscoveredToolReportsExpiredContextOverServerText(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tool := discoveredTool{remoteName: "result", client: ctxIgnoringDiagnosticClient{}}
+	_, err := tool.Execute(ctx, json.RawMessage(`{}`))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Execute() error = %v, want a context.Canceled identity", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "untrusted server diagnostic") {
+		t.Fatalf("Execute() leaked server diagnostic text: %v", err)
+	}
+}
+
 type resultClient struct{}
 
 func (resultClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
@@ -146,6 +181,30 @@ func (failingResultClient) CallTool(context.Context, string, map[string]any) (st
 	return "", errors.New("untrusted server diagnostic")
 }
 func (failingResultClient) Close() error { return nil }
+
+type canceledResultClient struct{}
+
+func (canceledResultClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (canceledResultClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	return "", context.Canceled
+}
+func (canceledResultClient) Close() error { return nil }
+
+type timedOutResultClient struct{}
+
+func (timedOutResultClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (timedOutResultClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	return "", fmt.Errorf("server timed out: %w", context.DeadlineExceeded)
+}
+func (timedOutResultClient) Close() error { return nil }
+
+type ctxIgnoringDiagnosticClient struct{}
+
+func (ctxIgnoringDiagnosticClient) ListTools(context.Context) ([]remoteTool, error) { return nil, nil }
+func (ctxIgnoringDiagnosticClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	return "", errors.New("untrusted server diagnostic")
+}
+func (ctxIgnoringDiagnosticClient) Close() error { return nil }
 
 func TestSanitizeToolSchemaBoundsPostRedactionGrowth(t *testing.T) {
 	policy, err := redact.Compile([]string{"sk-"}, nil, "")
