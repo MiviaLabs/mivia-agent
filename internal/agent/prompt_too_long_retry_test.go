@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -160,5 +161,71 @@ func TestAgentDoesNotCompactRetryWhenProviderReplayIsDisabled(t *testing.T) {
 	}
 	if comp.calls != 1 {
 		t.Fatalf("completer calls=%d, want one", comp.calls)
+	}
+}
+
+// A prompt-too-long rejection followed by one compaction retry must charge the
+// output allowance exactly once. requestStep reserves prompt+output before the
+// rejected first call; the retry's output was already reserved by that first
+// attempt, so the retry may charge only its (new, compacted) prompt. Charging
+// the full per-call output twice makes a finite MaxOutputTokens budget hard-fail
+// with "work limit exceeded: output tokens" even though only one completion
+// ever happened (DC-6 broken bound on the DC-8 retry path).
+func TestPromptTooLongRetryDoesNotDoubleChargeOutputBudget(t *testing.T) {
+	const outputBudget = 4096
+	maxTokens := outputBudget
+	comp := &promptTooLongCompleter{
+		failN:            1,
+		promptTooLongErr: fmt.Errorf("deepseek: provider error (HTTP 400, type invalid_request_error): %w", provider.ErrPromptTooLong),
+		steps:            []provider.Response{{Content: "recovered", FinishReason: "stop"}},
+	}
+	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
+
+	text, err := loop.Run(context.Background(), "final question", Options{
+		Model:      "deepseek-v4-flash",
+		MaxTokens:  &maxTokens,
+		WorkLimits: runtime.WorkLimits{MaxOutputTokens: outputBudget},
+		MaxSteps:   5,
+	})
+	if err != nil {
+		t.Fatalf("run failed after one compaction retry: %v", err)
+	}
+	if text != "recovered" {
+		t.Fatalf("text = %q, want %q", text, "recovered")
+	}
+	if comp.calls != 2 {
+		t.Fatalf("completer called %d times, want exactly 2 (one fail + one retry)", comp.calls)
+	}
+	if loop.workLimits.outputTokens != outputBudget {
+		t.Fatalf("meter outputTokens = %d, want %d (one logical completion charged once)", loop.workLimits.outputTokens, outputBudget)
+	}
+}
+
+// The fix must not bypass the cumulative output bound: a MaxOutputTokens that
+// genuinely cannot fit one completion still fails the run with the work-limit
+// error, before any provider call (stepRequest's outputCap rejects it).
+func TestPromptTooLongRetryHonorsTrulyExhaustedOutputBudget(t *testing.T) {
+	maxTokens := 8192
+	comp := &promptTooLongCompleter{
+		failN:            1,
+		promptTooLongErr: fmt.Errorf("deepseek: provider error (HTTP 400, type invalid_request_error): %w", provider.ErrPromptTooLong),
+		steps:            []provider.Response{{Content: "recovered", FinishReason: "stop"}},
+	}
+	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
+
+	_, err := loop.Run(context.Background(), "final question", Options{
+		Model:      "deepseek-v4-flash",
+		MaxTokens:  &maxTokens,
+		WorkLimits: runtime.WorkLimits{MaxOutputTokens: 512},
+		MaxSteps:   5,
+	})
+	if err == nil {
+		t.Fatal("expected work-limit error")
+	}
+	if !strings.Contains(err.Error(), "work limit exceeded: output tokens") {
+		t.Fatalf("err = %v, want %q", err, "work limit exceeded: output tokens")
+	}
+	if comp.calls != 0 {
+		t.Fatalf("completer called %d times, want 0 (output cap rejects before any provider call)", comp.calls)
 	}
 }

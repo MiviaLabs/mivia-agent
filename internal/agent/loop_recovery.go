@@ -55,8 +55,14 @@ func (l *Loop) retryAfterPromptTooLong(req provider.Request, opts Options, llmCt
 		Detail: fmt.Sprintf("provider rejected prompt (prompt too long); compacted to %d tokens and retrying once", target),
 	})
 	req.Messages = l.Messages
+	// The compacted retry prompt is genuinely new work (charge it against the
+	// prompt bound), but its output was already reserved by the rejected first
+	// attempt: reserveProvider would charge one logical completion's output
+	// allowance twice, hard-failing a finite MaxOutputTokens budget even though
+	// the rejected call produced no output. reservePromptOnly charges prompt
+	// only; the cumulative output bound still holds.
 	estimatedTokens, _ = provider.EstimatePromptCost(req.Messages, req.Tools)
-	if err := l.workLimits.reserveProvider(estimatedTokens, requestOutputReserve(req)); err != nil {
+	if err := l.workLimits.reservePromptOnly(estimatedTokens); err != nil {
 		return nil, estimatedTokens, err
 	}
 	resp, err := l.Completer.ChatTurn(llmCtx, req)
