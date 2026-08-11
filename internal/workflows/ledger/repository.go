@@ -76,6 +76,18 @@ type Repository interface {
 	// for a non-terminal outcome status or an illegal status edge.
 	CompleteStepAttempt(ctx context.Context, runID, attemptID string, expectedVersion uint64, outcome AttemptOutcome) error
 
+	// RecordStepAttemptOutcome records a fresh numbered attempt and its
+	// TERMINAL outcome in ONE durable wf_attempt_completed event: the attempt
+	// is never observable in a non-terminal state. It mirrors
+	// CreateStepAttempt's (runID, stepID, attemptNo) triple and AttemptID
+	// uniqueness (ErrDuplicate for a taken key) and CompleteStepAttempt's
+	// outcome rules (ErrInvalidTransition for a non-terminal outcome status or
+	// an illegal status edge, including the no-route-on-interrupted/canceled/
+	// timed_out rule and the MaxEvidenceBytes cap). The recorded attempt
+	// carries Version 1 and StartedAt == FinishedAt == the append instant.
+	// Returns ErrNotFound if the run is absent.
+	RecordStepAttemptOutcome(ctx context.Context, attempt StepAttempt, outcome AttemptOutcome) error
+
 	// CompareAndSetPanelPhase records one claim-fenced panel phase intent.
 	CompareAndSetPanelPhase(ctx context.Context, runID string, attemptID string, expectedVersion uint64, from PanelPhase, to PanelPhase, synthesis *PanelSynthesisExecution) error
 

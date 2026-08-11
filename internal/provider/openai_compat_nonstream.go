@@ -46,11 +46,12 @@ func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatRespon
 		return nil, fmt.Errorf("%s: response exceeds %d byte limit", c.name, maxJSONResponseBytes)
 	}
 	if c.errorParser != nil {
-		parserBody := raw
-		if len(parserBody) > 4096 {
-			parserBody = parserBody[:4096]
-		}
-		if err := c.errorParser(resp.StatusCode, parserBody); err != nil {
+		// The parser reads the full body, already bounded by
+		// maxJSONResponseBytes. Truncating here broke json.Unmarshal for
+		// error bodies whose message exceeds 4096 bytes, so a z.ai code-1261
+		// (prompt too long) rejection was never read and ErrPromptTooLong was
+		// never wrapped - the agent loop could not compact and retry.
+		if err := c.errorParser(resp.StatusCode, raw); err != nil {
 			return nil, err
 		}
 	}

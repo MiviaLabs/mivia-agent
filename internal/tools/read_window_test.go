@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -311,5 +312,54 @@ func TestReadFileWindowOffsetPastEndReportsTotal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "3 lines") {
 		t.Fatalf("error should report total line count, got: %v", err)
+	}
+}
+
+// TestReadFileWindowCollectionBoundedByBudget pins the fix for
+// read-file-window-unbounded-memory: a window call (offset>1, limit=0) on a
+// file far larger than maxBytes must bound peak collection to the byte budget
+// (plus one line) instead of materializing every line from offset to EOF.
+// Uses the repo's runtime.MemStats/runtime.GC() convention
+// (TestRunCommandCaptureMemoryBounded). The same call is the negative path:
+// the oversized file is truncated with a notice, never fully collected.
+func TestReadFileWindowCollectionBoundedByBudget(t *testing.T) {
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 200,000 lines × 12 bytes ≈ 2.4 MB — far beyond maxBytes. Built before
+	// the MemStats baseline so file creation is not counted in the delta.
+	var b strings.Builder
+	for i := 0; i < 200_000; i++ {
+		fmt.Fprintf(&b, "line-%06d\n", i)
+	}
+	path := filepath.Join(ws.Abs, "many.txt")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const maxBytes = 4096
+	tool := &readFileTool{ws: ws, maxBytes: maxBytes}
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	out, err := tool.readLineWindow(context.Background(), path, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+
+	delta := int64(after.TotalAlloc - before.TotalAlloc)
+	if delta > 4*1024*1024 {
+		t.Fatalf("window collection allocated too much: delta=%d bytes (%d MiB), want < 4 MiB", delta, delta/(1<<20))
+	}
+	// Output contract unchanged: the truncation notice is present and the
+	// result stays within maxBytes plus framing slack.
+	if !strings.Contains(out, "truncated at max read size") {
+		t.Fatalf("expected truncation notice, got: %q", out)
+	}
+	if len(out) > maxBytes+256 {
+		t.Fatalf("result len=%d exceeds maxBytes+256 framing slack", len(out))
 	}
 }

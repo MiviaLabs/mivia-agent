@@ -314,11 +314,13 @@ func keepTurnStart(turns []messageTurn, tailLength, budget int) int {
 // exchange block (an assistant tool_call message plus the consecutive tool
 // results answering it) is collected oldest-first with its token cost, the
 // oldest blocks are dropped until the remaining total fits the budget, and the
-// result slice is rebuilt once. The previous implementation re-scanned the
-// whole slice with MessagesTokens and rebuilt it once per dropped exchange
-// (O(k*n)); this is O(n) overall, so PruneMessagesKeepTurns - and with it
-// pruneHistory's two calls per step and retryAfterPromptTooLong's one call -
-// is linear in the history size.
+// result slice is rebuilt once. Only exchange blocks are removed - every
+// message outside them (plain assistant replies between exchanges included)
+// survives, because it is context the model may still need. The previous
+// implementation re-scanned the whole slice with MessagesTokens and rebuilt it
+// once per dropped exchange (O(k*n)); this is O(n) overall, so
+// PruneMessagesKeepTurns - and with it pruneHistory's two calls per step and
+// retryAfterPromptTooLong's one call - is linear in the history size.
 func pruneWithinTurn(msgs []Message, budget int) []Message {
 	total := MessagesTokens(msgs)
 	if total <= budget {
@@ -367,11 +369,20 @@ func pruneWithinTurn(msgs []Message, budget int) []Message {
 		dropped += b.tokens
 		dropCount++
 	}
-	// Dropped blocks form a contiguous prefix [blocks[0].start, last.end).
-	first, last := blocks[0], blocks[dropCount-1]
-	result := make([]Message, 0, len(msgs)-(last.end-first.start))
-	result = append(result, msgs[:first.start]...)
-	return append(result, msgs[last.end:]...)
+	// Remove exactly each dropped block's own [start, end) range. Blocks are
+	// sorted by start and disjoint, so one linear pass rebuilds the slice
+	// while keeping every message that lies between dropped exchanges - plain
+	// assistant replies included. The old contiguous-region cut dropped the
+	// whole span [blocks[0].start, blocks[dropCount-1].end), silently losing
+	// such replies even when the budget had room for them.
+	result := make([]Message, 0, len(msgs))
+	cursor := 0
+	for i := 0; i < dropCount; i++ {
+		block := blocks[i]
+		result = append(result, msgs[cursor:block.start]...)
+		cursor = block.end
+	}
+	return append(result, msgs[cursor:]...)
 }
 
 func joinPrunedMessages(system Message, kept []Message) []Message {

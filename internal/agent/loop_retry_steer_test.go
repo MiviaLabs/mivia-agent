@@ -183,3 +183,72 @@ func TestLoopPromptTooLongRetrySecondRejectionFailsTurn(t *testing.T) {
 		t.Fatalf("completer called %d times, want exactly 2 (rejection + retry rejection; no second retry, no loop)", comp.calls)
 	}
 }
+
+// TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry is the RED test for
+// the steer-cannot-cancel-retry gap: the per-step watcher survives the first
+// prompt-too-long rejection (armed on llmCtx), the retry runs on a fresh live
+// context, and a steer arriving DURING the retry must cancel it. The canceled
+// retry maps to errSteerInterrupt (steerFired set, turn ctx alive): the
+// never-consumed reservation is refunded and the loop soft-continues, draining
+// the steer at the next BeforeStep, and the next step answers on a live
+// context. Pre-fix the watcher held only llmCancel, so the retry was never
+// canceled: call 2 blocks forever and runLoop's 5s timeout fails the test.
+// Deterministic ordering: the retry's started signal happens-after
+// scope.set(retryCancel), so by the time the test goroutine sends the steer
+// token the scope is armed with retryCancel.
+func TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry(t *testing.T) {
+	var pending atomic.Bool
+	pending.Store(true)
+	stepCalls := 0
+	interrupt := make(chan struct{}, 1) // empty; the test goroutine sends the steer
+	// Script: call 1 is an immediate prompt-too-long rejection; call 2 (the
+	// compact-and-retry) blocks on its context until the steer cancels it; call
+	// 3 (the next step, after BeforeStep drains the steer) answers normally.
+	promptTooLongErr := fmt.Errorf("deepseek: provider error (HTTP 400, type invalid_request_error): %w", provider.ErrPromptTooLong)
+	comp := &steerCompleter{
+		steps: []steerStep{
+			{err: promptTooLongErr},
+			{blockCtx: true},
+			{resp: provider.Response{Content: "recovered", FinishReason: "stop"}},
+		},
+		// Cap 2: both the rejected attempt and the retry publish a started
+		// signal before the retry blocks; the retry's signal happens-after
+		// scope.set(retryCancel), so two receives mean the scope is armed.
+		started: make(chan struct{}, 2),
+	}
+	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
+
+	go func() {
+		<-comp.started // call 1 (rejected) in flight or already done
+		<-comp.started // call 2 (retry) in flight: the scope holds retryCancel
+		interrupt <- struct{}{}
+	}()
+
+	text, err := runLoop(t, loop, context.Background(), "final question", Options{
+		Model:                   "m",
+		MaxSteps:                10,
+		MaxContextTokens:        20000,
+		InterruptCh:             func() <-chan struct{} { return interrupt },
+		MailboxPendingInterrupt: func() bool { return pending.Load() },
+		SoftInterruptCooldown:   0,
+		BeforeStep: func() []provider.Message {
+			stepCalls++
+			if stepCalls > 1 {
+				pending.Store(false) // mailbox drained after step 1
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if text != "recovered" {
+		t.Fatalf("text=%q, want recovered", text)
+	}
+	if comp.calls != 3 {
+		t.Fatalf("completer called %d times, want exactly 3 (rejected attempt + steer-canceled retry + recovered step)", comp.calls)
+	}
+	if len(comp.canceled) != 1 || comp.canceled[0] != 1 {
+		t.Fatalf("canceled calls=%v, want [1] (only the retry is steer-canceled)", comp.canceled)
+	}
+}

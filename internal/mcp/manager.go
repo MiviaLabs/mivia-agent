@@ -337,6 +337,7 @@ type Manager struct {
 	clients        map[string]remoteClient
 	tools          map[string][]tools.Tool
 	failures       map[string]error
+	pending        map[string]chan struct{}
 	maxResultBytes int
 	redaction      *redact.Policy
 	closed         bool
@@ -346,7 +347,7 @@ type Manager struct {
 func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	if !cfg.Enabled {
 		shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
-		return &Manager{cfg: cfg, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, redaction: opts.RedactionPolicy}, nil
+		return &Manager{cfg: cfg, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, pending: map[string]chan struct{}{}, redaction: opts.RedactionPolicy}, nil
 	}
 	if opts.Connect == nil {
 		opts.Connect = connectServer
@@ -372,7 +373,7 @@ func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	// and Close cancels it, and no error path creates it (a leaked cancel would
 	// keep a background context alive forever).
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
-	return &Manager{cfg: cfg, connect: opts.Connect, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, maxResultBytes: limit, redaction: opts.RedactionPolicy}, nil
+	return &Manager{cfg: cfg, connect: opts.Connect, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, pending: map[string]chan struct{}{}, maxResultBytes: limit, redaction: opts.RedactionPolicy}, nil
 }
 
 // OwnsTool reports whether name is one wrapper this manager discovered.

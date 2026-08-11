@@ -24,7 +24,11 @@ func deadlineLabel(timeout time.Duration) string {
 // transport. The caller will close via defer after this returns; without
 // draining, Go's transport opens a new connection.
 func (c *OpenAICompat) httpError(resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	// Read the whole body up to maxJSONResponseBytes so a rejection whose
+	// message exceeds 4096 bytes (z.ai echoes request content in the message
+	// field) reaches the error parser intact; the drain below is a no-op once
+	// the body has been fully read.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
 	if c.errorParser != nil {
 		if err := c.errorParser(resp.StatusCode, body); err != nil {
 			return err
