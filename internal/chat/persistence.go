@@ -11,22 +11,10 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // Session persistence constants.
 const (
-	// ChunkMessageThreshold is the max messages per chunk file.
-	// When saving, if messages exceed this, we split into multiple
-	// chunk_XXXX.jsonl files for efficient storage and loading.
-	ChunkMessageThreshold = 500
-
-	// chunkFilePattern is the glob pattern for chunk files.
-	chunkFilePattern = "chunk_*.jsonl"
-
-	// chunkFileName formats a chunk file name by index.
-	chunkFileName = "chunk_%04d.jsonl"
-
 	// metaFileName is the metadata file inside a session directory.
 	metaFileName = "meta.json"
 
@@ -241,85 +229,13 @@ func (s *Session) saveToSessionDir(name string, msgs []provider.Message, selecti
 	if err := writeMetaJSON(dir, meta); err != nil {
 		return fmt.Errorf("write meta: %w", err)
 	}
+	// Chunks at or beyond the newly committed count are stale (a larger
+	// previous snapshot, or an emptied session). Remove them only now that
+	// meta.json references the new count, so a failed save never leaves
+	// meta.json pointing at deleted chunk files.
+	removeStaleChunkFiles(dir, chunkCount)
 
 	return nil
-}
-
-// redactReasoningForPersistence returns a deep copy of msgs whose assistant
-// ReasoningContent has passed through the process-wide redaction policy. It is
-// applied to the bytes written to disk, never to host history: callers keep the
-// raw reasoning for provider replay and only persist the redacted copy. The
-// policy is read via redact.Current() semantics (redact.Text), which is an
-// identity when no policy is installed, so unconfigured workspaces persist
-// exactly what they always did.
-func redactReasoningForPersistence(msgs []provider.Message) []provider.Message {
-	out := make([]provider.Message, len(msgs))
-	copy(out, msgs)
-	for i := range out {
-		out[i].ToolCalls = append([]provider.ToolCall(nil), msgs[i].ToolCalls...)
-		out[i].ReasoningContent = redact.Text(out[i].ReasoningContent)
-	}
-	return out
-}
-
-func writeSessionChunks(dir string, msgs []provider.Message) (int, error) {
-	// The chunk bytes are durable, operator-visible state: redact reasoning
-	// before it reaches the file. This covers the Session.Save file fallback
-	// (and, idempotently, any store that pre-redacts and delegates here).
-	msgs = redactReasoningForPersistence(msgs)
-	count := chunkCountFor(len(msgs))
-	if count == 0 {
-		// Remove any pre-existing chunks from previous saves.
-		if oldChunks, err := filepath.Glob(filepath.Join(dir, chunkFilePattern)); err == nil {
-			for _, f := range oldChunks {
-				_ = os.Remove(f)
-			}
-		}
-		return 0, nil
-	}
-	// Stage every chunk first, then swap them in. Deleting the old chunks up
-	// front (as this did) means any mid-write failure leaves meta.json pointing
-	// at files that no longer exist - an unloadable session - and truncating a
-	// chunk in place leaves a readable prefix whose trailing tool results are
-	// gone, which the API rejects on every later turn.
-	staged := make([]string, 0, count)
-	defer func() {
-		for _, tmp := range staged {
-			_ = os.Remove(tmp) // no-op once renamed
-		}
-	}()
-	for i := 0; i < count; i++ {
-		start, end := i*ChunkMessageThreshold, (i+1)*ChunkMessageThreshold
-		if end > len(msgs) {
-			end = len(msgs)
-		}
-		tmp := filepath.Join(dir, fmt.Sprintf(chunkFileName, i)) + ".tmp"
-		if err := writeJSONL(tmp, msgs[start:end]); err != nil {
-			return 0, fmt.Errorf("write chunk %d: %w", i, err)
-		}
-		staged = append(staged, tmp)
-	}
-	if oldChunks, err := filepath.Glob(filepath.Join(dir, chunkFilePattern)); err == nil {
-		for _, f := range oldChunks {
-			_ = os.Remove(f)
-		}
-	}
-	for i, tmp := range staged {
-		if err := os.Rename(tmp, filepath.Join(dir, fmt.Sprintf(chunkFileName, i))); err != nil {
-			return 0, fmt.Errorf("commit chunk %d: %w", i, err)
-		}
-	}
-	return count, nil
-}
-
-func chunkCountFor(n int) int {
-	if n <= 0 {
-		return 0
-	}
-	if n <= ChunkMessageThreshold {
-		return 1
-	}
-	return (n + ChunkMessageThreshold - 1) / ChunkMessageThreshold
 }
 
 // Load replaces this session's history, binding and tool surface with a saved
