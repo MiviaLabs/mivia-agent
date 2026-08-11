@@ -28,6 +28,10 @@ func TestDialectBodyFields(t *testing.T) {
 		{"openrouter off", reasoning.DialectOpenRouter, reasoning.Off, map[string]any{"reasoning": map[string]any{"enabled": false}}},
 		{"openrouter low", reasoning.DialectOpenRouter, reasoning.Low, map[string]any{"reasoning": map[string]any{"effort": "low"}}},
 
+		{"openrouter_onoff unset", reasoning.DialectOpenRouterOnOff, "", nil},
+		{"openrouter_onoff off", reasoning.DialectOpenRouterOnOff, reasoning.Off, map[string]any{"reasoning": map[string]any{"enabled": false}}},
+		{"openrouter_onoff max", reasoning.DialectOpenRouterOnOff, reasoning.Max, map[string]any{"reasoning": map[string]any{"enabled": true}}},
+
 		{"thinking unset", reasoning.DialectThinking, "", nil},
 		{"thinking off", reasoning.DialectThinking, reasoning.Off, map[string]any{"thinking": map[string]any{"type": "disabled"}}},
 		{"thinking medium", reasoning.DialectThinking, reasoning.Medium, map[string]any{"thinking": map[string]any{"type": "enabled"}}},

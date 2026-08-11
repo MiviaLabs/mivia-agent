@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+// deltaCountsAsReceived reports whether a stream chunk counts as a delivered
+// answer (content, any reasoning shape, finish_reason, or usage), mirroring
+// readTurnStream's payload gate so the no-tools path never re-bills a
+// reasoning-only stream non-streamed.
+func deltaCountsAsReceived(content, reasoningContent, reasoning, finishReason string, details []reasoningDetailWire, usage *usageWire) bool {
+	return content != "" || reasoningContent != "" || reasoning != "" || len(details) > 0 || finishReason != "" || usage != nil
+}
+
 // chatTurnStream runs a streaming chat.completions request, forwarding text
 // deltas to StreamWriter and assembling tool_calls from stream fragments.
 func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Response, error) {
@@ -225,6 +233,29 @@ func (c *OpenAICompat) applyStreamChunk(
 	}
 	if delta := ch.Delta.ReasoningContent; delta != "" {
 		reasoning.WriteString(delta)
+	}
+	if delta := ch.Delta.Reasoning; delta != "" {
+		reasoning.WriteString(delta)
+	}
+	// reasoning_details entries contribute their payload when the chunk carries
+	// no canonical reasoning_content: text entries concatenate Text, summary
+	// entries concatenate Summary. The reasoning builder doubles as the
+	// completion signal in readTurnStream (reasoning.Len() > 0 gates
+	// re-billing), so these fields must land in it too or a reasoning-only
+	// stream re-bills the turn non-streamed.
+	if ch.Delta.ReasoningContent == "" && len(ch.Delta.ReasoningDetails) > 0 {
+		for _, d := range ch.Delta.ReasoningDetails {
+			switch d.Type {
+			case "reasoning.text":
+				if d.Text != "" {
+					reasoning.WriteString(d.Text)
+				}
+			case "reasoning.summary":
+				if d.Summary != "" {
+					reasoning.WriteString(d.Summary)
+				}
+			}
+		}
 	}
 	*webSearch = append(*webSearch, ch.Delta.WebSearch...)
 	mergeToolCallDeltas(toolsByIdx, ch.Delta.ToolCalls)
