@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/envfile"
+	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/pelletier/go-toml/v2"
@@ -71,16 +72,11 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 	key, keySet := envfile.Lookup(pc.APIKeyEnv, envMap)
 	activeProfile := activeModelProfile(pc, model)
 	activePromptBudget := EffectivePromptTokens(activeProfile, file.Chat.MaxTokens, promptCap(file.Chat.MaxPromptTokens), 0)
-	subagentCfg := resolveSubagentConfig(file.Subagents)
+	subagentCfg, storePath, err := resolveSubagentStoreBackend(resolveSubagentConfig(file.Subagents), configPath)
+	if err != nil {
+		return nil, err
+	}
 	storeBackend := subagentCfg.StoreBackend
-	if storeBackend == "" {
-		storeBackend = "memory"
-	}
-	if storeBackend == "sqlite" && subagentCfg.StorePath == "" {
-		subagentCfg.StorePath = defaultStorePath()
-	}
-	storePath := subagentCfg.StorePath
-	subagentCfg.StoreBackend = storeBackend
 	redactionPolicy, err := redact.Compile(
 		file.Privacy.RedactionPatterns,
 		file.Privacy.RedactionKeyNames,
@@ -133,6 +129,28 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		return nil, err
 	}
 	return res, nil
+}
+
+// resolveSubagentStoreBackend normalizes and validates [subagents]
+// store_backend like the sibling [memory] backend (resolveMemoryConfig) and
+// returns the resolved store path (defaulted when sqlite has none). The
+// backend is a closed enum; an unvalidated value such as "SQLite" previously
+// survived to the CLI, where the exact "sqlite" equality checks silently
+// selected the in-memory backend and lost orchestration history on process
+// exit with no error or warning.
+func resolveSubagentStoreBackend(subagentCfg SubagentConfig, configPath string) (SubagentConfig, string, error) {
+	storeBackend := strings.ToLower(strings.TrimSpace(subagentCfg.StoreBackend))
+	if storeBackend == "" {
+		storeBackend = memory.BackendMemory
+	}
+	if storeBackend != memory.BackendMemory && storeBackend != memory.BackendSQLite {
+		return subagentCfg, "", fmt.Errorf("config %s: [subagents] store_backend must be \"memory\" or \"sqlite\", got %q", configPath, subagentCfg.StoreBackend)
+	}
+	if storeBackend == memory.BackendSQLite && subagentCfg.StorePath == "" {
+		subagentCfg.StorePath = defaultStorePath()
+	}
+	subagentCfg.StoreBackend = storeBackend
+	return subagentCfg, subagentCfg.StorePath, nil
 }
 
 func loadRuntimeMCPConfig(workspaceRoot string) (MCPConfig, []string, error) {
