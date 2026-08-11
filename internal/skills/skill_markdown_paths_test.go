@@ -141,3 +141,47 @@ func TestLoaderAdmitsSkillSchemas(t *testing.T) {
 		}
 	}
 }
+
+// A non-string value on a scalar-only field is a hard error naming the field,
+// not a silent coercion. Before the fix the bare type assertions dropped the
+// wrong-typed value and left the default in place - e.g. a flow-sequence
+// user-invocable parsed as []string{"false"}, the assertion failed, and
+// user-invocable stayed true.
+func TestFrontmatterRejectsNonStringValues(t *testing.T) {
+	for _, field := range []string{"name", "description", "argument-hint", "short-description", "user-invocable"} {
+		t.Run(field, func(t *testing.T) {
+			var parsed parsedSkill
+			if err := fillParsedSkillFrontmatter(&parsed, map[string]any{field: []string{"x"}}); err == nil ||
+				!strings.Contains(err.Error(), field) {
+				t.Fatalf("%s: err = %v, want a refusal naming the field", field, err)
+			}
+		})
+	}
+	// The direct regression: the exact value the parser produces for
+	// `user-invocable: [false]` must refuse instead of keeping default true.
+	t.Run("user-invocable flow sequence regression", func(t *testing.T) {
+		var parsed parsedSkill
+		if err := fillParsedSkillFrontmatter(&parsed, map[string]any{"user-invocable": []string{"false"}}); err == nil ||
+			!strings.Contains(err.Error(), "user-invocable") {
+			t.Fatalf("user-invocable: err = %v, want a refusal naming the field", err)
+		}
+	})
+	t.Run("triggers non-string", func(t *testing.T) {
+		var parsed parsedSkill
+		if err := fillParsedSkillFrontmatter(&parsed, map[string]any{"triggers": 7}); err == nil ||
+			!strings.Contains(err.Error(), "triggers") {
+			t.Fatalf("triggers: err = %v, want a refusal naming the field", err)
+		}
+	})
+}
+
+// The end-to-end regression: `user-invocable: [false]` must fail the whole
+// load, not register the skill as user-invocable (the default that survived
+// the silent coercion).
+func TestLoaderRejectsFlowSequenceOnScalarField(t *testing.T) {
+	root := skillRootWithFrontmatter(t, "user-invocable: [false]\n")
+	_, err := loadMarkdown(root)
+	if err == nil || !strings.Contains(err.Error(), "user-invocable") {
+		t.Fatalf("err = %v, want a load refusal naming user-invocable", err)
+	}
+}

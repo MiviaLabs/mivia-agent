@@ -254,12 +254,16 @@ func (s *sqliteStore) Save(ctx context.Context, e Entry) (Result, error) {
 	if e.Created == "" {
 		e.Created = time.Now().Format("2006-01-02")
 	}
-	rendered := e.Render()
-	id := entryID(e.Scope, e.Title, rendered)
 	db, org := s.dbFor(e.Scope)
 	if db == nil {
 		return Result{}, errors.New("org scope is not available (no org store on this machine)")
 	}
+	rendered := e.Render()
+	// The content-addressed id includes the org identity, so an identical
+	// entry saved under a different org id on a shared org.db file gets its
+	// own namespace-distinct id and cannot collide with (or be dropped by) a
+	// row another org already wrote.
+	id := entryID(e.Scope, org, e.Title, rendered)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := db.BeginTx(ctx, nil)
@@ -271,7 +275,7 @@ func (s *sqliteStore) Save(ctx context.Context, e Entry) (Result, error) {
 	// existing result instead of a spurious "store is full" error (parity with
 	// memStore, which checks the id before the cap).
 	var exists int
-	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?)", id).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ? AND scope = ? AND org = ?)", id, string(e.Scope), org).Scan(&exists); err != nil {
 		return Result{}, err
 	}
 	if exists == 1 {

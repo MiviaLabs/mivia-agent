@@ -42,17 +42,25 @@ func (s *memStore) Save(ctx context.Context, e Entry) (Result, error) {
 		e.Created = time.Now().Format("2006-01-02")
 	}
 	rendered := e.Render()
-	id := entryID(e.Scope, e.Title, rendered)
+	org := ""
+	if e.Scope == ScopeOrg {
+		org = s.cfg.OrgID
+	}
+	// The content-addressed id includes the org identity (backend parity with
+	// the sqlite store), so an identical entry under a different org id cannot
+	// collide with an existing row.
+	id := entryID(e.Scope, org, e.Title, rendered)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows := &s.project
-	org := ""
 	if e.Scope == ScopeOrg {
 		rows = &s.org
-		org = s.cfg.OrgID
 	}
 	for _, row := range *rows {
-		if row.id == id {
+		// Defense-in-depth: the id is already org-namespaced, but the
+		// dedup loop also requires the row to belong to the same org so a
+		// stale or cross-org row can never answer another org's save.
+		if row.id == id && row.org == org {
 			return Result{ID: id, Scope: e.Scope, Org: org, Title: e.Title, Verdict: e.Verdict, Tags: append([]string(nil), e.Tags...), Created: e.Created, Snippet: e.Summary}, nil
 		}
 	}

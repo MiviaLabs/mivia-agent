@@ -22,7 +22,7 @@ func (m *MemoryLedgerRepository) AdmitSingleTask(_ context.Context, a SingleTask
 	if run.CreatedAt.IsZero() {
 		run.CreatedAt = m.now()
 	}
-	rec := &runRecord{snapshot: run, tasks: map[string]*taskRecord{a.Task.TaskID: {snapshot: a.Task.Clone()}}, events: make([]LifecycleEvent, 0, 16), sequences: map[string]uint64{}, idemKeys: map[string]string{a.IdempotencyKey: run.RunID}}
+	rec := &runRecord{snapshot: run, tasks: map[string]*taskRecord{a.Task.TaskID: {snapshot: a.Task.Clone()}}, events: make([]LifecycleEvent, 0, 16), eventIDs: map[string]struct{}{}, sequences: map[string]uint64{}, idemKeys: map[string]string{a.IdempotencyKey: run.RunID}}
 	m.idemLookup[a.IdempotencyKey] = run.RunID
 	m.runs[run.RunID] = rec
 	return nil

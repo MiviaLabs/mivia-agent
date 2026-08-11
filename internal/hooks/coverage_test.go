@@ -1,9 +1,12 @@
 package hooks
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestAppendBoundedPreservesBoundaries(t *testing.T) {
@@ -147,6 +150,79 @@ func TestParseReactiveCorrectShapeNoWarning(t *testing.T) {
 	}
 	if !strings.Contains(v.context, "x") {
 		t.Fatalf("context must contain the reason, got %q", v.context)
+	}
+}
+
+// parseTimeout must range-check the DECLARED seconds before multiplying into a
+// time.Duration. time.Duration is int64, so the multiplication wraps modulo
+// 2^64: (2^55+1)*10^9 ≡ 10^9 (mod 2^64), i.e. a huge declared value wraps onto
+// exactly 1s = MinTimeout and used to pass the post-multiplication check.
+func TestParseTimeoutRejectsOverflowThatWrapsIntoRange(t *testing.T) {
+	overflow := int64(1)<<55 + 1
+	d, err := parseTimeout(overflow, 0)
+	if err == nil {
+		t.Fatalf("parseTimeout(%d) must error, got %v", overflow, d)
+	}
+	if d == MinTimeout {
+		t.Fatalf("parseTimeout(%d) must not resolve to MinTimeout", overflow)
+	}
+	// The declared bounds are still accepted exactly.
+	if d, err := parseTimeout(int64(1), 0); err != nil || d != MinTimeout {
+		t.Fatalf("parseTimeout(1) = %v, %v; want MinTimeout", d, err)
+	}
+	if d, err := parseTimeout(int64(600), 0); err != nil || d != MaxTimeout {
+		t.Fatalf("parseTimeout(600) = %v, %v; want MaxTimeout", d, err)
+	}
+	// Out-of-range declared seconds error, including values that would wrap
+	// onto an in-range duration.
+	for _, bad := range []int64{0, 601, -1, math.MaxInt64} {
+		if d, err := parseTimeout(bad, 0); err == nil {
+			t.Errorf("parseTimeout(%d) must error, got %v", bad, d)
+		}
+	}
+}
+
+// Both deny paths that splice hook-controlled text into the model-visible
+// reason must stay within maxReasonBytes plus the fixed truncation notice. Hook
+// stdout is captured up to MaxOutputBytes (8 KiB), which exceeds maxReasonBytes
+// (4 KiB), so a >4 KiB decision string used to reach the model whole.
+func TestPreToolUseDenyReasonsStayBounded(t *testing.T) {
+	notice := fmt.Sprintf("\n... truncated at %d bytes", maxReasonBytes)
+	limit := maxReasonBytes + len(notice)
+	huge := strings.Repeat("x", 5<<10)
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"flat decision", `{"decision":"` + huge + `"}`},
+		{"nested permissionDecision", `{"hookSpecificOutput":{"permissionDecision":"` + huge + `"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := parsePreToolUse(execution{program: "/tmp/h.sh"}, tc.body)
+			if !v.denied {
+				t.Fatalf("must deny: %#v", v)
+			}
+			if len(v.reason) > limit {
+				t.Fatalf("deny reason length = %d, want <= %d", len(v.reason), limit)
+			}
+			if !strings.Contains(v.reason, "truncated at") {
+				t.Fatalf("deny reason must carry the truncation notice, got %q", v.reason)
+			}
+		})
+	}
+	// A rune-heavy decision truncates on a rune boundary, so the reason stays
+	// valid UTF-8 for the model payload.
+	runeHeavy := strings.Repeat("é", 5<<10)
+	v := parsePreToolUse(execution{program: "/tmp/h.sh"}, `{"hookSpecificOutput":{"permissionDecision":"`+runeHeavy+`"}}`)
+	if !v.denied {
+		t.Fatalf("rune-heavy decision must deny: %#v", v)
+	}
+	if !utf8.ValidString(v.reason) {
+		t.Fatalf("rune-heavy deny reason must be valid UTF-8: %q", v.reason)
+	}
+	if len(v.reason) > limit {
+		t.Fatalf("rune-heavy deny reason length = %d, want <= %d", len(v.reason), limit)
 	}
 }
 

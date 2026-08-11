@@ -148,6 +148,17 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 	for _, task := range ready {
 		if err := c.transitionTask(h, task, string(ledger.TaskStatusRunning)); err == nil {
 			continue
+		} else if c.taskDurablyRunning(h, task.ID) {
+			// The queued -> running CAS succeeded but the task_running event
+			// append failed (a transient persistence error, not a dispatch
+			// failure). The task is durably running: join the append error
+			// into the run error for observability, but record NO result and
+			// leave the task in pending so buildBatch dispatches it. Without
+			// this branch the task would be recorded 'failed' without ever
+			// reaching the pool, and recordRunResults would then CAS the
+			// durably-running task running -> failed — a terminal status for
+			// a task that never executed.
+			runErr = joinError(runErr, err)
 		} else if c.queueRecoveredRetry(h, task, pending, queue, states) {
 			continue
 		} else if c.isCancelClaimed(h, task.ID) {
@@ -168,6 +179,21 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 		}
 	}
 	return runErr
+}
+
+// taskDurablyRunning reports whether the task's current ledger status is
+// running. When a startReady dispatch CAS (queued -> running) succeeded but
+// the task_running event append failed, this distinguishes the transient
+// append failure from a genuine dispatch failure: a durably-running task must
+// still be dispatched, never recorded as failed without executing. A ledger
+// read error reports false so the caller falls through to the legacy failure
+// path unchanged.
+func (c *coordinator) taskDurablyRunning(h *RunHandle, taskID string) bool {
+	snap, err := c.repo.GetTask(h.poolCtx, h.runID, taskID)
+	if err != nil {
+		return false
+	}
+	return snap.Status == string(ledger.TaskStatusRunning)
 }
 
 // isCancelClaimed reports whether the task's current ledger status shows it has
