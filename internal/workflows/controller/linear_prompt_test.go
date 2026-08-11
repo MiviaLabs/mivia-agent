@@ -344,9 +344,10 @@ func promptWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 func TestAgentStepRequestPromptPersistenceFailSoft(t *testing.T) {
 	const runID = "wfr-prompt-failsoft"
 	// The prompt is deterministic (template "task={{inputs.task}}" over the
-	// same inputs and an empty refs block), so the test can name the exact
-	// content ref the controller will try to store for it.
-	promptBody := "task=x" + evidenceRefsBlock(runID, nil)
+	// same inputs and an empty refs block, with the evidence-refs block FIRST
+	// per INV-68-6), so the test can name the exact content ref the controller
+	// will try to store for it.
+	promptBody := evidenceRefsBlock(runID, nil) + "task=x"
 	promptRef := "sha256:" + workflowledger.DigestHex([]byte(promptBody))
 	for _, tc := range []struct {
 		name         string
@@ -539,5 +540,101 @@ func TestAgentStepRetriesProviderMarkedReadDeadline(t *testing.T) {
 	}
 	if firstCalls != 3 {
 		t.Fatalf("first-step calls = %d, want 3 (1 + 2 retries); all calls = %d", firstCalls, len(runner.calls))
+	}
+}
+
+// renderPromptHarness builds a controller and renders one step prompt directly
+// so the INV-68-6 tests can drive renderStepPrompt in isolation.
+func renderPromptHarness(t *testing.T, runID string, tmpl string, stepInputs map[string]any, evidence map[string]any, refs map[string]ArtifactRef, maxBytes int) (string, error) {
+	t.Helper()
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, &linearRunner{}, linearWorkflow(t), nil, nil, runID, []byte("snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := definition.Step{ID: "review", Kind: "agent"}
+	if maxBytes > 0 {
+		step.Context = []definition.ContextBinding{{From: "inputs.big", As: "big", MaxBytes: maxBytes}}
+	}
+	attempt := workflowledger.StepAttempt{AttemptID: "wfa-review-1", RunID: ctrl.RunID, StepID: "review", AttemptNo: 1, Status: workflowledger.AttemptStatusRunning}
+	return ctrl.renderStepPrompt(context.Background(), attempt, StepRuntime{Template: tmpl}, step, stepInputs, evidence, refs)
+}
+
+// TestRenderStepPromptPlacesEvidenceRefsBlockBeforeTemplateBody pins INV-68-6:
+// the fixed "Evidence refs:" header renders FIRST and the per-step template
+// body follows it, so the header is the prompt's byte-identical prefix.
+func TestRenderStepPromptPlacesEvidenceRefsBlockBeforeTemplateBody(t *testing.T) {
+	const runID = "wfr-prefix-order"
+	prompt, err := renderPromptHarness(t, runID, "task={{inputs.task}}", map[string]any{"task": "x"}, nil, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := "Evidence refs: every prior-step output is stored in the workflow ledger"
+	idxHeader := strings.Index(prompt, header)
+	if idxHeader != 0 {
+		t.Fatalf("evidence-refs header must be the prompt prefix (index %d): %q", idxHeader, prompt)
+	}
+	idxBody := strings.Index(prompt, "task=x")
+	if idxBody <= idxHeader {
+		t.Fatalf("template body must follow the evidence block: header@%d body@%d prompt=%q", idxHeader, idxBody, prompt)
+	}
+}
+
+// TestRenderStepPromptEvidenceHeaderIsByteIdenticalAcrossSteps pins INV-68-6:
+// the fixed header prefix (the run ID is constant per run) is byte-identical
+// across every step prompt in one run even when the per-step template bodies
+// and evidence refs differ.
+func TestRenderStepPromptEvidenceHeaderIsByteIdenticalAcrossSteps(t *testing.T) {
+	const runID = "wfr-prefix-identical"
+	first, err := renderPromptHarness(t, runID, "first={{inputs.task}}", map[string]any{"task": "one"}, nil, map[string]ArtifactRef{
+		"prior": {Step: "prior", Attempt: 1, Ref: "sha256:abc", Bytes: 5, Digest: "abc"},
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := renderPromptHarness(t, runID, "second={{inputs.task}} {{evidence.other}}", map[string]any{"task": "two"}, map[string]any{"other": "z"}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefixOf := func(p string) string {
+		end := strings.IndexByte(p, '\n')
+		if end < 0 {
+			return p
+		}
+		return p[:end+1]
+	}
+	if prefixOf(first) != prefixOf(second) {
+		t.Fatalf("step prompt prefixes differ:\n%q\n---\n%q", prefixOf(first), prefixOf(second))
+	}
+	if first == second {
+		t.Fatal("the two step prompts must still differ after the shared prefix")
+	}
+}
+
+// TestRenderStepPromptStillRespectsMaxStepContextBytes pins the cap behavior
+// of the INV-68-6 reorder: a template body plus the evidence block at exactly
+// maxStepContextBytes is accepted, and one byte over is rejected with an error
+// naming the cap.
+func TestRenderStepPromptStillRespectsMaxStepContextBytes(t *testing.T) {
+	const runID = "wfr-prefix-cap"
+	block := evidenceRefsBlock(runID, nil)
+	bodyPrefix := len("x=")
+	atCap := maxStepContextBytes - len(block) - bodyPrefix
+	big := strings.Repeat("x", atCap)
+	prompt, err := renderPromptHarness(t, runID, "x={{inputs.big}}", map[string]any{"big": big}, nil, nil, maxStepContextBytes)
+	if err != nil {
+		t.Fatalf("prompt at the cap must be accepted: %v", err)
+	}
+	if len(prompt) != maxStepContextBytes {
+		t.Fatalf("prompt = %d bytes, want exactly %d", len(prompt), maxStepContextBytes)
+	}
+
+	over := strings.Repeat("x", atCap+1)
+	_, err = renderPromptHarness(t, runID, "x={{inputs.big}}", map[string]any{"big": over}, nil, nil, maxStepContextBytes)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("error = %v, want a cap rejection containing %q", err, "exceeds")
+	}
+	if err != nil && !strings.Contains(err.Error(), fmt.Sprintf("%d", maxStepContextBytes)) {
+		t.Fatalf("error must name the cap %d: %v", maxStepContextBytes, err)
 	}
 }

@@ -29,13 +29,21 @@ func (c *LinearController) renderStepPrompt(ctx context.Context, attempt workflo
 		}
 		log.Printf("workflow: run %s step %s attempt %d prompt %s is not loadable (%v); rendering fresh", c.RunID, step.ID, attempt.AttemptNo, attempt.PromptRef, err)
 	}
+	// INV-68-6: the evidence-refs block renders FIRST so the fixed
+	// "Evidence refs:" header (the run ID is constant per run) is a
+	// byte-identical prefix of every step prompt in a run, which is what a
+	// provider-implicit prompt cache can reuse across steps. template.Render
+	// still bounds the body at maxStepContextBytes and the defense-in-depth
+	// check below keeps the FINAL prompt at the cap, exactly as before the
+	// reorder (single-file revert per site).
+	block := evidenceRefsBlock(c.RunID, refs)
 	prompt, err := template.Render(runtime.Template, stepInputs, evidence, maxBinding(step), maxStepContextBytes)
 	if err != nil {
 		return "", err
 	}
-	prompt += evidenceRefsBlock(c.RunID, refs)
+	prompt = block + prompt
 	// Defense-in-depth: template.Render already bounded the rendered body at
-	// maxStepContextBytes; the appended evidence-refs block is the only thing
+	// maxStepContextBytes; the prepended evidence-refs block is the only thing
 	// that can push the final prompt over the cap.
 	if len(prompt) > maxStepContextBytes {
 		return "", fmt.Errorf("rendered step prompt exceeds %d bytes", maxStepContextBytes)

@@ -394,6 +394,7 @@ func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
 		s.mu.Unlock()
 		return false
 	}
+	outgoing := s.prefixIdentity
 	old := s.binding.Dispatcher
 	s.agentSurfaceGeneration++
 	s.SystemPrompt = pub.Prompt
@@ -405,7 +406,17 @@ func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
 	s.binding.AgentSurfaceGeneration = s.agentSurfaceGeneration
 	s.invalidateLocked()
 	setSystemMessageLocked(s, pub.Prompt)
+	// TryPublishAgentSurface is one of the four identity-capture triggers
+	// (INV-68-8). The incoming identity reflects the freshly published
+	// surface; when the wire-affecting subset changed, exactly one
+	// KindPrefixReset event is built under the lock and published after
+	// unlock (INV-68-2). Refused and unchanged paths emit nothing.
+	incoming := s.capturePrefixIdentityLocked()
+	s.prefixIdentity = incoming
+	reset := s.buildPrefixResetLocked(outgoing, incoming, true)
+	bus := s.EventBus
 	s.mu.Unlock()
+	publishPrefixResetEvent(bus, s.SessionID, reset)
 	if old != nil && old != pub.Dispatcher {
 		old.Close()
 	}

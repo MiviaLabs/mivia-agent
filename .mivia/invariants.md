@@ -165,6 +165,19 @@ may be separate processes or hosts.
 |----|----------|-----------|---------|---------------|
 | INV-WF-1 | Safety | Every workflow step attempt and every run transition is observable: a durable `wf_*` ledger event is written for run created/status/attempt started/completed/execution/resumed, and the controller emits a progress event at step start/end and run finish when a `ProgressSink` is attached | `TestLinearProgressStepStartedAndCompletedOnSuccess`, `TestPanelStepRefusalPersistsDurableCause`, `TestControllerRunEmitsRunFinished`, `TestStartNewResumeRecordsRunResumed` | |
 
+## Prefix-stability invariants (plan 68)
+
+| ID | Category | Invariant | Test(s) | Last Verified |
+|----|----------|-----------|---------|---------------|
+| INV-68-1 | Safety | PrefixIdentity equality is necessary and sufficient for byte-equal request prefixes: no wire-affecting input (provider/model, reasoning dial, temperature value pair, tool-schema digest, system-prompt digest) may be absent from the identity | `TestPrefixIdentityStableAcrossEqualBindingCaptures`, `TestChatTurnRequestBodyIsByteStableAcrossEqualPrefixIdentity` | |
+| INV-68-2 | Safety | Every wire-affecting identity field change emits exactly one KindPrefixReset naming the changed category(ies); equal identity and refused paths emit nothing (no false reset) | `TestSwitchBindingEmitsPrefixResetNamingChangedCategory`, `TestPublishAgentSurfaceEmitsPrefixResetOnAgentSwitch`, `TestPublishAgentSurfaceEmitsPrefixResetOnToolAdmission` | |
+| INV-68-3 | Safety | Equal identity plus equal message history produces byte-identical serialized request bodies | `TestChatTurnRequestBodyIsByteStableAcrossEqualPrefixIdentity` | |
+| INV-68-4 | Safety | PrefixIdentity and KindPrefixReset are read-only observability, never consulted by runtime.Dispatcher, ScopedRegistry, or any authorization check | `TestPrefixResetAuthorityUnchanged` | |
+| INV-68-5 | Safety | The deferred-tool index is frozen within one AgentSurfaceGeneration and never re-rendered after an admission | `TestDeferredIndexUnchangedAcrossAdmissionsWithinOneGeneration` | |
+| INV-68-6 | Safety | The evidenceRefsBlock fixed header is a byte-identical prefix of every step prompt in a run | `TestRenderStepPromptEvidenceHeaderIsByteIdenticalAcrossSteps` | |
+| INV-68-7 | Safety | KindPrefixReset telemetry carries no prompt content, digest preimage, tool-schema body, or tool-argument value | `TestPrefixResetEventIsSealedAndContentFree` | |
+| INV-68-8 | Safety | Prefix identity capture stays off the per-turn hot path: only NewSession, SwitchBinding, TryPublishAgentSurface, and SetReasoningEffort capture | `TestPrefixIdentityNotCapturedOnPerTurnSavePath` | |
+
 ## Liveness Gap Notes
 
 | ID | Gap | Mitigation | Feasibility |
