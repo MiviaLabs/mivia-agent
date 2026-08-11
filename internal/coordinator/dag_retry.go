@@ -8,6 +8,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
+// retryRequeueProbeInterval bounds how often flushRetries re-probes a re-queue
+// CAS that keeps failing. A failed entry is rescheduled to now plus this
+// interval instead of being left with an elapsed requeueAt, so waitForRetry
+// sleeps instead of returning nil immediately — an elapsed requeueAt would
+// make the caller loop busy-spin flushRetries at 100% CPU against a
+// persistently failing CAS. Bounded and strictly positive by construction.
+const retryRequeueProbeInterval = time.Second
+
 // flushRetries re-queues every retry task whose backoff elapsed: the ledger
 // moves retry_pending -> queued, the task_retry_queued event is appended and
 // emitted, and the task re-enters the pending set so collectReady can pick it
@@ -29,6 +37,16 @@ func (c *coordinator) flushRetries(h *RunHandle, tasks []subagents.Task, pending
 		}
 		if err := c.repo.CompareAndSetTaskStatus(h.poolCtx, h.runID, taskID, snap.Version, string(ledger.TaskStatusQueued)); err != nil {
 			runErr = joinError(runErr, fmt.Errorf("re-queue retry task %q: %w", taskID, err))
+			// The task stays in the retry queue (a failed CAS must not drop or
+			// re-pend it), but its entry must be rescheduled to a bounded
+			// future probe time: an elapsed requeueAt left in place makes
+			// waitForRetry compute sleep <= 0 and return nil immediately, so
+			// the caller loop busy-spins flushRetries at 100% CPU against the
+			// failing CAS. A persistent failure (e.g. ErrClaimHeld from lease
+			// theft) still terminates via the heartbeat canceling poolCtx
+			// within ~claimHeartbeat, after which waitForRetry's select fires
+			// and the loop breaks with markCanceledWithoutResults.
+			queue[taskID] = c.nowLocked().Add(retryRequeueProbeInterval)
 			continue
 		}
 		// The retry attempt was already minted by processResults when the task

@@ -208,6 +208,63 @@ func TestCoverageFlushRetriesCASFailureJoinsError(t *testing.T) {
 	}
 }
 
+// TestCoverageFlushRetriesCASFailureReschedulesFuture pins dag_retry.go:38-50:
+// when the retry_pending -> queued re-queue CAS fails, the error is joined
+// into the run error, the task stays in the retry queue, AND the queue entry
+// is rescheduled to a strictly-future probe time so earliestRequeue/waitForRetry
+// sleep instead of returning nil immediately. Without the reschedule an elapsed
+// requeueAt is left behind and the DAG loop busy-spins flushRetries at 100% CPU
+// against a persistently failing CAS. Fails before the fix (requeueAt stays
+// elapsed). Negative path: the failed CAS must not spin (future requeueAt), and
+// must not drop or re-pend the task.
+func TestCoverageFlushRetriesCASFailureReschedulesFuture(t *testing.T) {
+	ctx := context.Background()
+	repo := &flushRetriesCASFailingRepo{LedgerRepository: ledger.NewMemoryLedgerRepository()}
+	c := newIdempotencyCoordinator(repo).(*coordinator)
+	const runID = "flush-cas-probe-run"
+	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{RunID: runID, Status: ledger.RunStatusRunning}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	now := time.Now()
+	if err := repo.CreateTask(ctx, ledger.TaskSnapshot{
+		RunID: runID, TaskID: "t1", Status: string(ledger.TaskStatusRetryPending), Version: 1, CreatedAt: now,
+		Attempts: []ledger.AttemptSnapshot{{AttemptID: "attempt-1", TaskID: "t1", RunID: runID, AttemptNum: 1, StartedAt: now, Status: string(ledger.TaskStatusRetryPending)}},
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	h := c.newRunHandle(runID, "", map[string]string{"t1": "attempt-1"}, "", false)
+
+	pending := map[string]subagents.Task{}
+	queue := map[string]time.Time{"t1": time.Now().Add(-time.Minute)} // backoff elapsed
+	tasks := []subagents.Task{{ID: "t1", Name: "worker"}}
+
+	err := c.flushRetries(h, tasks, pending, queue)
+	if err == nil {
+		t.Fatal("flushRetries: expected the CAS failure to be joined into the run error")
+	}
+	if !strings.Contains(err.Error(), `re-queue retry task "t1"`) {
+		t.Fatalf("flushRetries error = %v, want re-queue retry task error", err)
+	}
+	// (a) The task stays in the retry queue — a failed CAS must not drop it...
+	if _, ok := queue["t1"]; !ok {
+		t.Fatal("t1 was dropped from the retry queue despite the failed re-queue CAS")
+	}
+	// ...nor re-pend it.
+	if _, ok := pending["t1"]; ok {
+		t.Fatal("t1 must not re-enter pending when the re-queue CAS failed")
+	}
+	// (c) The rescheduled requeueAt must be strictly in the future so
+	// earliestRequeue/waitForRetry sleep instead of returning nil immediately
+	// (the elapsed-requeueAt busy-spin negative path).
+	requeueAt := queue["t1"]
+	if !requeueAt.After(c.nowLocked()) {
+		t.Fatalf("requeueAt = %v, want strictly after now (an elapsed requeueAt left in place would busy-spin)", requeueAt)
+	}
+	if sleep := time.Until(earliestRequeue(queue)); sleep <= 0 {
+		t.Fatalf("earliestRequeue sleep = %v, want > 0 (waitForRetry would return nil immediately and spin)", sleep)
+	}
+}
+
 // flushRetriesAppendFailingRepo fails every AppendEvent, driving the
 // retry-event append failure branch of flushRetries (dag_retry.go:44-45).
 type flushRetriesAppendFailingRepo struct {
