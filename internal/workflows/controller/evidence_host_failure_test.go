@@ -89,6 +89,46 @@ func TestHostFailureRepairIsBounded(t *testing.T) {
 	}
 }
 
+// A run that exhausts the host-failure re-entry budget must record the
+// TERMINAL failure route on the budget-exhausting attempt — never the
+// un-honored repair target. settleAgentAttempt already rewrites the route
+// before persisting (linear_execution.go); settleHostFailure must do the
+// same, or the Failed run claims an active repair step that never ran (DC-9)
+// and a crash between the attempt-complete write and the run-fail CAS resumes
+// into a gate past its spent budget (DC-4).
+func TestHostFailureBudgetExhaustionRecordsTerminalRoute(t *testing.T) {
+	ctrl, _, repo := newHostFailureFixture(t, "repair", 40)
+	got, _ := ctrl.Run(context.Background())
+	if got.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("run status = %q, want failed once the repair budget is spent", got.Status)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateRuns, repairRuns := 0, 0
+	var lastFailedGate workflowledger.StepAttempt
+	for _, a := range attempts {
+		switch a.StepID {
+		case "verify":
+			gateRuns++
+			if a.Status == workflowledger.AttemptStatusFailed && a.AttemptNo > lastFailedGate.AttemptNo {
+				lastFailedGate = a
+			}
+		case "repair":
+			repairRuns++
+		}
+	}
+	// verify#1 fails -> repair#1; verify#2 fails -> repair#2; verify#3 fails
+	// with the budget spent -> run fails.
+	if gateRuns != 3 || repairRuns != 2 {
+		t.Fatalf("verify ran %d times (want 3), repair ran %d times (want 2): %+v", gateRuns, repairRuns, attempts)
+	}
+	if lastFailedGate.Status != workflowledger.AttemptStatusFailed || lastFailedGate.ToStepID != "failure" {
+		t.Fatalf("last failed verify attempt = %+v; want failed routed to the terminal failure once the budget is spent, not the un-honored repair target", lastFailedGate)
+	}
+}
+
 // A step that names no repair target keeps the old behaviour exactly: the run
 // fails, and the host cause reaches the caller.
 func TestHostFailureWithoutARepairTargetStillFailsTheRun(t *testing.T) {
@@ -152,4 +192,80 @@ func newHostFailureFixture(t *testing.T, onFailure string, maxAttempts int) (*Li
 
 func repairCallKey(n int) string {
 	return "repair#" + string(rune('0'+n))
+}
+
+// TestJoinInFlightEvidenceGateAttemptLeavesItForAdvance: resume must not
+// hard-fail on an in-flight EVIDENCE GATE attempt, which has no agent runtime
+// to join. JoinInFlightAttempt leaves it in-flight; Advance's admitAttempt
+// marks the stale attempt interrupted and admits a fresh attempt that re-runs
+// the gate.
+// Regression: resume aborted with "step %q has no snapshotted runtime", which
+// parked any run that died mid-gate forever (the CLI resume join could not
+// finish, so the run never reached Advance's reconciliation).
+func TestJoinInFlightEvidenceGateAttemptLeavesItForAdvance(t *testing.T) {
+	ctx := context.Background()
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "evidence-join", InitialStep: "verify",
+		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Steps: []definition.Step{
+			{ID: "verify", Kind: "evidence_gate", Verifier: "always-passes", OnFailure: "failure"},
+		},
+		Transitions: []definition.Transition{
+			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+			{From: "verify", To: "failure", Match: definition.MatchCriteria{Status: "failed"}},
+		},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := verifier.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "always-passes", result: verifier.Result{
+		Status: "passed", Checks: []verifier.Check{{Name: "check", Status: "passed"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{}}, compiled, map[string]StepRuntime{}, map[string]any{"task": "x"}, "wfr-gate-join", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetVerifiers(cat); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Seed the crash artifact: a RUNNING gate attempt with no coordinator child.
+	attempt := workflowledger.StepAttempt{AttemptID: "wfa-verify-1", RunID: ctrl.RunID, StepID: "verify", AttemptNo: 1, Status: workflowledger.AttemptStatusRunning}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	// Regression: this used to error "step \"verify\" has no snapshotted runtime".
+	if err := ctrl.JoinInFlightAttempt(ctx, attempt); err != nil {
+		t.Fatalf("JoinInFlightAttempt() error = %v, want nil (leave the gate attempt in-flight)", err)
+	}
+	got, done, err := ctrl.Advance(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done || got.ActiveStepID != "success" {
+		t.Fatalf("advance = %+v, done=%t; want the gate re-run routed to success", got, done)
+	}
+	attempts, err := repo.ListStepAttempts(ctx, ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stale, fresh bool
+	for _, a := range attempts {
+		if a.StepID == "verify" && a.AttemptNo == 1 && a.Status == workflowledger.AttemptStatusInterrupted {
+			stale = true
+		}
+		if a.StepID == "verify" && a.AttemptNo == 2 && a.Status == workflowledger.AttemptStatusSucceeded {
+			fresh = true
+		}
+	}
+	if !stale || !fresh {
+		t.Fatalf("attempts = %+v, want attempt 1 interrupted and attempt 2 succeeded", attempts)
+	}
 }
