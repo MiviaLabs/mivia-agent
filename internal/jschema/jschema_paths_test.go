@@ -11,7 +11,9 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -354,6 +356,177 @@ func TestStripOneCodeFenceRejectsNBacktickContentInNBacktickFence(t *testing.T) 
 	if got := StripOneCodeFence(in5safe); got != want5safe {
 		t.Fatalf("5-backtick fence with safe body lines was not stripped: got %q, want %q", got, want5safe)
 	}
+}
+
+// correctiveRuneMix returns a string of exactly n bytes mixing multi-byte é
+// runes with ASCII fillers (at least one multi-byte rune when n >= 2), so a
+// raw byte cut at any offset can land inside a rune.
+func correctiveRuneMix(n int) string {
+	s := strings.Repeat("é", n/2)
+	if pad := n - len(s); pad > 0 {
+		s += strings.Repeat("x", pad)
+	}
+	return s
+}
+
+// TestCorrectiveMessagesNeverSplitsRunes pins the DC-6 bound/truncation
+// invariant: every corrective message built for the model must be valid UTF-8
+// and stay within MaxCorrectiveBytes. The regression (RED before the fix):
+// the three formatters cut their detail at raw byte offsets, so a detail whose
+// cut offset lands inside a multi-byte rune carried a dangling lead byte into
+// the retry turn.
+func TestCorrectiveMessagesNeverSplitsRunes(t *testing.T) {
+	const capBytes = MaxCorrectiveBytes
+	smallSchema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+		"required":   []any{"ok"},
+	}
+
+	// Both é-alignment variants: "x" puts the é runes at odd offsets, "xx" at
+	// even offsets, so whichever parity the raw cut has, one variant splits.
+	oddAligned := "x" + strings.Repeat("é", capBytes/2)   // 1025 bytes
+	evenAligned := "xx" + strings.Repeat("é", capBytes/2) // 1026 bytes
+
+	assertCorrectiveParityValidity(t, oddAligned, evenAligned, smallSchema)
+	assertCorrectiveBoundaryTable(t, capBytes, smallSchema)
+
+	// Redaction must still apply after rune-safe truncation: a rune-splitting
+	// detail with a fixed redactor returns exactly the redactor output.
+	if got := FormatCorrective(errors.New(oddAligned), func(string) string { return "[redacted]" }); got != "[redacted]" {
+		t.Fatalf("redactor not applied after rune-safe truncation: %q", got)
+	}
+
+	// Pin the fix to the shared helper: on a plain (non-jsonschema) error,
+	// formatValidationErr must equal the rune-safe truncation of the error
+	// text exactly. RED before the fix: the raw cut leaves the dangling lead
+	// byte, TruncateRuneSafe backs off to the rune start.
+	if got := formatValidationErr(errors.New(oddAligned)); got != textutil.TruncateRuneSafe(oddAligned, capBytes) {
+		t.Fatalf("formatValidationErr = %q, want TruncateRuneSafe output %q", got, textutil.TruncateRuneSafe(oddAligned, capBytes))
+	}
+}
+
+// assertCorrectiveParityValidity runs both é-alignment variants through all
+// three corrective formatters. "x" puts the é runes at odd byte offsets, "xx"
+// at even offsets, so whichever parity the raw cut has, one variant splits on
+// the pre-fix code; every output must be valid UTF-8 and stay within the cap.
+func assertCorrectiveParityValidity(t *testing.T, oddAligned, evenAligned string, smallSchema map[string]any) {
+	t.Helper()
+	const capBytes = MaxCorrectiveBytes
+
+	// formatValidationErr must never emit invalid UTF-8. Guaranteed RED: the
+	// raw cut at byte 1024 of oddAligned ends on an é continuation byte.
+	for _, detail := range []string{oddAligned, evenAligned} {
+		m := formatValidationErr(errors.New(detail))
+		if !utf8.ValidString(m) {
+			t.Fatalf("formatValidationErr emitted invalid UTF-8 for %d-byte detail", len(detail))
+		}
+		if len(m) > capBytes {
+			t.Fatalf("formatValidationErr = %d bytes, cap %d", len(m), capBytes)
+		}
+	}
+
+	// FormatCorrective with both parities.
+	for _, detail := range []string{oddAligned, evenAligned} {
+		m := FormatCorrective(errors.New(detail), nil)
+		if !utf8.ValidString(m) {
+			t.Fatalf("FormatCorrective emitted invalid UTF-8 for %d-byte detail", len(detail))
+		}
+		if len(m) > capBytes {
+			t.Fatalf("FormatCorrective = %d bytes, cap %d", len(m), capBytes)
+		}
+	}
+
+	// FormatCorrectiveWithSchema: the cut at room (budget minus prefix and
+	// schema section) must also land on a rune boundary for either parity.
+	// The small schema leaves room, so the cap bound holds here too.
+	for _, detail := range []string{oddAligned, evenAligned} {
+		m := FormatCorrectiveWithSchema(errors.New(detail), smallSchema, nil)
+		if !utf8.ValidString(m) {
+			t.Fatalf("FormatCorrectiveWithSchema emitted invalid UTF-8 for %d-byte detail", len(detail))
+		}
+		if len(m) > capBytes {
+			t.Fatalf("FormatCorrectiveWithSchema = %d bytes, cap %d", len(m), capBytes)
+		}
+	}
+}
+
+// assertCorrectiveBoundaryTable runs the DC-6 probes (0, max-1, max, max+1,
+// 2*max) with pure multi-byte and ASCII+multi-byte mixes across all three
+// corrective formatters: every output must be valid UTF-8 and stay bounded.
+func assertCorrectiveBoundaryTable(t *testing.T, capBytes int, smallSchema map[string]any) {
+	t.Helper()
+	boundaries := []struct {
+		name string
+		in   string
+	}{
+		{"empty", ""},
+		{"max-1", correctiveRuneMix(capBytes - 1)},
+		{"max", correctiveRuneMix(capBytes)},
+		{"max+1", correctiveRuneMix(capBytes + 1)},
+		{"2*max", correctiveRuneMix(capBytes * 2)},
+		{"pure multi-byte max", strings.Repeat("é", capBytes/2)},
+		{"pure multi-byte 2*max", strings.Repeat("é", capBytes)},
+	}
+	for _, bc := range boundaries {
+		for _, formatter := range []string{"FormatCorrective", "FormatCorrectiveWithSchema", "formatValidationErr"} {
+			var m string
+			switch formatter {
+			case "FormatCorrective":
+				m = FormatCorrective(errors.New(bc.in), nil)
+			case "FormatCorrectiveWithSchema":
+				m = FormatCorrectiveWithSchema(errors.New(bc.in), smallSchema, nil)
+			default:
+				m = formatValidationErr(errors.New(bc.in))
+			}
+			if !utf8.ValidString(m) {
+				t.Fatalf("%s(%q) emitted invalid UTF-8", formatter, bc.name)
+			}
+			if len(m) > capBytes {
+				t.Fatalf("%s(%q) = %d bytes, cap %d", formatter, bc.name, len(m), capBytes)
+			}
+		}
+	}
+}
+
+// FuzzCorrectiveNeverSplitsRunes pins the validity/bound property across
+// arbitrary input: the formatters never panic, always emit valid UTF-8, and
+// (where the soft cap applies) stay within MaxCorrectiveBytes.
+func FuzzCorrectiveNeverSplitsRunes(f *testing.F) {
+	seeds := []string{
+		"",
+		strings.Repeat("x", MaxCorrectiveBytes*2),
+		"x" + strings.Repeat("é", MaxCorrectiveBytes/2),
+		"xx" + strings.Repeat("é", MaxCorrectiveBytes/2),
+		strings.Repeat("🙂", 300),
+		strings.Repeat("日本語", 400),
+		strings.Repeat("x", 1000) + strings.Repeat("é", 600),
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	smallSchema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+		"required":   []any{"ok"},
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		if m := FormatCorrective(errors.New(s), nil); !utf8.ValidString(m) {
+			t.Fatalf("FormatCorrective emitted invalid UTF-8: %q", m)
+		} else if len(m) > MaxCorrectiveBytes {
+			t.Fatalf("FormatCorrective = %d bytes, cap %d", len(m), MaxCorrectiveBytes)
+		}
+		// FormatCorrectiveWithSchema may legitimately exceed the soft cap to
+		// preserve the never-truncated schema contract; assert validity only.
+		if m := FormatCorrectiveWithSchema(errors.New(s), smallSchema, nil); !utf8.ValidString(m) {
+			t.Fatalf("FormatCorrectiveWithSchema emitted invalid UTF-8: %q", m)
+		}
+		if m := formatValidationErr(errors.New(s)); !utf8.ValidString(m) {
+			t.Fatalf("formatValidationErr emitted invalid UTF-8: %q", m)
+		} else if len(m) > MaxCorrectiveBytes {
+			t.Fatalf("formatValidationErr = %d bytes, cap %d", len(m), MaxCorrectiveBytes)
+		}
+	})
 }
 
 func FuzzStripOneCodeFence(f *testing.F) {

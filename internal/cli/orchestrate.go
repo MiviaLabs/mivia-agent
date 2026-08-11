@@ -22,6 +22,16 @@ import (
 // delegate and dispatch_tasks on the same ledger, pool, cancellation, and
 // identity path as the canonical orchestration tools.
 func runThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, tasks []subagents.Task, key string, repos ...ledger.LedgerRepository) (ledger.RunSnapshot, *coordinator.RunResult, error) {
+	// Fail closed on an already-dead caller context: no work has been spawned,
+	// so there is nothing to salvage (INV-AG-21 covers mid-run cancellation,
+	// where the pool context is rooted in Background and finished work is read
+	// back). Spawning now would run side-effecting subagents for a caller that
+	// can no longer wait for or consume the result, and the tools would then
+	// report completed work for a canceled call. The tools convert this error
+	// into the structured cancel/timed_out envelope (statusFromErr).
+	if err := ctx.Err(); err != nil {
+		return ledger.RunSnapshot{}, nil, err
+	}
 	caller, ok := runtime.CallerFrom(ctx)
 	if !ok || caller.SessionID == "" {
 		// Direct callers are supported for synchronous compatibility tools. They
