@@ -180,10 +180,11 @@ func parsePreToolUse(result execution, body string) verdict {
 	}
 	if parsed.HookSpecificOutput == nil {
 		if parsed.Decision != "" {
-			return verdict{denied: true, reason: fmt.Sprintf(
+			reason := fmt.Sprintf(
 				"hook %s returned the flat {\"decision\":%q} shape, which belongs to PostToolUse and Stop. "+
 					"PreToolUse uses hookSpecificOutput.permissionDecision; mivia denies rather than read an "+
-					"unrecognised shape as permission", result.label(), parsed.Decision)}
+					"unrecognised shape as permission", result.label(), parsed.Decision)
+			return verdict{denied: true, reason: bound(reason, maxReasonBytes)}
 		}
 		return verdict{context: body}
 	}
@@ -213,9 +214,10 @@ func parsePreToolUse(result execution, body string) verdict {
 		// ask and defer have no dispatcher-layer prompt to escalate to, and an
 		// unknown value is a hook attempting a decision mivia cannot honour.
 		// Either way the permissive branch is the wrong place to land.
-		return verdict{denied: true, reason: fmt.Sprintf(
+		reason := fmt.Sprintf(
 			"hook %s returned permissionDecision %q; mivia accepts allow and deny only, and denies rather "+
-				"than treat an unsupported decision as permission", result.label(), out.PermissionDecision)}
+				"than treat an unsupported decision as permission", result.label(), out.PermissionDecision)
+		return verdict{denied: true, reason: bound(reason, maxReasonBytes)}
 	}
 }
 
