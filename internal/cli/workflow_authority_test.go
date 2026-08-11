@@ -11,8 +11,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// workflowDefaultProtectedPaths are the built-in write protections for
-// workflow agent steps (DefaultWritePathBlocklist in internal/config).
+// workflowDefaultProtectedPaths are concrete files under the built-in write
+// protections for workflow agent steps (DefaultWritePathBlocklist in
+// internal/config). ".git/config" is NOT a separate default: it is a file
+// inside the ".git" default directory, blocked by prefix match.
 func workflowDefaultProtectedPaths() []string {
 	return []string{".mivia/mivia.toml", ".git/config"}
 }
@@ -38,6 +40,7 @@ func blockedPaths(t *testing.T, registry interface {
 			{"write_file", map[string]any{"path": path, "content": "new"}},
 			{"search_replace", map[string]any{"path": path, "old_string": "old", "new_string": "new"}},
 			{"multi_edit", map[string]any{"path": path, "edits": []map[string]any{{"old_string": "old", "new_string": "new"}}}},
+			{"delete_file", map[string]any{"path": path}},
 		} {
 			t.Run(path+"/"+tc.tool, func(t *testing.T) {
 				args, err := json.Marshal(tc.args)
@@ -126,7 +129,8 @@ func TestWorkflowRegistryHonorsConfiguredWritePathBlocklist(t *testing.T) {
 		".mivia/agents/worker.toml",
 		".mivia/policy/commit-message.json",
 	})
-	// The built-in defaults stay blocked even with additions.
+	// The built-in defaults stay blocked even with additions; ".git/config"
+	// exercises the directory-prefix match against the ".git" default.
 	blockedPaths(t, registry, root, workflowDefaultProtectedPaths())
 	// An input that cleans into a configured entry is blocked.
 	for _, path := range []string{

@@ -431,7 +431,7 @@ func (r *Resolved) Validate() error {
 	if _, err := secretpath.New(r.Tools.SecretPathPatterns, r.Tools.SecretPathExceptions); err != nil {
 		return err
 	}
-	if err := validateToolResultBudgets(r.Tools); err != nil {
+	if err := validateTools(r.Tools); err != nil {
 		return err
 	}
 	// resolveToolsConfig has already turned <= 0 into the default, so anything

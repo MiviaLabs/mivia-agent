@@ -340,6 +340,30 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # side effects on mivia itself.
 env_blocklist = ["GIT_DIR", "GIT_WORK_TREE"]
 
+# ---- Write-path blocklist (workflow agent steps) ----
+# The write tools of workflow agent steps (write_file, search_replace,
+# multi_edit, delete_file) refuse these workspace-relative paths or
+# directories. Two paths are ALWAYS blocked and cannot be removed: .git and
+# .mivia/mivia.toml. This key ADDS to that default set. It cannot remove
+# entries.
+#
+# These entries restore the full protection that was previously compiled in:
+# workflow agents cannot edit agent definitions, hook-policy gates, rules,
+# skills, or the workflow definition they run under, and cannot tamper with
+# Go module metadata (dependency substitution executed by a later build step).
+# A project that omits this key leaves all of these writable by workflow
+# agents, including its own workflow definition - choose deliberately.
+write_path_blocklist = [
+    ".mivia/agents",   # agent definitions
+    ".mivia/policy",   # hook-policy gates
+    ".mivia/rules",    # durable rules
+    ".mivia/skills",   # skill definitions
+    ".mivia/workflows",# workflow definitions and templates
+    "go.mod",
+    "go.sum",
+    "go.work",
+]
+
 # Replace the default env var allowlist entirely
 # env_allowlist_only = ["PATH", "HOME", "USER", "PWD"]
 
