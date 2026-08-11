@@ -1,7 +1,7 @@
 # Backward-compatible name for the generic implementation specialist.
 name = "go-engineer"
 description = "Generic implementation specialist: investigates, edits, and verifies work in the current workspace."
-tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "write_file", "search_replace", "multi_edit", "run_command", "search", "fetch_url", "extract"]
+tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "write_file", "search_replace", "multi_edit", "delete_file", "run_command", "search", "fetch_url", "extract"]
 skills = [
   "architecture-review",
   "concurrency-review",
