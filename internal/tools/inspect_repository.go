@@ -1,17 +1,13 @@
 package tools
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -276,21 +272,6 @@ func inspectEnvelopeBytes(out inspectOutput) (int, error) {
 	return len(raw), nil
 }
 
-func (t *inspectRepositoryTool) newInspectEngine(in inspectRepositoryInput, re *regexp.Regexp, view ignoreView, envelopeBytes int) *inspectEngine {
-	return &inspectEngine{
-		ws:                   t.ws,
-		maxBytes:             t.maxBytes,
-		envelopeReserve:      envelopeBytes,
-		secretPathExceptions: t.secretPathExceptions,
-		secretPathPatterns:   t.secretPathPatterns,
-		view:                 view,
-		re:                   re,
-		glob:                 in.Glob,
-		maxResults:           in.MaxResults,
-		contextLines:         in.ContextLines,
-	}
-}
-
 // marshalInspectOutput serializes out and, if it would exceed maxBytes,
 // drops trailing results (marking the output truncated) until it fits. This
 // is the hard guarantee behind "never exceeds its result byte cap": the
@@ -317,179 +298,4 @@ func marshalInspectOutput(out inspectOutput, maxBytes int) (string, error) {
 		return "", fmt.Errorf("inspect_repository: result exceeds configured byte cap (%d bytes)", maxBytes)
 	}
 	return string(payload), nil
-}
-
-// inspectEngine walks normalized scopes in deterministic order, applying the
-// shared ignore/secret/glob policy once per scope, and bounds its own
-// accumulation by result count and (approximately) by byte budget.
-type inspectEngine struct {
-	ws       *workspace.Root
-	maxBytes int
-	// envelopeReserve is the exact marshaled byte size of everything in the
-	// output except Results (Execute measures it directly), so the budget
-	// below accounts for Provenance.Paths regardless of how many/how long the
-	// requested paths are.
-	envelopeReserve      int
-	secretPathExceptions []string
-	secretPathPatterns   []string
-	view                 ignoreView
-	re                   *regexp.Regexp
-	glob                 string
-	maxResults           int
-	contextLines         int
-}
-
-func (e *inspectEngine) run(ctx context.Context, scopes []inspectScope) ([]inspectResult, bool, string, error) {
-	seen := make(map[string]bool)
-	var collected []inspectResult
-	truncated := false
-	reason := ""
-	budget := e.maxBytes - e.envelopeReserve - inspectEnvelopeSlack
-	if budget < 0 {
-		budget = 0
-	}
-	used := 0
-	cappedScopes := 0
-
-	stop := func(r string) error {
-		if !truncated {
-			truncated = true
-			reason = r
-		}
-		if r == inspectTruncByteLimit {
-			return errMaxBytes
-		}
-		return errMaxMatches
-	}
-
-	for _, scope := range scopes {
-		if truncated {
-			break
-		}
-		errs := &walkErrors{maxErrs: 10}
-		walkErr := walkFilteredFiles(ctx, e.ws, scope.abs, e.glob, e.secretPathExceptions, e.secretPathPatterns, e.view, true, errs, func(path, rel string, _ os.FileInfo) error {
-			for _, m := range e.scanFileMatches(ctx, path, rel) {
-				key := m.Path + "\x00" + strconv.Itoa(m.Line)
-				if seen[key] {
-					continue
-				}
-				encoded, marshalErr := json.Marshal(m)
-				if marshalErr != nil {
-					continue
-				}
-				if e.maxBytes > 0 && used+len(encoded) > budget {
-					return stop(inspectTruncByteLimit)
-				}
-				seen[key] = true
-				collected = append(collected, m)
-				used += len(encoded)
-				if len(collected) >= e.maxResults {
-					return stop(inspectTruncResultLimit)
-				}
-			}
-			return ctx.Err()
-		})
-		if walkErr != nil && (errors.Is(walkErr, context.Canceled) || errors.Is(walkErr, context.DeadlineExceeded)) {
-			return collected, truncated, reason, walkErr
-		}
-		if errs.count() >= errs.maxErrs {
-			cappedScopes++
-		}
-	}
-	if !truncated && cappedScopes > 0 {
-		truncated = true
-		reason = inspectTruncWalkErrors
-	}
-
-	sort.Slice(collected, func(i, j int) bool {
-		if collected[i].Path != collected[j].Path {
-			return collected[i].Path < collected[j].Path
-		}
-		return collected[i].Line < collected[j].Line
-	})
-	return collected, truncated, reason, nil
-}
-
-// pendingMatch is a match awaiting its trailing "after" context lines.
-type pendingMatch struct {
-	line      int
-	text      string
-	before    []string
-	after     []string
-	needAfter int
-}
-
-// scanFileMatches scans one file for regex matches and returns each with its
-// exact requested context window. It streams the file once: "before" context
-// is a bounded ring buffer and "after" context is a bounded pending queue, so
-// memory use does not grow with file size (unlike buffering whole-file
-// content, which read_file's line-window path does for its own, different,
-// random-access use case).
-func (e *inspectEngine) scanFileMatches(ctx context.Context, path, rel string) []inspectResult {
-	f, _, err := openRegularFile(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-
-	var before []string
-	var queue []pendingMatch
-	var out []inspectResult
-	lineNo := 0
-
-	flush := func(p pendingMatch) {
-		ctxLines := make([]string, 0, len(p.before)+len(p.after))
-		ctxLines = append(ctxLines, p.before...)
-		ctxLines = append(ctxLines, p.after...)
-		out = append(out, inspectResult{Path: rel, Line: p.line, Text: p.text, Context: ctxLines})
-	}
-
-	for sc.Scan() {
-		if lineNo&0xff == 0 && ctx != nil && ctx.Err() != nil {
-			break
-		}
-		lineNo++
-		line := sc.Text()
-
-		remaining := queue[:0]
-		for _, p := range queue {
-			if p.needAfter > 0 {
-				p.after = append(p.after, line)
-				p.needAfter--
-			}
-			if p.needAfter == 0 {
-				flush(p)
-			} else {
-				remaining = append(remaining, p)
-			}
-		}
-		queue = remaining
-
-		if e.re.MatchString(line) {
-			text := line
-			if len(text) > 200 {
-				text = truncateUTF8(text, 200) + "..."
-			}
-			p := pendingMatch{line: lineNo, text: text, before: append([]string(nil), before...), needAfter: e.contextLines}
-			if p.needAfter == 0 {
-				flush(p)
-			} else {
-				queue = append(queue, p)
-			}
-		}
-
-		if e.contextLines > 0 {
-			before = append(before, line)
-			if len(before) > e.contextLines {
-				before = before[1:]
-			}
-		}
-	}
-	for _, p := range queue {
-		flush(p)
-	}
-	return out
 }

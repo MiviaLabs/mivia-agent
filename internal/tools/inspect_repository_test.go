@@ -3,11 +3,16 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // testMinInspectRepositoryBytes mirrors config.MinInspectRepositoryBytes
@@ -407,4 +412,135 @@ func TestInspectRepositoryLargeProvenancePathsStillRespectsByteCap(t *testing.T)
 	if !json.Valid([]byte(raw)) {
 		t.Fatalf("output is not valid JSON: %s", raw)
 	}
+}
+
+// TestInspectRepositoryScanStopsAtResultCountCap pins the
+// bounded-accumulation contract on the count side: scanFileMatches must stop
+// scanning a file the moment max_results is reached instead of returning
+// every match in the file (the pre-fix code accumulated all matches before
+// run() applied the caps, so a file with arbitrarily many matches drove
+// unbounded heap growth).
+func TestInspectRepositoryScanStopsAtResultCountCap(t *testing.T) {
+	ws, _ := setupWS(t)
+	writeFile(t, ws.Abs, "many.txt", strings.Repeat("needle\n", 10000))
+
+	tool := &inspectRepositoryTool{ws: ws}
+	re := regexp.MustCompile("needle")
+	eng := tool.newInspectEngine(inspectRepositoryInput{Query: "needle", MaxResults: 3}, re, ignoreView{}, 0)
+
+	var collected []inspectResult
+	used := 0
+	seen := map[string]bool{}
+	err := eng.scanFileMatches(context.Background(), filepath.Join(ws.Abs, "many.txt"), "many.txt", &collected, &used, 0, seen)
+	if !errors.Is(err, errMaxMatches) {
+		t.Fatalf("scanFileMatches error = %v, want errMaxMatches", err)
+	}
+	if len(collected) != 3 {
+		t.Fatalf("collected %d results, want 3 (scan must stop at the count cap)", len(collected))
+	}
+}
+
+// TestInspectRepositoryScanStopsAtByteBudget pins the bounded-accumulation
+// contract on the byte side (negative path): with a tight budget and wide
+// context windows on a many-match file, scanFileMatches must trip errMaxBytes
+// well below both the count cap and the file's match count instead of
+// scanning the whole file first.
+func TestInspectRepositoryScanStopsAtByteBudget(t *testing.T) {
+	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxInspectRepositoryBytes: testMinInspectRepositoryBytes})
+	writeFile(t, ws.Abs, "many.txt", strings.Repeat("needle\n", 10000))
+
+	tool, ok := reg.Get("inspect_repository")
+	if !ok {
+		t.Fatal("inspect_repository not registered")
+	}
+	it, ok := tool.(*inspectRepositoryTool)
+	if !ok {
+		t.Fatalf("tool type = %T, want *inspectRepositoryTool", tool)
+	}
+	re := regexp.MustCompile("needle")
+	eng := it.newInspectEngine(inspectRepositoryInput{Query: "needle", MaxResults: 100, ContextLines: 10}, re, ignoreView{}, 0)
+	budget := eng.maxBytes - 0 - inspectEnvelopeSlack
+
+	var collected []inspectResult
+	used := 0
+	seen := map[string]bool{}
+	err := eng.scanFileMatches(context.Background(), filepath.Join(ws.Abs, "many.txt"), "many.txt", &collected, &used, budget, seen)
+	if !errors.Is(err, errMaxBytes) {
+		t.Fatalf("scanFileMatches error = %v, want errMaxBytes", err)
+	}
+	if len(collected) >= 100 {
+		t.Fatalf("collected %d results, want < max_results=100 (byte cap must trip before the count cap)", len(collected))
+	}
+	if used > budget {
+		t.Fatalf("used %d bytes exceeds budget %d", used, budget)
+	}
+	if len(collected) > 1000 {
+		t.Fatalf("scan did not stop early: collected %d of 10000 matches", len(collected))
+	}
+}
+
+// FuzzInspectRepositoryOutputBounded is the deterministic fuzz target for the
+// byte/count-cap invariant: whatever pathological content the fuzzer feeds a
+// workspace file, inspect_repository's output stays valid JSON, stays within
+// the configured byte budget, never exceeds max_results, and keeps
+// Truncated/TruncationReason consistent. Seeds cover an empty file, no
+// matches, many matches, a 1 MiB single line, context_lines 0 and 10, and
+// overlapping scopes.
+func FuzzInspectRepositoryOutputBounded(f *testing.F) {
+	dir := f.TempDir()
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		f.Fatal(err)
+	}
+	reg := NewDefaultRegistry(DefaultOptions{
+		Workspace:                 ws,
+		RunAllowlist:              testRunAllowlist,
+		SecretPathPatterns:        exampleSecretPatterns,
+		SecretPathExceptions:      exampleSecretExceptions,
+		MaxInspectRepositoryBytes: testMinInspectRepositoryBytes,
+	})
+	seeds := []string{
+		"",
+		"no matches here\n",
+		strings.Repeat("needle\n", 10000),
+		strings.Repeat("needle", 1<<20),
+		strings.Repeat("needle\n", 100) + strings.Repeat("zzz\n", 100),
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, content string) {
+		if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, contextLines := range []int{0, 10} {
+			for _, paths := range [][]string{{"."}, {".", "f.txt"}} {
+				pathsJSON, err := json.Marshal(paths)
+				if err != nil {
+					t.Fatal(err)
+				}
+				args := `{"query":"needle","max_results":5,"context_lines":` + strconv.Itoa(contextLines) + `,"paths":` + string(pathsJSON) + `}`
+				raw, err := reg.Execute(context.Background(), "inspect_repository", json.RawMessage(args))
+				if err != nil {
+					t.Fatalf("Execute: %v", err)
+				}
+				if !json.Valid([]byte(raw)) {
+					t.Fatalf("output is not valid JSON: %q", raw)
+				}
+				if len(raw) > testMinInspectRepositoryBytes {
+					t.Fatalf("output %d bytes exceeds configured budget %d", len(raw), testMinInspectRepositoryBytes)
+				}
+				var out inspectOutput
+				if err := json.Unmarshal([]byte(raw), &out); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+				if out.ResultCount > 5 {
+					t.Fatalf("result_count=%d exceeds max_results=5", out.ResultCount)
+				}
+				if out.Truncated != (out.TruncationReason != "") {
+					t.Fatalf("Truncated=%v inconsistent with TruncationReason=%q", out.Truncated, out.TruncationReason)
+				}
+			}
+		}
+	})
 }
