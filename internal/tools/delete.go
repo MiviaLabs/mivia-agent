@@ -16,11 +16,14 @@ import (
 // its removal is unfixable by the agent, which loops the repair gate forever
 // (DC-9).
 //
-// Like the edit tools, it honors the write-path blocklist: a protected path
-// is refused, so deletion cannot bypass the protection that guards writing.
+// Like the edit tools, it honors the write-path blocklist and the secret-path
+// filter: a protected or secret-like path is refused, so deletion cannot bypass
+// the protection that guards writing and reading.
 type deleteFileTool struct {
-	ws                *workspace.Root
-	writePathDenylist []string
+	ws                   *workspace.Root
+	writePathDenylist    []string
+	secretPathExceptions []string
+	secretPathPatterns   []string
 }
 
 func (t *deleteFileTool) Name() string { return "delete_file" }
@@ -69,6 +72,9 @@ func (t *deleteFileTool) Execute(ctx context.Context, args json.RawMessage) (str
 	}
 	if writePathDenied(t.ws, in.Path, rel, t.writePathDenylist) {
 		return "", fmt.Errorf("deleting protected path is blocked")
+	}
+	if isSecretPath(rel, t.secretPathExceptions, t.secretPathPatterns) {
+		return "", fmt.Errorf("deleting secret-like path is blocked")
 	}
 	select {
 	case <-ctx.Done():
