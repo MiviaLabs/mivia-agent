@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEstimateTokens(t *testing.T) {
@@ -486,6 +487,80 @@ func TestEstimateMessagesPromptCostMatchesEstimatePromptCost(t *testing.T) {
 	}
 	if got := EstimateMessagesPromptCost(messages, 0); got >= want {
 		t.Fatalf("zero schema cost = %d, want below the schema-charged %d", got, want)
+	}
+}
+
+// A tool loop appends one user message and then only assistant/tool messages,
+// so the whole run is a single turn. Pruning it must be linear in the history
+// size: the old implementation re-scanned MessagesTokens and rebuilt the slice
+// once per dropped exchange (O(k*n)), so a single-turn history of tens of
+// thousands of exchanges took orders of magnitude longer than the linear
+// rewrite. This test pins both correctness (budget respected, system+user
+// header kept, pairing intact, newest exchange kept) and the linearity bound
+// (5s wall clock): the O(k*n) loop exceeds that bound by an order of
+// magnitude while the linear pass finishes in milliseconds.
+func TestPruneMessagesKeepTurnsLinearInsideTurn(t *testing.T) {
+	const exchanges = 80000
+	payload := string(make([]byte, 400)) // ~100 tokens per result
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "go"},
+	}
+	for i := 0; i < exchanges; i++ {
+		msgs = append(msgs, toolCallMsg(fmt.Sprintf("call_%d", i), payload)...)
+	}
+
+	// Budget that fits the header plus exactly the newest exchange: nearly all
+	// 80,000 exchanges must be dropped.
+	header := MessagesTokens(msgs[:2])
+	newest := MessageTokens(msgs[len(msgs)-2]) + MessageTokens(msgs[len(msgs)-1])
+	budget := header + newest
+
+	start := time.Now()
+	pruned := PruneMessagesKeepTurns(msgs, budget)
+	elapsed := time.Since(start)
+
+	if got := MessagesTokens(pruned); got > budget {
+		t.Fatalf("pruner left %d tokens over a %d budget (%d messages)", got, budget, len(pruned))
+	}
+	if pruned[0].Role != RoleSystem || pruned[1].Role != RoleUser {
+		t.Fatalf("turn header lost: %s, %s", pruned[0].Role, pruned[1].Role)
+	}
+	// The newest exchange must survive: it is the one the model is answering.
+	if len(pruned) != 4 {
+		t.Fatalf("pruned to %d messages, want 4 (system + user + newest exchange)", len(pruned))
+	}
+	last := pruned[len(pruned)-1]
+	if last.Role != RoleTool || last.ToolCallID != fmt.Sprintf("call_%d", exchanges-1) {
+		t.Fatalf("newest exchange dropped, last=%+v", last)
+	}
+	if err := ValidateToolPairing(pruned); err != nil {
+		t.Fatalf("pruned history is not validly paired: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("pruning took %v (>5s): the pass is not linear (regression)", elapsed)
+	}
+	t.Logf("pruned %d exchanges to %d messages in %v", exchanges, len(pruned), elapsed)
+
+	// Fast path: an under-budget history is returned unchanged.
+	under := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "hi"},
+		{Role: RoleAssistant, Content: "hello"},
+	}
+	if got := PruneMessagesKeepTurns(under, 999999); len(got) != len(under) {
+		t.Fatalf("under-budget input pruned: %d -> %d", len(under), len(got))
+	}
+
+	// A single turn with no tool exchanges cannot shrink below its header: the
+	// pruner must return it unchanged rather than dropping the user message.
+	plain := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: string(make([]byte, 800))},
+		{Role: RoleAssistant, Content: string(make([]byte, 800))},
+	}
+	if got := PruneMessagesKeepTurns(plain, 10); len(got) != len(plain) {
+		t.Fatalf("tool-less turn pruned: %d -> %d", len(plain), len(got))
 	}
 }
 
