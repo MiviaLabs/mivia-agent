@@ -36,6 +36,37 @@ func BenchmarkMemoryLedger_TaskLifecycle(b *testing.B) {
 	}
 }
 
+// BenchmarkMemoryLedger_AppendEvent measures the duplicate-detection path in
+// AppendEvent: a fixed large batch of distinct appends followed by one
+// duplicate. The pre-fix linear scan paid O(n) on every append (O(n²) for the
+// batch); the per-run map index pays O(1). Timing is evidence for the host
+// gate, never an assertion.
+func BenchmarkMemoryLedger_AppendEvent(b *testing.B) {
+	repo := NewMemoryLedgerRepository()
+	ctx := context.Background()
+	const batch = 4096
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		runID := fmt.Sprintf("bench-append-%d", i)
+		if err := repo.CreateRun(ctx, "", RunSnapshot{RunID: runID, Status: RunStatusCreated}); err != nil {
+			b.Fatal(err)
+		}
+		for j := 0; j < batch; j++ {
+			if err := repo.AppendEvent(ctx, LifecycleEvent{
+				ID: fmt.Sprintf("run-%d-ev-%d", i, j), RunID: runID, Kind: "task_started",
+			}); err != nil {
+				b.Fatal(err)
+			}
+		}
+		if err := repo.AppendEvent(ctx, LifecycleEvent{
+			ID: fmt.Sprintf("run-%d-ev-0", i), RunID: runID, Kind: "task_started",
+		}); err != ErrDuplicate {
+			b.Fatalf("duplicate append error = %v, want ErrDuplicate", err)
+		}
+	}
+}
+
 func BenchmarkStorageLedger_CreateRun(b *testing.B) {
 	store := storage.NewMemory()
 	repo := NewStorageLedgerRepository(store)

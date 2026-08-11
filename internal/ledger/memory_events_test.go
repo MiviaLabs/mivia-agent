@@ -218,3 +218,85 @@ func TestListEventsOrderedBySequenceUnderTiedTimestamps(t *testing.T) {
 		})
 	}
 }
+
+// TestMemoryAppendEventDuplicateDetectionIsIndexed guards the per-run event-ID
+// index that replaced the linear duplicate scan in AppendEvent. The index must
+// stay in lockstep with rec.events: every event write flows through
+// AppendEvent, which inserts into eventIDs immediately after appending, so
+// cardinality and membership must agree after every operation. It also pins the
+// per-run scoping the old scan had implicitly: the same ID on a different run
+// is a fresh event, not a duplicate.
+//
+// It is white-box (same package) because the invariant it asserts lives on the
+// runRecord internals. It fails before the fix: runRecord had no eventIDs field,
+// so the test does not compile against the pre-fix code.
+func TestMemoryAppendEventDuplicateDetectionIsIndexed(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryLedgerRepository()
+	if err := m.CreateRun(ctx, "", RunSnapshot{RunID: "run-1", Status: RunStatusRunning}); err != nil {
+		t.Fatalf("CreateRun run-1: %v", err)
+	}
+	if err := m.CreateRun(ctx, "", RunSnapshot{RunID: "run-2", Status: RunStatusRunning}); err != nil {
+		t.Fatalf("CreateRun run-2: %v", err)
+	}
+
+	// Index/events lockstep invariant for one run.
+	assertIndexInvariant := func(t *testing.T, runID string) {
+		t.Helper()
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		rec, ok := m.runs[runID]
+		if !ok {
+			t.Fatalf("run %s missing", runID)
+		}
+		if len(rec.eventIDs) != len(rec.events) {
+			t.Fatalf("index/events cardinality mismatch: len(eventIDs)=%d len(events)=%d",
+				len(rec.eventIDs), len(rec.events))
+		}
+		for _, ev := range rec.events {
+			if _, ok := rec.eventIDs[ev.ID]; !ok {
+				t.Errorf("appended event ID %q is absent from the index", ev.ID)
+			}
+		}
+	}
+
+	const distinct = 64
+	for i := 0; i < distinct; i++ {
+		if err := m.AppendEvent(ctx, LifecycleEvent{
+			ID: fmt.Sprintf("ev-%d", i), RunID: "run-1", Kind: "task_started",
+		}); err != nil {
+			t.Fatalf("AppendEvent %d: %v", i, err)
+		}
+	}
+	assertIndexInvariant(t, "run-1")
+
+	// Duplicate append: refused, and the events slice and index are unchanged.
+	if err := m.AppendEvent(ctx, LifecycleEvent{
+		ID: "ev-0", RunID: "run-1", Kind: "task_started",
+	}); err != ErrDuplicate {
+		t.Fatalf("duplicate AppendEvent error = %v, want ErrDuplicate", err)
+	}
+	if got := len(m.runs["run-1"].events); got != distinct {
+		t.Errorf("events after duplicate append = %d, want %d", got, distinct)
+	}
+	assertIndexInvariant(t, "run-1")
+
+	// Fresh ID on the same run: both the slice and the index grow by one.
+	if err := m.AppendEvent(ctx, LifecycleEvent{
+		ID: "ev-fresh", RunID: "run-1", Kind: "task_completed",
+	}); err != nil {
+		t.Fatalf("fresh AppendEvent: %v", err)
+	}
+	if got := len(m.runs["run-1"].events); got != distinct+1 {
+		t.Errorf("events after fresh append = %d, want %d", got, distinct+1)
+	}
+	assertIndexInvariant(t, "run-1")
+
+	// Negative path: the same ID on a different run is not a duplicate.
+	if err := m.AppendEvent(ctx, LifecycleEvent{
+		ID: "ev-0", RunID: "run-2", Kind: "task_started",
+	}); err != nil {
+		t.Fatalf("same ID on a different run refused: %v", err)
+	}
+	assertIndexInvariant(t, "run-2")
+}
