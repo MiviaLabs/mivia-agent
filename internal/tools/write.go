@@ -79,7 +79,7 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", err
 	}
 	rel := t.ws.Rel(abs)
-	if isWriteDeniedPath(rel, t.writePathDenylist) {
+	if writePathDenied(t.ws, in.Path, rel, t.writePathDenylist) {
 		return "", fmt.Errorf("writing protected path is blocked")
 	}
 	if isSecretPath(rel, t.secretPathExceptions, t.secretPathPatterns) {
@@ -233,7 +233,7 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 		return "", err
 	}
 	rel := t.ws.Rel(abs)
-	if isWriteDeniedPath(rel, t.writePathDenylist) {
+	if writePathDenied(t.ws, in.Path, rel, t.writePathDenylist) {
 		return "", fmt.Errorf("writing protected path is blocked")
 	}
 	if isSecretPath(rel, t.secretPathExceptions, t.secretPathPatterns) {

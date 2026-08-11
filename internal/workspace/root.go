@@ -12,6 +12,13 @@ import (
 type Root struct {
 	// Abs is the absolute, cleaned, symlink-evaluated root path.
 	Abs string
+
+	// LexicalAbs is the absolute, cleaned root path exactly as the caller
+	// named it, BEFORE symlink evaluation; the blocklist's lexical check
+	// derives workspace-relative names from it so an absolute path spelled
+	// through a symlink alias of the root maps to the same relative name as
+	// the direct spelling.
+	LexicalAbs string
 }
 
 // SameExistingPath reports whether two existing paths name the same file.
@@ -39,6 +46,7 @@ func Open(rootPath string) (*Root, error) {
 	if err != nil {
 		return nil, fmt.Errorf("workspace abs: %w", err)
 	}
+	lexicalAbs := abs
 	abs, err = filepath.EvalSymlinks(abs)
 	if err != nil {
 		// If root does not exist yet, keep Abs without eval.
@@ -53,7 +61,7 @@ func Open(rootPath string) (*Root, error) {
 	if !st.IsDir() {
 		return nil, fmt.Errorf("workspace is not a directory: %s", abs)
 	}
-	return &Root{Abs: abs}, nil
+	return &Root{Abs: abs, LexicalAbs: lexicalAbs}, nil
 }
 
 // Resolve maps a user path (relative or absolute) into the workspace.
@@ -127,4 +135,31 @@ func (r *Root) Rel(absPath string) string {
 		return filepath.ToSlash(absPath)
 	}
 	return filepath.ToSlash(rel)
+}
+
+// LexicalRel returns the clean workspace-relative form of userPath without
+// resolving symlinks. Rel reports where a request lands; LexicalRel reports
+// the path the caller named, so a deny list can refuse a blocked name even
+// when an in-workspace symlink would redirect the write elsewhere; a name
+// that cannot be expressed as a workspace-relative path is an error and
+// callers treat that as denied (fail closed).
+func (r *Root) LexicalRel(userPath string) (string, error) {
+	if r == nil || r.LexicalAbs == "" {
+		return "", fmt.Errorf("nil workspace")
+	}
+	if strings.TrimSpace(userPath) == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	cleaned := filepath.Clean(userPath)
+	if !filepath.IsAbs(cleaned) {
+		return filepath.ToSlash(cleaned), nil
+	}
+	if !isUnder(r.LexicalAbs, cleaned) {
+		return "", fmt.Errorf("path %q escapes workspace %s", userPath, r.LexicalAbs)
+	}
+	rel, err := filepath.Rel(r.LexicalAbs, cleaned)
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(rel), nil
 }
