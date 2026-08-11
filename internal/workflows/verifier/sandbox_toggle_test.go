@@ -64,3 +64,31 @@ func TestRunVerifierCommandUsesSandboxWhenEnabled(t *testing.T) {
 		t.Fatalf("expected a host commandFailure, got %v", err)
 	}
 }
+
+// TestRunDirectCommandRejectsMissingBaseline pins that disabling the
+// sandbox does not also disable the module-baseline safety check: a "go"
+// command still requires admitted module inputs whether it runs sandboxed
+// or directly.
+func TestRunDirectCommandRejectsMissingBaseline(t *testing.T) {
+	err := runDirectCommand(context.Background(), t.TempDir(), nil, "go", "version")
+	if err == nil {
+		t.Fatal("runDirectCommand() with no baseline should fail")
+	}
+	failure, ok := err.(*commandFailure)
+	if !ok || failure.class != "host" {
+		t.Fatalf("expected a host commandFailure, got %v", err)
+	}
+}
+
+// TestRunDirectCommandRejectsNonBareProgram pins that disabling the
+// sandbox does not also disable the "no shell strings" invariant.
+func TestRunDirectCommandRejectsNonBareProgram(t *testing.T) {
+	err := runDirectCommand(context.Background(), t.TempDir(), nil, "echo hi; rm -rf /")
+	if err == nil {
+		t.Fatal("runDirectCommand() with a non-bare program should fail")
+	}
+	failure, ok := err.(*commandFailure)
+	if !ok || failure.class != "host" {
+		t.Fatalf("expected a host commandFailure, got %v", err)
+	}
+}

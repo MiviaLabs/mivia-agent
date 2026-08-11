@@ -10,15 +10,19 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 )
 
-// sandboxDisabled is process-wide, set once after config load (mirrors
-// redact.SetPolicy / tools.SetRedactToolArgs). The zero value (false) means
-// the sandbox is enabled by default, so a process that never calls
-// SetSandboxEnabled - every test, `mivia version`, any tool constructed
-// directly - keeps the safe, isolated behavior.
+// sandboxDisabled is process-wide (mirrors redact.SetPolicy /
+// tools.SetRedactToolArgs). The zero value (false) means the sandbox is
+// enabled by default, so a process that never calls SetSandboxEnabled -
+// every test, `mivia version`, any tool constructed directly - keeps the
+// safe, isolated behavior.
 var sandboxDisabled atomic.Bool
 
-// SetSandboxEnabled installs the process-wide sandbox toggle. Call once,
-// after config load.
+// SetSandboxEnabled installs the process-wide sandbox toggle, resolved from
+// [harness] sandbox after config load. It is idempotent and safe to call
+// more than once with the same value - newWorkflowController calls it on
+// every controller build within a process, not strictly once at startup -
+// but every call in one process is expected to carry the same resolved
+// config value; it is not a per-run or per-caller override.
 func SetSandboxEnabled(enabled bool) { sandboxDisabled.Store(!enabled) }
 
 // SandboxEnabled reports the current process-wide sandbox toggle.
@@ -43,11 +47,8 @@ func runVerifierCommand(ctx context.Context, workDir string, baseline *GoModuleB
 // bubblewrap; it trades the sandbox's isolation for that.
 func runDirectCommand(ctx context.Context, workDir string, baseline *GoModuleBaseline, program string, args ...string) error {
 	goMode := program == "go"
-	if goMode && (baseline == nil || len(baseline.GoMod) == 0) {
-		return hostFailure(errors.New("workflow verifier module baseline is missing"))
-	}
-	if !goMode && !IsBareProgramName(program) {
-		return hostFailure(errors.New("sandbox rejects non-bare program " + program))
+	if err := validateVerifierProgram(goMode, baseline, program); err != nil {
+		return hostFailure(err)
 	}
 	exePath, _, _, err := resolveSandboxExecutable(goMode, baseline, program)
 	if err != nil {
