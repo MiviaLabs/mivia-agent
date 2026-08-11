@@ -233,12 +233,23 @@ func (r Runner) execute(ctx context.Context, group Group, handler Handler, paylo
 	result.stdout, result.stderr = outBuf.trimmed(), errBuf.trimmed()
 	result.truncated = outBuf.over
 	if callCtx.Err() != nil {
-		result.noVerdict = true
-		result.reason = fmt.Sprintf("hook %s timed out after %s", filepath.Base(program), handler.Timeout)
-		if ctx.Err() != nil {
-			result.reason = fmt.Sprintf("hook %s did not run: %v", filepath.Base(program), ctx.Err())
+		// The deadline fired, but that is only a timeout when the run actually
+		// failed to produce a verdict. A hook that exited 0 or with a real exit
+		// code in the same instant its deadline landed has an answer, and
+		// discarding it here would turn an allow that arrived within budget
+		// into a spurious block (DC-7/DC-9). The genuine timeouts are a
+		// non-ExitError runErr (the unreapable waitGrace case, or a start
+		// failure under an expired context) and a signal death
+		// (ExitCode()==-1, the cancel's kill landing before exit).
+		var exitErr *exec.ExitError
+		if runErr != nil && (!errorsAs(runErr, &exitErr) || exitErr.ExitCode() == -1) {
+			result.noVerdict = true
+			result.reason = fmt.Sprintf("hook %s timed out after %s", filepath.Base(program), handler.Timeout)
+			if ctx.Err() != nil {
+				result.reason = fmt.Sprintf("hook %s did not run: %v", filepath.Base(program), ctx.Err())
+			}
+			return result
 		}
-		return result
 	}
 	if runErr != nil {
 		var exitErr *exec.ExitError
