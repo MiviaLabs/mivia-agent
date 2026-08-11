@@ -65,7 +65,7 @@ func TestReopenForRepairRoutesRunBackToTheNamedStep(t *testing.T) {
 
 	cause := errors.New("pre-commit: check_go_structure: 1 hard violation(s)")
 	var stdout bytes.Buffer
-	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", cause, &stdout); err != nil {
+	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", MaxDeliveryRepairs, cause, &stdout); err != nil {
 		t.Fatalf("ReopenForRepair() error = %v, want nil", err)
 	}
 
@@ -126,7 +126,7 @@ func TestReopenForRepairNumbersAttemptsIdempotently(t *testing.T) {
 	casRepairRunToDeliveryPending(t, ctx, repo, run.RunID)
 
 	var stdout bytes.Buffer
-	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("first"), &stdout); err != nil {
+	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", MaxDeliveryRepairs, errors.New("first"), &stdout); err != nil {
 		t.Fatalf("first reopen: %v", err)
 	}
 	// The run is running again after the first repair; it reaches delivery
@@ -138,7 +138,7 @@ func TestReopenForRepairNumbersAttemptsIdempotently(t *testing.T) {
 	if err := repo.CompareAndSetRunStatus(ctx, run.RunID, backToPending.Version, workflowledger.RunStatusDeliveryPending, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("second"), &stdout); err != nil {
+	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", MaxDeliveryRepairs, errors.New("second"), &stdout); err != nil {
 		t.Fatalf("second reopen: %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestReopenForRepairBudgetExhaustionSettlesDeliveryFailed(t *testing.T) {
 
 	var stdout bytes.Buffer
 	for i := 0; i < MaxDeliveryRepairs; i++ {
-		if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("hook rejected"), &stdout); err != nil {
+		if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", MaxDeliveryRepairs, errors.New("hook rejected"), &stdout); err != nil {
 			t.Fatalf("repair %d refused: %v", i+1, err)
 		}
 		back, err := repo.GetRun(ctx, run.RunID)
@@ -195,7 +195,7 @@ func TestReopenForRepairBudgetExhaustionSettlesDeliveryFailed(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", errors.New("hook rejected"), &stdout); err == nil {
+	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", MaxDeliveryRepairs, errors.New("hook rejected"), &stdout); err == nil {
 		t.Fatal("the repair budget is spent; a further re-entry must fail")
 	}
 	// The budget-exhausted run must settle terminal instead of waiting at
@@ -217,5 +217,110 @@ func TestReopenForRepairBudgetExhaustionSettlesDeliveryFailed(t *testing.T) {
 	// spent, so this is a settle, not a re-entry.
 	if recorded := findRepairAttempt(t, ctx, repo, run.RunID); recorded != nil && recorded.AttemptNo > MaxDeliveryRepairs {
 		t.Fatalf("delivery attempt %d created beyond the budget of %d", recorded.AttemptNo, MaxDeliveryRepairs)
+	}
+}
+
+// The repair-cycle budget is configurable per workflow via delivery.max_repairs
+// (snapshotted into Policy.MaxRepairs and passed through ReopenForRepair). A
+// budget of 1 allows exactly one re-entry; the next failure settles terminal.
+func TestReopenForRepairHonorsConfiguredBudget(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-repair-budget-one", Status: workflowledger.RunStatusPending, ActiveStepID: "preflight_structure",
+	}
+	if err := repo.CreateRun(ctx, run, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	casRepairRunToDeliveryPending(t, ctx, repo, run.RunID)
+
+	var stdout bytes.Buffer
+	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", 1, errors.New("hook rejected"), &stdout); err != nil {
+		t.Fatalf("first re-entry within budget 1: %v", err)
+	}
+	back, err := repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, run.RunID, back.Version, workflowledger.RunStatusDeliveryPending, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", 1, errors.New("hook rejected"), &stdout); err == nil {
+		t.Fatal("budget 1 is spent after one re-entry; a further re-entry must fail")
+	}
+	after, err := repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != workflowledger.RunStatusDeliveryFailed {
+		t.Fatalf("run status = %q, want %q", after.Status, workflowledger.RunStatusDeliveryFailed)
+	}
+}
+
+// RepairHint renders the harness guidance the repair agent sees via
+// delivery.failure: a class-specific "what to repair" lead plus the raw
+// rejection text. The lead must never name a repository's tests, files,
+// tools, or gate names - it stays project- and language-agnostic.
+func TestRepairHintClassifies(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want []string
+	}{
+		{"gate rejection", errors.New("pre-push: check_go_structure: 1 hard violation(s)"),
+			[]string{"the delivery gate rejected the change", "rejection output:", "check_go_structure"}},
+		{"PR metadata", &PRMetadataError{Reason: "title too long"},
+			[]string{"pr_title and pr_summary", "title too long"}},
+		{"permanent refusal", &RefusalError{Reason: "origin remote changed since admission"},
+			[]string{"permanently refused publication", "origin remote changed"}},
+		{"nil cause", nil, []string{"without a recorded cause"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RepairHint(tc.err)
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("RepairHint(%v) = %q, missing %q", tc.err, got, want)
+				}
+			}
+		})
+	}
+}
+
+// The stored delivery-failure evidence is the harness hint, not just the raw
+// error: the repair agent reads what to repair (and the commit guidance)
+// through the wf-delivery attempt's ErrorRef.
+func TestReopenForRepairStoresHarnessHint(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-repair-hint-evidence", Status: workflowledger.RunStatusPending, ActiveStepID: "preflight_structure",
+	}
+	if err := repo.CreateRun(ctx, run, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	casRepairRunToDeliveryPending(t, ctx, repo, run.RunID)
+
+	var stdout bytes.Buffer
+	cause := errors.New("pre-push: verify gate rejected the change")
+	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", MaxDeliveryRepairs, cause, &stdout); err != nil {
+		t.Fatalf("ReopenForRepair() error = %v, want nil", err)
+	}
+	recorded := findRepairAttempt(t, ctx, repo, run.RunID)
+	if recorded == nil || recorded.ErrorRef == "" {
+		t.Fatal("no delivery attempt with an ErrorRef; the repair agent would have no evidence")
+	}
+	body, err := repo.LoadContent(ctx, recorded.ErrorRef)
+	if err != nil {
+		t.Fatalf("load failure evidence: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "what to repair") && !strings.Contains(text, "the delivery gate rejected the change") {
+		t.Fatalf("stored evidence = %q, want the harness hint lead", text)
+	}
+	if !strings.Contains(text, cause.Error()) {
+		t.Fatalf("stored evidence = %q, want the raw rejection text", text)
 	}
 }

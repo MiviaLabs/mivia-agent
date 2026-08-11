@@ -1,0 +1,461 @@
+version = 1
+name = "bug-fix"
+description = "Hunt for at most 2 confirmed reachable performance or logic bugs in a scope, triage the findings, fix them with regression tests, and deliver a pull request."
+initial_step = "hunt"
+
+# bug-fix workflow design notes
+# -----------------------------
+# hunt   : read-only hostile hunt (auditor + bug-audit skill, run_command for
+#          reproduction). Findings are capped at 2 by schemas/findings-v1.json
+#          (maxItems) - a machine-enforced cap, not prose.
+# triage : independent confirmation gate (reviewer + bug-audit skill). Verdicts
+#          are distinct from review's: confirmed | insufficient_evidence |
+#          no_bug. no_bug routes to success; the host delivery no-diff gate then
+#          settles the run with no PR (no code was changed), which is the
+#          intended outcome for a clean audit.
+# perf_verify : conditional measurement gate (performance + performance-review
+#          skill). It runs only when the review echoes has_perf="true" (string
+#          enum: transition matchers compare string values). The reviewer sets
+#          has_perf from the retained findings, so the branch is reliable.
+# gates  : the repo's own gates (go-test, go-verify, go-final, invariants,
+#          go-structure) - reused verbatim, never tightened.
+# repairs: one repair step per evidence gate, looping back to review. The two
+#          delivery re-entry steps bind delivery.failure (compiler-enforced).
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 1048576
+
+[inputs.scope]
+type = "string"
+required = true
+max_bytes = 1048576
+
+[limits]
+# No global caps: max_step_attempts=0 is unlimited and max_duration_seconds=0
+# sets no run deadline, so long 24h+ agentic reviews and tasks are the intended
+# workload. Every cycle in this workflow is a bounded loop, so execution is
+# finite by construction even with both limits at 0.
+max_step_attempts = 0
+max_duration_seconds = 0
+
+# ---- Hunt: read-only hostile audit, at most 2 confirmed findings ----
+[[steps]]
+id = "hunt"
+kind = "agent"
+agent = "auditor"
+skill = "bug-audit"
+template = "templates/bugfix-hunt.md"
+output_schema = "schemas/findings-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.triage.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
+]
+on_failure = "failure"
+
+# ---- Triage: independent confirmation of each finding ----
+[[steps]]
+id = "triage"
+kind = "agent_gate"
+agent = "reviewer"
+skill = "bug-audit"
+template = "templates/bugfix-triage.md"
+output_schema = "schemas/triage-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.hunt.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.triage.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
+]
+on_failure = "failure"
+
+# ---- Fix plan: minimal change per retained finding ----
+[[steps]]
+id = "fix_plan"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/bugfix-fix-plan.md"
+output_schema = "schemas/plan-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+]
+on_failure = "failure"
+
+# ---- Implement: fix + regression tests ----
+[[steps]]
+id = "implement"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/bugfix-implement.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
+]
+on_failure = "failure"
+
+# ---- Review: code review + diff-scope check; echoes has_perf ----
+[[steps]]
+id = "review"
+kind = "agent_gate"
+agent = "reviewer"
+skill = "secure-change"
+template = "templates/bugfix-review.md"
+output_schema = "schemas/review-fix-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.review.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
+]
+on_failure = "failure"
+
+# ---- Perf verification: measurement gate, only for perf-class findings ----
+[[steps]]
+id = "perf_verify"
+kind = "agent_gate"
+agent = "performance"
+skill = "performance-review"
+template = "templates/bugfix-perf-verify.md"
+output_schema = "schemas/perf-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+]
+on_failure = "failure"
+
+# ---- Host evidence gates (the repo's own gates, unchanged) ----
+[[steps]]
+id = "test_validate"
+kind = "evidence_gate"
+verifier = "go-test"
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+[[steps]]
+id = "verify"
+kind = "evidence_gate"
+verifier = "go-verify"
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+[[steps]]
+id = "code_validate"
+kind = "evidence_gate"
+verifier = "go-final"
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+[[steps]]
+id = "preflight_validate"
+kind = "evidence_gate"
+command = { check = "invariants", program = "python3", args = ["scripts/validate_invariants.py"] }
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+[[steps]]
+id = "preflight_structure"
+kind = "evidence_gate"
+command = { check = "go-structure", program = "python3", args = ["scripts/check_go_structure.py", "--strict", "--worktree"] }
+output_schema = "schemas/verification-v1.json"
+on_failure = "failure"
+
+# ---- Repair steps: one per evidence gate, loop back to review ----
+[[steps]]
+id = "repair_tests"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/bugfix-repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.test_validate.output", as = "failed_evidence", max_bytes = 32768 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "repair_verify"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/bugfix-repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.verify.output", as = "failed_evidence", max_bytes = 32768 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "repair_final"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/bugfix-repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.code_validate.output", as = "failed_evidence", max_bytes = 32768 },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "repair_preflight"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/bugfix-repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.preflight_validate.output", as = "failed_evidence", max_bytes = 32768 },
+]
+on_failure = "failure"
+
+# repair_preflight_structure is also the delivery.on_failure target. It MUST
+# bind delivery.failure (compiler-enforced): the rejection text is its only
+# deterministic hint, and without it delivery re-fails identically forever.
+[[steps]]
+id = "repair_preflight_structure"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/bugfix-repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.preflight_structure.output", as = "failed_evidence", max_bytes = 32768 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
+]
+on_failure = "failure"
+
+# repair_pr_metadata fixes only the PR title and summary when the host rejects
+# the change-summary metadata. It is the delivery.on_pr_metadata_failure target
+# and must bind delivery.failure.
+[[steps]]
+id = "repair_pr_metadata"
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+template = "templates/bugfix-repair-metadata.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 1048576 },
+  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
+]
+on_failure = "failure"
+
+# ---- Transitions ----
+[[transitions]]
+from = "hunt"
+to = "triage"
+match = { status = "succeeded" }
+
+# triage confirmed -> fix
+[[transitions]]
+from = "triage"
+to = "fix_plan"
+match = { status = "succeeded", output = { verdict = "confirmed" } }
+
+# triage insufficient_evidence -> refine the hunt (bounded loop)
+[[transitions]]
+from = "triage"
+to = "hunt"
+match = { status = "succeeded", output = { verdict = "insufficient_evidence" } }
+loop = "triage_refinement"
+max_iterations = 5
+
+# triage no_bug -> success; the host delivery no-diff gate settles the run with
+# no PR because no code changed. This is the intended clean-audit outcome.
+[[transitions]]
+from = "triage"
+to = "success"
+match = { status = "succeeded", output = { verdict = "no_bug" } }
+
+[[transitions]]
+from = "fix_plan"
+to = "implement"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "implement"
+to = "review"
+match = { status = "succeeded" }
+
+# review approved with a perf finding -> measurement gate
+[[transitions]]
+from = "review"
+to = "perf_verify"
+match = { status = "succeeded", output = { verdict = "approved", has_perf = "true" } }
+
+# review approved without a perf finding -> straight to the gates
+[[transitions]]
+from = "review"
+to = "test_validate"
+match = { status = "succeeded", output = { verdict = "approved", has_perf = "false" } }
+
+# review changes_requested -> rework the fix (bounded loop)
+[[transitions]]
+from = "review"
+to = "implement"
+match = { status = "succeeded", output = { verdict = "changes_requested" } }
+loop = "review_repair"
+max_iterations = 8
+
+# perf measurement approved -> gates; changes_requested -> rework (bounded loop)
+[[transitions]]
+from = "perf_verify"
+to = "test_validate"
+match = { status = "succeeded", output = { verdict = "approved" } }
+
+[[transitions]]
+from = "perf_verify"
+to = "implement"
+match = { status = "succeeded", output = { verdict = "changes_requested" } }
+loop = "perf_repair"
+max_iterations = 4
+
+# test_validate -> verify, with repair loop
+[[transitions]]
+from = "test_validate"
+to = "verify"
+match = { status = "succeeded", output = { status = "passed" } }
+
+[[transitions]]
+from = "test_validate"
+to = "repair_tests"
+match = { status = "failed" }
+loop = "test_repair"
+max_iterations = 5
+
+[[transitions]]
+from = "repair_tests"
+to = "review"
+match = { status = "succeeded" }
+
+# verify -> code_validate, with repair loop
+[[transitions]]
+from = "verify"
+to = "code_validate"
+match = { status = "succeeded", output = { status = "passed" } }
+
+[[transitions]]
+from = "verify"
+to = "repair_verify"
+match = { status = "failed" }
+loop = "verify_repair"
+max_iterations = 5
+
+[[transitions]]
+from = "repair_verify"
+to = "review"
+match = { status = "succeeded" }
+
+# code_validate -> preflight_validate, with repair loop
+[[transitions]]
+from = "code_validate"
+to = "preflight_validate"
+match = { status = "succeeded", output = { status = "passed" } }
+
+[[transitions]]
+from = "code_validate"
+to = "repair_final"
+match = { status = "failed" }
+loop = "final_repair"
+max_iterations = 5
+
+[[transitions]]
+from = "repair_final"
+to = "review"
+match = { status = "succeeded" }
+
+# preflight_validate -> preflight_structure, with repair loop
+[[transitions]]
+from = "preflight_validate"
+to = "preflight_structure"
+match = { status = "succeeded", output = { status = "passed" } }
+
+[[transitions]]
+from = "preflight_validate"
+to = "repair_preflight"
+match = { status = "failed" }
+loop = "preflight_repair"
+max_iterations = 5
+
+[[transitions]]
+from = "repair_preflight"
+to = "review"
+match = { status = "succeeded" }
+
+# preflight_structure -> success, with repair loop
+[[transitions]]
+from = "preflight_structure"
+to = "success"
+match = { status = "succeeded", output = { status = "passed" } }
+
+[[transitions]]
+from = "preflight_structure"
+to = "repair_preflight_structure"
+match = { status = "failed" }
+loop = "preflight_structure_repair"
+max_iterations = 5
+
+[[transitions]]
+from = "repair_preflight_structure"
+to = "review"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "repair_pr_metadata"
+to = "review"
+match = { status = "succeeded" }
+
+# ---- Delivery ----
+[delivery]
+kind = "pull_request"
+mode = "draft"
+provider = "github"
+base = "master"
+title_template = "fix: bug-fix delivery"
+pr_title_policy = ".mivia/policy/pr-title.toml"
+# A delivery rejection (the common commit-hook refusal) routes here via
+# delivery.on_failure; the step repairs the change and the run delivers again.
+on_failure = "repair_preflight_structure"
+# A PR-metadata rejection routes to the dedicated metadata repair step.
+on_pr_metadata_failure = "repair_pr_metadata"
+# max_repairs bounds the delivery -> repair -> success -> delivery cycle: how
+# many times a rejected delivery may route back into the repair step before
+# the run settles terminal (delivery_failed) with the last rejection recorded.
+# The default is 5; set it lower to fail fast or higher for stubborn gates.
+max_repairs = 5
+commit_message_template = "fix(agent): bug-fix delivery\n\nDelivers: {{ inputs.scope }}"

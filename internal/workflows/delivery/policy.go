@@ -35,6 +35,16 @@ const DefaultMaxCommitMessageBytes = 1048576
 // stricter of the two wins.
 const MaxTitleRunes = 256
 
+// DefaultMaxDeliveryRepairs is the default budget for the delivery -> repair
+// -> success -> delivery cycle when the workflow does not configure
+// delivery.max_repairs. It bounds how many times a delivery rejection may
+// route back into the workflow's repair step before the run settles terminal
+// (delivery_failed). The ceiling is deliberately higher than the original
+// hard-coded 3: a gate that needs a couple of repair iterations (for example
+// a config/code drift like a dialect the base does not yet implement) is
+// common, while the run's duration cap still bounds the total spend.
+const DefaultMaxDeliveryRepairs = 5
+
 // Policy is the snapshotted delivery policy of one workflow run. It is derived
 // from the admitted compiled workflow (snapshot DefinitionTOML), never from a
 // re-read of a changed file.
@@ -56,6 +66,10 @@ type Policy struct {
 	// OnPRMetadataFailure names the step that repairs PR-metadata failures.
 	// Empty defaults to OnFailure.
 	OnPRMetadataFailure string
+	// MaxRepairs bounds the delivery repair cycle for this run. Zero or a
+	// negative value selects DefaultMaxDeliveryRepairs; the workflow TOML's
+	// delivery.max_repairs sets it per workflow.
+	MaxRepairs int
 }
 
 // clampMax returns v when positive, otherwise def.
@@ -89,6 +103,7 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		OnFailure:             d.OnFailure,
 		PRTitlePolicyPath:     d.PRTitlePolicy,
 		OnPRMetadataFailure:   onPRMetadataFailure,
+		MaxRepairs:            clampMax(d.MaxRepairs, DefaultMaxDeliveryRepairs),
 	}, true
 }
 

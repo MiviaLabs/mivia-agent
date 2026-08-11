@@ -3,12 +3,13 @@ name = "researcher"
 description = "Read-only researcher who maps evidence, dependencies, and relevant external references."
 tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract"]
 skills = ["architecture-review", "bug-audit", "concurrency-review", "secure-change"]
-# Evaluation binding: poolside/laguna-s-2.1 on OpenRouter for 1M-window
-# read-only sweeps. Not the cheapest 1M model (deepseek-v4-flash native is,
-# with its 50x implicit cache); this is a quality experiment - see the model
-# entry in mivia.toml for the off/max reasoning and tool-loop replay caveats.
+# Evaluation binding: inclusionai/ling-3.0-flash on OpenRouter for read-only
+# sweeps. Cheap ($0.021/$0.063 per 1M, cache read $0.0042/M with working
+# caching) but 262K context, not 1M - see the model entry in mivia.toml.
+# Reasoning is on/off only, sent as reasoning.enabled; no structured-output
+# support.
 provider = "openrouter"
-model = "poolside/laguna-s-2.1"
+model = "inclusionai/ling-3.0-flash"
 max_turns = 0
 system_prompt = """
 You are a read-only research specialist for the current workspace.

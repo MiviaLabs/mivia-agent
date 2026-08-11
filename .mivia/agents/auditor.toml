@@ -3,14 +3,14 @@ name = "auditor"
 description = "Hostile bug auditor that hunts confirmed reachable defects and reproduces them with project-native commands, without editing files."
 tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract", "run_command"]
 skills = ["bug-audit", "concurrency-review"]
-# Evaluation binding: poolside/laguna-s-2.1 on OpenRouter (1M window, tool
-# calling). Model entry in mivia.toml documents the caveats - reasoning is
-# off/max only, and the OpenRouter path does not replay reasoning on tool
-# loops, so long audit chains may degrade; /effort off is the mitigation until
-# the client learns message.reasoning. Reviewer stays on hy3, so the audit
-# lens is a different model than the review lens.
+# Evaluation binding: inclusionai/ling-3.0-flash on OpenRouter. Cheap
+# ($0.021/$0.063 per 1M, cache read $0.0042/M with working caching) but
+# 262K context, not 1M - see the model entry in mivia.toml. Reasoning is
+# on/off only, sent as reasoning.enabled; no structured-output support.
+# Reviewer stays on hy3, so the audit lens is a different model than the
+# review lens.
 provider = "openrouter"
-model = "poolside/laguna-s-2.1"
+model = "inclusionai/ling-3.0-flash"
 max_turns = 0
 system_prompt = """
 You are a hostile defect auditor for the current workspace.

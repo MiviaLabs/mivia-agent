@@ -215,7 +215,7 @@ func routePRMetadataRepair(ctx context.Context, repo workflowledger.Repository, 
 	if !delivery.IsPRMetadataError(err) || policy.OnPRMetadataFailure == "" {
 		return agenttools.DeliverResult{}, false, nil
 	}
-	if rerr := delivery.ReopenForRepair(ctx, repo, runID, policy.OnPRMetadataFailure, err, io.Discard); rerr != nil {
+	if rerr := delivery.ReopenForRepair(ctx, repo, runID, policy.OnPRMetadataFailure, policy.MaxRepairs, err, io.Discard); rerr != nil {
 		return agenttools.DeliverResult{}, false, rerr
 	}
 	fresh, gerr := repo.GetRun(ctx, runID)

@@ -237,7 +237,9 @@ is documented in `.mivia/rules/70-long-running-heartbeat.md`.
 
 ## The shipped workflow: feature-delivery
 
-The repository ships one workflow named `feature-delivery`. It runs a full plan, review, implement, and verify cycle:
+The repository ships two workflows: `feature-delivery` and `bug-fix`. This section
+documents `feature-delivery`, which runs a full plan, review, implement, and verify cycle:
+The next section documents `bug-fix`.
 
 ```mermaid
 flowchart TD
@@ -351,6 +353,100 @@ The evidence gates use fixed verifier profiles:
 | `preflight_structure` | `python3 scripts/check_go_structure.py --strict --worktree` |
 
 The delivery policy is a draft pull request to GitHub `master`. It requires `--allow-publish`.
+
+## The shipped workflow: bug-fix
+
+The repository ships a second workflow named `bug-fix`. It hunts for at most two confirmed
+reachable performance or logic bugs in a scope, triages the findings, fixes them with
+regression tests, and delivers a draft pull request:
+
+```mermaid
+flowchart TD
+    hunt --> triage
+    triage -->|confirmed| fix_plan
+    triage -->|insufficient evidence| hunt
+    triage -->|no bug| success
+    fix_plan --> implement
+    implement --> review
+    review -->|approved, perf finding| perf_verify
+    review -->|approved, no perf finding| test_validate
+    review -->|changes requested| implement
+    perf_verify -->|approved| test_validate
+    perf_verify -->|changes requested| implement
+    test_validate -->|passed| verify
+    test_validate -->|failed| repair_tests
+    verify -->|passed| code_validate
+    verify -->|failed| repair_verify
+    code_validate -->|passed| preflight_validate
+    code_validate -->|failed| repair_final
+    preflight_validate -->|passed| preflight_structure
+    preflight_validate -->|failed| repair_preflight
+    preflight_structure -->|passed| success
+    preflight_structure -->|failed| repair_preflight_structure
+    repair_tests --> review
+    repair_verify --> review
+    repair_final --> review
+    repair_preflight --> review
+    repair_preflight_structure --> review
+    repair_pr_metadata --> review
+    success -->|draft PR| delivery
+    delivery -->|hook rejects| repair_preflight_structure
+    delivery -->|PR metadata rejected| repair_pr_metadata
+```
+
+### What each part does
+
+The `hunt` step runs a read-only hostile audit with the `bug-audit` skill. It reports at
+most two confirmed findings, each in the performance or logic class. Every finding must
+satisfy the confirmation bar: expected invariant, quoted evidence, concrete reachable path,
+and concrete impact. The `triage` gate independently challenges each finding against the
+code. It confirms the findings, sends weak findings back to the hunt step for rework, or
+declares no bug. A no-bug run reaches the success terminal with no code change; the host
+no-diff gate then settles the run without a pull request.
+
+The `fix_plan` and `implement` steps fix the confirmed findings with the smallest change and
+add a regression test that fails before the fix. The `review` gate checks the fix, the
+regression tests, and the diff scope. It flags any change that makes the verification
+harness more strict as a violation. When a performance-class finding is present, the
+`perf_verify` gate measures the fixed code against the base code and requires the claimed
+improvement or a cost-neutral result. The evidence gates then run the same checks as
+`feature-delivery`.
+
+All loops are bounded: `triage` to `hunt` (5), `review` to `implement` (8), `perf_verify` to
+`implement` (4), and each evidence-gate repair loop (5). The workflow sets no global step or
+duration cap, so long agentic reviews and tasks can run past 24 hours.
+
+| Steps | Kind | Agent and skill | Purpose |
+|-------|------|-----------------|---------|
+| `hunt` | `agent` | `auditor` + `bug-audit` | Read-only hostile audit; report at most 2 confirmed findings. |
+| `triage` | `agent_gate` | `reviewer` + `bug-audit` | Confirm or reject each finding. |
+| `fix_plan`, `implement`, and all `repair_*` steps | `agent` | `workflow-engineer` + `workflow-feature-delivery` | Plan the fix, implement it, and repair failed evidence. |
+| `review` | `agent_gate` | `reviewer` + `secure-change` | Review the fix, the tests, and the diff scope. |
+| `perf_verify` | `agent_gate` | `performance` + `performance-review` | Measure the fix when a perf finding is present. |
+| `test_validate`, `verify`, `code_validate`, `preflight_validate`, and `preflight_structure` | `evidence_gate` | Fixed verifier or fixed command | Run the required checks outside the implementation agent. |
+| `delivery` | Delivery policy | Not an agent step | Create a draft GitHub pull request after `success`, only after explicit publish approval. |
+
+### Inputs and limits
+
+The `task` and `scope` inputs are required and accept up to 1 MiB each. The workflow
+contract sets `max_step_attempts = 0` and `max_duration_seconds = 0`: no global step cap
+and no run deadline. Execution stays finite because every cycle is a bounded loop.
+
+### Run the bug-fix workflow
+
+Start a run with the direct CLI form and the publish grant:
+
+```bash
+mivia workflow run bug-fix --allow-publish \
+  --input task="Hunt for confirmed reachable performance or logic bugs in the scope and fix them." \
+  --input scope="internal/durablefence"
+```
+
+Use `mivia workflow status <run-id>` and `mivia workflow events <run-id>` to monitor the
+run. The workflow contract lives in
+[`.mivia/workflows/bug-fix.toml`](../../.mivia/workflows/bug-fix.toml). Its templates are
+`templates/bugfix-*` and its schemas are `schemas/findings-v1.json`,
+`schemas/triage-v1.json`, `schemas/review-fix-v1.json`, and `schemas/perf-v1.json`.
 
 ## Authoring a workflow
 

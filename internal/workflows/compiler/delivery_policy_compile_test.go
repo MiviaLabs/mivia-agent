@@ -134,3 +134,17 @@ func TestCompile_DeliveryOnPRMetadataFailureValidation(t *testing.T) {
 		}
 	})
 }
+
+// TestCompile_DeliveryMaxRepairsNegativeRejected pins admission validation:
+// delivery.max_repairs is a repair-cycle budget and cannot be negative
+// (unbounded repair cycles would burn the run deadline).
+func TestCompile_DeliveryMaxRepairsNegativeRejected(t *testing.T) {
+	base := func() *definition.WorkflowFile {
+		wf := newMinimalWorkflow("delivery-max-repairs-negative")
+		wf.Delivery = &definition.Delivery{Kind: "pull_request", Mode: "draft", Provider: "github", Base: "main"}
+		return wf
+	}
+	wf := base()
+	wf.Delivery.MaxRepairs = -1
+	assertCompileError(t, wf, "negative max_repairs", "max_repairs must be >= 0")
+}

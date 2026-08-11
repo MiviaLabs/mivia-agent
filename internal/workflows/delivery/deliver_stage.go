@@ -23,10 +23,20 @@ func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, 
 		// and is NOT rewritten with a fresh pending upsert.
 		switch {
 		case existing.CommitSHA == head:
-			// Already committed by a previous attempt; the worktree must be
-			// exactly that commit (no edits on top).
+			// Already committed by a previous attempt. The worktree must be
+			// exactly that commit - UNLESS the changes on top are the run's
+			// own repair work: a delivery rejection routes to the workflow's
+			// repair step, the agent edits the worktree, and the run
+			// re-reaches success. Those edits ARE the delivery and must be
+			// published, so commit them as a follow-up delivery commit (never
+			// amend: an earlier attempt may already have pushed the branch)
+			// and adopt the new HEAD.
 			if !porcelainEmpty {
-				return "", "", &RefusalError{Reason: "worktree has uncommitted changes on the delivery commit"}
+				var ferr error
+				head, treeSHA, ferr = commitWorktreeFollowUp(ctx, repo, git, req, existing, diffRef)
+				if ferr != nil {
+					return "", "", ferr
+				}
 			}
 		case existing.CommitSHA == "" && existing.TreeSHA != "":
 			// Crash between commit and the CommitSHA record: adopt HEAD only
@@ -117,6 +127,62 @@ func freshDeliveryCommit(ctx context.Context, repo ledger.Repository, git GitRun
 		return "", "", err
 	}
 	return sha, adoptedTree, nil
+}
+
+// commitWorktreeFollowUp commits uncommitted worktree changes on top of the
+// recorded delivery commit - the repair-cycle edits made after a rejected
+// delivery - and re-records the delivery with the adopted HEAD and tree. It
+// never amends: an earlier attempt may already have pushed the branch, and a
+// new commit keeps the retry push fast-forward. Git execution failures are
+// recoverable (a plain error keeps the run delivery_pending); only a staged
+// tree that changes mid-commit is a refusal, mirroring the fresh path. The
+// delivery record is re-upserted with the adopted CommitSHA/TreeSHA and this
+// attempt's FRESH diff ref, preserving every other field (RemoteID, URL,
+// Mode, BaseRef, HeadRef, Provider) so the run keeps proving ownership of its
+// own PR on further retries.
+func commitWorktreeFollowUp(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, existing ledger.DeliveryRecord, diffRef string) (string, string, error) {
+	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
+		return "", "", err
+	}
+	treeOut, err := git.Run(ctx, req.GitCtx, "write-tree")
+	if err != nil {
+		return "", "", err
+	}
+	treeSHA := strings.TrimSpace(treeOut)
+	if _, err := git.Run(ctx, req.GitCtx, "diff", "--quiet", "--cached", treeSHA); err != nil {
+		return "", "", &RefusalError{Reason: "staged tree changed before commit"}
+	}
+	msg, err := req.Policy.RenderCommitMessage(req.Inputs)
+	if err != nil {
+		return "", "", err
+	}
+	// Commit through Git so pre-commit and commit-msg hooks can reject it,
+	// mirroring commitStagedTree on the fresh path.
+	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
+		"-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
+		"commit", "--allow-empty-message", "-m", msg); err != nil {
+		return "", "", err
+	}
+	headOut, err := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD")
+	if err != nil {
+		return "", "", err
+	}
+	treeOut, err = git.Run(ctx, req.GitCtx, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		return "", "", err
+	}
+	head := strings.TrimSpace(headOut)
+	adoptedTree := strings.TrimSpace(treeOut)
+	// Re-record the delivery with the adopted HEAD/tree, preserving every
+	// other field of the existing record (mirrors adoptOwnDeliveryCommit).
+	rec := existing
+	rec.TreeSHA = adoptedTree
+	rec.CommitSHA = head
+	rec.DiffRef = diffRef
+	if err := repo.UpsertDelivery(ctx, rec); err != nil {
+		return "", "", err
+	}
+	return head, adoptedTree, nil
 }
 
 // adoptOwnDeliveryCommit verifies HEAD is the run's own delivery commit after

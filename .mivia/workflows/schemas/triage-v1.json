@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "retained_findings", "has_perf", "rationale", "inspected"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["confirmed", "insufficient_evidence", "no_bug"]
+    },
+    "retained_findings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "has_perf": { "type": "string", "enum": ["true", "false"] },
+    "rationale": { "type": "string", "minLength": 1 },
+    "inspected": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

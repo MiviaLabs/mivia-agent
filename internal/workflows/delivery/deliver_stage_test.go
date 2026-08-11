@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -566,4 +567,73 @@ func orphanCommit(t *testing.T, dir, branch string) string {
 	runGit(t, dir, "checkout", branch)
 	runGit(t, dir, "branch", "-D", orphan)
 	return sha
+}
+
+// TestDeliverRetryCommitsRepairEditsAndPublishes pins the repair-cycle fix:
+// after a delivery rejection routed the run to its repair step, the agent's
+// edits sit UNCOMMITTED on top of the recorded delivery commit. The retry
+// must commit them as a follow-up delivery commit (never amend), re-record
+// the delivery with the adopted HEAD, and publish - instead of refusing the
+// worktree as dirty and settling the run delivery_failed terminal. This is
+// the exact shape that stranded a delivered run with "worktree has
+// uncommitted changes on the delivery commit" after a repair cycle.
+func TestDeliverRetryCommitsRepairEditsAndPublishes(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	// First delivery attempt: the implement step's work is committed and
+	// recorded exactly as a rejected attempt would leave it (Status failed,
+	// CommitSHA = the delivery commit, TreeSHA = its tree).
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "implemented\n")
+	runGit(t, worktreeRoot, "add", "b.txt")
+	runGit(t, worktreeRoot, "-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
+		"commit", "--allow-empty-message", "-m", "feat: task\n\nBody.")
+	firstHead := runGitOut(t, worktreeRoot, "rev-parse", "HEAD")
+	firstTree := runGitOut(t, worktreeRoot, "rev-parse", "HEAD^{tree}")
+	key := DeliveryKey(run.RunID, run.WorkflowDigest)
+	if err := repo.UpsertDelivery(ctx, workflowledger.DeliveryRecord{
+		RunID: run.RunID, IdempotencyKey: key, Status: "failed",
+		Mode: "draft", BaseRef: "main", HeadRef: "wf/wt-test", Provider: "github",
+		CommitSHA: firstHead, TreeSHA: firstTree,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The repair cycle then edits the worktree WITHOUT committing.
+	writeWorktreeFile(t, worktreeRoot, "c.txt", "repair\n")
+
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"}))
+	if err != nil {
+		t.Fatalf("Deliver retry with uncommitted repair edits = %v, want success (the host commits them)", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	if n := pr.createdCount(); n != 1 {
+		t.Fatalf("Create calls = %d, want 1", n)
+	}
+	// HEAD advanced by exactly one follow-up commit whose parent is the
+	// recorded delivery commit and which carries the repair edit.
+	head := runGitOut(t, worktreeRoot, "rev-parse", "HEAD")
+	if head == firstHead {
+		t.Fatal("HEAD unchanged; the repair edits were not committed")
+	}
+	if parent := runGitOut(t, worktreeRoot, "rev-parse", "HEAD~1"); parent != firstHead {
+		t.Fatalf("follow-up commit parent = %s, want the recorded delivery commit %s", parent, firstHead)
+	}
+	if got := runGitOut(t, worktreeRoot, "show", "HEAD:c.txt"); got != "repair" {
+		t.Fatalf("follow-up commit carries %q, want the repair edit", got)
+	}
+	rec := deliveryRecordByKey(t, repo, run)
+	if rec.Status != "succeeded" {
+		t.Fatalf("delivery record status = %q, want succeeded", rec.Status)
+	}
+	if rec.CommitSHA != head {
+		t.Fatalf("recorded CommitSHA = %s, want the adopted HEAD %s", rec.CommitSHA, head)
+	}
+	// The branch reached origin with both commits (fast-forward, never a
+	// force-push rewrite).
+	refs := runGitOut(t, repoRoot, "ls-remote", originURL)
+	if !strings.Contains(refs, "refs/heads/wf/wt-test") {
+		t.Fatalf("origin has no wf/wt-test branch after a successful retry push:\n%s", refs)
+	}
 }

@@ -195,11 +195,11 @@ func settleDeliveryError(ctx context.Context, repo workflowledger.Repository, ru
 	// on_failure). It is never a refusal and never a transport fault.
 	if delivery.IsPRMetadataError(err) && policy.OnPRMetadataFailure != "" {
 		recordAutoDeliveryFailure(ctx, repo, runID, err)
-		return delivery.ReopenForRepair(ctx, repo, runID, policy.OnPRMetadataFailure, err, stdout)
+		return delivery.ReopenForRepair(ctx, repo, runID, policy.OnPRMetadataFailure, policy.MaxRepairs, err, stdout)
 	}
 	if policy.OnFailure != "" && !provider.IsTransient(err) {
 		recordAutoDeliveryFailure(ctx, repo, runID, err)
-		return delivery.ReopenForRepair(ctx, repo, runID, policy.OnFailure, err, stdout)
+		return delivery.ReopenForRepair(ctx, repo, runID, policy.OnFailure, policy.MaxRepairs, err, stdout)
 	}
 	return err
 }

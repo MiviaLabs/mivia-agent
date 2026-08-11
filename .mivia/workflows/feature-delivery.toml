@@ -463,4 +463,9 @@ on_failure = "repair_preflight_structure"
 # A PR-metadata failure (the host rejected pr_title/pr_summary) routes to the
 # dedicated repair step instead of the generic on_failure step.
 on_pr_metadata_failure = "repair_pr_metadata"
+# max_repairs bounds the delivery -> repair -> success -> delivery cycle: how
+# many times a rejected delivery may route back into the repair step before
+# the run settles terminal (delivery_failed) with the last rejection recorded.
+# The default is 5; set it lower to fail fast or higher for stubborn gates.
+max_repairs = 5
 commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs.task }}"
