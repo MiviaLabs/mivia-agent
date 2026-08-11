@@ -165,11 +165,14 @@ func parseTimeout(value any, fallback time.Duration) (time.Duration, error) {
 	default:
 		return 0, timeoutRangeError(value)
 	}
-	timeout := time.Duration(seconds) * time.Second
-	if timeout < MinTimeout || timeout > MaxTimeout {
+	// Range-check the DECLARED seconds before any multiplication. time.Duration
+	// is int64, so time.Duration(seconds)*time.Second wraps modulo 2^64: a value
+	// like 36028797018963969 (2^55+1) lands on exactly 1s = MinTimeout and used
+	// to slip past the post-multiplication check below.
+	if seconds < int64(MinTimeout/time.Second) || seconds > int64(MaxTimeout/time.Second) {
 		return 0, timeoutRangeError(value)
 	}
-	return timeout, nil
+	return time.Duration(seconds) * time.Second, nil
 }
 
 func timeoutRangeError(value any) error {

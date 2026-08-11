@@ -258,6 +258,14 @@ var rejectionCases = []rejectionCase{
 		[]string{"timeout", "600"},
 	},
 	{
+		// 2^55+1: declared seconds that wrap onto exactly 1s when multiplied
+		// into a time.Duration, so a post-multiplication range check used to
+		// accept it. Must be rejected on the DECLARED value.
+		"overflow timeout",
+		"[[hooks]]\nevent = \"PreToolUse\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./h.sh\"]\n  timeout = 36028797018963969\n",
+		[]string{"timeout", "600"},
+	},
+	{
 		"bad on_timeout",
 		"[[hooks]]\nevent = \"PreToolUse\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./h.sh\"]\n  on_timeout = \"warn\"\n",
 		[]string{"on_timeout", "block", "allow"},
