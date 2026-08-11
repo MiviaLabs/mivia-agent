@@ -93,6 +93,15 @@ func panelMCPAllowedTools(agent agents.ResolvedAgent, authority *tools.Registry)
 	return out
 }
 
+// workflowDefaultRegistry builds the tool registry that workflow step agents
+// may hold. DiagnosticsCommand is deliberately NOT mapped here: workflow
+// steps run no commands by design - the workflow's own evidence gates execute
+// checks in the verifier sandbox ("Do not run commands" is in the
+// workflow-engineer system prompt, and feature_delivery_contract_test.go pins
+// run_command and get_diagnostics absent from its toolset). If this ever
+// changes, workflowWriteAuthority must classify get_diagnostics as
+// write-capable exactly like run_command (an allowlisted program can write
+// anywhere).
 func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry, error) {
 	ws, err := workspace.Open(root)
 	if err != nil {
@@ -140,7 +149,9 @@ func workflowWriteAuthority(wf *compiler.CompiledWorkflow, registry *agents.Agen
 			// external program), but a shell program can write anywhere, so a
 			// workflow that grants it is write-capable: it must run in an
 			// isolated worktree and clear the review gate before delivery.
-			// Mirrors tools.WorkspaceWriteCapable.
+			// Mirrors tools.WorkspaceWriteCapable. get_diagnostics is the same
+			// class (it runs an allowlisted external program): if it is ever
+			// granted to a workflow step, it must be added here too.
 			if tool.Name() == tools.RunCommandToolName || surface.Capability(tool.Name(), nil).Class == tools.ExecutionWrite {
 				writeCapable = true
 			}
