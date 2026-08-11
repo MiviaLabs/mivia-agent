@@ -309,47 +309,69 @@ func keepTurnStart(turns []messageTurn, tailLength, budget int) int {
 // nothing to drop and the prompt grows until the provider rejects it
 // mid-run. Dropping the oldest tool exchanges keeps the turn's intent (the user
 // message) and its most recent findings, which is what the next step needs.
+//
+// The pass is one linear sweep: total cost is computed once, every removable
+// exchange block (an assistant tool_call message plus the consecutive tool
+// results answering it) is collected oldest-first with its token cost, the
+// oldest blocks are dropped until the remaining total fits the budget, and the
+// result slice is rebuilt once. The previous implementation re-scanned the
+// whole slice with MessagesTokens and rebuilt it once per dropped exchange
+// (O(k*n)); this is O(n) overall, so PruneMessagesKeepTurns - and with it
+// pruneHistory's two calls per step and retryAfterPromptTooLong's one call -
+// is linear in the history size.
 func pruneWithinTurn(msgs []Message, budget int) []Message {
-	for MessagesTokens(msgs) > budget {
-		smaller := dropOldestToolExchange(msgs)
-		if smaller == nil {
-			return msgs // only the turn header and plain replies left
-		}
-		msgs = smaller
+	total := MessagesTokens(msgs)
+	if total <= budget {
+		return msgs
 	}
-	return msgs
-}
-
-// dropOldestToolExchange removes the earliest assistant tool_call message
-// together with every tool result answering it, mirroring the pairing invariant
-// RepairToolPairing enforces: an announced call without its result, or a result
-// without its call, makes the API reject the whole request. Returns nil when
-// the slice holds no removable exchange.
-func dropOldestToolExchange(msgs []Message) []Message {
-	for index, message := range msgs {
+	// A removable block is an assistant tool_call message together with the
+	// consecutive tool results answering it - exactly the set the former
+	// per-drop loop removed for valid paired histories. Non-contiguous
+	// orphan-result shapes are already invalid histories rejected/repaired
+	// downstream (ValidateToolPairing/RepairToolPairing), so only the valid
+	// paired shape needs the block scan to match.
+	type block struct{ start, end, tokens int }
+	var blocks []block
+	for scan := 0; scan < len(msgs); {
+		message := msgs[scan]
 		if message.Role != RoleAssistant || len(message.ToolCalls) == 0 {
+			scan++
 			continue
 		}
-		announced := make(map[string]bool, len(message.ToolCalls))
+		announced := make(map[string]struct{}, len(message.ToolCalls))
 		for _, call := range message.ToolCalls {
-			announced[call.ID] = true
+			announced[call.ID] = struct{}{}
 		}
-		out := make([]Message, 0, len(msgs)-1)
-		out = append(out, msgs[:index]...)
-		adjacent := true
-		for _, rest := range msgs[index+1:] {
-			// An id-less tool result cannot be matched by id, but it belongs to
-			// the exchange it directly follows and is dropped as an orphan
-			// downstream anyway, so it goes with that exchange here.
-			if rest.Role == RoleTool && (announced[rest.ToolCallID] || (adjacent && rest.ToolCallID == "")) {
-				continue
+		start, tokens := scan, MessageTokens(message)
+		scan++
+		for scan < len(msgs) && msgs[scan].Role == RoleTool {
+			if _, ok := announced[msgs[scan].ToolCallID]; !ok {
+				break
 			}
-			adjacent = false
-			out = append(out, rest)
+			tokens += MessageTokens(msgs[scan])
+			scan++
 		}
-		return out
+		blocks = append(blocks, block{start: start, end: scan, tokens: tokens})
 	}
-	return nil
+	if len(blocks) == 0 {
+		return msgs // only the turn header and plain replies left
+	}
+	// Drop the oldest blocks until the remaining total fits the budget. Blocks
+	// are mutually independent for valid paired histories, so the count the
+	// per-drop loop reached is exactly the count that fits here.
+	dropped, dropCount := 0, 0
+	for _, b := range blocks {
+		if total-dropped <= budget {
+			break
+		}
+		dropped += b.tokens
+		dropCount++
+	}
+	// Dropped blocks form a contiguous prefix [blocks[0].start, last.end).
+	first, last := blocks[0], blocks[dropCount-1]
+	result := make([]Message, 0, len(msgs)-(last.end-first.start))
+	result = append(result, msgs[:first.start]...)
+	return append(result, msgs[last.end:]...)
 }
 
 func joinPrunedMessages(system Message, kept []Message) []Message {
