@@ -67,27 +67,9 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 	if !goMode && !IsBareProgramName(program) {
 		return hostFailure(fmt.Errorf("sandbox rejects non-bare program %q", program))
 	}
-	// Resolve the executable that runs inside the sandbox and, when the pinned
-	// Go module inputs are available, the toolchain used to provision the
-	// module cache on the host.
-	var exePath, toolchainPath, goRoot string
-	if goMode {
-		toolchainPath, goRoot, err = verifierGoToolchain()
-		if err != nil {
-			return hostFailure(err)
-		}
-		exePath = toolchainPath
-	} else {
-		exePath, err = trustedSystemExecutable(program)
-		if err != nil {
-			return hostFailure(err)
-		}
-		if baseline != nil {
-			toolchainPath, goRoot, err = verifierGoToolchain()
-			if err != nil {
-				return hostFailure(err)
-			}
-		}
+	exePath, toolchainPath, goRoot, err := resolveSandboxExecutable(goMode, baseline, program)
+	if err != nil {
+		return hostFailure(err)
 	}
 	tempRoot, err := newSandboxRoot()
 	if err != nil {
@@ -99,11 +81,15 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 		return hostFailure(err)
 	}
 	modulesRoot := filepath.Join(tempRoot, "modules")
+	var buildCacheRoot string
 	if baseline != nil {
 		if err := applyGoModuleBaseline(copyRoot, baseline); err != nil {
 			return hostFailure(err)
 		}
 		if err := provisionModuleCache(copyRoot, modulesRoot, baseline, toolchainPath); err != nil {
+			return hostFailure(err)
+		}
+		if buildCacheRoot, err = prepareVerifierBuildCache(); err != nil {
 			return hostFailure(err)
 		}
 	}
@@ -114,7 +100,7 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 	if err != nil {
 		return hostFailure(err)
 	}
-	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, homeRoot, goRoot, exePath, baseline != nil, args...)...)
+	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, homeRoot, goRoot, exePath, buildCacheRoot, baseline != nil, args...)...)
 	command.Env = []string{"PATH=/usr/bin:/bin"}
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
@@ -207,7 +193,7 @@ func boundedDiagnostic(output []byte) string {
 	return text
 }
 
-func sandboxArgs(workRoot, modulesRoot, homeRoot, goRoot, exePath string, goEnv bool, args ...string) []string {
+func sandboxArgs(workRoot, modulesRoot, homeRoot, goRoot, exePath, buildCacheRoot string, goEnv bool, args ...string) []string {
 	result := []string{
 		"--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
 		"--ro-bind", "/usr", "/usr",
@@ -231,7 +217,8 @@ func sandboxArgs(workRoot, modulesRoot, homeRoot, goRoot, exePath string, goEnv 
 	if goEnv {
 		result = append(result,
 			"--ro-bind", modulesRoot, sandboxModules,
-			"--setenv", "GOCACHE", "/tmp/go-cache",
+			"--bind", buildCacheRoot, "/gocache",
+			"--setenv", "GOCACHE", "/gocache",
 			"--setenv", "GOMODCACHE", sandboxModules,
 			"--setenv", "GOWORK", "off",
 			"--setenv", "GOPROXY", "off",

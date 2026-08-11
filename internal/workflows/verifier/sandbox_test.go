@@ -260,7 +260,7 @@ func TestHostFailureDetailCarriesCause(t *testing.T) {
 }
 
 func TestSandboxDisablesGoWorkspaceMode(t *testing.T) {
-	args := sandboxArgs("/tmp/work", "/tmp/modules", "/tmp/home", "/opt/go", "/opt/go/bin/go", true, "test", "./...")
+	args := sandboxArgs("/tmp/work", "/tmp/modules", "/tmp/home", "/opt/go", "/opt/go/bin/go", "/tmp/gocache", true, "test", "./...")
 	joined := strings.Join(args, "\x00")
 	if !strings.Contains(joined, "GOWORK\x00off") {
 		t.Fatalf("sandbox arguments do not disable Go workspace mode: %q", joined)
