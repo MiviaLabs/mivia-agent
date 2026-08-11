@@ -92,13 +92,51 @@ def main() -> None:
         "branches: [master]",
         "if: github.event_name == 'pull_request'",
         "if: github.event_name == 'push'",
-        "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+        # A superseded run gives no signal. Every run group must cancel.
+        "cancel-in-progress: true",
         "go test ./... -count=1",
         "make race",
-        "CGO_ENABLED=0 go build -trimpath -o \"$output\" ./cmd/mivia",
+        'go build -trimpath -o "$output" ./cmd/mivia',
         "scripts/test_installers.ps1",
     ):
         require(ci, fragment, ci_path)
+
+    # One job compiles every release target in a loop. Check the full target
+    # set here, because a dropped target no longer removes a matrix entry.
+    cross_ci = ci.split("\n  cross-compile:", 1)[1]
+    for fragment in (
+        "linux/amd64",
+        "linux/arm64",
+        "darwin/amd64",
+        "darwin/arm64",
+        "windows/amd64",
+        "windows/arm64",
+        'CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch"',
+        "failed targets:",
+    ):
+        require(cross_ci, fragment, ci_path)
+
+    # The Linux jobs share one composite action. Keep the sandbox and the
+    # isolated test home together with it.
+    setup_path = ROOT / ".github/actions/setup-linux/action.yml"
+    if not setup_path.is_file():
+        raise AssertionError(f"{setup_path}: missing Linux setup action")
+    setup = setup_path.read_text(encoding="utf-8")
+    if ci.count("uses: ./.github/actions/setup-linux") != 2:
+        raise AssertionError(f"{ci_path}: both Linux jobs must use the setup action")
+    for fragment in (
+        "using: composite",
+        "bubblewrap ripgrep",
+        "kernel.apparmor_restrict_unprivileged_userns=0",
+        "pip install semgrep",
+        'ci_root="$(mktemp -d /tmp/mivia-ci.XXXXXX)"',
+        'echo "HOME=$test_home" >> "$GITHUB_ENV"',
+        'echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"',
+        'echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"',
+        ': > "$test_home/.mivia/.env"',
+        'ln -s "$module_cache" "$test_home/go/pkg/mod"',
+    ):
+        require(setup, fragment, setup_path)
     for fragment in (
         "Prepare isolated test home",
         'ci_root="$(mktemp -d /private/tmp/mivia-ci.XXXXXX)"',
