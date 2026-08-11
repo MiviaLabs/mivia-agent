@@ -18,7 +18,13 @@ func openDeclaredResourceFile(root *os.File, _ *os.Root, resourcePath string) (*
 	if err != nil {
 		return nil, err
 	}
-	defer unix.Close(fd)
+	// Close the live fd at return: the traversal loop below closes and
+	// reassigns fd, so a bare `defer unix.Close(fd)` would capture the dup'd
+	// root fd value at registration, double-close it after the loop reused it
+	// (an fd-reuse hazard), and leak the final parent directory fd once per
+	// call. The closure reads the current fd at return and closes each
+	// directory fd exactly once on the success path and every error branch.
+	defer func() { _ = unix.Close(fd) }()
 	parts := strings.Split(resourcePath, "/")
 	for _, part := range parts[:len(parts)-1] {
 		var st unix.Stat_t
