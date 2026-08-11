@@ -60,8 +60,13 @@ func parseSkillMarkdown(data []byte) (parsedSkill, error) {
 }
 
 func fillParsedSkillFrontmatter(parsed *parsedSkill, m map[string]any) error {
-	parsed.name, _ = m["name"].(string)
-	parsed.description, _ = m["description"].(string)
+	var err error
+	if parsed.name, err = frontmatterStringField(m, "name"); err != nil {
+		return err
+	}
+	if parsed.description, err = frontmatterStringField(m, "description"); err != nil {
+		return err
+	}
 	switch tv := m["triggers"].(type) {
 	case []string:
 		parsed.triggers = tv
@@ -69,17 +74,31 @@ func fillParsedSkillFrontmatter(parsed *parsedSkill, m map[string]any) error {
 		if tv != "" {
 			parsed.triggers = []string{tv}
 		}
+	case nil:
+		// triggers omitted: keep nil
+	default:
+		return fmt.Errorf("triggers must be a string or list of strings")
 	}
-	parsed.argsHint, _ = m["argument-hint"].(string)
-	parsed.shortDescription, _ = m["short-description"].(string)
-	if v, ok := m["user-invocable"].(string); ok && v != "" {
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "true":
-			parsed.userInvocable = true
-		case "false":
-			parsed.userInvocable = false
-		default:
+	if parsed.argsHint, err = frontmatterStringField(m, "argument-hint"); err != nil {
+		return err
+	}
+	if parsed.shortDescription, err = frontmatterStringField(m, "short-description"); err != nil {
+		return err
+	}
+	if raw, ok := m["user-invocable"]; ok {
+		v, ok := raw.(string)
+		if !ok {
 			return fmt.Errorf("user-invocable must be true or false")
+		}
+		if v != "" {
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "true":
+				parsed.userInvocable = true
+			case "false":
+				parsed.userInvocable = false
+			default:
+				return fmt.Errorf("user-invocable must be true or false")
+			}
 		}
 	}
 	tools, err := parseSkillTools(m["tools"])
@@ -98,6 +117,24 @@ func fillParsedSkillFrontmatter(parsed *parsedSkill, m map[string]any) error {
 	}
 	parsed.inputSchema = inSch
 	return nil
+}
+
+// frontmatterStringField returns the string value for key. An omitted key
+// yields the zero value with no error; a present non-string value is a hard
+// error naming the key. A bare type assertion used to silently drop the
+// wrong-typed value - e.g. user-invocable: [false] parses as []string{"false"},
+// the assertion failed, and the default user-invocable=true survived - the
+// class of silent coercion this parser exists to prevent.
+func frontmatterStringField(m map[string]any, key string) (string, error) {
+	raw, ok := m[key]
+	if !ok {
+		return "", nil
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string", key)
+	}
+	return s, nil
 }
 
 // parseSkillSchemaJSON accepts a JSON object as a scalar string (frontmatter
