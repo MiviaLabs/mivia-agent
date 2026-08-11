@@ -109,7 +109,7 @@ scopes = ["feat"]
 // agentSummaryBody returns the exact PR body the delivery engine must build
 // when the agent provides a change summary.
 func agentSummaryBody(run workflowledger.RunSnapshot, summary string) string {
-	return summary + "\n\n---\nAutomated workflow delivery from Mivia.\nRun: " + run.RunID + "\nWorkflow digest: " + run.WorkflowDigest
+	return summary + "\n\n---\nAutomated workflow delivery from [Mivia Agent](https://mivia.app).\nRun: [" + run.RunID + "](https://mivia.app/runs/" + run.RunID + ")\nWorkflow digest: [" + run.WorkflowDigest + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")"
 }
 
 // TestDeliverAgentTitleAndSummary: a run whose attempts carry a change-summary

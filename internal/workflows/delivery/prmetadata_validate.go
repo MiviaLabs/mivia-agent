@@ -11,6 +11,14 @@ import (
 	ledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
+// miviaBaseURL is the root of the Mivia web app, used to build links in
+// published PR bodies.
+const miviaBaseURL = "https://mivia.app"
+
+// deliveryFooter is the attribution line appended to every PR body the
+// delivery engine publishes.
+const deliveryFooter = "Automated workflow delivery from [Mivia Agent](" + miviaBaseURL + ")."
+
 // validatePRMetadata resolves the agent-provided PR metadata (title and
 // summary) from the run's change-summary output, or falls back to the legacy
 // title_template render, then validates the final title against the OPTIONAL
@@ -57,10 +65,12 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 			return "", "", verr
 		}
 	}
+	runLink := "[" + req.RunID + "](" + miviaBaseURL + "/runs/" + req.RunID + ")"
+	digestLink := "[" + req.WorkflowDigest + "](" + miviaBaseURL + "/workflows/digest/" + req.WorkflowDigest + ")"
 	if strings.TrimSpace(agentSummary) != "" {
-		body = agentSummary + "\n\n---\nAutomated workflow delivery from Mivia.\nRun: " + req.RunID + "\nWorkflow digest: " + req.WorkflowDigest
+		body = agentSummary + "\n\n---\n" + deliveryFooter + "\nRun: " + runLink + "\nWorkflow digest: " + digestLink
 	} else {
-		body = "Automated workflow delivery from Mivia.\n\nRun: " + req.RunID + "\nWorkflow digest: " + req.WorkflowDigest
+		body = deliveryFooter + "\n\nRun: " + runLink + "\nWorkflow digest: " + digestLink
 	}
 	return title, body, nil
 }
