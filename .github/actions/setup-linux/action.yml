@@ -1,0 +1,52 @@
+name: setup linux verification
+description: >-
+  Install the toolchain, the workflow verifier sandbox, and an isolated test
+  home for Linux verification jobs. Run this after actions/checkout.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      with:
+        go-version: "1.25.x"
+    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: "3.12"
+    - name: Install semgrep
+      shell: bash
+      run: pip install semgrep
+    - name: chmod scripts
+      shell: bash
+      run: |
+        chmod +x scripts/*.py scripts/*.sh scripts/git-hooks/* .githooks/* || true
+    - name: Install workflow verifier sandbox
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install --yes bubblewrap ripgrep
+    # bwrap --unshare-all needs unprivileged user namespaces. GitHub's
+    # Ubuntu 24.04 image restricts them with AppArmor by default.
+    - name: Allow unprivileged user namespaces for bubblewrap
+      shell: bash
+      run: |
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+        sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+    - name: Check required tools
+      # Run this check after setup. It gives a clear failure when a runner
+      # image no longer provides a required tool.
+      shell: bash
+      run: |
+        for tool in go git python3 rg semgrep bwrap; do
+          command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
+        done
+    - name: Prepare isolated test home
+      shell: bash
+      run: |
+        ci_root="$(mktemp -d /tmp/mivia-ci.XXXXXX)"
+        test_home="$ci_root/home"
+        test_tmp="$ci_root/tmp"
+        echo "HOME=$test_home" >> "$GITHUB_ENV"
+        echo "TMPDIR=$test_tmp" >> "$GITHUB_ENV"
+        echo "GOPATH=$(go env GOPATH)" >> "$GITHUB_ENV"
+        module_cache="$(go env GOMODCACHE)"
+        mkdir -p "$test_home" "$test_tmp" "$test_home/.mivia" "$test_home/go/pkg"
+        : > "$test_home/.mivia/.env"
+        ln -s "$module_cache" "$test_home/go/pkg/mod"
