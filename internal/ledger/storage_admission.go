@@ -18,6 +18,14 @@ func (s *StorageLedgerRepository) AdmitSingleTask(ctx context.Context, a SingleT
 	if !ok {
 		return fmt.Errorf("store does not support atomic new-run admission")
 	}
+	// Mirror CreateRun: rebase the run's sequence watermark before allocating
+	// event sequences. Without this, re-admitting a run ID after DeleteRun
+	// would mint sequence 1 again, below the surviving run_deleted tombstone -
+	// colliding with UNIQUE(run_id, sequence) on SQLite and maxSeq monotonicity
+	// on Memory, and putting run_created before the tombstone in replay order.
+	if err := s.rebaseRunSequence(ctx, a.Run.RunID); err != nil {
+		return err
+	}
 	a.Run.IdempotencyKey = a.IdempotencyKey
 	rawRun, err := marshalRunSnapshot(a.Run)
 	if err != nil {
