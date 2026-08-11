@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"os/exec"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -88,6 +89,78 @@ func TestDeriveOutputCeilingCoversEveryDeclaredBudget(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDeriveOutputCeilingCoversDiagnosticsCommand: with a configured
+// diagnostics_command whose argv[0] is on the run_command allowlist,
+// get_diagnostics registers and declares its 256 KiB result budget
+// (diagnosticsDefaultBudget - exactly the derivation floor). The derived
+// ceiling must cover that declared budget plus the input allowance (results
+// may echo request input verbatim) plus framing slack - with the default
+// input cap and with an explicit MaxInputBytes. And because the budget equals
+// the floor, the tool must never raise the shared global cap: the same config
+// without the diagnostics command derives an identical ceiling, and the
+// tool's per-tool ceiling stays under the dispatcher's global one.
+func TestDeriveOutputCeilingCoversDiagnosticsCommand(t *testing.T) {
+	// Registration resolves argv[0] on PATH (resolveAllowedCommand), so skip
+	// where no sh exists rather than fail the whole package run (mirrors
+	// requirePOSIXDiagnostics in internal/tools).
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("get_diagnostics registration requires sh on PATH")
+	}
+	opts := tools.DefaultOptions{
+		RunAllowlist:       []string{"sh"},
+		DiagnosticsCommand: []string{"sh", "-c", "true"},
+	}
+	reg := newCeilingRegistry(t, opts)
+
+	tool, ok := reg.Get(tools.GetDiagnosticsToolName)
+	if !ok {
+		t.Fatal("get_diagnostics not registered with DiagnosticsCommand set and argv[0] allowlisted")
+	}
+	budgeted, ok := tool.(tools.ResultBudgetTool)
+	if !ok {
+		t.Fatalf("get_diagnostics does not implement tools.ResultBudgetTool")
+	}
+	budget := budgeted.ResultBudgetBytes()
+	if budget != 256<<10 {
+		t.Errorf("get_diagnostics ResultBudgetBytes = %d, want the declared 256 KiB", budget)
+	}
+
+	// Coverage with the default input allowance (DeriveOutputCeiling's <=0
+	// argument) and with an explicit MaxInputBytes: budget + input + slack
+	// must sit at or under the derived ceiling.
+	ceiling := DeriveOutputCeiling(reg, 0)
+	if budget+inputAllowance+outputCeilingSlack > ceiling {
+		t.Errorf("get_diagnostics budget %d + allowance %d + slack %d exceeds ceiling %d",
+			budget, inputAllowance, outputCeilingSlack, ceiling)
+	}
+	explicit := 128 << 10
+	if got := DeriveOutputCeiling(reg, explicit); budget+explicit+outputCeilingSlack > got {
+		t.Errorf("get_diagnostics budget %d + explicit MaxInputBytes %d + slack %d exceeds ceiling %d",
+			budget, explicit, outputCeilingSlack, got)
+	}
+
+	// Never raise the global cap: the 256 KiB budget equals the derivation
+	// floor, so the same config without the diagnostics command must derive
+	// an identical ceiling, and the dispatcher's per-tool ceiling for the
+	// tool must stay at or under that global value.
+	plain := newCeilingRegistry(t, tools.DefaultOptions{RunAllowlist: []string{"sh"}})
+	if got := DeriveOutputCeiling(plain, 0); got != ceiling {
+		t.Errorf("ceiling with get_diagnostics = %d, without = %d; the tool must never raise the global cap",
+			ceiling, got)
+	}
+	d, err := NewToolDispatcher(reg, Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if got := d.Policy().MaxOutputBytes; got != ceiling {
+		t.Errorf("dispatcher global cap = %d, want derived %d", got, ceiling)
+	}
+	if got := d.OutputCeiling(Tool, tools.GetDiagnosticsToolName); got > ceiling {
+		t.Errorf("get_diagnostics per-tool ceiling %d exceeds the global cap %d", got, ceiling)
 	}
 }
 

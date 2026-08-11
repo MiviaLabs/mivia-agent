@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -59,6 +61,15 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		SecretPathExceptions:      tc.SecretPathExceptions,
 		SearchIgnorePatterns:      tc.SearchIgnorePatterns,
 		MaxInspectRepositoryBytes: tc.MaxInspectRepositoryBytes,
+		DiagnosticsCommand:        tc.DiagnosticsCommand,
+	}
+	// get_diagnostics runs the operator-configured diagnostics argv on this
+	// workspace. State the exact argv once at startup, before any tool call:
+	// a configured command that runs programs is a disclosure, not a hidden
+	// capability (the same contract as the lifecycle-hooks armedNotice).
+	if len(tc.DiagnosticsCommand) > 0 {
+		fmt.Fprintf(os.Stderr, "diagnostics: configured to run [%s] on this workspace\n",
+			strings.Join(tc.DiagnosticsCommand, " "))
 	}
 	// Phase 7: attach in-process workflow tools when .mivia/workflows/ exists.
 	// Pass res so the store path matches prepareWorkflowRun / CLI commands.

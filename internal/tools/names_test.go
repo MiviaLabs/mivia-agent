@@ -37,6 +37,11 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 		TavilyAPIKey: "test-key-not-real",
 		RunAllowlist: []string{"echo"}, // run_command is conditional on non-empty allowlist
 		Memory:       store,            // memory tools are conditional on a wired store
+		// get_diagnostics is conditional on a configured DiagnosticsCommand
+		// whose argv[0] is on the effective run_command allowlist. "echo" is
+		// on the harness allowlist, so the tool registers and the catalogue ↔
+		// registry contract below holds for it in both directions.
+		DiagnosticsCommand: []string{"echo", "diagnostics"},
 	})
 	// Also register skill resource which default registry may not include.
 	// AllToolNames lists it; if not in reg, catalogue still claims it as known.
@@ -63,6 +68,51 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 		if _, ok := got[name]; !ok {
 			t.Errorf("catalogue name %q not present in full default registry", name)
 		}
+	}
+}
+
+// TestGetDiagnosticsRegistrationConditions pins the get_diagnostics
+// registration contract (locked plan v2, task t6): the tool is advertised only
+// when it can succeed. It must be absent when DiagnosticsCommand is unset, and
+// absent when the command's argv[0] is not on the effective run_command
+// allowlist; only configured AND allowlisted commands register it. This mirrors
+// the advertised-iff-can-succeed contract of run_command and extract.
+func TestGetDiagnosticsRegistrationConditions(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n\ngo 1.22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newReg := func(diagnosticsCommand, allowlist []string) *tools.Registry {
+		return tools.NewDefaultRegistry(tools.DefaultOptions{
+			Workspace:          ws,
+			RunAllowlist:       allowlist,
+			DiagnosticsCommand: diagnosticsCommand,
+		})
+	}
+	hasDiagnostics := func(reg *tools.Registry) bool {
+		_, ok := reg.Get(tools.GetDiagnosticsToolName)
+		return ok
+	}
+
+	// Unconfigured: no DiagnosticsCommand → the tool is not registered.
+	if hasDiagnostics(newReg(nil, []string{"echo"})) {
+		t.Errorf("get_diagnostics must not register when DiagnosticsCommand is unset")
+	}
+
+	// Configured but argv[0] NOT on the allowlist → the tool is not registered.
+	// The allowlist membership check precedes PATH resolution, so this is
+	// deterministic regardless of whether the program exists.
+	if hasDiagnostics(newReg([]string{"not_an_allowlisted_program", "diagnostics"}, []string{"echo"})) {
+		t.Errorf("get_diagnostics must not register when argv[0] is not allowlisted")
+	}
+
+	// Configured and argv[0] allowlisted (and resolvable on PATH) → registered.
+	if !hasDiagnostics(newReg([]string{"echo", "diagnostics"}, []string{"echo"})) {
+		t.Errorf("get_diagnostics must register when DiagnosticsCommand is configured and allowlisted")
 	}
 }
 

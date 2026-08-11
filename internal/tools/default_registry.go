@@ -56,6 +56,13 @@ type DefaultOptions struct {
 	// unset-or-0 knob to that same default before this struct is built.
 	MaxInspectRepositoryBytes int
 
+	// DiagnosticsCommand is the argv of the project diagnostics command the
+	// get_diagnostics tool runs ([tools] diagnostics_command, wired by the
+	// config layer). Empty means the tool is not registered. The tool is
+	// advertised only when the command resolves against the run_command
+	// allowlist (see registerDiagnosticsTool).
+	DiagnosticsCommand []string
+
 	// WorkflowTools are pre-built Phase 7 workflow tools. They register only
 	// when the workspace has .mivia/workflows/ and no WorkflowToolsBuilder is
 	// installed. Prefer tools.SetWorkflowToolsBuilder for production wiring so
@@ -265,6 +272,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	}
 	registerWebTools(register, opts, ws, patterns, exceptions)
 	registerCodeNavTools(register, opts, ws, patterns, exceptions)
+	registerDiagnosticsTool(register, opts, ws, allowlist, envExact, envPrefix, envBlockedExact, opts.EnvAllowKeywordBlocklist, patterns, exceptions)
 	registerMemoryTools(register, opts)
 	registerWorkflowTools(register, opts)
 }
@@ -413,5 +421,51 @@ func registerCodeNavTools(register func(Tool), opts DefaultOptions, ws *workspac
 		ws:       ws,
 		resolver: analyzer,
 		maxBytes: navMaxBytes,
+	})
+}
+
+// diagnosticsDefaultBudget is the result-envelope byte bound for
+// get_diagnostics when the operator sets no tighter cap. 256 KiB is the
+// dispatcher's ceiling floor, so the tool's declared budget cannot raise the
+// shared output ceiling. An operator's max_tool_result_bytes clamps the
+// budget tighter, exactly as registerCodeNavTools clamps navMaxBytes.
+const diagnosticsDefaultBudget = 256 << 10
+
+// registerDiagnosticsTool registers the get_diagnostics tool. The tool is
+// advertised only when it can succeed. All of these must hold:
+//
+//   - the operator configured DiagnosticsCommand,
+//   - the workspace has a root,
+//   - the run_command allowlist is non-empty,
+//   - resolveAllowedCommand succeeds: argv[0] is allowlisted and resolvable
+//     on PATH.
+//
+// When any condition fails, the tool is silently absent from the registry.
+// It never registers as an error-returning stub (the same advertised-iff-
+// can-succeed contract as run_command and extract). The result budget is
+// diagnosticsDefaultBudget, clamped by MaxToolResultBytes.
+func registerDiagnosticsTool(register func(Tool), opts DefaultOptions, ws *workspace.Root, allowlist []string, envExact map[string]bool, envPrefix []string, envBlockedExact map[string]bool, keywordBlock []string, patterns, exceptions []string) {
+	if len(opts.DiagnosticsCommand) == 0 || ws == nil || len(allowlist) == 0 {
+		return
+	}
+	if _, _, err := resolveAllowedCommand(opts.DiagnosticsCommand, allowlist); err != nil {
+		return
+	}
+	maxBytes := diagnosticsDefaultBudget
+	if opts.MaxToolResultBytes > 0 {
+		maxBytes = min(maxBytes, opts.MaxToolResultBytes)
+	}
+	register(&getDiagnosticsTool{
+		ws:                   ws,
+		allowlist:            allowlist,
+		argv:                 opts.DiagnosticsCommand,
+		timeoutSec:           opts.RunTimeoutSec,
+		maxBytes:             maxBytes,
+		envExact:             envExact,
+		envPrefix:            envPrefix,
+		envBlockedExact:      envBlockedExact,
+		envKeywordBlock:      keywordBlock,
+		secretPathExceptions: exceptions,
+		secretPathPatterns:   patterns,
 	})
 }

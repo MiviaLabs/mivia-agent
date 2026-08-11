@@ -36,6 +36,12 @@ func AllToolNames() []string {
 		"list_symbols",
 		"go_to_definition",
 		"find_symbol_context",
+		// "get_diagnostics" is conditionally registered, like "extract". It is
+		// a real workspace tool only when [tools] diagnostics_command is set
+		// AND its argv[0] is on the effective run_command allowlist. The
+		// catalogue is static, so unknown-tool validation still recognizes
+		// the name regardless of config.
+		"get_diagnostics",
 		"memory_save",
 		"memory_search",
 		SkillResourceToolName,

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -113,6 +114,14 @@ type ToolsConfig struct {
 	// resolves to the built-in 64 KiB default. Values outside
 	// [MinInspectRepositoryBytes, MaxInspectRepositoryBytes] are rejected at load.
 	MaxInspectRepositoryBytes int `toml:"max_inspect_repository_bytes"`
+	// DiagnosticsCommand is the argv of the project diagnostics command the
+	// get_diagnostics tool runs. Empty (unset or []) means the tool is not
+	// registered. When set, argv[0] must be a bare program name on the
+	// resolved run allowlist (run_allowlist_only when set, else
+	// run_allowlist); validateDiagnosticsCommand rejects anything else at
+	// load, mirroring the run_command gate, so a diagnostics tool that could
+	// never register cannot load clean.
+	DiagnosticsCommand []string `toml:"diagnostics_command"`
 }
 
 // validateTools runs every [tools] validation. It is the single entry point
@@ -121,7 +130,67 @@ func validateTools(tc ToolsConfig) error {
 	if err := validateToolResultBudgets(tc); err != nil {
 		return err
 	}
+	if err := validateDiagnosticsCommand(tc); err != nil {
+		return err
+	}
 	return validateWritePathBlocklist(tc)
+}
+
+// validateDiagnosticsCommand enforces, at load, the same gate the run_command
+// tool applies at runtime (internal/tools/run.go resolveAllowedCommand), so a
+// [tools] diagnostics_command whose get_diagnostics tool could never register
+// is a load error instead of a silently absent tool. The membership logic is
+// mirrored locally - the config package must not import internal/tools.
+//
+// STE: the effective allowlist is run_allowlist_only when set, else
+// run_allowlist. resolveToolsConfig has already cleared RunAllowlist when
+// RunAllowlistOnly is set (B7, before Validate runs), so that selection is
+// exactly what the tools layer resolves (configuredRunAllowlist), and a
+// command allowlisted only in the non-authoritative run_allowlist is refused.
+//
+// STE: an unset or empty diagnostics_command is a no-op (the get_diagnostics
+// tool is simply not registered), keeping every pre-existing config loading
+// unchanged - backward compatibility is a hard contract.
+//
+// STE: a path-shaped argv[0] ("C:\\Tools\\diag.exe", "/bin/sh") is never a
+// bare name on the allowlist; the run_command gate refuses it, so the config
+// layer must refuse the same value at load.
+func validateDiagnosticsCommand(tc ToolsConfig) error {
+	argv := tc.DiagnosticsCommand
+	if len(argv) == 0 {
+		return nil
+	}
+	bin := argv[0]
+	if bin == "" {
+		return fmt.Errorf("[tools] diagnostics_command argv must be non-empty, got %q", argv)
+	}
+	if strings.Contains(bin, string(os.PathSeparator)) || strings.Contains(bin, "/") || strings.Contains(bin, "\\") {
+		return fmt.Errorf("[tools] diagnostics_command argv[0] must be a bare name on the run allowlist, not a path: %q", bin)
+	}
+	allowlist := tc.RunAllowlistOnly
+	if len(allowlist) == 0 {
+		allowlist = tc.RunAllowlist
+	}
+	if !allowlisted(bin, allowlist) {
+		return fmt.Errorf("[tools] diagnostics_command argv[0] %q is not on the run allowlist (allowed: %s)", bin, strings.Join(allowlist, ", "))
+	}
+	return nil
+}
+
+// allowlisted mirrors internal/tools/run.go allowed(): case-folded comparison
+// of the program name (and its base name, for exactness) against each
+// allowlist entry, which the tools layer stores pre-lowercased.
+func allowlisted(bin string, allowlist []string) bool {
+	base := filepath.Base(bin)
+	binLower := strings.ToLower(bin)
+	baseLower := strings.ToLower(base)
+	for _, entry := range allowlist {
+		e := strings.ToLower(entry)
+		if e == binLower || e == baseLower {
+			return true
+		}
+	}
+	return false
 }
 
 // validateWritePathBlocklist rejects entries that cannot protect anything:

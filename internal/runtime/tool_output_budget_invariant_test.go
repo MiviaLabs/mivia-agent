@@ -171,6 +171,68 @@ func TestDeclaredBudgetsAreCoveredByTheDerivedCeiling(t *testing.T) {
 	}
 }
 
+// TestGetDiagnosticsConfiguredRegistryBudgetInvariant covers the
+// configured-registry case of INV-AG-25. get_diagnostics is conditionally
+// registered - only when DiagnosticsCommand is configured, its argv[0] is on
+// the run_command allowlist, and it resolves on PATH - so the default-registry
+// enumeration tests above never see it. This test builds the configured
+// registry and pins the same invariants they hold for the always-registered
+// tools: the tool is registered, it declares ResultBudgetBytes() > 0, it has
+// no stale unbudgetedDefaultTools entry, and its declared budget is covered
+// by the derived per-tool ceiling.
+//
+// The worst-case harness below builds its registry without DiagnosticsCommand,
+// so get_diagnostics is absent from the registry assertWorstCaseCoverage
+// enumerates and needs no outOfHarness entry there. A configured registry
+// only exists inside this test, which checks the budget invariant directly
+// rather than running the adversarial workspace against a command the
+// operator's config chose.
+func TestGetDiagnosticsConfiguredRegistryBudgetInvariant(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("registration resolves argv[0] on PATH; sh is a POSIX program name")
+	}
+	reg := newCeilingRegistry(t, tools.DefaultOptions{
+		RunAllowlist:       []string{"sh"},
+		DiagnosticsCommand: []string{"sh", "-c", "true"},
+	})
+	tool, ok := reg.Get(tools.GetDiagnosticsToolName)
+	if !ok {
+		t.Fatal("get_diagnostics not registered with DiagnosticsCommand set and argv[0] allowlisted")
+	}
+	budgeted, ok := tool.(tools.ResultBudgetTool)
+	if !ok {
+		t.Fatal("get_diagnostics does not implement tools.ResultBudgetTool")
+	}
+	budget := budgeted.ResultBudgetBytes()
+	if budget <= 0 {
+		t.Fatalf("get_diagnostics declares ResultBudgetBytes() = %d, want > 0", budget)
+	}
+	// The same stale-entry gate TestEveryDefaultToolHasARecordedResultSizeDecision
+	// applies: a tool that declares a budget must not also sit in
+	// unbudgetedDefaultTools.
+	if _, listed := unbudgetedDefaultTools[tool.Name()]; listed {
+		t.Errorf("%s declares a result budget but is still listed in unbudgetedDefaultTools; remove the stale entry", tool.Name())
+	}
+	// The derived ceiling must clear the declared budget plus the framing
+	// terms, exactly as TestDeclaredBudgetsAreCoveredByTheDerivedCeiling holds
+	// for every default tool.
+	if ceiling := DeriveOutputCeiling(reg, 0); budget+inputAllowance+outputCeilingSlack > ceiling {
+		t.Errorf("get_diagnostics budget %d does not fit under derived ceiling %d", budget, ceiling)
+	}
+	// And the per-tool ceiling the dispatcher actually enforces must clear it
+	// (the TestFindReferencesCeilingClearsItsDeclaredBudget pattern for a
+	// budgeted tool the default-registry enumeration cannot reach).
+	d, err := NewToolDispatcher(reg, Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if got := d.OutputCeiling(Tool, tools.GetDiagnosticsToolName); got < budget+outputCeilingSlack {
+		t.Errorf("get_diagnostics per-tool ceiling %d binds below its declared budget %d plus framing slack %d",
+			got, budget, outputCeilingSlack)
+	}
+}
+
 // TestWorstCaseWorkspaceToolOutputStaysWithinBudget is the empirical half of
 // the invariant. It builds a deliberately adversarial workspace - name
 // components at the 255-byte filesystem limit, a directory chain driving

@@ -351,7 +351,13 @@ func exitStatus(callCtx context.Context, runErr error) string {
 	}
 }
 
-func (t *runCommandTool) resolveCommand(argv []string) (string, []string, error) {
+// resolveAllowedCommand is the run_command command gate. It validates argv
+// (non-empty, bare-name shape, case-folded full- and base-name allowlist
+// membership, the Windows echo/true/false shell-builtin exception) and
+// resolves argv[0] on PATH, returning the resolved binary and remaining
+// arguments. It is the single home of the gate's error text; resolveCommand
+// delegates to it so run_command behavior stays byte-identical.
+func resolveAllowedCommand(argv []string, allowlist []string) (string, []string, error) {
 	if len(argv) == 0 {
 		return "", nil, fmt.Errorf("argv must be non-empty")
 	}
@@ -359,8 +365,8 @@ func (t *runCommandTool) resolveCommand(argv []string) (string, []string, error)
 	if strings.Contains(bin, string(os.PathSeparator)) || strings.Contains(bin, "/") || strings.Contains(bin, "\\") {
 		return "", nil, fmt.Errorf("program must be a bare name on the allowlist, not a path: %q", bin)
 	}
-	if !t.allowed(bin) {
-		return "", nil, fmt.Errorf("program %q is not allowlisted (allowed: %s)", bin, strings.Join(t.allowlist, ", "))
+	if !allowed(bin, allowlist) {
+		return "", nil, fmt.Errorf("program %q is not allowlisted (allowed: %s)", bin, strings.Join(allowlist, ", "))
 	}
 	if runtime.GOOS == "windows" && (bin == "echo" || bin == "true" || bin == "false") {
 		return "", nil, fmt.Errorf("program %q is not available without a shell on Windows", bin)
@@ -372,14 +378,22 @@ func (t *runCommandTool) resolveCommand(argv []string) (string, []string, error)
 	return resolved, argv[1:], nil
 }
 
-func (t *runCommandTool) allowed(bin string) bool {
+// allowed reports whether bin is on the allowlist, comparing case-folded
+// against both the full program name and its base name.
+func allowed(bin string, allowlist []string) bool {
 	base := filepath.Base(bin)
 	binLower := strings.ToLower(bin)
 	baseLower := strings.ToLower(base)
-	for _, a := range t.allowlist {
+	for _, a := range allowlist {
 		if a == binLower || a == baseLower {
 			return true
 		}
 	}
 	return false
+}
+
+// resolveCommand validates argv against the tool allowlist and resolves the
+// program on PATH; see resolveAllowedCommand.
+func (t *runCommandTool) resolveCommand(argv []string) (string, []string, error) {
+	return resolveAllowedCommand(argv, t.allowlist)
 }
