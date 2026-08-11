@@ -91,8 +91,43 @@ func TestWorkLimitMeterOutputCapUsesPerCallAndRemainingTotal(t *testing.T) {
 	if err := meter.reserveProvider(0, *cap); err != nil {
 		t.Fatal(err)
 	}
+	// A positive remaining budget clamps the per-call allocation down to the
+	// remainder (1 of 5) instead of erroring; only a genuinely exhausted
+	// budget (remaining <= 0) rejects.
+	cap, err = meter.outputCap(nil)
+	if err != nil || cap == nil || *cap != 1 {
+		t.Fatalf("second cap = %v, %v; want 1, nil", cap, err)
+	}
+	if err := meter.reserveProvider(0, *cap); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := meter.outputCap(nil); err == nil {
-		t.Fatal("partial final output allocation was accepted")
+		t.Fatal("exhausted output allocation was accepted")
+	}
+}
+
+// A requested output above the remaining cumulative budget must be clamped
+// down to the remainder, not rejected: outputCap derives the maximum allocation
+// for one provider request, and a positive remaining budget is an allocation.
+func TestWorkLimitMeterOutputCapClampsRequestedAboveRemaining(t *testing.T) {
+	meter := workLimitMeter{limits: runtime.WorkLimits{MaxOutputTokens: 4000}}
+
+	requested := 8192
+	cap, err := meter.outputCap(&requested)
+	if err != nil || cap == nil || *cap != 4000 {
+		t.Fatalf("requested=%d cap = %v, %v; want 4000, nil", requested, cap, err)
+	}
+
+	equal := 4000
+	cap, err = meter.outputCap(&equal)
+	if err != nil || cap == nil || *cap != 4000 {
+		t.Fatalf("requested=%d cap = %v, %v; want 4000, nil", equal, cap, err)
+	}
+
+	below := 2048
+	cap, err = meter.outputCap(&below)
+	if err != nil || cap == nil || *cap != 2048 {
+		t.Fatalf("requested=%d cap = %v, %v; want 2048, nil", below, cap, err)
 	}
 }
 

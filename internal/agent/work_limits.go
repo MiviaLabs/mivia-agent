@@ -33,10 +33,13 @@ func (m *workLimitMeter) outputCap(requested *int) (*int, error) {
 		if remaining <= 0 {
 			return nil, fmt.Errorf("work limit exceeded: output tokens")
 		}
-		if cap <= 0 {
+		// A positive remaining budget is an allocation, not a rejection: clamp
+		// the per-call ceiling down to the remainder so the request still runs
+		// with the largest output the cumulative bound permits. Only a truly
+		// exhausted budget (remaining <= 0 above) fails, and it fails before
+		// any provider call.
+		if cap <= 0 || remaining < cap {
 			cap = remaining
-		} else if remaining < cap {
-			return nil, fmt.Errorf("work limit exceeded: output tokens")
 		}
 	}
 	if cap <= 0 {

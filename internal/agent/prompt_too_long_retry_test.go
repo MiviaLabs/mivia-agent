@@ -201,10 +201,12 @@ func TestPromptTooLongRetryDoesNotDoubleChargeOutputBudget(t *testing.T) {
 	}
 }
 
-// The fix must not bypass the cumulative output bound: a MaxOutputTokens that
-// genuinely cannot fit one completion still fails the run with the work-limit
-// error, before any provider call (stepRequest's outputCap rejects it).
-func TestPromptTooLongRetryHonorsTrulyExhaustedOutputBudget(t *testing.T) {
+// A per-request MaxTokens above the remaining output budget must be clamped
+// down to the remainder instead of hard-failing the whole turn: outputCap
+// derives the maximum allocation for one provider request, and a positive
+// remaining budget is an allocation. The request runs with MaxTokens clamped
+// to the remaining allowance; the prompt-too-long retry still recovers once.
+func TestPromptTooLongRetryClampsOutputBudgetToRemaining(t *testing.T) {
 	maxTokens := 8192
 	comp := &promptTooLongCompleter{
 		failN:            1,
@@ -213,19 +215,22 @@ func TestPromptTooLongRetryHonorsTrulyExhaustedOutputBudget(t *testing.T) {
 	}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
 
-	_, err := loop.Run(context.Background(), "final question", Options{
+	text, err := loop.Run(context.Background(), "final question", Options{
 		Model:      "deepseek-v4-flash",
 		MaxTokens:  &maxTokens,
-		WorkLimits: runtime.WorkLimits{MaxOutputTokens: 512},
+		WorkLimits: runtime.WorkLimits{MaxOutputTokens: 4000},
 		MaxSteps:   5,
 	})
-	if err == nil {
-		t.Fatal("expected work-limit error")
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "work limit exceeded: output tokens") {
-		t.Fatalf("err = %v, want %q", err, "work limit exceeded: output tokens")
+	if text != "recovered" {
+		t.Fatalf("text = %q, want %q", text, "recovered")
 	}
-	if comp.calls != 0 {
-		t.Fatalf("completer called %d times, want 0 (output cap rejects before any provider call)", comp.calls)
+	if comp.calls != 2 {
+		t.Fatalf("completer called %d times, want exactly 2 (one fail + one retry)", comp.calls)
+	}
+	if comp.lastReq.MaxTokens == nil || *comp.lastReq.MaxTokens != 4000 {
+		t.Fatalf("last request MaxTokens = %v, want 4000 (clamped to remaining output budget)", comp.lastReq.MaxTokens)
 	}
 }
