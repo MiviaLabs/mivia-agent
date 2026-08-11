@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os"
 	"strings"
 	"testing"
@@ -17,6 +19,10 @@ import (
 // It is the subprocess behind every stdio server in this test file.
 // The test binary runs this test when MIVIA_CLI_MCP_HELPER is set.
 func TestMCPStdioHelper(t *testing.T) {
+	if os.Getenv("MIVIA_CLI_MCP_FAIL") == "1" {
+		// Simulate a server binary that crashes immediately at startup.
+		os.Exit(1)
+	}
 	if os.Getenv("MIVIA_CLI_MCP_HELPER") != "1" {
 		return
 	}
@@ -104,6 +110,35 @@ func TestRegisterMCPToolsRejectsUnknownServer(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "nope") {
 		t.Fatalf("error = %q, want mention of %q", err.Error(), "nope")
+	}
+}
+
+// TestRegisterMCPToolsLogsUnavailableServer verifies that a contained MCP
+// server failure is surfaced as an operator warning instead of failing
+// registration: the session continues without that server's tools.
+func TestRegisterMCPToolsLogsUnavailableServer(t *testing.T) {
+	t.Setenv("MIVIA_CLI_MCP_FAIL", "1")
+	res := config.Resolved{MCP: config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
+		ID: "down", Transport: "stdio", Command: os.Args[0],
+		Args: []string{"-test.run=^TestMCPStdioHelper$"}, Env: []string{"MIVIA_CLI_MCP_FAIL"},
+		TimeoutSeconds: 10,
+	}}}}
+	manager, err := mcp.NewManager(res.MCP, mcp.ManagerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	var buf bytes.Buffer
+	original := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(original)
+
+	if err := registerMCPTools(tools.NewRegistry(), manager, []string{"down"}); err != nil {
+		t.Fatalf("registerMCPTools() error = %v, want a contained server failure", err)
+	}
+	if !strings.Contains(buf.String(), "down") {
+		t.Fatalf("log output = %q, want a warning naming server %q", buf.String(), "down")
 	}
 }
 
