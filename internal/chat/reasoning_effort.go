@@ -102,6 +102,8 @@ func (s *Session) SetReasoningEffort(level reasoning.Level) error {
 	if !level.Active() {
 		s.reasoningEffort = ""
 		s.invalidateLocked()
+		s.bumpPrefixGenerationLocked()
+		s.refreshPrefixIdentityLocked()
 		return nil
 	}
 	profile := s.binding.Profile
@@ -114,6 +116,12 @@ func (s *Session) SetReasoningEffort(level reasoning.Level) error {
 	}
 	s.reasoningEffort = level
 	s.invalidateLocked()
+	// /effort changes the request body via reasoningFields in a way
+	// BindingFence cannot see (gap B13): the generation bump plus the
+	// recapture make identities before/after /effort provably unequal, and the
+	// refusal paths above leave the identity cache untouched (no false reset).
+	s.bumpPrefixGenerationLocked()
+	s.refreshPrefixIdentityLocked()
 	return nil
 }
 

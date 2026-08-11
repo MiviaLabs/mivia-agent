@@ -175,6 +175,13 @@ type Session struct {
 	// snapshot capture. Provider calls remain lock-free; only the durable
 	// compare-and-swap and its in-memory adoption are serialized.
 	contextPublishMu sync.Mutex
+	// prefixIdentity is the cached byte-prefix stability identity, refreshed
+	// only at NewSession, SwitchBinding, TryPublishAgentSurface and
+	// SetReasoningEffort (INV-68-8); prefixGeneration is the /effort offset
+	// folded into it without touching binding.ModelGeneration (gap B13).
+	prefixIdentity         PrefixIdentity
+	prefixIdentityCaptures uint64
+	prefixGeneration       uint64
 }
 
 // TurnOptions supplies an invocation-local capability surface. It never
@@ -463,37 +470,5 @@ func (s *Session) adoptCalibration(turnCalibration contextmgr.Calibration) {
 func (s *Session) runTurnCleanup(turn *TurnOptions) {
 	if turn != nil && turn.Cleanup != nil {
 		turn.Cleanup()
-	}
-}
-
-func isInterruptedTurn(ctx context.Context, turnErr error) bool {
-	if errors.Is(turnErr, context.Canceled) || errors.Is(turnErr, context.DeadlineExceeded) {
-		return true
-	}
-	return ctx != nil && (errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded))
-}
-
-func resolveTurnExecutionSurface(sessionTools *tools.Registry, sessionDispatcher *runtime.Dispatcher, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher) {
-	if turn == nil {
-		return sessionTools, sessionDispatcher
-	}
-	if turn.Tools != nil {
-		sessionTools = turn.Tools
-	}
-	if turn.Dispatcher != nil {
-		sessionDispatcher = turn.Dispatcher
-	}
-	return sessionTools, sessionDispatcher
-}
-
-func replaceNewestUserText(messages []provider.Message, userText, persistedText string) {
-	if userText == persistedText {
-		return
-	}
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == provider.RoleUser && messages[i].Content == userText {
-			messages[i].Content = persistedText
-			return
-		}
 	}
 }
