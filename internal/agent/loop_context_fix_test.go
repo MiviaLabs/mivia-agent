@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -16,11 +15,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// --- R1a: budget-derived per-result tool cap --------------------------------
+// --- R1a regression: oversized current-turn result stays whole ---------------
 
 // hugeResultTool returns a fixed oversized body so the test can prove the
-// per-result context cap (not any per-call byte cap) is what protects the
-// prompt budget.
+// zero-cap config - not any per-call byte cap - is what lets a body above the
+// old derived per-result cap reach history whole.
 type hugeResultTool struct {
 	body string
 }
@@ -34,33 +33,26 @@ func (t *hugeResultTool) Capability(json.RawMessage) tools.Capability {
 
 // ResultBudgetBytes declares the tool's honest output budget so the runtime
 // dispatcher's runaway backstop sits above the body and passes it through
-// whole: the derived per-result cap is what must bound it, not the transport.
+// whole: with the zero-cap config, pass 1 must not be what bounds it.
 func (t *hugeResultTool) ResultBudgetBytes() int { return 512 << 10 }
 
 func (t *hugeResultTool) Execute(context.Context, json.RawMessage) (string, error) {
 	return t.body, nil
 }
 
-// remainderRefPattern extracts the full content ref a truncation notice names.
-var remainderRefPattern = regexp.MustCompile(`ref:output:[0-9a-f]{64}`)
-
-// R1a: with the shipped uncapped config (MaxToolResultChars=0 and
-// BatchResultBudgetBytes=0/off) a single oversized CURRENT-turn tool result
-// (a 500KB read) used to flow into history whole and blow the 8000-token
-// prompt budget on the next prepareStep, hard-aborting the turn with
-// ErrPromptBudgetExceeded after the tool already ran (context planning never
-// elides the current turn's result). The derived per-result cap must cut it
-// via capToolResult - len <= (MaxContextTokens/4)*4 chars - with the spool
-// content-ref notice so the FULL body stays recoverable through read_output,
-// while a small result stays byte-identical, Role/ToolCallID pairing is
-// preserved, and the loop CONTINUES.
-func TestLoopCapsOversizedCurrentTurnToolResult(t *testing.T) {
-	loop, spool, store, big, text := cappedResultLoop(t)
+// R1a regression: with the shipped uncapped config (MaxToolResultChars=0 and
+// BatchResultBudgetBytes=0/off) a CURRENT-turn tool result above the old
+// derived per-result cap ((MaxContextTokens/4)*4 chars) but inside the prompt
+// budget reaches history WHOLE: no truncation notice, no spooled ref, nothing
+// spooled, and the loop completes. The old code silently truncated the body at
+// the derived cap and spooled the original behind a content ref, contrary to
+// the documented "0 means no cap (use full result)" contract.
+func TestLoopKeepsOversizedCurrentTurnToolResultWhole(t *testing.T) {
+	loop, _, store, big, text := cappedResultLoop(t)
 	if text != "read complete" {
 		t.Fatalf("text=%q, want the second-step answer (loop continued past the huge result)", text)
 	}
 
-	capChars := (8000 / 4) * 4 // derived per-result cap in chars
 	var bigMsg, smallMsg *provider.Message
 	for i := range loop.Messages {
 		switch {
@@ -71,50 +63,44 @@ func TestLoopCapsOversizedCurrentTurnToolResult(t *testing.T) {
 		}
 	}
 	if bigMsg == nil {
-		t.Fatal("truncated RoleTool missing from history")
+		t.Fatal("RoleTool missing from history")
 	}
 	if smallMsg == nil {
 		t.Fatal("small RoleTool missing from history")
 	}
-	if len(bigMsg.Content) > capChars {
-		t.Fatalf("result kept %d chars, over the derived cap %d", len(bigMsg.Content), capChars)
+	if bigMsg.Content != big {
+		t.Fatalf("result kept %d bytes, want the full %d-byte body", len(bigMsg.Content), len(big))
 	}
-	if !strings.Contains(bigMsg.Content, "... truncated: kept ") {
-		t.Fatalf("truncated result missing the spool truncation notice: %q", trunc(bigMsg.Content, 200))
+	if strings.Contains(bigMsg.Content, "... truncated: kept ") {
+		t.Fatalf("full result carries a truncation notice: %q", trunc(bigMsg.Content, 200))
 	}
-	ref := remainderRefPattern.FindString(bigMsg.Content)
-	if ref == "" {
-		t.Fatalf("truncated result names no remainder ref: %q", trunc(bigMsg.Content, 200))
-	}
-	recovered, err := spool.Load(t.Context(), "session-r1a", ref)
-	if err != nil {
-		t.Fatalf("remainder ref %q not recoverable through read_output: %v", ref, err)
-	}
-	if string(recovered) != big {
-		t.Fatalf("remainder recovered %d bytes, want the full %d-byte body", len(recovered), len(big))
+	if strings.Contains(bigMsg.Content, "ref:output:") {
+		t.Fatalf("full result carries a content ref: %q", trunc(bigMsg.Content, 200))
 	}
 	if smallMsg.Content != "small body stays untouched" {
 		t.Fatalf("small result was altered: %q", trunc(smallMsg.Content, 80))
 	}
 	if bigMsg.ToolCallID != "1" || bigMsg.Name != "big_read" {
-		t.Fatalf("truncation changed tool pairing identity: id=%q name=%q", bigMsg.ToolCallID, bigMsg.Name)
+		t.Fatalf("tool pairing identity changed: id=%q name=%q", bigMsg.ToolCallID, bigMsg.Name)
 	}
 	if err := provider.ValidateToolPairing(loop.Messages); err != nil {
-		t.Fatalf("pairing broken by truncation: %v", err)
+		t.Fatalf("pairing broken: %v", err)
 	}
-	if store.Len() != 1 {
-		t.Fatalf("spool holds %d bodies, want exactly 1 (only the truncated big result)", store.Len())
+	if store.Len() != 0 {
+		t.Fatalf("spool holds %d bodies, want 0 (nothing truncated, nothing spooled)", store.Len())
 	}
 }
 
 // cappedResultLoop runs the R1a fixture: a first step that calls a huge tool
 // and a small tool, with the shipped uncapped per-result config and an 8000
-// token prompt budget. It returns the completed loop, the spool, the store,
-// the big body, and the final assistant text.
+// token prompt budget. The body sits above the old derived per-result cap
+// ((8000/4)*4 chars) but inside the prompt budget, so after the fix the loop
+// completes with the full body in history. It returns the completed loop, the
+// spool, the store, the big body, and the final assistant text.
 func cappedResultLoop(t *testing.T) (loop *Loop, spool *remainder.Spool, store *remainder.MemoryStore, big, text string) {
 	t.Helper()
 	const small = "small body stays untouched"
-	big = strings.Repeat("A", 500<<10)
+	big = strings.Repeat("A", 16<<10)
 	spool, store = testSpool(t)
 	reg := tools.NewRegistry()
 	reg.Register(&hugeResultTool{body: big})
@@ -133,8 +119,8 @@ func cappedResultLoop(t *testing.T) (loop *Loop, spool *remainder.Spool, store *
 		Model: "model", MaxContextTokens: 8000, MaxSteps: 5,
 		SessionID: "session-r1a", RemainderSpool: spool,
 		// The context manager never elides the current turn's mandatory latest
-		// tool unit, so without the derived cap the 500KB result makes the
-		// planner reject the mandatory set with a prompt-budget error.
+		// tool unit, so the full result must fit the prompt budget: the body is
+		// sized above the old derived cap but inside the 8000-token budget.
 		PreparationManager: contextmgr.StructuralPreparationManager{},
 		PreparationInput: contextmgr.PrepareInput{
 			Budget: 8000, Principal: principal, Binding: binding,

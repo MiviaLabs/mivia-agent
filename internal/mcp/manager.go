@@ -403,17 +403,28 @@ func (m *Manager) Failures() map[string]error {
 	return out
 }
 
-// Close closes every connected MCP client.
+// Close closes every connected MCP client. The manager mutex is held only for
+// map bookkeeping: the closed flag is set and the clients are snapshotted
+// under the lock, then each client's Close runs outside it, so a hung client
+// close (bounded by mcpShutdownTimeout) can never stall the accessors,
+// EnsureServers, or a concurrent Close. commitClaim's closed check still
+// closes an in-flight connect's client instead of storing it, so no client
+// leaks or double-closes (serializedRemoteClient.Close is idempotent).
 func (m *Manager) Close() error {
 	m.shutdownCancel()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed {
+		m.mu.Unlock()
 		return nil
 	}
 	m.closed = true
-	var first error
+	clients := make([]remoteClient, 0, len(m.clients))
 	for _, client := range m.clients {
+		clients = append(clients, client)
+	}
+	m.mu.Unlock()
+	var first error
+	for _, client := range clients {
 		if err := client.Close(); err != nil && first == nil {
 			first = err
 		}

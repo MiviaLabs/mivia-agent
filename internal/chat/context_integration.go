@@ -86,6 +86,12 @@ func (s *Session) SetSessionStore(store SessionStore, mgr *SaveManager) {
 	s.mu.Unlock()
 	if mgr != nil {
 		mgr.SetCurrentFence(s.currentSaveToken)
+		// Every autosave persists the session's admitted set beside the
+		// transcript so a resume from the snapshot replays the tools the
+		// transcript shows in use (plan tools/05 D3). The context-enabled
+		// early return above confines this to the file-store path where
+		// autosaves run.
+		mgr.SetAdmissionProvider(s.admissionRecord)
 	}
 }
 

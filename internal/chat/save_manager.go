@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
@@ -16,6 +17,16 @@ type SaveManagerMetrics struct {
 	SaveAfterTurnCount int64 `json:"save_after_turn_count"`
 	SaveOnExitCount    int64 `json:"save_on_exit_count"`
 	PruneCount         int64 `json:"prune_count"`
+}
+
+// saveStore is the FileSessionStore surface the SaveManager uses, declared as
+// an interface so tests can wrap it and inject a failure into the
+// admission-record write without corrupting a real store. *FileSessionStore
+// satisfies it.
+type saveStore interface {
+	SessionStore
+	AdmissionSessionStore
+	Dir() string
 }
 
 // SaveManager handles auto-save lifecycle independently of Session.
@@ -28,7 +39,7 @@ type SaveManagerMetrics struct {
 // SaveOnExit creates a bare exit snapshot (no qualifier) and then prunes
 // old auto-saves back to their retention budgets.
 type SaveManager struct {
-	store        *FileSessionStore
+	store        saveStore
 	model        string
 	providerName string
 	saveMu       sync.Mutex
@@ -36,6 +47,11 @@ type SaveManager struct {
 	latestToken  OperationToken
 	hasToken     bool
 	currentFence func() OperationToken
+	// admissionProvider snapshots the session's admitted set for persistence
+	// beside each autosave (plan tools/05 D3). When nil, autosaves write no
+	// record, preserving the pre-fix behavior for unwired managers. Guarded by
+	// fenceMu like currentFence.
+	admissionProvider func() contextstate.SessionAdmission
 
 	// turnMu guards turnSaveName.
 	turnMu sync.Mutex
@@ -69,6 +85,30 @@ func (m *SaveManager) SetCurrentFence(current func() OperationToken) {
 	m.fenceMu.Lock()
 	m.currentFence = current
 	m.fenceMu.Unlock()
+}
+
+// SetAdmissionProvider lets a Session attach its admission-record source so
+// every autosave persists the admitted set beside the transcript under the
+// same snapshot name. A nil provider unwires the record write.
+func (m *SaveManager) SetAdmissionProvider(provider func() contextstate.SessionAdmission) {
+	m.fenceMu.Lock()
+	m.admissionProvider = provider
+	m.fenceMu.Unlock()
+}
+
+// persistSnapshotAdmission writes the session's admitted set under the same
+// snapshot name the transcript just used, so a resume from that autosave
+// replays the tools the transcript shows in use (plan tools/05 D3). It is a
+// no-op when no provider is wired, and propagates the store error exactly as
+// Session.Save propagates persistAdmission errors.
+func (m *SaveManager) persistSnapshotAdmission(name string) error {
+	m.fenceMu.Lock()
+	provider := m.admissionProvider
+	m.fenceMu.Unlock()
+	if provider == nil {
+		return nil
+	}
+	return m.store.SaveAdmission(name, provider())
 }
 
 // SaveAfterTurn overwrites this manager's rolling per-turn snapshot, named
@@ -127,7 +167,11 @@ func (m *SaveManager) saveAfterTurnWithToken(msgs []provider.Message, providerNa
 	if m.tokenStale(token) {
 		return ErrStaleAutosave
 	}
-	if err := m.store.Save(m.turnSnapshotName(), msgs, model, providerName); err != nil {
+	name := m.turnSnapshotName()
+	if err := m.store.Save(name, msgs, model, providerName); err != nil {
+		return err
+	}
+	if err := m.persistSnapshotAdmission(name); err != nil {
 		return err
 	}
 	if m.tokenStale(token) {
@@ -206,6 +250,9 @@ func (m *SaveManager) SaveOnExitWithSelection(msgs []provider.Message, providerN
 	}
 	name := uniqAutoSaveName(m.store.Dir(), "")
 	if err := m.store.Save(name, msgs, model, providerName); err != nil {
+		return err
+	}
+	if err := m.persistSnapshotAdmission(name); err != nil {
 		return err
 	}
 	m.saveOnExit.Add(1)
