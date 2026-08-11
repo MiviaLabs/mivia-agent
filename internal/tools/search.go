@@ -141,6 +141,14 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 	totalFound := len(matches)
 	if in.Offset > 0 {
 		if in.Offset >= len(matches) {
+			// A walk cut off at the byte budget (errMaxBytes) has collected
+			// only a partial prefix, so "no matches" here is a false
+			// negative that silently drops the truncation notice - mirror
+			// the empty-result branch below. An untruncated offset-past-end
+			// page keeps the "no matches" convention.
+			if errors.Is(err, errMaxBytes) {
+				return strings.TrimPrefix(fmt.Sprintf(byteTruncNotice, t.maxBytes), "\n"), nil
+			}
 			return "no matches", nil
 		}
 		matches = matches[in.Offset:]
@@ -396,6 +404,13 @@ func (t *globTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	totalFound := len(hits)
 	if in.Offset > 0 {
 		if in.Offset >= len(hits) {
+			// Same false-negative guard as executeGrep: an offset past a
+			// byte-truncated prefix must report the byte notice, not
+			// "no matches"; an untruncated offset-past-end page keeps the
+			// "no matches" convention.
+			if errors.Is(err, errMaxBytes) {
+				return strings.TrimPrefix(fmt.Sprintf(byteTruncNotice, t.maxBytes), "\n"), nil
+			}
 			return "no matches", nil
 		}
 		hits = hits[in.Offset:]
