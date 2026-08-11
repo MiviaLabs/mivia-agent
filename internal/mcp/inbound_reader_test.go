@@ -117,6 +117,106 @@ func TestSSEReaderChunkedBoundariesEnforceLimitAndReset(t *testing.T) {
 	}
 }
 
+// TestStdioReaderBoundsMultiLineMessage is the fail-closed negative path for
+// the stdio budget: one JSON message split by embedded newlines into lines
+// each far under the limit must still be rejected once the message's total
+// exceeds maxMCPInboundMessageBytes. The pre-fix reader reset its budget on
+// every newline and accepted the whole value, letting the SDK's json.Decoder
+// buffer it unboundedly (client OOM).
+func TestStdioReaderBoundsMultiLineMessage(t *testing.T) {
+	third := maxMCPInboundMessageBytes / 3
+	message := "{\n" + strings.Repeat("x", third) + "\n" + strings.Repeat("x", third) + "\n" + strings.Repeat("x", third) + "\n}\n"
+	reader := newBoundedStdioReader(io.NopCloser(strings.NewReader(message)))
+	body, err := io.ReadAll(reader)
+	if !errors.Is(err, errMCPInboundMessageTooLarge) {
+		t.Fatalf("read over-limit multi-line message err=%v, want errMCPInboundMessageTooLarge", err)
+	}
+	if len(body) > maxMCPInboundMessageBytes {
+		t.Fatalf("consumed %d bytes before rejection, want <= %d", len(body), maxMCPInboundMessageBytes)
+	}
+}
+
+// TestStdioReaderAcceptsMultiLineMessageAtExactLimit pins that a single
+// multi-line JSON message whose total bytes (embedded newlines included) are
+// exactly maxMCPInboundMessageBytes passes, and that the terminator newline
+// after a message is never counted toward the budget.
+func TestStdioReaderAcceptsMultiLineMessageAtExactLimit(t *testing.T) {
+	message := "{\n" + strings.Repeat("x", maxMCPInboundMessageBytes-4) + "\n}\n"
+	if len(message)-1 != maxMCPInboundMessageBytes {
+		t.Fatalf("test message is %d bytes, want %d excluding the terminator", len(message)-1, maxMCPInboundMessageBytes)
+	}
+	reader := newBoundedStdioReader(io.NopCloser(strings.NewReader(message)))
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read multi-line message at the exact limit: %v", err)
+	}
+	if len(body) != len(message) {
+		t.Fatalf("stdio stream len=%d, want %d", len(body), len(message))
+	}
+}
+
+// TestStdioReaderResetsBudgetBetweenMessages pins that the budget is per
+// message, not per connection: two compliant single-line messages whose byte
+// totals sum past the limit both pass, because the terminator newline resets
+// the budget for the next message.
+func TestStdioReaderResetsBudgetBetweenMessages(t *testing.T) {
+	half := maxMCPInboundMessageBytes/2 + 1
+	stream := strings.Repeat("a", half) + "\n" + strings.Repeat("b", half) + "\n"
+	if 2*half <= maxMCPInboundMessageBytes {
+		t.Fatal("test stream must exceed the limit across both messages")
+	}
+	reader := newBoundedStdioReader(io.NopCloser(strings.NewReader(stream)))
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read two under-limit messages: %v", err)
+	}
+	if len(body) != len(stream) {
+		t.Fatalf("stdio stream len=%d, want %d", len(body), len(stream))
+	}
+}
+
+// TestStdioReaderChunkedBoundariesEnforceLimitAndReset feeds the same streams
+// through 1-byte reads to pin cross-Read limit enforcement and message reset:
+// messageBytes and the JSON depth/string state live on the reader, so the
+// budget must hold and reset across Read boundaries, never per call.
+func TestStdioReaderChunkedBoundariesEnforceLimitAndReset(t *testing.T) {
+	third := maxMCPInboundMessageBytes / 3
+	multiLine := "{\n" + strings.Repeat("x", third) + "\n" + strings.Repeat("x", third) + "\n" + strings.Repeat("x", third) + "\n}\n"
+	exactMultiLine := "{\n" + strings.Repeat("x", maxMCPInboundMessageBytes-4) + "\n}\n"
+	half := maxMCPInboundMessageBytes/2 + 1
+	twoMessages := strings.Repeat("a", half) + "\n" + strings.Repeat("b", half) + "\n"
+	cases := []struct {
+		name    string
+		stream  string
+		wantErr bool
+	}{
+		{name: "exact-limit-multiline", stream: exactMultiLine},
+		{name: "two-messages", stream: twoMessages},
+		{name: "over-limit-multiline", stream: multiLine, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := newBoundedStdioReader(io.NopCloser(oneByteReader{reader: strings.NewReader(tc.stream)}))
+			body, err := io.ReadAll(reader)
+			if tc.wantErr {
+				if !errors.Is(err, errMCPInboundMessageTooLarge) {
+					t.Fatalf("read over-limit multi-line message err=%v, want errMCPInboundMessageTooLarge", err)
+				}
+				if len(body) > maxMCPInboundMessageBytes {
+					t.Fatalf("consumed %d bytes before rejection, want <= %d", len(body), maxMCPInboundMessageBytes)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("read stdio stream through 1-byte reads: %v", err)
+			}
+			if len(body) != len(tc.stream) {
+				t.Fatalf("stdio stream len=%d, want %d", len(body), len(tc.stream))
+			}
+		})
+	}
+}
+
 // FuzzBoundedMCPReaders checks the bounded readers against a parsed model of
 // their input. For the SSE reader the model asserts that framing is never
 // counted: an over-limit error must fire only at a data byte that pushes the
@@ -139,6 +239,13 @@ func FuzzBoundedMCPReaders(f *testing.F) {
 		"data: hello\ndata: world\n\n",
 		"unterminated event with no blank line",
 		strings.Repeat("s", 64) + "\n\n" + strings.Repeat("z", maxMCPInboundMessageBytes+1),
+		// Multi-line JSON: a single stdio message whose embedded newlines are
+		// JSON whitespace inside one value, plus a well-formed variant with a
+		// string that contains structural characters, and an over-limit
+		// multi-line message whose lines are each far under the limit.
+		"{\n  \"a\": 1,\n  \"b\": [1, 2]\n}\n",
+		"{\"s\": \"{\n[\"} }\n",
+		"{\n" + strings.Repeat("x", third) + "\n" + strings.Repeat("x", third) + "\n" + strings.Repeat("x", third) + "\n}\n",
 	}
 	for _, seed := range seeds {
 		f.Add(seed)
@@ -238,7 +345,10 @@ func checkStdioReaderInvariants(t *testing.T, input string) {
 	t.Helper()
 	reader := newBoundedStdioReader(io.NopCloser(strings.NewReader(input)))
 	pos := 0
-	lineBytes := 0
+	messageBytes := 0 // bytes accepted in the current message
+	depth := 0        // JSON structural depth of the in-flight message
+	inString := false
+	escaped := false
 	buffer := make([]byte, 128)
 	for {
 		n, err := reader.Read(buffer)
@@ -246,12 +356,35 @@ func checkStdioReaderInvariants(t *testing.T, input string) {
 			t.Fatalf("stdio read returned n=%d outside [0,%d]", n, len(buffer))
 		}
 		for _, value := range buffer[:n] {
-			if value == '\n' {
-				lineBytes = 0
+			if value == '\n' && depth == 0 && !inString {
+				messageBytes = 0
 			} else {
-				lineBytes++
-				if lineBytes > maxMCPInboundMessageBytes {
-					t.Fatalf("stdio reader accepted more than the limit of bytes in one line")
+				messageBytes++
+				if messageBytes > maxMCPInboundMessageBytes {
+					t.Fatalf("stdio reader accepted more than the limit of bytes in one message")
+				}
+				if inString {
+					if escaped {
+						escaped = false
+					} else {
+						switch value {
+						case '\\':
+							escaped = true
+						case '"':
+							inString = false
+						}
+					}
+				} else {
+					switch value {
+					case '"':
+						inString = true
+					case '{', '[':
+						depth++
+					case '}', ']':
+						if depth > 0 {
+							depth--
+						}
+					}
 				}
 			}
 			pos++
@@ -260,8 +393,12 @@ func checkStdioReaderInvariants(t *testing.T, input string) {
 			if pos >= len(input) {
 				t.Fatalf("stdio over-limit error with no rejected byte")
 			}
-			if input[pos] == '\n' {
-				t.Fatalf("stdio over-limit error reported at the line terminator")
+			rejected := input[pos]
+			if rejected == '\n' && depth == 0 && !inString {
+				t.Fatalf("stdio over-limit error reported at the message terminator")
+			}
+			if messageBytes < maxMCPInboundMessageBytes {
+				t.Fatalf("stdio over-limit error before the message reached the limit: accepted %d bytes", messageBytes)
 			}
 			return
 		}
