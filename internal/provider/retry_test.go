@@ -347,6 +347,52 @@ func TestRetryRoundTripper_RetryOn5xx(t *testing.T) {
 	}
 }
 
+// Permanent 5xx statuses (501 Not Implemented, 505 HTTP Version Not
+// Supported) must fail the exchange on the first attempt instead of burning
+// the retry budget. The 500 case is the control: transient 5xx still retries.
+func TestRetryRoundTripper_Permanent5xxNoRetry(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		succeedOn  int // first attempt (1-based) that returns 2xx; 0 = never
+		wantCalls  int32
+		wantStatus int
+	}{
+		{"501 not implemented is permanent", http.StatusNotImplemented, 0, 1, http.StatusNotImplemented},
+		{"505 http version not supported is permanent", http.StatusHTTPVersionNotSupported, 0, 1, http.StatusHTTPVersionNotSupported},
+		{"500 internal server error still retries", http.StatusInternalServerError, 2, 2, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if n := calls.Add(1); tc.succeedOn > 0 && int(n) >= tc.succeedOn {
+					_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+					return
+				}
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+
+			rt := newRetryRoundTripper(http.DefaultTransport, retryOptions{MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond})
+			client := &http.Client{Transport: rt, Timeout: 5 * time.Second}
+
+			req, _ := http.NewRequest("GET", srv.URL, nil)
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.wantStatus {
+				t.Fatalf("status=%d, want %d", resp.StatusCode, tc.wantStatus)
+			}
+			if n := calls.Load(); n != tc.wantCalls {
+				t.Fatalf("expected %d call(s), got %d", tc.wantCalls, n)
+			}
+		})
+	}
+}
+
 // --- Integration: retry wired into OpenAICompat ChatTurn ---
 
 func TestOpenAICompat_ChatTurnRetriesOn429(t *testing.T) {
