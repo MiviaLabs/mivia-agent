@@ -1,5 +1,15 @@
 # Triage Findings
 
+## Output contract (READ FIRST — before the methodology below)
+
+Reply with ONLY one JSON object that satisfies the output schema appended to this task. Do
+NOT emit the bug-audit skill's Finding Format blocks, headings, bullets, prose, or code
+fences (```). The schema declares the only valid keys — no extra keys. `has_perf` is the
+STRING "true" or "false" (quoted), never a boolean. An invalid shape is rejected and you
+will be asked again with the schema.
+
+---
+
 Independently challenge the hunt findings for scope: {{ inputs.scope }}
 
 Task: {{ inputs.task }}

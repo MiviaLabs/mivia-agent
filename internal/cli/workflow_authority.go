@@ -135,11 +135,13 @@ func workflowWriteAuthority(wf *compiler.CompiledWorkflow, registry *agents.Agen
 			Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(authorizedAgentTools(&agent, authority)),
 			ExtraDenylist: extraDenylist,
 		})
-		if _, ok := surface.Get(tools.RunCommandToolName); ok {
-			return false, fmt.Errorf("workflow agent %q may not use run_command", agent.Name)
-		}
 		for _, tool := range surface.List() {
-			if surface.Capability(tool.Name(), nil).Class == tools.ExecutionWrite {
+			// run_command is not ExecutionWrite-class (a bare argv is an
+			// external program), but a shell program can write anywhere, so a
+			// workflow that grants it is write-capable: it must run in an
+			// isolated worktree and clear the review gate before delivery.
+			// Mirrors tools.WorkspaceWriteCapable.
+			if tool.Name() == tools.RunCommandToolName || surface.Capability(tool.Name(), nil).Class == tools.ExecutionWrite {
 				writeCapable = true
 			}
 		}

@@ -368,9 +368,17 @@ validation/`TryFrom` code.
 
 ## Output contract
 
-When a resource catalogue and its scoped reader are available, load
-`report-template` before producing the audit output. Preserve the exact output
-contract below. Without that capability, use the inline contract.
+When this audit is invoked by a workflow step whose prompt appends a required
+JSON output schema (the prompt says "Return ONLY valid JSON matching this
+schema" and the step template declares an output contract), that JSON schema is
+the ONLY output contract: emit exactly the JSON object it declares — no
+markdown, no headings, no code fences, and no extra keys. Do not load or emit
+`report-template` in that mode; the workflow step's schema replaces it.
+
+For direct audits (no JSON schema appended), the report-template applies: when
+a resource catalogue and its scoped reader are available, load `report-template`
+before producing the audit output. Preserve the exact output contract below.
+Without that capability, use the inline contract.
 
 Choose exactly one final shape. Emit **only** that shape - no preamble:
 

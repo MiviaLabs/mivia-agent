@@ -1,5 +1,14 @@
 # Fix Plan
 
+## Output contract (READ FIRST — before the methodology below)
+
+Reply with ONLY one JSON object that satisfies the output schema appended to this task. No
+markdown report, headings, bullets, prose outside the JSON, or code fences (```). The schema
+declares the only valid keys — no extra keys. An invalid shape is rejected and you will be
+asked again with the schema.
+
+---
+
 Plan the minimal fix for the confirmed findings in scope: {{ inputs.scope }}
 
 Task: {{ inputs.task }}
