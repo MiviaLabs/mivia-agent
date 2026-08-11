@@ -345,20 +345,22 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 		}
 		return settleAfterRoute(ctx, c, run, route)
 	}
-	if status == workflowledger.AttemptStatusFailed && !degraded {
-		// A GENUINE agent/runner failure. When the step declares a non-terminal
-		// on_failure target and the re-entry budget is not exhausted, honor the
-		// target: the attempt is persisted Failed with the on_failure route and
-		// the run advances to the declared step (mirrors settleHostFailure).
-		// Degraded failures and terminal targets / an exhausted budget keep
-		// the hard-fail behavior exactly as before.
-		if c.agentFailureRepairable(writeCtx, step, route) {
+	if status == workflowledger.AttemptStatusFailed {
+		// A GENUINE (non-degraded) agent/runner failure. When the step declares
+		// a non-terminal on_failure target and the re-entry budget is not
+		// exhausted, honor the target: the attempt is persisted Failed with the
+		// on_failure route and the run advances to the declared step (mirrors
+		// settleHostFailure). Terminal targets / an exhausted budget keep the
+		// hard-fail behavior exactly as before.
+		if !degraded && c.agentFailureRepairable(writeCtx, step, route) {
 			if err = CompleteExistingStepResult(writeCtx, c.Repo, attempt, result, status, route); err != nil {
 				return c.fail(writeCtx, run, err)
 			}
 			return settleAfterRoute(ctx, c, run, route)
 		}
-		// Budget spent (or the history could not be read): record the TERMINAL
+		// Degraded failures (route-selection, zero-progress) are not genuine
+		// agent failures and never divert to on_failure; a budget spent (or the
+		// history could not be read) also fails hard. Record the TERMINAL
 		// failure route so the ledger derives a terminal step — never an
 		// un-honored repair target that a crash between this persist and the
 		// status CAS could resume into — then fail the run as before.

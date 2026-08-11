@@ -51,6 +51,14 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 	if errors.Is(verifyErr, context.DeadlineExceeded) || errors.Is(verifyErr, context.Canceled) {
 		writeCtx, cancel := stepPersistenceContext(ctx)
 		defer cancel()
+		// Settle the admitted attempt as timed_out before the run reaches a
+		// terminal state, mirroring timeoutOpenHumanAttempt and the agent-step
+		// settle path: a terminal run must never leave an attempt Running. The
+		// deadline cause is persisted so the CLI can explain the timeout.
+		if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(writeCtx, c.Repo, verifyErr)}, workflowledger.AttemptStatusTimedOut, RouteDecision{}); err != nil {
+			return c.fail(writeCtx, run, err)
+		}
+		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusTimedOut))
 		return c.failWithStatus(writeCtx, run, context.DeadlineExceeded, workflowledger.RunStatusTimedOut)
 	}
 	output, err := json.Marshal(result)
