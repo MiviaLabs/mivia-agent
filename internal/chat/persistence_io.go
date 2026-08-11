@@ -1,9 +1,10 @@
 package chat
 
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,7 +75,14 @@ func writeMetaJSON(dir string, meta sessionMeta) error {
 }
 
 // readJSONL reads messages from a JSONL file.
-// Uses a scanner with a large buffer for tool result lines.
+// Uses a streaming json.Decoder so lines are unbounded, matching writeJSONL,
+// which encodes whole messages with no size ceiling. A bufio.Scanner-based
+// reader capped each JSONL line at 4 MiB, so a single tool result over that
+// bound made every load path fail with bufio.ErrTooLong and the session was
+// permanently unloadable. Blank lines and trailing newlines are skipped by the
+// decoder exactly as TrimSpace skipped them before; empty files yield no
+// messages; malformed or truncated JSON is reported as an error, never
+// silently truncated.
 func readJSONL(path string) ([]provider.Message, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -83,23 +91,18 @@ func readJSONL(path string) ([]provider.Message, error) {
 	defer f.Close()
 
 	var msgs []provider.Message
-	sc := bufio.NewScanner(f)
-	// 256KB initial buffer, growable to 4MB for large tool results.
-	buf := make([]byte, 0, 256*1024)
-	sc.Buffer(buf, 4*1024*1024)
-
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
+	dec := json.NewDecoder(f)
+	for {
 		var m provider.Message
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
+		if err := dec.Decode(&m); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
 			return msgs, fmt.Errorf("parse line: %w", err)
 		}
 		msgs = append(msgs, m)
 	}
-	return msgs, sc.Err()
+	return msgs, nil
 }
 
 // readMetaJSON reads the metadata file for a session directory.

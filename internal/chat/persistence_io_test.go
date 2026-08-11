@@ -4,8 +4,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 // TestWriteMetaJSONSyncsBeforeClose verifies that writeMetaJSON calls Sync
@@ -188,5 +191,98 @@ func TestWriteMetaJSONEmptyDir(t *testing.T) {
 	err := writeMetaJSON("", meta)
 	if err == nil {
 		t.Fatal("expected error for empty dir, got nil")
+	}
+}
+
+// TestReadJSONLHandlesSingleMessageOver4MiB locks the read side of the
+// write/read size mismatch: writeJSONL encodes whole messages with no ceiling,
+// but readJSONL capped each JSONL line at 4 MiB via bufio.Scanner, so one tool
+// result over the bound made every load path fail with bufio.ErrTooLong and
+// the session was permanently unloadable.
+func TestReadJSONLHandlesSingleMessageOver4MiB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chunk_0000.jsonl")
+	big := strings.Repeat("x", 4*1024*1024+64)
+	msgs := []provider.Message{
+		{Role: provider.RoleTool, ToolCallID: "c1", Name: "read_file", Content: big},
+	}
+	if err := writeJSONL(path, msgs); err != nil {
+		t.Fatalf("writeJSONL: %v", err)
+	}
+	got, err := readJSONL(path)
+	if err != nil {
+		t.Fatalf("readJSONL of a >4 MiB line: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != big {
+		t.Fatalf("round-trip mismatch: got %d messages, want 1 with the full content", len(got))
+	}
+}
+
+// TestStoreRoundTripsSingleMessageOver4MiB covers the same mismatch through
+// the full store path every loader uses (Save -> chunk files -> Load), which
+// is what makes an oversized tool result permanently unloadable.
+func TestStoreRoundTripsSingleMessageOver4MiB(t *testing.T) {
+	store, err := NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := strings.Repeat("y", 4*1024*1024+64)
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "q"},
+		{Role: provider.RoleTool, ToolCallID: "c1", Name: "read_file", Content: big},
+	}
+	if err := store.Save("big", msgs, "m", "p"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := store.Load("big")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != 2 || got[1].Content != big {
+		t.Fatalf("round-trip mismatch: got %d messages, want 2 with the full tool result", len(got))
+	}
+}
+
+// TestReadJSONLReportsMalformedJSON locks the negative path of the streaming
+// reader: a truncated or malformed line must surface as a parse error, never
+// as a silently truncated transcript.
+func TestReadJSONLReportsMalformedJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chunk_0000.jsonl")
+	if err := os.WriteFile(path, []byte("{\"role\":\"user\",\"content\":\"ok\"}\n{\"role\":\"tool\",\"content\":\"trunc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readJSONL(path); err == nil {
+		t.Fatal("readJSONL accepted truncated JSON without an error")
+	}
+}
+
+// TestReadJSONLHandlesBlankLinesAndTrailingNewline verifies the streaming
+// reader keeps the scanner-era behavior for empty files, blank lines, and
+// trailing newlines: no messages, no error, nothing silently dropped.
+func TestReadJSONLHandlesBlankLinesAndTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chunk_0000.jsonl")
+	if err := os.WriteFile(path, []byte("\n{\"role\":\"user\",\"content\":\"a\"}\n\n{\"role\":\"assistant\",\"content\":\"b\"}\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readJSONL(path)
+	if err != nil {
+		t.Fatalf("readJSONL: %v", err)
+	}
+	if len(got) != 2 || got[0].Content != "a" || got[1].Content != "b" {
+		t.Fatalf("round-trip mismatch: got %+v", got)
+	}
+
+	empty := filepath.Join(dir, "chunk_empty.jsonl")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = readJSONL(empty)
+	if err != nil {
+		t.Fatalf("readJSONL of an empty file: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("empty file yielded %d messages, want 0", len(got))
 	}
 }
