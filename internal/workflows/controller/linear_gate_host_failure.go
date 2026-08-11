@@ -2,8 +2,12 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -17,6 +21,37 @@ import (
 // named back-edge while this route carries no loop. Without this number, a
 // workflow with no limits and a permanently broken host would repair forever.
 const maxHostFailureRepairs = 3
+
+// maxHostFailureCauseBytes bounds how much of the verifier report is carried
+// into the step error: enough to say why the sandbox failed, never the whole
+// report (the failed_evidence binding already carries the full report).
+const maxHostFailureCauseBytes = 1024
+
+// hostFailureCause extracts a bounded, redacted cause from a gate's host
+// failure report: the first host-class check's detail, which now carries the
+// underlying error (missing bubblewrap, module baseline, git worktree init,
+// sandbox command stderr). Falling back to a bounded snippet of the raw
+// report keeps the step error actionable even for an unparseable report.
+func hostFailureCause(output []byte) string {
+	var report struct {
+		Checks []struct {
+			Class  string `json:"class"`
+			Detail string `json:"detail"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(output, &report); err == nil {
+		for _, check := range report.Checks {
+			if check.Class == "host" && strings.TrimSpace(check.Detail) != "" {
+				return textutil.TruncateRuneSafe(redact.Text(check.Detail), maxHostFailureCauseBytes)
+			}
+		}
+	}
+	trimmed := strings.TrimSpace(redact.Text(strings.ToValidUTF8(string(output), "\uFFFD")))
+	if trimmed == "" {
+		return ""
+	}
+	return textutil.TruncateRuneSafe(trimmed, maxHostFailureCauseBytes)
+}
 
 // settleHostFailure records a gate whose verifier could not run, and decides
 // where the run goes next.
@@ -34,6 +69,9 @@ const maxHostFailureRepairs = 3
 func (c *LinearController) settleHostFailure(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, step definition.Step, output []byte) (workflowledger.RunSnapshot, bool, error) {
 	route := failureRoute(step)
 	hostErr := fmt.Errorf("verifier %q has a host failure", step.Verifier)
+	if cause := hostFailureCause(output); cause != "" {
+		hostErr = fmt.Errorf("verifier %q has a host failure: %s", step.Verifier, cause)
+	}
 	result := AgentStepResult{Output: output, ErrorRef: storeErrorText(ctx, c.Repo, hostErr)}
 	if err := CompleteExistingStepResult(ctx, c.Repo, attempt, result, workflowledger.AttemptStatusFailed, route); err != nil {
 		return c.fail(ctx, run, err)

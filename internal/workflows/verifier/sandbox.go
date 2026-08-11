@@ -196,10 +196,6 @@ func trustedSystemExecutable(name string) (string, error) {
 	return "", fmt.Errorf("trusted system executable %q is unavailable", name)
 }
 
-func hostFailure(err error) *commandFailure {
-	return &commandFailure{class: "host", detail: "host verifier setup failed", err: err}
-}
-
 func boundedDiagnostic(output []byte) string {
 	text := redact.Text(string(output))
 	if len(text) > maxVerifierDiagnosticBytes {

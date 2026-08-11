@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
@@ -37,6 +38,16 @@ func TestHostFailureReachesTheDeclaredRepairStep(t *testing.T) {
 			sawFailedGate = true
 			if a.ErrorRef == "" {
 				t.Fatal("the host failure carries no cause; a repair agent would have no evidence")
+			}
+			// The cause must reach the error ref, not just the report: the step
+			// error is what the run summary and the caller surface, so it has
+			// to say WHY the verifier could not run (DC-9).
+			body, err := repo.LoadContent(context.Background(), a.ErrorRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), "sandbox unavailable") {
+				t.Fatalf("host failure cause = %q, want the verifier's host detail", body)
 			}
 			if a.ToStepID != "repair" {
 				t.Fatalf("gate routed to %q, want the declared repair step", a.ToStepID)
