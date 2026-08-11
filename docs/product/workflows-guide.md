@@ -574,6 +574,8 @@ A workflow file is untrusted repository input. Anyone can edit it. It may name a
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 
+Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Two paths are always blocked: `.git` and `.mivia/mivia.toml`. The blocklist key adds more; it cannot remove the defaults. A project that omits the key leaves `.mivia/agents`, `.mivia/policy`, `.mivia/rules`, `.mivia/skills`, `.mivia/workflows`, and Go module files writable by workflow agents, including the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
+
 ## How a run is checked before it starts
 
 Before a run starts, the compiler checks the workflow file:

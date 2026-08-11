@@ -12,17 +12,19 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-var workflowWritePathDenylist = []string{
-	workspace.Namespace + "/mivia.toml",
-	workspace.Namespace + "/agents",
-	workspace.Namespace + "/policy",
-	workspace.Namespace + "/rules",
-	workspace.Namespace + "/skills",
-	workspace.Namespace + "/workflows",
-	".git",
-	"go.mod",
-	"go.sum",
-	"go.work",
+// effectiveWorkflowWriteDenylist is the write-path blocklist for workflow
+// agent steps: the built-in defaults (config.DefaultWritePathBlocklist: .git
+// and .mivia/mivia.toml, always blocked) plus the project's
+// [tools] write_path_blocklist additions. Composing here (instead of in
+// resolveToolsConfig) guarantees the defaults even for a directly-constructed
+// config.Resolved; duplicate entries are harmless because the matcher is
+// membership-based.
+func effectiveWorkflowWriteDenylist(res *config.Resolved) []string {
+	var additions []string
+	if res != nil {
+		additions = res.Tools.WritePathBlocklist
+	}
+	return append(slices.Clone(config.DefaultWritePathBlocklist), additions...)
 }
 
 var panelReviewerTools = []string{"find_references", "glob", "grep", "list_dir", "read_file"}
@@ -109,7 +111,7 @@ func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry
 		MaxTavilyResponseBytes: tc.MaxTavilyResponseBytes, MaxFetchKB: tc.MaxFetchKB,
 		MemoryBackstopBytes: tc.MemoryBackstopMB << 20,
 		SecretPathPatterns:  tc.SecretPathPatterns, SecretPathExceptions: tc.SecretPathExceptions,
-		WritePathDenylist:    workflowWritePathDenylist,
+		WritePathDenylist:    effectiveWorkflowWriteDenylist(res),
 		SearchIgnorePatterns: tc.SearchIgnorePatterns,
 	}), nil
 }

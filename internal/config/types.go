@@ -199,8 +199,13 @@ type ChatConfig struct {
 
 // SubagentConfig holds subagent execution policy and storage configuration.
 type SubagentConfig struct {
-	MaxWorkers     int `toml:"max_workers"`
-	MaxDepth       int `toml:"max_depth"`
+	MaxWorkers int `toml:"max_workers"`
+	// MaxDepth caps the dependency depth of one orchestrated task graph
+	// (spawn_agent depends_on chains). 0 means unlimited (default); a
+	// positive value caps the depth.
+	MaxDepth int `toml:"max_depth"`
+	// MaxFanout caps the number of tasks admitted in one orchestration.
+	// 0 means unlimited (default); a positive value caps the count.
 	MaxFanout      int `toml:"max_fanout"`
 	DefaultTimeout int `toml:"default_timeout_seconds"`
 	// DefaultRequestTimeoutSec is the per-LLM-request timeout for subagents

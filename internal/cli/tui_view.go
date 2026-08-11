@@ -277,16 +277,17 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 			hintParts[0] = " type to queue · ctrl+g agents · ctrl+c cancel "
 		}
 	}
+	if hint := m.queueManagerHint(); hint != "" {
+		hintParts[0] = hint
+	}
 	if !m.mouseEnabled {
 		// Mouse capture is released: the terminal owns selection again. Say so
 		// loudly - a mode you cannot see is a mode you cannot leave.
 		hintParts = []string{tuiAccentStyle.Render(" select mode ") +
 			tuiDimStyle.Render(" drag to select, then copy as usual · F2 back ")}
 	}
-	// Copy/paste acknowledgements are shown here while idle. The status bar
-	// shows stepDetail only during a turn, which is exactly when
-	// nobody is copying: every copy made at rest was silent, and silence
-	// after a copy is indistinguishable from a broken key.
+	// Copy/paste acknowledgements are shown here while idle, because the
+	// status bar shows stepDetail only during a turn - when nobody copies.
 	// The arm prompt is sourced from the arm itself, not from a notice TTL:
 	// a prompt that outlives the arm promises an exit the next press will
 	// not deliver.
@@ -295,8 +296,8 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	} else if n := m.freshNotice(); n != "" {
 		hintParts = append(hintParts, "· "+n+" ")
 	}
-	if len(m.pendingQueue) > 0 {
-		hintParts = append(hintParts, fmt.Sprintf("· %d queued ", len(m.pendingQueue)))
+	if qh := m.queueCountHint(); qh != "" {
+		hintParts = append(hintParts, qh)
 	}
 	if m.runDash != nil && !m.runDash.isOpen() {
 		if s := m.runDash.summary(); s != "" {

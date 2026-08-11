@@ -64,6 +64,12 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 		m.textarea.InsertString("\n")
 		return true, false, nil
 	}
+	// The queue manager's edit flow owns Enter while it is active: the edited
+	// text re-queues (agent busy) or sends now (idle), and an emptied draft
+	// restores the original item. The edit state is cleared atomically here.
+	if m.editingQueued {
+		return m.handleQueueEditEnter()
+	}
 	userText := strings.TrimSpace(m.textarea.Value())
 	if userText == "" {
 		if len(m.toolRows) > 0 &&
@@ -107,7 +113,6 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 			if m.waiting {
 				m.queueSkillTurn(spec)
 				m.textarea.Reset()
-				m.appendInfo(fmt.Sprintf("(queued: %s - %d pending, empty enter=force)", truncateStr(spec.display, 40), len(m.pendingQueue)))
 				m.renderVP()
 				return true, false, nil
 			}
@@ -128,7 +133,6 @@ func (m *tuiModel) handleChatEnter(alt bool) (bool, bool, []tea.Cmd) {
 	if m.waiting {
 		m.queueTurn(userText, userText)
 		m.textarea.Reset()
-		m.appendInfo(fmt.Sprintf("(queued: %s - %d pending, empty enter=force)", truncateStr(userText, 40), len(m.pendingQueue)))
 		m.renderVP()
 		return true, false, nil
 	}
@@ -207,43 +211,26 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	if m.overlay != nil {
 		return m.handleOverlayKey(key)
 	}
+	if handled, skipViewport, cmds := m.handleQueueRouting(key); handled {
+		return true, skipViewport, cmds
+	}
 	if handled := m.handleSidebarKey(key); handled {
 		return true, true, nil
 	}
 	if handled := m.handleWorkflowsSidebarKey(key); handled {
 		return true, true, m.takePendingWorkflowDialogCmd()
 	}
-	// Dashboard keys take priority when the dashboard panel is open. Only
-	// non-typable keys are bound: a bare rune here is swallowed before it can
-	// reach the composer, so "k"/"j" made words like "just" untypable and "r"
-	// fired a real run resume on any word containing it. Resuming is /resume.
-	// Scrollback focus only: the panel renders directly above the composer, so
-	// letting it own the arrow keys while the composer has focus stole the
-	// caret from anyone editing a multi-line draft (INV-TUI-16).
-	if m.runDash != nil && m.runDash.isVisible() && m.focus == focusScrollback {
-		switch key {
-		case "up":
-			m.runDash.cursorUp()
-			m.layout()
-			return true, true, nil
-		case "down":
-			m.runDash.cursorDown()
-			m.layout()
-			return true, true, nil
-		}
+	if handled, skipViewport, cmds := m.handleRunDashKey(key); handled {
+		return true, skipViewport, cmds
 	}
+	// Queue manager routing lives above, before the sidebars: a modal owns
+	// every key while open. The composer popups (suggest/history) run here.
 	if handled, skipViewport, cmds := m.handleComposerPopupKey(key); handled {
 		return true, skipViewport, cmds
 	}
 	// Tab cycles focusable bubbles in history (not only pane toggle).
-	if key == "tab" || key == "shift+tab" {
-		if m.sidebarVisible() || m.workflowsSidebarVisible() {
-			m.setFocus(m.nextTUIFocus(m.focus, key == "shift+tab"))
-			return true, true, nil
-		}
-		if m.cycleChatFocus(key == "shift+tab") {
-			return true, false, nil
-		}
+	if handled, skipViewport, cmds := m.handleTabCycle(key); handled {
+		return true, skipViewport, cmds
 	}
 	if key == "enter" || key == " " {
 		if m.focus == focusScrollback && m.toggleSelectedBlock() {
@@ -265,6 +252,68 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 	// rendering later answers off-screen. routeFocusKey promotes
 	// pgup/pgdown/home/end to focusScrollback above, so those still reach it.
 	return skipTextarea, skipViewport || focus != focusScrollback, cmds
+}
+
+// handleQueueRouting owns the queue manager's routing slot: the modal popup
+// consumes every key while open, and ctrl+up opens it (or reaches it when
+// already open). It runs before the sidebars and the run dashboard so a
+// focused sidebar can never steal the modal's keys (INV-TUI-16, keymap
+// precedence header).
+func (m *tuiModel) handleQueueRouting(key string) (bool, bool, []tea.Cmd) {
+	if key == "ctrl+up" {
+		if m.queueMgr.open {
+			return m.handleQueueManagerKey(key)
+		}
+		if m.openQueueManager() {
+			return true, true, nil
+		}
+		return false, false, nil
+	}
+	if m.queueMgr.open {
+		return m.handleQueueManagerKey(key)
+	}
+	return false, false, nil
+}
+
+// handleRunDashKey owns the run-dashboard arrow keys while the dashboard is
+// drawn and the transcript side has focus. Only non-typable keys are bound: a
+// bare rune here is swallowed before it can reach the composer, so "k"/"j"
+// made words like "just" untypable and "r" fired a real run resume on any word
+// containing it. Resuming is /resume. Scrollback focus only: the panel renders
+// directly above the composer, so letting it own the arrow keys while the
+// composer has focus stole the caret from anyone editing a multi-line draft
+// (INV-TUI-16).
+func (m *tuiModel) handleRunDashKey(key string) (bool, bool, []tea.Cmd) {
+	if m.runDash == nil || !m.runDash.isVisible() || m.focus != focusScrollback {
+		return false, false, nil
+	}
+	switch key {
+	case "up":
+		m.runDash.cursorUp()
+		m.layout()
+		return true, true, nil
+	case "down":
+		m.runDash.cursorDown()
+		m.layout()
+		return true, true, nil
+	}
+	return false, false, nil
+}
+
+// handleTabCycle cycles focus among the visible panes (and chat bubbles in
+// history) on tab / shift+tab.
+func (m *tuiModel) handleTabCycle(key string) (bool, bool, []tea.Cmd) {
+	if key != "tab" && key != "shift+tab" {
+		return false, false, nil
+	}
+	if m.sidebarVisible() || m.workflowsSidebarVisible() {
+		m.setFocus(m.nextTUIFocus(m.focus, key == "shift+tab"))
+		return true, true, nil
+	}
+	if m.cycleChatFocus(key == "shift+tab") {
+		return true, false, nil
+	}
+	return false, false, nil
 }
 
 // handleChatToggleKey handles the mode/panel toggles, which share the shape
@@ -344,6 +393,12 @@ func (m *tuiModel) handleChatControlKey(key string, alt, skipTextarea bool) (boo
 		skipTextarea = true
 		swallowViewport = true
 	case "esc":
+		if m.editingQueued {
+			// Abort the queue edit: the original item returns to the queue
+			// and the composer draft is restored.
+			m.restoreQueueEdit()
+			return true, true, nil
+		}
 		m.selectedBlockID = ""
 		m.clearToolSelection()
 		for i := range m.toolRows {

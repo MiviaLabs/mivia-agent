@@ -1,6 +1,12 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+)
 
 // ToolsConfig configures tool execution policies.
 type ToolsConfig struct {
@@ -92,12 +98,58 @@ type ToolsConfig struct {
 	// SearchIgnorePatterns adds directory/file names to skip during grep/glob walks.
 	// Extends the built-in defaults (.git, node_modules, vendor). Does not replace them.
 	SearchIgnorePatterns []string `toml:"search_ignore_patterns,omitempty"`
+	// WritePathBlocklist adds workspace-relative paths or directories whose
+	// write tools refuse to change. It extends the built-in defaults
+	// (DefaultWritePathBlocklist: .git, .mivia/mivia.toml); it cannot remove
+	// them. Entries use forward slashes and are normalized (trimmed, cleaned)
+	// at load; an entry that is empty, ".", or absolute is a load error.
+	// The blocklist applies to workflow agent steps, whose write tools
+	// (write_file, search_replace, multi_edit, delete_file) refuse listed
+	// paths. The interactive session registry does not enforce it.
+	WritePathBlocklist []string `toml:"write_path_blocklist,omitempty"`
 	// MaxInspectRepositoryBytes caps the inspect_repository result envelope
 	// (bytes). Unlike MaxReadBytes/MaxOutputBytes there is no uncapped state:
 	// the tool's output must always be valid, bounded JSON. 0 or negative
 	// resolves to the built-in 64 KiB default. Values outside
 	// [MinInspectRepositoryBytes, MaxInspectRepositoryBytes] are rejected at load.
 	MaxInspectRepositoryBytes int `toml:"max_inspect_repository_bytes"`
+}
+
+// validateTools runs every [tools] validation. It is the single entry point
+// called from Resolved.Validate so the validation surface stays in one file.
+func validateTools(tc ToolsConfig) error {
+	if err := validateToolResultBudgets(tc); err != nil {
+		return err
+	}
+	return validateWritePathBlocklist(tc)
+}
+
+// validateWritePathBlocklist rejects entries that cannot protect anything:
+// entries that clean to "." (empty, whitespace-only, "x/..") or absolute
+// paths are silent no-ops in isWriteDeniedPath, so a misconfigured blocklist
+// fails closed at load instead of failing open at write time.
+func validateWritePathBlocklist(tc ToolsConfig) error {
+	for _, entry := range tc.WritePathBlocklist {
+		trimmed := strings.TrimSpace(entry)
+		cleaned := filepath.Clean(trimmed)
+		if cleaned == "." {
+			return fmt.Errorf("[tools] write_path_blocklist entry %q is empty or resolves to the workspace root; use a relative path", entry)
+		}
+		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("[tools] write_path_blocklist entry %q escapes the workspace; use a relative path inside the workspace", entry)
+		}
+		if filepath.IsAbs(cleaned) {
+			return fmt.Errorf("[tools] write_path_blocklist entry %q is absolute; use a workspace-relative path", entry)
+		}
+		// A backslash separator is a single filename character on non-Windows
+		// hosts, so an entry written with Windows separators can never match
+		// a real workspace-relative path there. Reject it instead of letting
+		// the protection silently not exist.
+		if runtime.GOOS != "windows" && strings.Contains(trimmed, "\\") {
+			return fmt.Errorf("[tools] write_path_blocklist entry %q uses a backslash separator; use forward slashes", entry)
+		}
+	}
+	return nil
 }
 
 // Validation for the two [tools] knobs that bound tool-result bytes: the
@@ -167,6 +219,17 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	// B7: EnvAllowlist + EnvAllowlistOnly are mutually exclusive - prefer EnvAllowlistOnly
 	if len(tc.EnvAllowlist) > 0 && len(tc.EnvAllowlistOnly) > 0 {
 		tc.EnvAllowlist = nil
+	}
+	// Normalize write_path_blocklist entries so the write tools compare exact
+	// workspace-relative paths: trim whitespace, collapse separators, use
+	// forward slashes. Defaults are NOT injected here; the workflow registry
+	// composes DefaultWritePathBlocklist + additions at build time.
+	if len(tc.WritePathBlocklist) > 0 {
+		norm := make([]string, 0, len(tc.WritePathBlocklist))
+		for _, entry := range tc.WritePathBlocklist {
+			norm = append(norm, filepath.ToSlash(filepath.Clean(strings.TrimSpace(entry))))
+		}
+		tc.WritePathBlocklist = slices.Clone(norm)
 	}
 	return tc
 }

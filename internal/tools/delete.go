@@ -15,8 +15,12 @@ import (
 // renamed test scaffold) is permanent, and a reviewer finding that requires
 // its removal is unfixable by the agent, which loops the repair gate forever
 // (DC-9).
+//
+// Like the edit tools, it honors the write-path blocklist: a protected path
+// is refused, so deletion cannot bypass the protection that guards writing.
 type deleteFileTool struct {
-	ws *workspace.Root
+	ws                *workspace.Root
+	writePathDenylist []string
 }
 
 func (t *deleteFileTool) Name() string { return "delete_file" }
@@ -62,6 +66,9 @@ func (t *deleteFileTool) Execute(ctx context.Context, args json.RawMessage) (str
 	rel := t.ws.Rel(abs)
 	if rel == "." {
 		return "", fmt.Errorf("refusing to delete the workspace root")
+	}
+	if isWriteDeniedPath(rel, t.writePathDenylist) {
+		return "", fmt.Errorf("deleting protected path is blocked")
 	}
 	select {
 	case <-ctx.Done():

@@ -72,7 +72,14 @@ type tuiModel struct {
 	// newest appended last. It feeds the Up-arrow history picker.
 	sentHistory []string
 	// history is the composer message-history picker overlay state.
-	history            historyState
+	history historyState
+	// queueMgr is the pending-message queue manager popup state.
+	queueMgr queueMgrState
+	// editingQueued is set while the user is editing a queued message in the
+	// composer (the queue manager's edit flow); editMemory holds the item and
+	// the composer draft/cursor to restore on esc/cancel.
+	editingQueued      bool
+	editMemory         queuedItem
 	liveThinkingScroll int               // scroll offset for live streaming thinking block
 	pendingQueue       []string          // sent text queued while agent is busy
 	pendingQueueLabels []string          // matching short display text for queued turns

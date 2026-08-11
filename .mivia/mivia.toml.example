@@ -189,6 +189,28 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 # Block vars from the resolved allowlist.
 # env_blocklist = ["GITHUB_TOKEN", "NPM_TOKEN"]
 
+# ---- Write-path blocklist (workflow agent steps) ----
+# Workflow agent write tools (write_file, search_replace, multi_edit,
+# delete_file) refuse these workspace-relative paths or directories. Two paths
+# are ALWAYS blocked and cannot be removed: .git and .mivia/mivia.toml. This
+# key ADDS to that default set. It cannot remove entries.
+#
+# Recommended starting values: the set below keeps workflow agents away from
+# agent definitions, hook-policy gates, rules, skills, the workflow definition
+# they run under, and Go module metadata. A project that omits this key leaves
+# all of these writable by workflow agents, including its own workflow
+# definition - choose deliberately.
+write_path_blocklist = [
+    ".mivia/agents",    # agent definitions
+    ".mivia/policy",    # hook-policy gates
+    ".mivia/rules",     # durable rules
+    ".mivia/skills",    # skill definitions
+    ".mivia/workflows", # workflow definitions and templates
+    "go.mod",
+    "go.sum",
+    "go.work",
+]
+
 # Timeouts (seconds).
 run_timeout_seconds = 900
 # max_read_bytes = 262144       # uncomment to cap read_file at 256 KiB (default: uncapped)
@@ -383,8 +405,8 @@ api_key_env = "TAVILY_API_KEY"
 [subagents]
 # All bounds default to 0 (unlimited). Set positive values to cap.
 max_workers = 0   # 0 = unlimited (one goroutine per task)
-max_depth = 0     # 0 = unlimited nesting depth
-max_fanout = 0    # 0 = unlimited parallel sub-tasks per level
+max_depth = -1    # -1 = unbounded DAG depth (0 also means unlimited)
+max_fanout = -1   # -1 = unbounded task count (0 also means unlimited)
 nested_steps = 0  # 0 = unlimited sub-agent loop steps
 # default_timeout_seconds is the per-agent default budget. 43200s = 12 hours,
 # the same safety bound an unset-or-0 value selects; it is written out so the

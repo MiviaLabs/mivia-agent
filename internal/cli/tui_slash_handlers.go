@@ -41,6 +41,8 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return true
 	case "/new", "/clear", "/sessions", "/worktrees":
 		return m.handleTuiSessionLifecycleSlash(cmd, fields)
+	case "/queue":
+		return m.handleTuiQueueSlash()
 	case "/save", "/load", "/delete", "/list", "/session":
 		return m.handleTuiSessionStoreSlash(cmd, fields)
 	case "/title":
@@ -57,6 +59,25 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	default:
 		return false
 	}
+}
+
+func (m *tuiModel) handleTuiQueueSlash() bool {
+	if m.openQueueManager() {
+		return true
+	}
+	// Explain the refusal instead of failing silently: the user typed /queue
+	// and something is in the way.
+	switch {
+	case m.mode != modeChat:
+		m.appendInfo("(the queue manager is chat mode only)")
+	case m.editingQueued:
+		m.appendInfo("(finish editing the queued message first)")
+	case m.queueCount() == 0:
+		m.appendInfo("(queue is empty)")
+	default:
+		m.appendInfo("(queue manager is already open)")
+	}
+	return true
 }
 
 func (m *tuiModel) handleTuiTitleSlash(cmd string) bool {
@@ -243,6 +264,7 @@ func (m *tuiModel) handleTuiSessionLifecycleSlash(cmd string, fields []string) b
 		m.msgOffset = 0
 		m.sentHistory = nil
 		m.closeHistory()
+		m.resetQueueState()
 		m.appendInfo("history cleared")
 		return true
 	case "/new":
@@ -390,7 +412,10 @@ func (m *tuiModel) runLoadSlash(fields []string) {
 		return
 	}
 	// A load is a session switch like /new: never offer the previous
-	// session's sent texts in the history picker (privacy across sessions).
+	// session's sent texts in the history picker (privacy across sessions),
+	// and never auto-send the previous session's queued messages into the
+	// freshly loaded one.
+	m.resetQueueState()
 	m.sentHistory = nil
 	m.closeHistory()
 	m.activeSession = nil

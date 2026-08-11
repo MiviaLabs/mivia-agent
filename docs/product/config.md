@@ -188,6 +188,16 @@ Recommended values ship in `.mivia/mivia.toml.example`. Copy it and trim it to w
 
 `[tools].env_allow_keyword_blocklist` is the companion subtractive filter. A variable admitted by a `*` prefix rule is dropped when its name contains any listed substring. The example lists `SECRET`, `TOKEN`, `PASSWORD`, and `API_KEY`. Exact `env_allowlist` entries are never dropped, so a build that needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything they match.
 
+## Write-path blocklist
+
+`[tools].write_path_blocklist` names workspace-relative paths or directories that the write tools of workflow agent steps (`write_file`, `search_replace`, `multi_edit`, `delete_file`) refuse to change. It applies to workflow runs only, not to the interactive session.
+
+Two paths are always blocked and cannot be removed: `.git` and `.mivia/mivia.toml`. The key adds to that default set. It cannot remove entries.
+
+Entries use forward slashes. At load, mivia trims whitespace and cleans each entry, so `" go.mod/ "` becomes `"go.mod"`. An entry that is empty, that resolves to the workspace root, or that is absolute is a config error: mivia refuses to start rather than silently ignore a blocklist entry that can never match.
+
+This key is a project decision. A project that omits it leaves paths such as `.mivia/agents`, `.mivia/policy`, `.mivia/rules`, `.mivia/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, and `go.work` writable by workflow agents. That includes the workflow definition the run executes. Recommended starting values ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
+
 ## Redaction and persisted orchestration history
 
 `[privacy].redaction_patterns` and `[privacy].redaction_key_names` control redaction in displayed tool previews, output, and event bodies. They do not redact SQLite task inputs or result content at rest. The example configuration provides starting patterns. Adapt and test them for your workspace.

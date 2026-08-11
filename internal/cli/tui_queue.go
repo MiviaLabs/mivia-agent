@@ -3,52 +3,43 @@ package cli
 // The pending-message queue: what happens to text typed while the agent is
 // working. Queued input is held, then sent when the turn ends (or force-sent
 // on an empty Enter). Slash commands run locally as they come off the queue.
+//
+// The queue is three index-aligned slices on tuiModel
+// (pendingQueue / pendingQueueLabels / pendingSkillTurns). Every mutation
+// goes through queueRemoveAt/queueInsertAt/queueAppend (tui_queue_manager.go)
+// so the alignment cannot drift, and sendQueuedItem owns the canonical
+// dispatch shared by the turn-end drain and the queue manager's steer.
 
 import "strings"
 
-func (m *tuiModel) forceSendQueued() {
-	if len(m.pendingQueue) == 0 {
-		return
+// sendQueuedItem dispatches one queued item. It returns true when a turn was
+// started (the caller stops draining) and false when the item was a slash
+// command handled locally and the caller should continue with the next item.
+func (m *tuiModel) sendQueuedItem(item queuedItem) bool {
+	if strings.HasPrefix(item.sent, "/") && m.handleSlash(item.sent) {
+		m.renderVP()
+		m.textarea.Reset()
+		// A queued slash command can still need a terminal command
+		// (/select). Dropping it left the mode and the terminal
+		// disagreeing until some later command drained the stale value.
+		m.queuedSlashCmds = append(m.queuedSlashCmds, m.takePendingSlashCmds()...)
+		return false
 	}
-	// Cancel current turn.
-	m.mu.Lock()
-	if m.cancel != nil {
-		m.cancel()
+	if item.skill != nil {
+		m.startSkillAI(*item.skill)
+	} else {
+		m.startAIWithDisplay(item.sent, item.display)
 	}
-	m.mu.Unlock()
-	m.sendNextQueued()
+	return true
 }
 
-// sendNextQueued pops and sends the next queued message, handling /commands locally.
+// sendNextQueued pops and sends queued messages, handling /commands locally.
 func (m *tuiModel) sendNextQueued() {
-	for len(m.pendingQueue) > 0 {
-		next := m.pendingQueue[0]
-		m.pendingQueue = m.pendingQueue[1:]
-		var skill *skillSlashSpec
-		if len(m.pendingSkillTurns) > 0 {
-			skill = m.pendingSkillTurns[0]
-			m.pendingSkillTurns = m.pendingSkillTurns[1:]
+	for m.queueCount() > 0 {
+		item := m.queueRemoveAt(0)
+		if m.sendQueuedItem(item) {
+			return
 		}
-		display := next
-		if len(m.pendingQueueLabels) > 0 {
-			display = m.pendingQueueLabels[0]
-			m.pendingQueueLabels = m.pendingQueueLabels[1:]
-		}
-		if strings.HasPrefix(next, "/") && m.handleSlash(next) {
-			m.renderVP()
-			m.textarea.Reset()
-			// A queued slash command can still need a terminal command
-			// (/select). Dropping it left the mode and the terminal
-			// disagreeing until some later command drained the stale value.
-			m.queuedSlashCmds = append(m.queuedSlashCmds, m.takePendingSlashCmds()...)
-			continue
-		}
-		if skill != nil {
-			m.startSkillAI(*skill)
-		} else {
-			m.startAIWithDisplay(next, display)
-		}
-		return
 	}
 }
 
