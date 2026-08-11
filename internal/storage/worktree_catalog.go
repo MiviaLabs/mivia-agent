@@ -59,7 +59,16 @@ func (s *SQLite) DeleteWorktreeSessionSnapshot(ctx context.Context, p contextsta
 		if err = requireContextRows(r, contextstate.ErrSessionNotFound); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, p.WorkspaceID, p.SubjectID, k, i.ID)
+		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_session_admissions WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, p.WorkspaceID, p.SubjectID, k, i.ID); err != nil {
+			return err
+		}
+		// The dir and catalog-key records are side tables with no foreign key,
+		// so every delete path names them explicitly or the rows outlive the
+		// snapshot forever (see chat_sessions.go).
+		if _, err := tx.ExecContext(ctx, `DELETE FROM chat_session_dirs WHERE workspace_id=? AND subject_id=? AND name=? AND instance_id=?`, p.WorkspaceID, p.SubjectID, k, i.ID); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM worktree_catalog_keys WHERE workspace_id=? AND subject_id=? AND instance_id=? AND entity='snapshot' AND name=? AND storage_key=?`, p.WorkspaceID, p.SubjectID, i.ID, n, k)
 		return err
 	})
 }

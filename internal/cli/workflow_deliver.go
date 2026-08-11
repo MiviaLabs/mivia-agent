@@ -30,7 +30,7 @@ var (
 	// workflowDeliveryClaimHeartbeat is how often a running delivery attempt
 	// re-claims its run with the same holder. The attempt can run for
 	// workflowDeliveryTimeout (10m) while the claim lease lasts only
-	// workflowledger.DefaultClaimLease (5m): without a refresh, a second host
+	// workflowledger.DefaultClaimLease: without a refresh, a second host
 	// could take the claim over mid-publish (DC-2 double publish). One third
 	// of the lease keeps the claim comfortably inside it. A package var so
 	// tests can shorten it.
@@ -248,7 +248,7 @@ func claimWorkflowDeliveryRun(ctx context.Context, repo workflowledger.Repositor
 		}
 	}
 	// The attempt can run for workflowDeliveryTimeout (10m) while the claim
-	// lease lasts only DefaultClaimLease (5m), so the claim is refreshed while
+	// lease lasts only DefaultClaimLease, so the claim is refreshed while
 	// the attempt runs. The release func stops and joins the heartbeat BEFORE
 	// releasing the claim (LIFO, mirroring the controller): a tick that landed
 	// after ReleaseRun would re-create the claim row (sqlite ClaimRun INSERTs

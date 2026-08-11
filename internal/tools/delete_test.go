@@ -134,3 +134,51 @@ func TestDeleteFileFollowsInWorkspaceSymlink(t *testing.T) {
 		t.Fatalf("symlink target still exists (stat err %v)", statErr)
 	}
 }
+
+// TestDeleteFileRefusesSecretPath pins that delete_file enforces the
+// secret-path filter through the registry wiring: with the example secret
+// patterns configured, deleting a credential file (.env) is refused with a
+// "blocked" error and the file survives. Regression for the bypass where
+// delete_file skipped the isSecretPath guard that every other file tool
+// enforces.
+func TestDeleteFileRefusesSecretPath(t *testing.T) {
+	ws, reg := setupWS(t)
+	target := filepath.Join(ws.Abs, ".env")
+	if err := os.WriteFile(target, []byte("SECRET=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustBlocked(t, reg, "delete_file", map[string]any{"path": ".env"})
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf(".env removed despite secret-path refusal (stat err=%v)", err)
+	}
+}
+
+// TestDeleteFileAllowsNonSecretPathWithSecretConfig is the success-path
+// control: with the same secret patterns configured, deleting an ordinary file
+// still succeeds, proving the filter does not over-block.
+func TestDeleteFileAllowsNonSecretPathWithSecretConfig(t *testing.T) {
+	ws, reg := setupWS(t)
+	target := filepath.Join(ws.Abs, "notes.txt")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, reg, "delete_file", map[string]any{"path": "notes.txt"})
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("notes.txt still exists after delete (stat err=%v)", err)
+	}
+}
+
+// TestDeleteFileAllowsSecretException is the exception-path control: a path
+// covered by secret_path_exceptions (.env.example) is not filtered and deletes
+// normally, proving exceptions take precedence in delete_file too.
+func TestDeleteFileAllowsSecretException(t *testing.T) {
+	ws, reg := setupWS(t)
+	target := filepath.Join(ws.Abs, ".env.example")
+	if err := os.WriteFile(target, []byte("TEMPLATE=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, reg, "delete_file", map[string]any{"path": ".env.example"})
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf(".env.example still exists after delete (stat err=%v)", err)
+	}
+}

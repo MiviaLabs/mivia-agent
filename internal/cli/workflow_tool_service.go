@@ -69,11 +69,15 @@ func workflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	// marks production wiring; tests pass nil), recover runs left unfinished
 	// by an earlier session (restart or crash): publish delivery_pending runs
 	// and resume pending/running/waiting_approval runs whose claim is free or
-	// expired. The sweep is one-shot; per run it is serialized by the
-	// execution file lock and fenced by the run claim, so it never races a
-	// live executor, and delivery refuses runs without an active policy.
+	// expired. The one-shot sweep covers the moment of wiring; the periodic
+	// re-scan then keeps picking up runs whose claim expires mid-session, so
+	// a dead run resumes on its own without a restart. The sweep is
+	// serialized per run by the execution file lock and fenced by the run
+	// claim, so it never races a live executor, and delivery refuses runs
+	// without an active policy.
 	if provider != nil {
-		go engine.reconcileParkedRuns(context.Background())
+		go engine.reconcileParkedRuns(context.Background(), false)
+		go engine.reconcileParkedRunsPeriodic(context.Background())
 	}
 	// NewService fails only when the repository factory is nil; this caller
 	// always provides one, so the error is impossible by construction and the

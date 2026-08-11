@@ -249,4 +249,19 @@ func TestReviewZeroProgressNonTerminalOnFailureStillFailsRun(t *testing.T) {
 	if len(runner.calls) != 6 {
 		t.Fatalf("runner calls = %d, want 6 (two repairs, no repair dispatch after degradation)", len(runner.calls))
 	}
+	// The degraded review#3 must persist a TERMINAL durable route: Failed with
+	// ToStepID == "failure", never the non-terminal on_failure target "repair".
+	// A crash between this persist and the run-status CAS must not be able to
+	// resume into the repair step.
+	attempts, listErr := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	review, ok := latestAttempt(attempts, "review")
+	if !ok {
+		t.Fatal("missing review attempt")
+	}
+	if review.Status != workflowledger.AttemptStatusFailed || review.ToStepID != "failure" {
+		t.Fatalf("degraded review attempt = %+v; want Failed with terminal route ToStepID=%q, got ToStepID=%q", review, "failure", review.ToStepID)
+	}
 }

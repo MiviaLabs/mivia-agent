@@ -248,7 +248,7 @@ func registerDefaultTools(r *Registry, opts DefaultOptions, allowlist []string, 
 	registerSearchTools(register, ws, readClassMaxBytes, patterns, exceptions, ignore)
 	register(&inspectRepositoryTool{ws: ws, maxBytes: inspectRepositoryBudget(opts), secretPathExceptions: exceptions, secretPathPatterns: patterns, ignore: ignore})
 	register(&writeFileTool{ws: ws, maxWriteKB: opts.MaxWriteKB, maxBytes: readClassMaxBytes, secretPathExceptions: exceptions, secretPathPatterns: patterns, writePathDenylist: opts.WritePathDenylist})
-	register(&deleteFileTool{ws: ws, writePathDenylist: opts.WritePathDenylist})
+	register(&deleteFileTool{ws: ws, writePathDenylist: opts.WritePathDenylist, secretPathExceptions: exceptions, secretPathPatterns: patterns})
 	registerEditTools(register, opts, ws, patterns, exceptions, opts.WritePathDenylist)
 	// run_command is advertised only when the allowlist is non-empty: an empty
 	// allowlist means no program may run, so the tool cannot succeed and is

@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -12,32 +14,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
+// workflowReconcileInterval is how often the session engine re-scans the
+// ledger for runs to recover while the session is up, so a run whose claim
+// expires mid-session (a hard kill, a transient failure) resumes on its own
+// without a restart. A package var so tests can shorten it.
+var workflowReconcileInterval = 30 * time.Second
+
 // reconcileParkedRuns recovers every run an earlier session left unfinished -
-// the restart/crash cases the session engine never re-enters on its own:
+// the restart/crash cases the session engine never re-enters on its own.
+// quiet suppresses the expected per-run skip log (a fresh claim belongs to a
+// live holder): the periodic re-scan passes true so active runs do not log
+// every interval; the session-start sweep passes false so a skipped run is
+// observable.
 //
-//   - delivery_pending runs are published (reconcileParkedDelivery).
-//     Delivery authorization comes from the workflow itself: a run settles at
-//     delivery_pending only when its workflow declares a [delivery] policy,
-//     and that policy is the publication grant - the harness must publish a
-//     delivery-defined workflow always, without flags or manual overrides, so
-//     a parked run is never stranded.
-//
-//   - pending, running, and waiting_approval runs are resumed
-//     (reconcileParkedResume) through the same durable preflight as the
-//     resume tool (prepareResume -> launchResume). The claim handoff makes
-//     this safe: an unclaimed run (graceful shutdown released it) is claimed
-//     fresh, a run whose claim is older than the lease (a crashed executor
-//     stopped heartbeating) is taken over, and a run with a fresh claim (a
-//     live session is executing it) is refused - the sweep skips it and a
-//     later session start retries. Runs the sweep cannot resume (invalid
-//     snapshot, config drift, live claim) stay as they are; the operator can
-//     still resume them explicitly.
-//
-// deliverRunWithStore independently refuses a run whose workflow has no
-// active delivery policy, and beginWorkflowExecution takes the workflow
-// execution file lock per run, so a run being published by another live
-// executor simply skips this sweep. The resume path takes the same lock.
-func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context) {
+// See reconcileParkedDelivery and reconcileParkedResume for the per-status
+// behavior.
+func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet bool) {
 	if e == nil || e.root == "" {
 		return
 	}
@@ -71,17 +63,31 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context) {
 		return
 	}
 	storePath := contextStorePath(work.Abs, res.Subagents)
+	// Fan out every parked run in parallel. Each run owns its execution file
+	// lock and run claim, so concurrent delivery/resume of different runs
+	// cannot conflict: those per-run fences are the only serialization points
+	// and the storage layer serializes writes per run. A sequential sweep
+	// would let one slow delivery (the push runs the repo's pre-push hook,
+	// often the full test suite) delay every other parked run for minutes;
+	// parallel dispatch recovers them all at once. Resumed runs continue in
+	// the engine's active set after the sweep returns.
+	var wg sync.WaitGroup
 	for _, run := range runs {
 		if ctx.Err() != nil {
 			return
 		}
-		switch run.Status {
-		case workflowledger.RunStatusDeliveryPending:
-			e.reconcileParkedDelivery(ctx, work.Abs, res, store, repo, storePath, run.RunID)
-		case workflowledger.RunStatusPending, workflowledger.RunStatusRunning, workflowledger.RunStatusWaitingApproval:
-			e.reconcileParkedResume(ctx, run.RunID)
-		}
+		wg.Add(1)
+		go func(run workflowledger.RunSnapshot) {
+			defer wg.Done()
+			switch run.Status {
+			case workflowledger.RunStatusDeliveryPending:
+				e.reconcileParkedDelivery(ctx, work.Abs, res, store, repo, storePath, run.RunID)
+			case workflowledger.RunStatusPending, workflowledger.RunStatusRunning, workflowledger.RunStatusWaitingApproval:
+				e.reconcileParkedResume(ctx, run.RunID, quiet)
+			}
+		}(run)
 	}
+	wg.Wait()
 }
 
 // reconcileParkedDelivery publishes one delivery_pending run. allowPublish
@@ -123,8 +129,30 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 // synchronously and the sweep moves on. waiting_approval runs re-attach at
 // the human gate and re-park (pauseHumanGate is idempotent): the resume
 // never re-executes agents or auto-approves.
-func (e *sessionWorkflowEngine) reconcileParkedResume(ctx context.Context, runID string) {
+func (e *sessionWorkflowEngine) reconcileParkedResume(ctx context.Context, runID string, quiet bool) {
 	if _, err := e.resumeCLI(ctx, agenttools.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
-		log.Printf("workflow: session recovery: resume %s skipped: %v", runID, err)
+		if !quiet {
+			log.Printf("workflow: session recovery: resume %s skipped: %v", runID, err)
+		}
+	}
+}
+
+// reconcileParkedRunsPeriodic re-runs the recovery scan while the session is
+// up, so a run whose claim expires mid-session (a hard kill, a transient
+// failure) is picked up on its own at the first scan after expiry - no
+// restart and no manual resume. The pass is quiet: expected skips (runs this
+// or another live session is executing) must not log every interval. The
+// per-run execution lock and claim fence make repeated scans idempotent and
+// safe against concurrent executors.
+func (e *sessionWorkflowEngine) reconcileParkedRunsPeriodic(ctx context.Context) {
+	ticker := time.NewTicker(workflowReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			e.reconcileParkedRuns(ctx, true)
+		}
 	}
 }

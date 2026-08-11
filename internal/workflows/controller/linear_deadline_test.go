@@ -386,6 +386,12 @@ func TestEvidenceGateVerifierHostFailureFromContextErrorTimesOut(t *testing.T) {
 			t.Fatalf("error ref contains host failure: %s", raw)
 		}
 	}
+	// The admitted verify attempt must be settled, never left Running on a
+	// terminal run: the deadline/cancel branch completes it as timed_out
+	// before the run reaches its terminal state.
+	if verify.Status != workflowledger.AttemptStatusTimedOut {
+		t.Fatalf("verify attempt status = %q, want %q (settled, not left Running)", verify.Status, workflowledger.AttemptStatusTimedOut)
+	}
 }
 
 // ctxAwareRepo wraps a repository and fails GetLoopCounters when the caller
