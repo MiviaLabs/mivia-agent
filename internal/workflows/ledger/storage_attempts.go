@@ -91,6 +91,151 @@ func (s *StorageRepository) removeAttemptRollback(runID, attemptID string, prevA
 	}
 }
 
+// RecordStepAttemptOutcome records a fresh numbered attempt and its TERMINAL
+// outcome in ONE wf_attempt_completed event: the attempt is never observable
+// in a non-terminal state. Uniqueness mirrors CreateStepAttempt (the
+// (runID, stepID, attemptNo) triple and the AttemptID are both unique —
+// ErrDuplicate), and the outcome rules mirror CompleteStepAttempt
+// (ErrInvalidTransition for a non-terminal outcome or an illegal edge,
+// including the no-route-on-interrupted/canceled/timed_out rule and the
+// MaxEvidenceBytes cap). The recorded attempt carries Version 1 with
+// StartedAt == FinishedAt == now. The completed payload carries the fresh
+// attempt's StepID/AttemptNo/StartedAt identity, which the replay restores so
+// LatestFailureText and the repair budget keep working after a rebuild.
+func (s *StorageRepository) RecordStepAttemptOutcome(ctx context.Context, attempt StepAttempt, outcome AttemptOutcome) error {
+	if err := s.ensureBuilt(ctx); err != nil {
+		return err
+	}
+	lock := s.runLock(attempt.RunID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	s.mu.Lock()
+	p, ok := s.proj[attempt.RunID]
+	if !ok || !p.HasRun {
+		s.mu.Unlock()
+		return ErrNotFound
+	}
+	if err := s.validateRecordOutcomeLocked(&p, attempt, outcome); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	now := s.now()
+	rec, rollback := s.applyRecordOutcomeLocked(&p, attempt, outcome, now)
+	s.proj[attempt.RunID] = p
+	s.mu.Unlock()
+
+	payload, err := marshalAttemptCompleted(attemptCompletedPayload{
+		AttemptID:        attempt.AttemptID,
+		Version:          rec.Version,
+		Status:           outcome.Status,
+		StepID:           attempt.StepID,
+		AttemptNo:        attempt.AttemptNo,
+		StartedAt:        now,
+		CoordinatorRunID: outcome.CoordinatorRunID,
+		TaskID:           outcome.TaskID,
+		OutputRef:        outcome.OutputRef,
+		OutputDigest:     outcome.OutputDigest,
+		ErrorRef:         outcome.ErrorRef,
+		ToStepID:         outcome.ToStepID,
+		TransitionIndex:  outcome.TransitionIndex,
+		MatchDigest:      outcome.MatchDigest,
+		DecisionJSON:     append([]byte(nil), outcome.DecisionJSON...),
+		EvidenceJSON:     append([]byte(nil), outcome.EvidenceJSON...),
+		FinishedAt:       now,
+		CreatedAt:        now,
+	})
+	if err != nil {
+		s.rollbackAndRebuild(ctx, attempt.RunID, rollback)
+		return fmt.Errorf("marshal %s payload: %w", eventKindAttemptCompleted, err)
+	}
+	evt := storage.Event{
+		ID:       EventID(attempt.RunID, eventKindAttemptCompleted, attempt.StepID, strconv.Itoa(attempt.AttemptNo)),
+		RunID:    attempt.RunID,
+		Sequence: int(s.nextSequence(attempt.RunID)),
+		Kind:     eventKindAttemptCompleted,
+		Payload:  payload,
+	}
+	return s.appendEvent(ctx, evt, rollback)
+}
+
+// validateRecordOutcomeLocked checks the one-event terminal write's guards:
+// uniqueness of the AttemptID and the (runID, stepID, attemptNo) triple, a
+// terminal outcome with a legal running->terminal edge, the
+// no-route-on-interrupted/canceled/timed_out rule and the MaxEvidenceBytes
+// cap. Caller holds s.mu and the per-run lock.
+func (s *StorageRepository) validateRecordOutcomeLocked(p *Projection, attempt StepAttempt, outcome AttemptOutcome) error {
+	for _, a := range p.Attempts {
+		if a.AttemptID == attempt.AttemptID || (a.StepID == attempt.StepID && a.AttemptNo == attempt.AttemptNo) {
+			return ErrDuplicate
+		}
+	}
+	if !IsTerminalAttemptStatus(outcome.Status) || !ValidAttemptTransition(AttemptStatusRunning, outcome.Status) {
+		return ErrInvalidTransition
+	}
+	if outcomeHasRoute(outcome) && (outcome.Status == AttemptStatusInterrupted || outcome.Status == AttemptStatusCanceled || outcome.Status == AttemptStatusTimedOut) {
+		return ErrInvalidTransition
+	}
+	if len(outcome.EvidenceJSON) > MaxEvidenceBytes {
+		return fmt.Errorf("evidence exceeds %d bytes", MaxEvidenceBytes)
+	}
+	return nil
+}
+
+// applyRecordOutcomeLocked builds the fresh terminal attempt from the outcome,
+// appends it to the cached projection and applies the route/derived-step rules
+// exactly like applyAttemptCompletionLocked. It returns the recorded attempt
+// and a rollback closure restoring the pre-mutation projection on marshal or
+// append failure. Caller holds s.mu and the per-run lock.
+func (s *StorageRepository) applyRecordOutcomeLocked(p *Projection, attempt StepAttempt, outcome AttemptOutcome, now time.Time) (StepAttempt, func()) {
+	rec := attempt.Clone()
+	rec.Status = outcome.Status
+	rec.Version = 1
+	rec.StartedAt = now
+	rec.FinishedAt = &now
+	rec.CoordinatorRunID = outcome.CoordinatorRunID
+	rec.TaskID = outcome.TaskID
+	rec.OutputRef = outcome.OutputRef
+	rec.OutputDigest = outcome.OutputDigest
+	rec.ErrorRef = outcome.ErrorRef
+	rec.ToStepID = outcome.ToStepID
+	rec.TransitionIndex = outcome.TransitionIndex
+	rec.MatchDigest = outcome.MatchDigest
+	rec.DecisionJSON = append([]byte(nil), outcome.DecisionJSON...)
+	rec.EvidenceJSON = append([]byte(nil), outcome.EvidenceJSON...)
+	prevActive := p.ActiveStepID
+	prevTransitions := append([]TransitionRecord(nil), p.Transitions...)
+	p.Attempts = append(p.Attempts, rec)
+	// Mirror applyAttemptCompletionLocked's route/derived-step rules: a route
+	// appends one transition record and moves the derived active step to the
+	// route target; a route-less completion carries no step candidate.
+	if outcome.ToStepID != "" {
+		p.Transitions = append(p.Transitions, TransitionRecord{
+			RunID:           attempt.RunID,
+			FromAttemptID:   attempt.AttemptID,
+			ToStepID:        outcome.ToStepID,
+			TransitionIndex: outcome.TransitionIndex,
+			MatchDigest:     outcome.MatchDigest,
+			DecisionJSON:    append([]byte(nil), outcome.DecisionJSON...),
+			CreatedAt:       now,
+		})
+		p.ActiveStepID = outcome.ToStepID
+	}
+	rollback := func() {
+		q := s.proj[attempt.RunID]
+		for i := range q.Attempts {
+			if q.Attempts[i].AttemptID == attempt.AttemptID {
+				q.Attempts = append(q.Attempts[:i], q.Attempts[i+1:]...)
+				break
+			}
+		}
+		q.Transitions = prevTransitions
+		q.ActiveStepID = prevActive
+		s.proj[attempt.RunID] = q
+	}
+	return rec, rollback
+}
+
 // GetStepAttempt returns one attempt. Returns ErrNotFound if absent.
 func (s *StorageRepository) GetStepAttempt(ctx context.Context, runID, attemptID string) (StepAttempt, error) {
 	if err := s.ensureBuilt(ctx); err != nil {
@@ -277,193 +422,4 @@ func (s *StorageRepository) applyAttemptCompletionLocked(p *Projection, idx int,
 		return nil, rollback, err
 	}
 	return payload, rollback, nil
-}
-
-// SetStepAttemptPrompt records the content-addressed prompt reference for one
-// attempt (the prompt body lives in content-addressed storage; only the ref is
-// persisted). Unlike CompleteStepAttempt it does NOT require a terminal status:
-// the prompt is written at dispatch time, while the attempt is Running, and the
-// attempt's status/version are never changed. Setting the same promptRef twice
-// is an idempotent no-op; setting a DIFFERENT promptRef on an attempt that
-// already has one returns ErrConflict (attempts are immutable after dispatch).
-// Returns ErrNotFound if the run or attempt is absent.
-func (s *StorageRepository) SetStepAttemptPrompt(ctx context.Context, runID, attemptID, promptRef string) error {
-	if promptRef == "" {
-		return fmt.Errorf("prompt ref is empty")
-	}
-	if err := s.ensureBuilt(ctx); err != nil {
-		return err
-	}
-	lock := s.runLock(runID)
-	lock.Lock()
-	defer lock.Unlock()
-
-	s.mu.Lock()
-	p, ok := s.proj[runID]
-	if !ok || !p.HasRun {
-		s.mu.Unlock()
-		return ErrNotFound
-	}
-	idx := -1
-	for i := range p.Attempts {
-		if p.Attempts[i].AttemptID == attemptID {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		s.mu.Unlock()
-		return ErrNotFound
-	}
-	if p.Attempts[idx].PromptRef != "" {
-		if p.Attempts[idx].PromptRef == promptRef {
-			s.mu.Unlock()
-			return nil // idempotent retry of the same ref
-		}
-		s.mu.Unlock()
-		return ErrConflict // attempts are immutable after dispatch
-	}
-	now := s.now()
-	stepID := p.Attempts[idx].StepID
-	attemptNo := p.Attempts[idx].AttemptNo
-	payload, rollback, err := s.applyAttemptPromptLocked(&p, idx, promptRef, now, runID, attemptID)
-	s.proj[runID] = p
-	s.mu.Unlock()
-	if err != nil {
-		s.rollbackAndRebuild(ctx, runID, rollback)
-		return fmt.Errorf("marshal %s payload: %w", eventKindAttemptPrompt, err)
-	}
-
-	evt := storage.Event{
-		ID:       EventID(runID, eventKindAttemptPrompt, stepID, strconv.Itoa(attemptNo)),
-		RunID:    runID,
-		Sequence: int(s.nextSequence(runID)),
-		Kind:     eventKindAttemptPrompt,
-		Payload:  payload,
-	}
-	return s.appendEvent(ctx, evt, rollback)
-}
-
-// SetStepAttemptExecution records the active child identity before dispatch,
-// together with the reason for the re-dispatch when one exists (a transient
-// retry records the provider error text that triggered it; an initial dispatch
-// records none). This closes the crash window where a transient retry has a
-// new child in memory but the ledger still points at the old child.
-func (s *StorageRepository) SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID, reason string) error {
-	if coordinatorRunID == "" || taskID == "" {
-		return fmt.Errorf("execution identity is incomplete")
-	}
-	if err := s.ensureBuilt(ctx); err != nil {
-		return err
-	}
-	lock := s.runLock(runID)
-	lock.Lock()
-	defer lock.Unlock()
-	s.mu.Lock()
-	p, ok := s.proj[runID]
-	if !ok || !p.HasRun {
-		s.mu.Unlock()
-		return ErrNotFound
-	}
-	idx := -1
-	for i := range p.Attempts {
-		if p.Attempts[i].AttemptID == attemptID {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		s.mu.Unlock()
-		return ErrNotFound
-	}
-	cur := p.Attempts[idx]
-	if len(cur.Executions) > 0 {
-		latest := cur.Executions[len(cur.Executions)-1]
-		if latest.CoordinatorRunID == coordinatorRunID && latest.TaskID == taskID {
-			s.mu.Unlock()
-			return nil
-		}
-	} else if cur.CoordinatorRunID == coordinatorRunID && cur.TaskID == taskID {
-		s.mu.Unlock()
-		return nil
-	}
-	prev := cur.Clone()
-	if len(cur.Executions) == 0 && cur.CoordinatorRunID != "" && cur.TaskID != "" {
-		cur.Executions = append(cur.Executions, StepExecution{
-			ExecutionNo: 1, CoordinatorRunID: cur.CoordinatorRunID, TaskID: cur.TaskID, StartedAt: cur.StartedAt,
-		})
-	}
-	executionNo := len(cur.Executions) + 1
-	cur.Executions = append(cur.Executions, StepExecution{
-		ExecutionNo: executionNo, CoordinatorRunID: coordinatorRunID, TaskID: taskID, StartedAt: s.now(),
-	})
-	cur.CoordinatorRunID = coordinatorRunID
-	cur.TaskID = taskID
-	p.Attempts[idx] = cur
-	s.proj[runID] = p
-	s.mu.Unlock()
-	now := cur.Executions[len(cur.Executions)-1].StartedAt
-	payload, err := marshalAttemptExecution(attemptExecutionPayload{AttemptID: attemptID, ExecutionNo: executionNo, CoordinatorRunID: coordinatorRunID, TaskID: taskID, Reason: reason, CreatedAt: now})
-	if err != nil {
-		s.rollbackAndRebuild(ctx, runID, func() {
-			q := s.proj[runID]
-			q.Attempts[idx] = prev
-			s.proj[runID] = q
-		})
-		return err
-	}
-	evt := storage.Event{ID: EventID(runID, eventKindAttemptExecution, attemptID, coordinatorRunID, taskID), RunID: runID, Sequence: int(s.nextSequence(runID)), Kind: eventKindAttemptExecution, Payload: payload}
-	rollback := func() {
-		q := s.proj[runID]
-		q.Attempts[idx] = prev
-		s.proj[runID] = q
-	}
-	return s.appendEvent(ctx, evt, rollback)
-}
-
-// applyAttemptPromptLocked records the prompt ref on the cached projection and
-// builds the wf_attempt_prompt payload. It must be called with the run's
-// per-run mutex held (the caller holds s.mu while mutating); the returned
-// rollback restores the projection on marshal/append failure (mirroring
-// applyAttemptCompletionLocked). The prompt contributes no step candidate and
-// never changes the derived active step, exactly like the replay.
-func (s *StorageRepository) applyAttemptPromptLocked(p *Projection, idx int, promptRef string, now time.Time, runID, attemptID string) ([]byte, func(), error) {
-	cur := &p.Attempts[idx]
-	prevPrompt := cur.PromptRef
-	cur.PromptRef = promptRef
-	rollback := func() {
-		q := s.proj[runID]
-		if idx < len(q.Attempts) {
-			q.Attempts[idx].PromptRef = prevPrompt
-		}
-		s.proj[runID] = q
-	}
-	payload, err := marshalAttemptPrompt(attemptPromptPayload{
-		AttemptID: attemptID,
-		PromptRef: promptRef,
-		CreatedAt: now,
-	})
-	if err != nil {
-		return nil, rollback, err
-	}
-	return payload, rollback, nil
-}
-
-// ListTransitions returns the route decisions derived from completed
-// attempts, ordered by event sequence.
-func (s *StorageRepository) ListTransitions(ctx context.Context, runID string) ([]TransitionRecord, error) {
-	if err := s.ensureBuilt(ctx); err != nil {
-		return nil, err
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	p, ok := s.proj[runID]
-	if !ok || !p.HasRun {
-		return nil, ErrNotFound
-	}
-	out := make([]TransitionRecord, 0, len(p.Transitions))
-	for i := range p.Transitions {
-		out = append(out, p.Transitions[i].Clone())
-	}
-	return out, nil
 }

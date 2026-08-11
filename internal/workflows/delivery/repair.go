@@ -34,13 +34,19 @@ const MaxDeliveryRepairs = DefaultMaxDeliveryRepairs
 // change is the common one - therefore had no route back into the workflow.
 // The run stopped with all of its work done and waited for a person.
 //
-// The re-entry writes one attempt for the delivery and completes it as failed
-// with a route to the repair step. The ledger derives the active step from the
-// last attempt's route, so the run continues at that step on the next resume,
-// exactly the way a repair loop inside the graph continues. The failure
-// evidence is stored content-addressed (RepairHint, which tells the agent what
-// to repair and whether a commit is involved) and referenced by the attempt,
-// so the repair agent reads why delivery failed instead of guessing.
+// The re-entry writes one attempt for the delivery and its TERMINAL failure
+// outcome with a route to the repair step in ONE durable event (see
+// Repository.RecordStepAttemptOutcome): the attempt is never observable in a
+// non-terminal state, so a crash cannot leave a Running undeclared-step
+// attempt behind. Crash windows are only before the write (nothing durable
+// changed; the run returns to delivery via the success-terminal reconcile) or
+// after it (the attempt is already terminal with the repair route) — both
+// recoverable. The ledger derives the active step from the last attempt's
+// route, so the run continues at that step on the next resume, exactly the
+// way a repair loop inside the graph continues. The failure evidence is
+// stored content-addressed (RepairHint, which tells the agent what to repair
+// and whether a commit is involved) and referenced by the attempt, so the
+// repair agent reads why delivery failed instead of guessing.
 //
 // The run then repairs, reaches its success terminal again, and delivers
 // again. Nothing here knows what the failure was or which step repairs it:
@@ -97,23 +103,17 @@ func ReopenForRepair(ctx context.Context, repo ledger.Repository, runID, repairS
 		AttemptID: fmt.Sprintf("wfa-%s-%d", DeliveryRepairStepID, next),
 		StepID:    DeliveryRepairStepID,
 		AttemptNo: next,
-		Status:    ledger.AttemptStatusRunning,
-	}
-	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
-		return fmt.Errorf("delivery failed: %v; record delivery attempt: %w", cause, err)
-	}
-
-	fresh, err := repo.GetStepAttempt(ctx, runID, attempt.AttemptID)
-	if err != nil {
-		return fmt.Errorf("delivery failed: %v; read delivery attempt: %w", cause, err)
 	}
 	outcome := ledger.AttemptOutcome{
 		Status:   ledger.AttemptStatusFailed,
 		ErrorRef: StoreDeliveryFailureText(ctx, repo, cause),
 		ToStepID: repairStep,
 	}
-	if err := repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, fresh.Version, outcome); err != nil {
-		return fmt.Errorf("delivery failed: %v; route delivery attempt to %q: %w", cause, repairStep, err)
+	// The re-entry records the attempt and its terminal outcome in ONE event,
+	// so a crash between a create and a complete can never leave a Running
+	// undeclared-step wf-delivery attempt that resume cannot join.
+	if err := repo.RecordStepAttemptOutcome(ctx, attempt, outcome); err != nil {
+		return fmt.Errorf("delivery failed: %v; record delivery attempt: %w", cause, err)
 	}
 
 	fmt.Fprintf(stdout, "delivery failed: %v\n", cause)

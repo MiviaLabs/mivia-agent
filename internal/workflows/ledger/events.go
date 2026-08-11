@@ -85,21 +85,28 @@ type attemptStartedPayload struct {
 // carries the terminal status AND the route decision + output evidence; the
 // ordered event log is the audit trail (no separate transition/audit event).
 type attemptCompletedPayload struct {
-	AttemptID        string        `json:"attempt_id"`
-	Version          uint64        `json:"version,omitempty"`
-	Status           AttemptStatus `json:"status"`
-	CoordinatorRunID string        `json:"coordinator_run_id,omitempty"`
-	TaskID           string        `json:"task_id,omitempty"`
-	OutputRef        string        `json:"output_ref,omitempty"`
-	OutputDigest     string        `json:"output_digest,omitempty"`
-	ErrorRef         string        `json:"error_ref,omitempty"`
-	ToStepID         string        `json:"to_step_id,omitempty"`
-	TransitionIndex  int           `json:"transition_index,omitempty"`
-	MatchDigest      string        `json:"match_digest,omitempty"`
-	DecisionJSON     []byte        `json:"decision_json,omitempty"`
-	EvidenceJSON     []byte        `json:"evidence_json,omitempty"`
-	FinishedAt       time.Time     `json:"finished_at"`
-	CreatedAt        time.Time     `json:"created_at"`
+	AttemptID string        `json:"attempt_id"`
+	Version   uint64        `json:"version,omitempty"`
+	Status    AttemptStatus `json:"status"`
+	// StepID/AttemptNo/StartedAt carry the fresh attempt's identity for
+	// completed-only records (RecordStepAttemptOutcome), which have no
+	// wf_attempt_started event to replay identity from. They are omitempty so
+	// ordinary two-write completions keep marshaling byte-identically.
+	StepID           string    `json:"step_id,omitempty"`
+	AttemptNo        int       `json:"attempt_no,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	CoordinatorRunID string    `json:"coordinator_run_id,omitempty"`
+	TaskID           string    `json:"task_id,omitempty"`
+	OutputRef        string    `json:"output_ref,omitempty"`
+	OutputDigest     string    `json:"output_digest,omitempty"`
+	ErrorRef         string    `json:"error_ref,omitempty"`
+	ToStepID         string    `json:"to_step_id,omitempty"`
+	TransitionIndex  int       `json:"transition_index,omitempty"`
+	MatchDigest      string    `json:"match_digest,omitempty"`
+	DecisionJSON     []byte    `json:"decision_json,omitempty"`
+	EvidenceJSON     []byte    `json:"evidence_json,omitempty"`
+	FinishedAt       time.Time `json:"finished_at"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // attemptPromptPayload is the wf_attempt_prompt event payload. It carries

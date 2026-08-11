@@ -97,6 +97,10 @@ func (f *abandonFence) CompleteStepAttempt(ctx context.Context, runID, attemptID
 	return f.mutate(runID, func() error { return f.inner.CompleteStepAttempt(ctx, runID, attemptID, expectedVersion, outcome) })
 }
 
+func (f *abandonFence) RecordStepAttemptOutcome(ctx context.Context, attempt workflowledger.StepAttempt, outcome workflowledger.AttemptOutcome) error {
+	return f.mutate(attempt.RunID, func() error { return f.inner.RecordStepAttemptOutcome(ctx, attempt, outcome) })
+}
+
 func (f *abandonFence) CompareAndSetPanelPhase(ctx context.Context, runID, attemptID string, expectedVersion uint64, from workflowledger.PanelPhase, to workflowledger.PanelPhase, synthesis *workflowledger.PanelSynthesisExecution) error {
 	return f.mutate(runID, func() error {
 		return f.inner.CompareAndSetPanelPhase(ctx, runID, attemptID, expectedVersion, from, to, synthesis)
