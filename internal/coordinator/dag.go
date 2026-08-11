@@ -42,9 +42,12 @@ func (c *coordinator) runDAGSeeded(h *RunHandle, tasks []subagents.Task, seed ma
 				if h.poolCtx.Err() != nil {
 					// Canceled while waiting out a retry backoff. Tasks still in the
 					// retry queue (retry_pending in the ledger) were never dispatched
-					// again, so mark them canceled instead of letting finalizeDAG emit
-					// "retry exhausted (run ended)" and recordRunResults attempt a
-					// forbidden retry_pending->failed CAS.
+					// again, so settle every task as canceled here: finalizeDAG would
+					// otherwise terminalize no-result retry entries with "run ended
+					// before retry re-dispatch" — also canceled, a valid retry_pending
+					// -> canceled transition — but without the run's cancellation error
+					// and without settling never-executed tasks that never entered the
+					// retry queue.
 					markCanceledWithoutResults(h, tasks, results)
 				}
 				break
@@ -209,9 +212,10 @@ func (c *coordinator) isCancelClaimed(h *RunHandle, taskID string) bool {
 }
 
 // markCanceledWithoutResults emits a canceled result for every task on a run
-// being canceled mid-flight, so finalizeDAG never emits "missing" or "retry
-// exhausted (run ended)" and recordRunResults transitions each task cleanly to
-// canceled.
+// being canceled mid-flight, so finalizeDAG never emits "missing" and
+// recordRunResults transitions each task cleanly to canceled. No-result retry
+// queue entries are terminalized by finalizeDAG itself as canceled ("run ended
+// before retry re-dispatch"), a valid retry_pending -> canceled transition.
 //
 // A failed/timed_out result is checked against the ledger before being
 // overwritten: the R9 early finalize fence (Pool.OnTaskDone) CASes a genuinely
@@ -382,7 +386,15 @@ func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]sub
 			if state := states[taskID]; state != nil {
 				state.Exhausted()
 			}
-			results[taskID] = subagents.Result{TaskID: taskID, Status: "failed", Err: fmt.Errorf("retry exhausted (run ended)")}
+			// retry_pending -> failed is a forbidden transition
+			// (ledger.ValidTaskTransition allows only retry_pending ->
+			// {queued, canceled}): a task still in the retry queue when the run
+			// ends was never re-dispatched, so terminalize it as canceled — the
+			// only valid terminal target for a retry_pending task besides a
+			// re-queue. recordRunResults then CASes the ledger retry_pending ->
+			// canceled instead of attempting the invalid transition and joining
+			// an ErrInvalidTransition into the run error.
+			results[taskID] = subagents.Result{TaskID: taskID, Status: "canceled", Err: fmt.Errorf("run ended before retry re-dispatch")}
 		}
 	}
 	out := make([]subagents.Result, 0, len(tasks))
