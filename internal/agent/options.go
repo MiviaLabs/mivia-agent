@@ -37,7 +37,10 @@ type Options struct {
 	// in BYTES despite the name (it bounds len() of the UTF-8 body; see
 	// capToolResult). This prevents a single large output (e.g. read_file of
 	// 256KB) from exceeding the context budget. 0 means no cap (use full
-	// result); per-tool Capability.MaxResultBytes budgets still apply.
+	// result); per-tool Capability.MaxResultBytes budgets still apply. To bound
+	// one oversized result against the prompt budget while keeping full results
+	// the default, set BatchResultBudgetBytes < 0 (derived batch budget)
+	// instead.
 	MaxToolResultChars int
 	// BatchResultBudgetBytes bounds the bytes ONE tool batch may add to
 	// history, across all its parallel calls together. Per-call caps cannot

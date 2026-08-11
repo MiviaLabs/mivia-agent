@@ -114,36 +114,3 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
-
-// derivedResultCapChars derives a budget-based per-result char cap from the
-// prompt budget, or returns 0 when no derived cap should apply.
-//
-// The shipped config sets both MaxToolResultChars and BatchResultBudgetBytes
-// to 0/off, so a single giant tool result (read_file of a huge file) flows
-// into history uncapped. Context planning elides prior-turn results but keeps
-// the CURRENT turn's mandatory latest tool unit whole, so one oversized result
-// can exceed the prompt budget in a single step and hard-abort the turn with
-// ErrPromptBudgetExceeded after the tool already ran (R1a).
-//
-// The derivation only engages when nothing else bounds per-result bytes: a
-// configured MaxToolResultChars, a capability MaxResultBytes, or an armed
-// batch budget (positive or derived) all take precedence over it. The cap is
-// (MaxContextTokens/4)*4 chars - a quarter of the prompt budget in token
-// terms - bounded at 32768*4 (32K tokens / 128 KiB chars) so a huge model
-// context cannot admit an unbounded single message.
-func derivedResultCapChars(opts Options) int {
-	if opts.MaxContextTokens <= 0 || opts.MaxToolResultChars > 0 {
-		return 0
-	}
-	if effectiveBatchBudget(opts) > 0 {
-		return 0
-	}
-	capChars := (opts.MaxContextTokens / 4) * 4
-	if capChars > 32768*4 {
-		capChars = 32768 * 4
-	}
-	if capChars < 1 {
-		capChars = 1
-	}
-	return capChars
-}
