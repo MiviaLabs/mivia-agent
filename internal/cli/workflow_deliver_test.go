@@ -313,7 +313,7 @@ func (g gatedGitRunner) Run(ctx context.Context, _ delivery.GitContext, _ ...str
 
 // TestWorkflowDeliverClaimHeartbeatKeepsLeaseFresh: a delivery attempt can run
 // for workflowDeliveryTimeout (10m) while its claim lease lasts only
-// DefaultClaimLease (5m). The claim heartbeat must re-claim with the same
+// DefaultClaimLease. The claim heartbeat must re-claim with the same
 // holder while the attempt runs (DC-2): TakeoverExpiredRunClaim with a tiny
 // lease must still fail mid-publish, and after the attempt ends the release
 // must stop+join the heartbeat BEFORE releasing the claim, so no late tick

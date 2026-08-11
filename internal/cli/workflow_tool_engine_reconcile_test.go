@@ -139,7 +139,7 @@ func TestSessionReconcileParkedRunsResumesRunningRun(t *testing.T) {
 	applyWorkflowStoreRoot(res, root)
 	e := newSessionWorkflowEngine(root, configPath)
 
-	e.reconcileParkedRuns(context.Background())
+	e.reconcileParkedRuns(context.Background(), false)
 	waitForSessionEngineIdle(t, e, runID)
 
 	run, err := repo.GetRun(context.Background(), runID)
@@ -180,7 +180,7 @@ func TestSessionReconcileParkedRunsSkipsLiveClaim(t *testing.T) {
 
 	// The sweep processes runs synchronously; the live-claim run is refused at
 	// the claim handoff, so when this returns the sweep is done with it.
-	e.reconcileParkedRuns(ctx)
+	e.reconcileParkedRuns(ctx, false)
 
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
@@ -285,7 +285,7 @@ func TestSessionReconcileParkedRunsResumesInParallel(t *testing.T) {
 	applyWorkflowStoreRoot(res, root)
 	e := newSessionWorkflowEngine(root, configPath)
 
-	e.reconcileParkedRuns(context.Background())
+	e.reconcileParkedRuns(context.Background(), false)
 	for _, runID := range runIDs {
 		waitForSessionEngineIdle(t, e, runID)
 		run, err := repo.GetRun(context.Background(), runID)
@@ -298,5 +298,76 @@ func TestSessionReconcileParkedRunsResumesInParallel(t *testing.T) {
 	}
 	if got := advanceCalls.Load(); got != 2 {
 		t.Fatalf("controller advances = %d, want 2 (one per resumed run)", got)
+	}
+}
+
+// TestSessionReconcileParkedRunsPeriodic proves a run whose claim expires
+// mid-session is picked up by the periodic re-scan without any session start:
+// the scan runs while the session is up, and the first tick recovers the
+// parked run on its own. The scan is quiet, so the per-tick expected skips
+// (active runs) never log.
+func TestSessionReconcileParkedRunsPeriodic(t *testing.T) {
+	root, configPath, repo, runIDs := seedTwoParkedRunningRuns(t)
+	var advanceCalls atomic.Int32
+	wireParkedResumeStubs(t, repo, func(ctx context.Context, b workflowControllerBuild) (workflowledger.RunSnapshot, error) {
+		advanceCalls.Add(1)
+		runID := b.Controller.RunID
+		stored, err := repo.GetRun(ctx, runID)
+		if err != nil {
+			return workflowledger.RunSnapshot{}, err
+		}
+		claimCtx := workflowledger.ContextWithClaimHolder(ctx, parkedSweepHolder)
+		if err := repo.CompareAndSetRunStatus(claimCtx, runID, stored.Version, workflowledger.RunStatusSucceeded, nil); err != nil {
+			return workflowledger.RunSnapshot{}, err
+		}
+		return repo.GetRun(ctx, runID)
+	})
+
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, AllowMissingConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyWorkflowStoreRoot(res, root)
+	e := newSessionWorkflowEngine(root, configPath)
+
+	old := workflowReconcileInterval
+	workflowReconcileInterval = 10 * time.Millisecond
+	t.Cleanup(func() { workflowReconcileInterval = old })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.reconcileParkedRunsPeriodic(ctx)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		done := 0
+		for _, runID := range runIDs {
+			run, err := repo.GetRun(context.Background(), runID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if run.Status == workflowledger.RunStatusSucceeded {
+				done++
+			}
+		}
+		if done == len(runIDs) {
+			break
+		}
+		select {
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	cancel()
+
+	for _, runID := range runIDs {
+		run, err := repo.GetRun(context.Background(), runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.Status != workflowledger.RunStatusSucceeded {
+			t.Fatalf("run %s status = %q, want succeeded (periodic scan recovered it without a session start)", runID, run.Status)
+		}
+	}
+	if got := advanceCalls.Load(); got != 2 {
+		t.Fatalf("controller advances = %d, want 2 (one per recovered run)", got)
 	}
 }

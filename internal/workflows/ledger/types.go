@@ -4,7 +4,16 @@ import (
 	"time"
 )
 
-const DefaultClaimLease = 5 * time.Minute
+// DefaultClaimLease is how long a run execution claim is considered fresh
+// after its last refresh. Every claim heartbeat in the codebase derives from
+// it (controller and delivery both refresh every Lease/3), so a live holder
+// never appears stale and a dead one is detected after at most one lease. Two
+// minutes means a hard-killed session's runs are recoverable within ~2m (plus
+// one recovery scan); graceful shutdowns release claims instantly. The
+// tradeoff: a process frozen for longer than the lease could be taken over by
+// another session — the 3-heartbeats-per-lease ratio keeps that window at the
+// refresh cadence.
+const DefaultClaimLease = 2 * time.Minute
 
 type RunStatus string
 
