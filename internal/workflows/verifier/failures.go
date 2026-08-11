@@ -1,12 +1,29 @@
 package verifier
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
+
+// contextErrorFromRun unwraps the context error that a sandboxed run wraps in
+// a host-class failure. runSandboxedCommand returns hostFailure(ctx.Err())
+// when the caller deadline or cancel ends the run, so the profiles must
+// surface the underlying context error instead of reporting a fabricated host
+// failure; the controller then settles the run as timed_out.
+func contextErrorFromRun(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	return nil
+}
 
 // Bounds for the structured failure list. The list must stay small enough to
 // always fit a repair step's failed_evidence binding, even when the raw

@@ -408,6 +408,24 @@ func writeFakeBwrapUnavailable(t *testing.T) string {
 	return path
 }
 
+// writeFakeBwrapLargeOutput returns a bwrap stub that emits well over
+// maxSandboxCaptureBytes of verbose output followed by a trailing failure
+// marker, then exits 1. The stub emits the output itself instead of exec'ing
+// the real toolchain: the sandboxed command is started with only PATH in the
+// environment, and only real bubblewrap applies the --setenv HOME/GOCACHE
+// flags a Go build needs, so `go run` through a passthrough stub fails before
+// producing any output.
+func writeFakeBwrapLargeOutput(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bwrap")
+	script := "#!/bin/sh\ni=0\nwhile [ \"$i\" -lt 81920 ]; do\n  printf 'verbose output line\\n'\n  i=$((i+1))\ndone\nprintf -- '--- FAIL: BoundedCaptureKeepsTail\\n'\nexit 1\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func writeFakeGit(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -431,4 +449,103 @@ func stubGitPath(t *testing.T, path string) {
 	original := sandboxGitPath
 	sandboxGitPath = func() (string, error) { return path, nil }
 	t.Cleanup(func() { sandboxGitPath = original })
+}
+
+// TestBoundedCaptureRetainsTailWithinCap verifies the tail-retaining output
+// sink used to bound sandboxed gate command capture: the retained bytes never
+// exceed the cap, overflow drops the head, a write reports its full length so
+// the child never blocks, and a single write larger than the cap keeps only
+// its own tail. Fails before the fix because boundedCapture did not exist and
+// the package did not compile.
+func TestBoundedCaptureRetainsTailWithinCap(t *testing.T) {
+	c := newBoundedCapture(8)
+	write := func(s string) int {
+		t.Helper()
+		n, err := c.Write([]byte(s))
+		if err != nil {
+			t.Fatalf("Write(%q) error = %v", s, err)
+		}
+		return n
+	}
+	// A write at the cap is retained whole and reports the full length.
+	if n := write("12345678"); n != 8 {
+		t.Fatalf("Write returned %d, want 8", n)
+	}
+	if got := string(c.Bytes()); got != "12345678" {
+		t.Fatalf("Bytes() = %q, want 12345678", got)
+	}
+	// Overflow drops the head and keeps the tail; the full write length is
+	// still reported so the child never blocks.
+	if n := write("99"); n != 2 {
+		t.Fatalf("Write returned %d, want 2", n)
+	}
+	if got := string(c.Bytes()); got != "34567899" {
+		t.Fatalf("Bytes() = %q, want 34567899", got)
+	}
+	// A single write larger than the cap keeps only its own tail.
+	if n := write("abcdefghij"); n != 10 {
+		t.Fatalf("Write returned %d, want 10", n)
+	}
+	if got := string(c.Bytes()); got != "cdefghij" {
+		t.Fatalf("Bytes() = %q, want cdefghij", got)
+	}
+}
+
+// TestSandboxedCommandLargeOutputCaptureIsBounded verifies end to end that a
+// sandboxed gate command emitting well over maxSandboxCaptureBytes is still
+// classified as a source failure whose detail is bounded and whose failure
+// list keeps the trailing runner marker from the retained tail. Passes before
+// and after the fix; it guards that bounding preserves the failure evidence.
+func TestSandboxedCommandLargeOutputCaptureIsBounded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// The test runs a sandboxed command through a bwrap passthrough
+		// stub. Bubblewrap is a Linux-only capability (namespaces), so the
+		// sandbox cannot execute on Windows; the equivalent supported
+		// contract is the boundedCapture unit test above.
+		t.Skip("bwrap sandbox is a Linux-only capability")
+	}
+	stubBubblewrapPath(t, writeFakeBwrapLargeOutput(t))
+	stubGitPath(t, writeFakeGit(t))
+
+	workDir := t.TempDir()
+	writeGoMod(t, workDir)
+
+	baseline, err := CaptureGoModuleBaseline(workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stubbed bubblewrap emits the oversized output itself: a passthrough
+	// stub starts the sandboxed program with only PATH in the environment
+	// (runSandboxedCommand sets command.Env, and only real bubblewrap applies
+	// the --setenv HOME/GOCACHE flags a Go build needs), so the real `go run`
+	// would fail on the missing build cache before producing any output.
+	// Emitting from the stub keeps this test about the capture bound, not the
+	// toolchain.
+	profile := newGoProfile("large-output", []commandSpec{{check: "large-output", program: "go", args: []string{"test", "./..."}}}, nil, secretpath.Policy{})
+	result, err := profile.Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %#v", result.Checks)
+	}
+	check := result.Checks[0]
+	if check.Class != "source" {
+		t.Fatalf("expected source class, got class=%q detail=%q", check.Class, check.Detail)
+	}
+	// boundedDiagnostic truncates the detail to maxVerifierDiagnosticBytes
+	// plus its truncation marker; the raw multi-MiB output must never reach
+	// the check detail.
+	if len(check.Detail) > maxVerifierDiagnosticBytes+len("\n[diagnostic truncated]") {
+		t.Fatalf("detail exceeds the diagnostic bound: %d bytes", len(check.Detail))
+	}
+	var marker bool
+	for _, f := range check.Failures {
+		if f == "--- FAIL: BoundedCaptureKeepsTail" {
+			marker = true
+		}
+	}
+	if !marker {
+		t.Fatalf("tail failure marker missing from bounded failures: %q", check.Failures)
+	}
 }

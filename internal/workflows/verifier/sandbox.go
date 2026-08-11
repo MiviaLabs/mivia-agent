@@ -1,12 +1,9 @@
 package verifier
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,21 +13,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
-	"golang.org/x/mod/modfile"
-	"golang.org/x/mod/module"
 )
 
 const maxVerifierDiagnosticBytes = 16 << 10
-
-type commandFailure struct {
-	class    string
-	detail   string
-	failures []string
-	err      error
-}
-
-func (e *commandFailure) Error() string { return e.err.Error() }
-func (e *commandFailure) Unwrap() error { return e.err }
 
 const (
 	sandboxWorkDir    = "/work"
@@ -116,9 +101,10 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 	}
 	command := exec.CommandContext(ctx, bwrap, sandboxArgs(copyRoot, modulesRoot, homeRoot, goRoot, exePath, baseline != nil, args...)...)
 	command.Env = []string{"PATH=/usr/bin:/bin"}
-	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
+	stdout := newBoundedCapture(maxSandboxCaptureBytes)
+	stderr := newBoundedCapture(maxSandboxCaptureBytes)
+	command.Stdout = stdout
+	command.Stderr = stderr
 	if err := command.Run(); err != nil {
 		if ctx.Err() != nil {
 			return hostFailure(ctx.Err())
@@ -127,10 +113,10 @@ func runSandboxedCommand(ctx context.Context, workDir string, baseline *GoModule
 		if !errors.As(err, &exitErr) {
 			return hostFailure(fmt.Errorf("sandbox command failed: %w", err))
 		}
-		if strings.HasPrefix(strings.TrimSpace(stderr.String()), "bwrap:") {
+		if strings.HasPrefix(strings.TrimSpace(string(stderr.Bytes())), "bwrap:") {
 			return hostFailure(fmt.Errorf("sandbox command failed: %w: %s", err, boundedDiagnostic(stderr.Bytes())))
 		}
-		return sourceCommandFailure(stdout.String()+stderr.String(), err)
+		return sourceCommandFailure(string(stdout.Bytes())+string(stderr.Bytes()), err)
 	}
 	return nil
 }
@@ -256,237 +242,4 @@ func createSandboxHome(tempRoot string) (string, error) {
 		return "", fmt.Errorf("create verifier env file: %w", err)
 	}
 	return homeRoot, nil
-}
-
-func copySandboxWorktree(source, destination string, policy secretpath.Policy) (string, error) {
-	return copySandboxTree(source, destination, policy)
-}
-
-func copySandboxTree(source, destination string, policy secretpath.Policy) (string, error) {
-	info, err := os.Stat(source)
-	if err != nil {
-		return "", fmt.Errorf("inspect verifier worktree: %w", err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("verifier worktree is not a directory")
-	}
-	if err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(source, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return os.MkdirAll(destination, 0o700)
-		}
-		if filepath.Base(rel) == ".git" || filepath.Base(rel) == ".codegraph" || sandboxControlDirectory(rel) {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if policy.Match(rel) {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		target := filepath.Join(destination, rel)
-		if entry.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("verifier worktree contains symlink %q", rel)
-		}
-		if entry.IsDir() {
-			return os.MkdirAll(target, 0o700)
-		}
-		if !entry.Type().IsRegular() {
-			return fmt.Errorf("verifier worktree contains unsupported file %q", rel)
-		}
-		return copyRegularFile(path, target)
-	}); err != nil {
-		return "", fmt.Errorf("copy verifier worktree: %w", err)
-	}
-	return destination, nil
-}
-
-func sandboxControlDirectory(rel string) bool {
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	if len(parts) != 2 || parts[1] != "worktrees" {
-		return false
-	}
-	switch parts[0] {
-	case ".agents", ".claude", ".codex", workspace.Namespace:
-		return true
-	default:
-		return false
-	}
-}
-
-// CaptureGoModuleBaseline reads the module inputs before workflow execution.
-func CaptureGoModuleBaseline(workRoot string) (*GoModuleBaseline, error) {
-	goMod, err := os.ReadFile(filepath.Join(workRoot, "go.mod"))
-	if err != nil {
-		return nil, fmt.Errorf("read verifier go.mod: %w", err)
-	}
-	goSum, err := os.ReadFile(filepath.Join(workRoot, "go.sum"))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read verifier go.sum: %w", err)
-	}
-	return &GoModuleBaseline{GoMod: goMod, GoSum: goSum}, nil
-}
-
-func applyGoModuleBaseline(workRoot string, baseline *GoModuleBaseline) error {
-	if baseline == nil || len(baseline.GoMod) == 0 {
-		return fmt.Errorf("workflow verifier module baseline is missing")
-	}
-	goModPath := filepath.Join(workRoot, "go.mod")
-	currentGoMod, err := os.ReadFile(goModPath)
-	if err != nil {
-		return fmt.Errorf("read verifier go.mod: %w", err)
-	}
-	if !bytes.Equal(currentGoMod, baseline.GoMod) {
-		return fmt.Errorf("workflow changed go.mod after admission")
-	}
-	goSumPath := filepath.Join(workRoot, "go.sum")
-	if len(baseline.GoSum) == 0 {
-		if _, err := os.Stat(goSumPath); err == nil {
-			return fmt.Errorf("workflow changed go.sum after admission")
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("inspect verifier go.sum: %w", err)
-		}
-		return nil
-	}
-	currentGoSum, err := os.ReadFile(goSumPath)
-	if err != nil {
-		return fmt.Errorf("read verifier go.sum: %w", err)
-	}
-	if !bytes.Equal(currentGoSum, baseline.GoSum) {
-		return fmt.Errorf("workflow changed go.sum after admission")
-	}
-	return nil
-}
-
-func provisionModuleCache(workRoot, destination string, baseline *GoModuleBaseline, goPath string) error {
-	if baseline == nil {
-		return fmt.Errorf("workflow verifier module baseline is missing")
-	}
-	parsed, err := modfile.Parse("go.mod", baseline.GoMod, nil)
-	if err != nil {
-		return fmt.Errorf("parse verifier go.mod: %w", err)
-	}
-	if len(parsed.Replace) != 0 {
-		return fmt.Errorf("verifier rejects Go module replacements")
-	}
-	cacheRoot, err := hostModuleCache(goPath)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(destination, 0o700); err != nil {
-		return fmt.Errorf("create verifier module cache: %w", err)
-	}
-	for _, require := range parsed.Require {
-		if err := copyRequiredModule(cacheRoot, destination, require.Mod.Path, require.Mod.Version); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func hostModuleCache(goPath string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve host home for Go module cache: %w", err)
-	}
-	command := exec.Command(goPath, "env", "GOMODCACHE")
-	// `go env GOMODCACHE` defaults to $HOME/go/pkg/mod only when GOPATH is
-	// unset. Preserve the host GOPATH (and an explicit GOMODCACHE) so a host
-	// whose Go paths live outside the home directory - a CI runner with
-	// GOPATH=/home/runner/go, or a developer with a custom GOPATH - reports
-	// the cache the modules were actually downloaded into, not a phantom
-	// directory under the sandboxed home.
-	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home}
-	for _, key := range []string{"GOPATH", "GOMODCACHE"} {
-		if value := os.Getenv(key); value != "" {
-			command.Env = append(command.Env, key+"="+value)
-		}
-	}
-	output, err := command.Output()
-	if err != nil {
-		return "", fmt.Errorf("resolve host Go module cache: %w", err)
-	}
-	cacheRoot := strings.TrimSpace(string(output))
-	if cacheRoot == "" || !filepath.IsAbs(cacheRoot) {
-		return "", fmt.Errorf("host Go module cache is invalid")
-	}
-	return cacheRoot, nil
-}
-
-func copyRequiredModule(cacheRoot, destination, modulePath, version string) error {
-	escapedPath, err := module.EscapePath(modulePath)
-	if err != nil {
-		return fmt.Errorf("escape module path %q: %w", modulePath, err)
-	}
-	escapedVersion, err := module.EscapeVersion(version)
-	if err != nil {
-		return fmt.Errorf("escape module version %q: %w", version, err)
-	}
-	// The extracted source tree only exists for modules the host build
-	// actually compiled. With pruned module graphs a host legitimately lacks
-	// it for modules that provide no packages for the host platform (a
-	// windows-only dependency on a Linux machine is never downloaded), so a
-	// missing tree is not a provision failure: the sandboxed command itself
-	// reports go's normal missing-module error if it truly needs the source.
-	source := filepath.Join(cacheRoot, escapedPath+"@"+escapedVersion)
-	target := filepath.Join(destination, escapedPath+"@"+escapedVersion)
-	if _, statErr := os.Stat(source); statErr == nil {
-		if _, err := copySandboxTree(source, target, secretpath.Policy{}); err != nil {
-			return fmt.Errorf("provision module %s@%s: %w", modulePath, version, err)
-		}
-	}
-	return copyRequiredModuleMetadata(cacheRoot, destination, escapedPath, escapedVersion)
-}
-
-func copyRequiredModuleMetadata(cacheRoot, destination, escapedPath, escapedVersion string) error {
-	sourceBase := filepath.Join(cacheRoot, "cache", "download", escapedPath, "@v", escapedVersion)
-	targetBase := filepath.Join(destination, "cache", "download", escapedPath, "@v", escapedVersion)
-	if err := os.MkdirAll(filepath.Dir(targetBase), 0o700); err != nil {
-		return fmt.Errorf("create verifier module metadata: %w", err)
-	}
-	// Each artifact is copied when the host cache has it. The .mod file is
-	// what a pruned graph needs for every module; .zip/.ziphash exist only
-	// for modules whose source the host build fetched. A missing artifact is
-	// left for the sandboxed command to report in go's own terms.
-	for _, suffix := range []string{".info", ".mod", ".zip", ".ziphash"} {
-		source := sourceBase + suffix
-		if _, statErr := os.Stat(source); statErr != nil {
-			continue
-		}
-		if err := copyRegularFile(source, targetBase+suffix); err != nil {
-			return fmt.Errorf("copy verifier module metadata %s: %w", suffix, err)
-		}
-	}
-	return nil
-}
-
-func copyRegularFile(source, destination string) error {
-	info, err := os.Stat(source)
-	if err != nil {
-		return err
-	}
-	in, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(out, in)
-	closeErr := out.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	return closeErr
 }
