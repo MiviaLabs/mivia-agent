@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -71,17 +72,31 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context) {
 		return
 	}
 	storePath := contextStorePath(work.Abs, res.Subagents)
+	// Fan out every parked run in parallel. Each run owns its execution file
+	// lock and run claim, so concurrent delivery/resume of different runs
+	// cannot conflict: those per-run fences are the only serialization points
+	// and the storage layer serializes writes per run. A sequential sweep
+	// would let one slow delivery (the push runs the repo's pre-push hook,
+	// often the full test suite) delay every other parked run for minutes;
+	// parallel dispatch recovers them all at once. Resumed runs continue in
+	// the engine's active set after the sweep returns.
+	var wg sync.WaitGroup
 	for _, run := range runs {
 		if ctx.Err() != nil {
 			return
 		}
-		switch run.Status {
-		case workflowledger.RunStatusDeliveryPending:
-			e.reconcileParkedDelivery(ctx, work.Abs, res, store, repo, storePath, run.RunID)
-		case workflowledger.RunStatusPending, workflowledger.RunStatusRunning, workflowledger.RunStatusWaitingApproval:
-			e.reconcileParkedResume(ctx, run.RunID)
-		}
+		wg.Add(1)
+		go func(run workflowledger.RunSnapshot) {
+			defer wg.Done()
+			switch run.Status {
+			case workflowledger.RunStatusDeliveryPending:
+				e.reconcileParkedDelivery(ctx, work.Abs, res, store, repo, storePath, run.RunID)
+			case workflowledger.RunStatusPending, workflowledger.RunStatusRunning, workflowledger.RunStatusWaitingApproval:
+				e.reconcileParkedResume(ctx, run.RunID)
+			}
+		}(run)
 	}
+	wg.Wait()
 }
 
 // reconcileParkedDelivery publishes one delivery_pending run. allowPublish
