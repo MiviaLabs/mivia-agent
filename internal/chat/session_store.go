@@ -130,6 +130,11 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, pr
 	if err := writeMetaJSON(dir, meta); err != nil {
 		return fmt.Errorf("write meta: %w", err)
 	}
+	// Chunks at or beyond the newly committed count are stale (a larger
+	// previous snapshot, or an emptied session). Remove them only now that
+	// meta.json references the new count, so a failed save never leaves
+	// meta.json pointing at deleted chunk files.
+	removeStaleChunkFiles(dir, chunkCount)
 
 	return nil
 }
