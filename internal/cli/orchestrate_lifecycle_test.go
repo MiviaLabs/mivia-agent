@@ -356,7 +356,7 @@ func TestCancelRunCannotCancelForeignRun(t *testing.T) {
 	}
 }
 
-func TestDispatcherCloseUnregistersOrchestrationHandle(t *testing.T) {
+func TestDispatcherCloseUnregistersCompletedOrchestrationHandle(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	dispatcher := runtime.New(runtime.Policy{})
 	if err := dispatcher.Register(runtime.Subagent, "oneshot", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) { return json.RawMessage(`{}`), nil })); err != nil {
@@ -371,11 +371,77 @@ func TestDispatcherCloseUnregistersOrchestrationHandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Pin the completed-run cleanup path deterministically: wait for the run
+	// to finish before closing the dispatcher, so the assertion tests the
+	// unregister-on-close behavior, not a race with the pool.
+	select {
+	case <-h.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("oneshot run did not complete")
+	}
 	record := &orchestrationHandle{coord: c, handle: h, repo: repo, dispatcher: dispatcher, principal: orchestrationPrincipal{sessionID: "session"}, retention: time.Hour}
 	storeOrchestrationHandle(snap.RunID, record)
 	dispatcher.Close()
 	if _, ok := runHandles.Load(snap.RunID); ok {
-		t.Fatal("dispatcher close retained orchestration handle")
+		t.Fatal("dispatcher close retained a completed orchestration handle")
+	}
+}
+
+// TestDispatcherCloseRetainsActiveOrchestrationHandle pins the surface-rebuild
+// fix: a dispatcher close while the run is still in flight must NOT unregister
+// the handle, because surface rebuilds (tool admission, /agent, /model)
+// replace the dispatcher while the session continues. A rebuild that dropped
+// the handle made every in-flight background run unreachable as "unknown
+// run_id". The same-session caller must reach it through a rebuilt dispatcher;
+// a foreign session must still be refused.
+func TestDispatcherCloseRetainsActiveOrchestrationHandle(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	if err := dispatcher.Register(runtime.Subagent, "blocker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		close(started)
+		<-release
+		return json.RawMessage(`{}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	c := coordinator.New(repo, subagents.New(dispatcher, subagents.Policy{Workers: 1}))
+	h, err := c.Spawn(context.Background(), []subagents.Task{{ID: "t1", Name: "blocker"}}, "retain-active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := c.Inspect(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not start")
+	}
+	record := &orchestrationHandle{coord: c, handle: h, repo: repo, dispatcher: dispatcher, principal: orchestrationPrincipal{sessionID: "session"}, retention: time.Hour}
+	storeOrchestrationHandle(snap.RunID, record)
+	t.Cleanup(func() { runHandles.Delete(snap.RunID) })
+	dispatcher.Close()
+	if _, ok := runHandles.Load(snap.RunID); !ok {
+		t.Fatal("dispatcher close dropped an active orchestration handle")
+	}
+	// The same session reaches the run through a rebuilt dispatcher instance.
+	rebuilt := runtime.New(runtime.Policy{})
+	ownerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session"})
+	if got, errJSON := accessibleOrchestrationHandle(ownerCtx, snap.RunID, rebuilt, repo); got == nil || errJSON != "" {
+		t.Fatalf("active handle unreachable after rebuild: record=%v errJSON=%q", got, errJSON)
+	}
+	foreignCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "other"})
+	if _, errJSON := accessibleOrchestrationHandle(foreignCtx, snap.RunID, rebuilt, repo); errJSON != errJSONUnknownRunID {
+		t.Fatalf("foreign session reached the run: errJSON=%q", errJSON)
+	}
+	close(release)
+	select {
+	case <-h.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not complete after release")
 	}
 }
 

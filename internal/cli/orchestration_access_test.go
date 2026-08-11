@@ -129,6 +129,25 @@ func TestAccessibleOrchestrationHandleIndistinguishable(t *testing.T) {
 	}
 }
 
+// TestAccessibleOrchestrationHandleAcrossDispatcherRebuild pins the fix for
+// surface rebuilds: the run was registered under one dispatcher instance, and
+// a later control call arrives through a rebuilt instance (tool admission,
+// /agent, /model all replace the dispatcher while the session continues). The
+// same session principal must still reach the run; the dispatcher pointer
+// equality that used to gate this would report "unknown run_id" for a live,
+// owned run.
+func TestAccessibleOrchestrationHandleAcrossDispatcherRebuild(t *testing.T) {
+	f := newAccessHelperFixture(t)
+	rebuilt := runtime.New(runtime.Policy{})
+	got, errJSON := accessibleOrchestrationHandle(f.ownerCtx, f.runID, rebuilt, f.repo)
+	if errJSON != "" {
+		t.Fatalf("errJSON = %q, want empty", errJSON)
+	}
+	if got == nil || got != f.record {
+		t.Fatal("same-session handle unreachable across a dispatcher rebuild")
+	}
+}
+
 func TestAccessibleOrchestrationHandleAccessible(t *testing.T) {
 	f := newAccessHelperFixture(t)
 	got, errJSON := accessibleOrchestrationHandle(f.ownerCtx, f.runID, f.dispatcher, f.repo)
