@@ -148,3 +148,14 @@ func BenchmarkVisibleWidth(b *testing.B) {
 		visibleWidth(input)
 	}
 }
+
+func BenchmarkWrapANSIv2LongLine(b *testing.B) {
+	// ~200 KiB spaced line. The host perf gate records the post-fix linear
+	// ns/op; the pre-fix re-measurement per byte showed a superlinear curve
+	// as the line grew (cli-wrap-v2-quadratic-remeasure).
+	input := strings.Repeat("word ", 40000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wrapANSIv2(input, 40)
+	}
+}

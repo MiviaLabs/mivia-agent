@@ -171,10 +171,26 @@ func wrapLineV2(line string, maxWidth int) string {
 		return hardTruncateANSI(line, maxWidth)
 	}
 
-	// We need to wrap. Walk byte by byte, using visibleWidth for width.
+	// The line exceeds maxWidth and is not a table row: soft-wrap at word
+	// boundaries (wrapLineChunks). The previous implementation re-measured
+	// the whole accumulated line with visibleWidth after every byte, an O(n)
+	// scan per byte that made wrapping O(n^2) on long lines and froze the TUI
+	// update goroutine; wrapLineChunks keeps the running width incrementally,
+	// so the pass is O(n) with byte-identical output.
+	return wrapLineChunks(line, maxWidth)
+}
+
+// wrapLineChunks soft-wraps a single line that is known to exceed maxWidth
+// (and is not a rendered table row) at space bytes, walking rune by rune and
+// keeping the visible width of currentLine as an incremental counter. The
+// running width is exactly what visibleWidth returns at every complete-rune
+// boundary, so the wrap decisions are preserved while the whole pass is O(n).
+func wrapLineChunks(line string, maxWidth int) string {
 	var out strings.Builder
 	var currentLine strings.Builder
-	lastSpaceByte := -1 // byte position of last space in currentLine
+	lastSpaceByte := -1   // byte position of last space in currentLine
+	width := 0            // visible width of currentLine since the last flush
+	widthAtLastSpace := 0 // visible width through lastSpaceByte
 
 	flushLine := func() {
 		prefix := currentLine.String()[:lastSpaceByte]
@@ -183,7 +199,9 @@ func wrapLineV2(line string, maxWidth int) string {
 		remainder := currentLine.String()[lastSpaceByte+1:] // skip the space
 		currentLine.Reset()
 		currentLine.WriteString(remainder)
+		width -= widthAtLastSpace
 		lastSpaceByte = -1
+		widthAtLastSpace = 0
 	}
 
 	i := 0
@@ -202,23 +220,28 @@ func wrapLineV2(line string, maxWidth int) string {
 			continue
 		}
 
-		// Regular character byte.
-		currentLine.WriteByte(line[i])
+		// Decode the next rune once, append its full byte slice once, and
+		// add its visible width exactly once.
+		r, size := utf8.DecodeRuneInString(line[i:])
+		currentLine.WriteString(line[i : i+size])
+		if isWideRune(r) {
+			width += 2
+		} else {
+			width++
+		}
 
 		// Track space positions for word wrap.
-		if line[i] == ' ' || line[i] == '\t' {
+		if r == ' ' || r == '\t' {
 			lastSpaceByte = currentLine.Len() - 1
+			widthAtLastSpace = width
 		}
 
-		// Check if we've exceeded maxWidth by measuring the full currentLine
-		// (which accumulates characters and ANSI codes).
-		if visibleWidth(currentLine.String()) > maxWidth && lastSpaceByte >= 0 {
+		// If we've exceeded maxWidth and there is a space to break at, wrap.
+		if width > maxWidth && lastSpaceByte >= 0 {
 			flushLine()
-			i++
-			continue
 		}
 
-		i++
+		i += size
 	}
 
 	// Write remaining content.
