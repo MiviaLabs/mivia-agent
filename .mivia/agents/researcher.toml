@@ -6,7 +6,8 @@ skills = ["architecture-review", "bug-audit", "concurrency-review", "secure-chan
 # Evaluation binding: poolside/laguna-s-2.1 on OpenRouter for 1M-window
 # read-only sweeps. Not the cheapest 1M model (deepseek-v4-flash native is,
 # with its 50x implicit cache); this is a quality experiment - see the model
-# entry in mivia.toml for the off/max reasoning and tool-loop replay caveats.
+# entry in mivia.toml for the off/max reasoning surface (sent as
+# reasoning.enabled; replay handled client-side).
 provider = "openrouter"
 model = "poolside/laguna-s-2.1"
 max_turns = 0

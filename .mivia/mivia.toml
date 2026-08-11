@@ -61,20 +61,18 @@ models = [
   # DeepSWE 40.4%) are vendor self-reports run in poolside's own harness -
   # not independently replicated. Reasoning surface is off/max only (no
   # graded effort), so "max" = thinking on; default on matches upstream.
-  # Two client-side caveats before trusting it in tool loops: (1) this client
-  # sends reasoning.effort for active levels and the endpoint reports
-  # supports_reasoning_effort:false - OpenRouter may ignore the value, smoke
-  # test first; (2) the OpenRouter path neither reads message.reasoning nor
-  # replays it (no RequiresReasoningReplay), and poolside documents that
-  # dropped thinking degrades multi-turn agentic work - /effort off for long
-  # tool chains until the client learns the field. No response_format /
-  # structured outputs (schemas are retry-enforced client-side anyway).
-  # $0.09/$0.18 per 1M (10% off list $0.10/$0.20), cache read $0.009/M -
-  # but this endpoint has implicit caching OFF, so real input cost is the
-  # $0.09 miss price. Paid endpoint trains nothing but retains prompts
+  # Dialect "openrouter_onoff" sends reasoning.enabled (never reasoning.effort,
+  # which this endpoint does not support); the client now also parses and
+  # replays OpenRouter reasoning (message.reasoning / delta.reasoning_details)
+  # on tool-call turns, so multi-turn thinking is preserved. No
+  # response_format / structured outputs (schemas are retry-enforced
+  # client-side anyway). $0.09/$0.18 per 1M (10% off list $0.10/$0.20),
+  # cache read $0.009/M - but this endpoint has implicit caching OFF and
+  # OpenRouter lists no explicit caching for Poolside, so the cache price is
+  # currently unreachable. Paid endpoint trains nothing but retains prompts
   # 90 days; the :free variant (256K ctx) trains on your inputs, deliberately
   # not listed. Single provider, not abortable, RPM 50.
-  { name = "poolside/laguna-s-2.1", context_window_tokens = 1048576, max_output_tokens = 131072, reasoning_efforts = ["off", "max"], reasoning = "max", reasoning_dialect = "openrouter" },
+  { name = "poolside/laguna-s-2.1", context_window_tokens = 1048576, max_output_tokens = 131072, reasoning_efforts = ["off", "max"], reasoning = "max", reasoning_dialect = "openrouter_onoff" },
 ]
 default_model = "tencent/hy3-preview"
 api_key_env = "OPENROUTER_API_KEY"

@@ -5,10 +5,10 @@ tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_re
 skills = ["bug-audit", "concurrency-review"]
 # Evaluation binding: poolside/laguna-s-2.1 on OpenRouter (1M window, tool
 # calling). Model entry in mivia.toml documents the caveats - reasoning is
-# off/max only, and the OpenRouter path does not replay reasoning on tool
-# loops, so long audit chains may degrade; /effort off is the mitigation until
-# the client learns message.reasoning. Reviewer stays on hy3, so the audit
-# lens is a different model than the review lens.
+# off/max only, sent as reasoning.enabled; the client now parses and replays
+# OpenRouter reasoning on tool loops, so long audit chains keep thinking.
+# Reviewer stays on hy3, so the audit lens is a different model than the
+# review lens.
 provider = "openrouter"
 model = "poolside/laguna-s-2.1"
 max_turns = 0
