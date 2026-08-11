@@ -25,6 +25,12 @@ func (e *Engine) Deliver(ctx context.Context, runID string, allowPublish bool) (
 		return agenttools.DeliverResult{}, fmt.Errorf("workflow engine is incomplete")
 	}
 	if !allowPublish {
+		emitProgress(controller.ProgressEvent{
+			Kind: controller.ProgressDeliveryRefused, RunID: runID,
+			StepID:    "deliver",
+			Detail:    "delivery requires allow_publish=true",
+			Timestamp: time.Now(),
+		})
 		return agenttools.DeliverResult{RunID: runID, Refused: true, Reason: "delivery requires allow_publish=true"}, nil
 	}
 	run, err := e.Repo.GetRun(ctx, runID)
@@ -74,6 +80,7 @@ func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnaps
 	}
 	policy, ok := delivery.FromCompiled(compiled)
 	if !ok {
+		e.emitDeliveryRefused(runID, fmt.Sprintf("workflow delivery policy is not active for run %q", runID))
 		return agenttools.DeliverResult{}, fmt.Errorf("workflow delivery policy is not active for run %q", runID)
 	}
 	// Serialize in-process deliveries per run: two concurrent tool calls must
@@ -154,20 +161,22 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 			if fresh, getErr := repo.GetRun(ctx, runID); getErr == nil {
 				_ = repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
 			}
+			e.emitDeliveryRefused(runID, err.Error())
 			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
 		}
 		return agenttools.DeliverResult{}, err
 	}
-	// The engine has no event bus today (Engine carries no bus field), so the
-	// delivery Stage callback is left nil here and delivery.Deliver treats it
-	// as a no-op; the CLI deliver path is the primary stage consumer. When the
-	// engine gains a bus, wire Stage to publish events.Event{Kind:
-	// events.KindWorkflowDeliveryStage, Name: stage, Detail: detail} per call.
+	// Every numbered delivery stage is published through the package progress
+	// sink as one workflow_delivery_stage event (nil sink no-ops), so the
+	// session surface observes the delivery attempt the same way the CLI stage
+	// printer does. The engine's stage sink is wired by the same
+	// SetProgressSink/NewBusProgressSink hook the terminal progress events use.
 	dreq := delivery.Request{
 		RunID: runID, WorkflowDigest: run.WorkflowDigest, Policy: policy,
 		Inputs: snapshot.Inputs, BaseCommit: run.BaseCommit,
 		Branch: "wf/" + run.WorktreeName, GitCtx: gitCtx,
 		OriginURL: run.RemoteURL,
+		Stage:     e.deliveryStageEmitter(runID),
 	}
 	result, err := delivery.Deliver(deliveryCtx, repo, git, pr, dreq)
 	if err != nil {
@@ -329,13 +338,17 @@ func (s busProgressSink) Emit(e controller.ProgressEvent) {
 }
 
 // localProgressKind maps one localengine terminal progress kind onto the
-// session event kind. Unrecognised kinds fall back to a heartbeat tick.
+// session event kind. Delivery stage and refusal observations reuse the
+// workflow_delivery_stage event kind with the cause in Detail. Unrecognised
+// kinds fall back to a heartbeat tick.
 func localProgressKind(k controller.ProgressKind) events.Kind {
 	switch k {
 	case controller.ProgressStepCompleted:
 		return events.KindWorkflowStepCompleted
 	case controller.ProgressRunFinished, controller.ProgressRunFailed:
 		return events.KindWorkflowRunFinished
+	case controller.ProgressDeliveryStage, controller.ProgressDeliveryRefused:
+		return events.KindWorkflowDeliveryStage
 	default:
 		return events.KindWorkflowStepHeartbeat
 	}
@@ -358,6 +371,37 @@ func emitProgress(e controller.ProgressEvent) {
 func emitDeliveredRunFinished(runID string) {
 	emitProgress(controller.ProgressEvent{
 		Kind: controller.ProgressRunFinished, RunID: runID, Detail: "succeeded",
+	})
+}
+
+// deliveryStageEmitter returns the delivery Stage callback for one delivery
+// attempt: each numbered delivery stage is published through the package
+// progress sink as one workflow_delivery_stage event (a nil sink no-ops).
+// The stable stage name and its free-form detail ride together in Detail
+// ("push: push branch wf/x to origin"), attributed to the run and the
+// synthetic "deliver" step.
+func (e *Engine) deliveryStageEmitter(runID string) func(stage, detail string) {
+	return func(stage, detail string) {
+		emitProgress(controller.ProgressEvent{
+			Kind:      controller.ProgressDeliveryStage,
+			RunID:     runID,
+			StepID:    "deliver",
+			Detail:    stage + ": " + detail,
+			Timestamp: time.Now(),
+		})
+	}
+}
+
+// emitDeliveryRefused publishes one workflow_delivery_stage event carrying a
+// delivery refusal (no publication grant, or a pre-attempt refusal): the
+// refusal reason rides in Detail.
+func (e *Engine) emitDeliveryRefused(runID, reason string) {
+	emitProgress(controller.ProgressEvent{
+		Kind:      controller.ProgressDeliveryRefused,
+		RunID:     runID,
+		StepID:    "deliver",
+		Detail:    reason,
+		Timestamp: time.Now(),
 	})
 }
 

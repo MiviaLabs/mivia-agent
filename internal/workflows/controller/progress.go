@@ -28,6 +28,14 @@ const (
 	ProgressRunFailed ProgressKind = "run_failed"
 	// ProgressPanelRefused reports a panel run refused by a member.
 	ProgressPanelRefused ProgressKind = "panel_refused"
+	// ProgressDeliveryStage reports one numbered delivery stage observation
+	// (guard, eligibility, commit, push, pr, success, failed) with the stage
+	// name and its free-form detail in Detail.
+	ProgressDeliveryStage ProgressKind = "delivery_stage"
+	// ProgressDeliveryRefused reports a delivery refusal: no publication
+	// grant (allow_publish=false or an inactive [delivery] policy), decided
+	// before any attempt.
+	ProgressDeliveryRefused ProgressKind = "delivery_refused"
 )
 
 // ProgressEvent is one workflow progress observation. The CLI writer marshals

@@ -35,6 +35,26 @@ func (r *recordingResumeRepository) RecordRunResumed(ctx context.Context, runID 
 	return r.Repository.RecordRunResumed(ctx, runID)
 }
 
+// TestFenceGetRunClaimPassesThrough pins that the read-only claim probe passes
+// through the abandon fence unfenced: it reports the held claim even for an
+// abandoned run, because observing a claim is never a mutation.
+func TestFenceGetRunClaimPassesThrough(t *testing.T) {
+	ctx := context.Background()
+	inner := workflowledger.NewMemoryRepository()
+	fence := newAbandonFence(inner)
+	if err := inner.ClaimRun(ctx, "wfr-fc", "h1"); err != nil {
+		t.Fatal(err)
+	}
+	holder, _, ok, err := fence.GetRunClaim(ctx, "wfr-fc")
+	if err != nil || !ok || holder != "h1" {
+		t.Fatalf("GetRunClaim = holder %q ok %v err %v, want h1 true nil", holder, ok, err)
+	}
+	fence.abandon("wfr-fc")
+	if _, _, ok, err := fence.GetRunClaim(ctx, "wfr-fc"); err != nil || !ok {
+		t.Fatalf("GetRunClaim after abandon = ok %v err %v, want the claim still readable", ok, err)
+	}
+}
+
 // TestAbandonFenceConcurrentMapAccess races abandon/clearAbandon/isAbandoned
 // under the race detector. A bare delete of abandoned without f.mu fails this.
 func TestAbandonFenceConcurrentMapAccess(t *testing.T) {
@@ -139,5 +159,29 @@ func TestAbandonFenceRecordRunResumedForwards(t *testing.T) {
 	}
 	if len(recording.resumed) != 1 {
 		t.Fatalf("abandoned RecordRunResumed reached inner repo: calls = %v, want 1", recording.resumed)
+	}
+}
+
+// TestAbandonFenceGetRunClaimPassesThrough pins that the claim probe is a pure
+// read: GetRunClaim reaches the inner repository unchanged both before and
+// after abandon, because observing a claim is never a mutation the fence must
+// guard.
+func TestAbandonFenceGetRunClaimPassesThrough(t *testing.T) {
+	inner := workflowledger.NewMemoryRepository()
+	fence := newAbandonFence(inner)
+	ctx := context.Background()
+	if err := inner.ClaimRun(ctx, "wfr-fc", "h1"); err != nil {
+		t.Fatal(err)
+	}
+	holder, at, ok, err := fence.GetRunClaim(ctx, "wfr-fc")
+	if err != nil || !ok || holder != "h1" {
+		t.Fatalf("GetRunClaim through the fence = holder %q ok %v err %v, want h1 true nil", holder, ok, err)
+	}
+	if at.IsZero() {
+		t.Fatal("GetRunClaim through the fence lost acquiredAt")
+	}
+	fence.abandon("wfr-fc")
+	if _, _, ok, err := fence.GetRunClaim(ctx, "wfr-fc"); err != nil || !ok {
+		t.Fatalf("GetRunClaim after abandon must still pass through: ok %v err %v", ok, err)
 	}
 }

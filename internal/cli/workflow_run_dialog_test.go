@@ -218,7 +218,7 @@ func TestBuildWorkflowRunView(t *testing.T) {
 		{StepID: "plan", AttemptNo: 1, Status: workflowledger.AttemptStatusSucceeded, StartedAt: time.Unix(1, 0)},
 	}
 	approvals := []workflowledger.ApprovalRecord{{ApprovalID: "wfa-1", RunID: run.RunID, StepID: "ship", Status: "pending"}}
-	view, err := buildWorkflowRunView(run, compiled, attempts, approvals, time.Now())
+	view, err := buildWorkflowRunView(run, compiled, attempts, approvals, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestBuildWorkflowRunView(t *testing.T) {
 	}
 
 	// Missing definition: header facts plus a notice, no step list, no panic.
-	missing, err := buildWorkflowRunView(run, nil, nil, nil, time.Now())
+	missing, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestBuildWorkflowRunView(t *testing.T) {
 	}
 
 	// Empty run id is an error (the run vanished before open).
-	if _, err := buildWorkflowRunView(workflowledger.RunSnapshot{}, compiled, nil, nil, time.Now()); err == nil {
+	if _, err := buildWorkflowRunView(workflowledger.RunSnapshot{}, compiled, nil, nil, time.Now(), workflowRunDeliveryClaim{}); err == nil {
 		t.Fatal("empty run id must error")
 	}
 }
@@ -275,7 +275,7 @@ func TestBuildWorkflowRunViewElapsedUsesFinishedAt(t *testing.T) {
 	}
 	// The wall clock moved two hours past start; the finished run's elapsed
 	// must stay frozen at the five minutes it actually ran.
-	view, err := buildWorkflowRunView(run, nil, nil, nil, started.Add(2*time.Hour))
+	view, err := buildWorkflowRunView(run, nil, nil, nil, started.Add(2*time.Hour), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestBuildWorkflowRunViewElapsedRunningUsesNow(t *testing.T) {
 		RunID: "wfr-ELAPSED2", WorkflowName: "alpha", Status: workflowledger.RunStatusRunning,
 		StartedAt: started,
 	}
-	view, err := buildWorkflowRunView(run, nil, nil, nil, started.Add(2*time.Minute))
+	view, err := buildWorkflowRunView(run, nil, nil, nil, started.Add(2*time.Minute), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestBuildWorkflowRunViewElapsedDeliverySettledUsesLastAttempt(t *testing.T)
 			}
 			// The wall clock moved 59 hours past start; the settled run's
 			// elapsed must stay frozen at the two hours its steps ran.
-			view, err := buildWorkflowRunView(run, nil, attempts, nil, started.Add(59*time.Hour))
+			view, err := buildWorkflowRunView(run, nil, attempts, nil, started.Add(59*time.Hour), workflowRunDeliveryClaim{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -354,12 +354,13 @@ func TestBuildWorkflowRunViewShowsDeliveryRecord(t *testing.T) {
 		want string
 	}{
 		{"succeeded with url", workflowledger.DeliveryRecord{Status: "succeeded", URL: "https://example.com/pull/74", CommitSHA: "40718667a7b2d59bf751195374c622fc02ab60fb"}, "delivery: succeeded · https://example.com/pull/74 · commit 40718667a7b2"},
+		{"succeeded with remote id", workflowledger.DeliveryRecord{Status: "succeeded", RemoteID: "42", URL: "https://example.com/pull/74", CommitSHA: "40718667a7b2d59bf751195374c622fc02ab60fb"}, "delivery: succeeded · PR #42 · https://example.com/pull/74 · commit 40718667a7b2"},
 		{"pending with commit", workflowledger.DeliveryRecord{Status: "pending", CommitSHA: "95520b476b2c"}, "delivery: pending · commit 95520b476b2c"},
 		{"failed without url", workflowledger.DeliveryRecord{Status: "failed"}, "delivery: failed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), []workflowledger.DeliveryRecord{tc.rec})
+			view, err := buildWorkflowRunView(run, nil, nil, nil, time.Now(), workflowRunDeliveryClaim{}, []workflowledger.DeliveryRecord{tc.rec})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -368,6 +369,39 @@ func TestBuildWorkflowRunViewShowsDeliveryRecord(t *testing.T) {
 				t.Fatalf("header missing %q:\n%s", tc.want, header)
 			}
 		})
+	}
+}
+
+// TestBuildWorkflowRunViewDeliveryLiveness pins the delivery_pending liveness
+// header line: a fresh execution claim reads "delivery: in flight" with the
+// claim age, a stale claim (past the ledger's claim lease) marks stale, and
+// no claim reads "delivery: waiting".
+func TestBuildWorkflowRunViewDeliveryLiveness(t *testing.T) {
+	run := workflowledger.RunSnapshot{RunID: "wfr-DLVLIV1", WorkflowName: "alpha", Status: workflowledger.RunStatusDeliveryPending, StartedAt: time.Now()}
+	now := time.Now()
+	header := func(claim workflowRunDeliveryClaim) string {
+		view, err := buildWorkflowRunView(run, nil, nil, nil, now, claim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(view.header, "\n")
+	}
+	fresh := header(workflowRunDeliveryClaim{at: now.Add(-12 * time.Second), ok: true})
+	if !strings.Contains(fresh, "delivery: in flight · claim") || !strings.Contains(fresh, "ago") {
+		t.Fatalf("fresh-claim header missing the in-flight claim line:\n%s", fresh)
+	}
+	stale := header(workflowRunDeliveryClaim{at: now.Add(-workflowledger.DefaultClaimLease - time.Minute), ok: true})
+	if !strings.Contains(stale, "delivery: in flight") || !strings.Contains(stale, "stale") {
+		t.Fatalf("stale-claim header missing the in-flight + stale marker:\n%s", stale)
+	}
+	waiting := header(workflowRunDeliveryClaim{})
+	if !strings.Contains(waiting, "delivery: waiting") {
+		t.Fatalf("no-claim header missing the waiting line:\n%s", waiting)
+	}
+	// A future claim (clock skew) is fresh and its age clamps to zero.
+	future := header(workflowRunDeliveryClaim{at: now.Add(5 * time.Second), ok: true})
+	if !strings.Contains(future, "delivery: in flight · claim") || strings.Contains(future, "stale") {
+		t.Fatalf("future-claim header must read fresh, not stale:\n%s", future)
 	}
 }
 
@@ -383,7 +417,7 @@ func TestWorkflowRunDialogRendersStepMarkers(t *testing.T) {
 		{StepID: "plan", AttemptNo: 1, Status: workflowledger.AttemptStatusSucceeded, StartedAt: time.Unix(1, 0)},
 	}
 	approvals := []workflowledger.ApprovalRecord{{ApprovalID: "wfa-1", RunID: run.RunID, StepID: "ship", Status: "pending"}}
-	view, err := buildWorkflowRunView(run, compiled, attempts, approvals, time.Now())
+	view, err := buildWorkflowRunView(run, compiled, attempts, approvals, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +452,7 @@ func TestWorkflowRunDialogFooterActionHints(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			view, err := buildWorkflowRunView(run(tc.status), nil, nil, nil, time.Now())
+			view, err := buildWorkflowRunView(run(tc.status), nil, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -485,7 +519,7 @@ func TestWorkflowRunDialogPagerScroll(t *testing.T) {
 		compiled.Steps[i] = definition.Step{ID: fmt.Sprintf("step-%02d", i), Kind: "agent", Agent: "test-agent"}
 	}
 	run := workflowledger.RunSnapshot{RunID: "wfr-BIG1", WorkflowName: "big", Status: workflowledger.RunStatusRunning, ActiveStepID: "step-00"}
-	view, err := buildWorkflowRunView(run, compiled, nil, nil, time.Now())
+	view, err := buildWorkflowRunView(run, compiled, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +562,7 @@ func TestWorkflowRunDialogGeometry(t *testing.T) {
 		compiled.Steps[i] = definition.Step{ID: fmt.Sprintf("step-%02d", i), Kind: "agent", Agent: strings.Repeat("\U0001F642", 6)}
 	}
 	run := workflowledger.RunSnapshot{RunID: "wfr-GEO1", WorkflowName: "big", Status: workflowledger.RunStatusRunning, ActiveStepID: "step-00", StartedAt: time.Now().Add(-time.Minute)}
-	view, err := buildWorkflowRunView(run, compiled, nil, nil, time.Now())
+	view, err := buildWorkflowRunView(run, compiled, nil, nil, time.Now(), workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,7 +634,7 @@ func TestBuildWorkflowRunViewShowsHeartbeatLine(t *testing.T) {
 	}
 
 	// Fresh: the age renders with the info style and no stale marker.
-	fresh, err := buildWorkflowRunView(run, nil, attempt(now.Add(-12*time.Second)), nil, now)
+	fresh, err := buildWorkflowRunView(run, nil, attempt(now.Add(-12*time.Second)), nil, now, workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +651,7 @@ func TestBuildWorkflowRunViewShowsHeartbeatLine(t *testing.T) {
 	}
 
 	// Stale: the age renders with a stale marker and the error style.
-	stale, err := buildWorkflowRunView(run, nil, attempt(now.Add(-3*time.Minute)), nil, now)
+	stale, err := buildWorkflowRunView(run, nil, attempt(now.Add(-3*time.Minute)), nil, now, workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +665,7 @@ func TestBuildWorkflowRunViewShowsHeartbeatLine(t *testing.T) {
 	}
 
 	// No running attempt: the line renders none.
-	none, err := buildWorkflowRunView(run, nil, nil, nil, now)
+	none, err := buildWorkflowRunView(run, nil, nil, nil, now, workflowRunDeliveryClaim{})
 	if err != nil {
 		t.Fatal(err)
 	}

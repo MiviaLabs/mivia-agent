@@ -239,9 +239,17 @@ type SubagentConfig struct {
 	// the model-visible result envelope (the "output" field). Results above
 	// this threshold emit only "output_ref", "output_bytes", and a bounded
 	// "synopsis"; the parent fetches the full body via ledger_read.
-	// Default: 4096. 0 means "always use refs" (never inline).
-	// Errors follow the same rule with "error"/"error_ref".
+	// Default: 4096. An explicit 0 means "always use refs" (never inline) and
+	// is preserved through resolution via inlineOutputBytesSet; an absent key
+	// falls back to the 4096 default. Errors follow the same rule with
+	// "error"/"error_ref".
 	InlineOutputBytes int `toml:"inline_output_bytes"`
+
+	// inlineOutputBytesSet records whether [subagents] inline_output_bytes was
+	// present in the config file, so an explicit 0 ("always use refs") survives
+	// the defaulting in resolveSubagentConfig. No toml tag: go-toml/v2 ignores
+	// unexported fields, so the flag is set only by loadFile's raw-byte probe.
+	inlineOutputBytesSet bool
 
 	// SchemaRetryMax is how many corrective re-entries a multi-step child may
 	// take after an invalid schema-validated reply (plan tools/02). Default 2.
@@ -278,8 +286,8 @@ type MessagingConfig struct {
 	// 1. Exactly one park per task is structurally enforced by the question
 	// registry (one pendingQuestion per runID/taskID key) plus the awaiting_input
 	// single-bit ledger status; N>1 is unsupported. The field still parses from
-	// TOML (and load.go still fills the default of 1) so existing configs load
-	// unchanged, but nothing reads it for behavior.
+	// TOML (and the config resolver still fills the default of 1) so existing
+	// configs load unchanged, but nothing reads it for behavior.
 	MaxPendingQuestions int `toml:"max_pending_questions"`
 	// SteerWatchdogSeconds: nil = default (300s); explicit 0 = disabled
 	// (unbounded); positive = seconds.

@@ -83,6 +83,12 @@ func (p *CommandProfile) Verify(ctx context.Context, req Request) (Result, error
 		runErr = runVerifierCommand(ctx, workDir, req.ModuleBaseline, p.policy, p.program, p.args...)
 	}
 	if runErr != nil {
+		// A caller deadline or cancel is a run timeout, not a host failure:
+		// surface the context error so the controller settles the run as
+		// timed_out instead of fabricating a host failure.
+		if ctxErr := contextErrorFromRun(runErr); ctxErr != nil {
+			return Result{Status: "failed", Checks: []Check{check}}, ctxErr
+		}
 		check.Status = "failed"
 		check.Class, check.Detail, check.Failures = failureEvidence(runErr)
 		return Result{Status: "failed", Checks: []Check{check}}, nil

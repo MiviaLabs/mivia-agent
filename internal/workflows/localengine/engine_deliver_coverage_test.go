@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -278,6 +279,47 @@ func TestCoverageBusProgressSinkMapsAndPublishesKinds(t *testing.T) {
 	NewBusProgressSink(nil).Emit(controller.ProgressEvent{Kind: controller.ProgressRunFinished, RunID: "wfr-nil-bus"})
 }
 
+// TestCoverageBusProgressSinkPublishesDeliveryKinds covers the delivery kind
+// mapping in localProgressKind: ProgressDeliveryStage and
+// ProgressDeliveryRefused both publish as KindWorkflowDeliveryStage with the
+// synthetic "deliver" step attribution and the stage/refusal reason in Detail.
+func TestCoverageBusProgressSinkPublishesDeliveryKinds(t *testing.T) {
+	bus := events.New()
+	defer bus.Close()
+	collected := &coverageBusEventSink{}
+	bus.Subscribe(events.KindWorkflowDeliveryStage, collected)
+
+	sink := NewBusProgressSink(bus)
+	sink.Emit(controller.ProgressEvent{Kind: controller.ProgressDeliveryStage, RunID: "wfr-dlv", StepID: "deliver", Detail: "push: push branch wf/x to origin"})
+	sink.Emit(controller.ProgressEvent{Kind: controller.ProgressDeliveryRefused, RunID: "wfr-dlv", StepID: "deliver", Detail: "delivery requires allow_publish=true"})
+
+	bus.Flush()
+	got := collected.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("published events = %d, want 2: %+v", len(got), got)
+	}
+	var stage, refused *events.Event
+	for i := range got {
+		if got[i].Kind != events.KindWorkflowDeliveryStage {
+			t.Fatalf("event kind = %q, want workflow_delivery_stage: %+v", got[i].Kind, got[i])
+		}
+		if strings.HasPrefix(got[i].Detail, "push:") {
+			stage = &got[i]
+		} else {
+			refused = &got[i]
+		}
+	}
+	if stage == nil || refused == nil {
+		t.Fatalf("missing a delivery event: %+v", got)
+	}
+	if stage.AgentName != "workflow:deliver" || stage.Detail != "push: push branch wf/x to origin" {
+		t.Fatalf("delivery stage event = %+v", stage)
+	}
+	if refused.AgentName != "workflow:deliver" || !strings.Contains(refused.Detail, "allow_publish") {
+		t.Fatalf("delivery refused event = %+v", refused)
+	}
+}
+
 // TestCoverageEmitCanceledAttemptsPublishesPerAttempt covers the
 // emitCanceledAttempts loop body: one step_completed(canceled) event per
 // settled attempt, carrying the attempt's step/attempt/task/coordinator
@@ -375,6 +417,134 @@ func TestCoverageCancelFlowEmitsCanceledAttemptEvent(t *testing.T) {
 	}
 	if fresh.Status != workflowledger.RunStatusCanceled {
 		t.Fatalf("run status after cancel = %q, want canceled", fresh.Status)
+	}
+}
+
+// TestCoverageDeliverEmitsStageEvents drives Engine.Deliver through the real
+// git-run path (resolve worktree, commit, push, PR) with the package progress
+// sink wired and asserts the delivery publishes one workflow_delivery_stage
+// progress event per numbered stage, attributed to the run and the synthetic
+// "deliver" step. The first stage is the entry guard.
+func TestCoverageDeliverEmitsStageEvents(t *testing.T) {
+	repoRoot, originURL := coverageDeliveryRepo(t)
+	repo := workflowledger.NewMemoryRepository()
+	run := coverageSeededPendingRun(t, repoRoot, originURL, repo)
+
+	sink := &coverageRecordingSink{}
+	SetProgressSink(sink)
+	defer func() { SetProgressSink(nil) }()
+
+	engine := &Engine{WorkspaceRoot: repoRoot, Repo: repo, PR: &coverageRecordingPR{}}
+	res, err := engine.Deliver(context.Background(), run.RunID, true)
+	if err != nil {
+		t.Fatalf("Engine.Deliver: %v", err)
+	}
+	if res.Status != string(workflowledger.RunStatusSucceeded) {
+		t.Fatalf("deliver result = %+v, want succeeded", res)
+	}
+	got := sink.snapshot()
+	var stages []string
+	for _, ev := range got {
+		if ev.Kind == controller.ProgressDeliveryStage && ev.RunID == run.RunID {
+			if ev.StepID != "deliver" {
+				t.Fatalf("stage event step = %q, want deliver", ev.StepID)
+			}
+			stages = append(stages, ev.Detail)
+		}
+	}
+	if len(stages) == 0 {
+		t.Fatalf("no delivery stage events published: %+v", got)
+	}
+	if !strings.HasPrefix(stages[0], "guard:") {
+		t.Fatalf("first stage = %q, want the guard stage", stages[0])
+	}
+}
+
+// TestCoverageDeliverRefusalEmitsRefusedEvent pins the engine-level refusal:
+// Engine.Deliver with allow_publish=false publishes exactly one
+// delivery_refused progress event and refuses without touching the run.
+func TestCoverageDeliverRefusalEmitsRefusedEvent(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	sink := &coverageRecordingSink{}
+	SetProgressSink(sink)
+	defer func() { SetProgressSink(nil) }()
+
+	engine := &Engine{Repo: repo}
+	res, err := engine.Deliver(context.Background(), "wfr-refuse", false)
+	if err != nil {
+		t.Fatalf("Engine.Deliver refusal: %v", err)
+	}
+	if !res.Refused {
+		t.Fatalf("deliver result = %+v, want Refused", res)
+	}
+	got := sink.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("emitted events = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].Kind != controller.ProgressDeliveryRefused || got[0].RunID != "wfr-refuse" || got[0].StepID != "deliver" {
+		t.Fatalf("refused event = %+v, want delivery_refused for the run", got[0])
+	}
+}
+
+// TestCoverageDeliverPolicyInactiveEmitsRefusedEvent drives deliverPending with
+// a workflow that declares no [delivery] policy: the attempt is refused before
+// any git work, the run stays delivery_pending, and one delivery_refused
+// progress event is published.
+func TestCoverageDeliverPolicyInactiveEmitsRefusedEvent(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	ctx := context.Background()
+	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion:    workflowledger.SnapshotSchemaVersion,
+		DefinitionTOML:   []byte(coverageTwoStepTOML), // no [delivery] policy
+		DefinitionDigest: "digest",
+		Inputs:           map[string]string{"task": "x"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := workflowledger.RunSnapshot{
+		RunID: "wfr-nopolicy", WorkflowName: "two-step", WorkflowDigest: "digest",
+		ActiveStepID: "success", BaseRef: "main", BaseCommit: "deadbeef",
+		Status: workflowledger.RunStatusPending,
+	}
+	if err := repo.CreateRun(ctx, snap, raw); err != nil {
+		t.Fatal(err)
+	}
+	// pending -> running -> delivery_pending, mirroring the ledger's status
+	// transitions for a workflow body that finished and entered delivery.
+	for _, status := range []workflowledger.RunStatus{
+		workflowledger.RunStatusRunning,
+		workflowledger.RunStatusDeliveryPending,
+	} {
+		cur, err := repo.GetRun(ctx, snap.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompareAndSetRunStatus(ctx, snap.RunID, cur.Version, status, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sink := &coverageRecordingSink{}
+	SetProgressSink(sink)
+	defer func() { SetProgressSink(nil) }()
+
+	engine := &Engine{Repo: repo}
+	if _, err := engine.Deliver(ctx, snap.RunID, true); err == nil {
+		t.Fatal("Deliver with an inactive delivery policy must error")
+	}
+	got := sink.snapshot()
+	var refused bool
+	for _, ev := range got {
+		if ev.Kind == controller.ProgressDeliveryRefused && ev.RunID == snap.RunID {
+			refused = true
+			if !strings.Contains(ev.Detail, "policy is not active") {
+				t.Fatalf("refused event detail = %q, want the policy-inactive reason", ev.Detail)
+			}
+		}
+	}
+	if !refused {
+		t.Fatalf("no delivery_refused event published for the policy-inactive run: %+v", got)
 	}
 }
 
