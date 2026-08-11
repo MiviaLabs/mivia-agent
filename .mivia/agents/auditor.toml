@@ -1,7 +1,7 @@
 # Hostile bug auditor with command execution for reproduction, no write tools.
 name = "auditor"
 description = "Hostile bug auditor that hunts confirmed reachable defects and reproduces them with project-native commands, without editing files."
-tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract", "run_command"]
+tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract", "get_diagnostics", "run_command"]
 skills = ["bug-audit", "concurrency-review"]
 # Evaluation binding: the bug-fix hunt step requires a closed-schema JSON
 # reply, and inclusionai/ling-3.0-flash never delivered one (3 failed
