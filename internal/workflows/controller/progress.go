@@ -57,7 +57,22 @@ type ProgressSink interface {
 // emitProgress delivers one progress event to the configured sink. A nil sink
 // makes the call a no-op. A zero timestamp and an empty run ID are completed
 // from the controller clock and the controller run ID.
+//
+// A step-heartbeat event additionally triggers a THROTTLED durable heartbeat
+// write for the attempt (the join watchdog emits one per tick; the throttle
+// bounds the ledger writes). This keeps the in-memory task-id registry the
+// fast liveness path while the durable event log records that the attempt was
+// still running. Persistence is independent of the sink: a nil sink still
+// records the durable heartbeat, and a ledger write error is best-effort
+// (never fails the step).
 func (c *LinearController) emitProgress(e ProgressEvent) {
+	if e.Kind == ProgressStepHeartbeat && e.StepID != "" && e.AttemptNo > 0 {
+		at := e.Timestamp
+		if at.IsZero() {
+			at = c.now()
+		}
+		c.persistDurableHeartbeat(attemptIDFor(e.StepID, e.AttemptNo), at)
+	}
 	if c.progress == nil {
 		return
 	}

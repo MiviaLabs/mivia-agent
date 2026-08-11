@@ -98,6 +98,14 @@ type Repository interface {
 	// idempotent for the same identity.
 	SetStepAttemptExecution(ctx context.Context, runID, attemptID, coordinatorRunID, taskID, reason string) error
 
+	// SetStepAttemptHeartbeat durably records one liveness observation for a
+	// RUNNING attempt. Each call appends a DISTINCT wf_attempt_heartbeat event
+	// (the event ID embeds the heartbeat timestamp), so successive ticks never
+	// conflict and a retried append of the same heartbeat is an idempotent
+	// no-op (nil). The attempt's status/version are never changed. Returns
+	// ErrNotFound if the run or attempt is absent.
+	SetStepAttemptHeartbeat(ctx context.Context, runID, attemptID string, heartbeatAt time.Time) error
+
 	// ListTransitions returns the route decisions derived from completed
 	// attempts, ordered by event sequence.
 	ListTransitions(ctx context.Context, runID string) ([]TransitionRecord, error)

@@ -175,7 +175,7 @@ func (c *LinearController) JoinInFlightAttempt(ctx context.Context, attempt work
 
 func (c *LinearController) newAttempt(stepID string, attemptNo int) workflowledger.StepAttempt {
 	return workflowledger.StepAttempt{
-		AttemptID: fmt.Sprintf("wfa-%s-%d", stepID, attemptNo), RunID: c.RunID, StepID: stepID,
+		AttemptID: attemptIDFor(stepID, attemptNo), RunID: c.RunID, StepID: stepID,
 		AttemptNo: attemptNo, Status: workflowledger.AttemptStatusRunning,
 		CoordinatorRunID: coordinator.NewRunID(), TaskID: newWorkflowTaskID(),
 	}

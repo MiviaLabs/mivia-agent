@@ -202,6 +202,7 @@ type StepAttempt struct {
 	DecisionJSON     []byte          `json:"decision_json,omitempty"`
 	EvidenceJSON     []byte          `json:"evidence_json,omitempty"`
 	PanelExecution   *PanelExecution `json:"panel_execution,omitempty"`
+	LastHeartbeatAt  time.Time       `json:"last_heartbeat_at,omitempty"`
 	StartedAt        time.Time       `json:"started_at"`
 	FinishedAt       *time.Time      `json:"finished_at,omitempty"`
 	Version          uint64          `json:"version"`

@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -624,6 +625,52 @@ func TestListEventsRunResumedSummary(t *testing.T) {
 			}
 			if !strings.Contains(found.Summary, run) {
 				t.Fatalf("run_resumed summary = %q, want it to contain the run id %q", found.Summary, run)
+			}
+		})
+	}
+}
+
+// TestListEventsAttemptHeartbeatSummary: a wf_attempt_heartbeat event lands in
+// the audit trail with a bounded summary carrying the attempt id and the
+// heartbeat instant, one event per tick.
+func TestListEventsAttemptHeartbeatSummary(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, raw := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, raw), nil, "CreateRun")
+			requireErr(t, repo.CreateStepAttempt(ctx, StepAttempt{AttemptID: "att-hb", RunID: run, StepID: "plan", AttemptNo: 1}), nil, "CreateStepAttempt")
+			requireErr(t, repo.SetStepAttemptHeartbeat(ctx, run, "att-hb", fixedClock), nil, "heartbeat 1")
+			requireErr(t, repo.SetStepAttemptHeartbeat(ctx, run, "att-hb", fixedClock.Add(30*time.Second)), nil, "heartbeat 2")
+
+			events, err := repo.ListEvents(ctx, run, 0, 0)
+			requireErr(t, err, nil, "ListEvents")
+			var heartbeats []EventRecord
+			for _, ev := range events {
+				if ev.Kind == eventKindAttemptHeartbeat {
+					heartbeats = append(heartbeats, ev)
+				}
+			}
+			if len(heartbeats) != 2 {
+				t.Fatalf("wf_attempt_heartbeat events = %d, want 2", len(heartbeats))
+			}
+			for _, hb := range heartbeats {
+				if !strings.Contains(hb.Summary, "att-hb") {
+					t.Fatalf("heartbeat summary = %q, want it to contain the attempt id", hb.Summary)
+				}
+				if !strings.Contains(hb.Summary, "heartbeat at") {
+					t.Fatalf("heartbeat summary = %q, want it to name the heartbeat instant", hb.Summary)
+				}
+				if len(hb.Summary) > MaxEventSummaryBytes {
+					t.Fatalf("heartbeat summary = %d bytes, want <= %d", len(hb.Summary), MaxEventSummaryBytes)
+				}
+				if hb.CreatedAt.IsZero() {
+					t.Fatal("wf_attempt_heartbeat CreatedAt is the zero timestamp")
+				}
+			}
+			if heartbeats[0].Sequence >= heartbeats[1].Sequence {
+				t.Fatalf("heartbeat sequences = %d then %d, want strictly increasing", heartbeats[0].Sequence, heartbeats[1].Sequence)
 			}
 		})
 	}

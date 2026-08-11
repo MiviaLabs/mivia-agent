@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 )
@@ -642,6 +643,48 @@ func TestStorageRepository_SetStepAttemptPromptReplay(t *testing.T) {
 			}
 			if got.PromptRef != promptRef {
 				t.Fatalf("B PromptRef = %q after catch-up, want %q", got.PromptRef, promptRef)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SetStepAttemptHeartbeat
+// ---------------------------------------------------------------------------
+
+// TestStorageRepository_SetStepAttemptHeartbeatCrossInstance covers replay
+// across repository instances: a heartbeat written on one instance is visible
+// to a second instance over the shared store after catch-up.
+func TestStorageRepository_SetStepAttemptHeartbeatCrossInstance(t *testing.T) {
+	ctx := context.Background()
+	for _, pair := range repoPairs() {
+		t.Run(pair.name, func(t *testing.T) {
+			a, b, done := pair.new(t)
+			defer done()
+
+			run := runID(t)
+			snap, json := newRun(t, run)
+			requireErr(t, a.CreateRun(ctx, snap, json), nil, "CreateRun on A")
+			requireErr(t, a.CreateStepAttempt(ctx, StepAttempt{AttemptID: "att-1", RunID: run, StepID: "plan", AttemptNo: 1}), nil, "create attempt on A")
+
+			// Legacy replay: no heartbeat event -> zero LastHeartbeatAt.
+			got, err := b.GetStepAttempt(ctx, run, "att-1")
+			if err != nil {
+				t.Fatalf("GetStepAttempt on B (legacy): %v", err)
+			}
+			if !got.LastHeartbeatAt.IsZero() {
+				t.Fatalf("legacy attempt LastHeartbeatAt = %v, want zero", got.LastHeartbeatAt)
+			}
+
+			// A records heartbeats; B catches up and sees the latest.
+			requireErr(t, a.SetStepAttemptHeartbeat(ctx, run, "att-1", fixedClock), nil, "heartbeat t1 on A")
+			requireErr(t, a.SetStepAttemptHeartbeat(ctx, run, "att-1", fixedClock.Add(30*time.Second)), nil, "heartbeat t2 on A")
+			got, err = b.GetStepAttempt(ctx, run, "att-1")
+			if err != nil {
+				t.Fatalf("GetStepAttempt on B after heartbeats: %v", err)
+			}
+			if !got.LastHeartbeatAt.Equal(fixedClock.Add(30 * time.Second)) {
+				t.Fatalf("B LastHeartbeatAt = %v after catch-up, want %v", got.LastHeartbeatAt, fixedClock.Add(30*time.Second))
 			}
 		})
 	}

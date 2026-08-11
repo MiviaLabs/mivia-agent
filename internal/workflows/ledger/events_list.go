@@ -113,6 +113,8 @@ func summarizeEvent(ev storage.Event) (EventRecord, bool) {
 		summary, createdAt, ok = summarizeAttemptPrompt(ev)
 	case eventKindAttemptExecution:
 		summary, createdAt, ok = summarizeAttemptExecution(ev)
+	case eventKindAttemptHeartbeat:
+		summary, createdAt, ok = summarizeAttemptHeartbeat(ev)
 	case eventKindPanelPhaseSet:
 		summary, createdAt, ok = summarizePanelPhase(ev)
 	case eventKindLoopIncremented:

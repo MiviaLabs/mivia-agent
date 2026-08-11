@@ -110,6 +110,8 @@ func RebuildProjection(events []storage.Event) (Projection, error) {
 			err = applyAttemptPrompt(&proj, ev)
 		case eventKindAttemptExecution:
 			err = applyAttemptExecution(&proj, ev)
+		case eventKindAttemptHeartbeat:
+			err = applyAttemptHeartbeat(&proj, ev)
 		case eventKindAttemptCompleted:
 			err = applyAttemptCompleted(&proj, st, ev)
 		case eventKindPanelPhaseSet:
@@ -338,6 +340,31 @@ func applyAttemptCompleted(proj *Projection, st *rebuildState, ev storage.Event)
 		st.stepCandidates = append(st.stepCandidates, p.ToStepID)
 	}
 	return nil
+}
+
+// applyAttemptHeartbeat folds one wf_attempt_heartbeat event into the
+// projection: the liveness observation is recorded on the matching attempt by
+// attempt_id, keeping the LATEST timestamp (a newer heartbeat wins; an
+// out-of-order replay or an equal retry never regresses LastHeartbeatAt). It
+// carries no step, so it contributes no step candidate and never changes the
+// derived active step (mirroring the prompt/loop/approval applies). A
+// heartbeat for an unknown attempt is ignored — no placeholder is created.
+func applyAttemptHeartbeat(proj *Projection, ev storage.Event) error {
+	p, err := unmarshalAttemptHeartbeat(ev.Payload)
+	if err != nil {
+		return fmt.Errorf("decode %s payload: %w", ev.Kind, err)
+	}
+	for i := range proj.Attempts {
+		if proj.Attempts[i].AttemptID != p.AttemptID {
+			continue
+		}
+		cur := proj.Attempts[i].LastHeartbeatAt
+		if cur.IsZero() || !p.HeartbeatAt.Before(cur) {
+			proj.Attempts[i].LastHeartbeatAt = p.HeartbeatAt
+		}
+		return nil
+	}
+	return nil // unknown attempt: ignore
 }
 
 // applyLoopIncremented folds one wf_loop_incremented event into the

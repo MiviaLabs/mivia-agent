@@ -38,15 +38,7 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 	if gateDetail == "" {
 		gateDetail = step.Kind
 	}
-	c.emitProgress(ProgressEvent{
-		Kind: ProgressGateStarted, StepID: step.ID, AttemptNo: attempt.AttemptNo, Detail: gateDetail,
-	})
-	result, verifyErr := profile.Verify(ctx, verifier.Request{
-		WorkDir:        c.WorkDir,
-		StepID:         step.ID,
-		RunID:          c.RunID,
-		ModuleBaseline: c.ModuleBaseline,
-	})
+	result, verifyErr := c.runGateVerify(ctx, step, attempt, gateDetail, profile)
 	status := workflowledger.AttemptStatusSucceeded
 	if verifyErr != nil || result.Status == "failed" {
 		status = workflowledger.AttemptStatusFailed
@@ -93,6 +85,26 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 		return c.fail(writeCtx, run, routeErr)
 	}
 	return settleAfterRoute(ctx, c, run, route)
+}
+
+// runGateVerify reports the gate start, keeps the durable heartbeat trail
+// alive while the SYNCHRONOUS host verifier runs, and runs the profile. A
+// long-running gate stays observable in the durable ledger even though it
+// dispatches no coordinator child: the ticker is stopped on every return path
+// (defer) and exits when the step context is canceled, and its writes are
+// throttled + best-effort, so a ledger write error can never fail the gate.
+func (c *LinearController) runGateVerify(ctx context.Context, step definition.Step, attempt workflowledger.StepAttempt, gateDetail string, profile verifier.Profile) (verifier.Result, error) {
+	c.emitProgress(ProgressEvent{
+		Kind: ProgressGateStarted, StepID: step.ID, AttemptNo: attempt.AttemptNo, Detail: gateDetail,
+	})
+	stopGateHeartbeats := c.startDurableHeartbeatTicker(ctx, attempt.AttemptID)
+	defer stopGateHeartbeats()
+	return profile.Verify(ctx, verifier.Request{
+		WorkDir:        c.WorkDir,
+		StepID:         step.ID,
+		RunID:          c.RunID,
+		ModuleBaseline: c.ModuleBaseline,
+	})
 }
 
 // verifierProfile resolves the evidence gate's verifier: a named catalogue

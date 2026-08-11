@@ -3,7 +3,6 @@ package controller
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -61,25 +60,26 @@ type Admission struct {
 // LinearController advances a workflow one active step at a time.
 // Phase 4 supports agent, agent_gate, evidence_gate, human_gate, and loops.
 type LinearController struct {
-	Repo           workflowledger.Repository
-	Runner         AgentStepRunner
-	Workflow       *compiler.CompiledWorkflow
-	Steps          map[string]StepRuntime
-	Inputs         map[string]any
-	RunID          string
-	Snapshot       []byte
-	Holder         string
-	Verifiers      *verifier.Catalogue
-	WorkDir        string
-	ModuleBaseline *verifier.GoModuleBaseline
-	SecretPolicy   secretpath.Policy
-	PanelLimiter   *PanelActorLimiter
-	progress       ProgressSink
-	admission      Admission
-	forceResume    bool
-	now            func() time.Time
-	started        bool
-	mu             sync.Mutex
+	Repo              workflowledger.Repository
+	Runner            AgentStepRunner
+	Workflow          *compiler.CompiledWorkflow
+	Steps             map[string]StepRuntime
+	Inputs            map[string]any
+	RunID             string
+	Snapshot          []byte
+	Holder            string
+	Verifiers         *verifier.Catalogue
+	WorkDir           string
+	ModuleBaseline    *verifier.GoModuleBaseline
+	SecretPolicy      secretpath.Policy
+	PanelLimiter      *PanelActorLimiter
+	progress          ProgressSink
+	admission         Admission
+	forceResume       bool
+	now               func() time.Time
+	started           bool
+	mu                sync.Mutex
+	heartbeatThrottle *durableHeartbeatThrottle
 }
 
 // NewLinearController creates a controller for an admitted workflow run.
@@ -96,7 +96,7 @@ func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner,
 	if len(snapshot) == 0 {
 		return nil, fmt.Errorf("workflow snapshot is empty")
 	}
-	return &LinearController{Repo: repo, Runner: runner, Workflow: wf, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now, PanelLimiter: NewPanelActorLimiter()}, nil
+	return &LinearController{Repo: repo, Runner: runner, Workflow: wf, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now, PanelLimiter: NewPanelActorLimiter(), heartbeatThrottle: newDurableHeartbeatThrottle()}, nil
 }
 
 // SetProgressSink sets the workflow progress sink before Start.
@@ -436,65 +436,4 @@ func (c *LinearController) failWithStatus(ctx context.Context, run workflowledge
 		return run, false, fmt.Errorf("workflow failed: %v: %w", cause, err)
 	}
 	return failed, true, fmt.Errorf("workflow step failed: %w", cause)
-}
-
-func maxBinding(step definition.Step) int {
-	max := 0
-	for _, b := range step.Context {
-		if b.MaxBytes > max {
-			max = b.MaxBytes
-		}
-	}
-	return max
-}
-
-// validateBindingLimits measures every context binding's resolved value against
-// its max_bytes. Evidence bindings measure the EVIDENCE VALUE already built by
-// contextForStep — the inlined value or the reference envelope — never the
-// original artifact bytes: an enveloped artifact passes the binding cap, or the
-// envelope substitution in contextForStep would be pointless. Inputs bindings
-// keep reading the controller's inputs unchanged.
-func validateBindingLimits(step definition.Step, inputs map[string]any, evidence map[string]any) error {
-	for _, binding := range step.Context {
-		if binding.MaxBytes <= 0 {
-			continue
-		}
-		// A delivery.failure binding is bounded by contextForStep's rune-safe
-		// truncation; re-measuring it here would reject the already-truncated
-		// text against the same cap (JSON quoting adds two bytes).
-		if strings.HasPrefix(binding.From, "delivery.") {
-			continue
-		}
-		var value any
-		parts := strings.Split(binding.From, ".")
-		if len(parts) == 2 {
-			value = inputs[parts[1]]
-		} else {
-			value = evidence[binding.As]
-			if binding.Optional {
-				// A missing optional prior output resolves to "" (contextForStep);
-				// never reject it against a tiny max_bytes on the first attempt.
-				if s, ok := value.(string); ok && s == "" {
-					continue
-				}
-			}
-		}
-		raw, err := json.Marshal(value)
-		if err != nil {
-			return fmt.Errorf("marshal context binding %q: %w", binding.From, err)
-		}
-		if len(raw) > binding.MaxBytes {
-			return fmt.Errorf("context binding %q exceeds %d bytes", binding.From, binding.MaxBytes)
-		}
-	}
-	return nil
-}
-
-func cloneValues(values map[string]any) map[string]any {
-	raw, _ := json.Marshal(values)
-	var out map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	_ = decoder.Decode(&out)
-	return out
 }
