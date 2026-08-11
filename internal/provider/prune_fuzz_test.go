@@ -12,7 +12,10 @@ package provider
 //   - MessagesTokens(pruned) <= budget when the header plus the newest exchange
 //     fit, and an over-budget result holds no droppable exchange (fail-closed);
 //   - pruning is deterministic;
-//   - a system message, when present, stays at index 0.
+//   - a system message, when present, stays at index 0;
+//   - plain assistant replies survive pruning for valid single-turn histories
+//     (they are never part of an exchange block, so only the region cut that
+//     used to span dropped exchanges could remove them).
 //
 // The fix that made pruning linear (pruneWithinTurn is one pass, O(n)) is what
 // keeps the bounded -fuzztime gate tractable on histories the quadratic
@@ -25,7 +28,23 @@ import (
 )
 
 func FuzzPruneMessagesKeepTurns(f *testing.F) {
-	seeds := []string{
+	for _, s := range pruneFuzzSeeds() {
+		f.Add([]byte(s))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		budget, msgs, ok := parsePruneFuzzInput(data)
+		if !ok {
+			t.Skip()
+		}
+		checkPruneFuzzInvariants(t, budget, msgs, PruneMessagesKeepTurns(msgs, budget))
+	})
+}
+
+// pruneFuzzSeeds returns the deterministic seed corpus for
+// FuzzPruneMessagesKeepTurns: budgets including 0/negative/huge, and single
+// and multi-exchange histories with and without plain assistant replies.
+func pruneFuzzSeeds() []string {
+	return []string{
 		"",
 		"100\n",
 		"100\ns|sys\n",
@@ -34,74 +53,88 @@ func FuzzPruneMessagesKeepTurns(f *testing.F) {
 		"50\ns|sys\nu|go\nc|c1|read_file|{}|\nt|c1|read_file|data\nc|c2|read_file|{}|\nt|c2|read_file|more\n",
 		"50\ns|sys\nu|go\na|plain answer\n",
 		"50\ns|sys\nu|go\nc|c1|read_file|{}|\nt|c1|read_file|data\na|closing note\n",
+		"50\ns|sys\nu|go\nc|c1|read_file|{}|\nt|c1|read_file|data\na|mid note\nc|c2|read_file|{}|\nt|c2|read_file|more\n",
 		"10\nu|go\nc|c1|read_file|{}|\nt|c1|read_file|data\n",
 		"0\ns|sys\nu|go\nc|c1|read_file|{}|\nt|c1|read_file|data\n",
 		"-5\ns|sys\nu|go\n",
 		"999999999\ns|sys\nu|go\nc|c1|read_file|{}|\nt|c1|read_file|data\n",
 	}
-	for _, s := range seeds {
-		f.Add([]byte(s))
+}
+
+// checkPruneFuzzInvariants asserts the pruning invariants for one fuzz input:
+// the pruned history never grows, stays validly paired, is deterministic,
+// keeps a system message at index 0, respects the budget (fail-closed when it
+// cannot fit, must-fit when the header plus the newest exchange fit), and
+// never drops plain assistant replies in a valid single-turn history.
+func checkPruneFuzzInvariants(t *testing.T, budget int, msgs, pruned []Message) {
+	t.Helper()
+	valid := ValidateToolPairing(msgs) == nil
+
+	if len(pruned) > len(msgs) {
+		t.Fatalf("pruned history grew: %d -> %d", len(msgs), len(pruned))
 	}
-	f.Fuzz(func(t *testing.T, data []byte) {
-		budget, msgs, ok := parsePruneFuzzInput(data)
-		if !ok {
-			t.Skip()
+	if len(msgs) > 0 && msgs[0].Role == RoleSystem {
+		if len(pruned) == 0 || pruned[0].Role != RoleSystem {
+			t.Fatal("system message no longer at index 0")
 		}
-		valid := ValidateToolPairing(msgs) == nil
-
-		pruned := PruneMessagesKeepTurns(msgs, budget)
-
-		if len(pruned) > len(msgs) {
-			t.Fatalf("pruned history grew: %d -> %d", len(msgs), len(pruned))
+	}
+	if valid {
+		if err := ValidateToolPairing(pruned); err != nil {
+			t.Fatalf("pruned a valid history into an invalid one: %v", err)
 		}
-		if len(msgs) > 0 && msgs[0].Role == RoleSystem {
-			if len(pruned) == 0 || pruned[0].Role != RoleSystem {
-				t.Fatal("system message no longer at index 0")
+	}
+
+	// Determinism: the same input must prune to the same history.
+	again := PruneMessagesKeepTurns(msgs, budget)
+	if !samePrunedMessages(pruned, again) {
+		t.Fatal("pruning is not deterministic")
+	}
+
+	// Budget, fail-closed direction: with a positive budget, a pruned history
+	// still over budget must hold no removable exchange - dropping more was
+	// impossible (only the turn header and plain replies are left). For valid
+	// histories an assistant tool_call with results is always removable.
+	if valid && budget > 0 && MessagesTokens(pruned) > budget {
+		for _, m := range pruned {
+			if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
+				t.Fatalf("over-budget pruned history (%d > %d) still holds a droppable exchange", MessagesTokens(pruned), budget)
 			}
 		}
-		if valid {
-			if err := ValidateToolPairing(pruned); err != nil {
-				t.Fatalf("pruned a valid history into an invalid one: %v", err)
+	}
+
+	// Budget, must-fit direction: for a valid single-turn history (one user
+	// message), the newest exchange is the last assistant tool_call block plus
+	// its consecutive results, and the never-dropped header is everything
+	// outside it. If the header plus the newest exchange fits the budget, the
+	// pruned history must fit too. For a single-user history this direction
+	// only fires when the early-return path already keeps everything.
+	if valid && budget > 0 && userMessageCount(msgs) == 1 {
+		if start, end, ok := newestExchangeRange(msgs); ok {
+			header := MessagesTokens(msgs[:start]) + MessagesTokens(msgs[end:])
+			newest := MessagesTokens(msgs[start:end])
+			if header+newest <= budget && MessagesTokens(pruned) > budget {
+				t.Fatalf("pruned history (%d) exceeds budget %d although header+newest exchange fit (%d)", MessagesTokens(pruned), budget, header+newest)
 			}
 		}
+	}
 
-		// Determinism: the same input must prune to the same history.
-		again := PruneMessagesKeepTurns(msgs, budget)
-		if !samePrunedMessages(pruned, again) {
-			t.Fatal("pruning is not deterministic")
+	// Plain-assistant survival: a plain assistant message is never part of an
+	// exchange block, so for a valid single-turn history whose first non-system
+	// message is the user message it must survive pruning at any budget. The
+	// old contiguous-region cut dropped plain replies lying between two dropped
+	// exchanges even when the budget had room for them. The property holds for
+	// every budget, so it is asserted wherever it is sound.
+	if valid && budget > 0 && userMessageCount(msgs) == 1 {
+		first := 0
+		if msgs[0].Role == RoleSystem {
+			first = 1
 		}
-
-		// Budget, fail-closed direction: with a positive budget, a pruned
-		// history that is still over budget must hold no removable exchange -
-		// dropping more was impossible (only the turn header and plain replies
-		// are left). For valid histories an assistant tool_call with results
-		// is always a removable exchange, so such a result proves the pruner
-		// stopped early.
-		if valid && budget > 0 && MessagesTokens(pruned) > budget {
-			for _, m := range pruned {
-				if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
-					t.Fatalf("over-budget pruned history (%d > %d) still holds a droppable exchange", MessagesTokens(pruned), budget)
-				}
+		if first < len(msgs) && msgs[first].Role == RoleUser {
+			if got := plainAssistantCount(pruned); got != plainAssistantCount(msgs) {
+				t.Fatalf("pruning dropped %d plain assistant messages (%d -> %d)", plainAssistantCount(msgs)-got, plainAssistantCount(msgs), got)
 			}
 		}
-
-		// Budget, must-fit direction: for a valid single-turn history (one user
-		// message), the newest exchange is the last assistant tool_call block
-		// plus its consecutive results, and the never-dropped part (the header)
-		// is everything outside that block - the user message, plain assistant
-		// messages before it, and any plain assistant messages after it. If the
-		// header plus the newest exchange fits the budget, the pruned history
-		// must fit too.
-		if valid && budget > 0 && userMessageCount(msgs) == 1 {
-			if start, end, ok := newestExchangeRange(msgs); ok {
-				header := MessagesTokens(msgs[:start]) + MessagesTokens(msgs[end:])
-				newest := MessagesTokens(msgs[start:end])
-				if header+newest <= budget && MessagesTokens(pruned) > budget {
-					t.Fatalf("pruned history (%d) exceeds budget %d although header+newest exchange fit (%d)", MessagesTokens(pruned), budget, header+newest)
-				}
-			}
-		}
-	})
+	}
 }
 
 // parsePruneFuzzInput decodes the structured fuzz input: the first line is the
@@ -164,6 +197,18 @@ func userMessageCount(msgs []Message) int {
 	count := 0
 	for _, m := range msgs {
 		if m.Role == RoleUser {
+			count++
+		}
+	}
+	return count
+}
+
+// plainAssistantCount counts assistant messages that carry no tool calls. Such
+// messages are context, not part of any exchange, and must survive pruning.
+func plainAssistantCount(msgs []Message) int {
+	count := 0
+	for _, m := range msgs {
+		if m.Role == RoleAssistant && len(m.ToolCalls) == 0 {
 			count++
 		}
 	}
