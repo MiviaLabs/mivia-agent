@@ -66,13 +66,14 @@ func workflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	// A workflow that declares a [delivery] policy grants publication: the
 	// harness must honor it always, without flags or manual overrides. When
 	// the harness wires its workflow surface (a non-nil event-bus provider
-	// marks production wiring; tests pass nil), sweep delivery_pending runs
-	// left over from an earlier session (restart or crash) and publish them.
-	// The sweep is one-shot and serialized per run by the execution file
-	// lock, so it never races a live deliverer; runs without an active
-	// delivery policy are refused by the delivery path itself.
+	// marks production wiring; tests pass nil), recover runs left unfinished
+	// by an earlier session (restart or crash): publish delivery_pending runs
+	// and resume pending/running/waiting_approval runs whose claim is free or
+	// expired. The sweep is one-shot; per run it is serialized by the
+	// execution file lock and fenced by the run claim, so it never races a
+	// live executor, and delivery refuses runs without an active policy.
 	if provider != nil {
-		go engine.reconcileParkedDeliveries(context.Background())
+		go engine.reconcileParkedRuns(context.Background())
 	}
 	// NewService fails only when the repository factory is nil; this caller
 	// always provides one, so the error is impossible by construction and the
