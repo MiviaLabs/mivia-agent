@@ -122,16 +122,15 @@ func TestChunkSwapRenameFailureKeepsOldSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// A two-chunk transcript.
-	oldMsgs := make([]provider.Message, 0, ChunkMessageThreshold+1)
-	for i := 0; i < ChunkMessageThreshold+1; i++ {
-		oldMsgs = append(oldMsgs, provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("old-%d", i)})
-	}
+	oldMsgs := chunkMsgsForCount(2, "old")
 	if err := store.Save("s", oldMsgs, "m", "p"); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(store.Dir(), "s")
+	oldChunk0, err := os.ReadFile(filepath.Join(dir, "chunk_0000.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	oldChunk1, err := os.ReadFile(filepath.Join(dir, "chunk_0001.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -150,40 +149,158 @@ func TestChunkSwapRenameFailureKeepsOldSnapshot(t *testing.T) {
 
 	// Re-save a same-size transcript; the save must fail with the injected
 	// error.
-	newMsgs := make([]provider.Message, 0, ChunkMessageThreshold+1)
-	for i := 0; i < ChunkMessageThreshold+1; i++ {
-		newMsgs = append(newMsgs, provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("new-%d", i)})
-	}
-	if err := store.Save("s", newMsgs, "m", "p"); err == nil {
-		t.Fatal("expected the injected rename failure, got nil")
-	} else if !errors.Is(err, injectedErr) {
-		t.Fatalf("expected the injected rename failure, got: %v", err)
-	}
+	assertSaveFailsWith(t, store, "s", chunkMsgsForCount(2, "new"), injectedErr)
 
 	// The previous snapshot must still be intact and loadable: meta still
-	// references two chunks and every referenced chunk file still exists.
-	loaded, info, err := store.LoadWithInfo("s")
+	// references two chunks, every referenced chunk file still exists, and the
+	// loaded transcript is byte-for-byte the old one.
+	assertFailedSaveLeavesSnapshot(t, store, "s", dir, oldMsgs, 2, oldChunk0, oldChunk1)
+}
+
+// assertSaveFailsWith re-saves msgs under name and asserts the save fails with
+// exactly wantErr (the injected rename failure).
+func assertSaveFailsWith(t *testing.T, store *FileSessionStore, name string, msgs []provider.Message, wantErr error) {
+	t.Helper()
+	if err := store.Save(name, msgs, "m", "p"); err == nil {
+		t.Fatal("expected the injected rename failure, got nil")
+	} else if !errors.Is(err, wantErr) {
+		t.Fatalf("expected the injected rename failure, got: %v", err)
+	}
+}
+
+// assertFailedSaveLeavesSnapshot asserts that a failed mid-swap save left the
+// previous snapshot byte-for-byte intact: meta still references wantChunks,
+// every message round-trips in order, and each chunk file still holds its old
+// content. The chunk_0000 comparison is the assertion that fails pre-fix: the
+// first chunk was already swapped to new content before the injected failure,
+// so pre-fix it held NEW content while meta.json still referenced the old
+// snapshot, silently corrupting the load.
+func assertFailedSaveLeavesSnapshot(t *testing.T, store *FileSessionStore, name, dir string, wantMsgs []provider.Message, wantChunks int, wantChunk0, wantChunk1 []byte) {
+	t.Helper()
+	loaded, info, err := store.LoadWithInfo(name)
 	if err != nil {
 		t.Fatalf("load after failed save must still succeed: %v", err)
 	}
-	if info.ChunkCount != 2 {
-		t.Fatalf("ChunkCount: got %d, want 2", info.ChunkCount)
+	if info.ChunkCount != wantChunks {
+		t.Fatalf("ChunkCount: got %d, want %d", info.ChunkCount, wantChunks)
 	}
-	if len(loaded) != ChunkMessageThreshold+1 {
-		t.Fatalf("loaded messages: got %d, want %d", len(loaded), ChunkMessageThreshold+1)
+	if len(loaded) != len(wantMsgs) {
+		t.Fatalf("loaded messages: got %d, want %d", len(loaded), len(wantMsgs))
 	}
-	// The chunk whose rename failed must still hold the old content.
+	for i, want := range wantMsgs {
+		if loaded[i].Role != want.Role || loaded[i].Content != want.Content {
+			t.Fatalf("message %d = %+v, want %+v: failed save must leave the previous snapshot byte-for-byte intact", i, loaded[i], want)
+		}
+	}
+	// Both chunks must still hold their old content: chunk_0001 was never
+	// swapped (its rename failed) and chunk_0000 must have been restored
+	// (pre-fix it held NEW content, corrupting the load).
+	after0, err := os.ReadFile(filepath.Join(dir, "chunk_0000.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after0) != string(wantChunk0) {
+		t.Fatal("chunk_0000.jsonl changed after the failed save (pre-fix it held new content)")
+	}
 	after, err := os.ReadFile(filepath.Join(dir, "chunk_0001.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(after) != string(oldChunk1) {
+	if string(after) != string(wantChunk1) {
 		t.Fatal("chunk_0001.jsonl changed after the failed save")
 	}
-	// No staged temp files may remain.
-	leftovers, _ := filepath.Glob(filepath.Join(dir, "*.tmp"))
-	if len(leftovers) > 0 {
-		t.Fatalf("temp files left behind: %v", leftovers)
+	// No staged temp files or backups may remain.
+	for _, pattern := range []string{"*.tmp", "*.bak"} {
+		leftovers, _ := filepath.Glob(filepath.Join(dir, pattern))
+		if len(leftovers) > 0 {
+			t.Fatalf("%s files left behind: %v", pattern, leftovers)
+		}
+	}
+}
+
+// chunkMsgsForCount builds a transcript sized to span n chunk files, labeled
+// with prefix so old and new snapshots are distinguishable.
+func chunkMsgsForCount(n int, prefix string) []provider.Message {
+	count := 3
+	if n > 1 {
+		count = ChunkMessageThreshold + 1
+	}
+	msgs := make([]provider.Message, 0, count)
+	for i := 0; i < count; i++ {
+		msgs = append(msgs, provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("%s-%d", prefix, i)})
+	}
+	return msgs
+}
+
+// A re-save that fails mid-swap must restore the FULL previous snapshot, not
+// just the chunk whose rename failed: the old code renamed staged chunks over
+// their destinations one by one, so a failure at commit index i left chunks
+// 0..i-1 holding NEW content while meta.json still referenced the old chunk
+// count - a mixed transcript that loads without error and corrupts the
+// conversation. The matrix sweeps every reachable size delta (same, grow,
+// shrink) and failure index so the rollback path is pinned for all of them.
+func TestChunkSwapRenameFailureRestoresFullPreviousSnapshot(t *testing.T) {
+	tests := []struct {
+		name       string
+		oldChunks  int
+		newChunks  int
+		failCommit int
+	}{
+		{name: "same-size/fail-commit-0", oldChunks: 2, newChunks: 2, failCommit: 0},
+		{name: "same-size/fail-commit-1", oldChunks: 2, newChunks: 2, failCommit: 1},
+		{name: "grow/fail-commit-0", oldChunks: 1, newChunks: 2, failCommit: 0},
+		{name: "grow/fail-commit-1", oldChunks: 1, newChunks: 2, failCommit: 1},
+		{name: "shrink/fail-commit-0", oldChunks: 2, newChunks: 1, failCommit: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := NewFileSessionStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldMsgs := chunkMsgsForCount(tc.oldChunks, "old")
+			if err := store.Save("s", oldMsgs, "m", "p"); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(store.Dir(), "s")
+
+			injectedErr := errors.New("injected rename failure")
+			origRename := renameFile
+			renameFile = func(oldpath, newpath string) error {
+				if strings.HasSuffix(newpath, fmt.Sprintf(chunkFileName, tc.failCommit)) {
+					return injectedErr
+				}
+				return origRename(oldpath, newpath)
+			}
+			t.Cleanup(func() { renameFile = origRename })
+
+			newMsgs := chunkMsgsForCount(tc.newChunks, "new")
+			if err := store.Save("s", newMsgs, "m", "p"); !errors.Is(err, injectedErr) {
+				t.Fatalf("save error = %v, want the injected rename failure", err)
+			}
+
+			loaded, info, err := store.LoadWithInfo("s")
+			if err != nil {
+				t.Fatalf("load after failed save must still succeed: %v", err)
+			}
+			if info.ChunkCount != tc.oldChunks {
+				t.Fatalf("ChunkCount: got %d, want %d", info.ChunkCount, tc.oldChunks)
+			}
+			if len(loaded) != len(oldMsgs) {
+				t.Fatalf("loaded messages: got %d, want %d", len(loaded), len(oldMsgs))
+			}
+			for i, want := range oldMsgs {
+				if loaded[i].Role != want.Role || loaded[i].Content != want.Content {
+					t.Fatalf("message %d = %+v, want %+v: failed save must leave the previous snapshot byte-for-byte intact", i, loaded[i], want)
+				}
+			}
+			for _, pattern := range []string{"*.tmp", "*.bak"} {
+				leftovers, _ := filepath.Glob(filepath.Join(dir, pattern))
+				if len(leftovers) > 0 {
+					t.Fatalf("%s files left behind after failed save: %v", pattern, leftovers)
+				}
+			}
+		})
 	}
 }
 
