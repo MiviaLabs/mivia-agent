@@ -47,6 +47,14 @@ func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, 
 	}
 	if decision == "rejected" {
 		route := failureRoute(step)
+		// Rejection always fails the run (the CompareAndSetRunStatus to Failed
+		// below), so the durable route must be terminal — never an un-honored
+		// on_failure target that a crash between this persist and the status
+		// CAS could resume into and silently undo the rejection. Mirrors the
+		// guarded pattern in settleAgentAttempt and settleHostFailure.
+		if !workflowledger.IsTerminalStepID(route.ToStepID) {
+			route.ToStepID = "failure"
+		}
 		rejectErr := fmt.Errorf("human_gate step %q was rejected", step.ID)
 		if err := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(ctx, c.Repo, rejectErr)}, workflowledger.AttemptStatusFailed, route); err != nil {
 			return err
