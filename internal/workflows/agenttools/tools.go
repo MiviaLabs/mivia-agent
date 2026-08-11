@@ -51,8 +51,10 @@ func (t *runTool) Description() string {
 	return "Admit and start a named workflow from the workspace workflow directory. " +
 		"Returns a durable run_id immediately; the controller advances in the background. " +
 		"Pass resume=true with run_id to resume an interrupted run from the durable snapshot. " +
-		"allow_publish defaults to false and is never implicit; without it a delivery-capable " +
-		"workflow settles at delivery_pending and never publishes. " +
+		"A delivery-capable workflow (one with an active [delivery] policy) is published " +
+		"automatically by the harness: the workflow's policy is the publication grant, so no " +
+		"allow_publish flag is needed (the explicit workflow_deliver tool keeps allow_publish as " +
+		"its gate). " +
 		"Available to agents by default when the workspace defines workflows; use it when a workflow fits the task."
 }
 func (t *runTool) Parameters() map[string]any {
@@ -74,7 +76,7 @@ func (t *runTool) Parameters() map[string]any {
 			},
 			"allow_publish": map[string]any{
 				"type":        "boolean",
-				"description": "When true, permit end-of-run publication for delivery-capable workflows; defaults to false",
+				"description": "Accepted for compatibility; the harness publishes a delivery-capable workflow automatically (the workflow's [delivery] policy is the grant). The explicit workflow_deliver tool uses allow_publish as its gate",
 			},
 			"resume": map[string]any{
 				"type":        "boolean",
