@@ -76,6 +76,20 @@ func (s *Session) captureOperationToken(key string) OperationToken {
 	return s.captureOperationTokenLocked(key)
 }
 
+// captureTurnToken captures the current operation fence and pins TurnID to the
+// given turn id. captureOperationTokenLocked reads the session's CURRENT turn
+// id; a turn that re-captures its fence after a start-of-turn surface
+// publication (surfaceForTurnStart) must keep its own id, so a superseding
+// turn's id can never validate the older turn's commit
+// (chat-turnstart-admission-fences-own-turn).
+func (s *Session) captureTurnToken(turnID uint64) OperationToken {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	token := s.captureOperationTokenLocked(fmt.Sprintf("turn:%d", turnID))
+	token.TurnID = turnID
+	return token
+}
+
 func (s *Session) tokenCurrentLocked(token OperationToken) bool {
 	return token.sameFence(s.captureOperationTokenLocked(token.IdempotencyKey))
 }
