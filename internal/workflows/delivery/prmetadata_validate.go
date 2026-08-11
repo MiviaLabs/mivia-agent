@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -11,13 +12,24 @@ import (
 	ledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// miviaBaseURL is the root of the Mivia web app, used to build links in
-// published PR bodies.
-const miviaBaseURL = "https://mivia.app"
+// defaultMiviaBaseURL is the root of the Mivia web app, used to build links
+// in published PR bodies. Override with the MIVIA_WEB_APP_BASE_URL env var.
+const defaultMiviaBaseURL = "https://mivia.app"
+
+// miviaBaseURL returns the configured Mivia web app root, falling back to
+// defaultMiviaBaseURL when MIVIA_WEB_APP_BASE_URL is unset.
+func miviaBaseURL() string {
+	if v := os.Getenv("MIVIA_WEB_APP_BASE_URL"); v != "" {
+		return v
+	}
+	return defaultMiviaBaseURL
+}
 
 // deliveryFooter is the attribution line appended to every PR body the
 // delivery engine publishes.
-const deliveryFooter = "Automated workflow delivery from [Mivia Agent](" + miviaBaseURL + ")."
+func deliveryFooter() string {
+	return "Automated workflow delivery from [Mivia Agent](" + miviaBaseURL() + ")."
+}
 
 // validatePRMetadata resolves the agent-provided PR metadata (title and
 // summary) from the run's change-summary output, or falls back to the legacy
@@ -65,12 +77,13 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 			return "", "", verr
 		}
 	}
-	runLink := "[" + req.RunID + "](" + miviaBaseURL + "/runs/" + req.RunID + ")"
-	digestLink := "[" + req.WorkflowDigest + "](" + miviaBaseURL + "/workflows/digest/" + req.WorkflowDigest + ")"
+	base := miviaBaseURL()
+	runLink := "[" + req.RunID + "](" + base + "/runs/" + req.RunID + ")"
+	digestLink := "[" + req.WorkflowDigest + "](" + base + "/workflows/digest/" + req.WorkflowDigest + ")"
 	if strings.TrimSpace(agentSummary) != "" {
-		body = agentSummary + "\n\n---\n" + deliveryFooter + "\nRun: " + runLink + "\nWorkflow digest: " + digestLink
+		body = agentSummary + "\n\n---\n" + deliveryFooter() + "\nRun: " + runLink + "\nWorkflow digest: " + digestLink
 	} else {
-		body = deliveryFooter + "\n\nRun: " + runLink + "\nWorkflow digest: " + digestLink
+		body = deliveryFooter() + "\n\nRun: " + runLink + "\nWorkflow digest: " + digestLink
 	}
 	return title, body, nil
 }
