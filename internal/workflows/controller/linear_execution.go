@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -133,6 +135,18 @@ func (c *LinearController) JoinInFlightAttempt(ctx context.Context, attempt work
 	}
 	step, ok := c.WorkflowStep(attempt.StepID)
 	if !ok {
+		// Heal a stale delivery re-entry before the hard undeclared-step error:
+		// a crash between ReopenForRepair's attempt create and complete (pre-
+		// atomic-re-entry binaries) left a Running wf-delivery attempt with no
+		// child identity and no declared step. Completing it Failed with the
+		// workflow's repair route lets the resume proceed at the derived repair
+		// step instead of erroring, which parked the run permanently
+		// (unresumable, undeliverable). Only this exact artifact is healed;
+		// every OTHER undeclared step keeps the hard error below (no gate
+		// weakening).
+		if attempt.StepID == delivery.DeliveryRepairStepID && attempt.CoordinatorRunID == "" && attempt.TaskID == "" {
+			return c.healStaleDeliveryReentry(ctx, attempt)
+		}
 		return fmt.Errorf("workflow step %q is not declared", attempt.StepID)
 	}
 	runtime, ok := c.Steps[attempt.StepID]
@@ -181,6 +195,39 @@ func (c *LinearController) JoinInFlightAttempt(ctx context.Context, attempt work
 	}
 	_, _, err = c.settleAgentAttempt(ctx, run, step, latest, result, joinErr)
 	return err
+}
+
+// healStaleDeliveryReentry settles a crash-left Running wf-delivery attempt
+// (no dispatched child, no declared step) as Failed with the workflow's
+// delivery repair route, so the resume proceeds at the derived repair step
+// instead of hard-erroring "workflow step \"wf-delivery\" is not declared".
+// The route comes only from the snapshot-pinned, compile-validated Delivery
+// config (OnFailure, falling back to OnPRMetadataFailure); it may be empty
+// when the workflow declares no repair target, in which case the attempt is
+// settled Failed without a route. Idempotent: an ErrConflict/ErrNotFound
+// followed by a re-read showing the attempt already terminal is treated as
+// settled by a concurrent writer (nil).
+func (c *LinearController) healStaleDeliveryReentry(ctx context.Context, attempt workflowledger.StepAttempt) error {
+	route := ""
+	if c.Workflow != nil && c.Workflow.Delivery != nil {
+		route = c.Workflow.Delivery.OnFailure
+		if route == "" {
+			route = c.Workflow.Delivery.OnPRMetadataFailure
+		}
+	}
+	outcome := workflowledger.AttemptOutcome{
+		Status:   workflowledger.AttemptStatusFailed,
+		ToStepID: route,
+	}
+	if err := c.Repo.CompleteStepAttempt(ctx, c.RunID, attempt.AttemptID, attempt.Version, outcome); err != nil {
+		if errors.Is(err, workflowledger.ErrConflict) || errors.Is(err, workflowledger.ErrNotFound) {
+			if fresh, getErr := c.Repo.GetStepAttempt(ctx, c.RunID, attempt.AttemptID); getErr == nil && workflowledger.IsTerminalAttemptStatus(fresh.Status) {
+				return nil // already settled by a concurrent writer
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *LinearController) newAttempt(stepID string, attemptNo int) workflowledger.StepAttempt {

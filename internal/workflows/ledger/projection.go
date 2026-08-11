@@ -297,7 +297,10 @@ func applyAttemptPrompt(proj *Projection, ev storage.Event) error {
 // applyAttemptCompleted folds one wf_attempt_completed event into the
 // projection: the attempt is merged by attempt_id, and a non-empty ToStepID
 // derives a TransitionRecord and a step candidate for the derived active
-// step.
+// step. A completed-only record (RecordStepAttemptOutcome — no
+// wf_attempt_started event) restores its identity from the payload's
+// StepID/AttemptNo/StartedAt fields, which are omitempty so ordinary
+// two-write completions replay unchanged.
 func applyAttemptCompleted(proj *Projection, st *rebuildState, ev storage.Event) error {
 	p, err := unmarshalAttemptCompleted(ev.Payload)
 	if err != nil {
@@ -310,6 +313,15 @@ func applyAttemptCompleted(proj *Projection, st *rebuildState, ev storage.Event)
 		st.attemptIdx[p.AttemptID] = i
 	}
 	a := &proj.Attempts[i]
+	if p.StepID != "" {
+		a.StepID = p.StepID
+	}
+	if p.AttemptNo > 0 {
+		a.AttemptNo = p.AttemptNo
+	}
+	if !p.StartedAt.IsZero() {
+		a.StartedAt = p.StartedAt
+	}
 	a.Status = p.Status
 	a.CoordinatorRunID = p.CoordinatorRunID
 	a.TaskID = p.TaskID

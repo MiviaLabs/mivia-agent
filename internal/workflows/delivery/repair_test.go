@@ -45,6 +45,72 @@ func findRepairAttempt(t *testing.T, ctx context.Context, repo workflowledger.Re
 	return recorded
 }
 
+// failingAttemptWriter wraps a repository and fails every attempt-outcome
+// write, simulating a crash or storage fault at the exact moment the delivery
+// re-entry records its attempt.
+type failingAttemptWriter struct {
+	workflowledger.Repository
+	err error
+}
+
+func (f *failingAttemptWriter) CompleteStepAttempt(ctx context.Context, runID, attemptID string, expectedVersion uint64, outcome workflowledger.AttemptOutcome) error {
+	return f.err
+}
+
+func (f *failingAttemptWriter) RecordStepAttemptOutcome(ctx context.Context, attempt workflowledger.StepAttempt, outcome workflowledger.AttemptOutcome) error {
+	return f.err
+}
+
+// TestReopenForRepairAtomicReentryWrite pins the atomic re-entry contract: a
+// failure while recording the delivery re-entry must not leave a Running
+// wf-delivery attempt behind. Before the fix ReopenForRepair wrote the
+// Running attempt (CreateStepAttempt) and then completed it in a SEPARATE
+// write, so a failure between the two left a Running undeclared-step attempt
+// that made the run permanently unresumable; after the fix the single-write
+// API fails atomically and no attempt exists at all.
+func TestReopenForRepairAtomicReentryWrite(t *testing.T) {
+	ctx := context.Background()
+	base := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = base.Close() })
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-repair-atomic", Status: workflowledger.RunStatusPending, ActiveStepID: "preflight_structure",
+	}
+	if err := base.CreateRun(ctx, run, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	casRepairRunToDeliveryPending(t, ctx, base, run.RunID)
+
+	sentinel := errors.New("attempt write failed")
+	repo := &failingAttemptWriter{Repository: base, err: sentinel}
+
+	var stdout bytes.Buffer
+	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", MaxDeliveryRepairs, errors.New("hook rejected"), &stdout); err == nil {
+		t.Fatal("ReopenForRepair() must surface the failed attempt write")
+	}
+
+	// The failed re-entry must not leave any wf-delivery attempt in a
+	// non-terminal state: the attempt and its terminal outcome are one write,
+	// so a failing write leaves no attempt at all.
+	attempts, err := base.ListStepAttempts(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range attempts {
+		if a.StepID == DeliveryRepairStepID && !workflowledger.IsTerminalAttemptStatus(a.Status) {
+			t.Fatalf("failed re-entry left a non-terminal wf-delivery attempt %s (status %q)", a.AttemptID, a.Status)
+		}
+	}
+	// A resume must find nothing in flight: the run is running with no
+	// attempts, so the CLI join loop has nothing to hard-fail on.
+	plan, err := workflowledger.PlanResume(ctx, base, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.AttemptsInFlight) != 0 {
+		t.Fatalf("PlanResume.AttemptsInFlight = %d, want 0 after a failed re-entry write", len(plan.AttemptsInFlight))
+	}
+}
+
 // A delivery that fails for a reason an agent can repair must send the run
 // back into the workflow, not stop it. The re-entry writes one wf-delivery
 // attempt, completes it as failed with a route to the named repair step, and
