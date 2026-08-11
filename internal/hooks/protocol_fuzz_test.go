@@ -35,9 +35,15 @@ func FuzzParseStdout(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, body string) {
 		for _, event := range []Event{EventPreToolUse, EventPostToolUse, EventStop} {
-			v := parseStdout(event, execution{program: "/tmp/h.sh", stdout: []byte(body)})
-			if v.denied && len(v.reason) > maxReasonBytes+len(fmt.Sprintf("\n... truncated at %d bytes", maxReasonBytes)) {
-				t.Fatalf("%s: deny reason length %d exceeds the bound", event, len(v.reason))
+			// Toggle the capture-cut flag so the truncated-deny branch in
+			// parsePreToolUse is fuzzed against the same invariants: no panic
+			// on any event, and any deny reason stays within maxReasonBytes
+			// plus the fixed truncation notice.
+			for _, truncated := range []bool{false, true} {
+				v := parseStdout(event, execution{program: "/tmp/h.sh", stdout: []byte(body), truncated: truncated})
+				if v.denied && len(v.reason) > maxReasonBytes+len(fmt.Sprintf("\n... truncated at %d bytes", maxReasonBytes)) {
+					t.Fatalf("%s: deny reason length %d exceeds the bound", event, len(v.reason))
+				}
 			}
 		}
 	})
