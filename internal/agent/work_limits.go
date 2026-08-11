@@ -72,6 +72,25 @@ func (m *workLimitMeter) reserveProvider(promptTokens, outputTokens int) error {
 	return nil
 }
 
+// reservePromptOnly charges prompt tokens against MaxPromptTokens without
+// touching the output allowance. It backs recovery paths (the prompt-too-long
+// compaction retry) where the retried prompt is genuinely new work but the
+// completion's output was already reserved by the rejected attempt: charging
+// output twice for one logical completion would hard-fail a finite
+// MaxOutputTokens budget (DC-6 broken bound on the DC-8 retry path). The
+// cumulative prompt bound still holds; a nil receiver is a no-op, mirroring
+// reserveProvider.
+func (m *workLimitMeter) reservePromptOnly(promptTokens int) error {
+	if m == nil {
+		return nil
+	}
+	if m.limits.MaxPromptTokens > 0 && promptTokens > m.limits.MaxPromptTokens-m.promptTokens {
+		return fmt.Errorf("work limit exceeded: prompt tokens")
+	}
+	m.promptTokens += promptTokens
+	return nil
+}
+
 func requestOutputReserve(req provider.Request) int {
 	if req.MaxTokens == nil {
 		return 0
