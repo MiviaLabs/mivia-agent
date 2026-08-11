@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func sseServer(t *testing.T, chunks []string, sendDone bool) *httptest.Server {
@@ -580,5 +583,69 @@ func TestNoMessageLossFallbackToleratesNilWriter(t *testing.T) {
 	}
 	if resp.Content != "fallback" {
 		t.Fatalf("resp.Content=%q, want %q", resp.Content, "fallback")
+	}
+}
+
+// deadlineTransport returns the exact error shape http.Client produces when
+// its own Timeout backstop fires: a *url.Error wrapping context.DeadlineExceeded.
+// The failing RoundTripper never dials, so no server or insecure-HTTP env is
+// needed to exercise chatTurnStream's client.Do error branch.
+type deadlineTransport struct{}
+
+func (deadlineTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, &url.Error{Op: "Post", URL: "https://example.invalid/chat/completions", Err: context.DeadlineExceeded}
+}
+
+// TestChatTurnStreamDoDeadlineIsTransient locks chatTurnStream's client.Do
+// error branch to the same deadline marking as doJSONOnce and ChatStream.
+// When the transport backstop (http.Client.Timeout, 15min default) or a parent
+// deadline fires before the armed per-call req.Timeout (hours), client.Do
+// returns *url.Error wrapping context.DeadlineExceeded. A bare deadline is not
+// transient, so without the mark the step fails terminal and loses finished
+// work (DC-8) instead of engaging runStepWithTransientRetry.
+func TestChatTurnStreamDoDeadlineIsTransient(t *testing.T) {
+	c := &OpenAICompat{
+		name:        "test",
+		baseURL:     "https://example.invalid",
+		apiKey:      "k",
+		errorParser: openaiErrorParser,
+		client:      &http.Client{Transport: deadlineTransport{}},
+	}
+
+	// Positive: the armed req.Timeout is still in the future when the
+	// transport backstop cut the call, so the cut is transient and the step
+	// retry loop may re-run the call under a fresh context.
+	_, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true, Timeout: 12 * time.Hour,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	var transient *TransientError
+	if !errors.As(err, &transient) {
+		t.Fatalf("deadline cut before the armed req.Timeout must be transient, got: %v", err)
+	}
+
+	// Negative (a): no armed per-call deadline (Timeout==0). A parent/step
+	// deadline is the caller's decision, not a cut call, so the url.Error
+	// deadline must stay permanent: retrying under the expired context fails
+	// at once, every time.
+	_, err = c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true, Timeout: 0,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if errors.As(err, &transient) {
+		t.Fatalf("bare deadline with no armed req.Timeout must stay permanent, got transient: %v", err)
+	}
+
+	// Negative (b): the armed deadline genuinely fired - the parent context
+	// is already expired, so the provider had its full budget and answered
+	// nothing. That is a permanent statement about the call, not a cut answer.
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	_, err = c.ChatTurn(expired, Request{
+		Model: "m", Stream: true, Timeout: time.Hour,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if errors.As(err, &transient) {
+		t.Fatalf("genuinely fired armed deadline must stay permanent, got transient: %v", err)
 	}
 }

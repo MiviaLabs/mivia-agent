@@ -37,6 +37,7 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
+		err = markTransientReadDeadline(callCtx, req.Timeout, err)
 		return nil, asTransient(fmt.Errorf("%s: request failed: %w", c.name, err))
 	}
 	defer resp.Body.Close()
