@@ -152,6 +152,13 @@ func applyEdits(ctx context.Context, content, path string, edits []editSpec) (st
 		if e.OldString == e.NewString {
 			return "", 0, fmt.Errorf("%s: old_string and new_string are identical", label)
 		}
+		// This edit already landed against the running content - see
+		// alreadyApplied for why (old_string is frequently a substring of
+		// new_string, so skipping this would let a retried or independently
+		// re-issued edit duplicate the inserted text).
+		if alreadyApplied(content, e.NewString) {
+			continue
+		}
 		count := strings.Count(content, e.OldString)
 		if count == 0 {
 			// An edit that matched the ORIGINAL file but not the running

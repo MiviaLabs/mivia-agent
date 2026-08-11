@@ -655,3 +655,53 @@ func TestMultiEditReportsReadFailure(t *testing.T) {
 		t.Fatal("expected a read failure on an unreadable file")
 	}
 }
+
+// Neither edit tool checks whether new_string is already present before
+// applying old_string -> new_string; it only checks old_string still exists.
+// When old_string survives as a substring of new_string (the common case for
+// an edit that extends an anchor line, e.g. a function signature followed by
+// an appended call), a retried or independently re-issued identical edit
+// re-applies and duplicates the inserted text. These two tests pin the
+// desired invariant - the duplication must not happen - and are expected to
+// fail (RED) until the tools gain an idempotency check.
+
+func TestSearchReplaceReapplyingIdenticalEditDoesNotDuplicate(t *testing.T) {
+	_, reg := setupWS(t)
+	mustExec(t, reg, "write_file", map[string]any{
+		"path":    "f.go",
+		"content": "func foo() {\n\treturn\n}\n",
+	})
+	edit := map[string]any{
+		"path":       "f.go",
+		"old_string": "func foo() {",
+		"new_string": "func foo() {\n\textra()",
+	}
+	mustExec(t, reg, "search_replace", edit)
+	// Re-issue the identical call: simulates a retried/duplicate delivery,
+	// or a second agent independently applying the same fix.
+	_, err := reg.Execute(context.Background(), "search_replace", mustJSON(t, edit))
+	got := mustExec(t, reg, "read_file", map[string]any{"path": "f.go"})
+	if n := strings.Count(got, "extra()"); n != 1 {
+		t.Fatalf("extra() appears %d times after reapplying an already-applied edit, want 1 (second call err=%v, content=%q)", n, err, got)
+	}
+}
+
+func TestMultiEditReapplyingIdenticalEditDoesNotDuplicate(t *testing.T) {
+	_, reg := setupWS(t)
+	mustExec(t, reg, "write_file", map[string]any{
+		"path":    "f.go",
+		"content": "func foo() {\n\treturn\n}\n",
+	})
+	args := map[string]any{
+		"path": "f.go",
+		"edits": []map[string]any{
+			{"old_string": "func foo() {", "new_string": "func foo() {\n\textra()"},
+		},
+	}
+	mustExec(t, reg, "multi_edit", args)
+	_, err := reg.Execute(context.Background(), "multi_edit", mustJSON(t, args))
+	got := mustExec(t, reg, "read_file", map[string]any{"path": "f.go"})
+	if n := strings.Count(got, "extra()"); n != 1 {
+		t.Fatalf("extra() appears %d times after reapplying an already-applied multi_edit, want 1 (second call err=%v, content=%q)", n, err, got)
+	}
+}
