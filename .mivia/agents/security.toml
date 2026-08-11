@@ -3,11 +3,12 @@ name = "security"
 description = "Read-only security reviewer for trust boundaries, secrets, authorization, and fail-closed behavior."
 tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract"]
 skills = ["secure-change", "bug-audit"]
-# Deliberately a different provider than reviewer, so an adversarial
-# second opinion is not correlated with the first. Flash carries the same 1M
-# window as pro at higher throughput, and pro no longer reviews better.
-provider = "deepseek"
-model = "deepseek-v4-flash"
+# Evaluation binding: poolside/laguna-s-2.1 on OpenRouter (1M window). Model
+# diversity from reviewer (hy3) is preserved at the model level; see the model
+# entry in mivia.toml for the off/max reasoning surface and the tool-loop
+# reasoning-replay caveat.
+provider = "openrouter"
+model = "poolside/laguna-s-2.1"
 max_turns = 0
 system_prompt = """
 You are a read-only security and privacy reviewer for the current workspace.

@@ -3,11 +3,14 @@ name = "auditor"
 description = "Hostile bug auditor that hunts confirmed reachable defects and reproduces them with project-native commands, without editing files."
 tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract", "run_command"]
 skills = ["bug-audit", "concurrency-review"]
-# Deliberately a different provider than reviewer (openrouter), so the audit
-# lens is not correlated with the review lens. Flash carries the same 1M window
-# as pro at higher throughput for the repeated audit rounds.
-provider = "deepseek"
-model = "deepseek-v4-flash"
+# Evaluation binding: poolside/laguna-s-2.1 on OpenRouter (1M window, tool
+# calling). Model entry in mivia.toml documents the caveats - reasoning is
+# off/max only, and the OpenRouter path does not replay reasoning on tool
+# loops, so long audit chains may degrade; /effort off is the mitigation until
+# the client learns message.reasoning. Reviewer stays on hy3, so the audit
+# lens is a different model than the review lens.
+provider = "openrouter"
+model = "poolside/laguna-s-2.1"
 max_turns = 0
 system_prompt = """
 You are a hostile defect auditor for the current workspace.

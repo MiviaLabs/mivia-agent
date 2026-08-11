@@ -76,6 +76,15 @@ models = [
   # On/off reasoning only (no graded effort): "high" = thinking on. Tool
   # calling supported; no structured outputs (response_format unsupported).
   { name = "inclusionai/ling-3.0-flash", context_window_tokens = 262144, max_output_tokens = 32768, reasoning_efforts = ["off", "high"], reasoning = "high", reasoning_dialect = "openrouter" },
+  # Poolside Laguna S 2.1: 118B-total / 8B-active MoE coding-agent model,
+  # 1M context / 131K max completion, tool calling, reasoning off/max only
+  # ("max" = thinking on; default on matches upstream). No response_format.
+  # Caveats: benchmarks are vendor self-reports; the client sends
+  # reasoning.effort although the endpoint reports supports_reasoning_effort:
+  # false, and the OpenRouter path does not replay reasoning on tool loops -
+  # smoke test before agentic use. The :free variant trains on your inputs -
+  # use the paid endpoint (retains prompts 90 days, trains nothing).
+  { name = "poolside/laguna-s-2.1", context_window_tokens = 1048576, max_output_tokens = 131072, reasoning_efforts = ["off", "max"], reasoning = "max", reasoning_dialect = "openrouter" },
 ]
 default_model = "openai/gpt-4o-mini"
 api_key_env = "OPENROUTER_API_KEY"

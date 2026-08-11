@@ -3,9 +3,12 @@ name = "researcher"
 description = "Read-only researcher who maps evidence, dependencies, and relevant external references."
 tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "search", "fetch_url", "extract"]
 skills = ["architecture-review", "bug-audit", "concurrency-review", "secure-change"]
-# High-volume read-only sweeps: cheapest model with a 1M window.
-provider = "deepseek"
-model = "deepseek-v4-flash"
+# Evaluation binding: poolside/laguna-s-2.1 on OpenRouter for 1M-window
+# read-only sweeps. Not the cheapest 1M model (deepseek-v4-flash native is,
+# with its 50x implicit cache); this is a quality experiment - see the model
+# entry in mivia.toml for the off/max reasoning and tool-loop replay caveats.
+provider = "openrouter"
+model = "poolside/laguna-s-2.1"
 max_turns = 0
 system_prompt = """
 You are a read-only research specialist for the current workspace.
