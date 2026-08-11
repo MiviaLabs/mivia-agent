@@ -375,96 +375,6 @@ func NewManager(cfg config.MCPConfig, opts ManagerOptions) (*Manager, error) {
 	return &Manager{cfg: cfg, connect: opts.Connect, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel, clients: map[string]remoteClient{}, tools: map[string][]tools.Tool{}, failures: map[string]error{}, maxResultBytes: limit, redaction: opts.RedactionPolicy}, nil
 }
 
-// EnsureServers discovers tools for the requested server IDs once per session.
-func (m *Manager) EnsureServers(ctx context.Context, ids []string) ([]tools.Tool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
-		return nil, fmt.Errorf("MCP manager is closed")
-	}
-	var out []tools.Tool
-	for _, id := range ids {
-		if !m.cfg.Enabled {
-			return nil, fmt.Errorf("MCP is disabled")
-		}
-		server, ok := m.server(id)
-		if !ok {
-			return nil, fmt.Errorf("unknown MCP server %q", id)
-		}
-		if _, failed := m.failures[id]; failed {
-			return nil, fmt.Errorf("MCP server %q is unavailable", id)
-		}
-		if _, ok := m.clients[id]; !ok {
-			startupCtx, cancel := m.startupContext(ctx)
-			client, err := m.connect(startupCtx, server)
-			cancel()
-			if err != nil {
-				m.failures[id] = err
-				return nil, fmt.Errorf("MCP server %q is unavailable", id)
-			}
-			client = &serializedRemoteClient{client: client}
-			m.clients[id] = client
-			discoveryCtx, cancel := m.serverContext(ctx, server)
-			remote, err := client.ListTools(discoveryCtx)
-			cancel()
-			if err != nil {
-				_ = client.Close()
-				delete(m.clients, id)
-				m.failures[id] = err
-				return nil, fmt.Errorf("MCP server %q is unavailable", id)
-			}
-			if m.cfg.MaxToolsPerServer > 0 && len(remote) > m.cfg.MaxToolsPerServer {
-				_ = client.Close()
-				delete(m.clients, id)
-				m.failures[id] = fmt.Errorf("too many tools")
-				return nil, fmt.Errorf("MCP server %q returned too many tools", id)
-			}
-			wrapped, err := wrapRemoteTools(id, client, remote, m.cfg.MaxToolDescriptionBytes, m.cfg.MaxToolSchemaBytes, m.maxResultBytes, server.TimeoutSeconds, m.redaction)
-			if err != nil {
-				_ = client.Close()
-				delete(m.clients, id)
-				m.failures[id] = err
-				return nil, err
-			}
-			m.tools[id] = wrapped
-		}
-		out = append(out, m.tools[id]...)
-	}
-	return out, nil
-}
-
-func (m *Manager) startupContext(parent context.Context) (context.Context, context.CancelFunc) {
-	return m.boundContext(parent, m.cfg.StartupTimeoutSeconds)
-}
-
-func (m *Manager) serverContext(parent context.Context, server config.MCPServerConfig) (context.Context, context.CancelFunc) {
-	return m.boundContext(parent, server.TimeoutSeconds)
-}
-
-func (m *Manager) boundContext(parent context.Context, timeoutSeconds int) (context.Context, context.CancelFunc) {
-	var ctx context.Context
-	var cancel context.CancelFunc
-	if timeoutSeconds <= 0 {
-		ctx, cancel = context.WithCancel(parent)
-	} else {
-		ctx, cancel = context.WithTimeout(parent, time.Duration(timeoutSeconds)*time.Second)
-	}
-	stop := context.AfterFunc(m.shutdownCtx, cancel)
-	return ctx, func() {
-		stop()
-		cancel()
-	}
-}
-
-func (m *Manager) server(id string) (config.MCPServerConfig, bool) {
-	for _, server := range m.cfg.Servers {
-		if server.ID == id {
-			return server, true
-		}
-	}
-	return config.MCPServerConfig{}, false
-}
-
 // OwnsTool reports whether name is one wrapper this manager discovered.
 func (m *Manager) OwnsTool(name string) bool {
 	m.mu.Lock()
@@ -477,6 +387,19 @@ func (m *Manager) OwnsTool(name string) bool {
 		}
 	}
 	return false
+}
+
+// Failures reports the servers whose connection or discovery failed, keyed by
+// server ID. A contained server outage never fails a session or a workflow
+// start; callers use this accessor to surface which tools are absent and why.
+func (m *Manager) Failures() map[string]error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]error, len(m.failures))
+	for id, err := range m.failures {
+		out[id] = err
+	}
+	return out
 }
 
 // Close closes every connected MCP client.

@@ -137,6 +137,7 @@ func (d *agentDialog) rowAtY(y int, w, h int) (agentListRow, bool) {
 
 func (m *tuiModel) openAgentDialog() {
 	m.closeSuggest()
+	m.closeHistory()
 	var rows []agentListRow
 	if m.agentState != nil {
 		rows = agentListRows(m.agentState.Registry, currentAgentName(m.agentState))

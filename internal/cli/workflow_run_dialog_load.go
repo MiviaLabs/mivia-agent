@@ -150,6 +150,7 @@ type workflowRunDialogActionMsg struct {
 // loading placeholder until that read lands.
 func (m *tuiModel) openWorkflowRunDialog(row workflowRunRow) tea.Cmd {
 	m.closeSuggest()
+	m.closeHistory()
 	root := m.resolveRepoRoot()
 	dlg := &workflowRunDialog{
 		runID:      row.run.RunID,

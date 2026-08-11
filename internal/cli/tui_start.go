@@ -51,6 +51,12 @@ func (m *tuiModel) startAI(userText string) {
 // the transcript and event detail. Skill bodies are workspace-controlled and
 // must never become a visible user block or telemetry detail.
 func (m *tuiModel) startAIWithDisplay(sent, display string) {
+	// Record real user sends for the history picker. Skill bodies and
+	// queued skill labels are excluded: sent != display for skill paths,
+	// and queued skill entries carry an empty sent text.
+	if sent != "" && sent == display {
+		m.appendSentHistory(sent)
+	}
 	m.startAIWithPrepared(sent, display, nil)
 }
 

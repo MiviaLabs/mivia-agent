@@ -31,6 +31,13 @@ type Loop struct {
 	// PreparationErr records an interrupted recovery failure so the session can
 	// surface the real cause instead of misreporting a checkpoint conflict.
 	PreparationErr error
+	// LastFinishReason is the provider finish reason of the last successfully
+	// completed step of the most recent Run: "stop", "tool_calls", "length",
+	// or another provider vocabulary value. Empty when no step completed. The
+	// schema-repair loop reads it to distinguish a reply truncated by the
+	// output budget (finish_reason "length") from ordinary invalid JSON, so it
+	// can say so honestly instead of re-prompting with the same budget.
+	LastFinishReason string
 	// Calibration tracks the rolling EWMA correction ratio between estimated
 	// and provider-reported token usage. It is updated after every successful
 	// provider response that reports usage, and its Ratio is passed to
@@ -78,6 +85,9 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	if opts.SessionID == "" {
 		opts.SessionID = runtime.NewSessionID()
 	}
+	// Each Run owns its finish-reason report: a previous run's reason must
+	// never leak into the next caller's read.
+	l.LastFinishReason = ""
 	l.Messages = append(l.Messages, provider.Message{
 		Role:      provider.RoleUser,
 		Content:   userText,
@@ -95,6 +105,12 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 		out, err := l.runStep(ctx, toolSpecs, opts, step)
 		if err != nil {
 			return lastText, err
+		}
+		// The final completed step's reason is what the caller reads: every
+		// successful step overwrites the field, so a tool_calls step followed
+		// by the closing text step reports the closing step's reason.
+		if out.finishReason != "" {
+			l.LastFinishReason = out.finishReason
 		}
 		if out.done {
 			if out.text == "" {

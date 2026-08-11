@@ -232,7 +232,7 @@ func (m *tuiModel) handleChatKey(key string, alt bool) (bool, bool, []tea.Cmd) {
 			return true, true, nil
 		}
 	}
-	if handled, skipViewport, cmds := m.handleSuggestKey(key); handled {
+	if handled, skipViewport, cmds := m.handleComposerPopupKey(key); handled {
 		return true, skipViewport, cmds
 	}
 	// Tab cycles focusable bubbles in history (not only pane toggle).

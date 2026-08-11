@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
@@ -83,6 +84,12 @@ func registerMCPTools(registry *tools.Registry, manager *mcp.Manager, serverIDs 
 	wrappers, err := manager.EnsureServers(context.Background(), serverIDs)
 	if err != nil {
 		return err
+	}
+	// A contained server outage never fails the session; surface it so the
+	// operator knows which tools are absent. The log line carries only the
+	// server ID - external error text can include request content (DC-14).
+	for id := range manager.Failures() {
+		log.Printf("mcp: server %q is unavailable; its tools are not registered", id)
 	}
 	for _, wrapper := range wrappers {
 		if _, exists := registry.Get(wrapper.Name()); exists {

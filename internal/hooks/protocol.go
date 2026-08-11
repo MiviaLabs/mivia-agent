@@ -153,7 +153,11 @@ type reactiveOutput struct {
 func parseStdout(event Event, result execution) verdict {
 	body := strings.TrimSpace(string(result.stdout))
 	if body == "" {
-		return verdict{}
+		// Nothing to carry as context, but a cut is still a cut: output that
+		// overran the capture bound and trims to empty must keep the truncated
+		// flag so Run announces it. Dropping it here made an over-budget hook
+		// look silent (DC-9).
+		return verdict{truncated: result.truncated}
 	}
 	if !strings.HasPrefix(body, "{") {
 		// Plain text is ordinary hook output, not a malformed decision.

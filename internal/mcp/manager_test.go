@@ -39,6 +39,80 @@ func TestManagerEnsuresOnlyRequestedServerOnce(t *testing.T) {
 	}
 }
 
+func TestManagerEnsureServersSkipsUnavailableServer(t *testing.T) {
+	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{
+		{ID: "down", Transport: "stdio", Command: stdioFixtureCommand(t)},
+		{ID: "up", Transport: "stdio", Command: stdioFixtureCommand(t)},
+	}}, ManagerOptions{Connect: func(_ context.Context, server config.MCPServerConfig) (remoteClient, error) {
+		if server.ID == "down" {
+			return nil, errors.New("connect refused")
+		}
+		return toolListClient{tools: []remoteTool{{Name: "read"}}}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.EnsureServers(context.Background(), []string{"down", "up"})
+	if err != nil {
+		t.Fatalf("EnsureServers() error = %v, want a contained per-server failure", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("EnsureServers() returned %d tools, want only the healthy server's 1", len(got))
+	}
+	failures := m.Failures()
+	if _, ok := failures["down"]; !ok {
+		t.Fatalf("Failures() = %v, want a recorded failure for server %q", failures, "down")
+	}
+	if _, ok := failures["up"]; ok {
+		t.Fatalf("Failures() = %v, want no failure for healthy server %q", failures, "up")
+	}
+}
+
+func TestManagerEnsureServersKeepsUnavailableServerRecorded(t *testing.T) {
+	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{
+		{ID: "down", Transport: "stdio", Command: stdioFixtureCommand(t)},
+	}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
+		return nil, errors.New("connect refused")
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.EnsureServers(context.Background(), []string{"down"}); err != nil {
+		t.Fatalf("EnsureServers() error = %v, want the failure contained", err)
+	}
+	got, err := m.EnsureServers(context.Background(), []string{"down"})
+	if err != nil {
+		t.Fatalf("second EnsureServers() error = %v, want the server skipped, not fatal", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("second EnsureServers() = %d tools, want 0 for the unavailable server", len(got))
+	}
+	if len(m.Failures()) != 1 {
+		t.Fatalf("Failures() = %v, want exactly the one unavailable server", m.Failures())
+	}
+}
+
+func TestManagerEnsureServersContainsDiscoveryFailure(t *testing.T) {
+	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{
+		{ID: "down", Transport: "stdio", Command: stdioFixtureCommand(t)},
+	}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
+		return discoveryFailClient{err: errors.New("discovery refused")}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.EnsureServers(context.Background(), []string{"down"})
+	if err != nil {
+		t.Fatalf("EnsureServers() error = %v, want the discovery failure contained", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("EnsureServers() = %d tools, want 0 for the failed server", len(got))
+	}
+	if len(m.Failures()) != 1 {
+		t.Fatalf("Failures() = %v, want the failed server recorded", m.Failures())
+	}
+}
+
 func TestManagerCloseCancelsBlockingDiscovery(t *testing.T) {
 	client := &blockingDiscoveryClient{started: make(chan struct{}), canceled: make(chan struct{})}
 	manager, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
@@ -271,8 +345,15 @@ func TestManagerRejectsMoreToolsThanConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.EnsureServers(context.Background(), []string{"repository"}); err == nil {
-		t.Fatal("EnsureServers() accepted too many remote tools")
+	got, err := m.EnsureServers(context.Background(), []string{"repository"})
+	if err != nil {
+		t.Fatalf("EnsureServers() error = %v, want the too-many-tools failure contained", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("EnsureServers() = %d tools, want 0 for the too-many-tools server", len(got))
+	}
+	if len(m.Failures()) != 1 {
+		t.Fatalf("Failures() = %v, want the too-many-tools server recorded", m.Failures())
 	}
 }
 
@@ -288,12 +369,19 @@ func TestManagerMemoizesFailedDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := m.EnsureServers(context.Background(), []string{"repository"}); err == nil {
-			t.Fatal("EnsureServers() accepted a failed server")
+		got, err := m.EnsureServers(context.Background(), []string{"repository"})
+		if err != nil {
+			t.Fatalf("EnsureServers() error = %v, want the per-server failure contained", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("EnsureServers() = %d tools, want 0 for the failed server", len(got))
 		}
 	}
 	if got := connects.Load(); got != 1 {
 		t.Fatalf("connect count = %d, want 1 after failure", got)
+	}
+	if len(m.Failures()) != 1 {
+		t.Fatalf("Failures() = %v, want the failed server recorded", m.Failures())
 	}
 }
 
@@ -550,6 +638,14 @@ func (toolListClient) CallTool(context.Context, string, map[string]any) (string,
 	return "", nil
 }
 func (toolListClient) Close() error { return nil }
+
+type discoveryFailClient struct{ err error }
+
+func (c discoveryFailClient) ListTools(context.Context) ([]remoteTool, error) { return nil, c.err }
+func (discoveryFailClient) CallTool(context.Context, string, map[string]any) (string, error) {
+	return "", nil
+}
+func (discoveryFailClient) Close() error { return nil }
 
 type serialProbeClient struct {
 	entered chan struct{}

@@ -13,6 +13,7 @@ import (
 
 func (m *tuiModel) openWorktreeDialog() {
 	m.closeSuggest()
+	m.closeHistory()
 	wtDir := m.resolveRepoRoot()
 	list, err := vcs.List(context.Background(), wtDir)
 	if err != nil {
