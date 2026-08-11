@@ -476,6 +476,25 @@ func TestOversizedStdoutIsTruncatedWithNotice(t *testing.T) {
 	}
 }
 
+// A hook that overruns the capture bound with whitespace-only output must still
+// announce the truncation. parseStdout's empty-body branch used to drop
+// result.truncated, so Runner.Run's finishContext never learned a cut happened
+// and the notice every other over-budget path emits was silently lost (DC-9).
+func TestWhitespaceOnlyOverBudgetStdoutIsAnnounced(t *testing.T) {
+	requirePOSIX(t)
+	dir := hookDir(t)
+	script(t, dir, "loud.sh", "i=0\nwhile [ $i -lt 20000 ]; do printf ' '; i=$((i+1)); done\nexit 0\n")
+	groups := group(t, dir, postToolUse(`["./loud.sh"]`, "  timeout = 30\n"))
+
+	out := runHooks(t, dir, groups, Payload{Event: EventPostToolUse, Tool: "x"})
+	if out.Denied {
+		t.Fatalf("an exit-0 whitespace-only hook is no decision and must not block: %s", out.Reason)
+	}
+	if !strings.Contains(out.Context, "truncated") {
+		t.Fatalf("the over-budget cut must be announced, got context %q (warnings %v)", out.Context, out.Warnings)
+	}
+}
+
 // Truncation must not cut a rune in half. Hook context and block reasons are
 // model-visible text, and a trailing partial rune is invalid UTF-8 in a
 // payload the provider has to encode.

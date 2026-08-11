@@ -149,3 +149,34 @@ func TestParseReactiveCorrectShapeNoWarning(t *testing.T) {
 		t.Fatalf("context must contain the reason, got %q", v.context)
 	}
 }
+
+// A hook whose stdout overruns the capture bound but trims to empty (whitespace
+// only) must still announce the cut. Every other over-budget path reaches the
+// caller through verdict.truncated -> Runner.Run's finishContext; the empty-body
+// branch used to drop the flag, so the caller never learned the output was cut
+// (DC-9 silent truncation).
+func TestParseStdoutWhitespaceOnlyOverBudgetAnnouncesTruncation(t *testing.T) {
+	for _, event := range []Event{EventPostToolUse, EventPreToolUse} {
+		t.Run(string(event), func(t *testing.T) {
+			v := parseStdout(event, execution{stdout: []byte(strings.Repeat(" ", 20000)), truncated: true})
+			if !v.truncated {
+				t.Fatalf("whitespace-only over-budget stdout must keep the truncation flag: %#v", v)
+			}
+			if v.denied {
+				t.Fatalf("an exit-0 no-decision body must stay allow: %#v", v)
+			}
+		})
+	}
+	t.Run("nothing cut", func(t *testing.T) {
+		v := parseStdout(EventPostToolUse, execution{stdout: nil, truncated: false})
+		if v.truncated || v.denied || v.context != "" || len(v.warnings) != 0 {
+			t.Fatalf("empty stdout with nothing cut must announce nothing: %#v", v)
+		}
+	})
+	t.Run("under-bound whitespace", func(t *testing.T) {
+		v := parseStdout(EventPostToolUse, execution{stdout: []byte(strings.Repeat(" ", 100)), truncated: false})
+		if v.truncated || v.denied || v.context != "" || len(v.warnings) != 0 {
+			t.Fatalf("under-bound whitespace is not a cut and must announce nothing: %#v", v)
+		}
+	})
+}
