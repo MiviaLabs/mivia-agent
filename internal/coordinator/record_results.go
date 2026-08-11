@@ -78,6 +78,9 @@ func (c *coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagen
 	}
 
 	newStatus := mapStatus(r)
+	// alreadyAtStatus: the task already sits at this result's status, so
+	// tryTaskStatusCAS below takes its already-at-status skip.
+	alreadyAtStatus := taskSnap.Status == newStatus
 	casOK := c.tryTaskStatusCAS(persistCtx, h.runID, t.ID, taskSnap, newStatus, runErr)
 
 	if casOK {
@@ -96,14 +99,23 @@ func (c *coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagen
 		if err := c.repo.SetTaskAttempt(persistCtx, h.runID, t.ID, h.getAttempt(t.ID), newStatus, &finished); err != nil {
 			*runErr = joinError(*runErr, fmt.Errorf("update attempt %q: %w", t.ID, err))
 		}
-		evt := ledger.LifecycleEvent{
-			ID: newEventID(), RunID: h.runID, Kind: "task_" + newStatus,
-			TaskID: t.ID, AttemptID: h.getAttempt(t.ID), SessionID: t.SessionID,
-		}
-		if err := c.repo.AppendEvent(persistCtx, evt); err != nil {
-			*runErr = joinError(*runErr, fmt.Errorf("append task %q event: %w", t.ID, err))
-		} else {
-			c.emitLifecycleEvent(evt)
+		// Terminal announce stays exactly-once (DC-9/DC-12: duplicated durable
+		// record). blocked is the only terminal status runDAG's transitionTask
+		// already announced (collectReady CASes queued->blocked and appends+
+		// emits task_blocked at block time), so an already-at-status skip here
+		// would duplicate the row. completed/failed/timed_out still need the
+		// append: the R9 early fence CASes them silently with no event, and
+		// canceled is announced by this append (or recordCancellation) alone.
+		if !(alreadyAtStatus && newStatus == string(ledger.TaskStatusBlocked)) {
+			evt := ledger.LifecycleEvent{
+				ID: newEventID(), RunID: h.runID, Kind: "task_" + newStatus,
+				TaskID: t.ID, AttemptID: h.getAttempt(t.ID), SessionID: t.SessionID,
+			}
+			if err := c.repo.AppendEvent(persistCtx, evt); err != nil {
+				*runErr = joinError(*runErr, fmt.Errorf("append task %q event: %w", t.ID, err))
+			} else {
+				c.emitLifecycleEvent(evt)
+			}
 		}
 	}
 	return r
