@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
@@ -92,29 +93,60 @@ func (s *Session) SetReasoningEffort(level reasoning.Level) error {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	// Same rule as /model: an in-flight turn already captured its binding, so
 	// changing the dial now would report a change the running request did not
 	// get.
 	if s.activeTurns > 0 {
+		s.mu.Unlock()
 		return fmt.Errorf("reasoning effort cannot change while work is active")
 	}
+	var reset *events.PrefixResetEvent
 	if !level.Active() {
 		s.reasoningEffort = ""
 		s.invalidateLocked()
+		s.bumpPrefixGenerationLocked()
+		// /effort is wire-affecting (reasoningFields) and one of the four
+		// capture triggers (INV-68-8): emit exactly one reset naming
+		// "reasoning" so the implicit-cache-prefix break is observable (audit
+		// RC-3, INV-68-2). A same-level no-op emits nothing (the generation
+		// counters never produce a category).
+		reset = s.emitReasoningPrefixResetLocked()
+		s.mu.Unlock()
+		publishPrefixResetEvent(s.EventBus, s.SessionID, reset)
 		return nil
 	}
 	profile := s.binding.Profile
 	if !config.ModelOffersReasoning(profile) {
+		s.mu.Unlock()
 		return fmt.Errorf("model %q declares no reasoning efforts", s.binding.Model)
 	}
 	if !slices.Contains(profile.ReasoningEfforts, level) {
+		s.mu.Unlock()
 		return fmt.Errorf("model %q does not offer reasoning effort %q (offers %s)",
 			s.binding.Model, level, reasoning.FormatLevels(profile.ReasoningEfforts))
 	}
 	s.reasoningEffort = level
 	s.invalidateLocked()
+	// /effort changes the request body via reasoningFields in a way
+	// BindingFence cannot see (gap B13): the generation bump plus the
+	// recapture make identities before/after /effort provably unequal, and the
+	// refusal paths above leave the identity cache untouched (no false reset).
+	s.bumpPrefixGenerationLocked()
+	reset = s.emitReasoningPrefixResetLocked()
+	s.mu.Unlock()
+	publishPrefixResetEvent(s.EventBus, s.SessionID, reset)
 	return nil
+}
+
+// emitReasoningPrefixResetLocked recaptures the identity after a /effort
+// change, returns the KindPrefixReset event (nil when the wire-affecting
+// subset is unchanged), and leaves the cache at the fresh capture. Callers
+// hold s.mu and publish the returned event after unlock.
+func (s *Session) emitReasoningPrefixResetLocked() *events.PrefixResetEvent {
+	outgoing := s.prefixIdentity
+	incoming := s.capturePrefixIdentityLocked()
+	s.prefixIdentity = incoming
+	return s.buildPrefixResetLocked(outgoing, incoming, false)
 }
 
 // effectiveReasoningLocked resolves the override against the model default.

@@ -74,6 +74,7 @@ func (s *Session) SetEventIdentityFactory(factory func(uint64) *events.Identity)
 // scoped tools, dispatcher, and skill registry after candidate construction.
 func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *tools.Registry, dispatcher *runtime.Dispatcher, skillReg *skills.Registry) {
 	s.mu.Lock()
+	outgoing := s.prefixIdentity
 	old := s.binding.Dispatcher
 	s.agentSurfaceGeneration++
 	s.SystemPrompt = prompt
@@ -85,10 +86,18 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 	s.binding.AgentSurfaceGeneration = s.agentSurfaceGeneration
 	s.invalidateLocked()
 	setSystemMessageLocked(s, prompt)
+	// The host-side agent-surface publication changes the wire prefix
+	// (prompt, tools) and advances the surface generation: recapture so the
+	// cache never describes the pre-publication surface (audit RC-1) and emit
+	// exactly one reset naming the changed categories (INV-68-2).
+	incoming := s.capturePrefixIdentityLocked()
+	s.prefixIdentity = incoming
+	reset := s.buildPrefixResetLocked(outgoing, incoming, true)
 	s.mu.Unlock()
 	if old != nil && old != dispatcher {
 		old.Close()
 	}
+	publishPrefixResetEvent(s.EventBus, s.SessionID, reset)
 }
 
 // SetAgentSettings updates only the root prompt and turn limit under the
@@ -96,11 +105,35 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 // consistent with the public fields.
 func (s *Session) SetAgentSettings(prompt string, maxSteps int) {
 	s.mu.Lock()
+	outgoing := s.prefixIdentity
 	s.SystemPrompt = prompt
 	s.MaxSteps = maxSteps
 	s.invalidateLocked()
 	setSystemMessageLocked(s, prompt)
+	// The prompt is wire-affecting: recapture and emit so a prompt change is
+	// reported once and a no-op settings write stays silent (audit RC-1,
+	// INV-68-2).
+	incoming := s.capturePrefixIdentityLocked()
+	s.prefixIdentity = incoming
+	reset := s.buildPrefixResetLocked(outgoing, incoming, false)
 	s.mu.Unlock()
+	publishPrefixResetEvent(s.EventBus, s.SessionID, reset)
+}
+
+// RefreshPrefixIdentity recaptures the cached prefix identity after a
+// host-side tool-surface mutation that is not one of the trigger events
+// (attach-time sess.Tools wiring in the CLI). It emits a KindPrefixReset when
+// the wire-affecting subset changed, so the cache never describes a stale
+// surface and the next trigger cannot emit a false reset (audit RC-1,
+// INV-68-2).
+func (s *Session) RefreshPrefixIdentity() {
+	s.mu.Lock()
+	outgoing := s.prefixIdentity
+	incoming := s.capturePrefixIdentityLocked()
+	s.prefixIdentity = incoming
+	reset := s.buildPrefixResetLocked(outgoing, incoming, true)
+	s.mu.Unlock()
+	publishPrefixResetEvent(s.EventBus, s.SessionID, reset)
 }
 
 // AgentSettings returns the current root prompt and turn limit atomically.

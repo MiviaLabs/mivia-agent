@@ -90,13 +90,21 @@ func (s *Session) SelectModel(name string) bool {
 	}
 	// SelectModel renames the selection without resolving a new profile, so
 	// everything model-specific still on it describes the PREVIOUS model.
+	outgoing := s.prefixIdentity
 	s.renameModelLocked(name)
 	s.binding.ModelGeneration = newBinding.ModelGeneration
 	s.invalidateLocked()
 	if contextEnabled {
 		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
 	}
+	// The selected model is wire-affecting: recapture and emit exactly one
+	// reset so the model change is observable and the cache stays fresh
+	// (audit RC-1, INV-68-2). A no-op rename emits nothing.
+	incoming := s.capturePrefixIdentityLocked()
+	s.prefixIdentity = incoming
+	reset := s.buildPrefixResetLocked(outgoing, incoming, false)
 	s.mu.Unlock()
+	publishPrefixResetEvent(s.EventBus, s.SessionID, reset)
 	return true
 }
 

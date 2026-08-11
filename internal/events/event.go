@@ -2,6 +2,7 @@ package events
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,6 +39,11 @@ const (
 	// KindTokenUsage reports provider-supplied input/output token counts
 	// for one completion turn. See TokenUsageEvent.
 	KindTokenUsage Kind = "token_usage"
+	// KindPrefixReset reports that the session's byte-prefix stability
+	// identity changed at a binding switch or agent-surface publication, so a
+	// provider-implicit prompt-cache prefix is no longer reusable for the next
+	// request. See PrefixResetEvent.
+	KindPrefixReset Kind = "prefix_reset"
 
 	// Session/turn lifecycle events.
 	KindSessionStart Kind = "session_start"
@@ -106,6 +112,10 @@ type Event struct {
 	// Identity is the typed, allowlisted runtime identity. It never carries
 	// prompts, paths, digests, tools, content, errors, or arbitrary metadata.
 	Identity *Identity
+	// PrefixReset is present only for the typed prefix-stability reset event
+	// (KindPrefixReset). It is not copied into generic content/input/output
+	// envelopes and carries no prompt or digest content (INV-68-7).
+	PrefixReset *PrefixResetEvent
 }
 
 // CompactionEvent is the sealed, content-free progress payload for context
@@ -264,6 +274,88 @@ func (e TokenUsageEvent) Validate() error {
 	}
 	if e.CalibrationRatio < 0 {
 		return fmt.Errorf("invalid token usage event: calibration ratio")
+	}
+	return nil
+}
+
+// prefixResetCategoryAllowlist is the fixed set of category names a
+// PrefixResetEvent may carry. Each name is one wire-affecting identity
+// dimension; the names are fixed so the event can never smuggle prompt
+// content, digest preimages, tool-schema bodies, or tool-argument values
+// (INV-68-7).
+var prefixResetCategoryAllowlist = map[string]struct{}{
+	"model":          {},
+	"reasoning":      {},
+	"tools":          {},
+	"system_prompt":  {},
+	"agent_switch":   {},
+	"tool_admission": {},
+}
+
+// maxPrefixResetCategoryLen bounds one category name. The allowlist names are
+// all well under this bound; the check exists so an oversized wire category is
+// rejected on its own terms rather than surfacing as a generic unknown.
+const maxPrefixResetCategoryLen = 16
+
+// PrefixResetEvent is the sealed, content-free payload reporting that the
+// session's byte-prefix stability identity changed. It intentionally has no
+// generic content/input/output fields: it carries only allowlisted changed
+// category names and the outgoing/incoming generation counters, never prompt
+// content, digest preimages, tool-schema bodies, or tool-argument values
+// (INV-68-7).
+type PrefixResetEvent struct {
+	Categories                []string `json:"categories"`
+	OutgoingModelGeneration   uint64   `json:"outgoing_model_generation"`
+	IncomingModelGeneration   uint64   `json:"incoming_model_generation"`
+	OutgoingSurfaceGeneration uint64   `json:"outgoing_surface_generation"`
+	IncomingSurfaceGeneration uint64   `json:"incoming_surface_generation"`
+	sealed                    bool     `json:"-"`
+}
+
+// PrefixResetEventParams is the only constructor input for PrefixResetEvent.
+// The generation counters ride as observability only: a republish that changes
+// only a monotonic counter is byte-stable and must not emit a reset (INV-68-2,
+// test-plan correction 4).
+type PrefixResetEventParams struct {
+	Categories                []string
+	OutgoingModelGeneration   uint64
+	IncomingModelGeneration   uint64
+	OutgoingSurfaceGeneration uint64
+	IncomingSurfaceGeneration uint64
+}
+
+// NewPrefixResetEvent constructs the only valid prefix-reset event. Callers
+// get a value, not a pointer, so the event bus cannot mutate the constructor's
+// private state through a shared object.
+func NewPrefixResetEvent(p PrefixResetEventParams) (PrefixResetEvent, error) {
+	event := PrefixResetEvent{Categories: slices.Clone(p.Categories), OutgoingModelGeneration: p.OutgoingModelGeneration, IncomingModelGeneration: p.IncomingModelGeneration, OutgoingSurfaceGeneration: p.OutgoingSurfaceGeneration, IncomingSurfaceGeneration: p.IncomingSurfaceGeneration, sealed: true}
+	return event, event.Validate()
+}
+
+func (e PrefixResetEvent) Validate() error {
+	if !e.sealed {
+		return fmt.Errorf("invalid prefix reset event: constructor seal missing")
+	}
+	if len(e.Categories) == 0 {
+		return fmt.Errorf("invalid prefix reset event: no categories")
+	}
+	seen := make(map[string]struct{}, len(e.Categories))
+	for _, category := range e.Categories {
+		if len(category) > maxPrefixResetCategoryLen {
+			return fmt.Errorf("invalid prefix reset event: category %q is oversized", category)
+		}
+		for _, r := range category {
+			if r < 0x20 || r == 0x7f {
+				return fmt.Errorf("invalid prefix reset event: category contains control character")
+			}
+		}
+		if _, ok := prefixResetCategoryAllowlist[category]; !ok {
+			return fmt.Errorf("invalid prefix reset event: unknown category %q", category)
+		}
+		if _, dup := seen[category]; dup {
+			return fmt.Errorf("invalid prefix reset event: duplicate category %q", category)
+		}
+		seen[category] = struct{}{}
 	}
 	return nil
 }

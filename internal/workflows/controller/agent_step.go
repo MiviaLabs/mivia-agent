@@ -50,6 +50,9 @@ type RouteDecision struct {
 	// increments the counter only after the attempt completion is durable.
 	Loop          string
 	MaxIterations int
+	// PartialAccept marks a loop-exhaustion escape: the run advanced to the
+	// declared partial_target with verified outputs salvaged into evidence.
+	PartialAccept bool
 }
 
 // RecordStepResult writes the child identity and bounded evidence selection to

@@ -54,7 +54,7 @@ var allKnownKinds = []Kind{
 	KindWorkflowRunFinished, KindWorkflowDeliveryStage,
 	KindInvocationStarted, KindInvocationCompleted, KindInvocationRetrying,
 	KindUIResize, KindUserInput, KindUIReady, KindConfigChange,
-	KindError, KindCacheUsage, KindTokenUsage,
+	KindError, KindCacheUsage, KindTokenUsage, KindPrefixReset,
 }
 
 // Subscribe subscribes the adapter to all known event kinds on the given Bus.

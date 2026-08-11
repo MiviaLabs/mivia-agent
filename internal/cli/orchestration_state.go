@@ -135,6 +135,17 @@ func storeOrchestrationHandle(runID string, record *orchestrationHandle) {
 	}
 	closed := make(chan struct{})
 	record.dispatcher.OnClose(func() {
+		// Dispatcher close is not session end: surface rebuilds (tool
+		// admission, /agent, /model) replace the dispatcher while the session
+		// continues. Unregister only a completed run now; an active run stays
+		// inspectable under its session principal and the retention timer
+		// cleans it up once it completes. A rebuild used to orphan every
+		// in-flight background run as "unknown run_id".
+		select {
+		case <-record.handle.Done():
+		default:
+			return
+		}
 		close(closed)
 		if current, ok := runHandles.Load(runID); ok && current == record {
 			runHandles.Delete(runID)
@@ -194,9 +205,16 @@ func orchestrationSwitchGuard(sessionID string) func() error {
 	}
 }
 
-func orchestrationHandleAccessible(ctx context.Context, record *orchestrationHandle, dispatcher *runtime.Dispatcher, repo ledger.LedgerRepository) bool {
+// orchestrationHandleAccessible reports whether the caller in ctx may control
+// record. The dispatcher instance is deliberately NOT compared: surface
+// rebuilds (tool admission, /agent, /model, resume) replace the dispatcher
+// while the session continues, and an equality check would orphan every
+// in-flight run registered under the replaced instance. The principal (session
+// + role) and the repository bind the handle to its session and workspace;
+// INV-AG-9 keeps the unknown/inaccessible errors indistinguishable.
+func orchestrationHandleAccessible(ctx context.Context, record *orchestrationHandle, _ *runtime.Dispatcher, repo ledger.LedgerRepository) bool {
 	principal, ok := principalFromContext(ctx)
-	return ok && record != nil && record.dispatcher == dispatcher && repositoriesMatch(record.repo, repo) && record.principal == principal
+	return ok && record != nil && repositoriesMatch(record.repo, repo) && record.principal == principal
 }
 
 func orchestrationHandleRetention(cfg config.SubagentConfig) time.Duration {

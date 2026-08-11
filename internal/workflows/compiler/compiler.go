@@ -203,8 +203,8 @@ func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]boo
 			if strings.Contains(cb.From, "..") {
 				return fmt.Errorf("step %q: context from %q contains path traversal", s.ID, cb.From)
 			}
-			// Validate source format: inputs.<name>, steps.<id>.output, or
-			// delivery.failure
+			// Validate source format: inputs.<name>, steps.<id>.output,
+			// delivery.failure, or run.salvage
 			parts := strings.Split(cb.From, ".")
 			switch parts[0] {
 			case "inputs":
@@ -237,6 +237,10 @@ func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]boo
 			case "delivery":
 				if len(parts) != 2 || parts[1] != "failure" {
 					return fmt.Errorf("step %q: context from %q invalid (expected delivery.failure)", s.ID, cb.From)
+				}
+			case "run":
+				if len(parts) != 2 || parts[1] != "salvage" {
+					return fmt.Errorf("step %q: context from %q invalid (expected run.salvage)", s.ID, cb.From)
 				}
 			default:
 				return fmt.Errorf("step %q: context from %q invalid (must start with inputs. or steps.)", s.ID, cb.From)
@@ -293,6 +297,12 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool, s
 		}
 		if t.Loop == "" && t.MaxIterations != 0 {
 			return fmt.Errorf("transition %s → %s: max_iterations requires a loop name", t.From, t.To)
+		}
+		if t.PartialTarget != "" && t.Loop == "" {
+			return fmt.Errorf("transition %s → %s: partial_target requires a loop", t.From, t.To)
+		}
+		if t.PartialTarget != "" && !stepIDs[t.PartialTarget] {
+			return fmt.Errorf("transition %s → %s: partial_target %q is not a declared step", t.From, t.To, t.PartialTarget)
 		}
 		if t.From == t.To && t.Loop == "" {
 			// Self-loop without a loop name is a no-op transition.

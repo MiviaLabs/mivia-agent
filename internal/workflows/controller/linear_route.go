@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -39,8 +41,7 @@ func (c *LinearController) selectRoute(ctx context.Context, step definition.Step
 	}
 	if decision.Loop != "" {
 		if err := c.checkLoopCap(ctx, decision.Loop, decision.MaxIterations); err != nil {
-			route.ToStepID = failureTarget(step)
-			return route, err
+			return c.loopExhaustionRoute(ctx, step, decision, c.loopExhaustedRouteError(ctx, err, step.ID))
 		}
 	}
 	return route, nil
@@ -71,8 +72,7 @@ func (c *LinearController) selectEvidenceFailureRoute(ctx context.Context, step 
 	}
 	if decision.Loop != "" {
 		if err := c.checkLoopCap(ctx, decision.Loop, decision.MaxIterations); err != nil {
-			route.ToStepID = failureTarget(step)
-			return route, err
+			return c.loopExhaustionRoute(ctx, step, decision, c.loopExhaustedRouteError(ctx, err, step.ID))
 		}
 	}
 	return route, nil
@@ -82,11 +82,122 @@ func failureRoute(step definition.Step) RouteDecision {
 	return RouteDecision{ToStepID: failureTarget(step), TransitionIndex: -1}
 }
 
+// loopExhaustionRoute decides the exhausted-loop route (R2 Phase 2). A
+// transition that declares a partial_target is honored when the ledger still
+// holds verified outputs: the run advances to the target with run.salvage
+// bound as evidence, and the exhausted attempt is persisted with that route.
+// Without a partial_target (or without salvage) the route is the terminal
+// failureTarget and the error carries the salvage hint.
+func (c *LinearController) loopExhaustionRoute(ctx context.Context, step definition.Step, decision matcher.Decision, exhausted error) (RouteDecision, error) {
+	route := RouteDecision{
+		ToStepID:        failureTarget(step),
+		TransitionIndex: decision.TransitionIndex,
+		MatchDigest:     decision.MatchDigest,
+		DecisionJSON:    append([]byte(nil), decision.DecisionJSON...),
+	}
+	if decision.PartialTarget == "" {
+		return route, exhausted
+	}
+	var loopErr *loopExhaustedError
+	if !errors.As(exhausted, &loopErr) || len(loopErr.Salvage) == 0 {
+		return route, exhausted
+	}
+	route.ToStepID = decision.PartialTarget
+	route.PartialAccept = true
+	return route, nil
+}
+
+// loopExhaustedRouteError attaches the refused step and the salvaged verified
+// outputs to the loop-exhaustion hint without losing the typed error, so
+// callers can recover the structured fields with errors.As while the message
+// names the step. Salvage is best-effort: a salvage failure must never change
+// the loop-exhaustion outcome.
+func (c *LinearController) loopExhaustedRouteError(ctx context.Context, err error, stepID string) error {
+	var loopErr *loopExhaustedError
+	if errors.As(err, &loopErr) {
+		loopErr.StepID = stepID
+		if salvaged, salErr := c.salvageLoopSuccesses(ctx); salErr == nil {
+			loopErr.Salvage = salvaged
+		}
+		return loopErr
+	}
+	return fmt.Errorf("%w (step %q)", err, stepID)
+}
+
 func failureTarget(step definition.Step) string {
 	if step.OnFailure != "" {
 		return step.OnFailure
 	}
 	return "failure"
+}
+
+// SalvagedAttempt names one durable step output preserved when a repair loop
+// exhausts, so the verified work survives the terminal failure (R2 Phase 2:
+// partial-accept foundation - the outputs are content-addressed and recoverable
+// by ref from the failure evidence).
+type SalvagedAttempt struct {
+	StepID       string `json:"step_id"`
+	AttemptNo    int    `json:"attempt_no"`
+	OutputRef    string `json:"output_ref,omitempty"`
+	OutputDigest string `json:"output_digest,omitempty"`
+}
+
+// maxSalvageSummaryItems bounds the refs listed in the failure message; the
+// structured Salvage slice on the typed error is not bounded by it.
+const maxSalvageSummaryItems = 4
+
+// salvageLoopSuccesses collects the last succeeded attempt per step from the
+// durable ledger. Deterministic order: sorted by step ID.
+func (c *LinearController) salvageLoopSuccesses(ctx context.Context) ([]SalvagedAttempt, error) {
+	attempts, err := c.Repo.ListStepAttempts(ctx, c.RunID)
+	if err != nil {
+		return nil, err
+	}
+	last := make(map[string]workflowledger.StepAttempt)
+	for _, a := range attempts {
+		if a.Status != workflowledger.AttemptStatusSucceeded {
+			continue
+		}
+		if cur, ok := last[a.StepID]; !ok || a.AttemptNo > cur.AttemptNo {
+			last[a.StepID] = a
+		}
+	}
+	out := make([]SalvagedAttempt, 0, len(last))
+	for stepID, a := range last {
+		out = append(out, SalvagedAttempt{StepID: stepID, AttemptNo: a.AttemptNo, OutputRef: a.OutputRef, OutputDigest: a.OutputDigest})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StepID < out[j].StepID })
+	return out, nil
+}
+
+// loopExhaustedError is the deterministic recovery hint produced when a
+// repair loop spends its budget. Its message names the loop, the cap, the
+// iterations spent, and the step whose route was refused, so a human or a
+// resumed run can recover the verified work without re-reading the whole
+// ledger (R2 Phase 1: the routing stays terminal, the evidence is enriched).
+type loopExhaustedError struct {
+	LoopName      string
+	Iterations    int
+	MaxIterations int
+	StepID        string
+	Salvage       []SalvagedAttempt
+}
+
+func (e *loopExhaustedError) Error() string {
+	msg := fmt.Sprintf("loop %q exhausted: max_iterations=%d (iterations=%d) (step %q)", e.LoopName, e.MaxIterations, e.Iterations, e.StepID)
+	if len(e.Salvage) == 0 {
+		return msg
+	}
+	n := min(len(e.Salvage), maxSalvageSummaryItems)
+	parts := make([]string, 0, n)
+	for _, s := range e.Salvage[:n] {
+		ref := s.OutputRef
+		if ref == "" {
+			ref = s.OutputDigest
+		}
+		parts = append(parts, fmt.Sprintf("%s#%d:%s", s.StepID, s.AttemptNo, ref))
+	}
+	return msg + fmt.Sprintf(" (salvaged: %s)", strings.Join(parts, ", "))
 }
 
 // checkLoopCap refuses a back-edge when the durable counter already hit the cap.
@@ -104,7 +215,7 @@ func (c *LinearController) checkLoopCap(ctx context.Context, loopName string, ma
 		}
 	}
 	if maxIterations >= 0 && current >= maxIterations {
-		return fmt.Errorf("loop %q exhausted: max_iterations=%d", loopName, maxIterations)
+		return &loopExhaustedError{LoopName: loopName, Iterations: current, MaxIterations: maxIterations}
 	}
 	return nil
 }

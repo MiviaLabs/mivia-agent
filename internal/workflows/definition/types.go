@@ -98,6 +98,13 @@ type Transition struct {
 	Match         MatchCriteria `toml:"match" json:"match,omitempty"`
 	Loop          string        `toml:"loop" json:"loop,omitempty"`
 	MaxIterations int           `toml:"max_iterations" json:"max_iterations,omitempty"`
+	// PartialTarget is the step a loop routes to when its budget exhausts and
+	// the ledger still holds verified (succeeded) step outputs. Without it, an
+	// exhausted loop fails the run (with a salvage hint). With it, the verified
+	// work survives: the run advances to the target with run.salvage bound as
+	// evidence. The target must be a declared step; it usually forwards to
+	// success or delivery.
+	PartialTarget string `toml:"partial_target" json:"partial_target,omitempty"`
 }
 
 type MatchCriteria struct {

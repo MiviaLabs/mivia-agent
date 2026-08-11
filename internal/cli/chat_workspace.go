@@ -69,6 +69,10 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		return func() {}, err
 	}
 	sess.Tools = tools.NewDefaultRegistry(opts)
+	// The attach-time tool surface is wire-affecting and not one of the four
+	// identity-capture triggers; keep the cached prefix identity fresh so the
+	// first switch/publication compares fresh against fresh (audit RC-1).
+	sess.RefreshPrefixIdentity()
 	return func() {
 		if opts.Memory != nil {
 			_ = opts.Memory.Close()
