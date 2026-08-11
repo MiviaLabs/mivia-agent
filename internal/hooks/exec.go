@@ -253,12 +253,24 @@ func (r Runner) execute(ctx context.Context, group Group, handler Handler, paylo
 	}
 	if runErr != nil {
 		var exitErr *exec.ExitError
-		if !errorsAs(runErr, &exitErr) {
+		switch {
+		case errorsAs(runErr, &exitErr):
+			result.exitCode = exitErr.ExitCode()
+		case errorsIs(runErr, exec.ErrWaitDelay):
+			// os/exec returns ErrWaitDelay only when the process exited with a
+			// SUCCESSFUL status but orphaned descendants kept the output pipes
+			// open past WaitDelay. The captured stdout is therefore a real
+			// verdict and must be honored, not discarded as a start failure.
+			// ProcessState is set by os/exec before Wait returns, so
+			// ExitCode() is authoritative here. An ErrWaitDelay under an
+			// expired deadline already returned through the callCtx.Err()
+			// branch above, which keeps the conservative timeout/noVerdict.
+			result.exitCode = cmd.ProcessState.ExitCode()
+		default:
 			result.noVerdict = true
 			result.reason = fmt.Sprintf("hook %s could not start: %v", filepath.Base(program), runErr)
 			return result
 		}
-		result.exitCode = exitErr.ExitCode()
 	}
 	return result
 }

@@ -377,6 +377,50 @@ func TestUnparseableDecisionJSONFallsBackToExitCode(t *testing.T) {
 	}
 }
 
+// A PreToolUse gate whose deny JSON overruns the capture bound must deny, not
+// resolve as an allow. The hook printed a real deny, but the capture cut the
+// body before it could be parsed; the parse failure is OUR cut, and treating an
+// unreadable decision as permission is the fail-open the gate exists to
+// prevent. The on_timeout subtest pins that the fail-closed rule is not
+// OnTimeout-scoped: OnTimeout governs hooks that did not run, whereas this
+// hook ran and failed to deliver a readable decision. Fails before the fix:
+// the truncated body hit the warning-only parse-failure branch and the exit-0
+// allow won (DC-9).
+func TestTruncatedDenyJSONOnPreToolUseFailsClosed(t *testing.T) {
+	requirePOSIX(t)
+	for _, tc := range []struct {
+		name      string
+		onTimeout string
+	}{
+		{"default", ""},
+		{"onTimeoutAllow", "  on_timeout = \"allow\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := hookDir(t)
+			// The 12000-byte reason puts the body past MaxOutputBytes (8192),
+			// so the capture bound cuts it mid-object and the parse must fail.
+			script(t, dir, "loud-deny.sh", `printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"'
+i=0
+while [ $i -lt 12000 ]; do printf 'x'; i=$((i+1)); done
+printf '"}'
+exit 0
+`)
+			groups := group(t, dir, preToolUse(`["./loud-deny.sh"]`, tc.onTimeout))
+
+			out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
+			if !out.Denied {
+				t.Fatal("a truncated deny decision must block: the hook's decision was cut off before it could be read")
+			}
+			if !strings.Contains(out.Reason, "loud-deny.sh") {
+				t.Fatalf("the deny reason must name the hook, got %q", out.Reason)
+			}
+			if !strings.Contains(out.Reason, "cut off") {
+				t.Fatalf("the deny reason must explain the truncation, got %q", out.Reason)
+			}
+		})
+	}
+}
+
 func TestPlainTextStdoutBecomesContext(t *testing.T) {
 	requirePOSIX(t)
 	dir := hookDir(t)

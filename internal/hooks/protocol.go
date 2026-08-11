@@ -13,6 +13,9 @@ import (
 // execution.
 func errorsAs(err error, target any) bool { return errors.As(err, target) }
 
+// errorsIs is the errors.Is twin, for the same reason.
+func errorsIs(err, target error) bool { return errors.Is(err, target) }
+
 // verdict is what one handler's execution means for the event.
 type verdict struct {
 	denied   bool
@@ -174,6 +177,20 @@ func parseStdout(event Event, result execution) verdict {
 func parsePreToolUse(result execution, body string) verdict {
 	var parsed preToolUseOutput
 	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		if result.truncated {
+			// The capture bound cut the body, so this parse failure is OUR cut,
+			// not the hook's bytes. A decision that was truncated before it
+			// could be read is not permission: deny rather than treat an
+			// unreadable gate as an allow, exactly as the updatedInput and
+			// unsupported-permissionDecision branches deny an honourless
+			// decision. OnTimeout is deliberately not consulted: its contract
+			// is the verdict when the deadline fires, i.e. hooks that did not
+			// run, whereas this hook RAN and failed to deliver a readable
+			// decision (DC-9: a truncated gate must never resolve as an allow).
+			return verdict{denied: true, reason: bound(fmt.Sprintf(
+				"hook %s printed more than %d bytes of JSON output and its decision was cut off before it could be read; mivia denies rather than treat a truncated gate as permission",
+				result.label(), MaxOutputBytes), maxReasonBytes), truncated: true}
+		}
 		// Never read as a decision: fall back to exit-code semantics and say so.
 		return verdict{warnings: []string{fmt.Sprintf(
 			"hook %s printed JSON that did not parse (%v); its exit code decided the call", result.program, err)}}

@@ -52,6 +52,37 @@ exit 0
 	}
 }
 
+// os/exec returns ErrWaitDelay when the process exits with a successful status
+// but orphaned descendants kept the output pipes open past WaitDelay. That
+// error is not an *exec.ExitError, so execute() used to classify it as a start
+// failure, discarding the captured stdout and turning a hook's allow into a
+// spurious PreToolUse block. The verdict the hook printed before exit is real
+// and must be honored. The elapsed >= 1s assertion proves the WaitDelay path
+// actually fired: a grandchild that failed to hold the pipe would let Wait
+// return immediately, and the test would pass vacuously. Fails before the fix:
+// the ErrWaitDelay was a spurious deny via 'could not start'.
+func TestWaitDelayVerdictIsHonoredNotDiscardedAsStartFailure(t *testing.T) {
+	requirePOSIX(t)
+	dir := hookDir(t)
+	script(t, dir, "orphan-hold.sh", `printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
+sleep 30 &
+exit 0
+`)
+	groups := group(t, dir, preToolUse(`["./orphan-hold.sh"]`, "  timeout = 30\n"))
+
+	start := time.Now()
+	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
+	if elapsed := time.Since(start); elapsed < 1*time.Second {
+		t.Fatalf("the WaitDelay path did not fire (elapsed %v): the grandchild must hold the stdout pipe across the WaitDelay window", elapsed)
+	}
+	if out.Denied {
+		t.Fatalf("an allow printed before exit must be honored even though orphaned descendants held the pipe: %s", out.Reason)
+	}
+	if len(out.Warnings) != 0 {
+		t.Fatalf("a clean allow must not warn, got %v", out.Warnings)
+	}
+}
+
 func TestExplicitOnTimeoutAllowWarnsInsteadOfBlocking(t *testing.T) {
 	requirePOSIX(t)
 	dir := hookDir(t)
