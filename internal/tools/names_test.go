@@ -37,11 +37,14 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 		TavilyAPIKey: "test-key-not-real",
 		RunAllowlist: []string{"echo"}, // run_command is conditional on non-empty allowlist
 		Memory:       store,            // memory tools are conditional on a wired store
-		// get_diagnostics is conditional on a configured DiagnosticsCommand
-		// whose argv[0] is on the effective run_command allowlist. "echo" is
-		// on the harness allowlist, so the tool registers and the catalogue ↔
-		// registry contract below holds for it in both directions.
-		DiagnosticsCommand: []string{"echo", "diagnostics"},
+		// get_diagnostics is conditional on a configured DiagnosticsCommands
+		// map whose default entry's argv[0] is on the effective run_command
+		// allowlist. "echo" is on the harness allowlist, so the tool registers
+		// and the catalogue ↔ registry contract below holds for it in both
+		// directions.
+		DiagnosticsCommands: map[string][]string{
+			"default": {"echo", "diagnostics"},
+		},
 	})
 	// Also register skill resource which default registry may not include.
 	// AllToolNames lists it; if not in reg, catalogue still claims it as known.
@@ -73,9 +76,9 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 
 // TestGetDiagnosticsRegistrationConditions pins the get_diagnostics
 // registration contract (locked plan v2, task t6): the tool is advertised only
-// when it can succeed. It must be absent when DiagnosticsCommand is unset, and
-// absent when the command's argv[0] is not on the effective run_command
-// allowlist; only configured AND allowlisted commands register it. This mirrors
+// when it can succeed. It must be absent when DiagnosticsCommands is unset, and
+// absent when the default command's argv[0] is not on the effective run_command
+// allowlist; only configured AND allowlisted defaults register it. This mirrors
 // the advertised-iff-can-succeed contract of run_command and extract.
 func TestGetDiagnosticsRegistrationConditions(t *testing.T) {
 	dir := t.TempDir()
@@ -86,11 +89,11 @@ func TestGetDiagnosticsRegistrationConditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	newReg := func(diagnosticsCommand, allowlist []string) *tools.Registry {
+	newReg := func(commands map[string][]string, allowlist []string) *tools.Registry {
 		return tools.NewDefaultRegistry(tools.DefaultOptions{
-			Workspace:          ws,
-			RunAllowlist:       allowlist,
-			DiagnosticsCommand: diagnosticsCommand,
+			Workspace:           ws,
+			RunAllowlist:        allowlist,
+			DiagnosticsCommands: commands,
 		})
 	}
 	hasDiagnostics := func(reg *tools.Registry) bool {
@@ -98,21 +101,28 @@ func TestGetDiagnosticsRegistrationConditions(t *testing.T) {
 		return ok
 	}
 
-	// Unconfigured: no DiagnosticsCommand → the tool is not registered.
+	// Unconfigured: no DiagnosticsCommands → the tool is not registered.
 	if hasDiagnostics(newReg(nil, []string{"echo"})) {
-		t.Errorf("get_diagnostics must not register when DiagnosticsCommand is unset")
+		t.Errorf("get_diagnostics must not register when DiagnosticsCommands is unset")
 	}
 
-	// Configured but argv[0] NOT on the allowlist → the tool is not registered.
-	// The allowlist membership check precedes PATH resolution, so this is
-	// deterministic regardless of whether the program exists.
-	if hasDiagnostics(newReg([]string{"not_an_allowlisted_program", "diagnostics"}, []string{"echo"})) {
-		t.Errorf("get_diagnostics must not register when argv[0] is not allowlisted")
+	// Configured but the default argv[0] NOT on the allowlist → the tool is
+	// not registered. The allowlist membership check precedes PATH resolution,
+	// so this is deterministic regardless of whether the program exists.
+	if hasDiagnostics(newReg(map[string][]string{"default": {"not_an_allowlisted_program", "diagnostics"}}, []string{"echo"})) {
+		t.Errorf("get_diagnostics must not register when the default argv[0] is not allowlisted")
 	}
 
-	// Configured and argv[0] allowlisted (and resolvable on PATH) → registered.
-	if !hasDiagnostics(newReg([]string{"echo", "diagnostics"}, []string{"echo"})) {
-		t.Errorf("get_diagnostics must register when DiagnosticsCommand is configured and allowlisted")
+	// Configured with a "default" entry whose argv[0] is allowlisted (and
+	// resolvable on PATH) → registered.
+	if !hasDiagnostics(newReg(map[string][]string{"default": {"echo", "diagnostics"}}, []string{"echo"})) {
+		t.Errorf("get_diagnostics must register when DiagnosticsCommands has an allowlisted default entry")
+	}
+
+	// A sole non-"default" command is its own default (the v2 defaultName
+	// rule) and gates registration the same way.
+	if !hasDiagnostics(newReg(map[string][]string{"check": {"echo", "diagnostics"}}, []string{"echo"})) {
+		t.Errorf("get_diagnostics must register with a sole non-default command name as the default")
 	}
 }
 

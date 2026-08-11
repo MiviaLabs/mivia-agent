@@ -74,19 +74,22 @@ type diagnosticsOutput struct {
 const diagnosticsEnvelopeVersion = 1
 
 // diagnosticsEnvelope is the model-facing JSON shape of the get_diagnostics
-// tool result (locked plan v2 item 5). exit_code is a pointer so it is
-// omitted when the process never started; truncated reports that rows were
-// dropped by max_rows (or that the envelope was budget-refused); error carries
-// envelope-level failures (resolve/start/refusal) while per-run findings live
-// in rows.
+// tool result (locked plan v2 item 5). command names the executed argv
+// (redacted, shell-safe formatted); command_name names the selected commands
+// entry and is omitted on the legacy single-argv surface. exit_code is a
+// pointer so it is omitted when the process never started; truncated reports
+// that rows were dropped by max_rows (or that the envelope was
+// budget-refused); error carries envelope-level failures (resolve/start/
+// refusal) while per-run findings live in rows.
 type diagnosticsEnvelope struct {
-	Version   int                `json:"version"`
-	Command   string             `json:"command,omitempty"`
-	ExitCode  *int               `json:"exit_code,omitempty"`
-	Rows      []diagnosticsRow   `json:"rows"`
-	Summary   diagnosticsSummary `json:"summary"`
-	Truncated bool               `json:"truncated,omitempty"`
-	Error     string             `json:"error,omitempty"`
+	Version     int                `json:"version"`
+	Command     string             `json:"command,omitempty"`
+	CommandName string             `json:"command_name,omitempty"`
+	ExitCode    *int               `json:"exit_code,omitempty"`
+	Rows        []diagnosticsRow   `json:"rows"`
+	Summary     diagnosticsSummary `json:"summary"`
+	Truncated   bool               `json:"truncated,omitempty"`
+	Error       string             `json:"error,omitempty"`
 }
 
 // diagnosticsLineGCC matches the gcc/tsc shape "file:line:col: rest". The file

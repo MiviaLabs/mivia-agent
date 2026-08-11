@@ -173,11 +173,11 @@ func TestFindReferencesRegisteredLimitDefault(t *testing.T) {
 }
 
 // newCapRegistryWithDiagnostics builds a default registry like newCapRegistry
-// over a temp workspace, additionally wiring a get_diagnostics command:
-// argv[0] is on the run_command allowlist and resolvable on PATH, so
+// over a temp workspace, additionally wiring a get_diagnostics default command:
+// its argv[0] is on the run_command allowlist and resolvable on PATH, so
 // registerDiagnosticsTool registers the tool (get_diagnostics is advertised
-// only when its configured command can run). The command never executes in
-// these budget pins; it only has to register.
+// only when its configured default command can run). The command never executes
+// in these budget pins; it only has to register.
 func newCapRegistryWithDiagnostics(t *testing.T, capBytes int, argv ...string) *Registry {
 	t.Helper()
 	ws, err := workspace.Open(t.TempDir())
@@ -185,11 +185,11 @@ func newCapRegistryWithDiagnostics(t *testing.T, capBytes int, argv ...string) *
 		t.Fatal(err)
 	}
 	return NewDefaultRegistry(DefaultOptions{
-		Workspace:          ws,
-		MaxToolResultBytes: capBytes,
-		MaxReadBytes:       256 * 1024,
-		DiagnosticsCommand: argv,
-		RunAllowlist:       []string{argv[0]},
+		Workspace:           ws,
+		MaxToolResultBytes:  capBytes,
+		MaxReadBytes:        256 * 1024,
+		DiagnosticsCommands: map[string][]string{"default": argv},
+		RunAllowlist:        []string{argv[0]},
 	})
 }
 

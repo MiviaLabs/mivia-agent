@@ -114,14 +114,30 @@ type ToolsConfig struct {
 	// resolves to the built-in 64 KiB default. Values outside
 	// [MinInspectRepositoryBytes, MaxInspectRepositoryBytes] are rejected at load.
 	MaxInspectRepositoryBytes int `toml:"max_inspect_repository_bytes"`
-	// DiagnosticsCommand is the argv of the project diagnostics command the
-	// get_diagnostics tool runs. Empty (unset or []) means the tool is not
-	// registered. When set, argv[0] must be a bare program name on the
-	// resolved run allowlist (run_allowlist_only when set, else
-	// run_allowlist); validateDiagnosticsCommand rejects anything else at
+	// DiagnosticsCommand is the DEPRECATED alias for the reserved "default"
+	// entry of DiagnosticsCommands. It is the argv of the project diagnostics
+	// command the get_diagnostics tool runs. resolveToolsConfig folds a set
+	// alias into DiagnosticsCommands["default"] and then clears it, so
+	// Validate (and every consumer) sees exactly one surface; setting BOTH
+	// the alias and the map is ambiguous and rejected at load. Empty (unset
+	// or []) means the tool is not registered. When set, argv[0] must be a
+	// bare program name on the resolved run allowlist (run_allowlist_only
+	// when set, else run_allowlist); validation rejects anything else at
 	// load, mirroring the run_command gate, so a diagnostics tool that could
 	// never register cannot load clean.
 	DiagnosticsCommand []string `toml:"diagnostics_command"`
+	// DiagnosticsCommands maps a command name to the argv of a project
+	// diagnostics command the get_diagnostics tool runs. Empty or unset means
+	// the tool is not registered; "default" is the reserved name for the
+	// deprecated diagnostics_command alias (declaring it explicitly is
+	// allowed). Every entry is validated at load like the run_command gate:
+	// non-empty argv, argv[0] a bare program name on the EFFECTIVE run
+	// allowlist (run_allowlist_only when set, else run_allowlist, minus
+	// run_blocklist - the tools layer subtracts the blocklist in
+	// configuredRunAllowlist, so a command that could never register is a
+	// load error). Command names must be non-empty, non-whitespace, and
+	// unique after case folding.
+	DiagnosticsCommands map[string][]string `toml:"diagnostics_commands"`
 }
 
 // validateTools runs every [tools] validation. It is the single entry point
@@ -130,51 +146,119 @@ func validateTools(tc ToolsConfig) error {
 	if err := validateToolResultBudgets(tc); err != nil {
 		return err
 	}
-	if err := validateDiagnosticsCommand(tc); err != nil {
+	if err := validateDiagnosticsCommands(tc); err != nil {
 		return err
 	}
 	return validateWritePathBlocklist(tc)
 }
 
-// validateDiagnosticsCommand enforces, at load, the same gate the run_command
-// tool applies at runtime (internal/tools/run.go resolveAllowedCommand), so a
-// [tools] diagnostics_command whose get_diagnostics tool could never register
-// is a load error instead of a silently absent tool. The membership logic is
-// mirrored locally - the config package must not import internal/tools.
+// validateDiagnosticsCommands validates the whole [tools] diagnostics_commands
+// map (the ONE surface; the deprecated diagnostics_command alias has already
+// been folded into DiagnosticsCommands["default"] and cleared by
+// resolveToolsConfig when it was set alone). It enforces, at load, the same
+// gate the run_command tool applies at runtime (internal/tools/run.go
+// resolveAllowedCommand), so a diagnostics command whose get_diagnostics tool
+// could never register is a load error instead of a silently absent tool. The
+// membership logic is mirrored locally - the config package must not import
+// internal/tools.
+//
+// STE: the deprecated alias and the map are the same surface; setting both is
+// ambiguous and must be a LOAD ERROR, not a silent precedence choice.
+// resolveToolsConfig cannot return an error, so it leaves the both-set case
+// intact for this check.
+//
+// STE: map keys are command names the model selects by. Empty, whitespace-only,
+// and case-folded duplicate keys cannot be selected unambiguously and are load
+// errors. (TOML keys are case-sensitive, so "Lint" and "lint" both parse; the
+// case-folded collision is this layer's rejection, not the parser's.)
 //
 // STE: the effective allowlist is run_allowlist_only when set, else
-// run_allowlist. resolveToolsConfig has already cleared RunAllowlist when
-// RunAllowlistOnly is set (B7, before Validate runs), so that selection is
-// exactly what the tools layer resolves (configuredRunAllowlist), and a
-// command allowlisted only in the non-authoritative run_allowlist is refused.
+// run_allowlist, MINUS run_blocklist (case-folded subtraction, mirroring the
+// tools layer's disabledToolNames in configuredRunAllowlist). resolveToolsConfig
+// has already cleared RunAllowlist when RunAllowlistOnly is set (B7, before
+// Validate runs), so that selection is exactly what the tools layer resolves,
+// and a command allowlisted only in the non-authoritative run_allowlist - or
+// blocklisted - is refused.
 //
-// STE: an unset or empty diagnostics_command is a no-op (the get_diagnostics
-// tool is simply not registered), keeping every pre-existing config loading
-// unchanged - backward compatibility is a hard contract.
+// STE: an unset or empty map is a no-op (the get_diagnostics tool is simply not
+// registered), keeping every pre-existing config loading unchanged - backward
+// compatibility is a hard contract.
+func validateDiagnosticsCommands(tc ToolsConfig) error {
+	if len(tc.DiagnosticsCommand) > 0 && len(tc.DiagnosticsCommands) > 0 {
+		return fmt.Errorf("[tools] diagnostics_command and diagnostics_commands are both set; diagnostics_commands is the one surface - remove the deprecated diagnostics_command alias")
+	}
+	effective := effectiveDiagnosticsAllowlist(tc)
+	// Keys first, so a config with an invalid name fails on the name before
+	// any per-entry argv check obscures it.
+	seen := make(map[string]string, len(tc.DiagnosticsCommands))
+	for name := range tc.DiagnosticsCommands {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("[tools] diagnostics_commands command name %q is empty or whitespace-only; names must be non-empty", name)
+		}
+		folded := strings.ToLower(name)
+		if prev, dup := seen[folded]; dup {
+			return fmt.Errorf("[tools] diagnostics_commands command names %q and %q collide after case folding; names must be unique ignoring case", prev, name)
+		}
+		seen[folded] = name
+	}
+	for name, argv := range tc.DiagnosticsCommands {
+		if err := validateDiagnosticsCommandEntry(name, argv, effective); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateDiagnosticsCommandEntry validates ONE diagnostics_commands entry like
+// the run_command gate: non-empty argv, a bare argv[0] (no path separator), and
+// argv[0] on the effective run allowlist.
 //
 // STE: a path-shaped argv[0] ("C:\\Tools\\diag.exe", "/bin/sh") is never a
 // bare name on the allowlist; the run_command gate refuses it, so the config
 // layer must refuse the same value at load.
-func validateDiagnosticsCommand(tc ToolsConfig) error {
-	argv := tc.DiagnosticsCommand
+func validateDiagnosticsCommandEntry(name string, argv []string, effectiveAllowlist []string) error {
 	if len(argv) == 0 {
-		return nil
+		return fmt.Errorf("[tools] diagnostics_commands[%q] argv must be non-empty, got %v", name, argv)
 	}
 	bin := argv[0]
 	if bin == "" {
-		return fmt.Errorf("[tools] diagnostics_command argv must be non-empty, got %q", argv)
+		return fmt.Errorf("[tools] diagnostics_commands[%q] argv[0] must be non-empty, got %v", name, argv)
 	}
 	if strings.Contains(bin, string(os.PathSeparator)) || strings.Contains(bin, "/") || strings.Contains(bin, "\\") {
-		return fmt.Errorf("[tools] diagnostics_command argv[0] must be a bare name on the run allowlist, not a path: %q", bin)
+		return fmt.Errorf("[tools] diagnostics_commands[%q] argv[0] must be a bare name on the run allowlist, not a path: %q", name, bin)
 	}
+	if !allowlisted(bin, effectiveAllowlist) {
+		return fmt.Errorf("[tools] diagnostics_commands[%q] argv[0] %q is not on the effective run allowlist (allowed: %s)", name, bin, strings.Join(effectiveAllowlist, ", "))
+	}
+	return nil
+}
+
+// effectiveDiagnosticsAllowlist mirrors internal/tools/default_registry.go
+// configuredRunAllowlist: run_allowlist_only when set (resolveToolsConfig's B7
+// rule has already cleared RunAllowlist), else run_allowlist, MINUS
+// run_blocklist. The blocklist subtraction case-folds both sides exactly like
+// the tools layer's disabledToolNames, so "SH" blocks "sh" the same way the
+// run_command registry would refuse it.
+func effectiveDiagnosticsAllowlist(tc ToolsConfig) []string {
 	allowlist := tc.RunAllowlistOnly
 	if len(allowlist) == 0 {
 		allowlist = tc.RunAllowlist
 	}
-	if !allowlisted(bin, allowlist) {
-		return fmt.Errorf("[tools] diagnostics_command argv[0] %q is not on the run allowlist (allowed: %s)", bin, strings.Join(allowlist, ", "))
+	if len(tc.RunBlocklist) == 0 {
+		return allowlist
 	}
-	return nil
+	blocked := make(map[string]bool, len(tc.RunBlocklist))
+	for _, name := range tc.RunBlocklist {
+		blocked[strings.ToLower(name)] = true
+	}
+	filtered := make([]string, 0, len(allowlist))
+	for _, entry := range allowlist {
+		if blocked[strings.ToLower(entry)] {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 // allowlisted mirrors internal/tools/run.go allowed(): case-folded comparison
@@ -289,6 +373,7 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	if len(tc.EnvAllowlist) > 0 && len(tc.EnvAllowlistOnly) > 0 {
 		tc.EnvAllowlist = nil
 	}
+	tc = resolveDiagnosticsAlias(tc)
 	// Normalize write_path_blocklist entries so the write tools compare exact
 	// workspace-relative paths: trim whitespace, collapse separators, use
 	// forward slashes. Defaults are NOT injected here; the workflow registry
@@ -299,6 +384,23 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 			norm = append(norm, filepath.ToSlash(filepath.Clean(strings.TrimSpace(entry))))
 		}
 		tc.WritePathBlocklist = slices.Clone(norm)
+	}
+	return tc
+}
+
+// resolveDiagnosticsAlias folds the deprecated DiagnosticsCommand alias into
+// the reserved "default" entry of DiagnosticsCommands and clears the alias, so
+// Validate (and every consumer) sees exactly one surface - the same shape as
+// the B7 clears above. Both set is ambiguous and must be a load error, but
+// resolveToolsConfig cannot return one, so the both-set case is left intact
+// for validateDiagnosticsCommands to reject.
+func resolveDiagnosticsAlias(tc ToolsConfig) ToolsConfig {
+	if len(tc.DiagnosticsCommand) > 0 && len(tc.DiagnosticsCommands) == 0 {
+		if tc.DiagnosticsCommands == nil {
+			tc.DiagnosticsCommands = make(map[string][]string, 1)
+		}
+		tc.DiagnosticsCommands["default"] = tc.DiagnosticsCommand
+		tc.DiagnosticsCommand = nil
 	}
 	return tc
 }

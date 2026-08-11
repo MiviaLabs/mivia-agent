@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -61,15 +62,24 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		SecretPathExceptions:      tc.SecretPathExceptions,
 		SearchIgnorePatterns:      tc.SearchIgnorePatterns,
 		MaxInspectRepositoryBytes: tc.MaxInspectRepositoryBytes,
-		DiagnosticsCommand:        tc.DiagnosticsCommand,
+		DiagnosticsCommands:       tc.DiagnosticsCommands,
 	}
-	// get_diagnostics runs the operator-configured diagnostics argv on this
-	// workspace. State the exact argv once at startup, before any tool call:
-	// a configured command that runs programs is a disclosure, not a hidden
-	// capability (the same contract as the lifecycle-hooks armedNotice).
-	if len(tc.DiagnosticsCommand) > 0 {
-		fmt.Fprintf(os.Stderr, "diagnostics: configured to run [%s] on this workspace\n",
-			strings.Join(tc.DiagnosticsCommand, " "))
+	// get_diagnostics runs the operator-configured diagnostics commands on this
+	// workspace. State every declared command once at startup, before any tool
+	// call: a configured command that runs programs is a disclosure, not a
+	// hidden capability (the same contract as the lifecycle-hooks armedNotice).
+	// Names are sorted so the line is deterministic across runs.
+	if len(tc.DiagnosticsCommands) > 0 {
+		names := make([]string, 0, len(tc.DiagnosticsCommands))
+		for name := range tc.DiagnosticsCommands {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		parts := make([]string, 0, len(names))
+		for _, name := range names {
+			parts = append(parts, fmt.Sprintf("%s=[%s]", name, strings.Join(tc.DiagnosticsCommands[name], " ")))
+		}
+		fmt.Fprintf(os.Stderr, "diagnostics: configured commands: %s\n", strings.Join(parts, ", "))
 	}
 	// Phase 7: attach in-process workflow tools when .mivia/workflows/ exists.
 	// Pass res so the store path matches prepareWorkflowRun / CLI commands.

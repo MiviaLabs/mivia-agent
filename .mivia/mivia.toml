@@ -287,15 +287,17 @@ run_allowlist = [
 # Disable specific built-in capabilities
 # disable_tools = ["web_search", "extract", "fetch_url"]
 
-# ---- Project diagnostics command (get_diagnostics tool) ----
-# Activated for this repository: [tools] diagnostics_command = ["go", "vet", "./..."]
-# `go` is on the run_allowlist above, so the command passes load validation and
-# the tool registers for every session (root agent and sub-agents; workflow
-# steps never get it - evidence gates run checks there). `go vet ./...`
-# type-checks the module and runs vet, one finding per line; the tool returns
-# them as a bounded, normalized feed with the exit code. The command runs only
-# when an agent calls get_diagnostics.
-diagnostics_command = ["go", "vet", "./..."]
+# ---- Project diagnostics commands (get_diagnostics tool) ----
+# Every command must be FAST and offline: the tool runs it on demand, so
+# nothing long-running (no full test suites, no network scans) belongs here.
+# All argv[0] names are on the run_allowlist above, so the map passes load
+# validation and the tool registers for every session (root agent and
+# sub-agents; workflow steps never get it - evidence gates run checks there).
+# The command runs only when an agent calls get_diagnostics.
+# default = type-check + vet, one finding per line
+# fmt = gofmt over tracked Go files (fast)
+# structure = LOC policy
+diagnostics_commands = { default = ["go", "vet", "./..."], fmt = ["make", "fmt-check"], structure = ["python3", "scripts/check_go_structure.py", "--worktree"] }
 
 # ---- Environment variable allowlist ----
 # Entries ending in "*" are prefix rules (e.g. "GIT_*" matches GIT_DIR, etc.)
