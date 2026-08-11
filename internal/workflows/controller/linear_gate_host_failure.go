@@ -73,13 +73,23 @@ func (c *LinearController) settleHostFailure(ctx context.Context, run workflowle
 		hostErr = fmt.Errorf("verifier %q has a host failure: %s", step.Verifier, cause)
 	}
 	result := AgentStepResult{Output: output, ErrorRef: storeErrorText(ctx, c.Repo, hostErr)}
+	// Decide the re-entry BEFORE persisting, like settleAgentAttempt: the
+	// attempt being settled is still Running in the ledger, so the budget check
+	// must not see its own completion. When the budget is spent, record the
+	// TERMINAL failure route so the ledger derives a terminal step — never an
+	// un-honored repair target that a crash between this persist and the status
+	// CAS could resume into — then fail the run as before.
+	repairable := c.hostFailureRepairable(ctx, step, route)
+	if !repairable && !workflowledger.IsTerminalStepID(route.ToStepID) {
+		route.ToStepID = "failure"
+	}
 	if err := CompleteExistingStepResult(ctx, c.Repo, attempt, result, workflowledger.AttemptStatusFailed, route); err != nil {
 		return c.fail(ctx, run, err)
 	}
 	// The failed attempt is durable. Report the completion once with the
 	// failed status before deciding where the run goes next.
 	c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
-	if !c.hostFailureRepairable(ctx, step, route) {
+	if !repairable {
 		return c.fail(ctx, run, hostErr)
 	}
 	return settleAfterRoute(ctx, c, run, route)
@@ -99,8 +109,11 @@ func (c *LinearController) hostFailureRepairable(ctx context.Context, step defin
 		// honest failure.
 		return false
 	}
-	// The attempt being settled is already recorded, so it counts here.
-	spent := 0
+	// The attempt being settled is still Running in the ledger (not yet in its
+	// Failed set) when this runs before CompleteExistingStepResult, so it is
+	// counted here as spent, exactly as agentFailureRepairable counts the
+	// still-Running attempt; the budget total is unchanged.
+	spent := 1
 	for _, a := range attempts {
 		if a.StepID == step.ID && a.Status == workflowledger.AttemptStatusFailed {
 			spent++

@@ -89,6 +89,46 @@ func TestHostFailureRepairIsBounded(t *testing.T) {
 	}
 }
 
+// A run that exhausts the host-failure re-entry budget must record the
+// TERMINAL failure route on the budget-exhausting attempt — never the
+// un-honored repair target. settleAgentAttempt already rewrites the route
+// before persisting (linear_execution.go); settleHostFailure must do the
+// same, or the Failed run claims an active repair step that never ran (DC-9)
+// and a crash between the attempt-complete write and the run-fail CAS resumes
+// into a gate past its spent budget (DC-4).
+func TestHostFailureBudgetExhaustionRecordsTerminalRoute(t *testing.T) {
+	ctrl, _, repo := newHostFailureFixture(t, "repair", 40)
+	got, _ := ctrl.Run(context.Background())
+	if got.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("run status = %q, want failed once the repair budget is spent", got.Status)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateRuns, repairRuns := 0, 0
+	var lastFailedGate workflowledger.StepAttempt
+	for _, a := range attempts {
+		switch a.StepID {
+		case "verify":
+			gateRuns++
+			if a.Status == workflowledger.AttemptStatusFailed && a.AttemptNo > lastFailedGate.AttemptNo {
+				lastFailedGate = a
+			}
+		case "repair":
+			repairRuns++
+		}
+	}
+	// verify#1 fails -> repair#1; verify#2 fails -> repair#2; verify#3 fails
+	// with the budget spent -> run fails.
+	if gateRuns != 3 || repairRuns != 2 {
+		t.Fatalf("verify ran %d times (want 3), repair ran %d times (want 2): %+v", gateRuns, repairRuns, attempts)
+	}
+	if lastFailedGate.Status != workflowledger.AttemptStatusFailed || lastFailedGate.ToStepID != "failure" {
+		t.Fatalf("last failed verify attempt = %+v; want failed routed to the terminal failure once the budget is spent, not the un-honored repair target", lastFailedGate)
+	}
+}
+
 // A step that names no repair target keeps the old behaviour exactly: the run
 // fails, and the host cause reaches the caller.
 func TestHostFailureWithoutARepairTargetStillFailsTheRun(t *testing.T) {
