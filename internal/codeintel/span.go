@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"go/types"
 	"strings"
+	"unicode/utf8"
 )
 
 // astFileFor returns the parsed file that contains pos, or nil when the
@@ -184,5 +185,15 @@ func collapseLine(s string) string {
 	if len(s) <= maxSignatureBytes {
 		return s
 	}
-	return strings.TrimSpace(s[:maxSignatureBytes]) + " …"
+	// Cut at a rune boundary: s[:maxSignatureBytes] can land inside a
+	// multi-byte character, and the partial rune survives TrimSpace, making
+	// the emitted signature invalid UTF-8 that encoding/json silently mangles
+	// into U+FFFD. Back off byte-by-byte until the cut is valid UTF-8, the
+	// same pattern diff.TruncateUTF8 uses. The bound stays <= maxSignatureBytes
+	// bytes plus the 4-byte ' …' marker.
+	cut := s[:maxSignatureBytes]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return strings.TrimSpace(cut) + " …"
 }

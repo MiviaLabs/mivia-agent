@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -15,10 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
 )
 
@@ -83,17 +79,51 @@ func runChat(args []string) error {
 
 func parseChatInvocation(args []string) (chatInvocation, error) {
 	var invocation chatInvocation
-	invocation.prompt, args, _ = flagValue(args, "-p", "--prompt")
-	invocation.provider, args, _ = flagValue(args, "--provider")
-	invocation.model, args, _ = flagValue(args, "--model")
-	invocation.configPath, args, _ = flagValue(args, "--config")
-	invocation.workspacePath, args, _ = flagValue(args, "--workspace")
-	invocation.agent, args, _ = flagValue(args, "--agent")
-	invocation.allowProgram, args, _ = flagVar(args, "--allow-program")
-	invocation.denyProgram, args, _ = flagVar(args, "--deny-program")
-	invocation.disableTool, args, _ = flagVar(args, "--disable-tool")
-	invocation.allowEnvVar, args, _ = flagVar(args, "--allow-env-var")
-	invocation.denyEnvVar, args, _ = flagVar(args, "--deny-env-var")
+	var err error
+	invocation.prompt, args, _, err = flagValue(args, "-p", "--prompt")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.provider, args, _, err = flagValue(args, "--provider")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.model, args, _, err = flagValue(args, "--model")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.configPath, args, _, err = flagValue(args, "--config")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.workspacePath, args, _, err = flagValue(args, "--workspace")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.agent, args, _, err = flagValue(args, "--agent")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.allowProgram, args, _, err = flagVar(args, "--allow-program")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.denyProgram, args, _, err = flagVar(args, "--deny-program")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.disableTool, args, _, err = flagVar(args, "--disable-tool")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.allowEnvVar, args, _, err = flagVar(args, "--allow-env-var")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.denyEnvVar, args, _, err = flagVar(args, "--deny-env-var")
+	if err != nil {
+		return chatInvocation{}, err
+	}
 	invocation.noTools, invocation.plainUI, invocation.staleBypass, args = chatFlags(args)
 	if len(args) > 0 {
 		return chatInvocation{}, fmt.Errorf("chat: unexpected arguments: %v", args)
@@ -255,151 +285,6 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 		return repl(sess, res, useTools, agentState)
 	}
 	return runTUI(sess, res, useTools, agentState, invocation.resumeSessionName)
-}
-
-func chatRepositoryRoot(path string) (string, error) {
-	if path == "" {
-		path = "."
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	return vcs.MainRepoRoot(abs)
-}
-
-func setupChatSessionContext(sess *chat.Session, workspaceRoot string, invocation chatInvocation, res *config.Resolved) (*storage.SQLite, error) {
-	repositoryRoot, err := chatRepositoryRoot(workspaceRoot)
-	if err == nil {
-		if err := bindManagedWorktreeSessionExpected(sess, repositoryRoot, workspaceRoot, invocation.repositorySessionStorePath, invocation.expectedWorktreeInstance); err != nil {
-			return nil, err
-		}
-	}
-	if err != nil || invocation.repositorySessionStorePath == "" {
-		return setupSessionContext(sess, workspaceRoot, res)
-	}
-	return setupRepositorySessionContext(sess, repositoryRoot, invocation.repositorySessionStorePath, res)
-}
-
-func bindManagedWorktreeSession(sess *chat.Session, repositoryRoot, workspaceRoot, storePath string) error {
-	return bindManagedWorktreeSessionExpected(sess, repositoryRoot, workspaceRoot, storePath, contextstate.WorktreeInstance{})
-}
-
-func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, workspaceRoot, storePath string, expected contextstate.WorktreeInstance) error {
-	name, err := vcs.CurrentWorktreeName(context.Background(), workspaceRoot)
-	if err != nil {
-		return err
-	}
-	if name == "" {
-		if !expected.IsZero() {
-			return contextstate.ErrWorktreeDeleted
-		}
-		return nil
-	}
-	if !expected.IsZero() && expected.Worktree != name {
-		return contextstate.ErrWorktreeDeleted
-	}
-	worktree, err := vcs.Resolve(context.Background(), repositoryRoot, name)
-	if err != nil {
-		return err
-	}
-	if worktree == nil {
-		return fmt.Errorf("managed worktree %q is not available", name)
-	}
-	canonicalPath, err := canonicalMarkerRoot(worktree.Path)
-	if err != nil {
-		return err
-	}
-	if storePath == "" {
-		storePath, err = repositorySessionStorePath(repositoryRoot, chatInvocation{}, &config.Resolved{})
-		if err != nil {
-			return err
-		}
-	}
-	store, err := openContextStorePath(storePath)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	principal, _ := worktreeRoutePrincipal(repositoryRoot)
-	instance, markerErr := readWorktreeMarker(worktree.Path)
-	if errors.Is(markerErr, os.ErrNotExist) {
-		if !expected.IsZero() {
-			return contextstate.ErrWorktreeDeleted
-		}
-		info, legacy, err := classifyMissingMarkerForBind(store, principal, name, canonicalPath)
-		if err != nil {
-			return err
-		}
-		if !info.Instance.IsZero() {
-			return fmt.Errorf("managed worktree %q has state %q but no marker: %w", name, info.State, contextstate.ErrWorktreeDeleted)
-		}
-		if legacy {
-			return fmt.Errorf("worktree %q requires adoption; run mivia worktree adopt %s", name, name)
-		}
-		return nil
-	}
-	if markerErr != nil {
-		return fmt.Errorf("read worktree session marker: %w", markerErr)
-	}
-	if instance.Worktree != name {
-		return fmt.Errorf("worktree session marker does not match %q", name)
-	}
-	if !expected.IsZero() && instance != expected {
-		return contextstate.ErrWorktreeDeleted
-	}
-	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
-		return fmt.Errorf("validate worktree session binding: %w", err)
-	}
-	sessionDir, err := canonicalMarkerRoot(workspaceRoot)
-	if err != nil {
-		return err
-	}
-	return sess.SetContextWorktreeBindingAt(instance, canonicalPath, sessionDir)
-}
-
-func repositorySessionStorePath(root string, invocation chatInvocation, _ *config.Resolved) (string, error) {
-	configPath, found := repositoryConfigPath(root, invocation)
-	if !found {
-		return config.DefaultStorePathForWorkspace(root), nil
-	}
-	resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: root, AllowMissingConfig: true})
-	if err != nil {
-		return "", err
-	}
-	if !resolved.StorePathSet {
-		return config.DefaultStorePathForWorkspace(root), nil
-	}
-	path := config.ExpandPath(resolved.Subagents.StorePath)
-	if filepath.IsAbs(path) {
-		return path, nil
-	}
-	return filepath.Join(root, path), nil
-}
-
-func repositoryConfigPath(root string, invocation chatInvocation) (string, bool) {
-	configPath := invocation.configPath
-	if configPath == "" {
-		configPath = os.Getenv("MIVIA_CONFIG")
-	}
-	if configPath != "" {
-		path := config.ExpandPath(configPath)
-		if !filepath.IsAbs(path) {
-			absolute, err := filepath.Abs(path)
-			if err != nil {
-				return "", false
-			}
-			path = absolute
-		}
-		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
-			return "", false
-		}
-		return path, true
-	}
-	return config.FirstExisting([]string{
-		workspace.NamespacePath(root, "mivia.toml"),
-		config.UserConfigPath(),
-	})
 }
 
 func enterChatWorkspace(path string) (string, error) {

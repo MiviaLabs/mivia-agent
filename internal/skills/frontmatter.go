@@ -203,7 +203,11 @@ func (p *fmParser) keyLine(trimmed string, lineNum int, front []string, idx int)
 		if !strings.HasSuffix(rest, "]") {
 			return fmt.Errorf("line %d: unclosed flow sequence", lineNum)
 		}
-		p.result[key] = splitFlowSequence(strings.TrimSpace(rest[1 : len(rest)-1]))
+		items, err := splitFlowSequence(strings.TrimSpace(rest[1 : len(rest)-1]))
+		if err != nil {
+			return fmt.Errorf("line %d: key %q: %v", lineNum, key, err)
+		}
+		p.result[key] = items
 	case rest == "":
 		if startsBlockSequence(front, idx) {
 			p.key, p.block, p.inBlock = key, nil, true
@@ -211,7 +215,10 @@ func (p *fmParser) keyLine(trimmed string, lineNum int, front []string, idx int)
 			p.result[key] = ""
 		}
 	default:
-		val := unquote(rest)
+		val, err := unquote(rest)
+		if err != nil {
+			return fmt.Errorf("line %d: key %q: %v", lineNum, key, err)
+		}
 		if val == "" {
 			return fmt.Errorf("line %d: empty scalar value for key %q", lineNum, key)
 		}
@@ -247,29 +254,48 @@ func blockItem(trimmed string, lineNum int) (string, error) {
 	if !strings.HasPrefix(trimmed, "- ") {
 		return "", fmt.Errorf("line %d: expected list item %q inside block sequence, got %q", lineNum, "- value", trimmed)
 	}
-	item := unquote(strings.TrimSpace(trimmed[2:]))
+	item, err := unquote(strings.TrimSpace(trimmed[2:]))
+	if err != nil {
+		return "", fmt.Errorf("line %d: %v", lineNum, err)
+	}
 	if item == "" {
 		return "", fmt.Errorf("line %d: empty list item", lineNum)
 	}
 	return item, nil
 }
 
-// unquote removes surrounding single or double quotes from s.
-func unquote(s string) string {
-	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
-		}
+// unquote removes surrounding single or double quotes from s. A value whose
+// first byte is a quote delimiter but which has no matching closing delimiter
+// is malformed - the stray leading quote would otherwise be silently kept in
+// the value - so it returns an error naming the delimiter kind, never the
+// value itself.
+func unquote(s string) (string, error) {
+	if s == "" {
+		return "", nil
 	}
-	return s
+	switch s[0] {
+	case '"':
+		if len(s) >= 2 && s[len(s)-1] == '"' {
+			return s[1 : len(s)-1], nil
+		}
+		return "", fmt.Errorf("unbalanced double-quoted value (missing closing quote)")
+	case '\'':
+		if len(s) >= 2 && s[len(s)-1] == '\'' {
+			return s[1 : len(s)-1], nil
+		}
+		return "", fmt.Errorf("unbalanced single-quoted value (missing closing quote)")
+	}
+	return s, nil
 }
 
 // splitFlowSequence splits a comma-separated flow sequence inner string
 // with awareness of quoted values, so commas inside quotes are preserved.
-func splitFlowSequence(inner string) []string {
+// A scan that ends inside an open quote is a hard error rather than a
+// silently kept stray delimiter.
+func splitFlowSequence(inner string) ([]string, error) {
 	inner = strings.TrimSpace(inner)
 	if inner == "" {
-		return nil
+		return nil, nil
 	}
 	var items []string
 	var current strings.Builder
@@ -284,14 +310,25 @@ func splitFlowSequence(inner string) []string {
 			inSingle = !inSingle
 			current.WriteByte(ch)
 		case ch == ',' && !inSingle && !inDouble:
-			items = append(items, unquote(strings.TrimSpace(current.String())))
+			item, err := unquote(strings.TrimSpace(current.String()))
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
 			current.Reset()
 		default:
 			current.WriteByte(ch)
 		}
 	}
-	if current.Len() > 0 || len(items) > 0 {
-		items = append(items, unquote(strings.TrimSpace(current.String())))
+	if inSingle || inDouble {
+		return nil, fmt.Errorf("unbalanced quote in flow sequence")
 	}
-	return items
+	if current.Len() > 0 || len(items) > 0 {
+		item, err := unquote(strings.TrimSpace(current.String()))
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }

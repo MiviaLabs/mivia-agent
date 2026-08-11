@@ -245,21 +245,30 @@ func TestParseFrontmatter_FlowSequenceQuotedCommas(t *testing.T) {
 }
 
 func TestSplitFlowSequence_Empty(t *testing.T) {
-	items := splitFlowSequence("")
+	items, err := splitFlowSequence("")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if items != nil {
 		t.Fatalf("expected nil, got %v", items)
 	}
 }
 
 func TestSplitFlowSequence_Quoted(t *testing.T) {
-	items := splitFlowSequence(`"a,b",c,"d,e"`)
+	items, err := splitFlowSequence(`"a,b",c,"d,e"`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(items) != 3 || items[0] != "a,b" || items[1] != "c" || items[2] != "d,e" {
 		t.Fatalf("got %v", items)
 	}
 }
 
 func TestSplitFlowSequence_SingleQuoted(t *testing.T) {
-	items := splitFlowSequence(`'x,y',z`)
+	items, err := splitFlowSequence(`'x,y',z`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(items) != 2 || items[0] != "x,y" || items[1] != "z" {
 		t.Fatalf("got %v", items)
 	}
@@ -447,5 +456,70 @@ func TestParseFrontmatterAcceptsOmittedKey(t *testing.T) {
 	}
 	if m["name"] != "x" {
 		t.Fatalf("name = %v, want x", m["name"])
+	}
+}
+
+// A value whose first byte is a quote delimiter but which has no matching
+// closing delimiter is malformed (DC-9 silent corruption / DC-14 interface
+// tolerance). The parser previously kept the stray leading quote verbatim,
+// silently corrupting names and triggers instead of erroring.
+func TestParseFrontmatter_RejectsUnbalancedQuoteScalar(t *testing.T) {
+	for name, in := range map[string]string{
+		"double-quoted scalar": "---\nname: \"unclosed\n---\nbody\n",
+		"single-quoted scalar": "---\nname: 'unclosed\n---\nbody\n",
+		"bare double quote":    "---\nname: \"\n---\nbody\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseFrontmatter([]byte(in))
+			if err == nil {
+				t.Fatal("expected error for unbalanced quote in scalar value")
+			}
+		})
+	}
+}
+
+func TestParseFrontmatter_RejectsUnbalancedQuoteFlowSequence(t *testing.T) {
+	for name, in := range map[string]string{
+		"double-quoted item": "---\ntriggers: [\"a,b]\n---\nbody\n",
+		"single-quoted item": "---\ntriggers: ['a, b]\n---\nbody\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseFrontmatter([]byte(in))
+			if err == nil {
+				t.Fatal("expected error for unbalanced quote in flow sequence")
+			}
+		})
+	}
+}
+
+func TestParseFrontmatter_RejectsUnbalancedQuoteBlockItem(t *testing.T) {
+	_, err := ParseFrontmatter([]byte("---\ntriggers:\n  - 'unclosed\n---\nbody\n"))
+	if err == nil {
+		t.Fatal("expected error for unbalanced quote in block sequence item")
+	}
+}
+
+// The fix must not over-reject: balanced delimiters, interior quotes, and the
+// existing empty-after-unquote rejection keep their behavior.
+func TestParseFrontmatter_KeepsBalancedQuotes(t *testing.T) {
+	for name, in := range map[string]string{
+		"double-quoted scalar": "---\nname: \"closed\"\n---\nbody\n",
+		"single-quoted scalar": "---\nname: 'closed'\n---\nbody\n",
+		"flow sequence quoted": "---\ntriggers: [\"a,b\", 'c']\n---\nbody\n",
+		"interior quotes":      "---\nname: he said \"hi\"\n---\nbody\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, err := ParseFrontmatter([]byte(in))
+			if err != nil {
+				t.Fatalf("%s: unexpected error: %v", name, err)
+			}
+			if m == nil {
+				t.Fatalf("%s: expected non-nil result", name)
+			}
+		})
+	}
+	// The existing empty-after-unquote rejection must still error.
+	if _, err := ParseFrontmatter([]byte("---\nname: \"\"\n---\nbody\n")); err == nil {
+		t.Fatal("expected empty-after-unquote scalar to be rejected")
 	}
 }
