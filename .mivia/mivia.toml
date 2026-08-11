@@ -476,6 +476,11 @@ api_key_env = "TAVILY_API_KEY"
 # ---------------------------------------------------------------------------
 [subagents]
 max_workers = 0                    # 0 = unlimited (one goroutine per task)
+# schema_retry_max: corrective re-entries a multi-step child may make after an
+# invalid structured reply (default 2, max 10). Raised so a flash agent that
+# drifts into prose gets more chances to converge to the step's JSON schema
+# instead of failing the whole workflow run on one output hiccup.
+schema_retry_max = 5
 # max_depth caps the dependency depth of one orchestrated task graph
 # (spawn_agent depends_on chains). -1 = unbounded (the pool Unlimited
 # sentinel); 0 also means unlimited after resolve. A positive value caps it.
