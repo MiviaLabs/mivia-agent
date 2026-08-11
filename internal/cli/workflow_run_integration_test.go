@@ -173,7 +173,10 @@ func TestWorkflowRunRejectsOpenSchemaBeforeProviderCall(t *testing.T) {
 	}
 }
 
-func TestWorkflowRunRejectsRunCommandAuthority(t *testing.T) {
+// TestWorkflowRunAllowsRunCommandAuthority: a workflow agent step that carries
+// run_command is admissible, and the workflow is treated as write-capable
+// (a shell program can write anywhere) so it must run in an isolated worktree.
+func TestWorkflowRunAllowsRunCommandAuthority(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
 	storePath := filepath.Join(root, "workflow.db")
@@ -195,9 +198,24 @@ func TestWorkflowRunRejectsRunCommandAuthority(t *testing.T) {
 	if err := os.WriteFile(agentPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = runWorkflowWithIO([]string{"run", "two-step", "--workspace", root, "--config", configPath, "--input", "task=compile"}, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "run_command") {
-		t.Fatalf("workflow run error = %v, want run_command rejection", err)
+	initWorkflowGitRepo(t, root)
+	var stdout strings.Builder
+	err = runWorkflowWithIO([]string{"run", "two-step", "--workspace", root, "--config", configPath, "--input", "task=compile"}, &stdout, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := strings.TrimPrefix(strings.Fields(stdout.String())[0], "run_id=")
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	run, err := ledger.NewStorageRepository(store).GetRun(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.WorktreeName == "" {
+		t.Fatal("run_command workflow must be write-capable and create a worktree")
 	}
 }
 
