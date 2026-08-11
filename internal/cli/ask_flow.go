@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -395,6 +396,16 @@ func (t *postMessageTool) waitOnParkedAnswer(
 	case <-ctx.Done():
 		if answer, ok := tryRecvAnswer(answerCh); ok {
 			return finishReceive(answer)
+		}
+		// The enclosing tool/step deadline fired while parked (the wait was
+		// clamped to that budget, or the deadline passed during park setup):
+		// surface the documented no_answer result, never the raw ctx.Err().
+		// Mirrors the question path's deadline handling (waitForAnswer) and
+		// the timer.C branch's cleanup. A genuine cancel must still propagate
+		// as an error — a canceled task is never a no_answer park.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			c.CloseAsk(msg.ID)
+			return retireParkedWaitNoAnswer(c, id, parked, unpark, msg.ID, "timed_out")
 		}
 		*parked = false
 		unpark()

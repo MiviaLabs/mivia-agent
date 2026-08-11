@@ -124,6 +124,9 @@ func TestStartNewSnapshotCarriesSchemaBytes(t *testing.T) {
 	if string(ref.Bytes) != schemaContent {
 		t.Fatalf("admitted schema bytes = %q, want the workspace file bytes", ref.Bytes)
 	}
+	// Join the background run goroutine. Its final .mivia/runs trace write
+	// must finish before t.TempDir cleanup removes the workspace.
+	waitRun(t, engine, started.RunID)
 }
 
 // schemaStepSchema is the closed JSON Schema accepted at admission for the

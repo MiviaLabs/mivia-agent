@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 	"unicode/utf8"
@@ -43,6 +44,19 @@ func (t discoveredTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	}
 	result, err := t.client.CallTool(ctx, t.remoteName, values)
 	if err != nil {
+		// Preserve the cancellation/timeout identity so the runtime can stamp
+		// "canceled"/"timed_out" instead of a generic "failed" (DC-9). The
+		// sentinels carry no external content; server-owned error text stays
+		// hidden on every branch.
+		if errors.Is(err, context.Canceled) {
+			return "", context.Canceled
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", context.DeadlineExceeded
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		return "", fmt.Errorf("MCP tool call failed")
 	}
 	return capMCPResult(t.redaction.Text(result), t.maxResultBytes), nil
