@@ -101,6 +101,9 @@ func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnaps
 	}
 	defer release()
 	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
+	// Refresh the durable on-disk trace after delivery settles (success,
+	// failure, or refusal), so .mivia/runs carries the delivery hint.
+	defer e.writeRunTrace(runID)
 	return e.publishDelivery(ctx, run, snapshot, policy)
 }
 
