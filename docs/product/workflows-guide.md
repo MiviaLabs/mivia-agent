@@ -433,7 +433,7 @@ from = "plan_review"
 to = "plan"
 match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "plan_review_repair"
-max_iterations = -1
+max_iterations = 5
 ```
 
 | Field | Description |
@@ -444,6 +444,13 @@ max_iterations = -1
 | `match.output` | Output field values to match (no expressions, regexes, or negation) |
 | `loop` | Named loop for back-edges (globally unique) |
 | `max_iterations` | Loop cap: `>0` (max 1000) or `-1` (unlimited) |
+
+Use a finite `max_iterations` for repair loops. A bounded loop enables the
+controller's stall guard: when a review gate reproduces the same findings set
+across several rounds, the run fails with a durable "no progress" cause
+instead of burning the loop budget. An unbounded loop (`-1`) disables that
+guard, so a review finding the agents cannot fix (for example one that needs a
+host action) loops until the run duration bound stops it.
 
 A transition matches only a closed attempt status and declared output-schema fields. Zero or multiple matches fails closed.
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
@@ -89,5 +90,13 @@ status = "succeeded"
 	}
 	if got != run.WorktreeName {
 		t.Fatalf("SanitizeName(%q) = %q, want the name unchanged", run.WorktreeName, got)
+	}
+	// Wait for the background controller (and the terminal on-disk trace) to
+	// finish before the temp workspace is removed, so teardown does not race
+	// the engine's final summary write.
+	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := engine.Wait(waitCtx, result.RunID); err != nil {
+		t.Fatalf("Wait(%q): %v", result.RunID, err)
 	}
 }

@@ -175,6 +175,8 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 		return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 	}
 	_ = req.AllowPublish // publication is a separate deliver step for tools
+	// Durable local trace: create .mivia/runs + admission summary; fail-soft.
+	e.writeRunTrace(runID)
 	e.launch(ctrl)
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
@@ -256,6 +258,8 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 		return agenttools.StartResult{}, err
 	}
 	e.launch(ctrl)
+	// Durable local trace for the resumed run (see startNew).
+	e.writeRunTrace(req.RunID)
 	fresh, err := e.Repo.GetRun(ctx, req.RunID)
 	if err != nil {
 		return agenttools.StartResult{}, err
@@ -392,6 +396,8 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 		// when the last Advance already released it or another host took
 		// the claim.
 		_ = e.Repo.ReleaseRun(context.Background(), ctrl.RunID, ctrl.Holder)
+		// Final durable trace with the terminal status and delivery hints.
+		e.writeRunTrace(ctrl.RunID)
 		e.mu.Lock()
 		if cur, ok := e.active[ctrl.RunID]; ok && cur.done == done {
 			delete(e.active, ctrl.RunID)
