@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 )
 
@@ -35,6 +36,18 @@ type subscription struct {
 	// (sync.Once.Do), so waiting on its done channel would deadlock. Such a
 	// goroutine drains and exits on its own once the handler returns.
 	delivering atomic.Bool
+	// deliveringMu serializes the delivering false->true transition with
+	// Delivery.Close's snapshot of deliveringChange. It is a leaf lock: it is
+	// acquired without holding b.mu and never held across the done wait, so
+	// no lock-order inversion is introduced.
+	deliveringMu sync.Mutex
+	// deliveringChange is closed and replaced with a fresh open channel on
+	// every delivering false->true transition (in handle(), before the
+	// handler runs). Delivery.Close snapshots it under deliveringMu and
+	// selects on it, so the moment a subscription's goroutine starts
+	// delivering, Close abandons the wait instead of joining a goroutine
+	// that cannot exit until its handler returns.
+	deliveringChange chan struct{}
 }
 
 func newSubscription(ctx context.Context, b *Bus, h Handler, bufSize int) *subscription {
@@ -42,10 +55,11 @@ func newSubscription(ctx context.Context, b *Bus, h Handler, bufSize int) *subsc
 		bufSize = defaultBufSize
 	}
 	s := &subscription{
-		handler: h,
-		ch:      make(chan Event, bufSize),
-		done:    make(chan struct{}),
-		flushCh: make(chan chan struct{}, 1), // small buffer for flush signals
+		handler:          h,
+		ch:               make(chan Event, bufSize),
+		done:             make(chan struct{}),
+		flushCh:          make(chan chan struct{}, 1), // small buffer for flush signals
+		deliveringChange: make(chan struct{}),
 	}
 	ctx, s.cancel = context.WithCancel(ctx)
 	if b != nil {
@@ -164,6 +178,20 @@ func (s *subscription) drainEvents(ctx context.Context) {
 // recovers internally) and makes it apply to every handler uniformly.
 func (s *subscription) handle(ctx context.Context, ev Event) {
 	s.delivering.Store(true)
+	// Publish the delivering false->true transition before the handler runs:
+	// close the current deliveringChange channel (waking any Delivery.Close
+	// that snapshotted it) and replace it with a fresh open channel. The
+	// Store(true) above happens-before this close under deliveringMu, so a
+	// Close that snapshots the channel and then sees delivering==false is
+	// guaranteed to observe the channel the next transition closes. Lazy-init
+	// keeps hand-built subscriptions (white-box tests) safe.
+	s.deliveringMu.Lock()
+	if s.deliveringChange == nil {
+		s.deliveringChange = make(chan struct{})
+	}
+	close(s.deliveringChange)
+	s.deliveringChange = make(chan struct{})
+	s.deliveringMu.Unlock()
 	defer func() {
 		// Clear before the recover so a panicking handler also releases the
 		// delivering flag: Delivery.Close must never wait on this goroutine

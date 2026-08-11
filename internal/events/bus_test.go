@@ -306,6 +306,65 @@ func TestUnsubscribeNonexistent(t *testing.T) {
 	bus.Unsubscribe(KindError, h)
 }
 
+// Regression: Bus.Unsubscribe must not panic when the handler is a
+// HandlerFunc. Function values are not comparable in Go, and the old
+// implementation compared interface values with s.handler == target: when
+// both dynamic types are HandlerFunc, the comparison panics at runtime. The
+// panic fires while b.mu is held with no deferred unlock, permanently
+// wedging the bus (every later Subscribe/Publish/Unsubscribe/Flush/Close
+// blocks forever). Unsubscribe must treat a HandlerFunc as a best-effort
+// code-pointer-identity match: the same func value unsubscribes, a different
+// func value is a no-op, and neither path panics.
+func TestBusUnsubscribeWithHandlerFuncDoesNotPanic(t *testing.T) {
+	bus := New()
+	t.Cleanup(bus.Close)
+
+	// Success path: subscribe a HandlerFunc value and deliver one event.
+	var calls atomic.Int64
+	fn := HandlerFunc(func(ctx context.Context, ev Event) {
+		calls.Add(1)
+	})
+	bus.Subscribe(KindToolStart, fn)
+	bus.Publish(NewEvent(KindToolStart))
+	bus.Flush()
+	if calls.Load() != 1 {
+		t.Fatalf("handler invoked %d times, want 1", calls.Load())
+	}
+
+	// Negative path 1: a DIFFERENT HandlerFunc value (never subscribed) must
+	// not panic and must be a no-op — the subscribed handler keeps running.
+	// Pre-fix this comparison panics at runtime while b.mu is held.
+	other := HandlerFunc(func(ctx context.Context, ev Event) {})
+	bus.Unsubscribe(KindToolStart, other)
+	bus.Publish(NewEvent(KindToolStart))
+	bus.Flush()
+	if calls.Load() != 2 {
+		t.Fatalf("handler invoked %d times after no-op Unsubscribe, want 2", calls.Load())
+	}
+
+	// Success path: unsubscribing with the SAME fn value removes the
+	// subscription; a later publish must not reach the handler.
+	bus.Unsubscribe(KindToolStart, fn)
+	bus.Publish(NewEvent(KindToolStart))
+	bus.Flush()
+	if calls.Load() != 2 {
+		t.Fatalf("handler invoked %d times after Unsubscribe, want 2 (subscription not removed)", calls.Load())
+	}
+
+	// Negative path 2: Unsubscribe with a HandlerFunc on a kind with no
+	// subscribers must not panic.
+	bus.Unsubscribe(KindStep, HandlerFunc(func(ctx context.Context, ev Event) {}))
+
+	// Negative path 3: Unsubscribe after Bus.Close must not panic. Close sets
+	// b.subs = nil, and the old HandlerFunc comparison ran on the nil-guard
+	// path while holding b.mu.
+	closed := New()
+	closed.Subscribe(KindToolStart, fn)
+	closed.Close()
+	closed.Unsubscribe(KindToolStart, HandlerFunc(func(ctx context.Context, ev Event) {}))
+	closed.Unsubscribe(KindToolStart, fn)
+}
+
 // TestSubscribeNilHandler verifies that subscribing nil does not panic.
 func TestSubscribeNilHandler(t *testing.T) {
 	bus := New()

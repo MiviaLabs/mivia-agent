@@ -330,8 +330,12 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	}
 	defer done()
 	// Publish any stage an earlier boundary could not at the earliest safe
-	// point of this turn, and take the surface the loop must run on.
-	toolRegistry, turnDispatcher := s.surfaceForTurnStart(snapshot, turn)
+	// point of this turn, and take the surface the loop must run on. The
+	// returned token is re-captured after the start-of-turn publication so the
+	// loop's commit runs under the post-publication fence
+	// (chat-turnstart-admission-fences-own-turn).
+	toolRegistry, turnDispatcher, turnToken := s.surfaceForTurnStart(snapshot, turn)
+	snapshot.token = turnToken
 	loop := &agent.Loop{
 		Completer: snapshot.binding.Completer,
 		Tools:     toolRegistry,
@@ -406,10 +410,21 @@ func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
 // step (DC-9: the load_tools "next turn" promise must hold). A stage owned by
 // this not-yet-run turn stays deferred for its own boundary (D7). Turns with
 // nothing pending keep the snapshot path byte-for-byte.
-func (s *Session) surfaceForTurnStart(snapshot agentTurnSnapshot, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher) {
+//
+// The returned token is the turn's operation fence RE-CAPTURED after the
+// start-of-turn publication. That publication swaps the binding surface and
+// bumps the operation fence (TryPublishAgentSurface -> invalidateLocked),
+// which would fence this turn's own beginAgentTurn token out of
+// commitPreparedTurn (chat-turnstart-admission-fences-own-turn). Re-capturing
+// pins the fence to the post-publication epoch/revision/binding and to this
+// turn's own id, so the loop's commit runs under the fence it actually
+// executes on. When the publication deferred (no bump), the re-capture is a
+// no-op re-read. Genuine supersession still refuses: a superseding turn
+// advances s.turnID, and sameFence compares TurnID.
+func (s *Session) surfaceForTurnStart(snapshot agentTurnSnapshot, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher, OperationToken) {
 	toolRegistry, turnDispatcher := resolveTurnExecutionSurface(snapshot.toolRegistry, snapshot.binding.Dispatcher, turn)
 	if !snapshot.pendingAdmission {
-		return toolRegistry, turnDispatcher
+		return toolRegistry, turnDispatcher, snapshot.token
 	}
 	s.PublishPendingAdmissionAtTurnStart()
 	// The snapshot predates the start-of-turn publication. Read the live
@@ -420,7 +435,8 @@ func (s *Session) surfaceForTurnStart(snapshot agentTurnSnapshot, turn *TurnOpti
 	liveTools := s.Tools
 	liveDispatcher := s.binding.Dispatcher
 	s.mu.RUnlock()
-	return resolveTurnExecutionSurface(liveTools, liveDispatcher, turn)
+	toolRegistry, turnDispatcher = resolveTurnExecutionSurface(liveTools, liveDispatcher, turn)
+	return toolRegistry, turnDispatcher, s.captureTurnToken(snapshot.myTurn)
 }
 
 // adoptCalibration copies a finished turn's rolling token calibration back

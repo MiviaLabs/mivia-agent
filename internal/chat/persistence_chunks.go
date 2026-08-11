@@ -55,15 +55,19 @@ func writeSessionChunks(dir string, msgs []provider.Message) (int, error) {
 	if count == 0 {
 		return 0, nil
 	}
-	// Stage every chunk first, then swap them in by renaming each staged file
-	// over its destination. Old chunks are never deleted before or during the
-	// swap: a mid-swap failure must leave the previous snapshot fully loadable
-	// (deleting the old chunks up front left meta.json pointing at files that
-	// no longer exist - an unloadable session - and truncating a chunk in
-	// place left a readable prefix whose trailing tool results were gone,
-	// which the API rejects on every later turn). Stale chunks are removed by
-	// the caller only after meta.json commits to the new chunk count.
+	// Stage every chunk first, then back up each existing destination chunk
+	// and swap the staged files in. A failure at any point must leave the
+	// PREVIOUS snapshot byte-for-byte intact: old chunks are never deleted or
+	// renamed over before their replacement is fully staged, and every chunk
+	// moved aside is restored on failure (deleting the old chunks up front
+	// left meta.json pointing at files that no longer exist - an unloadable
+	// session - and renaming over them one by one left a mixed snapshot whose
+	// low chunks held new content while meta.json still referenced the old
+	// chunk count, which loads without error but corrupts the transcript on
+	// every later turn). Stale chunks are removed by the caller only after
+	// meta.json commits to the new chunk count.
 	staged := make([]string, 0, count)
+	backedUp := make([]int, 0, count)
 	defer func() {
 		for _, tmp := range staged {
 			_ = os.Remove(tmp) // no-op once renamed
@@ -80,10 +84,42 @@ func writeSessionChunks(dir string, msgs []provider.Message) (int, error) {
 		}
 		staged = append(staged, tmp)
 	}
+	// restoreBackups moves every chunk whose destination was set aside back
+	// into place. It deliberately uses direct os.Rename, bypassing the
+	// injectable renameFile seam, so a test-injected commit failure cannot
+	// poison the rollback: destinations are absent (backed up, not yet
+	// swapped) or replaced atomically (already swapped), and the caller holds
+	// the per-directory sessionIOLock write lock, so no reader can observe a
+	// mix of old and new chunks.
+	restoreBackups := func() {
+		for _, i := range backedUp {
+			dst := filepath.Join(dir, fmt.Sprintf(chunkFileName, i))
+			_ = os.Rename(dst+".bak", dst)
+		}
+	}
+	// Move every existing destination chunk aside before any staged file is
+	// swapped in, so a failure can always put the previous snapshot back.
+	for i := 0; i < count; i++ {
+		dst := filepath.Join(dir, fmt.Sprintf(chunkFileName, i))
+		if _, err := os.Stat(dst); err != nil {
+			continue // destination absent (e.g. growing chunk count): nothing to preserve
+		}
+		if err := renameFile(dst, dst+".bak"); err != nil {
+			restoreBackups()
+			return 0, fmt.Errorf("backup chunk %d: %w", i, err)
+		}
+		backedUp = append(backedUp, i)
+	}
 	for i, tmp := range staged {
 		if err := renameFile(tmp, filepath.Join(dir, fmt.Sprintf(chunkFileName, i))); err != nil {
+			restoreBackups()
 			return 0, fmt.Errorf("commit chunk %d: %w", i, err)
 		}
+	}
+	// Every swap succeeded: drop the backups so the directory holds exactly
+	// the new snapshot.
+	for _, i := range backedUp {
+		_ = os.Remove(filepath.Join(dir, fmt.Sprintf(chunkFileName, i)) + ".bak")
 	}
 	return count, nil
 }

@@ -220,3 +220,44 @@ func TestWorkLimitMeterReservePromptOnlyChargesPromptNotOutput(t *testing.T) {
 		t.Fatalf("nil receiver reservePromptOnly: %v", err)
 	}
 }
+
+// refundProvider subtracts a reservation that never completed (a soft steer
+// canceled the LLM call before completion, plan 54 §4.3). An exact refund
+// restores the balances; an over-refund clamps at zero so an accounting drift
+// can never produce a negative budget (a negative balance would widen the next
+// outputCap allocation); a nil receiver is a no-op mirroring reserveProvider.
+func TestWorkLimitMeterRefundProvider(t *testing.T) {
+	// (a) exact refund restores the balances, and the restored budget is spendable.
+	meter := workLimitMeter{limits: runtime.WorkLimits{MaxOutputTokens: 8}}
+	if err := meter.reserveProvider(0, 4); err != nil {
+		t.Fatal(err)
+	}
+	meter.refundProvider(0, 4)
+	if meter.promptTokens != 0 || meter.outputTokens != 0 {
+		t.Fatalf("exact refund: prompt=%d output=%d, want 0 0", meter.promptTokens, meter.outputTokens)
+	}
+	if err := meter.reserveProvider(0, 8); err != nil {
+		t.Fatalf("reserve after exact refund: %v", err)
+	}
+	if meter.outputTokens != 8 {
+		t.Fatalf("output after re-reserve = %d, want 8", meter.outputTokens)
+	}
+
+	// (b) over-refund clamps at zero (never negative).
+	meter = workLimitMeter{}
+	meter.refundProvider(100, 100)
+	if meter.promptTokens != 0 || meter.outputTokens != 0 {
+		t.Fatalf("refund of an empty meter: prompt=%d output=%d, want 0 0", meter.promptTokens, meter.outputTokens)
+	}
+	meter.reserveProvider(3, 4)
+	meter.refundProvider(10, 10)
+	if meter.promptTokens != 0 || meter.outputTokens != 0 {
+		t.Fatalf("over-refund clamps at zero: prompt=%d output=%d, want 0 0", meter.promptTokens, meter.outputTokens)
+	}
+
+	// (c) nil receiver is a no-op, mirroring reserveProvider.
+	if err := (*workLimitMeter)(nil).reserveProvider(1, 1); err != nil {
+		t.Fatalf("nil receiver reserveProvider: %v", err)
+	}
+	(*workLimitMeter)(nil).refundProvider(1, 1) // must not panic
+}

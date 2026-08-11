@@ -75,6 +75,30 @@ func (m *workLimitMeter) reserveProvider(promptTokens, outputTokens int) error {
 	return nil
 }
 
+// refundProvider subtracts a reservation that never completed. It backs the
+// soft-steer path (plan 54 §4.3): a steer cancels ONLY the in-flight LLM call,
+// so the prompt+output reservation that call charged was never consumed, and
+// leaving it charged makes the next step's outputCap fail with an exhausted
+// budget - aborting a run the soft interrupt was supposed to soft-continue.
+// Balances clamp at zero so an accounting drift can never produce a negative
+// budget (a negative balance would widen the next outputCap allocation). A nil
+// receiver is a no-op, mirroring reserveProvider.
+func (m *workLimitMeter) refundProvider(promptTokens, outputTokens int) {
+	if m == nil {
+		return
+	}
+	if m.promptTokens < promptTokens {
+		m.promptTokens = 0
+	} else {
+		m.promptTokens -= promptTokens
+	}
+	if m.outputTokens < outputTokens {
+		m.outputTokens = 0
+	} else {
+		m.outputTokens -= outputTokens
+	}
+}
+
 // reservePromptOnly charges prompt tokens against MaxPromptTokens without
 // touching the output allowance. It backs recovery paths (the prompt-too-long
 // compaction retry) where the retried prompt is genuinely new work but the

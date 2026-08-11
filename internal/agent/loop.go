@@ -414,27 +414,40 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 		// genuine provider error (500/timeout) that merely coincides with a
 		// steer fire - or a hard turn-ctx cancel - propagates unchanged: the
 		// sentinel must never mask real failures.
+		//
+		// The soft steer canceled the call before completion, so the
+		// prompt+output reservation charged above was never consumed: refund
+		// exactly it, or the next step's outputCap sees an exhausted budget and
+		// aborts the run with "work limit exceeded: output tokens" - breaking
+		// the soft-steer soft-continue contract (plan 54 §4.3). Genuine
+		// provider errors and hard cancels keep today's consume-and-abort
+		// semantics (no refund), so a refund can never widen the budget.
+		l.workLimits.refundProvider(estimatedTokens, requestOutputReserve(req))
 		return nil, errSteerInterrupt
 	}
 	if err == nil {
-		EmitCacheUsage(opts, l.Completer.Name(), req.Model, resp.CacheUsage)
-		// The ratio emitted with this turn's drift must be the calibration in
-		// effect for THIS turn (what the planner budgeted against), not the
-		// post-update EWMA. Update() runs after capturing it, so the event
-		// reads "estimate X vs actual Y (ratio R)" with R the applied
-		// correction - the raw per-turn ratio is Y/X. A zero ratio is the
-		// zero-value calibrator meaning unity, so display it as 1.00 rather
-		// than a misleading 0.00.
-		ratio := l.Calibration.Ratio
-		if ratio <= 0 {
-			ratio = 1
-		}
-		if resp.TokenUsage.Reported && estimatedTokens > 0 && resp.TokenUsage.InputTokens > 0 {
-			l.Calibration.Update(estimatedTokens, resp.TokenUsage.InputTokens)
-		}
-		EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
+		l.emitTurnUsage(opts, req, resp, estimatedTokens)
 	}
 	return resp, err
+}
+
+// emitTurnUsage surfaces the cache hit and token drift of a completed
+// provider call. The ratio emitted with this turn's drift must be the
+// calibration in effect for THIS turn (what the planner budgeted against),
+// not the post-update EWMA. Update() runs after capturing it, so the event
+// reads "estimate X vs actual Y (ratio R)" with R the applied correction -
+// the raw per-turn ratio is Y/X. A zero ratio is the zero-value calibrator
+// meaning unity, so display it as 1.00 rather than a misleading 0.00.
+func (l *Loop) emitTurnUsage(opts Options, req provider.Request, resp *provider.Response, estimatedTokens int) {
+	EmitCacheUsage(opts, l.Completer.Name(), req.Model, resp.CacheUsage)
+	ratio := l.Calibration.Ratio
+	if ratio <= 0 {
+		ratio = 1
+	}
+	if resp.TokenUsage.Reported && estimatedTokens > 0 && resp.TokenUsage.InputTokens > 0 {
+		l.Calibration.Update(estimatedTokens, resp.TokenUsage.InputTokens)
+	}
+	EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
 }
 
 // streamRevoker is implemented by the TUI streamBridge to clear optimistic

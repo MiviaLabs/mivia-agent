@@ -334,8 +334,11 @@ func TestSessionReconcileParkedRunsPeriodic(t *testing.T) {
 	workflowReconcileInterval = 10 * time.Millisecond
 	t.Cleanup(func() { workflowReconcileInterval = old })
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go e.reconcileParkedRunsPeriodic(ctx)
+	periodicDone := make(chan struct{})
+	go func() {
+		defer close(periodicDone)
+		e.reconcileParkedRunsPeriodic(ctx)
+	}()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -357,6 +360,10 @@ func TestSessionReconcileParkedRunsPeriodic(t *testing.T) {
 		}
 	}
 	cancel()
+	<-periodicDone
+	for _, runID := range runIDs {
+		waitForSessionEngineIdle(t, e, runID)
+	}
 
 	for _, runID := range runIDs {
 		run, err := repo.GetRun(context.Background(), runID)

@@ -135,6 +135,15 @@ func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflo
 	}
 	route, err := c.selectEvidenceFailureRoute(ctx, step, outputMap)
 	if err != nil {
+		// This branch fails the run immediately after the persist (c.fail
+		// below), so the durable route must be terminal — never an un-honored
+		// on_failure target (e.g. a repair step past a spent loop budget) that
+		// a crash between this persist and the status CAS could resume into.
+		// Mirrors the guarded pattern in settleAgentAttempt and
+		// settleHostFailure.
+		if !workflowledger.IsTerminalStepID(route.ToStepID) {
+			route.ToStepID = "failure"
+		}
 		if completeErr := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output, ErrorRef: storeErrorText(writeCtx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
 			return c.fail(writeCtx, run, completeErr)
 		}

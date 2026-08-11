@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -73,6 +74,20 @@ func (s *Session) captureOperationToken(key string) OperationToken {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.captureOperationTokenLocked(key)
+}
+
+// captureTurnToken captures the current operation fence and pins TurnID to the
+// given turn id. captureOperationTokenLocked reads the session's CURRENT turn
+// id; a turn that re-captures its fence after a start-of-turn surface
+// publication (surfaceForTurnStart) must keep its own id, so a superseding
+// turn's id can never validate the older turn's commit
+// (chat-turnstart-admission-fences-own-turn).
+func (s *Session) captureTurnToken(turnID uint64) OperationToken {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	token := s.captureOperationTokenLocked(fmt.Sprintf("turn:%d", turnID))
+	token.TurnID = turnID
+	return token
 }
 
 func (s *Session) tokenCurrentLocked(token OperationToken) bool {
@@ -167,9 +182,26 @@ func (s *Session) saveLegacyTurn(token OperationToken, msgs []provider.Message) 
 	return nil
 }
 
+// isTurnToken reports whether the token belongs to a turn lifecycle (captured
+// by beginAgentTurn/beginPlainTurn with the "turn:N" key) rather than to a
+// benign host autosave (TUI periodic save, /clear, SaveLast) whose key is
+// "manual-save" or empty. Only turn-lifecycle tokens may advance the durable
+// domain.
+func isTurnToken(token OperationToken) bool {
+	return strings.HasPrefix(token.IdempotencyKey, "turn:")
+}
+
+// markDurableRevision advances the durable domain only for turn-lifecycle
+// saves whose fence is still current. Benign host-triggered autosaves snapshot
+// the same state and must not advance it: if they did, an in-flight turn's
+// captured token would be fenced out of commitPreparedTurn's adoption and
+// persistence the moment such an autosave completed, silently dropping the
+// turn's history. Turn-boundary commits still bump, so newerThan and the
+// current-fence Durable check keep rejecting older-generation and
+// same-generation-stale autosaves.
 func (s *Session) markDurableRevision(token OperationToken) {
 	s.mu.Lock()
-	if s.tokenCurrentLocked(token) {
+	if isTurnToken(token) && s.tokenCurrentLocked(token) {
 		s.contextRevision.Durable++
 	}
 	s.mu.Unlock()
