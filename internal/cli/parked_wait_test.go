@@ -177,6 +177,50 @@ func TestWaitOnParkedAnswerDeclinePreferredOverCancel(t *testing.T) {
 	}
 }
 
+// TestWaitOnParkedAnswerDeadlineExceededReturnsNoAnswer: an ask whose
+// wait_seconds exceeds the enclosing tool/step budget must exit as the
+// documented no_answer result (reason timed_out) with nil error — never a raw
+// ctx.Err(). The ask wait site clamps its park timer to the enclosing
+// deadline (parkedWaitDuration), so at expiry the clamped timer and
+// ctx.Done() race; the ctx.Done() branch previously returned the raw deadline
+// error whenever the deadline won the select. Mirrors the question path's
+// pinned contract (TestWaitForAnswerDeadlineExceededReturnsNoAnswer) and the
+// tool schema's own wording: "Waits beyond the enclosing tool/step budget are
+// clamped and end as no_answer".
+func TestWaitOnParkedAnswerDeadlineExceededReturnsNoAnswer(t *testing.T) {
+	cfg := config.DefaultSubagentConfig
+	tool, c, _, runID, taskID, ctx := setupPostMessageEnv(t, cfg)
+	expiredCtx, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer cancel()
+	askID := "ask-deadline-no-answer"
+	c.RegisterAsk(runID, taskID, "worker", askID, nil)
+	ch, unpark, err := c.ParkQuestion(runID, taskID, askID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked := true
+	msg := newAskForWait(t, runID, taskID, askID)
+	out, err := tool.waitOnParkedAnswer(expiredCtx, c,
+		runtime.TaskIdentity{RunID: runID, TaskID: taskID}, msg, 30, ch, &parked, unpark)
+	unpark()
+	if err != nil {
+		t.Fatalf("deadline-exceeded ask park surfaced a raw error: %v", err)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("structured no_answer result expected, got %q: %v", out, err)
+	}
+	if res["status"] != "no_answer" || res["reason"] != "timed_out" {
+		t.Fatalf("out=%s", out)
+	}
+	if res["message_id"] != askID {
+		t.Fatalf("out=%s", out)
+	}
+	if parked {
+		t.Fatal("park must be retired after deadline no_answer")
+	}
+}
+
 func TestWaitForAnswerDeclineSentinel(t *testing.T) {
 	cfg := config.DefaultSubagentConfig
 	tool, c, _, runID, taskID, _ := setupPostMessageEnv(t, cfg)
