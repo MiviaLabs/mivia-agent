@@ -113,6 +113,12 @@ func (f *abandonFence) SetStepAttemptExecution(ctx context.Context, runID, attem
 	})
 }
 
+func (f *abandonFence) SetStepAttemptHeartbeat(ctx context.Context, runID, attemptID string, heartbeatAt time.Time) error {
+	return f.mutate(runID, func() error {
+		return f.inner.SetStepAttemptHeartbeat(ctx, runID, attemptID, heartbeatAt)
+	})
+}
+
 func (f *abandonFence) ListTransitions(ctx context.Context, runID string) ([]workflowledger.TransitionRecord, error) {
 	return f.inner.ListTransitions(ctx, runID)
 }

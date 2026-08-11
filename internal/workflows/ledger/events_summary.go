@@ -77,6 +77,17 @@ func summarizeAttemptExecution(ev storage.Event) (string, time.Time, bool) {
 	return summary, p.CreatedAt, true
 }
 
+// summarizeAttemptHeartbeat renders the bounded summary for a
+// wf_attempt_heartbeat event: the attempt id and the heartbeat instant. No
+// other state is carried by the payload, so nothing else can leak.
+func summarizeAttemptHeartbeat(ev storage.Event) (string, time.Time, bool) {
+	p, err := unmarshalAttemptHeartbeat(ev.Payload)
+	if err != nil || p.AttemptID == "" || p.HeartbeatAt.IsZero() {
+		return "", time.Time{}, false
+	}
+	return fmt.Sprintf("attempt %s heartbeat at %s", p.AttemptID, p.HeartbeatAt.Format(time.RFC3339)), p.CreatedAt, true
+}
+
 // summarizePanelPhase renders the summary for a wf_panel_phase_set event.
 func summarizePanelPhase(ev storage.Event) (string, time.Time, bool) {
 	p, err := unmarshalPanelPhase(ev.Payload)

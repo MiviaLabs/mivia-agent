@@ -45,6 +45,104 @@ func TestExecuteWorkflowRunsListsRuns(t *testing.T) {
 	}
 }
 
+// TestExecuteWorkflowRunsHeartbeatFreshness pins the liveness column of the
+// runs listing: a running run whose active attempt recorded a heartbeat shows
+// "hb <Ns>" derived from LastHeartbeatAt.
+func TestExecuteWorkflowRunsHeartbeatFreshness(t *testing.T) {
+	root, _, repo, closeFn, ctx, run := openEventsFixtureWithRun(t, "wfr-HB-0001")
+	config := filepath.Join(root, "config.toml")
+
+	stored, err := repo.GetRun(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, run, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{
+		AttemptID: "att-hb-1", RunID: run, StepID: "start", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusRunning,
+	}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetStepAttemptHeartbeat(ctx, run, attempt.AttemptID, time.Now().Add(-60*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	closeFn() // release the seeding connection; the command opens its own
+
+	var stdout bytes.Buffer
+	if err := executeWorkflowRuns(root, config, "", 20, &stdout, io.Discard); err != nil {
+		t.Fatalf("executeWorkflowRuns: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "hb 60s") {
+		t.Fatalf("output %q missing the hb 60s freshness column", out)
+	}
+}
+
+// TestExecuteWorkflowRunsHeartbeatDash pins the no-heartbeat case: an
+// in-flight run with no recorded heartbeat shows "hb -", while a terminal run
+// carries no hb column at all.
+func TestExecuteWorkflowRunsHeartbeatDash(t *testing.T) {
+	root, repo, closeFn, ctx, runID := newRunsHeartbeatFixture(t, "wfr-HB-0002")
+	config := filepath.Join(root, "config.toml")
+
+	t.Run("in-flight run without heartbeat shows hb -", func(t *testing.T) {
+		var stdout bytes.Buffer
+		if err := executeWorkflowRuns(root, config, "running", 20, &stdout, io.Discard); err != nil {
+			t.Fatalf("executeWorkflowRuns: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "hb -") {
+			t.Fatalf("output %q missing the hb - placeholder", stdout.String())
+		}
+	})
+
+	t.Run("terminal run carries no hb column", func(t *testing.T) {
+		stored, err := repo.GetRun(ctx, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusSucceeded, nil); err != nil {
+			t.Fatal(err)
+		}
+		closeFn() // release the seeding connection; the command opens its own
+		var stdout bytes.Buffer
+		if err := executeWorkflowRuns(root, config, "succeeded", 20, &stdout, io.Discard); err != nil {
+			t.Fatalf("executeWorkflowRuns: %v", err)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, runID) {
+			t.Fatalf("output %q missing the terminal run", out)
+		}
+		if strings.Contains(out, "hb ") {
+			t.Fatalf("output %q must not carry an hb column for a terminal run", out)
+		}
+	})
+}
+
+// newRunsHeartbeatFixture builds an in-flight (running) run with an active
+// attempt but no heartbeat, for the runs-listing dash-column tests.
+func newRunsHeartbeatFixture(t *testing.T, runID string) (root string, repo *workflowledger.StorageRepository, closeFn func(), ctx context.Context, run string) {
+	t.Helper()
+	root, _, repo, closeFn, ctx, run = openEventsFixtureWithRun(t, runID)
+	stored, err := repo.GetRun(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, run, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{
+		AttemptID: "att-hb-" + runID, RunID: run, StepID: "start", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusRunning,
+	}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	return root, repo, closeFn, ctx, run
+}
+
 func TestExecuteWorkflowRunsStatusFilter(t *testing.T) {
 	root, _, _, closeFn, _, run := openEventsFixtureWithRun(t, "wfr-BBBB2222")
 	defer closeFn()

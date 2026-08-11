@@ -94,6 +94,15 @@ func printWorkflowAttempts(ctx context.Context, stdout io.Writer, repo workflowl
 		} else if !a.StartedAt.IsZero() {
 			line += fmt.Sprintf(" elapsed=%ds", int64(time.Since(a.StartedAt).Seconds()))
 		}
+		if a.LastHeartbeatAt.IsZero() {
+			line += " last_heartbeat=-"
+		} else {
+			staleness := int64(time.Since(a.LastHeartbeatAt).Seconds())
+			if staleness < 0 {
+				staleness = 0
+			}
+			line += fmt.Sprintf(" last_heartbeat=%s (%ds ago)", a.LastHeartbeatAt.UTC().Format(time.RFC3339), staleness)
+		}
 		fmt.Fprintln(stdout, line)
 		printAttemptError(ctx, stdout, repo, failedAttemptDiagnosticRef(a))
 	}

@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -238,6 +239,23 @@ func TestGoProfileReportsHostFailureWithoutRepairEvidence(t *testing.T) {
 	}
 	if result.Repairable() || len(result.Checks) != 1 || result.Checks[0].Class != "host" || result.Checks[0].Detail == "" {
 		t.Fatalf("host failure result = %#v", result)
+	}
+	// The detail must carry the underlying cause (why the verifier could not
+	// run), not a fixed placeholder: a repair agent or operator sees the
+	// actual failure. Regression: detail was once always "host verifier setup
+	// failed" with the cause dropped.
+	if !strings.Contains(result.Checks[0].Detail, "bubblewrap is required") {
+		t.Fatalf("host failure detail must carry the cause, got %q", result.Checks[0].Detail)
+	}
+}
+
+func TestHostFailureDetailCarriesCause(t *testing.T) {
+	got := hostFailure(errors.New("bubblewrap is unavailable: exec: bwrap: not found"))
+	if want := "host verifier setup failed: bubblewrap is unavailable: exec: bwrap: not found"; got.detail != want {
+		t.Fatalf("hostFailure detail = %q, want %q", got.detail, want)
+	}
+	if got.class != "host" {
+		t.Fatalf("hostFailure class = %q, want host", got.class)
 	}
 }
 

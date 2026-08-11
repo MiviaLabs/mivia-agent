@@ -128,6 +128,12 @@ type AttemptView struct {
 	StartedAt        string `json:"started_at,omitempty"`
 	FinishedAt       string `json:"finished_at,omitempty"`
 	ElapsedSeconds   int64  `json:"elapsed_seconds,omitempty"`
+	// LastHeartbeatAt is the latest liveness observation for a RUNNING
+	// attempt, RFC3339 UTC, or empty when none was recorded.
+	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
+	// LastHeartbeatStalenessSeconds is the seconds elapsed since the latest
+	// heartbeat, or 0 when none was recorded (or the clock is skewed).
+	LastHeartbeatStalenessSeconds int64 `json:"last_heartbeat_staleness_seconds,omitempty"`
 }
 
 // LoopView is one named loop counter.

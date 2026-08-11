@@ -116,6 +116,8 @@ func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.Com
 		}
 		v.header = append(v.header, "started: "+started+elapsed)
 	}
+	hb := workflowRunHeartbeatHeaderLine(run, attempts, now)
+	v.header = append(v.header, hb)
 	for i := range deliveries {
 		for _, rec := range deliveries[i] {
 			line := "delivery: " + rec.Status
@@ -153,6 +155,68 @@ func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.Com
 // latest completed step attempt.
 func workflowRunStepGraphDone(status workflowledger.RunStatus) bool {
 	return status == workflowledger.RunStatusDeliveryPending || status == workflowledger.RunStatusDeliveryFailed
+}
+
+// workflowHeartbeatFreshWindow is how old a running attempt's last heartbeat
+// may be before the TUI reads the run as stale. The engine throttles durable
+// heartbeats to ~15s per attempt, so the 60s window tolerates a missed tick
+// without calling a live run dead.
+const workflowHeartbeatFreshWindow = 60 * time.Second
+
+// workflowHeartbeatFresh reports whether heartbeatAt is a live heartbeat:
+// nonzero and no older than window at now. A zero heartbeat (never set) is
+// never fresh; a future heartbeat (clock skew) is fresh.
+func workflowHeartbeatFresh(heartbeatAt, now time.Time, window time.Duration) bool {
+	if heartbeatAt.IsZero() {
+		return false
+	}
+	return now.Sub(heartbeatAt) <= window
+}
+
+// workflowActiveAttemptHeartbeat returns the active attempt's LastHeartbeatAt
+// for a run: the newest running attempt on the run's active step, falling
+// back to the newest running attempt overall (attempts arrive ordered by
+// event sequence, so the newest start wins). A zero time means no running
+// attempt carries a heartbeat yet. Terminal and non-running attempts never
+// count, because heartbeats exist only for RUNNING attempts.
+func workflowActiveAttemptHeartbeat(run workflowledger.RunSnapshot, attempts []workflowledger.StepAttempt) time.Time {
+	var onStep, any workflowledger.StepAttempt
+	for i := range attempts {
+		a := attempts[i]
+		if a.Status != workflowledger.AttemptStatusRunning {
+			continue
+		}
+		if any.AttemptID == "" || a.StartedAt.After(any.StartedAt) {
+			any = a
+		}
+		if a.StepID == run.ActiveStepID && (onStep.AttemptID == "" || a.StartedAt.After(onStep.StartedAt)) {
+			onStep = a
+		}
+	}
+	if onStep.AttemptID != "" {
+		return onStep.LastHeartbeatAt
+	}
+	return any.LastHeartbeatAt
+}
+
+// workflowRunHeartbeatHeaderLine renders the dialog's last-heartbeat header
+// line for one run: the age when a running attempt recorded a heartbeat
+// (styled info when fresh, error with a stale marker when aged out), or a
+// dimmed "none" line when no running attempt carries one.
+func workflowRunHeartbeatHeaderLine(run workflowledger.RunSnapshot, attempts []workflowledger.StepAttempt, now time.Time) string {
+	hb := workflowActiveAttemptHeartbeat(run, attempts)
+	if hb.IsZero() {
+		return tuiDimStyle.Render("last heartbeat: none")
+	}
+	ago := now.Sub(hb)
+	if ago < 0 {
+		ago = 0
+	}
+	line := "last heartbeat: " + formatDuration(ago) + " ago"
+	if workflowHeartbeatFresh(hb, now, workflowHeartbeatFreshWindow) {
+		return tuiInfoStyle.Render(line)
+	}
+	return tuiErrorStyle.Render(line + " · stale")
 }
 
 // buildWorkflowRunSteps maps each compiled step (declaration order) to its

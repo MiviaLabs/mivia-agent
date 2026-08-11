@@ -177,10 +177,15 @@ func TestWorkflowRunRejectsOpenSchemaBeforeProviderCall(t *testing.T) {
 // run_command is admissible, and the workflow is treated as write-capable
 // (a shell program can write anywhere) so it must run in an isolated worktree.
 func TestWorkflowRunAllowsRunCommandAuthority(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`)
+	}))
+	t.Cleanup(server.Close)
 	root := t.TempDir()
 	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
 	storePath := filepath.Join(root, "workflow.db")
-	writeWorkflowRunFixture(t, root, "http://127.0.0.1:1", storePath)
+	writeWorkflowRunFixture(t, root, server.URL, storePath)
 	configPath := filepath.Join(root, "config.toml")
 	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -59,6 +60,43 @@ func TestWorkflowEventsRunResumedRendersDash(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "0001-01-01T00:00:00Z") {
 		t.Fatalf("stdout renders the zero instant; want '-' for a payload-less timestamp:\n%s", stdout.String())
+	}
+}
+
+// TestWorkflowEventsRendersAttemptHeartbeat pins Wave 1 heartbeat visibility
+// in the events listing: a wf_attempt_heartbeat event renders its bounded
+// summary (attempt id + heartbeat instant) through the same paged path as every
+// other wf_* event — the events CLI filters no kinds.
+func TestWorkflowEventsRendersAttemptHeartbeat(t *testing.T) {
+	root, _, repo, closeFn, ctx, run := openEventsFixtureWithRun(t, "wfr-cli-heartbeat-event")
+
+	stored, err := repo.GetRun(ctx, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, run, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{
+		AttemptID: "att-hb-event", RunID: run, StepID: "start", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusRunning,
+	}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	hb := time.Date(2026, 8, 6, 12, 0, 30, 0, time.UTC)
+	if err := repo.SetStepAttemptHeartbeat(ctx, run, attempt.AttemptID, hb); err != nil {
+		t.Fatal(err)
+	}
+	closeFn() // release the seeding connection; the command opens its own
+
+	var stdout strings.Builder
+	if err := executeWorkflowEvents(run, root, filepath.Join(root, "config.toml"), 0, 0, &stdout, io.Discard); err != nil {
+		t.Fatalf("executeWorkflowEvents error = %v", err)
+	}
+	want := fmt.Sprintf("attempt %s heartbeat at %s", attempt.AttemptID, hb.Format(time.RFC3339))
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("stdout = %q, want the heartbeat summary %q", stdout.String(), want)
 	}
 }
 

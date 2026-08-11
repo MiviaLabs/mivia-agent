@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -138,6 +139,8 @@ func roundTripPayload[T any](t *testing.T, name string, p T) {
 			roundTrip(t, marshalAttemptCompleted, unmarshalAttemptCompleted, v)
 		case attemptPromptPayload:
 			roundTrip(t, marshalAttemptPrompt, unmarshalAttemptPrompt, v)
+		case attemptHeartbeatPayload:
+			roundTrip(t, marshalAttemptHeartbeat, unmarshalAttemptHeartbeat, v)
 		case loopIncrementedPayload:
 			roundTrip(t, marshalLoopIncremented, unmarshalLoopIncremented, v)
 		case approvalCreatedPayload:
@@ -230,6 +233,58 @@ func TestPayloadRoundTripAttemptPrompt(t *testing.T) {
 		PromptRef: "refs/prompts/1",
 		CreatedAt: ts(2024, time.September, 9, 9, 9, 9, 999999999),
 	})
+}
+
+// TestPayloadRoundTripAttemptHeartbeat covers the wf_attempt_heartbeat payload
+// round trip: attempt identity plus the heartbeat instant.
+func TestPayloadRoundTripAttemptHeartbeat(t *testing.T) {
+	roundTripPayload(t, "attemptHeartbeat", attemptHeartbeatPayload{
+		AttemptID:   "att-7",
+		HeartbeatAt: ts(2024, time.October, 10, 10, 10, 10, 101010101),
+		CreatedAt:   ts(2024, time.October, 10, 10, 10, 10, 101010101),
+	})
+}
+
+// TestAttemptHeartbeatValidation verifies marshalAttemptHeartbeat rejects an
+// empty attempt id and a zero heartbeat instant, and normalizes a zero
+// CreatedAt onto the heartbeat instant so the payload is a deterministic
+// function of (AttemptID, HeartbeatAt): a retried append of the same heartbeat
+// is byte-identical and dedupes on the event ID instead of conflicting.
+func TestAttemptHeartbeatValidation(t *testing.T) {
+	if _, err := marshalAttemptHeartbeat(attemptHeartbeatPayload{
+		HeartbeatAt: ts(2024, time.October, 10, 10, 10, 10, 0),
+	}); err == nil {
+		t.Error("marshalAttemptHeartbeat accepted an empty AttemptID")
+	}
+	if _, err := marshalAttemptHeartbeat(attemptHeartbeatPayload{
+		AttemptID: "att-7",
+	}); err == nil {
+		t.Error("marshalAttemptHeartbeat accepted a zero HeartbeatAt")
+	}
+
+	// A zero CreatedAt is normalized onto HeartbeatAt, so the payload is
+	// deterministic for one heartbeat instant.
+	data, err := marshalAttemptHeartbeat(attemptHeartbeatPayload{AttemptID: "att-7", HeartbeatAt: ts(2024, time.October, 10, 10, 10, 10, 0)})
+	if err != nil {
+		t.Fatalf("marshalAttemptHeartbeat with zero CreatedAt failed: %v", err)
+	}
+	out, err := unmarshalAttemptHeartbeat(data)
+	if err != nil {
+		t.Fatalf("unmarshalAttemptHeartbeat failed: %v", err)
+	}
+	if !out.CreatedAt.Equal(out.HeartbeatAt) {
+		t.Fatalf("normalized CreatedAt = %v, want it to mirror HeartbeatAt %v", out.CreatedAt, out.HeartbeatAt)
+	}
+
+	// Two marshal calls for the SAME heartbeat instant are byte-identical
+	// (idempotent append input).
+	second, err := marshalAttemptHeartbeat(attemptHeartbeatPayload{AttemptID: "att-7", HeartbeatAt: ts(2024, time.October, 10, 10, 10, 10, 0)})
+	if err != nil {
+		t.Fatalf("marshalAttemptHeartbeat (second call) failed: %v", err)
+	}
+	if !bytes.Equal(data, second) {
+		t.Fatalf("marshalAttemptHeartbeat is not deterministic for one heartbeat instant:\n%q\n%q", data, second)
+	}
 }
 
 // TestAttemptPromptValidation verifies marshalAttemptPrompt rejects empty

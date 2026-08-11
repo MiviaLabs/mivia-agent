@@ -16,6 +16,7 @@ const (
 	eventKindRunStatusChanged = "wf_run_status_changed"
 	eventKindAttemptStarted   = "wf_attempt_started"
 	eventKindAttemptExecution = "wf_attempt_execution"
+	eventKindAttemptHeartbeat = "wf_attempt_heartbeat"
 	eventKindAttemptCompleted = "wf_attempt_completed"
 	eventKindPanelPhaseSet    = "wf_panel_phase_set"
 	eventKindLoopIncremented  = "wf_loop_incremented"
@@ -120,6 +121,18 @@ type attemptExecutionPayload struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+// attemptHeartbeatPayload is the wf_attempt_heartbeat event payload: a
+// durable liveness observation for one RUNNING attempt. HeartbeatAt is the
+// observed liveness instant (the payload's discriminator — the event ID
+// embeds it, so every tick appends a distinct event); CreatedAt is the same
+// instant stamped by the store so a retried append of one heartbeat is
+// byte-identical and idempotent.
+type attemptHeartbeatPayload struct {
+	AttemptID   string    `json:"attempt_id"`
+	HeartbeatAt time.Time `json:"heartbeat_at"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // loopIncrementedPayload is the wf_loop_incremented event payload.
 type loopIncrementedPayload struct {
 	LoopName   string    `json:"loop_name"`
@@ -222,6 +235,30 @@ func unmarshalAttemptPrompt(data []byte) (attemptPromptPayload, error) {
 func marshalAttemptExecution(p attemptExecutionPayload) ([]byte, error) { return json.Marshal(p) }
 func unmarshalAttemptExecution(data []byte) (attemptExecutionPayload, error) {
 	var p attemptExecutionPayload
+	err := json.Unmarshal(data, &p)
+	return p, err
+}
+
+// marshalAttemptHeartbeat encodes the wf_attempt_heartbeat payload. It
+// rejects an empty attempt id and a zero heartbeat instant (a zero timestamp
+// is never a valid liveness observation) and normalizes a zero CreatedAt to
+// the heartbeat instant, so the payload is a deterministic function of
+// (AttemptID, HeartbeatAt): a retried append of the same heartbeat is
+// byte-identical and dedupes on the deterministic event ID.
+func marshalAttemptHeartbeat(p attemptHeartbeatPayload) ([]byte, error) {
+	if p.AttemptID == "" {
+		return nil, fmt.Errorf("attempt_heartbeat payload: attempt_id is empty")
+	}
+	if p.HeartbeatAt.IsZero() {
+		return nil, fmt.Errorf("attempt_heartbeat payload: heartbeat_at is zero")
+	}
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = p.HeartbeatAt
+	}
+	return json.Marshal(p)
+}
+func unmarshalAttemptHeartbeat(data []byte) (attemptHeartbeatPayload, error) {
+	var p attemptHeartbeatPayload
 	err := json.Unmarshal(data, &p)
 	return p, err
 }
