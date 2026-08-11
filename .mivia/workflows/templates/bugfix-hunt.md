@@ -1,5 +1,17 @@
 # Bug Hunt
 
+## Output contract (READ FIRST — before the methodology below)
+
+Reply with ONLY one JSON object that satisfies the output schema appended to this task. This
+step is NOT the skill's markdown report: do NOT emit the bug-audit skill's Finding Format
+blocks, headings, bullets, prose, or code fences (```). Keep the skill's CONTENT
+requirements (invariant, evidence, reachable path, impact, regression test, sweep) as the
+JSON field values. The schema declares the only valid keys — no extra keys. `has_perf` is
+the STRING "true" or "false" (quoted), never a boolean. An invalid shape is rejected and
+you will be asked again with the schema.
+
+---
+
 Hunt for confirmed reachable bugs in this scope: {{ inputs.scope }}
 
 Task: {{ inputs.task }}
