@@ -125,22 +125,8 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	}
 	sc.Buffer(buf, scannerMax)
 
-	// First pass: count total lines and collect the requested window.
-	// The scanner must iterate to offset anyway, so counting is free.
-	// When limit==0, all lines from offset onward are collected.
-	var windowLines []string
-	lineNo := 0
-	for sc.Scan() {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		lineNo++
-		if lineNo >= offset && (limit <= 0 || len(windowLines) < limit) {
-			windowLines = append(windowLines, sc.Text())
-		}
-	}
-	totalLines := lineNo
-	if err := sc.Err(); err != nil {
+	lines, totalLines, err := t.collectWindowLines(ctx, sc, offset, limit)
+	if err != nil {
 		if err == bufio.ErrTooLong {
 			// The scanner enforces the larger of max and cap(buf)
 			// (bufio.Scanner.Buffer). Report that enforced bound, not
@@ -157,11 +143,48 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	if offset > totalLines {
 		return "", fmt.Errorf("offset %d past end of file (%d lines)", offset, totalLines)
 	}
-	if len(windowLines) == 0 {
+	if len(lines) == 0 {
 		return "", nil
 	}
+	return t.formatWindow(lines, offset, totalLines)
+}
 
-	return t.formatWindow(windowLines, offset, totalLines)
+// collectWindowLines scans the file once, counting every line (totalLines)
+// while collecting the requested window under the byte budget. The budget is
+// enforced during collection, not deferred to formatWindow: without it a
+// window call (offset>1, limit=0) on a file far larger than maxBytes collects
+// every line from offset to EOF before the post-collection cap runs, making
+// peak memory grow with file size instead of staying bounded by maxBytes. The
+// line that trips the budget is still appended so formatWindow's per-line
+// accounting (prefix + separator + b.Len()==0 case) keeps deciding between
+// the truncation notice and the "line N exceeds max read size" error exactly
+// as before; later lines are skipped while the scan continues so totalLines
+// stays honest for the "… lines X–Y of Z" header. Peak collection is bounded
+// by maxBytes plus one line (≤ the scanner's enforced max token size),
+// independent of file size. maxBytes<=0 (uncapped) is untouched.
+func (t *readFileTool) collectWindowLines(ctx context.Context, sc *bufio.Scanner, offset, limit int) ([]string, int, error) {
+	var windowLines []string
+	collectedBytes := 0
+	budgetExhausted := false
+	lineNo := 0
+	for sc.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, lineNo, err
+		}
+		lineNo++
+		if lineNo >= offset && (limit <= 0 || len(windowLines) < limit) {
+			if t.maxBytes > 0 && budgetExhausted {
+				continue
+			}
+			line := sc.Text()
+			windowLines = append(windowLines, line)
+			collectedBytes += len(line)
+			if t.maxBytes > 0 && collectedBytes > t.maxBytes {
+				budgetExhausted = true
+			}
+		}
+	}
+	return windowLines, lineNo, sc.Err()
 }
 
 // formatWindow renders collected window lines with right-aligned line
