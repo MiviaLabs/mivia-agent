@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,7 +19,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-func chatFlags(args []string) (noTools, plainUI, staleBypass bool, rest []string) {
+func chatFlags(args []string) (noTools, plainUI, staleBypass, jsonMode bool, rest []string) {
 	for _, arg := range args {
 		switch arg {
 		case "--no-tools":
@@ -31,11 +32,18 @@ func chatFlags(args []string) (noTools, plainUI, staleBypass bool, rest []string
 			// Rejecting it would break the CI configs it was written for, and
 			// those are the runs least able to explain a startup failure.
 			staleBypass = true
+		case "--json":
+			// Reframes line-mode's stdout as NDJSON (chunk/done/cancelled/
+			// error events - see ndjsonEvent) instead of raw streamed text.
+			// Only valid for the non-interactive piped-stdin path;
+			// runConfiguredChatOnce rejects it for the TUI/classic-REPL and
+			// one-shot -p paths.
+			jsonMode = true
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	return noTools, plainUI, staleBypass, rest
+	return noTools, plainUI, staleBypass, jsonMode, rest
 }
 
 // attachSessionDispatcher wires NewSessionDispatcher onto the session using the
@@ -276,13 +284,13 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	return attachedToolSurface{plan: plan, authority: authority, skillScope: liveScope}
 }
 
-func repl(sess *chat.Session, res *config.Resolved, toolsOn bool, _ *agentSessionState) error {
+func repl(sess *chat.Session, res *config.Resolved, toolsOn bool, _ *agentSessionState, jsonMode bool) error {
 	printReplBanner(sess, toolsOn)
 	defer autoSaveREPL(sess)
 	term, err := NewTerminal()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: not a terminal (%v), falling back to line mode\n", err)
-		return replLineMode(sess, res, toolsOn)
+		return replLineMode(sess, res, toolsOn, jsonMode)
 	}
 	defer term.Close()
 	r := newREPLRuntime(sess, res, toolsOn, term)
@@ -310,7 +318,7 @@ func autoSaveREPL(sess *chat.Session) {
 	writeAutosaveStatus(sess.SessionDir, err)
 }
 
-func replLineMode(sess *chat.Session, res *config.Resolved, toolsOn bool) error {
+func replLineMode(sess *chat.Session, res *config.Resolved, toolsOn bool, jsonMode bool) error {
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sigCh := make(chan os.Signal, 1)
@@ -330,20 +338,31 @@ func replLineMode(sess *chat.Session, res *config.Resolved, toolsOn bool) error 
 		if line == "exit" || line == "quit" {
 			return nil
 		}
-		if err := sendLineMode(sess, line, sigCh); err != nil {
+		if err := sendLineMode(sess, line, sigCh, jsonMode); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		}
 	}
 	return sc.Err()
 }
 
-func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal) error {
+// sendLineMode runs one line-mode turn. In plain mode stdout carries the raw
+// streamed answer text; in --json mode (jsonMode) stdout instead carries
+// NDJSON events - see ndjsonEvent for the schema - so a caller piping this
+// process (e.g. a GUI wrapper) can parse chunk/turn-end/error boundaries
+// without guessing from a bare trailing newline.
+func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonMode bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go cancelOnInterrupt(ctx, cancel, done, sigCh)
 	usage := sess.ContextUsage()
 	fmt.Fprintf(os.Stderr, "  (~%d tokens, %d%% context used)\n", usage.UsedTokens, usage.Percent)
-	_, err := sess.SendUser(ctx, line, os.Stdout)
+	var w io.Writer = os.Stdout
+	var jw *ndjsonChunkWriter
+	if jsonMode {
+		jw = newNDJSONChunkWriter(os.Stdout)
+		w = jw
+	}
+	_, err := sess.SendUser(ctx, line, w)
 	for _, note := range sess.TakeAdmissionNotes() {
 		fmt.Fprintf(os.Stderr, "\n%s\n", note)
 	}
@@ -355,10 +374,33 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal) error
 	interrupted := ctx.Err() != nil
 	close(done)
 	cancel()
-	fmt.Fprintln(os.Stdout)
+	if !jsonMode {
+		fmt.Fprintln(os.Stdout)
+	}
 	if interrupted && cancellationCanReplaceTurnError(err) {
 		fmt.Fprintln(os.Stderr, "(cancelled)")
+		if jsonMode {
+			// The turn was interrupted mid-stream: whatever ndjsonChunkWriter
+			// is still holding back as a possibly-incomplete trailing rune was
+			// never a confirmed, complete chunk, so it must not be flushed -
+			// that would surface a phantom chunk for content the turn never
+			// finished producing. Reported as its own "cancelled" type
+			// (distinct from "error") so a consumer can tell "the user
+			// stopped this" apart from "this failed" without string-matching
+			// a message field.
+			jw.Discard()
+			writeNDJSONEvent(os.Stdout, ndjsonEvent{Type: "cancelled"})
+		}
 		return nil
+	}
+	if jsonMode {
+		if err != nil {
+			jw.Discard()
+			writeNDJSONEvent(os.Stdout, ndjsonEvent{Type: "error", Message: jsonTurnErrorMessage(err)})
+			return err
+		}
+		jw.Flush()
+		writeNDJSONEvent(os.Stdout, ndjsonEvent{Type: "done"})
 	}
 	return err
 }

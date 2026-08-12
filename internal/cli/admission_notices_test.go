@@ -261,7 +261,7 @@ func TestLineModeTurnPrintsAdmissionNotes(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess.PublishPendingAdmission()
-	if err := sendLineMode(sess, "hello", nil); err != nil {
+	if err := sendLineMode(sess, "hello", nil, false); err != nil {
 		t.Fatalf("line-mode turn: %v", err)
 	}
 	if notes := sess.TakeAdmissionNotes(); len(notes) != 0 {
