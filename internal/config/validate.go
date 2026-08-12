@@ -106,12 +106,12 @@ func parseStructuralURL(raw string) (*url.URL, error) {
 }
 
 func validateBaseURL(raw, providerName string) error {
-	if _, err := ValidateHTTPSURL(raw); err == nil {
-		return nil
-	}
 	u, err := parseStructuralURL(raw)
 	if err != nil {
 		return err
+	}
+	if u.Scheme == "https" {
+		return nil
 	}
 	switch u.Scheme {
 	case "http":
