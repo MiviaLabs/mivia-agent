@@ -116,7 +116,18 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 	work, err := c.buildPanelTaskSpec(ctx, panelWorkSpecParams{
 		RunID: runID, TaskID: taskID, AgentName: binding.AgentName, AgentDigest: binding.AgentDigest,
 		Skill: step.Skill, Provider: binding.ProviderName, Model: binding.Model,
-		Input: envelope, InputSchema: []byte(`{"type":"object"}`), OutputSchema: schemaRef.Bytes,
+		// The runtime dispatches every panel child through the multi-step
+		// subagent handler, whose Invoke contract is a JSON-string task prompt
+		// (json.Unmarshal into a string) - the same shape buildPanelAttempt
+		// uses for members (mustJSON(prompt)). Wrapping the envelope JSON in a
+		// JSON string makes the envelope itself the synthesis task prompt (the
+		// review-synthesis skill/template describe receiving "one host-assembled
+		// JSON envelope"). Passing the raw envelope object bytes instead fails
+		// live dispatch with "invalid task input: cannot unmarshal object into
+		// string" (observed on feature-delivery runs once member reports
+		// started decoding; the fake handlers in unit tests ignored req.Input
+		// so the shape mismatch only surfaced live).
+		Input: mustJSON(string(envelope)), InputSchema: []byte(`{"type":"string"}`), OutputSchema: schemaRef.Bytes,
 		Deadline: deadline, Limits: panelSynthesisLimits,
 	})
 	if err != nil {

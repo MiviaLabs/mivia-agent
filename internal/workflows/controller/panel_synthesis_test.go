@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -19,6 +20,27 @@ import (
 type fixedOutputHandler struct{ raw string }
 
 func (h fixedOutputHandler) Invoke(context.Context, runtime.Request) (json.RawMessage, error) {
+	return json.RawMessage(h.raw), nil
+}
+
+// stringInputHandler enforces the live MultiStepHandler input contract: the
+// dispatched task input must be a JSON string (the task prompt), mirroring
+// subagents.MultiStepHandler.Invoke's json.Unmarshal(req.Input, &taskPrompt).
+// fixedOutputHandler ignores req.Input, so a controller bug that dispatches a
+// non-string input (e.g. the raw synthesis envelope object instead of a
+// JSON-string-wrapped prompt) would pass every fixture test and only fail on
+// live runs. Registering this handler for panel children proves the input
+// shape in-test too.
+type stringInputHandler struct{ raw string }
+
+func (h stringInputHandler) Invoke(_ context.Context, req runtime.Request) (json.RawMessage, error) {
+	var prompt string
+	if err := json.Unmarshal(req.Input, &prompt); err != nil {
+		return nil, fmt.Errorf("task input must be a JSON string: %w", err)
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return nil, fmt.Errorf("task prompt is empty")
+	}
 	return json.RawMessage(h.raw), nil
 }
 
@@ -57,10 +79,10 @@ func panelSynthesisFixture(t *testing.T, runID, memberReport, synthesisOutput st
 		t.Fatal(err)
 	}
 	dispatcher := runtime.New(runtime.Policy{})
-	if err := dispatcher.Register(runtime.Subagent, "panel-reviewer", fixedOutputHandler{raw: memberReport}); err != nil {
+	if err := dispatcher.Register(runtime.Subagent, "panel-reviewer", stringInputHandler{raw: memberReport}); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatcher.Register(runtime.Subagent, "review-synthesizer", fixedOutputHandler{raw: synthesisOutput}); err != nil {
+	if err := dispatcher.Register(runtime.Subagent, "review-synthesizer", stringInputHandler{raw: synthesisOutput}); err != nil {
 		t.Fatal(err)
 	}
 	coordLedger := coordledger.NewMemoryLedgerRepository()
@@ -332,8 +354,16 @@ func TestAdvancePanelSynthesis_DispatchedInputMatchesBuiltEnvelope(t *testing.T)
 	if err != nil {
 		t.Fatalf("BuildSynthesisEnvelope() error = %v", err)
 	}
-	if string(dispatchedInput) != string(wantEnvelope) {
-		t.Fatalf("dispatched Input =\n%s\nwant (independently rebuilt envelope) =\n%s", dispatchedInput, wantEnvelope)
+	// The runtime dispatches panel children through the multi-step subagent
+	// handler, which requires the task input to be a JSON string. The synthesis
+	// prompt is the envelope JSON wrapped in a JSON string (mustJSON), so the
+	// dispatched input must equal that wrapping, not the raw envelope object.
+	wantInput, err := json.Marshal(string(wantEnvelope))
+	if err != nil {
+		t.Fatalf("json.Marshal(string(wantEnvelope)) error = %v", err)
+	}
+	if string(dispatchedInput) != string(wantInput) {
+		t.Fatalf("dispatched Input =\n%s\nwant (JSON-string-wrapped envelope) =\n%s", dispatchedInput, wantInput)
 	}
 }
 
