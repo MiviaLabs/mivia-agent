@@ -45,6 +45,19 @@ func TestFormatDoctorModelInfoIncludesCatalogCapacity(t *testing.T) {
 	}
 }
 
+func TestFormatConfigShowOllamaAPIKeyRequired(t *testing.T) {
+	// A keyless loopback ollama profile performs no API-key auth, so config
+	// show must not contradict doctor's "not required" verdict.
+	loopback := formatConfigShow(&config.Resolved{ProviderName: "ollama", BaseURL: "http://127.0.0.1:11434/v1"})
+	if !strings.Contains(loopback, "api_key_set=false\n") || !strings.Contains(loopback, "api_key_required=false\n") {
+		t.Fatalf("loopback ollama output = %q", loopback)
+	}
+	cloud := formatConfigShow(&config.Resolved{ProviderName: "ollama", BaseURL: "https://ollama.com/v1"})
+	if !strings.Contains(cloud, "api_key_required=true\n") {
+		t.Fatalf("cloud ollama output = %q", cloud)
+	}
+}
+
 func TestConfigShowPromptBudgetAdvisoryShown(t *testing.T) {
 	res := &config.Resolved{ProviderName: "deepseek", Model: "deepseek-v4-flash", MaxContextTokens: 616000}
 	got := formatConfigShow(res)

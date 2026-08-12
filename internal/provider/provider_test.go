@@ -87,6 +87,26 @@ func TestNewForProviderNonOllamaLoopbackStillFailsClosed(t *testing.T) {
 	}
 }
 
+func TestNewForProviderOllamaNonLoopbackHTTPNeverRelaxes(t *testing.T) {
+	// The keyless relaxation is scoped to loopback only: a plain http URL on a
+	// non-loopback host must still fail closed at the NewForProvider switch path.
+	res := &config.Resolved{ProviderName: "ollama", BaseURL: "http://ollama.example.test/v1", APIKeyEnv: "OLLAMA_API_KEY", APIKeySet: false}
+	_, err := NewForProvider(res, "ollama")
+	if err == nil || !strings.Contains(err.Error(), "missing API key") {
+		t.Fatalf("err=%v, want 'missing API key'", err)
+	}
+
+	res.APIKeySet = true
+	res.APIKey = "fake"
+	comp, err := NewForProvider(res, "ollama")
+	if err != nil || comp == nil {
+		t.Fatalf("comp=%T err=%v", comp, err)
+	}
+	if comp.Name() != "ollama" {
+		t.Fatalf("name=%q, want %q", comp.Name(), "ollama")
+	}
+}
+
 func TestNewDispatchesZAI(t *testing.T) {
 	res := &config.Resolved{ProviderName: "zai", BaseURL: "https://api.z.ai/api/paas/v4", APIKey: "fake", APIKeySet: true}
 	comp, err := New(res)

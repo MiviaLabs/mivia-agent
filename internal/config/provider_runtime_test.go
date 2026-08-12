@@ -116,6 +116,41 @@ func TestResolveProviderRuntimesLoopbackRelaxationIsNarrow(t *testing.T) {
 	}
 }
 
+// TestResolveProviderRuntimesWhitespaceKeyIsMissing pins that a whitespace-only
+// API key value is treated as missing everywhere, matching NewForProvider's
+// TrimSpace check: the runtime reports APIKeySet=false and the group is
+// unselectable with the credential-unavailable reason, so neither the chat
+// entrypoint gate nor the provider factory is bypassed by an all-whitespace env.
+func TestResolveProviderRuntimesWhitespaceKeyIsMissing(t *testing.T) {
+	oneModel := []ModelSpec{{Name: "llama3.2", ContextWindowTokens: 128000}}
+	providers := map[string]ProviderConfig{
+		"ollama": {APIKeyEnv: "OLLAMA_API_KEY", BaseURL: "https://ollama.example.com/v1", Models: oneModel},
+	}
+
+	runtimes, groups := resolveProviderRuntimes(
+		File{Providers: providers},
+		map[string]string{"OLLAMA_API_KEY": "   "},
+		"ollama",
+	)
+	rt, ok := runtimes["ollama"]
+	if !ok {
+		t.Fatalf("no runtime for provider %q", "ollama")
+	}
+	if rt.APIKeySet {
+		t.Fatalf("runtime APIKeySet = true, want false for whitespace-only key")
+	}
+	group := findProviderGroup(groups, "ollama")
+	if group == nil {
+		t.Fatalf("no group for provider %q", "ollama")
+	}
+	if group.Selectable {
+		t.Fatalf("group Selectable = true, want false for whitespace-only key")
+	}
+	if group.DisabledReason != "credential unavailable" {
+		t.Fatalf("group DisabledReason = %q, want %q", group.DisabledReason, "credential unavailable")
+	}
+}
+
 func findProviderGroup(groups []ProviderModelGroup, name string) *ProviderModelGroup {
 	for i := range groups {
 		if groups[i].Provider == name {

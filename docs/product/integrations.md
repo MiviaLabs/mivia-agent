@@ -7,7 +7,7 @@ use.
 
 ## AI providers
 
-mivia sends prompts and selected context to one configured AI provider. Three
+mivia sends prompts and selected context to one configured AI provider. Four
 providers are built in today:
 
 | Provider | Default model | Default API base URL |
@@ -15,6 +15,7 @@ providers are built in today:
 | DeepSeek (default) | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
 | OpenRouter | declare under `providers.openrouter` | `https://openrouter.ai/api/v1` |
 | ZAI (z.ai) | declare under `providers.zai` | `https://api.z.ai/api/paas/v4` |
+| Ollama | declare under `providers.ollama` | `http://127.0.0.1:11434/v1` |
 
 mivia does not accept an arbitrary OpenAI-compatible provider name. See
 [Configuration](config.md#provider-support) for the full provider list, key

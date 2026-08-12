@@ -97,7 +97,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		ModelProfiles:    cloneModelSpecs(pc.Models),
 		BaseURL:          strings.TrimRight(pc.BaseURL, "/"),
 		APIKeyEnv:        pc.APIKeyEnv,
-		APIKeySet:        keySet && key != "",
+		APIKeySet:        keySet && strings.TrimSpace(key) != "",
 		APIKey:           key,
 		HTTPReferer:      pc.HTTPReferer,
 		XTitle:           pc.XTitle,

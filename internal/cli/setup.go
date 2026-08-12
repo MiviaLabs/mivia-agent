@@ -83,12 +83,15 @@ func runSetupWithIO(args []string, stdout io.Writer, stdin io.Reader) error {
 			key = strings.TrimSpace(string(raw))
 		}
 	}
-	if key == "" {
+	keylessOllama := key == "" && provider == "ollama"
+	if key == "" && !keylessOllama {
 		return fmt.Errorf("setup: no API key; pass --key or set %s", keyEnv)
 	}
 
-	if err := writeSetupEnvFile(envPath, keyEnv, key); err != nil {
-		return err
+	if key != "" {
+		if err := writeSetupEnvFile(envPath, keyEnv, key); err != nil {
+			return err
+		}
 	}
 	cfgWritten, err := writeSetupConfigIfMissing(cfgPath, provider)
 	if err != nil {
@@ -98,7 +101,12 @@ func runSetupWithIO(args []string, stdout io.Writer, stdin io.Reader) error {
 	fmt.Fprintln(stdout, "mivia setup")
 	fmt.Fprintf(stdout, "  provider:   %s\n", provider)
 	fmt.Fprintf(stdout, "  key env:    %s\n", keyEnv)
-	fmt.Fprintf(stdout, "  key file:   %s (written)\n", displayPath(envPath))
+	if keylessOllama {
+		fmt.Fprintln(stdout, "  mode:       local daemon - no API key needed (base_url http://127.0.0.1:11434/v1)")
+		fmt.Fprintf(stdout, "  mode:       Ollama Cloud - pass the key via --key or set %s\n", keyEnv)
+	} else {
+		fmt.Fprintf(stdout, "  key file:   %s (written)\n", displayPath(envPath))
+	}
 	if cfgWritten {
 		fmt.Fprintf(stdout, "  config:     %s (written)\n", displayPath(cfgPath))
 	} else if provider != config.DefaultProvider {

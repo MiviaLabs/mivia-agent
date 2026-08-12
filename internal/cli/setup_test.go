@@ -145,6 +145,80 @@ func TestSetupSkipsConfigForOtherProvider(t *testing.T) {
 	}
 }
 
+func TestSetupOllamaKeylessNeedsNoKey(t *testing.T) {
+	t.Setenv("OLLAMA_API_KEY", "")
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	out, err := runSetupCapture(t, []string{
+		"--provider", "ollama",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, "")
+	if err != nil {
+		t.Fatalf("keyless ollama setup error = %v", err)
+	}
+	if _, statErr := os.Stat(envPath); !os.IsNotExist(statErr) {
+		t.Fatalf("env file created for keyless ollama (stat err=%v)", statErr)
+	}
+	for _, want := range []string{"local daemon", "Cloud", "http://127.0.0.1:11434/v1", "mivia doctor"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "(written)") {
+		t.Fatalf("summary claims a written key file for keyless ollama:\n%s", out)
+	}
+}
+
+func TestSetupOllamaWithKeyWritesEnvFile(t *testing.T) {
+	t.Setenv("OLLAMA_API_KEY", "")
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	out, err := runSetupCapture(t, []string{
+		"--provider", "ollama",
+		"--key", "sk-test",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, "")
+	if err != nil {
+		t.Fatalf("setup error = %v", err)
+	}
+	entries, err := envfile.Load(envPath)
+	if err != nil {
+		t.Fatalf("load written env file: %v", err)
+	}
+	if entries["OLLAMA_API_KEY"] != "sk-test" {
+		t.Fatalf("env key = %q, want sk-test", entries["OLLAMA_API_KEY"])
+	}
+	if !strings.Contains(out, "(written)") {
+		t.Fatalf("summary lacks the (written) marker for keyed ollama:\n%s", out)
+	}
+	if strings.Contains(out, "sk-test") {
+		t.Fatalf("summary leaks the key value:\n%s", out)
+	}
+}
+
+func TestSetupDeepseekNoKeyStillErrors(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	dir := t.TempDir()
+	_, err := runSetupCapture(t, []string{
+		"--provider", "deepseek",
+		"--env-file", filepath.Join(dir, ".env"),
+		"--config", filepath.Join(dir, "mivia.toml"),
+		"--yes",
+	}, "")
+	if err == nil {
+		t.Fatal("deepseek setup with no key returned nil error")
+	}
+	if !strings.Contains(err.Error(), "no API key") {
+		t.Fatalf("setup error = %v, want missing-key message", err)
+	}
+}
+
 func TestSetupKeepsExistingConfig(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
