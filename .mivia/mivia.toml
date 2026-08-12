@@ -15,10 +15,10 @@
 env_file = "~/.mivia/.env"
 
 [provider]
-# Local Ollama by default (this machine's daemon at 127.0.0.1:11434) with
-# qwen3.6:27b-q4_K_M. Cloud backends stay configured as fallbacks:
-# --provider deepseek (native DeepSeek), --provider openrouter, --provider zai.
-name = "ollama"
+# Default provider: DeepSeek v4 Flash (cloud).
+# Set DEEPSEEK_API_KEY in ~/.mivia/.env.
+# Switch with: --provider ollama, --provider openrouter, --provider zai.
+name = "deepseek"
 
 [providers.deepseek]
 # DeepSeek v4 thinking mode: reasoning_effort high/max (low/medium→high,
