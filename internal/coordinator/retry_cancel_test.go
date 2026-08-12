@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -31,7 +32,10 @@ func (h *failTwiceHandler) Invoke(_ context.Context, _ runtime.Request) (json.Ra
 	count := h.invoked
 	h.mu.Unlock()
 	if count <= 2 {
-		return nil, fmt.Errorf("intentional failure #%d", count)
+		// Transient-marked: these tests exercise retry mechanics, and
+		// shouldRetryTask now requires provider.IsTransient for a "failed"
+		// task's error before spending retry budget on it.
+		return nil, &provider.TransientError{Err: fmt.Errorf("intentional failure #%d", count)}
 	}
 	return json.RawMessage(`{"ok":true}`), nil
 }
@@ -108,7 +112,7 @@ func TestCoordinator_RetryExhaustedFailsTask(t *testing.T) {
 	fixedTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	repo.SetTimeSource(func() time.Time { return fixedTime })
 	d := runtime.New(runtime.Policy{})
-	_ = d.Register(runtime.Subagent, "foreverfail", staticHandler{err: errors.New("always fail")})
+	_ = d.Register(runtime.Subagent, "foreverfail", staticHandler{err: &provider.TransientError{Err: errors.New("always fail")}})
 	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p).WithRetryPolicy(RetryPolicy{
 		MaxRetries:     2,
@@ -355,7 +359,7 @@ func TestCoordinator_MintRetryAttemptLedgerError(t *testing.T) {
 	repo.SetTimeSource(func() time.Time { return fixedTime })
 	errorRepo := &erroringSetTaskAttemptRepo{LedgerRepository: repo}
 	d := runtime.New(runtime.Policy{})
-	_ = d.Register(runtime.Subagent, "flaky", staticHandler{err: fmt.Errorf("task failure")})
+	_ = d.Register(runtime.Subagent, "flaky", staticHandler{err: &provider.TransientError{Err: fmt.Errorf("task failure")}})
 	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(errorRepo, p).WithRetryPolicy(RetryPolicy{
 		MaxRetries:     3,
@@ -521,7 +525,7 @@ func TestRetryFinalizesOriginalFailedExhausted(t *testing.T) {
 	fixedTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	repo.SetTimeSource(func() time.Time { return fixedTime })
 	d := runtime.New(runtime.Policy{})
-	_ = d.Register(runtime.Subagent, "alwaysfail-finalize", staticHandler{err: errors.New("always fail")})
+	_ = d.Register(runtime.Subagent, "alwaysfail-finalize", staticHandler{err: &provider.TransientError{Err: errors.New("always fail")}})
 	p := subagents.New(d, subagents.Policy{Workers: 1})
 	c := New(repo, p).WithRetryPolicy(RetryPolicy{
 		MaxRetries:     2,

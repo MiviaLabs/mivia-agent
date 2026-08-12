@@ -457,6 +457,19 @@ default_timeout_seconds = 43200
 # default_budget = 0           # 0 = unlimited
 # max_audit_rounds = 0         # 0 = unlimited
 
+# [subagents.retry] controls whole-task retry for a dispatched task that
+# failed with a transient error (network blip, 429, 5xx, timeout) or timed
+# out. Disabled by default (max_retries = 0): a deployment must opt in.
+# Distinct from schema_retry_max above, which governs corrective re-entries
+# after an invalid schema-validated reply within one task, not whole-task
+# retry.
+# [subagents.retry]
+# max_retries = 0            # 0 = disabled (default); positive = attempts beyond the first
+# base_backoff_seconds = 1   # initial backoff before the first retry
+# max_backoff_seconds = 30   # cap on backoff growth
+# backoff_factor = 2.0       # exponential multiplier per attempt; 0 selects 2.0
+# jitter_fraction = 0.25     # ±jitter_fraction/2 randomization; 0 disables jitter
+
 # ---------------------------------------------------------------------------
 # Durable context storage (byte fields under [context])
 # ---------------------------------------------------------------------------

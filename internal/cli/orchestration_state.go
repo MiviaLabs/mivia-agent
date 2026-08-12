@@ -325,7 +325,7 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		MaxBudget: cfg.DefaultBudget,
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
 	})
-	c := coordinator.New(repo, pool).WithRetryPolicy(coordinator.NoRetry)
+	c := coordinator.New(repo, pool).WithRetryPolicy(taskRetryPolicyFromConfig(cfg.TaskRetry))
 	// Wire [subagents.messaging] body/mailbox budgets (plan 53).
 	c = c.WithMessagingLimits(cfg.Messaging.MaxBodyBytes, cfg.Messaging.MailboxCapacity)
 	actual, _ := coordinators.LoadOrStore(d, c)
@@ -340,6 +340,25 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		})
 	}
 	return actual.(coordinator.Coordinator)
+}
+
+// taskRetryPolicyFromConfig converts the [subagents.retry] TOML surface into
+// a coordinator.RetryPolicy. internal/config cannot import internal/coordinator
+// (coordinator already imports config), so this CLI-layer seam does the
+// conversion. An all-zero TaskRetryConfig (the default) converts to
+// coordinator.NoRetry, identical to today's hardcoded behavior - a deployment
+// must opt in via [subagents.retry] max_retries > 0 to enable retry.
+func taskRetryPolicyFromConfig(cfg config.TaskRetryConfig) coordinator.RetryPolicy {
+	if cfg.MaxRetries <= 0 {
+		return coordinator.NoRetry
+	}
+	return coordinator.RetryPolicy{
+		MaxRetries:     cfg.MaxRetries,
+		BaseBackoff:    time.Duration(cfg.BaseBackoffSeconds * float64(time.Second)),
+		MaxBackoff:     time.Duration(cfg.MaxBackoffSeconds * float64(time.Second)),
+		BackoffFactor:  cfg.BackoffFactor,
+		JitterFraction: cfg.JitterFraction,
+	}
 }
 
 func orchestrationRepoForDispatcher(d *runtime.Dispatcher) ledger.LedgerRepository {

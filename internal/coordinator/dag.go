@@ -288,6 +288,17 @@ func canceledResult(h *RunHandle, taskID string) subagents.Result {
 	return subagents.Result{TaskID: taskID, Status: "canceled", Err: cancelErr}
 }
 
+// queueRecoveredRetry does NOT apply shouldRetryTask's transient-error gate.
+// It fires from a ledger CAS race (a queued->running transition losing to a
+// concurrent write that already shows the task failed/timed_out), and by
+// then only a ledger.TaskSnapshot is available - its ErrorRef is a bounded,
+// redacted string, not the typed error provider.IsTransient needs. Gating
+// this path would require plumbing a classification signal through the
+// ledger's error storage, which is out of scope for the live-dispatch fix
+// this gate was added for. It stays blind-retry, same as it was before this
+// change, and same as requeueForResume's crash-recovery path (recovery.go) -
+// both already require MaxRetries > 0, so the exposure is bounded to
+// deployments that explicitly opt into retry.
 func (c *coordinator) queueRecoveredRetry(h *RunHandle, task subagents.Task, pending map[string]subagents.Task, queue map[string]time.Time, states map[string]*RetryState) bool {
 	snap, err := c.repo.GetTask(h.poolCtx, h.runID, task.ID)
 	if err != nil || h.policy().MaxRetries <= 0 || (snap.Status != string(ledger.TaskStatusFailed) && snap.Status != string(ledger.TaskStatusTimedOut)) {
@@ -327,7 +338,7 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 		taskSet = tasks[0]
 	}
 	for _, result := range batch {
-		if !c.shouldRetryTask(h, mapStatus(result), result.TaskID, states) {
+		if !c.shouldRetryTask(h, mapStatus(result), result.Err, result.TaskID, states) {
 			results[result.TaskID] = result
 			continue
 		}
@@ -371,15 +382,6 @@ func (c *coordinator) processResults(h *RunHandle, batch []subagents.Result, res
 	return runErr
 }
 
-func retryState(taskID string, states map[string]*RetryState, policy RetryPolicy) *RetryState {
-	if state := states[taskID]; state != nil {
-		return state
-	}
-	state := NewRetryState(taskID, policy)
-	states[taskID] = state
-	return state
-}
-
 func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]subagents.Result, queue map[string]time.Time, states map[string]*RetryState) []subagents.Result {
 	for taskID := range queue {
 		if _, ok := results[taskID]; !ok {
@@ -406,14 +408,6 @@ func (c *coordinator) finalizeDAG(tasks []subagents.Task, results map[string]sub
 		}
 	}
 	return out
-}
-
-func (c *coordinator) shouldRetryTask(h *RunHandle, status, taskID string, states map[string]*RetryState) bool {
-	if h.policy().IsZero() || h.policy().MaxRetries <= 0 || (status != string(ledger.TaskStatusFailed) && status != string(ledger.TaskStatusTimedOut)) {
-		return false
-	}
-	state := states[taskID]
-	return state == nil || state.CanRetry()
 }
 
 func (c *coordinator) transitionTaskToStatus(h *RunHandle, taskID, status string, sessionIDs ...string) error {
