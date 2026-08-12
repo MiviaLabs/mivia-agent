@@ -6,10 +6,29 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
+
+// panelCancelCoordinator returns the coordinator a fresh runner from
+// e.NewRunner would use, so a panel-aware cancel (D15) can inspect and
+// cancel exact panel children through the same coordinator this engine
+// dispatches them with. Returns nil when NewRunner is unset or does not
+// build a *controller.CoordinatorRunner (e.g. a scripted test runner):
+// CancelRunWithAttemptsWithClaim then fails closed only if it actually
+// finds a live panel attempt to reconcile.
+func (e *Engine) panelCancelCoordinator() coordinator.Coordinator {
+	if e.NewRunner == nil {
+		return nil
+	}
+	runner, ok := e.NewRunner().(*controller.CoordinatorRunner)
+	if !ok {
+		return nil
+	}
+	return runner.Coordinator
+}
 
 // Cancel implements agenttools.Engine.
 func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelResult, error) {
@@ -45,7 +64,7 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelRes
 		return agenttools.CancelResult{}, err
 	}
 	defer func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }()
-	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, e.Repo, runID, holder)
+	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, e.Repo, e.panelCancelCoordinator(), runID, holder)
 	if err != nil {
 		// Context cancel may already have settled the run; treat terminal as success.
 		run, getErr := e.Repo.GetRun(ctx, runID)

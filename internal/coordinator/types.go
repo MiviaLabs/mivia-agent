@@ -138,6 +138,13 @@ type Coordinator interface {
 	EnsureRun(context.Context, EnsureRunRequest) (*RunHandle, error)
 	EnsureSingleTaskRun(context.Context, EnsureRunRequest) (*RunHandle, error)
 	EnsureTerminalSingleTaskRun(context.Context, EnsureRunRequest, ledger.TaskStatus) (*RunHandle, error)
+	// JoinAsRecovered returns a recovered, wait-only handle for an already
+	// admitted run, or ledger.ErrNotFound if none is admitted yet. It never
+	// claims to run the child, dispatches its handler, or resumes it as a
+	// local actor: Cancel on the returned handle always takes the fail-closed
+	// recovered path, which refuses when a task's persisted status looks
+	// nonterminal with no verifiable live owner.
+	JoinAsRecovered(context.Context, EnsureRunRequest) (*RunHandle, error)
 	Inspect(context.Context, *RunHandle) (ledger.RunSnapshot, error)
 	Join(context.Context, *RunHandle) (*RunResult, error)
 	Cancel(context.Context, *RunHandle) error
