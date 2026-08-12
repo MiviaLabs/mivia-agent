@@ -14,17 +14,29 @@ import (
 
 // effectiveWorkflowWriteDenylist is the write-path blocklist for workflow
 // agent steps: the built-in defaults (config.DefaultWritePathBlocklist: .git
-// and .mivia/mivia.toml, always blocked) plus the project's
-// [tools] write_path_blocklist additions. Composing here (instead of in
-// resolveToolsConfig) guarantees the defaults even for a directly-constructed
-// config.Resolved; duplicate entries are harmless because the matcher is
-// membership-based.
+// and .mivia/mivia.toml) plus the project's [tools] write_path_blocklist
+// additions, minus the project's [tools] write_path_blocklist_remove
+// removals. The defaults are removable only by explicit opt-out, because
+// unblocking .git or .mivia/mivia.toml is a trust decision: the config file
+// carries the blocklist itself, and Git metadata carries history and hooks.
+// Composing here (instead of in resolveToolsConfig) guarantees the defaults
+// even for a directly-constructed config.Resolved; duplicate entries are
+// harmless because the matcher is membership-based.
 func effectiveWorkflowWriteDenylist(res *config.Resolved) []string {
-	var additions []string
+	var additions, removals []string
 	if res != nil {
 		additions = res.Tools.WritePathBlocklist
+		removals = res.Tools.WritePathBlocklistRemove
 	}
-	return append(slices.Clone(config.DefaultWritePathBlocklist), additions...)
+	list := append(slices.Clone(config.DefaultWritePathBlocklist), additions...)
+	if len(removals) == 0 {
+		return list
+	}
+	removed := make(map[string]bool, len(removals))
+	for _, r := range removals {
+		removed[r] = true
+	}
+	return slices.DeleteFunc(list, func(entry string) bool { return removed[entry] })
 }
 
 var panelReviewerTools = []string{"find_references", "glob", "grep", "list_dir", "read_file"}

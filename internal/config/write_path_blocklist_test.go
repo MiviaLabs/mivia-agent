@@ -43,6 +43,20 @@ func TestResolveToolsConfigWritePathBlocklistNilSafe(t *testing.T) {
 	}
 }
 
+func TestResolveToolsConfigWritePathBlocklistRemoveNormalizes(t *testing.T) {
+	tc := resolveToolsConfig(ToolsConfig{WritePathBlocklistRemove: []string{" .git/ ", "a//b"}})
+	got := map[string]bool{}
+	for _, e := range tc.WritePathBlocklistRemove {
+		got[e] = true
+	}
+	if !got[".git"] {
+		t.Fatalf("removals = %v, want trimmed trailing-slash .git", tc.WritePathBlocklistRemove)
+	}
+	if !got["a/b"] {
+		t.Fatalf("removals = %v, want normalized a/b", tc.WritePathBlocklistRemove)
+	}
+}
+
 func TestValidateWritePathBlocklist(t *testing.T) {
 	valid := ToolsConfig{WritePathBlocklist: []string{".git", ".mivia/workflows", "go.mod"}}
 	if err := validateWritePathBlocklist(valid); err != nil {
@@ -64,6 +78,24 @@ func TestValidateWritePathBlocklist(t *testing.T) {
 	}
 }
 
+func TestValidateWritePathBlocklistRemove(t *testing.T) {
+	valid := ToolsConfig{WritePathBlocklistRemove: []string{".git", ".mivia/mivia.toml"}}
+	if err := validateWritePathBlocklist(valid); err != nil {
+		t.Fatalf("valid removals rejected: %v", err)
+	}
+	for _, bad := range []string{".", "", "   ", "go.mod/..", "/etc/passwd", "..", "a/../.."} {
+		tc := ToolsConfig{WritePathBlocklistRemove: []string{bad}}
+		if err := validateWritePathBlocklist(tc); err == nil {
+			t.Fatalf("removal entry %q accepted, want load error", bad)
+		}
+	}
+	// The same entry in both keys is a contradiction and a load error.
+	tc := ToolsConfig{WritePathBlocklist: []string{".git"}, WritePathBlocklistRemove: []string{".git"}}
+	if err := validateWritePathBlocklist(tc); err == nil || !strings.Contains(err.Error(), "both write_path_blocklist and write_path_blocklist_remove") {
+		t.Fatalf("contradictory keys error = %v, want both-keys load error", err)
+	}
+}
+
 func TestWritePathBlocklistTOMLKey(t *testing.T) {
 	raw := []byte("[tools]\nwrite_path_blocklist = [\".mivia/workflows\", \"go.mod\"]\n")
 	var file struct {
@@ -74,6 +106,19 @@ func TestWritePathBlocklistTOMLKey(t *testing.T) {
 	}
 	if len(file.Tools.WritePathBlocklist) != 2 || file.Tools.WritePathBlocklist[0] != ".mivia/workflows" {
 		t.Fatalf("WritePathBlocklist = %v", file.Tools.WritePathBlocklist)
+	}
+}
+
+func TestWritePathBlocklistRemoveTOMLKey(t *testing.T) {
+	raw := []byte("[tools]\nwrite_path_blocklist_remove = [\".git\", \".mivia/mivia.toml\"]\n")
+	var file struct {
+		Tools ToolsConfig `toml:"tools"`
+	}
+	if err := toml.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Tools.WritePathBlocklistRemove) != 2 || file.Tools.WritePathBlocklistRemove[0] != ".git" {
+		t.Fatalf("WritePathBlocklistRemove = %v", file.Tools.WritePathBlocklistRemove)
 	}
 }
 
