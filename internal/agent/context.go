@@ -29,6 +29,7 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 			preparation, fallbackErr := opts.PreparationManager.Prepare(context.Background(), input)
 			if fallbackErr == nil {
 				l.recordPreparation(preparation)
+				l.captureOmittedEvidence(input, preparation)
 				l.Messages = clonePreparedMessages(preparation.Messages)
 				l.PreparationErr = nil
 			} else {
@@ -40,8 +41,22 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 	l.discardPreparation(opts)
 	l.recordPreparation(preparation)
 	l.PreparationErr = nil
+	l.captureOmittedEvidence(input, preparation)
 	l.Messages = clonePreparedMessages(l.LastPreparation.Messages)
 	return nil
+}
+
+// captureOmittedEvidence folds the content-free diff of the pre-compaction
+// history against the retained preparation into the run's TurnState BEFORE
+// l.Messages is overwritten. Omitted evidence is bounded by the tracker; a
+// rejected item (list full, envelope-invalid) is dropped, never an error.
+func (l *Loop) captureOmittedEvidence(input contextmgr.PrepareInput, preparation contextmgr.Preparation) {
+	if l.TurnState == nil || !preparation.Compacted {
+		return
+	}
+	for _, item := range contextmgr.OmittedEvidence(input.Messages, preparation.Messages) {
+		_ = l.TurnState.AddEvidence(item)
+	}
 }
 
 // buildPrepareInput assembles the manager input shared by prepareStep and the

@@ -375,6 +375,10 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		input.CurrentObjective = userText
 		opts.PreparationManager = snapshot.context.manager.PreparationManager
 		opts.PreparationInput = input
+		opts.SummaryConfig = agent.SummaryConfig{
+			Summarizer: snapshot.context.summarizer,
+			Redaction:  snapshot.context.redaction,
+		}
 	}
 	if turnDispatcher != nil {
 		opts.Dispatcher = turnDispatcher

@@ -42,7 +42,15 @@ func (l *Loop) retryAfterPromptTooLong(req provider.Request, opts Options, llmCt
 	// PruneMessagesKeepTurns always keeps the system prompt and the newest
 	// turns, and drops tool exchanges as a unit (announced call + results),
 	// so pairing survives. The failed ChatTurn appended nothing, so history
-	// holds no orphaned tool calls.
+	// holds no orphaned tool calls. The pre-prune history is snapshotted
+	// BEFORE the in-place prune: the retry drops messages here, and the
+	// summary injected below must reference exactly what this prune omitted.
+	// The first prepareStep captured evidence for the rejected, never-sent
+	// history, so without this snapshot the retried request's summary would
+	// reference the wrong omitted set (R0-1). PruneMessagesKeepTurns never
+	// mutates its input, so the snapshot stays a valid copy of the rejected
+	// history.
+	prePrune := l.Messages
 	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, pruneTarget)
 	// The compaction must be visible to the model, not just the operator:
 	// earlier tool results were dropped, and the next step has no way to know
@@ -55,6 +63,17 @@ func (l *Loop) retryAfterPromptTooLong(req provider.Request, opts Options, llmCt
 		Detail: fmt.Sprintf("provider rejected prompt (prompt too long); compacted to %d tokens and retrying once", target),
 	})
 	req.Messages = l.Messages
+	// Phase 2 summary injection on the retry: the pruned history still belongs
+	// to a compacted turn, so carry the summary into the retried request when
+	// the budget re-check passes. On any failure the retry stays structural.
+	if opts.SummaryConfig.Summarizer != nil && l.HasPreparation && l.LastPreparation.Compacted {
+		// Re-derive the omitted-evidence diff for the history the retry
+		// actually sends BEFORE the summary is built: summarizeTurn reads the
+		// run's TurnState, which otherwise still describes the rejected
+		// first-attempt history (R0-1).
+		l.refreshOmittedEvidenceAfterRetry(prePrune)
+		req.Messages = l.injectSummary(llmCtx, opts)
+	}
 	// The compacted retry prompt is genuinely new work (charge it against the
 	// prompt bound), but its output was already reserved by the rejected first
 	// attempt: reserveProvider would charge one logical completion's output

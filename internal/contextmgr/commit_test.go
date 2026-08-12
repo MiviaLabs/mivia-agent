@@ -99,6 +99,134 @@ func TestCommitPreparationAllowsStructuralCompactionWithoutSummary(t *testing.T)
 	}
 }
 
+// summaryRequestBuilderForPrep derives a summary request from the preparation
+// itself: the objective from the latest retained user message and the source
+// range from preparation.Token.Range. Everything else is copied from a fixed
+// template request.
+func summaryRequestBuilderForPrep(template SummaryRequest) SummaryRequestBuilder {
+	return func(preparation Preparation) (SummaryRequest, error) {
+		objective := ""
+		for index := len(preparation.Messages) - 1; index >= 0; index-- {
+			if preparation.Messages[index].Role == provider.RoleUser {
+				objective = preparation.Messages[index].Content
+				break
+			}
+		}
+		envelope, err := NewSummaryEnvelope(template.Input.Version, objective, template.Input.State, nil, nil, nil, nil, nil, preparation.Token.Range, template.Input.PolicyDigest)
+		if err != nil {
+			return SummaryRequest{}, err
+		}
+		request := template
+		request.Input = envelope
+		request.SourceRange = preparation.Token.Range
+		if err := request.Validate(); err != nil {
+			return SummaryRequest{}, err
+		}
+		return request, nil
+	}
+}
+
+// TestCommitPreparationBuilderPersistsSummaryMetadata drives the commit-time
+// builder seam: with a builder wired, CommitPreparation derives the request
+// from the preparation and persists validated SummaryMetadata on the
+// checkpoint when the preparation is compacted.
+func TestCommitPreparationBuilderPersistsSummaryMetadata(t *testing.T) {
+	store, summarizer, summaryRequest, preparation, result := publicationFixture(t, validSummaryProvider())
+	if err := CommitPreparation(context.Background(), PublicationRequest{
+		Store: store, Summarizer: &summarizer, SummaryBuilder: summaryRequestBuilderForPrep(summaryRequest),
+		Preparation: preparation, Result: result,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if store.commits != 1 || len(store.request.Checkpoint.SummaryMetadata) == 0 {
+		t.Fatalf("builder publication = %+v", store.request)
+	}
+}
+
+// TestCommitPreparationBuilderErrorLeavesStateUntouched pins the fail-before-
+// CAS contract: a builder failure returns before any Store.Commit call and
+// never mutates the caller's preparation.
+func TestCommitPreparationBuilderErrorLeavesStateUntouched(t *testing.T) {
+	store, summarizer, _, preparation, result := publicationFixture(t, validSummaryProvider())
+	before := preparation
+	builder := func(Preparation) (SummaryRequest, error) {
+		return SummaryRequest{}, errors.New("builder failed")
+	}
+	if err := CommitPreparation(context.Background(), PublicationRequest{
+		Store: store, Summarizer: &summarizer, SummaryBuilder: builder,
+		Preparation: preparation, Result: result,
+	}); err == nil {
+		t.Fatal("builder failure returned nil")
+	}
+	if store.commits != 0 {
+		t.Fatalf("store commits=%d, want 0", store.commits)
+	}
+	if preparation.Candidate.SummaryMetadata != nil || before.Candidate.SummaryMetadata != nil {
+		t.Fatal("caller preparation was mutated by failed builder")
+	}
+}
+
+// TestCommitPreparationNonCompactedNeverSummarizes pins that a non-compacted
+// preparation never consults the builder or the Summarizer, yet still commits.
+func TestCommitPreparationNonCompactedNeverSummarizes(t *testing.T) {
+	store, original, summaryRequest, compacted, result := publicationFixture(t, validSummaryProvider())
+	nonCompacted := compacted
+	nonCompacted.Compacted = false
+	var builderCalls, providerCalls int
+	captured := summaryProviderFunc(func(_ context.Context, request SummaryRequest) (Summary, error) {
+		providerCalls++
+		return Summary{Version: request.Input.Version, Objective: "obj", State: "state", SourceRange: request.SourceRange}, nil
+	})
+	summarizer, err := NewSummarizer(captured, original.Binding, original.Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := func(Preparation) (SummaryRequest, error) {
+		builderCalls++
+		return summaryRequest, nil
+	}
+	if err := CommitPreparation(context.Background(), PublicationRequest{
+		Store: store, Summarizer: &summarizer, SummaryBuilder: builder,
+		Preparation: nonCompacted, Result: result,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if builderCalls != 0 || providerCalls != 0 {
+		t.Fatalf("builder=%d provider=%d, want 0/0 for a non-compacted preparation", builderCalls, providerCalls)
+	}
+	if store.commits != 1 {
+		t.Fatalf("store commits=%d, want 1", store.commits)
+	}
+}
+
+// TestCommitPreparationBuilderUsesPreparationState pins that the builder's
+// derived request reads the objective from the latest retained user message
+// and the source range from preparation.Token.Range.
+func TestCommitPreparationBuilderUsesPreparationState(t *testing.T) {
+	store, original, summaryRequest, preparation, result := publicationFixture(t, validSummaryProvider())
+	var received SummaryRequest
+	captured := summaryProviderFunc(func(_ context.Context, request SummaryRequest) (Summary, error) {
+		received = request
+		return Summary{Version: request.Input.Version, Objective: request.Input.Objective, State: "state", SourceRange: request.SourceRange}, nil
+	})
+	summarizer, err := NewSummarizer(captured, original.Binding, original.Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CommitPreparation(context.Background(), PublicationRequest{
+		Store: store, Summarizer: &summarizer, SummaryBuilder: summaryRequestBuilderForPrep(summaryRequest),
+		Preparation: preparation, Result: result,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if received.Input.Objective != "old" {
+		t.Fatalf("objective = %q, want the latest retained user message", received.Input.Objective)
+	}
+	if received.SourceRange != preparation.Token.Range || received.Input.SourceRange != preparation.Token.Range {
+		t.Fatalf("source range = %+v / %+v, want preparation.Token.Range %+v", received.SourceRange, received.Input.SourceRange, preparation.Token.Range)
+	}
+}
+
 func validSummaryProvider() SummaryProvider {
 	return summaryProviderFunc(func(_ context.Context, request SummaryRequest) (Summary, error) {
 		return Summary{Version: request.Input.Version, Objective: "safe objective", State: "safe state", SourceRange: request.SourceRange}, nil

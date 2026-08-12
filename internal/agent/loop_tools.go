@@ -49,6 +49,7 @@ func (l *Loop) runToolBatch(ctx context.Context, calls []provider.ToolCall, opts
 			Name:       r.toolCall.Function.Name,
 			Content:    bodies[i],
 		})
+		l.recordToolFacts(r)
 	}
 }
 
@@ -75,6 +76,7 @@ func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, tr
 		ReasoningContent: resp.ReasoningContent,
 		CreatedAt:        time.Now(),
 	})
+	l.recordAssistantState(resp.Content)
 	if trimmed != "" {
 		emit(opts, Event{Kind: EventAssistant, Content: resp.Content, Detail: "interim"})
 	}
