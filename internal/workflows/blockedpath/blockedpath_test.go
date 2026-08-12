@@ -31,6 +31,12 @@ func runLineDemandCases(t *testing.T, tests []lineDemandCase) {
 func TestLineDemandsEdit(t *testing.T) {
 	runLineDemandCases(t, []lineDemandCase{
 		{
+			name: "empty blocked path is never a demand",
+			line: "edit .mivia/mivia.toml to remove the restriction",
+			path: "",
+			want: false,
+		},
+		{
 			name: "explicit edit instruction",
 			line: "edit .mivia/workflows/bug-fix.toml to lower max_bytes to 16000",
 			path: ".mivia/workflows",
