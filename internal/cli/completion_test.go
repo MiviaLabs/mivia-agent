@@ -28,6 +28,33 @@ func TestCompletionCommandsIncludesLoginLogout(t *testing.T) {
 	}
 }
 
+func TestCompletionCommandsIncludesMemory(t *testing.T) {
+	for _, want := range []string{"memory"} {
+		found := false
+		for _, cmd := range completionCommands {
+			if cmd == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("completionCommands is missing %q (must stay in sync with the Execute switch in root.go)", want)
+		}
+	}
+}
+
+func TestCompletionMemorySubcommandOffersSearch(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		out, err := runCompletionCapture(t, []string{shell})
+		if err != nil {
+			t.Fatalf("completion %s error = %v", shell, err)
+		}
+		if !strings.Contains(out, "memory") || !strings.Contains(out, "search") {
+			t.Fatalf("%s script lacks a memory -> search subcommand entry: %q", shell, out)
+		}
+	}
+}
+
 func TestCompletionBashScript(t *testing.T) {
 	out, err := runCompletionCapture(t, []string{"bash"})
 	if err != nil {
