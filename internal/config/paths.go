@@ -39,6 +39,12 @@ func UserEnvPath() string {
 	return userPath(".env")
 }
 
+// UserAuthPath returns the path to the local CLI auth token file
+// (~/.mivia/auth.json) without checking the filesystem.
+func UserAuthPath() string {
+	return userPath("auth.json")
+}
+
 func userPath(name string) string {
 	home, err := workspace.UserHomeDir()
 	if err != nil {
