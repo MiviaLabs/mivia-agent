@@ -305,6 +305,36 @@ func TestAdvancePanelSynthesis_PhaseTransitionConflictFailsTheRun(t *testing.T) 
 	}
 }
 
+// TestPanelSynthesisWorkHonorsStepMaxTurns pins that buildPanelSynthesisWork
+// applies the step's max_turns knob (0 default = unlimited) to the synthesis
+// child's WorkLimits instead of a hardcoded turn cap.
+func TestPanelSynthesisWorkHonorsStepMaxTurns(t *testing.T) {
+	memberReport := `{"verdict":"approved","findings":[]}`
+	synthesisOutput := `{"dispositions":[],"summary":"Nothing to report."}`
+	cases := []struct {
+		name     string
+		maxTurns int
+		want     int
+	}{
+		{"unset defaults to unlimited", 0, 0},
+		{"positive bounds synthesis turns", 5, 5},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl, repo, step := panelSynthesisFixture(t, fmt.Sprintf("wfr-panel-synth-turns-%d", i), memberReport, synthesisOutput)
+			step.MaxTurns = tc.maxTurns
+			ctx := workflowledger.ContextWithClaimHolder(context.Background(), ctrl.Holder)
+			_, attempt, _, _ := driveToSynthesisAdmitted(t, ctx, ctrl, repo, step)
+			if attempt.PanelExecution == nil || attempt.PanelExecution.Synthesis == nil {
+				t.Fatalf("attempt = %+v, want admitted synthesis work", attempt.PanelExecution)
+			}
+			if got := attempt.PanelExecution.Synthesis.Work.WorkLimits.MaxTurns; got != tc.want {
+				t.Fatalf("synthesis WorkLimits.MaxTurns = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 // Test-review regression: no test proved the coordinator task's dispatched
 // Input bytes are EXACTLY BuildSynthesisEnvelope's encoded output, only that
 // each side independently does the right thing. Load the synthesis work's

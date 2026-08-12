@@ -113,6 +113,8 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 		return workflowledger.PanelTaskSpec{}, context.DeadlineExceeded
 	}
 	runID, taskID := attempt.PanelExecution.SynthesisRunID, attempt.PanelExecution.SynthesisTaskID
+	synthesisLimits := panelSynthesisLimits
+	synthesisLimits.MaxTurns = step.MaxTurns // 0 = unlimited (default)
 	work, err := c.buildPanelTaskSpec(ctx, panelWorkSpecParams{
 		RunID: runID, TaskID: taskID, AgentName: binding.AgentName, AgentDigest: binding.AgentDigest,
 		Skill: step.Skill, Provider: binding.ProviderName, Model: binding.Model,
@@ -128,7 +130,7 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 		// started decoding; the fake handlers in unit tests ignored req.Input
 		// so the shape mismatch only surfaced live).
 		Input: mustJSON(string(envelope)), InputSchema: []byte(`{"type":"string"}`), OutputSchema: schemaRef.Bytes,
-		Deadline: deadline, Limits: panelSynthesisLimits,
+		Deadline: deadline, Limits: synthesisLimits,
 	})
 	if err != nil {
 		return workflowledger.PanelTaskSpec{}, fmt.Errorf("panel step %q synthesis: %w", step.ID, err)

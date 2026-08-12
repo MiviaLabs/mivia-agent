@@ -156,6 +156,11 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 		errs = append(errs, err.Error())
 	}
 
+	// Per-step max_turns validation
+	if err := validateStepMaxTurns(wf); err != nil {
+		errs = append(errs, err.Error())
+	}
+
 	// Agent panel validation
 	if err := validatePanels(wf); err != nil {
 		errs = append(errs, err.Error())
@@ -361,6 +366,18 @@ func validateLimits(limits definition.Limits) error {
 	}
 	if limits.MaxTransientStepRetries < 0 || limits.MaxTransientStepRetries > 1000 {
 		return fmt.Errorf("limits: max_transient_step_retries must be in range [0, 1000] (got %d)", limits.MaxTransientStepRetries)
+	}
+	return nil
+}
+
+// validateStepMaxTurns checks that each step's max_turns is within bounds.
+// 0 means unlimited (the default); negative values and values above the
+// maximum are config errors, mirroring the [limits] knobs.
+func validateStepMaxTurns(wf *definition.WorkflowFile) error {
+	for _, s := range wf.Steps {
+		if s.MaxTurns < 0 || s.MaxTurns > 10000 {
+			return fmt.Errorf("step %q: max_turns must be in range [0, 10000] (got %d)", s.ID, s.MaxTurns)
+		}
 	}
 	return nil
 }

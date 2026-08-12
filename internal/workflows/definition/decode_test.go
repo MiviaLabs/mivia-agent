@@ -100,6 +100,56 @@ match = { status = "succeeded" }
 	}
 }
 
+// TestParseWorkflowTOML_StepMaxTurns verifies the per-step max_turns knob
+// decodes from TOML, defaulting to 0 (unlimited) when unset.
+func TestParseWorkflowTOML_StepMaxTurns(t *testing.T) {
+	data := []byte(`
+version = 1
+name = "step-max-turns"
+initial_step = "plan"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "worker"
+max_turns = 7
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }
+`)
+	wf, _, err := ParseWorkflowTOML(data, "step-max-turns.toml")
+	if err != nil {
+		t.Fatalf("ParseWorkflowTOML() error = %v", err)
+	}
+	if got := wf.Steps[0].MaxTurns; got != 7 {
+		t.Fatalf("step max_turns = %d, want 7", got)
+	}
+	data = []byte(`
+version = 1
+name = "step-max-turns-unset"
+initial_step = "plan"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "worker"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }
+`)
+	wf, _, err = ParseWorkflowTOML(data, "step-max-turns-unset.toml")
+	if err != nil {
+		t.Fatalf("ParseWorkflowTOML() error = %v", err)
+	}
+	if got := wf.Steps[0].MaxTurns; got != 0 {
+		t.Fatalf("unset step max_turns = %d, want 0 (unlimited)", got)
+	}
+}
+
 func TestParseWorkflowTOML_AgentPanel(t *testing.T) {
 	data := []byte(`
 version = 1

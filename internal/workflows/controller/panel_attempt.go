@@ -13,27 +13,36 @@ import (
 
 const panelMemberTimeout = 30 * time.Minute
 
-// panelMemberLimits bounds each panel member child's work. MaxPromptTokens is
-// deliberately 0 (unlimited cumulative prompt, per runtime.WorkLimits
-// semantics): a read-only reviewer's prompt volume is not a work bound. Every
-// provider call is already bounded by the model context window with a
-// prompt-too-long compaction retry, and the member loop is bounded by MaxTurns,
-// MaxOutputTokens, MaxOutputPerCall, MaxToolCalls, panelMemberTimeout, and the
-// panel's retry policy. A finite cumulative cap (historically 524288) killed
-// deep reviews of large packages mid-panel with "work limit exceeded: prompt
-// tokens" — a bogus bound that no other agent loop in the system applies.
+// panelMemberLimits bounds each panel member child's work. MaxTurns is
+// deliberately 0 (unlimited) here: the turn bound is a per-step workflow knob
+// (definition.Step.MaxTurns, default 0 = unlimited) applied at build time in
+// buildPanelAttempt. A hardcoded MaxTurns (historically 16) killed deep
+// read-only reviews of large packages mid-panel with "agent exceeded
+// max_steps (16)" — the same bogus bound class as the prompt-token cap below.
+// MaxPromptTokens is also deliberately 0 (unlimited cumulative prompt, per
+// runtime.WorkLimits semantics): a read-only reviewer's prompt volume is not a
+// work bound. Every provider call is already bounded by the model context
+// window with a prompt-too-long compaction retry, and the member loop is
+// bounded by MaxOutputTokens, MaxOutputPerCall, MaxToolCalls,
+// panelMemberTimeout, and the panel's retry policy. A finite cumulative cap
+// (historically 524288) killed deep reviews of large packages mid-panel with
+// "work limit exceeded: prompt tokens" — a bogus bound that no other agent
+// loop in the system applies.
 var panelMemberLimits = runtime.WorkLimits{
-	MaxTurns: 16, MaxPromptTokens: 0, MaxOutputTokens: 131072,
+	MaxTurns: 0, MaxPromptTokens: 0, MaxOutputTokens: 131072,
 	MaxOutputPerCall: 8192, MaxToolCalls: 64,
 }
 
 // panelSynthesisLimits bounds the synthesis child's work. buildPanelSynthesisWork
 // (panel_synthesis.go) consumes these once member work succeeds and it builds
-// the actual synthesis PanelTaskSpec. MaxPromptTokens is 0 (unlimited) for the
-// same reason as panelMemberLimits; the synthesis child is still bounded by
-// MaxTurns, MaxOutputTokens, MaxOutputPerCall, MaxToolCalls, and its deadline.
+// the actual synthesis PanelTaskSpec. MaxTurns is deliberately 0 (unlimited)
+// here for the same reason as panelMemberLimits: the per-step max_turns knob
+// is applied at build time, so the hardcoded synthesis cap (historically 8)
+// is gone. MaxPromptTokens is 0 (unlimited) for the same reason as
+// panelMemberLimits; the synthesis child is still bounded by MaxOutputTokens,
+// MaxOutputPerCall, MaxToolCalls, and its deadline.
 var panelSynthesisLimits = runtime.WorkLimits{
-	MaxTurns: 8, MaxPromptTokens: 0, MaxOutputTokens: 65536,
+	MaxTurns: 0, MaxPromptTokens: 0, MaxOutputTokens: 65536,
 	MaxOutputPerCall: 8192, MaxToolCalls: 16,
 }
 
@@ -76,11 +85,13 @@ func (c *LinearController) buildPanelAttempt(ctx context.Context, run workflowle
 		}
 		input := mustJSON(prompt)
 		runID, taskID := workflowledger.PanelChildIDs(c.RunID, attempt.AttemptID, member.ID)
+		memberLimits := panelMemberLimits
+		memberLimits.MaxTurns = step.MaxTurns // 0 = unlimited (default)
 		work, err := c.buildPanelTaskSpec(ctx, panelWorkSpecParams{
 			RunID: runID, TaskID: taskID, AgentName: binding.AgentName, AgentDigest: binding.AgentDigest,
 			Skill: member.Skill, Provider: binding.ProviderName, Model: binding.Model,
 			Input: input, InputSchema: []byte(`{"type":"string"}`), OutputSchema: schemaRef.Bytes,
-			Deadline: deadline, Limits: panelMemberLimits,
+			Deadline: deadline, Limits: memberLimits,
 		})
 		if err != nil {
 			return workflowledger.StepAttempt{}, fmt.Errorf("panel member %q: %w", member.ID, err)
