@@ -329,10 +329,11 @@ func TestSessionReconcileParkedRunsPeriodic(t *testing.T) {
 	}
 	applyWorkflowStoreRoot(res, root)
 	e := newSessionWorkflowEngine(root, configPath)
-
-	old := workflowReconcileInterval
-	workflowReconcileInterval = 10 * time.Millisecond
-	t.Cleanup(func() { workflowReconcileInterval = old })
+	// Shorten the re-scan cadence on this engine only: the periodic scanner
+	// is a per-engine field, so a short interval here cannot race another
+	// engine's background scanner (a package var would be shared mutable
+	// state read by every leaked context.Background() scan).
+	e.reconcileInterval = 10 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	periodicDone := make(chan struct{})
 	go func() {

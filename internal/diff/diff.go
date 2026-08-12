@@ -33,8 +33,14 @@ func Compute(oldText, newText string, opts Options) (Result, error) {
 	oldLines, newLines := splitLines(oldText), splitLines(newText)
 	// A trailing newline is represented by an empty terminal element. It is a
 	// visible insertion when added, but not a deletion when the other side has
-	// continued content (the terminator is metadata for that file).
-	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" && (len(newLines) == 0 || newLines[len(newLines)-1] != "") {
+	// continued content (the terminator is metadata for that file). Drop the
+	// old-side terminal only when the two sides still differ in some other
+	// line: when removing the trailing newline is the ONLY change, keep the
+	// terminal so it renders as a visible Delete op (honest -N stats) instead
+	// of an empty +0 -0 diff.
+	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" &&
+		(len(newLines) == 0 || newLines[len(newLines)-1] != "") &&
+		strings.TrimSuffix(oldText, "\n") != newText {
 		oldLines = oldLines[:len(oldLines)-1]
 	}
 	deadline := time.Time{}

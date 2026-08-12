@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -169,5 +170,89 @@ func TestDiff_EmptyInputPairs(t *testing.T) {
 	ins, del = Stats(r)
 	if ins != 0 || del != 1 {
 		t.Fatalf("hello-to-empty stats=%d/%d", ins, del)
+	}
+}
+
+// TestDiff_TrailingNewlineRemovalIsVisible pins that removing a file's only
+// trailing newline is a real change. Before the fix, Compute stripped the
+// old-side empty terminal whenever the new side lacked one, so "a\nx\n" ->
+// "a\nx" produced an all-Equal diff with Stats 0/0 (dishonest +0 -0) instead
+// of a visible Delete with del=1.
+func TestDiff_TrailingNewlineRemovalIsVisible(t *testing.T) {
+	r, err := Compute("a\nx\n", "a\nx", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, del := Stats(r)
+	if ins != 0 || del != 1 {
+		t.Fatalf("removal stats=%d/%d, want 0/1", ins, del)
+	}
+	// Negative path: the add direction stays ins=1, del=0.
+	r, err = Compute("a\nx", "a\nx\n", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, del = Stats(r)
+	if ins != 1 || del != 0 {
+		t.Fatalf("add stats=%d/%d, want 1/0", ins, del)
+	}
+	// Pinned: appending a line after a trailing newline stays ins=1, del=0.
+	r, err = Compute("a\n", "a\nb", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, del = Stats(r)
+	if ins != 1 || del != 0 {
+		t.Fatalf("append stats=%d/%d, want 1/0", ins, del)
+	}
+}
+
+// TestDiff_TrailingNewlineRemovalHunkWithinBounds reproduces the finding's
+// exact scenario: "a\nx\n" edited to "a\nx" removes a trailing newline, and
+// callers anchor hunks at firstChangedLine computed from raw strings.Split
+// (3 for this pair). The emitted hunk must stay within the file's raw line
+// counts instead of "@@ -3,2 +3,2 @@" beyond EOF with no change lines.
+func TestDiff_TrailingNewlineRemovalHunkWithinBounds(t *testing.T) {
+	oldText, newText := "a\nx\n", "a\nx"
+	r, err := Compute(oldText, newText, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// anchor 3 is the edit.go firstChangedLine path; anchor 1 is the
+	// write_file path. Both must name an in-bounds header and show the
+	// deletion of the empty terminal line.
+	for _, anchor := range []int{3, 1} {
+		got := FormatUnifiedAt("x", r, anchor, anchor, 3)
+		if !strings.Contains(got, "@@ -1,3 +1,2 @@") {
+			t.Fatalf("anchor %d header missing, got %q", anchor, got)
+		}
+		if !strings.HasSuffix(got, "-\n") {
+			t.Fatalf("anchor %d diff missing visible deletion of the empty terminal, got %q", anchor, got)
+		}
+		assertHunkHeadersWithinBounds(t, got, oldText, newText)
+	}
+}
+
+// assertHunkHeadersWithinBounds parses each hunk header in a unified diff and
+// fails unless the named old/new line ranges lie within the raw-split line
+// counts of the two sides.
+func assertHunkHeadersWithinBounds(t *testing.T, got, oldText, newText string) {
+	t.Helper()
+	oldCount := len(strings.Split(oldText, "\n"))
+	newCount := len(strings.Split(newText, "\n"))
+	for _, line := range strings.Split(got, "\n") {
+		if !strings.HasPrefix(line, "@@ ") {
+			continue
+		}
+		var oldStart, oldLines, newStart, newLines int
+		if _, err := fmt.Sscanf(line, "@@ -%d,%d +%d,%d @@", &oldStart, &oldLines, &newStart, &newLines); err != nil {
+			t.Fatalf("unparseable hunk header %q: %v", line, err)
+		}
+		if oldStart < 1 || oldStart+oldLines-1 > oldCount {
+			t.Fatalf("old range %d..%d exceeds raw old line count %d in %q", oldStart, oldStart+oldLines-1, oldCount, line)
+		}
+		if newStart < 1 || newStart+newLines-1 > newCount {
+			t.Fatalf("new range %d..%d exceeds raw new line count %d in %q", newStart, newStart+newLines-1, newCount, line)
+		}
 	}
 }
