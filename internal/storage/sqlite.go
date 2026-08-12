@@ -121,7 +121,11 @@ func (s *SQLite) appendBatchForNewRun(ctx context.Context, runID string, events 
 		return err
 	}
 	var exists int
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE run_id=?)`, runID).Scan(&exists); err != nil {
+	// A run whose only surviving events are deletion tombstones is free for
+	// re-admission; any other surviving event means it is still live. The
+	// claim probe and empty-payload check below are unchanged, so the whole
+	// gate stays one transaction.
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE run_id=? AND kind <> ?)`, runID, KindRunDeleted).Scan(&exists); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -451,39 +455,6 @@ func (s *SQLite) ReleaseClaim(ctx context.Context, id, h string) error {
 func (s *SQLite) ClearClaim(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM run_claims WHERE run_id = ?`, id)
 	return err
-}
-func (s *SQLite) PutContent(ctx context.Context, ref string, data []byte) error {
-	if len(data) == 0 {
-		return nil
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO content(ref, data) VALUES(?, ?)`, ref, data)
-	return err
-}
-func (s *SQLite) GetContent(ctx context.Context, ref string) ([]byte, error) {
-	var data []byte
-	err := s.db.QueryRowContext(ctx, `SELECT data FROM content WHERE ref = ?`, ref).Scan(&data)
-	if err == sql.ErrNoRows {
-		return nil, ErrContentNotFound
-	}
-	return data, err
-}
-
-// GrantSpool durably records that principal holds a read grant on a remainder
-// ref. INSERT OR IGNORE keeps the first grant for a (ref, principal) pair, so
-// re-spooling the same ref for the same principal is idempotent.
-func (s *SQLite) GrantSpool(ctx context.Context, ref, principal string) error {
-	if ref == "" || principal == "" {
-		return nil
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO spool_grants(ref, principal) VALUES(?, ?)`, ref, principal)
-	return err
-}
-
-// CheckSpoolGrant reports whether principal holds a durable read grant on ref.
-func (s *SQLite) CheckSpoolGrant(ctx context.Context, ref, principal string) (bool, error) {
-	var exists bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM spool_grants WHERE ref = ? AND principal = ?)`, ref, principal).Scan(&exists)
-	return exists, err
 }
 func isConstraint(err error) bool {
 	return err != nil && (contains(err.Error(), "constraint") || contains(err.Error(), "UNIQUE"))
