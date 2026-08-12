@@ -106,7 +106,21 @@ func agentNames(reg *agents.AgentRegistry) []string {
 	if reg == nil {
 		return []string{}
 	}
-	return reg.Names()
+	// AgentRegistry.Names() returns nil, not an empty slice, when zero
+	// agents are registered (slices.Clone of a nil backing slice stays
+	// nil). This value is marshaled straight into the dispatch_tasks tool
+	// schema's "enum" field below, and encoding/json renders a nil []string
+	// as JSON null rather than []. Some providers' function-schema
+	// validators (DeepSeek's, confirmed) reject "enum": null outright,
+	// failing every tool-enabled request in a workspace with no named
+	// agents - the common case. Coalesce here rather than in Names()
+	// itself, since this is the only caller that puts the result on the
+	// wire as JSON; other callers only range over or Join() it, where nil
+	// and empty behave identically.
+	if names := reg.Names(); names != nil {
+		return names
+	}
+	return []string{}
 }
 
 func agentRoutingDescription(reg *agents.AgentRegistry) string {
