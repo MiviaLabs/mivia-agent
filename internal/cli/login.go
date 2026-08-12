@@ -1,14 +1,11 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
-
-	"golang.org/x/term"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
@@ -26,9 +23,9 @@ func runLoginWithIO(args []string, stdout, stderr io.Writer, stdin io.Reader) er
 		return err
 	}
 
-	password, err := resolveLoginPassword(opts, stdout, stdin)
+	password, err := resolvePasswordInput(opts.passwordStdin, stdout, stdin)
 	if err != nil {
-		return err
+		return fmt.Errorf("login: %w", err)
 	}
 
 	serverURL := opts.serverURL
@@ -82,18 +79,10 @@ func parseLoginArgs(args []string) (loginOptions, error) {
 		return opts, fmt.Errorf("login: --server-url must not be empty; omit the flag to use %s", miviaauth.ServerURLFromEnv())
 	}
 
-	filtered := args[:0]
-	for _, arg := range args {
-		switch {
-		case arg == "--password-stdin":
-			opts.passwordStdin = true
-		case arg == "--password" || strings.HasPrefix(arg, "--password="):
-			return opts, fmt.Errorf("login: --password is not supported (it would leak into shell history and process listings); use --password-stdin instead")
-		default:
-			filtered = append(filtered, arg)
-		}
+	args, opts.passwordStdin, err = rejectPlainPasswordFlag(args)
+	if err != nil {
+		return opts, fmt.Errorf("login: %w", err)
 	}
-	args = filtered
 
 	if arg, ok := firstUnknownFlag(args); ok {
 		return opts, fmt.Errorf("login: unknown flag %q", arg)
@@ -118,43 +107,4 @@ func firstUnknownFlag(args []string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// resolveLoginPassword resolves the password in priority order:
-// --password-stdin (read from stdin up to the first newline or EOF) then, if
-// stdin is a real terminal, an interactive term.ReadPassword prompt (echoing
-// "Password: " to stdout first, matching setup.go); otherwise it returns a
-// clear error asking for --password-stdin. Network calls must never be
-// attempted before this resolves.
-//
-// The interactive term.ReadPassword branch requires a real TTY on stdin and
-// is not exercised by the unit test suite, matching the same accepted gap in
-// setup.go's identical pattern.
-func resolveLoginPassword(opts loginOptions, stdout io.Writer, stdin io.Reader) ([]byte, error) {
-	if opts.passwordStdin {
-		return readLoginPasswordFromStdin(stdin)
-	}
-	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		fmt.Fprint(stdout, "Password: ")
-		raw, err := term.ReadPassword(int(f.Fd()))
-		fmt.Fprintln(stdout)
-		if err != nil {
-			return nil, fmt.Errorf("login: read the password: %w", err)
-		}
-		return raw, nil
-	}
-	return nil, fmt.Errorf("login: no password source; pass --password-stdin")
-}
-
-// readLoginPasswordFromStdin reads the entire password up to the first
-// newline or EOF, trimming a single trailing newline.
-func readLoginPasswordFromStdin(stdin io.Reader) ([]byte, error) {
-	reader := bufio.NewReader(stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("login: read the password from stdin: %w", err)
-	}
-	line = strings.TrimSuffix(line, "\n")
-	line = strings.TrimSuffix(line, "\r")
-	return []byte(line), nil
 }
