@@ -116,10 +116,15 @@ func containsIdent(n ast.Node, pos token.Pos) bool {
 
 // findImplementations searches for concrete types that implement the given
 // interface targetObj. It checks both T and *T for each named type in pkg.
-// Results (and any overflow past the caller's cap) are reported through
-// addLoc, which owns dedup and the truncation decision - this function does
-// not stop early on a count, so it never under-reports a genuine match that
-// would otherwise be silently dropped from the truncation signal.
+// Only concrete named types are reported: a named type whose underlying type
+// is an interface (an embedding interface declaration, or a defined type over
+// an interface such as `type R io.Reader`) inherits the interface's method
+// set, so types.Implements reports it trivially, but it is abstract, not a
+// concrete implementation, and is skipped. Results are reported through
+// addLoc, which owns dedup; the cap and the truncation decision belong to the
+// caller, applied after deterministic sorting, and this function never stops
+// early on a count, so it never under-reports a genuine match that would
+// otherwise be silently dropped from the truncation signal.
 func findImplementations(pkg *packages.Package, targetObj types.Object, fset *token.FileSet, addLoc func(string, int, string, Role)) {
 	if pkg == nil || pkg.Types == nil || pkg.TypesInfo == nil || targetObj == nil {
 		return
@@ -141,6 +146,14 @@ func findImplementations(pkg *packages.Package, targetObj types.Object, fset *to
 		}
 		named, ok := obj.Type().(*types.Named)
 		if !ok {
+			continue
+		}
+		// A named type whose underlying type is an interface (an embedding
+		// interface declaration, or a defined type over an interface such as
+		// `type R io.Reader`) inherits the interface's method set, so
+		// types.Implements reports it trivially - but it is abstract, not a
+		// concrete implementation. Skip it.
+		if _, isInterface := named.Underlying().(*types.Interface); isInterface {
 			continue
 		}
 		// Check both T and *T - types.Implements on *T catches pointer receivers.
