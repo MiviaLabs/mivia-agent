@@ -116,7 +116,7 @@ func TestBlockedFilesChangedFailsRun(t *testing.T) {
 func TestReviewDemandingBlockedPathFailsInsteadOfLooping(t *testing.T) {
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
 		"implement#1": cleanImplementJSON(),
-		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-f1","severity":"high","reason":"edit .mivia/workflows/bug-fix.toml to lower max_bytes to 16000. This must be executed by a process with write access to .mivia/workflows."}]}`),
+		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-f1","severity":"high","reason":"edit .mivia/workflows/bug-fix.toml to lower max_bytes to 16000. This must be executed by a process with write access to .mivia/workflows.","required":"edit .mivia/workflows/bug-fix.toml to lower max_bytes to 16000"}]}`),
 	}}
 	ctrl := blockedController(t, runner, "wfr-blocked-review")
 	got, err := ctrl.Run(context.Background())
@@ -144,6 +144,39 @@ func TestMentionOfBlockedPathWithoutDemandRoutesNormally(t *testing.T) {
 		"review#2":    reviewJSON("approved"),
 	}}
 	ctrl := blockedController(t, runner, "wfr-blocked-mention")
+	got, err := ctrl.Run(context.Background())
+	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run = %+v err=%v, want a succeeded run", got, err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	implements := 0
+	for _, call := range runner.calls {
+		if call.StepID == "implement" {
+			implements++
+		}
+	}
+	if implements != 2 {
+		t.Fatalf("implement calls = %d, want 2 (the loop back-edge must still work)", implements)
+	}
+}
+
+// TestFindingEvidenceQuotingBlockedPathRoutesNormally is the production
+// false-positive guard: a review finding whose evidence merely QUOTES a
+// blocklisted path (doc content mentioning ".mivia/policy/deploy.toml") while
+// its required field demands a PLAN correction must route on the loop
+// back-edge exactly as before, not fail the run as blocked. Before the fix,
+// json.Marshal merged evidence and required onto one line, so the quoted path
+// token plus the demand verb "Correct" was misread as a demand to write the
+// blocked path.
+func TestFindingEvidenceQuotingBlockedPathRoutesNormally(t *testing.T) {
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": cleanImplementJSON(),
+		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-1","severity":"low","claim":"Plan falsely claims docs/product/overview.md is identical to upstream master.","evidence":"Local docs/product/overview.md lines 27-30: .mivia/policy/deploy.toml and --agent <name>; upstream URL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/docs/product/overview.md lines 27-30: .mivia/policy/.toml (missing <name> placeholder).","reason":"The plan claims content-identical to upstream master, but the local doc differs, as confirmed by fetch_url of the upstream URL.","required":"Correct the plan's step 2 to remove the false claim of identity to upstream master, or provide valid evidence supporting the claim."}]}`),
+		"implement#2": cleanImplementJSON("R0-1"),
+		"review#2":    reviewJSON("approved"),
+	}}
+	ctrl := blockedController(t, runner, "wfr-blocked-evidence-quote")
 	got, err := ctrl.Run(context.Background())
 	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
 		t.Fatalf("run = %+v err=%v, want a succeeded run", got, err)

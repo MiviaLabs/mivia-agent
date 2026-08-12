@@ -9,13 +9,27 @@ import (
 // want to exercise the built-in protection without importing internal/config.
 var defaultBlocklist = []string{".git", ".mivia/mivia.toml"}
 
+// lineDemandCase is one LineDemandsEdit expectation.
+type lineDemandCase struct {
+	name string
+	line string
+	path string
+	want bool
+}
+
+func runLineDemandCases(t *testing.T, tests []lineDemandCase) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LineDemandsEdit(tt.line, tt.path); got != tt.want {
+				t.Fatalf("LineDemandsEdit(%q, %q) = %v, want %v", tt.line, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLineDemandsEdit(t *testing.T) {
-	tests := []struct {
-		name string
-		line string
-		path string
-		want bool
-	}{
+	runLineDemandCases(t, []lineDemandCase{
 		{
 			name: "explicit edit instruction",
 			line: "edit .mivia/workflows/bug-fix.toml to lower max_bytes to 16000",
@@ -76,14 +90,69 @@ func TestLineDemandsEdit(t *testing.T) {
 			path: ".mivia/workflows",
 			want: true,
 		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := LineDemandsEdit(tt.line, tt.path); got != tt.want {
-				t.Fatalf("LineDemandsEdit(%q, %q) = %v, want %v", tt.line, tt.path, got, tt.want)
-			}
-		})
-	}
+	})
+}
+
+// TestLineDemandsEditTokenBoundaries pins the path-token matching rules:
+// an entry embedded inside a URL or a sibling name is not a path reference,
+// while quoted, sentence-final, and nested references still match.
+func TestLineDemandsEditTokenBoundaries(t *testing.T) {
+	runLineDemandCases(t, []lineDemandCase{
+		{
+			name: "git inside a github URL is not a path reference",
+			line: "the upstream https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/docs/product/overview.md is the source",
+			path: ".git",
+			want: false,
+		},
+		{
+			name: "gitignore is not the git directory",
+			line: "edit .gitignore",
+			path: ".git",
+			want: false,
+		},
+		{
+			name: "sibling prefix is not the directory",
+			line: "fix .mivia/workflows-x/bug-fix.toml",
+			path: ".mivia/workflows",
+			want: false,
+		},
+		{
+			name: "dotfile sibling is not go.mod",
+			line: "update go.mod.bak",
+			path: "go.mod",
+			want: false,
+		},
+		{
+			name: "quoted path token matches",
+			line: "edit `.mivia/workflows/bug-fix.toml` to lower max_bytes",
+			path: ".mivia/workflows",
+			want: true,
+		},
+		{
+			name: "sentence-final path token matches",
+			line: "update .mivia/policy.",
+			path: ".mivia/policy",
+			want: true,
+		},
+		{
+			name: "bare git dir reference matches",
+			line: "remove .git/HEAD",
+			path: ".git",
+			want: true,
+		},
+		{
+			name: "git dir under another directory matches",
+			line: "edit foo/.git/config",
+			path: ".git",
+			want: true,
+		},
+		{
+			name: "rooted path token matches",
+			line: "edit /.mivia/workflows/bug-fix.toml",
+			path: ".mivia/workflows",
+			want: true,
+		},
+	})
 }
 
 func TestIsBlockedPath(t *testing.T) {
@@ -133,6 +202,16 @@ func TestPathsDemandedInText(t *testing.T) {
 
 	if got := PathsDemandedInText("audit the .mivia/workflows design only", blocklist); len(got) != 0 {
 		t.Fatalf("PathsDemandedInText() = %v, want none for a read-only mention", got)
+	}
+	// A URL that merely contains ".git" as a substring (raw.githubusercontent.com)
+	// is not a demand to write .git, even with a demand verb on the same line.
+	if got := PathsDemandedInText("correct the claim; evidence at https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/docs/product/overview.md", blocklist); len(got) != 0 {
+		t.Fatalf("PathsDemandedInText() = %v, want none for a URL that contains .git as a substring", got)
+	}
+	// A finding-style demand that asks for a plan correction and names no
+	// blocked path must not flag any.
+	if got := PathsDemandedInText("Correct the plan's step 2 to remove the false claim of identity to upstream master, or provide valid evidence supporting the claim.", blocklist); len(got) != 0 {
+		t.Fatalf("PathsDemandedInText() = %v, want none for a plan-correction demand", got)
 	}
 	if got := PathsDemandedInText("", blocklist); len(got) != 0 {
 		t.Fatalf("PathsDemandedInText() = %v, want none for empty text", got)
