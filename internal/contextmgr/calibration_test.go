@@ -106,6 +106,26 @@ func TestApplyCalibrationNegInf(t *testing.T) {
 	}
 }
 
+func TestCalibrationAlphaUpperBound(t *testing.T) {
+	// Alpha above the documented upper bound (0 < alpha <= 1) must fall back
+	// to the default smoothing factor and keep Ratio in [MinRatio, MaxRatio].
+	// Before the fix the blend used alpha=2.0 directly: first update seeds
+	// Ratio=0.5, second update yields 2.0*2.0+(1-2.0)*0.5 = 3.5 (out of range).
+	c := Calibration{Alpha: 2.0}
+	c.Update(100, 50)
+	if c.Ratio != 0.5 {
+		t.Fatalf("first update: Ratio = %f, want 0.5", c.Ratio)
+	}
+	c.Update(100, 200)
+	if c.Ratio < calibrationMinRatio || c.Ratio > calibrationMaxRatio {
+		t.Fatalf("Ratio %f out of [%f, %f]", c.Ratio, calibrationMinRatio, calibrationMaxRatio)
+	}
+	// Default alpha 0.2: 0.2*2.0 + 0.8*0.5 = 0.8
+	if math.Abs(c.Ratio-0.8) > 0.001 {
+		t.Fatalf("second update: Ratio = %f, want 0.8", c.Ratio)
+	}
+}
+
 func TestCalibrationDefaultAlpha(t *testing.T) {
 	// When Alpha is 0, Update should use defaultCalibrationAlpha (0.2)
 	var c Calibration
