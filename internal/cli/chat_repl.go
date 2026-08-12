@@ -400,7 +400,7 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonM
 			return err
 		}
 		jw.Flush()
-		writeNDJSONEvent(os.Stdout, ndjsonEvent{Type: "done"})
+		writeNDJSONEvent(os.Stdout, ndjsonEvent{Type: "done", SessionID: sess.SessionID})
 	}
 	return err
 }
