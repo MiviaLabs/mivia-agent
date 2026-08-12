@@ -159,6 +159,24 @@ func TestPanelTaskSpecRejectsIncompleteWork(t *testing.T) {
 	}
 }
 
+func TestPanelTaskSpecAcceptsUnlimitedPromptTokens(t *testing.T) {
+	work := validPanelTask("unlimited-prompt")
+	work.WorkLimits.MaxPromptTokens = 0
+	work.WorkFingerprint = work.workFingerprint()
+	if err := work.Validate(); err != nil {
+		t.Fatalf("MaxPromptTokens 0 (unlimited cumulative prompt) must be accepted: %v", err)
+	}
+}
+
+func TestPanelTaskSpecRejectsNegativePromptTokens(t *testing.T) {
+	work := validPanelTask("negative-prompt")
+	work.WorkLimits.MaxPromptTokens = -1
+	work.WorkFingerprint = work.workFingerprint()
+	if err := work.Validate(); err == nil {
+		t.Fatal("negative MaxPromptTokens must fail")
+	}
+}
+
 func TestPanelTaskSpecAcceptsAgentDefinitionDigest(t *testing.T) {
 	work := validPanelTask("agent-digest")
 	work.AgentDigest = "sha256:" + panelDigest("agent")
