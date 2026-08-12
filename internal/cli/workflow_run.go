@@ -216,6 +216,15 @@ func prepareWorkflowRun(name, root, configPath string, rawInputs []string) (*pre
 		closeFn()
 		return nil, err
 	}
+	// Fail fast before any agent runs: a fresh run whose inputs instruct a
+	// write to a host write-blocklisted path can never satisfy itself (the
+	// write tools refuse), so it would spin implement -> review -> blocked
+	// implement until a misattributed failure. Refuse admission instead and
+	// route the change through the root session or a host-owned process.
+	if err := workflowBlockedInputAdmission(effectiveWorkflowWriteDenylist(res), compiled.Name, inputs); err != nil {
+		closeFn()
+		return nil, err
+	}
 	return &preparedWorkflowRun{
 		root: work.Abs, res: res, store: store, repo: repo, closeFn: closeFn,
 		compiled: compiled, inputs: inputs, inputSnapshot: inputSnapshot,

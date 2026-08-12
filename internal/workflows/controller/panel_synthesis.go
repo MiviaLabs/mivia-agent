@@ -214,6 +214,11 @@ func panelSynthesisTaskStatusError(taskResult subagents.Result) error {
 	if taskResult.Status != "completed" {
 		return fmt.Errorf("panel synthesis task ended with status %q, not completed", taskResult.Status)
 	}
+	// D14: a completed task with missing content is a panel failure, not
+	// something to settle as the final report.
+	if len(taskResult.Output) == 0 {
+		return fmt.Errorf("panel synthesis task completed with no output content")
+	}
 	return nil
 }
 

@@ -24,19 +24,27 @@ var ErrPanelMembersComplete = errors.New("panel members completed; synthesis is 
 // plan 62's "Open question: panelsEnabled stays false".
 const panelsEnabled = false
 
+// findResumablePanelAttempt finds the step's existing non-terminal panel
+// attempt, if any (D14: resume joins each existing member run from its
+// exact persisted PanelExecution instead of building a new one). A fresh
+// dispatch (no matching attempt) reports found=false so the caller admits
+// one.
+func findResumablePanelAttempt(attempts []workflowledger.StepAttempt, stepID string) (workflowledger.StepAttempt, bool) {
+	for _, existing := range attempts {
+		if existing.StepID == stepID && existing.PanelExecution != nil && !workflowledger.IsTerminalAttemptStatus(existing.Status) {
+			return existing, true
+		}
+	}
+	return workflowledger.StepAttempt{}, false
+}
+
 func (c *LinearController) advancePanelStep(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step) (workflowledger.RunSnapshot, bool, error) {
 	attempts, err := c.Repo.ListStepAttempts(ctx, c.RunID)
 	if err != nil {
 		return run, false, err
 	}
-	var attempt workflowledger.StepAttempt
-	for _, existing := range attempts {
-		if existing.StepID == step.ID && existing.PanelExecution != nil && !workflowledger.IsTerminalAttemptStatus(existing.Status) {
-			attempt = existing
-			break
-		}
-	}
-	if attempt.AttemptID == "" {
+	attempt, found := findResumablePanelAttempt(attempts, step.ID)
+	if !found {
 		attempt, err = c.buildPanelAttempt(ctx, run, step, attempts)
 		if err != nil {
 			return c.fail(ctx, run, err)

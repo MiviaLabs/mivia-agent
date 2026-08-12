@@ -132,3 +132,18 @@ func TestPanelMemberResultErrorRejectsNonCompletedStatusWithNilErr(t *testing.T)
 		t.Fatalf("status completed: panelMemberResultError() = %v, want nil", err)
 	}
 }
+
+// D14: a completed coordinator task with missing content is a panel
+// failure, not something to synthesize from.
+func TestPanelMemberResultErrorRejectsCompletedWithEmptyOutput(t *testing.T) {
+	for name, output := range map[string]json.RawMessage{"nil": nil, "empty": json.RawMessage("")} {
+		t.Run(name, func(t *testing.T) {
+			result := &coordinator.RunResult{Results: []subagents.Result{
+				{TaskID: "task-1", Status: "completed", Err: nil, Output: output},
+			}}
+			if err := panelMemberResultError(result); err == nil {
+				t.Fatal("completed with no output content: panelMemberResultError() = nil, want an error")
+			}
+		})
+	}
+}

@@ -200,6 +200,12 @@ func (p PanelCoordinator) CancelOrTombstoneSynthesis(ctx context.Context, attemp
 // cancelOrTombstone admits a canceled tombstone for a child that was never
 // dispatched, or joins an existing child as a recovered (never-locally-
 // resumed) handle and issues the coordinator's normal cancel request on it.
+//
+// A context deadline/cancellation while waiting on that cancel request is a
+// slow-worker signal (D15 item 5), not an ambiguous claim (item 6): it
+// reports (false, nil) so the caller records durable progress and reports
+// cancel_pending, distinct from a genuine ambiguous-claim refusal, which
+// reports (false, err).
 func (p PanelCoordinator) cancelOrTombstone(ctx context.Context, runID, taskID string, work PanelTaskSpec) (bool, error) {
 	req, err := p.request(ctx, runID, taskID, work, true)
 	if err != nil {
@@ -216,6 +222,9 @@ func (p PanelCoordinator) cancelOrTombstone(ctx context.Context, runID, taskID s
 		return false, err
 	}
 	if err := p.inner.Cancel(p.childContext(ctx), handle); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return false, nil
+		}
 		return false, err
 	}
 	return true, nil
