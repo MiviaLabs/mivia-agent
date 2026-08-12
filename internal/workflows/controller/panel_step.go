@@ -59,14 +59,11 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 	for i, member := range attempt.PanelExecution.Members {
 		members[i] = PanelMemberRequest{MemberID: member.MemberID, RunID: member.CoordinatorRunID}
 	}
-	_, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
+	membersResult, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
 	if runErr != nil {
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, runErr)
 	}
-	// Wave 4 completes only the member phase. Wave 5 persists and executes
-	// synthesis. Keep this attempt nonterminal so a successful panel does not
-	// take the failure route before that phase exists.
-	return run, false, nil
+	return c.advancePanelSynthesis(ctx, run, step, attempt, panel, membersResult)
 }
 
 // refusePanelStep fails the panel attempt and its run closed with a durable
