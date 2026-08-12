@@ -150,11 +150,9 @@ func TestNewForProviderOllamaLocalhostFailClosedUnderHostileResolver(t *testing.
 // newLoopbackDialContext pins only the dial; the request URL keeps the
 // literal localhost so the transport never re-resolves it at request time.
 func TestOllamaKeylessLocalhostRequestIsKeylessAndUnresolved(t *testing.T) {
-	// This test asserts request shape, not resolution behavior, so the host's
-	// resolver must not be consulted: on machines with no /etc/hosts localhost
-	// entry and no DNS on ::1:53, the production resolver (net.LookupIP) fails
-	// and NewOllama fails closed before a request could be inspected. Install
-	// the seam exactly like the other keyless-gate tests in this file; the
+	// Hermetic: pin localhost resolution so construction does not depend on
+	// the environment's resolver (no DNS server in sandboxes). Only the dial
+	// is pinned; the request URL keeps the literal localhost, so the
 	// assertions below are unchanged.
 	installLocalhostResolver(t, "127.0.0.1")
 
