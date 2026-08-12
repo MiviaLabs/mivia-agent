@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,15 @@ import (
 //  2. The same pattern against the workspace-relative path (`"src/*.go"`)
 //  3. A `**/`-aware match for patterns containing double-star segments
 func globMatches(glob, rel, base string) bool {
+	return globMatchesCtx(context.Background(), glob, rel, base)
+}
+
+// globMatchesCtx is globMatches with cancellation: per-file doublestar
+// matching honors ctx.Done() so a cancelled search walk stops matching files
+// instead of grinding through a pathological **/ pattern. A cancelled context
+// fails the match - walkFilteredFiles' per-entry check converts that into
+// ctx.Err() - and a nil ctx behaves like context.Background().
+func globMatchesCtx(ctx context.Context, glob, rel, base string) bool {
 	glob = filepath.ToSlash(glob)
 	rel = filepath.ToSlash(rel)
 
@@ -42,29 +52,86 @@ func globMatches(glob, rel, base string) bool {
 	// where each "/"-terminated segment must be consumed by a directory level
 	// and the last segment is matched against the remaining path.
 	parts := strings.Split(glob, "**/")
-	return globMatchSegments(parts, rel, match)
+	return globMatchSegmentsCtx(ctx, parts, rel, match)
 }
 
 // globMatchSegments recursively matches a list of glob segments against a path.
 // Each segment except the last must end with "/" (directory-level match).
 // A **/ segment matches zero or more path components.
 func globMatchSegments(segments []string, path string, match func(string, string) bool) bool {
+	return globMatchSegmentsCtx(context.Background(), segments, path, match)
+}
+
+// globMatchKey memoizes one (segment index, path suffix) pair. The suffix is
+// identified by its byte offset into the original path, which is unique
+// because every recursion below cuts path at a component boundary.
+type globMatchKey struct {
+	segIdx int
+	offset int
+}
+
+// globMatchSegmentsCtx is the cancellable, memoized recursion behind
+// globMatchSegments. Results are cached per (segment index, path suffix), so
+// the worst case for k **/ segments over c path components drops from the
+// exponential O(c^k) of a naive recursion to O(len(segments) × c²), and the
+// memo holds at most len(segments) × (c+1) entries. ctx.Done() is honored at
+// every recursion entry - a cancelled context fails the match (callers
+// convert that into ctx.Err()) - and a nil ctx behaves like
+// context.Background(). Branch order and first-success short-circuit are
+// identical to the original recursion, so results are unchanged.
+func globMatchSegmentsCtx(ctx context.Context, segments []string, path string, match func(string, string) bool) bool {
 	if len(segments) == 0 {
 		return false
 	}
-	if len(segments) == 1 {
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+	}
+	memo := make(map[globMatchKey]bool)
+	return globMatchSegmentsRec(ctx, segments, 0, path, len(path), match, memo)
+}
+
+// globMatchSegmentsRec is the memoized recursion of globMatchSegmentsCtx.
+// origLen is the byte length of the original path; a suffix's offset is
+// origLen - len(path), so the key identifies exactly one suffix.
+func globMatchSegmentsRec(ctx context.Context, segments []string, segIdx int, path string, origLen int, match func(string, string) bool, memo map[globMatchKey]bool) bool {
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+	}
+	key := globMatchKey{segIdx: segIdx, offset: origLen - len(path)}
+	if v, ok := memo[key]; ok {
+		return v
+	}
+	v := globMatchSegmentsStep(ctx, segments, segIdx, path, origLen, match, memo)
+	memo[key] = v
+	return v
+}
+
+// globMatchSegmentsStep performs one level of segment matching. It mirrors the
+// original branch order exactly: last segment first, then the leading **/
+// zero-or-more-directories branch, then literal-prefix consumption, then the
+// glob-prefix fallback, each short-circuiting on the first success.
+func globMatchSegmentsStep(ctx context.Context, segments []string, segIdx int, path string, origLen int, match func(string, string) bool, memo map[globMatchKey]bool) bool {
+	if segIdx == len(segments)-1 {
 		// Last segment: match against the full remaining path or just base.
-		pat := segments[0]
+		pat := segments[segIdx]
 		base := filepath.Base(path)
 		return match(pat, base) || match(pat, path)
 	}
 
-	prefix := segments[0]
-	rest := segments[1:]
+	prefix := segments[segIdx]
+	next := segIdx + 1
 
 	if prefix == "" {
 		// Leading **/: can match zero or more directories.
-		if globMatchSegments(rest, path, match) {
+		if globMatchSegmentsRec(ctx, segments, next, path, origLen, match, memo) {
 			return true
 		}
 		for {
@@ -73,7 +140,7 @@ func globMatchSegments(segments []string, path string, match func(string, string
 				break
 			}
 			path = path[idx+1:]
-			if globMatchSegments(rest, path, match) {
+			if globMatchSegmentsRec(ctx, segments, next, path, origLen, match, memo) {
 				return true
 			}
 		}
@@ -84,8 +151,7 @@ func globMatchSegments(segments []string, path string, match func(string, string
 	// Try literal prefix match first.
 	if strings.HasPrefix(path, prefix) {
 		remaining := path[len(prefix):]
-		// **/ after prefix: try zero then one-or-more directories.
-		if globMatchSegments(rest, remaining, match) {
+		if globMatchSegmentsRec(ctx, segments, next, remaining, origLen, match, memo) {
 			return true
 		}
 		for {
@@ -94,7 +160,7 @@ func globMatchSegments(segments []string, path string, match func(string, string
 				break
 			}
 			remaining = remaining[idx+1:]
-			if globMatchSegments(rest, remaining, match) {
+			if globMatchSegmentsRec(ctx, segments, next, remaining, origLen, match, memo) {
 				return true
 			}
 		}
@@ -111,7 +177,7 @@ func globMatchSegments(segments []string, path string, match func(string, string
 	}
 	if match(prefix, seg) {
 		remaining := path[len(seg):]
-		if globMatchSegments(rest, remaining, match) {
+		if globMatchSegmentsRec(ctx, segments, next, remaining, origLen, match, memo) {
 			return true
 		}
 		for {
@@ -120,7 +186,7 @@ func globMatchSegments(segments []string, path string, match func(string, string
 				break
 			}
 			remaining = remaining[idx+1:]
-			if globMatchSegments(rest, remaining, match) {
+			if globMatchSegmentsRec(ctx, segments, next, remaining, origLen, match, memo) {
 				return true
 			}
 		}

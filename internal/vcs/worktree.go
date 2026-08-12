@@ -67,6 +67,19 @@ func CreateWithPrefixLease(ctx context.Context, repoRoot string, name string, ba
 	if err := os.MkdirAll(wtDir, 0o755); err != nil {
 		return nil, err
 	}
+	// Prune stale worktree registrations before adding. A checkout removed
+	// outside Remove (orphan cleanup) stays registered in
+	// .git/worktrees/<name>/ until prune runs, and the stale registration
+	// makes `git worktree add` fail for the same name, wedging the name
+	// permanently. Pruning first clears the stale registration so the add can
+	// re-create the worktree and re-attach the retained branch; prune never
+	// deletes refs, so retained-branch behavior is preserved.
+	prune := exec.CommandContext(ctx, "git", "worktree", "prune")
+	prune.Dir = root
+	prune.Env = pinnedEnv()
+	if out, err := runGitMutation(prune, lease); err != nil {
+		return nil, &gitCommandError{cmd: "worktree prune", output: string(out), err: err}
+	}
 	// If the managed branch exists, attach it without changing its tip. This
 	// preserves work that remains on the branch after a worktree is removed.
 	// Otherwise create the branch from baseRef, or HEAD when baseRef is empty.

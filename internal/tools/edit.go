@@ -161,7 +161,7 @@ func applyEdits(ctx context.Context, content, path string, edits []editSpec) (st
 		// alreadyApplied for why (old_string is frequently a substring of
 		// new_string, so skipping this would let a retried or independently
 		// re-issued edit duplicate the inserted text).
-		if alreadyApplied(content, e.NewString) {
+		if alreadyApplied(content, e.OldString, e.NewString) {
 			continue
 		}
 		count := strings.Count(content, e.OldString)

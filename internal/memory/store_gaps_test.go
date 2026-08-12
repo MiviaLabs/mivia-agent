@@ -11,8 +11,10 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -105,15 +107,144 @@ func TestGapOpenProjectSchemaFailure(t *testing.T) {
 	}
 }
 
+// TestGapSQLiteMemoryDSNQuestionMarkSeparator pins the DSN-shape contract for
+// sqliteMemoryDSN, mirroring TestSQLiteDSNQuestionMarkUsesFileURI in
+// internal/storage: plain paths keep the historical path+"?"+pragmas DSN
+// byte-for-byte, and '?'-paths become a file: URI whose path portion contains
+// no literal '?' and percent-decodes back to the input path. The contract
+// matters because the modernc.org/sqlite driver (v1.54.0) splits a DSN at the
+// first literal '?', so any literal '?' in the filename portion would silently
+// open the wrong database file.
 func TestGapSQLiteMemoryDSNQuestionMarkSeparator(t *testing.T) {
-	withQ := sqliteMemoryDSN("dir/db?.sqlite")
-	want := "dir/db?.sqlite&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)"
-	if withQ != want {
-		t.Errorf("DSN for a path containing '?' = %q, want %q", withQ, want)
+	t.Run("plain path keeps historical shape", func(t *testing.T) {
+		for _, path := range []string{"dir/db.sqlite", "events.db", "/tmp/events.db", "dir/with space.db", "dir/with#hash.db", "dir/with%percent.db"} {
+			got := sqliteMemoryDSN(path)
+			want := path + "?" + pragmaMemoryDSNParams
+			if got != want {
+				t.Fatalf("sqliteMemoryDSN(%q) = %q, want %q", path, got, want)
+			}
+		}
+	})
+	t.Run("question mark path becomes a file URI", func(t *testing.T) {
+		for _, path := range []string{"dir/db?.sqlite", "ledger?part.db", "/tmp/ctx?name.db", "a?b?c.db", "?leading.db"} {
+			dsn := sqliteMemoryDSN(path)
+			if !strings.HasPrefix(dsn, "file:") {
+				t.Fatalf("sqliteMemoryDSN(%q) = %q, want a file: URI", path, dsn)
+			}
+			rest := strings.TrimPrefix(dsn, "file:")
+			sep := strings.IndexByte(rest, '?')
+			if sep < 0 {
+				t.Fatalf("sqliteMemoryDSN(%q) = %q has no query separator", path, dsn)
+			}
+			encoded := rest[:sep]
+			if strings.Contains(encoded, "?") {
+				t.Fatalf("path portion of sqliteMemoryDSN(%q) = %q still contains a literal '?'", path, encoded)
+			}
+			decoded, err := url.PathUnescape(encoded)
+			if err != nil {
+				t.Fatalf("PathUnescape(%q): %v", encoded, err)
+			}
+			if decoded != path {
+				t.Fatalf("PathUnescape(%q) = %q, want %q", encoded, decoded, path)
+			}
+			query := rest[sep+1:]
+			if query != pragmaMemoryDSNParams {
+				t.Fatalf("query of sqliteMemoryDSN(%q) = %q, want %q", path, query, pragmaMemoryDSNParams)
+			}
+		}
+	})
+}
+
+// TestSQLiteMemoryQuestionMarkPathOpensLiteralFile is the end-to-end
+// regression for the memory-store variant of the
+// storage-dsn-question-mark-truncation bug: a store path containing a literal
+// '?' must open as the literal file, never truncated at the '?'. Before the
+// fix sqliteMemoryDSN returned ".../ctx?name.db&_pragma=..." and the
+// modernc.org/sqlite v1.54.0 driver split the DSN at the first '?', so the
+// store silently opened ".../ctx" - a different, wrong database file (silent
+// data mislocation or cross-store mixing). '?' is not a legal Windows filename
+// character, so the bug (and this regression) is POSIX-only.
+func TestSQLiteMemoryQuestionMarkPathOpensLiteralFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("'?' is not a legal Windows filename character; the bug is POSIX-only")
 	}
-	plain := sqliteMemoryDSN("dir/db.sqlite")
-	if !strings.Contains(plain, "?_pragma=") {
-		t.Errorf("DSN for a plain path must use '?' separator, got %q", plain)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ctx?name.db")
+	s, err := Open(Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      path,
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	})
+	if err != nil {
+		t.Fatalf("Open(%q): %v", path, err)
+	}
+	defer s.Close()
+
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %q: %v", path, err)
+	}
+	if !st.Mode().IsRegular() {
+		t.Fatalf("%q mode = %v, want a regular file", path, st.Mode())
+	}
+	truncated := filepath.Join(dir, "ctx")
+	if _, err := os.Stat(truncated); err == nil {
+		t.Fatalf("truncated file %q exists: the store opened the wrong database file", truncated)
+	}
+
+	ctx := context.Background()
+	if _, err := s.Save(ctx, testEntry("qpath", ScopeProject)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := s.Search(ctx, Query{Text: "qpath", Scope: ScopeProject})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 1 || got[0].Title != "qpath" {
+		t.Fatalf("Search = %+v, want the saved entry", got)
+	}
+}
+
+// TestSQLiteSearchOrdersSameRankByCreatedDate is the regression for the
+// f2-memory-search-ordering-parity defect: the SQLite backend ordered
+// same-rank results by the insertion-time created_at column (schema default
+// CURRENT_TIMESTAMP, second resolution), while the memory backend orders by
+// the user-visible Created date (YYYY-MM-DD, day resolution). Two same-rank
+// entries with reversed Created-vs-insertion order therefore came back in
+// different orders on the two backends. The ORDER BY must use the created
+// column so both backends agree: rank, Created DESC, title ASC. This fails
+// before the fix (returns [beta, alpha]) and passes after.
+func TestSQLiteSearchOrdersSameRankByCreatedDate(t *testing.T) {
+	s := newTestStore(t, "sqlite", "")
+	ctx := context.Background()
+	// Reversed Created-vs-insertion order: alpha has the newer Created date
+	// but is saved first (older insertion time).
+	alpha := testEntry("alpha cache", ScopeProject)
+	alpha.Created = "2026-01-05"
+	beta := testEntry("beta cache", ScopeProject)
+	beta.Created = "2026-01-01"
+	if _, err := s.Save(ctx, alpha); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(ctx, beta); err != nil {
+		t.Fatal(err)
+	}
+	// Force beta's insertion timestamp strictly later so the OLD ORDER BY
+	// (created_at DESC) deterministically returns [beta, alpha]: without this
+	// the second-resolution CURRENT_TIMESTAMP could tie the two rows and the
+	// old title-ASC tie-break would mask the defect.
+	st := s.(*sqliteStore)
+	if _, err := st.projectDB.Exec("UPDATE memories SET created_at = '2999-01-01 00:00:00' WHERE title = ?", "beta cache"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Search(ctx, Query{Text: "cache", Scope: ScopeProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Title != "alpha cache" || got[1].Title != "beta cache" {
+		t.Fatalf("same-rank search order = %+v, want [alpha cache, beta cache] (Created DESC)", got)
 	}
 }
 
