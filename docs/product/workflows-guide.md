@@ -280,19 +280,30 @@ Look at the right side of the diagram. Five gates run the tests and checks. Each
 ### What each part does
 
 The workflow first creates and challenges a change plan. It then creates and
-challenges a test plan. Only then does it change files. The reviewer checks the
-implementation twice: once for the change and once for cross-layer effects.
-Each failed automated check routes to a focused repair step, then to review
-again. A rejected PR title or summary routes to the dedicated metadata repair
-step, which rewrites only the metadata and feeds back through review. A run can
-continue to repair while it stays inside its attempt and duration limits.
+challenges a test plan. Only then does it change files. The implementation
+goes through a three-reviewer panel, then a cross-layer integration review.
+Each failed automated check routes to a focused repair step, then to the
+panel again. A rejected PR title or summary routes to the dedicated metadata
+repair step, which rewrites only the metadata and feeds back through the
+panel. A run can continue to repair while it stays inside its attempt and
+duration limits.
 
 | Steps | Kind | Agent and skill | Purpose |
 |------|------|-----------------|---------|
 | `plan`, `plan_tests`, `implement`, and all `repair_*` steps | `agent` | `workflow-engineer` + `workflow-feature-delivery` | Plan, write tests, change files, and repair failed evidence. |
-| `plan_review`, `test_plan_review`, `review`, and `review_integration` | `agent_gate` | `reviewer` + `secure-change` | Challenge plans and review the change before automated gates. |
+| `plan_review`, `test_plan_review`, and `review_integration` | `agent_gate` | `reviewer` + `secure-change` | Challenge plans and review cross-layer effects before automated gates. |
+| `review_panel` | `agent_panel` | Three `panel-reviewer` members (`correctness`, `security`, `integration`, each on a distinct provider/model) synthesized by `review-synthesizer` | Independently review the implementation for correctness, security, and architectural fit; the host, not any single model, computes the final verdict. |
 | `test_validate`, `verify`, `code_validate`, `preflight_validate`, and `preflight_structure` | `evidence_gate` | Fixed verifier or fixed command | Run the required checks outside the implementation agent. |
 | `delivery` | Delivery policy | Not an agent step | Create a draft GitHub pull request after `success`, only after explicit publish approval. |
+
+`review_panel` requires DeepSeek, OpenRouter, and Z.AI credentials, and
+`allow_workspace_agent_providers = true` in your own `~/.mivia/mivia.toml`
+(see [Credential-routing protection](../security/overview.md#credential-routing-protection)).
+Missing policy or credentials fail admission; there is no fallback. See
+[Panel review](../architecture/workflows.md#panel-review-steps) for how the
+panel step works and
+[Panel review data handling](../security/overview.md#panel-review-agent_panel-workflow-steps)
+for what each member and the synthesizer can see.
 
 The workflow starts in an isolated worktree. It stores the compiled workflow,
 inputs, templates, schemas, and resolved agent bindings in the run record. A
@@ -497,9 +508,10 @@ on_failure = "failure"
 | Field | Description |
 |-------|-------------|
 | `id` | Unique step identifier (cannot be `success` or `failure`) |
-| `kind` | One of: `agent`, `agent_gate`, `evidence_gate`, `human_gate` |
-| `agent` | Agent name for `agent` and `agent_gate` steps |
+| `kind` | One of: `agent`, `agent_gate`, `agent_panel`, `evidence_gate`, `human_gate` |
+| `agent` | Agent name for `agent` and `agent_gate` steps; the synthesis agent for `agent_panel` steps |
 | `skill` | Skill to invoke under the agent's policy |
+| `panel` | `[steps.panel]` table for `agent_panel` steps: `failure_policy = "require_all"`, `require_distinct_bindings = true`, and 2-4 `[[steps.panel.members]]`, each with its own `id`, `agent`, `provider`, `model`, `skill`, `template`, and `output_schema` |
 | `verifier` | Verifier name for `evidence_gate` steps (for example: `go-test`) |
 | `template` | Prompt template file path |
 | `output_schema` | JSON schema file for output validation |

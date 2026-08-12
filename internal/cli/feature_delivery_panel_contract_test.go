@@ -1,0 +1,119 @@
+package cli
+
+import (
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
+)
+
+// assertFeatureDeliveryReviewPanel pins the Wave 7 panel review gate (D1-D17,
+// plan 62): review_panel replaced the single-reviewer review step with three
+// independent panel-reviewer members (distinct provider/model pairs, D4) and
+// a review-synthesizer synthesis step. Without this pin, a change could drop
+// a member, weaken require_distinct_bindings, or reintroduce a shared
+// provider/model pair without any test failing.
+func assertFeatureDeliveryReviewPanel(t *testing.T, workflow definition.WorkflowFile) {
+	t.Helper()
+	step := featureDeliveryStep(t, workflow, "review_panel")
+	if step.Kind != "agent_panel" {
+		t.Fatalf("step review_panel kind = %q, want agent_panel", step.Kind)
+	}
+	if step.Agent != "review-synthesizer" || step.Skill != "review-synthesis" {
+		t.Fatalf("step review_panel agent/skill = %q/%q; want review-synthesizer/review-synthesis", step.Agent, step.Skill)
+	}
+	if step.Template != "templates/review-panel-synthesis.md" {
+		t.Fatalf("step review_panel template = %q, want templates/review-panel-synthesis.md", step.Template)
+	}
+	if step.OutputSchema != "schemas/review-panel-v1.json" {
+		t.Fatalf("step review_panel output schema = %q, want schemas/review-panel-v1.json", step.OutputSchema)
+	}
+	if step.Panel == nil {
+		t.Fatal("step review_panel must declare [steps.panel]")
+	}
+	if step.Panel.FailurePolicy != "require_all" {
+		t.Fatalf("step review_panel failure_policy = %q, want require_all", step.Panel.FailurePolicy)
+	}
+	if !step.Panel.RequireDistinctBindings {
+		t.Fatal("step review_panel require_distinct_bindings must be true")
+	}
+	wantMembers := map[string]struct{ provider, model, skill, template string }{
+		"correctness": {"deepseek", "deepseek-v4-flash", "bug-audit", "templates/review-panel-correctness.md"},
+		"security":    {"openrouter", "tencent/hy3-preview", "secure-change", "templates/review-panel-security.md"},
+		"integration": {"zai", "glm-5.2", "architecture-review", "templates/review-panel-integration.md"},
+	}
+	if len(step.Panel.Members) != len(wantMembers) {
+		t.Fatalf("step review_panel has %d members, want %d", len(step.Panel.Members), len(wantMembers))
+	}
+	seenPairs := map[string]struct{}{}
+	for _, m := range step.Panel.Members {
+		want, ok := wantMembers[m.ID]
+		if !ok {
+			t.Fatalf("step review_panel has unexpected member id %q", m.ID)
+		}
+		if m.Agent != "panel-reviewer" {
+			t.Fatalf("panel member %q agent = %q, want panel-reviewer", m.ID, m.Agent)
+		}
+		if m.Provider != want.provider || m.Model != want.model {
+			t.Fatalf("panel member %q provider/model = %q/%q, want %q/%q", m.ID, m.Provider, m.Model, want.provider, want.model)
+		}
+		if m.Skill != want.skill {
+			t.Fatalf("panel member %q skill = %q, want %q", m.ID, m.Skill, want.skill)
+		}
+		if m.Template != want.template {
+			t.Fatalf("panel member %q template = %q, want %q", m.ID, m.Template, want.template)
+		}
+		if m.OutputSchema != "schemas/panel-review-v1.json" {
+			t.Fatalf("panel member %q output schema = %q, want schemas/panel-review-v1.json", m.ID, m.OutputSchema)
+		}
+		pair := m.Provider + "/" + m.Model
+		if _, dup := seenPairs[pair]; dup {
+			t.Fatalf("panel member %q duplicates provider/model pair %q", m.ID, pair)
+		}
+		seenPairs[pair] = struct{}{}
+	}
+	assertTransition(t, workflow, "implement", "review_panel", "succeeded")
+	assertTransition(t, workflow, "review_panel", "review_integration", "succeeded")
+	assertTransition(t, workflow, "review_panel", "implement", "succeeded")
+}
+
+// TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound is a regression
+// test: buildPanelAttempt (internal/workflows/controller/panel_attempt.go)
+// renders each member's template via contextForStep directly, never through
+// agentStepRequest's inputs.round injection - panel members never receive a
+// round input, unlike agent/agent_gate steps. A member template that
+// unconditionally references {{ inputs.round }} (copied from an agent_gate
+// review template without checking this) fails template.Render with
+// "template binding \"inputs.round\" is missing" on every dispatch, so the
+// panel could never actually run. This renders each committed member
+// template with exactly the inputs/evidence shape buildPanelAttempt supplies
+// (task only; no round) and fails if any binding the template references is
+// missing.
+func TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
+	root := committedWorkflowRoot(t)
+	workflow, base := loadCommittedFeatureDeliveryWorkflow(t, root)
+	step := featureDeliveryStep(t, workflow, "review_panel")
+	if step.Panel == nil {
+		t.Fatal("step review_panel must declare [steps.panel]")
+	}
+	// Mirrors buildPanelAttempt: inputs holds only what the step's own
+	// context binds from "inputs.*" (here, just task); evidence holds every
+	// "steps.*.output" binding resolved to a placeholder string. Neither map
+	// ever carries "round".
+	inputs := map[string]any{"task": "example task"}
+	evidence := map[string]any{
+		"plan":           "example plan",
+		"test_plan":      "example test plan",
+		"implementation": "example implementation summary",
+		"prior_findings": "",
+	}
+	for _, member := range step.Panel.Members {
+		templateBytes, err := readWorkflowRef(base, member.Template, template.MaxTemplateBytes)
+		if err != nil {
+			t.Fatalf("panel member %q: read template %q: %v", member.ID, member.Template, err)
+		}
+		if _, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes); err != nil {
+			t.Fatalf("panel member %q: render template %q without a round input: %v", member.ID, member.Template, err)
+		}
+	}
+}

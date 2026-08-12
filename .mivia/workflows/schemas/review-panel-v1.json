@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dispositions", "summary"],
+  "properties": {
+    "dispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["member_id", "finding_id", "disposition", "final_finding_id"],
+        "properties": {
+          "member_id": { "type": "string", "minLength": 1 },
+          "finding_id": { "type": "string", "minLength": 1 },
+          "disposition": { "type": "string", "enum": ["included", "duplicate"] },
+          "final_finding_id": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 4000 }
+  }
+}
