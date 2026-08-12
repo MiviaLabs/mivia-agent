@@ -56,22 +56,7 @@ If unsure whether a change is trivial, use the full ADLC.
 
 ## Writing standard (ASD-STE100)
 
-All agent-authored prose must use ASD-STE100 Simplified Technical English (STE). This rule covers completion reports, findings, documentation, prompts, agent messages, and commit messages. It also covers code comments and doc comments. It does not cover code identifiers, quoted external text, or log output.
-
-Follow these STE rules:
-
-- Write short sentences. Put one idea in each sentence.
-- Use the active voice. Say "the tool writes the file", not "the file is written by the tool".
-- Use the present tense for facts and procedures.
-- Use one term for one thing. Do not use synonyms for the same concept.
-- Use the same word for the same action.
-- Use simple words. Avoid jargon, idioms, and metaphors.
-- Give instructions in the imperative. Say "Run the test", not "you should run the test".
-- Keep each sentence to about 20 words or fewer.
-- Use bullet lists and numbered steps for procedures.
-- Do not use "-ing" forms where a simple form is correct. Say "to verify", not "verifying".
-- Define abbreviations and acronyms before you use them.
-- ASD-STE100 is the authority. When you are in doubt, follow the specification.
+All agent-authored prose (reports, findings, docs, prompts, agent messages, commit messages, code comments) must use ASD-STE100 Simplified Technical English. Rules: `.mivia/rules/90-writing-standard-ste100.md`.
 
 ## Local commands
 
@@ -79,6 +64,7 @@ Follow these STE rules:
 make install-hooks   # once per clone
 make verify          # offline gates (config, secrets, docs, contracts, semgrep, go)
 make test
+make test-changed    # go test on packages with uncommitted/staged .go changes only
 make race            # concurrency packages
 make build           # produces ./mivia
 make secret-scan
