@@ -245,13 +245,7 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 			return nil, fmt.Errorf("missing API key for provider %q", providerName)
 		}
 	}
-	var contextWindowTokens int
-	for _, model := range runtime.Models {
-		if model.Name == res.Model {
-			contextWindowTokens = model.ContextWindowTokens
-			break
-		}
-	}
+	contextWindowTokens := contextWindowTokensFor(runtime.Models, res.Model)
 	opts := Options{
 		Name:                runtime.ProviderName,
 		BaseURL:             runtime.BaseURL,
@@ -267,4 +261,17 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 		return nil, fmt.Errorf("unsupported provider %q (available: %s)", providerName, strings.Join(builtinFactories.names(), ", "))
 	}
 	return factory(opts)
+}
+
+// contextWindowTokensFor returns the declared context capacity of the model
+// named in the catalog. It returns 0 when the name is absent. The match is
+// exact, and the first match wins. Catalogs are small, and NewForProvider
+// runs once per client construction, so a linear scan is the right shape.
+func contextWindowTokensFor(models []config.ModelSpec, name string) int {
+	for _, model := range models {
+		if model.Name == name {
+			return model.ContextWindowTokens
+		}
+	}
+	return 0
 }

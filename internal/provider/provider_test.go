@@ -114,3 +114,43 @@ func TestNewDispatchesZAI(t *testing.T) {
 		t.Fatalf("comp=%T err=%v", comp, err)
 	}
 }
+
+// TestContextWindowTokensFor pins the catalog lookup semantics used by
+// NewForProvider to resolve the model's declared context capacity: exact
+// match, first match wins, and 0 when the name is absent.
+func TestContextWindowTokensFor(t *testing.T) {
+	catalog := []config.ModelSpec{
+		{Name: "qwen3.6:27b-q4_K_M", ContextWindowTokens: 32768},
+		{Name: "gpt-oss:20b", ContextWindowTokens: 131072},
+	}
+	tests := []struct {
+		name   string
+		models []config.ModelSpec
+		lookup string
+		want   int
+	}{
+		{name: "exact match returns declared window", models: catalog, lookup: "qwen3.6:27b-q4_K_M", want: 32768},
+		{name: "later entry matches too", models: catalog, lookup: "gpt-oss:20b", want: 131072},
+		{name: "absent name returns zero", models: catalog, lookup: "unlisted:latest", want: 0},
+		{name: "empty catalog returns zero", models: nil, lookup: "qwen3.6:27b-q4_K_M", want: 0},
+		{
+			name:   "first match wins on duplicates",
+			models: []config.ModelSpec{{Name: "dup", ContextWindowTokens: 4096}, {Name: "dup", ContextWindowTokens: 8192}},
+			lookup: "dup",
+			want:   4096,
+		},
+		{
+			name:   "no normalization - whitespace differs",
+			models: []config.ModelSpec{{Name: " llama3", ContextWindowTokens: 4096}},
+			lookup: "llama3",
+			want:   0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := contextWindowTokensFor(tt.models, tt.lookup); got != tt.want {
+				t.Fatalf("contextWindowTokensFor(%q) = %d, want %d", tt.lookup, got, tt.want)
+			}
+		})
+	}
+}
