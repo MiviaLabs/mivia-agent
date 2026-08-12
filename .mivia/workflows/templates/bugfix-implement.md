@@ -37,6 +37,15 @@ listed in the 'Evidence refs' section of the prompt. Findings arrive as a ledger
 envelope (artifact + note). Resolve the full artifact with workflow_inspect(run_id, step,
 attempt) before responding; never guess from the preview.
 
+## Blocked writes
+
+If the host write-path policy refuses a write you need for the approved scope (write_file,
+search_replace, multi_edit, or delete_file is rejected because the path is write-blocklisted),
+record each refused workspace-relative path in `blocked_paths` in your output. Do not silently
+skip a required edit and do not claim the change is complete: a blocked path means this run
+cannot deliver and must stop. Only the root session or a host-owned process can change
+write-blocklisted paths.
+
 Implement the smallest change that satisfies the plan. Write or update the regression tests
 before or with the implementation; each test must fail before the fix and pass after. Cover
 success and at least one negative path.

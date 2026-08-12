@@ -45,8 +45,9 @@ func (c *LinearController) agentFailureRepairable(ctx context.Context, step defi
 // persists its cause (Defect 2, storeErrorText stays fail-soft). It returns
 // the status and route to record, the effective error, whether the outcome was
 // degraded by the controller (a SUCCEEDED child flipped to Failed by route
-// selection or zero-progress — never a genuine agent/runner failure, so never
-// diverted to on_failure), and any error from route selection.
+// selection, a blocked write, or zero-progress — never a genuine agent/runner
+// failure, so never diverted to on_failure), and any error from route
+// selection.
 func (c *LinearController) settleAttemptOutcome(writeCtx context.Context, step definition.Step, result *AgentStepResult, runErr error) (workflowledger.AttemptStatus, error, RouteDecision, bool, error) {
 	// degraded marks a SUCCEEDED child whose outcome was flipped to Failed by
 	// the controller itself (route selection, zero-progress). Those are not
@@ -86,6 +87,18 @@ func (c *LinearController) settleAttemptOutcome(writeCtx context.Context, step d
 				if route.ToStepID == "" {
 					route = failureRoute(step)
 				}
+			} else if blockedErr, blocked := c.blockedCause(outMap); blocked {
+				// A SUCCEEDED step whose output admits a write it cannot
+				// perform (blocked_paths, a claimed files_changed entry inside
+				// the host write-path blocklist, or a review finding demanding
+				// a blocked-path edit) must fail the run HERE. Routing it to
+				// review would reproduce the same demand and burn the loop
+				// budget into a misattributed zero-progress failure; the run
+				// cannot deliver, so it stops with an honest blocked cause.
+				degraded = true
+				status, runErr = workflowledger.AttemptStatusFailed, blockedErr
+				result.ErrorRef = storeErrorText(writeCtx, c.Repo, blockedErr)
+				route = failureRoute(step)
 			} else if noProgress, zpErr := c.reviewMadeNoProgress(writeCtx, step, route, outMap); zpErr != nil {
 				// A ledger-read failure inside the zero-progress check is a HARD
 				// step failure: the controller cannot safely route a review
