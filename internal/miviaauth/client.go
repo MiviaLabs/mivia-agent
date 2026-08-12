@@ -35,6 +35,11 @@ type Client struct {
 	http    *http.Client
 }
 
+// Pins *Client to Service's expected interface at compile time, so a
+// future signature drift here is caught immediately instead of at the
+// point Service is first wired to a real Client.
+var _ sessionClient = (*Client)(nil)
+
 // NewClient validates baseURL and returns a Client. baseURL must be an
 // absolute https URL, with one exception: a loopback address (127.0.0.1,
 // ::1, or the literal "localhost") over plain http is accepted for local
