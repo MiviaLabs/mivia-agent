@@ -124,6 +124,20 @@ type WorktreeStore interface {
 	LoadWorktree(context.Context, Principal, string, WorktreeInstance) (Snapshot, error)
 }
 
+// SessionReclaimer is the optional surface that lets a resumed process take
+// over write ownership of an existing, non-tombstoned live context session.
+// A session's owner capability is minted fresh and only ever held in the
+// process that created it (Principal.capability), so a later process that
+// legitimately knows the session's id - the same id LoadSession/
+// DeleteSessionSnapshot already accept scoped only to workspace+subject,
+// with no capability check - is trusted to reclaim it for resumed commits.
+// Without this, a resumed session can read its prior history but every
+// subsequent turn commits under the resuming process's own, unrelated
+// session id instead of updating the one the caller asked to resume.
+type SessionReclaimer interface {
+	ReclaimSession(context.Context, Principal, string) (Snapshot, error)
+}
+
 type SourceReader interface {
 	ReadRange(context.Context, Principal, SourceRange) ([]SourceEvent, error)
 	ReadPayload(context.Context, Principal, ContentRef) (SanitizedPayload, error)

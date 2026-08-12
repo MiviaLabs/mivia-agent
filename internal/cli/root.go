@@ -32,6 +32,8 @@ func Execute(args []string) error {
 		return runDoctor(args[1:])
 	case "agents":
 		return runAgents(args[1:])
+	case "sessions":
+		return runSessions(args[1:])
 	case "memory":
 		return runMemory(args[1:])
 	case "workflows":
@@ -80,7 +82,7 @@ func usageText() string {
 	return fmt.Sprintf(`%s - local CLI AI agent (MiviaLabs)
 
 Usage:
-  %s chat [-p prompt] [--provider name] [--model name] [--agent name] [--workspace dir] [--no-tools] [--plain] [--config path]
+  %s chat [-p prompt] [--provider name] [--model name] [--agent name] [--workspace dir] [--session name] [--no-tools] [--plain] [--config path]
          [--allow-program name]... [--deny-program name]...
          [--disable-tool name]... [--allow-env-var name]... [--deny-env-var name]...
   %s config show [--config path]
@@ -88,6 +90,9 @@ Usage:
   %s doctor [--config path] [--json] [--workspace dir]
   %s agents list [--workspace dir]
   %s agents explain <name> [--workspace dir]
+  %s sessions list [--workspace dir] [--json]
+  %s sessions show <name> [--workspace dir] [--json] [--limit N]
+  %s sessions delete <name> [--workspace dir]
   %s workflows list [--workspace dir]
   %s workflows show <name> [--workspace dir]
   %s workflows validate [name] [--workspace dir]
@@ -111,6 +116,7 @@ Advanced DeepSeek model: deepseek-v4-pro (via --model, config, or /model in chat
 
 Agent tools: read_file list_dir grep glob write_file search_replace multi_edit run_command
   --agent selects a named agent definition from ~/.mivia/agents/ or <workspace>/.mivia/agents/.
+  --session resumes a saved session by the name/id "mivia sessions list" reports; fails if it does not exist.
   --no-tools disables tools (pure chat). --workspace confines file/command tools.
   --plain uses classic terminal UI (if Bubble Tea misbehaves).
   --allow-program  add program to run_command allowlist (repeatable)
@@ -124,7 +130,7 @@ Chat: /help /tools /hooks /exit /clear /new /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 // flagValue returns the value of the first occurrence of any named flag,
