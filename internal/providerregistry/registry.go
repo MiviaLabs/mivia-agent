@@ -19,6 +19,10 @@ var descriptors = map[string]Descriptor{
 		Name: "deepseek", DefaultModel: "deepseek-v4-flash",
 		DefaultURL: "https://api.deepseek.com/v1", DefaultAPIKeyEnv: "DEEPSEEK_API_KEY",
 	},
+	"ollama": {
+		Name: "ollama", DefaultModel: "gpt-oss:120b",
+		DefaultURL: "https://ollama.com/v1", DefaultAPIKeyEnv: "OLLAMA_API_KEY",
+	},
 	"openrouter": {
 		Name: "openrouter", DefaultModel: "openai/gpt-4o-mini",
 		DefaultURL: "https://openrouter.ai/api/v1", DefaultAPIKeyEnv: "OPENROUTER_API_KEY",

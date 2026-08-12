@@ -32,8 +32,24 @@ func TestNewDispatchesBuiltinsAndRejectsUnknown(t *testing.T) {
 	}
 	res.ProviderName = "unknown"
 	_, err = New(res)
-	if err == nil || !strings.Contains(err.Error(), "available: deepseek, openrouter, zai") {
+	if err == nil || !strings.Contains(err.Error(), "available: deepseek, ollama, openrouter, zai") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNewForProviderOllamaCloudFailsClosedWithoutKey(t *testing.T) {
+	res := &config.Resolved{ProviderRuntimes: map[string]config.ProviderRuntime{"ollama": {ProviderName: "ollama", BaseURL: "https://ollama.com/v1", APIKeyEnv: "OLLAMA_API_KEY"}}}
+	_, err := NewForProvider(res, "ollama")
+	if err == nil || !strings.Contains(err.Error(), "missing API key") || strings.Contains(err.Error(), "OLLAMA_API_KEY") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNewForProviderOllamaCloudSucceedsWithKey(t *testing.T) {
+	res := &config.Resolved{ProviderRuntimes: map[string]config.ProviderRuntime{"ollama": {ProviderName: "ollama", BaseURL: "https://ollama.com/v1", APIKeyEnv: "OLLAMA_API_KEY", APIKeySet: true, APIKey: "fake"}}}
+	comp, err := NewForProvider(res, "ollama")
+	if err != nil || comp.Name() != "ollama" {
+		t.Fatalf("comp=%T err=%v", comp, err)
 	}
 }
 

@@ -191,6 +191,10 @@ func registerBuiltins() error {
 			builtinsErr = err
 			return
 		}
+		if err := registry.register("ollama", NewOllama); err != nil {
+			builtinsErr = err
+			return
+		}
 		builtinFactories = registry
 	})
 	return builtinsErr
