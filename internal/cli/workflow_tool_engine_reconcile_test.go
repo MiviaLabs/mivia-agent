@@ -330,9 +330,9 @@ func TestSessionReconcileParkedRunsPeriodic(t *testing.T) {
 	applyWorkflowStoreRoot(res, root)
 	e := newSessionWorkflowEngine(root, configPath)
 
-	old := workflowReconcileInterval
-	workflowReconcileInterval = 10 * time.Millisecond
-	t.Cleanup(func() { workflowReconcileInterval = old })
+	old := workflowReconcileInterval.Load()
+	workflowReconcileInterval.Store(int64(10 * time.Millisecond))
+	t.Cleanup(func() { workflowReconcileInterval.Store(old) })
 	ctx, cancel := context.WithCancel(context.Background())
 	periodicDone := make(chan struct{})
 	go func() {

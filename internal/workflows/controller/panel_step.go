@@ -119,6 +119,15 @@ func (c *LinearController) reconcilePanelCancelPending(ctx context.Context, run 
 	outcome := workflowledger.AttemptOutcome{Status: workflowledger.AttemptStatusCanceled}
 	outcome.ErrorRef = storeErrorText(ctx, c.Repo, errors.New("workflow run canceled by operator"))
 	if err := c.Repo.CompleteStepAttempt(ctx, c.RunID, reconciled.AttemptID, reconciled.Version, outcome); err != nil {
+		if errors.Is(err, workflowledger.ErrConflict) {
+			// Another executor legitimately racing the same cancel_pending
+			// attempt (D14's claim-heartbeat handoff window) won this CAS
+			// first: this is the same retryable "cannot make progress right
+			// now" outcome as ErrCancelBlocked above, not a genuine defect,
+			// so it must stay non-terminal for a later Advance to reconcile
+			// instead of forcing the run to a durable Failed status.
+			return run, false, nil
+		}
 		return c.fail(ctx, run, err)
 	}
 	return c.settlePanelRunCanceled(ctx, run)
@@ -128,6 +137,13 @@ func (c *LinearController) reconcilePanelCancelPending(ctx context.Context, run 
 // reconciliation confirmed every intended child terminal.
 func (c *LinearController) settlePanelRunCanceled(ctx context.Context, run workflowledger.RunSnapshot) (workflowledger.RunSnapshot, bool, error) {
 	if err := c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusCanceled, nil); err != nil {
+		if errors.Is(err, workflowledger.ErrConflict) {
+			// Same rationale as reconcilePanelCancelPending's CompleteStepAttempt
+			// conflict handling: a concurrent executor won the run-status CAS
+			// first, so stay non-terminal and retryable rather than escalating
+			// to a permanent failure.
+			return run, false, nil
+		}
 		return c.fail(ctx, run, err)
 	}
 	settled, err := c.Repo.GetRun(ctx, c.RunID)

@@ -273,6 +273,73 @@ type Empty interface {}
 	}
 }
 
+// TestFindImplementationsSkipsInterfaceUnderlyingTypes is a regression test
+// for the bug where findImplementations reported abstract named types whose
+// underlying type is an interface as concrete implementations. A defined type
+// over an interface (`type ReaderAlias Reader`) and an embedding interface
+// (`type AliasReader interface { Reader }`) both inherit the interface's
+// method set, so types.Implements reports them trivially - but neither is a
+// concrete implementation. Only the concrete struct myReader may be reported.
+func TestFindImplementationsSkipsInterfaceUnderlyingTypes(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package p
+
+// Reader declares a single method.
+type Reader interface {
+	Read([]byte) (int, error)
+}
+
+// WrappedReader embeds Reader with no explicit methods - the query target.
+type WrappedReader interface {
+	Reader
+}
+
+// AliasReader is another embedding interface: abstract, not an implementation.
+type AliasReader interface {
+	Reader
+}
+
+// ReaderAlias is a defined type whose underlying type is the Reader interface:
+// abstract, not an implementation.
+type ReaderAlias Reader
+
+// myReader is the only concrete implementor.
+type myReader struct{}
+
+func (myReader) Read([]byte) (int, error) { return 0, nil }
+`
+	f, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{Defs: make(map[*ast.Ident]types.Object)}
+	pkg, err := conf.Check("p", fset, []*ast.File{f}, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgsPkg := &packages.Package{Types: pkg, TypesInfo: info, Fset: fset}
+	target := pkg.Scope().Lookup("WrappedReader")
+	if target == nil {
+		t.Fatal("WrappedReader not found in scope")
+	}
+	var locs []string
+	findImplementations(pkgsPkg, target, fset,
+		func(file string, line int, name string, role Role) {
+			locs = append(locs, name)
+		},
+	)
+	want := []string{"myReader"}
+	if len(locs) != len(want) {
+		t.Fatalf("expected exactly %v, got %v", want, locs)
+	}
+	for i := range want {
+		if locs[i] != want[i] {
+			t.Fatalf("expected exactly %v, got %v", want, locs)
+		}
+	}
+}
+
 // TestFindImplementationsNilInputs verifies that findImplementations returns no
 // results for nil or zero-value inputs. Three subcases:
 // (a) nil *packages.Package,

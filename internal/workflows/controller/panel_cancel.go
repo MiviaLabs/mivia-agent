@@ -101,6 +101,14 @@ func advancePanelPhaseToCancelPending(ctx context.Context, repo workflowledger.R
 			return attempt, fmt.Errorf("panel attempt %q has no legal cancel transition from phase %q", attempt.AttemptID, from)
 		}
 		if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+			if errors.Is(err, workflowledger.ErrClaimHeld) {
+				// Another holder now owns the workflow claim: this caller
+				// lost the race, not this attempt's cancellation. Report it
+				// the same retryable way as an ambiguous child claim rather
+				// than failing the run — the new holder (or a later retry by
+				// this one) can still make progress.
+				return attempt, fmt.Errorf("%w: workflow claim: %v", ErrCancelBlocked, err)
+			}
 			return attempt, err
 		}
 		err := repo.CompareAndSetPanelPhase(ctx, runID, attempt.AttemptID, attempt.Version, from, workflowledger.PanelPhaseCancelPending, nil)
@@ -116,5 +124,11 @@ func advancePanelPhaseToCancelPending(ctx context.Context, repo workflowledger.R
 		}
 		attempt = reloaded
 	}
-	return attempt, fmt.Errorf("panel attempt %q: cancel phase transition did not converge", attempt.AttemptID)
+	// Bounded retries exhausted under sustained contention (repeated claim
+	// handoffs mid-reconciliation): this is the same "cannot make progress
+	// right now" outcome as an ambiguous child claim, not a genuine defect in
+	// this attempt's state, so it must stay retryable rather than
+	// permanently fail the run the way every other cancel path in this
+	// design treats a stuck-but-not-broken condition.
+	return attempt, fmt.Errorf("%w: panel attempt %q: cancel phase transition did not converge after %d attempts", ErrCancelBlocked, attempt.AttemptID, maxCancelPhaseRetries)
 }

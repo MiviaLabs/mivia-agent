@@ -201,6 +201,17 @@ func (p PanelCoordinator) CancelOrTombstoneSynthesis(ctx context.Context, attemp
 // dispatched, or joins an existing child as a recovered (never-locally-
 // resumed) handle and issues the coordinator's normal cancel request on it.
 //
+// Both paths mark the context wait-only (coordinator.ContextWithPanelWaitOnlyJoin)
+// as defense in depth: today the workflow claim already excludes a
+// concurrent forward dispatcher from winning the child's admission race
+// while cancellation is in flight, but the wait-only marker gives
+// cancellation its own independent guarantee that it can never itself
+// become a child's local actor even if that outer invariant is ever
+// violated (an expired workflow claim lease mid-reconciliation, for
+// example) — it fails closed (ErrWaitOnlyJoinLost from the underlying
+// coordinator) instead of silently resuming the very child it is trying to
+// stop.
+//
 // A context deadline/cancellation while waiting on that cancel request is a
 // slow-worker signal (D15 item 5), not an ambiguous claim (item 6): it
 // reports (false, nil) so the caller records durable progress and reports
@@ -211,23 +222,43 @@ func (p PanelCoordinator) cancelOrTombstone(ctx context.Context, runID, taskID s
 	if err != nil {
 		return false, err
 	}
-	handle, err := p.inner.JoinAsRecovered(p.childContext(ctx), req)
+	waitOnlyCtx := coordinator.ContextWithPanelWaitOnlyJoin(p.childContext(ctx))
+	handle, err := p.inner.JoinAsRecovered(waitOnlyCtx, req)
 	if errors.Is(err, coordledger.ErrNotFound) {
-		if _, err := p.inner.EnsureTerminalSingleTaskRun(p.childContext(ctx), req, coordledger.TaskStatusCanceled); err != nil {
-			return false, err
-		}
-		return true, nil
+		// EnsureTerminalSingleTaskRun's own returned handle is not trustworthy
+		// on its own: if a concurrent forward dispatcher wins the admission
+		// race in the gap between JoinAsRecovered's ErrNotFound and this call,
+		// it returns that dispatcher's live, non-terminal join handle with a
+		// nil error instead of our tombstone. Route it through the same
+		// Cancel call below as any other found handle so a live winner is
+		// verified (and fails closed) rather than trusted.
+		handle, err = p.inner.EnsureTerminalSingleTaskRun(waitOnlyCtx, req, coordledger.TaskStatusCanceled)
 	}
 	if err != nil {
+		if isPanelCancelContention(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	if err := p.inner.Cancel(p.childContext(ctx), handle); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		if isPanelCancelContention(err) {
 			return false, nil
 		}
 		return false, err
 	}
 	return true, nil
+}
+
+// isPanelCancelContention reports whether err represents benign concurrent
+// contention on this exact child rather than a genuinely ambiguous claim:
+// a caller context deadline/cancellation while waiting on a live but
+// uncooperative child (D15 item 5, "a slow worker"), or a coordinator-ledger
+// version conflict from a concurrent cancel attempt on the same child (two
+// cancel surfaces racing each other, D15 items 13-15 - the other caller is
+// concurrently making the same progress this one wants, so this call
+// reports not-yet-terminal for a retry instead of a false "blocked").
+func isPanelCancelContention(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, coordledger.ErrConflict)
 }
 
 func (p PanelCoordinator) member(ctx context.Context, attemptID, memberID string) (PanelMemberExecution, error) {

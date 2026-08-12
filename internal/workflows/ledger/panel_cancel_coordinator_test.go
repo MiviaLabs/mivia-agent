@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -229,5 +230,133 @@ func TestCancelOrTombstoneMember_SlowWorkerReportsPendingNotBlocked(t *testing.T
 	}
 	if terminal {
 		t.Fatal("a worker that has not yet stopped must not be reported terminal")
+	}
+}
+
+// joinAsRecoveredRaceCoordinator wraps a real coordinator.Coordinator and, the
+// first time its JoinAsRecovered observes ledger.ErrNotFound (member never
+// admitted yet), synchronously runs a caller-supplied hook before returning.
+// This deterministically reproduces the exact race window inside
+// PanelCoordinator.cancelOrTombstone between its own JoinAsRecovered call
+// (ErrNotFound) and its subsequent EnsureTerminalSingleTaskRun call: the hook
+// lets a *different* coordinator instance (a concurrent forward dispatcher)
+// win admission for the same idempotency key in that gap, every run, with no
+// goroutines or timing luck required.
+type joinAsRecoveredRaceCoordinator struct {
+	coordinator.Coordinator
+	once sync.Once
+	hook func()
+}
+
+func (r *joinAsRecoveredRaceCoordinator) JoinAsRecovered(ctx context.Context, req coordinator.EnsureRunRequest) (*coordinator.RunHandle, error) {
+	h, err := r.Coordinator.JoinAsRecovered(ctx, req)
+	if errors.Is(err, coordledger.ErrNotFound) {
+		r.once.Do(r.hook)
+	}
+	return h, err
+}
+
+// TestCancelOrTombstoneMember_ConcurrentAdmissionWinnerIsNotFalselyTerminal is
+// a regression test for the bug where cancelOrTombstone discarded the handle
+// returned by its own EnsureTerminalSingleTaskRun call and unconditionally
+// reported (terminal=true, err=nil). When a concurrent forward dispatcher
+// wins the underlying admission race for a never-admitted child in the gap
+// between this method's JoinAsRecovered (ErrNotFound) and EnsureTerminal-
+// SingleTaskRun calls, the latter returns a live, non-terminal join handle
+// onto the winner's run with a nil error (coordinator's wait-only
+// joinSingleTaskAdmission ErrClaimHeld branch) instead of admitting our own
+// tombstone. The fix must route that handle through the same Cancel call as
+// any other found handle, which fails closed (ErrClaimHeld) because a
+// different coordinator instance holds the run's claim - not silently report
+// the still-running member as canceled.
+// concurrentAdmissionRaceFixture builds two independent coordinator
+// instances sharing one durable ledger (a stale forward dispatcher and the
+// canceler), plus an admitted 2-member panel attempt, for tests that need to
+// race a concurrent forward admission against a cancel call.
+func concurrentAdmissionRaceFixture(t *testing.T, handler runtime.Handler) (forwardDispatcher, cancelerInner coordinator.Coordinator, repo *StorageRepository, run string, attempt StepAttempt) {
+	t.Helper()
+	dispatcher := runtime.New(runtime.Policy{})
+	for _, name := range []string{"member-0", "member-1", "synthesis"} {
+		if err := dispatcher.Register(runtime.Subagent, name, handler); err != nil {
+			t.Fatal(err)
+		}
+	}
+	coordLedger := coordledger.NewMemoryLedgerRepository()
+	// Two independent coordinator instances over the SAME durable ledger,
+	// each with its own random holder ID - exactly what a stale forward
+	// dispatcher vs. this cancel path would be after a claim-lease handoff.
+	forwardDispatcher = coordinator.New(coordLedger, subagents.New(dispatcher, subagents.Policy{Workers: 4}))
+	cancelerInner = coordinator.New(coordLedger, subagents.New(dispatcher, subagents.Policy{Workers: 4}))
+
+	repo = newMemoryRepo(t)
+	ctx := context.Background()
+	run = runID(t)
+	snap, raw := newRun(t, run)
+	if err := repo.CreateRun(ctx, snap, raw); err != nil {
+		t.Fatal(err)
+	}
+	attempt = StepAttempt{AttemptID: "attempt", RunID: run, StepID: "panel", AttemptNo: 1, PanelExecution: validPanelExecution(t, run, "attempt")}
+	storePanelExecution(t, repo, attempt.PanelExecution)
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := repo.GetStepAttempt(ctx, run, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return forwardDispatcher, cancelerInner, repo, run, attempt
+}
+
+func TestCancelOrTombstoneMember_ConcurrentAdmissionWinnerIsNotFalselyTerminal(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	handler := panelCancelHandlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		select {
+		case <-release:
+			return json.RawMessage(`{}`), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	forwardDispatcher, cancelerInner, repo, run, attempt := concurrentAdmissionRaceFixture(t, handler)
+
+	raceCoord := &joinAsRecoveredRaceCoordinator{Coordinator: cancelerInner}
+	panel := NewPanelCoordinator(run, raceCoord, repo)
+
+	member := attempt.PanelExecution.Members[0]
+	req, err := panel.request(context.Background(), member.CoordinatorRunID, member.TaskID, member.Work, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var winnerHandle *coordinator.RunHandle
+	raceCoord.hook = func() {
+		// Never-admitted member: a concurrent forward dispatcher wins the
+		// admission race for the same idempotency key right after this
+		// method observed ErrNotFound.
+		h, err := forwardDispatcher.EnsureSingleTaskRun(ContextWithPanelChildPrincipal(context.Background(), run), req)
+		if err != nil {
+			t.Fatalf("concurrent forward dispatch error = %v", err)
+		}
+		if !h.LocalActor() {
+			t.Fatal("forward dispatcher must become member-0's local actor")
+		}
+		winnerHandle = h
+	}
+
+	claimCtx := claimAndCancelPending(t, repo, run, attempt)
+	terminal, err := panel.CancelOrTombstoneMember(claimCtx, attempt.AttemptID, "member-0")
+	if err == nil {
+		t.Fatalf("CancelOrTombstoneMember must fail closed when a concurrent dispatcher wins admission, got terminal=%v err=nil", terminal)
+	}
+	if terminal {
+		t.Fatalf("CancelOrTombstoneMember must never report terminal=true while the concurrently admitted member is still live, got err = %v", err)
+	}
+	if winnerHandle == nil {
+		t.Fatal("race hook never ran; test setup did not exercise the ErrNotFound path")
+	}
+	select {
+	case <-winnerHandle.Done():
+		t.Fatal("the concurrently admitted member finished before the assertions ran; test no longer proves it was live")
+	default:
 	}
 }
