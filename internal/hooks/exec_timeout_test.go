@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,41 @@ exit 0
 	}
 	if out.Denied {
 		t.Fatalf("an allow printed before exit must be honored even though orphaned descendants held the pipe: %s", out.Reason)
+	}
+	if len(out.Warnings) != 0 {
+		t.Fatalf("a clean allow must not warn, got %v", out.Warnings)
+	}
+}
+
+// os/exec returns ErrWaitDelay under an expired deadline when the process
+// exited 0 but a DETACHED descendant (escaping the group kill via setsid) held
+// the output pipe open past WaitDelay. That is a successful exit whose verdict
+// was captured before the cut, so the deadline must not reclassify it as a
+// timeout: before the fix, callCtx.Err() != nil re-derived "timed out" for
+// every non-ExitError runErr and turned the hook's allow into a spurious
+// PreToolUse deny (hooks-verdict-at-deadline-denied). The elapsed >= 1.5s
+// assertion proves the WaitDelay path fired: a grandchild that failed to
+// detach would be killed by the group kill, EOF the pipe, and let Wait return
+// the exit-0 status near the 1s deadline, passing vacuously.
+func TestErrWaitDelayAtDeadlineIsNotReclassifiedAsTimeout(t *testing.T) {
+	requirePOSIX(t)
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid unavailable; cannot detach a pipe-holding grandchild")
+	}
+	dir := hookDir(t)
+	script(t, dir, "detached-holder.sh", `printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
+setsid sleep 30 &
+exit 0
+`)
+	groups := group(t, dir, preToolUse(`["./detached-holder.sh"]`, "  timeout = 1\n"))
+
+	start := time.Now()
+	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
+	if elapsed := time.Since(start); elapsed < 1500*time.Millisecond {
+		t.Fatalf("the WaitDelay path did not fire (elapsed %v): the detached grandchild must hold the stdout pipe past WaitDelay", elapsed)
+	}
+	if out.Denied {
+		t.Fatalf("the exit-0 allow must be honored even though the deadline fired: %s", out.Reason)
 	}
 	if len(out.Warnings) != 0 {
 		t.Fatalf("a clean allow must not warn, got %v", out.Warnings)

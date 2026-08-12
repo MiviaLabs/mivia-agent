@@ -107,3 +107,37 @@ func TestNewRequestRejectsReservedExtras(t *testing.T) {
 		})
 	}
 }
+
+// An empty API key must not leak a bare "Bearer " prefix onto the wire: the
+// Authorization header has to be absent entirely.
+func TestSetHeadersOmitsEmptyAuthorization(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: "https://example.test/v1", APIKey: ""})
+	httpReq, err := c.newRequest(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := httpReq.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want empty for an empty API key", got)
+	}
+	if _, present := httpReq.Header["Authorization"]; present {
+		t.Fatal("Authorization header must not be present at all for an empty API key")
+	}
+}
+
+// A real key keeps the pinned "Bearer <key>" behavior.
+func TestSetHeadersSendsBearerForRealKey(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "test", BaseURL: "https://example.test/v1", APIKey: "k"})
+	httpReq, err := c.newRequest(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := httpReq.Header.Get("Authorization"); got != "Bearer k" {
+		t.Fatalf("Authorization = %q, want %q", got, "Bearer k")
+	}
+}

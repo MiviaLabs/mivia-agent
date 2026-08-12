@@ -15,9 +15,10 @@
 env_file = "~/.mivia/.env"
 
 [provider]
-# DeepSeek everywhere: native DeepSeek API by default, DeepSeek via OpenRouter
-# as the fallback (--provider openrouter).
-name = "deepseek"
+# Local Ollama by default (this machine's daemon at 127.0.0.1:11434) with
+# qwen3.6:27b-q4_K_M. Cloud backends stay configured as fallbacks:
+# --provider deepseek (native DeepSeek), --provider openrouter, --provider zai.
+name = "ollama"
 
 [providers.deepseek]
 # DeepSeek v4 thinking mode: reasoning_effort high/max (low/medium→high,
@@ -98,6 +99,23 @@ models = [
 default_model = "glm-5-turbo"
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/coding/paas/v4"
+
+[providers.ollama]
+# Local daemon profile (no key). This machine runs Ollama at 127.0.0.1:11434
+# with qwen3.6:27b-q4_K_M (dense 27.8B, 262K ctx, tools + thinking) and
+# qwen3-coder:30b-a3b-q4_K_M (MoE 30.5B total / 3B active, tools only, no
+# thinking). We chose qwen3.6:27b: dense models are more reliable in the
+# multi-step tool-calling loops this agent runs, and its thinking capability
+# feeds the reasoning-effort machinery. The mode is inferred from base_url
+# alone: a loopback hostname (127.0.0.1, ::1, localhost) needs no API key, so
+# api_key_env is optional; any other base_url requires OLLAMA_API_KEY. A local
+# daemon has no remote catalog, so model names must match `ollama list` output
+# exactly (tag included).
+models = [
+  { name = "qwen3.6:27b-q4_K_M", context_window_tokens = 262144 },
+]
+default_model = "qwen3.6:27b-q4_K_M"
+base_url = "http://127.0.0.1:11434/v1"
 
 # ---------------------------------------------------------------------------
 # AGENTS - file-backed definitions under .mivia/agents/

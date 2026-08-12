@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -41,6 +42,13 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 	// Wait for referral-as-spawn tasks so Join does not race claim release.
 	h.waitReferrals()
 	runErr = c.recordRunResults(h, tasks, results, runErr)
+	// Report one result per task. finalizeDAG emits only re-executed tasks, so
+	// the seeded outcomes of tasks that finished before the interruption
+	// (completed/canceled/blocked) must be merged back in. The merge runs AFTER
+	// recordRunResults, so seeded entries are never re-CASed or re-announced in
+	// the ledger: their terminal status is already durable, and re-recording
+	// would duplicate the terminal lifecycle event.
+	results = mergeSeededResults(results, tasks, seed)
 
 	h.mu.Lock()
 	persistCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -49,6 +57,36 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 	runErr = joinError(runErr, snapErr)
 	h.result = &RunResult{Snapshot: snap, Results: results, Err: runErr}
 	h.mu.Unlock()
+}
+
+// mergeSeededResults appends the seeded outcomes of tasks that finished before
+// an interruption to the final result slice. finalizeDAG emits only task IDs
+// present in the re-executed task set, so without this merge a resumed run's
+// completed/canceled/blocked tasks never reached Join's RunResult.Results,
+// violating the recovery.go contract that a resumed run reports one result
+// per task. Entries whose TaskID is present in the executed set are skipped:
+// the live result stays authoritative and no duplicate is appended. Remaining
+// seed IDs are appended in sort.Strings order for deterministic output.
+func mergeSeededResults(results []subagents.Result, tasks []subagents.Task, seed map[string]subagents.Result) []subagents.Result {
+	if len(seed) == 0 {
+		return results
+	}
+	executed := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		executed[task.ID] = struct{}{}
+	}
+	ids := make([]string, 0, len(seed))
+	for id := range seed {
+		if _, ok := executed[id]; ok {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		results = append(results, seed[id])
+	}
+	return results
 }
 
 func (c *coordinator) transitionTask(h *RunHandle, task subagents.Task, status string) error {

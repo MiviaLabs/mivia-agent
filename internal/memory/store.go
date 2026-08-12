@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -227,14 +228,30 @@ func openMemoryDB(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// sqliteMemoryDSN applies the same pragmas the storage package uses for its
-// durable stores. Keep the two in sync when the set changes.
+// pragmaMemoryDSNParams are the driver-side pragma overrides applied by
+// modernc.org/sqlite's applyQueryParams to every pooled connection, matching
+// the storage package's pragmaDSNParams (without foreign_keys, which this
+// schema does not use). Keep the two in sync when the set changes.
+const pragmaMemoryDSNParams = "_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)"
+
+// sqliteMemoryDSN builds the driver DSN for a memory store file. The
+// modernc.org/sqlite driver (v1.54.0) splits a DSN at the first literal '?' to
+// separate the filename from its query parameters, so a POSIX filename
+// containing '?' ("ctx?name.db") would be silently truncated to "ctx" and the
+// store would open the wrong database file. Paths without '?' keep the
+// historical path+"?"+pragmas form byte-for-byte; paths with '?' are
+// percent-escaped into a file: URI whose only literal '?' is the query
+// separator, and SQLite's URI decoder (SQLITE_OPEN_URI) restores the literal
+// '?' (and '/' for absolute paths) in the real filename. Escaping the whole
+// path also prevents URI authority ("//"), query ('?'), and fragment ('#')
+// injection into the path portion, so no wrong-file or path-confusion vector
+// remains. Keep this in sync with internal/storage/sqlite_dsn.go; the storage
+// package applies the identical transform.
 func sqliteMemoryDSN(path string) string {
-	separator := "?"
 	if strings.Contains(path, "?") {
-		separator = "&"
+		return "file:" + url.PathEscape(path) + "?" + pragmaMemoryDSNParams
 	}
-	return path + separator + "_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)"
+	return path + "?" + pragmaMemoryDSNParams
 }
 
 func (s *sqliteStore) dbFor(scope Scope) (*sql.DB, string) {
@@ -376,7 +393,7 @@ ORDER BY CASE
   WHEN lower(title) = lower(?) THEN 0
   WHEN lower(title) LIKE lower(?) ESCAPE '\' THEN 1
   WHEN lower(summary) LIKE lower(?) ESCAPE '\' THEN 2
-  ELSE 3 END, created_at DESC, title ASC
+  ELSE 3 END, created DESC, title ASC
 LIMIT ?`
 
 func (s *sqliteStore) searchDB(ctx context.Context, db *sql.DB, scope Scope, org, text string, limit int) ([]Result, error) {

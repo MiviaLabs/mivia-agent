@@ -11,8 +11,13 @@ func TestLookupAndNamesAreStable(t *testing.T) {
 	if !ok || d.DefaultModel != "deepseek-v4-flash" || d.DefaultAPIKeyEnv != "DEEPSEEK_API_KEY" {
 		t.Fatalf("descriptor=%+v ok=%v", d, ok)
 	}
+	ollama, ok := Lookup("ollama")
+	if !ok || ollama.Name != "ollama" || ollama.DefaultModel != "gpt-oss:120b" ||
+		ollama.DefaultURL != "https://ollama.com/v1" || ollama.DefaultAPIKeyEnv != "OLLAMA_API_KEY" {
+		t.Fatalf("ollama descriptor=%+v ok=%v", ollama, ok)
+	}
 	names := Names()
-	if len(names) != 3 || names[0] != "deepseek" || names[1] != "openrouter" || names[2] != "zai" {
+	if len(names) != 4 || names[0] != "deepseek" || names[1] != "ollama" || names[2] != "openrouter" || names[3] != "zai" {
 		t.Fatalf("names=%v", names)
 	}
 	names[0] = "mutated"

@@ -97,7 +97,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		ModelProfiles:    cloneModelSpecs(pc.Models),
 		BaseURL:          strings.TrimRight(pc.BaseURL, "/"),
 		APIKeyEnv:        pc.APIKeyEnv,
-		APIKeySet:        keySet && key != "",
+		APIKeySet:        keySet && strings.TrimSpace(key) != "",
 		APIKey:           key,
 		HTTPReferer:      pc.HTTPReferer,
 		XTitle:           pc.XTitle,
@@ -177,8 +177,8 @@ func resolveTavilyAPIKey(tc TavilyConfig, envMap map[string]string) string {
 		return ""
 	}
 	key, ok := envfile.Lookup(envName, envMap)
-	if ok && key != "" {
-		return key
+	if ok && strings.TrimSpace(key) != "" {
+		return strings.TrimSpace(key)
 	}
 	return ""
 }

@@ -194,7 +194,9 @@ func renameReasoningContentKey(body map[string]any, field string) {
 
 func (c *OpenAICompat) setHeaders(httpReq *http.Request, req Request, raw []byte) {
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	httpReq.Header.Set("Accept", "application/json")
 	// The Go transport can replay a request with an Idempotency-Key after a
 	// reused connection fails. Panel actors forbid every transport replay.

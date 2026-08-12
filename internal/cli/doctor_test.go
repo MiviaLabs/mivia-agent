@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
 // writePromptBudgetConfig writes a deepseek doctor config into dir and
@@ -96,5 +98,67 @@ func TestDoctorPromptBudgetAdvisoryAbsentWhenCapAboveBudget(t *testing.T) {
 	stdout, _ := runDoctorForPromptBudget(t, 1000000, 384000, "500000")
 	if strings.Contains(stdout, "prompt_budget") {
 		t.Fatalf("stdout contains prompt_budget advisory with an explicit cap above the budget:\n%s", stdout)
+	}
+}
+
+// TestDoctorHumanOllamaLoopbackKeyless: a loopback Ollama endpoint
+// (http://127.0.0.1:11434/v1) is a local server that performs no API-key
+// auth, so the human doctor path must report ok even when OLLAMA_API_KEY is
+// unset - no MISSING api_key line on stdout, no "not ready for chat" notice
+// on stderr. This pins the keyless ollama-loopback relaxation end to end.
+func TestDoctorHumanOllamaLoopbackKeyless(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), ".mivia", "mivia.toml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `[provider]
+name = "ollama"
+
+[providers.ollama]
+base_url = "http://127.0.0.1:11434/v1"
+models = [{ name = "qwen3:8b", context_window_tokens = 32768 }]
+default_model = "qwen3:8b"
+`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Defensively ensure the keyless case is exercised: no OLLAMA_API_KEY
+	// may leak in from the host environment.
+	t.Setenv("OLLAMA_API_KEY", "")
+
+	res, err := config.Load(config.LoadOptions{
+		ConfigPath:         cfgPath,
+		AllowMissingConfig: true,
+	})
+	if err != nil {
+		t.Fatalf("config.Load failed for ollama loopback config: %v", err)
+	}
+	if res.ProviderName != "ollama" || res.BaseURL != "http://127.0.0.1:11434/v1" {
+		t.Fatalf("resolved provider/base_url = %q/%q", res.ProviderName, res.BaseURL)
+	}
+
+	var stdout, stderr strings.Builder
+	if err := runDoctorWithIO([]string{"--config", cfgPath}, &stdout, &stderr); err != nil {
+		t.Fatalf("doctor error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "status:     ok") {
+		t.Fatalf("stdout missing 'status:     ok':\n%s", out)
+	}
+	if strings.Contains(out, "set OLLAMA_API_KEY") {
+		t.Fatalf("stdout contains 'set OLLAMA_API_KEY' for keyless ollama loopback:\n%s", out)
+	}
+	if strings.Contains(stderr.String(), "not ready for chat") {
+		t.Fatalf("stderr contains 'not ready for chat':\n%s", stderr.String())
+	}
+	// The keyless ollama screen must state the honest reason the key is not
+	// required: a local daemon (loopback) performs no API-key auth.
+	if !strings.Contains(out, "not required (local daemon)") {
+		t.Fatalf("stdout missing 'not required (local daemon)' for keyless ollama loopback:\n%s", out)
+	}
+	// The keyless ollama screen must NOT claim the key is set: the value is
+	// absent, so an "api_key:    set" line would be a lie.
+	if strings.Contains(out, "api_key:    set") {
+		t.Fatalf("stdout contains 'api_key:    set' for keyless ollama loopback:\n%s", out)
 	}
 }

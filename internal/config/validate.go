@@ -24,7 +24,7 @@ func (r *Resolved) Validate() error {
 	if !validEnvName(r.APIKeyEnv) {
 		return fmt.Errorf("api_key_env is invalid")
 	}
-	if err := validateBaseURL(r.BaseURL); err != nil {
+	if err := validateBaseURL(r.BaseURL, r.ProviderName); err != nil {
 		return err
 	}
 	if _, err := secretpath.New(r.Tools.SecretPathPatterns, r.Tools.SecretPathExceptions); err != nil {
@@ -72,7 +72,7 @@ func validEnvName(name string) bool {
 // value cannot slip past the structural checks below.
 const maxBaseURLLength = 8 << 10
 
-func validateBaseURL(raw string) error {
+func validateBaseURL(raw, providerName string) error {
 	if len(raw) > maxBaseURLLength {
 		return fmt.Errorf("base_url is invalid")
 	}
@@ -89,6 +89,9 @@ func validateBaseURL(raw string) error {
 	case "https":
 		return nil
 	case "http":
+		if providerName == "ollama" && IsOllamaLoopback(raw) {
+			return nil
+		}
 		if os.Getenv("MIVIA_ALLOW_INSECURE_HTTP") == "1" {
 			return nil
 		}

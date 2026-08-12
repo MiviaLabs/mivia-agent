@@ -60,7 +60,12 @@ func (l *Loop) processToolCalls(ctx context.Context, resp *provider.Response, tr
 	// answers each call must all agree on one ID per call.
 	calls := identifiedToolCalls(resp.ToolCalls)
 	validCalls, errorResults := filterValidToolCalls(calls)
-	if err := l.workLimits.reserveToolBatch(len(validCalls)); err != nil {
+	// Only calls that will actually dispatch are charged against the cumulative
+	// MaxToolCalls budget: calls the per-batch cap declines get error results
+	// but never execute, so charging them would abort a run prematurely
+	// (AG-BUDGET-1). The reservation stays before the assistant-message append
+	// so an exhausted-budget abort stays fail-closed and history stays clean.
+	if err := l.workLimits.reserveToolBatch(executedToolCallCount(len(validCalls), opts)); err != nil {
 		return stepOutcome{}, err
 	}
 	l.Messages = append(l.Messages, provider.Message{
@@ -217,6 +222,19 @@ func toolResultBodyFailed(name, body string) bool {
 	return false
 }
 
+// executedToolCallCount is the single rule for how many calls of a batch
+// executeToolsParallel dispatches: all of them, unless MaxToolCallsPerBatch
+// bounds the batch, in which case at most that many. processToolCalls reserves
+// exactly this count against the cumulative MaxToolCalls budget, so
+// per-batch-declined calls - which get error results but never execute - never
+// consume MaxToolCalls (AG-BUDGET-1).
+func executedToolCallCount(n int, opts Options) int {
+	if opts.MaxToolCallsPerBatch > 0 && n > opts.MaxToolCallsPerBatch {
+		return opts.MaxToolCallsPerBatch
+	}
+	return n
+}
+
 func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *tools.Registry, opts Options) []toolExecResult {
 	n := len(calls)
 	if n == 0 {
@@ -235,9 +253,8 @@ func executeToolsParallel(ctx context.Context, calls []provider.ToolCall, reg *t
 		}
 	}
 	results := make([]toolExecResult, n)
-	executeN := n
-	if opts.MaxToolCallsPerBatch > 0 && executeN > opts.MaxToolCallsPerBatch {
-		executeN = opts.MaxToolCallsPerBatch
+	executeN := executedToolCallCount(n, opts)
+	if executeN < n {
 		for i := executeN; i < n; i++ {
 			err := fmt.Errorf("tool batch budget exceeded: max %d calls", opts.MaxToolCallsPerBatch)
 			results[i] = errorExecResult(i, calls[i], err)

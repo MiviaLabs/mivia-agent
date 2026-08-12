@@ -691,10 +691,10 @@ func TestLoadAcceptsValidBaseURL(t *testing.T) {
 // hostless values. "https://" was already refused at load (resolveLoaded
 // trims it to "https:"), so it stays a guard case, not a RED case.
 func TestValidateBaseURLRejectsHostlessUnit(t *testing.T) {
-	if err := validateBaseURL(""); err == nil || !strings.Contains(err.Error(), "base_url") {
+	if err := validateBaseURL("", "deepseek"); err == nil || !strings.Contains(err.Error(), "base_url") {
 		t.Fatalf("validateBaseURL(\"\") = %v", err)
 	}
-	if err := validateBaseURL("https://"); err == nil || !strings.Contains(err.Error(), "base_url") {
+	if err := validateBaseURL("https://", "deepseek"); err == nil || !strings.Contains(err.Error(), "base_url") {
 		t.Fatalf("validateBaseURL(\"https://\") = %v", err)
 	}
 
@@ -735,10 +735,10 @@ func TestValidateBaseURLLengthBoundary(t *testing.T) {
 		t.Fatalf("boundary fixtures: exact=%d over=%d", len(exact), len(over))
 	}
 
-	if err := validateBaseURL(exact); err != nil {
+	if err := validateBaseURL(exact, "deepseek"); err != nil {
 		t.Fatalf("validateBaseURL(exactly maxBaseURLLength) = %v", err)
 	}
-	if err := validateBaseURL(over); err == nil {
+	if err := validateBaseURL(over, "deepseek"); err == nil {
 		t.Fatal("validateBaseURL(maxBaseURLLength+1) accepted")
 	}
 
@@ -757,7 +757,7 @@ func TestValidateBaseURLLengthBoundary(t *testing.T) {
 func FuzzValidateBaseURLNeverPanics(f *testing.F) {
 	seedValidateBaseURLCorpus(f)
 	f.Fuzz(func(t *testing.T, raw string) {
-		if err := validateBaseURL(raw); err != nil {
+		if err := validateBaseURL(raw, "deepseek"); err != nil {
 			return
 		}
 		u, perr := url.Parse(raw)

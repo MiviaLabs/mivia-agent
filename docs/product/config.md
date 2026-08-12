@@ -42,6 +42,7 @@ The workspace `.env` stays beside the project files at `./.env`. Tools such as d
 | DeepSeek advanced example | `deepseek-v4-pro` (declare it, then set `default_model` or use `--model`) |
 | OpenRouter example | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
 | ZAI example | `glm-5.2` (declare it under `providers.zai`) |
+| Ollama example | `gpt-oss:120b` (declare it under `providers.ollama`) |
 
 ## Set up a provider
 
@@ -87,9 +88,44 @@ api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
 
+### Ollama
+
+The `ollama` provider supports two modes. The provider name is always
+`ollama`; mode is inferred from `base_url` via the loopback predicate —
+literal loopback hostnames (`127.0.0.1`, `::1`, `localhost`) mean local
+daemon mode with **no API key**; any other `base_url` means cloud mode
+and requires `OLLAMA_API_KEY`. localhost is trusted as loopback per the
+design (matching internal/config/loopback.go's doc comment); environments
+where localhost does not resolve to loopback should use 127.0.0.1 instead.
+The client additionally resolves the host once at construction and pins the
+connection to the verified loopback address, so keyless local mode fails
+closed (with a clear error) if localhost resolves to a non-loopback address.
+
+**Cloud profile** (Ollama Cloud, API key required):
+
+```toml
+[providers.ollama]
+models = [{ name = "gpt-oss:120b", context_window_tokens = 131072 }]
+default_model = "gpt-oss:120b"
+api_key_env = "OLLAMA_API_KEY"
+base_url = "https://ollama.com/v1"
+```
+
+**Local-daemon profile** (local Ollama, no key needed):
+
+```toml
+[providers.ollama]
+models = [{ name = "gpt-oss:120b", context_window_tokens = 131072 }]
+default_model = "gpt-oss:120b"
+base_url = "http://127.0.0.1:11434/v1"
+```
+
+Local daemon model names must be declared in `models` and match the
+output of `ollama list`. The local profile needs no key in the env file.
+
 ## Provider support
 
-mivia currently supports `deepseek`, `openrouter`, and `zai`. Do not add an
+mivia currently supports `deepseek`, `openrouter`, `zai`, and `ollama`. Do not add an
 arbitrary OpenAI-compatible provider name. The provider registry rejects names
 that it does not support.
 
@@ -107,6 +143,7 @@ An empty list, a missing list, or a remote model registry is invalid. mivia does
 DEEPSEEK_API_KEY=sk-REPLACE-ME
 OPENROUTER_API_KEY=sk-REPLACE-ME
 ZAI_API_KEY=sk-REPLACE-ME
+OLLAMA_API_KEY=ollama-REPLACE-ME  # required for cloud mode only; local daemon needs no key
 ```
 
 ## Installed binary

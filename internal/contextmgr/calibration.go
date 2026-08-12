@@ -43,10 +43,12 @@ func (c *Calibration) Update(estimated, reported int) {
 	}
 
 	alpha := c.Alpha
-	if alpha <= 0 {
+	if !(alpha > 0 && alpha <= 1) {
+		// Enforce the documented invariant (0 < alpha <= 1): fall back to
+		// the default for alpha <= 0, alpha > 1, and NaN/+Inf/-Inf.
 		alpha = defaultCalibrationAlpha
 	}
-	c.Ratio = alpha*ratio + (1-alpha)*c.Ratio
+	c.Ratio = math.Max(calibrationMinRatio, math.Min(calibrationMaxRatio, alpha*ratio+(1-alpha)*c.Ratio))
 	c.Samples++
 }
 

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestResolvedValidateRejectsEmptyRequiredFields pins each of Validate's
 // required-field checks: provider name, model, base_url, and api_key_env
@@ -50,6 +53,42 @@ func TestValidEnvNameRejectsOutOfRangeAndBadFirstChar(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if validEnvName(tt.env) {
 				t.Fatalf("validEnvName(%q) = true, want false", tt.env)
+			}
+		})
+	}
+}
+
+// TestValidateBaseURLOllamaLoopbackRelaxation pins the planned ollama
+// loopback relaxation: an http loopback base_url (the default ollama serving
+// address) is accepted for the ollama provider even without
+// MIVIA_ALLOW_INSECURE_HTTP, while the same loopback URL stays gated for
+// other providers and a non-loopback http URL is never relaxed for ollama.
+// The env var is pinned explicitly so the case never depends on the ambient
+// environment (mirroring TestLoadHTTPBaseURLEnvGate's t.Setenv usage).
+func TestValidateBaseURLOllamaLoopbackRelaxation(t *testing.T) {
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "")
+	tests := []struct {
+		name            string
+		raw             string
+		provider        string
+		wantErrContains string
+	}{
+		{"ollama http loopback relaxed without env", "http://127.0.0.1:11434/v1", "ollama", ""},
+		{"non-ollama loopback not relaxed", "http://127.0.0.1:11434/v1", "deepseek", "https"},
+		{"ollama https accepted", "https://ollama.com/v1", "ollama", ""},
+		{"ollama non-loopback http rejected", "http://evil.example", "ollama", "https"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBaseURL(tt.raw, tt.provider)
+			if tt.wantErrContains == "" {
+				if err != nil {
+					t.Fatalf("validateBaseURL(%q, %q) = %v, want nil", tt.raw, tt.provider, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErrContains) {
+				t.Fatalf("validateBaseURL(%q, %q) = %v, want error containing %q", tt.raw, tt.provider, err, tt.wantErrContains)
 			}
 		})
 	}

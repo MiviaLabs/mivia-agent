@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -109,6 +110,8 @@ type CompatOptions struct {
 	// RequiresReasoningReplay: z.ai sets replay without this bit so a
 	// reasoning=off multi-step tool run still ships those turns.
 	RejectReasoningLessToolTurns bool
+	// DialContext pins every dial for keyless loopback clients; nil keeps http.DefaultTransport.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // NewOpenAICompatWithOptions constructs an OpenAI-compatible client from
@@ -133,14 +136,11 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		rejectReasoningLessToolTurns: opts.RejectReasoningLessToolTurns,
 		client: &http.Client{
 			Timeout:       DefaultHTTPTimeout,
-			Transport:     newRetryRoundTripper(http.DefaultTransport, retry),
+			Transport:     newRetryRoundTripper(compatBaseRoundTripper(opts.DialContext), retry),
 			CheckRedirect: checkNoReplayRedirect,
 		},
 	}
-	// Every OpenAI-compatible provider gets a default error parser that
-	// never forwards the provider's own message text. Providers that need
-	// richer diagnostics (e.g. z.ai with its numeric body codes) override
-	// this by setting ErrorParser in their CompatOptions.
+	// Every OpenAI-compatible provider gets a default error parser that never forwards the provider's own message text; providers override it via CompatOptions.ErrorParser.
 	if c.errorParser == nil {
 		c.errorParser = openaiErrorParser
 	}
@@ -192,7 +192,7 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		rejectReasoningLessToolTurns: options.RejectReasoningLessToolTurns,
 		client: &http.Client{
 			Timeout:       DefaultHTTPTimeout,
-			Transport:     newRetryRoundTripper(http.DefaultTransport, baseOpts),
+			Transport:     newRetryRoundTripper(compatBaseRoundTripper(options.DialContext), baseOpts),
 			CheckRedirect: checkNoReplayRedirect,
 		},
 	}

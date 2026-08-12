@@ -705,3 +705,61 @@ func TestMultiEditReapplyingIdenticalEditDoesNotDuplicate(t *testing.T) {
 		t.Fatalf("extra() appears %d times after reapplying an already-applied multi_edit, want 1 (second call err=%v, content=%q)", n, err, got)
 	}
 }
+
+// A file that already contains new_string elsewhere but still contains a live
+// old_string must still be edited. Before the fix, the alreadyApplied skip
+// keyed only on new_string's presence, so a file that merely contained the
+// replacement text (an earlier independent application to another spot, or the
+// model pre-filling it) silently dropped the edit with a false "no change
+// (edit already applied)" success report. The fixed predicate strips the
+// landed new_string occurrences and only skips when no old_string remains
+// outside them.
+func TestSearchReplaceNewStringPreexistsStillApplies(t *testing.T) {
+	_, reg := setupWS(t)
+	mustExec(t, reg, "write_file", map[string]any{
+		"path":    "f.txt",
+		"content": "beta_marker already applied elsewhere\nalpha_marker still needs replacing\n",
+	})
+	out := mustExec(t, reg, "search_replace", map[string]any{
+		"path":       "f.txt",
+		"old_string": "alpha_marker",
+		"new_string": "beta_marker",
+	})
+	if strings.Contains(out, "no change") {
+		t.Fatalf("live edit was skipped as already applied: %q", out)
+	}
+	got := mustExec(t, reg, "read_file", map[string]any{"path": "f.txt"})
+	if strings.Contains(got, "alpha_marker") {
+		t.Fatalf("old_string still present after edit: %q", got)
+	}
+	if n := strings.Count(got, "beta_marker"); n != 2 {
+		t.Fatalf("new_string appears %d times after edit, want 2: %q", n, got)
+	}
+}
+
+// Same false-positive scenario through multi_edit: the batch must apply a live
+// edit whose new_string merely pre-exists, while a retried identical edit
+// (old_string only inside the landed new_string) still no-ops.
+func TestMultiEditNewStringPreexistsStillApplies(t *testing.T) {
+	_, reg := setupWS(t)
+	mustExec(t, reg, "write_file", map[string]any{
+		"path":    "f.txt",
+		"content": "beta_marker already applied elsewhere\nalpha_marker still needs replacing\n",
+	})
+	out := mustExec(t, reg, "multi_edit", map[string]any{
+		"path": "f.txt",
+		"edits": []map[string]any{
+			{"old_string": "alpha_marker", "new_string": "beta_marker"},
+		},
+	})
+	if strings.Contains(out, "no change") {
+		t.Fatalf("live edit was skipped as already applied: %q", out)
+	}
+	got := mustExec(t, reg, "read_file", map[string]any{"path": "f.txt"})
+	if strings.Contains(got, "alpha_marker") {
+		t.Fatalf("old_string still present after edit: %q", got)
+	}
+	if n := strings.Count(got, "beta_marker"); n != 2 {
+		t.Fatalf("new_string appears %d times after edit, want 2: %q", n, got)
+	}
+}
