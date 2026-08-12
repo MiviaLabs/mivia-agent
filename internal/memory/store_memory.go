@@ -18,6 +18,7 @@ type memRow struct {
 	e         Entry
 	id, org   string
 	createdAt time.Time
+	tier      string // "core" or "" (treated as "archive", the sqlite-backend default)
 }
 
 type memStore struct {
@@ -31,6 +32,12 @@ func newMemStore(cfg Config) *memStore {
 	return &memStore{cfg: cfg}
 }
 
+// Save on this backend has no consolidation trigger, unlike sqliteStore.Save
+// (plan 76, D2): consolidation was scoped to sqlite only - it exists to keep
+// a *committed* database growing gracefully, and the in-memory backend has
+// nothing committed to grow. A store_backend = "memory" config still hits
+// the hard MaxEntries refusal at the cap with no auto-consolidation; this is
+// an intentional asymmetry, not an oversight (confirmed in Step 5 review).
 func (s *memStore) Save(ctx context.Context, e Entry) (Result, error) {
 	if s.cfg.ReadOnly {
 		return Result{}, errors.New("memory store is read-only")
@@ -173,6 +180,77 @@ func (s *memStore) matchParsed(rows []memRow, text string, p parsedQuery, limit 
 		out[i] = m.r
 	}
 	return out
+}
+
+func (s *memStore) PromoteToCore(ctx context.Context, id string) error {
+	if s.cfg.ReadOnly {
+		return errors.New("memory store is read-only")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rows := range [][]memRow{s.project, s.org} {
+		for i := range rows {
+			if rows[i].id != id {
+				continue
+			}
+			if rows[i].tier == "core" {
+				return nil
+			}
+			var count int
+			for _, r := range rows {
+				if r.tier == "core" && r.org == rows[i].org {
+					count++
+				}
+			}
+			if count >= CoreTierCap {
+				return ErrCoreTierFull
+			}
+			rows[i].tier = "core"
+			return nil
+		}
+	}
+	return ErrEntryNotFound
+}
+
+func (s *memStore) CoreEntries(ctx context.Context, scope Scope) ([]Result, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var rows []memRow
+	switch scope {
+	case ScopeProject:
+		rows = s.project
+	case ScopeOrg:
+		if s.cfg.OrgID == "" {
+			return nil, nil
+		}
+		rows = s.org
+	default:
+		return nil, fmt.Errorf("scope must be project or org, got %q", scope)
+	}
+	var out []Result
+	for _, row := range rows {
+		if row.tier != "core" {
+			continue
+		}
+		out = append(out, Result{
+			ID: row.id, Scope: row.e.Scope, Org: row.org, Title: row.e.Title,
+			Verdict: row.e.Verdict, Tags: append([]string(nil), row.e.Tags...),
+			Created: row.e.Created, Snippet: row.e.Summary,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Created != out[j].Created {
+			return out[i].Created > out[j].Created
+		}
+		if out[i].Title != out[j].Title {
+			return out[i].Title < out[j].Title
+		}
+		return out[i].ID < out[j].ID
+	})
+	if len(out) > CoreTierCap {
+		out = out[:CoreTierCap]
+	}
+	return out, nil
 }
 
 func (s *memStore) Count(ctx context.Context, scope Scope) (int, error) {

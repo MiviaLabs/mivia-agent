@@ -386,6 +386,7 @@ func (s *Session) ResetAdmissions() {
 // separate check would let a force-sent sibling turn start in the gap and have
 // its dispatcher closed underneath it (plan tools/05 R2-1).
 func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
+	pub.Prompt = ComposeSystemPrompt(pub.Prompt, "")
 	s.mu.Lock()
 	if s.switching ||
 		(pub.RequireSoleActiveTurn && s.activeTurns != 1) ||

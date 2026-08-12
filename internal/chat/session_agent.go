@@ -73,6 +73,7 @@ func (s *Session) SetEventIdentityFactory(factory func(uint64) *events.Identity)
 // PublishAgentSurface atomically publishes root-agent prompt, turn settings,
 // scoped tools, dispatcher, and skill registry after candidate construction.
 func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *tools.Registry, dispatcher *runtime.Dispatcher, skillReg *skills.Registry) {
+	prompt = ComposeSystemPrompt(prompt, "")
 	s.mu.Lock()
 	outgoing := s.prefixIdentity
 	old := s.binding.Dispatcher
@@ -104,6 +105,7 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 // session lock, keeping the system message used by the next provider request
 // consistent with the public fields.
 func (s *Session) SetAgentSettings(prompt string, maxSteps int) {
+	prompt = ComposeSystemPrompt(prompt, "")
 	s.mu.Lock()
 	outgoing := s.prefixIdentity
 	s.SystemPrompt = prompt
