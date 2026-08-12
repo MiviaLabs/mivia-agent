@@ -39,7 +39,10 @@ func TestChatWorktreeCoverageRunRejectsStaleRestart(t *testing.T) {
 	runConfiguredChatOnceImpl = func(chatInvocation, *config.Resolved) error {
 		return &workspaceRestart{dir: t.TempDir(), worktreeInstance: expected}
 	}
-	err := runConfiguredChat(chatInvocation{}, &config.Resolved{})
+	// workspacePath isolates this test from the ambient main repository's
+	// real .mivia/mivia.toml (see the note in
+	// TestRunConfiguredChatCarriesResumeSessionAcrossRestart).
+	err := runConfiguredChat(chatInvocation{workspacePath: t.TempDir()}, &config.Resolved{})
 	if !errors.Is(err, contextstate.ErrWorktreeDeleted) || !strings.Contains(err.Error(), "validate workspace restart") {
 		t.Fatalf("stale restart error = %v", err)
 	}
