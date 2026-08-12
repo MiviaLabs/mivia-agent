@@ -24,35 +24,39 @@ import (
 // this guard is the defense against writers that never take that lock.
 
 type fileObservation struct {
-	mtime  time.Time
-	size   int64
-	digest [sha256.Size]byte // sha256 of the first observeHashBytes bytes
+	mtime time.Time
+	size  int64
+	// digest is the sha256 of the FULL file content, so a guard check is
+	// O(file size) CPU on multi-GB targets. That is the necessary price of
+	// the "any on-disk change" invariant: windowed reads already scan the
+	// whole file, in-place edit targets are bounded by maxFileBytes, and
+	// delete/overwrite of a huge target is exactly the case the guard must
+	// not silently clobber.
+	digest [sha256.Size]byte
 }
-
-// observeHashBytes caps the hashed prefix. mtime and size still cover files
-// larger than the cap, and the in-place edit tools read whole files anyway;
-// a bounded prefix keeps the guard cheap on multi-GB targets.
-const observeHashBytes = 16 << 20 // 16 MiB
 
 var editFileObservations sync.Map // map[string]fileObservation keyed by abs path
 
 // observeFileState captures the current on-disk state of abs. A missing file
 // is not an error here: it is the legitimate pre-state of a create.
+//
+// The open goes through the package's hardened openRegularFile (O_NONBLOCK
+// and O_NOFOLLOW on Unix, then a Stat that refuses non-regular files), so a
+// FIFO or other special file swapped in after a caller pre-check cannot block
+// the tool worker; mtime and size come from that open's own Stat, so the
+// guard compares against what it actually opened, closing the TOCTOU window
+// between a caller's Stat and this open.
 func observeFileState(abs string) (fileObservation, error) {
 	var obs fileObservation
-	f, err := os.Open(abs)
+	f, st, err := openRegularFile(abs)
 	if err != nil {
 		return obs, err
 	}
 	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return obs, err
-	}
 	obs.mtime = st.ModTime()
 	obs.size = st.Size()
 	h := sha256.New()
-	if _, err := io.CopyN(h, f, observeHashBytes); err != nil && err != io.EOF {
+	if _, err := io.Copy(h, f); err != nil {
 		return obs, err
 	}
 	copy(obs.digest[:], h.Sum(nil))
@@ -81,8 +85,10 @@ func dropFileObservation(abs string) {
 // the agent last read or wrote it. With no prior observation there is nothing
 // to be stale against, so the current state is recorded and the write
 // proceeds - first writes are explicit by construction and the tool's diff
-// shows what they replace. Callers must have already established that abs is
-// a regular file, so this never opens a FIFO or other blocking special file.
+// shows what they replace. The guard opens abs itself through the package's
+// hardened openRegularFile, so it self-protects: a FIFO or other special file
+// swapped in after any caller pre-check cannot block the tool worker, and a
+// non-regular or symlink final component is refused, not followed.
 func guardStaleWrite(abs string) error {
 	cur, err := observeFileState(abs)
 	if err != nil {

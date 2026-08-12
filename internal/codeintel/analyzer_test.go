@@ -2,8 +2,10 @@ package codeintel
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -303,4 +305,100 @@ func TestAnalyzerDoesNotReachNetwork(t *testing.T) {
 	if err == nil {
 		t.Log("References(nonexistent) returned nil error (may be empty result)")
 	}
+}
+
+// TestReferencesTruncationDeterministic is a regression test for the bug where
+// collectLocations applied the limit inside the addLoc callback while iterating
+// the unordered TypesInfo.Defs/Uses maps: which subset survived an identical
+// truncated query was randomized by map iteration order. After the fix all
+// matches are collected and deduplicated first, sorted deterministically
+// (roleRank - definitions first - then path/line/role/symbol), and only then
+// capped, so five repeated identical queries must return the identical sorted
+// prefix of the full result.
+func TestReferencesTruncationDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"), "module example.com/det\n\ngo 1.25\n")
+
+	// 1 definition (var Target int) plus 40 uses = 41 distinct locations.
+	var body strings.Builder
+	body.WriteString("package det\n\nvar Target int\n\n")
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&body, "func use%d() { _ = Target }\n", i)
+	}
+	write(t, filepath.Join(dir, "det.go"), body.String())
+
+	a := NewAnalyzer(dir)
+	ctx := context.Background()
+
+	full, err := a.References(ctx, "det.Target", nil, 1000)
+	if err != nil {
+		t.Fatalf("References(det.Target, limit=1000): %v", err)
+	}
+	if full.Truncated {
+		t.Fatal("Truncated=true with limit=1000 above the real total")
+	}
+	if len(full.Locations) != 41 {
+		t.Fatalf("expected 41 distinct locations (1 definition + 40 uses), got %d", len(full.Locations))
+	}
+	wantPrefix := sortLocations(full.Locations)[:5]
+
+	var first []Location
+	for i := 0; i < 5; i++ {
+		res, err := a.References(ctx, "det.Target", nil, 5)
+		if err != nil {
+			t.Fatalf("References(det.Target, limit=5) call %d: %v", i, err)
+		}
+		if !res.Truncated {
+			t.Fatalf("call %d: Truncated=false with limit=5 below the real total of 41", i)
+		}
+		if len(res.Locations) != 5 {
+			t.Fatalf("call %d: len(Locations)=%d, want 5", i, len(res.Locations))
+		}
+		if !equalLocations(res.Locations, wantPrefix) {
+			t.Fatalf("call %d: truncated subset %+v is not the (path,line,role,symbol)-sorted prefix %+v", i, res.Locations, wantPrefix)
+		}
+		if i == 0 {
+			first = append([]Location(nil), res.Locations...)
+		} else if !equalLocations(res.Locations, first) {
+			t.Fatalf("call %d: result %+v differs from call 0's %+v", i, res.Locations, first)
+		}
+	}
+}
+
+// sortLocations returns a copy of locs sorted exactly as collectLocations
+// orders locations before capping: role rank (definitions first) then
+// (path, line, role, symbol). Both sides call the same roleRank, so the
+// expected truncated prefix cannot drift from the production order.
+func sortLocations(locs []Location) []Location {
+	out := append([]Location(nil), locs...)
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if ra, rb := roleRank(a.Role), roleRank(b.Role); ra != rb {
+			return ra < rb
+		}
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		if a.Role != b.Role {
+			return a.Role < b.Role
+		}
+		return a.Symbol < b.Symbol
+	})
+	return out
+}
+
+// equalLocations reports whether two location slices are element-wise equal.
+func equalLocations(a, b []Location) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

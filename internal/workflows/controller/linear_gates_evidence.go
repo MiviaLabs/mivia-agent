@@ -49,17 +49,7 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 	}
 	// A caller deadline or cancel is a run timeout, not a verifier host failure.
 	if errors.Is(verifyErr, context.DeadlineExceeded) || errors.Is(verifyErr, context.Canceled) {
-		writeCtx, cancel := stepPersistenceContext(ctx)
-		defer cancel()
-		// Settle the admitted attempt as timed_out before the run reaches a
-		// terminal state, mirroring timeoutOpenHumanAttempt and the agent-step
-		// settle path: a terminal run must never leave an attempt Running. The
-		// deadline cause is persisted so the CLI can explain the timeout.
-		if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(writeCtx, c.Repo, verifyErr)}, workflowledger.AttemptStatusTimedOut, RouteDecision{}); err != nil {
-			return c.fail(writeCtx, run, err)
-		}
-		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusTimedOut))
-		return c.failWithStatus(writeCtx, run, context.DeadlineExceeded, workflowledger.RunStatusTimedOut)
+		return c.settleEvidenceGateTimeout(ctx, run, attempt, step, verifyErr)
 	}
 	output, err := json.Marshal(result)
 	if err != nil {
@@ -80,6 +70,15 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 		if route.ToStepID == "" {
 			route = failureRoute(step)
 		}
+		// This branch fails the run immediately after the persist (c.fail
+		// below), so the durable route must be terminal — never an un-honored
+		// on_failure/loop target (e.g. a repair step past a spent loop budget)
+		// that a crash between this persist and the status CAS could resume
+		// into. Mirrors the guarded pattern in routeEvidenceFailure,
+		// settleAgentAttempt, and settleHostFailure.
+		if !workflowledger.IsTerminalStepID(route.ToStepID) {
+			route.ToStepID = "failure"
+		}
 		_ = CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{Output: output, ErrorRef: storeErrorText(writeCtx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route)
 		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
 		return c.fail(writeCtx, run, err)
@@ -93,6 +92,22 @@ func (c *LinearController) advanceEvidenceGate(ctx context.Context, run workflow
 		return c.fail(writeCtx, run, routeErr)
 	}
 	return settleAfterRoute(ctx, c, run, route)
+}
+
+// settleEvidenceGateTimeout settles a gate attempt whose verifier hit a caller
+// deadline or cancel. A deadline or cancel is a run timeout, not a verifier
+// host failure. The admitted attempt is settled as timed_out before the run
+// reaches a terminal state, mirroring timeoutOpenHumanAttempt and the agent-
+// step settle path: a terminal run must never leave an attempt Running. The
+// deadline cause is persisted so the CLI can explain the timeout.
+func (c *LinearController) settleEvidenceGateTimeout(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, step definition.Step, verifyErr error) (workflowledger.RunSnapshot, bool, error) {
+	writeCtx, cancel := stepPersistenceContext(ctx)
+	defer cancel()
+	if err := CompleteExistingStepResult(writeCtx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(writeCtx, c.Repo, verifyErr)}, workflowledger.AttemptStatusTimedOut, RouteDecision{}); err != nil {
+		return c.fail(writeCtx, run, err)
+	}
+	c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusTimedOut))
+	return c.failWithStatus(writeCtx, run, context.DeadlineExceeded, workflowledger.RunStatusTimedOut)
 }
 
 // runGateVerify reports the gate start, keeps the durable heartbeat trail
