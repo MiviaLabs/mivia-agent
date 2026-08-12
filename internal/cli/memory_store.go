@@ -29,7 +29,7 @@ func wireSessionMemory(opts *tools.DefaultOptions, root string, res *config.Reso
 }
 
 // openMemoryStore builds the session memory backend from the resolved
-// [memory] config.
+// [memory] config, read-write.
 //
 // store_path resolves relative to the workspace root, so a repo owner can
 // keep the database inside the repository (for example ".mivia/memory.db")
@@ -44,6 +44,18 @@ func wireSessionMemory(opts *tools.DefaultOptions, root string, res *config.Reso
 // every save runs a WAL checkpoint, so the main database file is always
 // current and safe to commit at any time.
 func openMemoryStore(root string, mc config.MemoryConfig) (memory.Store, error) {
+	return openMemoryStoreWithReadOnly(root, mc, false)
+}
+
+// openMemoryStoreReadOnly is openMemoryStore with ReadOnly: true: a search
+// session that must never write the committed database file.
+func openMemoryStoreReadOnly(root string, mc config.MemoryConfig) (memory.Store, error) {
+	return openMemoryStoreWithReadOnly(root, mc, true)
+}
+
+// openMemoryStoreWithReadOnly resolves the [memory] config to a memory store;
+// readOnly controls memory.Config.ReadOnly (see openMemoryStore).
+func openMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {
 	projectPath := strings.TrimSpace(mc.StorePath)
 	if projectPath == "" {
 		projectPath = workspace.MemoryDBPath(root)
@@ -66,6 +78,7 @@ func openMemoryStore(root string, mc config.MemoryConfig) (memory.Store, error) 
 		MaxEntries:       mc.MaxEntries,
 		MaxSearchResults: mc.MaxSearchResults,
 		BlockPatterns:    mc.BlockPatterns,
+		ReadOnly:         readOnly,
 	}
 	return memory.Open(cfg)
 }
