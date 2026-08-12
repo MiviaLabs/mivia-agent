@@ -15,12 +15,68 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
+
+// sessionsShowPreviewLimit bounds a persisted message's content/tool-call-
+// argument text in "sessions show" output. Larger than the live NDJSON
+// preview's 256/512-byte bounds (internal/agent/loop_tool_preview.go) since
+// this is a human reading past history, not a streaming progress indicator -
+// but still bounded, so a pathologically large stored blob (a `write_file`
+// call's content, say) can't dump unbounded output.
+const sessionsShowPreviewLimit = 8192
+
+// redactSessionMessagesForDisplay returns copies of msgs with tool-call
+// arguments and message content scrubbed via the same redact.Text policy the
+// live "chat --json" NDJSON preview uses for tool_start/tool_end (see
+// redactToolInput/redactToolOutputForTool in
+// internal/agent/loop_tool_preview.go) - persisted session history is raw,
+// unredacted provider.Message data (arguments/content exactly as sent to/
+// from the model), so a caller printing it (this command's own --json and
+// text output, and external consumers like mivia-agent-desktop) must not
+// see anything a live turn wouldn't have shown.
+//
+// Builds fresh ToolCalls slices rather than mutating msgs[i].ToolCalls[j] in
+// place: MessagesCopy's copy() is a shallow slice-header copy, so the
+// backing ToolCall array is still shared with the live chat.Session this was
+// loaded from - mutating an element in place would corrupt that session's
+// real history for any process still holding it.
+func redactSessionMessagesForDisplay(msgs []provider.Message) []provider.Message {
+	out := make([]provider.Message, len(msgs))
+	for i, m := range msgs {
+		m.Content = truncateForDisplay(redact.Text(m.Content))
+		if len(m.ToolCalls) > 0 {
+			toolCalls := make([]provider.ToolCall, len(m.ToolCalls))
+			for j, tc := range m.ToolCalls {
+				tc.Function.Arguments = truncateForDisplay(redact.Text(tc.Function.Arguments))
+				toolCalls[j] = tc
+			}
+			m.ToolCalls = toolCalls
+		}
+		out[i] = m
+	}
+	return out
+}
+
+// truncateForDisplay bounds s to sessionsShowPreviewLimit bytes, cutting on a
+// UTF-8 rune boundary so a multi-byte character at the cut point is dropped
+// whole rather than split into invalid bytes.
+func truncateForDisplay(s string) string {
+	if len(s) <= sessionsShowPreviewLimit {
+		return s
+	}
+	cut := sessionsShowPreviewLimit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
 
 // defaultSessionsShowLimit bounds "sessions show" to recent history by
 // default, matching the task's confirmed requirement: bounded recent
@@ -137,10 +193,12 @@ func runSessionsList(args []string, stdout io.Writer) error {
 // runSessionsShow loads a saved session by name (the session_id returned by
 // "sessions list" for an auto-persisted live session, or an explicit snapshot
 // name) and prints the last --limit messages (default
-// defaultSessionsShowLimit) as JSON. Messages are the raw
-// provider.Message values (role, content, tool_calls, tool_call_id, name,
-// reasoning_content, created_at - see internal/provider/provider.go), printed
-// unfiltered: tool-call/tool-result and any leading system-prompt message are
+// defaultSessionsShowLimit) as JSON. Messages are provider.Message values
+// (role, content, tool_calls, tool_call_id, name, reasoning_content,
+// created_at - see internal/provider/provider.go), redacted and bounded via
+// redactSessionMessagesForDisplay (same redact.Text policy the live
+// "chat --json" NDJSON preview applies) but otherwise unfiltered:
+// tool-call/tool-result and any leading system-prompt message are
 // included rather than stripped, so a caller reconstructing chat turns (e.g.
 // mivia-agent-desktop) gets the full shape it needs instead of a lossy
 // user/assistant-only view.
@@ -176,6 +234,7 @@ func runSessionsShow(args []string, stdout io.Writer) error {
 	if limit > 0 && len(msgs) > limit {
 		msgs = msgs[len(msgs)-limit:]
 	}
+	msgs = redactSessionMessagesForDisplay(msgs)
 	if jsonFlag {
 		return writeSessionsJSON(stdout, msgs)
 	}
