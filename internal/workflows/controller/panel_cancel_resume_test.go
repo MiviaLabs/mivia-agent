@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	coordledger "github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -41,6 +42,134 @@ func TestAdvancePanelStep_ResumesCancelPendingUntilAllTerminal(t *testing.T) {
 	}
 	if stored.Status != workflowledger.AttemptStatusCanceled {
 		t.Fatalf("attempt status = %q, want canceled", stored.Status)
+	}
+}
+
+// conflictingCompleteStepAttemptRepository fails the first CompleteStepAttempt
+// call with ErrConflict, simulating a second executor's concurrent Advance
+// winning the CAS on the same cancel_pending attempt first (D14's
+// claim-heartbeat handoff window), then behaves normally.
+type conflictingCompleteStepAttemptRepository struct {
+	workflowledger.Repository
+	failed bool
+}
+
+func (r *conflictingCompleteStepAttemptRepository) CompleteStepAttempt(ctx context.Context, runID, attemptID string, expectedVersion uint64, outcome workflowledger.AttemptOutcome) error {
+	if !r.failed {
+		r.failed = true
+		return workflowledger.ErrConflict
+	}
+	return r.Repository.CompleteStepAttempt(ctx, runID, attemptID, expectedVersion, outcome)
+}
+
+// Bug-audit finding: reconcilePanelCancelPending must treat a version-CAS
+// conflict on CompleteStepAttempt the same retryable way ErrCancelBlocked is
+// treated, not escalate it to a permanent run failure via c.fail. A losing
+// CompleteStepAttempt here is exactly what happens when two executors are
+// both legitimately live for the same run near a claim-lease handoff and
+// both race reconcilePanelCancelPending for the same attempt.
+func TestAdvancePanelStep_CancelPendingCompleteStepAttemptConflictStaysNonTerminal(t *testing.T) {
+	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
+	if err := repo.CompareAndSetPanelPhase(ctx, ctrl.RunID, attempt.AttemptID, attempt.Version, workflowledger.PanelPhaseMembersAdmitted, workflowledger.PanelPhaseCancelPending, nil); err != nil {
+		t.Fatalf("CompareAndSetPanelPhase() error = %v", err)
+	}
+	conflicting := &conflictingCompleteStepAttemptRepository{Repository: repo}
+	ctrl.Repo = conflicting
+
+	run, done, err := ctrl.Advance(context.Background())
+	if err != nil {
+		t.Fatalf("Advance() error = %v, want nil (a CAS conflict must be retryable, not a durable error)", err)
+	}
+	if done {
+		t.Fatal("Advance() done = true, want false: a losing CompleteStepAttempt CAS must leave the run non-terminal for a later retry")
+	}
+	if run.Status == workflowledger.RunStatusFailed {
+		t.Fatal("a CompleteStepAttempt version conflict must never fail the run; the attempt legitimately reconciled to canceled")
+	}
+	stored, err := repo.GetStepAttempt(context.Background(), ctrl.RunID, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflowledger.IsTerminalAttemptStatus(stored.Status) {
+		t.Fatalf("attempt status = %q, want non-terminal after the lost CAS so a retry can settle it", stored.Status)
+	}
+
+	// A later retry (the other executor's write already landed; this repo
+	// now behaves normally) converges to canceled without failing.
+	run, done, err = ctrl.Advance(context.Background())
+	if err != nil {
+		t.Fatalf("retry Advance() error = %v", err)
+	}
+	if !done || run.Status != workflowledger.RunStatusCanceled {
+		t.Fatalf("retry Advance() done=%v status=%q, want done=true status=canceled", done, run.Status)
+	}
+}
+
+// conflictingRunStatusRepository simulates a second executor's concurrent
+// CompareAndSetRunStatus call winning the race first: on the first call it
+// actually performs the real CAS to the run's current version (as the
+// concurrent winner would), then reports ErrConflict to this caller, exactly
+// like a real optimistic-concurrency loss — this caller's `run` view is
+// simply stale, not wrong.
+type conflictingRunStatusRepository struct {
+	workflowledger.Repository
+	failed bool
+}
+
+func (r *conflictingRunStatusRepository) CompareAndSetRunStatus(ctx context.Context, runID string, expectedVersion uint64, status workflowledger.RunStatus, finishedAt *time.Time) error {
+	if !r.failed {
+		r.failed = true
+		current, err := r.Repository.GetRun(ctx, runID)
+		if err != nil {
+			return err
+		}
+		if err := r.Repository.CompareAndSetRunStatus(ctx, runID, current.Version, status, finishedAt); err != nil {
+			return err
+		}
+		return workflowledger.ErrConflict
+	}
+	return r.Repository.CompareAndSetRunStatus(ctx, runID, expectedVersion, status, finishedAt)
+}
+
+// Bug-audit finding: settlePanelRunCanceled must treat a version-CAS conflict
+// on CompareAndSetRunStatus as retryable too, not escalate to c.fail. Without
+// this, a stale run version held by an executor that lost an earlier race can
+// durably flip an already-reconciled-canceled run to Failed even though the
+// run was in fact just settled canceled by the winner.
+func TestAdvancePanelStep_CancelPendingRunStatusConflictStaysNonTerminal(t *testing.T) {
+	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
+	if err := repo.CompareAndSetPanelPhase(ctx, ctrl.RunID, attempt.AttemptID, attempt.Version, workflowledger.PanelPhaseMembersAdmitted, workflowledger.PanelPhaseCancelPending, nil); err != nil {
+		t.Fatalf("CompareAndSetPanelPhase() error = %v", err)
+	}
+	conflicting := &conflictingRunStatusRepository{Repository: repo}
+	ctrl.Repo = conflicting
+
+	run, done, err := ctrl.Advance(context.Background())
+	if err != nil {
+		t.Fatalf("Advance() error = %v, want nil (a CAS conflict must be retryable, not a durable error)", err)
+	}
+	if done {
+		t.Fatal("Advance() done = true, want false: a losing CompareAndSetRunStatus CAS must not report the run settled from this call")
+	}
+	if run.Status == workflowledger.RunStatusFailed {
+		t.Fatal("a CompareAndSetRunStatus version conflict must never fail the run; every panel child legitimately reconciled to canceled")
+	}
+	stored, err := repo.GetRun(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != workflowledger.RunStatusCanceled {
+		t.Fatalf("run status = %q, want canceled: the concurrent winner's write must be the one visible durably", stored.Status)
+	}
+
+	// A later retry observes the run already terminal canceled and reports
+	// it done, without ever reaching c.fail.
+	run, done, err = ctrl.Advance(context.Background())
+	if err != nil {
+		t.Fatalf("retry Advance() error = %v", err)
+	}
+	if !done || run.Status != workflowledger.RunStatusCanceled {
+		t.Fatalf("retry Advance() done=%v status=%q, want done=true status=canceled", done, run.Status)
 	}
 }
 

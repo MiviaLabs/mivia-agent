@@ -12,14 +12,25 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// panelCancelCoordinator returns the coordinator a fresh runner from
-// e.NewRunner would use, so a panel-aware cancel (D15) can inspect and
-// cancel exact panel children through the same coordinator this engine
-// dispatches them with. Returns nil when NewRunner is unset or does not
-// build a *controller.CoordinatorRunner (e.g. a scripted test runner):
+// panelCancelCoordinator returns the coordinator that can inspect and cancel
+// exact panel children for runID through the same coordinator instance this
+// engine actually dispatches them with. When runID is live in this process
+// (active != nil), it reuses active.ctrl.Runner's coordinator: that is the
+// exact instance the in-flight Advance() call dispatched panel children
+// with, holding the in-memory handle (and claim holder identity) needed to
+// genuinely cancel a live local-actor member instead of merely refusing a
+// held claim (D15). Only when runID is not live in this process does it fall
+// back to a fresh coordinator from e.NewRunner, matching prior behavior for
+// cross-process/recovered cancellation. Returns nil when neither source
+// yields a *controller.CoordinatorRunner (e.g. a scripted test runner):
 // CancelRunWithAttemptsWithClaim then fails closed only if it actually
 // finds a live panel attempt to reconcile.
-func (e *Engine) panelCancelCoordinator() coordinator.Coordinator {
+func (e *Engine) panelCancelCoordinator(active *activeRun) coordinator.Coordinator {
+	if active != nil && active.ctrl != nil {
+		if runner, ok := active.ctrl.Runner.(*controller.CoordinatorRunner); ok {
+			return runner.Coordinator
+		}
+	}
 	if e.NewRunner == nil {
 		return nil
 	}
@@ -64,7 +75,7 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelRes
 		return agenttools.CancelResult{}, err
 	}
 	defer func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }()
-	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, e.Repo, e.panelCancelCoordinator(), runID, holder)
+	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, e.Repo, e.panelCancelCoordinator(active), runID, holder)
 	if err != nil {
 		// Context cancel may already have settled the run; treat terminal as success.
 		run, getErr := e.Repo.GetRun(ctx, runID)

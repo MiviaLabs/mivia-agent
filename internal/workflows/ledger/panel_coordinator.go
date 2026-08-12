@@ -225,21 +225,40 @@ func (p PanelCoordinator) cancelOrTombstone(ctx context.Context, runID, taskID s
 	waitOnlyCtx := coordinator.ContextWithPanelWaitOnlyJoin(p.childContext(ctx))
 	handle, err := p.inner.JoinAsRecovered(waitOnlyCtx, req)
 	if errors.Is(err, coordledger.ErrNotFound) {
-		if _, err := p.inner.EnsureTerminalSingleTaskRun(waitOnlyCtx, req, coordledger.TaskStatusCanceled); err != nil {
-			return false, err
-		}
-		return true, nil
+		// EnsureTerminalSingleTaskRun's own returned handle is not trustworthy
+		// on its own: if a concurrent forward dispatcher wins the admission
+		// race in the gap between JoinAsRecovered's ErrNotFound and this call,
+		// it returns that dispatcher's live, non-terminal join handle with a
+		// nil error instead of our tombstone. Route it through the same
+		// Cancel call below as any other found handle so a live winner is
+		// verified (and fails closed) rather than trusted.
+		handle, err = p.inner.EnsureTerminalSingleTaskRun(waitOnlyCtx, req, coordledger.TaskStatusCanceled)
 	}
 	if err != nil {
+		if isPanelCancelContention(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	if err := p.inner.Cancel(p.childContext(ctx), handle); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		if isPanelCancelContention(err) {
 			return false, nil
 		}
 		return false, err
 	}
 	return true, nil
+}
+
+// isPanelCancelContention reports whether err represents benign concurrent
+// contention on this exact child rather than a genuinely ambiguous claim:
+// a caller context deadline/cancellation while waiting on a live but
+// uncooperative child (D15 item 5, "a slow worker"), or a coordinator-ledger
+// version conflict from a concurrent cancel attempt on the same child (two
+// cancel surfaces racing each other, D15 items 13-15 - the other caller is
+// concurrently making the same progress this one wants, so this call
+// reports not-yet-terminal for a retry instead of a false "blocked").
+func isPanelCancelContention(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, coordledger.ErrConflict)
 }
 
 func (p PanelCoordinator) member(ctx context.Context, attemptID, memberID string) (PanelMemberExecution, error) {
