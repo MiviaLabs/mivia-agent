@@ -103,6 +103,84 @@ func TestSingleTaskAdmissionRejectsExistingRunAndClaim(t *testing.T) {
 	}
 }
 
+// TestSingleTaskAdmissionRecreatesRunAfterDelete pins the re-admission path
+// for a deleted run ID. DeleteRun leaves a run_deleted tombstone in the store,
+// so the atomic admission gate must treat a tombstone-only history as free,
+// and AdmitSingleTask must rebase the run sequence above the tombstone before
+// minting the new run_created/task_created events. Before the fix the gate
+// refused ANY surviving event (the tombstone included) with ErrDuplicate, so a
+// deterministically recycled run ID (e.g. a PanelChildID) wedged permanently.
+func TestSingleTaskAdmissionRecreatesRunAfterDelete(t *testing.T) {
+	for name, store := range map[string]storage.Store{
+		"memory": storage.NewMemory(),
+		"sqlite": func() storage.Store {
+			s, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "ledger.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s.Close() })
+			return s
+		}(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			repo := NewStorageLedgerRepository(store)
+
+			first := queuedSingleAdmission("recycle-key-one", "run-recycled", "task-one")
+			if err := repo.AdmitSingleTask(ctx, first); err != nil {
+				t.Fatalf("first admit: %v", err)
+			}
+			if err := repo.DeleteRun(ctx, first.Run.RunID); err != nil {
+				t.Fatalf("DeleteRun: %v", err)
+			}
+
+			second := queuedSingleAdmission("recycle-key-two", "run-recycled", "task-two")
+			if err := repo.AdmitSingleTask(ctx, second); err != nil {
+				t.Fatalf("re-admit deleted run ID: %v (regression: the run_deleted tombstone must free the ID)", err)
+			}
+
+			run, err := repo.GetRun(ctx, first.Run.RunID)
+			if err != nil {
+				t.Fatalf("GetRun after re-admit: %v", err)
+			}
+			tasks, err := repo.ListTasks(ctx, first.Run.RunID)
+			if err != nil || len(tasks) != 1 || tasks[0].TaskID != "task-two" {
+				t.Fatalf("re-admitted run=%+v tasks=%+v err=%v", run, tasks, err)
+			}
+			if got, err := repo.GetRunByIdempotencyKey(ctx, "recycle-key-two"); err != nil || got.RunID != first.Run.RunID {
+				t.Fatalf("key-two resolution = %+v err=%v, want the re-admitted run", got, err)
+			}
+			if _, err := repo.GetRunByIdempotencyKey(ctx, "recycle-key-one"); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("key-one still resolves after delete: %v, want ErrNotFound", err)
+			}
+
+			// A fresh observer repository converges to the same state: the
+			// tombstone replays before the reused-ID run_created.
+			observer := NewStorageLedgerRepository(store)
+			if _, err := observer.GetRun(ctx, first.Run.RunID); err != nil {
+				t.Fatalf("observer GetRun after catch-up: %v", err)
+			}
+			observerTasks, err := observer.ListTasks(ctx, first.Run.RunID)
+			if err != nil || len(observerTasks) != 1 || observerTasks[0].TaskID != "task-two" {
+				t.Fatalf("observer tasks=%+v err=%v", observerTasks, err)
+			}
+			if got, err := observer.GetRunByIdempotencyKey(ctx, "recycle-key-two"); err != nil || got.RunID != first.Run.RunID {
+				t.Fatalf("observer key resolution = %+v err=%v", got, err)
+			}
+			if _, err := observer.GetRunByIdempotencyKey(ctx, "recycle-key-one"); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("observer key-one resolution = %v, want ErrNotFound", err)
+			}
+
+			// Negative path: once re-admitted the run is LIVE again, and a
+			// third admission of the same ID is refused as a duplicate.
+			third := queuedSingleAdmission("recycle-key-three", "run-recycled", "task-three")
+			if err := repo.AdmitSingleTask(ctx, third); !errors.Is(err, ErrDuplicate) {
+				t.Fatalf("live-run re-admit error = %v, want ErrDuplicate", err)
+			}
+		})
+	}
+}
+
 func assertSingleTaskAdmissionRace(t *testing.T, firstStore, secondStore storage.Store) {
 	t.Helper()
 	first := NewStorageLedgerRepository(firstStore)
