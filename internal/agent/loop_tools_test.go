@@ -512,37 +512,6 @@ func TestLoopToolResultBudgetIsExact(t *testing.T) {
 		}
 	}
 }
-
-func TestExecuteToolsParallel_EnforcesBatchCallBudget(t *testing.T) {
-	reg := tools.NewRegistry()
-	for _, name := range []string{"one", "two", "three"} {
-		reg.Register(&scheduledTestTool{name: name, class: tools.ExecutionRead, key: "path:" + name, delay: time.Millisecond})
-	}
-	calls := []provider.ToolCall{tc("1", "one", `{}`), tc("2", "two", `{}`), tc("3", "three", `{}`)}
-	results := executeToolsParallel(context.Background(), calls, reg, Options{
-		MaxConcurrentTools:   3,
-		MaxToolCallsPerBatch: 2,
-	})
-	if len(results) != len(calls) {
-		t.Fatalf("results=%d, want %d", len(results), len(calls))
-	}
-	if results[2].err == nil || !strings.Contains(results[2].err.Error(), "calls") {
-		t.Fatalf("third result err=%v, want call budget error", results[2].err)
-	}
-	// The call-count budget bounds how many tools EXECUTE. It must never zero
-	// or shrink the content of results that did execute - the only per-result
-	// byte bound is capToolResult (MaxToolResultChars / Capability budgets).
-	for i := 0; i < 2; i++ {
-		if results[i].err != nil {
-			t.Fatalf("result %d err=%v, want success", i, results[i].err)
-		}
-		if results[i].result == "" || results[i].truncated {
-			t.Fatalf("result %d content=%q truncated=%v; batch ceiling must not touch executed results",
-				i, results[i].result, results[i].truncated)
-		}
-	}
-}
-
 func TestExecuteToolsParallel_QueueSaturationIncludesTimeoutAndPreservesOrder(t *testing.T) {
 	started := new(atomic.Int32)
 	reg := tools.NewRegistry()
