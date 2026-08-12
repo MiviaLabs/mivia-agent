@@ -125,9 +125,9 @@ func acquirePanelMemberPermit(ctx context.Context, limiter *PanelActorLimiter, r
 // canceled at the exact moment a slot freed up can still win the select and
 // return a valid lease. Without this guard, every caller here would go on to
 // call runnable admission (EnsureMember) on a canceled ctx, violating "a
-// canceled permit waiter never calls runnable admission" (Wave 8 audit
-// finding #3, required test matrix item). ReleaseBeforeActor safely returns
-// the slot without ever attaching a local actor to it.
+// canceled permit waiter never calls runnable admission" (required test
+// matrix item). ReleaseBeforeActor safely returns the slot without ever
+// attaching a local actor to it.
 func acquireGuardedPanelMemberPermit(ctx context.Context, limiter *PanelActorLimiter, runID string) (*panelActorLease, error) {
 	lease, err := limiter.Acquire(ctx, runID)
 	if err != nil {

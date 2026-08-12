@@ -40,7 +40,7 @@ func assertFeatureDeliveryReviewPanel(t *testing.T, workflow definition.Workflow
 	wantMembers := map[string]struct{ provider, model, skill, template string }{
 		"correctness": {"deepseek", "deepseek-v4-flash", "bug-audit", "templates/review-panel-correctness.md"},
 		"security":    {"openrouter", "tencent/hy3-preview", "secure-change", "templates/review-panel-security.md"},
-		"integration": {"zai", "glm-5.2", "architecture-review", "templates/review-panel-integration.md"},
+		"integration": {"zai", "glm-5-turbo", "architecture-review", "templates/review-panel-integration.md"},
 	}
 	if len(step.Panel.Members) != len(wantMembers) {
 		t.Fatalf("step review_panel has %d members, want %d", len(step.Panel.Members), len(wantMembers))

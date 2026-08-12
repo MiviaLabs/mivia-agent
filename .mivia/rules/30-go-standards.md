@@ -50,6 +50,7 @@ Mechanical policy: `.mivia/policy/go-structure.json`, enforced by `scripts/check
 - Every exported identifier has a doc comment starting with the identifier name.
 - Comments explain contracts, edge cases, and invariants; they do not narrate obvious assignments.
 - Prefer linking to canonical docs under `docs/` for long product rationale rather than duplicating essays in comments.
+- **Do not reference plan waves, session numbers, round numbers, or audit-finding labels in code comments** (e.g. "Wave 8 audit finding #1", "round 2 fix", "this session's change"). A future session or reader has no access to that plan and the label carries no information once the plan is closed. Describe the actual invariant, race, or contract instead: what would break, under what interleaving or input, and why the code guards against it. Plan/wave history belongs in the commit message (`Regression:`/`Class:`/`Sweep:` trailers) and the plan file itself, not in the source.
 
 ## Embedding
 

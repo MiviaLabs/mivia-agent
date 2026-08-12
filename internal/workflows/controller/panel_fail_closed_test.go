@@ -8,19 +8,21 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// TestPanelStepRefusalPersistsDurableCause: the fail-closed refusal must leave
-// a durable attempt row. The attempt settles failed with a non-empty ErrorRef
-// that resolves to the refusal cause, and the run reaches a terminal status
-// (G9 fail-closed, no hang). The ProgressPanelRefused event carries the cause.
-func TestPanelStepRefusalPersistsDurableCause(t *testing.T) {
+// TestPanelStepFailureCausePersistsDurableCause: a panel step that fails
+// closed (an invalid member report, see
+// TestPanelStepFailsClosedOnInvalidMemberReport) must leave a durable attempt
+// row. The attempt settles failed with a non-empty ErrorRef that resolves to
+// the failure cause, and the run reaches a terminal status (G9 fail-closed,
+// no hang). A run_failed progress event carries the same cause.
+func TestPanelStepFailureCausePersistsDurableCause(t *testing.T) {
 	ctrl, repo, _, step := panelStepFixture(t, "wfr-panel-refused")
 	sink := &recordingProgressSink{}
 	if err := ctrl.SetProgressSink(sink); err != nil {
 		t.Fatal(err)
 	}
 	run, err := ctrl.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "Wave 5 synthesis unavailable") {
-		t.Fatalf("Run error = %v, want refusal cause", err)
+	if err == nil || !strings.Contains(err.Error(), "panel member") {
+		t.Fatalf("Run error = %v, want a panel member report failure", err)
 	}
 	if !workflowledger.IsTerminalRunStatus(run.Status) {
 		t.Fatalf("Run status = %q, want terminal", run.Status)
@@ -43,21 +45,20 @@ func TestPanelStepRefusalPersistsDurableCause(t *testing.T) {
 		t.Fatalf("attempt status = %q, want failed", attempt.Status)
 	}
 	if attempt.ErrorRef == "" {
-		t.Fatal("attempt ErrorRef is empty, want the refusal cause")
+		t.Fatal("attempt ErrorRef is empty, want the failure cause")
 	}
 	body, err := repo.LoadContent(context.Background(), attempt.ErrorRef)
 	if err != nil {
 		t.Fatalf("load ErrorRef content: %v", err)
 	}
-	want := `agent_panel step "review" is not supported (Wave 5 synthesis unavailable)`
-	if string(body) != want {
-		t.Fatalf("ErrorRef content = %q, want %q", body, want)
+	if !strings.Contains(string(body), "panel member") {
+		t.Fatalf("ErrorRef content = %q, want it to name the failing panel member", body)
 	}
 	events := sink.take()
 	for _, e := range events {
-		if e.Kind == ProgressPanelRefused && e.StepID == step.ID && e.AttemptNo == attempt.AttemptNo && e.Detail == want {
+		if e.Kind == ProgressRunFailed && e.Detail == string(body) {
 			return
 		}
 	}
-	t.Fatalf("no ProgressPanelRefused event with cause among %+v", events)
+	t.Fatalf("no ProgressRunFailed event carrying the failure cause among %+v", events)
 }

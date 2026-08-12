@@ -18,27 +18,27 @@ var ErrPanelMembersComplete = errors.New("panel members completed; synthesis is 
 // ErrCancelReconciliationPending reports that reconcilePanelCancelPending
 // made no terminal progress this Advance (an ambiguous child claim, a slow
 // child, or a claim conflict from a racing executor) and wants another
-// Advance later. It is distinct from ErrPanelMembersComplete (Wave 8 audit
-// finding #2): before this sentinel existed, Run's loop could not tell a
-// not-yet-terminal cancel_pending reconciliation apart from the true Wave-4
-// "members complete, synthesis unsupported" case, since both leave Advance
-// returning done=false, err=nil with the active step still agent_panel. Run
-// treated every such case as ErrPanelMembersComplete, which
+// Advance later. It is distinct from ErrPanelMembersComplete: without this
+// sentinel, Run's loop cannot tell a not-yet-terminal cancel_pending
+// reconciliation apart from the "members complete, synthesis unsupported"
+// case in refusePanelStep, since both leave Advance returning done=false,
+// err=nil with the active step still agent_panel. Conflating the two would
+// make Run treat every such case as ErrPanelMembersComplete, which
 // isNonTerminalWorkflowStop settles as a silent no-op - stranding a
 // legitimately still-canceling run at running/cancel_pending with no
 // automatic retry. Callers should retry Advance/Run on this error (see
 // RunWithCancelReconciliationRetry) instead of treating it as a stop.
 var ErrCancelReconciliationPending = errors.New("panel cancel reconciliation is not yet complete")
 
-// panelsEnabled gates agent_panel execution. Wave 5 implements synthesis
-// end to end (buildPanelSynthesisWork, advancePanelSynthesis,
-// CompareAndSetPanelPhase), but the controller still fails panel steps
-// closed: canceling a workflow mid-panel does not yet cancel its live
-// member/synthesis coordinator children (D15's cancel-broker, Wave 6), and
-// resume has no panel-phase reconciliation branch yet (D14, Wave 6). The
-// member-running code below stays dead until Wave 6 closes those gaps. See
-// plan 62's "Open question: panelsEnabled stays false".
-const panelsEnabled = false
+// panelsEnabled gates agent_panel execution. Dispatch (buildPanelAttempt,
+// RunPanelMembers), synthesis (buildPanelSynthesisWork, advancePanelSynthesis,
+// CompareAndSetPanelPhase), cancel-broker reconciliation (D15,
+// reconcilePanelCancelPending), and resume rejoining (D14,
+// findResumablePanelAttempt) are all implemented and covered by a hostile
+// concurrency audit and the full verification gate (build, vet, structure
+// checks, race, secret scan, docs, semgrep). See plan 62's completion record
+// for the audit history and any still-open follow-ups.
+const panelsEnabled = true
 
 // findResumablePanelAttempt finds the step's existing non-terminal panel
 // attempt, if any (D14: resume joins each existing member run from its
@@ -201,9 +201,9 @@ const cancelReconciliationRetryDelay = 500 * time.Millisecond
 // ErrCancelReconciliationPending, so a panel cancel_pending attempt that
 // is not yet all-terminal (a slow-to-stop member, an ambiguous claim, or a
 // racing executor's claim conflict) gets automatically retried instead of
-// stranding the run at running with no driver ever calling Advance again
-// (Wave 8 audit finding #2). It gives up after cancelReconciliationRetryLimit
-// retries or ctx cancellation, returning whatever run last reported.
+// stranding the run at running with no driver ever calling Advance again.
+// It gives up after cancelReconciliationRetryLimit retries or ctx
+// cancellation, returning whatever run last reported.
 func RunWithCancelReconciliationRetry(ctx context.Context, run func(context.Context) (workflowledger.RunSnapshot, error)) (workflowledger.RunSnapshot, error) {
 	var snap workflowledger.RunSnapshot
 	var err error

@@ -112,16 +112,18 @@ func panelStepFixture(t *testing.T, runID string) (*LinearController, workflowle
 	return ctrl, repo, coordLedger, step
 }
 
-// TestPanelStepFailsClosedWithoutSynthesis: Wave 5 synthesis has no agent or
-// template definition surface, so the controller refuses the agent_panel step
-// instead of running members and leaving the attempt running forever (G9).
-// The run settles terminal failed with the refusal cause, and no member
-// coordinator run is dispatched.
-func TestPanelStepFailsClosedWithoutSynthesis(t *testing.T) {
+// TestPanelStepFailsClosedOnInvalidMemberReport: a member report that does
+// not decode against the strict panel-review schema (completedPanelHandler's
+// stub output is a generic "job completed" payload, not a valid verdict/
+// findings report) must fail the run closed rather than leave the attempt
+// running forever (G9) or synthesize from unvalidated data. Member dispatch
+// itself does happen - this is a decode/validation failure downstream of a
+// real coordinator run, not a routing refusal.
+func TestPanelStepFailsClosedOnInvalidMemberReport(t *testing.T) {
 	ctrl, _, coordLedger, _ := panelStepFixture(t, "wfr-panel-fail-closed")
 	run, err := ctrl.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "agent_panel step") {
-		t.Fatalf("Run error = %v, want refusal cause", err)
+	if err == nil || !strings.Contains(err.Error(), "panel member") {
+		t.Fatalf("Run error = %v, want a panel member report failure", err)
 	}
 	if !workflowledger.IsTerminalRunStatus(run.Status) || run.Status != workflowledger.RunStatusFailed {
 		t.Fatalf("Run status = %q, want terminal failed", run.Status)
@@ -130,7 +132,7 @@ func TestPanelStepFailsClosedWithoutSynthesis(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 0 {
-		t.Fatalf("member coordinator runs = %d, want none dispatched", len(runs))
+	if len(runs) == 0 {
+		t.Fatal("member coordinator runs = 0, want at least one member actually dispatched")
 	}
 }

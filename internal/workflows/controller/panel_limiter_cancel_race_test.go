@@ -7,8 +7,8 @@ import (
 )
 
 // TestAcquireGuardedPanelMemberPermitRejectsCanceledCtx is the regression
-// test for Wave 8 audit finding #3: PanelActorLimiter.Acquire races
-// l.slots<-struct{}{} against ctx.Done() in one select, and Go's select does
+// test: PanelActorLimiter.Acquire races l.slots<-struct{}{} against
+// ctx.Done() in one select, and Go's select does
 // not prioritize an already-closed ctx.Done() over a simultaneously ready
 // send - with an already-canceled ctx and an available slot, the select can
 // still pick the slots branch and return a usable lease. Without
