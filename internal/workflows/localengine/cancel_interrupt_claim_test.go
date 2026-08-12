@@ -27,11 +27,26 @@ type blockingGit struct {
 type cancelClaimCountRepo struct {
 	workflowledger.Repository
 	claimCalls int
+	// releasedThenReclaimed records whether a ClaimRun call was ever
+	// observed after a ReleaseRun call - the actual regression this test
+	// guards (a release that lets another host steal the claim before
+	// cancel reclaims it), as opposed to a release-only cleanup call at the
+	// very end of Cancel, which is expected and safe.
+	released              bool
+	releasedThenReclaimed bool
 }
 
 func (r *cancelClaimCountRepo) ClaimRun(ctx context.Context, runID, holder string) error {
 	r.claimCalls++
+	if r.released {
+		r.releasedThenReclaimed = true
+	}
 	return r.Repository.ClaimRun(ctx, runID, holder)
+}
+
+func (r *cancelClaimCountRepo) ReleaseRun(ctx context.Context, runID, holder string) error {
+	r.released = true
+	return r.Repository.ReleaseRun(ctx, runID, holder)
 }
 
 func (g *blockingGit) Run(ctx context.Context, gc delivery.GitContext, args ...string) (string, error) {
@@ -154,8 +169,17 @@ func TestEngineCancelKeepsClaimThroughSettlement(t *testing.T) {
 	if _, err := engine.Cancel(ctx, runID); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
-	if repo.claimCalls != 1 {
-		t.Fatalf("ClaimRun calls = %d, want 1; cancel must not release then reclaim", repo.claimCalls)
+	// CancelRunWithAttemptsWithClaim refreshes the claim immediately before
+	// its terminal write (D13), so more than one ClaimRun call is expected
+	// and safe on its own; the real regression this test guards is a RELEASE
+	// before a subsequent reclaim, which would let another host steal the
+	// claim mid-cancel. A release-only cleanup call at the very end (after
+	// settlement) is expected and is not that regression.
+	if repo.claimCalls < 1 {
+		t.Fatalf("ClaimRun calls = %d, want at least 1", repo.claimCalls)
+	}
+	if repo.releasedThenReclaimed {
+		t.Fatal("cancel released the claim and then reclaimed it, letting another host steal it mid-cancel")
 	}
 }
 

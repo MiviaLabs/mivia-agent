@@ -170,6 +170,40 @@ func TestCancelRunWithAttemptsWithClaimKeepsClaim(t *testing.T) {
 	}
 }
 
+// Bug-audit finding (ADLC Step 0 challenge): the terminal CompareAndSetRunStatus
+// used a run snapshot captured before panel reconciliation with no claim
+// refresh immediately before the write, so a caller whose claim was
+// legitimately taken over mid-reconciliation could still win the
+// version-based CAS and finalize the run. This proves the added refresh
+// surfaces a lost claim as an error instead of silently proceeding: another
+// holder taking over between the initial claim and this call must make
+// CancelRunWithAttemptsWithClaim fail, not settle the run canceled anyway.
+func TestCancelRunWithAttemptsWithClaimRefusesAfterClaimLost(t *testing.T) {
+	ctx := context.Background()
+	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusRunning)
+	const holder = "cancel-holder"
+	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+		t.Fatal(err)
+	}
+	// A legitimate concurrent takeover: the claim lease expired and another
+	// holder acquired it before the terminal write.
+	if err := repo.TakeoverExpiredRunClaim(ctx, runID, "other-holder", 0); err != nil {
+		t.Fatalf("TakeoverExpiredRunClaim() error = %v", err)
+	}
+	defer func() { _ = repo.ReleaseRun(context.Background(), runID, "other-holder") }()
+
+	if _, err := CancelRunWithAttemptsWithClaim(ctx, repo, nil, runID, holder); !errors.Is(err, workflowledger.ErrClaimHeld) {
+		t.Fatalf("CancelRunWithAttemptsWithClaim() error = %v, want ErrClaimHeld", err)
+	}
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status == workflowledger.RunStatusCanceled {
+		t.Fatal("a stale holder must never settle the run canceled after losing the claim")
+	}
+}
+
 // TestCancelRunWithAttemptsReturnsCanceledAttemptsWithErrorRef: the exported
 // CancelRunWithAttempts must return every attempt it canceled with the
 // canceled status and the operator-cancel ErrorRef set, while leaving terminal

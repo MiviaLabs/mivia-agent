@@ -107,7 +107,7 @@ func advancePanelPhaseToCancelPending(ctx context.Context, repo workflowledger.R
 				// the same retryable way as an ambiguous child claim rather
 				// than failing the run — the new holder (or a later retry by
 				// this one) can still make progress.
-				return attempt, fmt.Errorf("%w: workflow claim: %v", ErrCancelBlocked, err)
+				return attempt, fmt.Errorf("%w: workflow claim: %w", ErrCancelBlocked, err)
 			}
 			return attempt, err
 		}
@@ -120,7 +120,7 @@ func advancePanelPhaseToCancelPending(ctx context.Context, repo workflowledger.R
 			// took over the workflow claim between the ClaimRun refresh above
 			// and this write. Same retryable outcome as losing the refresh
 			// itself, not a permanent failure.
-			return attempt, fmt.Errorf("%w: workflow claim: %v", ErrCancelBlocked, err)
+			return attempt, fmt.Errorf("%w: workflow claim: %w", ErrCancelBlocked, err)
 		}
 		if !errors.Is(err, workflowledger.ErrConflict) {
 			return attempt, err

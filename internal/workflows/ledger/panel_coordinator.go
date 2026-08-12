@@ -228,13 +228,22 @@ func (p PanelCoordinator) requireTerminalPhaseOrAlreadyDone(ctx context.Context,
 // dispatched, or joins an existing child as a recovered (never-locally-
 // resumed) handle and issues the coordinator's normal cancel request on it.
 //
-// Both paths mark the context wait-only (coordinator.ContextWithPanelWaitOnlyJoin)
-// as defense in depth: today the workflow claim already excludes a
-// concurrent forward dispatcher from winning the child's admission race
-// while cancellation is in flight, but the wait-only marker gives
-// cancellation its own independent guarantee that it can never itself
-// become a child's local actor even if that outer invariant is ever
-// violated (an expired workflow claim lease mid-reconciliation, for
+// Both calls run under the wait-only context (coordinator.ContextWithPanelWaitOnlyJoin),
+// but only the EnsureTerminalSingleTaskRun branch's underlying
+// joinSingleTaskAdmission actually consults that marker today —
+// coordinator.JoinAsRecovered never reads it: it is structurally incapable
+// of becoming a local actor by construction (it only reads durable state and
+// starts a passive watchRecoveredRun), so the marker is a no-op on that path,
+// not an active defense. It is still applied there for one reason: if
+// JoinAsRecovered ever gains any claim-taking or resume behavior in a future
+// change, the marker starts protecting this call automatically instead of
+// requiring that change to remember to add it. On the EnsureTerminalSingleTaskRun
+// branch, the marker is a real, load-bearing defense in depth: today the
+// workflow claim already excludes a concurrent forward dispatcher from
+// winning the child's admission race while cancellation is in flight, but
+// this marker gives cancellation its own independent guarantee that it can
+// never itself become a child's local actor even if that outer invariant is
+// ever violated (an expired workflow claim lease mid-reconciliation, for
 // example) — it fails closed (ErrWaitOnlyJoinLost from the underlying
 // coordinator) instead of silently resuming the very child it is trying to
 // stop.
