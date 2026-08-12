@@ -15,7 +15,7 @@ providers are built in today:
 | DeepSeek (default) | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
 | OpenRouter | declare under `providers.openrouter` | `https://openrouter.ai/api/v1` |
 | ZAI (z.ai) | declare under `providers.zai` | `https://api.z.ai/api/paas/v4` |
-| Ollama | declare under `providers.ollama` | `http://127.0.0.1:11434/v1` |
+| Ollama | declare under `providers.ollama` | `https://ollama.com/v1` |
 
 mivia does not accept an arbitrary OpenAI-compatible provider name. See
 [Configuration](config.md#provider-support) for the full provider list, key

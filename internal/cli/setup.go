@@ -64,12 +64,13 @@ func runSetupWithIO(args []string, stdout io.Writer, stdin io.Reader) error {
 	if provider == "" {
 		provider = defaultSetupProvider()
 	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
 	keyEnv := strings.ToUpper(provider) + "_API_KEY"
 
 	key := opts.key
 	if key == "" {
-		if v, ok := os.LookupEnv(keyEnv); ok && v != "" {
-			key = v
+		if v, ok := os.LookupEnv(keyEnv); ok && strings.TrimSpace(v) != "" {
+			key = strings.TrimSpace(v)
 		}
 	}
 	if key == "" {

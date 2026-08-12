@@ -172,6 +172,64 @@ func TestSetupOllamaKeylessNeedsNoKey(t *testing.T) {
 	}
 }
 
+// A whitespace-only OLLAMA_API_KEY must count as missing so setup takes the
+// keyless-ollama branch instead of writing a junk key line to the env file.
+func TestSetupOllamaWhitespaceKeyCountsAsKeyless(t *testing.T) {
+	t.Setenv("OLLAMA_API_KEY", "   ")
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	out, err := runSetupCapture(t, []string{
+		"--provider", "ollama",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, "")
+	if err != nil {
+		t.Fatalf("keyless ollama setup error = %v", err)
+	}
+	if _, statErr := os.Stat(envPath); !os.IsNotExist(statErr) {
+		t.Fatalf("env file created for whitespace-key ollama (stat err=%v)", statErr)
+	}
+	for _, want := range []string{"local daemon", "Cloud", "http://127.0.0.1:11434/v1", "mivia doctor"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "(written)") {
+		t.Fatalf("summary claims a written key file for keyless ollama:\n%s", out)
+	}
+}
+
+// A case-variant provider name must still enter the keyless-ollama branch and
+// resolve the upper-cased OLLAMA_API_KEY env name.
+func TestSetupOllamaCaseVariantIsKeyless(t *testing.T) {
+	t.Setenv("OLLAMA_API_KEY", "")
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	out, err := runSetupCapture(t, []string{
+		"--provider", "Ollama",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, "")
+	if err != nil {
+		t.Fatalf("keyless Ollama setup error = %v", err)
+	}
+	if _, statErr := os.Stat(envPath); !os.IsNotExist(statErr) {
+		t.Fatalf("env file created for keyless Ollama (stat err=%v)", statErr)
+	}
+	if !strings.Contains(out, "provider:   ollama") {
+		t.Fatalf("summary did not normalize the provider name:\n%s", out)
+	}
+	for _, want := range []string{"local daemon", "http://127.0.0.1:11434/v1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestSetupOllamaWithKeyWritesEnvFile(t *testing.T) {
 	t.Setenv("OLLAMA_API_KEY", "")
 	dir := t.TempDir()

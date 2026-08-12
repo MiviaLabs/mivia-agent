@@ -672,3 +672,54 @@ func TestDoctorJSONLoadError(t *testing.T) {
 		}
 	}
 }
+
+// TestDoctorWhitespaceAPIKeyCountsAsMissing pins the doctor surface for a
+// whitespace-only provider key. Resolved.APIKeySet trims, so a blank value
+// must behave exactly like an unset key. The JSON path must report
+// api_key_set=false, key_required=true, and a non-ok status. The human path
+// must print the "not ready for chat" notice on stderr.
+func TestDoctorWhitespaceAPIKeyCountsAsMissing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("DEEPSEEK_API_KEY", "   ") // Whitespace-only key counts as missing.
+	root := t.TempDir()
+	configPath := writeDoctorConfig(t, root)
+	workspace := t.TempDir()
+
+	// JSON path: the doctor surface must distinguish the whitespace key from
+	// a real key and still report the provider as requiring one.
+	var jsonOut, jsonErrOut strings.Builder
+	err := runDoctorWithIO([]string{"--config", configPath, "--json", "--workspace", workspace}, &jsonOut, &jsonErrOut)
+	if err == nil {
+		t.Fatal("doctor --json should error when the required key is whitespace-only")
+	}
+	if !strings.Contains(err.Error(), "missing DEEPSEEK_API_KEY") {
+		t.Fatalf("doctor error = %v, want missing DEEPSEEK_API_KEY", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(jsonOut.String()), &raw); err != nil {
+		t.Fatalf("doctor --json output is not valid JSON: %v\nraw: %s", err, jsonOut.String())
+	}
+	if doctorJSONBool(t, raw, "api_key_set") {
+		t.Error("api_key_set = true, want false for a whitespace-only key")
+	}
+	if !doctorJSONBool(t, raw, "key_required") {
+		t.Error("key_required = false, want true for deepseek")
+	}
+	if got := doctorJSONString(t, raw, "status"); got == "ok" {
+		t.Error("status = ok, want non-ok when the required key is whitespace-only")
+	}
+
+	// Human path: the not-ready notice must reach stderr and the stdout
+	// screen must state that the key is missing.
+	var humanOut, humanErrOut strings.Builder
+	err = runDoctorWithIO([]string{"--config", configPath, "--workspace", workspace}, &humanOut, &humanErrOut)
+	if err == nil {
+		t.Fatal("doctor should error when the required key is whitespace-only")
+	}
+	if !strings.Contains(humanErrOut.String(), "not ready for chat") {
+		t.Fatalf("stderr missing 'not ready for chat' for whitespace-only key:\n%s", humanErrOut.String())
+	}
+	if !strings.Contains(humanOut.String(), "MISSING - set DEEPSEEK_API_KEY") {
+		t.Fatalf("stdout missing MISSING api_key line for whitespace-only key:\n%s", humanOut.String())
+	}
+}

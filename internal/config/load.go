@@ -177,8 +177,8 @@ func resolveTavilyAPIKey(tc TavilyConfig, envMap map[string]string) string {
 		return ""
 	}
 	key, ok := envfile.Lookup(envName, envMap)
-	if ok && key != "" {
-		return key
+	if ok && strings.TrimSpace(key) != "" {
+		return strings.TrimSpace(key)
 	}
 	return ""
 }
