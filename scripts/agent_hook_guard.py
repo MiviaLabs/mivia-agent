@@ -143,6 +143,16 @@ def _scan_segment(segment: list[str]) -> list[str]:
     return vec
 
 
+def _option_segments(argv: list[str]) -> list[list[str]]:
+    """One scanned option vector per shell segment.
+
+    option_vector() flattens these; _flag_hits() needs the grouping so the
+    -n structural check (git then commit then -n inside ONE command) cannot
+    fire across a shell separator or across -m/-F/-C value consumption.
+    """
+    return [_scan_segment(segment) for segment in _split_shell_segments(argv)]
+
+
 def option_vector(argv: list[str]) -> list[str]:
     """Tokens that can carry bypass flags; option VALUES are excluded.
 
@@ -153,8 +163,8 @@ def option_vector(argv: list[str]) -> list[str]:
     token (even a dash-prefixed one) and scanning resumes.
     """
     vec: list[str] = []
-    for segment in _split_shell_segments(argv):
-        vec.extend(_scan_segment(segment))
+    for segment in _option_segments(argv):
+        vec.extend(segment)
     return vec
 
 
@@ -235,16 +245,44 @@ def _split_command(text: str) -> list[str] | None:
         return None
 
 
-def _flag_hits(vec: list[str], policy: dict[str, Any]) -> list[str]:
-    """Exact-flag and git-commit -n hits over the option vector only."""
+def _segment_has_git_commit_dash_n(segment: list[str]) -> bool:
+    """True when one command's option vector has git, then commit, then -n.
+
+    -n only skips hooks when it is an option of `git commit`. Git global
+    options between `git` and `commit` (-C path, --git-dir=..., -c key=value,
+    --work-tree=...) and commit options before -n are covered because only the
+    relative order inside one command matters. -n on a non-commit command
+    (git log -n 5, grep -n) is never flagged, and option values (already
+    excluded from the vector) can never contribute.
+    """
+    try:
+        i_git = segment.index("git")
+        i_commit = segment.index("commit", i_git + 1)
+        segment.index("-n", i_commit + 1)
+    except ValueError:
+        return False
+    return True
+
+
+def _flag_hits(vec: list[str], segments: list[list[str]], policy: dict[str, Any]) -> list[str]:
+    """Exact-flag and git-commit -n hits over the option vector only.
+
+    -n is a real bypass only when it follows `git commit` inside one command;
+    git global options (-C, --git-dir, -c, --work-tree) may sit between git
+    and commit, so the check is structural (per segment, git then commit then
+    -n in order) rather than an adjacency regex over the joined vector. The
+    exact blockedFlags loop below skips -n; the structural check owns it.
+    """
     hits: list[str] = []
     for flag in policy.get("blockedFlags", []):
         if not isinstance(flag, str) or flag == "-n":
             continue
         if flag in vec:
             hits.append(f"blocked flag {flag}")
-    if re.search(r"(?i)git\s+commit\b[^\n]*\s-n\b", " ".join(vec)):
-        hits.append("blocked flag -n")
+    for segment in segments:
+        if _segment_has_git_commit_dash_n(segment):
+            hits.append("blocked flag -n")
+            break
     return hits
 
 
@@ -299,13 +337,21 @@ def bypass_reasons(payload: dict[str, Any], policy: dict[str, Any]) -> list[str]
     argv = _structured_argv(payload)
     if argv is not None:
         # Structured argv: check the option vector only. Message values (-m/-F
-        # argument VALUES) are data and are never scanned for flags.
-        vec = option_vector(argv) if is_git_commit(argv) else argv
+        # argument VALUES) are data and are never scanned for flags. The -n
+        # structural check needs the per-segment grouping; non-git-commit argv
+        # gets no segments so the -n loop stays inert (git log -n 5, grep -n).
+        if is_git_commit(argv):
+            vec = option_vector(argv)
+            segments = _option_segments(argv)
+        else:
+            vec = argv
+            segments = []
         texts = [" ".join(vec)]
     else:
         # No structured argv: fall back to scanning command/prompt strings,
         # parsing git commit argv so quoted -m values stay data.
         vec: list[str] = []
+        segments: list[list[str]] = []
         texts: list[str] = []
         for raw in _fallback_strings(payload):
             tokens = _split_command(raw)
@@ -313,12 +359,16 @@ def bypass_reasons(payload: dict[str, Any], policy: dict[str, Any]) -> list[str]
                 # Unparseable (unbalanced quotes): scan the raw text, fail closed.
                 texts.append(raw)
                 continue
-            parsed = option_vector(tokens) if is_git_commit(tokens) else tokens
+            if is_git_commit(tokens):
+                parsed = option_vector(tokens)
+                segments.extend(_option_segments(tokens))
+            else:
+                parsed = tokens
             vec.extend(parsed)
             texts.append(" ".join(parsed))
     texts.extend(_env_strings(payload))
 
-    reasons.extend(_flag_hits(vec, policy))
+    reasons.extend(_flag_hits(vec, segments, policy))
     reasons.extend(_pattern_hits(texts, policy))
 
     husky_zero = re.compile(

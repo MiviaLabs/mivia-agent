@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -14,12 +15,18 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// workflowReconcileDefaultInterval is the default cadence of the session
-// engine's parked-run re-scan (see reconcileParkedRunsPeriodic). The interval
-// lives on each engine as a field so a background scanner spawned with
-// context.Background() never shares mutable package state with another
-// engine (or a test) that wants a different cadence.
-const workflowReconcileDefaultInterval = 30 * time.Second
+// workflowReconcileInterval is how often the session engine re-scans the
+// ledger for runs to recover while the session is up, so a run whose claim
+// expires mid-session (a hard kill, a transient failure) resumes on its own
+// without a restart. A package var so tests can shorten it. Atomic because
+// the periodic re-scan goroutine (started by workflowToolServiceWithBus on a
+// background context) can outlive the test that armed the sweep, so a later
+// test shortening the interval must not race the goroutine's ticker creation.
+var workflowReconcileInterval atomic.Int64
+
+func init() {
+	workflowReconcileInterval.Store(int64(30 * time.Second))
+}
 
 // reconcileParkedRuns recovers every run an earlier session left unfinished -
 // the restart/crash cases the session engine never re-enters on its own.
@@ -146,11 +153,7 @@ func (e *sessionWorkflowEngine) reconcileParkedResume(ctx context.Context, runID
 // per-run execution lock and claim fence make repeated scans idempotent and
 // safe against concurrent executors.
 func (e *sessionWorkflowEngine) reconcileParkedRunsPeriodic(ctx context.Context) {
-	interval := e.reconcileInterval
-	if interval <= 0 {
-		interval = workflowReconcileDefaultInterval
-	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(time.Duration(workflowReconcileInterval.Load()))
 	defer ticker.Stop()
 	for {
 		select {

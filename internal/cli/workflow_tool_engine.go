@@ -43,15 +43,6 @@ type sessionWorkflowEngine struct {
 	// runTUI creates the bus, so a provider keeps that ordering irrelevant.
 	bus    func() *events.Bus
 	active map[string]*sessionActiveRun
-
-	// reconcileInterval is how often the parked-run periodic re-scan fires
-	// while the session is up (see reconcileParkedRunsPeriodic). It is a
-	// per-engine field, not a package var: the scanner is spawned with
-	// context.Background() and outlives the wiring call, so a shared mutable
-	// var would let one engine's (or test's) write race another engine's
-	// ticker read. Each engine owns its cadence; tests shorten it on their
-	// own engine instance.
-	reconcileInterval time.Duration
 }
 
 type sessionActiveRun struct {
@@ -63,10 +54,9 @@ type sessionActiveRun struct {
 // newSessionWorkflowEngine builds the chat-session workflow engine.
 func newSessionWorkflowEngine(root, configPath string) *sessionWorkflowEngine {
 	return &sessionWorkflowEngine{
-		root:              root,
-		configPath:        configPath,
-		reconcileInterval: workflowReconcileDefaultInterval,
-		active:            make(map[string]*sessionActiveRun),
+		root:       root,
+		configPath: configPath,
+		active:     make(map[string]*sessionActiveRun),
 	}
 }
 

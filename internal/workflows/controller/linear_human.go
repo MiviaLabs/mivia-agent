@@ -46,28 +46,7 @@ func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, 
 		return c.finishHumanRunStatus(ctx, run, attempt, decision)
 	}
 	if decision == "rejected" {
-		route := failureRoute(step)
-		// Rejection always fails the run (the CompareAndSetRunStatus to Failed
-		// below), so the durable route must be terminal — never an un-honored
-		// on_failure target that a crash between this persist and the status
-		// CAS could resume into and silently undo the rejection. Mirrors the
-		// guarded pattern in settleAgentAttempt and settleHostFailure.
-		if !workflowledger.IsTerminalStepID(route.ToStepID) {
-			route.ToStepID = "failure"
-		}
-		rejectErr := fmt.Errorf("human_gate step %q was rejected", step.ID)
-		if err := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(ctx, c.Repo, rejectErr)}, workflowledger.AttemptStatusFailed, route); err != nil {
-			return err
-		}
-		c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
-		run, err = c.Repo.GetRun(ctx, c.RunID)
-		if err != nil {
-			return err
-		}
-		if run.Status == workflowledger.RunStatusWaitingApproval {
-			return c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusFailed, nil)
-		}
-		return nil
+		return c.finishHumanRejection(ctx, run, step, attempt)
 	}
 	output := map[string]any{"decision": "approved"}
 	raw, err := json.Marshal(output)
@@ -78,6 +57,15 @@ func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, 
 	if err != nil {
 		if route.ToStepID == "" {
 			route = failureRoute(step)
+		}
+		// This branch fails the run immediately after the persist (the
+		// CompareAndSetRunStatus to Failed below), so the durable route must
+		// be terminal — never an un-honored on_failure/loop target that a
+		// crash between this persist and the status CAS could resume into.
+		// Mirrors the guarded rejection branch above and settleAgentAttempt /
+		// settleHostFailure.
+		if !workflowledger.IsTerminalStepID(route.ToStepID) {
+			route.ToStepID = "failure"
 		}
 		if completeErr := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{Output: raw, ErrorRef: storeErrorText(ctx, c.Repo, err)}, workflowledger.AttemptStatusFailed, route); completeErr != nil {
 			return completeErr
@@ -97,6 +85,32 @@ func (c *LinearController) finishHumanResolutionForAttempt(ctx context.Context, 
 	}
 	c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusSucceeded))
 	return c.finishHumanRunStatus(ctx, run, workflowledger.StepAttempt{ToStepID: route.ToStepID, Status: workflowledger.AttemptStatusSucceeded}, decision)
+}
+
+// finishHumanRejection settles a rejected human-gate attempt. Rejection always
+// fails the run (the CompareAndSetRunStatus to Failed below), so the durable
+// route must be terminal — never an un-honored on_failure target that a crash
+// between this persist and the status CAS could resume into and silently undo
+// the rejection. Mirrors the guarded pattern in settleAgentAttempt and
+// settleHostFailure.
+func (c *LinearController) finishHumanRejection(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt) error {
+	route := failureRoute(step)
+	if !workflowledger.IsTerminalStepID(route.ToStepID) {
+		route.ToStepID = "failure"
+	}
+	rejectErr := fmt.Errorf("human_gate step %q was rejected", step.ID)
+	if err := CompleteExistingStepResult(ctx, c.Repo, attempt, AgentStepResult{ErrorRef: storeErrorText(ctx, c.Repo, rejectErr)}, workflowledger.AttemptStatusFailed, route); err != nil {
+		return err
+	}
+	c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
+	run, err := c.Repo.GetRun(ctx, c.RunID)
+	if err != nil {
+		return err
+	}
+	if run.Status == workflowledger.RunStatusWaitingApproval {
+		return c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusFailed, nil)
+	}
+	return nil
 }
 
 func (c *LinearController) finishHumanRunStatus(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, decision string) error {
