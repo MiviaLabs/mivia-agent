@@ -32,6 +32,8 @@ func Execute(args []string) error {
 		return runDoctor(args[1:])
 	case "agents":
 		return runAgents(args[1:])
+	case "memory":
+		return runMemory(args[1:])
 	case "workflows":
 		return runWorkflows(args[1:])
 	case "workflow":
@@ -78,6 +80,7 @@ Usage:
          [--allow-program name]... [--deny-program name]...
          [--disable-tool name]... [--allow-env-var name]... [--deny-env-var name]...
   %s config show [--config path]
+  %s memory search <query> [--scope project|org|all] [--limit N] [--json] [--workspace dir] [--config path]
   %s doctor [--config path] [--json] [--workspace dir]
   %s agents list [--workspace dir]
   %s agents explain <name> [--workspace dir]
@@ -115,7 +118,7 @@ Chat: /help /tools /hooks /exit /clear /new /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 // flagValue returns the value of the first occurrence of any named flag,

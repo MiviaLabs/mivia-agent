@@ -194,9 +194,9 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 		// done closes as soon as the run loop itself has exited (and released
 		// any claim it held), before resource teardown below: stopActive's
 		// callers must be able to observe "the loop stopped" without that
-		// implying "resources are already closed" (Wave 8 audit finding #1) -
-		// otherwise a concurrent Cancel waiting on done would always find
-		// runner's backing store already closed by the time it can reuse it.
+		// implying "resources are already closed" - otherwise a concurrent
+		// Cancel waiting on done would always find runner's backing store
+		// already closed by the time it can reuse it.
 		close(done)
 		e.mu.Lock()
 		active := e.active[runID]

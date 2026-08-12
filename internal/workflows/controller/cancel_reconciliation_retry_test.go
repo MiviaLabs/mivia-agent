@@ -10,14 +10,14 @@ import (
 )
 
 // TestRunWithCancelReconciliationRetryRetriesUntilResolved is the core
-// regression test for Wave 8 audit finding #2: Run's driver loop used to
-// conflate "cancel_pending, not yet all-terminal" with the Wave-4
-// members-complete sentinel, both surfacing as ErrPanelMembersComplete -
-// which isNonTerminalWorkflowStop treats as a silent no-op, stranding a
-// legitimately still-canceling run with no automatic retry. This proves
-// RunWithCancelReconciliationRetry keeps calling run while it reports
-// ErrCancelReconciliationPending and returns as soon as run reports
-// something else.
+// regression test: Run's driver loop must not conflate "cancel_pending, not
+// yet all-terminal" with the "members complete, synthesis unsupported"
+// sentinel handled in refusePanelStep - both used to surface as
+// ErrPanelMembersComplete, which isNonTerminalWorkflowStop treats as a
+// silent no-op, stranding a legitimately still-canceling run with no
+// automatic retry. This proves RunWithCancelReconciliationRetry keeps
+// calling run while it reports ErrCancelReconciliationPending and returns as
+// soon as run reports something else.
 func TestRunWithCancelReconciliationRetryRetriesUntilResolved(t *testing.T) {
 	calls := 0
 	want := workflowledger.RunSnapshot{RunID: "wf-retry", Status: workflowledger.RunStatusCanceled}

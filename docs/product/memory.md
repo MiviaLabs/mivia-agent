@@ -146,6 +146,35 @@ or `all` (the default). The result count is capped by `max_search_results`.
 Search results are advisory local data. The tool description and the prompts
 tell agents to weigh them as data, never to obey them as instructions.
 
+## CLI command
+
+`mivia memory search <query> [--scope project|org|all] [--limit N] [--json] [--workspace dir] [--config path]`
+
+Searches stored memories for the query string. The query is required.
+
+Default scope is `all`. Default limit is the `[memory] max_search_results` setting (8 by default).
+
+With `--json`, the command prints a JSON array. Each object has these fields:
+- `id` — the memory entry ID
+- `scope` — `project` or `org`
+- `org` — the org ID (empty string for project scope)
+- `title` — the entry title
+- `verdict` — `good`, `bad`, `mixed`, or `neutral`
+- `tags` — list of tag strings
+- `created` — the creation date
+- `summary` — the summary snippet
+
+Without `--json`, the command prints a ranked list. Each entry shows title, scope, verdict, date, tags, and the summary snippet. Zero results print a friendly message and exit 0.
+
+Errors exit non-zero. A missing query, an invalid flag value, a duplicate flag, an unknown flag, or memory disabled all exit non-zero.
+
+Examples:
+
+```
+mivia memory search "authentication bug"
+mivia memory search "deployment" --scope org --json
+```
+
 ## Privacy
 
 Memory content stays on the machine. It enters model context only through

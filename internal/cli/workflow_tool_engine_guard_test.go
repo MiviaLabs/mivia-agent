@@ -10,12 +10,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 )
 
-// TestSessionActiveRunUseLiveCoordinatorNilCases is a regression test for
-// Wave 8 audit finding #1: useLiveCoordinator must report used=false (and
-// never invoke use) for a nil run, a run with no runner, and a run whose
-// resources already closed - the caller falls back to a freshly built
-// coordinator in every one of these cases instead of assuming a bare
-// active.runner != nil check proves the runner is still safe to use.
+// TestSessionActiveRunUseLiveCoordinatorNilCases is a regression test:
+// useLiveCoordinator must report used=false (and never invoke use) for a nil
+// run, a run with no runner, and a run whose resources already closed - the
+// caller falls back to a freshly built coordinator in every one of these
+// cases instead of assuming a bare active.runner != nil check proves the
+// runner is still safe to use.
 func TestSessionActiveRunUseLiveCoordinatorNilCases(t *testing.T) {
 	called := func(a *sessionActiveRun) bool {
 		invoked := false
@@ -68,10 +68,10 @@ func TestSessionActiveRunUseLiveCoordinatorUsesRunner(t *testing.T) {
 }
 
 // TestSessionActiveRunCloseGuardedWaitsForInFlightUse is the core regression
-// test for Wave 8 audit finding #1: closeGuarded (the run-completion
-// goroutine's teardown) must not close resources while a Cancel call is
-// mid-use of the live coordinator via useLiveCoordinator. Before the fix,
-// Cancel captured active.runner directly and reused it after stopActive
+// test: closeGuarded (the run-completion goroutine's teardown) must not
+// close resources while a Cancel call is mid-use of the live coordinator via
+// useLiveCoordinator. Before this guard existed, Cancel captured
+// active.runner directly and reused it after stopActive
 // returned - which, because closeFn ran before the done channel closed, was
 // always a closed store. This test proves the new guard actually serializes
 // the two: closeGuarded blocks until the in-flight useLiveCoordinator call

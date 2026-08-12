@@ -74,6 +74,12 @@ type Config struct {
 	MaxSearchResults int
 	// BlockPatterns are regexes; matching content is refused at save.
 	BlockPatterns []string
+	// ReadOnly opens the store without writing the database file: open skips
+	// the journal_mode(WAL) switch, the schema CREATE, and the FTS5 rebuild
+	// backfill; Close skips the WAL checkpoint; Save is refused. Search
+	// works via the LIKE fallback with identical results; the file must
+	// already exist with the schema. Zero value false = read-write.
+	ReadOnly bool
 }
 
 // Backend names.
@@ -167,7 +173,7 @@ func openSQLiteStore(cfg Config) (*sqliteStore, error) {
 	if projectPath == "" {
 		return nil, errors.New("memory: project database path is required")
 	}
-	projectDB, fts, err := openMemoryDB(projectPath)
+	projectDB, fts, err := openMemoryDB(projectPath, cfg.ReadOnly)
 	if err != nil {
 		return nil, fmt.Errorf("memory project store %s: %w", projectPath, err)
 	}
@@ -176,7 +182,7 @@ func openSQLiteStore(cfg Config) (*sqliteStore, error) {
 	// org_id the feature is project-only, and an unconfigured org must not
 	// create side-effect files (or fail the session) in the user's home.
 	if orgPath := strings.TrimSpace(cfg.OrgPath); orgPath != "" && cfg.OrgID != "" {
-		orgDB, _, err := openMemoryDB(orgPath)
+		orgDB, _, err := openMemoryDB(orgPath, cfg.ReadOnly)
 		if err != nil {
 			projectDB.Close()
 			return nil, fmt.Errorf("memory org store %s: %w", orgPath, err)
@@ -202,16 +208,25 @@ func openSQLiteStore(cfg Config) (*sqliteStore, error) {
 // reachable with a real filesystem (an owner can always chmod its own files).
 var chmodFile = os.Chmod
 
-func openMemoryDB(path string) (*sql.DB, bool, error) {
+func openMemoryDB(path string, readOnly bool) (*sql.DB, bool, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, false, err
 	}
+	dsn := sqliteMemoryDSN(path)
+	if readOnly {
+		dsn = sqliteMemoryDSNReadOnly(path)
+	}
 	// sql.Open fails only on an unknown driver name; modernc.org/sqlite
 	// registers "sqlite" in its init, so the error branch would be dead code
 	// (diff-coverage gate).
-	db, _ := sql.Open("sqlite", sqliteMemoryDSN(path))
+	db, _ := sql.Open("sqlite", dsn)
 	db.SetMaxOpenConns(1)
+	if readOnly {
+		// No WAL switch, schema exec, or FTS rebuild (all writes); the DSN
+		// carries query_only, and fts=false routes search to the LIKE path.
+		return db, false, nil
+	}
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA synchronous=FULL",
@@ -238,7 +253,20 @@ func openMemoryDB(path string) (*sql.DB, bool, error) {
 // schema does not use). Keep the two in sync when the set changes.
 const pragmaMemoryDSNParams = "_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)"
 
-// sqliteMemoryDSN builds the driver DSN for a memory store file. The
+// pragmaMemoryDSNReadOnlyParams are the read-only overrides: no
+// journal_mode(WAL) (switching would write the database header), and
+// query_only(1) so no pooled connection can mutate the committed file.
+const pragmaMemoryDSNReadOnlyParams = "_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)&_pragma=query_only(1)"
+
+// sqliteMemoryDSN builds the read-write driver DSN; see memoryDSN.
+func sqliteMemoryDSN(path string) string { return memoryDSN(path, pragmaMemoryDSNParams) }
+
+// sqliteMemoryDSNReadOnly builds the read-only driver DSN; see memoryDSN.
+func sqliteMemoryDSNReadOnly(path string) string {
+	return memoryDSN(path, pragmaMemoryDSNReadOnlyParams)
+}
+
+// memoryDSN builds the driver DSN for a memory store file. The
 // modernc.org/sqlite driver (v1.54.0) splits a DSN at the first literal '?' to
 // separate the filename from its query parameters, so a POSIX filename
 // containing '?' ("ctx?name.db") would be silently truncated to "ctx" and the
@@ -251,11 +279,11 @@ const pragmaMemoryDSNParams = "_pragma=journal_mode(WAL)&_pragma=synchronous(FUL
 // injection into the path portion, so no wrong-file or path-confusion vector
 // remains. Keep this in sync with internal/storage/sqlite_dsn.go; the storage
 // package applies the identical transform.
-func sqliteMemoryDSN(path string) string {
+func memoryDSN(path, params string) string {
 	if strings.Contains(path, "?") {
-		return "file:" + url.PathEscape(path) + "?" + pragmaMemoryDSNParams
+		return "file:" + url.PathEscape(path) + "?" + params
 	}
-	return path + "?" + pragmaMemoryDSNParams
+	return path + "?" + params
 }
 
 func (s *sqliteStore) dbFor(scope Scope) (*sql.DB, string) {
@@ -266,6 +294,9 @@ func (s *sqliteStore) dbFor(scope Scope) (*sql.DB, string) {
 }
 
 func (s *sqliteStore) Save(ctx context.Context, e Entry) (Result, error) {
+	if s.cfg.ReadOnly {
+		return Result{}, errors.New("memory store is read-only")
+	}
 	if err := e.Validate(s.cfg.limits()); err != nil {
 		return Result{}, err
 	}
@@ -292,9 +323,8 @@ func (s *sqliteStore) Save(ctx context.Context, e Entry) (Result, error) {
 		return Result{}, err
 	}
 	defer tx.Rollback()
-	// Idempotency first, so an identical re-save at capacity returns the
-	// existing result instead of a spurious "store is full" error (parity with
-	// memStore, which checks the id before the cap).
+	// Idempotency first: an identical re-save at capacity returns the existing
+	// result instead of a spurious "store is full" error (parity with memStore).
 	var exists int
 	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ? AND scope = ? AND org = ?)", id, string(e.Scope), org).Scan(&exists); err != nil {
 		return Result{}, err
@@ -447,16 +477,20 @@ func (s *sqliteStore) Count(ctx context.Context, scope Scope) (int, error) {
 func (s *sqliteStore) Close() error {
 	var first error
 	if s.projectDB != nil {
-		if err := s.checkpoint(context.Background(), s.projectDB); err != nil && first == nil {
-			first = err
+		if !s.cfg.ReadOnly {
+			if err := s.checkpoint(context.Background(), s.projectDB); err != nil && first == nil {
+				first = err
+			}
 		}
 		if err := s.projectDB.Close(); err != nil && first == nil {
 			first = err
 		}
 	}
 	if s.orgDB != nil {
-		if err := s.checkpoint(context.Background(), s.orgDB); err != nil && first == nil {
-			first = err
+		if !s.cfg.ReadOnly {
+			if err := s.checkpoint(context.Background(), s.orgDB); err != nil && first == nil {
+				first = err
+			}
 		}
 		if err := s.orgDB.Close(); err != nil && first == nil {
 			first = err

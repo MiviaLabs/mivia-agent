@@ -19,15 +19,14 @@ type sessionActiveRun struct {
 	// runner is the exact coordinator runner this run dispatches panel
 	// children with, when the controller uses one. Cancel reuses it (see
 	// cliPanelCancelCoordinator) so a live panel member is genuinely
-	// canceled instead of only having its claim refused (D15, Wave 7).
+	// canceled instead of only having its claim refused (D15).
 	runner *controller.CoordinatorRunner
 	// resourceGuard serializes runner-backed coordinator reuse against
-	// closeFn's teardown (Wave 8 audit finding #1): the run's own completion
-	// goroutine closes runner's backing store via closeFn, and without this
-	// guard Cancel could reuse runner after that store already closed. Every
-	// use of runner must hold resourceGuard.RLock() for its full duration;
-	// closeGuarded holds resourceGuard.Lock() around closeFn and the closed
-	// flag it sets.
+	// closeFn's teardown: the run's own completion goroutine closes runner's
+	// backing store via closeFn, and without this guard Cancel could reuse
+	// runner after that store already closed. Every use of runner must hold
+	// resourceGuard.RLock() for its full duration; closeGuarded holds
+	// resourceGuard.Lock() around closeFn and the closed flag it sets.
 	resourceGuard sync.RWMutex
 	closed        bool
 }
@@ -68,14 +67,13 @@ func (a *sessionActiveRun) closeGuarded() {
 
 // cancelRunWithGuardedCoordinator runs CancelRunWithAttemptsWithClaim,
 // reusing active's live coordinator only while resourceGuard proves its
-// backing store has not closed (Wave 8 audit finding #1): Cancel's earlier
-// stopActive wait only confirms the run loop exited, not that its resources
-// are still open, so a bare active.runner read could hand
-// CancelRunWithAttemptsWithClaim a coordinator whose store already closed.
-// useLiveCoordinator holds the guard for this call's full duration, which
-// also makes closeGuarded wait its turn instead of closing mid-cancel. It
-// falls back to a fresh store-backed coordinator when active has no usable
-// live runner.
+// backing store has not closed: Cancel's earlier stopActive wait only
+// confirms the run loop exited, not that its resources are still open, so a
+// bare active.runner read could hand CancelRunWithAttemptsWithClaim a
+// coordinator whose store already closed. useLiveCoordinator holds the
+// guard for this call's full duration, which also makes closeGuarded wait
+// its turn instead of closing mid-cancel. It falls back to a fresh
+// store-backed coordinator when active has no usable live runner.
 func cancelRunWithGuardedCoordinator(ctx context.Context, active *sessionActiveRun, repo workflowledger.Repository, store *storage.SQLite, runID, holder string) ([]workflowledger.StepAttempt, error) {
 	var attempts []workflowledger.StepAttempt
 	var cancelErr error

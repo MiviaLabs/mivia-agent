@@ -166,8 +166,7 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 		// event here once delivery actually succeeded.
 		e.publishDeliveredRunFinished(context.Background(), p.repo, p.runID)
 		// done closes once the run loop itself has exited, before resource
-		// teardown below - see launchStartedWorkflow's matching comment
-		// (Wave 8 audit finding #1).
+		// teardown below - see launchStartedWorkflow's matching comment.
 		close(done)
 		e.mu.Lock()
 		active := e.active[p.runID]

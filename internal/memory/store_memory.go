@@ -32,6 +32,9 @@ func newMemStore(cfg Config) *memStore {
 }
 
 func (s *memStore) Save(ctx context.Context, e Entry) (Result, error) {
+	if s.cfg.ReadOnly {
+		return Result{}, errors.New("memory store is read-only")
+	}
 	if err := e.Validate(s.cfg.limits()); err != nil {
 		return Result{}, err
 	}

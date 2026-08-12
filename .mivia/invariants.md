@@ -164,7 +164,7 @@ may be separate processes or hosts.
 
 | ID | Category | Invariant | Test(s) | Last Verified |
 |----|----------|-----------|---------|---------------|
-| INV-WF-1 | Safety | Every workflow step attempt and every run transition is observable: a durable `wf_*` ledger event is written for run created/status/attempt started/completed/execution/resumed, and the controller emits a progress event at step start/end and run finish when a `ProgressSink` is attached | `TestLinearProgressStepStartedAndCompletedOnSuccess`, `TestPanelStepRefusalPersistsDurableCause`, `TestControllerRunEmitsRunFinished`, `TestStartNewResumeRecordsRunResumed` | |
+| INV-WF-1 | Safety | Every workflow step attempt and every run transition is observable: a durable `wf_*` ledger event is written for run created/status/attempt started/completed/execution/resumed, and the controller emits a progress event at step start/end and run finish when a `ProgressSink` is attached | `TestLinearProgressStepStartedAndCompletedOnSuccess`, `TestPanelStepFailureCausePersistsDurableCause`, `TestControllerRunEmitsRunFinished`, `TestStartNewResumeRecordsRunResumed` | |
 
 ## Prefix-stability invariants (plan 68)
 
