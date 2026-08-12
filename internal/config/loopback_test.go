@@ -7,7 +7,7 @@ import (
 // TestIsOllamaLoopback pins the planned IsOllamaLoopback predicate: a raw
 // endpoint string counts as a local Ollama server only when it is an
 // http(s) URL whose host is a genuine loopback address (127.0.0.1, ::1, or
-// the literal "localhost", case-insensitive) on the default Ollama port.
+// the literal "localhost", case-insensitive) on any loopback port.
 // Host-name lookalikes (suffix hosts, trailing-dot FQDNs, IPv4-mapped IPv6,
 // alternate spellings of 127.0.0.1), userinfo, fragments, non-http schemes,
 // scheme-relative or scheme-less strings, and empty/garbage input must all be

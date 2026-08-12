@@ -61,6 +61,7 @@ func TestSetupWritesKeyToNewEnvFile(t *testing.T) {
 }
 
 func TestSetupPreservesExistingEnvKeys(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
 	if err := os.WriteFile(envPath, []byte("OTHER_KEY=keep-me\n"), 0o600); err != nil {
@@ -88,6 +89,7 @@ func TestSetupPreservesExistingEnvKeys(t *testing.T) {
 }
 
 func TestSetupReadsKeyFromEnvVar(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test-0002")
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
@@ -278,6 +280,7 @@ func TestSetupDeepseekNoKeyStillErrors(t *testing.T) {
 }
 
 func TestSetupKeepsExistingConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
 	cfgPath := filepath.Join(dir, "mivia.toml")
@@ -328,6 +331,7 @@ func TestSetupArgErrors(t *testing.T) {
 }
 
 func TestExecuteSetupWritesFiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
 	cfgPath := filepath.Join(dir, "mivia.toml")
@@ -348,5 +352,96 @@ func TestExecuteSetupWritesFiles(t *testing.T) {
 	}
 	if _, statErr := os.Stat(cfgPath); statErr != nil {
 		t.Fatalf("config missing after Execute: %v", statErr)
+	}
+}
+
+// A whitespace-only DEEPSEEK_API_KEY must count as missing: setup must not
+// accept padded whitespace as a key and must fail with the no-key error.
+func TestSetupDeepseekWhitespaceKeyStillErrors(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "   ")
+	dir := t.TempDir()
+	_, err := runSetupCapture(t, []string{
+		"--provider", "deepseek",
+		"--env-file", filepath.Join(dir, ".env"),
+		"--config", filepath.Join(dir, "mivia.toml"),
+		"--yes",
+	}, "")
+	if err == nil {
+		t.Fatal("deepseek setup with a whitespace key returned nil error")
+	}
+	if !strings.Contains(err.Error(), "setup: no API key") {
+		t.Fatalf("setup error = %v, want missing-key message", err)
+	}
+}
+
+// A padded --key value must be trimmed before it reaches the env file: the
+// file must contain exactly OPENROUTER_API_KEY=sk-test with no whitespace.
+func TestSetupTrimsPaddedKeyValue(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	if _, err := runSetupCapture(t, []string{
+		"--provider", "openrouter",
+		"--key", " sk-test ",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, ""); err != nil {
+		t.Fatalf("setup error = %v", err)
+	}
+	raw, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("read written env file: %v", err)
+	}
+	if string(raw) != "OPENROUTER_API_KEY=sk-test\n" {
+		t.Fatalf("env file = %q, want exactly %q", raw, "OPENROUTER_API_KEY=sk-test\n")
+	}
+	entries, err := envfile.Load(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries["OPENROUTER_API_KEY"] != "sk-test" {
+		t.Fatalf("env key = %q, want sk-test", entries["OPENROUTER_API_KEY"])
+	}
+}
+
+// A padded provider name must be trimmed before the keyless-ollama decision:
+// setup must take the keyless branch, exit 0, and write no env file.
+func TestSetupOllamaPaddedProviderIsKeyless(t *testing.T) {
+	t.Setenv("OLLAMA_API_KEY", "")
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	cfgPath := filepath.Join(dir, "mivia.toml")
+	out, err := runSetupCapture(t, []string{
+		"--provider", " ollama ",
+		"--env-file", envPath,
+		"--config", cfgPath,
+		"--yes",
+	}, "")
+	if err != nil {
+		t.Fatalf("keyless ollama setup error = %v", err)
+	}
+	if _, statErr := os.Stat(envPath); !os.IsNotExist(statErr) {
+		t.Fatalf("env file created for padded-provider ollama (stat err=%v)", statErr)
+	}
+	if !strings.Contains(out, "provider:   ollama") {
+		t.Fatalf("summary did not trim the provider name:\n%s", out)
+	}
+}
+
+// An empty --provider= value must be rejected up front by the argument parser.
+func TestSetupEmptyProviderFlagErrors(t *testing.T) {
+	dir := t.TempDir()
+	_, err := runSetupCapture(t, []string{
+		"--provider=",
+		"--env-file", filepath.Join(dir, ".env"),
+		"--config", filepath.Join(dir, "mivia.toml"),
+		"--yes",
+	}, "")
+	if err == nil {
+		t.Fatal("setup with an empty --provider returned nil error")
+	}
+	if !strings.Contains(err.Error(), "setup: --provider requires a name") {
+		t.Fatalf("setup error = %v, want --provider requires a name", err)
 	}
 }

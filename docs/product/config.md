@@ -93,13 +93,15 @@ The `ollama` provider supports two modes. The provider name is always
 `ollama`; mode is inferred from `base_url` via the loopback predicate —
 literal loopback hostnames (`127.0.0.1`, `::1`, `localhost`) mean local
 daemon mode with **no API key**; any other `base_url` means cloud mode
-and requires `OLLAMA_API_KEY`.
+and requires `OLLAMA_API_KEY`. localhost is trusted as loopback per the
+design (matching internal/config/loopback.go's doc comment); environments
+where localhost does not resolve to loopback should use 127.0.0.1 instead.
 
 **Cloud profile** (Ollama Cloud, API key required):
 
 ```toml
 [providers.ollama]
-models = [{ name = "gpt-oss:120b", context_window_tokens = 128000 }]
+models = [{ name = "gpt-oss:120b", context_window_tokens = 131072 }]
 default_model = "gpt-oss:120b"
 api_key_env = "OLLAMA_API_KEY"
 base_url = "https://ollama.com/v1"
@@ -109,7 +111,7 @@ base_url = "https://ollama.com/v1"
 
 ```toml
 [providers.ollama]
-models = [{ name = "gpt-oss:120b", context_window_tokens = 128000 }]
+models = [{ name = "gpt-oss:120b", context_window_tokens = 131072 }]
 default_model = "gpt-oss:120b"
 base_url = "http://127.0.0.1:11434/v1"
 ```

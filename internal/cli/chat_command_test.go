@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,23 +14,29 @@ import (
 
 // TestRunConfiguredChatOnceOllamaLoopbackSkipsKeyGate pins that a local
 // ollama loopback provider needs no API key: the entrypoint must get past the
-// missing-key gate and reach the provider (failing with a dial error when no
-// daemon is listening, or succeeding against a real one) instead of returning
-// "missing API key". This is the chat-side pair of the config validateBaseURL
-// relaxation for ollama loopback URLs.
+// missing-key gate and reach the provider (failing with a provider error from
+// a hermetic 404 server) instead of returning "missing API key". This is the
+// chat-side pair of the config validateBaseURL relaxation for ollama loopback
+// URLs.
 func TestRunConfiguredChatOnceOllamaLoopbackSkipsKeyGate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
 	ws := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(ws, ".mivia"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(ws, ".mivia", "mivia.toml")
-	fixture := `[provider]
+	fixture := fmt.Sprintf(`[provider]
 name = "ollama"
 
 [providers.ollama]
-base_url = "http://127.0.0.1:11434/v1"
+base_url = "%s/v1"
 models = [{ name = "llama3.1:8b", context_window_tokens = 128000 }]
-`
+`, server.URL)
 	if err := os.WriteFile(cfgPath, []byte(fixture), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -55,8 +64,8 @@ models = [{ name = "llama3.1:8b", context_window_tokens = 128000 }]
 	if err != nil && strings.Contains(err.Error(), "missing API key") {
 		t.Fatalf("runConfiguredChatOnceImpl: %v (key gate must not fire for ollama loopback)", err)
 	}
-	// With no local daemon the call ends in a dial error - acceptable. If a
-	// real daemon is running it may even succeed.
+	// The call must reach the provider: the hermetic 404 server answers, so
+	// the error is a provider error and never the key gate.
 }
 
 // TestRunConfiguredChatOnceWhitespaceKeyIsMissing pins that a whitespace-only
@@ -109,21 +118,28 @@ models = [{ name = "llama3.1:8b", context_window_tokens = 128000 }]
 
 // TestRunConfiguredChatOnceOllamaLoopbackWhitespaceKeySkipsKeyGate pins that the
 // ollama loopback relaxation survives a whitespace-only OLLAMA_API_KEY: the key
-// gate must not fire, and the call must reach the provider (dial error when no
-// daemon listens) instead of returning "missing API key".
+// gate must not fire, and the call must reach the provider (failing with a
+// provider error from a hermetic 404 server) instead of returning "missing API
+// key".
 func TestRunConfiguredChatOnceOllamaLoopbackWhitespaceKeySkipsKeyGate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
 	ws := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(ws, ".mivia"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(ws, ".mivia", "mivia.toml")
-	fixture := `[provider]
+	fixture := fmt.Sprintf(`[provider]
 name = "ollama"
 
 [providers.ollama]
-base_url = "http://127.0.0.1:11434/v1"
+base_url = "%s/v1"
 models = [{ name = "llama3.1:8b", context_window_tokens = 128000 }]
-`
+`, server.URL)
 	if err := os.WriteFile(cfgPath, []byte(fixture), 0o600); err != nil {
 		t.Fatal(err)
 	}

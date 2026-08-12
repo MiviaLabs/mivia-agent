@@ -99,12 +99,17 @@ func runSetupWithIO(args []string, stdout io.Writer, stdin io.Reader) error {
 		return err
 	}
 
+	return printSetupSummary(stdout, provider, keyEnv, envPath, cfgPath, keylessOllama, cfgWritten)
+}
+
+// printSetupSummary renders the post-run summary. It never prints the key value.
+func printSetupSummary(stdout io.Writer, provider, keyEnv, envPath, cfgPath string, keylessOllama, cfgWritten bool) error {
 	fmt.Fprintln(stdout, "mivia setup")
 	fmt.Fprintf(stdout, "  provider:   %s\n", provider)
 	fmt.Fprintf(stdout, "  key env:    %s\n", keyEnv)
 	if keylessOllama {
-		fmt.Fprintln(stdout, "  mode:       local daemon - no API key needed (base_url http://127.0.0.1:11434/v1)")
-		fmt.Fprintf(stdout, "  mode:       Ollama Cloud - pass the key via --key or set %s\n", keyEnv)
+		fmt.Fprintln(stdout, "  mode:       local daemon - no API key needed (set base_url to http://127.0.0.1:11434/v1 in [providers.ollama])")
+		fmt.Fprintf(stdout, "  mode:       Ollama Cloud - needs the key (default base_url https://ollama.com/v1); pass --key or set %s\n", keyEnv)
 	} else {
 		fmt.Fprintf(stdout, "  key file:   %s (written)\n", displayPath(envPath))
 	}
@@ -115,7 +120,11 @@ func runSetupWithIO(args []string, stdout io.Writer, stdin io.Reader) error {
 	} else {
 		fmt.Fprintf(stdout, "  config:     %s (existing)\n", displayPath(cfgPath))
 	}
-	fmt.Fprintln(stdout, "  next:       run `mivia doctor` to verify")
+	if keylessOllama {
+		fmt.Fprintln(stdout, "  next:       add a [providers.ollama] block to your config, then run mivia doctor")
+	} else {
+		fmt.Fprintln(stdout, "  next:       run `mivia doctor` to verify")
+	}
 	return nil
 }
 
