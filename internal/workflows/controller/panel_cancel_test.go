@@ -104,6 +104,36 @@ func TestReconcilePanelCancellation_MissingClaimHolderFails(t *testing.T) {
 	}
 }
 
+// alwaysConflictPanelPhaseRepository fails every CompareAndSetPanelPhase
+// call with ErrConflict, simulating sustained contention (repeated claim
+// handoffs mid-reconciliation) that never lets this caller's CAS land.
+type alwaysConflictPanelPhaseRepository struct {
+	workflowledger.Repository
+}
+
+func (r *alwaysConflictPanelPhaseRepository) CompareAndSetPanelPhase(ctx context.Context, runID, attemptID string, expectedVersion uint64, from, to workflowledger.PanelPhase, synthesis *workflowledger.PanelSynthesisExecution) error {
+	return workflowledger.ErrConflict
+}
+
+// Bug-audit finding: exhausting advancePanelPhaseToCancelPending's bounded
+// retry loop must report the same retryable ErrCancelBlocked outcome every
+// other "cannot make progress right now" cancel path reports, not a hard
+// error that would permanently fail the run.
+func TestReconcilePanelCancellation_RetryExhaustionReportsErrCancelBlocked(t *testing.T) {
+	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
+	runner := ctrl.Runner.(*CoordinatorRunner)
+	stuck := &alwaysConflictPanelPhaseRepository{Repository: repo}
+	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, stuck)
+
+	_, allTerminal, err := ReconcilePanelCancellation(ctx, stuck, panel, ctrl.RunID, ctrl.Holder, attempt.AttemptID)
+	if allTerminal {
+		t.Fatal("retry exhaustion must not report allTerminal")
+	}
+	if !errors.Is(err, ErrCancelBlocked) {
+		t.Fatalf("error = %v, want errors.Is(err, ErrCancelBlocked)", err)
+	}
+}
+
 func TestReconcilePanelCancellation_RetriesAfterLostCAS(t *testing.T) {
 	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
 	runner := ctrl.Runner.(*CoordinatorRunner)

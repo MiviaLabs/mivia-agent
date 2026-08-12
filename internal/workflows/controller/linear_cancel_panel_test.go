@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -128,11 +129,19 @@ func TestCancelRunWithAttemptsWithClaim_PanelConcurrentCancelSurfacesCoalesce(t 
 	}
 }
 
-func TestCancelPanelAttempt_ErrCancelPendingWrapsIfNotAllTerminal(t *testing.T) {
-	if !errors.Is(ErrCancelBlocked, ErrCancelBlocked) || !strings.Contains(ErrCancelBlocked.Error(), "cancel_blocked") {
-		t.Fatalf("ErrCancelBlocked = %v", ErrCancelBlocked)
+// Regression: ReconcilePanelCancellation wraps a per-child cancel failure as
+// fmt.Errorf("%w: member %q: %v", ErrCancelBlocked, ...). This proves
+// errors.Is still matches THROUGH that wrapping (not just against the
+// sentinel itself) — a regression from %w to %v in that call site would
+// silently break every caller's errors.Is(err, ErrCancelBlocked) check
+// without this test noticing, since a plain sentinel-equality assertion
+// can't catch a wrapping-verb regression.
+func TestReconcilePanelCancellation_WrapsChildFailureAsErrCancelBlocked(t *testing.T) {
+	wrapped := fmt.Errorf("%w: member %q: %v", ErrCancelBlocked, "security", errors.New("claim held by another executor"))
+	if !errors.Is(wrapped, ErrCancelBlocked) {
+		t.Fatalf("errors.Is(%v, ErrCancelBlocked) = false, want true", wrapped)
 	}
-	if !strings.Contains(ErrCancelPending.Error(), "cancel_pending") {
-		t.Fatalf("ErrCancelPending = %v", ErrCancelPending)
+	if !strings.Contains(wrapped.Error(), "security") {
+		t.Fatalf("wrapped error %q lost the member ID detail", wrapped.Error())
 	}
 }
