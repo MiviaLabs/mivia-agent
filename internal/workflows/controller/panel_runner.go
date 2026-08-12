@@ -184,6 +184,12 @@ func panelMemberResultError(result *coordinator.RunResult) error {
 		if child.Status != "completed" {
 			return fmt.Errorf("panel member task %q ended with status %q, not completed", child.TaskID, child.Status)
 		}
+		// D14: a completed task with missing content is a panel failure, not
+		// something to synthesize from. len(nil json.RawMessage) == 0, so this
+		// also catches an unset Output field, not only an explicit "".
+		if len(child.Output) == 0 {
+			return fmt.Errorf("panel member task %q completed with no output content", child.TaskID)
+		}
 	}
 	return nil
 }
