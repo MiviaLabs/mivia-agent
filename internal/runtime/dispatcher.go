@@ -345,6 +345,19 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) (result Result) {
 	result.HookContext = boundHookContext(joinHookContext(verdict.Context, post.Context))
 	result.HookRuns = append(verdict.Runs, post.Runs...)
 	d.recordTurnResult(req, result)
+	// ID-keyed dedup fidelity (DC-9): the completed-map record and the
+	// ID-keyed waiter delivery run HERE, after postInvoke attached
+	// HookContext/HookRuns, so an ID-keyed duplicate - an in-flight waiter or
+	// a completed-map re-delivery - is answered with the same POST-hook result
+	// as the owner. The result.Err == nil guard preserves the pre-existing
+	// write set: only the execute-success path reaches this tail with Err ==
+	// nil; failure/block/cancel paths release ID-keyed waiters through
+	// deliverTerminal and never populate d.completed.
+	if result.Err == nil {
+		d.mu.Lock()
+		d.completeIDKeyed(req, result)
+		d.mu.Unlock()
+	}
 	return result
 }
 
@@ -396,7 +409,12 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	// (scope-acquisition failure, runaway output). It must not record the turn
 	// bucket: Invoke records every execute-returned result exactly once, after
 	// the hooks attach HookContext, so a same-step duplicate is served the same
-	// post-hook result as the owner (DC-9 dedup fidelity).
+	// post-hook result as the owner (DC-9 dedup fidelity). The ID-keyed
+	// completed-map record and ID-keyed waiter delivery also happen in Invoke's
+	// tail, after postInvoke attaches HookContext/HookRuns (see the tail
+	// comment there); execute's success tail only builds the bounded Result.
+	// Every failure path returns before that tail and never populates
+	// d.completed.
 	h := res.handler
 	meta.Status = "started"
 	d.emit(meta)
@@ -457,12 +475,5 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 		meta.OutputPreview = d.previewFor(out)
 	}
 	d.emit(meta)
-	result := Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Output: out, Attempts: attempts, Metadata: meta}
-	d.mu.Lock()
-	// Record the ID-keyed completed entry only for calls that read it
-	// (turnDedupKey == "", see reserve); the ID-keyed waiter delivery inside
-	// stays ungated.
-	d.completeIDKeyed(req, result)
-	d.mu.Unlock()
-	return result
+	return Result{ID: req.ID, Name: req.Name, Kind: req.Kind, Output: out, Attempts: attempts, Metadata: meta}
 }
