@@ -339,6 +339,30 @@ func TestDecodeStrictPanelMemberReport_RejectsUnknownFields(t *testing.T) {
 	}
 }
 
+// Bug-audit regression: a finding ID carrying sourceKeyDigest's own
+// separator bytes (0x00, 0x1e) must never decode successfully, since it
+// would let two different canonical source keys collide onto one digest.
+func TestDecodeStrictPanelMemberReport_RejectsControlByteInFindingID(t *testing.T) {
+	for _, id := range []string{"a\x00b", "a\x1eb", "a\x7fb", "a\tb", "a\nb"} {
+		raw := validPanelReportJSON(PanelVerdictChangesRequested, finding(id))
+		if _, _, err := DecodeStrictPanelMemberReport(raw); err == nil {
+			t.Fatalf("finding id %q: DecodeStrictPanelMemberReport() error = nil, want control-byte rejection", id)
+		}
+	}
+}
+
+// Bug-audit regression: without the control-byte rejection above, this pair
+// of reports would hash to the identical source-key digest despite carrying
+// different findings, because the digest concatenates MemberID + 0x00 +
+// FindingID + 0x1e with no escaping.
+func TestSourceKeyDigest_CollisionInputsAreNowRejectedAtDecode(t *testing.T) {
+	forged := "X\x1esecurity\x00Y"
+	raw := validPanelReportJSON(PanelVerdictChangesRequested, finding(forged))
+	if _, _, err := DecodeStrictPanelMemberReport(raw); err == nil {
+		t.Fatal("forged finding id must be rejected at decode, before it can reach sourceKeyDigest")
+	}
+}
+
 func memberIDFor(i int) string {
 	return "member-" + string(rune('a'+i))
 }

@@ -230,3 +230,27 @@ func TestAdvancePanelSynthesis_RejectsIncompleteDispositions(t *testing.T) {
 		t.Fatalf("run status = %q, want failed", run.Status)
 	}
 }
+
+// Bug-audit regression: the compiler's ValidateAgentSkillReferences accepts
+// an empty step.Skill on an agent_panel step (backward compatibility for
+// workflows admitted before skill bindings existed), but PanelTaskSpec.Validate
+// unconditionally rejects an empty Skill. buildPanelSynthesisWork must fail
+// fast with a clear cause naming the missing skill, not let a legally
+// compiled workflow build an invalid work spec that fails deep inside the
+// ledger's phase-transition validation with an opaque ErrInvalidTransition.
+func TestAdvancePanelSynthesis_RejectsMissingStepSkill(t *testing.T) {
+	memberReport := `{"verdict":"approved","findings":[]}`
+	synthesisOutput := `{"dispositions":[],"summary":"Nothing to report."}`
+	ctrl, repo, step := panelSynthesisFixture(t, "wfr-panel-synth-no-skill", memberReport, synthesisOutput)
+	step.Skill = ""
+	_, done, err := driveAdvancePanelSynthesis(t, ctrl, repo, step)
+	if err == nil {
+		t.Fatal("advancePanelSynthesis() error = nil, want a missing-skill rejection")
+	}
+	if !strings.Contains(err.Error(), "requires a skill") {
+		t.Fatalf("advancePanelSynthesis() error = %v, want it to name the missing skill", err)
+	}
+	if !done {
+		t.Fatal("advancePanelSynthesis() done = false, want a terminal (failed) run")
+	}
+}

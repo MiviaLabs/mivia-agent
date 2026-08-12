@@ -53,6 +53,16 @@ func validatePanelMembers(stepID string, members []definition.PanelMember) error
 		if member.ID == "synthesis" {
 			return fmt.Errorf("step %q: panel member id %q is reserved", stepID, member.ID)
 		}
+		// Wave 5's controller.sourceKeyDigest concatenates MemberID and
+		// FindingID with 0x00/0x1e separators. A member ID carrying one of
+		// those bytes (or any other control byte) could make two different
+		// canonical source keys collide onto the same digest. A finding ID
+		// gets this same check at decode time (host-decoded, model-authored);
+		// a member ID is workflow-definition-authored, so it is checked here,
+		// at compile time, once.
+		if hasControlByte(member.ID) {
+			return fmt.Errorf("step %q: panel member id %q contains a control character", stepID, member.ID)
+		}
 		if _, exists := memberIDs[member.ID]; exists {
 			return fmt.Errorf("step %q: panel has duplicate member id %q", stepID, member.ID)
 		}
@@ -92,4 +102,14 @@ func validatePanelMembers(stepID string, members []definition.PanelMember) error
 		bindings[binding] = struct{}{}
 	}
 	return nil
+}
+
+// hasControlByte reports whether s contains a C0 control byte or DEL.
+func hasControlByte(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
 }

@@ -70,6 +70,16 @@ func DecodeStrictPanelMemberReport(raw []byte) (PanelMemberReport, []byte, error
 		if len(f.ID) > maxFindingIDBytes {
 			return PanelMemberReport{}, nil, fmt.Errorf("panel member report: finding id exceeds %d byte bound", maxFindingIDBytes)
 		}
+		// A control byte in a finding ID (notably 0x00 and 0x1e, the
+		// separators sourceKeyDigest uses between key fields) would let two
+		// different canonical source keys hash to the same digest, e.g.
+		// member "security" with finding "X\x1esecurity\x00Y" and member
+		// "security" with two findings "X" and "Y" produce the same digest
+		// input. Reject it here so no finding ID can ever collide with a
+		// separator the host's own encoding relies on.
+		if hasControlByte(f.ID) {
+			return PanelMemberReport{}, nil, fmt.Errorf("panel member report: finding id contains a control character")
+		}
 		if _, dup := seen[f.ID]; dup {
 			return PanelMemberReport{}, nil, fmt.Errorf("panel member report: duplicate finding id %q", f.ID)
 		}
@@ -83,6 +93,19 @@ func DecodeStrictPanelMemberReport(raw []byte) (PanelMemberReport, []byte, error
 		return PanelMemberReport{}, nil, fmt.Errorf("panel member canonical report is %d bytes, exceeds %d byte bound", len(canonical), maxCanonicalPanelMemberReportBytes)
 	}
 	return report, canonical, nil
+}
+
+// hasControlByte reports whether s contains a C0 control byte or DEL. It
+// guards sourceKeyDigest's separator-based encoding: without this check, a
+// finding ID could smuggle the digest's own separator bytes and collide two
+// different canonical source keys onto the same digest.
+func hasControlByte(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // checkNoDuplicateJSONKeys walks raw as a JSON token stream and rejects a

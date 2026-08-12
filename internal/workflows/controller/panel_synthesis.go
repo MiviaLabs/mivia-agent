@@ -86,6 +86,17 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 	if step.Panel == nil || attempt.PanelExecution == nil || len(attempt.PanelExecution.Members) == 0 {
 		return workflowledger.PanelTaskSpec{}, fmt.Errorf("panel step %q has no admitted member work", step.ID)
 	}
+	// The compiler accepts an empty step.Skill for backward compatibility with
+	// workflows admitted before skill bindings existed (ValidateAgentSkillReferences
+	// treats "" as "no skill declared", not an error). PanelTaskSpec.Validate,
+	// deeper in the ledger, unconditionally rejects an empty Skill. Without this
+	// check, a panel step that legitimately compiles with no declared skill would
+	// admit its members, then fail the synthesis phase transition every time with
+	// an opaque ErrInvalidTransition far from its real cause. Fail here instead,
+	// with a cause that names the actual problem.
+	if step.Skill == "" {
+		return workflowledger.PanelTaskSpec{}, fmt.Errorf("panel step %q requires a skill for synthesis dispatch", step.ID)
+	}
 	snapshot, err := workflowledger.UnmarshalSnapshot(c.Snapshot)
 	if err != nil {
 		return workflowledger.PanelTaskSpec{}, err
