@@ -43,6 +43,10 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 	if synthesizer && !agent.AllowEmptyTools {
 		return fmt.Errorf("review-synthesizer must declare allow_empty_tools = true")
 	}
+	// skillHasResources mirrors the injectSkillResourceTool branch below so
+	// the expected tool set can include the scoped reader exactly when the
+	// runtime surface does.
+	skillHasResources := false
 	if skillName != "" {
 		if opts.SkillReg == nil {
 			return fmt.Errorf("panel agent %q has no skill registry", agent.Name)
@@ -55,6 +59,7 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 			return fmt.Errorf("review-synthesizer skill %q must not declare tools or resources", skillName)
 		}
 		if len(skill.Resources) != 0 {
+			skillHasResources = true
 			activation, err := skill.Activate()
 			if err != nil {
 				return err
@@ -75,6 +80,16 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 	want := []string{}
 	if !synthesizer {
 		want = panelMCPAllowedTools(agent, authority)
+		// A member skill that declares resources gets the host-injected
+		// scoped reader (injectSkillResourceTool) in its runtime surface, so
+		// the expected set must carry read_skill_resource too. Without this,
+		// admission fails for every panel member whose skill ships a
+		// resources.toml (bug-audit, secure-change, architecture-review all
+		// do), which is exactly how the enabled gate refused every run on
+		// first live use.
+		if skillHasResources {
+			want = append(want, tools.SkillResourceToolName)
+		}
 		slices.Sort(want)
 	}
 	if !slices.Equal(names, want) {

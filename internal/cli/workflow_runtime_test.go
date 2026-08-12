@@ -70,6 +70,56 @@ func TestPanelAuthorityRequiresExactFinalToolNames(t *testing.T) {
 	}
 }
 
+// TestPanelAuthorityAdmitsSkillResourceReader pins the fix for the enabled
+// agent_panel gate refusing every run at admission: a panel member whose
+// skill declares resources gets the host-injected read_skill_resource scoped
+// reader (injectSkillResourceTool) in its runtime surface, so the expected
+// tool set must carry it too. TestPanelAuthorityRequiresExactFinalToolNames
+// above uses a resource-less skill, which is exactly why unit coverage never
+// saw the mismatch that blocked the live gate (bug-audit, secure-change, and
+// architecture-review all ship resources.toml).
+func TestPanelAuthorityAdmitsSkillResourceReader(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/panel\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Join(root, "review")
+	if err := os.Mkdir(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"SKILL.md":       "---\nname: review\n---\nLoad the declared template before reporting.",
+		"resources.toml": "format = 1\n\n[[resources]]\nid = \"template\"\npath = \"template.md\"\nsummary = \"Required report template\"\n",
+		"template.md":    "TEMPLATE",
+	} {
+		if err := os.WriteFile(filepath.Join(skillDir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ws, err := workspace.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	skillRegistry, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: root, Origin: skills.OriginProject}}, skills.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := SessionDispatcherOpts{Registry: registry, AuthorityRegistry: registry, Config: config.DefaultSubagentConfig, SkillReg: skillRegistry}
+	good := agents.ResolvedAgent{Name: "panel-reviewer", EffectiveTools: []string{"read_file", "list_dir", "grep", "glob", "find_references"}, DisallowedTools: []string{toolPostMessage}}
+	if err := validatePanelAgentTools(good, "review", opts, false); err != nil {
+		t.Fatalf("validatePanelAgentTools with a resource-declaring skill: %v", err)
+	}
+	// Fail-closed is preserved: an unauthorized extra tool that exists in the
+	// authority registry still refuses admission.
+	registry.Register(namedTool{name: "future_read_tool"})
+	bad := good
+	bad.EffectiveTools = append(bad.EffectiveTools, "future_read_tool")
+	if err := validatePanelAgentTools(bad, "review", opts, false); err == nil {
+		t.Fatal("validatePanelAgentTools accepted an unauthorized extra tool")
+	}
+}
+
 func TestLoadWorkflowRuntimesPinsPanelMemberBindings(t *testing.T) {
 	base := t.TempDir()
 	if err := os.WriteFile(filepath.Join(base, "member.md"), []byte("review"), 0o600); err != nil {

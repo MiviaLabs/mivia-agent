@@ -1,10 +1,15 @@
 package cli
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // assertFeatureDeliveryReviewPanel pins the Wave 7 panel review gate (D1-D17,
@@ -115,5 +120,60 @@ func TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
 		if _, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes); err != nil {
 			t.Fatalf("panel member %q: render template %q without a round input: %v", member.ID, member.Template, err)
 		}
+	}
+}
+
+// TestFeatureDeliveryPanelMembersAdmit is the live-shaped regression test for
+// the enabled agent_panel review gate: every committed panel member
+// (panel-reviewer with bug-audit / secure-change / architecture-review) must
+// pass validatePanelAgentTools, the exact admission check workflow_run runs
+// before a run starts. All three member skills ship a resources.toml, so each
+// member's runtime surface carries the host-injected read_skill_resource
+// reader and the expected tool set must match. When this test was added the
+// gate refused every feature-delivery run at admission with a
+// "final runtime tools = [... read_skill_resource], want [...]" mismatch;
+// unit coverage used a resource-less skill and never saw it.
+func TestFeatureDeliveryPanelMembersAdmit(t *testing.T) {
+	root := committedWorkflowRoot(t)
+	workflow, _ := loadCommittedFeatureDeliveryWorkflow(t, root)
+	step := featureDeliveryStep(t, workflow, "review_panel")
+	if step.Panel == nil {
+		t.Fatal("step review_panel must declare [steps.panel]")
+	}
+	skillRegistry, warnings, err := skills.LoadMarkdownSources(
+		[]skills.Source{{Dir: filepath.Join(root, ".mivia", "skills"), Origin: skills.OriginProject}},
+		skills.LoadOptions{},
+	)
+	if err != nil {
+		t.Fatalf("load committed workflow skills: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("load committed workflow skills warnings: %v", warnings)
+	}
+	loaded, err := loadAgentDefinitions(root, "", skillRegistry)
+	if err != nil {
+		t.Fatalf("load committed workflow agents: %v", err)
+	}
+	ws, err := workspace.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	opts := SessionDispatcherOpts{Registry: registry, AuthorityRegistry: registry, Config: config.DefaultSubagentConfig, SkillReg: skillRegistry}
+	for _, member := range step.Panel.Members {
+		agent, ok := loaded.Registry.Get(member.Agent)
+		if !ok {
+			t.Fatalf("panel member %q references unknown agent %q", member.ID, member.Agent)
+		}
+		if err := validatePanelAgentTools(agent, member.Skill, opts, false); err != nil {
+			t.Fatalf("panel member %q (%s/%s, skill %q) must admit: %v", member.ID, member.Provider, member.Model, member.Skill, err)
+		}
+	}
+	synthesizer, ok := loaded.Registry.Get(step.Agent)
+	if !ok {
+		t.Fatalf("panel step references unknown synthesizer %q", step.Agent)
+	}
+	if err := validatePanelAgentTools(synthesizer, step.Skill, opts, true); err != nil {
+		t.Fatalf("review-synthesizer must admit: %v", err)
 	}
 }
