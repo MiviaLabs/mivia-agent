@@ -385,16 +385,18 @@ func runWorkflowsExplain(args []string, stdout, stderr io.Writer) error {
 // for the presentation layer.
 func buildExplainView(c *compiler.CompiledWorkflow, baseDir string) *presentation.CompiledWorkflowExplain {
 	cw := &presentation.CompiledWorkflowExplain{
-		Name:               c.Name,
-		Description:        c.Description,
-		Version:            c.Version,
-		Digest:             c.Digest,
-		Steps:              c.Steps,
-		Transitions:        c.Transitions,
-		InitialStep:        c.InitialStep,
-		Delivery:           c.Delivery,
-		MaxStepAttempts:    c.Limits.MaxStepAttempts,
-		MaxDurationSeconds: c.Limits.MaxDurationSeconds,
+		Name:                    c.Name,
+		Description:             c.Description,
+		Version:                 c.Version,
+		Digest:                  c.Digest,
+		Steps:                   c.Steps,
+		Transitions:             c.Transitions,
+		InitialStep:             c.InitialStep,
+		Delivery:                c.Delivery,
+		MaxStepAttempts:         c.Limits.MaxStepAttempts,
+		MaxDurationSeconds:      c.Limits.MaxDurationSeconds,
+		MaxOnFailureReentries:   c.Limits.MaxOnFailureReentries,
+		MaxTransientStepRetries: c.Limits.MaxTransientStepRetries,
 	}
 
 	// Loop names

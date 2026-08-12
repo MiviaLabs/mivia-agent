@@ -469,6 +469,14 @@ func TestCompile_LimitsValidation(t *testing.T) {
 			definition.Limits{MaxDurationSeconds: -1}},
 		{"max_duration_seconds exceeds 86400", "test-limits-high-duration", "max_duration_seconds",
 			definition.Limits{MaxDurationSeconds: 100000}},
+		{"negative max_on_failure_reentries", "test-limits-neg-reentries", "max_on_failure_reentries",
+			definition.Limits{MaxOnFailureReentries: -1}},
+		{"max_on_failure_reentries exceeds 1000", "test-limits-high-reentries", "max_on_failure_reentries",
+			definition.Limits{MaxOnFailureReentries: 2000}},
+		{"negative max_transient_step_retries", "test-limits-neg-transient", "max_transient_step_retries",
+			definition.Limits{MaxTransientStepRetries: -1}},
+		{"max_transient_step_retries exceeds 1000", "test-limits-high-transient", "max_transient_step_retries",
+			definition.Limits{MaxTransientStepRetries: 5000}},
 	}
 	for _, tc := range wantErr {
 		t.Run(tc.name, func(t *testing.T) {

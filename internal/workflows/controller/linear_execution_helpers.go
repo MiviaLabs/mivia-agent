@@ -37,7 +37,7 @@ func (c *LinearController) agentFailureRepairable(ctx context.Context, step defi
 			spent++
 		}
 	}
-	return spent < maxOnFailureReentries
+	return spent < c.onFailureReentryLimit()
 }
 
 // settleAttemptOutcome classifies one attempt's child result into its terminal
@@ -215,4 +215,21 @@ func (c *LinearController) failAttempt(ctx context.Context, run workflowledger.R
 // number, a workflow whose author declared an on_failure cycle (the compiler
 // accepts non-terminal on_failure targets and does not reject the cycle) would
 // spin to the run deadline.
-const maxOnFailureReentries = 3
+//
+// The budget is configurable per workflow via [limits] max_on_failure_reentries;
+// 0 (or an absent [limits] section) means this default. The same knob bounds
+// agent_panel re-entries (panel failures settle through settleAgentAttempt)
+// and evidence_gate host-failure repairs (hostFailureRepairable).
+const defaultMaxOnFailureReentries = 3
+
+// onFailureReentryLimit returns the per-step re-entry budget declared by the
+// workflow's [limits] max_on_failure_reentries, falling back to the controller
+// default when the workflow leaves it at 0. It is the single knob behind
+// agentFailureRepairable and hostFailureRepairable, so agents, panels, and
+// gate host repairs all spend the same configurable budget.
+func (c *LinearController) onFailureReentryLimit() int {
+	if c.Workflow != nil && c.Workflow.Limits.MaxOnFailureReentries > 0 {
+		return c.Workflow.Limits.MaxOnFailureReentries
+	}
+	return defaultMaxOnFailureReentries
+}

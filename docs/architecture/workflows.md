@@ -24,7 +24,7 @@ Workflow files live under `.mivia/workflows/*.toml`. A v1 definition has:
 
 - a version, canonical name, input contract, limits, and one initial step;
 - sequential steps with one of five kinds: `agent`, `agent_gate`, `agent_panel`, `evidence_gate`, or `human_gate`;
-- optional per-step `on_failure` target (defaults to `"failure"` when omitted);
+- optional per-step `on_failure` target (defaults to `"failure"` when omitted; a non-terminal target is a repair loop bounded per step by `[limits] max_on_failure_reentries`, default 3);
 - explicit structural transitions to a step or reserved `success` / `failure` terminal;
 - optional terminal delivery policy.
 
@@ -64,6 +64,14 @@ The feature-delivery workflow's `review_panel` step is the reference adoption: t
 provider/model pair) and one `review-synthesizer` synthesis step. See
 [Security and privacy](../security/overview.md#panel-review-agent_panel-workflow-steps) for the
 panel's data-handling contract.
+
+Panel attempts retry like any other step: a member or synthesis failure settles the
+attempt Failed, and the step's declared `on_failure` route decides what runs next. The
+feature-delivery workflow names the panel itself, so a failed panel attempt re-runs all
+members with a fresh attempt (each retry is a fresh, numbered panel attempt in the
+ledger). Re-entries are bounded per step by the workflow's
+`[limits] max_on_failure_reentries` (default 3); a spent budget routes to the terminal
+`failure` step.
 
 ## Delivery design
 

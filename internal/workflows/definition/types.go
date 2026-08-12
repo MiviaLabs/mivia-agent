@@ -22,6 +22,21 @@ type InputDef struct {
 type Limits struct {
 	MaxStepAttempts    int `toml:"max_step_attempts" json:"max_step_attempts,omitempty"`
 	MaxDurationSeconds int `toml:"max_duration_seconds" json:"max_duration_seconds,omitempty"`
+	// MaxOnFailureReentries bounds how many times ONE step may re-enter its
+	// declared non-terminal on_failure (repair) target after genuine
+	// failures: agent steps, agent_panel steps, and evidence_gate host
+	// failures all spend this budget, counted per step. 0 means the
+	// controller default (3); negative values are rejected by the compiler.
+	// The budget is a safety net, not a tuning dial: the compiler accepts
+	// on_failure cycles, so without it a workflow whose author declared a
+	// repair cycle would spin to the run deadline.
+	MaxOnFailureReentries int `toml:"max_on_failure_reentries" json:"max_on_failure_reentries,omitempty"`
+	// MaxTransientStepRetries bounds step-level retries of transient
+	// LLM-provider failures (overload, rate limit, upstream 5xx) within one
+	// attempt, each retry re-running the whole step with a fresh task
+	// identity. 0 means the controller default (3); negative values are
+	// rejected by the compiler.
+	MaxTransientStepRetries int `toml:"max_transient_step_retries" json:"max_transient_step_retries,omitempty"`
 }
 
 // IsEmpty reports true when both MaxStepAttempts and MaxDurationSeconds are zero,

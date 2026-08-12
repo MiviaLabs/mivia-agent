@@ -12,15 +12,16 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// maxHostFailureRepairs bounds how many times one gate step may re-enter a
-// repair after its verifier failed to run.
+// hostFailureRepairable's re-entry budget is the workflow-configurable
+// max_on_failure_reentries limit (onFailureReentryLimit), shared with
+// agentFailureRepairable so every repair re-entry in a run is bounded by one
+// knob.
 //
 // The two caps that bound other re-entries do not reach this one.
 // enforceGlobalAttemptCap does nothing when a workflow leaves
 // max_step_attempts unset, which is legal, and checkLoopCap fires only for a
-// named back-edge while this route carries no loop. Without this number, a
+// named back-edge while this route carries no loop. Without the budget, a
 // workflow with no limits and a permanently broken host would repair forever.
-const maxHostFailureRepairs = 3
 
 // maxHostFailureCauseBytes bounds how much of the verifier report is carried
 // into the step error: enough to say why the sandbox failed, never the whole
@@ -119,5 +120,5 @@ func (c *LinearController) hostFailureRepairable(ctx context.Context, step defin
 			spent++
 		}
 	}
-	return spent < maxHostFailureRepairs
+	return spent < c.onFailureReentryLimit()
 }

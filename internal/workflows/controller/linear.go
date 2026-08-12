@@ -314,10 +314,12 @@ func (c *LinearController) Run(ctx context.Context) (workflowledger.RunSnapshot,
 			}
 			return snap, nil
 		}
-		if step, ok := c.WorkflowStep(snap.ActiveStepID); ok && step.Kind == "agent_panel" {
-			// Wave 4 completes the member phase only. Wave 5 advances the
-			// persisted panel phase into synthesis.
-			return snap, ErrPanelMembersComplete
+		if !panelsEnabled {
+			if step, ok := c.WorkflowStep(snap.ActiveStepID); ok && step.Kind == "agent_panel" {
+				// Wave 4 completes the member phase only. Wave 5 advances the
+				// persisted panel phase into synthesis.
+				return snap, ErrPanelMembersComplete
+			}
 		}
 	}
 }

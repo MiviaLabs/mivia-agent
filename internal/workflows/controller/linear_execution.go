@@ -266,7 +266,7 @@ func (c *LinearController) reconcileTerminalAttempt(ctx context.Context, run wor
 // extra attempts into the ledger.
 func (c *LinearController) runStepWithTransientRetry(ctx context.Context, req AgentStepRequest, attempt workflowledger.StepAttempt, step definition.Step) (AgentStepResult, error) {
 	result, runErr := c.Runner.RunStep(ctx, req)
-	for i := 0; runErr != nil && i < maxTransientStepRetries && isTransientProviderError(runErr); i++ {
+	for i := 0; runErr != nil && i < c.transientStepRetryLimit() && isTransientProviderError(runErr); i++ {
 		retryTaskID := newWorkflowTaskID()
 		retryRunID := coordinator.NewRunID()
 		if err := c.Repo.SetStepAttemptExecution(ctx, c.RunID, attempt.AttemptID, retryRunID, retryTaskID, truncateReason(runErr.Error())); err != nil {
@@ -427,12 +427,23 @@ func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowl
 	return c.failWithStatus(writeCtx, run, runErr, runStatus)
 }
 
-// maxTransientStepRetries bounds step-level retries for transient
-// LLM-provider failures. Each retry re-runs the whole subagent step with a
-// fresh task identity and a fresh child context. Three retries with the
-// 10/30/60s backoff give a flaky provider roughly two minutes to recover
-// before the step fails.
-const maxTransientStepRetries = 3
+// defaultMaxTransientStepRetries is the default value of the workflow-level
+// max_transient_step_retries limit, applied when the workflow leaves it at 0.
+// It bounds step-level retries for transient LLM-provider failures. Each
+// retry re-runs the whole subagent step with a fresh task identity and a
+// fresh child context. Three retries with the 10/30/60s backoff give a flaky
+// provider roughly two minutes to recover before the step fails.
+const defaultMaxTransientStepRetries = 3
+
+// transientStepRetryLimit returns the step-level transient-retry budget in
+// effect for this run: the workflow's declared max_transient_step_retries when
+// it is set (> 0), otherwise the controller default.
+func (c *LinearController) transientStepRetryLimit() int {
+	if c.Workflow != nil && c.Workflow.Limits.MaxTransientStepRetries > 0 {
+		return c.Workflow.Limits.MaxTransientStepRetries
+	}
+	return defaultMaxTransientStepRetries
+}
 
 // truncateReason bounds the transient-retry reason recorded in the audit
 // trail to 512 bytes without splitting a UTF-8 rune.

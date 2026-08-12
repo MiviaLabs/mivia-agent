@@ -485,9 +485,20 @@ Limits:
 
 ```toml
 [limits]
-max_step_attempts = 16    # 0-10000
-max_duration_seconds = 10800  # 0-86400
+max_step_attempts = 16    # 0-10000 (0 = unlimited)
+max_duration_seconds = 10800  # 0-86400 (0 = no deadline)
+max_on_failure_reentries = 3   # 0-1000 (0 = controller default 3)
+max_transient_step_retries = 3 # 0-1000 (0 = controller default 3)
 ```
+
+`max_on_failure_reentries` bounds how many times ONE step may re-enter its
+declared non-terminal `on_failure` (repair) target after genuine failures.
+It applies to agent steps, `agent_panel` steps (a failed panel attempt re-runs
+all of its members), and `evidence_gate` host-failure repairs, counted per
+step. `max_transient_step_retries` bounds step-level retries of transient
+LLM-provider failures within one attempt, each retry re-running the whole
+step with a fresh task identity and a 10s/30s/60s backoff. Leaving either key
+at 0 (or omitting it) applies the controller default of 3.
 
 Steps:
 
@@ -516,7 +527,7 @@ on_failure = "failure"
 | `template` | Prompt template file path |
 | `output_schema` | JSON schema file for output validation |
 | `context` | Evidence bindings from inputs or prior step outputs |
-| `on_failure` | Target step or terminal on failure (default: `failure`) |
+| `on_failure` | Target step or terminal on failure (default: `failure`). A non-terminal target is a repair loop: the step re-enters it after genuine failures, bounded per step by `[limits] max_on_failure_reentries` (default 3). A step may name itself (`on_failure = "review"`) to retry the same step; `agent_panel` steps use this to re-run their members. |
 
 Context bindings pass typed evidence between steps:
 
