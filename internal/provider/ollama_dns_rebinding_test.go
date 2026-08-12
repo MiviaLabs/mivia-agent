@@ -150,6 +150,12 @@ func TestNewForProviderOllamaLocalhostFailClosedUnderHostileResolver(t *testing.
 // newLoopbackDialContext pins only the dial; the request URL keeps the
 // literal localhost so the transport never re-resolves it at request time.
 func TestOllamaKeylessLocalhostRequestIsKeylessAndUnresolved(t *testing.T) {
+	// Pin the construction-time localhost resolution so the request-shape
+	// assertions do not depend on the host resolver (the gate host may have
+	// no DNS service answering localhost). This mirrors the sibling loopback
+	// tests; the keyless and unresolved-literal-hostname contract is unchanged.
+	installLocalhostResolver(t, "127.0.0.1")
+
 	comp, err := NewOllama(Options{BaseURL: "http://localhost:11434/v1", APIKey: "sekrit"})
 	if err != nil {
 		t.Fatal(err)
