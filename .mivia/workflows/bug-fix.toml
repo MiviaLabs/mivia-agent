@@ -130,9 +130,9 @@ template = "templates/review-panel-synthesis.md"
 output_schema = "schemas/review-panel-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
-  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 4096 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
-  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 16384 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
   { from = "steps.review_panel.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
@@ -181,9 +181,9 @@ template = "templates/bugfix-review.md"
 output_schema = "schemas/review-fix-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
-  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 4096 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
-  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 16384 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
   { from = "steps.review_panel.output", as = "review", max_bytes = 16000, optional = true },
   { from = "steps.review.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
