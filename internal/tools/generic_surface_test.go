@@ -206,10 +206,10 @@ func TestOpenAIToolsJSONHasNoLanguageBias(t *testing.T) {
 }
 
 // get_diagnostics is conditionally registered: it exists only when a
-// workspace configures [tools] diagnostics_command whose argv[0] is on the
-// run_command allowlist. The whole-surface test above therefore never sees it
-// in an unconfigured registry, so pin its surface here with the tool actually
-// registered (rule 60).
+// workspace configures [tools] diagnostics_commands whose default entry's
+// argv[0] is on the run_command allowlist. The whole-surface test above
+// therefore never sees it in an unconfigured registry, so pin its surface
+// here with the tool actually registered (rule 60).
 func TestGetDiagnosticsSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 	prog := onPathDiagnosticsProgram(t)
 	ws, err := workspace.Open(t.TempDir())
@@ -217,13 +217,15 @@ func TestGetDiagnosticsSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := NewDefaultRegistry(DefaultOptions{
-		Workspace:          ws,
-		RunAllowlist:       []string{prog},
-		DiagnosticsCommand: []string{prog},
+		Workspace:    ws,
+		RunAllowlist: []string{prog},
+		DiagnosticsCommands: map[string][]string{
+			"default": {prog},
+		},
 	})
 	tool, ok := reg.Get(GetDiagnosticsToolName)
 	if !ok {
-		t.Fatalf("get_diagnostics must register when DiagnosticsCommand=%q is on the run allowlist", prog)
+		t.Fatalf("get_diagnostics must register when DiagnosticsCommands=%q is the allowlisted default entry", prog)
 	}
 
 	// The model-facing surface: Description plus flattened parameter schemas.

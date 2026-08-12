@@ -173,15 +173,15 @@ func TestDeclaredBudgetsAreCoveredByTheDerivedCeiling(t *testing.T) {
 
 // TestGetDiagnosticsConfiguredRegistryBudgetInvariant covers the
 // configured-registry case of INV-AG-25. get_diagnostics is conditionally
-// registered - only when DiagnosticsCommand is configured, its argv[0] is on
-// the run_command allowlist, and it resolves on PATH - so the default-registry
-// enumeration tests above never see it. This test builds the configured
-// registry and pins the same invariants they hold for the always-registered
-// tools: the tool is registered, it declares ResultBudgetBytes() > 0, it has
-// no stale unbudgetedDefaultTools entry, and its declared budget is covered
-// by the derived per-tool ceiling.
+// registered - only when DiagnosticsCommands is configured, its default
+// entry's argv[0] is on the run_command allowlist, and it resolves on PATH -
+// so the default-registry enumeration tests above never see it. This test
+// builds the configured registry and pins the same invariants they hold for
+// the always-registered tools: the tool is registered, it declares
+// ResultBudgetBytes() > 0, it has no stale unbudgetedDefaultTools entry, and
+// its declared budget is covered by the derived per-tool ceiling.
 //
-// The worst-case harness below builds its registry without DiagnosticsCommand,
+// The worst-case harness below builds its registry without DiagnosticsCommands,
 // so get_diagnostics is absent from the registry assertWorstCaseCoverage
 // enumerates and needs no outOfHarness entry there. A configured registry
 // only exists inside this test, which checks the budget invariant directly
@@ -192,12 +192,14 @@ func TestGetDiagnosticsConfiguredRegistryBudgetInvariant(t *testing.T) {
 		t.Skip("registration resolves argv[0] on PATH; sh is a POSIX program name")
 	}
 	reg := newCeilingRegistry(t, tools.DefaultOptions{
-		RunAllowlist:       []string{"sh"},
-		DiagnosticsCommand: []string{"sh", "-c", "true"},
+		RunAllowlist: []string{"sh"},
+		DiagnosticsCommands: map[string][]string{
+			"default": {"sh", "-c", "true"},
+		},
 	})
 	tool, ok := reg.Get(tools.GetDiagnosticsToolName)
 	if !ok {
-		t.Fatal("get_diagnostics not registered with DiagnosticsCommand set and argv[0] allowlisted")
+		t.Fatal("get_diagnostics not registered with DiagnosticsCommands configured and the default argv[0] allowlisted")
 	}
 	budgeted, ok := tool.(tools.ResultBudgetTool)
 	if !ok {

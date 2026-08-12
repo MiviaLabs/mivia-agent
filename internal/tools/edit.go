@@ -116,6 +116,11 @@ func (t *multiEditTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", ctx.Err()
 	default:
 	}
+	// Held across the read and the write below: shares editFileLocks with
+	// search_replace (see edit_lock.go) so the two tools mutually exclude on
+	// the same file, not just against themselves.
+	unlock := lockEditFile(abs)
+	defer unlock()
 	data, err := readFileWithContext(ctx, abs)
 	if err != nil {
 		return "", err

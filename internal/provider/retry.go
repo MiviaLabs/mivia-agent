@@ -236,8 +236,11 @@ func (r *retryRoundTripper) isRetryable(err error, resp *http.Response) (bool, r
 	case http.StatusGatewayTimeout: // 504
 		return true, retryAfterHeader{}
 	default:
-		// 5xx server errors (not 501 Not Implemented, etc.)
-		if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
+		// 5xx server errors, except 501 Not Implemented and 505 HTTP Version
+		// Not Supported, which are permanent and therefore not retried.
+		if resp.StatusCode >= 500 && resp.StatusCode <= 599 &&
+			resp.StatusCode != http.StatusNotImplemented &&
+			resp.StatusCode != http.StatusHTTPVersionNotSupported {
 			return true, retryAfterHeader{}
 		}
 		return false, retryAfterHeader{}

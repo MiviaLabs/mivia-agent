@@ -92,17 +92,17 @@ func TestDeriveOutputCeilingCoversEveryDeclaredBudget(t *testing.T) {
 	}
 }
 
-// TestDeriveOutputCeilingCoversDiagnosticsCommand: with a configured
-// diagnostics_command whose argv[0] is on the run_command allowlist,
-// get_diagnostics registers and declares its 256 KiB result budget
+// TestDeriveOutputCeilingCoversDiagnosticsCommands: with a configured
+// diagnostics_commands map whose default entry's argv[0] is on the run_command
+// allowlist, get_diagnostics registers and declares its 256 KiB result budget
 // (diagnosticsDefaultBudget - exactly the derivation floor). The derived
 // ceiling must cover that declared budget plus the input allowance (results
 // may echo request input verbatim) plus framing slack - with the default
 // input cap and with an explicit MaxInputBytes. And because the budget equals
 // the floor, the tool must never raise the shared global cap: the same config
-// without the diagnostics command derives an identical ceiling, and the
+// without the diagnostics commands derives an identical ceiling, and the
 // tool's per-tool ceiling stays under the dispatcher's global one.
-func TestDeriveOutputCeilingCoversDiagnosticsCommand(t *testing.T) {
+func TestDeriveOutputCeilingCoversDiagnosticsCommands(t *testing.T) {
 	// Registration resolves argv[0] on PATH (resolveAllowedCommand), so skip
 	// where no sh exists rather than fail the whole package run (mirrors
 	// requirePOSIXDiagnostics in internal/tools).
@@ -110,14 +110,16 @@ func TestDeriveOutputCeilingCoversDiagnosticsCommand(t *testing.T) {
 		t.Skip("get_diagnostics registration requires sh on PATH")
 	}
 	opts := tools.DefaultOptions{
-		RunAllowlist:       []string{"sh"},
-		DiagnosticsCommand: []string{"sh", "-c", "true"},
+		RunAllowlist: []string{"sh"},
+		DiagnosticsCommands: map[string][]string{
+			"default": {"sh", "-c", "true"},
+		},
 	}
 	reg := newCeilingRegistry(t, opts)
 
 	tool, ok := reg.Get(tools.GetDiagnosticsToolName)
 	if !ok {
-		t.Fatal("get_diagnostics not registered with DiagnosticsCommand set and argv[0] allowlisted")
+		t.Fatal("get_diagnostics not registered with DiagnosticsCommands configured and the default argv[0] allowlisted")
 	}
 	budgeted, ok := tool.(tools.ResultBudgetTool)
 	if !ok {

@@ -177,11 +177,6 @@ type searchReplaceTool struct {
 	writePathDenylist    []string
 }
 
-// afterSearchReplaceRead, when non-nil, runs once per Execute call right
-// after the file is read and before the replacement is computed or written.
-// See its call site for why it exists.
-var afterSearchReplaceRead func()
-
 func (t *searchReplaceTool) Capability(args json.RawMessage) Capability {
 	// Capability.MaxResultBytes is deliberately NOT declared: the agent loop
 	// treats it as a wire truncation bound and would tail-cut the "…"
@@ -256,6 +251,12 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 		return "", ctx.Err()
 	default:
 	}
+	// Held across the read and the write below: without it, two concurrent
+	// search_replace calls to the same file can both read the same original
+	// content and race to write, silently dropping whichever wrote first
+	// (see edit_lock.go).
+	unlock := lockEditFile(abs)
+	defer unlock()
 	data, err := readFileWithContext(ctx, abs)
 	if err != nil {
 		return "", err
@@ -266,14 +267,6 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	default:
 	}
 	content := string(data)
-	// afterSearchReplaceRead is a test seam: it lets a test force two
-	// concurrent search_replace calls to both finish reading before either
-	// writes, deterministically reproducing the lost-update race that an
-	// unsynchronized read-then-write allows in production (no artificial
-	// delay needed to catch the window). Nil in production.
-	if afterSearchReplaceRead != nil {
-		afterSearchReplaceRead()
-	}
 	if alreadyApplied(content, in.NewString) {
 		return fmt.Sprintf("no change to %s (edit already applied: new_string already present)", rel), nil
 	}

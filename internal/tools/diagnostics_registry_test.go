@@ -92,6 +92,28 @@ func runGetDiagnostics(t *testing.T, reg *Registry, args json.RawMessage) diagno
 	return diagnosticsResult{env: env, out: out}
 }
 
+// diagnosticsEnvelopeNamed is the v2 envelope shape: diagnosticsEnvelope plus
+// command_name, which names the selected commands entry. diagnostics.go does
+// not carry command_name yet (it lands with v2t2), so the RED tests unmarshal
+// the raw output into this extended shape instead of referencing a field that
+// does not exist.
+type diagnosticsEnvelopeNamed struct {
+	diagnosticsEnvelope
+	CommandName string `json:"command_name,omitempty"`
+}
+
+// namedEnvelopeOf unmarshals the raw tool output into the v2 envelope shape.
+// It is used on the success path, where runGetDiagnostics already proved the
+// body is valid JSON.
+func namedEnvelopeOf(t *testing.T, res diagnosticsResult) diagnosticsEnvelopeNamed {
+	t.Helper()
+	var env diagnosticsEnvelopeNamed
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("get_diagnostics returned a non-JSON envelope %q: %v", res.out, err)
+	}
+	return env
+}
+
 // requireRowAt pins the parsed fields of the row for file. It fails when no
 // row carries that file.
 func requireRowAt(t *testing.T, rows []diagnosticsRow, file, severity, message string, line, column int) {
@@ -575,5 +597,189 @@ func TestGetDiagnosticsJSONModeRedacts(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no redacted auth.go row in %+v", res.env.Rows)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// v2t1 RED contract tests: command selection (locked plan v2). The production
+// skeleton in get_diagnostics.go now carries the commands map + defaultName
+// fields and parses the "command" argument, but resolution is still the
+// not-implemented stub, so every assertion below fails until v2t2 lands real
+// selection. The tests construct the tool with the CURRENT struct fields plus
+// the new commands/defaultName fields, so they compile against the skeleton
+// and fail on assertions - not on compilation.
+// ---------------------------------------------------------------------------
+
+// TestGetDiagnosticsCommandSelectionRunsNamedCommand covers v2t1 item (a): a
+// tool configured with commands {default, lint} and defaultName "default"
+// must select the argv by the "command" argument. Execute {"command":"lint"}
+// must run the lint argv (JSON mode) and return rows from the JSON block; the
+// envelope Command must name the lint argv and CommandName must be "lint".
+func TestGetDiagnosticsCommandSelectionRunsNamedCommand(t *testing.T) {
+	requirePOSIXDiagnostics(t)
+	ws := setupTestWSRun(t)
+	script := diagnosticsFixturePath(t)
+	reg := diagnosticsRegistry(t, &getDiagnosticsTool{
+		ws:        ws,
+		allowlist: []string{"sh"},
+		commands: map[string][]string{
+			"default": []string{"sh", script, "--fail"},
+			"lint":    []string{"sh", script, "--format=json"},
+		},
+		defaultName: "default",
+		timeoutSec:  30,
+	})
+	res := runGetDiagnostics(t, reg, json.RawMessage(`{"command":"lint"}`))
+	if res.failure != "" {
+		t.Fatalf("unexpected failure: %s", res.failure)
+	}
+	env := namedEnvelopeOf(t, res)
+	if env.CommandName != "lint" {
+		t.Errorf("command_name = %q, want %q", env.CommandName, "lint")
+	}
+	if !strings.Contains(env.Command, "fake_diagnostics.sh") || !strings.Contains(env.Command, "--format=json") {
+		t.Errorf("command = %q, want it to name the lint argv (fixture + --format=json)", env.Command)
+	}
+	if env.ExitCode == nil || *env.ExitCode != 0 {
+		t.Errorf("exit_code = %v, want 0 for the lint command", env.ExitCode)
+	}
+	if len(env.Rows) != 3 {
+		t.Fatalf("rows = %d, want 3 from the JSON block: %+v", len(env.Rows), env.Rows)
+	}
+	requireRowAt(t, env.Rows, "main.go", "error", "undefined: foo", 12, 5)
+	requireRowAt(t, env.Rows, "vendor/helper.go", "warning", "unused variable bar", 3, 2)
+	requireRowAt(t, env.Rows, "src/extra.go", "info", "third finding", 9, 0)
+}
+
+// TestGetDiagnosticsCommandOmittedRunsDefault covers v2t1 item (b): omitting
+// the "command" argument must run the defaultName entry. The envelope
+// CommandName must be "default" and Command must name the default argv (the
+// default exits non-zero but still returns its rows).
+func TestGetDiagnosticsCommandOmittedRunsDefault(t *testing.T) {
+	requirePOSIXDiagnostics(t)
+	ws := setupTestWSRun(t)
+	script := diagnosticsFixturePath(t)
+	reg := diagnosticsRegistry(t, &getDiagnosticsTool{
+		ws:        ws,
+		allowlist: []string{"sh"},
+		commands: map[string][]string{
+			"default": []string{"sh", script, "--fail"},
+			"lint":    []string{"sh", script, "--format=json"},
+		},
+		defaultName: "default",
+		timeoutSec:  30,
+	})
+	res := runGetDiagnostics(t, reg, json.RawMessage(`{}`))
+	if res.failure != "" {
+		t.Fatalf("unexpected failure: %s", res.failure)
+	}
+	env := namedEnvelopeOf(t, res)
+	if env.CommandName != "default" {
+		t.Errorf("command_name = %q, want %q", env.CommandName, "default")
+	}
+	if !strings.Contains(env.Command, "--fail") {
+		t.Errorf("command = %q, want it to name the default argv (--fail)", env.Command)
+	}
+	if env.ExitCode == nil || *env.ExitCode != 3 {
+		t.Errorf("exit_code = %v, want 3 (the default command exits non-zero but still returns rows)", env.ExitCode)
+	}
+	if len(env.Rows) != 3 {
+		t.Errorf("rows = %d, want 3 even on the default's non-zero exit", len(env.Rows))
+	}
+}
+
+// TestGetDiagnosticsCommandUnknownFails covers v2t1 item (c): an unknown
+// command name must produce a failureEnvelope-shaped refusal whose Error
+// contains 'unknown diagnostics command'. The refusal body must stay valid
+// JSON.
+func TestGetDiagnosticsCommandUnknownFails(t *testing.T) {
+	ws := setupTestWSRun(t)
+	script := diagnosticsFixturePath(t)
+	reg := diagnosticsRegistry(t, &getDiagnosticsTool{
+		ws:        ws,
+		allowlist: []string{"sh"},
+		commands: map[string][]string{
+			"default": []string{"sh", script, "--fail"},
+		},
+		defaultName: "default",
+		timeoutSec:  30,
+	})
+	res := runGetDiagnostics(t, reg, json.RawMessage(`{"command":"bogus"}`))
+	if res.failure == "" {
+		t.Fatal("an unknown command name must fail")
+	}
+	var env struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("failure envelope is not valid JSON %q: %v", res.out, err)
+	}
+	if !strings.Contains(env.Error, "unknown diagnostics command") {
+		t.Errorf("envelope error = %q, want it to contain 'unknown diagnostics command'", env.Error)
+	}
+}
+
+// TestGetDiagnosticsNoDefaultMultipleCommandsFails covers v2t1 item (d): with
+// no defaultName and more than one entry, an omitted command must produce a
+// failureEnvelope-shaped refusal whose Error contains 'multiple diagnostics
+// commands'. The refusal body must stay valid JSON.
+func TestGetDiagnosticsNoDefaultMultipleCommandsFails(t *testing.T) {
+	ws := setupTestWSRun(t)
+	script := diagnosticsFixturePath(t)
+	reg := diagnosticsRegistry(t, &getDiagnosticsTool{
+		ws:        ws,
+		allowlist: []string{"sh"},
+		commands: map[string][]string{
+			"lint": []string{"sh", script, "--format=json"},
+			"test": []string{"sh", script, "--fail"},
+		},
+		timeoutSec: 30,
+	})
+	res := runGetDiagnostics(t, reg, json.RawMessage(`{}`))
+	if res.failure == "" {
+		t.Fatal("an omitted command with no default and multiple entries must fail")
+	}
+	var env struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("failure envelope is not valid JSON %q: %v", res.out, err)
+	}
+	if !strings.Contains(env.Error, "multiple diagnostics commands") {
+		t.Errorf("envelope error = %q, want it to contain 'multiple diagnostics commands'", env.Error)
+	}
+}
+
+// TestGetDiagnosticsEnvelopeReflectsSelectedCommand pins auditor F5 (v2t1 item
+// (e)): the envelope Command/CommandName must reflect the SELECTED argv even
+// when it differs from the default. Executing the lint command must surface
+// the lint argv - never the default's.
+func TestGetDiagnosticsEnvelopeReflectsSelectedCommand(t *testing.T) {
+	requirePOSIXDiagnostics(t)
+	ws := setupTestWSRun(t)
+	script := diagnosticsFixturePath(t)
+	reg := diagnosticsRegistry(t, &getDiagnosticsTool{
+		ws:        ws,
+		allowlist: []string{"sh"},
+		commands: map[string][]string{
+			"default": []string{"sh", script, "--fail"},
+			"lint":    []string{"sh", script, "--format=json"},
+		},
+		defaultName: "default",
+		timeoutSec:  30,
+	})
+	res := runGetDiagnostics(t, reg, json.RawMessage(`{"command":"lint"}`))
+	if res.failure != "" {
+		t.Fatalf("unexpected failure: %s", res.failure)
+	}
+	env := namedEnvelopeOf(t, res)
+	if env.CommandName != "lint" {
+		t.Errorf("command_name = %q, want %q (the selected command, not the default)", env.CommandName, "lint")
+	}
+	if !strings.Contains(env.Command, "--format=json") {
+		t.Errorf("command = %q, want it to carry the selected lint argv", env.Command)
+	}
+	if strings.Contains(env.Command, "--fail") {
+		t.Errorf("command = %q, must not leak the default argv (--fail) when lint is selected", env.Command)
 	}
 }

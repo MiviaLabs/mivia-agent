@@ -36,8 +36,18 @@ type getDiagnosticsTool struct {
 	// diagnostics command as to run_command.
 	allowlist []string
 	// argv is the command line the tool runs. argv[0] is resolved against
-	// the allowlist at Execute time, exactly as run_command resolves it.
+	// the allowlist at Execute time, exactly as run_command resolves it. It
+	// is the legacy single-command surface; a tool configured with commands
+	// selects its argv through the commands map instead.
 	argv []string
+	// commands maps a command name to its argv: the v2 selection surface
+	// (locked plan v2). When set, Execute selects the argv by the "command"
+	// argument, falling back to defaultName when the argument is omitted. A
+	// nil commands map keeps the legacy argv path.
+	commands map[string][]string
+	// defaultName names the commands entry executed when the "command"
+	// argument is omitted. It is consulted only when commands is set.
+	defaultName string
 	// timeoutSec is the tool-level timeout for the command.
 	timeoutSec int
 	// maxBytes bounds the result envelope. Zero means uncapped.
@@ -68,10 +78,15 @@ func (t *getDiagnosticsTool) Description() string {
 		"Use max_rows to cap the number of findings in the result."
 }
 
-// Parameters returns the JSON schema for the tool arguments. max_rows is
-// optional; when set, it caps the number of rows in the result envelope.
+// Parameters returns the JSON schema for the tool arguments. command selects
+// the entry from the configured commands map (v2 selection surface); max_rows
+// is optional and, when set, caps the number of rows in the result envelope.
 func (t *getDiagnosticsTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
+		"command": map[string]any{
+			"type":        "string",
+			"description": "Optional name of the diagnostics command to run. When omitted, the configured default command runs.",
+		},
 		"max_rows": map[string]any{
 			"type":        "integer",
 			"minimum":     float64(1),
@@ -98,12 +113,14 @@ func (t *getDiagnosticsTool) Capability(json.RawMessage) Capability {
 func (t *getDiagnosticsTool) ResultBudgetBytes() int { return t.maxBytes }
 
 // Execute runs the tool. Pipeline (locked plan v2 section 5): context check,
-// decode max_rows, resolve the configured argv against the allowlist (a
+// decode max_rows and command, resolve the argv through the commands map
+// (the "command" argument selects the entry, defaultName when omitted; a
 // refusal is an envelope-level failure carried in the envelope Error field
-// and returned as a Go error, never a child process), screen argv for
-// secret-like paths, run the command under the run_command process guards,
-// redact the whole capture BEFORE parsing, parse into rows, apply max_rows
-// with truncated=true, and marshal the envelope under the maxBytes budget.
+// and returned as a Go error, never a child process), resolve the selected
+// argv against the allowlist, screen argv for secret-like paths, run the
+// command under the run_command process guards, redact the whole capture
+// BEFORE parsing, parse into rows, apply max_rows with truncated=true, and
+// marshal the envelope under the maxBytes budget.
 //
 // Exit-code semantics mirror run.go's exitStatus precedence: a started
 // process always carries its real exit code (0 on a clean exit, the child's
@@ -119,13 +136,23 @@ func (t *getDiagnosticsTool) Execute(ctx context.Context, args json.RawMessage) 
 		return "", err
 	}
 	var in struct {
-		MaxRows int `json:"max_rows"`
+		MaxRows int    `json:"max_rows"`
+		Command string `json:"command"`
 	}
 	if err := decodeArgs(args, &in); err != nil {
 		return "", err
 	}
 
-	bin, commandArgs, err := resolveAllowedCommand(t.argv, t.allowlist)
+	// v2 command selection (locked plan v2): a command-configured tool
+	// resolves its argv through the commands map by the "command" argument,
+	// falling back to defaultName when omitted; the legacy single-argv
+	// surface (argv) is unchanged for tools without commands.
+	name, argv, errMsg := t.resolveDiagnosticsCommand(in.Command)
+	if errMsg != "" {
+		return t.failureEnvelope(errMsg)
+	}
+
+	bin, commandArgs, err := resolveAllowedCommand(argv, t.allowlist)
 	if err != nil {
 		return t.failureEnvelope(err.Error())
 	}
@@ -139,33 +166,10 @@ func (t *getDiagnosticsTool) Execute(ctx context.Context, args json.RawMessage) 
 		return t.failureEnvelope(msg)
 	}
 
-	callCtx, cancel := t.callContext(ctx, 0)
-	if cancel != nil {
-		defer cancel()
-	}
-	cmd, scope, err := t.buildCommand(callCtx, bin, commandArgs)
-	if err != nil {
-		return t.failureEnvelope(err.Error())
-	}
-	defer scope.cleanup()
-
-	capture := t.runCapture(cmd, callCtx, scope)
-
-	// Classify the run outcome FIRST (audit findings E1, E3): a started
-	// process always carries its real exit code, even when the parent context
-	// fires later during redaction/parsing; a timed-out or canceled run
-	// reports that, even when the capture also overran the budget.
-	exitCode, msg, failed := t.resolveExitCode(callCtx, capture)
+	// Run under the run_command process guards; the outcome is classified
+	// before any parsing (audit findings E1, E3).
+	exitCode, capture, msg, failed := t.runDiagnosticsCommand(ctx, bin, commandArgs)
 	if failed {
-		return t.failureEnvelope(msg)
-	}
-
-	// A completed run whose capture was elided is a silently partial feed:
-	// refuse with a bounded envelope naming the bound (audit finding E3,
-	// INV-AG-26 discipline), never hand the model an incomplete diagnostics
-	// set.
-	if capture.truncated {
-		msg := fmt.Sprintf("get_diagnostics output exceeds capture budget %d", capture.limit)
 		return t.failureEnvelope(msg)
 	}
 
@@ -188,7 +192,70 @@ func (t *getDiagnosticsTool) Execute(ctx context.Context, args json.RawMessage) 
 		rows = rows[:in.MaxRows]
 		maxRowTruncated = true
 	}
-	return t.composeEnvelope(rows, exitCode, maxRowTruncated)
+	return t.composeEnvelope(name, argv, rows, exitCode, maxRowTruncated)
+}
+
+// runDiagnosticsCommand runs the resolved command under the run_command
+// process guards and capture budget. It classifies the run outcome FIRST
+// (audit findings E1, E3): a started process always carries its real exit
+// code, even when the parent context fires later during redaction/parsing; a
+// run that never produced an exit (start failure, timeout, cancel) is an
+// envelope-level failure; an elided capture is refused. On success it returns
+// the exit code and the capture (for redaction) with failed=false.
+func (t *getDiagnosticsTool) runDiagnosticsCommand(ctx context.Context, bin string, commandArgs []string) (*int, runCapture, string, bool) {
+	callCtx, cancel := t.callContext(ctx, 0)
+	if cancel != nil {
+		defer cancel()
+	}
+	cmd, scope, err := t.buildCommand(callCtx, bin, commandArgs)
+	if err != nil {
+		return nil, runCapture{}, err.Error(), true
+	}
+	defer scope.cleanup()
+
+	capture := t.runCapture(cmd, callCtx, scope)
+
+	exitCode, msg, failed := t.resolveExitCode(callCtx, capture)
+	if failed {
+		return nil, capture, msg, true
+	}
+	if capture.truncated {
+		msg := fmt.Sprintf("get_diagnostics output exceeds capture budget %d", capture.limit)
+		return nil, capture, msg, true
+	}
+	return exitCode, capture, "", false
+}
+
+// resolveDiagnosticsCommand selects the argv for the "command" argument on a
+// command-configured tool (locked plan v2). It returns the entry name, its
+// argv, and an errMsg when resolution fails. An omitted command resolves to
+// defaultName; with no default and more than one entry that is an ambiguity
+// error ('multiple diagnostics commands configured; specify which with
+// command'); an unknown name is an error ('unknown diagnostics command: X').
+// A nil commands map (the legacy single-argv surface) returns the tool argv
+// with an empty name.
+func (t *getDiagnosticsTool) resolveDiagnosticsCommand(command string) (string, []string, string) {
+	if t.commands == nil {
+		return "", t.argv, ""
+	}
+	name := command
+	if name == "" {
+		name = t.defaultName
+	}
+	if name == "" {
+		if len(t.commands) > 1 {
+			return "", nil, "multiple diagnostics commands configured; specify which with command"
+		}
+		// A sole configured command with no default is unambiguous: pick it.
+		for candidate := range t.commands {
+			name = candidate
+		}
+	}
+	argv, ok := t.commands[name]
+	if !ok {
+		return "", nil, fmt.Sprintf("unknown diagnostics command: %s", name)
+	}
+	return name, argv, ""
 }
 
 // parseRedactedCapture parses the two redacted streams independently so a
@@ -337,12 +404,15 @@ func (t *getDiagnosticsTool) workspaceRoot() string {
 }
 
 // composeEnvelope marshals the model-facing envelope under the maxBytes
-// budget. Rows are the variable-length part: when the composed JSON exceeds
-// the bound, the largest fitting row prefix is kept with truncated=true
-// (budgetedJSON's binary search, as in nav_json.go). When even a zero-row
-// envelope exceeds the bound, the tool refuses with a bounded error envelope
-// naming the bound - it never tail-cuts and never returns invalid JSON.
-func (t *getDiagnosticsTool) composeEnvelope(rows []diagnosticsRow, exitCode *int, maxRowTruncated bool) (string, error) {
+// budget. name/argv are the resolved command identity: Command renders the
+// argv redacted and shell-safe (FormatArgv) and CommandName carries the
+// commands entry name ("" omits it on the legacy surface). Rows are the
+// variable-length part: when the composed JSON exceeds the bound, the largest
+// fitting row prefix is kept with truncated=true (budgetedJSON's binary
+// search, as in nav_json.go). When even a zero-row envelope exceeds the
+// bound, the tool refuses with a bounded error envelope naming the bound - it
+// never tail-cuts and never returns invalid JSON.
+func (t *getDiagnosticsTool) composeEnvelope(name string, argv []string, rows []diagnosticsRow, exitCode *int, maxRowTruncated bool) (string, error) {
 	build := func(keep int, budgetTruncated bool) any {
 		kept := rows
 		if keep < len(kept) {
@@ -352,12 +422,13 @@ func (t *getDiagnosticsTool) composeEnvelope(rows []diagnosticsRow, exitCode *in
 			kept = []diagnosticsRow{}
 		}
 		return diagnosticsEnvelope{
-			Version:   diagnosticsEnvelopeVersion,
-			Command:   redact.Text(FormatArgv(t.argv)),
-			ExitCode:  exitCode,
-			Rows:      kept,
-			Summary:   finalizeDiagnostics(kept).Summary,
-			Truncated: maxRowTruncated || budgetTruncated,
+			Version:     diagnosticsEnvelopeVersion,
+			Command:     redact.Text(FormatArgv(argv)),
+			CommandName: name,
+			ExitCode:    exitCode,
+			Rows:        kept,
+			Summary:     finalizeDiagnostics(kept).Summary,
+			Truncated:   maxRowTruncated || budgetTruncated,
 		}
 	}
 	if t.maxBytes > 0 {

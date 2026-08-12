@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
@@ -391,5 +393,193 @@ func TestHasContent_MixedMessages(t *testing.T) {
 	}
 	if !hasContent(msgs) {
 		t.Error("hasContent(mixed) = false, want true")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Autosave admission-record persistence (plan tools/05 D3)
+// ---------------------------------------------------------------------------
+
+// admissionReplaySession builds a fresh session wired to the same store with
+// the binding identity and host widener a real resume would have, ready to
+// Load an autosave snapshot and replay its admitted set.
+func admissionReplaySession(t *testing.T, store *FileSessionStore) (*Session, chan []string) {
+	t.Helper()
+	widened := make(chan []string, 4)
+	fresh := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	fresh.SetSessionStore(store, NewSaveManager(store, "test-model", "test-provider"))
+	fresh.SetBindingFactory(func(providerName, model string) (ModelBinding, error) {
+		return ModelBinding{ProviderName: providerName, Model: model, Completer: &fakeCompleter{out: "answer"}}, nil
+	})
+	fresh.SetAdmissionBinding("reader", "digest-1")
+	fresh.SetSurfaceWidener(func(admitted []string, req AgentSurfacePublication) (bool, error) {
+		widened <- slices.Clone(admitted)
+		return fresh.TryPublishAgentSurface(req), nil
+	})
+	return fresh, widened
+}
+
+// assertReplayedSet asserts that a resume from an autosave replayed the
+// admitted set through the host widener and adopted it into the session.
+func assertReplayedSet(t *testing.T, widened chan []string, fresh *Session) {
+	t.Helper()
+	select {
+	case names := <-widened:
+		if !slices.Equal(names, []string{"grep"}) {
+			t.Fatalf("replayed %v, want [grep]", names)
+		}
+	default:
+		t.Fatal("resume did not replay the admitted set")
+	}
+	if got := fresh.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
+		t.Fatalf("admitted = %v after replay", got)
+	}
+}
+
+// TestTurnAutosavePersistsAndReplaysTheAdmittedSet locks the turn-snapshot
+// side of the missing-record defect: SaveAfterTurn wrote the transcript but
+// never the session's admission record, so resuming from the crash-recovery
+// snapshot silently dropped the tools the transcript shows in use. The record
+// must ride beside the transcript under the same snapshot name, and a fresh
+// Session.Load of that snapshot must replay it through the widener.
+func TestTurnAutosavePersistsAndReplaysTheAdmittedSet(t *testing.T) {
+	store := newTestStore(t)
+	mgr := NewSaveManager(store, "test-model", "test-provider")
+	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	sess.SetSessionStore(store, mgr)
+	sess.SetAdmissionBinding("reader", "digest-1")
+	admitTools(sess, "grep")
+	sess.Messages = []provider.Message{
+		{Role: provider.RoleUser, Content: "q"},
+		{Role: provider.RoleAssistant, Content: "a"},
+	}
+	if err := sess.saveAfterTurn(sess.currentSaveToken()); err != nil {
+		t.Fatalf("saveAfterTurn: %v", err)
+	}
+	name := mgr.turnSnapshotName()
+
+	got, err := store.LoadAdmission(name)
+	if err != nil {
+		t.Fatalf("load admission: %v", err)
+	}
+	if got.Agent != "reader" || got.Digest != "digest-1" || !slices.Equal(got.Names, []string{"grep"}) {
+		t.Fatalf("record = %+v, want reader/digest-1/[grep]", got)
+	}
+
+	fresh, widened := admissionReplaySession(t, store)
+	if err := fresh.Load(name); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	assertReplayedSet(t, widened, fresh)
+}
+
+// TestExitAutosavePersistsAndReplaysTheAdmittedSet is the SaveOnExit twin of
+// the turn-snapshot test: the exit snapshot must carry the record too, or the
+// next launch resumes with the admitted tools missing.
+func TestExitAutosavePersistsAndReplaysTheAdmittedSet(t *testing.T) {
+	store := newTestStore(t)
+	mgr := NewSaveManager(store, "test-model", "test-provider")
+	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	sess.SetSessionStore(store, mgr)
+	sess.SetAdmissionBinding("reader", "digest-1")
+	admitTools(sess, "grep")
+	sess.Messages = []provider.Message{
+		{Role: provider.RoleUser, Content: "q"},
+		{Role: provider.RoleAssistant, Content: "a"},
+	}
+	if err := sess.SaveLast(); err != nil {
+		t.Fatalf("SaveLast: %v", err)
+	}
+	infos, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected one exit snapshot, got %d", len(infos))
+	}
+	name := infos[0].Name
+
+	got, err := store.LoadAdmission(name)
+	if err != nil {
+		t.Fatalf("load admission: %v", err)
+	}
+	if got.Agent != "reader" || got.Digest != "digest-1" || !slices.Equal(got.Names, []string{"grep"}) {
+		t.Fatalf("record = %+v, want reader/digest-1/[grep]", got)
+	}
+
+	fresh, widened := admissionReplaySession(t, store)
+	if err := fresh.Load(name); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	assertReplayedSet(t, widened, fresh)
+}
+
+// failingAdmissionStore fails only the admission-record write so the
+// propagation branch can be exercised without corrupting a real store.
+// The embedded *FileSessionStore still satisfies saveStore.
+type failingAdmissionStore struct {
+	*FileSessionStore
+	err error
+}
+
+func (f failingAdmissionStore) SaveAdmission(string, contextstate.SessionAdmission) error {
+	return f.err
+}
+
+// TestAutosaveReportsAnAdmissionStoreFailure locks the negative path of the
+// record write: when the store rejects the admission record, the autosave must
+// report the failure (mirroring TestSaveReportsAStoreFailureBeforePersisting-
+// TheAdmission) instead of swallowing it. The transcript still lands first,
+// exactly as Session.Save persists the transcript before the admission.
+func TestAutosaveReportsAnAdmissionStoreFailure(t *testing.T) {
+	store := newTestStore(t)
+	want := errors.New("admission store full")
+	mgr := NewSaveManager(store, "test-model", "test-provider")
+	mgr.store = failingAdmissionStore{FileSessionStore: store, err: want}
+	// Wire the admission source so the failing store's SaveAdmission is the
+	// branch under test; an unwired manager is a documented no-op and would
+	// skip the record write entirely.
+	mgr.SetAdmissionProvider(func() contextstate.SessionAdmission {
+		return contextstate.SessionAdmission{Agent: "reader", Digest: "digest-1", Names: []string{"grep"}}
+	})
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "q"},
+		{Role: provider.RoleAssistant, Content: "a"},
+	}
+
+	if err := mgr.SaveAfterTurn(msgs); !errors.Is(err, want) {
+		t.Fatalf("SaveAfterTurn error = %v, want the admission store failure", err)
+	}
+	if err := mgr.SaveOnExit(msgs); !errors.Is(err, want) {
+		t.Fatalf("SaveOnExit error = %v, want the admission store failure", err)
+	}
+
+	// Both transcripts landed before the admission write failed, mirroring
+	// Session.Save's order.
+	infos, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 2 {
+		t.Fatalf("expected 2 snapshots written before the admission failure, got %d", len(infos))
+	}
+}
+
+// TestAutosaveAdmissionFailureSurfacesThroughTheSession is the session-level
+// twin: saveAfterTurn wraps the manager's admission failure in ErrPersistence
+// so the host observes the autosave as failed.
+func TestAutosaveAdmissionFailureSurfacesThroughTheSession(t *testing.T) {
+	store := newTestStore(t)
+	mgr := NewSaveManager(store, "test-model", "test-provider")
+	mgr.store = failingAdmissionStore{FileSessionStore: store, err: errors.New("admission store full")}
+	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	sess.SetSessionStore(store, mgr)
+	admitTools(sess, "grep")
+	sess.Messages = []provider.Message{
+		{Role: provider.RoleUser, Content: "q"},
+		{Role: provider.RoleAssistant, Content: "a"},
+	}
+	if err := sess.saveAfterTurn(sess.currentSaveToken()); !errors.Is(err, ErrPersistence) {
+		t.Fatalf("saveAfterTurn error = %v, want ErrPersistence wrapping the admission failure", err)
 	}
 }
