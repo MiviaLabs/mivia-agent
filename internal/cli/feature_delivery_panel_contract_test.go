@@ -43,9 +43,9 @@ func assertFeatureDeliveryReviewPanel(t *testing.T, workflow definition.Workflow
 		t.Fatal("step review_panel require_distinct_bindings must be true")
 	}
 	wantMembers := map[string]struct{ provider, model, skill, template string }{
-		"correctness": {"deepseek", "deepseek-v4-flash", "bug-audit", "templates/review-panel-correctness.md"},
-		"security":    {"openrouter", "tencent/hy3-preview", "secure-change", "templates/review-panel-security.md"},
-		"integration": {"zai", "glm-5-turbo", "architecture-review", "templates/review-panel-integration.md"},
+		"correctness": {"deepseek", "deepseek-v4-flash", "panel-bug-audit", "templates/review-panel-correctness.md"},
+		"security":    {"openrouter", "tencent/hy3-preview", "panel-secure-change", "templates/review-panel-security.md"},
+		"integration": {"zai", "glm-5-turbo", "panel-architecture-review", "templates/review-panel-integration.md"},
 	}
 	if len(step.Panel.Members) != len(wantMembers) {
 		t.Fatalf("step review_panel has %d members, want %d", len(step.Panel.Members), len(wantMembers))
@@ -125,18 +125,19 @@ func TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
 
 // TestFeatureDeliveryPanelMembersAdmit is the live-shaped regression test for
 // the enabled agent_panel review gate: every committed panel member
-// (panel-reviewer with bug-audit / secure-change / architecture-review) must
-// pass validatePanelAgentTools, the exact admission check workflow_run runs
-// before a run starts, and so must the review-synthesizer. All three member
-// skills ship a resources.toml, so each member's runtime surface carries the
-// host-injected read_skill_resource reader; and the loaded agents inherit the
-// project's global MCP servers (codegraph, context7), so the registry below
-// mirrors that live surface with the same mcp__ tool names. When this test
-// was added the gate refused every feature-delivery run at admission - first
-// on the members ("... read_skill_resource], want [...]"), then, after that
-// fix, on the synthesizer ("final runtime tools = [mcp__codegraph...], want
-// []"); unit coverage used a resource-less skill and an MCP-less registry and
-// never saw either.
+// (panel-reviewer with panel-bug-audit / panel-secure-change /
+// panel-architecture-review) must pass validatePanelAgentTools, the exact
+// admission check workflow_run runs before a run starts, and so must the
+// review-synthesizer. The three panel skills are deliberately resource-less
+// (JSON-only, no report-template), so each member's runtime surface is exactly
+// the read-only panel toolset with no read_skill_resource reader; and the
+// loaded agents inherit the project's global MCP servers (codegraph,
+// context7), so the registry below mirrors that live surface with the same
+// mcp__ tool names. When this test was added the gate refused every
+// feature-delivery run at admission - first on the members ("...
+// read_skill_resource], want [...]"), then, after that fix, on the synthesizer
+// ("final runtime tools = [mcp__codegraph...], want []"); unit coverage used a
+// resource-less skill and an MCP-less registry and never saw either.
 func TestFeatureDeliveryPanelMembersAdmit(t *testing.T) {
 	root := committedWorkflowRoot(t)
 	workflow, _ := loadCommittedFeatureDeliveryWorkflow(t, root)

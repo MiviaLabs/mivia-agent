@@ -177,6 +177,31 @@ func TestSessionsDelete(t *testing.T) {
 	}
 }
 
+// runSessionsRename targets the live context-session catalog
+// (chat.Session.SetContextSessionTitle -> the context_sessions table), the
+// only kind of session a real `mivia chat` conversation - and so the only
+// kind mivia-agent-desktop's sidebar ever shows - actually produces. A named
+// snapshot (`seedCatalogSession`'s chat_sessions-table rows, from an explicit
+// `/save <name>`) has no row there, so renaming one fails clearly rather
+// than silently doing nothing; TestIntegrationSetContextSessionTitle in
+// internal/chat covers the success path against a real live session, which
+// this package's test fixtures (a nil completer - see newCatalogSession's
+// doc comment) cannot construct.
+func TestSessionsRenameUnknownOrNamedSnapshotFails(t *testing.T) {
+	ws := isolatedSessionsWorkspace(t)
+	seedThreeCatalogSessions(t, ws)
+
+	var snapshotStderr bytes.Buffer
+	if err := runSessionsRename([]string{"alpha", "Project kickoff", "--workspace", ws}, &snapshotStderr); err == nil {
+		t.Fatal("sessions rename alpha (a named snapshot, not a live session): want an error, got nil")
+	}
+
+	var missingStderr bytes.Buffer
+	if err := runSessionsRename([]string{"does-not-exist", "New title", "--workspace", ws}, &missingStderr); err == nil {
+		t.Fatal("sessions rename does-not-exist: want an error, got nil")
+	}
+}
+
 func TestSessionsShowUnknownNameFails(t *testing.T) {
 	ws := isolatedSessionsWorkspace(t)
 	var buf bytes.Buffer
@@ -217,5 +242,8 @@ func TestSessionsCommandArgParsing(t *testing.T) {
 	}
 	if err := runSessionsWithIO([]string{"list", "--unknown-flag"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Fatal("sessions list --unknown-flag: want an error, got nil")
+	}
+	if err := runSessionsWithIO([]string{"rename", "a"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("sessions rename (no title): want an error, got nil")
 	}
 }

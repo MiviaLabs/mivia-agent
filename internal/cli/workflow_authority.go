@@ -94,11 +94,11 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 		want = slices.Clone(panelReviewerTools)
 		// A member skill that declares resources gets the host-injected
 		// scoped reader (injectSkillResourceTool) in its runtime surface, so
-		// the expected set must carry read_skill_resource too. Without this,
-		// admission fails for every panel member whose skill ships a
-		// resources.toml (bug-audit, secure-change, architecture-review all
-		// do), which is exactly how the enabled gate refused every run on
-		// first live use.
+		// the expected set must carry read_skill_resource too. The committed
+		// panel skills are deliberately resource-less JSON-only skills, so
+		// this branch stays a generic capability check rather than a panel
+		// requirement (the original interactive skills all shipped
+		// resources.toml, which is how the gate refused runs on first live use).
 		if skillHasResources {
 			want = append(want, tools.SkillResourceToolName)
 		}

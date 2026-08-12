@@ -70,6 +70,72 @@ func TestIntegrationListSessionsTitlesForkedContinuation(t *testing.T) {
 	}
 }
 
+// TestIntegrationSetContextSessionTitle pins that an explicit rename
+// (chat.Session.SetContextSessionTitle, what "mivia sessions rename" and the
+// TUI's /title command both call) overrides the opener-derived title
+// fillSessionTitles would otherwise use, and that it survives a resumed
+// continuation under a different principal - the same identity as the
+// session itself, not something a fresh resuming process would reset.
+func TestIntegrationSetContextSessionTitle(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	res := &config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model"}}
+	run1 := NewSession(res, &fakeCompleter{out: "answer"})
+	setupTitleSessionContext(t, run1, store)
+	if _, err := run1.SendUser(t.Context(), "opener message", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	const renamed = "Project kickoff"
+	if err := run1.SetContextSessionTitle(run1.SessionID, renamed); err != nil {
+		t.Fatalf("SetContextSessionTitle: %v", err)
+	}
+
+	infos, err := run1.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSessionTitle(t, infos, run1.SessionID, renamed)
+
+	// The rename must stick even after a fresh process resumes the session
+	// under its own, different principal.
+	run2 := NewSession(res, &fakeCompleter{out: "answer"})
+	setupTitleSessionContext(t, run2, store)
+	if err := run2.Load(run1.SessionID); err != nil {
+		t.Fatalf("resume load: %v", err)
+	}
+	if _, err := run2.SendUser(t.Context(), "continuation", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	infos, err = run2.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSessionTitle(t, infos, run1.SessionID, renamed)
+
+	// Renaming an unknown session id must fail clearly, not silently no-op.
+	if err := run1.SetContextSessionTitle("does-not-exist", "New title"); err == nil {
+		t.Fatal("SetContextSessionTitle(does-not-exist): want an error, got nil")
+	}
+}
+
+func assertSessionTitle(t *testing.T, infos []SessionInfo, sessionID, want string) {
+	t.Helper()
+	for _, info := range infos {
+		if info.SessionID == sessionID {
+			if info.Title != want {
+				t.Fatalf("session %q title = %q, want %q", sessionID, info.Title, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("session %q missing from list: %#v", sessionID, infos)
+}
+
 func setupTitleSessionContext(t *testing.T, session *Session, store *storage.SQLite) {
 	t.Helper()
 	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")

@@ -33,7 +33,7 @@ func runSessions(args []string) error {
 
 func runSessionsWithIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("sessions: expected list, show, or delete")
+		return fmt.Errorf("sessions: expected list, show, rename, or delete")
 	}
 	subcommand, rest := args[0], args[1:]
 	switch subcommand {
@@ -41,6 +41,8 @@ func runSessionsWithIO(args []string, stdout, stderr io.Writer) error {
 		return runSessionsList(rest, stdout)
 	case "show":
 		return runSessionsShow(rest, stdout)
+	case "rename":
+		return runSessionsRename(rest, stderr)
 	case "delete":
 		return runSessionsDelete(rest, stderr)
 	default:
@@ -178,6 +180,27 @@ func runSessionsShow(args []string, stdout io.Writer) error {
 		return writeSessionsJSON(stdout, msgs)
 	}
 	writeSessionsShowText(stdout, msgs)
+	return nil
+}
+
+// runSessionsRename sets a saved session's display title. The session's own
+// id/name is never changed - only chat.SessionInfo.Title, the human-facing
+// label "sessions list" and a sidebar would show in place of the raw id.
+func runSessionsRename(args []string, stderr io.Writer) error {
+	workspaceRoot, _, positional, err := parseSessionsWorkspaceAndJSON("sessions rename", args, 2)
+	if err != nil {
+		return err
+	}
+	name, title := positional[0], positional[1]
+	sess, store, err := newCatalogSession(workspaceRoot)
+	if err != nil {
+		return fmt.Errorf("sessions rename: %w", err)
+	}
+	defer store.Close()
+	if err := sess.SetContextSessionTitle(name, title); err != nil {
+		fmt.Fprintf(stderr, "sessions rename: %v\n", err)
+		return fmt.Errorf("sessions rename: %w", err)
+	}
 	return nil
 }
 

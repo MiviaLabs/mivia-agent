@@ -382,9 +382,14 @@ func TestDecodeStrictPanelMemberReport_RejectsInvalidVerdict(t *testing.T) {
 	}
 }
 
-// Regression (DC-14, live panel failure): the correctness member emitted an
-// "elapsed" field that no schema or prompt defines. Unknown fields must be
-// skipped, not reject the whole report, and the canonical form drops them.
+// Regression (DC-14, live panel failure): the decoded member output carried
+// an "elapsed" field that no schema or prompt defines. The field actually
+// arrived via the coordinator result envelope (agent handler's buildResult,
+// {"output":..., "status":..., "elapsed":...}) because the panel path did not
+// unwrap it with extractTaskOutput; the real fix is the unwrap in
+// panelSynthesisMemberInputs (see TestPanelSynthesisMemberInputs_UnwrapsEnvelope).
+// This test pins the defense-in-depth behavior: unknown fields are skipped,
+// not rejected, and the canonical form drops them.
 func TestDecodeStrictPanelMemberReport_SkipsUnknownFields(t *testing.T) {
 	raw := []byte(`{"verdict":"approved","findings":[{"id":"r1","title":"t","severity":"high","description":"d"}],"elapsed":"32s","extra":{"nested":1}}`)
 	report, canonical, err := DecodeStrictPanelMemberReport(raw)

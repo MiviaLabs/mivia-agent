@@ -22,6 +22,10 @@ type fakeSessionClient struct {
 	refreshErr   error
 	refreshCalls int
 
+	verifyToken Token
+	verifyErr   error
+	verifyCalls int
+
 	revokeErr   error
 	revokeCalls int
 }
@@ -34,6 +38,11 @@ func (f *fakeSessionClient) Login(_ context.Context, _ string, _ []byte) (Token,
 func (f *fakeSessionClient) Refresh(_ context.Context, _ string) (Token, error) {
 	f.refreshCalls++
 	return f.refreshToken, f.refreshErr
+}
+
+func (f *fakeSessionClient) Verify(_ context.Context, _ string) (Token, error) {
+	f.verifyCalls++
+	return f.verifyToken, f.verifyErr
 }
 
 func (f *fakeSessionClient) Revoke(_ context.Context, _ string) error {
@@ -317,6 +326,63 @@ func TestServiceEnsureRefreshNetworkErrorLeavesTokenUntouched(t *testing.T) {
 	}
 	if stored.Bearer != tok.Bearer {
 		t.Errorf("stored Bearer = %q, want unchanged %q", stored.Bearer, tok.Bearer)
+	}
+}
+
+func TestServiceVerifySuccessSavesToken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	fake := &fakeSessionClient{verifyToken: farFutureToken()}
+	svc := NewService(fake, path)
+
+	if err := svc.Verify(context.Background(), "verify-code"); err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if fake.verifyCalls != 1 {
+		t.Errorf("verifyCalls = %d, want 1", fake.verifyCalls)
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() after Verify() error = %v", err)
+	}
+	if got.Bearer != farFutureToken().Bearer {
+		t.Errorf("Load().Bearer = %q, want %q", got.Bearer, farFutureToken().Bearer)
+	}
+}
+
+func TestServiceVerifySessionlessReturnsErrVerifiedNoSessionWithoutSaving(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	fake := &fakeSessionClient{verifyErr: ErrVerifiedNoSession}
+	svc := NewService(fake, path)
+
+	err := svc.Verify(context.Background(), "verify-code")
+	if !errors.Is(err, ErrVerifiedNoSession) {
+		t.Fatalf("Verify() error = %v, want ErrVerifiedNoSession", err)
+	}
+
+	if _, err := Load(path); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Load() after sessionless Verify() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestServiceVerifyClientErrorWraps(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	fake := &fakeSessionClient{verifyErr: errors.New("bad code")}
+	svc := NewService(fake, path)
+
+	err := svc.Verify(context.Background(), "verify-code")
+	if err == nil {
+		t.Fatal("Verify() error = nil, want an error")
+	}
+	if errors.Is(err, ErrVerifiedNoSession) {
+		t.Errorf("Verify() error = %v, want NOT ErrVerifiedNoSession", err)
+	}
+
+	if _, err := Load(path); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Load() after failed Verify() error = %v, want ErrNotFound", err)
 	}
 }
 

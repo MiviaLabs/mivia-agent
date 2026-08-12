@@ -23,6 +23,7 @@ const refreshSkew = 10 * time.Minute
 type sessionClient interface {
 	Login(ctx context.Context, email string, password []byte) (Token, error)
 	Refresh(ctx context.Context, bearer string) (Token, error)
+	Verify(ctx context.Context, token string) (Token, error)
 	Revoke(ctx context.Context, bearer string) error
 }
 
@@ -47,6 +48,25 @@ func (s *Service) Login(ctx context.Context, email string, password []byte) erro
 	}
 	if err := Save(s.path, tok); err != nil {
 		return fmt.Errorf("miviaauth: save token after login: %w", err)
+	}
+	return nil
+}
+
+// Verify submits an emailed verification code and, if the server issues a
+// session, persists it -- mirroring Login. If verification succeeded but no
+// session was issued (ErrVerifiedNoSession), that error is returned as-is
+// and nothing is written to disk; the caller should tell the user to run
+// `mivia login`.
+func (s *Service) Verify(ctx context.Context, token string) error {
+	tok, err := s.client.Verify(ctx, token)
+	if err != nil {
+		if errors.Is(err, ErrVerifiedNoSession) {
+			return err
+		}
+		return fmt.Errorf("miviaauth: verify: %w", err)
+	}
+	if err := Save(s.path, tok); err != nil {
+		return fmt.Errorf("miviaauth: save token after verify: %w", err)
 	}
 	return nil
 }

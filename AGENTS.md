@@ -122,6 +122,14 @@ Repo-native:
 | `architecture-review` | Boundaries, abstraction level, over-engineering (ADLC Step 0) |
 | `feature-delivery` | Bounded feature slice delivery |
 
+Workflow panel (read-only, JSON-only; used by the `feature-delivery` `review_panel` members):
+
+| Skill | Role |
+|-------|------|
+| `panel-bug-audit` | Correctness member: reachable bugs, concurrency, persistence, reliability |
+| `panel-secure-change` | Security member: authz, secrets, injection, SSRF, prompt injection |
+| `panel-architecture-review` | Integration member: boundary fitness, dependency direction, abstraction cost |
+
 ## Workflows
 
 When the workspace has `.mivia/workflows/`, the root agent has the workflow
