@@ -13,6 +13,21 @@ func runCompletionCapture(t *testing.T, args []string) (string, error) {
 	return buf.String(), err
 }
 
+func TestCompletionCommandsIncludesLoginLogout(t *testing.T) {
+	for _, want := range []string{"login", "logout"} {
+		found := false
+		for _, cmd := range completionCommands {
+			if cmd == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("completionCommands is missing %q (must stay in sync with the Execute switch in root.go)", want)
+		}
+	}
+}
+
 func TestCompletionBashScript(t *testing.T) {
 	out, err := runCompletionCapture(t, []string{"bash"})
 	if err != nil {

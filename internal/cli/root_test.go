@@ -174,3 +174,42 @@ func TestExecuteCompletionNoArgs(t *testing.T) {
 		t.Fatalf("Execute([completion]) error = %v, want usage line", err)
 	}
 }
+
+// TestUsageTextDocumentsLoginLogout: usageText() documents the login/logout
+// commands, matching the existing precedent of asserting command lines are
+// present in the help body.
+func TestUsageTextDocumentsLoginLogout(t *testing.T) {
+	text := usageText()
+	if !strings.Contains(text, "login") {
+		t.Fatalf("usageText() missing login command:\n%s", text)
+	}
+	if !strings.Contains(text, "logout") {
+		t.Fatalf("usageText() missing logout command:\n%s", text)
+	}
+}
+
+// TestExecuteLoginDispatchesToRunLogin: `mivia login` (no --email) reaches
+// runLogin and fails fast on parseLoginArgs's pre-network validation,
+// proving dispatch without a real network call or filesystem touch.
+func TestExecuteLoginDispatchesToRunLogin(t *testing.T) {
+	err := Execute([]string{"login"})
+	if err == nil {
+		t.Fatal("Execute([login]) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "--email is required") {
+		t.Fatalf("error = %v, want contains '--email is required'", err)
+	}
+}
+
+// TestExecuteLogoutDispatchesToRunLogout: `mivia logout --bogus` reaches
+// runLogout and fails fast on parseLogoutArgs's unknown-flag check, proving
+// dispatch without touching a real ~/.mivia session file.
+func TestExecuteLogoutDispatchesToRunLogout(t *testing.T) {
+	err := Execute([]string{"logout", "--bogus"})
+	if err == nil {
+		t.Fatal("Execute([logout, --bogus]) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("error = %v, want contains 'unknown flag'", err)
+	}
+}

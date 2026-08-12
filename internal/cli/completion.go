@@ -14,7 +14,7 @@ var completionShells = []string{"bash", "zsh", "fish"}
 // the Execute switch in root.go.
 var completionCommands = []string{
 	"chat", "config", "doctor", "agents", "workflows", "workflow",
-	"worktree", "version", "help", "completion", "setup",
+	"worktree", "version", "help", "completion", "setup", "login", "logout",
 }
 
 // runCompletion prints a static completion script for the requested shell.
