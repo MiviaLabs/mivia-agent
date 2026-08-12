@@ -42,11 +42,24 @@ func NewOllama(opts Options) (Completer, error) {
 		// traffic could leave the machine (round-9 confirmed finding).
 		return nil, fmt.Errorf("missing API key for provider %q", "ollama")
 	}
+	var extraBody map[string]any
+	if opts.ContextWindowTokens > 0 {
+		// Ollama does not infer context length from the model name: its daemon
+		// serves a small default (2048/4096) unless told otherwise per request.
+		// mivia's prompt budgeting already assumes the configured
+		// context_window_tokens is honored, so without this the daemon silently
+		// truncates older turns server-side while the client believes it sent a
+		// history that fits (round-trip confirmed: local-only history loss).
+		extraBody = map[string]any{
+			"options": map[string]any{"num_ctx": opts.ContextWindowTokens},
+		}
+	}
 	return NewOpenAICompatWithOptions(CompatOptions{
 		Name:              "ollama",
 		BaseURL:           base,
 		APIKey:            apiKey,
 		CacheUsageEnabled: opts.CacheUsageEnabled,
 		DialContext:       dialContext,
+		ExtraBody:         extraBody,
 	}), nil
 }

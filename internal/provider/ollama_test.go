@@ -1,6 +1,9 @@
 package provider
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // TestNewOllamaDefaultsToCloudURL pins the Ollama factory defaults: with no
 // BaseURL the built-in descriptor's cloud URL is used, the API key is
@@ -96,5 +99,44 @@ func TestNewOllamaKeepsKeyForCloud(t *testing.T) {
 	}
 	if client.apiKey != "fake" {
 		t.Fatalf("NewOllama apiKey=%q, want %q", client.apiKey, "fake")
+	}
+}
+
+// TestNewOllamaSetsNumCtxFromConfiguredContextWindow pins the fix for
+// history silently vanishing on local ollama: without an explicit num_ctx,
+// the daemon serves its own small default context window regardless of what
+// mivia's prompt budgeting believes the model supports, so older turns get
+// truncated server-side. When ContextWindowTokens is set, NewOllama must
+// forward it as options.num_ctx in every request body.
+func TestNewOllamaSetsNumCtxFromConfiguredContextWindow(t *testing.T) {
+	comp, err := NewOllama(Options{BaseURL: "http://127.0.0.1:11434/v1", ContextWindowTokens: 262144})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, ok := comp.(*OpenAICompat)
+	if !ok {
+		t.Fatalf("NewOllama must return *OpenAICompat, got %T", comp)
+	}
+	want := map[string]any{"options": map[string]any{"num_ctx": 262144}}
+	if !reflect.DeepEqual(client.extraBody, want) {
+		t.Fatalf("NewOllama extraBody=%#v, want %#v", client.extraBody, want)
+	}
+}
+
+// TestNewOllamaOmitsNumCtxWhenContextWindowUnset pins the no-op default: an
+// unrecognized or unconfigured model (ContextWindowTokens=0) must not send a
+// num_ctx override, keeping the request body byte-identical to before this
+// option existed.
+func TestNewOllamaOmitsNumCtxWhenContextWindowUnset(t *testing.T) {
+	comp, err := NewOllama(Options{BaseURL: "http://127.0.0.1:11434/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, ok := comp.(*OpenAICompat)
+	if !ok {
+		t.Fatalf("NewOllama must return *OpenAICompat, got %T", comp)
+	}
+	if len(client.extraBody) != 0 {
+		t.Fatalf("NewOllama extraBody=%#v, want empty", client.extraBody)
 	}
 }

@@ -131,6 +131,12 @@ type Options struct {
 	// CacheUsageEnabled gates capture of provider-reported prompt-cache usage
 	// accounting. It never changes what is sent to the provider.
 	CacheUsageEnabled bool
+	// ContextWindowTokens is the configured model's declared context capacity
+	// (config.ModelSpec.ContextWindowTokens for the resolved model name), or 0
+	// if the model is unrecognized. Only consumed by providers whose server
+	// does not infer context length from the model name on its own (ollama's
+	// num_ctx); other factories ignore it.
+	ContextWindowTokens int
 }
 
 type providerFactory func(Options) (Completer, error)
@@ -239,14 +245,22 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 			return nil, fmt.Errorf("missing API key for provider %q", providerName)
 		}
 	}
+	var contextWindowTokens int
+	for _, model := range runtime.Models {
+		if model.Name == res.Model {
+			contextWindowTokens = model.ContextWindowTokens
+			break
+		}
+	}
 	opts := Options{
-		Name:              runtime.ProviderName,
-		BaseURL:           runtime.BaseURL,
-		APIKey:            runtime.APIKey,
-		Model:             res.Model,
-		HTTPReferer:       runtime.HTTPReferer,
-		XTitle:            runtime.XTitle,
-		CacheUsageEnabled: res.PromptCache != "off",
+		Name:                runtime.ProviderName,
+		BaseURL:             runtime.BaseURL,
+		APIKey:              runtime.APIKey,
+		Model:               res.Model,
+		HTTPReferer:         runtime.HTTPReferer,
+		XTitle:              runtime.XTitle,
+		CacheUsageEnabled:   res.PromptCache != "off",
+		ContextWindowTokens: contextWindowTokens,
 	}
 	factory, ok := builtinFactories.lookup(providerName)
 	if !ok {
