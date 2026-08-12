@@ -13,16 +13,27 @@ import (
 
 const panelMemberTimeout = 30 * time.Minute
 
+// panelMemberLimits bounds each panel member child's work. MaxPromptTokens is
+// deliberately 0 (unlimited cumulative prompt, per runtime.WorkLimits
+// semantics): a read-only reviewer's prompt volume is not a work bound. Every
+// provider call is already bounded by the model context window with a
+// prompt-too-long compaction retry, and the member loop is bounded by MaxTurns,
+// MaxOutputTokens, MaxOutputPerCall, MaxToolCalls, panelMemberTimeout, and the
+// panel's retry policy. A finite cumulative cap (historically 524288) killed
+// deep reviews of large packages mid-panel with "work limit exceeded: prompt
+// tokens" — a bogus bound that no other agent loop in the system applies.
 var panelMemberLimits = runtime.WorkLimits{
-	MaxTurns: 16, MaxPromptTokens: 524288, MaxOutputTokens: 131072,
+	MaxTurns: 16, MaxPromptTokens: 0, MaxOutputTokens: 131072,
 	MaxOutputPerCall: 8192, MaxToolCalls: 64,
 }
 
 // panelSynthesisLimits bounds the synthesis child's work. buildPanelSynthesisWork
 // (panel_synthesis.go) consumes these once member work succeeds and it builds
-// the actual synthesis PanelTaskSpec.
+// the actual synthesis PanelTaskSpec. MaxPromptTokens is 0 (unlimited) for the
+// same reason as panelMemberLimits; the synthesis child is still bounded by
+// MaxTurns, MaxOutputTokens, MaxOutputPerCall, MaxToolCalls, and its deadline.
 var panelSynthesisLimits = runtime.WorkLimits{
-	MaxTurns: 8, MaxPromptTokens: 524288, MaxOutputTokens: 65536,
+	MaxTurns: 8, MaxPromptTokens: 0, MaxOutputTokens: 65536,
 	MaxOutputPerCall: 8192, MaxToolCalls: 16,
 }
 
