@@ -1,8 +1,8 @@
-// Package textutil provides rune-safe byte-cap truncation for UTF-8 text.
-//
-// jschema and delivery both bound stored or rendered text by byte count, and
-// both must never split a UTF-8 rune. This leaf package holds that shared
-// logic so neither importer depends on the other.
+// Package textutil provides small, dependency-free string-safety
+// primitives shared by packages that must not depend on each other: rune-safe
+// byte-cap truncation (jschema, delivery) and control-byte detection
+// (workflows/controller, workflows/compiler). Each importer needs the exact
+// same check; this leaf package holds the one implementation.
 package textutil
 
 import "unicode/utf8"
