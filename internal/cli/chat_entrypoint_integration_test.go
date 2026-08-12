@@ -109,7 +109,10 @@ tools_core = ["read_file"]
 
 // TestRunConfiguredChatRefusesWithoutAnAPIKey pins the entrypoint's first gate.
 func TestRunConfiguredChatRefusesWithoutAnAPIKey(t *testing.T) {
-	err := runConfiguredChat(chatInvocation{}, &config.Resolved{APIKeyEnv: "TEST_KEY"})
+	// workspacePath isolates this test from the ambient main repository's
+	// real .mivia/mivia.toml (see the note in
+	// TestRunConfiguredChatCarriesResumeSessionAcrossRestart).
+	err := runConfiguredChat(chatInvocation{workspacePath: t.TempDir()}, &config.Resolved{APIKeyEnv: "TEST_KEY"})
 	if err == nil || !strings.Contains(err.Error(), "missing API key") {
 		t.Fatalf("error = %v, want the missing-key refusal", err)
 	}

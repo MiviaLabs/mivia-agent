@@ -174,6 +174,16 @@ func panelMemberResultError(result *coordinator.RunResult) error {
 		if child.Err != nil {
 			return child.Err
 		}
+		// A task can report a non-completed terminal status (failed,
+		// timed_out, canceled, blocked) with Err == nil (mapStatus treats
+		// Status as authoritative independent of Err). Wave 5's synthesis
+		// envelope trusts every member result RunPanelMembers lets through,
+		// so a non-completed status must fail here too, not only a non-nil
+		// Err: otherwise a failed member's stale or partial Output could be
+		// silently decoded into the host verdict.
+		if child.Status != "completed" {
+			return fmt.Errorf("panel member task %q ended with status %q, not completed", child.TaskID, child.Status)
+		}
 	}
 	return nil
 }

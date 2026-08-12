@@ -28,6 +28,9 @@ func prepareWorkflowRuntime(root, refBase string, wf *compiler.CompiledWorkflow,
 	if err != nil {
 		return preparedWorkflowRuntime{}, err
 	}
+	if err := resolveWorkflowPanelSynthesisBindings(wf, registry, prior, snapshot, dispatcherOpts); err != nil {
+		return preparedWorkflowRuntime{}, err
+	}
 	if err := authorizeWorkflowPanelBindings(wf, registry, snapshot, prior != nil, dispatcherOpts); err != nil {
 		return preparedWorkflowRuntime{}, err
 	}
@@ -122,6 +125,70 @@ func authorizeWorkflowPanelBindings(wf *compiler.CompiledWorkflow, registry *age
 		if err := validatePanelAgentTools(synthesizer, step.Skill, opts, true); err != nil {
 			return fmt.Errorf("panel step %q: %w", step.ID, err)
 		}
+	}
+	return nil
+}
+
+// resolveWorkflowPanelSynthesisBindings resolves and stores the provider and
+// model each agent_panel step's review-synthesizer runs on. D4 requires the
+// synthesizer to declare no provider or model of its own; it follows the
+// admitted session binding exactly like any other undeclared-binding agent
+// (see resolveAgentBinding). Unlike a panel member's binding, this pair is
+// not a workflow-declared override: it is resolved here, once, and then
+// pinned like any other agent snapshot so resume reauthorizes the exact pair
+// instead of drifting to a new session default.
+//
+// It stores the result under the reserved member key "<step-id>/synthesis"
+// in Snapshot.PanelBindings. A real member ID can never equal "synthesis"
+// (panel_types.go's validateInitial rejects it), so this key cannot collide
+// with a declared member binding.
+func resolveWorkflowPanelSynthesisBindings(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, snapshot workflowledger.Snapshot, opts SessionDispatcherOpts) error {
+	for _, step := range wf.Steps {
+		if step.Kind != "agent_panel" || step.Panel == nil {
+			continue
+		}
+		key := step.ID + "/synthesis"
+		synthesizer, ok := registry.Get(step.Agent)
+		if !ok {
+			return fmt.Errorf("panel step %q references unknown synthesizer %q", step.ID, step.Agent)
+		}
+		if synthesizer.Name != "review-synthesizer" || declaredBinding(synthesizer) {
+			return fmt.Errorf("panel step %q requires provider-neutral review-synthesizer agent", step.ID)
+		}
+		digest, err := synthesizer.DefinitionDigest()
+		if err != nil {
+			return err
+		}
+		var binding agentBinding
+		if prior != nil {
+			pinned, ok := prior.PanelBindings[key]
+			if !ok {
+				return fmt.Errorf("panel synthesis binding %q is missing", key)
+			}
+			binding, err = resolvePinnedAgentBinding(synthesizer, opts, pinned.ProviderName, pinned.Model)
+		} else {
+			binding, err = resolveAgentBinding(synthesizer, opts)
+		}
+		if err != nil {
+			return fmt.Errorf("panel synthesis binding %q is not authorized: %w", key, err)
+		}
+		if binding.completer == nil {
+			return fmt.Errorf("panel synthesis binding %q has no usable completer", key)
+		}
+		next := workflowledger.PanelBindingSnapshot{
+			StepID: step.ID, MemberID: "synthesis", AgentName: synthesizer.Name, AgentDigest: digest,
+			ProviderName: binding.providerName, Model: binding.model,
+			TemplateDigest: digestBytes(snapshot.Templates[step.Template].Bytes),
+			SchemaDigest:   digestBytes(snapshot.Schemas[step.OutputSchema].Bytes),
+		}
+		if prior != nil {
+			pinned := prior.PanelBindings[key]
+			pinned.SkillDigest = ""
+			if pinned != next {
+				return fmt.Errorf("panel synthesis binding %q changed since workflow admission", key)
+			}
+		}
+		snapshot.PanelBindings[key] = next
 	}
 	return nil
 }
