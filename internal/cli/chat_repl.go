@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -358,11 +359,18 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonM
 	fmt.Fprintf(os.Stderr, "  (~%d tokens, %d%% context used)\n", usage.UsedTokens, usage.Percent)
 	var w io.Writer = os.Stdout
 	var jw *ndjsonChunkWriter
+	var onEvent func(agent.Event)
 	if jsonMode {
 		jw = newNDJSONChunkWriter(os.Stdout)
 		w = jw
+		// Thinking/tool_start/tool_end are written directly to os.Stdout
+		// (not through jw): they are whole, self-contained NDJSON lines, not
+		// raw content-delta bytes needing jw's split-UTF-8-rune buffering, so
+		// routing them through jw would gain nothing and risks getting stuck
+		// behind pending buffered bytes.
+		onEvent = jsonTurnEventCallback(os.Stdout)
 	}
-	_, err := sess.SendUser(ctx, line, w)
+	_, err := sess.SendUserWithEvent(ctx, line, w, onEvent)
 	for _, note := range sess.TakeAdmissionNotes() {
 		fmt.Fprintf(os.Stderr, "\n%s\n", note)
 	}
