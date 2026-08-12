@@ -267,7 +267,7 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	default:
 	}
 	content := string(data)
-	if alreadyApplied(content, in.NewString) {
+	if alreadyApplied(content, in.OldString, in.NewString) {
 		return fmt.Sprintf("no change to %s (edit already applied: new_string already present)", rel), nil
 	}
 	next, n, err := computeSearchReplace(content, in.OldString, in.NewString, in.Path, in.ReplaceAll)
@@ -282,16 +282,26 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	return formatSearchReplaceResultAt(t.ws.Rel(abs), n, in.OldString, in.NewString, content, next, oldLine, t.maxBytes), nil
 }
 
-// alreadyApplied reports whether new_string is already present in content,
-// meaning this exact edit already landed - most often a retried/re-issued
-// call, or a second agent applying the same fix independently. old_string is
-// frequently a substring of new_string (an anchor line the edit extends), so
-// without this check old_string would still match post-edit and a reapply
-// would silently duplicate the inserted text instead of no-op'ing. Always
-// false for new_string == "" (a deletion edit), where "already applied"
-// can't be distinguished from "there was never anything to delete".
-func alreadyApplied(content, newString string) bool {
-	return newString != "" && strings.Contains(content, newString)
+// alreadyApplied reports whether this exact edit has already landed in
+// content: new_string is present, and old_string no longer occurs anywhere
+// outside the landed new_string occurrences. It is true for a retried or
+// re-issued call, or a second agent applying the same fix independently.
+// old_string is frequently a substring of new_string (an anchor line the
+// edit extends), so without the strip old_string would still match post-edit
+// and a reapply would silently duplicate the inserted text instead of
+// no-op'ing. The strip also keeps the check honest the other way: a file that
+// merely CONTAINS new_string elsewhere while old_string still needs replacing
+// is a live edit, not a reapply, and must not be skipped. Always false for
+// new_string == "" (a deletion edit), where "already applied" can't be
+// distinguished from "there was never anything to delete".
+func alreadyApplied(content, oldString, newString string) bool {
+	if newString == "" {
+		return false
+	}
+	if !strings.Contains(content, newString) {
+		return false
+	}
+	return !strings.Contains(strings.ReplaceAll(content, newString, ""), oldString)
 }
 
 // computeSearchReplace validates old_string's match count against
