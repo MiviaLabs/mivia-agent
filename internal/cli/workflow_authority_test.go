@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -149,6 +150,42 @@ func TestWorkflowRegistryHonorsConfiguredWritePathBlocklist(t *testing.T) {
 	writablePath(t, registry, root, ".mivia/workflows/other.toml")
 	writablePath(t, registry, root, "internal/foo.go")
 	writablePath(t, registry, root, "go.work")
+}
+
+func TestEffectiveWorkflowWriteDenylistRemovals(t *testing.T) {
+	res := &config.Resolved{Tools: config.ToolsConfig{
+		WritePathBlocklist:       []string{".mivia/workflows", "go.mod"},
+		WritePathBlocklistRemove: []string{".git", ".mivia/mivia.toml"},
+	}}
+	got := effectiveWorkflowWriteDenylist(res)
+	if slices.Contains(got, ".git") || slices.Contains(got, ".mivia/mivia.toml") {
+		t.Fatalf("denylist = %v, want the defaults removed by explicit opt-out", got)
+	}
+	if !slices.Contains(got, ".mivia/workflows") || !slices.Contains(got, "go.mod") {
+		t.Fatalf("denylist = %v, want the additions kept", got)
+	}
+}
+
+// TestWorkflowRegistryHonorsWritePathBlocklistRemove covers the explicit
+// opt-out end to end: write_path_blocklist_remove unblocks a default entry
+// (.git, .mivia/mivia.toml) and a project addition for workflow agent steps,
+// while a non-removed addition stays blocked.
+func TestWorkflowRegistryHonorsWritePathBlocklistRemove(t *testing.T) {
+	root := t.TempDir()
+	res := &config.Resolved{Tools: config.ToolsConfig{
+		WritePathBlocklist:       []string{".mivia/workflows/feature-delivery.toml", "go.mod"},
+		WritePathBlocklistRemove: []string{".git", ".mivia/mivia.toml", ".mivia/workflows/feature-delivery.toml"},
+	}}
+	registry, err := workflowDefaultRegistry(root, res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Removed entries are writable again.
+	writablePath(t, registry, root, ".git/config")
+	writablePath(t, registry, root, ".mivia/mivia.toml")
+	writablePath(t, registry, root, ".mivia/workflows/feature-delivery.toml")
+	// A non-removed addition stays blocked.
+	blockedPaths(t, registry, root, []string{"go.mod"})
 }
 
 func TestWorkflowRegistryAllowsWorkspaceWrites(t *testing.T) {

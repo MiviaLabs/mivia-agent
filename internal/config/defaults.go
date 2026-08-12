@@ -122,9 +122,12 @@ var DefaultSubagentConfig = SubagentConfig{
 
 // DefaultWritePathBlocklist is the built-in set of workspace paths that write
 // tools always refuse for workflow agent steps. A project extends it with
-// [tools] write_path_blocklist; it cannot remove entries. The config file
-// itself (inside the workspace namespace) and the Git metadata stay protected
-// even when a project configures nothing.
+// [tools] write_path_blocklist and may remove entries (including these two)
+// with [tools] write_path_blocklist_remove. The config file itself (inside
+// the workspace namespace) and the Git metadata stay protected unless a
+// project explicitly opts out - unblocking them is a trust decision because
+// the config file carries this blocklist and Git metadata carries history and
+// hooks.
 var DefaultWritePathBlocklist = []string{".git", workspace.Namespace + "/mivia.toml"}
 
 // DefaultToolsConfig defines the built-in tool policy defaults.

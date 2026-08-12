@@ -108,10 +108,8 @@ func parseMemorySearchArgs(args []string) (query string, scope memory.Scope, lim
 			}
 			jsonFlag = true
 		case "":
-			if strings.HasPrefix(arg, "-") {
-				err = fmt.Errorf("memory search: unknown flag %q", safeCatalogText(arg, 80))
-				break
-			}
+			// cutMemoryFlag returns "" only for non-flag args, so a dash
+			// prefix here is unreachable; unknown flags land in default.
 			positional = append(positional, arg)
 		default:
 			err = fmt.Errorf("memory search: unknown flag %q", safeCatalogText(arg, 80))

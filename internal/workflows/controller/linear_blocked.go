@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,10 +17,14 @@ import (
 //  2. files_changed ∩ blocklist — a claim that the change modified a path the
 //     host write policy makes unwritable for workflow agents. No agent can
 //     legitimately change such a file, so a claim of one is a blocked signal.
-//  3. review findings that DEMAND a blocked-path edit (path token plus demand
-//     verb on one line) — the deadlock shape seen in production, where the
-//     reviewer keeps asking for an edit no workflow agent can perform. A mere
-//     mention of a blocklisted path is not a demand and is ignored.
+//  3. review findings that DEMAND a blocked-path edit. A finding demands an
+//     edit only through its required field (the review schema guarantees a
+//     non-empty string), so only that field is scanned for a path token plus
+//     demand verb. Evidence and reason are context, not demands: a finding
+//     that merely quotes a blocklisted path (say, doc content mentioning
+//     ".mivia/agents/<name>.toml") while requiring a plan correction must
+//     not be treated as a demand to write that path. A mere mention of a
+//     blocklisted path is not a demand and is ignored.
 //
 // Paths are deduplicated and sorted for deterministic error messages.
 func (c *LinearController) blockedPathsFromOutput(output map[string]any) []string {
@@ -55,12 +58,18 @@ func (c *LinearController) blockedPathsFromOutput(output map[string]any) []strin
 			for _, item := range raw {
 				switch f := item.(type) {
 				case map[string]any:
-					text, err := json.Marshal(f)
-					if err != nil {
-						continue
-					}
-					for _, p := range blockedpath.PathsDemandedInText(string(text), c.WritePathBlocklist) {
-						add(p)
+					// The demand of a finding lives in its required field (the
+					// review schema guarantees a non-empty string). Scanning
+					// the whole marshaled finding would merge evidence and
+					// demand onto one line: a finding whose evidence merely
+					// quotes a blocklisted path (doc content mentioning
+					// ".mivia/agents/<name>.toml") while required says
+					// "correct the plan" would be misread as a demand to
+					// write the blocked path.
+					if required, ok := f["required"].(string); ok && strings.TrimSpace(required) != "" {
+						for _, p := range blockedpath.PathsDemandedInText(required, c.WritePathBlocklist) {
+							add(p)
+						}
 					}
 				case string:
 					for _, p := range blockedpath.PathsDemandedInText(f, c.WritePathBlocklist) {

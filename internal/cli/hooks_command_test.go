@@ -258,7 +258,7 @@ func TestHooksListOnNoHooksSaysSo(t *testing.T) {
 // not be silently swallowed either: the operator needs to know it stopped
 // meaning anything.
 func TestStaleBypassFlagIsAcceptedAndReported(t *testing.T) {
-	noTools, plainUI, staleBypass, rest := chatFlags([]string{"--bypass-hook-trust", "keep"})
+	noTools, plainUI, staleBypass, _, rest := chatFlags([]string{"--bypass-hook-trust", "keep"})
 	if !staleBypass {
 		t.Fatal("the removed flag must still parse rather than land in rest")
 	}

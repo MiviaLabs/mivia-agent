@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
-	"slices"
 	"strings"
 )
 
@@ -106,13 +104,29 @@ type ToolsConfig struct {
 	SearchIgnorePatterns []string `toml:"search_ignore_patterns,omitempty"`
 	// WritePathBlocklist adds workspace-relative paths or directories whose
 	// write tools refuse to change. It extends the built-in defaults
-	// (DefaultWritePathBlocklist: .git, .mivia/mivia.toml); it cannot remove
-	// them. Entries use forward slashes and are normalized (trimmed, cleaned)
-	// at load; an entry that is empty, ".", or absolute is a load error.
+	// (DefaultWritePathBlocklist: .git, .mivia/mivia.toml); removal is via
+	// WritePathBlocklistRemove. Entries use forward slashes and are normalized
+	// (trimmed, cleaned) at load; an entry that is empty, ".", or absolute is
+	// a load error.
 	// The blocklist applies to workflow agent steps, whose write tools
 	// (write_file, search_replace, multi_edit, delete_file) refuse listed
 	// paths. The interactive session registry does not enforce it.
 	WritePathBlocklist []string `toml:"write_path_blocklist,omitempty"`
+	// WritePathBlocklistRemove removes workspace-relative paths or directories
+	// from the effective write-path blocklist (the built-in defaults plus
+	// WritePathBlocklist) for workflow agent steps. It is the explicit opt-out
+	// for a default entry (.git, .mivia/mivia.toml) or a project addition, and
+	// it is the only way to unblock those two defaults. Unblocking a path is a
+	// trust decision: .mivia/mivia.toml carries this very blocklist, so an
+	// agent that can edit it can remove its own restrictions (including
+	// .mivia/agents, .mivia/policy, .mivia/rules, .mivia/skills,
+	// .mivia/workflows, go.mod, go.sum, and go.work), and .git carries commit
+	// history and hooks, so an agent that can edit it can rewrite history or
+	// plant hooks that bypass the host hook-policy gates. Keep the defaults
+	// blocked unless a host-owned step genuinely needs the path. Entries use
+	// the same normalization and validation rules as WritePathBlocklist; an
+	// entry listed in BOTH keys is a load error (the keys contradict).
+	WritePathBlocklistRemove []string `toml:"write_path_blocklist_remove,omitempty"`
 	// MaxInspectRepositoryBytes caps the inspect_repository result envelope
 	// (bytes). Unlike MaxReadBytes/MaxOutputBytes there is no uncapped state:
 	// the tool's output must always be valid, bounded JSON. 0 or negative
@@ -282,38 +296,11 @@ func allowlisted(bin string, allowlist []string) bool {
 	return false
 }
 
-// validateWritePathBlocklist rejects entries that cannot protect anything:
-// entries that clean to "." (empty, whitespace-only, "x/..") or absolute
-// paths are silent no-ops in isWriteDeniedPath, so a misconfigured blocklist
-// fails closed at load instead of failing open at write time.
-func validateWritePathBlocklist(tc ToolsConfig) error {
-	for _, entry := range tc.WritePathBlocklist {
-		trimmed := strings.TrimSpace(entry)
-		cleaned := filepath.Clean(trimmed)
-		if cleaned == "." {
-			return fmt.Errorf("[tools] write_path_blocklist entry %q is empty or resolves to the workspace root; use a relative path", entry)
-		}
-		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("[tools] write_path_blocklist entry %q escapes the workspace; use a relative path inside the workspace", entry)
-		}
-		if filepath.IsAbs(cleaned) {
-			return fmt.Errorf("[tools] write_path_blocklist entry %q is absolute; use a workspace-relative path", entry)
-		}
-		// A backslash separator is a single filename character on non-Windows
-		// hosts, so an entry written with Windows separators can never match
-		// a real workspace-relative path there. Reject it instead of letting
-		// the protection silently not exist.
-		if runtime.GOOS != "windows" && strings.Contains(trimmed, "\\") {
-			return fmt.Errorf("[tools] write_path_blocklist entry %q uses a backslash separator; use forward slashes", entry)
-		}
-	}
-	return nil
-}
-
 // Validation for the two [tools] knobs that bound tool-result bytes: the
 // per-call ceiling and the aggregate per-batch budget. Both reject values that
 // would leave the model with results too small to use, rather than accepting a
-// number and quietly producing stubs.
+// number and quietly producing stubs. Write-path blocklist validation and
+// normalization live in write_path_blocklist.go.
 
 func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	tc = resolveToolsDefaults(tc)
@@ -342,17 +329,7 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 		tc.EnvAllowlist = nil
 	}
 	tc = resolveDiagnosticsAlias(tc)
-	// Normalize write_path_blocklist entries so the write tools compare exact
-	// workspace-relative paths: trim whitespace, collapse separators, use
-	// forward slashes. Defaults are NOT injected here; the workflow registry
-	// composes DefaultWritePathBlocklist + additions at build time.
-	if len(tc.WritePathBlocklist) > 0 {
-		norm := make([]string, 0, len(tc.WritePathBlocklist))
-		for _, entry := range tc.WritePathBlocklist {
-			norm = append(norm, filepath.ToSlash(filepath.Clean(strings.TrimSpace(entry))))
-		}
-		tc.WritePathBlocklist = slices.Clone(norm)
-	}
+	tc = normalizeWritePathBlocklist(tc)
 	tc = normalizeRefOnlyTools(tc)
 	return tc
 }

@@ -31,29 +31,60 @@ var demandVerbRe = regexp.MustCompile(`(?i)\b(?:edit|change|modify|update|write|
 var nounWritePhrases = regexp.MustCompile(`(?i)\bwrite[\s_-]+(?:access|path|permission|policy|blocklist|denylist|list)\b`)
 
 // LineDemandsEdit reports whether one line of text both names path and
-// instructs editing it: the path token appears and a demand verb is present.
-// Word boundaries keep verbs inside other words ("assets", "prefix") from
-// matching, and the path token itself is stripped from the line before verb
-// matching so a verb inside a file name ("fix" in "bug-fix.toml") never
-// counts. Noun phrases ("write access") are stripped too. A "do not edit X"
-// instruction still matches: the text instructs a write to a blocked path
-// either way, and the caller should refuse or route the task to a host-owned
-// process.
+// instructs editing it: a whitespace-delimited token references the path and a
+// demand verb is present. A token references the path only when the path
+// appears at a token or "/" boundary and is followed by the end of the token
+// or another "/": ".git" inside a URL ("raw.githubusercontent.com") or a
+// sibling name (".gitignore", ".mivia/workflows-x") never matches, while a
+// quoted or backticked reference ("`.mivia/workflows/bug-fix.toml`",
+// "foo/.git/HEAD") does. Word boundaries keep verbs inside other words
+// ("assets", "prefix") from matching, and each matched path token itself is
+// stripped from the line before verb matching so a verb inside a file name
+// ("fix" in "bug-fix.toml") never counts. Noun phrases ("write access") are
+// stripped too. A "do not edit X" instruction still matches: the text
+// instructs a write to a blocked path either way, and the caller should
+// refuse or route the task to a host-owned process.
 func LineDemandsEdit(line, blockedPath string) bool {
 	blockedPath = normalizePath(blockedPath)
-	if blockedPath == "" || !strings.Contains(line, blockedPath) {
+	if blockedPath == "" {
 		return false
 	}
-	cleaned := pathTokenRe(blockedPath).ReplaceAllString(line, " ")
+	cleaned := line
+	matched := false
+	for _, token := range strings.Fields(line) {
+		if tokenNamesPath(token, blockedPath) {
+			matched = true
+			cleaned = strings.Replace(cleaned, token, " ", 1)
+		}
+	}
+	if !matched {
+		return false
+	}
 	cleaned = nounWritePhrases.ReplaceAllString(cleaned, " ")
 	return demandVerbRe.MatchString(cleaned)
 }
 
-// pathTokenRe matches the whitespace-delimited token that contains blockedPath
-// (for example ".mivia/workflows/bug-fix.toml" for the entry
-// ".mivia/workflows"), so the token can be stripped before verb matching.
-func pathTokenRe(blockedPath string) *regexp.Regexp {
-	return regexp.MustCompile(`[^\s]*` + regexp.QuoteMeta(blockedPath) + `[^\s]*`)
+// tokenNamesPath reports whether a whitespace-delimited token references
+// blockedPath as a workspace path: the normalized path appears at the start of
+// the token or right after a "/" and is followed by the end of the token or
+// another "/". Wrapping punctuation (backticks, quotes, brackets) is trimmed
+// from the start, and sentence punctuation (period, comma, closing brackets)
+// from the end, so quoted references and sentence-final paths still match; a
+// leading dot that is part of a dotfile name (.git, .mivia) is never trimmed.
+// An entry embedded inside a longer word (".git" inside
+// "raw.githubusercontent.com") or followed by a name character (".gitignore",
+// ".mivia/workflows-x") never counts: such a token does not name the blocked
+// path.
+func tokenNamesPath(token, blockedPath string) bool {
+	t := strings.TrimLeft(token, "`\"'([{</*")
+	t = strings.TrimRight(t, "`\"'.,;:!?/)]}>*")
+	s := "/" + t
+	idx := strings.Index(s, "/"+blockedPath)
+	if idx < 0 {
+		return false
+	}
+	after := s[idx+len("/"+blockedPath):]
+	return after == "" || strings.HasPrefix(after, "/")
 }
 
 // IsBlockedPath reports whether rel (a slash-separated workspace-relative

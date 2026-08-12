@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -135,7 +136,10 @@ func TestParseMemorySearchArgsRejectsBadInput(t *testing.T) {
 		{"workspace missing value", []string{"fix", "--workspace"}, "requires a directory"},
 		{"workspace dash value", []string{"fix", "--workspace", "--json"}, "requires a directory"},
 		{"workspace empty equals", []string{"fix", "--workspace="}, "requires a directory"},
+		{"workspace dash equals", []string{"fix", "--workspace=-x"}, "requires a directory"},
 		{"config missing value", []string{"fix", "--config"}, "requires a path"},
+		{"config dash equals", []string{"fix", "--config=-x"}, "requires a path"},
+		{"json with value", []string{"fix", "--json=1"}, "unknown flag"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -256,6 +260,98 @@ func TestMemorySearchEndToEndHuman(t *testing.T) {
 	}
 	if errOut.Len() != 0 {
 		t.Errorf("unexpected stderr: %q", errOut.String())
+	}
+}
+
+// failingWriter is an io.Writer that always fails, forcing the JSON encoder's
+// write error branch in writeMemorySearchJSON.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+
+// TestMemorySearchParseError covers the runMemoryWithIO branch that returns a
+// parseMemorySearchArgs failure unchanged.
+func TestMemorySearchParseError(t *testing.T) {
+	var out, errOut strings.Builder
+	err := runMemoryWithIO([]string{"search", "--bogus"}, &out, &errOut)
+	if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("runMemoryWithIO error = %v, want unknown flag", err)
+	}
+}
+
+// TestMemorySearchResolveWorkspaceError covers the chatWorkspaceRoot failure
+// branch: filepath.Abs errors when the process working directory no longer
+// exists. The test is intentionally sequential (no t.Parallel): it changes the
+// process cwd, and parallel tests only run after sequential tests finish.
+func TestMemorySearchResolveWorkspaceError(t *testing.T) {
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(t.TempDir(), "gone")
+	if err := os.Mkdir(gone, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(gone); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(origWD); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	}()
+	// Removing the process cwd succeeds (the kernel keeps a reference); the
+	// next getcwd then fails, which is exactly the filepath.Abs error path.
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut strings.Builder
+	err = runMemoryWithIO([]string{"search", "fix"}, &out, &errOut)
+	if err == nil || !strings.Contains(err.Error(), "resolve workspace") {
+		t.Fatalf("runMemoryWithIO error = %v, want resolve workspace failure", err)
+	}
+}
+
+// TestMemorySearchConfigLoadError covers the config.Load failure branch: an
+// invalid config document errors even with AllowMissingConfig set.
+func TestMemorySearchConfigLoadError(t *testing.T) {
+	root := t.TempDir()
+	bad := filepath.Join(root, "bad.toml")
+	if err := os.WriteFile(bad, []byte("this is not [valid toml"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut strings.Builder
+	err := runMemoryWithIO([]string{"search", "fix", "--workspace", root, "--config", bad}, &out, &errOut)
+	if err == nil {
+		t.Fatal("runMemoryWithIO: want config load error")
+	}
+}
+
+// TestMemorySearchStoreSearchError covers the store.Search failure branch: the
+// read-only store opens lazily (sql.Open does not touch the file), so a corrupt
+// database file fails on the first query inside Search.
+func TestMemorySearchStoreSearchError(t *testing.T) {
+	root := t.TempDir()
+	cfgPath := writeMemoryTestConfigPath(t, root, true, ".mivia/corrupt.db")
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "corrupt.db"), []byte("not a sqlite database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut strings.Builder
+	err := runMemoryWithIO([]string{"search", "fix", "--workspace", root, "--config", cfgPath}, &out, &errOut)
+	if err == nil || !strings.Contains(err.Error(), "memory search:") {
+		t.Fatalf("runMemoryWithIO error = %v, want memory search failure", err)
+	}
+}
+
+// TestWriteMemorySearchJSONEncodeError covers the JSON encoder write-failure
+// branch in writeMemorySearchJSON.
+func TestWriteMemorySearchJSONEncodeError(t *testing.T) {
+	err := writeMemorySearchJSON(failingWriter{}, []memory.Result{{ID: "1", Title: "t"}})
+	if err == nil || !strings.Contains(err.Error(), "json encode failed") {
+		t.Fatalf("writeMemorySearchJSON error = %v, want json encode failure", err)
 	}
 }
 

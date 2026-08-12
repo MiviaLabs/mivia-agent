@@ -415,9 +415,10 @@ env_blocklist = ["GIT_DIR", "GIT_WORK_TREE"]
 # ---- Write-path blocklist (workflow agent steps) ----
 # The write tools of workflow agent steps (write_file, search_replace,
 # multi_edit, delete_file) refuse these workspace-relative paths or
-# directories. Two paths are ALWAYS blocked and cannot be removed: .git and
-# .mivia/mivia.toml. This key ADDS to that default set. It cannot remove
-# entries.
+# directories. Two paths are blocked by default and cannot be removed unless
+# you explicitly opt out: .git and .mivia/mivia.toml. This key ADDS to that
+# default set; write_path_blocklist_remove REMOVES entries from it (the
+# defaults or an addition).
 #
 # These entries restore the full protection that was previously compiled in:
 # workflow agents cannot edit agent definitions, hook-policy gates, rules,
@@ -425,6 +426,13 @@ env_blocklist = ["GIT_DIR", "GIT_WORK_TREE"]
 # Go module metadata (dependency substitution executed by a later build step).
 # A project that omits this key leaves all of these writable by workflow
 # agents, including its own workflow definition - choose deliberately.
+#
+# Removing a default entry is a trust decision. .mivia/mivia.toml carries
+# this very blocklist: an agent that can edit it can remove its own
+# restrictions, including the entries below. .git carries commit history and
+# hooks: an agent that can edit it can rewrite history or plant hooks that
+# bypass the host hook-policy gates. Keep both blocked unless a host-owned
+# step genuinely needs the path. An entry in BOTH keys is a load error.
 write_path_blocklist = [
     ".mivia/agents",   # agent definitions
     ".mivia/policy",   # hook-policy gates
@@ -435,6 +443,7 @@ write_path_blocklist = [
     "go.sum",
     "go.work",
 ]
+# write_path_blocklist_remove = [".git", ".mivia/mivia.toml"]  # opt-out example
 
 # Replace the default env var allowlist entirely
 # env_allowlist_only = ["PATH", "HOME", "USER", "PWD"]
