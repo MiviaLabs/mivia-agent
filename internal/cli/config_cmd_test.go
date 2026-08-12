@@ -44,3 +44,22 @@ func TestFormatDoctorModelInfoIncludesCatalogCapacity(t *testing.T) {
 		t.Fatalf("doctor catalog = %q", got)
 	}
 }
+
+func TestConfigShowPromptBudgetAdvisoryShown(t *testing.T) {
+	res := &config.Resolved{ProviderName: "deepseek", Model: "deepseek-v4-flash", MaxContextTokens: 616000}
+	got := formatConfigShow(res)
+	if !strings.Contains(got, "prompt_budget_advisory=unbounded (616000 tokens)") {
+		t.Fatalf("advisory output = %q", got)
+	}
+	if !strings.Contains(got, "recommended 200000") {
+		t.Fatalf("advisory missing recommendation = %q", got)
+	}
+}
+
+func TestConfigShowPromptBudgetAdvisoryAbsentWhenCapped(t *testing.T) {
+	res := &config.Resolved{ProviderName: "deepseek", Model: "deepseek-v4-flash", MaxContextTokens: 616000, MaxPromptTokens: intPtr(200000)}
+	got := formatConfigShow(res)
+	if strings.Contains(got, "prompt_budget_advisory") {
+		t.Fatalf("capped output = %q", got)
+	}
+}

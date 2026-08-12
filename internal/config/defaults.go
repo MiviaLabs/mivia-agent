@@ -14,6 +14,13 @@ import (
 // subagent work; never unbounded so cancel/timeout always surfaces.
 const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
 
+// DefaultPromptCapTokens is the recommended [chat] max_prompt_tokens value.
+// It bounds the per-request prompt budget for models with large context
+// windows. The planner compacts history at 80% of the budget. It is a
+// recommendation, not a compiled default: an unset knob keeps the
+// window-derived budget.
+const DefaultPromptCapTokens = 200_000
+
 // MaxTimeoutSeconds is the overflow-safety ceiling for every timeout that
 // EffectiveTimeoutSec returns. It is NOT a policy cap: raise-only semantics
 // let a model push any effective timeout up to 10 years, far beyond any real

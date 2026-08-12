@@ -63,6 +63,16 @@ func doctorStatusErr(res *config.Resolved, view agentCatalogView, catalogErr err
 	return fmt.Errorf("missing %s", res.APIKeyEnv)
 }
 
+// promptBudgetAdvisory reports when the session prompt budget is unbounded:
+// [chat] max_prompt_tokens unset and the active budget above the recommended
+// cap. Empty means no advisory.
+func promptBudgetAdvisory(res *config.Resolved) string {
+	if res == nil || res.MaxPromptTokens != nil || res.MaxContextTokens <= config.DefaultPromptCapTokens {
+		return ""
+	}
+	return fmt.Sprintf("unbounded (%d tokens); set [chat] max_prompt_tokens (recommended %d)", res.MaxContextTokens, config.DefaultPromptCapTokens)
+}
+
 // writeDoctorHumanLoadError prints the load-failure screen (human path).
 func writeDoctorHumanLoadError(stdout, stderr io.Writer, view agentCatalogView, catalogErr error) {
 	fmt.Fprintln(stdout, "mivia doctor")
@@ -105,6 +115,9 @@ func writeDoctorHuman(stdout, stderr io.Writer, res *config.Resolved, view agent
 		fmt.Fprintln(stdout, "  env_file:   (none found; using process env only)")
 	}
 	fmt.Fprint(stdout, formatDoctorModelInfo(res))
+	if advisory := promptBudgetAdvisory(res); advisory != "" {
+		fmt.Fprintf(stdout, "  prompt_budget: %s\n", advisory)
+	}
 	fmt.Fprintf(stdout, "  base_url:   %s\n", safeDoctorURL(res.BaseURL))
 	fmt.Fprintf(stdout, "  api_key_env:%s\n", safeCatalogText(res.APIKeyEnv, 128))
 

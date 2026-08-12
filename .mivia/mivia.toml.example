@@ -115,6 +115,11 @@ base_url = "https://api.z.ai/api/paas/v4"
 system_prompt = "You are mivia, a local CLI coding agent."
 temperature = 0
 max_tokens = 16384
+# Recommended prompt-budget bound (tokens). When unset, the budget is the
+# model window minus the output reserve. A bounded budget compacts history
+# earlier (at 80% of the budget) and cuts token cost on long sessions.
+# Larger values keep more history at higher cost - a recall-versus-price dial.
+max_prompt_tokens = 200000
 # max_steps = 0  # 0 = unlimited (default). Set positive to cap turns. /steps overrides per session.
 
 [worktrees]
@@ -347,12 +352,12 @@ core = [
 
 # Aggregate budget for ONE tool batch (bytes), across all of its parallel
 # calls together - the bound max_tool_result_bytes cannot provide, because it
-# sees each call in isolation. 0 = off (default). -1 derives it from the
-# model's prompt budget (a quarter of it, floor 256 KiB; inert without a
-# prompt budget). Positive values are literal and must be >= 16384.
+# sees each call in isolation. -1 (recommended) derives it from the model's
+# prompt budget (a quarter of it, floor 256 KiB; inert without a prompt
+# budget). 0 = off. Positive values are literal and must be >= 16384.
 # Over-budget results are degraded to content references readable with
 # read_output - never failed, and never destroyed.
-# batch_result_budget_bytes = 0
+batch_result_budget_bytes = -1
 
 # Bound on a Tavily API response body, used by the `search` tool's Tavily path
 # and by `extract`. Responses are NEVER truncated: this is not a cap on what

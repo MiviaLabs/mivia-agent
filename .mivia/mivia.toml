@@ -181,6 +181,9 @@ temperature = 0
 # mid-response truncation (finish_reason="length") on comprehensive turns.
 max_steps = 0
 
+# Bound the prompt budget (recommended): compact history earlier, cut token cost.
+max_prompt_tokens = 200000
+
 # ---------------------------------------------------------------------------
 # TOOLS - program allowlist, environment variable policies, size limits
 # ---------------------------------------------------------------------------
@@ -407,6 +410,10 @@ write_path_blocklist = [
 # max_glob_matches = 200          # glob max matches
 # memory_backstop_mb = 256        # OOM guard (MiB); default 256; 0 → 256
 # max_tool_result_bytes = 0       # history result cap; 0=uncapped; huge values warn once
+
+# Bound one tool batch (derived from the prompt budget): degrade over-budget
+# results to recoverable refs instead of letting a batch blow the context.
+batch_result_budget_bytes = -1
 
 # ---- Deferred tool loading (plan tools/05) ----
 # Tools named here are always advertised. Authorized tools NOT named here are

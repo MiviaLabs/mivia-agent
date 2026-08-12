@@ -1,8 +1,10 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
@@ -71,5 +73,35 @@ func TestShippedCatalogGLM52ContextWindowTokens(t *testing.T) {
 	}
 	if spec.MaxOutputTokens >= spec.ContextWindowTokens {
 		t.Fatalf("shipped glm-5.2 max_output_tokens = %d must stay below the 200000 context window", spec.MaxOutputTokens)
+	}
+}
+
+// The shipped example is also the recommendation sheet for the two knobs that
+// gate the model's usable context: chat.max_prompt_tokens (200000, matching
+// glm-5.2's real context window) and tools.batch_result_budget_bytes (-1, the
+// derived sentinel that sizes one tool batch from the active profile instead of
+// a fixed literal).
+func TestShippedExampleSetsRecommendedBounds(t *testing.T) {
+	path := filepath.Join("..", "..", ".mivia", "mivia.toml.example")
+	res, err := Load(LoadOptions{ConfigPath: path})
+	if err != nil {
+		t.Fatalf("the shipped example config does not load: %v", err)
+	}
+
+	if res.MaxPromptTokens == nil || *res.MaxPromptTokens != 200000 {
+		t.Fatalf("example chat.max_prompt_tokens = %v, want 200000", res.MaxPromptTokens)
+	}
+	if res.Tools.BatchResultBudgetBytes != BatchResultBudgetDerived {
+		t.Fatalf("example tools.batch_result_budget_bytes = %d, want %d (derived)", res.Tools.BatchResultBudgetBytes, BatchResultBudgetDerived)
+	}
+	// The loader normalizes every negative value to the derived sentinel, so the
+	// resolved check alone cannot tell "-1" from "-2". Pin the literal bytes the
+	// example actually ships: it is the documented spelling operators copy.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read shipped example: %v", err)
+	}
+	if !strings.Contains(string(raw), "batch_result_budget_bytes = -1") {
+		t.Fatalf("example must ship the literal 'batch_result_budget_bytes = -1'")
 	}
 }
