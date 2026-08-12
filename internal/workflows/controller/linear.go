@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -61,26 +62,33 @@ type Admission struct {
 // LinearController advances a workflow one active step at a time.
 // Phase 4 supports agent, agent_gate, evidence_gate, human_gate, and loops.
 type LinearController struct {
-	Repo              workflowledger.Repository
-	Runner            AgentStepRunner
-	Workflow          *compiler.CompiledWorkflow
-	Steps             map[string]StepRuntime
-	Inputs            map[string]any
-	RunID             string
-	Snapshot          []byte
-	Holder            string
-	Verifiers         *verifier.Catalogue
-	WorkDir           string
-	ModuleBaseline    *verifier.GoModuleBaseline
-	SecretPolicy      secretpath.Policy
-	PanelLimiter      *PanelActorLimiter
-	progress          ProgressSink
-	admission         Admission
-	forceResume       bool
-	now               func() time.Time
-	started           bool
-	mu                sync.Mutex
-	heartbeatThrottle *durableHeartbeatThrottle
+	Repo           workflowledger.Repository
+	Runner         AgentStepRunner
+	Workflow       *compiler.CompiledWorkflow
+	Steps          map[string]StepRuntime
+	Inputs         map[string]any
+	RunID          string
+	Snapshot       []byte
+	Holder         string
+	Verifiers      *verifier.Catalogue
+	WorkDir        string
+	ModuleBaseline *verifier.GoModuleBaseline
+	SecretPolicy   secretpath.Policy
+	// WritePathBlocklist is the host write-path denylist for workflow agents
+	// (internal/tools enforced): paths under it can never be written by an
+	// agent step. The controller uses it to recognize a succeeded step whose
+	// output admits a write it cannot perform (blocked_paths, a claimed
+	// files_changed entry, or a review finding demanding a blocked edit) and
+	// fail the run honestly instead of looping it into review.
+	WritePathBlocklist []string
+	PanelLimiter       *PanelActorLimiter
+	progress           ProgressSink
+	admission          Admission
+	forceResume        bool
+	now                func() time.Time
+	started            bool
+	mu                 sync.Mutex
+	heartbeatThrottle  *durableHeartbeatThrottle
 }
 
 // NewLinearController creates a controller for an admitted workflow run.
@@ -131,6 +139,29 @@ func (c *LinearController) SetSecretPolicy(policy secretpath.Policy) error {
 		return fmt.Errorf("workflow run already started")
 	}
 	c.SecretPolicy = policy
+	return nil
+}
+
+// SetWritePathBlocklist sets the host write-path denylist for workflow agent
+// steps before Start. Entries must be non-empty workspace-relative paths;
+// validation rejects absolute paths and entries that normalize to nothing.
+func (c *LinearController) SetWritePathBlocklist(paths []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	blocklist := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("write path blocklist entry is empty")
+		}
+		if path.IsAbs(p) {
+			return fmt.Errorf("write path blocklist entry %q is absolute; entries must be workspace-relative", p)
+		}
+		blocklist = append(blocklist, p)
+	}
+	c.WritePathBlocklist = blocklist
 	return nil
 }
 
