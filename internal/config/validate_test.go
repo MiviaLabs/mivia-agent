@@ -58,6 +58,45 @@ func TestValidEnvNameRejectsOutOfRangeAndBadFirstChar(t *testing.T) {
 	}
 }
 
+// TestValidateHTTPSURL pins ValidateHTTPSURL's strict https-only structural
+// checks: it accepts a well-formed absolute https URL and returns the parsed
+// *url.URL, and rejects the same structural defects validateBaseURL rejects
+// (missing scheme, http scheme, malformed URL, userinfo, fragment) with no
+// ollama-loopback or MIVIA_ALLOW_INSECURE_HTTP relaxation.
+func TestValidateHTTPSURL(t *testing.T) {
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "")
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{"valid https URL", "https://example.test/v1", false},
+		{"missing scheme", "example.test/v1", true},
+		{"http scheme rejected", "http://example.test/v1", true},
+		{"ollama loopback http still rejected", "http://127.0.0.1:11434/v1", true},
+		{"malformed URL", "https://%zz", true},
+		{"URL with userinfo", "https://user:pass@example.test", true},
+		{"URL with fragment", "https://example.test/v1#frag", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, err := ValidateHTTPSURL(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ValidateHTTPSURL(%q) = %v, nil, want error", tt.raw, u)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateHTTPSURL(%q) = %v, %v, want nil error", tt.raw, u, err)
+			}
+			if u == nil || u.String() != tt.raw {
+				t.Fatalf("ValidateHTTPSURL(%q) returned %v, want parsed URL for %q", tt.raw, u, tt.raw)
+			}
+		})
+	}
+}
+
 // TestValidateBaseURLOllamaLoopbackRelaxation pins the planned ollama
 // loopback relaxation: an http loopback base_url (the default ollama serving
 // address) is accepted for the ollama provider even without

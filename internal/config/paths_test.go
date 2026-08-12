@@ -98,6 +98,14 @@ func TestUserEnvPath(t *testing.T) {
 	}
 }
 
+func TestUserAuthPath(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home-does-not-exist")
+	t.Setenv("HOME", home)
+	if got, want := UserAuthPath(), workspace.NamespacePath(home, "auth.json"); got != want {
+		t.Fatalf("user auth path = %q, want %q", got, want)
+	}
+}
+
 func TestDefaultConfigCandidatesHonorsEnvOverrideFirst(t *testing.T) {
 	t.Setenv("MIVIA_CONFIG", "/tmp/explicit.toml")
 	got := DefaultConfigCandidates()

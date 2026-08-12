@@ -72,22 +72,48 @@ func validEnvName(name string) bool {
 // value cannot slip past the structural checks below.
 const maxBaseURLLength = 8 << 10
 
-func validateBaseURL(raw, providerName string) error {
+// ValidateHTTPSURL rejects anything but a well-formed absolute https URL. It
+// carries no per-provider or per-environment relaxation; a caller needing a
+// loopback or env-var exception applies it before/after calling this.
+func ValidateHTTPSURL(raw string) (*url.URL, error) {
+	u, err := parseStructuralURL(raw)
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("base_url must be an absolute https URL")
+	}
+	return u, nil
+}
+
+// parseStructuralURL applies the length cap and structural checks shared by
+// ValidateHTTPSURL and validateBaseURL's http relaxation path, without any
+// scheme requirement.
+func parseStructuralURL(raw string) (*url.URL, error) {
 	if len(raw) > maxBaseURLLength {
-		return fmt.Errorf("base_url is invalid")
+		return nil, fmt.Errorf("base_url is invalid")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		// Fixed literal on purpose: url.Parse's error quotes the raw value,
 		// and a base_url may carry credentials or control characters.
-		return fmt.Errorf("base_url is invalid")
+		return nil, fmt.Errorf("base_url is invalid")
 	}
 	if !u.IsAbs() || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
-		return fmt.Errorf("base_url is invalid")
+		return nil, fmt.Errorf("base_url is invalid")
+	}
+	return u, nil
+}
+
+func validateBaseURL(raw, providerName string) error {
+	u, err := parseStructuralURL(raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme == "https" {
+		return nil
 	}
 	switch u.Scheme {
-	case "https":
-		return nil
 	case "http":
 		if providerName == "ollama" && IsOllamaLoopback(raw) {
 			return nil
