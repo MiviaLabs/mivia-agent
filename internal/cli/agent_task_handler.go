@@ -257,6 +257,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		MaxTokens:   maxTokens, MaxContextTokens: binding.contextBudget(),
 		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
 		BatchResultBudgetBytes: h.opts.BatchResultBudgetBytes,
+		RefOnlyTools:           h.opts.RefOnlyTools,
 		RemainderSpool:         RemainderSpoolFromRegistry(registry),
 		OutputSchema:           outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
 		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec, h.opts.Config.DefaultTimeout),

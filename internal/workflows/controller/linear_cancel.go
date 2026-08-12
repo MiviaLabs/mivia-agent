@@ -110,18 +110,39 @@ func CancelRunWithAttemptsWithClaim(ctx context.Context, repo workflowledger.Rep
 		canceled = append(canceled, reconciled)
 	}
 
+	// D13: refresh the claim immediately before the terminal write. Panel
+	// reconciliation above can take real wall-clock time (a coordinator.Cancel
+	// call per member/synthesis child); run.Version only changes on RunStatus
+	// transitions, so without this refresh a caller whose claim lease expired
+	// and was legitimately taken over mid-reconciliation could still win the
+	// version-based CAS below and finalize the run out from under the new
+	// holder. A lost claim surfaces here as an error to the caller, same as
+	// any other durable failure in this function.
+	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+		return nil, err
+	}
 	if err := repo.CompareAndSetRunStatus(ctx, runID, run.Version, workflowledger.RunStatusCanceled, nil); err != nil {
 		return nil, err
 	}
-	// Mark every remaining non-terminal attempt canceled. Attempt marking is
-	// best-effort display data: the run status is authoritative, and an
-	// attempt that completed meanwhile is simply skipped (the claim fences
-	// concurrent completion anyway). The canceled attempts are returned so
-	// callers can emit one step_completed event per attempt.
-	attempts, err = repo.ListStepAttempts(ctx, runID)
+	remaining, err := markRemainingAttemptsCanceled(ctx, repo, runID)
 	if err != nil {
 		return nil, err
 	}
+	return append(canceled, remaining...), nil
+}
+
+// markRemainingAttemptsCanceled marks every non-terminal attempt canceled
+// after the run itself is already settled. Attempt marking is best-effort
+// display data: the run status is authoritative, and an attempt that
+// completed meanwhile is simply skipped (the claim fences concurrent
+// completion anyway). The canceled attempts are returned so callers can
+// emit one step_completed event per attempt.
+func markRemainingAttemptsCanceled(ctx context.Context, repo workflowledger.Repository, runID string) ([]workflowledger.StepAttempt, error) {
+	attempts, err := repo.ListStepAttempts(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	var canceled []workflowledger.StepAttempt
 	for _, attempt := range attempts {
 		if workflowledger.IsTerminalAttemptStatus(attempt.Status) {
 			continue

@@ -284,6 +284,24 @@ What the budget does not charge: lifecycle-hook advisory context (it has its own
 
 Contrast with `[tools] max_tool_result_bytes = 0` (uncapped per-call). Per-call results are already bounded by each tool's declared `ResultBudgetBytes` - see the per-tool budgets (`max_read_bytes`, `max_output_bytes`, tool-declared limits). The batch budget is the only knob that bounds a group of parallel calls together.
 
+## Ref-only tools
+
+`[tools] ref_only_tools` is an opt-in list of tool names whose results are never inlined into the model context when they exceed the batch degrade floor (16 KiB, `BatchDegradeFloorBytes`). Instead the whole body is spooled to the remainder store and the result is replaced by a notice naming a remainder ref the model can fetch with `read_output`. Only the notice's bytes are charged (notice-only token charge). Ephemeral tools are never spooled. The default is empty (off).
+
+When the spool succeeds the notice names the ref:
+
+```
+[tool result for <name> elided to a remainder ref (original ~N KiB): <ref> — use read_output to fetch the full body]
+```
+
+When the spool is nil, the principal is empty, or the store fails the notice omits the ref and the body is lost:
+
+```
+[tool result for <name> elided; original ~N KiB]
+```
+
+No ref is ever invented on a failed spool. The config key is `ref_only_tools` (TOML), defaulting to an empty list (off). Entries are matched exactly (case-sensitive) by tool name.
+
 ## Web research response bound
 
 `[tools] max_tavily_response_bytes` bounds a Tavily API response body, in bytes. It governs the `search` tool's Tavily path and the `extract` tool. Default is 4194304 (4 MiB).

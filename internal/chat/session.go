@@ -50,6 +50,8 @@ type Session struct {
 	// all its parallel calls. 0 is off, -1 derives from the prompt budget. Set
 	// from [tools] batch_result_budget_bytes by NewSession.
 	BatchResultBudgetBytes int
+	// RefOnlyTools names tools whose results are always spooled as references.
+	RefOnlyTools []string
 	// RemainderSpool stores truncated tool-result bodies for read_output.
 	// Set from the session dispatcher registration so notices and reads share
 	// one grant domain. Nil omits refs from truncation notices.
@@ -360,6 +362,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		MaxSteps:  snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
 		MaxToolResultChars:     snapshot.maxToolResult,
 		BatchResultBudgetBytes: snapshot.batchResultBudget,
+		RefOnlyTools:           snapshot.refOnlyTools,
 		RemainderSpool:         snapshot.remainderSpool,
 		RequestTimeout:         DefaultRequestTimeout,
 		ToolTimeout:            snapshot.toolTimeout,

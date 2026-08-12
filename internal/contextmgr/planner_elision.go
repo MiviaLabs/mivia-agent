@@ -1,10 +1,12 @@
 package contextmgr
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 )
 
 // planCompact runs elision, retention, costing, and checkpoint fingerprinting
@@ -18,7 +20,7 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	// the returned messages. Input.Messages is never mutated.
 	working := cloneMessages(input.Messages)
 	mandatory := mandatoryIndexes(working, objectiveIndex)
-	working, elision := elideToolResults(working, objectiveIndex, mandatory)
+	working, elision := elideToolResultsWithSpool(working, objectiveIndex, mandatory, input.Spool, input.Principal)
 	planInput := input
 	planInput.Messages = working
 	retained, err := retainMessages(planInput, objective, objectiveIndex, target, schemaCost)
@@ -92,11 +94,25 @@ var (
 )
 
 // elideToolResults replaces eligible prior-turn oversized tool-result bodies
-// with a host-authored notice. messages must already be a private clone; the
-// function mutates Content in place and never changes Role, ToolCallID, Name,
-// or ToolCalls. A candidate is skipped when the notice is not strictly cheaper
-// by messageTokenCost.
+// with a plain host-authored notice. It is the spool-free compatibility seam
+// (nil spool, empty principal): the fuzz invariants and threshold tests drive
+// the plain form directly, and it is byte-identical to before the spool
+// grant landed.
 func elideToolResults(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}) ([]provider.Message, ElisionStats) {
+	return elideToolResultsWithSpool(messages, objectiveIndex, mandatory, nil, contextstate.Principal{})
+}
+
+// elideToolResultsWithSpool replaces eligible prior-turn oversized tool-result
+// bodies with a host-authored notice. messages must already be a private
+// clone; the function mutates Content in place and never changes Role,
+// ToolCallID, Name, or ToolCalls. A candidate is skipped when the notice is
+// not strictly cheaper by messageTokenCost.
+//
+// When spool is non-nil the full body is spooled before replacement and the
+// minted ref is named in the notice so the model can page the body back with
+// read_output. A nil spool, empty principal, nil store, or store failure yield
+// "" and the plain notice: a failed spool must never invent a ref (INV-AG-10).
+func elideToolResultsWithSpool(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, spool *remainder.Spool, principal contextstate.Principal) ([]provider.Message, ElisionStats) {
 	var stats ElisionStats
 	for index := range messages {
 		if messages[index].Role != provider.RoleTool {
@@ -112,7 +128,11 @@ func elideToolResults(messages []provider.Message, objectiveIndex int, mandatory
 		if originalLen <= elisionContentMinBytes {
 			continue
 		}
-		notice := elisionNotice(originalLen)
+		ref := ""
+		if spool != nil {
+			ref = spool.Spool(context.Background(), principal.SessionID, []byte(messages[index].Content))
+		}
+		notice := elisionNoticeWithRef(originalLen, ref)
 		candidate := messages[index]
 		candidate.Content = notice
 		if messageTokenCost(candidate) >= messageTokenCost(messages[index]) {
@@ -125,10 +145,24 @@ func elideToolResults(messages []provider.Message, objectiveIndex int, mandatory
 	return messages, stats
 }
 
-// elisionNotice is a constant-format, non-imperative host notice. It never
-// includes digests, excerpts, tool names, or arguments.
+// elisionNotice is the plain, spool-free host notice. It is the ref-less
+// compatibility seam kept callable for the threshold and bucket tests.
 func elisionNotice(originalBytes int) string {
-	return fmt.Sprintf("[context elided prior tool result; original size about %s]", sizeBucketLabel(originalBytes))
+	return elisionNoticeWithRef(originalBytes, "")
+}
+
+// elisionNoticeWithRef is a constant-format, non-imperative host notice. It
+// never includes digests, excerpts, tool names, or arguments. When ref is
+// non-empty the notice names the spooled remainder so the model can fetch the
+// full body back with read_output; when ref is empty the notice is
+// byte-identical to the plain form (nil spool, empty principal, nil store, or
+// store failure: a failed spool must never invent a ref, INV-AG-10).
+func elisionNoticeWithRef(originalBytes int, ref string) string {
+	size := sizeBucketLabel(originalBytes)
+	if ref == "" {
+		return fmt.Sprintf("[context elided prior tool result; original size about %s]", size)
+	}
+	return fmt.Sprintf("[context elided prior tool result; original size about %s; remainder: %s — use read_output to fetch the full body]", size, ref)
 }
 
 // sizeBucketLabel rounds n up to the next power of two and renders it as

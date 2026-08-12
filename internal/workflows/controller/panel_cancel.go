@@ -67,14 +67,14 @@ func ReconcilePanelCancellation(ctx context.Context, repo workflowledger.Reposit
 	for _, member := range attempt.PanelExecution.Members {
 		terminal, cancelErr := panel.CancelOrTombstoneMember(ctx, attemptID, member.MemberID)
 		if cancelErr != nil {
-			return attempt, false, fmt.Errorf("%w: member %q: %v", ErrCancelBlocked, member.MemberID, cancelErr)
+			return attempt, false, fmt.Errorf("%w: member %q: %w", ErrCancelBlocked, member.MemberID, cancelErr)
 		}
 		allTerminal = allTerminal && terminal
 	}
 	if attempt.PanelExecution.Synthesis != nil {
 		terminal, cancelErr := panel.CancelOrTombstoneSynthesis(ctx, attemptID)
 		if cancelErr != nil {
-			return attempt, false, fmt.Errorf("%w: synthesis: %v", ErrCancelBlocked, cancelErr)
+			return attempt, false, fmt.Errorf("%w: synthesis: %w", ErrCancelBlocked, cancelErr)
 		}
 		allTerminal = allTerminal && terminal
 	}
@@ -107,13 +107,20 @@ func advancePanelPhaseToCancelPending(ctx context.Context, repo workflowledger.R
 				// the same retryable way as an ambiguous child claim rather
 				// than failing the run — the new holder (or a later retry by
 				// this one) can still make progress.
-				return attempt, fmt.Errorf("%w: workflow claim: %v", ErrCancelBlocked, err)
+				return attempt, fmt.Errorf("%w: workflow claim: %w", ErrCancelBlocked, err)
 			}
 			return attempt, err
 		}
 		err := repo.CompareAndSetPanelPhase(ctx, runID, attempt.AttemptID, attempt.Version, from, workflowledger.PanelPhaseCancelPending, nil)
 		if err == nil {
 			return repo.GetStepAttempt(ctx, runID, attempt.AttemptID)
+		}
+		if errors.Is(err, workflowledger.ErrClaimHeld) {
+			// The CAS write's own claim check lost the race: another holder
+			// took over the workflow claim between the ClaimRun refresh above
+			// and this write. Same retryable outcome as losing the refresh
+			// itself, not a permanent failure.
+			return attempt, fmt.Errorf("%w: workflow claim: %w", ErrCancelBlocked, err)
 		}
 		if !errors.Is(err, workflowledger.ErrConflict) {
 			return attempt, err

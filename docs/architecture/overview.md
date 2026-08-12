@@ -134,6 +134,26 @@ Two further layers catch what the transport cannot see:
   purpose: a cancelled or expired call must fail once, not repeat under a
   context that already ended.
 
+## Context compaction and elision recoverability
+
+Compaction elides prior-turn oversized tool-result bodies to reclaim context budget. Elision is recoverable when a remainder spool is configured: the full body is spooled before replacement and the minted ref is named in the notice so the model can page the body back with `read_output`. Without a spool the notice is plain and the body is lost.
+
+When a spool is configured on the loop (`agent.Options.RemainderSpool`) plus a session principal, the elision notice includes a principal-scoped remainder ref:
+
+```
+[context elided prior tool result; original size about N KiB; remainder: <ref> — use read_output to fetch the full body]
+```
+
+When the spool is nil, the principal is empty, the store is nil, or the store fails the notice is plain and no ref is invented:
+
+```
+[context elided prior tool result; original size about N KiB]
+```
+
+A failed spool must never invent a ref (INV-AG-10). Refs are principal-scoped: only the session that received the grant may load the ref via `read_output`.
+
+The batch-degrade floor is 16 KiB (`BatchDegradeFloorBytes`). Bodies at or below this threshold are never replaced. The elision threshold is 2048 bytes (`elisionContentMinBytes`); bodies at or below this are never replaced.
+
 ## Subagent Orchestration
 
 Mivia runs sub-agents as **in-process concurrent goroutines**, not as separate OS processes.

@@ -91,8 +91,8 @@ func TestShippedExampleSetsRecommendedBounds(t *testing.T) {
 	if res.MaxPromptTokens == nil || *res.MaxPromptTokens != 200000 {
 		t.Fatalf("example chat.max_prompt_tokens = %v, want 200000", res.MaxPromptTokens)
 	}
-	if res.Tools.BatchResultBudgetBytes != BatchResultBudgetDerived {
-		t.Fatalf("example tools.batch_result_budget_bytes = %d, want %d (derived)", res.Tools.BatchResultBudgetBytes, BatchResultBudgetDerived)
+	if *res.Tools.BatchResultBudgetBytes != BatchResultBudgetDerived {
+		t.Fatalf("example tools.batch_result_budget_bytes = %d, want %d (derived)", *res.Tools.BatchResultBudgetBytes, BatchResultBudgetDerived)
 	}
 	// The loader normalizes every negative value to the derived sentinel, so the
 	// resolved check alone cannot tell "-1" from "-2". Pin the literal bytes the

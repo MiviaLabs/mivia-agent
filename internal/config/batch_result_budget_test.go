@@ -6,17 +6,18 @@ import (
 )
 
 // [tools] batch_result_budget_bytes - the aggregate per-batch tool-result
-// budget (plan tools/06). Off by default: an operator who never heard of it
-// must get today's behaviour exactly.
+// budget (plan tools/06). Unset (the key absent) resolves to derived: an
+// operator who never heard of it gets the prompt-budget-derived bound, not
+// an accidentally disabled mechanism.
 
-func TestBatchResultBudgetDefaultsToOff(t *testing.T) {
+func TestBatchResultBudgetDefaultsToDerived(t *testing.T) {
 	res, err := Load(LoadOptions{ConfigPath: writeToolResultCapConfig(t, "")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Tools.BatchResultBudgetBytes != BatchResultBudgetOff {
-		t.Fatalf("unset batch_result_budget_bytes resolved to %d, want %d (off)",
-			res.Tools.BatchResultBudgetBytes, BatchResultBudgetOff)
+	if *res.Tools.BatchResultBudgetBytes != BatchResultBudgetDerived {
+		t.Fatalf("unset batch_result_budget_bytes resolved to %d, want %d (derived)",
+			*res.Tools.BatchResultBudgetBytes, BatchResultBudgetDerived)
 	}
 }
 
@@ -25,8 +26,8 @@ func TestBatchResultBudgetAcceptsALiteralBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Tools.BatchResultBudgetBytes != 262144 {
-		t.Fatalf("resolved to %d, want 262144", res.Tools.BatchResultBudgetBytes)
+	if *res.Tools.BatchResultBudgetBytes != 262144 {
+		t.Fatalf("resolved to %d, want 262144", *res.Tools.BatchResultBudgetBytes)
 	}
 }
 
@@ -36,9 +37,9 @@ func TestBatchResultBudgetNegativeNormalizesToDerived(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s rejected: %v", line, err)
 		}
-		if res.Tools.BatchResultBudgetBytes != BatchResultBudgetDerived {
+		if *res.Tools.BatchResultBudgetBytes != BatchResultBudgetDerived {
 			t.Fatalf("%s resolved to %d, want %d (derived)",
-				line, res.Tools.BatchResultBudgetBytes, BatchResultBudgetDerived)
+				line, *res.Tools.BatchResultBudgetBytes, BatchResultBudgetDerived)
 		}
 	}
 }
@@ -60,7 +61,7 @@ func TestBatchResultBudgetAtTheFloorIsAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the floor value itself was rejected: %v", err)
 	}
-	if res.Tools.BatchResultBudgetBytes != MinBatchResultBudgetBytes {
-		t.Fatalf("resolved to %d, want %d", res.Tools.BatchResultBudgetBytes, MinBatchResultBudgetBytes)
+	if *res.Tools.BatchResultBudgetBytes != MinBatchResultBudgetBytes {
+		t.Fatalf("resolved to %d, want %d", *res.Tools.BatchResultBudgetBytes, MinBatchResultBudgetBytes)
 	}
 }

@@ -52,6 +52,7 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 func (l *Loop) buildPrepareInput(toolSpecs []provider.ToolSpec, opts Options) contextmgr.PrepareInput {
 	input := opts.PreparationInput
 	input.Messages = l.Messages
+	input.Spool = opts.RemainderSpool
 	if opts.MaxContextTokens > 0 {
 		input.Budget = opts.MaxContextTokens
 	}

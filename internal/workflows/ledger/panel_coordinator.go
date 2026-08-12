@@ -174,8 +174,8 @@ func (p PanelCoordinator) CancelOrTombstoneMember(ctx context.Context, attemptID
 	if err != nil {
 		return false, err
 	}
-	if err := p.requireTerminalPhase(ctx, attemptID); err != nil {
-		return false, err
+	if terminal, err := p.requireTerminalPhaseOrAlreadyDone(ctx, attemptID); terminal || err != nil {
+		return terminal, err
 	}
 	return p.cancelOrTombstone(ctx, member.CoordinatorRunID, member.TaskID, member.Work)
 }
@@ -191,23 +191,59 @@ func (p PanelCoordinator) CancelOrTombstoneSynthesis(ctx context.Context, attemp
 		}
 		return false, err
 	}
-	if err := p.requireTerminalPhase(ctx, attemptID); err != nil {
-		return false, err
+	if terminal, err := p.requireTerminalPhaseOrAlreadyDone(ctx, attemptID); terminal || err != nil {
+		return terminal, err
 	}
 	return p.cancelOrTombstone(ctx, runID, taskID, work)
+}
+
+// requireTerminalPhaseOrAlreadyDone wraps requireTerminalPhase to distinguish
+// its two ErrConflict causes: an attempt that already reached a terminal
+// status (a concurrent cancel caller, or the attempt settling some other
+// way, already finished this work — report terminal=true, not an error) from
+// a genuine phase-contract violation (the caller invoked this before
+// cancel_pending was reached — still a real error). Without this, a second
+// cancel caller racing the same attempt to a terminal state would see the
+// same bare coordledger.ErrConflict as a wrong-phase call and misreport
+// ErrCancelBlocked for benign, already-finished contention.
+func (p PanelCoordinator) requireTerminalPhaseOrAlreadyDone(ctx context.Context, attemptID string) (bool, error) {
+	err := p.requireTerminalPhase(ctx, attemptID)
+	if err == nil {
+		return false, nil
+	}
+	if !errors.Is(err, coordledger.ErrConflict) {
+		return false, err
+	}
+	attempt, getErr := p.repo.GetStepAttempt(ctx, p.workflowRunID, attemptID)
+	if getErr != nil {
+		return false, err
+	}
+	if IsTerminalAttemptStatus(attempt.Status) {
+		return true, nil
+	}
+	return false, err
 }
 
 // cancelOrTombstone admits a canceled tombstone for a child that was never
 // dispatched, or joins an existing child as a recovered (never-locally-
 // resumed) handle and issues the coordinator's normal cancel request on it.
 //
-// Both paths mark the context wait-only (coordinator.ContextWithPanelWaitOnlyJoin)
-// as defense in depth: today the workflow claim already excludes a
-// concurrent forward dispatcher from winning the child's admission race
-// while cancellation is in flight, but the wait-only marker gives
-// cancellation its own independent guarantee that it can never itself
-// become a child's local actor even if that outer invariant is ever
-// violated (an expired workflow claim lease mid-reconciliation, for
+// Both calls run under the wait-only context (coordinator.ContextWithPanelWaitOnlyJoin),
+// but only the EnsureTerminalSingleTaskRun branch's underlying
+// joinSingleTaskAdmission actually consults that marker today —
+// coordinator.JoinAsRecovered never reads it: it is structurally incapable
+// of becoming a local actor by construction (it only reads durable state and
+// starts a passive watchRecoveredRun), so the marker is a no-op on that path,
+// not an active defense. It is still applied there for one reason: if
+// JoinAsRecovered ever gains any claim-taking or resume behavior in a future
+// change, the marker starts protecting this call automatically instead of
+// requiring that change to remember to add it. On the EnsureTerminalSingleTaskRun
+// branch, the marker is a real, load-bearing defense in depth: today the
+// workflow claim already excludes a concurrent forward dispatcher from
+// winning the child's admission race while cancellation is in flight, but
+// this marker gives cancellation its own independent guarantee that it can
+// never itself become a child's local actor even if that outer invariant is
+// ever violated (an expired workflow claim lease mid-reconciliation, for
 // example) — it fails closed (ErrWaitOnlyJoinLost from the underlying
 // coordinator) instead of silently resuming the very child it is trying to
 // stop.

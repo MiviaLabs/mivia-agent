@@ -62,6 +62,8 @@ type SessionDispatcherOpts struct {
 	// applied to every nested sub-agent loop the same way it applies to the
 	// session loop. 0 = off.
 	BatchResultBudgetBytes int
+	// RefOnlyTools is the [tools] ref_only_tools knob for every nested sub-agent loop; empty = off.
+	RefOnlyTools []string
 	// WorkspaceRoot is the directory lifecycle hooks execute in. Empty means
 	// no hooks are wired, which is what every non-chat caller wants.
 	WorkspaceRoot string
@@ -142,10 +144,12 @@ type SessionDispatcherOpts struct {
 type resultBudgets struct {
 	perCall  int
 	perBatch int
+	// refOnlyTools names tools whose results are always spooled as refs.
+	refOnlyTools []string
 }
 
 func (o SessionDispatcherOpts) resultBudgets() resultBudgets {
-	return resultBudgets{perCall: o.ToolResultCapBytes, perBatch: o.BatchResultBudgetBytes}
+	return resultBudgets{perCall: o.ToolResultCapBytes, perBatch: o.BatchResultBudgetBytes, refOnlyTools: o.RefOnlyTools}
 }
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions from a
