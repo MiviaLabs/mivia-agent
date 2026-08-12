@@ -94,7 +94,7 @@ func (s *memStore) Search(ctx context.Context, q Query) ([]Result, error) {
 		if s.cfg.OrgID != "" {
 			org = s.matchRows(s.org, text, limit)
 		}
-		out = mergeRanked(proj, org, text, limit)
+		out = mergeRanked(proj, org, parseQuery(text), text, limit)
 	default:
 		return nil, fmt.Errorf("scope must be project, org, or all, got %q", q.Scope)
 	}
@@ -109,6 +109,19 @@ func (s *memStore) searchLimit(requested int) int {
 }
 
 func (s *memStore) matchRows(rows []memRow, text string, limit int) []Result {
+	p := parseQuery(text)
+	if p.zeroToken {
+		return s.matchParsed(rows, text, p, limit)
+	}
+	res, _ := relaxSearch(p.tokens, func(tokens []string) ([]Result, error) {
+		pp := p
+		pp.tokens = tokens
+		return s.matchParsed(rows, text, pp, limit), nil
+	})
+	return res
+}
+
+func (s *memStore) matchParsed(rows []memRow, text string, p parsedQuery, limit int) []Result {
 	lowerText := strings.ToLower(text)
 	type scored struct {
 		r    Result
@@ -122,7 +135,7 @@ func (s *memStore) matchRows(rows []memRow, text string, limit int) []Result {
 		// text, so a query matching only rendered metadata - the verdict or
 		// scope line, the created line, a section heading, tags, or references
 		// - returns the same results on both backends.
-		rank := rankMatch(row.e.Title, row.e.Summary, row.e.Render(), lowerText)
+		rank := rankMatch(row.e.Title, row.e.Summary, row.e.Render(), lowerText, p)
 		if rank < 0 {
 			continue
 		}
@@ -144,7 +157,10 @@ func (s *memStore) matchRows(rows []memRow, text string, limit int) []Result {
 		if matched[i].r.Created != matched[j].r.Created {
 			return matched[i].r.Created > matched[j].r.Created
 		}
-		return matched[i].r.Title < matched[j].r.Title
+		if matched[i].r.Title != matched[j].r.Title {
+			return matched[i].r.Title < matched[j].r.Title
+		}
+		return matched[i].r.ID < matched[j].r.ID
 	})
 	if len(matched) > limit {
 		matched = matched[:limit]

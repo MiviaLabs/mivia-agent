@@ -471,6 +471,12 @@ func TestGapSearchInvalidScope(t *testing.T) {
 func TestGapSearchScanError(t *testing.T) {
 	s := newTestStore(t, "sqlite", "")
 	st := s.(*sqliteStore)
+	// Force the LIKE path: this test recreates the memories table directly via
+	// SQL, so its row is intentionally absent from the FTS index (which is kept
+	// in sync only by Save). The rows.Scan error branch is exercised by the
+	// LIKE path scanning the recreated table directly. No behavioral pin
+	// changes: ftsEnabled=false is exactly the transparent degradation path.
+	st.fts = false
 	// Recreate memories with a NULLable tags column and insert a NULL there:
 	// the row is returned by the search but Scan into the tags string field
 	// fails, exercising searchDB's rows.Scan error branch.
