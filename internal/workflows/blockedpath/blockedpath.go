@@ -17,16 +17,11 @@ import (
 	"strings"
 )
 
-// DemandVerbs are the words that, next to a blocklisted path token, indicate
-// the text instructs writing that path. Kept small on purpose: prose that
-// merely describes a path ("review .mivia/workflows and report") must not
-// match, while "edit .mivia/workflows/bug-fix.toml to lower max_bytes" must.
-var DemandVerbs = []string{
-	"edit", "change", "modify", "update", "write", "fix", "apply", "set",
-	"lower", "raise", "add", "remove", "rewrite", "implement", "create",
-	"delete", "bump", "cap", "revert",
-}
-
+// demandVerbRe matches the demand verbs that, next to a blocklisted path
+// token, indicate the text instructs writing that path. Kept small on
+// purpose: prose that merely describes a path ("review .mivia/workflows and
+// report") must not match, while "edit .mivia/workflows/bug-fix.toml to lower
+// max_bytes" must.
 var demandVerbRe = regexp.MustCompile(`(?i)\b(?:edit|change|modify|update|write|fix|apply|set|lower|raise|add|remove|rewrite|implement|create|delete|bump|cap|revert)\b`)
 
 // nounWritePhrases strips the noun uses of "write" that must not count as the
