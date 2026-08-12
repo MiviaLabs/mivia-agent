@@ -60,13 +60,19 @@ func FormatWorkflowExplain(cw *CompiledWorkflowExplain) string {
 	}
 
 	// Limits
-	if cw.MaxStepAttempts > 0 || cw.MaxDurationSeconds > 0 {
+	if cw.MaxStepAttempts > 0 || cw.MaxDurationSeconds > 0 || cw.MaxOnFailureReentries > 0 || cw.MaxTransientStepRetries > 0 {
 		b.WriteString("\n── Limits ──\n")
 		if cw.MaxStepAttempts > 0 {
 			fmt.Fprintf(&b, "  max_step_attempts:    %d\n", cw.MaxStepAttempts)
 		}
 		if cw.MaxDurationSeconds > 0 {
 			fmt.Fprintf(&b, "  max_duration_seconds: %d\n", cw.MaxDurationSeconds)
+		}
+		if cw.MaxOnFailureReentries > 0 {
+			fmt.Fprintf(&b, "  max_on_failure_reentries: %d\n", cw.MaxOnFailureReentries)
+		}
+		if cw.MaxTransientStepRetries > 0 {
+			fmt.Fprintf(&b, "  max_transient_step_retries: %d\n", cw.MaxTransientStepRetries)
 		}
 	}
 
@@ -76,19 +82,21 @@ func FormatWorkflowExplain(cw *CompiledWorkflowExplain) string {
 // CompiledWorkflowExplain holds the data needed for the explain presentation.
 // It avoids exposing the full CompiledWorkflow to the presentation layer.
 type CompiledWorkflowExplain struct {
-	Name               string
-	Description        string
-	Version            int
-	Digest             string
-	Steps              []definition.Step
-	Transitions        []definition.Transition
-	LoopNames          []string
-	Agents             []string
-	References         []string
-	InitialStep        string
-	Delivery           *definition.Delivery
-	MaxStepAttempts    int
-	MaxDurationSeconds int
+	Name                    string
+	Description             string
+	Version                 int
+	Digest                  string
+	Steps                   []definition.Step
+	Transitions             []definition.Transition
+	LoopNames               []string
+	Agents                  []string
+	References              []string
+	InitialStep             string
+	Delivery                *definition.Delivery
+	MaxStepAttempts         int
+	MaxDurationSeconds      int
+	MaxOnFailureReentries   int
+	MaxTransientStepRetries int
 }
 
 // formatStateGraph renders the step→transition→target graph.

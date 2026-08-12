@@ -129,10 +129,11 @@ Two further layers catch what the transport cannot see:
   `TransientError` above, a reset or refused connection, a torn HTTP/2 stream -
   repeats the same step with a fresh task identity, backing off 10s, 30s, then
   60s (`runStepWithTransientRetry` in `internal/workflows/controller`). Three
-  tries, then the step takes its declared `on_failure` route like any other
-  failure. `context.Canceled` and `context.DeadlineExceeded` are excluded on
-  purpose: a cancelled or expired call must fail once, not repeat under a
-  context that already ended.
+  tries by default (the workflow's `[limits] max_transient_step_retries` can
+  change the count), then the step takes its declared `on_failure` route like
+  any other failure. `context.Canceled` and `context.DeadlineExceeded` are
+  excluded on purpose: a cancelled or expired call must fail once, not repeat
+  under a context that already ended.
 
 ## Context compaction and elision recoverability
 

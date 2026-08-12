@@ -13,8 +13,9 @@ var completionShells = []string{"bash", "zsh", "fish"}
 // completionCommands lists the top-level mivia commands. Keep it in sync with
 // the Execute switch in root.go.
 var completionCommands = []string{
-	"chat", "config", "doctor", "agents", "workflows", "workflow",
-	"worktree", "version", "help", "completion", "setup",
+	"chat", "config", "doctor", "agents", "memory", "sessions", "workflows",
+	"workflow", "worktree", "version", "help", "completion", "setup", "login",
+	"logout",
 }
 
 // runCompletion prints a static completion script for the requested shell.
@@ -56,6 +57,7 @@ _mivia_completion() {
         config)     COMPREPLY=( $(compgen -W "show" -- "${cur}") ) ;;
         doctor)     COMPREPLY=( $(compgen -W "--json --config --workspace" -- "${cur}") ) ;;
         agents)     COMPREPLY=( $(compgen -W "list explain" -- "${cur}") ) ;;
+        memory)     COMPREPLY=( $(compgen -W "search" -- "${cur}") ) ;;
         workflows)  COMPREPLY=( $(compgen -W "list show validate explain" -- "${cur}") ) ;;
         workflow)   COMPREPLY=( $(compgen -W "run runs deliver resume" -- "${cur}") ) ;;
         worktree)   COMPREPLY=( $(compgen -W "create list remove" -- "${cur}") ) ;;
@@ -83,6 +85,7 @@ _mivia_completion() {
         config)     _values 'subcommand' show ;;
         doctor)     _values 'flag' --json --config --workspace ;;
         agents)     _values 'subcommand' list explain ;;
+        memory)     _values 'subcommand' search ;;
         workflows)  _values 'subcommand' list show validate explain ;;
         workflow)   _values 'subcommand' run runs deliver resume ;;
         worktree)   _values 'subcommand' create list remove ;;
@@ -101,6 +104,7 @@ complete -c mivia -f -n "__fish_use_subcommand" -a "%s"
 complete -c mivia -f -n "__fish_seen_subcommand_from config" -a "show"
 complete -c mivia -f -n "__fish_seen_subcommand_from doctor" -a "--json --config --workspace"
 complete -c mivia -f -n "__fish_seen_subcommand_from agents" -a "list explain"
+complete -c mivia -f -n "__fish_seen_subcommand_from memory" -a "search"
 complete -c mivia -f -n "__fish_seen_subcommand_from workflows" -a "list show validate explain"
 complete -c mivia -f -n "__fish_seen_subcommand_from workflow" -a "run runs deliver resume"
 complete -c mivia -f -n "__fish_seen_subcommand_from worktree" -a "create list remove"

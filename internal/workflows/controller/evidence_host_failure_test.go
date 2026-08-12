@@ -84,8 +84,8 @@ func TestHostFailureRepairIsBounded(t *testing.T) {
 			gate++
 		}
 	}
-	if gate > maxHostFailureRepairs+1 {
-		t.Fatalf("gate ran %d times, want it bounded near %d", gate, maxHostFailureRepairs)
+	if gate > defaultMaxOnFailureReentries+1 {
+		t.Fatalf("gate ran %d times, want it bounded near %d", gate, defaultMaxOnFailureReentries)
 	}
 }
 

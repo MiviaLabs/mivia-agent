@@ -356,6 +356,12 @@ func validateLimits(limits definition.Limits) error {
 	if limits.MaxDurationSeconds < 0 || limits.MaxDurationSeconds > 86400 {
 		return fmt.Errorf("limits: max_duration_seconds must be in range [0, 86400] (got %d)", limits.MaxDurationSeconds)
 	}
+	if limits.MaxOnFailureReentries < 0 || limits.MaxOnFailureReentries > 1000 {
+		return fmt.Errorf("limits: max_on_failure_reentries must be in range [0, 1000] (got %d)", limits.MaxOnFailureReentries)
+	}
+	if limits.MaxTransientStepRetries < 0 || limits.MaxTransientStepRetries > 1000 {
+		return fmt.Errorf("limits: max_transient_step_retries must be in range [0, 1000] (got %d)", limits.MaxTransientStepRetries)
+	}
 	return nil
 }
 

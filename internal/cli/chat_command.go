@@ -49,7 +49,15 @@ func applyContextLimits(res *config.Resolved) {
 type chatInvocation struct {
 	prompt, provider, model, configPath, workspacePath, resumeSessionName, repositorySessionStorePath string
 	agent                                                                                             string
-	expectedWorktreeInstance                                                                          contextstate.WorktreeInstance
+	// session is --session <name>: resume a saved session (by the session_id
+	// or snapshot name `mivia sessions list` reports) before the surface
+	// starts. An unknown name fails closed - see runConfiguredChatOnce -
+	// rather than silently starting a fresh session under that name, because
+	// this codebase never lets a caller choose a session's identity (new
+	// sessions always mint a fresh id via RotateSessionID); --session only
+	// resumes an id/name that already exists.
+	session                  string
+	expectedWorktreeInstance contextstate.WorktreeInstance
 	// staleBypass records that the removed --bypass-hook-trust flag was passed,
 	// so the session can say the flag no longer does anything.
 	staleBypass                            bool
@@ -106,6 +114,10 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 		return chatInvocation{}, err
 	}
 	invocation.agent, args, _, err = flagValue(args, "--agent")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.session, args, _, err = flagValue(args, "--session")
 	if err != nil {
 		return chatInvocation{}, err
 	}
@@ -271,6 +283,11 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	defer contextStore.Close()
 	// Capture pointer so /agent and model-switch rebuilds see updates.
 	sess.SetBindingFactory(chatBindingFactory(sess, res, wsRoot, agentState))
+	if invocation.session != "" {
+		if err := sess.Load(invocation.session); err != nil {
+			return fmt.Errorf("--session %q: %w (omit --session to start a new session under a system-assigned id)", invocation.session, err)
+		}
+	}
 	contextWiring := contextDispatcherFor(sess, res.Subagents)
 	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, sessionRouting{
 		Catalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res),

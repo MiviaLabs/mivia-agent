@@ -179,8 +179,8 @@ func TestAgentFailureOnFailureRepairIsBounded(t *testing.T) {
 	if implementRuns != 3 || repairRuns != 2 {
 		t.Fatalf("implement ran %d times (want 3), repair ran %d times (want 2): %+v", implementRuns, repairRuns, attempts)
 	}
-	if implementRuns > maxOnFailureReentries+1 {
-		t.Fatalf("implement ran %d times, want it bounded near %d", implementRuns, maxOnFailureReentries)
+	if implementRuns > defaultMaxOnFailureReentries+1 {
+		t.Fatalf("implement ran %d times, want it bounded near %d", implementRuns, defaultMaxOnFailureReentries)
 	}
 	if lastImplement.Status != workflowledger.AttemptStatusFailed || lastImplement.ToStepID != "failure" {
 		t.Fatalf("last implement attempt = %+v; want failed routed to the terminal failure once the budget is spent", lastImplement)

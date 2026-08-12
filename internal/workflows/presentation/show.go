@@ -42,7 +42,8 @@ func formatInputs(b *strings.Builder, c *compiler.CompiledWorkflow) {
 }
 
 func formatLimits(b *strings.Builder, c *compiler.CompiledWorkflow) {
-	if c.Limits.MaxStepAttempts == 0 && c.Limits.MaxDurationSeconds == 0 {
+	if c.Limits.MaxStepAttempts == 0 && c.Limits.MaxDurationSeconds == 0 &&
+		c.Limits.MaxOnFailureReentries == 0 && c.Limits.MaxTransientStepRetries == 0 {
 		return
 	}
 	b.WriteString("\nLimits:\n")
@@ -51,6 +52,12 @@ func formatLimits(b *strings.Builder, c *compiler.CompiledWorkflow) {
 	}
 	if c.Limits.MaxDurationSeconds > 0 {
 		b.WriteString(fmt.Sprintf("  max_duration_seconds: %d\n", c.Limits.MaxDurationSeconds))
+	}
+	if c.Limits.MaxOnFailureReentries > 0 {
+		b.WriteString(fmt.Sprintf("  max_on_failure_reentries: %d\n", c.Limits.MaxOnFailureReentries))
+	}
+	if c.Limits.MaxTransientStepRetries > 0 {
+		b.WriteString(fmt.Sprintf("  max_transient_step_retries: %d\n", c.Limits.MaxTransientStepRetries))
 	}
 }
 

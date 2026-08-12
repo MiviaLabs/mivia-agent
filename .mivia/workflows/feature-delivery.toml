@@ -14,6 +14,13 @@ max_bytes = 12000
 # duration bound, not iteration counts, governs long repair cycles.
 max_step_attempts = 5000
 max_duration_seconds = 86400
+# max_on_failure_reentries bounds how many times ONE step may re-enter its
+# declared non-terminal on_failure (repair) target after genuine failures.
+# 0 (or omitting the key) means the controller default of 3. review_panel
+# below declares a self-loop on_failure, so a failed panel attempt re-runs
+# its members up to this budget before the run fails. Set the panel's
+# on_failure back to "failure" to disable panel retries entirely.
+max_on_failure_reentries = 3
 
 [[steps]]
 id = "plan"
@@ -101,7 +108,11 @@ context = [
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.review_panel.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
-on_failure = "failure"
+# review_panel retries: a member or synthesis failure re-enters the panel with
+# a fresh attempt (all members re-run) instead of failing the run. The number
+# of re-entries is bounded by [limits] max_on_failure_reentries (default 3).
+# To disable panel retries, set on_failure = "failure".
+on_failure = "review_panel"
 
 [steps.panel]
 failure_policy = "require_all"

@@ -64,6 +64,42 @@ match = { status = "succeeded" }
 	}
 }
 
+// TestParseWorkflowTOML_LimitsRetryKnobs verifies the workflow-level retry
+// knobs decode from TOML into the Limits struct.
+func TestParseWorkflowTOML_LimitsRetryKnobs(t *testing.T) {
+	data := []byte(`
+version = 1
+name = "limits-retry-knobs"
+initial_step = "plan"
+
+[limits]
+max_step_attempts = 16
+max_duration_seconds = 10800
+max_on_failure_reentries = 7
+max_transient_step_retries = 5
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "worker"
+
+[[transitions]]
+from = "plan"
+to = "success"
+match = { status = "succeeded" }
+`)
+	wf, _, err := ParseWorkflowTOML(data, "limits-retry-knobs.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Limits.MaxOnFailureReentries != 7 {
+		t.Errorf("MaxOnFailureReentries = %d, want 7", wf.Limits.MaxOnFailureReentries)
+	}
+	if wf.Limits.MaxTransientStepRetries != 5 {
+		t.Errorf("MaxTransientStepRetries = %d, want 5", wf.Limits.MaxTransientStepRetries)
+	}
+}
+
 func TestParseWorkflowTOML_AgentPanel(t *testing.T) {
 	data := []byte(`
 version = 1

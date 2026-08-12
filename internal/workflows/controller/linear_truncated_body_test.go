@@ -62,7 +62,7 @@ func TestPersistentlyTruncatedBodyRerunsStep(t *testing.T) {
 	if firstCalls < 2 {
 		t.Fatalf("first step ran %d times, want > 1: a persistently cut body must re-run the step via the transient retry", firstCalls)
 	}
-	if firstCalls != 1+maxTransientStepRetries {
-		t.Fatalf("first step ran %d times, want %d (initial call + step-level transient retries)", firstCalls, 1+maxTransientStepRetries)
+	if firstCalls != 1+defaultMaxTransientStepRetries {
+		t.Fatalf("first step ran %d times, want %d (initial call + step-level transient retries)", firstCalls, 1+defaultMaxTransientStepRetries)
 	}
 }

@@ -12,20 +12,26 @@ import (
 // ndjsonEvent is the wire schema for line-mode --json output. Exactly one
 // event type is populated per line, and there are exactly four types:
 //
-//	{"type":"chunk","text":"..."}  - one per emitted piece of streamed content
-//	{"type":"done"}                - exactly once, turn completed successfully
-//	{"type":"cancelled"}           - exactly once, turn was SIGINT-interrupted
-//	{"type":"error","message":"…"} - exactly once, turn failed
+//	{"type":"chunk","text":"..."}                  - one per emitted piece of streamed content
+//	{"type":"done","session_id":"..."}             - exactly once, turn completed successfully
+//	{"type":"cancelled"}                           - exactly once, turn was SIGINT-interrupted
+//	{"type":"error","message":"…"}                 - exactly once, turn failed
 //
 // A SIGINT-interrupted turn gets its own "cancelled" type rather than being
 // folded into "error": a caller that wants to distinguish "the user stopped
 // this on purpose" from "this genuinely failed" (e.g. to decide whether to
 // surface an error toast) would otherwise have to string-match a message
 // field, which is fragile - a bare type check is not.
+//
+// "done" carries the session's SessionID so a caller that started a brand
+// new conversation (no --session on the invocation) learns the id mivia
+// just minted, without which it has no way to look this conversation up
+// later via `mivia sessions list`/`show`/`--session <id>` resume.
 type ndjsonEvent struct {
-	Type    string `json:"type"`
-	Text    string `json:"text,omitempty"`
-	Message string `json:"message,omitempty"`
+	Type      string `json:"type"`
+	Text      string `json:"text,omitempty"`
+	Message   string `json:"message,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // writeNDJSONEvent marshals ev as one NDJSON line and writes it to w.
