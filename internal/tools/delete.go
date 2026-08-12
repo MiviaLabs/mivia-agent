@@ -91,8 +91,15 @@ func (t *deleteFileTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if !st.Mode().IsRegular() {
 		return "", fmt.Errorf("path %s is not a regular file (mode %s); refusing special files", rel, st.Mode().Type())
 	}
+	// Same stale-write guard as the edit tools: a file changed by a foreign
+	// writer since the agent last saw it must not be deleted on the agent's
+	// say-so - removal is as destructive as overwriting.
+	if err := guardStaleWrite(abs); err != nil {
+		return "", err
+	}
 	if err := os.Remove(abs); err != nil {
 		return "", fmt.Errorf("delete %s: %w", rel, err)
 	}
+	dropFileObservation(abs)
 	return fmt.Sprintf("deleted %s", rel), nil
 }

@@ -121,6 +121,12 @@ func (t *multiEditTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	// the same file, not just against themselves.
 	unlock := lockEditFile(abs)
 	defer unlock()
+	// Refuse to apply an edit computed from an older view: the file may have
+	// changed on disk (editor, second session, hook) since the agent last read
+	// or wrote it, and silently overwriting that foreign work is a lost update.
+	if err := guardStaleWrite(abs); err != nil {
+		return "", err
+	}
 	data, err := readFileWithContext(ctx, abs)
 	if err != nil {
 		return "", err
@@ -137,6 +143,9 @@ func (t *multiEditTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := rewriteRegularFileContents(abs, next, st.Mode().Perm()); err != nil {
 		return "", err
 	}
+	// The write is the newest view the agent has; record it so the next guard
+	// check compares against this state, not the pre-edit one.
+	refreshFileObservation(abs)
 	return formatMultiEditResult(rel, len(in.Edits), replacements, original, next, t.maxBytes), nil
 }
 

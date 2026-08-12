@@ -119,6 +119,11 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err
 	}
+	// Refuse an overwrite of a file that changed on disk since the agent last
+	// saw it; first writes (never observed) proceed and record.
+	if err := guardStaleWrite(abs); err != nil {
+		return "", err
+	}
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
@@ -127,6 +132,7 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := writeRegularFileContents(abs, in.Content); err != nil {
 		return "", err
 	}
+	refreshFileObservation(abs)
 	newLines := countLines(in.Content)
 	if !existed {
 		return fmt.Sprintf("wrote %s (%d bytes, create +%d)", rel, len(in.Content), newLines), nil
@@ -257,6 +263,11 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	// (see edit_lock.go).
 	unlock := lockEditFile(abs)
 	defer unlock()
+	// Same stale-write guard as multi_edit: the file must not have changed on
+	// disk since the agent last read or wrote it (editor, second session, hook).
+	if err := guardStaleWrite(abs); err != nil {
+		return "", err
+	}
 	data, err := readFileWithContext(ctx, abs)
 	if err != nil {
 		return "", err
@@ -277,6 +288,7 @@ func (t *searchReplaceTool) Execute(ctx context.Context, args json.RawMessage) (
 	if err := rewriteRegularFileContents(abs, next, st.Mode().Perm()); err != nil {
 		return "", err
 	}
+	refreshFileObservation(abs)
 	matchAt := strings.Index(content, in.OldString)
 	oldLine := strings.Count(content[:matchAt], "\n") + 1
 	return formatSearchReplaceResultAt(t.ws.Rel(abs), n, in.OldString, in.NewString, content, next, oldLine, t.maxBytes), nil

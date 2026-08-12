@@ -94,10 +94,19 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		if !utf8.Valid(data) {
 			return "", fmt.Errorf("file is not valid UTF-8")
 		}
+		// The agent has now seen this exact state; record it so the stale-write
+		// guard on a later edit compares against what was actually shown.
+		refreshFileObservation(abs)
 		return string(data), nil
 	}
 
-	return t.readLineWindow(ctx, abs, in.Offset, in.Limit)
+	out, err := t.readLineWindow(ctx, abs, in.Offset, in.Limit)
+	if err == nil {
+		// The agent saw a valid window of this state; refresh the observation
+		// so a later edit is compared against what the agent was shown.
+		refreshFileObservation(abs)
+	}
+	return out, err
 }
 
 func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, limit int) (string, error) {
