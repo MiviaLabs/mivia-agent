@@ -288,7 +288,7 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	}
 cancelClaimed:
 	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
-	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, runID, holder)
+	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, nil, runID, holder) // coord: see executeWorkflowCancel
 	if err != nil {
 		// Context cancel or a prior settle may already leave the run terminal.
 		run, getErr := repo.GetRun(ctx, runID)

@@ -39,8 +39,28 @@ git diff --check --cached
 mapfile -d '' GO_FILES < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.go')
 if ((${#GO_FILES[@]})); then
   require_cmd gofmt
-  gofmt -w "${GO_FILES[@]}"
-  git add -- "${GO_FILES[@]}"
+  # Fully staged files keep the auto-format + re-add path. Partially staged
+  # files (unstaged hunks present) must NEVER be re-added: `git add -- file`
+  # stages the whole working-tree file and silently overstages unstaged hunks.
+  # For those, format only the staged blob (git show :file | gofmt) into a new
+  # blob (git hash-object -w) and rewrite only the index entry with the real
+  # mode from `git ls-files -s` (first field, never hardcoded), skipping the
+  # update when the formatted hash equals the current staged hash. The
+  # working-tree file is never touched, so unstaged hunks stay unstaged while
+  # the committed tree stays gofmt-clean.
+  for file in "${GO_FILES[@]}"; do
+    if git diff --quiet -- "$file"; then
+      gofmt -w "$file"
+      git add -- "$file"
+    else
+      mode="$(git ls-files -s -- "$file" | awk '{print $1}')"
+      current="$(git rev-parse :"$file")"
+      formatted="$(git show :"$file" | gofmt | git hash-object -w --stdin)"
+      if [ "$formatted" != "$current" ]; then
+        git update-index --cacheinfo "$mode" "$formatted" "$file"
+      fi
+    fi
+  done
   git diff --check --cached
   GOFMT_SUMMARY="gofmt ${#GO_FILES[@]} file(s)"
 else

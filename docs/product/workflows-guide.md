@@ -672,6 +672,21 @@ A reviewer must return schema-valid structured evidence. Prose is never a routin
 
 Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Two paths are always blocked: `.git` and `.mivia/mivia.toml`. The blocklist key adds more; it cannot remove the defaults. A project that omits the key leaves `.mivia/agents`, `.mivia/policy`, `.mivia/rules`, `.mivia/skills`, `.mivia/workflows`, and Go module files writable by workflow agents, including the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
 
+### Blocked writes are a host problem, never a review failure
+
+Workflow agent steps can never write a blocklisted path, so a task that demands one cannot be
+delivered by the workflow. The harness refuses such a task at admission: `mivia workflow run`
+rejects an input that instructs a write to a blocklisted path before any agent runs, with a
+diagnostic naming the path. If a blocked write is still recorded mid-run (the change summary's
+`blocked_paths`, a claimed `files_changed` entry, or a review finding demanding a blocked-path
+edit), the run settles terminal as `failed` with an honest `workflow blocked: ...` cause naming
+the path — the review gate is never the failure sink for an execution deadlock, and the repair
+loop never spins on an unsatisfiable demand.
+
+Fixing a workflow definition (`.mivia/workflows/`), a policy, or any other blocklisted surface is
+a root-owned change: execute it from the interactive session (which is not bound by the
+blocklist), not as a `bug-fix`/`feature-delivery` run.
+
 ## How a run is checked before it starts
 
 Before a run starts, the compiler checks the workflow file:
@@ -684,6 +699,7 @@ Before a run starts, the compiler checks the workflow file:
 6. Verifier names are valid for evidence gate steps.
 7. On-failure targets reference declared steps or terminals.
 8. Delivery config is valid: kind, mode, provider, and base.
+9. No input instructs a write to a write-blocklisted path (refused at admission with a diagnostic naming the path; route the change through the interactive session instead).
 
 ## Resume
 

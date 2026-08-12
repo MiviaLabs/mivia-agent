@@ -199,66 +199,50 @@ func makeRoleFilter(roles []Role) map[Role]bool {
 	return filter
 }
 
+// roleRank orders roles for the deterministic location sort. Definitions
+// rank first so a capped query can never lose the symbol's definition - the
+// invariant the pre-fix in-loop limiter maintained by scanning
+// TypesInfo.Defs before Uses (pinned by
+// TestReferencesResolvesFullyQualifiedPath). The remaining roles have a
+// fixed relative order purely so the sort is total; the exact order among
+// them carries no semantics. Unknown roles rank last so an unforeseen role
+// can never jump ahead of a definition.
+func roleRank(r Role) int {
+	switch r {
+	case RoleDefinition:
+		return 0
+	case RoleImplementation:
+		return 1
+	case RoleCaller:
+		return 2
+	case RoleReturn:
+		return 3
+	case RoleComparison:
+		return 4
+	}
+	return 5
+}
+
 // collectLocations scans all packages for definitions and uses of targetObj.
 // It returns the capped location list and whether at least one genuine match
-// existed beyond the cap. Truncated is only ever true when a match was
-// actually dropped - reaching exactly limit distinct matches with nothing
-// left over reports Truncated=false, since nothing was in fact cut.
+// existed beyond the cap. All matches are collected and deduplicated first,
+// sorted deterministically (see sortAndCapLocations), and only then capped,
+// so an identical query always returns the identical subset. Definitions
+// sort first (roleRank) because a capped query must never lose the symbol's
+// definition: the pre-fix in-loop limiter guaranteed that by scanning
+// TypesInfo.Defs before Uses, and TestReferencesResolvesFullyQualifiedPath
+// pins it. Truncated is only ever true when a match was actually dropped -
+// reaching exactly limit distinct matches with nothing left over reports
+// Truncated=false, since nothing was in fact cut.
 func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilter map[Role]bool, limit int) ([]Location, bool) {
 	noFilter := len(roleFilter) == 0
-	var locations []Location
-	var truncated bool
-	seen := make(map[string]bool)
-
-	// addLoc reports a candidate location. It dedups by (path, line, role)
-	// first - a duplicate is not a new match, so it never marks truncation -
-	// and only once a location is confirmed new does reaching the cap count
-	// as a genuine drop.
-	addLoc := func(path string, line int, symName string, role Role) {
-		key := fmt.Sprintf("%s:%d:%s", path, line, role)
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		if limit > 0 && len(locations) >= limit {
-			truncated = true
-			return
-		}
-		locations = append(locations, Location{
-			Path: path, Line: line, Symbol: symName, Role: role,
-		})
-	}
+	col := &locationCollector{seen: make(map[string]bool)}
 
 	for _, pkg := range lr.pkgs {
-		if pkg.TypesInfo == nil {
-			continue
-		}
-		// Definitions
-		for id, obj := range pkg.TypesInfo.Defs {
-			if err := ctx.Err(); err != nil {
-				return locations, truncated
-			}
-			if obj == nil || !sameObject(obj, lr.targetObj) {
-				continue
-			}
-			if noFilter || roleFilter[RoleDefinition] {
-				file, line := posInfo(lr.fset, id)
-				addLoc(file, line, obj.Name(), RoleDefinition)
-			}
-		}
-		// Uses
-		for id, obj := range pkg.TypesInfo.Uses {
-			if err := ctx.Err(); err != nil {
-				return locations, truncated
-			}
-			if obj == nil || !sameObject(obj, lr.targetObj) {
-				continue
-			}
-			role := classifyUseRole(id, pkg)
-			if noFilter || roleFilter[role] {
-				file, line := posInfo(lr.fset, id)
-				addLoc(file, line, obj.Name(), role)
-			}
+		if !collectPkgLocations(ctx, pkg, lr, noFilter, roleFilter, col.addLoc) {
+			// ctx was cancelled mid-scan: return the partial, uncapped result,
+			// matching the pre-split early return.
+			return col.locations, false
 		}
 	}
 
@@ -267,13 +251,98 @@ func (a *Analyzer) collectLocations(ctx context.Context, lr loadResult, roleFilt
 		if typeName, ok := lr.targetObj.(*types.TypeName); ok {
 			if iface, ok := typeName.Type().Underlying().(*types.Interface); ok && iface.NumMethods() > 0 {
 				for _, pkg := range lr.pkgs {
-					findImplementations(pkg, lr.targetObj, lr.fset, addLoc)
+					findImplementations(pkg, lr.targetObj, lr.fset, col.addLoc)
 				}
 			}
 		}
 	}
 
-	return locations, truncated
+	return sortAndCapLocations(col.locations, limit)
+}
+
+// locationCollector accumulates candidate locations for one query. All
+// matches are deduplicated at insertion time by (path, line, role); the cap
+// is applied by the caller only after deterministic sorting, so the iteration
+// order of the unordered TypesInfo.Defs/Uses maps can never decide which
+// subset survives an identical query.
+type locationCollector struct {
+	locations []Location
+	seen      map[string]bool
+}
+
+// addLoc reports one candidate location. It dedups by (path, line, role)
+// first - a duplicate is not a new match - and appends unconditionally.
+func (c *locationCollector) addLoc(path string, line int, symName string, role Role) {
+	key := fmt.Sprintf("%s:%d:%s", path, line, role)
+	if c.seen[key] {
+		return
+	}
+	c.seen[key] = true
+	c.locations = append(c.locations, Location{
+		Path: path, Line: line, Symbol: symName, Role: role,
+	})
+}
+
+// collectPkgLocations scans one package for definitions and uses of
+// lr.targetObj, reporting matches through addLoc. It returns false when ctx
+// was cancelled before the package was fully scanned.
+func collectPkgLocations(ctx context.Context, pkg *packages.Package, lr loadResult, noFilter bool, roleFilter map[Role]bool, addLoc func(string, int, string, Role)) bool {
+	if pkg.TypesInfo == nil {
+		return true
+	}
+	for id, obj := range pkg.TypesInfo.Defs {
+		if err := ctx.Err(); err != nil {
+			return false
+		}
+		if obj == nil || !sameObject(obj, lr.targetObj) {
+			continue
+		}
+		if noFilter || roleFilter[RoleDefinition] {
+			file, line := posInfo(lr.fset, id)
+			addLoc(file, line, obj.Name(), RoleDefinition)
+		}
+	}
+	for id, obj := range pkg.TypesInfo.Uses {
+		if err := ctx.Err(); err != nil {
+			return false
+		}
+		if obj == nil || !sameObject(obj, lr.targetObj) {
+			continue
+		}
+		role := classifyUseRole(id, pkg)
+		if noFilter || roleFilter[role] {
+			file, line := posInfo(lr.fset, id)
+			addLoc(file, line, obj.Name(), role)
+		}
+	}
+	return true
+}
+
+// sortAndCapLocations sorts locations deterministically - definitions before
+// uses (roleRank), then by (path, line, role, symbol) - and applies the cap
+// once, after every package has been scanned. It reports whether a genuine
+// match was dropped.
+func sortAndCapLocations(locations []Location, limit int) ([]Location, bool) {
+	sort.Slice(locations, func(i, j int) bool {
+		a, b := locations[i], locations[j]
+		if ra, rb := roleRank(a.Role), roleRank(b.Role); ra != rb {
+			return ra < rb
+		}
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		if a.Role != b.Role {
+			return a.Role < b.Role
+		}
+		return a.Symbol < b.Symbol
+	})
+	if limit > 0 && len(locations) > limit {
+		return locations[:limit], true
+	}
+	return locations, false
 }
 
 // analyzerEnv returns the environment for the go commands the analyzer spawns,

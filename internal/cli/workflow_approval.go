@@ -131,7 +131,16 @@ func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, runID, holder)
+	// coord is nil: this operator cancel path has no coordinator reference
+	// available (openWorkflowResolutionContext only opens the workflow
+	// ledger, not a full provider-backed coordinator/dispatcher). Safe today
+	// because panelsEnabled is false, so no attempt can carry a live
+	// PanelExecution; CancelRunWithAttemptsWithClaim fails closed with a
+	// clear error instead of a nil-coordinator panic if that ever changes
+	// without this call site being updated. Wave 7 must wire a real
+	// coordinator here before panelsEnabled can flip to true (see plan 62's
+	// Wave 6 completion record).
+	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, nil, runID, holder)
 	if err != nil {
 		fmt.Fprintf(stderr, "workflow cancel failed: %v\n", err)
 		return err
