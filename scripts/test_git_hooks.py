@@ -422,6 +422,7 @@ def test_pre_commit_is_staged_only_and_bounded() -> None:
     # the slower policy/security gates; independent gates must not be serialized.
     assert pre.index("git diff --check --cached") < pre.index("run_gate config")
     assert pre.index("gofmt -w") < pre.index("run_gate config")
+    assert pre.index("update-index --cacheinfo") < pre.index("run_gate config")
     assert "run_gate secrets" in pre
     assert "run_gate structure" in pre
     assert 'wait "$pid"' in pre
@@ -430,6 +431,63 @@ def test_pre_commit_is_staged_only_and_bounded() -> None:
     )
     assert "setsid" in supervisor
     assert "timeout --signal=TERM --kill-after=5s" in supervisor
+
+
+def extract_gofmt_block() -> str:
+    """The gofmt/index block of pre-commit, from the staged-file mapfile
+    through the outer if/fi that follows the gofmt-skipped summary, ready to
+    run under a local require_cmd stub in a fixture repo."""
+    source = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
+    start = source.index("mapfile -d '' GO_FILES")
+    marker = 'GOFMT_SUMMARY="gofmt skipped"'
+    end = source.index(marker) + len(marker)
+    fi = source.index("\nfi\n", end)
+    return source[start : fi + len("\nfi\n")]
+
+
+def test_pre_commit_does_not_overstage_partially_staged_go_file(root: Path) -> None:
+    """Partially staged Go files must not have their unstaged hunks staged.
+
+    Regression for pre-commit-readd-overstages-partially-staged-go-files: the
+    old gofmt -w + git add -- over every staged Go file staged the whole
+    working-tree file, silently overstaging unstaged hunks of partially staged
+    files. The fixed block formats only the staged blob into the index entry
+    (git hash-object -w + git update-index --cacheinfo) and leaves the working
+    tree untouched, so the committed tree stays gofmt-clean while unstaged
+    hunks remain unstaged.
+    """
+    if os.name == "nt":
+        return
+    if shutil.which("gofmt") is None:
+        return
+    init_repo(root)
+    staged_body = 'package main\n\nfunc main() {\n    println("staged")\n}\n'
+    unstaged_body = (
+        'package main\n\nfunc main() {\n    println("staged")\n    println("unstaged")\n}\n'
+    )
+    go_file = root / "main.go"
+    go_file.write_text(staged_body, encoding="utf-8")
+    run(["git", "add", "main.go"], root)
+    go_file.write_text(unstaged_body, encoding="utf-8")
+
+    block = extract_gofmt_block()
+    script = (
+        "set -euo pipefail\n"
+        'require_cmd() { command -v "$1" >/dev/null 2>&1 || return 1; }\n'
+        + block
+    )
+    run(["bash", "-c", script], root, check=True)
+
+    staged = run(["git", "show", ":main.go"], root).stdout
+    assert '\tprintln("staged")' in staged, "index blob must be gofmt-formatted"
+    assert '    println("staged")' not in staged
+    cached = run(["git", "diff", "--cached"], root).stdout
+    assert "unstaged" not in cached, "unstaged hunk must not be staged"
+    unstaged = run(["git", "diff"], root).stdout
+    assert "unstaged" in unstaged, "unstaged hunk must stay unstaged"
+    assert go_file.read_bytes() == unstaged_body.encode("utf-8"), (
+        "working-tree file must be byte-unchanged"
+    )
 
 
 def test_pre_commit_has_invariant_gate() -> None:
@@ -624,6 +682,9 @@ def main() -> None:
         test_install_git_hooks_sets_hooks_path(base / "install")
         test_isolated_git_env_preserves_main_and_worktree_indexes(base / "isolation")
         test_install_sets_first_push_upstream_in_linked_worktree(base / "first-push")
+        test_pre_commit_does_not_overstage_partially_staged_go_file(
+            base / "partial-staging"
+        )
     print("test_git_hooks: ok")
 
 
