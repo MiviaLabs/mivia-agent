@@ -53,9 +53,9 @@ func TestBuildSynthesisEnvelope_PreservesDeclarationOrder(t *testing.T) {
 // Fan-in matrix item 2: invalid or oversized JSON never reaches synthesis.
 func TestBuildSynthesisEnvelope_RejectsOversizedRawReport(t *testing.T) {
 	// Oversized via ONLY legal schema fields (an oversized but otherwise valid
-	// finding description), not an unknown field: an unknown-field rejection
-	// would mask the actual raw-size bound this test names, since
-	// DisallowUnknownFields would fire regardless of size.
+	// finding description), not an unknown field: an unknown field is skipped
+	// rather than rejected, so it could not exercise the raw-size bound this
+	// test names.
 	oversizedFinding := finding("f1")
 	oversizedFinding.Description = strings.Repeat("d", maxRawPanelMemberReportBytes)
 	raw := validPanelReportJSON(PanelVerdictApproved, oversizedFinding)
@@ -382,10 +382,20 @@ func TestDecodeStrictPanelMemberReport_RejectsInvalidVerdict(t *testing.T) {
 	}
 }
 
-func TestDecodeStrictPanelMemberReport_RejectsUnknownFields(t *testing.T) {
-	raw := []byte(`{"verdict":"approved","findings":[],"extra":"field"}`)
-	if _, _, err := DecodeStrictPanelMemberReport(raw); err == nil {
-		t.Fatal("DecodeStrictPanelMemberReport() error = nil, want unknown-field rejection")
+// Regression (DC-14, live panel failure): the correctness member emitted an
+// "elapsed" field that no schema or prompt defines. Unknown fields must be
+// skipped, not reject the whole report, and the canonical form drops them.
+func TestDecodeStrictPanelMemberReport_SkipsUnknownFields(t *testing.T) {
+	raw := []byte(`{"verdict":"approved","findings":[{"id":"r1","title":"t","severity":"high","description":"d"}],"elapsed":"32s","extra":{"nested":1}}`)
+	report, canonical, err := DecodeStrictPanelMemberReport(raw)
+	if err != nil {
+		t.Fatalf("DecodeStrictPanelMemberReport() error = %v, want nil (unknown fields skipped)", err)
+	}
+	if report.Verdict != PanelVerdictApproved || len(report.Findings) != 1 {
+		t.Fatalf("DecodeStrictPanelMemberReport() = %+v, want verdict and findings preserved", report)
+	}
+	if strings.Contains(string(canonical), "elapsed") || strings.Contains(string(canonical), "extra") {
+		t.Fatalf("canonical form %s must drop unknown fields", canonical)
 	}
 }
 

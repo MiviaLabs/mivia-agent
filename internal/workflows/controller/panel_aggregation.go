@@ -28,10 +28,13 @@ const (
 
 // DecodeStrictPanelMemberReport strictly decodes one panel-review-v1.json
 // member report from untrusted raw model output. It rejects duplicate JSON
-// keys, duplicate finding IDs, unknown fields, an invalid verdict, too many
-// findings, and a finding ID that exceeds either the schema's character
-// bound or the host's byte bound (D10). It returns the decoded report and
-// its canonical (re-encoded) form, bounded to maxCanonicalPanelMemberReportBytes.
+// keys, duplicate finding IDs, an invalid verdict, too many findings, and a
+// finding ID that exceeds either the schema's character bound or the host's
+// byte bound (D10). Unknown fields are skipped, not rejected: a model
+// occasionally adds a junk field (e.g. "elapsed"), and one extra field must
+// not fail an entire review panel. It returns the decoded report and its
+// canonical (re-encoded) form, which carries exactly the bounded fields and
+// is bounded to maxCanonicalPanelMemberReportBytes.
 func DecodeStrictPanelMemberReport(raw []byte) (PanelMemberReport, []byte, error) {
 	if len(raw) == 0 {
 		return PanelMemberReport{}, nil, fmt.Errorf("panel member report is empty")
@@ -42,8 +45,9 @@ func DecodeStrictPanelMemberReport(raw []byte) (PanelMemberReport, []byte, error
 	if err := checkNoDuplicateJSONKeys(raw); err != nil {
 		return PanelMemberReport{}, nil, fmt.Errorf("panel member report: %w", err)
 	}
+	// No DisallowUnknownFields: unknown fields are skipped (see above) so the
+	// canonical form drops them while every known field stays strictly checked.
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
 	var report PanelMemberReport
 	if err := dec.Decode(&report); err != nil {
 		return PanelMemberReport{}, nil, fmt.Errorf("panel member report: %w", err)

@@ -1,8 +1,8 @@
 package controller
 
 // PanelFinding is one finding inside a panel-review-v1.json member report.
-// Fields match the JSON schema exactly; DecodeStrictPanelMemberReport rejects
-// any report that carries additional or missing fields.
+// Fields match the JSON schema exactly; DecodeStrictPanelMemberReport skips
+// unknown fields in the raw model output and stores only verdict and findings.
 type PanelFinding struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`

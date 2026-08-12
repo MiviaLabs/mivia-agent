@@ -33,10 +33,10 @@ type PanelFinalReport struct {
 }
 
 // DecodeStrictPanelSynthesisOutput strictly decodes the synthesizer's
-// review-panel-v1.json output: it applies the same duplicate-key and
-// size-bound defenses as DecodeStrictPanelMemberReport, then requires every
-// disposition to reference a real canonical source key exactly once with a
-// legal value (ValidateSourceDispositions).
+// review-panel-v1.json output: it applies the same duplicate-key, size-bound,
+// and unknown-field-skipping defenses as DecodeStrictPanelMemberReport, then
+// requires every disposition to reference a real canonical source key exactly
+// once with a legal value (ValidateSourceDispositions).
 func DecodeStrictPanelSynthesisOutput(raw []byte, keys []CanonicalSourceKey) (PanelSynthesisOutput, error) {
 	if len(raw) == 0 {
 		return PanelSynthesisOutput{}, fmt.Errorf("panel synthesis output is empty")
@@ -47,8 +47,9 @@ func DecodeStrictPanelSynthesisOutput(raw []byte, keys []CanonicalSourceKey) (Pa
 	if err := checkNoDuplicateJSONKeys(raw); err != nil {
 		return PanelSynthesisOutput{}, fmt.Errorf("panel synthesis output: %w", err)
 	}
+	// Unknown fields are skipped (same policy as member reports) so the
+	// synthesizer's output cannot fail on a stray extra field.
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
 	var out PanelSynthesisOutput
 	if err := dec.Decode(&out); err != nil {
 		return PanelSynthesisOutput{}, fmt.Errorf("panel synthesis output: %w", err)
