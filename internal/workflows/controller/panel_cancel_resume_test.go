@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -77,8 +78,8 @@ func TestAdvancePanelStep_CancelPendingCompleteStepAttemptConflictStaysNonTermin
 	ctrl.Repo = conflicting
 
 	run, done, err := ctrl.Advance(context.Background())
-	if err != nil {
-		t.Fatalf("Advance() error = %v, want nil (a CAS conflict must be retryable, not a durable error)", err)
+	if !errors.Is(err, ErrCancelReconciliationPending) {
+		t.Fatalf("Advance() error = %v, want ErrCancelReconciliationPending (a CAS conflict must be retryable, not a durable error)", err)
 	}
 	if done {
 		t.Fatal("Advance() done = true, want false: a losing CompleteStepAttempt CAS must leave the run non-terminal for a later retry")
@@ -139,8 +140,8 @@ func TestAdvancePanelStep_CancelPendingCompleteStepAttemptClaimHeldStaysNonTermi
 	ctrl.Repo = claimHeld
 
 	run, done, err := ctrl.Advance(context.Background())
-	if err != nil {
-		t.Fatalf("Advance() error = %v, want nil (ErrClaimHeld must be retryable, not a durable error)", err)
+	if !errors.Is(err, ErrCancelReconciliationPending) {
+		t.Fatalf("Advance() error = %v, want ErrCancelReconciliationPending (ErrClaimHeld must be retryable, not a durable error)", err)
 	}
 	if done {
 		t.Fatal("Advance() done = true, want false: a losing CompleteStepAttempt claim-fenced write must leave the run non-terminal for a later retry")
@@ -207,8 +208,8 @@ func TestAdvancePanelStep_CancelPendingRunStatusConflictStaysNonTerminal(t *test
 	ctrl.Repo = conflicting
 
 	run, done, err := ctrl.Advance(context.Background())
-	if err != nil {
-		t.Fatalf("Advance() error = %v, want nil (a CAS conflict must be retryable, not a durable error)", err)
+	if !errors.Is(err, ErrCancelReconciliationPending) {
+		t.Fatalf("Advance() error = %v, want ErrCancelReconciliationPending (a CAS conflict must be retryable, not a durable error)", err)
 	}
 	if done {
 		t.Fatal("Advance() done = true, want false: a losing CompareAndSetRunStatus CAS must not report the run settled from this call")
@@ -269,8 +270,8 @@ func TestAdvancePanelStep_CancelPendingRunStatusClaimHeldStaysNonTerminal(t *tes
 	ctrl.Repo = claimHeld
 
 	run, done, err := ctrl.Advance(context.Background())
-	if err != nil {
-		t.Fatalf("Advance() error = %v, want nil (ErrClaimHeld must be retryable, not a durable error)", err)
+	if !errors.Is(err, ErrCancelReconciliationPending) {
+		t.Fatalf("Advance() error = %v, want ErrCancelReconciliationPending (ErrClaimHeld must be retryable, not a durable error)", err)
 	}
 	if done {
 		t.Fatal("Advance() done = true, want false: a losing CompareAndSetRunStatus claim-fenced write must leave the run non-terminal for a later retry")
@@ -419,8 +420,8 @@ func TestAdvancePanelStep_CancelPendingAmbiguousChildLeavesRunNonTerminal(t *tes
 	ctrl, repo, attempt, _, _ := twoCoordinatorPanelFixture(t, release)
 
 	run, done, err := ctrl.Advance(context.Background())
-	if err != nil {
-		t.Fatalf("Advance() error = %v", err)
+	if !errors.Is(err, ErrCancelReconciliationPending) {
+		t.Fatalf("Advance() error = %v, want ErrCancelReconciliationPending", err)
 	}
 	if done {
 		t.Fatal("an ambiguous child claim must never let Advance settle the run")
@@ -440,9 +441,12 @@ func TestAdvancePanelStep_CancelPendingAmbiguousChildLeavesRunNonTerminal(t *tes
 	}
 	// The workflow claim itself is untouched: a second Advance can still
 	// claim and retry (Advance's own ClaimRun/ReleaseRun around the call
-	// already exercises this; a held workflow claim here would surface as an
-	// error from this second call, not a silent hang).
-	if _, _, err := ctrl.Advance(context.Background()); err != nil {
-		t.Fatalf("retry Advance() error = %v, want the workflow claim still acquirable", err)
+	// already exercises this; a held workflow claim here would surface as a
+	// distinct error from this second call, not a silent hang). The child
+	// claim is still ambiguous (release has not been closed yet), so the
+	// retry stays blocked too - it must report ErrCancelReconciliationPending
+	// again, not some other error, proving the claim itself was acquirable.
+	if _, _, err := ctrl.Advance(context.Background()); !errors.Is(err, ErrCancelReconciliationPending) {
+		t.Fatalf("retry Advance() error = %v, want ErrCancelReconciliationPending (the workflow claim must still be acquirable)", err)
 	}
 }

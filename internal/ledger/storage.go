@@ -437,7 +437,15 @@ func (s *StorageLedgerRepository) DeleteRun(ctx context.Context, runID string) e
 		}
 		return fmt.Errorf("store delete run %q: %w", runID, err)
 	}
-	if err := s.mem.DeleteRun(ctx, runID); err != nil {
+	// A concurrent catch-up (applyTail -> applyStoreEventLocked) may already
+	// have folded the run_deleted tombstone into the projection and dropped
+	// the run, so mem.DeleteRun can report ErrNotFound even though the store
+	// commit succeeded. Tolerate it exactly like applyStoreEventLocked and
+	// rebuildRunProjection already tolerate ErrNotFound from mem.DeleteRun:
+	// the mandatory claimedRuns/applied/allocated/inflight cleanup below must
+	// still run, or the stale fenced claim blocks a same-ID recreation with
+	// ErrClaimHeld forever on this instance.
+	if err := s.mem.DeleteRun(ctx, runID); err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
 	s.mu.Lock()

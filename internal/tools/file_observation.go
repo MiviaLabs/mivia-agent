@@ -93,8 +93,19 @@ func guardStaleWrite(abs string) error {
 	cur, err := observeFileState(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// A missing file is a legitimate create.
-			return nil
+			// A missing file with no prior observation is a legitimate
+			// create: there is nothing to be stale against.
+			if _, ok := editFileObservations.Load(abs); !ok {
+				return nil
+			}
+			// The agent has seen this path before and it has vanished since:
+			// a foreign writer removed a file the agent believes it knows.
+			// Refusing with the disappearance message - rather than treating
+			// the missing path as a fresh create or a bare ENOENT - keeps the
+			// guard contract (never silently act on a file changed since the
+			// agent last saw it) and names the re-read that clears the
+			// observation via dropIfGone.
+			return staleDisappearanceError(abs)
 		}
 		return err
 	}
@@ -112,4 +123,30 @@ func guardStaleWrite(abs string) error {
 			"re-read the file before editing, or this write will overwrite changes you have not seen "+
 			"(a post-write formatter such as gofmt may also have rewritten it)",
 		abs, old.mtime.Format(time.RFC3339Nano), cur.mtime.Format(time.RFC3339Nano), old.size, cur.size)
+}
+
+// staleDisappearanceError names a foreign deletion of a path the agent had
+// previously observed. Both the write guard and the delete path emit it so a
+// removal is never reported as a bare ENOENT the agent could chalk up to its
+// own action; it points at the re-read that clears the observation.
+func staleDisappearanceError(abs string) error {
+	return fmt.Errorf(
+		"file changed on disk since your last read (%s; it no longer exists - removed by a writer you have not seen); "+
+			"re-read the path before writing or deleting",
+		abs)
+}
+
+// dropIfGone drops the observation for abs when err reports the path no
+// longer exists, then returns err unchanged. read_file on a missing path
+// fails before the refresh call that would re-record state, so without this a
+// foreign deletion would leave a stale observation behind and the
+// guardStaleWrite disappearance refusal would fire for the process lifetime:
+// the guard only clears when the agent re-reads the file, and a missing file
+// cannot be re-read. A re-read of the gone path therefore clears the
+// observation and the next write proceeds as an informed create.
+func dropIfGone(abs string, err error) error {
+	if err != nil && os.IsNotExist(err) {
+		editFileObservations.Delete(abs)
+	}
+	return err
 }

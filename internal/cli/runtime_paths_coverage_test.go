@@ -384,7 +384,7 @@ func TestRuntimeCoverageEnableContextRejectsInvalidSessionID(t *testing.T) {
 func TestRuntimeCoverageEnableContextReturnsManagerFailure(t *testing.T) {
 	original := setContextManagerForSetup
 	want := errors.New("manager failed")
-	setContextManagerForSetup = func(*chat.Session, *contextmgr.ContextManager, contextstate.Principal) error {
+	setContextManagerForSetup = func(*chat.Session, *contextmgr.ContextManager, contextstate.Principal, ...contextstate.PolicySnapshot) error {
 		return want
 	}
 	t.Cleanup(func() { setContextManagerForSetup = original })

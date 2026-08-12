@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -130,7 +131,11 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 	if e.active == nil {
 		e.active = make(map[string]*sessionActiveRun)
 	}
-	e.active[p.runID] = &sessionActiveRun{cancel: cancel, done: done, closeFn: func() {
+	var runner *controller.CoordinatorRunner
+	if p.built.Controller != nil {
+		runner, _ = p.built.Controller.Runner.(*controller.CoordinatorRunner)
+	}
+	e.active[p.runID] = &sessionActiveRun{cancel: cancel, done: done, runner: runner, closeFn: func() {
 		p.finishExec()
 		if p.built.Dispatcher != nil {
 			p.built.Dispatcher.Close()
@@ -139,32 +144,37 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 	}}
 	e.mu.Unlock()
 	go func() {
-		defer close(done)
 		// Safety net: releases the preflight handoff claim if the advance
 		// wrapper's release below was not reached. Releasing with a stale
 		// holder is harmless: ReleaseRun is a no-op when the caller is not the
 		// current holder.
 		defer releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
 		sessionAutoDeliveryRepairLoop(runCtx, p.repo, p.root, p.res, p.store, p.runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
-			snap, err := workflowResumeRun(ctx, p.built)
-			// Release the preflight handoff claim BEFORE settling: settle
-			// claims the run with its own holder, so a still-held handoff (the
-			// controller stopped before its first Advance claimed and released
-			// the run) makes the settle a no-op and the run stays running with
-			// no cause.
-			releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
-			return snap, err
+			return controller.RunWithCancelReconciliationRetry(ctx, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
+				snap, err := workflowResumeRun(ctx, p.built)
+				// Release the preflight handoff claim BEFORE settling: settle
+				// claims the run with its own holder, so a still-held handoff
+				// (the controller stopped before its first Advance claimed and
+				// released the run) makes the settle a no-op and the run stays
+				// running with no cause.
+				releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
+				return snap, err
+			})
 		})
 		// Delivery completion settles outside the controller (which parked at
 		// delivery_pending and emitted no run_finished), so publish the terminal
 		// event here once delivery actually succeeded.
 		e.publishDeliveredRunFinished(context.Background(), p.repo, p.runID)
+		// done closes once the run loop itself has exited, before resource
+		// teardown below - see launchStartedWorkflow's matching comment
+		// (Wave 8 audit finding #1).
+		close(done)
 		e.mu.Lock()
 		active := e.active[p.runID]
 		delete(e.active, p.runID)
 		e.mu.Unlock()
 		if active != nil {
-			active.closeFn()
+			active.closeGuarded()
 		}
 	}()
 	fresh, err := p.repo.GetRun(ctx, p.runID)

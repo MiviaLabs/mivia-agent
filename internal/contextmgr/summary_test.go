@@ -38,7 +38,7 @@ func TestValidateSummaryRejectsSensitiveAndOversizedData(t *testing.T) {
 	}
 
 	oversized := base
-	oversized.Objective = strings.Repeat("x", maxSummaryFieldBytes+1)
+	oversized.Objective = strings.Repeat("x", MaxSummaryFieldBytes+1)
 	if _, err := ValidateSummary(oversized, request); !errors.Is(err, contextstate.ErrInvalidDTO) {
 		t.Fatalf("oversized summary error = %v, want ErrInvalidDTO", err)
 	}
@@ -153,7 +153,7 @@ func TestSummaryMetadataEnvelopeRejection(t *testing.T) {
 	// A full list of large (but per-field valid and unique) items pushes the
 	// canonical envelope past the default summary metadata bound while staying
 	// comfortably under the raised operator ceiling below.
-	items := make([]string, maxSummaryItems)
+	items := make([]string, MaxSummaryItems)
 	for i := range items {
 		items[i] = fmt.Sprintf("%d:%s", i, strings.Repeat("x", 1024))
 	}

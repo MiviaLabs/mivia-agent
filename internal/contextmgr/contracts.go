@@ -227,7 +227,14 @@ type TurnResult struct {
 type ContextManager struct {
 	PreparationManager  PreparationManager
 	CheckpointPublisher CheckpointPublisher
-	Enabled             bool
+	// Summarizer is the optional LLM summarizer wiring point. Nil keeps every
+	// path structural-only (today's production state: no SummaryProvider
+	// exists). It is copied into chat turn configurations so both the agent
+	// loop and plain chat can inject a validated summary at the request
+	// boundary; the checkpoint committer reaches it through the
+	// PreparationCommitter fields.
+	Summarizer *Summarizer
+	Enabled    bool
 }
 
 func (m ContextManager) Prepare(ctx context.Context, input PrepareInput) (Preparation, error) {

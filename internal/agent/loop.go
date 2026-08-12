@@ -52,6 +52,12 @@ type Loop struct {
 	turnAfterTokens    int
 	turnElidedMessages int
 	turnElidedBytes    int
+	// TurnState accumulates bounded, content-free host facts (omitted-message
+	// evidence, tool names, changed surfaces, risks, latest assistant state)
+	// for the summary envelope of the current run. Reset at Run start; it
+	// never leaves the loop and is never consulted by planning, commit, or
+	// checkpoint fingerprinting.
+	TurnState *contextmgr.TurnState
 	// softInterruptAt is the unix-nano timestamp of the last soft interrupt
 	// (plan 54). It backs the cross-call SoftInterruptCooldown; watcher
 	// goroutines write it and later calls' watchers read it, so it must be
@@ -69,6 +75,7 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	}
 	l.discardPreparation(opts)
 	l.resetTurnCompaction()
+	l.TurnState = contextmgr.NewTurnState()
 	if l.workLimits == nil || !opts.PreserveWorkLimits || l.workLimits.limits != opts.WorkLimits {
 		l.workLimits = &workLimitMeter{limits: opts.WorkLimits}
 	}
@@ -268,6 +275,7 @@ func (l *Loop) commitFinalAnswer(resp *provider.Response, trimmed string, stream
 		ReasoningContent: resp.ReasoningContent,
 		CreatedAt:        time.Now(),
 	})
+	l.recordAssistantState(resp.Content)
 	// When streaming, FinalWriter already received deltas - do not rewrite.
 	if !stream && opts.FinalWriter != nil {
 		_, _ = io.WriteString(opts.FinalWriter, resp.Content)
@@ -295,7 +303,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 		live = &teeWriter{w: opts.FinalWriter}
 		streamWriter = live
 	}
-	req, err := l.stepRequest(toolSpecs, opts, stream, streamWriter)
+	req, err := l.stepRequest(ctx, toolSpecs, opts, stream, streamWriter)
 	if err != nil {
 		return stepOutcome{}, err
 	}
@@ -344,13 +352,22 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	return l.processToolCalls(ctx, resp, trimmed, opts)
 }
 
-func (l *Loop) stepRequest(toolSpecs []provider.ToolSpec, opts Options, stream bool, streamWriter io.Writer) (provider.Request, error) {
+func (l *Loop) stepRequest(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options, stream bool, streamWriter io.Writer) (provider.Request, error) {
 	maxTokens, err := l.workLimits.outputCap(opts.MaxTokens)
 	if err != nil {
 		return provider.Request{}, err
 	}
+	messages := l.Messages
+	// Phase 2 summary injection: when the current preparation compacted and a
+	// Summarizer is wired, build the request from an EPHEMERAL clone carrying
+	// the validated summary before the latest user objective. l.Messages stays
+	// structural, so planning, idempotency, BaseDigest, and checkpoint bytes
+	// are untouched. On any failure the request falls back structural-only.
+	if opts.SummaryConfig.Summarizer != nil && l.HasPreparation && l.LastPreparation.Compacted {
+		messages = l.injectSummary(ctx, opts)
+	}
 	return provider.Request{
-		Model: opts.Model, Messages: l.Messages, Temperature: opts.Temperature,
+		Model: opts.Model, Messages: messages, Temperature: opts.Temperature,
 		MaxTokens: maxTokens, Tools: toolSpecs, ToolChoice: "auto", Stream: stream,
 		StreamWriter: streamWriter, Timeout: opts.RequestTimeout,
 		ReasoningLevel: opts.Reasoning.Level, ReasoningDialect: opts.Reasoning.Dialect,

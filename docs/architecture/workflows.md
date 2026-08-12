@@ -23,7 +23,7 @@ A loop is represented as a fresh, numbered workflow step attempt. It is never a 
 Workflow files live under `.mivia/workflows/*.toml`. A v1 definition has:
 
 - a version, canonical name, input contract, limits, and one initial step;
-- sequential steps with one of four kinds: `agent`, `agent_gate`, `evidence_gate`, or `human_gate`;
+- sequential steps with one of five kinds: `agent`, `agent_gate`, `agent_panel`, `evidence_gate`, or `human_gate`;
 - optional per-step `on_failure` target (defaults to `"failure"` when omitted);
 - explicit structural transitions to a step or reserved `success` / `failure` terminal;
 - optional terminal delivery policy.
@@ -41,6 +41,29 @@ The compiler rejects unknown fields, non-regular or escaping files, ambiguous ro
 Later phases persist an immutable run snapshot and separate projections for runs, numbered step attempts, transition decisions, loop counters, approvals, and deliveries. State mutation uses optimistic version compare-and-set. The controller records a selected transition and its explanation before dispatching the next state.
 
 Agent steps are adapted to one existing coordinator task. The adapter preserves existing agent scope, retries, cancellation, heartbeats, task routing, and recovery. Gates route only on typed evidence.
+
+## Panel review steps
+
+An `agent_panel` step fans a review out to 2-4 independent `[[steps.panel.members]]`, each a
+single-task coordinator run with its own agent/provider/model/skill/template/output-schema
+binding, then dispatches one synthesis child (the step's own `agent`) over the bounded, strictly-
+decoded member reports. `failure_policy = "require_all"` and `require_distinct_bindings = true`
+are the only supported values; the compiler rejects anything else. Every member's report and the
+synthesizer's output are validated against a strict JSON decoder (unknown fields, duplicate keys,
+oversized IDs, and out-of-bound finding counts are all rejected) before the step can settle.
+
+The host, never a model, computes the step's final verdict from the member reports
+(`ComputeHostVerdict`): any member reporting `changes_requested` or a nonempty findings list forces
+the gate closed, and the synthesizer cannot override it. A downstream transition matches the
+step's output on `host_verdict` (`"approved"` / `"changes_requested"`), not `verdict` - `agent_gate`
+steps use `verdict`; `agent_panel` steps use `host_verdict`, since the host, not the model, owns
+that field.
+
+The feature-delivery workflow's `review_panel` step is the reference adoption: three
+`panel-reviewer` members (`correctness`, `security`, `integration`, each on a distinct
+provider/model pair) and one `review-synthesizer` synthesis step. See
+[Security and privacy](../security/overview.md#panel-review-agent_panel-workflow-steps) for the
+panel's data-handling contract.
 
 ## Delivery design
 

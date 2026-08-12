@@ -95,30 +95,21 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	default:
 	}
 
-	existed := false
-	oldLines := 0
-	var oldContent string
-	if st, err := os.Stat(abs); err == nil {
-		if st.IsDir() {
-			return "", fmt.Errorf("path is a directory")
-		}
-		if !st.Mode().IsRegular() {
-			return "", fmt.Errorf("path is not a regular file (mode %s); refusing special files that can block", st.Mode().Type())
-		}
-		existed = true
-		// Stream-count lines for stats only - never load whole file into memory.
-		// Cap scan so a multi-GB target cannot OOM the agent on a small rewrite.
-		oldLines = countFileLinesCapped(abs, 8<<20) // 8 MiB scan budget
-		if st.Size() <= overwriteDiffMaxBytes && int64(len(in.Content)) <= overwriteDiffMaxBytes {
-			if data, readErr := readFileWithContext(ctx, abs); readErr == nil {
-				oldContent = string(data)
-			}
-		}
+	// Snapshot the pre-write state used for the result message and diff.
+	existed, oldLines, oldContent, err := snapshotExistingFile(ctx, abs, in.Content)
+	if err != nil {
+		return "", err
 	}
-
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err
 	}
+	// Serialize against the in-place edit tools (search_replace, multi_edit)
+	// and delete_file on the same path: write_file used to skip editFileLocks,
+	// so a concurrent read-modify-write span could interleave inside this
+	// guard+write and one mutation would be silently dropped while both tools
+	// reported success (see edit_lock.go).
+	unlock := lockEditFile(abs)
+	defer unlock()
 	// Refuse an overwrite of a file that changed on disk since the agent last
 	// saw it; first writes (never observed) proceed and record.
 	if err := guardStaleWrite(abs); err != nil {
@@ -133,18 +124,49 @@ func (t *writeFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", err
 	}
 	refreshFileObservation(abs)
-	newLines := countLines(in.Content)
-	if !existed {
-		return fmt.Sprintf("wrote %s (%d bytes, create +%d)", rel, len(in.Content), newLines), nil
+	return t.formatWriteResult(rel, in.Content, existed, oldLines, oldContent), nil
+}
+
+// snapshotExistingFile captures the pre-write state of abs for the result
+// message and overwrite diff; a missing path is a legitimate create, not an
+// error, and the stat/diff read precede the lock because the diff is advisory.
+func snapshotExistingFile(ctx context.Context, abs, newContent string) (existed bool, oldLines int, oldContent string, err error) {
+	st, err := os.Stat(abs)
+	if err != nil {
+		return false, 0, "", nil
 	}
-	header := fmt.Sprintf("wrote %s (%d bytes, overwrite %d→%d lines)", rel, len(in.Content), oldLines, newLines)
+	if st.IsDir() {
+		return false, 0, "", fmt.Errorf("path is a directory")
+	}
+	if !st.Mode().IsRegular() {
+		return false, 0, "", fmt.Errorf("path is not a regular file (mode %s); refusing special files that can block", st.Mode().Type())
+	}
+	// Stream-count lines for stats only - never load whole file into memory.
+	// Cap scan so a multi-GB target cannot OOM the agent on a small rewrite.
+	oldLines = countFileLinesCapped(abs, 8<<20) // 8 MiB scan budget
+	if st.Size() <= overwriteDiffMaxBytes && int64(len(newContent)) <= overwriteDiffMaxBytes {
+		if data, readErr := readFileWithContext(ctx, abs); readErr == nil {
+			oldContent = string(data)
+		}
+	}
+	return true, oldLines, oldContent, nil
+}
+
+// formatWriteResult renders the write_file confirmation: a create summary, or
+// an overwrite summary with the capped unified diff of the previous contents.
+func (t *writeFileTool) formatWriteResult(rel, content string, existed bool, oldLines int, oldContent string) string {
+	newLines := countLines(content)
+	if !existed {
+		return fmt.Sprintf("wrote %s (%d bytes, create +%d)", rel, len(content), newLines)
+	}
+	header := fmt.Sprintf("wrote %s (%d bytes, overwrite %d→%d lines)", rel, len(content), oldLines, newLines)
 	if oldContent == "" && oldLines > 0 {
-		return header + "\n(diff omitted: file exceeds diff size budget)", nil
+		return header + "\n(diff omitted: file exceeds diff size budget)"
 	}
 	if oldContent == "" {
-		return header, nil
+		return header
 	}
-	return t.capWriteResult(header + "\n" + generateUnifiedDiffAt(rel, oldContent, in.Content, 1)), nil
+	return t.capWriteResult(header + "\n" + generateUnifiedDiffAt(rel, oldContent, content, 1))
 }
 
 // writeRegularFileContents writes content via non-blocking open + fstat so a

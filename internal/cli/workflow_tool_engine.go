@@ -45,12 +45,6 @@ type sessionWorkflowEngine struct {
 	active map[string]*sessionActiveRun
 }
 
-type sessionActiveRun struct {
-	cancel  context.CancelFunc
-	done    chan struct{}
-	closeFn func()
-}
-
 // newSessionWorkflowEngine builds the chat-session workflow engine.
 func newSessionWorkflowEngine(root, configPath string) *sessionWorkflowEngine {
 	return &sessionWorkflowEngine{
@@ -186,23 +180,30 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 	if e.active == nil {
 		e.active = make(map[string]*sessionActiveRun)
 	}
-	e.active[runID] = &sessionActiveRun{cancel: cancel, done: done, closeFn: func() { finishExecution(); built.Dispatcher.Close(); prepared.closeFn() }}
+	runner, _ := built.Controller.Runner.(*controller.CoordinatorRunner)
+	e.active[runID] = &sessionActiveRun{cancel: cancel, done: done, runner: runner, closeFn: func() { finishExecution(); built.Dispatcher.Close(); prepared.closeFn() }}
 	e.mu.Unlock()
 	go func() {
-		defer close(done)
 		sessionAutoDeliveryRepairLoop(runCtx, prepared.repo, prepared.root, prepared.res, prepared.store, runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
-			return built.Controller.Run(ctx)
+			return controller.RunWithCancelReconciliationRetry(ctx, built.Controller.Run)
 		})
 		// Delivery completion settles outside the controller (which parked at
 		// delivery_pending and emitted no run_finished), so publish the terminal
 		// event here once delivery actually succeeded.
 		e.publishDeliveredRunFinished(context.Background(), prepared.repo, runID)
+		// done closes as soon as the run loop itself has exited (and released
+		// any claim it held), before resource teardown below: stopActive's
+		// callers must be able to observe "the loop stopped" without that
+		// implying "resources are already closed" (Wave 8 audit finding #1) -
+		// otherwise a concurrent Cancel waiting on done would always find
+		// runner's backing store already closed by the time it can reuse it.
+		close(done)
 		e.mu.Lock()
 		active := e.active[runID]
 		delete(e.active, runID)
 		e.mu.Unlock()
 		if active != nil {
-			active.closeFn()
+			active.closeGuarded()
 		}
 	}()
 	run, err := prepared.repo.GetRun(ctx, runID)
@@ -233,6 +234,26 @@ func (e *sessionWorkflowEngine) stopActive(ctx context.Context, runID string) {
 	}
 }
 
+// claimForCancel claims runID for holder, taking over the existing claim
+// only when its lease has actually expired. A fresh foreign claim is refused
+// outright: a live delivery claim (held by this or another host mid-publish)
+// must never be force-cleared by cancel.
+func claimForCancel(ctx context.Context, repo workflowledger.Repository, runID, holder string) error {
+	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+		if !errors.Is(err, workflowledger.ErrClaimHeld) {
+			return err
+		}
+		takeoverErr := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
+		if errors.Is(takeoverErr, workflowledger.ErrClaimNotHeld) {
+			return repo.ClaimRun(ctx, runID, holder)
+		}
+		if takeoverErr != nil {
+			return fmt.Errorf("workflow run %q is claimed by another executor; cancel refused", runID)
+		}
+	}
+	return nil
+}
+
 // Cancel implements agenttools.Engine.
 // It stops any in-process controller first, then settles via the same
 // execution-lock + CancelRun path as `mivia workflow cancel`. A terminal or
@@ -245,8 +266,11 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	if strings.TrimSpace(runID) == "" {
 		return agenttools.CancelResult{}, fmt.Errorf("run_id is required")
 	}
+	e.mu.Lock()
+	active := e.active[runID]
+	e.mu.Unlock()
 	e.stopActive(ctx, runID)
-	releaseExecution, repo, closeFn, err := openWorkflowResolutionContextBounded(e.root, e.configPath, runID, workflowResolutionLockWait)
+	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContextBounded(e.root, e.configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return agenttools.CancelResult{}, err
 	}
@@ -272,23 +296,11 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	// be taken over with the exclusion fence still armed, but a fresh foreign
 	// claim is refused outright.
 	holder := newWorkflowCancelHolder()
-	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
-		if errors.Is(err, workflowledger.ErrClaimHeld) {
-			if takeoverErr := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease); takeoverErr != nil {
-				if errors.Is(takeoverErr, workflowledger.ErrClaimNotHeld) {
-					if retryErr := repo.ClaimRun(ctx, runID, holder); retryErr == nil {
-						goto cancelClaimed
-					}
-				}
-				return agenttools.CancelResult{}, fmt.Errorf("workflow run %q is claimed by another executor; cancel refused", runID)
-			}
-		} else {
-			return agenttools.CancelResult{}, err
-		}
+	if err := claimForCancel(ctx, repo, runID, holder); err != nil {
+		return agenttools.CancelResult{}, err
 	}
-cancelClaimed:
 	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
-	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, nil, runID, holder) // coord: see executeWorkflowCancel
+	attempts, err := cancelRunWithGuardedCoordinator(ctx, active, repo, store, runID, holder)
 	if err != nil {
 		// Context cancel or a prior settle may already leave the run terminal.
 		run, getErr := repo.GetRun(ctx, runID)
@@ -349,7 +361,7 @@ func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string) (agent
 	if strings.TrimSpace(runID) == "" {
 		return agenttools.DeleteResult{}, fmt.Errorf("run_id is required")
 	}
-	releaseExecution, repo, closeFn, err := openWorkflowResolutionContextBounded(e.root, e.configPath, runID, workflowResolutionLockWait)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(e.root, e.configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return agenttools.DeleteResult{}, err
 	}

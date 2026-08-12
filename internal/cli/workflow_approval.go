@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -23,7 +24,7 @@ const workflowApprovalDefaultActor = "operator"
 // the run continue, mirroring executeWorkflowResume's preamble (file lock,
 // then controller resolution under the lock).
 func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
 	if err != nil {
 		return err
 	}
@@ -61,7 +62,7 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 // approve, it reads the before-snapshot BEFORE building the controller, so an
 // unknown run fails fast at the before-read instead of inside the controller.
 func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
 	if err != nil {
 		return err
 	}
@@ -114,7 +115,7 @@ func emitCLIRunTerminalProgress(runID string, before, settled workflowledger.Run
 // run), mirroring controller.CancelRun's contract: the caller holds the
 // workflow execution file lock and a live execution claim.
 func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
+	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
 	if err != nil {
 		return err
 	}
@@ -131,16 +132,10 @@ func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	// coord is nil: this operator cancel path has no coordinator reference
-	// available (openWorkflowResolutionContext only opens the workflow
-	// ledger, not a full provider-backed coordinator/dispatcher). Safe today
-	// because panelsEnabled is false, so no attempt can carry a live
-	// PanelExecution; CancelRunWithAttemptsWithClaim fails closed with a
-	// clear error instead of a nil-coordinator panic if that ever changes
-	// without this call site being updated. Wave 7 must wire a real
-	// coordinator here before panelsEnabled can flip to true (see plan 62's
-	// Wave 6 completion record).
-	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, nil, runID, holder)
+	// This one-shot process never has a live in-process controller, so the
+	// coordinator is always freshly built over store's own ledger (D15,
+	// Wave 7): see cliPanelCancelCoordinator.
+	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, cliPanelCancelCoordinator(nil, store), runID, holder)
 	if err != nil {
 		fmt.Fprintf(stderr, "workflow cancel failed: %v\n", err)
 		return err
@@ -202,61 +197,61 @@ func publishCanceledAttemptsCLI(runID string, attempts []workflowledger.StepAtte
 // openWorkflowResolutionContext opens the workspace, config, store, and the
 // workflow execution file lock for the mutating operator commands (approve,
 // reject, cancel). The returned release must be called after closeFn.
-func openWorkflowResolutionContext(root, configPath, runID string) (func(), workflowledger.Repository, func(), error) {
+func openWorkflowResolutionContext(root, configPath, runID string) (func(), workflowledger.Repository, *storage.SQLite, func(), error) {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
 	work, err := workspace.Open(root)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	configPath = workflowConfigPath(work.Abs, configPath)
 	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	applyPrivacyPolicy(res)
 	applyWorkflowStoreRoot(res, work.Abs)
-	_, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
+	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	releaseExecution, err := acquireWorkflowExecutionLock(contextStorePath(work.Abs, res.Subagents), runID)
 	if err != nil {
 		closeFn()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return releaseExecution, repo, closeFn, nil
+	return releaseExecution, repo, store, closeFn, nil
 }
 
 // openWorkflowResolutionContextBounded is openWorkflowResolutionContext with a
 // bounded wait for the execution lock: cancel and deliver call it so a still-
 // settling controller does not surface as an opaque lock error.
-func openWorkflowResolutionContextBounded(root, configPath, runID string, lockWait time.Duration) (func(), workflowledger.Repository, func(), error) {
+func openWorkflowResolutionContextBounded(root, configPath, runID string, lockWait time.Duration) (func(), workflowledger.Repository, *storage.SQLite, func(), error) {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
 	work, err := workspace.Open(root)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	configPath = workflowConfigPath(work.Abs, configPath)
 	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	applyPrivacyPolicy(res)
 	applyWorkflowStoreRoot(res, work.Abs)
-	_, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
+	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	releaseExecution, err := acquireWorkflowExecutionLockBounded(contextStorePath(work.Abs, res.Subagents), runID, lockWait)
 	if err != nil {
 		closeFn()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return releaseExecution, repo, closeFn, nil
+	return releaseExecution, repo, store, closeFn, nil
 }
 
 // buildResolutionController loads and validates the run snapshot, then builds

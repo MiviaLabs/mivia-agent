@@ -88,6 +88,15 @@ func TestChatTurnRejectsTruncatedStreamWithInvalidArguments(t *testing.T) {
 		!strings.Contains(strings.ToLower(err.Error()), "truncat") {
 		t.Fatalf("error should name malformed/invalid/truncated arguments, got: %v", err)
 	}
+	// A stream cut mid-tool-call never delivered a usable answer, so the step
+	// retry loop must be allowed to re-run the turn: the truncation must
+	// surface as transient even when the arguments are malformed JSON. The
+	// missing-ID sibling branch already wraps in TransientError; before this
+	// fix the bare fmt.Errorf here matched no transient phrase, so the step
+	// failed terminal instead of retrying.
+	if !IsTransient(err) {
+		t.Fatalf("truncated stream with malformed tool-call arguments must be transient, got: %v", err)
+	}
 }
 
 // A stream with tool calls that have both ID and name, valid argument JSON,

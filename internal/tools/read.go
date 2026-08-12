@@ -79,7 +79,7 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	}
 	st, err := requireRegularFile(abs)
 	if err != nil {
-		return "", err
+		return "", dropIfGone(abs, err)
 	}
 
 	// Full-file path: small files only.
@@ -106,7 +106,10 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		// so a later edit is compared against what the agent was shown.
 		refreshFileObservation(abs)
 	}
-	return out, err
+	// A missing path that fails here must not leave its stale observation
+	// behind (see dropIfGone): the agent re-read the path and learned it is
+	// gone, so a later write is an informed create, not a stuck refusal.
+	return out, dropIfGone(abs, err)
 }
 
 func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, limit int) (string, error) {

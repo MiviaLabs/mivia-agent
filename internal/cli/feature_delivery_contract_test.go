@@ -85,6 +85,7 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	assertFeatureDeliveryReviewFeedbackChannel(t, workflow)
 	assertFeatureDeliveryReviewPriorFindingsBindings(t, workflow)
 	assertFeatureDeliveryFindingsBindingsCapped(t, workflow)
+	assertFeatureDeliveryReviewPanel(t, workflow)
 	assertFeatureDeliveryIntegrationGate(t, workflow)
 	assertFeatureDeliverySchemasRequireInspected(t, base, filepath.Join(root, "internal", "workflows", "testdata"))
 	assertFeatureDeliveryTemplatesInstructPRMetadata(t, root)
@@ -198,7 +199,7 @@ func assertFeatureDeliveryPreflightGate(t *testing.T, workflow definition.Workfl
 	assertTransition(t, workflow, "code_validate", "preflight_validate", "succeeded")
 	assertTransition(t, workflow, "preflight_validate", "preflight_structure", "succeeded")
 	assertTransition(t, workflow, "preflight_validate", "repair_preflight", "failed")
-	assertTransition(t, workflow, "repair_preflight", "review", "succeeded")
+	assertTransition(t, workflow, "repair_preflight", "review_panel", "succeeded")
 
 	// preflight_structure runs the repository's own layout gate (check_go_structure
 	// --strict --worktree) inside the sandbox so a change that violates the
@@ -229,7 +230,7 @@ func assertFeatureDeliveryPreflightGate(t *testing.T, workflow definition.Workfl
 	}
 	assertTransition(t, workflow, "preflight_structure", "success", "succeeded")
 	assertTransition(t, workflow, "preflight_structure", "repair_preflight_structure", "failed")
-	assertTransition(t, workflow, "repair_preflight_structure", "review", "succeeded")
+	assertTransition(t, workflow, "repair_preflight_structure", "review_panel", "succeeded")
 }
 
 // assertTransition reports a failure when the workflow lacks a transition
@@ -264,7 +265,7 @@ func assertFeatureDeliveryReviewFeedbackChannel(t *testing.T, workflow definitio
 		// step ID -> the reviewer step whose output must reach the agent.
 		"plan":       "steps.plan_review.output",
 		"plan_tests": "steps.test_plan_review.output",
-		"implement":  "steps.review.output",
+		"implement":  "steps.review_panel.output",
 	}
 	for stepID, reviewerOutput := range wantBindings {
 		step := featureDeliveryStep(t, workflow, stepID)
@@ -299,10 +300,19 @@ func assertFeatureDeliveryReviewFeedbackChannel(t *testing.T, workflow definitio
 // instead of re-deriving it from the prompt.
 func assertFeatureDeliveryReviewPriorFindingsBindings(t *testing.T, workflow definition.WorkflowFile) {
 	t.Helper()
-	for _, id := range []string{"plan_review", "test_plan_review", "review", "review_integration"} {
+	// review_panel replaced the single-reviewer agent_gate review step (Wave 7):
+	// it is kind agent_panel, but carries the same self-binding contract as the
+	// remaining agent_gate reviewers.
+	kinds := map[string]string{
+		"plan_review":        "agent_gate",
+		"test_plan_review":   "agent_gate",
+		"review_panel":       "agent_panel",
+		"review_integration": "agent_gate",
+	}
+	for id, wantKind := range kinds {
 		step := featureDeliveryStep(t, workflow, id)
-		if step.Kind != "agent_gate" {
-			t.Fatalf("review step %q kind = %q, want agent_gate", id, step.Kind)
+		if step.Kind != wantKind {
+			t.Fatalf("review step %q kind = %q, want %q", id, step.Kind, wantKind)
 		}
 		found := false
 		for _, cb := range step.Context {
@@ -331,7 +341,7 @@ func assertFeatureDeliveryFindingsBindingsCapped(t *testing.T, workflow definiti
 		// agent step -> finding channel -> reviewer step whose output feeds it.
 		"plan":       {"review_findings": "plan_review"},
 		"plan_tests": {"review_findings": "test_plan_review"},
-		"implement":  {"review_findings": "review", "integration_findings": "review_integration"},
+		"implement":  {"review_findings": "review_panel", "integration_findings": "review_integration"},
 	}
 	for stepID, channels := range want {
 		step := featureDeliveryStep(t, workflow, stepID)

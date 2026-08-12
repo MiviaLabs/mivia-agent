@@ -8,14 +8,15 @@ import (
 	"testing"
 )
 
-// D1: Dispatcher.execute wrote d.completed[req.ID] = result for every
-// non-SkipDedup call, but the only reader of that map (reserve,
-// dispatcher_reserve.go) is gated on turnDedupKey(req) == "": turn-scoped Tool
-// calls are answered from the step-aware turn bucket, never the completed map.
-// The write was therefore dead retention of the full Result - Output bytes up
-// to the per-tool ceiling - for the whole session until Close. These tests pin
-// that a turn-scoped call leaves no completed entry while the non-turn paths
-// keep the ID-keyed behavior exactly.
+// D1: Invoke's tail calls completeIDKeyed for every non-SkipDedup
+// execute-success result (after postInvoke attaches HookContext/HookRuns), and
+// completeIDKeyed writes d.completed[req.ID] = result only when
+// turnDedupKey(req) == "": turn-scoped Tool calls are answered from the
+// step-aware turn bucket, never the completed map. The write was therefore
+// dead retention of the full Result - Output bytes up to the per-tool ceiling
+// - for the whole session until Close. These tests pin that a turn-scoped call
+// leaves no completed entry while the non-turn paths keep the ID-keyed
+// behavior exactly.
 
 // TestTurnScopedToolCallLeavesNoCompletedEntry: a Tool call with TurnID+Step
 // (the shape every write-class agent-loop call carries, loop_tools.go) must
@@ -93,35 +94,36 @@ func TestNonTurnSameIDReissueStillDedups(t *testing.T) {
 }
 
 // waitForIDKeyedWaiterRegistered deterministically waits until the duplicate
-// invocation's reserve has run and captured the ID-keyed waiter channel. The
-// channel itself is created by the OWNER's reserve, so its existence proves
-// nothing about the waiter: releasing the owner before the waiter's reserve
-// would let the owner complete and delete active[id], turning the late waiter
-// into a second owner (handler double-execution). Both calls carry Budget 1
-// under the same budgetKey (their TurnID), so spent[key] == 2 proves the
-// waiter passed reserve's budget charge; because the owner is still blocked in
-// its handler, the waiter's active-check inside the SAME critical section
-// resolves it as a duplicate. Polls dispatcher state under d.mu with
-// runtime.Gosched between polls (no time.Sleep).
-func waitForIDKeyedWaiterRegistered(t *testing.T, d *Dispatcher, id, budgetKey string) {
+// invocation's reserve has run and registered its ID-keyed waiter channel.
+// Registration appends to d.waiters[id] under d.mu when the duplicate finds
+// the owner's active marker; len(d.waiters[id]) > 0 is a valid signal because
+// in every caller the owner is blocked in its handler (or in postInvoke), so
+// it cannot have delivered or drained the waiter slice yet. The previous
+// spent-charge signal (d.spent[budgetKey] >= 2) encoded the bug this slice
+// fixes: a same-ID in-flight duplicate no longer charges cumulative budget, so
+// registration is observable only through the waiter slice itself. Polls
+// dispatcher state under d.mu with runtime.Gosched between polls (no
+// time.Sleep).
+func waitForIDKeyedWaiterRegistered(t *testing.T, d *Dispatcher, id string) {
 	t.Helper()
 	for i := 0; i < 1_000_000; i++ {
 		d.mu.Lock()
-		charged := d.spent[budgetKey]
+		registered := len(d.waiters[id]) > 0
 		d.mu.Unlock()
-		if charged >= 2 {
+		if registered {
 			return
 		}
 		runtime.Gosched()
 	}
-	t.Fatalf("waiter for %q never passed reserve's budget charge", id)
+	t.Fatalf("waiter for %q never registered on the ID-keyed waiter slice", id)
 }
 
 // TestTurnScopedCallStillDeliversToIDKeyedWaiter: the ID-keyed waiter delivery
-// inside execute is SEPARATE from the completed-map write and must stay
-// ungated. A same-ID turn-scoped duplicate carrying a different Step (so the
-// turn-dedup key differs and the turn bucket misses) collapses on the
-// active/waiter path and receives the owner's result.
+// (completeIDKeyed, now in Invoke's tail after hooks attach) is SEPARATE from
+// the completed-map write and must stay ungated. A same-ID turn-scoped
+// duplicate carrying a different Step (so the turn-dedup key differs and the
+// turn bucket misses) collapses on the active/waiter path and receives the
+// owner's result.
 func TestTurnScopedCallStillDeliversToIDKeyedWaiter(t *testing.T) {
 	d := New(Policy{})
 	var calls atomic.Int32
@@ -144,15 +146,14 @@ func TestTurnScopedCallStillDeliversToIDKeyedWaiter(t *testing.T) {
 
 	// Same ID, different step: the turn bucket key differs (step is part of
 	// the key), so the ID-keyed active/waiter path is the only collision.
-	// Both calls carry Budget 1 so the waiter's reserve is observable via the
-	// shared turn budget counter (see waitForIDKeyedWaiterRegistered).
 	waiterDone := make(chan Result, 1)
 	go func() {
 		waiterDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", Input: input, TurnID: "turn:1", Step: 2, Budget: 1})
 	}()
-	// Deterministically wait until the waiter's reserve has run, then release
-	// the owner so its completion delivers the result to the waiter.
-	waitForIDKeyedWaiterRegistered(t, d, "same", "turn:1")
+	// Deterministically wait until the waiter's reserve has registered the
+	// ID-keyed waiter, then release the owner so its completion delivers the
+	// result to the waiter.
+	waitForIDKeyedWaiterRegistered(t, d, "same")
 	close(release)
 
 	owner := <-ownerDone

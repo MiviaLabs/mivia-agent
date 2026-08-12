@@ -82,26 +82,57 @@ context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
-  { from = "steps.review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  { from = "steps.review_panel.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
   { from = "steps.review_integration.output", as = "integration_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
 
 [[steps]]
-id = "review"
-kind = "agent_gate"
-agent = "reviewer"
-skill = "secure-change"
-template = "templates/review.md"
-output_schema = "schemas/review-v1.json"
+id = "review_panel"
+kind = "agent_panel"
+agent = "review-synthesizer"
+skill = "review-synthesis"
+template = "templates/review-panel-synthesis.md"
+output_schema = "schemas/review-panel-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
-  { from = "steps.review.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  { from = "steps.review_panel.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
+
+[steps.panel]
+failure_policy = "require_all"
+require_distinct_bindings = true
+
+[[steps.panel.members]]
+id = "correctness"
+agent = "panel-reviewer"
+provider = "deepseek"
+model = "deepseek-v4-flash"
+skill = "bug-audit"
+template = "templates/review-panel-correctness.md"
+output_schema = "schemas/panel-review-v1.json"
+
+[[steps.panel.members]]
+id = "security"
+agent = "panel-reviewer"
+provider = "openrouter"
+model = "tencent/hy3-preview"
+skill = "secure-change"
+template = "templates/review-panel-security.md"
+output_schema = "schemas/panel-review-v1.json"
+
+[[steps.panel.members]]
+id = "integration"
+agent = "panel-reviewer"
+provider = "zai"
+model = "glm-5.2"
+skill = "architecture-review"
+template = "templates/review-panel-integration.md"
+output_schema = "schemas/panel-review-v1.json"
 
 [[steps]]
 id = "review_integration"
@@ -115,7 +146,7 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
-  { from = "steps.review.output", as = "review", max_bytes = 16000, optional = true },
+  { from = "steps.review_panel.output", as = "review", max_bytes = 16000, optional = true },
   { from = "steps.review_integration.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
@@ -309,17 +340,17 @@ match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "test_plan_review_repair"
 max_iterations = 5
 
-# implement → review (implementation + tests ready for review)
+# implement → review_panel (implementation + tests ready for review)
 [[transitions]]
 from = "implement"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
-# review → review_integration (code review approved, cross-layer gate next)
+# review_panel → review_integration (panel approved, cross-layer gate next)
 [[transitions]]
-from = "review"
+from = "review_panel"
 to = "review_integration"
-match = { status = "succeeded", output = { verdict = "approved" } }
+match = { status = "succeeded", output = { host_verdict = "approved" } }
 
 # review_integration → test_validate (cross-layer review approved, validate tests pass)
 [[transitions]]
@@ -335,11 +366,11 @@ match = { status = "succeeded", output = { verdict = "changes_requested" } }
 loop = "integration_repair"
 max_iterations = 8
 
-# review → implement (code review changes requested, unbounded repair loop)
+# review_panel → implement (panel changes requested, unbounded repair loop)
 [[transitions]]
-from = "review"
+from = "review_panel"
 to = "implement"
-match = { status = "succeeded", output = { verdict = "changes_requested" } }
+match = { status = "succeeded", output = { host_verdict = "changes_requested" } }
 loop = "review_repair"
 max_iterations = 8
 
@@ -358,7 +389,7 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_tests"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 # verify → code_validate (verification passed, final validation gate)
@@ -376,7 +407,7 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_verify"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 # code_validate → preflight_validate (final Go gate passed, run the project gate)
@@ -394,7 +425,7 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_final"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 # preflight_validate → preflight_structure (invariants gate passed, run structure gate)
@@ -412,7 +443,7 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_preflight"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 # preflight_structure → success (structure gate passed, deliver)
@@ -430,12 +461,12 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_preflight_structure"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 [[transitions]]
 from = "repair_pr_metadata"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 [delivery]

@@ -84,6 +84,55 @@ The identity is for local correlation only. The active CLI session owns it. The 
 
 The provider-independent `mivia agents list`, `mivia agents explain`, and `mivia doctor` views expose source and bounded diagnostics without provider credentials. None of these views prints prompts, digests, credentials, or agent content. Runtime events omit source paths as well as tool and content payloads.
 
+## Panel review (agent_panel workflow steps)
+
+A workflow `agent_panel` step (for example `feature-delivery.toml`'s `review_panel`) fans a review
+out to several independent `panel-reviewer` members, each bound to a distinct provider/model pair,
+then synthesizes their reports with a separate `review-synthesizer` agent.
+
+**Purpose.** Independent, differently-provider-backed reviewers reduce the chance that one
+provider's blind spot silently passes a defective change; the host, not any model, computes the
+final verdict from the member reports.
+
+**Data owner.** The workflow run's operator owns the task, plan, test plan, and implementation
+content sent to every panel member and to the synthesizer. Each panel member report and the
+synthesis output are owned by the same run and stored in the workflow ledger like any other step
+output.
+
+**Provider transfers.** Each panel member sends the same review context (task, plan, test plan,
+implementation summary, prior findings) to its own bound provider. The locked feature-delivery
+bindings use DeepSeek, OpenRouter, and Z.AI; every member sees the same source content its
+provider's credentials are configured for. `review-synthesizer` receives only the bounded, already
+-terminal member reports (never raw source), routed to the session's admitted provider.
+
+**Retention.** Panel member and synthesis content follow the same workflow-ledger retention as
+every other step's input/output: durable for the life of the run record, subject to the same
+`workflow delete` and ledger-cleanup paths as non-panel steps. No panel-specific retention exists.
+
+**Access.** Panel and synthesis content is readable through the same `workflow_inspect` /
+`workflow_status` surfaces as any other step, gated by the same run-scoped access control. No
+panel-only viewer exists.
+
+**Deletion.** `mivia workflow delete` removes a panel run's ledger record exactly like any other
+run; no separate deletion path exists for panel member or synthesis content.
+
+**Audit.** Every panel member report and the synthesis output are appended to the workflow ledger
+as durable step attempts with the same lifecycle events as any other step, so a panel run's full
+history is auditable the same way.
+
+**Bearer access.** `review-synthesizer` never sees source, workspace paths, or credentials: it
+declares `allow_empty_tools = true` and an empty final tool registry (locked, exact-match
+enforced), so it cannot read anything beyond the bounded member-report envelope it receives as
+input. `panel-reviewer` members are read-only (`read_file`, `list_dir`, `grep`, `glob`,
+`find_references`; `post_message` disallowed): a member cannot write, execute commands, or contact
+another agent.
+
+**Equality-oracle risk.** The host, not a model, computes the panel's final verdict
+(`ComputeHostVerdict`): any member reporting `changes_requested` or a nonempty findings list forces
+the gate closed. A member or the synthesizer cannot approve a change by claiming success; the host
+verdict is derived from bounded, strictly-decoded member reports, never trusted from free-form
+model text.
+
 ## Personal data
 
 mivia does not collect personal data as a general product feature. mivia never logs credentials or raw provider payloads that contain secrets.
