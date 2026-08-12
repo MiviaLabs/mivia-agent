@@ -24,18 +24,21 @@ func resolveProviderRuntimes(file File, envMap map[string]string, active string)
 		seen[name] = true
 		pc := file.Providers[name]
 		key, keySet := envfile.Lookup(pc.APIKeyEnv, envMap)
+		ollamaLoopback := name == "ollama" && IsOllamaLoopback(pc.BaseURL)
 		runtimes[name] = ProviderRuntime{
 			ProviderName: name, BaseURL: strings.TrimRight(pc.BaseURL, "/"), APIKeyEnv: pc.APIKeyEnv,
 			APIKeySet: keySet && key != "", APIKey: key, HTTPReferer: pc.HTTPReferer,
 			XTitle: pc.XTitle, Models: cloneModelSpecs(pc.Models),
 		}
 		group := ProviderModelGroup{Provider: name, Models: cloneModelSpecs(pc.Models), Active: name == active}
-		group.Selectable = len(pc.Models) > 0 && keySet && key != ""
+		group.Selectable = len(pc.Models) > 0 && ((keySet && key != "") || ollamaLoopback)
 		switch {
 		case len(pc.Models) == 0:
 			group.DisabledReason = "no configured models"
 		case !keySet || key == "":
-			group.DisabledReason = "credential unavailable"
+			if !ollamaLoopback {
+				group.DisabledReason = "credential unavailable"
+			}
 		}
 		groups = append(groups, group)
 	}

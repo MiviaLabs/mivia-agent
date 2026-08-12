@@ -10,7 +10,8 @@ import (
 
 // doctorJSON is the JSON output structure for `mivia doctor --json`.
 // The API key VALUE must never appear; only api_key_set (bool) and
-// api_key_env (name) are included.
+// api_key_env (name) are included. key_required (bool) distinguishes
+// "no key needed" (ollama loopback) from "key missing".
 type doctorJSON struct {
 	Config        string           `json:"config"`
 	EnvFile       string           `json:"env_file"`
@@ -21,6 +22,7 @@ type doctorJSON struct {
 	BaseURL       string           `json:"base_url"`
 	APIKeyEnv     string           `json:"api_key_env"`
 	APIKeySet     bool             `json:"api_key_set"`
+	KeyRequired   bool             `json:"key_required"`
 	AgentCatalog  []jsonAgentEntry `json:"agent_catalog"`
 	Warnings      []string         `json:"warnings"`
 	Status        string           `json:"status"`
@@ -78,6 +80,7 @@ func writeDoctorJSON(stdout io.Writer, res *config.Resolved, view agentCatalogVi
 		BaseURL:       safeDoctorURL(res.BaseURL),
 		APIKeyEnv:     safeCatalogText(res.APIKeyEnv, 128),
 		APIKeySet:     res.APIKeySet,
+		KeyRequired:   !(res.ProviderName == "ollama" && config.IsOllamaLoopback(res.BaseURL)),
 		AgentCatalog:  []jsonAgentEntry{},
 		Warnings:      []string{},
 	}
@@ -123,6 +126,7 @@ func writeDoctorJSONLoadError(stdout io.Writer) {
 		BaseURL:       "",
 		APIKeyEnv:     "",
 		APIKeySet:     false,
+		KeyRequired:   true,
 		AgentCatalog:  []jsonAgentEntry{},
 		Warnings:      []string{},
 		Status:        "configuration diagnostics unavailable",

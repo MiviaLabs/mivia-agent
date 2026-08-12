@@ -58,3 +58,43 @@ func TestNewOllamaHonorsOverride(t *testing.T) {
 		t.Fatalf("NewOllama apiKey=%q, want %q", client.apiKey, "fake")
 	}
 }
+
+// TestNewOllamaStripsKeyForLoopback pins the loopback guard: when the base
+// URL points at a loopback address (127.0.0.1), NewOllama must drop the API
+// key so it never leaks to a local endpoint. RED: the current factory passes
+// the key through unchanged.
+func TestNewOllamaStripsKeyForLoopback(t *testing.T) {
+	comp, err := NewOllama(Options{BaseURL: "http://127.0.0.1:11434/v1", APIKey: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comp == nil {
+		t.Fatal("NewOllama returned nil completer")
+	}
+	client, ok := comp.(*OpenAICompat)
+	if !ok {
+		t.Fatalf("NewOllama must return *OpenAICompat, got %T", comp)
+	}
+	if client.apiKey != "" {
+		t.Fatalf("NewOllama apiKey=%q, want %q for loopback base URL", client.apiKey, "")
+	}
+}
+
+// TestNewOllamaKeepsKeyForCloud pins the cloud path: when the base URL is a
+// remote endpoint (ollama.com), NewOllama must forward the API key unchanged.
+func TestNewOllamaKeepsKeyForCloud(t *testing.T) {
+	comp, err := NewOllama(Options{BaseURL: "https://ollama.com/v1", APIKey: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comp == nil {
+		t.Fatal("NewOllama returned nil completer")
+	}
+	client, ok := comp.(*OpenAICompat)
+	if !ok {
+		t.Fatalf("NewOllama must return *OpenAICompat, got %T", comp)
+	}
+	if client.apiKey != "fake" {
+		t.Fatalf("NewOllama apiKey=%q, want %q", client.apiKey, "fake")
+	}
+}

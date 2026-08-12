@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 )
 
@@ -16,10 +17,14 @@ func NewOllama(opts Options) (Completer, error) {
 		}
 		base = descriptor.DefaultURL
 	}
+	apiKey := opts.APIKey
+	if config.IsOllamaLoopback(base) {
+		apiKey = ""
+	}
 	return NewOpenAICompatWithOptions(CompatOptions{
 		Name:              "ollama",
 		BaseURL:           base,
-		APIKey:            opts.APIKey,
+		APIKey:            apiKey,
 		CacheUsageEnabled: opts.CacheUsageEnabled,
 	}), nil
 }
