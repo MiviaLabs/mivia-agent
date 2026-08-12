@@ -40,7 +40,7 @@ func TestDispatcherCloseReleasesDedupWaiters(t *testing.T) {
 		go func() {
 			waiterDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", TurnID: "turn", Step: 2, Budget: 1})
 		}()
-		waitForIDKeyedWaiterRegistered(t, d, "same", "turn")
+		waitForIDKeyedWaiterRegistered(t, d, "same")
 		d.Close()
 		assertClosedDispatcherResult(t, waiterDone)
 		close(release)
@@ -138,9 +138,10 @@ func assertDispatcherResult(t *testing.T, done <-chan Result) {
 
 // TestLateIDKeyedWaiterAfterOwnerDeliveryStillReceivesResult pins the
 // stranded-waiter window: a same-ID duplicate that registers AFTER the owner's
-// execute already delivered to the ID-keyed waiters (completeIDKeyed) but
-// BEFORE the owner's active marker is removed must still receive the owner's
-// result. The marker removal drains the waiter slice with the owner's final
+// Invoke tail delivered to the ID-keyed waiters (completeIDKeyed, which runs
+// after postInvoke attaches HookContext/HookRuns) but BEFORE the owner's
+// active marker is removed must still receive the owner's result. The marker
+// removal (releaseIDKeyed) drains the waiter slice with the owner's final
 // result in the same critical section; without it the late waiter parks
 // forever (the multi-waiter change replaced the old shared buffered channel
 // with per-waiter channels drained exactly once).
@@ -162,15 +163,15 @@ func TestLateIDKeyedWaiterAfterOwnerDeliveryStillReceivesResult(t *testing.T) {
 		ownerDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", TurnID: "turn", Step: 1, Budget: 1})
 	}()
 	<-hookEntered
-	// The owner's handler has returned and completeIDKeyed delivered to an
-	// empty waiter slice; the active marker is still installed because the
-	// owner is blocked in postInvoke. A same-ID, later-step call now registers
-	// as a duplicate and must be released with the owner's result.
+	// The owner's handler has returned and the owner is blocked in postInvoke,
+	// before Invoke's tail runs completeIDKeyed and before releaseIDKeyed
+	// removes the active marker. A same-ID, later-step call now registers as a
+	// duplicate and must be released with the owner's result.
 	waiterDone := make(chan Result, 1)
 	go func() {
 		waiterDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", TurnID: "turn", Step: 2, Budget: 1})
 	}()
-	waitForIDKeyedWaiterRegistered(t, d, "same", "turn")
+	waitForIDKeyedWaiterRegistered(t, d, "same")
 	close(hookRelease)
 	assertDispatcherResult(t, ownerDone)
 	select {

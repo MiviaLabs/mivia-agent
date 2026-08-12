@@ -343,7 +343,7 @@ func TestSkipDedupMixedWaiterSteal(t *testing.T) {
 	go func() {
 		waiterDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", Input: input, Budget: 1})
 	}()
-	waitForIDKeyedWaiterRegistered(t, d, "same", "same")
+	waitForIDKeyedWaiterRegistered(t, d, "same")
 
 	// Intruder: SkipDedup, same ID, failing handler. Its terminal path must
 	// not read or delete the ID-keyed waiter.
