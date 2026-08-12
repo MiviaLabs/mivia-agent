@@ -22,8 +22,9 @@ var panelMemberLimits = runtime.WorkLimits{
 	MaxOutputPerCall: 8192, MaxToolCalls: 64,
 }
 
-// panelSynthesisLimits reserves the fixed future synthesis slice. Wave 4
-// persists only member work and does not create a synthesis task.
+// panelSynthesisLimits bounds the synthesis child's work. buildPanelSynthesisWork
+// (panel_synthesis.go) consumes these once member work succeeds and it builds
+// the actual synthesis PanelTaskSpec.
 var panelSynthesisLimits = runtime.WorkLimits{
 	MaxTurns: 8, MaxPromptTokens: 524288, MaxOutputTokens: 65536,
 	MaxOutputPerCall: 8192, MaxToolCalls: 16,
@@ -62,52 +63,86 @@ func (c *LinearController) buildPanelAttempt(ctx context.Context, run workflowle
 			return workflowledger.StepAttempt{}, fmt.Errorf("panel binding %q is missing", step.ID+"/"+member.ID)
 		}
 		templateRef, schemaRef := snapshot.Templates[member.Template], snapshot.Schemas[member.OutputSchema]
-		var schema map[string]any
-		if err := json.Unmarshal(schemaRef.Bytes, &schema); err != nil {
-			return workflowledger.StepAttempt{}, fmt.Errorf("panel member %q schema: %w", member.ID, err)
-		}
 		prompt, err := template.Render(string(templateRef.Bytes), inputs, evidence, maxBinding(step), maxStepContextBytes)
 		if err != nil {
 			return workflowledger.StepAttempt{}, err
 		}
 		input := mustJSON(prompt)
-		inputSchema := []byte(`{"type":"string"}`)
-		inputRef, err := c.storePanelContent(ctx, input)
-		if err != nil {
-			return workflowledger.StepAttempt{}, err
-		}
-		inputSchemaRef, err := c.storePanelContent(ctx, inputSchema)
-		if err != nil {
-			return workflowledger.StepAttempt{}, err
-		}
-		outputSchemaRef, err := c.storePanelContent(ctx, schemaRef.Bytes)
-		if err != nil {
-			return workflowledger.StepAttempt{}, err
-		}
 		runID, taskID := workflowledger.PanelChildIDs(c.RunID, attempt.AttemptID, member.ID)
-		limits := panelMemberLimits
-		limits.DeadlineAt = deadline
-		work := workflowledger.PanelTaskSpec{
-			TaskName: member.Agent, InputRef: inputRef, InputDigest: workflowledger.DigestHex(input),
-			InputSchemaRef: inputSchemaRef, InputSchemaDigest: workflowledger.DigestHex(inputSchema),
-			Budget: 1, Scope: "workflow-panel:" + runID, AgentName: binding.AgentName, AgentDigest: binding.AgentDigest,
+		work, err := c.buildPanelTaskSpec(ctx, panelWorkSpecParams{
+			RunID: runID, TaskID: taskID, AgentName: binding.AgentName, AgentDigest: binding.AgentDigest,
 			Skill: member.Skill, Provider: binding.ProviderName, Model: binding.Model,
-			OutputSchemaRef: outputSchemaRef, OutputSchemaDigest: workflowledger.DigestHex(schemaRef.Bytes),
-			Timeout: deadline.Sub(c.now()), DeadlineAt: deadline, WorkLimits: limits,
-			Policy: coordledger.RunPolicy{NoRetry: true, FailInterrupted: true},
-		}
-		task := subagents.Task{ID: taskID, Name: work.TaskName, Input: input, InputSchema: map[string]any{"type": "string"}, OutputSchema: schema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}
-		fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{task}, work.Policy)
+			Input: input, InputSchema: []byte(`{"type":"string"}`), OutputSchema: schemaRef.Bytes,
+			Deadline: deadline, Limits: panelMemberLimits,
+		})
 		if err != nil {
-			return workflowledger.StepAttempt{}, err
+			return workflowledger.StepAttempt{}, fmt.Errorf("panel member %q: %w", member.ID, err)
 		}
-		work.CoordinatorRequestFingerprint = fingerprint
-		workflowledger.FinalizePanelTaskSpec(&work)
 		members = append(members, workflowledger.PanelMemberExecution{MemberID: member.ID, CoordinatorRunID: runID, TaskID: taskID, Work: work, Order: order})
 	}
 	synthesisRun, synthesisTask := workflowledger.PanelChildIDs(c.RunID, attempt.AttemptID, "synthesis")
 	attempt.PanelExecution = &workflowledger.PanelExecution{Members: members, SynthesisRunID: synthesisRun, SynthesisTaskID: synthesisTask, Phase: workflowledger.PanelPhaseMembersAdmitted}
 	return attempt, nil
+}
+
+// panelWorkSpecParams names the fields that vary between one panel member's
+// work spec and the synthesis work spec. Content storage, fingerprinting,
+// and the fixed no-retry/fail-interrupted policy are identical for both and
+// live in buildPanelTaskSpec below.
+type panelWorkSpecParams struct {
+	RunID, TaskID          string
+	AgentName, AgentDigest string
+	Skill, Provider, Model string
+	Input, InputSchema     []byte
+	OutputSchema           []byte
+	Deadline               time.Time
+	Limits                 runtime.WorkLimits
+}
+
+// buildPanelTaskSpec stores a panel child's input and schema content, builds
+// its PanelTaskSpec and matching coordinator fingerprint, and finalizes the
+// work fingerprint. buildPanelAttempt's per-member loop and
+// buildPanelSynthesisWork (panel_synthesis.go) both call this; only the
+// fields in panelWorkSpecParams differ between a member and the synthesizer.
+func (c *LinearController) buildPanelTaskSpec(ctx context.Context, p panelWorkSpecParams) (workflowledger.PanelTaskSpec, error) {
+	inputRef, err := c.storePanelContent(ctx, p.Input)
+	if err != nil {
+		return workflowledger.PanelTaskSpec{}, err
+	}
+	inputSchemaRef, err := c.storePanelContent(ctx, p.InputSchema)
+	if err != nil {
+		return workflowledger.PanelTaskSpec{}, err
+	}
+	outputSchemaRef, err := c.storePanelContent(ctx, p.OutputSchema)
+	if err != nil {
+		return workflowledger.PanelTaskSpec{}, err
+	}
+	var inputSchemaValue, outputSchemaValue map[string]any
+	if err := json.Unmarshal(p.InputSchema, &inputSchemaValue); err != nil {
+		return workflowledger.PanelTaskSpec{}, fmt.Errorf("panel task %q input schema: %w", p.TaskID, err)
+	}
+	if err := json.Unmarshal(p.OutputSchema, &outputSchemaValue); err != nil {
+		return workflowledger.PanelTaskSpec{}, fmt.Errorf("panel task %q output schema: %w", p.TaskID, err)
+	}
+	limits := p.Limits
+	limits.DeadlineAt = p.Deadline
+	work := workflowledger.PanelTaskSpec{
+		TaskName: p.AgentName, InputRef: inputRef, InputDigest: workflowledger.DigestHex(p.Input),
+		InputSchemaRef: inputSchemaRef, InputSchemaDigest: workflowledger.DigestHex(p.InputSchema),
+		Budget: 1, Scope: "workflow-panel:" + p.RunID, AgentName: p.AgentName, AgentDigest: p.AgentDigest,
+		Skill: p.Skill, Provider: p.Provider, Model: p.Model,
+		OutputSchemaRef: outputSchemaRef, OutputSchemaDigest: workflowledger.DigestHex(p.OutputSchema),
+		Timeout: p.Deadline.Sub(c.now()), DeadlineAt: p.Deadline, WorkLimits: limits,
+		Policy: coordledger.RunPolicy{NoRetry: true, FailInterrupted: true},
+	}
+	task := subagents.Task{ID: p.TaskID, Name: work.TaskName, Input: p.Input, InputSchema: inputSchemaValue, OutputSchema: outputSchemaValue, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}
+	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{task}, work.Policy)
+	if err != nil {
+		return workflowledger.PanelTaskSpec{}, err
+	}
+	work.CoordinatorRequestFingerprint = fingerprint
+	workflowledger.FinalizePanelTaskSpec(&work)
+	return work, nil
 }
 
 func (c *LinearController) storePanelContent(ctx context.Context, data []byte) (string, error) {

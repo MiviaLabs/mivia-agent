@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"unicode/utf8"
+
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 )
 
 // Bounds. See plan 62, "Bounds": 24 KiB per raw and per canonical member
@@ -77,7 +79,7 @@ func DecodeStrictPanelMemberReport(raw []byte) (PanelMemberReport, []byte, error
 		// "security" with two findings "X" and "Y" produce the same digest
 		// input. Reject it here so no finding ID can ever collide with a
 		// separator the host's own encoding relies on.
-		if hasControlByte(f.ID) {
+		if textutil.HasControlByte(f.ID) {
 			return PanelMemberReport{}, nil, fmt.Errorf("panel member report: finding id contains a control character")
 		}
 		if _, dup := seen[f.ID]; dup {
@@ -93,19 +95,6 @@ func DecodeStrictPanelMemberReport(raw []byte) (PanelMemberReport, []byte, error
 		return PanelMemberReport{}, nil, fmt.Errorf("panel member canonical report is %d bytes, exceeds %d byte bound", len(canonical), maxCanonicalPanelMemberReportBytes)
 	}
 	return report, canonical, nil
-}
-
-// hasControlByte reports whether s contains a C0 control byte or DEL. It
-// guards sourceKeyDigest's separator-based encoding: without this check, a
-// finding ID could smuggle the digest's own separator bytes and collide two
-// different canonical source keys onto the same digest.
-func hasControlByte(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] < 0x20 || s[i] == 0x7f {
-			return true
-		}
-	}
-	return false
 }
 
 // checkNoDuplicateJSONKeys walks raw as a JSON token stream and rejects a

@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
-	coordledger "github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -106,10 +104,6 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 		return workflowledger.PanelTaskSpec{}, fmt.Errorf("panel synthesis binding %q is missing", step.ID+"/synthesis")
 	}
 	schemaRef := snapshot.Schemas[step.OutputSchema]
-	var schema map[string]any
-	if err := json.Unmarshal(schemaRef.Bytes, &schema); err != nil {
-		return workflowledger.PanelTaskSpec{}, fmt.Errorf("panel step %q synthesis schema: %w", step.ID, err)
-	}
 	// Every member shares the same deadline (buildPanelAttempt derives it once
 	// from the run deadline and panelMemberTimeout); reuse it for synthesis so
 	// the synthesis child cannot outlive the attempt that admitted it.
@@ -117,38 +111,16 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 	if !deadline.After(c.now()) {
 		return workflowledger.PanelTaskSpec{}, context.DeadlineExceeded
 	}
-	inputSchema := []byte(`{"type":"object"}`)
-	inputRef, err := c.storePanelContent(ctx, envelope)
-	if err != nil {
-		return workflowledger.PanelTaskSpec{}, err
-	}
-	inputSchemaRef, err := c.storePanelContent(ctx, inputSchema)
-	if err != nil {
-		return workflowledger.PanelTaskSpec{}, err
-	}
-	outputSchemaRef, err := c.storePanelContent(ctx, schemaRef.Bytes)
-	if err != nil {
-		return workflowledger.PanelTaskSpec{}, err
-	}
 	runID, taskID := attempt.PanelExecution.SynthesisRunID, attempt.PanelExecution.SynthesisTaskID
-	limits := panelSynthesisLimits
-	limits.DeadlineAt = deadline
-	work := workflowledger.PanelTaskSpec{
-		TaskName: step.Agent, InputRef: inputRef, InputDigest: workflowledger.DigestHex(envelope),
-		InputSchemaRef: inputSchemaRef, InputSchemaDigest: workflowledger.DigestHex(inputSchema),
-		Budget: 1, Scope: "workflow-panel:" + runID, AgentName: binding.AgentName, AgentDigest: binding.AgentDigest,
+	work, err := c.buildPanelTaskSpec(ctx, panelWorkSpecParams{
+		RunID: runID, TaskID: taskID, AgentName: binding.AgentName, AgentDigest: binding.AgentDigest,
 		Skill: step.Skill, Provider: binding.ProviderName, Model: binding.Model,
-		OutputSchemaRef: outputSchemaRef, OutputSchemaDigest: workflowledger.DigestHex(schemaRef.Bytes),
-		Timeout: deadline.Sub(c.now()), DeadlineAt: deadline, WorkLimits: limits,
-		Policy: coordledger.RunPolicy{NoRetry: true, FailInterrupted: true},
-	}
-	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: envelope, InputSchema: map[string]any{"type": "object"}, OutputSchema: schema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}
-	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{task}, work.Policy)
+		Input: envelope, InputSchema: []byte(`{"type":"object"}`), OutputSchema: schemaRef.Bytes,
+		Deadline: deadline, Limits: panelSynthesisLimits,
+	})
 	if err != nil {
-		return workflowledger.PanelTaskSpec{}, err
+		return workflowledger.PanelTaskSpec{}, fmt.Errorf("panel step %q synthesis: %w", step.ID, err)
 	}
-	work.CoordinatorRequestFingerprint = fingerprint
-	workflowledger.FinalizePanelTaskSpec(&work)
 	return work, nil
 }
 

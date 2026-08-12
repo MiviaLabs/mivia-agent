@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -60,7 +61,7 @@ func validatePanelMembers(stepID string, members []definition.PanelMember) error
 		// gets this same check at decode time (host-decoded, model-authored);
 		// a member ID is workflow-definition-authored, so it is checked here,
 		// at compile time, once.
-		if hasControlByte(member.ID) {
+		if textutil.HasControlByte(member.ID) {
 			return fmt.Errorf("step %q: panel member id %q contains a control character", stepID, member.ID)
 		}
 		if _, exists := memberIDs[member.ID]; exists {
@@ -102,14 +103,4 @@ func validatePanelMembers(stepID string, members []definition.PanelMember) error
 		bindings[binding] = struct{}{}
 	}
 	return nil
-}
-
-// hasControlByte reports whether s contains a C0 control byte or DEL.
-func hasControlByte(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] < 0x20 || s[i] == 0x7f {
-			return true
-		}
-	}
-	return false
 }
