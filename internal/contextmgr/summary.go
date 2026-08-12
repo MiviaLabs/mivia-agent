@@ -12,8 +12,13 @@ import (
 )
 
 const (
-	maxSummaryFieldBytes = 2 * 1024
-	maxSummaryItems      = 32
+	// MaxSummaryFieldBytes bounds every individual summary envelope field,
+	// including each list item. Host trackers and injection paths share it so
+	// the loop and the validators cannot drift apart.
+	MaxSummaryFieldBytes = 2 * 1024
+	// MaxSummaryItems bounds every summary envelope list. The turn-state
+	// tracker and OmittedEvidence share it with the validators.
+	MaxSummaryItems = 32
 )
 
 // UntrustedSummary is a validated data-only result from a summarizer. The
@@ -142,7 +147,7 @@ func summaryTokenEstimate(bytes int) int {
 }
 
 func validateSummaryText(field, value string, allowEmpty bool) error {
-	if !utf8.ValidString(value) || len(value) > maxSummaryFieldBytes {
+	if !utf8.ValidString(value) || len(value) > MaxSummaryFieldBytes {
 		return fmt.Errorf("%w: summary %s is invalid or oversized", contextstate.ErrInvalidDTO, field)
 	}
 	if !allowEmpty && strings.TrimSpace(value) == "" {
@@ -157,7 +162,7 @@ func validateSummaryText(field, value string, allowEmpty bool) error {
 }
 
 func validateSummaryList(field string, values []string) error {
-	if len(values) > maxSummaryItems {
+	if len(values) > MaxSummaryItems {
 		return fmt.Errorf("%w: summary %s has too many items", contextstate.ErrInvalidDTO, field)
 	}
 	seen := make(map[string]struct{}, len(values))

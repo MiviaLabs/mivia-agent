@@ -13,8 +13,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
-var setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.ContextManager, principal contextstate.Principal) error {
-	return session.SetContextManager(manager, principal)
+var setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.ContextManager, principal contextstate.Principal, policies ...contextstate.PolicySnapshot) error {
+	return session.SetContextManager(manager, principal, policies...)
 }
 
 func openRepositoryContextStore(root string) (*storage.SQLite, error) {
@@ -108,12 +108,19 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 	if err != nil {
 		return err
 	}
+	// The committer exposes the commit-time SummaryRequestBuilder seam for a
+	// future summary section. Today no SummaryProvider exists, so the builder
+	// and the Summarizer stay nil and every path keeps structural-only
+	// behavior; the policy passed below is the summary-disabled default.
 	manager := &contextmgr.ContextManager{
 		PreparationManager:  contextmgr.StructuralPreparationManager{},
 		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
 		Enabled:             true,
 	}
-	if err := setContextManagerForSetup(sess, manager, principal); err != nil {
+	// The summary policy is the summary-disabled default: no summary section
+	// exists in config yet. When one lands, this is the seam that populates
+	// the PolicySnapshot and the ContextManager.Summarizer.
+	if err := setContextManagerForSetup(sess, manager, principal, contextstate.PolicySnapshot{}); err != nil {
 		return err
 	}
 	return sess.SetContextStore(store)
