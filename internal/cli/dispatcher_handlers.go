@@ -136,6 +136,7 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 			MaxContextTokensFunc:      budget,
 			MaxToolResultChars:        budgets.perCall,
 			BatchResultBudgetBytes:    budgets.perBatch,
+			RefOnlyTools:              budgets.refOnlyTools,
 			RemainderSpool:            spool,
 			OutputSchema:              skill.OutputSchema,
 			SchemaRetryMax:            cfg.SchemaRetryMax,

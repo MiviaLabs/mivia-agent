@@ -73,6 +73,26 @@ No paid SQLite extensions are required. Do not use SQLite Encryption Extension, 
 
 SQLite is not the right default if Mivia later requires sustained high write contention, multiple processes writing the same file, shared network-filesystem ownership, or service-scale replication. The storage interface must keep that future backend change possible.
 
+## Remainder storage contract
+
+The `internal/remainder` package owns the truncated-result spool and its principal-scoped visibility grants. When a tool result is shortened, the full body is stored under a content-addressed ref and the principal that received the truncation notice is granted read access. The model pages that body via the host's `read_output` tool.
+
+Content-addressed refs use `contentref.Reference`, which produces `"ref:<kind>:<64-hex-sha256>"` strings. The kind for tool-result bodies is `output`. The same body always mints the same ref, so re-storing a duplicate lands on the same key and never grows the store.
+
+`StoreContent` must be idempotent: storing the same data twice returns the same ref and the store must not grow unboundedly for duplicates. `MemoryStore` is the idempotent in-memory implementation used for tests and host wiring that does not share the ledger repository.
+
+Visibility is caller-scoped: only the principal that received the grant may `Load` the ref. The `Spool` grants access by session ID (`principal.SessionID`). After a process restart, in-memory grants are empty even though durable grants and bytes survive, so the spool consults the durable grant store (`SpoolGrantStore`) on the in-memory grant miss path.
+
+Sentinel load failures:
+
+| Error | Meaning |
+|-------|---------|
+| `ErrNotFound` | The ref is unknown (never spooled, or never stored). |
+| `ErrDenied` | Content exists (or was granted to someone else) but the calling principal was not the recipient of the remainder ref. |
+| `ErrExpired` | The principal once held a grant but the remainder is no longer available (retention expiry or explicit expiry). Distinct from not-found so the model does not treat a timed-out ref as a corrupt key. |
+
+A nil spool, empty principal, nil store, or store failure yields `""` and the plain notice: a failed spool must never invent a ref (INV-AG-10 / INV-CE-07-A/C).
+
 ## Required validation before implementation
 
 1. Benchmark representative event sizes and concurrent readers/writers; record throughput, p95 latency, database growth, and recovery time.

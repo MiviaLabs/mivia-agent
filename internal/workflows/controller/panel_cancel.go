@@ -67,14 +67,14 @@ func ReconcilePanelCancellation(ctx context.Context, repo workflowledger.Reposit
 	for _, member := range attempt.PanelExecution.Members {
 		terminal, cancelErr := panel.CancelOrTombstoneMember(ctx, attemptID, member.MemberID)
 		if cancelErr != nil {
-			return attempt, false, fmt.Errorf("%w: member %q: %v", ErrCancelBlocked, member.MemberID, cancelErr)
+			return attempt, false, fmt.Errorf("%w: member %q: %w", ErrCancelBlocked, member.MemberID, cancelErr)
 		}
 		allTerminal = allTerminal && terminal
 	}
 	if attempt.PanelExecution.Synthesis != nil {
 		terminal, cancelErr := panel.CancelOrTombstoneSynthesis(ctx, attemptID)
 		if cancelErr != nil {
-			return attempt, false, fmt.Errorf("%w: synthesis: %v", ErrCancelBlocked, cancelErr)
+			return attempt, false, fmt.Errorf("%w: synthesis: %w", ErrCancelBlocked, cancelErr)
 		}
 		allTerminal = allTerminal && terminal
 	}
