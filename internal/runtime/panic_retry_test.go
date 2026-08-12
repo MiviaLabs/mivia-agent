@@ -36,3 +36,37 @@ func TestSafeInvokeRecoversPanicAndContinuesRetryLoop(t *testing.T) {
 		t.Fatalf("r.Attempts = %d, want 2", r.Attempts)
 	}
 }
+
+// panicEphemeralHandler succeeds on Invoke but panics from
+// EphemeralResultMarker, the side interface Dispatcher.execute calls AFTER
+// the handler already succeeded, to build the event-log output preview.
+type panicEphemeralHandler struct{}
+
+func (panicEphemeralHandler) Invoke(context.Context, Request) (json.RawMessage, error) {
+	return json.RawMessage(`{"ok":true}`), nil
+}
+
+func (panicEphemeralHandler) EphemeralResultMarker(Request) string {
+	panic("simulated EphemeralResultMarker panic")
+}
+
+// TestInvokeRecoversPanicFromEphemeralResultMarker is a bug-audit finding
+// (hostile panic-recovery lens): safeInvoke only wraps h.Invoke, but
+// Dispatcher.execute calls ephemeralMarker(h, req) - which invokes the
+// handler-supplied EphemeralResultMarker method - on the SUCCESS path,
+// outside safeInvoke's recovery. A handler implementing that side interface
+// and panicking from it defeated the whole point of the panic-recovery fix:
+// the task actually succeeded (Invoke returned a real answer), but building
+// its output preview crashed the process anyway.
+func TestInvokeRecoversPanicFromEphemeralResultMarker(t *testing.T) {
+	d := New(Policy{})
+	_ = d.Register(Tool, "ephemeral-panics", panicEphemeralHandler{})
+
+	r := d.Invoke(context.Background(), Request{Kind: Tool, Name: "ephemeral-panics"})
+	if r.Err != nil {
+		t.Fatalf("Invoke Err = %v, want nil - the handler's actual answer must survive a panic in EphemeralResultMarker", r.Err)
+	}
+	if string(r.Output) != `{"ok":true}` {
+		t.Fatalf("Invoke Output = %s, want the handler's real answer preserved", r.Output)
+	}
+}

@@ -372,10 +372,21 @@ func taskRetryPolicyFromConfig(cfg config.TaskRetryConfig) coordinator.RetryPoli
 	if baseBackoff > 0 && baseBackoff < minTaskRetryBaseBackoff {
 		baseBackoff = minTaskRetryBaseBackoff
 	}
+	// coordinator.RetryPolicy.EffectiveBackoff applies MaxBackoff as a hard
+	// ceiling computed AFTER BaseBackoff (retry.go) - so a MaxBackoff smaller
+	// than BaseBackoff silently clamps every backoff back down below the
+	// floor just enforced above, defeating it entirely (bug-audit finding,
+	// config-plumbing lens). 0 (unset) means "no cap" to EffectiveBackoff and
+	// must stay 0, not be raised - only an explicit, too-small positive value
+	// gets raised to meet the floor it would otherwise undercut.
+	maxBackoff := time.Duration(cfg.MaxBackoffSeconds * float64(time.Second))
+	if maxBackoff > 0 && maxBackoff < baseBackoff {
+		maxBackoff = baseBackoff
+	}
 	return coordinator.RetryPolicy{
 		MaxRetries:     maxRetries,
 		BaseBackoff:    baseBackoff,
-		MaxBackoff:     time.Duration(cfg.MaxBackoffSeconds * float64(time.Second)),
+		MaxBackoff:     maxBackoff,
 		BackoffFactor:  cfg.BackoffFactor,
 		JitterFraction: cfg.JitterFraction,
 	}

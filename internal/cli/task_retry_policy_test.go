@@ -102,6 +102,39 @@ func TestTaskRetryPolicyFromConfigFloorsExcessivelySmallBaseBackoff(t *testing.T
 	}
 }
 
+// TestTaskRetryPolicyFromConfigRaisesMaxBackoffToMeetBaseBackoffFloor is the
+// RED test for a bug-audit finding (config-plumbing lens): MaxBackoffSeconds
+// was never clamped, so a config like {base_backoff_seconds: 0.001,
+// max_backoff_seconds: 0.001} floored BaseBackoff to 50ms as intended, but
+// coordinator.RetryPolicy.EffectiveBackoff applies MaxBackoff as a hard
+// ceiling AFTER computing from BaseBackoff - so the still-1ms MaxBackoff
+// clamped the floored 50ms right back down to 1ms, silently defeating the
+// BaseBackoff safety floor entirely.
+func TestTaskRetryPolicyFromConfigRaisesMaxBackoffToMeetBaseBackoffFloor(t *testing.T) {
+	got := taskRetryPolicyFromConfig(config.TaskRetryConfig{
+		MaxRetries:         2,
+		BaseBackoffSeconds: 0.001,
+		MaxBackoffSeconds:  0.001,
+	})
+	if got.MaxBackoff < got.BaseBackoff {
+		t.Fatalf("MaxBackoff = %v < BaseBackoff = %v, want MaxBackoff raised to at least BaseBackoff so it can never defeat the floor", got.MaxBackoff, got.BaseBackoff)
+	}
+	if backoff := got.EffectiveBackoff(0); backoff < minTaskRetryBaseBackoff {
+		t.Fatalf("EffectiveBackoff(0) = %v, want >= %v end to end (the whole point of the floor)", backoff, minTaskRetryBaseBackoff)
+	}
+}
+
+// TestTaskRetryPolicyFromConfigLeavesUnsetMaxBackoffUncapped confirms the fix
+// above doesn't regress the "MaxBackoffSeconds unset" case: 0 means "no cap"
+// to coordinator.RetryPolicy.EffectiveBackoff (only MaxBackoff > 0 clamps),
+// and must stay that way rather than being raised to BaseBackoff.
+func TestTaskRetryPolicyFromConfigLeavesUnsetMaxBackoffUncapped(t *testing.T) {
+	got := taskRetryPolicyFromConfig(config.TaskRetryConfig{MaxRetries: 2, BaseBackoffSeconds: 1})
+	if got.MaxBackoff != 0 {
+		t.Fatalf("MaxBackoff = %v, want 0 (uncapped) when max_backoff_seconds is unset", got.MaxBackoff)
+	}
+}
+
 // TestInitCoordinatorRetriesTransientFailureFromConfig is a bug-audit
 // coverage gap (test-coverage lens): task_retry_config_test.go proves TOML
 // parses into TaskRetryConfig, and TestTaskRetryPolicyFromConfig* above prove
