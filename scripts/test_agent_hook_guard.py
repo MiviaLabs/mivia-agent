@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import random
 import subprocess
 import shutil
 import sys
@@ -219,6 +221,118 @@ def test_blocks_core_hooks_path_argv() -> None:
     )
     assert proc.returncode != 0
     assert "Do not bypass Git hooks" in (proc.stderr + proc.stdout)
+
+
+# ---------------------------------------------------------------------------
+# Git-global-option -n bypass regression: git options between `git` and
+# `commit` (-C path, --git-dir=..., -c key=value, --work-tree=...) used to
+# defeat the old adjacency regex (git\s+commit ... -n), so `git -C /tmp/x
+# commit -n` skipped hooks unblocked. The -n check is now structural per shell
+# segment (git then commit then -n in order), which also never flags -n on
+# non-commit commands (git log -n 5) or global options without -n.
+# ---------------------------------------------------------------------------
+
+
+def test_blocks_commit_dash_n_after_git_c_argv() -> None:
+    proc = run_guard(
+        "claude",
+        "PreToolUse",
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"argv": ["git", "-C", "/tmp/x", "commit", "-n", "-m", "y"]},
+        },
+    )
+    assert proc.returncode != 0
+    assert "Do not bypass Git hooks" in (proc.stderr + proc.stdout)
+
+
+def test_blocks_commit_dash_n_after_git_dir_argv() -> None:
+    proc = run_guard(
+        "claude",
+        "PreToolUse",
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {
+                "argv": ["git", "--git-dir=/tmp/g", "commit", "-n", "-m", "y"]
+            },
+        },
+    )
+    assert proc.returncode != 0
+    assert "Do not bypass Git hooks" in (proc.stderr + proc.stdout)
+
+
+def test_blocks_commit_dash_n_after_git_config_argv() -> None:
+    proc = run_guard(
+        "claude",
+        "PreToolUse",
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {
+                "argv": ["git", "-c", "user.email=x", "commit", "-n", "-m", "y"]
+            },
+        },
+    )
+    assert proc.returncode != 0
+    assert "Do not bypass Git hooks" in (proc.stderr + proc.stdout)
+
+
+def test_blocks_commit_dash_n_after_git_c_shell() -> None:
+    proc = run_guard(
+        "claude",
+        "PreToolUse",
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git -C /tmp/x commit -n -m y"},
+        },
+    )
+    assert proc.returncode != 0
+    assert "Do not bypass Git hooks" in (proc.stderr + proc.stdout)
+
+
+def test_blocks_commit_dash_n_after_git_dir_shell() -> None:
+    proc = run_guard(
+        "claude",
+        "PreToolUse",
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git --git-dir=/tmp/g commit -n -m y"},
+        },
+    )
+    assert proc.returncode != 0
+    assert "Do not bypass Git hooks" in (proc.stderr + proc.stdout)
+
+
+def test_allows_git_global_option_without_dash_n_shell() -> None:
+    # A global option WITHOUT -n must stay allowed.
+    proc = run_guard(
+        "claude",
+        "PreToolUse",
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git -C /tmp commit -m x"},
+        },
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+def test_allows_git_log_dash_n_shell() -> None:
+    # -n on a non-commit git command is legitimate and must stay allowed.
+    proc = run_guard(
+        "claude",
+        "PreToolUse",
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git log -n 5"},
+        },
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
 
 
 def test_run_command_guard_allows_message_containing_dash_n() -> None:
@@ -685,6 +799,114 @@ def test_option_vector_or_or_still_splits() -> None:
     assert "x" not in vec
 
 
+def test_n_reporting_matches_segment_shape_seeded() -> None:
+    """Seeded deterministic property test over generated argv shapes.
+
+    Fixed seed, ~2000 iterations, sub-second: the deterministic stand-in for a
+    host fuzz gate on the argv parser (option_vector/_scan_segment/_flag_hits
+    are pure functions over token lists). Asserts
+      (a) no value token of -m/-F/-C/--message/--file/--reuse-message/
+          --reedit-message ever surfaces in the option vector as a flag, and
+      (b) -n is reported iff some single segment's option vector contains
+          git, then commit, then -n in order (covers git global options
+          between git and commit, and never flags non-commit -n such as
+          `git log -n 5` or `grep -n`).
+    """
+    guard_path = ROOT / "scripts" / "agent_hook_guard.py"
+    spec = importlib.util.spec_from_file_location("agent_hook_guard", str(guard_path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # phrase = (kind, tokens, value_tokens). Value literals are generated
+    # uniquely per iteration so a surfaced value is unambiguous (flag-like
+    # values -m -n, -Fn are covered by the dedicated value-is-data tests).
+    git_phrases = [
+        ("git", ["git"], []),
+        ("git_global", ["git", "-C", "/tmp/x"], ["/tmp/x"]),
+        ("git_global", ["git", "--git-dir=/tmp/g"], []),
+        ("git_global", ["git", "-c", "user.email=x"], []),
+        ("git_global", ["git", "--work-tree=/tmp/w"], []),
+    ]
+    commit_phrases = [("commit", ["commit"], [])]
+    n_phrases = [
+        ("n_flag", ["-n"], []),
+        ("n_flag", ["-an"], []),
+        ("n_flag", ["-na"], []),
+    ]
+    other_phrases = [
+        ("no_verify", ["--no-verify"], []),
+        ("log_n", ["log", "-n", "5"], []),
+        ("grep_n", ["grep", "-n", "x"], []),
+    ]
+    pools = [git_phrases, commit_phrases, n_phrases, other_phrases]
+    value_options = [
+        "-m",
+        "-F",
+        "-C",
+        "--message",
+        "--file",
+        "--reuse-message",
+        "--reedit-message",
+    ]
+
+    def vec_has_git_commit_n(vec: list[str]) -> bool:
+        try:
+            i_git = vec.index("git")
+            i_commit = vec.index("commit", i_git + 1)
+            vec.index("-n", i_commit + 1)
+        except ValueError:
+            return False
+        return True
+
+    rng = random.Random(20260812)
+    policy = mod.load_policy()
+    for _ in range(2000):
+        raw_segments: list[list[str]] = []
+        value_tokens: list[str] = []
+        for _seg in range(rng.randint(1, 3)):
+            segment: list[str] = []
+            for _phrase in range(rng.randint(2, 8)):
+                if rng.random() < 0.3:
+                    # Value-taking option with a unique value literal.
+                    option = rng.choice(value_options)
+                    literal = f"v{len(value_tokens)}"
+                    value_tokens.append(literal)
+                    segment.extend([option, literal])
+                else:
+                    kind, tokens, values = rng.choice(rng.choice(pools))
+                    segment.extend(tokens)
+                    value_tokens.extend(values)
+            raw_segments.append(segment)
+
+        argv: list[str] = []
+        for index, segment in enumerate(raw_segments):
+            if index:
+                argv.append(rng.choice(["&&", ";"]))
+            argv.extend(segment)
+
+        # (a) no value token ever surfaces in the option vector as a flag.
+        all_vec: list[str] = []
+        for segment in raw_segments:
+            all_vec.extend(mod.option_vector(segment))
+        for value_token in value_tokens:
+            assert value_token not in all_vec, (
+                f"value token {value_token!r} surfaced as a flag in {argv!r}"
+            )
+
+        # (b) -n is reported iff some single segment's option vector contains
+        # git, then commit, then -n in order.
+        expected = any(
+            vec_has_git_commit_n(mod.option_vector(segment)) for segment in raw_segments
+        )
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"argv": argv},
+        }
+        reasons = mod.bypass_reasons(payload, policy)
+        assert ("blocked flag -n" in reasons) == expected, (argv, reasons)
+
+
 def test_run_command_guard_blocks_compound_hooks_path_pipe() -> None:
     proc = run_command_guard(
         [
@@ -768,6 +990,13 @@ def main() -> None:
     test_codex_denies_with_json()
     test_env_payload_blocks_husky()
     test_runner_blocks_before_binary()
+    test_blocks_commit_dash_n_after_git_c_argv()
+    test_blocks_commit_dash_n_after_git_dir_argv()
+    test_blocks_commit_dash_n_after_git_config_argv()
+    test_blocks_commit_dash_n_after_git_c_shell()
+    test_blocks_commit_dash_n_after_git_dir_shell()
+    test_allows_git_global_option_without_dash_n_shell()
+    test_allows_git_log_dash_n_shell()
     test_blocks_bundled_dash_n_argv()
     test_blocks_bundled_dash_n_last_argv()
     test_blocks_bundled_dash_n_before_file_argv()
@@ -799,6 +1028,7 @@ def main() -> None:
     test_option_vector_ampersand_ampersand_still_splits()
     test_option_vector_semicolon_still_splits()
     test_option_vector_or_or_still_splits()
+    test_n_reporting_matches_segment_shape_seeded()
     test_run_command_guard_blocks_compound_hooks_path_pipe()
     test_run_command_guard_blocks_compound_husky_pipe()
     test_run_command_guard_blocks_compound_dash_n_pipe()
