@@ -131,6 +131,20 @@ func (s *Session) loadContextCatalog(name string) (bool, error) {
 		return false, fmt.Errorf("load session %q: %w", name, err)
 	}
 	isContextSession := info.SessionID != ""
+	// A loaded live context session's history now sits in memory, but every
+	// commit still authorizes against s.contextPrincipal - which, until this
+	// point, is still the fresh principal this process minted at startup for
+	// its OWN (different, empty) session id. Left alone, the turn that just
+	// loaded this history would durably commit it right back out under that
+	// unrelated id: sessions list would show two records - the resumed one,
+	// frozen at its pre-load state, and a new one holding the merged result -
+	// instead of one record whose turn count grew. Reclaiming the loaded
+	// session's ownership before adopting its messages closes that gap.
+	if isContextSession && info.SessionID != principal.SessionID {
+		if err := s.reclaimContextSession(info.SessionID); err != nil {
+			return false, fmt.Errorf("resume session %q: %w", name, err)
+		}
+	}
 	msgs, err := decodeCatalogMessages(data)
 	if err != nil {
 		return false, err
@@ -153,6 +167,45 @@ func (s *Session) loadContextCatalog(name string) (bool, error) {
 	}
 	token := s.captureOperationToken("catalog-load:" + name)
 	return isContextSession, s.publishLoadedMessages(token, msgs, info.Model)
+}
+
+// reclaimContextSession takes over write ownership of an existing, live
+// context session identified by sessionID by minting this process a fresh
+// Principal for it and installing that Principal as s.contextPrincipal (with
+// s.SessionID kept in lock-step, per contextEnabledLocked's invariant). The
+// session's original owner capability lived only in the process that created
+// it and cannot be recovered, so contextstate.SessionReclaimer performs the
+// re-authorization store-side, scoped the same way LoadSession already is:
+// by workspace, subject and the session's own id, not by proving the old
+// capability. See contextstate.SessionReclaimer's doc comment for the full
+// trust-boundary argument.
+func (s *Session) reclaimContextSession(sessionID string) error {
+	s.mu.RLock()
+	store := s.contextStore
+	workspaceID, subjectID := s.contextPrincipal.WorkspaceID, s.contextPrincipal.SubjectID
+	oldSessionID := s.SessionID
+	s.mu.RUnlock()
+	reclaimer, ok := store.(contextstate.SessionReclaimer)
+	if !ok {
+		return fmt.Errorf("context store does not support resuming a live session")
+	}
+	principal, err := contextstate.NewPrincipal(workspaceID, sessionID, subjectID)
+	if err != nil {
+		return err
+	}
+	snapshot, err := reclaimer.ReclaimSession(context.Background(), principal, sessionID)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.SessionID != oldSessionID {
+		return ErrStaleOperation
+	}
+	s.SessionID = sessionID
+	s.contextPrincipal = principal
+	s.contextHead = snapshot.Revision
+	return nil
 }
 
 // adoptLoadedMessages replaces history after the binding has already been
