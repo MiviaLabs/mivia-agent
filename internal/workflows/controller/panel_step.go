@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -13,6 +14,21 @@ import (
 // while panelsEnabled is false, so refusePanelStep settles it failed instead
 // of advancing to synthesis.
 var ErrPanelMembersComplete = errors.New("panel members completed; synthesis is unavailable")
+
+// ErrCancelReconciliationPending reports that reconcilePanelCancelPending
+// made no terminal progress this Advance (an ambiguous child claim, a slow
+// child, or a claim conflict from a racing executor) and wants another
+// Advance later. It is distinct from ErrPanelMembersComplete (Wave 8 audit
+// finding #2): before this sentinel existed, Run's loop could not tell a
+// not-yet-terminal cancel_pending reconciliation apart from the true Wave-4
+// "members complete, synthesis unsupported" case, since both leave Advance
+// returning done=false, err=nil with the active step still agent_panel. Run
+// treated every such case as ErrPanelMembersComplete, which
+// isNonTerminalWorkflowStop settles as a silent no-op - stranding a
+// legitimately still-canceling run at running/cancel_pending with no
+// automatic retry. Callers should retry Advance/Run on this error (see
+// RunWithCancelReconciliationRetry) instead of treating it as a stop.
+var ErrCancelReconciliationPending = errors.New("panel cancel reconciliation is not yet complete")
 
 // panelsEnabled gates agent_panel execution. Wave 5 implements synthesis
 // end to end (buildPanelSynthesisWork, advancePanelSynthesis,
@@ -106,12 +122,12 @@ func (c *LinearController) reconcilePanelCancelPending(ctx context.Context, run 
 	reconciled, allTerminal, err := ReconcilePanelCancellation(ctx, c.Repo, panel, c.RunID, c.Holder, attempt.AttemptID)
 	if err != nil {
 		if errors.Is(err, ErrCancelBlocked) {
-			return run, false, nil
+			return run, false, ErrCancelReconciliationPending
 		}
 		return c.fail(ctx, run, err)
 	}
 	if !allTerminal {
-		return run, false, nil
+		return run, false, ErrCancelReconciliationPending
 	}
 	if workflowledger.IsTerminalAttemptStatus(reconciled.Status) {
 		return c.settlePanelRunCanceled(ctx, run)
@@ -128,7 +144,7 @@ func (c *LinearController) reconcilePanelCancelPending(ctx context.Context, run 
 			// above, not a genuine defect, so it must stay non-terminal for
 			// a later Advance to reconcile instead of forcing the run to a
 			// durable Failed status.
-			return run, false, nil
+			return run, false, ErrCancelReconciliationPending
 		}
 		return c.fail(ctx, run, err)
 	}
@@ -146,7 +162,7 @@ func (c *LinearController) settlePanelRunCanceled(ctx context.Context, run workf
 			// write (ErrClaimHeld) during the same D14 claim-heartbeat handoff
 			// window, so stay non-terminal and retryable rather than escalating
 			// to a permanent failure.
-			return run, false, nil
+			return run, false, ErrCancelReconciliationPending
 		}
 		return c.fail(ctx, run, err)
 	}
@@ -170,4 +186,36 @@ func (c *LinearController) refusePanelStep(ctx context.Context, run workflowledg
 		Kind: ProgressPanelRefused, StepID: step.ID, AttemptNo: attempt.AttemptNo, Detail: cause,
 	})
 	return snapshot, done, settleErr
+}
+
+// cancelReconciliationRetryLimit bounds automatic retries of a not-yet-
+// terminal panel cancel reconciliation before RunWithCancelReconciliationRetry
+// gives up. It never busy-loops or retries forever on a genuinely stuck
+// claim: a later operator cancel or resume can still reconcile it.
+const cancelReconciliationRetryLimit = 5
+
+// cancelReconciliationRetryDelay bounds each retry's backoff.
+const cancelReconciliationRetryDelay = 500 * time.Millisecond
+
+// RunWithCancelReconciliationRetry runs run repeatedly while it reports
+// ErrCancelReconciliationPending, so a panel cancel_pending attempt that
+// is not yet all-terminal (a slow-to-stop member, an ambiguous claim, or a
+// racing executor's claim conflict) gets automatically retried instead of
+// stranding the run at running with no driver ever calling Advance again
+// (Wave 8 audit finding #2). It gives up after cancelReconciliationRetryLimit
+// retries or ctx cancellation, returning whatever run last reported.
+func RunWithCancelReconciliationRetry(ctx context.Context, run func(context.Context) (workflowledger.RunSnapshot, error)) (workflowledger.RunSnapshot, error) {
+	var snap workflowledger.RunSnapshot
+	var err error
+	for attempt := 0; ; attempt++ {
+		snap, err = run(ctx)
+		if !errors.Is(err, ErrCancelReconciliationPending) || attempt >= cancelReconciliationRetryLimit {
+			return snap, err
+		}
+		select {
+		case <-ctx.Done():
+			return snap, err
+		case <-time.After(cancelReconciliationRetryDelay):
+		}
+	}
 }

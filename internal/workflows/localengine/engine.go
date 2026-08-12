@@ -382,8 +382,8 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 	}
 	go func() {
 		defer close(done)
-		_, runErr := ctrl.Run(runCtx)
-		if runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, controller.ErrPanelMembersComplete) {
+		_, runErr := controller.RunWithCancelReconciliationRetry(runCtx, ctrl.Run)
+		if runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, controller.ErrPanelMembersComplete) && !errors.Is(runErr, controller.ErrCancelReconciliationPending) {
 			// Surface the failure instead of silently dropping it: a
 			// claim-contention or step error that stops the run must not
 			// look like a healthy no-op resume. Best-effort settle to

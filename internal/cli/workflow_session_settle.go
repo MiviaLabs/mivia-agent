@@ -27,7 +27,11 @@ func settleCLIRunFailure(repo workflowledger.Repository, runID string, runErr er
 }
 
 func isNonTerminalWorkflowStop(err error) bool {
-	return errors.Is(err, controller.ErrPanelMembersComplete)
+	// ErrCancelReconciliationPending only reaches here after
+	// RunWithCancelReconciliationRetry exhausted its retries: the cancel is
+	// still genuinely in flight (not a failure), so it must not be settled
+	// failed here either - same rationale as ErrPanelMembersComplete.
+	return errors.Is(err, controller.ErrPanelMembersComplete) || errors.Is(err, controller.ErrCancelReconciliationPending)
 }
 
 // settleSessionRunFailure records why a session-driven run stopped, and gives

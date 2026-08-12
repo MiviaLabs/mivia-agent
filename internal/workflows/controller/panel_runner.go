@@ -108,13 +108,36 @@ func runOnePanelMember(ctx context.Context, limiter *PanelActorLimiter, req Pane
 func acquirePanelMemberPermit(ctx context.Context, limiter *PanelActorLimiter, req PanelMembersRequest, member PanelMemberRequest) (*panelActorLease, error) {
 	probe, ok := req.Coordinator.(PanelMemberPermitProbe)
 	if !ok {
-		return limiter.Acquire(ctx, member.RunID)
+		return acquireGuardedPanelMemberPermit(ctx, limiter, member.RunID)
 	}
 	needsPermit, err := probe.MemberNeedsActorPermit(ctx, req.AttemptID, member.MemberID)
 	if err != nil || !needsPermit {
 		return nil, err
 	}
-	return limiter.Acquire(ctx, member.RunID)
+	return acquireGuardedPanelMemberPermit(ctx, limiter, member.RunID)
+}
+
+// acquireGuardedPanelMemberPermit wraps limiter.Acquire with an explicit,
+// deterministic ctx-cancellation check immediately after a lease is granted.
+// Go's select does not prioritize an already-closed ctx.Done() case over a
+// simultaneously ready send (limiter.Acquire's internal select races
+// l.slots<-struct{}{} against ctx.Done()), so a permit wait whose ctx was
+// canceled at the exact moment a slot freed up can still win the select and
+// return a valid lease. Without this guard, every caller here would go on to
+// call runnable admission (EnsureMember) on a canceled ctx, violating "a
+// canceled permit waiter never calls runnable admission" (Wave 8 audit
+// finding #3, required test matrix item). ReleaseBeforeActor safely returns
+// the slot without ever attaching a local actor to it.
+func acquireGuardedPanelMemberPermit(ctx context.Context, limiter *PanelActorLimiter, runID string) (*panelActorLease, error) {
+	lease, err := limiter.Acquire(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		lease.ReleaseBeforeActor()
+		return nil, ctxErr
+	}
+	return lease, nil
 }
 
 func ensurePanelMember(ctx context.Context, limiter *PanelActorLimiter, req PanelMembersRequest, member PanelMemberRequest, lease *panelActorLease) (*coordinator.RunHandle, *panelActorLease, error) {
@@ -131,7 +154,7 @@ func ensurePanelMember(ctx context.Context, limiter *PanelActorLimiter, req Pane
 	if !errors.Is(err, coordinator.ErrWaitOnlyJoinLost) {
 		return handle, nil, err
 	}
-	lease, err = limiter.Acquire(ctx, member.RunID)
+	lease, err = acquireGuardedPanelMemberPermit(ctx, limiter, member.RunID)
 	if err != nil {
 		return nil, nil, err
 	}

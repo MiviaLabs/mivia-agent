@@ -45,17 +45,6 @@ type sessionWorkflowEngine struct {
 	active map[string]*sessionActiveRun
 }
 
-type sessionActiveRun struct {
-	cancel  context.CancelFunc
-	done    chan struct{}
-	closeFn func()
-	// runner is the exact coordinator runner this run dispatches panel
-	// children with, when the controller uses one. Cancel reuses it (see
-	// cliPanelCancelCoordinator) so a live panel member is genuinely
-	// canceled instead of only having its claim refused (D15, Wave 7).
-	runner *controller.CoordinatorRunner
-}
-
 // newSessionWorkflowEngine builds the chat-session workflow engine.
 func newSessionWorkflowEngine(root, configPath string) *sessionWorkflowEngine {
 	return &sessionWorkflowEngine{
@@ -195,20 +184,26 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 	e.active[runID] = &sessionActiveRun{cancel: cancel, done: done, runner: runner, closeFn: func() { finishExecution(); built.Dispatcher.Close(); prepared.closeFn() }}
 	e.mu.Unlock()
 	go func() {
-		defer close(done)
 		sessionAutoDeliveryRepairLoop(runCtx, prepared.repo, prepared.root, prepared.res, prepared.store, runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
-			return built.Controller.Run(ctx)
+			return controller.RunWithCancelReconciliationRetry(ctx, built.Controller.Run)
 		})
 		// Delivery completion settles outside the controller (which parked at
 		// delivery_pending and emitted no run_finished), so publish the terminal
 		// event here once delivery actually succeeded.
 		e.publishDeliveredRunFinished(context.Background(), prepared.repo, runID)
+		// done closes as soon as the run loop itself has exited (and released
+		// any claim it held), before resource teardown below: stopActive's
+		// callers must be able to observe "the loop stopped" without that
+		// implying "resources are already closed" (Wave 8 audit finding #1) -
+		// otherwise a concurrent Cancel waiting on done would always find
+		// runner's backing store already closed by the time it can reuse it.
+		close(done)
 		e.mu.Lock()
 		active := e.active[runID]
 		delete(e.active, runID)
 		e.mu.Unlock()
 		if active != nil {
-			active.closeFn()
+			active.closeGuarded()
 		}
 	}()
 	run, err := prepared.repo.GetRun(ctx, runID)
@@ -305,11 +300,7 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 		return agenttools.CancelResult{}, err
 	}
 	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
-	var liveRunner *controller.CoordinatorRunner
-	if active != nil {
-		liveRunner = active.runner
-	}
-	attempts, err := controller.CancelRunWithAttemptsWithClaim(ctx, repo, cliPanelCancelCoordinator(liveRunner, store), runID, holder)
+	attempts, err := cancelRunWithGuardedCoordinator(ctx, active, repo, store, runID, holder)
 	if err != nil {
 		// Context cancel or a prior settle may already leave the run terminal.
 		run, getErr := repo.GetRun(ctx, runID)
