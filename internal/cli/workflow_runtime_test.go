@@ -191,6 +191,94 @@ func TestAuthorizeWorkflowPanelBindings(t *testing.T) {
 	}
 }
 
+// Test-review regression: neither TestLoadWorkflowRuntimesPinsPanelMemberBindings
+// nor TestAuthorizeWorkflowPanelBindings ever calls resolveWorkflowPanelSynthesisBindings
+// (it is wired only into prepareWorkflowRuntime, not loadWorkflowRuntimes or
+// authorizeWorkflowPanelBindings individually), so the synthesizer's own
+// session-following binding resolution and resume reauthorization had zero
+// direct test coverage.
+func TestResolveWorkflowPanelSynthesisBindings(t *testing.T) {
+	f := newPanelAuthorizationFixture(t)
+	admitted := f.snapshot
+	if err := resolveWorkflowPanelSynthesisBindings(f.workflow, f.agents, nil, admitted, f.opts); err != nil {
+		t.Fatalf("admit: resolveWorkflowPanelSynthesisBindings() error = %v", err)
+	}
+	binding, ok := admitted.PanelBindings["review/synthesis"]
+	if !ok {
+		t.Fatal("admit: synthesis binding was not stored under the reserved key")
+	}
+	if binding.AgentName != "review-synthesizer" || binding.ProviderName != "deepseek" || binding.Model != "flash" {
+		t.Fatalf("admit: synthesis binding = %+v, want review-synthesizer following the session's deepseek/flash default", binding)
+	}
+
+	t.Run("resume accepts the unchanged binding", func(t *testing.T) {
+		f2 := newPanelAuthorizationFixture(t)
+		f2.snapshot.PanelBindings["review/synthesis"] = binding
+		prior := f2.snapshot
+		next := workflowledger.Snapshot{PanelBindings: map[string]workflowledger.PanelBindingSnapshot{}}
+		if err := resolveWorkflowPanelSynthesisBindings(f2.workflow, f2.agents, &prior, next, f2.opts); err != nil {
+			t.Fatalf("resolveWorkflowPanelSynthesisBindings(resume, unchanged) error = %v", err)
+		}
+	})
+
+	// Provider/model resolve FROM the pinned value itself on resume (matching
+	// the same pattern non-panel undeclared-binding agents already use via
+	// resolvePinnedAgentBinding), so only the agent/template/schema digests -
+	// which are recomputed fresh from the CURRENT registry/snapshot on every
+	// call - give real drift protection here.
+	for name, mutate := range map[string]func(*workflowledger.PanelBindingSnapshot){
+		"agent digest":    func(b *workflowledger.PanelBindingSnapshot) { b.AgentDigest = "changed" },
+		"template digest": func(b *workflowledger.PanelBindingSnapshot) { b.TemplateDigest = "changed" },
+		"schema digest":   func(b *workflowledger.PanelBindingSnapshot) { b.SchemaDigest = "changed" },
+	} {
+		t.Run("resume rejects changed "+name, func(t *testing.T) {
+			fx := newPanelAuthorizationFixture(t)
+			drifted := binding
+			mutate(&drifted)
+			fx.snapshot.PanelBindings["review/synthesis"] = drifted
+			prior := fx.snapshot
+			next := workflowledger.Snapshot{PanelBindings: map[string]workflowledger.PanelBindingSnapshot{}}
+			if err := resolveWorkflowPanelSynthesisBindings(fx.workflow, fx.agents, &prior, next, fx.opts); err == nil {
+				t.Fatal("resolveWorkflowPanelSynthesisBindings() accepted a drifted synthesis binding")
+			}
+		})
+	}
+
+	t.Run("resume rejects a missing prior binding", func(t *testing.T) {
+		fx := newPanelAuthorizationFixture(t)
+		prior := fx.snapshot // PanelBindings has no "review/synthesis" entry
+		next := workflowledger.Snapshot{PanelBindings: map[string]workflowledger.PanelBindingSnapshot{}}
+		if err := resolveWorkflowPanelSynthesisBindings(fx.workflow, fx.agents, &prior, next, fx.opts); err == nil {
+			t.Fatal("resolveWorkflowPanelSynthesisBindings() accepted resume with no pinned synthesis binding")
+		}
+	})
+}
+
+// Test-review regression: the D4 guard on the synthesizer's own binding
+// (step.Agent must be named "review-synthesizer" and declare no provider or
+// model) is a statement newly added alongside resolveWorkflowPanelSynthesisBindings;
+// the equivalent guard in authorizeWorkflowPanelBindings already had
+// coverage for members but not this one.
+func TestResolveWorkflowPanelSynthesisBindingsRejectsDeclaredOrMisnamedSynthesizer(t *testing.T) {
+	f := newPanelAuthorizationFixture(t)
+	if err := f.agents.Publish(agents.ResolvedAgent{Name: "declared-synthesizer", Provider: "deepseek", Model: "flash", AllowEmptyTools: true}); err != nil {
+		t.Fatal(err)
+	}
+	f.workflow.Steps[0].Agent = "declared-synthesizer"
+	if err := resolveWorkflowPanelSynthesisBindings(f.workflow, f.agents, nil, f.snapshot, f.opts); err == nil {
+		t.Fatal("resolveWorkflowPanelSynthesisBindings() accepted a declared-binding synthesizer")
+	}
+
+	f2 := newPanelAuthorizationFixture(t)
+	if err := f2.agents.Publish(agents.ResolvedAgent{Name: "not-a-synthesizer", AllowEmptyTools: true}); err != nil {
+		t.Fatal(err)
+	}
+	f2.workflow.Steps[0].Agent = "not-a-synthesizer"
+	if err := resolveWorkflowPanelSynthesisBindings(f2.workflow, f2.agents, nil, f2.snapshot, f2.opts); err == nil {
+		t.Fatal("resolveWorkflowPanelSynthesisBindings() accepted a misnamed synthesizer agent")
+	}
+}
+
 type panelAuthorizationFixture struct {
 	workflow *compiler.CompiledWorkflow
 	agents   *agents.AgentRegistry

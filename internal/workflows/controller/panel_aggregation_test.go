@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -53,9 +52,16 @@ func TestBuildSynthesisEnvelope_PreservesDeclarationOrder(t *testing.T) {
 
 // Fan-in matrix item 2: invalid or oversized JSON never reaches synthesis.
 func TestBuildSynthesisEnvelope_RejectsOversizedRawReport(t *testing.T) {
-	oversized := bytes.Repeat([]byte("a"), maxRawPanelMemberReportBytes+1)
-	raw := append([]byte(`{"verdict":"approved","findings":[],"pad":"`), oversized...)
-	raw = append(raw, []byte(`"}`)...)
+	// Oversized via ONLY legal schema fields (an oversized but otherwise valid
+	// finding description), not an unknown field: an unknown-field rejection
+	// would mask the actual raw-size bound this test names, since
+	// DisallowUnknownFields would fire regardless of size.
+	oversizedFinding := finding("f1")
+	oversizedFinding.Description = strings.Repeat("d", maxRawPanelMemberReportBytes)
+	raw := validPanelReportJSON(PanelVerdictApproved, oversizedFinding)
+	if len(raw) <= maxRawPanelMemberReportBytes {
+		t.Fatalf("test fixture is %d bytes, want > %d", len(raw), maxRawPanelMemberReportBytes)
+	}
 	inputs := []PanelSynthesisMemberInput{
 		panelMemberInput("security", raw),
 		panelMemberInput("correctness", validPanelReportJSON(PanelVerdictApproved)),
@@ -173,6 +179,50 @@ func TestComputeHostVerdict_AllEmptyApprovedReportsProduceApproved(t *testing.T)
 	}
 	if got := ComputeHostVerdict(reports); got != PanelVerdictApproved {
 		t.Fatalf("ComputeHostVerdict() = %q, want %q", got, PanelVerdictApproved)
+	}
+}
+
+// Test-review regression: ComputeHostVerdict was only ever exercised with
+// 2-member report slices, but panels admit up to 4 members. A single
+// changes_requested/finding at the LAST position (not the first) must still
+// force the verdict, proving the loop does not short-circuit or stop early.
+func TestComputeHostVerdict_FourMembersAnyPositionForcesChangesRequested(t *testing.T) {
+	for position := 0; position < 4; position++ {
+		reports := make([]PanelMemberReport, 4)
+		for i := range reports {
+			reports[i] = PanelMemberReport{Verdict: PanelVerdictApproved, Findings: nil}
+		}
+		reports[position] = PanelMemberReport{Verdict: PanelVerdictApproved, Findings: []PanelFinding{finding("f1")}}
+		if got := ComputeHostVerdict(reports); got != PanelVerdictChangesRequested {
+			t.Fatalf("position %d: ComputeHostVerdict() = %q, want %q", position, got, PanelVerdictChangesRequested)
+		}
+	}
+	allApproved := make([]PanelMemberReport, 4)
+	for i := range allApproved {
+		allApproved[i] = PanelMemberReport{Verdict: PanelVerdictApproved, Findings: nil}
+	}
+	if got := ComputeHostVerdict(allApproved); got != PanelVerdictApproved {
+		t.Fatalf("four members, all approved and empty: ComputeHostVerdict() = %q, want %q", got, PanelVerdictApproved)
+	}
+}
+
+// Test-review regression: BuildSynthesisEnvelope's 2..4 member bound (D7)
+// was never exercised at 1 or 5 members; a broken boundary (e.g. <= vs <)
+// would go undetected.
+func TestBuildSynthesisEnvelope_RejectsMemberCountOutsideTwoToFour(t *testing.T) {
+	one := []PanelSynthesisMemberInput{panelMemberInput("security", validPanelReportJSON(PanelVerdictApproved))}
+	if _, _, err := BuildSynthesisEnvelope("review", one); err == nil {
+		t.Fatal("1 member: BuildSynthesisEnvelope() error = nil, want rejection")
+	}
+	five := make([]PanelSynthesisMemberInput, 0, 5)
+	for i := 0; i < 5; i++ {
+		five = append(five, panelMemberInput(memberIDFor(i), validPanelReportJSON(PanelVerdictApproved)))
+	}
+	if _, _, err := BuildSynthesisEnvelope("review", five); err == nil {
+		t.Fatal("5 members: BuildSynthesisEnvelope() error = nil, want rejection")
+	}
+	if _, _, err := BuildSynthesisEnvelope("review", nil); err == nil {
+		t.Fatal("0 members: BuildSynthesisEnvelope() error = nil, want rejection")
 	}
 }
 
