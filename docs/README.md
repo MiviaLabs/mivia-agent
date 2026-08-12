@@ -40,6 +40,7 @@ What mivia does and how to configure it. Owner: `product`.
 | [Workflows](product/workflows.md) | Workflow model: plan, implement, review, and verify |
 | [Workflow guide](product/workflows-guide.md) | CLI commands, agent tools, authoring, execution, and monitoring |
 | [Agent memory](product/memory.md) | Durable agent memory: scopes, tools, entry format, configuration |
+| [Integrations](product/integrations.md) | External services mivia can talk to: AI providers, web search, MCP servers |
 
 ## Architecture
 

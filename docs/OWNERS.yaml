@@ -106,3 +106,8 @@ topics:
     path: docs/product/memory.md
     owner: product
     description: Durable agent memory: scopes, tools, entry format, configuration
+
+  integrations:
+    path: docs/product/integrations.md
+    owner: product
+    description: External services mivia can talk to - AI providers, web search, MCP servers

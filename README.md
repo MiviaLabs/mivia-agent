@@ -14,7 +14,7 @@
 
 mivia reads, searches, and edits files in your project. It runs commands, such as your test suite. It can also run multi-step workflows in an isolated worktree, with a durable run record for every step.
 
-Your files stay on your machine by default. mivia sends prompts and selected context to the AI provider you configure. Web search, configured MCP servers, lifecycle hooks, and workflow delivery can also contact external services or run configured local programs. Review those settings before use.
+Your files stay on your machine by default. mivia sends prompts and selected context to the AI provider you configure. Web search, configured MCP servers, lifecycle hooks, and workflow delivery can also contact external services or run configured local programs. Review those settings before use. See [Integrations](docs/product/integrations.md) for the full list.
 
 ## Quick start
 
@@ -130,6 +130,7 @@ Most work under `mivia chat` runs locally. The provider, web search, configured 
 |-------|--------|
 | [Product overview](docs/product/overview.md) | What mivia is, plain-language walkthrough |
 | [Configuration](docs/product/config.md) | Providers, keys, settings, and MCP servers |
+| [Integrations](docs/product/integrations.md) | External services mivia can talk to |
 | [Coding agent mode](docs/product/agent.md) | Chat, tools, agents, skills |
 | [Memory](docs/product/memory.md) | Durable project and organization memory |
 | [Workflows](docs/product/workflows.md) | Step-by-step processes |
