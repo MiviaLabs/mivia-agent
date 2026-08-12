@@ -209,6 +209,9 @@ func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workfl
 	if taskResult.Err != nil {
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: taskResult.Status}, taskResult.Err)
 	}
+	if err := panelSynthesisTaskStatusError(taskResult); err != nil {
+		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: taskResult.Status}, err)
+	}
 	keys := AllCanonicalSourceKeys(envelopeStruct)
 	synthOut, err := DecodeStrictPanelSynthesisOutput([]byte(taskResult.Output), keys)
 	if err != nil {
@@ -224,6 +227,22 @@ func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workfl
 		Output: output, Status: "completed",
 	}
 	return c.settleAgentAttempt(ctx, run, step, attempt, result2, nil)
+}
+
+// panelSynthesisTaskStatusError checks the synthesis task's own terminal
+// status, mirroring panelMemberResultError's status check for members
+// (panel_runner.go). coordinator.mapStatus treats Status as authoritative
+// independent of Err, so a synthesis task can terminate
+// failed/timed_out/canceled/blocked with Err == nil; without this check its
+// stale or partial Output would decode straight into the final settled
+// report. The member check is not a substitute for this one: the synthesis
+// result is read directly in advancePanelSynthesis, not through that
+// chokepoint.
+func panelSynthesisTaskStatusError(taskResult subagents.Result) error {
+	if taskResult.Status != "completed" {
+		return fmt.Errorf("panel synthesis task ended with status %q, not completed", taskResult.Status)
+	}
+	return nil
 }
 
 // panelSynthesisMemberInputs gathers each successful member's raw output and

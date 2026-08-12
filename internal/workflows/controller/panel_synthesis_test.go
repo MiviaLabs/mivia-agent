@@ -254,3 +254,22 @@ func TestAdvancePanelSynthesis_RejectsMissingStepSkill(t *testing.T) {
 		t.Fatal("advancePanelSynthesis() done = false, want a terminal (failed) run")
 	}
 }
+
+// Bug-audit regression (round 3): coordinator.mapStatus treats Status as
+// authoritative independent of Err, so a synthesis task can terminate
+// non-completed with a nil Err. panelSynthesisTaskStatusError must reject
+// that, the same way panelMemberResultError already rejects it for members
+// — this is a second, independent site of the same defect class, not
+// covered by the member-side fix.
+func TestPanelSynthesisTaskStatusErrorRejectsNonCompletedStatusWithNilErr(t *testing.T) {
+	for _, status := range []string{"failed", "timed_out", "canceled", "blocked"} {
+		result := subagents.Result{TaskID: "synthesis", Status: status, Err: nil, Output: json.RawMessage(`{"dispositions":[],"summary":"x"}`)}
+		if err := panelSynthesisTaskStatusError(result); err == nil {
+			t.Fatalf("status %q with nil Err: panelSynthesisTaskStatusError() = nil, want an error", status)
+		}
+	}
+	completed := subagents.Result{TaskID: "synthesis", Status: "completed", Err: nil}
+	if err := panelSynthesisTaskStatusError(completed); err != nil {
+		t.Fatalf("status completed: panelSynthesisTaskStatusError() = %v, want nil", err)
+	}
+}
