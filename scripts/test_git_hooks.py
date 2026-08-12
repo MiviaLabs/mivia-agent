@@ -511,6 +511,77 @@ def test_pre_commit_has_invariant_gate() -> None:
     assert helper_call in push
 
 
+def extract_memory_dump_block() -> str:
+    """The plan-76 (D6) memory-dump-and-stage block of pre-commit, from its
+    leading comment through the closing `fi`, ready to run standalone in a
+    fixture repo with $ROOT and `fail` provided by the caller."""
+    source = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
+    start = source.index("# Plan 76 (D6)")
+    marker = 'git add "$ROOT/.mivia/memory.jsonl"\nfi\n'
+    end = source.index(marker) + len(marker)
+    return source[start:end]
+
+
+def write_fake_mivia_module(root: Path) -> None:
+    """A minimal `go run ./cmd/mivia` stand-in: recognizes `memory dump` and
+    prints one canned JSONL line, so the pre-commit block's staging logic can
+    be tested without depending on a full mivia build."""
+    (root / "go.mod").write_text("module fakemivia\n\ngo 1.21\n", encoding="utf-8")
+    cmd_dir = root / "cmd" / "mivia"
+    cmd_dir.mkdir(parents=True, exist_ok=True)
+    (cmd_dir / "main.go").write_text(
+        'package main\n\n'
+        'import (\n\t"fmt"\n\t"os"\n)\n\n'
+        'func main() {\n'
+        '\tfor _, a := range os.Args[1:] {\n'
+        '\t\tif a == "dump" {\n'
+        '\t\t\tfmt.Println(`{"id":"fake-id","scope":"project"}`)\n'
+        '\t\t\treturn\n'
+        '\t\t}\n'
+        '\t}\n'
+        '\tos.Exit(1)\n'
+        '}\n',
+        encoding="utf-8",
+    )
+
+
+def test_pre_commit_memory_dump_stages_jsonl_when_db_staged(root: Path) -> None:
+    if os.name == "nt" or shutil.which("go") is None:
+        return
+    init_repo(root)
+    write_fake_mivia_module(root)
+    run(["git", "add", "go.mod", "cmd/mivia/main.go"], root)
+    mivia_dir = root / ".mivia"
+    mivia_dir.mkdir(exist_ok=True)
+    (mivia_dir / "memory.db").write_bytes(b"fake sqlite bytes")
+    run(["git", "add", ".mivia/memory.db"], root)
+
+    block = extract_memory_dump_block()
+    script = f'ROOT="{root}"\nfail() {{ echo "$*" >&2; exit 1; }}\n' + block
+    run(["bash", "-c", script], root, check=True)
+
+    cached = run(["git", "diff", "--cached", "--name-only"], root).stdout
+    assert ".mivia/memory.jsonl" in cached, "staging memory.db must stage the jsonl export too"
+    jsonl = (mivia_dir / "memory.jsonl").read_text(encoding="utf-8")
+    assert "fake-id" in jsonl
+
+
+def test_pre_commit_memory_dump_skipped_when_db_not_staged(root: Path) -> None:
+    if os.name == "nt" or shutil.which("go") is None:
+        return
+    init_repo(root)
+    write_fake_mivia_module(root)
+    run(["git", "add", "go.mod", "cmd/mivia/main.go"], root)
+
+    block = extract_memory_dump_block()
+    script = f'ROOT="{root}"\nfail() {{ echo "$*" >&2; exit 1; }}\n' + block
+    run(["bash", "-c", script], root, check=True)
+
+    cached = run(["git", "diff", "--cached", "--name-only"], root).stdout
+    assert ".mivia/memory.jsonl" not in cached
+    assert not (root / ".mivia" / "memory.jsonl").exists()
+
+
 def test_pre_push_without_a_base_scans_all_tracked_files() -> None:
     """Run the pre-push base selection with no usable upstream or origin base."""
     if os.name == "nt":
@@ -685,6 +756,8 @@ def main() -> None:
         test_pre_commit_does_not_overstage_partially_staged_go_file(
             base / "partial-staging"
         )
+        test_pre_commit_memory_dump_stages_jsonl_when_db_staged(base / "memory-dump-staged")
+        test_pre_commit_memory_dump_skipped_when_db_not_staged(base / "memory-dump-skipped")
     print("test_git_hooks: ok")
 
 
