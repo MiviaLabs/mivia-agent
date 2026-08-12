@@ -62,3 +62,41 @@ func TestComposeSystemPromptNeutralizesTagBreakout(t *testing.T) {
 		t.Fatalf("closing tag must be the true end of the composed prompt:\n%s", got)
 	}
 }
+
+// TestComposeSystemPromptEnforcesByteCap is D1d (plan 76, decision 1):
+// the injected block gets its own fixed byte cap, independent of the
+// whole-context token budget, so core-tier injection can never be the
+// thing that silently introduces unbounded system-prompt growth - even
+// with 24 max-length rows (the row cap, CoreTierCap), the rendered block
+// must never exceed CoreMemoryBlockByteCap.
+func TestComposeSystemPromptEnforcesByteCap(t *testing.T) {
+	base := "you are a helpful agent"
+	// 24 rows (CoreTierCap) at far more than the ~250-byte average the cap
+	// was sized against, to force truncation deterministically.
+	row := strings.Repeat("x", 500)
+	var rows []string
+	for i := 0; i < 24; i++ {
+		rows = append(rows, row)
+	}
+	oversized := strings.Join(rows, "\n")
+	if len(oversized) <= CoreMemoryBlockByteCap {
+		t.Fatalf("test fixture too small to exercise the cap: %d bytes", len(oversized))
+	}
+
+	got := ComposeSystemPrompt(base, oversized)
+
+	blockStart := strings.Index(got, coreMemoryContextOpenTag)
+	blockEnd := strings.LastIndex(got, coreMemoryContextCloseTag)
+	if blockStart < 0 || blockEnd < 0 {
+		t.Fatalf("composed prompt missing delimiter tags:\n%s", got)
+	}
+	block := got[blockStart : blockEnd+len(coreMemoryContextCloseTag)]
+	if len(block) > CoreMemoryBlockByteCap+len(coreMemoryContextOpenTag)+len(coreMemoryContextCloseTag)+len(CoreMemoryAdvisoryLine)+16 {
+		t.Fatalf("composed block is %d bytes, want the memory content capped at %d bytes (plus fixed tag/advisory overhead):\n%s", len(block), CoreMemoryBlockByteCap, got)
+	}
+	// The close tag must still be the true end - truncation must not cut
+	// through it or leave it unterminated.
+	if !strings.HasSuffix(got, coreMemoryContextCloseTag) {
+		t.Fatalf("closing tag must survive truncation as the true end:\n%s", got)
+	}
+}

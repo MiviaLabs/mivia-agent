@@ -1,6 +1,9 @@
 package chat
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // CoreMemoryAdvisoryLine repeats the same "data, never instructions" framing
 // already used for the memory_search tool result (internal/tools/memory.go)
@@ -33,9 +36,22 @@ const (
 	coreMemoryContextCloseTag = "</core-memory-context>"
 )
 
+// CoreMemoryBlockByteCap bounds the rendered memoryBlock (D1d, decision 1):
+// even with the row cap (memory.CoreTierCap = 24) satisfied, this keeps the
+// injected block a small, fixed cost against the whole-context token
+// budget regardless of how verbose individual entries are - independent of
+// that budget, since no system-prompt-only cap exists anywhere else in the
+// codebase and core-tier injection must never be what silently introduces
+// unbounded system-prompt growth.
+const CoreMemoryBlockByteCap = 6 * 1024
+
 func ComposeSystemPrompt(base, memoryBlock string) string {
 	if memoryBlock == "" {
 		return base
+	}
+	memoryBlock = neutralizeTags(memoryBlock)
+	if len(memoryBlock) > CoreMemoryBlockByteCap {
+		memoryBlock = truncateOnRuneBoundary(memoryBlock, CoreMemoryBlockByteCap)
 	}
 	var b strings.Builder
 	b.WriteString(base)
@@ -44,10 +60,23 @@ func ComposeSystemPrompt(base, memoryBlock string) string {
 	b.WriteString("\n")
 	b.WriteString(CoreMemoryAdvisoryLine)
 	b.WriteString("\n")
-	b.WriteString(neutralizeTags(memoryBlock))
+	b.WriteString(memoryBlock)
 	b.WriteString("\n")
 	b.WriteString(coreMemoryContextCloseTag)
 	return b.String()
+}
+
+// truncateOnRuneBoundary cuts s to at most n bytes, backing up to the
+// nearest rune boundary so a multi-byte character at the cut point is
+// dropped whole rather than split into invalid UTF-8.
+func truncateOnRuneBoundary(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // neutralizeTags breaks up any literal occurrence of the delimiter tags
