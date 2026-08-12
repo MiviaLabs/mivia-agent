@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -52,7 +53,7 @@ func TestLineModeReportsTurnFailures(t *testing.T) {
 	want := errors.New("durable publication refused")
 	session := chat.NewSession(&config.Resolved{Model: "model", SystemPrompt: "sys"}, failingLineCompleter{err: want})
 	stderr := captureStderr(t)
-	err := sendLineMode(session, "a question", nil)
+	err := sendLineMode(session, "a question", nil, false)
 	if err == nil {
 		t.Fatal("line mode swallowed the turn error")
 	}
@@ -88,7 +89,7 @@ func TestLineModeStillReportsCancellation(t *testing.T) {
 	signals := make(chan os.Signal, 1)
 	signals <- os.Interrupt
 	stderr := captureStderr(t)
-	err := sendLineMode(session, "a question", signals)
+	err := sendLineMode(session, "a question", signals, false)
 	if err != nil {
 		t.Fatalf("cancelled turn returned an error: %v", err)
 	}
@@ -263,6 +264,131 @@ func TestProcessLineChatReportsInterruptedTurn(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "cancelled - still in session") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+// TestSendLineModeJSONEmitsChunksThenDone pins the happy-path --json wire
+// contract: streamed content comes out as one or more "chunk" events, in
+// order, followed by exactly one "done" event, and stdout carries nothing
+// else (no raw text, no trailing bare newline).
+func TestSendLineModeJSONEmitsChunksThenDone(t *testing.T) {
+	const answer = "hello there"
+	session := chat.NewSession(&config.Resolved{Model: "model", SystemPrompt: "sys"}, streamingLineCompleter{output: answer})
+	stdout := captureStdout(t)
+	stderr := captureStderr(t)
+	err := sendLineMode(session, "hi", nil, true)
+	got := stdout()
+	_ = stderr()
+	if err != nil {
+		t.Fatalf("sendLineMode: %v", err)
+	}
+	lines := splitNonEmptyLines(got)
+	if len(lines) < 2 {
+		t.Fatalf("got %d NDJSON lines, want at least 2 (chunk + done): %q", len(lines), got)
+	}
+	var reconstructed strings.Builder
+	for _, line := range lines[:len(lines)-1] {
+		var ev ndjsonEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("line %q is not valid JSON: %v", line, err)
+		}
+		if ev.Type != "chunk" {
+			t.Fatalf("line %q: type = %q, want %q", line, ev.Type, "chunk")
+		}
+		reconstructed.WriteString(ev.Text)
+	}
+	if reconstructed.String() != answer {
+		t.Fatalf("reconstructed chunk text = %q, want %q", reconstructed.String(), answer)
+	}
+	var last ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatalf("last line %q is not valid JSON: %v", lines[len(lines)-1], err)
+	}
+	if last.Type != "done" {
+		t.Fatalf("last line type = %q, want %q", last.Type, "done")
+	}
+}
+
+// TestSendLineModeJSONReportsErrorWithoutLeakingProviderText pins DC-14: a
+// failed turn must surface an {"type":"error",...} event on stdout, but its
+// message must never be the raw provider/tool error text verbatim, since that
+// text can carry request content.
+func TestSendLineModeJSONReportsErrorWithoutLeakingProviderText(t *testing.T) {
+	secret := errors.New("request contained sk-live-super-secret-token, rejected")
+	session := chat.NewSession(&config.Resolved{Model: "model", SystemPrompt: "sys"}, failingLineCompleter{err: secret})
+	stdout := captureStdout(t)
+	stderr := captureStderr(t)
+	err := sendLineMode(session, "a question", nil, true)
+	got := stdout()
+	_ = stderr()
+	if err == nil {
+		t.Fatal("sendLineMode swallowed the turn error")
+	}
+	lines := splitNonEmptyLines(got)
+	if len(lines) != 1 {
+		t.Fatalf("got %d NDJSON lines, want exactly 1 (error): %q", len(lines), got)
+	}
+	var ev ndjsonEvent
+	if jsonErr := json.Unmarshal([]byte(lines[0]), &ev); jsonErr != nil {
+		t.Fatalf("line %q is not valid JSON: %v", lines[0], jsonErr)
+	}
+	if ev.Type != "error" {
+		t.Fatalf("type = %q, want %q", ev.Type, "error")
+	}
+	if strings.Contains(ev.Message, "sk-live-super-secret-token") {
+		t.Fatalf("error message leaked provider error text verbatim: %q", ev.Message)
+	}
+	if ev.Message == "" {
+		t.Fatal("error event carried no message")
+	}
+}
+
+// TestSendLineModeJSONReportsCancellationAsError pins the cancellation framing:
+// a SIGINT'd turn is reported as {"type":"error","message":"cancelled"}, not
+// "done" and not a fourth event type, and sendLineMode itself still returns
+// nil (a user-initiated cancel is not a hard failure - see
+// TestLineModeStillReportsCancellation for the non-json equivalent).
+func TestSendLineModeJSONReportsCancellationAsError(t *testing.T) {
+	session := chat.NewSession(&config.Resolved{Model: "model", SystemPrompt: "sys"}, blockingLineCompleter{})
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+	stdout := captureStdout(t)
+	stderr := captureStderr(t)
+	err := sendLineMode(session, "a question", signals, true)
+	got := stdout()
+	_ = stderr()
+	if err != nil {
+		t.Fatalf("cancelled turn returned an error: %v", err)
+	}
+	lines := splitNonEmptyLines(got)
+	if len(lines) != 1 {
+		t.Fatalf("got %d NDJSON lines, want exactly 1 (error/cancelled): %q", len(lines), got)
+	}
+	var ev ndjsonEvent
+	if jsonErr := json.Unmarshal([]byte(lines[0]), &ev); jsonErr != nil {
+		t.Fatalf("line %q is not valid JSON: %v", lines[0], jsonErr)
+	}
+	if ev.Type != "error" || ev.Message != "cancelled" {
+		t.Fatalf("event = %+v, want type=error message=cancelled", ev)
+	}
+}
+
+// TestSendLineModeNonJSONUnaffected pins that omitting --json leaves the
+// classic line-mode output (raw streamed text plus a bare trailing newline)
+// byte-for-byte as it was before --json existed.
+func TestSendLineModeNonJSONUnaffected(t *testing.T) {
+	const answer = "plain text reply"
+	session := chat.NewSession(&config.Resolved{Model: "model", SystemPrompt: "sys"}, streamingLineCompleter{output: answer})
+	stdout := captureStdout(t)
+	stderr := captureStderr(t)
+	err := sendLineMode(session, "hi", nil, false)
+	got := stdout()
+	_ = stderr()
+	if err != nil {
+		t.Fatalf("sendLineMode: %v", err)
+	}
+	if got != answer+"\n" {
+		t.Fatalf("stdout = %q, want %q", got, answer+"\n")
 	}
 }
 

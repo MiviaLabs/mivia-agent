@@ -56,6 +56,11 @@ type chatInvocation struct {
 	allowProgram, denyProgram, disableTool []string
 	allowEnvVar, denyEnvVar                []string
 	noTools, plainUI                       bool
+	// jsonMode is --json: reframe line-mode's stdout as NDJSON events instead
+	// of raw streamed text. Only valid for the non-interactive piped-stdin
+	// line-mode path - runConfiguredChatOnce rejects it for one-shot -p and
+	// for the interactive TUI/classic-REPL paths.
+	jsonMode bool
 }
 
 func runChat(args []string) error {
@@ -124,7 +129,7 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 	if err != nil {
 		return chatInvocation{}, err
 	}
-	invocation.noTools, invocation.plainUI, invocation.staleBypass, args = chatFlags(args)
+	invocation.noTools, invocation.plainUI, invocation.staleBypass, invocation.jsonMode, args = chatFlags(args)
 	if len(args) > 0 {
 		return chatInvocation{}, fmt.Errorf("chat: unexpected arguments: %v", args)
 	}
@@ -275,6 +280,19 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 		return err
 	}
 	defer cleanup()
+	return dispatchChatSurface(invocation, sess, res, useTools, agentState)
+}
+
+// dispatchChatSurface picks and runs the surface (one-shot, classic REPL, or
+// TUI) a fully-built session dispatches to. Split out of
+// runConfiguredChatOnce to keep that setup function under the repo's per-
+// function line budget.
+func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *config.Resolved, useTools bool, agentState *agentSessionState) error {
+	if invocation.jsonMode {
+		if err := validateJSONModeInvocation(invocation); err != nil {
+			return err
+		}
+	}
 	if invocation.prompt != "" {
 		return oneShot(sess, invocation.prompt, useTools, res)
 	}
@@ -282,9 +300,26 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	classicAgentState = agentState
 	defer func() { classicAgentState = nil }()
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return repl(sess, res, useTools, agentState)
+		return repl(sess, res, useTools, agentState, invocation.jsonMode)
 	}
 	return runTUI(sess, res, useTools, agentState, invocation.resumeSessionName)
+}
+
+// validateJSONModeInvocation fails closed on --json combined with any path
+// other than non-interactive piped line-mode: one-shot -p mode never reaches
+// the REPL at all, and the interactive TUI/classic-REPL paths (stdin is a
+// real terminal) print prompts, banners and rendered UI to stdout that would
+// be interleaved with - and indistinguishable from - the NDJSON stream.
+// --json's NDJSON framing (see ndjsonEvent) is only meaningful when stdout is
+// nothing but that stream, which line-mode is the one path that guarantees.
+func validateJSONModeInvocation(invocation chatInvocation) error {
+	if invocation.prompt != "" {
+		return fmt.Errorf("chat: --json is not supported with -p/--prompt (one-shot mode); it only applies to non-interactive piped chat")
+	}
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("chat: --json is not supported for the interactive REPL/TUI; pipe input via stdin (non-interactive) to use --json")
+	}
+	return nil
 }
 
 func enterChatWorkspace(path string) (string, error) {
