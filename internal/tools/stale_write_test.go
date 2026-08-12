@@ -144,3 +144,89 @@ func TestStaleWriteGuardClearsAfterReRead(t *testing.T) {
 		t.Fatalf("edit after re-read = %q, want %q", got, "alpha\ngamma\n")
 	}
 }
+
+// A foreign deletion of a file the agent read must be refused, not silently
+// recreated: write_file's ENOENT branch used to treat every missing file as a
+// legitimate create, so a removed-by-foreign-writer file was recreated with
+// the agent's content while the agent still believed it was editing the
+// version it saw. RED before the fix (write proceeds and recreates the file);
+// GREEN after (write refused with the disappearance message, file stays gone).
+func TestWriteFileRefusesExternallyDeletedObservedFile(t *testing.T) {
+	ws, reg := setupWS(t)
+	abs := filepath.Join(ws.Abs, "f.txt")
+	externalTouch(t, abs, "old\n")
+	mustExec(t, reg, "read_file", map[string]any{"path": "f.txt"})
+	// A foreign writer removes the file the agent had read.
+	if err := os.Remove(abs); err != nil {
+		t.Fatal(err)
+	}
+	_, err := reg.Execute(context.Background(), "write_file", mustJSON(t, map[string]any{
+		"path": "f.txt", "content": "mine\n",
+	}))
+	if err == nil {
+		t.Fatal("write_file recreated an externally deleted observed file; want a refusal")
+	}
+	if !strings.Contains(err.Error(), "no longer exists") {
+		t.Fatalf("refusal does not name the disappearance: %v", err)
+	}
+	if _, statErr := os.Lstat(abs); !os.IsNotExist(statErr) {
+		t.Fatalf("refused write recreated the file (lstat err=%v)", statErr)
+	}
+}
+
+// The delete counterpart: an externally deleted observed file must be refused
+// with the disappearance message, not a bare os.Remove ENOENT that reads like
+// "nothing happened" and gives the agent no reason to re-read. RED before the
+// fix (delete surfaces a bare ENOENT); GREEN after (disappearance refusal).
+func TestDeleteFileRefusesExternallyDeletedObservedFile(t *testing.T) {
+	ws, reg := setupWS(t)
+	abs := filepath.Join(ws.Abs, "f.txt")
+	externalTouch(t, abs, "old\n")
+	mustExec(t, reg, "read_file", map[string]any{"path": "f.txt"})
+	if err := os.Remove(abs); err != nil {
+		t.Fatal(err)
+	}
+	_, err := reg.Execute(context.Background(), "delete_file", mustJSON(t, map[string]any{
+		"path": "f.txt",
+	}))
+	if err == nil {
+		t.Fatal("delete_file succeeded on an externally deleted observed file; want a refusal")
+	}
+	if !strings.Contains(err.Error(), "no longer exists") || !strings.Contains(err.Error(), "removed by a writer you have not seen") {
+		t.Fatalf("refusal is a bare ENOENT, not the disappearance message: %v", err)
+	}
+}
+
+// The disappearance refusal must not be sticky: re-reading the now-missing
+// path drops the stale observation (dropIfGone), so the next write proceeds as
+// an informed create. Without the escape hatch a foreign deletion would leave
+// an observation that read_file on a missing path never refreshes, refusing
+// every later write/delete on that path for the process lifetime. RED before
+// the fix (the first write is not refused at all, so the escape path is never
+// exercised); GREEN after (refusal -> re-read of the missing path -> informed
+// create succeeds).
+func TestStaleGuardClearsAfterReReadOfMissingFile(t *testing.T) {
+	ws, reg := setupWS(t)
+	abs := filepath.Join(ws.Abs, "f.txt")
+	externalTouch(t, abs, "old\n")
+	mustExec(t, reg, "read_file", map[string]any{"path": "f.txt"})
+	if err := os.Remove(abs); err != nil {
+		t.Fatal(err)
+	}
+	// First: the guard refuses the write on the externally deleted file.
+	_, err := reg.Execute(context.Background(), "write_file", mustJSON(t, map[string]any{
+		"path": "f.txt", "content": "mine\n",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "no longer exists") {
+		t.Fatalf("write_file on externally deleted observed file: err=%v", err)
+	}
+	// Re-reading the missing path drops the observation...
+	if _, err := reg.Execute(context.Background(), "read_file", mustJSON(t, map[string]any{"path": "f.txt"})); err == nil {
+		t.Fatal("read_file of a missing path succeeded; want an error")
+	}
+	// ...so the next write is an informed create, not a stale-write refusal.
+	mustExec(t, reg, "write_file", map[string]any{"path": "f.txt", "content": "new\n"})
+	if got := readFileAbs(t, abs); got != "new\n" {
+		t.Fatalf("informed create wrote %q, want %q", got, "new\n")
+	}
+}
