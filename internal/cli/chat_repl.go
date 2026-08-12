@@ -33,9 +33,8 @@ func chatFlags(args []string) (noTools, plainUI, staleBypass, jsonMode bool, res
 			// those are the runs least able to explain a startup failure.
 			staleBypass = true
 		case "--json":
-			// Reframes line-mode's stdout as NDJSON (chunk/done/error events,
-			// with a cancelled turn reported as an "error" whose message is
-			// "cancelled" - see ndjsonEvent) instead of raw streamed text.
+			// Reframes line-mode's stdout as NDJSON (chunk/done/cancelled/
+			// error events - see ndjsonEvent) instead of raw streamed text.
 			// Only valid for the non-interactive piped-stdin path;
 			// runConfiguredChatOnce rejects it for the TUI/classic-REPL and
 			// one-shot -p paths.
@@ -385,13 +384,12 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonM
 			// is still holding back as a possibly-incomplete trailing rune was
 			// never a confirmed, complete chunk, so it must not be flushed -
 			// that would surface a phantom chunk for content the turn never
-			// finished producing. Reported as "error"/"cancelled" rather than
-			// "done" (the wire schema has exactly three event types), so a
-			// consumer keying off type alone still sees a two-way split
-			// between success and not-success, with the message telling them
-			// which kind of not-success this was.
+			// finished producing. Reported as its own "cancelled" type
+			// (distinct from "error") so a consumer can tell "the user
+			// stopped this" apart from "this failed" without string-matching
+			// a message field.
 			jw.Discard()
-			writeNDJSONEvent(os.Stdout, ndjsonEvent{Type: "error", Message: "cancelled"})
+			writeNDJSONEvent(os.Stdout, ndjsonEvent{Type: "cancelled"})
 		}
 		return nil
 	}

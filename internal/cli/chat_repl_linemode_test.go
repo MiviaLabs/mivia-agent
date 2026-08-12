@@ -343,12 +343,14 @@ func TestSendLineModeJSONReportsErrorWithoutLeakingProviderText(t *testing.T) {
 	}
 }
 
-// TestSendLineModeJSONReportsCancellationAsError pins the cancellation framing:
-// a SIGINT'd turn is reported as {"type":"error","message":"cancelled"}, not
-// "done" and not a fourth event type, and sendLineMode itself still returns
-// nil (a user-initiated cancel is not a hard failure - see
-// TestLineModeStillReportsCancellation for the non-json equivalent).
-func TestSendLineModeJSONReportsCancellationAsError(t *testing.T) {
+// TestSendLineModeJSONReportsCancellationAsDistinctType pins the cancellation
+// framing: a SIGINT'd turn is reported as {"type":"cancelled"} - not "done",
+// and not folded into "error" - so a consumer can tell "the user stopped
+// this" apart from "this failed" with a bare type check, no message-string
+// matching. sendLineMode itself still returns nil (a user-initiated cancel
+// is not a hard failure - see TestLineModeStillReportsCancellation for the
+// non-json equivalent).
+func TestSendLineModeJSONReportsCancellationAsDistinctType(t *testing.T) {
 	session := chat.NewSession(&config.Resolved{Model: "model", SystemPrompt: "sys"}, blockingLineCompleter{})
 	signals := make(chan os.Signal, 1)
 	signals <- os.Interrupt
@@ -362,14 +364,17 @@ func TestSendLineModeJSONReportsCancellationAsError(t *testing.T) {
 	}
 	lines := splitNonEmptyLines(got)
 	if len(lines) != 1 {
-		t.Fatalf("got %d NDJSON lines, want exactly 1 (error/cancelled): %q", len(lines), got)
+		t.Fatalf("got %d NDJSON lines, want exactly 1 (cancelled): %q", len(lines), got)
 	}
 	var ev ndjsonEvent
 	if jsonErr := json.Unmarshal([]byte(lines[0]), &ev); jsonErr != nil {
 		t.Fatalf("line %q is not valid JSON: %v", lines[0], jsonErr)
 	}
-	if ev.Type != "error" || ev.Message != "cancelled" {
-		t.Fatalf("event = %+v, want type=error message=cancelled", ev)
+	if ev.Type != "cancelled" {
+		t.Fatalf("event = %+v, want type=cancelled", ev)
+	}
+	if ev.Message != "" {
+		t.Fatalf("event = %+v, want no message on a cancelled event", ev)
 	}
 }
 

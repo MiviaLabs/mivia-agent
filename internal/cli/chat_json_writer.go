@@ -10,17 +10,18 @@ import (
 )
 
 // ndjsonEvent is the wire schema for line-mode --json output. Exactly one
-// event type is populated per line, and there are exactly three types:
+// event type is populated per line, and there are exactly four types:
 //
 //	{"type":"chunk","text":"..."}  - one per emitted piece of streamed content
 //	{"type":"done"}                - exactly once, turn completed successfully
-//	{"type":"error","message":"…"} - exactly once, turn failed or was cancelled
+//	{"type":"cancelled"}           - exactly once, turn was SIGINT-interrupted
+//	{"type":"error","message":"…"} - exactly once, turn failed
 //
-// A SIGINT-interrupted turn is reported as {"type":"error","message":"cancelled"}
-// rather than "done": the turn produced no confirmed final answer, so "done"
-// would misrepresent it. It is folded into "error" rather than given a fourth
-// type of its own so a consumer only has to branch on two outcomes ("done" vs.
-// not) plus a message to tell them apart, matching the three-type contract.
+// A SIGINT-interrupted turn gets its own "cancelled" type rather than being
+// folded into "error": a caller that wants to distinguish "the user stopped
+// this on purpose" from "this genuinely failed" (e.g. to decide whether to
+// surface an error toast) would otherwise have to string-match a message
+// field, which is fragile - a bare type check is not.
 type ndjsonEvent struct {
 	Type    string `json:"type"`
 	Text    string `json:"text,omitempty"`
