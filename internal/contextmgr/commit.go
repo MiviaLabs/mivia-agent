@@ -7,6 +7,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
+// SummaryRequestBuilder derives the summary request for one preparation from
+// real host state (objective, source range, policy digest, turn state). It is
+// consulted only for a compacted preparation with a non-nil Summarizer; a nil
+// builder falls back to the fixed SummaryRequest field, keeping existing
+// callers byte-identical.
+type SummaryRequestBuilder func(Preparation) (SummaryRequest, error)
+
 // PublicationRequest keeps summary generation, request mapping, and durable
 // publication in one explicit call boundary. No memory publication happens in
 // this package; the caller adopts the preparation only after success.
@@ -14,6 +21,7 @@ type PublicationRequest struct {
 	Store          contextstate.Store
 	Summarizer     *Summarizer
 	SummaryRequest SummaryRequest
+	SummaryBuilder SummaryRequestBuilder
 	Preparation    Preparation
 	Result         TurnResult
 }
@@ -27,7 +35,15 @@ func CommitPreparation(ctx context.Context, request PublicationRequest) error {
 	}
 	preparation := request.Preparation
 	if preparation.Compacted && request.Summarizer != nil {
-		summary, err := request.Summarizer.Summarize(ctx, request.SummaryRequest)
+		summaryRequest := request.SummaryRequest
+		var err error
+		if request.SummaryBuilder != nil {
+			summaryRequest, err = request.SummaryBuilder(preparation)
+			if err != nil {
+				return err
+			}
+		}
+		summary, err := request.Summarizer.Summarize(ctx, summaryRequest)
 		if err != nil {
 			return err
 		}
@@ -46,16 +62,19 @@ func CommitPreparation(ctx context.Context, request PublicationRequest) error {
 
 // PreparationCommitter adapts the publication function to the narrow
 // CheckpointPublisher interface used by chat. The summary request is captured
-// by the host together with the preparation's provider/model policy snapshot.
+// by the host together with the preparation's provider/model policy snapshot,
+// or derived per preparation through SummaryBuilder when the host has live
+// turn state to draw on.
 type PreparationCommitter struct {
 	Store          contextstate.Store
 	Summarizer     *Summarizer
 	SummaryRequest SummaryRequest
+	SummaryBuilder SummaryRequestBuilder
 }
 
 func (c PreparationCommitter) Commit(ctx context.Context, preparation Preparation, result TurnResult) error {
 	return CommitPreparation(ctx, PublicationRequest{
 		Store: c.Store, Summarizer: c.Summarizer, SummaryRequest: c.SummaryRequest,
-		Preparation: preparation, Result: result,
+		SummaryBuilder: c.SummaryBuilder, Preparation: preparation, Result: result,
 	})
 }

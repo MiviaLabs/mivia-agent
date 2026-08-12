@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
@@ -103,6 +104,12 @@ type Options struct {
 	// has no checkpoint publisher and is therefore safe to pass to nested loops.
 	PreparationManager contextmgr.PreparationManager
 	PreparationInput   contextmgr.PrepareInput
+	// SummaryConfig wires the optional LLM summarizer into the request path. A
+	// nil Summarizer keeps the loop structural-only: no summary provider call,
+	// no injected message, byte-identical requests. Redaction is the host's
+	// compiled redaction policy applied to summary input and output through
+	// the summary validators.
+	SummaryConfig SummaryConfig
 	// BeforeStep, when set, is called on the loop goroutine at the top of each
 	// step before history pruning and request build (plan 53.03). Returned
 	// messages are appended to the loop history. Nil is a no-op.
@@ -132,4 +139,16 @@ type Options struct {
 	// most one interrupt per window. 0 disables the cooldown (tests). The
 	// production 5s default lives in the subagents wiring, NOT here.
 	SoftInterruptCooldown time.Duration
+}
+
+// SummaryConfig is one turn's immutable summary wiring. It is read, never
+// written, by the loop, mirroring Options itself.
+type SummaryConfig struct {
+	// Summarizer is the captured provider/model/policy binding. Nil disables
+	// summary injection entirely.
+	Summarizer *contextmgr.Summarizer
+	// Redaction is the host's compiled redaction policy. It classifies every
+	// envelope field and every provider output before anything reaches the
+	// wire or storage.
+	Redaction contextstate.RedactionPolicy
 }
