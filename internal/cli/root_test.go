@@ -213,3 +213,29 @@ func TestExecuteLogoutDispatchesToRunLogout(t *testing.T) {
 		t.Fatalf("error = %v, want contains 'unknown flag'", err)
 	}
 }
+
+// TestExecuteRegisterDispatchesToRunRegister: `mivia register` (no --email)
+// reaches runRegister and fails fast on parseRegisterArgs's pre-network
+// validation, proving dispatch without a real network call.
+func TestExecuteRegisterDispatchesToRunRegister(t *testing.T) {
+	err := Execute([]string{"register"})
+	if err == nil {
+		t.Fatal("Execute([register]) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "--email is required") {
+		t.Fatalf("error = %v, want contains '--email is required'", err)
+	}
+}
+
+// TestExecuteVerifyDispatchesToRunVerify: `mivia verify` (no code) reaches
+// runVerify and fails fast on parseVerifyArgs's pre-network validation,
+// proving dispatch without a real network call or filesystem touch.
+func TestExecuteVerifyDispatchesToRunVerify(t *testing.T) {
+	err := Execute([]string{"verify"})
+	if err == nil {
+		t.Fatal("Execute([verify]) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "a verification code is required") {
+		t.Fatalf("error = %v, want contains 'a verification code is required'", err)
+	}
+}

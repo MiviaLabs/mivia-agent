@@ -50,6 +50,10 @@ func Execute(args []string) error {
 		return runLogin(args[1:])
 	case "logout":
 		return runLogout(args[1:])
+	case "register":
+		return runRegister(args[1:])
+	case "verify":
+		return runVerify(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (try %s help)", args[0], version.Binary)
 	}
@@ -109,6 +113,8 @@ Usage:
   %s setup [--provider name] [--key value] [--env-file path] [--config path] [--yes]
   %s login --email <addr> [--password-stdin] [--server-url <url>]
   %s logout [--server-url <url>]
+  %s register --email <addr> --organization-name <name> [--password-stdin] [--server-url <url>]
+  %s verify <code> [--server-url <url>]
   %s version [--json]
   %s help
 
@@ -131,7 +137,7 @@ Chat: /help /tools /hooks /exit /clear /new /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 // flagValue returns the value of the first occurrence of any named flag,
