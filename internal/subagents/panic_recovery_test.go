@@ -84,3 +84,33 @@ func TestPoolOnTaskDonePanicDoesNotCorruptSuccessfulResult(t *testing.T) {
 		t.Fatalf("Err = %v, want nil - an OnTaskDone panic must not corrupt the already-computed result", got[0].Err)
 	}
 }
+
+// TestPoolRecoversPanicInContextForTask is a bug-audit coverage gap
+// (test-coverage lens): safeExecuteOne's recover wraps the whole of
+// executeOne, but the only panic sources previously exercised were inside
+// the dispatched handler and inside OnTaskDone. ContextForTask runs earlier
+// in executeOne, before the dispatcher is ever invoked - this proves the
+// same recovery net catches a panic there too, rather than that code path
+// being accidentally uncovered dead-code-for-panics.
+func TestPoolRecoversPanicInContextForTask(t *testing.T) {
+	d := runtime.New(runtime.Policy{})
+	_ = d.Register(runtime.Subagent, "ok", h{})
+
+	p := New(d, Policy{Workers: 1})
+	p.ContextForTask = func(context.Context, string) context.Context {
+		panic("simulated ContextForTask panic")
+	}
+	got, err := p.Run(context.Background(), []Task{{ID: "t1", Name: "ok"}})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %+v", len(got), got)
+	}
+	if got[0].Status != "failed" {
+		t.Fatalf("Status = %q, want %q", got[0].Status, "failed")
+	}
+	if got[0].Err == nil || !strings.Contains(got[0].Err.Error(), "simulated ContextForTask panic") {
+		t.Fatalf("Err = %v, want it to mention the panic value", got[0].Err)
+	}
+}

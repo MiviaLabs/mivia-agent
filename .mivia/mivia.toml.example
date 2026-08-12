@@ -463,9 +463,17 @@ default_timeout_seconds = 43200
 # Distinct from schema_retry_max above, which governs corrective re-entries
 # after an invalid schema-validated reply within one task, not whole-task
 # retry.
+#
+# NOT safe for a task with side effects it can't undo: retry re-dispatches
+# the whole task from scratch, it does not skip tool calls the failed attempt
+# already made. A task that writes a file, calls an external API, or sends a
+# message and only THEN hits a late transient error will repeat those side
+# effects on retry. max_retries is capped at 20 and base_backoff_seconds is
+# floored at 50ms regardless of the value set here, to bound retry-storm risk
+# against a misconfiguration.
 # [subagents.retry]
-# max_retries = 0            # 0 = disabled (default); positive = attempts beyond the first
-# base_backoff_seconds = 1   # initial backoff before the first retry
+# max_retries = 0            # 0 = disabled (default); positive = attempts beyond the first, capped at 20
+# base_backoff_seconds = 1   # initial backoff before the first retry; floored at 0.05 (50ms) if positive
 # max_backoff_seconds = 30   # cap on backoff growth
 # backoff_factor = 2.0       # exponential multiplier per attempt; 0 selects 2.0
 # jitter_fraction = 0.25     # ±jitter_fraction/2 randomization; 0 disables jitter

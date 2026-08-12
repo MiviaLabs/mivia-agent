@@ -342,6 +342,18 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	return actual.(coordinator.Coordinator)
 }
 
+// maxTaskRetries and minTaskRetryBaseBackoff clamp [subagents.retry] against
+// misconfiguration (bug-audit finding, security lens): TaskRetryConfig had no
+// bound on max_retries and RetryPolicy.EffectiveBackoff only floors a
+// base_backoff of exactly zero-or-negative to 100ms, so a typo'd value (an
+// extra zero on max_retries, or base_backoff_seconds = 0.001) could retry-storm
+// a provider with none of the caps internal/provider/retry.go's own
+// HTTP-layer retry hardcodes for the same reason.
+const (
+	maxTaskRetries          = 20
+	minTaskRetryBaseBackoff = 50 * time.Millisecond
+)
+
 // taskRetryPolicyFromConfig converts the [subagents.retry] TOML surface into
 // a coordinator.RetryPolicy. internal/config cannot import internal/coordinator
 // (coordinator already imports config), so this CLI-layer seam does the
@@ -352,9 +364,17 @@ func taskRetryPolicyFromConfig(cfg config.TaskRetryConfig) coordinator.RetryPoli
 	if cfg.MaxRetries <= 0 {
 		return coordinator.NoRetry
 	}
+	maxRetries := cfg.MaxRetries
+	if maxRetries > maxTaskRetries {
+		maxRetries = maxTaskRetries
+	}
+	baseBackoff := time.Duration(cfg.BaseBackoffSeconds * float64(time.Second))
+	if baseBackoff > 0 && baseBackoff < minTaskRetryBaseBackoff {
+		baseBackoff = minTaskRetryBaseBackoff
+	}
 	return coordinator.RetryPolicy{
-		MaxRetries:     cfg.MaxRetries,
-		BaseBackoff:    time.Duration(cfg.BaseBackoffSeconds * float64(time.Second)),
+		MaxRetries:     maxRetries,
+		BaseBackoff:    baseBackoff,
 		MaxBackoff:     time.Duration(cfg.MaxBackoffSeconds * float64(time.Second)),
 		BackoffFactor:  cfg.BackoffFactor,
 		JitterFraction: cfg.JitterFraction,
