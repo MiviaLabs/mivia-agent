@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -458,31 +457,6 @@ func (s *StorageLedgerRepository) DeleteRun(ctx context.Context, runID string) e
 	}
 	s.mu.Unlock()
 	return nil
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-var storageEventIDCounter atomic.Uint64
-
-func newStorageEventID() string {
-	n := storageEventIDCounter.Add(1)
-	return fmt.Sprintf("se-%d", n)
-}
-
-// advanceStorageEventIDCounter raises the process-local event ID counter to at
-// least n, so IDs minted after a restart cannot collide with replayed ones.
-func advanceStorageEventIDCounter(n uint64) {
-	for {
-		cur := storageEventIDCounter.Load()
-		if n <= cur {
-			return
-		}
-		if storageEventIDCounter.CompareAndSwap(cur, n) {
-			return
-		}
-	}
 }
 
 // Ensure StorageLedgerRepository implements LedgerRepository at compile time.

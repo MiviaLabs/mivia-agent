@@ -428,7 +428,7 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	var err error
 	for i := 0; i < maxAttempts; i++ {
 		attempts++
-		out, err = h.Invoke(callCtx, req)
+		out, err = safeInvoke(h, callCtx, req)
 		if err == nil {
 			break
 		}
@@ -465,11 +465,4 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	d.completeIDKeyed(req, result)
 	d.mu.Unlock()
 	return result
-}
-
-func ephemeralMarker(h Handler, req Request) string {
-	if ephemeral, ok := h.(ephemeralResultHandler); ok {
-		return ephemeral.EphemeralResultMarker(req)
-	}
-	return ""
 }

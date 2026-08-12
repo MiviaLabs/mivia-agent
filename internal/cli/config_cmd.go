@@ -59,9 +59,13 @@ func formatConfigShow(res *config.Resolved) string {
 		}
 		fmt.Fprintf(&out, "model_policy=%s\n", policy)
 	}
+	if advisory := promptBudgetAdvisory(res); advisory != "" {
+		fmt.Fprintf(&out, "prompt_budget_advisory=%s\n", advisory)
+	}
 	fmt.Fprintf(&out, "base_url=%s\n", res.BaseURL)
 	fmt.Fprintf(&out, "api_key_env=%s\n", res.APIKeyEnv)
 	fmt.Fprintf(&out, "api_key_set=%v\n", res.APIKeySet)
+	fmt.Fprintf(&out, "api_key_required=%v\n", !(res.ProviderName == "ollama" && config.IsOllamaLoopback(res.BaseURL)))
 	if res.HTTPReferer != "" {
 		fmt.Fprintf(&out, "http_referer=%s\n", res.HTTPReferer)
 	}

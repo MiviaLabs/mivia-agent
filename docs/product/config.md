@@ -42,6 +42,7 @@ The workspace `.env` stays beside the project files at `./.env`. Tools such as d
 | DeepSeek advanced example | `deepseek-v4-pro` (declare it, then set `default_model` or use `--model`) |
 | OpenRouter example | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
 | ZAI example | `glm-5.2` (declare it under `providers.zai`) |
+| Ollama example | `gpt-oss:120b` (declare it under `providers.ollama`) |
 
 ## Set up a provider
 
@@ -87,9 +88,44 @@ api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
 ```
 
+### Ollama
+
+The `ollama` provider supports two modes. The provider name is always
+`ollama`; mode is inferred from `base_url` via the loopback predicate —
+literal loopback hostnames (`127.0.0.1`, `::1`, `localhost`) mean local
+daemon mode with **no API key**; any other `base_url` means cloud mode
+and requires `OLLAMA_API_KEY`. localhost is trusted as loopback per the
+design (matching internal/config/loopback.go's doc comment); environments
+where localhost does not resolve to loopback should use 127.0.0.1 instead.
+The client additionally resolves the host once at construction and pins the
+connection to the verified loopback address, so keyless local mode fails
+closed (with a clear error) if localhost resolves to a non-loopback address.
+
+**Cloud profile** (Ollama Cloud, API key required):
+
+```toml
+[providers.ollama]
+models = [{ name = "gpt-oss:120b", context_window_tokens = 131072 }]
+default_model = "gpt-oss:120b"
+api_key_env = "OLLAMA_API_KEY"
+base_url = "https://ollama.com/v1"
+```
+
+**Local-daemon profile** (local Ollama, no key needed):
+
+```toml
+[providers.ollama]
+models = [{ name = "gpt-oss:120b", context_window_tokens = 131072 }]
+default_model = "gpt-oss:120b"
+base_url = "http://127.0.0.1:11434/v1"
+```
+
+Local daemon model names must be declared in `models` and match the
+output of `ollama list`. The local profile needs no key in the env file.
+
 ## Provider support
 
-mivia currently supports `deepseek`, `openrouter`, and `zai`. Do not add an
+mivia currently supports `deepseek`, `openrouter`, `zai`, and `ollama`. Do not add an
 arbitrary OpenAI-compatible provider name. The provider registry rejects names
 that it does not support.
 
@@ -107,6 +143,7 @@ An empty list, a missing list, or a remote model registry is invalid. mivia does
 DEEPSEEK_API_KEY=sk-REPLACE-ME
 OPENROUTER_API_KEY=sk-REPLACE-ME
 ZAI_API_KEY=sk-REPLACE-ME
+OLLAMA_API_KEY=ollama-REPLACE-ME  # required for cloud mode only; local daemon needs no key
 ```
 
 ## Installed binary
@@ -215,6 +252,16 @@ Two consequences worth knowing before you enable it:
 
 `[chat] max_steps` bounds one turn's agent loop. `0` means unlimited, and this is the default when unset. `/steps` overrides it for the current session.
 
+## Bounded prompt budget
+
+`[chat] max_prompt_tokens` caps the per-request prompt budget in tokens. The recommended value is `200000`.
+
+When unset, the prompt budget is the model window minus the output reserve (for example, `616000` on `deepseek-v4-flash`). A bounded budget makes history compaction fire earlier - at 80% of the budget, targeting 50% - and cuts token cost on long sessions.
+
+The recall-versus-price dial works as follows: larger values keep more history in the prompt at higher cost; smaller values compact sooner and spend fewer tokens. The escape hatch is any explicit value up to `10000000` (10M).
+
+When the knob is unset and the active budget exceeds `200000`, `mivia doctor` and `mivia config show` print a `prompt_budget_advisory` suggesting the recommended cap. Set `[chat] max_prompt_tokens = 200000` to suppress the advisory.
+
 ## Tool result ceiling
 
 `[tools] max_tool_result_bytes` caps each tool result stored in agent-loop history, in bytes. Default is `0`, which means uncapped. The per-tool budgets (`max_read_bytes`, `max_output_bytes`, tool-declared limits) are the bound. The one knob governs both the interactive session loop and nested sub-agent loops, so a sub-agent never sees a different ceiling than the session that spawned it.
@@ -225,15 +272,17 @@ Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded interac
 
 ## Per-batch tool result budget
 
-`[tools] batch_result_budget_bytes` bounds what one tool batch adds to history, across all of its parallel calls together. Default is `0`, which means off.
+`[tools] batch_result_budget_bytes` bounds what one tool batch adds to history, across all of its parallel calls together. The recommended value is `-1` (derived).
 
-- `0` (default): off. History is byte-for-byte what it is without the key.
-- `-1`: derive it from the model's prompt budget (a quarter of it in bytes, never below 256 KiB). Inert when there is no prompt budget configured.
+- `-1` (recommended): derive it from the model's prompt budget. The derived value is a quarter of the prompt budget in bytes, with a 256 KiB floor (so `200000` tokens yields `262144` B). Inert when there is no prompt budget configured.
+- `0` (off): history is byte-for-byte what it is without the key.
 - a positive value: the literal byte budget. Minimum 16384; smaller positive values are a config error.
 
-Over-budget results are degraded, never failed. The call already ran and its side effects already happened, so its result is re-cut. Once the budget is spent, the result is replaced by a truncation notice that names the content reference holding the full body. The model pages it back with `read_output` when it needs it.
+Over-budget results are degraded to recoverable content references (`read_output`), never failed. The call already ran and its side effects already happened, so its result is re-cut. Once the budget is spent, the result is replaced by a truncation notice that names the content reference holding the full body. The model pages it back with `read_output` when it needs it.
 
 What the budget does not charge: lifecycle-hook advisory context (it has its own 8 KiB bound) and truncation notices themselves.
+
+Contrast with `[tools] max_tool_result_bytes = 0` (uncapped per-call). Per-call results are already bounded by each tool's declared `ResultBudgetBytes` - see the per-tool budgets (`max_read_bytes`, `max_output_bytes`, tool-declared limits). The batch budget is the only knob that bounds a group of parallel calls together.
 
 ## Web research response bound
 

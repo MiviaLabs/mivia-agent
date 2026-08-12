@@ -237,12 +237,16 @@ func (r Runner) execute(ctx context.Context, group Group, handler Handler, paylo
 		// failed to produce a verdict. A hook that exited 0 or with a real exit
 		// code in the same instant its deadline landed has an answer, and
 		// discarding it here would turn an allow that arrived within budget
-		// into a spurious block (DC-7/DC-9). The genuine timeouts are a
-		// non-ExitError runErr (the unreapable waitGrace case, or a start
-		// failure under an expired context) and a signal death
-		// (ExitCode()==-1, the cancel's kill landing before exit).
+		// into a spurious block (DC-7/DC-9). The deadline case honors that
+		// verdict identically to a deadline-free run. The genuine timeouts are
+		// a non-ExitError runErr other than ErrWaitDelay (the unreapable
+		// waitGrace case, or a start failure under an expired context) and a
+		// signal death (ExitCode()==-1, the cancel's kill landing before exit).
+		// ErrWaitDelay is excluded: os/exec returns it only for a SUCCESSFUL
+		// exit whose orphaned descendants kept the pipes open, so its captured
+		// verdict is as real under an expired deadline as it is without one.
 		var exitErr *exec.ExitError
-		if runErr != nil && (!errorsAs(runErr, &exitErr) || exitErr.ExitCode() == -1) {
+		if runErr != nil && !errorsIs(runErr, exec.ErrWaitDelay) && (!errorsAs(runErr, &exitErr) || exitErr.ExitCode() == -1) {
 			result.noVerdict = true
 			result.reason = fmt.Sprintf("hook %s timed out after %s", filepath.Base(program), handler.Timeout)
 			if ctx.Err() != nil {
@@ -263,8 +267,9 @@ func (r Runner) execute(ctx context.Context, group Group, handler Handler, paylo
 			// verdict and must be honored, not discarded as a start failure.
 			// ProcessState is set by os/exec before Wait returns, so
 			// ExitCode() is authoritative here. An ErrWaitDelay under an
-			// expired deadline already returned through the callCtx.Err()
-			// branch above, which keeps the conservative timeout/noVerdict.
+			// expired deadline reaches this same case: the deadline branch
+			// above excludes it from the timeout classification, so it honors
+			// the exit-0 verdict identically to a deadline-free run.
 			result.exitCode = cmd.ProcessState.ExitCode()
 		default:
 			result.noVerdict = true

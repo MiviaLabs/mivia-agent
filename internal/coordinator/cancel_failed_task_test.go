@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -68,7 +69,9 @@ func runCancelFailedRaceOnce(c Coordinator) cancelRaceOutcome {
 func TestCancelRacingFailedTask(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
-	_ = d.Register(runtime.Subagent, "alwaysfail", staticHandler{err: errors.New("always fail")})
+	// Transient-marked: shouldRetryTask now requires provider.IsTransient for
+	// a "failed" task's error before it's retryable at all.
+	_ = d.Register(runtime.Subagent, "alwaysfail", staticHandler{err: &provider.TransientError{Err: errors.New("always fail")}})
 	p := subagents.New(d, subagents.Policy{Workers: 1})
 	// Default retry policy (MaxRetries=3) via New(): a failed task is retryable,
 	// which is what makes the retry transition race the cancellation.

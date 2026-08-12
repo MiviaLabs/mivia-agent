@@ -325,7 +325,7 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		MaxBudget: cfg.DefaultBudget,
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
 	})
-	c := coordinator.New(repo, pool).WithRetryPolicy(coordinator.NoRetry)
+	c := coordinator.New(repo, pool).WithRetryPolicy(taskRetryPolicyFromConfig(cfg.TaskRetry))
 	// Wire [subagents.messaging] body/mailbox budgets (plan 53).
 	c = c.WithMessagingLimits(cfg.Messaging.MaxBodyBytes, cfg.Messaging.MailboxCapacity)
 	actual, _ := coordinators.LoadOrStore(d, c)
@@ -340,6 +340,56 @@ func initCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		})
 	}
 	return actual.(coordinator.Coordinator)
+}
+
+// maxTaskRetries and minTaskRetryBaseBackoff clamp [subagents.retry] against
+// misconfiguration (bug-audit finding, security lens): TaskRetryConfig had no
+// bound on max_retries and RetryPolicy.EffectiveBackoff only floors a
+// base_backoff of exactly zero-or-negative to 100ms, so a typo'd value (an
+// extra zero on max_retries, or base_backoff_seconds = 0.001) could retry-storm
+// a provider with none of the caps internal/provider/retry.go's own
+// HTTP-layer retry hardcodes for the same reason.
+const (
+	maxTaskRetries          = 20
+	minTaskRetryBaseBackoff = 50 * time.Millisecond
+)
+
+// taskRetryPolicyFromConfig converts the [subagents.retry] TOML surface into
+// a coordinator.RetryPolicy. internal/config cannot import internal/coordinator
+// (coordinator already imports config), so this CLI-layer seam does the
+// conversion. An all-zero TaskRetryConfig (the default) converts to
+// coordinator.NoRetry, identical to today's hardcoded behavior - a deployment
+// must opt in via [subagents.retry] max_retries > 0 to enable retry.
+func taskRetryPolicyFromConfig(cfg config.TaskRetryConfig) coordinator.RetryPolicy {
+	if cfg.MaxRetries <= 0 {
+		return coordinator.NoRetry
+	}
+	maxRetries := cfg.MaxRetries
+	if maxRetries > maxTaskRetries {
+		maxRetries = maxTaskRetries
+	}
+	baseBackoff := time.Duration(cfg.BaseBackoffSeconds * float64(time.Second))
+	if baseBackoff > 0 && baseBackoff < minTaskRetryBaseBackoff {
+		baseBackoff = minTaskRetryBaseBackoff
+	}
+	// coordinator.RetryPolicy.EffectiveBackoff applies MaxBackoff as a hard
+	// ceiling computed AFTER BaseBackoff (retry.go) - so a MaxBackoff smaller
+	// than BaseBackoff silently clamps every backoff back down below the
+	// floor just enforced above, defeating it entirely (bug-audit finding,
+	// config-plumbing lens). 0 (unset) means "no cap" to EffectiveBackoff and
+	// must stay 0, not be raised - only an explicit, too-small positive value
+	// gets raised to meet the floor it would otherwise undercut.
+	maxBackoff := time.Duration(cfg.MaxBackoffSeconds * float64(time.Second))
+	if maxBackoff > 0 && maxBackoff < baseBackoff {
+		maxBackoff = baseBackoff
+	}
+	return coordinator.RetryPolicy{
+		MaxRetries:     maxRetries,
+		BaseBackoff:    baseBackoff,
+		MaxBackoff:     maxBackoff,
+		BackoffFactor:  cfg.BackoffFactor,
+		JitterFraction: cfg.JitterFraction,
+	}
 }
 
 func orchestrationRepoForDispatcher(d *runtime.Dispatcher) ledger.LedgerRepository {

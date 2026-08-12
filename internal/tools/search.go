@@ -322,7 +322,7 @@ func walkFilteredFiles(ctx context.Context, ws *workspace.Root, root, glob strin
 		if view.ShouldIgnoreFile(d.Name(), rel) {
 			return nil
 		}
-		if glob != "" && !globMatches(glob, rel, d.Name()) {
+		if glob != "" && !globMatchesCtx(ctx, glob, rel, d.Name()) {
 			return nil
 		}
 		if isSecretPath(rel, secretExceptions, secretPatterns) {

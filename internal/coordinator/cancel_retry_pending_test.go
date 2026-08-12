@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -24,7 +25,7 @@ import (
 func TestCancelDuringRetryBackoff(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
-	_ = d.Register(runtime.Subagent, "alwaysfail", staticHandler{err: errors.New("always fail")})
+	_ = d.Register(runtime.Subagent, "alwaysfail", staticHandler{err: &provider.TransientError{Err: errors.New("always fail")}})
 	p := subagents.New(d, subagents.Policy{Workers: 1})
 	// A long backoff keeps the task in retry_pending for a comfortable window
 	// so we can reliably observe it and cancel during the retry backoff.

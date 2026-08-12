@@ -11,6 +11,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
+// ollamaLoopbackKeyless reports whether the active provider is ollama
+// pointed at a loopback daemon, where no API key is required.
+func ollamaLoopbackKeyless(res *config.Resolved) bool {
+	return res != nil && res.ProviderName == "ollama" && config.IsOllamaLoopback(res.BaseURL)
+}
+
 func runDoctor(args []string) error {
 	return runDoctorWithIO(args, os.Stdout, os.Stderr)
 }
@@ -51,7 +57,7 @@ func doctorStatusErr(res *config.Resolved, view agentCatalogView, catalogErr err
 	if catalogErr == nil {
 		diagnostics = view.Report.DiagnosticSummary()
 	}
-	if res.APIKeySet {
+	if res.APIKeySet || ollamaLoopbackKeyless(res) {
 		if diagnostics != "" && diagnostics != "none" {
 			return fmt.Errorf("agent diagnostics: %s", diagnostics)
 		}
@@ -61,6 +67,16 @@ func doctorStatusErr(res *config.Resolved, view agentCatalogView, catalogErr err
 		return fmt.Errorf("agent diagnostics: %s; missing %s", diagnostics, res.APIKeyEnv)
 	}
 	return fmt.Errorf("missing %s", res.APIKeyEnv)
+}
+
+// promptBudgetAdvisory reports when the session prompt budget is unbounded:
+// [chat] max_prompt_tokens unset and the active budget above the recommended
+// cap. Empty means no advisory.
+func promptBudgetAdvisory(res *config.Resolved) string {
+	if res == nil || res.MaxPromptTokens != nil || res.MaxContextTokens <= config.DefaultPromptCapTokens {
+		return ""
+	}
+	return fmt.Sprintf("unbounded (%d tokens); set [chat] max_prompt_tokens (recommended %d)", res.MaxContextTokens, config.DefaultPromptCapTokens)
 }
 
 // writeDoctorHumanLoadError prints the load-failure screen (human path).
@@ -88,7 +104,7 @@ func writeDoctorDiagnostics(stderr io.Writer, catalogErr error, view agentCatalo
 	if diagnostics := view.Report.DiagnosticSummary(); diagnostics != "" && diagnostics != "none" {
 		fmt.Fprintf(stderr, "doctor: agent diagnostics: %s\n", diagnostics)
 	}
-	if !res.APIKeySet {
+	if !res.APIKeySet && !ollamaLoopbackKeyless(res) {
 		fmt.Fprintln(stderr, "doctor: not ready for chat")
 	}
 }
@@ -105,6 +121,9 @@ func writeDoctorHuman(stdout, stderr io.Writer, res *config.Resolved, view agent
 		fmt.Fprintln(stdout, "  env_file:   (none found; using process env only)")
 	}
 	fmt.Fprint(stdout, formatDoctorModelInfo(res))
+	if advisory := promptBudgetAdvisory(res); advisory != "" {
+		fmt.Fprintf(stdout, "  prompt_budget: %s\n", advisory)
+	}
 	fmt.Fprintf(stdout, "  base_url:   %s\n", safeDoctorURL(res.BaseURL))
 	fmt.Fprintf(stdout, "  api_key_env:%s\n", safeCatalogText(res.APIKeyEnv, 128))
 
@@ -124,6 +143,8 @@ func writeDoctorHuman(stdout, stderr io.Writer, res *config.Resolved, view agent
 	}
 	if res.APIKeySet {
 		fmt.Fprintln(stdout, "  api_key:    set (value redacted)")
+	} else if ollamaLoopbackKeyless(res) {
+		fmt.Fprintln(stdout, "  api_key:    not required (local daemon)")
 	} else {
 		fmt.Fprintf(stdout, "  api_key:    MISSING - set %s in environment or env file\n", res.APIKeyEnv)
 		fmt.Fprintln(stderr, "doctor: not ready for chat")

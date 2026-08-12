@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
@@ -308,7 +309,10 @@ func TestProcessResultsCancelClaimedAfterRetryCASLoss(t *testing.T) {
 	results := map[string]subagents.Result{}
 	queue := map[string]time.Time{}
 	states := map[string]*RetryState{}
-	batch := []subagents.Result{{TaskID: "t1", Status: "failed", Err: errors.New("boom")}}
+	// Transient-marked: shouldRetryTask now requires provider.IsTransient for
+	// a "failed" task's error before treating it as retryable at all, which
+	// is what routes processResults into the retry-CAS path this test pins.
+	batch := []subagents.Result{{TaskID: "t1", Status: "failed", Err: &provider.TransientError{Err: errors.New("boom")}}}
 
 	runErr := c.processResults(h, batch, results, queue, states)
 	if runErr != nil {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -264,7 +265,7 @@ func (p *Pool) execute(ctx context.Context, tasks []Task, results map[string]Res
 		go func() {
 			defer wg.Done()
 			for t := range jobs {
-				r := p.executeOne(ctx, t)
+				r := p.safeExecuteOne(ctx, t)
 				mu.Lock()
 				results[t.ID] = r
 				mu.Unlock()
@@ -283,6 +284,21 @@ func (p *Pool) execute(ctx context.Context, tasks []Task, results map[string]Res
 	close(jobs)
 	wg.Wait()
 }
+
+// safeExecuteOne wraps executeOne with per-task panic recovery. Recovery is
+// scoped to this one call (not the whole worker goroutine): a goroutine-level
+// recover would unwind past the `for t := range jobs` loop and end that
+// worker early, silently shrinking pool parallelism for the rest of the
+// batch. A panic from one task must cost that task alone.
+func (p *Pool) safeExecuteOne(ctx context.Context, t Task) (r Result) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			r = Result{TaskID: t.ID, Err: fmt.Errorf("subagent task %q panicked: %v", t.ID, rec), Status: "failed"}
+		}
+	}()
+	return p.executeOne(ctx, t)
+}
+
 func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 	if ctx.Err() != nil {
 		return Result{TaskID: t.ID, Err: ctx.Err(), Status: "canceled"}
@@ -328,10 +344,29 @@ func (p *Pool) executeOne(ctx context.Context, t Task) Result {
 		// Finalize hook (plan R9): runs on the worker goroutine with the
 		// stamped per-task context so the coordinator can fence a terminal
 		// task before the rest of the pool finishes. It must not change the
-		// result returned to the caller.
-		p.OnTaskDone(taskCtx, t, result)
+		// result returned to the caller - callOnTaskDoneSafely enforces that
+		// even when the hook panics (bug audit: safeExecuteOne's outer recover
+		// covers this whole function, so a naive direct call here would let an
+		// OnTaskDone panic overwrite an already-computed, correct result with
+		// a synthetic "failed" one).
+		callOnTaskDoneSafely(p.OnTaskDone, taskCtx, t, result)
 	}
 	return result
+}
+
+// callOnTaskDoneSafely invokes fn and recovers a panic without letting it
+// propagate or alter the result the caller already computed. OnTaskDone's
+// documented contract is that it never changes the returned result; a panic
+// must not silently break that contract by falling through to
+// safeExecuteOne's outer recover, which would replace a real (possibly
+// successful) result with a synthetic failure.
+func callOnTaskDoneSafely(fn func(context.Context, Task, Result), ctx context.Context, t Task, r Result) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("subagents: OnTaskDone panicked for task %q: %v", t.ID, rec)
+		}
+	}()
+	fn(ctx, t, r)
 }
 
 func resultStatus(taskCtx, parentCtx context.Context, err error) string {

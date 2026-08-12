@@ -261,6 +261,16 @@ type SubagentConfig struct {
 	// Messaging configures typed agent-to-agent messaging (plan 53). Nested
 	// under [subagents.messaging]. Always enabled (product decision 2026-08-03).
 	Messaging MessagingConfig `toml:"messaging"`
+
+	// TaskRetry configures automatic retry/backoff for a dispatched task whose
+	// failure is classified transient (provider.IsTransient - network blip,
+	// 429, 5xx, timeout) or that timed out. Nested under [subagents.retry].
+	// Distinct from SchemaRetryMax above, which governs corrective re-entries
+	// after an invalid schema-validated reply within one task, not whole-task
+	// retry. All-zero (the default) disables retry entirely, identical to
+	// today's behavior: a deployment must opt in. See task_retry_config.go
+	// for the TaskRetryConfig type.
+	TaskRetry TaskRetryConfig `toml:"retry"`
 }
 
 // WorktreeConfig controls worktree branch settings.

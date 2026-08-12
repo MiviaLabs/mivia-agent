@@ -209,7 +209,7 @@ func validateWorkspaceRestart(restart workspaceRestart, invocation chatInvocatio
 }
 
 func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) error {
-	if !res.APIKeySet {
+	if (!res.APIKeySet || strings.TrimSpace(res.APIKey) == "") && !(res.ProviderName == "ollama" && config.IsOllamaLoopback(res.BaseURL)) {
 		return fmt.Errorf("missing API key: set %s in environment or env file (see mivia doctor)", res.APIKeyEnv)
 	}
 	applyChatToolOverrides(res, invocation.allowProgram, invocation.denyProgram, invocation.disableTool, invocation.allowEnvVar, invocation.denyEnvVar)

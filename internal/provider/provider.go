@@ -191,6 +191,10 @@ func registerBuiltins() error {
 			builtinsErr = err
 			return
 		}
+		if err := registry.register("ollama", NewOllama); err != nil {
+			builtinsErr = err
+			return
+		}
 		builtinFactories = registry
 	})
 	return builtinsErr
@@ -231,7 +235,9 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 		return nil, fmt.Errorf("provider %q is not configured", providerName)
 	}
 	if !runtime.APIKeySet || strings.TrimSpace(runtime.APIKey) == "" {
-		return nil, fmt.Errorf("missing API key for provider %q", providerName)
+		if !(providerName == "ollama" && config.IsOllamaLoopback(runtime.BaseURL)) {
+			return nil, fmt.Errorf("missing API key for provider %q", providerName)
+		}
 	}
 	opts := Options{
 		Name:              runtime.ProviderName,

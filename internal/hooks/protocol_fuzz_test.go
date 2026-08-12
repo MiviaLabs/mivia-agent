@@ -22,6 +22,12 @@ func FuzzParseStdout(f *testing.F) {
 		// Unsupported decisions must deny, not allow.
 		`{"hookSpecificOutput":{"permissionDecision":"ask"}}`,
 		`{"hookSpecificOutput":{"permissionDecision":"defer"}}`,
+		// A complete decision followed by trailing garbage: with truncated=true
+		// the capture bound cut only chatter AFTER the decision, and the
+		// decision inside the captured bytes must be honored rather than denied
+		// (hooks-truncated-allow-denied).
+		`{"hookSpecificOutput":{"permissionDecision":"allow"}} trailing`,
+		`{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"no"}} trailing`,
 		// Plain text, empty, and malformed bodies.
 		`plain text hook output`,
 		``,

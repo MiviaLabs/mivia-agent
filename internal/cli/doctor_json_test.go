@@ -168,6 +168,7 @@ func TestDoctorJSONValidWithAllFields(t *testing.T) {
 	requiredKeys := []string{
 		"config", "env_file", "env_file_loaded", "provider", "model",
 		"model_catalog", "base_url", "api_key_env", "api_key_set",
+		"key_required",
 		"agent_catalog", "warnings", "status",
 	}
 	var raw map[string]json.RawMessage
@@ -430,6 +431,37 @@ func runDoctorJSON(t *testing.T, configPath, workspace string) doctorJSON {
 	return dj
 }
 
+// doctorJSONBool decodes a top-level boolean field from the raw doctor JSON
+// map, failing the test when the key is absent or not a boolean. It reads the
+// wire directly so tests can pin keys that doctorJSON does not (yet) declare.
+func doctorJSONBool(t *testing.T, raw map[string]json.RawMessage, key string) bool {
+	t.Helper()
+	val, ok := raw[key]
+	if !ok {
+		t.Fatalf("missing required key %q in JSON output", key)
+	}
+	var b bool
+	if err := json.Unmarshal(val, &b); err != nil {
+		t.Fatalf("key %q is not a boolean: %v", key, err)
+	}
+	return b
+}
+
+// doctorJSONString decodes a top-level string field from the raw doctor JSON
+// map, failing the test when the key is absent or not a string.
+func doctorJSONString(t *testing.T, raw map[string]json.RawMessage, key string) string {
+	t.Helper()
+	val, ok := raw[key]
+	if !ok {
+		t.Fatalf("missing required key %q in JSON output", key)
+	}
+	var s string
+	if err := json.Unmarshal(val, &s); err != nil {
+		t.Fatalf("key %q is not a string: %v", key, err)
+	}
+	return s
+}
+
 func TestDoctorJSONEnvFileStates(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DEEPSEEK_API_KEY", "example-token")
@@ -513,6 +545,79 @@ func TestDoctorJSONWithJSONEqualsValue(t *testing.T) {
 	}
 }
 
+// TestDoctorJSONKeyRequiredSemantics pins the key_required field: it reports
+// whether the active provider demands an API key. The ollama-loopback
+// relaxation (config validateBaseURL + provider runtime) means a local ollama
+// at 127.0.0.1:11434 is usable with NO key, so doctor must report
+// key_required=false and stay "ok". Every other provider still requires its
+// key, so keyless deepseek must report key_required=true and a non-ok status.
+func TestDoctorJSONKeyRequiredSemantics(t *testing.T) {
+	t.Run("ollama_loopback_keyless", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("OLLAMA_API_KEY", "") // Keyless on purpose.
+		root := t.TempDir()
+		// base_url lives on the [providers.ollama] table; [provider] only
+		// selects the active provider name.
+		configPath := filepath.Join(root, "mivia.toml")
+		body := `[provider]
+name = "ollama"
+
+[providers.ollama]
+base_url = "http://127.0.0.1:11434/v1"
+models = [{ name = "gpt-oss:120b", context_window_tokens = 131072 }]
+default_model = "gpt-oss:120b"
+`
+		if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		workspace := t.TempDir()
+		var out, errOut strings.Builder
+		err := runDoctorWithIO([]string{"--config", configPath, "--json", "--workspace", workspace}, &out, &errOut)
+		if err != nil {
+			t.Fatalf("keyless ollama loopback doctor --json unexpected error: %v", err)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(out.String()), &raw); err != nil {
+			t.Fatalf("doctor --json output is not valid JSON: %v\nraw: %s", err, out.String())
+		}
+		if doctorJSONBool(t, raw, "api_key_set") {
+			t.Error("api_key_set = true, want false (no key configured)")
+		}
+		if doctorJSONBool(t, raw, "key_required") {
+			t.Error("key_required = true, want false for ollama loopback (loopback relaxation)")
+		}
+		if got := doctorJSONString(t, raw, "status"); got != "ok" {
+			t.Errorf("status = %q, want ok", got)
+		}
+	})
+
+	t.Run("deepseek_keyless", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("DEEPSEEK_API_KEY", "") // Missing API key.
+		root := t.TempDir()
+		configPath := writeDoctorConfig(t, root)
+		workspace := t.TempDir()
+		var out, errOut strings.Builder
+		err := runDoctorWithIO([]string{"--config", configPath, "--json", "--workspace", workspace}, &out, &errOut)
+		if err == nil {
+			t.Fatal("doctor --json should error when the required key is missing")
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(out.String()), &raw); err != nil {
+			t.Fatalf("doctor --json output is not valid JSON: %v\nraw: %s", err, out.String())
+		}
+		if doctorJSONBool(t, raw, "api_key_set") {
+			t.Error("api_key_set = true, want false (no key configured)")
+		}
+		if !doctorJSONBool(t, raw, "key_required") {
+			t.Error("key_required = false, want true for deepseek")
+		}
+		if got := doctorJSONString(t, raw, "status"); got == "ok" {
+			t.Error("status = ok, want non-ok when the required key is missing")
+		}
+	})
+}
+
 // TestDoctorJSONLoadError verifies the JSON output when config.Load fails
 // (e.g. no config file at all with AllowMissingConfig). The
 // writeDoctorJSONLoadError path writes a hardcoded doctorJSON with status
@@ -558,11 +663,63 @@ func TestDoctorJSONLoadError(t *testing.T) {
 	requiredKeys := []string{
 		"config", "env_file", "env_file_loaded", "provider", "model",
 		"model_catalog", "base_url", "api_key_env", "api_key_set",
+		"key_required",
 		"agent_catalog", "warnings", "status",
 	}
 	for _, key := range requiredKeys {
 		if _, ok := raw[key]; !ok {
 			t.Errorf("missing required key %q in load-error JSON output", key)
 		}
+	}
+}
+
+// TestDoctorWhitespaceAPIKeyCountsAsMissing pins the doctor surface for a
+// whitespace-only provider key. Resolved.APIKeySet trims, so a blank value
+// must behave exactly like an unset key. The JSON path must report
+// api_key_set=false, key_required=true, and a non-ok status. The human path
+// must print the "not ready for chat" notice on stderr.
+func TestDoctorWhitespaceAPIKeyCountsAsMissing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("DEEPSEEK_API_KEY", "   ") // Whitespace-only key counts as missing.
+	root := t.TempDir()
+	configPath := writeDoctorConfig(t, root)
+	workspace := t.TempDir()
+
+	// JSON path: the doctor surface must distinguish the whitespace key from
+	// a real key and still report the provider as requiring one.
+	var jsonOut, jsonErrOut strings.Builder
+	err := runDoctorWithIO([]string{"--config", configPath, "--json", "--workspace", workspace}, &jsonOut, &jsonErrOut)
+	if err == nil {
+		t.Fatal("doctor --json should error when the required key is whitespace-only")
+	}
+	if !strings.Contains(err.Error(), "missing DEEPSEEK_API_KEY") {
+		t.Fatalf("doctor error = %v, want missing DEEPSEEK_API_KEY", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(jsonOut.String()), &raw); err != nil {
+		t.Fatalf("doctor --json output is not valid JSON: %v\nraw: %s", err, jsonOut.String())
+	}
+	if doctorJSONBool(t, raw, "api_key_set") {
+		t.Error("api_key_set = true, want false for a whitespace-only key")
+	}
+	if !doctorJSONBool(t, raw, "key_required") {
+		t.Error("key_required = false, want true for deepseek")
+	}
+	if got := doctorJSONString(t, raw, "status"); got == "ok" {
+		t.Error("status = ok, want non-ok when the required key is whitespace-only")
+	}
+
+	// Human path: the not-ready notice must reach stderr and the stdout
+	// screen must state that the key is missing.
+	var humanOut, humanErrOut strings.Builder
+	err = runDoctorWithIO([]string{"--config", configPath, "--workspace", workspace}, &humanOut, &humanErrOut)
+	if err == nil {
+		t.Fatal("doctor should error when the required key is whitespace-only")
+	}
+	if !strings.Contains(humanErrOut.String(), "not ready for chat") {
+		t.Fatalf("stderr missing 'not ready for chat' for whitespace-only key:\n%s", humanErrOut.String())
+	}
+	if !strings.Contains(humanOut.String(), "MISSING - set DEEPSEEK_API_KEY") {
+		t.Fatalf("stdout missing MISSING api_key line for whitespace-only key:\n%s", humanOut.String())
 	}
 }

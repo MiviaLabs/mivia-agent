@@ -66,6 +66,29 @@ default_model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/v1"
 
+[providers.ollama]
+# Override CLI provider with --provider ollama
+# Ollama Cloud profile (key required): https://ollama.com/v1 is also the
+# built-in default, so base_url could be omitted entirely.
+models = [
+  { name = "gpt-oss:120b", context_window_tokens = 131072 },
+]
+default_model = "gpt-oss:120b"
+api_key_env = "OLLAMA_API_KEY"
+base_url = "https://ollama.com/v1"
+
+# Local daemon profile (no key) - comment out the cloud keys above and
+# uncomment this one instead. The mode is inferred from base_url alone:
+# a loopback hostname (127.0.0.1, ::1, localhost) needs no API key, so
+# api_key_env is optional; any other base_url requires OLLAMA_API_KEY.
+# A local daemon has no remote catalog, so model names must match
+# `ollama list` output exactly (tag included).
+# models = [
+#   { name = "gpt-oss:120b", context_window_tokens = 131072 },
+# ]
+# default_model = "gpt-oss:120b"
+# base_url = "http://127.0.0.1:11434/v1"
+
 [providers.openrouter]
 # Override CLI provider with --provider openrouter
 # OpenRouter normalizes reasoning_effort per upstream model, so it needs no
@@ -115,6 +138,11 @@ base_url = "https://api.z.ai/api/paas/v4"
 system_prompt = "You are mivia, a local CLI coding agent."
 temperature = 0
 max_tokens = 16384
+# Recommended prompt-budget bound (tokens). When unset, the budget is the
+# model window minus the output reserve. A bounded budget compacts history
+# earlier (at 80% of the budget) and cuts token cost on long sessions.
+# Larger values keep more history at higher cost - a recall-versus-price dial.
+max_prompt_tokens = 200000
 # max_steps = 0  # 0 = unlimited (default). Set positive to cap turns. /steps overrides per session.
 
 [worktrees]
@@ -347,12 +375,12 @@ core = [
 
 # Aggregate budget for ONE tool batch (bytes), across all of its parallel
 # calls together - the bound max_tool_result_bytes cannot provide, because it
-# sees each call in isolation. 0 = off (default). -1 derives it from the
-# model's prompt budget (a quarter of it, floor 256 KiB; inert without a
-# prompt budget). Positive values are literal and must be >= 16384.
+# sees each call in isolation. -1 (recommended) derives it from the model's
+# prompt budget (a quarter of it, floor 256 KiB; inert without a prompt
+# budget). 0 = off. Positive values are literal and must be >= 16384.
 # Over-budget results are degraded to content references readable with
 # read_output - never failed, and never destroyed.
-# batch_result_budget_bytes = 0
+batch_result_budget_bytes = -1
 
 # Bound on a Tavily API response body, used by the `search` tool's Tavily path
 # and by `extract`. Responses are NEVER truncated: this is not a cap on what
@@ -451,6 +479,27 @@ default_timeout_seconds = 43200
 # default_request_timeout_seconds = 0  # per-LLM-request timeout (seconds); 0 = fall back to the effective orchestration default (default_timeout_seconds when positive, otherwise the 12-hour safety bound); internal 15-minute HTTP transport timeout is the hard per-request ceiling regardless
 # default_budget = 0           # 0 = unlimited
 # max_audit_rounds = 0         # 0 = unlimited
+
+# [subagents.retry] controls whole-task retry for a dispatched task that
+# failed with a transient error (network blip, 429, 5xx, timeout) or timed
+# out. Disabled by default (max_retries = 0): a deployment must opt in.
+# Distinct from schema_retry_max above, which governs corrective re-entries
+# after an invalid schema-validated reply within one task, not whole-task
+# retry.
+#
+# NOT safe for a task with side effects it can't undo: retry re-dispatches
+# the whole task from scratch, it does not skip tool calls the failed attempt
+# already made. A task that writes a file, calls an external API, or sends a
+# message and only THEN hits a late transient error will repeat those side
+# effects on retry. max_retries is capped at 20 and base_backoff_seconds is
+# floored at 50ms regardless of the value set here, to bound retry-storm risk
+# against a misconfiguration.
+# [subagents.retry]
+# max_retries = 0            # 0 = disabled (default); positive = attempts beyond the first, capped at 20
+# base_backoff_seconds = 1   # initial backoff before the first retry; floored at 0.05 (50ms) if positive
+# max_backoff_seconds = 30   # cap on backoff growth
+# backoff_factor = 2.0       # exponential multiplier per attempt; 0 selects 2.0
+# jitter_fraction = 0.25     # ±jitter_fraction/2 randomization; 0 disables jitter
 
 # ---------------------------------------------------------------------------
 # Durable context storage (byte fields under [context])
