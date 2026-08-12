@@ -9,14 +9,19 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// ErrPanelMembersComplete reports that Wave 4 completed member work but Wave
-// 5 synthesis is not available to finish the workflow step.
+// ErrPanelMembersComplete reports that a panel attempt completed member work
+// while panelsEnabled is false, so refusePanelStep settles it failed instead
+// of advancing to synthesis.
 var ErrPanelMembersComplete = errors.New("panel members completed; synthesis is unavailable")
 
-// panelsEnabled gates agent_panel execution. Wave 5 synthesis has no agent or
-// template definition surface, so the controller fails panel steps closed:
-// running members without synthesis left the attempt running forever (G9).
-// The member-running code below stays dead until Wave 5 defines synthesis.
+// panelsEnabled gates agent_panel execution. Wave 5 implements synthesis
+// end to end (buildPanelSynthesisWork, advancePanelSynthesis,
+// CompareAndSetPanelPhase), but the controller still fails panel steps
+// closed: canceling a workflow mid-panel does not yet cancel its live
+// member/synthesis coordinator children (D15's cancel-broker, Wave 6), and
+// resume has no panel-phase reconciliation branch yet (D14, Wave 6). The
+// member-running code below stays dead until Wave 6 closes those gaps. See
+// plan 62's "Open question: panelsEnabled stays false".
 const panelsEnabled = false
 
 func (c *LinearController) advancePanelStep(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step) (workflowledger.RunSnapshot, bool, error) {
@@ -59,14 +64,11 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 	for i, member := range attempt.PanelExecution.Members {
 		members[i] = PanelMemberRequest{MemberID: member.MemberID, RunID: member.CoordinatorRunID}
 	}
-	_, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
+	membersResult, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
 	if runErr != nil {
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, runErr)
 	}
-	// Wave 4 completes only the member phase. Wave 5 persists and executes
-	// synthesis. Keep this attempt nonterminal so a successful panel does not
-	// take the failure route before that phase exists.
-	return run, false, nil
+	return c.advancePanelSynthesis(ctx, run, step, attempt, panel, membersResult)
 }
 
 // refusePanelStep fails the panel attempt and its run closed with a durable

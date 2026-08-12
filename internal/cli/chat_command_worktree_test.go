@@ -103,7 +103,14 @@ func TestRunConfiguredChatCarriesResumeSessionAcrossRestart(t *testing.T) {
 		return nil
 	}
 
-	if err := runConfiguredChat(chatInvocation{}, &config.Resolved{}); err != nil {
+	// workspacePath must NOT be the ambient cwd: chatRepositoryRoot resolves
+	// to the real main repository root (vcs.MainRepoRoot), so an empty
+	// workspacePath here would read that repo's real, uncommitted
+	// .mivia/mivia.toml - environment state this test has no business
+	// depending on. A non-repo tempdir makes chatRepositoryRoot fail cleanly
+	// and skips repository-session-store binding, which this test isn't
+	// exercising anyway.
+	if err := runConfiguredChat(chatInvocation{workspacePath: t.TempDir()}, &config.Resolved{}); err != nil {
 		t.Fatal(err)
 	}
 }

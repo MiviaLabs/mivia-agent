@@ -108,6 +108,16 @@ var panelValidationCases = []panelValidationCase{
 		},
 		wantErr: "duplicate provider/model binding",
 	},
+	// Bug-audit regression: controller.sourceKeyDigest (Wave 5) concatenates
+	// MemberID and FindingID with 0x00/0x1e separators. A member ID carrying
+	// one of those bytes could collide two different canonical source keys
+	// onto the same digest. Member IDs are workflow-definition-authored, so
+	// this is rejected here, at compile time.
+	{
+		name:    "member id contains a control byte",
+		mutate:  func(s *definition.Step) { s.Panel.Members[0].ID = "sec\x1eurity" },
+		wantErr: "contains a control character",
+	},
 }
 
 // TestValidatePanelsMemberRules exercises the static agent_panel validation
