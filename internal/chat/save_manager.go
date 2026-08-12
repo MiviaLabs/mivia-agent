@@ -64,6 +64,16 @@ type SaveManager struct {
 	// crash-recovery snapshot.
 	turnSaveName string
 
+	// lastWrittenToken and hasWritten track the operation token of the most
+	// recent successful write to the rolling turn snapshot. Guarded by saveMu,
+	// which serializes every saveAfterTurnWithToken write. A benign host
+	// autosave (TUI periodic save, /clear, SaveLast) or a fenceless zero-token
+	// save that shares the fence of a completed turn's snapshot must not
+	// overwrite it with a pre-turn transcript: only a strictly newer fence may
+	// refresh after a turn write.
+	lastWrittenToken OperationToken
+	hasWritten       bool
+
 	// atomic counters
 	saveAfterTurn atomic.Int64
 	saveOnExit    atomic.Int64
@@ -167,10 +177,15 @@ func (m *SaveManager) saveAfterTurnWithToken(msgs []provider.Message, providerNa
 	if m.tokenStale(token) {
 		return ErrStaleAutosave
 	}
+	if m.hasWritten && !m.snapshotWriteAllowed(token) {
+		return ErrStaleAutosave
+	}
 	name := m.turnSnapshotName()
 	if err := m.store.Save(name, msgs, model, providerName); err != nil {
 		return err
 	}
+	m.lastWrittenToken = token
+	m.hasWritten = true
 	if err := m.persistSnapshotAdmission(name); err != nil {
 		return err
 	}
@@ -179,6 +194,25 @@ func (m *SaveManager) saveAfterTurnWithToken(msgs []provider.Message, providerNa
 	}
 	m.saveAfterTurn.Add(1)
 	return nil
+}
+
+// snapshotWriteAllowed reports whether a write may follow the last successful
+// turn-snapshot write, given the fence the rolling snapshot already holds. A
+// benign host autosave (TUI periodic save, /clear, SaveLast) or a fenceless
+// zero-token save that shares a completed turn's fence may carry a pre-turn
+// transcript and must not regress the crash-recovery snapshot; only a
+// strictly newer fence may refresh. Turn-lifecycle writes are always allowed
+// because registerToken and tokenStale already reject superseded turns, and a
+// non-turn write may always follow a non-turn write (idempotent
+// establish/refresh). Callers hold saveMu.
+func (m *SaveManager) snapshotWriteAllowed(token OperationToken) bool {
+	if !isTurnToken(m.lastWrittenToken) {
+		return true
+	}
+	if isTurnToken(token) {
+		return true
+	}
+	return token.newerThan(m.lastWrittenToken)
 }
 
 func (m *SaveManager) registerToken(token OperationToken) error {
