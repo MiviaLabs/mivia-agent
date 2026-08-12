@@ -209,7 +209,7 @@ func (r *coverageCancelFailRepo) CompleteStepAttempt(ctx context.Context, runID,
 
 func TestCoverageCancelRunNilRepo(t *testing.T) {
 	ctx := context.Background()
-	_, err := CancelRunWithAttempts(ctx, nil, "wfr-x")
+	_, err := CancelRunWithAttempts(ctx, nil, nil, "wfr-x")
 	if err == nil || !strings.Contains(err.Error(), "workflow ledger is nil") {
 		t.Fatalf("CancelRunWithAttempts(nil repo) = %v, want a nil-ledger error", err)
 	}
@@ -219,7 +219,7 @@ func TestCoverageCancelRunClaimFailure(t *testing.T) {
 	ctx := context.Background()
 	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusPending)
 	wrapped := &coverageCancelFailRepo{Repository: repo, failClaim: true}
-	if _, err := CancelRunWithAttempts(ctx, wrapped, runID); err == nil {
+	if _, err := CancelRunWithAttempts(ctx, wrapped, nil, runID); err == nil {
 		t.Fatal("CancelRunWithAttempts = nil error, want the claim failure")
 	}
 	run, err := repo.GetRun(ctx, runID)
@@ -235,7 +235,7 @@ func TestCoverageCancelRunPendingCASRunningFailure(t *testing.T) {
 	ctx := context.Background()
 	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusPending)
 	wrapped := &coverageCancelFailRepo{Repository: repo, failCASRunning: true}
-	if _, err := CancelRunWithAttempts(ctx, wrapped, runID); err == nil {
+	if _, err := CancelRunWithAttempts(ctx, wrapped, nil, runID); err == nil {
 		t.Fatal("CancelRunWithAttempts = nil error, want the pending->running CAS failure")
 	}
 	run, err := repo.GetRun(ctx, runID)
@@ -253,7 +253,7 @@ func TestCoverageCancelRunGetRunAfterPendingCASFailure(t *testing.T) {
 	// CancelRunWithAttempts reads the run once before the pending->running CAS
 	// and once after; the second read fails.
 	wrapped := &coverageCancelFailRepo{Repository: repo, failGetRunCall: 2}
-	if _, err := CancelRunWithAttempts(ctx, wrapped, runID); err == nil {
+	if _, err := CancelRunWithAttempts(ctx, wrapped, nil, runID); err == nil {
 		t.Fatal("CancelRunWithAttempts = nil error, want the post-CAS GetRun failure")
 	}
 }
@@ -262,7 +262,7 @@ func TestCoverageCancelRunCASCanceledFailure(t *testing.T) {
 	ctx := context.Background()
 	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusRunning)
 	wrapped := &coverageCancelFailRepo{Repository: repo, failCASCanceled: true}
-	if _, err := CancelRunWithAttempts(ctx, wrapped, runID); err == nil {
+	if _, err := CancelRunWithAttempts(ctx, wrapped, nil, runID); err == nil {
 		t.Fatal("CancelRunWithAttempts = nil error, want the running->canceled CAS failure")
 	}
 	run, err := repo.GetRun(ctx, runID)
@@ -278,16 +278,21 @@ func TestCoverageCancelRunListAttemptsFailure(t *testing.T) {
 	ctx := context.Background()
 	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusRunning)
 	wrapped := &coverageCancelFailRepo{Repository: repo, failListAttempts: true}
-	if _, err := CancelRunWithAttempts(ctx, wrapped, runID); err == nil {
+	if _, err := CancelRunWithAttempts(ctx, wrapped, nil, runID); err == nil {
 		t.Fatal("CancelRunWithAttempts = nil error, want the ListStepAttempts failure")
 	}
-	// The canceled CAS happened before the attempt listing failed.
+	// D15: the run must never report canceled without first knowing whether
+	// a live panel attempt needs its children reconciled first, so the
+	// attempt listing that detects one now happens before the canceled CAS,
+	// not after. A listing failure here must leave the run non-terminal
+	// rather than risk declaring it canceled while an orphaned panel child
+	// could exist unseen.
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != workflowledger.RunStatusCanceled {
-		t.Fatalf("run status = %q, want canceled before the list failure", run.Status)
+	if run.Status != workflowledger.RunStatusRunning {
+		t.Fatalf("run status = %q, want running (unsettled) after the list failure", run.Status)
 	}
 }
 
@@ -299,7 +304,7 @@ func TestCoverageCancelRunCompleteAttemptFailureContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrapped := &coverageCancelFailRepo{Repository: repo, failCompleteAttempt: true}
-	canceled, err := CancelRunWithAttempts(ctx, wrapped, runID)
+	canceled, err := CancelRunWithAttempts(ctx, wrapped, nil, runID)
 	if err != nil {
 		t.Fatalf("CancelRunWithAttempts = %v; attempt marking is best-effort and must continue", err)
 	}

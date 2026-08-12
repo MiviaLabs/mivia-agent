@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -158,6 +159,66 @@ func (p PanelCoordinator) CancelSynthesis(ctx context.Context, attemptID string,
 		return err
 	}
 	return p.cancel(ctx, runID, taskID, work, handle)
+}
+
+// CancelOrTombstoneMember cancels an admitted member's coordinator child or
+// tombstones one that was never admitted, under the cancel_pending phase
+// (D15). It returns terminal=true once the child is safely known terminal
+// (including a member that was never dispatched, or one that already
+// finished on its own). A non-nil error means the child's terminal state
+// could not be safely verified right now (an ambiguous recovered claim, or a
+// running task with no verifiable live owner) and cancellation must not
+// proceed to a false "canceled" outcome for this member.
+func (p PanelCoordinator) CancelOrTombstoneMember(ctx context.Context, attemptID, memberID string) (bool, error) {
+	member, err := p.member(ctx, attemptID, memberID)
+	if err != nil {
+		return false, err
+	}
+	if err := p.requireTerminalPhase(ctx, attemptID); err != nil {
+		return false, err
+	}
+	return p.cancelOrTombstone(ctx, member.CoordinatorRunID, member.TaskID, member.Work)
+}
+
+// CancelOrTombstoneSynthesis mirrors CancelOrTombstoneMember for the
+// synthesis child. If no synthesis phase-intent exists yet, there is no
+// child to cancel or tombstone: it returns terminal=true immediately.
+func (p PanelCoordinator) CancelOrTombstoneSynthesis(ctx context.Context, attemptID string) (bool, error) {
+	runID, taskID, work, err := p.synthesis(ctx, attemptID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+	if err := p.requireTerminalPhase(ctx, attemptID); err != nil {
+		return false, err
+	}
+	return p.cancelOrTombstone(ctx, runID, taskID, work)
+}
+
+// cancelOrTombstone admits a canceled tombstone for a child that was never
+// dispatched, or joins an existing child as a recovered (never-locally-
+// resumed) handle and issues the coordinator's normal cancel request on it.
+func (p PanelCoordinator) cancelOrTombstone(ctx context.Context, runID, taskID string, work PanelTaskSpec) (bool, error) {
+	req, err := p.request(ctx, runID, taskID, work, true)
+	if err != nil {
+		return false, err
+	}
+	handle, err := p.inner.JoinAsRecovered(p.childContext(ctx), req)
+	if errors.Is(err, coordledger.ErrNotFound) {
+		if _, err := p.inner.EnsureTerminalSingleTaskRun(p.childContext(ctx), req, coordledger.TaskStatusCanceled); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := p.inner.Cancel(p.childContext(ctx), handle); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (p PanelCoordinator) member(ctx context.Context, attemptID, memberID string) (PanelMemberExecution, error) {

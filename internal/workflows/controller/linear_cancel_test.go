@@ -46,7 +46,7 @@ func newCancelRunFixture(t *testing.T, status workflowledger.RunStatus) (workflo
 func TestCancelRunPending(t *testing.T) {
 	ctx := context.Background()
 	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusPending)
-	if err := CancelRun(ctx, repo, runID); err != nil {
+	if err := CancelRun(ctx, repo, nil, runID); err != nil {
 		t.Fatalf("CancelRun: %v", err)
 	}
 	run, err := repo.GetRun(ctx, runID)
@@ -64,7 +64,7 @@ func TestCancelRunPending(t *testing.T) {
 func TestCancelRunRunning(t *testing.T) {
 	ctx := context.Background()
 	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusRunning)
-	if err := CancelRun(ctx, repo, runID); err != nil {
+	if err := CancelRun(ctx, repo, nil, runID); err != nil {
 		t.Fatalf("CancelRun: %v", err)
 	}
 	run, err := repo.GetRun(ctx, runID)
@@ -95,7 +95,7 @@ func TestCancelRunWaitingApprovalMarksAttempts(t *testing.T) {
 	if got.Status != workflowledger.RunStatusWaitingApproval {
 		t.Fatalf("run status = %q, want waiting_approval", got.Status)
 	}
-	if err := CancelRun(ctx, repo, ctrl.RunID); err != nil {
+	if err := CancelRun(ctx, repo, nil, ctrl.RunID); err != nil {
 		t.Fatalf("CancelRun: %v", err)
 	}
 	run, err := repo.GetRun(ctx, ctrl.RunID)
@@ -117,7 +117,7 @@ func TestCancelRunWaitingApprovalMarksAttempts(t *testing.T) {
 func TestCancelRunDeliveryPendingRefused(t *testing.T) {
 	ctx := context.Background()
 	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusDeliveryPending)
-	err := CancelRun(ctx, repo, runID)
+	err := CancelRun(ctx, repo, nil, runID)
 	if err == nil || !strings.Contains(err.Error(), "waiting for delivery") {
 		t.Fatalf("CancelRun on delivery_pending = %v, want a delivery refusal", err)
 	}
@@ -133,7 +133,7 @@ func TestCancelRunDeliveryPendingRefused(t *testing.T) {
 func TestCancelRunTerminalNoOp(t *testing.T) {
 	ctx := context.Background()
 	repo, runID := newCancelRunFixture(t, workflowledger.RunStatusSucceeded)
-	if err := CancelRun(ctx, repo, runID); err != nil {
+	if err := CancelRun(ctx, repo, nil, runID); err != nil {
 		t.Fatalf("CancelRun on a terminal run: %v", err)
 	}
 	run, err := repo.GetRun(ctx, runID)
@@ -149,7 +149,7 @@ func TestCancelRunMissingRun(t *testing.T) {
 	ctx := context.Background()
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	if err := CancelRun(ctx, repo, "wfr-missing"); err != workflowledger.ErrNotFound {
+	if err := CancelRun(ctx, repo, nil, "wfr-missing"); err != workflowledger.ErrNotFound {
 		t.Fatalf("CancelRun on a missing run = %v, want ErrNotFound", err)
 	}
 }
@@ -162,7 +162,7 @@ func TestCancelRunWithAttemptsWithClaimKeepsClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
-	if _, err := CancelRunWithAttemptsWithClaim(ctx, repo, runID, holder); err != nil {
+	if _, err := CancelRunWithAttemptsWithClaim(ctx, repo, nil, runID, holder); err != nil {
 		t.Fatalf("CancelRunWithAttemptsWithClaim: %v", err)
 	}
 	if err := repo.ClaimRun(ctx, runID, "other-holder"); !errors.Is(err, workflowledger.ErrClaimHeld) {
@@ -202,7 +202,7 @@ func TestCancelRunWithAttemptsReturnsCanceledAttemptsWithErrorRef(t *testing.T) 
 	if err := repo.CompleteStepAttempt(ctx, runID, "wfa-one-2", 1, workflowledger.AttemptOutcome{Status: workflowledger.AttemptStatusSucceeded}); err != nil {
 		t.Fatal(err)
 	}
-	canceled, err := CancelRunWithAttempts(ctx, repo, runID)
+	canceled, err := CancelRunWithAttempts(ctx, repo, nil, runID)
 	if err != nil {
 		t.Fatalf("CancelRunWithAttempts: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestCancelRunMarksInFlightAttemptWithErrorRef(t *testing.T) {
 	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
-	if err := CancelRun(ctx, repo, runID); err != nil {
+	if err := CancelRun(ctx, repo, nil, runID); err != nil {
 		t.Fatalf("CancelRun: %v", err)
 	}
 	attempts, err := repo.ListStepAttempts(ctx, runID)

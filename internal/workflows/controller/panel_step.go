@@ -9,14 +9,19 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// ErrPanelMembersComplete reports that Wave 4 completed member work but Wave
-// 5 synthesis is not available to finish the workflow step.
+// ErrPanelMembersComplete reports that a panel attempt completed member work
+// while panelsEnabled is false, so refusePanelStep settles it failed instead
+// of advancing to synthesis.
 var ErrPanelMembersComplete = errors.New("panel members completed; synthesis is unavailable")
 
-// panelsEnabled gates agent_panel execution. Wave 5 synthesis has no agent or
-// template definition surface, so the controller fails panel steps closed:
-// running members without synthesis left the attempt running forever (G9).
-// The member-running code below stays dead until Wave 5 defines synthesis.
+// panelsEnabled gates agent_panel execution. Wave 5 implements synthesis
+// end to end (buildPanelSynthesisWork, advancePanelSynthesis,
+// CompareAndSetPanelPhase), but the controller still fails panel steps
+// closed: canceling a workflow mid-panel does not yet cancel its live
+// member/synthesis coordinator children (D15's cancel-broker, Wave 6), and
+// resume has no panel-phase reconciliation branch yet (D14, Wave 6). The
+// member-running code below stays dead until Wave 6 closes those gaps. See
+// plan 62's "Open question: panelsEnabled stays false".
 const panelsEnabled = false
 
 func (c *LinearController) advancePanelStep(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step) (workflowledger.RunSnapshot, bool, error) {
@@ -47,6 +52,15 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 		}
 		attempt = stored
 	}
+	if attempt.PanelExecution.Phase == workflowledger.PanelPhaseCancelPending {
+		// D14/D15: a prior cancel (via CancelRunWithAttemptsWithClaim) already
+		// recorded cancel_pending durably. This branch is what makes resume
+		// repair a crash between tombstone writes (cancellation matrix item
+		// 10): it is unconditional, ahead of the panelsEnabled gate, because
+		// reconciling an already-in-flight cancellation is cleanup, not new
+		// panel dispatch, and must proceed even while panelsEnabled is false.
+		return c.reconcilePanelCancelPending(ctx, run, step, attempt)
+	}
 	if !panelsEnabled {
 		return c.refusePanelStep(ctx, run, step, attempt)
 	}
@@ -59,14 +73,60 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 	for i, member := range attempt.PanelExecution.Members {
 		members[i] = PanelMemberRequest{MemberID: member.MemberID, RunID: member.CoordinatorRunID}
 	}
-	_, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
+	membersResult, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
 	if runErr != nil {
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, runErr)
 	}
-	// Wave 4 completes only the member phase. Wave 5 persists and executes
-	// synthesis. Keep this attempt nonterminal so a successful panel does not
-	// take the failure route before that phase exists.
-	return run, false, nil
+	return c.advancePanelSynthesis(ctx, run, step, attempt, panel, membersResult)
+}
+
+// reconcilePanelCancelPending drives one already-cancel_pending panel attempt
+// toward its terminal canceled state (D14's resume-under-claim-heartbeat
+// reconciliation for D15's cancel_pending phase). It is idempotent and safe
+// to call on every Advance while the attempt sits in cancel_pending:
+//   - ErrCancelBlocked (an ambiguous child claim) leaves the run non-terminal
+//     for a later retry, without failing the run;
+//   - a slow child that has not settled yet also leaves the run non-terminal;
+//   - once every intended child is confirmed terminal, it completes the
+//     attempt and settles the run canceled.
+func (c *LinearController) reconcilePanelCancelPending(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt) (workflowledger.RunSnapshot, bool, error) {
+	runner, ok := c.Runner.(*CoordinatorRunner)
+	if !ok || runner.Coordinator == nil {
+		return c.failAttempt(ctx, run, attempt, fmt.Errorf("panel cancel reconciliation has no coordinator"))
+	}
+	panel := workflowledger.NewPanelCoordinator(c.RunID, runner.Coordinator, c.Repo)
+	reconciled, allTerminal, err := ReconcilePanelCancellation(ctx, c.Repo, panel, c.RunID, c.Holder, attempt.AttemptID)
+	if err != nil {
+		if errors.Is(err, ErrCancelBlocked) {
+			return run, false, nil
+		}
+		return c.fail(ctx, run, err)
+	}
+	if !allTerminal {
+		return run, false, nil
+	}
+	if workflowledger.IsTerminalAttemptStatus(reconciled.Status) {
+		return c.settlePanelRunCanceled(ctx, run)
+	}
+	outcome := workflowledger.AttemptOutcome{Status: workflowledger.AttemptStatusCanceled}
+	outcome.ErrorRef = storeErrorText(ctx, c.Repo, errors.New("workflow run canceled by operator"))
+	if err := c.Repo.CompleteStepAttempt(ctx, c.RunID, reconciled.AttemptID, reconciled.Version, outcome); err != nil {
+		return c.fail(ctx, run, err)
+	}
+	return c.settlePanelRunCanceled(ctx, run)
+}
+
+// settlePanelRunCanceled CASes the run to canceled after cancel_pending
+// reconciliation confirmed every intended child terminal.
+func (c *LinearController) settlePanelRunCanceled(ctx context.Context, run workflowledger.RunSnapshot) (workflowledger.RunSnapshot, bool, error) {
+	if err := c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusCanceled, nil); err != nil {
+		return c.fail(ctx, run, err)
+	}
+	settled, err := c.Repo.GetRun(ctx, c.RunID)
+	if err != nil {
+		return run, false, err
+	}
+	return settled, true, nil
 }
 
 // refusePanelStep fails the panel attempt and its run closed with a durable

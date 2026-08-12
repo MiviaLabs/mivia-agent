@@ -110,3 +110,25 @@ func TestRunPanelMembersReportsMemberTimeout(t *testing.T) {
 		t.Fatal("member timeout did not fail the panel")
 	}
 }
+
+// Bug-audit regression: subagents.Result.Status is authoritative independent
+// of Err (coordinator.mapStatus falls back to Err only when Status is
+// unset). A non-completed status with a nil Err must still fail the panel,
+// or Wave 5's synthesis envelope would silently decode a failed member's
+// stale or partial Output into the host verdict.
+func TestPanelMemberResultErrorRejectsNonCompletedStatusWithNilErr(t *testing.T) {
+	for _, status := range []string{"failed", "timed_out", "canceled", "blocked"} {
+		result := &coordinator.RunResult{Results: []subagents.Result{
+			{TaskID: "task-1", Status: status, Err: nil, Output: json.RawMessage(`{"verdict":"approved","findings":[]}`)},
+		}}
+		if err := panelMemberResultError(result); err == nil {
+			t.Fatalf("status %q with nil Err: panelMemberResultError() = nil, want an error", status)
+		}
+	}
+	completed := &coordinator.RunResult{Results: []subagents.Result{
+		{TaskID: "task-1", Status: "completed", Err: nil, Output: json.RawMessage(`{"verdict":"approved","findings":[]}`)},
+	}}
+	if err := panelMemberResultError(completed); err != nil {
+		t.Fatalf("status completed: panelMemberResultError() = %v, want nil", err)
+	}
+}

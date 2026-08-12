@@ -131,6 +131,12 @@ type Options struct {
 	// CacheUsageEnabled gates capture of provider-reported prompt-cache usage
 	// accounting. It never changes what is sent to the provider.
 	CacheUsageEnabled bool
+	// ContextWindowTokens is the configured model's declared context capacity
+	// (config.ModelSpec.ContextWindowTokens for the resolved model name), or 0
+	// if the model is unrecognized. Only consumed by providers whose server
+	// does not infer context length from the model name on its own (ollama's
+	// num_ctx); other factories ignore it.
+	ContextWindowTokens int
 }
 
 type providerFactory func(Options) (Completer, error)
@@ -239,18 +245,33 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 			return nil, fmt.Errorf("missing API key for provider %q", providerName)
 		}
 	}
+	contextWindowTokens := contextWindowTokensFor(runtime.Models, res.Model)
 	opts := Options{
-		Name:              runtime.ProviderName,
-		BaseURL:           runtime.BaseURL,
-		APIKey:            runtime.APIKey,
-		Model:             res.Model,
-		HTTPReferer:       runtime.HTTPReferer,
-		XTitle:            runtime.XTitle,
-		CacheUsageEnabled: res.PromptCache != "off",
+		Name:                runtime.ProviderName,
+		BaseURL:             runtime.BaseURL,
+		APIKey:              runtime.APIKey,
+		Model:               res.Model,
+		HTTPReferer:         runtime.HTTPReferer,
+		XTitle:              runtime.XTitle,
+		CacheUsageEnabled:   res.PromptCache != "off",
+		ContextWindowTokens: contextWindowTokens,
 	}
 	factory, ok := builtinFactories.lookup(providerName)
 	if !ok {
 		return nil, fmt.Errorf("unsupported provider %q (available: %s)", providerName, strings.Join(builtinFactories.names(), ", "))
 	}
 	return factory(opts)
+}
+
+// contextWindowTokensFor returns the declared context capacity of the model
+// named in the catalog. It returns 0 when the name is absent. The match is
+// exact, and the first match wins. Catalogs are small, and NewForProvider
+// runs once per client construction, so a linear scan is the right shape.
+func contextWindowTokensFor(models []config.ModelSpec, name string) int {
+	for _, model := range models {
+		if model.Name == name {
+			return model.ContextWindowTokens
+		}
+	}
+	return 0
 }
