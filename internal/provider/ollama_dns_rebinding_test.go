@@ -149,7 +149,12 @@ func TestNewForProviderOllamaLocalhostFailClosedUnderHostileResolver(t *testing.
 // even an empty Bearer), and the request targets the literal hostname.
 // newLoopbackDialContext pins only the dial; the request URL keeps the
 // literal localhost so the transport never re-resolves it at request time.
+// The resolver seam is installed so the test does not depend on the host
+// resolving "localhost" (environments without a reachable resolver would
+// otherwise fail construction before the request shape is exercised); the
+// request-shape assertions are resolution-independent.
 func TestOllamaKeylessLocalhostRequestIsKeylessAndUnresolved(t *testing.T) {
+	installLocalhostResolver(t, "127.0.0.1")
 	comp, err := NewOllama(Options{BaseURL: "http://localhost:11434/v1", APIKey: "sekrit"})
 	if err != nil {
 		t.Fatal(err)
