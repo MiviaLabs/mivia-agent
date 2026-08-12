@@ -680,3 +680,57 @@ func TestPruneRemovesStaleWorktreeEntry(t *testing.T) {
 		t.Fatalf("Resolve after prune = %+v, want nil", resolved)
 	}
 }
+
+// TestCreateReusesNameAfterStaleRegistration pins the fix where a worktree
+// whose checkout was removed outside Remove (orphan cleanup) stays registered
+// in .git/worktrees/<name>/ until `git worktree prune` runs, and the stale
+// registration makes `git worktree add` fail for the same name, wedging the
+// name permanently. Create now prunes stale registrations first, so the add
+// re-creates the worktree and re-attaches the retained branch.
+func TestCreateReusesNameAfterStaleRegistration(t *testing.T) {
+	root := initTestRepo(t)
+	ctx := context.Background()
+	const name = "stale-reuse"
+
+	worktree, err := Create(ctx, root, name, "HEAD")
+	if err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+	write(t, worktree.Path, "retained.txt", "retain this commit")
+	run(t, worktree.Path, "git", "add", "retained.txt")
+	run(t, worktree.Path, "git", "commit", "-m", "retain worktree branch")
+
+	if err := os.RemoveAll(worktree.Path); err != nil {
+		t.Fatalf("RemoveAll worktree directory: %v", err)
+	}
+	// Wedge precondition: git still lists the stale registration, matching
+	// the state TestPruneRemovesStaleWorktreeEntry constructs.
+	resolved, err := Resolve(ctx, root, name)
+	if err != nil {
+		t.Fatalf("Resolve before re-create: %v", err)
+	}
+	if resolved == nil {
+		t.Fatal("git no longer lists the stale worktree; wedge precondition missing")
+	}
+
+	recreated, err := Create(ctx, root, name, "HEAD")
+	if err != nil {
+		t.Fatalf("re-Create with stale registration: %v", err)
+	}
+	if recreated.Name != name {
+		t.Errorf("Name = %q, want %q", recreated.Name, name)
+	}
+	if want := defaultWorktreeBranchPrefix + name; recreated.Branch != want {
+		t.Errorf("Branch = %q, want %q", recreated.Branch, want)
+	}
+	if _, err := os.Stat(filepath.Join(recreated.Path, "retained.txt")); err != nil {
+		t.Errorf("retained branch content is missing after re-create: %v", err)
+	}
+
+	// Negative path: a second create of the now-live name is refused.
+	if _, err := Create(ctx, root, name, "HEAD"); err == nil {
+		t.Fatal("second Create of the live name succeeds")
+	} else if _, ok := err.(WorktreeExistsError); !ok {
+		t.Errorf("second Create error = %T: %v, want WorktreeExistsError", err, err)
+	}
+}
