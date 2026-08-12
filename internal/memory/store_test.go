@@ -246,6 +246,30 @@ func TestStoreSearchEscapesWildcards(t *testing.T) {
 	}
 }
 
+// TestStoreSearchQuotedPhraseContiguity pins the double-quote contract on both
+// backends: a quoted phrase must appear contiguously and in order, while the
+// same words unquoted match order-independently.
+func TestStoreSearchQuotedPhraseContiguity(t *testing.T) {
+	for _, backend := range []string{"sqlite", "memory"} {
+		t.Run(backend, func(t *testing.T) {
+			s := newTestStore(t, backend, "")
+			ctx := context.Background()
+			if _, err := s.Save(ctx, testEntry("DeepSeek v4-flash: transient HTTP 400 escalation", ScopeProject)); err != nil {
+				t.Fatal(err)
+			}
+			if titles := searchTitles(t, s, `"HTTP 400"`, ScopeProject); len(titles) != 1 {
+				t.Errorf("quoted phrase = %v, want 1 contiguous-order match", titles)
+			}
+			if titles := searchTitles(t, s, `"400 HTTP"`, ScopeProject); len(titles) != 0 {
+				t.Errorf("reversed quoted phrase = %v, want empty", titles)
+			}
+			if titles := searchTitles(t, s, "HTTP 400", ScopeProject); len(titles) != 1 {
+				t.Errorf("unquoted words = %v, want 1 order-independent match", titles)
+			}
+		})
+	}
+}
+
 func TestStoreSearchEmptyQueryFails(t *testing.T) {
 	for _, backend := range []string{"sqlite", "memory"} {
 		t.Run(backend, func(t *testing.T) {

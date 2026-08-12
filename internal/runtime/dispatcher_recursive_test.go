@@ -27,7 +27,7 @@ func TestDispatcherRecursiveDuplicateDoesNotReleaseOtherWaiters(t *testing.T) {
 	go func() {
 		waiterDone <- d.Invoke(context.Background(), Request{ID: "same", ParentID: "root", Kind: Tool, Name: "t", Budget: 1})
 	}()
-	waitForIDKeyedWaiterRegistered(t, d, "same", "root")
+	waitForIDKeyedWaiterRegistered(t, d, "same")
 
 	recursive := d.Invoke(context.Background(), Request{ID: "same", ParentID: "same", Kind: Tool, Name: "t"})
 	if recursive.Err == nil {

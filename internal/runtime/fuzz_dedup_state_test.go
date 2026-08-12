@@ -158,8 +158,8 @@ func checkFuzzDedupInvariants(t *testing.T, d *Dispatcher, ownerReq Request, own
 		return
 	}
 	// Non-turn, non-skip: the ID-keyed completed map is the dedup authority.
-	// execute writes it only on the COMPLETED path (completeIDKeyed, after the
-	// ceiling check): handler failures and over-ceiling destroy return BEFORE
+	// Invoke's tail writes it only on the COMPLETED path (completeIDKeyed, after
+	// the ceiling check): handler failures and over-ceiling destroy return BEFORE
 	// that write, and failResult/deliverTerminal touch only the ID-keyed waiter
 	// channel, never d.completed. So the map holds exactly the results that
 	// completed - presence ⟺ Err == nil - and a same-ID reissue of a FAILED

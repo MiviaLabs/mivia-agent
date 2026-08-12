@@ -177,7 +177,7 @@ func validateTruncatedToolCalls(toolsByIdx map[int]*ToolCall, name string) error
 		}
 		args := strings.TrimSpace(tc.Function.Arguments)
 		if args != "" && !json.Valid([]byte(args)) {
-			return fmt.Errorf("%s: stream ended without a completion signal (tool call %q has malformed arguments)", name, tc.ID)
+			return &TransientError{Err: fmt.Errorf("%s: stream ended without a completion signal (tool call %q has malformed arguments)", name, tc.ID)}
 		}
 	}
 	return nil
@@ -239,22 +239,19 @@ func (c *OpenAICompat) applyStreamChunk(
 		reasoning.WriteString(delta)
 	}
 	// reasoning_details entries contribute their payload when the chunk carries
-	// no canonical reasoning_content: text entries concatenate Text, summary
-	// entries concatenate Summary. The reasoning builder doubles as the
-	// completion signal in readTurnStream (reasoning.Len() > 0 gates
-	// re-billing), so these fields must land in it too or a reasoning-only
-	// stream re-bills the turn non-streamed.
+	// no canonical reasoning_content. Every payload-bearing entry contributes,
+	// whatever its type tag: the reasoning builder doubles as the completion
+	// signal in readTurnStream (reasoning.Len() > 0 gates re-billing), and the
+	// non-stream resolveReasoningContent concatenates every entry's text (or
+	// summary when text is absent) with no type gate. An entry with neither
+	// text nor summary contributes nothing, so an empty details array still
+	// does not count as received (R0-1).
 	if ch.Delta.ReasoningContent == "" && len(ch.Delta.ReasoningDetails) > 0 {
 		for _, d := range ch.Delta.ReasoningDetails {
-			switch d.Type {
-			case "reasoning.text":
-				if d.Text != "" {
-					reasoning.WriteString(d.Text)
-				}
-			case "reasoning.summary":
-				if d.Summary != "" {
-					reasoning.WriteString(d.Summary)
-				}
+			if d.Text != "" {
+				reasoning.WriteString(d.Text)
+			} else if d.Summary != "" {
+				reasoning.WriteString(d.Summary)
 			}
 		}
 	}

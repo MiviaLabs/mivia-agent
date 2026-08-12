@@ -83,6 +83,15 @@ func (t *deleteFileTool) Execute(ctx context.Context, args json.RawMessage) (str
 	}
 	st, err := os.Lstat(abs)
 	if err != nil {
+		// A foreign deletion of a file the agent had read surfaces as the
+		// disappearance refusal (same contract as guardStaleWrite), not a
+		// bare ENOENT the agent could mistake for its own action. The Lstat
+		// runs before the guard, so the observation store is consulted here.
+		if os.IsNotExist(err) {
+			if _, ok := editFileObservations.Load(abs); ok {
+				return "", staleDisappearanceError(abs)
+			}
+		}
 		return "", fmt.Errorf("cannot delete %s: %w", rel, err)
 	}
 	if st.IsDir() {
@@ -91,6 +100,13 @@ func (t *deleteFileTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if !st.Mode().IsRegular() {
 		return "", fmt.Errorf("path %s is not a regular file (mode %s); refusing special files", rel, st.Mode().Type())
 	}
+	// Serialize against the in-place edit tools and write_file on the same
+	// path: delete_file used to skip editFileLocks, so a concurrent
+	// read-modify-write span could interleave inside this guard+remove and
+	// one mutation would be silently dropped while both tools reported
+	// success (see edit_lock.go).
+	unlock := lockEditFile(abs)
+	defer unlock()
 	// Same stale-write guard as the edit tools: a file changed by a foreign
 	// writer since the agent last saw it must not be deleted on the agent's
 	// say-so - removal is as destructive as overwriting.
