@@ -22,15 +22,21 @@ initial_step = "hunt"
 # repairs: one repair step per evidence gate, looping back to review. The two
 #          delivery re-entry steps bind delivery.failure (compiler-enforced).
 
+# [inputs.task] and [inputs.scope] max_bytes cap every step's task/scope
+# context binding at 16000. This is a hard engine limit, not a style choice:
+# the controller renders step context with a 256 KiB cap, and a binding larger
+# than that (the historical 1048576 = 1 MiB) failed every agent step render, so
+# no run could ever start. 16000 matches feature-delivery.toml and keeps the
+# full task text visible to every step that needs it.
 [inputs.task]
 type = "string"
 required = true
-max_bytes = 1048576
+max_bytes = 16000
 
 [inputs.scope]
 type = "string"
 required = true
-max_bytes = 1048576
+max_bytes = 16000
 
 [limits]
 # No global caps: max_step_attempts=0 is unlimited and max_duration_seconds=0
@@ -49,8 +55,8 @@ skill = "bug-audit"
 template = "templates/bugfix-hunt.md"
 output_schema = "schemas/findings-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.triage.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
@@ -64,8 +70,8 @@ skill = "bug-audit"
 template = "templates/bugfix-triage.md"
 output_schema = "schemas/triage-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.hunt.output", as = "findings", max_bytes = 32768 },
   { from = "steps.triage.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
@@ -80,8 +86,8 @@ skill = "workflow-feature-delivery"
 template = "templates/bugfix-fix-plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
 ]
 on_failure = "failure"
@@ -95,8 +101,8 @@ skill = "workflow-feature-delivery"
 template = "templates/bugfix-implement.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
@@ -112,8 +118,8 @@ skill = "secure-change"
 template = "templates/bugfix-review.md"
 output_schema = "schemas/review-fix-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
@@ -130,8 +136,8 @@ skill = "performance-review"
 template = "templates/bugfix-perf-verify.md"
 output_schema = "schemas/perf-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
 ]
@@ -182,8 +188,8 @@ skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.test_validate.output", as = "failed_evidence", max_bytes = 32768 },
@@ -198,8 +204,8 @@ skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.verify.output", as = "failed_evidence", max_bytes = 32768 },
@@ -214,8 +220,8 @@ skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.code_validate.output", as = "failed_evidence", max_bytes = 32768 },
@@ -230,8 +236,8 @@ skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.preflight_validate.output", as = "failed_evidence", max_bytes = 32768 },
@@ -249,8 +255,8 @@ skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.preflight_structure.output", as = "failed_evidence", max_bytes = 32768 },
@@ -269,8 +275,8 @@ skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair-metadata.md"
 output_schema = "schemas/change-summary-v1.json"
 context = [
-  { from = "inputs.task", as = "task", max_bytes = 1048576 },
-  { from = "inputs.scope", as = "scope", max_bytes = 1048576 },
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
 ]
 on_failure = "failure"
