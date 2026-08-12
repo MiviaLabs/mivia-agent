@@ -120,6 +120,52 @@ func TestPanelAuthorityAdmitsSkillResourceReader(t *testing.T) {
 	}
 }
 
+// TestPanelAuthoritySynthesizerAdmitsMCPServers pins the second live
+// admission failure of the enabled agent_panel gate: the review-synthesizer
+// inherits the project's global MCP servers (codegraph, context7), so its
+// runtime surface carries the mcp__ tools and the expected set must carry
+// them too. Before this fix the synthesizer's expected set was always empty,
+// so a live panel could never admit even after the member fix landed. The
+// synthesizer still fails closed against any non-MCP tool.
+func TestPanelAuthoritySynthesizerAdmitsMCPServers(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/panel\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	// Mirrors the live codegraph/context7 surface: EncodeToolName is
+	// "mcp__<server>__x" + hex of the remote tool name.
+	for _, name := range []string{
+		"mcp__codegraph__x636f646567726170685f6578706c6f7265",
+		"mcp__context7__x71756572792d646f6373",
+		"mcp__context7__x7265736f6c7665722d6c6962726172792d6964",
+	} {
+		registry.Register(namedTool{name: name})
+	}
+	skillRegistry := skills.NewRegistry()
+	if err := skillRegistry.Register(skills.Definition{Name: "review"}); err != nil {
+		t.Fatal(err)
+	}
+	opts := SessionDispatcherOpts{Registry: registry, AuthorityRegistry: registry, Config: config.DefaultSubagentConfig, SkillReg: skillRegistry}
+	synth := agents.ResolvedAgent{
+		Name: "review-synthesizer", AllowEmptyTools: true, DisallowedTools: []string{toolPostMessage},
+		EffectiveMCPServers: []string{"codegraph", "context7"},
+	}
+	if err := validatePanelAgentTools(synth, "review", opts, true); err != nil {
+		t.Fatalf("validatePanelAgentTools for a synthesizer with global MCP servers: %v", err)
+	}
+	// A synthesizer whose surface gains a non-MCP tool still fails closed.
+	bad := synth
+	bad.EffectiveTools = []string{"read_file"}
+	if err := validatePanelAgentTools(bad, "review", opts, true); err == nil {
+		t.Fatal("validatePanelAgentTools accepted a synthesizer with a local tool")
+	}
+}
+
 func TestLoadWorkflowRuntimesPinsPanelMemberBindings(t *testing.T) {
 	base := t.TempDir()
 	if err := os.WriteFile(filepath.Join(base, "member.md"), []byte("review"), 0o600); err != nil {

@@ -79,7 +79,7 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 	slices.Sort(names)
 	want := []string{}
 	if !synthesizer {
-		want = panelMCPAllowedTools(agent, authority)
+		want = slices.Clone(panelReviewerTools)
 		// A member skill that declares resources gets the host-injected
 		// scoped reader (injectSkillResourceTool) in its runtime surface, so
 		// the expected set must carry read_skill_resource too. Without this,
@@ -90,22 +90,24 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 		if skillHasResources {
 			want = append(want, tools.SkillResourceToolName)
 		}
-		slices.Sort(want)
 	}
+	// MCP tools follow the agent's selected servers for panel members and the
+	// review-synthesizer alike: the project marks codegraph and context7
+	// global, so workflow agents run with them, and the synthesizer is
+	// allowed those read-only MCP tools (it still carries no local tools).
+	// The expected set must include every MCP tool the runtime grants, or a
+	// live panel can never admit - the synthesizer's second live failure was
+	// exactly this: want stayed [] while its surface held the mcp__ tools.
+	for _, name := range authorizedAgentTools(&agent, authority) {
+		if strings.HasPrefix(name, "mcp__") {
+			want = append(want, name)
+		}
+	}
+	slices.Sort(want)
 	if !slices.Equal(names, want) {
 		return fmt.Errorf("panel agent %q final runtime tools = %v, want %v", agent.Name, names, want)
 	}
 	return nil
-}
-
-func panelMCPAllowedTools(agent agents.ResolvedAgent, authority *tools.Registry) []string {
-	out := slices.Clone(panelReviewerTools)
-	for _, name := range authorizedAgentTools(&agent, authority) {
-		if strings.HasPrefix(name, "mcp__") {
-			out = append(out, name)
-		}
-	}
-	return out
 }
 
 // workflowDefaultRegistry builds the tool registry that workflow step agents

@@ -127,12 +127,16 @@ func TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
 // the enabled agent_panel review gate: every committed panel member
 // (panel-reviewer with bug-audit / secure-change / architecture-review) must
 // pass validatePanelAgentTools, the exact admission check workflow_run runs
-// before a run starts. All three member skills ship a resources.toml, so each
-// member's runtime surface carries the host-injected read_skill_resource
-// reader and the expected tool set must match. When this test was added the
-// gate refused every feature-delivery run at admission with a
-// "final runtime tools = [... read_skill_resource], want [...]" mismatch;
-// unit coverage used a resource-less skill and never saw it.
+// before a run starts, and so must the review-synthesizer. All three member
+// skills ship a resources.toml, so each member's runtime surface carries the
+// host-injected read_skill_resource reader; and the loaded agents inherit the
+// project's global MCP servers (codegraph, context7), so the registry below
+// mirrors that live surface with the same mcp__ tool names. When this test
+// was added the gate refused every feature-delivery run at admission - first
+// on the members ("... read_skill_resource], want [...]"), then, after that
+// fix, on the synthesizer ("final runtime tools = [mcp__codegraph...], want
+// []"); unit coverage used a resource-less skill and an MCP-less registry and
+// never saw either.
 func TestFeatureDeliveryPanelMembersAdmit(t *testing.T) {
 	root := committedWorkflowRoot(t)
 	workflow, _ := loadCommittedFeatureDeliveryWorkflow(t, root)
@@ -159,6 +163,15 @@ func TestFeatureDeliveryPanelMembersAdmit(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
+	// Mirrors the live codegraph/context7 surface the loaded agents inherit
+	// from .mivia/mivia.toml ([mcp] servers with global = true).
+	for _, name := range []string{
+		"mcp__codegraph__x636f646567726170685f6578706c6f7265",
+		"mcp__context7__x71756572792d646f6373",
+		"mcp__context7__x7265736f6c7665722d6c6962726172792d6964",
+	} {
+		registry.Register(namedTool{name: name})
+	}
 	opts := SessionDispatcherOpts{Registry: registry, AuthorityRegistry: registry, Config: config.DefaultSubagentConfig, SkillReg: skillRegistry}
 	for _, member := range step.Panel.Members {
 		agent, ok := loaded.Registry.Get(member.Agent)
