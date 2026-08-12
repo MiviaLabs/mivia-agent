@@ -12,12 +12,27 @@ import (
 // remainder - only the notice's bytes are charged, exactly as tier 3 charges
 // its notice alone. No ref is ever invented (INV-AG-10): a nil spool, an
 // empty principal, or a failed store yields the plain notice.
+//
+// A pass-1 result that was NOT truncated carries its original body in
+// cappedBody, and that body is spooled here exactly once. A pass-1 result
+// that WAS truncated already had its ORIGINAL spooled under parts.refA
+// (buildExecResult -> CapWithSpoolRef): that ref is named and never spooled
+// again, so read_output pages the full original in one hop and the original
+// is stored exactly once. A truncated result whose pass-1 spool failed (refA
+// empty) falls back to the plain notice rather than spool the truncation
+// artifact - naming the artifact as the 'original' would repeat the very
+// defect this branch exists to avoid.
 func refOnlyTier(env shapeEnv, p resultParts, name string) (string, bool) {
 	if !slices.Contains(env.refOnlyTools, name) ||
 		p.totalN < BatchDegradeFloorBytes || p.ephemeral {
 		return "", false
 	}
-	ref := env.spool(p.cappedBody)
+	// truncated: pass 1 already spooled the original under p.refA - name it,
+	// never spool again. !truncated: cappedBody IS the original, spool it once.
+	ref := p.refA
+	if !p.truncated {
+		ref = env.spool(p.cappedBody)
+	}
 	var notice string
 	if ref != "" {
 		notice = fmt.Sprintf("[tool result for %s elided to a remainder ref (original ~%s): %s — use read_output to fetch the full body]",
