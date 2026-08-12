@@ -35,8 +35,19 @@ func Inspect(workspaceRoot string, o LoadResolveOptions) (InspectionReport, erro
 	if o.SkillCatalogue != nil {
 		o.AllowProjectSkills = global.LoadWorkspaceConfig
 	}
+	// Load the trusted MCP configuration exactly as LoadAndResolveOpts does so
+	// every resolution entry point agrees on agent selectability. Without this,
+	// an agent with an explicit mcp_servers list resolves against the
+	// zero-value MCPConfig (Enabled=false, no servers), resolveMCPServers fails
+	// with unknown-or-disabled, and Inspect promotes the valid agent to
+	// malformed - hiding it from CLI/doctor output and automation.
+	mcpConfig, _, err := config.LoadTrustedMCPConfig(workspaceRoot)
+	if err != nil {
+		return InspectionReport{Global: global, Collection: discovered.Collection, Diagnostics: discovered.Diagnostics, Warnings: discovered.Warnings}, err
+	}
 	opts := ResolveOptions{
 		Global:             global,
+		MCPConfig:          mcpConfig,
 		KnownTools:         knownToolSet(tools.DeclaredToolNames()),
 		SkillNames:         o.SkillNames,
 		ReservedHandlers:   subagents.ReservedHandlerNames(),
