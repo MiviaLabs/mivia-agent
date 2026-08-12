@@ -3,7 +3,9 @@ package ledger
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	coordledger "github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -24,8 +26,13 @@ func (f panelCancelHandlerFunc) Invoke(ctx context.Context, req runtime.Request)
 func panelCancelFixture(t *testing.T, handler runtime.Handler) (PanelCoordinator, *StorageRepository, coordinator.Coordinator, string, StepAttempt) {
 	t.Helper()
 	dispatcher := runtime.New(runtime.Policy{})
-	if err := dispatcher.Register(runtime.Subagent, "agent", handler); err != nil {
-		t.Fatal(err)
+	// The pool routes by task.Name (validPanelTask sets TaskName to the
+	// member/synthesis ID), not AgentName, so every name a fixture's panel
+	// attempt can dispatch must resolve to the same handler.
+	for _, name := range []string{"member-0", "member-1", "synthesis"} {
+		if err := dispatcher.Register(runtime.Subagent, name, handler); err != nil {
+			t.Fatal(err)
+		}
 	}
 	coordLedger := coordledger.NewMemoryLedgerRepository()
 	coord := coordinator.New(coordLedger, subagents.New(dispatcher, subagents.Policy{Workers: 4}))
@@ -169,5 +176,58 @@ func TestCancelOrTombstoneMember_CancelsLiveLocalActor(t *testing.T) {
 	case <-handle.Done():
 	default:
 		t.Fatal("canceling a live local actor must wait for it to reach a terminal state")
+	}
+}
+
+// Cancellation matrix item 5: a slow worker produces cancel_pending
+// (terminal=false, err=nil), not an ambiguous-claim refusal (item 6,
+// terminal=false with a non-nil error). A caller-context deadline while
+// waiting for an uncooperative-but-live child to finish is the slow-worker
+// signal, distinct from a claim the coordinator cannot safely verify at all.
+func TestCancelOrTombstoneMember_SlowWorkerReportsPendingNotBlocked(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{})
+	defer close(release)
+	// Deliberately does not observe ctx.Done(): simulates a worker that is
+	// genuinely still running and has not yet reacted to cancellation, so
+	// only the caller's own deadline elapses, not the child's completion.
+	// The coordinator CASes the task to running before dispatching it to the
+	// pool (dag.go's startReady), so closing started as the handler's first
+	// action is a deterministic signal that the durable status is already
+	// "running" by the time this test proceeds.
+	var startedOnce sync.Once
+	handler := panelCancelHandlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		startedOnce.Do(func() { close(started) })
+		<-release
+		return json.RawMessage(`{}`), nil
+	})
+	panel, repo, _, run, attempt := panelCancelFixture(t, handler)
+
+	membersCtx := ContextWithClaimHolder(context.Background(), "holder")
+	if err := repo.ClaimRun(membersCtx, run, "holder"); err != nil {
+		t.Fatal(err)
+	}
+	handle, err := panel.EnsureMember(membersCtx, attempt.AttemptID, "member-0")
+	if err != nil {
+		t.Fatalf("EnsureMember() error = %v", err)
+	}
+	if !handle.LocalActor() {
+		t.Fatal("expected member-0 to become a local actor")
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("member-0's handler never started")
+	}
+
+	claimCtx := claimAndCancelPending(t, repo, run, attempt)
+	shortCtx, cancel := context.WithTimeout(claimCtx, 20*time.Millisecond)
+	defer cancel()
+	terminal, err := panel.CancelOrTombstoneMember(shortCtx, attempt.AttemptID, "member-0")
+	if err != nil {
+		t.Fatalf("slow worker must report cancel_pending (nil error), got err = %v", err)
+	}
+	if terminal {
+		t.Fatal("a worker that has not yet stopped must not be reported terminal")
 	}
 }
