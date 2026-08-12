@@ -82,6 +82,20 @@ func TestF1PortlessDialAddressUsesUnchangedFallback(t *testing.T) {
 		}
 		t.Fatal("dial of a portless address must return a non-nil error (unchanged-addr fallback), got a connection")
 	}
+	// Discriminating pin: the unchanged-address fallback (ollama_loopback.go
+	// SplitHostPort-failure branch) hands the dialer '127.0.0.1' verbatim, so
+	// the dialer's error carries a SINGLE colon after the host
+	// ('127.0.0.1: missing port in address'). If that branch were removed, the
+	// portless address would instead be re-hosted through
+	// net.JoinHostPort('127.0.0.1', '') and the error would carry TWO colons
+	// ('127.0.0.1:: missing port in address'). Both assertions must hold, so
+	// this test cannot pass vacuously when the fallback branch is deleted.
+	if !strings.Contains(err.Error(), "127.0.0.1: missing port in address") {
+		t.Fatalf("error = %q, want it to contain %q (unchanged-address fallback must dial '127.0.0.1' unchanged)", err, "127.0.0.1: missing port in address")
+	}
+	if strings.Contains(err.Error(), "127.0.0.1::") {
+		t.Fatalf("error = %q must not contain %q (double colon means JoinHostPort('127.0.0.1','') was dialed: the SplitHostPort-failure fallback branch was removed)", err, "127.0.0.1::")
+	}
 }
 
 // F2a: localhost resolves to [127.0.0.2, 127.0.0.3]; the multi-IP loop must

@@ -41,6 +41,7 @@ func TestIsOllamaLoopback(t *testing.T) {
 		{name: "scheme-relative", raw: "//127.0.0.1:11434", want: false},
 		{name: "ipv4-mapped ipv6", raw: "http://[::ffff:127.0.0.1]:11434", want: false},
 		{name: "empty", raw: "", want: false},
+		{name: "empty hostname", raw: "http://:11434/v1", want: false},
 		{name: "not a url", raw: "not a url", want: false},
 		{name: "remote ollama", raw: "https://ollama.com/v1", want: false},
 	}

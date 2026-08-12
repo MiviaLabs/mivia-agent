@@ -86,6 +86,7 @@ default_model = "openai/gpt-4o-mini"
 models = [{ name = "glm-5.2", context_window_tokens = 200000, max_output_tokens = 128000 }]
 api_key_env = "ZAI_API_KEY"
 base_url = "https://api.z.ai/api/paas/v4"
+```
 
 ### Ollama
 
@@ -121,7 +122,6 @@ base_url = "http://127.0.0.1:11434/v1"
 
 Local daemon model names must be declared in `models` and match the
 output of `ollama list`. The local profile needs no key in the env file.
-```
 
 ## Provider support
 
