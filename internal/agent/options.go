@@ -55,15 +55,21 @@ type Options struct {
 	// is charged across compaction boundaries, where cross-batch growth is
 	// already compaction's job.
 	BatchResultBudgetBytes int
-	MaxToolCallsPerBatch   int
-	MaxConcurrentTools     int
-	ToolTimeout            time.Duration
-	RequestTimeout         time.Duration
-	ParentID               string
-	TurnID                 string
-	SessionID              string
-	Role                   string
-	Depth                  int
+	// RefOnlyTools lists tool names whose results are never inlined into the
+	// model context when they exceed BatchDegradeFloorBytes; instead the whole
+	// body is spooled to RemainderSpool and the notice names a remainder ref
+	// (read_output) that the model can fetch. Empty/absent names keep normal
+	// degrade behavior.
+	RefOnlyTools         []string
+	MaxToolCallsPerBatch int
+	MaxConcurrentTools   int
+	ToolTimeout          time.Duration
+	RequestTimeout       time.Duration
+	ParentID             string
+	TurnID               string
+	SessionID            string
+	Role                 string
+	Depth                int
 	// Step is the loop's 1-based model-step index, stamped per step on the
 	// loop's own Options copy before tool calls are dispatched (plan:
 	// step-scoped tool dedup). 0 means unset/legacy.

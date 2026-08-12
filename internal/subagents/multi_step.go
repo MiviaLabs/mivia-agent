@@ -89,6 +89,10 @@ type MultiStepHandler struct {
 	// the interactive loop ([tools] batch_result_budget_bytes); the counter is
 	// per batch, so every nested loop gets its own automatically.
 	BatchResultBudgetBytes int
+	// RefOnlyTools names tools whose results are always spooled as refs by the
+	// nested loop. Same operator knob as the interactive loop
+	// ([tools] ref_only_tools); empty = off.
+	RefOnlyTools []string
 	// RemainderSpool stores truncated tool-result bodies for read_output.
 	// Shared with the session's registered read_output tool so notices and
 	// reads use one grant domain. Nil omits refs from truncation notices.
@@ -215,6 +219,7 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 		// Same operator knob as the interactive loop; 0 = uncapped.
 		MaxToolResultChars:     h.MaxToolResultChars,
 		BatchResultBudgetBytes: h.BatchResultBudgetBytes,
+		RefOnlyTools:           h.RefOnlyTools,
 		RemainderSpool:         h.RemainderSpool,
 		ToolTimeout:            toolTimeout,
 		RequestTimeout:         h.RequestTimeout,

@@ -11,9 +11,16 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 )
 
 type PrepareInput struct {
+	// Spool, when non-nil, lets compaction elision store the full body of an
+	// elided tool result and name the remainder ref in the notice, so the model
+	// can fetch the original bytes with read_output. Nil keeps plain
+	// (non-recoverable) notices.
+	Spool *remainder.Spool
+
 	Messages         []provider.Message
 	Budget           int
 	Tools            []provider.ToolSpec

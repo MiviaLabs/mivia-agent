@@ -204,7 +204,7 @@ func (c *coordinator) cancelRecovered(ctx context.Context, h *RunHandle) error {
 		}
 		if err := c.repo.CompareAndSetTaskStatus(persistCtx, h.runID, task.TaskID, task.Version, string(ledger.TaskStatusCanceled)); err != nil {
 			if err == ledger.ErrConflict {
-				return fmt.Errorf("cannot cancel recovered task %q: state changed during reconciliation", task.TaskID)
+				return fmt.Errorf("cannot cancel recovered task %q: state changed during reconciliation: %w", task.TaskID, err)
 			}
 			return fmt.Errorf("cancel recovered task %q: %w", task.TaskID, err)
 		}

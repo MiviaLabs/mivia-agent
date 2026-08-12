@@ -64,6 +64,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: defaultMaxTokens, MaxContextTokens: maxContextTokens,
 		MaxToolResultChars:        budgets.perCall,
 		BatchResultBudgetBytes:    budgets.perBatch,
+		RefOnlyTools:              budgets.refOnlyTools,
 		RemainderSpool:            spool,
 		SchemaRetryMax:            cfg.SchemaRetryMax,
 		MaxContextTokensFunc:      budget,

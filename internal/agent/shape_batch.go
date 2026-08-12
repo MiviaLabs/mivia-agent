@@ -97,6 +97,12 @@ type resultParts struct {
 	// resurrect, via read_output, exactly the bytes the scrub exists to
 	// remove.
 	ephemeral bool
+	// toolName is the tool that produced this result, stamped from the call
+	// by shapeBatchResults. Pass 1 does not build it: the ref-only tier is
+	// the only reader, and it decides per batch whether a result is inlined
+	// or elided, so the name rides on the structured parts rather than being
+	// glued into the body.
+	toolName string
 }
 
 // shapeStore is the spool capability shapeBatch needs, narrowed to keep the
@@ -106,10 +112,19 @@ type shapeStore interface {
 	Load(ctx context.Context, principal, ref string) ([]byte, error)
 }
 
-// shapeEnv carries the only I/O shapeBatch performs.
+// shapeEnv carries the only I/O shapeBatch performs, plus the ref-only tool
+// set that decides whether a result is inlined at all (plan tools/06). The
+// set is configuration rather than I/O, but shapeOne receives the env - and
+// shapeBatch's signature is pinned by tests - so the set rides here, empty
+// meaning the tier is off.
 type shapeEnv struct {
 	store     shapeStore
 	principal string
+	// refOnlyTools lists tool names whose results are never inlined: when a
+	// result's raw body clears the floor and the result is not ephemeral,
+	// the WHOLE body is spooled and replaced by a notice naming the
+	// remainder. Empty means every result keeps the budget tiers.
+	refOnlyTools []string
 }
 
 // newShapeEnv builds the environment from loop options. A nil spool or empty
@@ -179,8 +194,13 @@ func shapeBatchResults(results []toolExecResult, opts Options) []string {
 	parts := make([]resultParts, len(results))
 	for i, r := range results {
 		parts[i] = r.parts
+		// The ref-only tier decides on the TOOL, not the bytes, so the name
+		// is stamped here from the call that produced this result.
+		parts[i].toolName = r.toolCall.Function.Name
 	}
-	shaped, report := shapeBatch(parts, budget, newShapeEnv(opts.RemainderSpool, opts.SessionID))
+	env := newShapeEnv(opts.RemainderSpool, opts.SessionID)
+	env.refOnlyTools = opts.RefOnlyTools
+	shaped, report := shapeBatch(parts, budget, env)
 	for i := range shaped {
 		// Hook context is re-attached AFTER shaping and outside the budget
 		// check: it is framing, bounded by runtime.MaxHookContextBytes, and
@@ -292,6 +312,12 @@ func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeR
 // explanations live ("error: no such file"). Requiring the saving to cover the
 // notice itself is the threshold.
 func shapeOne(p resultParts, remaining int, env shapeEnv) (string, degradeState, bool) {
+	// Ref-only tier (plan tools/06): a tool opted out of inlining is elided
+	// before the budget tiers see it. The notice is carried in fallback so
+	// the D8 status-line recomposition returns it verbatim.
+	if notice, ok := refOnlyTier(env, p, p.toolName); ok {
+		return notice, degradeState{fallback: notice}, true
+	}
 	if len(p.cappedBody) <= remaining {
 		return p.cappedBody, degradeState{}, false
 	}

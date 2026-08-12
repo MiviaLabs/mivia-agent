@@ -380,6 +380,25 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 	// The skill policy is built against the final live authority registry
 	// (plan 43) and returned for the caller to install on commit.
 	skillScope := skillScopeFromAgentAndRegistry(selected, authority)
+	dispatcher, err := NewSessionDispatcher(dispatcherOptsForSurface(sess, res, state, binding, registry, authority, skillReg, skillScope, plan, root))
+	if err != nil {
+		return nil, fmt.Errorf("dispatcher: %w", err)
+	}
+	return &agentSurface{
+		registry:     registry,
+		dispatcher:   dispatcher,
+		skillReg:     filterSkillsForScope(skillReg, skillScope),
+		plan:         plan,
+		skillRegFull: skillReg,
+		skillScope:   skillScope,
+	}, nil
+}
+
+// dispatcherOptsForSurface builds the SessionDispatcherOpts for one surface
+// build. The session owns the ledger store, so no rebuilt dispatcher opens one
+// it would then close on publication - under the spool this surface carries.
+// Callers hold state.mu, so the repository field is read directly.
+func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *agentSessionState, binding chat.ModelBinding, registry, authority *tools.Registry, skillReg *skills.Registry, skillScope agentSkillScope, plan toolTierPlan, root string) SessionDispatcherOpts {
 	cfg := config.SubagentConfig{}
 	var modelCatalog []config.ProviderModelGroup
 	if res != nil {
@@ -387,7 +406,7 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 		modelCatalog = res.ModelCatalog()
 	}
 	contextWiring := contextDispatcherFor(sess, cfg)
-	dispatcher, err := NewSessionDispatcher(SessionDispatcherOpts{
+	return SessionDispatcherOpts{
 		Registry:          registry,
 		AuthorityRegistry: authority,
 		// The session owns the ledger store, so no rebuilt dispatcher opens one
@@ -404,6 +423,7 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 		Config:                    cfg,
 		ToolResultCapBytes:        sess.MaxToolResultChars,
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
+		RefOnlyTools:              sess.RefOnlyTools,
 		WorkspaceRoot:             root,
 		MaxContextTokens:          sess.PromptBudget(),
 		MaxTokens:                 sess.MaxTokens,
@@ -421,16 +441,5 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 		// spool the live surface holds. Reuse it so the republication below is
 		// an identity re-publish rather than a revocation.
 		RemainderSpool: RemainderSpoolFromRegistry(sess.Tools),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
-	return &agentSurface{
-		registry:     registry,
-		dispatcher:   dispatcher,
-		skillReg:     filterSkillsForScope(skillReg, skillScope),
-		plan:         plan,
-		skillRegFull: skillReg,
-		skillScope:   skillScope,
-	}, nil
 }

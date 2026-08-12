@@ -51,6 +51,7 @@ type agentTurnSnapshot struct {
 	maxSteps          int
 	maxToolResult     int
 	batchResultBudget int
+	refOnlyTools      []string
 	onEvent           func(agent.Event)
 	toolRegistry      *tools.Registry
 	toolTimeout       time.Duration
@@ -388,7 +389,7 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		context: s.captureContextLocked(), contextBudget: budget,
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens),
 		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars,
-		batchResultBudget: s.BatchResultBudgetBytes, onEvent: onEvent,
+		batchResultBudget: s.BatchResultBudgetBytes, refOnlyTools: s.RefOnlyTools, onEvent: onEvent,
 		toolRegistry: s.Tools, toolTimeout: s.ToolTimeout, sessionID: s.SessionID,
 		// Captured under the lock: the host republishes the spool after a
 		// surface publication, concurrently with turns starting.

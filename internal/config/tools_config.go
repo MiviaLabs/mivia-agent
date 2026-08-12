@@ -53,15 +53,20 @@ type ToolsConfig struct {
 	// each honestly under it still blow the context when they land in the same
 	// step; this is the only bound that sees the batch as a whole.
 	//
-	// 0 (the default) disables it. -1 derives it from the model's prompt
-	// budget (a quarter of it, floor 256 KiB; inert when there is no prompt
-	// budget). A positive value is the literal byte budget and must be at
-	// least 16 KiB - below that every batch would degrade to references.
+	// nil (absent) resolves to the derived budget; explicit 0 disables it;
+	// any negative derives it from the model's prompt budget (a quarter of
+	// it, floor 256 KiB; inert when there is no prompt budget). A positive
+	// value is the literal byte budget and must be at least 16 KiB - below
+	// that every batch would degrade to references.
 	//
 	// Over-budget results are degraded to content references, never failed:
 	// the model already paid for the calls and their side effects already
 	// happened.
-	BatchResultBudgetBytes int `toml:"batch_result_budget_bytes"`
+	BatchResultBudgetBytes *int `toml:"batch_result_budget_bytes"`
+	// RefOnlyTools is an opt-in list of tool names whose results are always
+	// spooled and replaced by a ref-only notice, never inlined whole; empty
+	// = off.
+	RefOnlyTools []string `toml:"ref_only_tools"`
 	// MaxTavilyResponseBytes bounds the bytes read from a Tavily API response
 	// body - the `search` tool's Tavily path and `extract`. It is NOT a
 	// truncation cap: the tools never cut content. The bound exists so their
@@ -311,55 +316,18 @@ func validateWritePathBlocklist(tc ToolsConfig) error {
 // number and quietly producing stubs.
 
 func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
-	def := DefaultToolsConfig
-	if tc.RunTimeoutSec <= 0 {
-		tc.RunTimeoutSec = def.RunTimeoutSec
-	}
-	if tc.MaxReadBytes <= 0 {
-		tc.MaxReadBytes = def.MaxReadBytes
-	}
-	if tc.MaxWriteKB <= 0 {
-		tc.MaxWriteKB = def.MaxWriteKB
-	}
-	if tc.MaxOutputBytes <= 0 {
-		tc.MaxOutputBytes = def.MaxOutputBytes
-	}
-	if tc.MaxListDirEntries <= 0 {
-		tc.MaxListDirEntries = def.MaxListDirEntries
-	}
+	tc = resolveToolsDefaults(tc)
 	// No defaulting: 0 means uncapped. Negative is normalized to 0 so every
 	// consumer can treat <=0 uniformly as "no cap".
 	if tc.MaxToolResultBytes < 0 {
 		tc.MaxToolResultBytes = 0
 	}
-	// No defaulting either: 0 is off, -1 is derived, positive is literal. Any
-	// other negative is normalized to the derived sentinel so consumers can
-	// treat "< 0" uniformly - Validate rejects the values that are typos
-	// rather than intent.
-	if tc.BatchResultBudgetBytes < 0 {
-		tc.BatchResultBudgetBytes = BatchResultBudgetDerived
-	}
-	// Unlike MaxToolResultBytes there is no "uncapped" state: the tools that
-	// read Tavily responses declare this number as their result budget, and an
-	// undeclared budget is exactly what the dispatcher's backstop destroys.
-	if tc.MaxTavilyResponseBytes <= 0 {
-		tc.MaxTavilyResponseBytes = def.MaxTavilyResponseBytes
-	}
-	// Unlike the Tavily bound there IS a valid unlimited state for fetch_url:
-	// it truncates an over-bound body instead of refusing it, so an unbounded
-	// read still yields a bounded, usable result. But Go cannot tell an unset
-	// knob from an explicit 0 (both decode to the zero value), so a <= 0 here
-	// resolves to the built-in default - exactly like MaxTavilyResponseBytes.
-	// fetch_url itself preserves a 0 it receives via direct construction as
-	// unlimited (see internal/tools/fetch_url.go).
-	if tc.MaxFetchKB <= 0 {
-		tc.MaxFetchKB = def.MaxFetchKB
-	}
-	// Like MaxTavilyResponseBytes: no valid "unlimited" state, so <=0 (unset or
-	// a typo'd negative) resolves to the built-in default rather than passing
-	// through.
-	if tc.MaxInspectRepositoryBytes <= 0 {
-		tc.MaxInspectRepositoryBytes = def.MaxInspectRepositoryBytes
+	// Absent resolves to derived (-1) so an operator who configures nothing
+	// gets the derived batch budget; explicit 0 is off; negative is derived;
+	// positive is literal.
+	if tc.BatchResultBudgetBytes == nil || *tc.BatchResultBudgetBytes < 0 {
+		derived := BatchResultBudgetDerived
+		tc.BatchResultBudgetBytes = &derived
 	}
 	// OOM guard: 0 / negative must not disable the backstop.
 	if tc.MemoryBackstopMB <= 0 {
@@ -384,6 +352,78 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 			norm = append(norm, filepath.ToSlash(filepath.Clean(strings.TrimSpace(entry))))
 		}
 		tc.WritePathBlocklist = slices.Clone(norm)
+	}
+	tc = normalizeRefOnlyTools(tc)
+	return tc
+}
+
+// resolveToolsDefaults fills the byte and count knobs whose shared rule is
+// "unset or non-positive resolves to the built-in default". Each knob's
+// comment explains why its particular state cannot pass through: Tavily
+// responses must declare a budget, fetch_url's unlimited state is
+// indistinguishable from an unset 0 at the TOML boundary, and
+// inspect_repository always needs valid bounded JSON.
+func resolveToolsDefaults(tc ToolsConfig) ToolsConfig {
+	def := DefaultToolsConfig
+	if tc.RunTimeoutSec <= 0 {
+		tc.RunTimeoutSec = def.RunTimeoutSec
+	}
+	if tc.MaxReadBytes <= 0 {
+		tc.MaxReadBytes = def.MaxReadBytes
+	}
+	if tc.MaxWriteKB <= 0 {
+		tc.MaxWriteKB = def.MaxWriteKB
+	}
+	if tc.MaxOutputBytes <= 0 {
+		tc.MaxOutputBytes = def.MaxOutputBytes
+	}
+	if tc.MaxListDirEntries <= 0 {
+		tc.MaxListDirEntries = def.MaxListDirEntries
+	}
+	// Unlike MaxToolResultBytes there is no "uncapped" state: the tools that
+	// read Tavily responses declare this number as their result budget, and an
+	// undeclared budget is exactly what the dispatcher's backstop destroys.
+	if tc.MaxTavilyResponseBytes <= 0 {
+		tc.MaxTavilyResponseBytes = def.MaxTavilyResponseBytes
+	}
+	// Unlike the Tavily bound there IS a valid unlimited state for fetch_url:
+	// it truncates an over-bound body instead of refusing it, so an unbounded
+	// read still yields a bounded, usable result. But Go cannot tell an unset
+	// knob from an explicit 0 (both decode to the zero value), so a <= 0 here
+	// resolves to the built-in default - exactly like MaxTavilyResponseBytes.
+	// fetch_url itself preserves a 0 it receives via direct construction as
+	// unlimited (see internal/tools/fetch_url.go).
+	if tc.MaxFetchKB <= 0 {
+		tc.MaxFetchKB = def.MaxFetchKB
+	}
+	// Like MaxTavilyResponseBytes: no valid "unlimited" state, so <=0 (unset or
+	// a typo'd negative) resolves to the built-in default rather than passing
+	// through.
+	if tc.MaxInspectRepositoryBytes <= 0 {
+		tc.MaxInspectRepositoryBytes = def.MaxInspectRepositoryBytes
+	}
+	return tc
+}
+
+// normalizeRefOnlyTools normalizes ref_only_tools: trim whitespace, drop
+// empty strings, dedupe preserving order. Entries are matched exactly
+// (case-sensitive) by the consumer, so dedupe is exact-string too.
+func normalizeRefOnlyTools(tc ToolsConfig) ToolsConfig {
+	if len(tc.RefOnlyTools) > 0 {
+		seen := make(map[string]struct{}, len(tc.RefOnlyTools))
+		norm := make([]string, 0, len(tc.RefOnlyTools))
+		for _, name := range tc.RefOnlyTools {
+			trimmed := strings.TrimSpace(name)
+			if trimmed == "" {
+				continue
+			}
+			if _, dup := seen[trimmed]; dup {
+				continue
+			}
+			seen[trimmed] = struct{}{}
+			norm = append(norm, trimmed)
+		}
+		tc.RefOnlyTools = norm
 	}
 	return tc
 }
@@ -416,10 +456,12 @@ func validateToolResultBudgets(tc ToolsConfig) error {
 	// A batch budget under the degrade floor cannot be honoured: the first
 	// result that does not fit is re-cut to the floor anyway, so every batch
 	// would overshoot and every result after it would be a bare reference.
-	// Reject it rather than ship a bound that only pretends to hold.
-	if v := tc.BatchResultBudgetBytes; v > 0 && v < MinBatchResultBudgetBytes {
+	// Reject it rather than ship a bound that only pretends to hold. A nil
+	// field (absent key) is not a budget and skips the check - resolveToolsConfig
+	// has already resolved it to derived before Validate runs.
+	if v := tc.BatchResultBudgetBytes; v != nil && *v > 0 && *v < MinBatchResultBudgetBytes {
 		return fmt.Errorf("[tools] batch_result_budget_bytes must be 0 (off), %d (derive from the prompt budget), or >= %d, got %d",
-			BatchResultBudgetDerived, MinBatchResultBudgetBytes, v)
+			BatchResultBudgetDerived, MinBatchResultBudgetBytes, *v)
 	}
 	// inspect_repository's envelope must always be valid, bounded JSON: too
 	// small and the framing (provenance + one result) cannot fit; too large

@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 )
 
 const (
@@ -19,7 +20,9 @@ const (
 )
 
 // PlanInput contains only immutable inputs to the structural planner. The
-// planner has no provider, storage, filesystem, or session side effects.
+// planner stays pure except for an explicit caller-provided Spool seam: when
+// Spool is nil there are no side effects and output is byte-identical to
+// before; when set, elision spools bytes through that seam only.
 type PlanInput struct {
 	Messages         []provider.Message
 	Budget           int
@@ -34,6 +37,10 @@ type PlanInput struct {
 	// CalibrationRatio scales token estimates to correct for heuristic drift.
 	// 0 means use 1.0 (no correction). Should come from a Calibration.Ratio.
 	CalibrationRatio float64
+	// Spool: nil = elision mints no refs (plain notices), keeping the planner free of storage side effects.
+	Spool *remainder.Spool
+	// Principal: the session principal that receives the remainder grant when Spool is set.
+	Principal contextstate.Principal
 }
 
 // PlannerInput is a descriptive alias for callers that use the planner as a

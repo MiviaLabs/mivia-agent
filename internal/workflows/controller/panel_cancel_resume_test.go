@@ -235,6 +235,69 @@ func TestAdvancePanelStep_CancelPendingRunStatusConflictStaysNonTerminal(t *test
 	}
 }
 
+// claimHeldRunStatusRepository simulates a concurrent claim takeover landing
+// exactly at settlePanelRunCanceled's run-status write: the version CAS
+// matches (so this is not ErrConflict), but the trailing claim-fenced event
+// append loses to another holder's claim (D14's claim-heartbeat handoff
+// window), then behaves normally on retry.
+type claimHeldRunStatusRepository struct {
+	workflowledger.Repository
+	failed bool
+}
+
+func (r *claimHeldRunStatusRepository) CompareAndSetRunStatus(ctx context.Context, runID string, expectedVersion uint64, status workflowledger.RunStatus, finishedAt *time.Time) error {
+	if !r.failed {
+		r.failed = true
+		return workflowledger.ErrClaimHeld
+	}
+	return r.Repository.CompareAndSetRunStatus(ctx, runID, expectedVersion, status, finishedAt)
+}
+
+// Bug-audit finding: settlePanelRunCanceled must treat ErrClaimHeld from
+// CompareAndSetRunStatus the same retryable way ErrConflict is treated, not
+// escalate it to a permanent run failure via c.fail. ErrClaimHeld is a
+// distinct sentinel from ErrConflict (the version CAS can match while the
+// trailing claim-fenced event append still loses to a concurrent claim
+// holder), and is exactly the same D14 claim-heartbeat handoff window already
+// handled at the two sibling CompleteStepAttempt call sites.
+func TestAdvancePanelStep_CancelPendingRunStatusClaimHeldStaysNonTerminal(t *testing.T) {
+	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
+	if err := repo.CompareAndSetPanelPhase(ctx, ctrl.RunID, attempt.AttemptID, attempt.Version, workflowledger.PanelPhaseMembersAdmitted, workflowledger.PanelPhaseCancelPending, nil); err != nil {
+		t.Fatalf("CompareAndSetPanelPhase() error = %v", err)
+	}
+	claimHeld := &claimHeldRunStatusRepository{Repository: repo}
+	ctrl.Repo = claimHeld
+
+	run, done, err := ctrl.Advance(context.Background())
+	if err != nil {
+		t.Fatalf("Advance() error = %v, want nil (ErrClaimHeld must be retryable, not a durable error)", err)
+	}
+	if done {
+		t.Fatal("Advance() done = true, want false: a losing CompareAndSetRunStatus claim-fenced write must leave the run non-terminal for a later retry")
+	}
+	if run.Status == workflowledger.RunStatusFailed {
+		t.Fatal("a CompareAndSetRunStatus ErrClaimHeld must never fail the run; every panel child legitimately reconciled to canceled")
+	}
+	stored, err := repo.GetStepAttempt(context.Background(), ctrl.RunID, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !workflowledger.IsTerminalAttemptStatus(stored.Status) {
+		t.Fatalf("attempt status = %q, want terminal canceled: the attempt CompleteStepAttempt already succeeded before the run-status write failed", stored.Status)
+	}
+
+	// A later retry with the claim (the wrapper now behaves normally, as the
+	// real claim holder eventually would) settles the run canceled without
+	// ever having gone through c.fail.
+	settled, done, err := ctrl.settlePanelRunCanceled(ctx, run)
+	if err != nil {
+		t.Fatalf("retry settlePanelRunCanceled() error = %v", err)
+	}
+	if !done || settled.Status != workflowledger.RunStatusCanceled {
+		t.Fatalf("retry settlePanelRunCanceled() done=%v status=%q, want done=true status=canceled", done, settled.Status)
+	}
+}
+
 // twoCoordinatorPanelFixture builds two independent coordinator instances
 // sharing the same durable coordinator ledger, so one can hold a live child
 // claim while the other (the workflow controller under test) cannot verify

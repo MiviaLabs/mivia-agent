@@ -120,6 +120,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		EnsureMCPTools:            ensureMCPServerTools(surface.authority, mcpManager),
 		ToolResultCapBytes:        sess.MaxToolResultChars,
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
+		RefOnlyTools:              sess.RefOnlyTools,
 		WorkspaceRoot:             root,
 		MaxContextTokens:          sess.PromptBudget(),
 		MaxTokens:                 sess.MaxTokens,

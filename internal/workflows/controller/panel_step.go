@@ -139,10 +139,12 @@ func (c *LinearController) reconcilePanelCancelPending(ctx context.Context, run 
 // reconciliation confirmed every intended child terminal.
 func (c *LinearController) settlePanelRunCanceled(ctx context.Context, run workflowledger.RunSnapshot) (workflowledger.RunSnapshot, bool, error) {
 	if err := c.Repo.CompareAndSetRunStatus(ctx, c.RunID, run.Version, workflowledger.RunStatusCanceled, nil); err != nil {
-		if errors.Is(err, workflowledger.ErrConflict) {
+		if errors.Is(err, workflowledger.ErrConflict) || errors.Is(err, workflowledger.ErrClaimHeld) {
 			// Same rationale as reconcilePanelCancelPending's CompleteStepAttempt
 			// conflict handling: a concurrent executor won the run-status CAS
-			// first, so stay non-terminal and retryable rather than escalating
+			// first, or holds the claim at the moment of this claim-fenced
+			// write (ErrClaimHeld) during the same D14 claim-heartbeat handoff
+			// window, so stay non-terminal and retryable rather than escalating
 			// to a permanent failure.
 			return run, false, nil
 		}

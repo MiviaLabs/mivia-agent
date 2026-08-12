@@ -69,6 +69,17 @@ func resolvedMaxSteps(res *config.Resolved) int {
 	return DefaultMaxSteps
 }
 
+// batchResultBudget resolves the [tools] batch_result_budget_bytes knob with
+// the same nil-safe pattern as promptCap: an absent key (nil) falls back to
+// the derived budget sentinel, not to "off" (0). Explicit 0 stays off;
+// config.Load has already normalized negatives to the derived sentinel.
+func batchResultBudget(res *config.Resolved) int {
+	if res.Tools.BatchResultBudgetBytes == nil {
+		return config.BatchResultBudgetDerived
+	}
+	return *res.Tools.BatchResultBudgetBytes
+}
+
 // NewSession builds a session from resolved config and completer.
 func NewSession(res *config.Resolved, c provider.Completer) *Session {
 	providerName := res.ProviderName
@@ -101,7 +112,8 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		MaxToolResultChars: res.Tools.MaxToolResultBytes,
 		// 0 = off; config.Load already normalized negatives to the derived
 		// sentinel and rejected positive values under the degrade floor.
-		BatchResultBudgetBytes: res.Tools.BatchResultBudgetBytes,
+		BatchResultBudgetBytes: batchResultBudget(res),
+		RefOnlyTools:           slices.Clone(res.Tools.RefOnlyTools),
 		SessionID:              runtime.NewSessionID(),
 	}
 	s.agentSurfaceGeneration = 1

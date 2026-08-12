@@ -38,6 +38,10 @@ var (
 // ContentStore is the durable byte store the spool writes to. ledger
 // repositories satisfy it; the interface keeps this package free of ledger
 // imports so agent and runtime layers can use it without cycles.
+//
+// StoreContent must be idempotent: storing the same data twice returns the
+// same ref and the store must not grow unboundedly for duplicates —
+// determinism of refs across repeated prepares depends on it.
 type ContentStore interface {
 	StoreContent(ctx context.Context, ref string, data []byte) error
 	LoadContent(ctx context.Context, ref string) ([]byte, error)
