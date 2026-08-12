@@ -68,3 +68,68 @@ func TestChatStreamTruncatedReasoningOnlyStreamDoesNotResend(t *testing.T) {
 		t.Fatalf("content = %q, want empty", content)
 	}
 }
+
+// Tools-path counterpart: reasoning_details entries that carry text under an
+// unknown type tag (e.g. "thinking") must still count as a delivered answer.
+// readTurnStream's payload gate is reasoning.Len() > 0; applyStreamChunk only
+// wrote to that builder for the two known type tags, so an unknown-type
+// reasoning-only stream left the payload empty and chatTurnStream re-billed
+// the same turn non-streamed (a second upstream request). Every payload-bearing
+// details entry must contribute, matching the non-stream resolveReasoningContent
+// which concatenates text/summary with no type gate.
+func TestChatTurnStreamUnknownReasoningDetailsTypeDoesNotResend(t *testing.T) {
+	chunks := []string{
+		`{"choices":[{"delta":{"reasoning_details":[{"type":"thinking","text":"think "}]}}]}`,
+		`{"choices":[{"delta":{"reasoning_details":[{"type":"thinking","text":"more"}]}}]}`,
+	}
+	srv, calls := countingSSEServer(t, chunks, true)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model:    "m",
+		Stream:   true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+		Tools:    []ToolSpec{{"type": "function"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("unknown-type reasoning_details stream caused %d upstream requests, want 1 (no re-billing fallback)", got)
+	}
+	if want := "think more"; resp.ReasoningContent != want {
+		t.Fatalf("ReasoningContent = %q, want %q", resp.ReasoningContent, want)
+	}
+}
+
+// Negative boundary of the details fix: an entry with no text and no summary
+// carries no payload, so it must NOT count as received and the non-streaming
+// fallback must still fire (R0-1 empty-delta semantics preserved).
+func TestChatTurnStreamEmptyReasoningDetailsStillFallsBack(t *testing.T) {
+	chunks := []string{
+		`{"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text"}]}}]}`,
+	}
+	srv, calls := countingSSEServer(t, chunks, true)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model:    "m",
+		Stream:   true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+		Tools:    []ToolSpec{{"type": "function"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if got := atomic.LoadInt32(calls); got != 2 {
+		t.Fatalf("empty reasoning_details entry made %d upstream requests, want 2 (stream + fallback)", got)
+	}
+	if resp.Content != "fallback" {
+		t.Fatalf("resp.Content = %q, want %q (fallback fired)", resp.Content, "fallback")
+	}
+	if resp.ReasoningContent != "" {
+		t.Fatalf("ReasoningContent = %q, want empty", resp.ReasoningContent)
+	}
+}
