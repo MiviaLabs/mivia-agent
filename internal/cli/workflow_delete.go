@@ -15,7 +15,7 @@ import (
 // live claim, so deletion claims the run (taking over only an expired lease)
 // and never blind-clears a held claim.
 func executeWorkflowDelete(runID, root, configPath string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -130,7 +131,11 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 	if e.active == nil {
 		e.active = make(map[string]*sessionActiveRun)
 	}
-	e.active[p.runID] = &sessionActiveRun{cancel: cancel, done: done, closeFn: func() {
+	var runner *controller.CoordinatorRunner
+	if p.built.Controller != nil {
+		runner, _ = p.built.Controller.Runner.(*controller.CoordinatorRunner)
+	}
+	e.active[p.runID] = &sessionActiveRun{cancel: cancel, done: done, runner: runner, closeFn: func() {
 		p.finishExec()
 		if p.built.Dispatcher != nil {
 			p.built.Dispatcher.Close()
