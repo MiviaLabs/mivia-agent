@@ -582,6 +582,62 @@ def test_pre_commit_memory_dump_skipped_when_db_not_staged(root: Path) -> None:
     assert not (root / ".mivia" / "memory.jsonl").exists()
 
 
+def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path) -> None:
+    """Run the REAL scripts/git-hooks/pre-commit end to end (not the
+    extracted D6 fragment) in a linked git worktree of this repo, with a
+    genuinely staged .mivia/memory.db change, confirming the memory-dump
+    step coexists with every other gate (config, secrets, size, structure,
+    semgrep, invariants) running together - the integration-coverage gap
+    the Step 5+ review found: only the isolated fragment was tested before.
+
+    A linked worktree (not a synthetic fixture) is required: the script's
+    other gates live at $ROOT/scripts/... and must actually be present.
+    """
+    if os.name == "nt" or shutil.which("go") is None:
+        return
+    root.parent.mkdir(parents=True, exist_ok=True)
+    run(["git", "worktree", "add", "--detach", str(root)], ROOT)
+    try:
+        run(["git", "config", "user.email", "hook-test@example.invalid"], root)
+        run(["git", "config", "user.name", "Hook Test"], root)
+        run(["git", "config", "commit.gpgsign", "false"], root)
+
+        mivia_db = root / ".mivia" / "memory.db"
+        assert mivia_db.is_file(), "worktree must carry the real committed memory.db"
+
+        # Real, valid mutation via the actual CLI (not a byte-level edit):
+        # find a real existing id, then promote it - a genuine read-write
+        # open plus (if not already core) a real row change.
+        found = run(
+            ["go", "run", "./cmd/mivia", "memory", "search", "the",
+             "--workspace", str(root), "--limit", "1", "--json"],
+            root,
+        )
+        results = json.loads(found.stdout)
+        assert results, "expected at least one existing memory entry to promote"
+        entry_id = results[0]["id"]
+        run(
+            ["go", "run", "./cmd/mivia", "memory", "promote", entry_id, "--workspace", str(root)],
+            root,
+        )
+        run(["git", "add", ".mivia/memory.db"], root)
+
+        result = run(
+            [str(ROOT / "scripts" / "git-hooks" / "pre-commit")],
+            root,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"pre-commit failed:\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
+        cached = run(["git", "diff", "--cached", "--name-only"], root).stdout
+        assert ".mivia/memory.jsonl" in cached, "memory-dump step did not stage the export"
+        combined = result.stdout + result.stderr
+        assert "one or more parallel pre-commit gates failed" not in combined
+    finally:
+        run(["git", "worktree", "remove", "--force", str(root)], ROOT, check=False)
+
+
 def test_pre_push_without_a_base_scans_all_tracked_files() -> None:
     """Run the pre-push base selection with no usable upstream or origin base."""
     if os.name == "nt":
@@ -758,6 +814,9 @@ def main() -> None:
         )
         test_pre_commit_memory_dump_stages_jsonl_when_db_staged(base / "memory-dump-staged")
         test_pre_commit_memory_dump_skipped_when_db_not_staged(base / "memory-dump-skipped")
+        test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(
+            base / "full-script-worktree"
+        )
     print("test_git_hooks: ok")
 
 

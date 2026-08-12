@@ -138,6 +138,18 @@ func mergeTagLists(a, b string) string {
 
 // evictOldestArchive deletes the lowest-`created` archive-tier row for
 // (scope, org). Returns false when no evictable (archive-tier) row exists.
+//
+// `created` is caller-supplied (Entry.Created, validated only as a
+// well-formed YYYY-MM-DD date - entry.go's Validate places no bound on past
+// or future values) - a self-preserving agent could set a far-future
+// Created on its own new entries to make them never look "oldest" and dodge
+// eviction. This reuses the same `created` column decision 4/D4 already
+// locked for search ranking and consolidation ordering (plan 76); it cannot
+// retroactively change an existing rival entry's Created (Save only
+// inserts, never updates), so the exposure is limited to self-preservation,
+// not tampering with other entries. Flagged, not fixed, in Step 5+ review -
+// closing it would mean deriving eviction order from the server-side
+// `created_at` timestamp instead, a design change beyond this plan's scope.
 func (s *sqliteStore) evictOldestArchive(ctx context.Context, tx *sql.Tx, scope Scope, org string) (bool, error) {
 	var id string
 	err := tx.QueryRowContext(ctx,

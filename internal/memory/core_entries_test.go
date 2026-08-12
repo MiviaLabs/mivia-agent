@@ -61,6 +61,50 @@ func TestCoreEntriesReturnsOnlyCoreTierUpToCap(t *testing.T) {
 	}
 }
 
+// TestSearchReturnsBothTiersUnaffected is the mixed-tier Search() coverage
+// the Step 5+ review found missing: promoting an entry to core must not
+// remove it from, or otherwise break, ordinary text search - tier is a
+// separate concern from search ranking (D4's ranking stays keyed on
+// `created`/text rank, not tier).
+func TestSearchReturnsBothTiersUnaffected(t *testing.T) {
+	for _, backend := range []string{"sqlite", "memory"} {
+		t.Run(backend, func(t *testing.T) {
+			s := newTestStore(t, backend, "")
+			ctx := context.Background()
+
+			resCore, err := s.Save(ctx, testEntry("promoted deploy fact", ScopeProject))
+			if err != nil {
+				t.Fatalf("save core candidate: %v", err)
+			}
+			if err := s.PromoteToCore(ctx, resCore.ID); err != nil {
+				t.Fatalf("promote: %v", err)
+			}
+			resArchive, err := s.Save(ctx, testEntry("archived deploy fact", ScopeProject))
+			if err != nil {
+				t.Fatalf("save archive entry: %v", err)
+			}
+
+			results, err := s.Search(ctx, Query{Text: "deploy", Scope: ScopeProject, MaxResults: 10})
+			if err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			seen := map[string]bool{}
+			for _, r := range results {
+				seen[r.ID] = true
+			}
+			if !seen[resCore.ID] {
+				t.Errorf("promoted (core) entry %q missing from search results: %+v", resCore.ID, results)
+			}
+			if !seen[resArchive.ID] {
+				t.Errorf("archive entry %q missing from search results: %+v", resArchive.ID, results)
+			}
+			if len(results) != 2 {
+				t.Fatalf("search returned %d results, want exactly 2 (both tiers)", len(results))
+			}
+		})
+	}
+}
+
 func TestCoreEntriesEmptyWhenNoneCore(t *testing.T) {
 	for _, backend := range []string{"sqlite", "memory"} {
 		t.Run(backend, func(t *testing.T) {

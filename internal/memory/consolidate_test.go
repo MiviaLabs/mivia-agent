@@ -57,6 +57,44 @@ func TestSaveConsolidatesAtEightyPercentAndSucceeds(t *testing.T) {
 	_ = lastID
 }
 
+// TestSaveConsolidatesAcrossManyRepeatedCrossings is the sustained-load
+// coverage the Step 5+ review found missing: prior tests each crossed the
+// 80% threshold once. This drives many sequential saves - well past the
+// cap several times over - through the real Store interface, confirming
+// consolidation keeps working (not just once) and the store never exceeds
+// MaxEntries at any point along the way.
+func TestSaveConsolidatesAcrossManyRepeatedCrossings(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      dir + "/project.db",
+		MaxEntryBytes:    8192,
+		MaxEntries:       10,
+		MaxSearchResults: 8,
+	}
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	// 50 distinct saves against a cap of 10 crosses the 80% threshold
+	// (and the hard cap) many times over in one run.
+	for i := 0; i < 50; i++ {
+		if _, err := s.Save(ctx, testEntry(fmt.Sprintf("sustained entry %d about topic %d", i, i*173), ScopeProject)); err != nil {
+			t.Fatalf("save %d: %v", i, err)
+		}
+		count, err := s.Count(ctx, ScopeProject)
+		if err != nil {
+			t.Fatalf("count after save %d: %v", i, err)
+		}
+		if count > cfg.MaxEntries {
+			t.Fatalf("count = %d after save %d, exceeded max_entries=%d", count, i, cfg.MaxEntries)
+		}
+	}
+}
+
 func TestConsolidateMergesNearDuplicatesBeforeEvicting(t *testing.T) {
 	dir := t.TempDir()
 	cfg := Config{

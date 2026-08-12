@@ -31,6 +31,29 @@ func TestMemoryDumpEndToEnd(t *testing.T) {
 	}
 }
 
+// TestExecuteMemoryDumpRoutesToCommand is the Execute()-level integration
+// test the Step 5+ review found missing: real root dispatch against
+// committed sqlite content, not DumpJSONL called directly on a *sqliteStore.
+func TestExecuteMemoryDumpRoutesToCommand(t *testing.T) {
+	root := t.TempDir()
+	cfgPath := writeMemoryTestConfig(t, root, true)
+	saveTestMemories(t, root)
+
+	done := captureStdout(t)
+	err := Execute([]string{"memory", "dump", "--workspace", root, "--config", cfgPath})
+	stdout := done()
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(stdout, `"title":"Deploy pipeline fix"`) {
+		t.Fatalf("dump output missing seeded entry:\n%s", stdout)
+	}
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("dump line count = %d, want 3 (one per seeded entry)", len(lines))
+	}
+}
+
 func TestMemoryDumpDisabledMemoryError(t *testing.T) {
 	root := t.TempDir()
 	cfgPath := writeMemoryTestConfig(t, root, false)

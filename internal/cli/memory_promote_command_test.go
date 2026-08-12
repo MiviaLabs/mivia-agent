@@ -80,6 +80,52 @@ func TestMemoryPromoteUnknownFlag(t *testing.T) {
 	}
 }
 
+// TestExecuteMemoryPromoteRoutesToCommand is the Execute()-level integration
+// test the Step 5+ review found missing: real root dispatch (not
+// runMemoryWithIO called directly), two full invocations proving the second
+// promote is genuinely a no-op through the actual CLI entrypoint, not just
+// at the Store level.
+func TestExecuteMemoryPromoteRoutesToCommand(t *testing.T) {
+	root := t.TempDir()
+	cfgPath := writeMemoryTestConfig(t, root, true)
+	saveTestMemories(t, root)
+
+	mc := config.MemoryConfig{StoreBackend: "sqlite", StorePath: ".mivia/memory.db"}
+	store, err := openMemoryStore(root, mc)
+	if err != nil {
+		t.Fatalf("openMemoryStore: %v", err)
+	}
+	results, err := store.Search(context.Background(), memory.Query{Text: "deploy", Scope: memory.ScopeProject})
+	if err != nil || len(results) == 0 {
+		t.Fatalf("search for seeded entry: results=%v err=%v", results, err)
+	}
+	id := results[0].ID
+	store.Close()
+
+	done := captureStdout(t)
+	err = Execute([]string{"memory", "promote", id, "--workspace", root, "--config", cfgPath})
+	stdout := done()
+	if err != nil {
+		t.Fatalf("Execute (first promote): %v", err)
+	}
+	if !strings.Contains(stdout, id) {
+		t.Fatalf("first promote output = %q, want it to mention %q", stdout, id)
+	}
+
+	// Second Execute() call, real CLI entrypoint end to end again - must
+	// succeed as a no-op, not error, proving idempotency through the actual
+	// dispatch path rather than a direct Store call.
+	done = captureStdout(t)
+	err = Execute([]string{"memory", "promote", id, "--workspace", root, "--config", cfgPath})
+	stdout = done()
+	if err != nil {
+		t.Fatalf("Execute (second promote, must be a no-op): %v", err)
+	}
+	if !strings.Contains(stdout, id) {
+		t.Fatalf("second promote output = %q, want it to mention %q", stdout, id)
+	}
+}
+
 func TestMemoryPromoteDisabledMemoryError(t *testing.T) {
 	root := t.TempDir()
 	cfgPath := writeMemoryTestConfig(t, root, false)
