@@ -139,8 +139,10 @@ func (s *Service) Deliver(ctx context.Context, runID string, allowPublish bool) 
 	return engine.Deliver(ctx, runID, allowPublish)
 }
 
-// Delete removes a settled run (terminal or delivery_pending) from the ledger.
-func (s *Service) Delete(ctx context.Context, runID string) (DeleteResult, error) {
+// Delete removes a run from the ledger. force is the crash-recovery override
+// that also permits non-terminal (pending/running/waiting_approval) runs
+// stranded by a dead executor; a live claim is refused either way.
+func (s *Service) Delete(ctx context.Context, runID string, force bool) (DeleteResult, error) {
 	if strings.TrimSpace(runID) == "" {
 		return DeleteResult{}, fmt.Errorf("run_id is required")
 	}
@@ -148,7 +150,7 @@ func (s *Service) Delete(ctx context.Context, runID string) (DeleteResult, error
 	if engine == nil {
 		return DeleteResult{}, fmt.Errorf("workflow engine is not configured")
 	}
-	return engine.Delete(ctx, runID)
+	return engine.Delete(ctx, runID, force)
 }
 
 // Status returns a deep run overview from ledger projections only.

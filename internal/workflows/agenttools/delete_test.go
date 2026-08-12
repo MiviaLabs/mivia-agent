@@ -11,9 +11,10 @@ import (
 )
 
 // deleteEngine records Delete calls so service/tool tests can assert the
-// run_id reaches the engine untouched.
+// run_id (and force flag) reach the engine untouched.
 type deleteEngine struct {
 	deleted []string
+	forces  []bool
 }
 
 func (e *deleteEngine) Start(context.Context, agenttools.StartRequest) (agenttools.StartResult, error) {
@@ -25,8 +26,9 @@ func (e *deleteEngine) Cancel(context.Context, string) (agenttools.CancelResult,
 func (e *deleteEngine) Deliver(context.Context, string, bool) (agenttools.DeliverResult, error) {
 	return agenttools.DeliverResult{}, nil
 }
-func (e *deleteEngine) Delete(_ context.Context, runID string) (agenttools.DeleteResult, error) {
+func (e *deleteEngine) Delete(_ context.Context, runID string, force bool) (agenttools.DeleteResult, error) {
 	e.deleted = append(e.deleted, runID)
+	e.forces = append(e.forces, force)
 	return agenttools.DeleteResult{RunID: runID, Status: "delivery_pending", Deleted: true}, nil
 }
 
@@ -66,8 +68,34 @@ func TestDeleteToolExecutes(t *testing.T) {
 	if len(engine.deleted) != 1 || engine.deleted[0] != "wfr-x" {
 		t.Fatalf("engine deletes = %v, want [wfr-x]", engine.deleted)
 	}
+	if len(engine.forces) != 1 || engine.forces[0] {
+		t.Fatalf("engine force flags = %v, want [false] when force is omitted", engine.forces)
+	}
 	if !strings.Contains(out, `"deleted":true`) || !strings.Contains(out, `"run_id":"wfr-x"`) {
 		t.Fatalf("output = %s, want deleted:true for wfr-x", out)
+	}
+}
+
+// TestDeleteToolForwardsForce asserts the workflow_delete tool decodes
+// force=true and forwards it to the engine (the crash-recovery override).
+func TestDeleteToolForwardsForce(t *testing.T) {
+	engine := &deleteEngine{}
+	svc := testService(t, workflowledger.NewMemoryRepository(), engine)
+	tool := findTool(t, svc, agenttools.ToolWorkflowDelete)
+
+	params := tool.Parameters()
+	props, _ := params["properties"].(map[string]any)
+	if _, ok := props["force"]; !ok {
+		t.Fatal("parameters missing force")
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"run_id":"wfr-x","force":true}`)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(engine.forces) != 1 || !engine.forces[0] {
+		t.Fatalf("engine force flags = %v, want [true]", engine.forces)
+	}
+	if len(engine.deleted) != 1 || engine.deleted[0] != "wfr-x" {
+		t.Fatalf("engine deletes = %v, want [wfr-x]", engine.deleted)
 	}
 }
 
@@ -94,10 +122,10 @@ func TestDeleteToolInvalidArguments(t *testing.T) {
 func TestDeleteServiceRequiresRunID(t *testing.T) {
 	engine := &deleteEngine{}
 	svc := testService(t, workflowledger.NewMemoryRepository(), engine)
-	if _, err := svc.Delete(context.Background(), ""); err == nil {
+	if _, err := svc.Delete(context.Background(), "", false); err == nil {
 		t.Fatal("empty run_id accepted")
 	}
-	if _, err := svc.Delete(context.Background(), "   "); err == nil {
+	if _, err := svc.Delete(context.Background(), "   ", false); err == nil {
 		t.Fatal("blank run_id accepted")
 	}
 	if len(engine.deleted) != 0 {
@@ -116,7 +144,7 @@ func TestDeleteServiceNoEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	if _, err := svc.Delete(context.Background(), "wfr-x"); err == nil || !strings.Contains(err.Error(), "engine") {
+	if _, err := svc.Delete(context.Background(), "wfr-x", false); err == nil || !strings.Contains(err.Error(), "engine") {
 		t.Fatalf("Delete without engine = %v, want engine refusal", err)
 	}
 }

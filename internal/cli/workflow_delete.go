@@ -11,10 +11,15 @@ import (
 
 // executeWorkflowDelete removes a settled run's durable ledger record. It
 // mirrors executeWorkflowCleanup's preamble (execution file lock, run lookup)
-// and refuses active runs. A delivery_pending run may be mid-publish under a
-// live claim, so deletion claims the run (taking over only an expired lease)
-// and never blind-clears a held claim.
-func executeWorkflowDelete(runID, root, configPath string, stdout, stderr io.Writer) error {
+// and refuses active runs unless the operator passes force — the crash
+// recovery override, exactly as resume --force and deliver --force are. force
+// unlocks only the STATUS gate (pending/running/waiting_approval become
+// deletable so a run stranded by a dead executor can be purged); it never
+// clears a live claim: claimWorkflowOperator still refuses a fresh claim held
+// by a live executor and takes over only an expired lease. A delivery_pending
+// run may be mid-publish under a live claim, so deletion claims the run and
+// never blind-clears a held claim.
+func executeWorkflowDelete(runID, root, configPath string, force bool, stdout, stderr io.Writer) error {
 	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
 	if err != nil {
 		return err
@@ -29,8 +34,8 @@ func executeWorkflowDelete(runID, root, configPath string, stdout, stderr io.Wri
 		}
 		return err
 	}
-	if !workflowledger.IsDeletableRunStatus(run.Status) {
-		return fmt.Errorf("workflow run %q is %q; cancel it before delete", runID, run.Status)
+	if !workflowledger.IsDeletableRunStatus(run.Status) && !force {
+		return fmt.Errorf("workflow run %q is %q; cancel it before delete, or pass --force only after the prior executor stopped (a live claim is still refused)", runID, run.Status)
 	}
 	holder := newWorkflowDeleteHolder()
 	if err := claimWorkflowOperator(ctx, repo, runID, holder); err != nil {

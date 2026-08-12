@@ -23,7 +23,7 @@ func (e *recordingEngine) Cancel(context.Context, string) (agenttools.CancelResu
 func (e *recordingEngine) Deliver(context.Context, string, bool) (agenttools.DeliverResult, error) {
 	return agenttools.DeliverResult{}, nil
 }
-func (e *recordingEngine) Delete(context.Context, string) (agenttools.DeleteResult, error) {
+func (e *recordingEngine) Delete(context.Context, string, bool) (agenttools.DeleteResult, error) {
 	return agenttools.DeleteResult{}, nil
 }
 
