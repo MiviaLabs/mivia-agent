@@ -6,6 +6,18 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// registerRequest is the JSON body for POST /api/v2/auth/register.
+type registerRequest struct {
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	OrganizationName string `json:"organization_name"`
+}
+
+// verifyRequest is the JSON body for POST /api/v2/auth/verify.
+type verifyRequest struct {
+	Token string `json:"token"`
+}
+
 // sessionResponse is the shared 200 response shape for login and refresh:
 // {"authenticated":true,"user":{...},"session":{"bearer":"...","expires_at":"..."}}.
 type sessionResponse struct {

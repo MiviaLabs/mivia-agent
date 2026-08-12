@@ -248,6 +248,154 @@ func TestNewClientIgnoresAllowInsecureHTTPEnvVar(t *testing.T) {
 	}
 }
 
+func TestRegisterSuccessSendsCorrectRequestAndBody(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"verification_pending"}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	if err := c.Register(context.Background(), "user@example.com", []byte("hunter2"), "Acme"); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v2/auth/register" {
+		t.Errorf("path = %q, want /api/v2/auth/register", gotPath)
+	}
+	if gotBody["email"] != "user@example.com" || gotBody["password"] != "hunter2" || gotBody["organization_name"] != "Acme" {
+		t.Errorf("body = %+v, want email/password/organization_name fields", gotBody)
+	}
+}
+
+func TestRegisterNon202ReturnsStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	err = c.Register(context.Background(), "user@example.com", []byte("hunter2"), "Acme")
+	var statusErr *StatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("Register() error = %v, want *StatusError", err)
+	}
+	if statusErr.StatusCode != http.StatusConflict {
+		t.Errorf("StatusCode = %d, want %d", statusErr.StatusCode, http.StatusConflict)
+	}
+}
+
+func TestVerifySuccessSendsCorrectRequestAndParsesToken(t *testing.T) {
+	var gotPath, gotTransport, gotMethod string
+	var gotBody map[string]string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotTransport = r.Header.Get("X-Mivia-Auth-Transport")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(loginResponseBody))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	tok, err := c.Verify(context.Background(), "verify-code")
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v2/auth/verify" {
+		t.Errorf("path = %q, want /api/v2/auth/verify", gotPath)
+	}
+	if gotTransport != "cli" {
+		t.Errorf("X-Mivia-Auth-Transport = %q, want cli", gotTransport)
+	}
+	if gotBody["token"] != "verify-code" {
+		t.Errorf("body = %+v, want token field", gotBody)
+	}
+
+	want := Token{
+		Bearer:         "bearer-abc",
+		ExpiresAt:      wantExpiresAt(t),
+		OrganizationID: "org-42",
+		Role:           "owner",
+	}
+	if tok.Bearer != want.Bearer || !tok.ExpiresAt.Equal(want.ExpiresAt) ||
+		tok.OrganizationID != want.OrganizationID || tok.Role != want.Role {
+		t.Errorf("Verify() = %+v, want %+v", tok, want)
+	}
+}
+
+func TestVerifyNon200ReturnsStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = c.Verify(context.Background(), "bad-code")
+	var statusErr *StatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("Verify() error = %v, want *StatusError", err)
+	}
+	if statusErr.StatusCode != http.StatusBadRequest {
+		t.Errorf("StatusCode = %d, want %d", statusErr.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestVerifySessionlessSuccessReturnsErrVerifiedNoSession(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"authenticated":false,"status":"verified"}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	tok, err := c.Verify(context.Background(), "verify-code")
+	if !errors.Is(err, ErrVerifiedNoSession) {
+		t.Fatalf("Verify() error = %v, want ErrVerifiedNoSession", err)
+	}
+	if tok != (Token{}) {
+		t.Errorf("Verify() token = %+v, want zero value", tok)
+	}
+}
+
 func TestLoginContextCancellationReturnsPromptly(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {

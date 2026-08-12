@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,11 @@ type StatusError struct {
 func (e *StatusError) Error() string {
 	return fmt.Sprintf("miviaauth: server responded with status %d", e.StatusCode)
 }
+
+// ErrVerifiedNoSession means the verification code was accepted but the
+// server did not issue a session (VerifyCreatesSession=false server-side).
+// The caller should tell the user to run `mivia login` next.
+var ErrVerifiedNoSession = errors.New("miviaauth: email verified, but no session was issued; run `mivia login`")
 
 // Client talks to the go-mivia bearer-token CLI auth endpoints.
 type Client struct {
@@ -78,7 +84,7 @@ func (c *Client) Login(ctx context.Context, email string, password []byte) (Toke
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Mivia-Auth-Transport", "cli")
-	return c.doSessionRequest(req)
+	return c.doSessionRequest(req, false)
 }
 
 // Refresh exchanges a still-valid bearer for a new Token.
@@ -88,7 +94,52 @@ func (c *Client) Refresh(ctx context.Context, bearer string) (Token, error) {
 		return Token{}, fmt.Errorf("miviaauth: build refresh request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+bearer)
-	return c.doSessionRequest(req)
+	return c.doSessionRequest(req, false)
+}
+
+// Register starts account creation. It never returns a session -- the
+// account is unusable until the emailed verification code is submitted via
+// Verify. password is converted to a string only at the JSON marshal call
+// site, matching Login.
+func (c *Client) Register(ctx context.Context, email string, password []byte, organizationName string) error {
+	body, err := json.Marshal(registerRequest{Email: email, Password: string(password), OrganizationName: organizationName})
+	if err != nil {
+		return fmt.Errorf("miviaauth: encode register request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/auth/register", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("miviaauth: build register request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("miviaauth: register request: %w", err)
+	}
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("miviaauth: register failed: %w", &StatusError{StatusCode: resp.StatusCode})
+	}
+	return nil
+}
+
+// Verify submits an emailed verification code. On success it normally
+// returns a Token (same as Login/Refresh); if the server is configured
+// without auto-login-on-verify it returns ErrVerifiedNoSession instead --
+// callers must handle that case explicitly, not treat it as a hard error.
+func (c *Client) Verify(ctx context.Context, token string) (Token, error) {
+	body, err := json.Marshal(verifyRequest{Token: token})
+	if err != nil {
+		return Token{}, fmt.Errorf("miviaauth: encode verify request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/auth/verify", bytes.NewReader(body))
+	if err != nil {
+		return Token{}, fmt.Errorf("miviaauth: build verify request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mivia-Auth-Transport", "cli")
+	return c.doSessionRequest(req, true)
 }
 
 // Revoke invalidates bearer server-side. Success is HTTP 204.
@@ -111,11 +162,15 @@ func (c *Client) Revoke(ctx context.Context, bearer string) error {
 	return nil
 }
 
-// doSessionRequest performs req and parses the shared login/refresh
+// doSessionRequest performs req and parses the shared login/refresh/verify
 // response shape into a Token. Non-2xx responses are reported as a
 // *StatusError; network-level failures (including context cancellation)
 // are returned as a plain wrapped error so callers can tell the two apart.
-func (c *Client) doSessionRequest(req *http.Request) (Token, error) {
+// sessionOptional controls what happens when the response has no session:
+// Login/Refresh pass false, so a missing session is a hard parse error (a
+// genuine bug); Verify passes true, so a missing session instead yields
+// ErrVerifiedNoSession, a legitimate server state.
+func (c *Client) doSessionRequest(req *http.Request, sessionOptional bool) (Token, error) {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return Token{}, fmt.Errorf("miviaauth: request failed: %w", err)
@@ -129,6 +184,12 @@ func (c *Client) doSessionRequest(req *http.Request) (Token, error) {
 	var wire sessionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
 		return Token{}, fmt.Errorf("miviaauth: decode response: %w", err)
+	}
+	if wire.Session.Bearer == "" {
+		if sessionOptional {
+			return Token{}, ErrVerifiedNoSession
+		}
+		return Token{}, fmt.Errorf("miviaauth: request failed: response had no session")
 	}
 	expiresAt, err := time.Parse(time.RFC3339, wire.Session.ExpiresAt)
 	if err != nil {
