@@ -375,6 +375,28 @@ the ONLY output contract: emit exactly the JSON object it declares — no
 markdown, no headings, no code fences, and no extra keys. Do not load or emit
 `report-template` in that mode; the workflow step's schema replaces it.
 
+JSON-mode discipline (live-run lessons; applies to every workflow schema this
+skill serves, such as the bug-fix findings schema and the review-panel report
+schema):
+
+- Emit exactly the keys the appended schema declares, nothing else. Never add
+  metadata fields (for example `elapsed`, `status`, `schema`, `steps`,
+  `step_count`, `notes`, or an `extra` object) — a single junk field is a
+  strict-decode failure or a silently dropped key on the host side.
+- Emit no preamble, no trailing prose, and no retraction after the JSON value.
+  One JSON value only, then stop.
+- Never emit the Finding Format blocks or the inline report structure in this
+  mode. The appended schema replaces them, whatever schema it is.
+- A finding's required fields must be non-empty. In a schema with a free-form
+  description field, the description states the concrete claim, the cited
+  evidence (literal tokens), and why it is required — the same content the
+  Finding Format would carry.
+
+The review panel's correctness member does not use this skill; it uses the
+trimmed, panel-only `panel-bug-audit` skill, whose output contract is the
+panel report schema alone. Keep this skill's dual-mode contract intact for
+interactive audits and the bug-fix workflow steps.
+
 For direct audits (no JSON schema appended), the report-template applies: when
 a resource catalogue and its scoped reader are available, load `report-template`
 before producing the audit output. Preserve the exact output contract below.

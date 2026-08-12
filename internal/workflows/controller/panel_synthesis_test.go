@@ -389,6 +389,64 @@ func TestAdvancePanelSynthesis_EndToEndSuccess(t *testing.T) {
 	}
 }
 
+// Regression (live feature-delivery runs, "panel member report: invalid
+// verdict \"\""): the real agent handler returns a transport envelope from
+// every coordinator task - {"output": <model JSON>, "status": "completed",
+// "schema": "ok", "steps": N, "elapsed": "...", "step_count": N} - and the
+// panel path must unwrap it with extractTaskOutput before strict decoding.
+// The fake handlers in panelSynthesisFixture return the raw payload, which is
+// why this never surfaced in unit tests. Driving the whole pipeline with
+// REAL envelope-shaped member and synthesis outputs proves the unwrap on both
+// decode sites; before the fix this fails with the exact production error
+// ("panel member report: invalid verdict \"\"").
+func TestAdvancePanelSynthesis_UnwrapsCoordinatorResultEnvelopes(t *testing.T) {
+	memberJSON := `{"verdict":"changes_requested","findings":[{"id":"f1","title":"t","severity":"low","description":"d"}]}`
+	memberEnvelope := `{"output":` + memberJSON + `,"schema":"ok","status":"completed","steps":4,"elapsed":"1m0s","step_count":5}`
+	synthJSON := `{"dispositions":[` +
+		`{"member_id":"security","finding_id":"f1","disposition":"included","final_finding_id":"F1"},` +
+		`{"member_id":"correctness","finding_id":"f1","disposition":"duplicate","final_finding_id":"F1"}` +
+		`],"summary":"One finding reported by both members."}`
+	synthEnvelope := `{"output":` + synthJSON + `,"schema":"ok","status":"completed","steps":3,"elapsed":"42s","step_count":3}`
+	ctrl, repo, step := panelSynthesisFixture(t, "wfr-panel-synth-envelope-unwrap", memberEnvelope, synthEnvelope)
+	run, done, err := driveAdvancePanelSynthesis(t, ctrl, repo, step)
+	if err != nil {
+		t.Fatalf("advancePanelSynthesis() error = %v", err)
+	}
+	if !done {
+		t.Fatal("advancePanelSynthesis() done = false, want true")
+	}
+	if run.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run status = %q, want succeeded", run.Status)
+	}
+}
+
+// Focused regression for the member side of the same envelope bug: a
+// coordinator task result whose Output is the handler envelope must be
+// unwrapped before it becomes a member's RawOutput, so the strict decoder
+// sees the report, not the envelope's own fields.
+func TestPanelSynthesisMemberInputs_UnwrapsEnvelope(t *testing.T) {
+	memberJSON := `{"verdict":"approved","findings":[]}`
+	envelope := `{"output":` + memberJSON + `,"schema":"ok","status":"completed","steps":4,"elapsed":"1m0s","step_count":5}`
+	execution := &workflowledger.PanelExecution{Members: []workflowledger.PanelMemberExecution{{
+		MemberID: "security", CoordinatorRunID: "run-1", TaskID: "task-1",
+		Work: workflowledger.PanelTaskSpec{AgentName: "panel-reviewer", AgentDigest: strings.Repeat("a", 64), Provider: "deepseek", Model: "deepseek-v4-flash"},
+	}}}
+	results := PanelMembersResult{Members: []PanelMemberResult{{MemberID: "security", Result: &coordinator.RunResult{Results: []subagents.Result{{TaskID: "task-1", Status: "completed", Output: json.RawMessage(envelope)}}}}}}
+	inputs, err := panelSynthesisMemberInputs(execution, results)
+	if err != nil {
+		t.Fatalf("panelSynthesisMemberInputs() error = %v", err)
+	}
+	if len(inputs) != 1 {
+		t.Fatalf("member inputs = %d, want 1", len(inputs))
+	}
+	if got := string(inputs[0].RawOutput); got != memberJSON {
+		t.Fatalf("RawOutput = %s, want unwrapped %s", got, memberJSON)
+	}
+	if _, _, err := DecodeStrictPanelMemberReport(inputs[0].RawOutput); err != nil {
+		t.Fatalf("DecodeStrictPanelMemberReport(unwrapped) error = %v", err)
+	}
+}
+
 // A model cannot flip the host verdict to approved by claiming so in its own
 // member report text or in the synthesizer's own output: the host always
 // recomputes it from the bounded member reports (D10).

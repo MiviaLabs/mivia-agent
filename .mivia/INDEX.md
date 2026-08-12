@@ -76,6 +76,12 @@ Repo-native:
 - `performance-review` - measurement-driven profiling and benchmarking; no findings without measurements
 - `feature-delivery` - bounded feature slice with verification
 
+Workflow panel (read-only, JSON-only; used by the `feature-delivery` `review_panel` members):
+
+- `panel-bug-audit` - correctness member: reachable bugs, concurrency, persistence, reliability
+- `panel-secure-change` - security member: authz, secrets, injection, SSRF, prompt injection, fail-closed defaults
+- `panel-architecture-review` - integration member: boundary fitness, dependency direction, abstraction cost
+
 `bug-audit`, `architecture-review`, `simplification-review`, and `performance-review` remain report-only. They do not commit or push.
 
 ## Policy

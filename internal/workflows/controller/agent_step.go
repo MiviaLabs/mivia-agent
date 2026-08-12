@@ -392,6 +392,17 @@ func applyChildResult(out *AgentStepResult, res subagents.Result) {
 	}
 }
 
+// extractTaskOutput is the controller-wide mechanism for turning one
+// coordinator task result's Output into the payload the workflow step's
+// schema governs. Agent handlers (agentTaskHandler/MultiStepHandler) return a
+// transport envelope - {"output": <model reply>, "status": "completed",
+// "schema": "ok"?, "steps": N, "elapsed": "...", "step_count": N} - and the
+// CLI tool surface deliberately exposes that envelope (elapsed/steps/schema).
+// Every workflow controller consumer that validates or decodes a task result
+// as step-schema JSON MUST unwrap it through this function first; decoding
+// the envelope directly silently skips its fields as unknown (e.g. a panel
+// member report decoding to verdict ""). Non-envelope payloads pass through
+// untouched, so plain verifier/gate JSON is unaffected.
 func extractTaskOutput(raw json.RawMessage) json.RawMessage {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &envelope); err != nil {

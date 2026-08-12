@@ -186,7 +186,10 @@ func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workfl
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: taskResult.Status}, err)
 	}
 	keys := AllCanonicalSourceKeys(envelopeStruct)
-	synthOut, err := DecodeStrictPanelSynthesisOutput([]byte(taskResult.Output), keys)
+	// Same envelope unwrap as members: the synthesis child also returns the
+	// handler envelope, and decoding it directly would skip every field the
+	// strict synthesis decoder requires.
+	synthOut, err := DecodeStrictPanelSynthesisOutput(extractTaskOutput(taskResult.Output), keys)
 	if err != nil {
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, err)
 	}
@@ -243,7 +246,16 @@ func panelSynthesisMemberInputs(execution *workflowledger.PanelExecution, result
 			MemberID: member.MemberID, AgentName: member.Work.AgentName, AgentDigest: member.Work.AgentDigest,
 			Provider: member.Work.Provider, Model: member.Work.Model,
 			CoordinatorRunID: member.CoordinatorRunID, CoordinatorTaskID: member.TaskID,
-			TerminalStatus: taskResult.Status, RawOutput: []byte(taskResult.Output),
+			// The coordinator task result is the handler envelope
+			// ({"output":..., "status":..., "schema":..., "elapsed":...}), not the
+			// member's model JSON. extractTaskOutput is the controller-wide
+			// mechanism for unwrapping it (see its contract in agent_step.go);
+			// without it the envelope's own fields (status/schema/elapsed/steps)
+			// are skipped as unknown and the report decodes to verdict ""
+			// (observed as "panel member report: invalid verdict \"\"" on live
+			// feature-delivery runs). DC-14's unknown-field tolerance masked this
+			// root cause by letting the envelope decode "successfully".
+			TerminalStatus: taskResult.Status, RawOutput: extractTaskOutput(taskResult.Output),
 		})
 	}
 	return inputs, nil

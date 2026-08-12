@@ -227,7 +227,9 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 	}
 	wantNames := []string{
 		"architecture-review", "bug-audit", "concurrency-review",
-		"docs-update", "feature-delivery", "performance-review", "review-synthesis",
+		"docs-update", "feature-delivery", "panel-architecture-review",
+		"panel-bug-audit", "panel-secure-change", "performance-review",
+		"review-synthesis",
 		"secure-change", "simplification-review",
 		"verify-change", "verify-code-change", "workflow-feature-delivery",
 	}
