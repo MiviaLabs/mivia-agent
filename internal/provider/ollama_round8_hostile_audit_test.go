@@ -10,8 +10,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -343,7 +345,8 @@ func TestRound8EdgeURLConstruction(t *testing.T) {
 		// CoversApprovedEdgeURLs proves ANY dial target (even 203.0.113.7) is
 		// rewritten to loopback, so keyless traffic can never leave the
 		// machine. The malformed part fails at request/dial time with a clear
-		// error (empty port -> missing port; trailing space -> daemon 404).
+		// error (empty port -> scheme-default port 80 refusal; trailing space
+		// -> daemon 404).
 		{"http://127.0.0.1:/v1", true, true},       // empty port: gate approves (hostname literal), dial pinned
 		{"http://127.0.0.1:11434/v1 ", true, true}, // trailing space: path-only, dial pinned
 		// Fails closed (no key, not a loopback spelling).
@@ -406,50 +409,70 @@ func TestRound8BlankKeyNeverUnpins(t *testing.T) {
 // still produces a pinned dial to a loopback address, so the looser-than-doc
 // predicate cannot cause keyless traffic to leave the machine.
 func TestRound8PinnedDialCoversApprovedEdgeURLs(t *testing.T) {
-	urls := []string{
-		"http://127.0.0.1:11434/v1 ",
-		"http://127.0.0.1:11434/v1#",
-		"http://127.0.0.1:/v1",
-		"http://127.0.0.1:99999/v1",
-		"http://::1:11434/v1",
+	// POSITIVE, routing-independent proof (round-9 hardening): the pinned dial
+	// must rewrite ANY target - here a TEST-NET-3 address the host would never
+	// reach - to a verified loopback address and CONNECT. An unpinned dial to
+	// the same address fails (timeout / no route), so a pass is unambiguous.
+	ln4, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, raw := range urls {
-		if !config.IsOllamaLoopback(raw) {
-			t.Logf("%q not approved; skip", raw)
-			continue
+	defer ln4.Close()
+	acceptAndClose(ln4)
+	v4port := ln4.Addr().(*net.TCPAddr).Port
+
+	urls := []struct {
+		raw    string
+		target string // TEST-NET-3 address whose port matches a live listener
+	}{
+		{"http://127.0.0.1:11434/v1 ", net.JoinHostPort("203.0.113.7", strconv.Itoa(v4port))},
+		{"http://127.0.0.1:11434/v1#", net.JoinHostPort("203.0.113.7", strconv.Itoa(v4port))},
+		{"http://127.0.0.1:/v1", net.JoinHostPort("203.0.113.7", strconv.Itoa(v4port))},
+		{"http://127.0.0.1:99999/v1", net.JoinHostPort("203.0.113.7", strconv.Itoa(v4port))},
+	}
+	// IPv6-pinned URL: only exercised when the host can bind a ::1 listener.
+	if ln6, err6 := net.Listen("tcp", "[::1]:0"); err6 == nil {
+		defer ln6.Close()
+		acceptAndClose(ln6)
+		urls = append(urls, struct {
+			raw    string
+			target string
+		}{"http://::1:11434/v1", net.JoinHostPort("203.0.113.7", strconv.Itoa(ln6.Addr().(*net.TCPAddr).Port))})
+	}
+
+	ctx := context.Background()
+	for _, tc := range urls {
+		if !config.IsOllamaLoopback(tc.raw) {
+			t.Fatalf("%q is no longer approved by the predicate: contract changed", tc.raw)
 		}
-		comp, err := NewOllama(Options{BaseURL: raw})
+		comp, err := NewOllama(Options{BaseURL: tc.raw})
 		if err != nil {
-			t.Fatalf("NewOllama(%q) = %v", raw, err)
+			t.Fatalf("NewOllama(%q) = %v", tc.raw, err)
 		}
 		client := comp.(*OpenAICompat)
 		tr, ok := innerTransport(client).(*http.Transport)
 		if !ok || tr.DialContext == nil {
-			t.Fatalf("%q: approved keyless but UNPINNED transport", raw)
+			t.Fatalf("%q: approved keyless but UNPINNED transport", tc.raw)
 		}
-		// The pinned dial must rewrite ANY dial target to a loopback address:
-		// ask it to dial a remote TEST-NET-3 address and verify the dialed
-		// target is loopback (the rewrite happens before the OS sees it).
-		ctx := context.Background()
-		conn, err := tr.DialContext(ctx, "tcp", "203.0.113.7:12345")
-		if err == nil {
-			conn.Close()
-			t.Fatalf("%q: pinned dial connected to 203.0.113.7?!", raw)
+		conn, err := tr.DialContext(ctx, "tcp", tc.target)
+		if err != nil {
+			t.Fatalf("%q: pinned dial to %s failed (%v): want rewrite to loopback and CONNECT", tc.raw, tc.target, err)
 		}
-		// The error must be a connection refusal ON LOOPBACK (rewrite
-		// happened), never a "no route to host" for TEST-NET-3.
-		if !containsAny(err.Error(), "connection refused", "no route to host") {
-			t.Fatalf("%q: dial error %q does not prove a loopback rewrite", raw, err)
-		}
+		conn.Close()
 		client.client.CloseIdleConnections()
 	}
 }
 
-func containsAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if strings.Contains(s, sub) {
-			return true
+// acceptAndClose accepts connections in a loop and closes them immediately,
+// so a pinned dial can complete the handshake against a live listener.
+func acceptAndClose(ln net.Listener) {
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
 		}
-	}
-	return false
+	}()
 }

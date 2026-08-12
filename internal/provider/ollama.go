@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
@@ -32,6 +33,14 @@ func NewOllama(opts Options) (Completer, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else if strings.TrimSpace(apiKey) == "" {
+		// Cloud/non-loopback mode must be keyed. Failing closed here (mirroring
+		// the NewForProvider gate) keeps the plan §12 invariant that a keyless
+		// ollama client is constructible iff the base_url is a verified
+		// loopback address: otherwise the exported constructor would return a
+		// keyless client on the default (unpinned) transport, and keyless
+		// traffic could leave the machine (round-9 confirmed finding).
+		return nil, fmt.Errorf("missing API key for provider %q", "ollama")
 	}
 	return NewOpenAICompatWithOptions(CompatOptions{
 		Name:              "ollama",
