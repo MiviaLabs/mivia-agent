@@ -119,13 +119,15 @@ func (c *LinearController) reconcilePanelCancelPending(ctx context.Context, run 
 	outcome := workflowledger.AttemptOutcome{Status: workflowledger.AttemptStatusCanceled}
 	outcome.ErrorRef = storeErrorText(ctx, c.Repo, errors.New("workflow run canceled by operator"))
 	if err := c.Repo.CompleteStepAttempt(ctx, c.RunID, reconciled.AttemptID, reconciled.Version, outcome); err != nil {
-		if errors.Is(err, workflowledger.ErrConflict) {
+		if errors.Is(err, workflowledger.ErrConflict) || errors.Is(err, workflowledger.ErrClaimHeld) {
 			// Another executor legitimately racing the same cancel_pending
 			// attempt (D14's claim-heartbeat handoff window) won this CAS
-			// first: this is the same retryable "cannot make progress right
-			// now" outcome as ErrCancelBlocked above, not a genuine defect,
-			// so it must stay non-terminal for a later Advance to reconcile
-			// instead of forcing the run to a durable Failed status.
+			// first, or holds the claim at the moment of the claim-fenced
+			// completion write (ErrClaimHeld): both are the same retryable
+			// "cannot make progress right now" outcome as ErrCancelBlocked
+			// above, not a genuine defect, so it must stay non-terminal for
+			// a later Advance to reconcile instead of forcing the run to a
+			// durable Failed status.
 			return run, false, nil
 		}
 		return c.fail(ctx, run, err)

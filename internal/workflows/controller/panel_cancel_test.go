@@ -134,6 +134,50 @@ func TestReconcilePanelCancellation_RetryExhaustionReportsErrCancelBlocked(t *te
 	}
 }
 
+// claimHeldOnPanelPhaseWriteRepository fails the first CompareAndSetPanelPhase
+// call with ErrClaimHeld, simulating a legitimate concurrent takeover
+// (lease-reaper, operator retry, claim-heartbeat handoff) that flips the
+// workflow claim's holder in the gap between advancePanelPhaseToCancelPending's
+// own ClaimRun refresh and this CAS write's independent claim check.
+type claimHeldOnPanelPhaseWriteRepository struct {
+	workflowledger.Repository
+	calls int
+}
+
+func (r *claimHeldOnPanelPhaseWriteRepository) CompareAndSetPanelPhase(ctx context.Context, runID, attemptID string, expectedVersion uint64, from, to workflowledger.PanelPhase, synthesis *workflowledger.PanelSynthesisExecution) error {
+	r.calls++
+	if r.calls == 1 {
+		return workflowledger.ErrClaimHeld
+	}
+	return r.Repository.CompareAndSetPanelPhase(ctx, runID, attemptID, expectedVersion, from, to, synthesis)
+}
+
+// Regression: a lost CAS on the cancel-phase write itself must classify as
+// ErrCancelBlocked, exactly like the ClaimRun refresh above it and the
+// bounded-retry-exhaustion path, when the durable write reports
+// workflowledger.ErrClaimHeld instead of workflowledger.ErrConflict. Before
+// the fix, advancePanelPhaseToCancelPending only special-cased ErrConflict
+// and returned the bare ErrClaimHeld unwrapped, which callers (via
+// panel_step.go's reconcilePanelCancelPending) do not recognize as
+// retryable and instead treat as a permanent run failure.
+func TestReconcilePanelCancellation_ClaimHeldOnPhaseWriteReportsErrCancelBlocked(t *testing.T) {
+	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
+	runner := ctrl.Runner.(*CoordinatorRunner)
+	takenOver := &claimHeldOnPanelPhaseWriteRepository{Repository: repo}
+	panel := workflowledger.NewPanelCoordinator(ctrl.RunID, runner.Coordinator, takenOver)
+
+	_, allTerminal, err := ReconcilePanelCancellation(ctx, takenOver, panel, ctrl.RunID, ctrl.Holder, attempt.AttemptID)
+	if allTerminal {
+		t.Fatal("a claim lost mid-write must not report allTerminal")
+	}
+	if !errors.Is(err, ErrCancelBlocked) {
+		t.Fatalf("error = %v, want errors.Is(err, ErrCancelBlocked)", err)
+	}
+	if errors.Is(err, ErrCancelPending) {
+		t.Fatalf("error = %v, must not also match ErrCancelPending", err)
+	}
+}
+
 func TestReconcilePanelCancellation_RetriesAfterLostCAS(t *testing.T) {
 	ctrl, repo, _, attempt, ctx := panelCancelReconcileFixture(t, `{}`, `{}`)
 	runner := ctrl.Runner.(*CoordinatorRunner)

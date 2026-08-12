@@ -113,6 +113,38 @@ func TestCancelOrTombstoneMember_TombstonesNeverDispatchedMember(t *testing.T) {
 	}
 }
 
+// Regression: a second caller finding the attempt already terminal (a
+// concurrent cancel racing to completion) must report terminal=true, not
+// propagate requireTerminalPhase's bare coordledger.ErrConflict as a false
+// "blocked" outcome. Before the fix, CancelOrTombstoneMember/Synthesis could
+// not distinguish "already terminal" from "wrong phase" (both surface as the
+// same ErrConflict from requireTerminalPhase), so ReconcilePanelCancellation
+// wrapped it as ErrCancelBlocked even though the work was genuinely done.
+func TestCancelOrTombstoneMember_AlreadyTerminalAttemptReportsTerminalNotBlocked(t *testing.T) {
+	handler := panelCancelHandlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{}`), nil
+	})
+	panel, repo, _, run, attempt := panelCancelFixture(t, handler)
+	claimCtx := claimAndCancelPending(t, repo, run, attempt)
+	current, err := repo.GetStepAttempt(claimCtx, run, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outcome := AttemptOutcome{Status: AttemptStatusCanceled}
+	if err := repo.CompleteStepAttempt(claimCtx, run, attempt.AttemptID, current.Version, outcome); err != nil {
+		t.Fatal(err)
+	}
+
+	terminal, err := panel.CancelOrTombstoneMember(claimCtx, attempt.AttemptID, "member-0")
+	if err != nil {
+		t.Fatalf("already-terminal attempt must not report an error, got %v", err)
+	}
+	if !terminal {
+		t.Fatal("already-terminal attempt must report terminal=true")
+	}
+}
+
 func TestCancelOrTombstoneMember_RequiresCancelPendingPhase(t *testing.T) {
 	handler := panelCancelHandlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
 		return json.RawMessage(`{}`), nil

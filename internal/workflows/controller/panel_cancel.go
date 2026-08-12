@@ -115,6 +115,13 @@ func advancePanelPhaseToCancelPending(ctx context.Context, repo workflowledger.R
 		if err == nil {
 			return repo.GetStepAttempt(ctx, runID, attempt.AttemptID)
 		}
+		if errors.Is(err, workflowledger.ErrClaimHeld) {
+			// The CAS write's own claim check lost the race: another holder
+			// took over the workflow claim between the ClaimRun refresh above
+			// and this write. Same retryable outcome as losing the refresh
+			// itself, not a permanent failure.
+			return attempt, fmt.Errorf("%w: workflow claim: %v", ErrCancelBlocked, err)
+		}
 		if !errors.Is(err, workflowledger.ErrConflict) {
 			return attempt, err
 		}

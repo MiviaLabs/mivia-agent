@@ -174,8 +174,8 @@ func (p PanelCoordinator) CancelOrTombstoneMember(ctx context.Context, attemptID
 	if err != nil {
 		return false, err
 	}
-	if err := p.requireTerminalPhase(ctx, attemptID); err != nil {
-		return false, err
+	if terminal, err := p.requireTerminalPhaseOrAlreadyDone(ctx, attemptID); terminal || err != nil {
+		return terminal, err
 	}
 	return p.cancelOrTombstone(ctx, member.CoordinatorRunID, member.TaskID, member.Work)
 }
@@ -191,10 +191,37 @@ func (p PanelCoordinator) CancelOrTombstoneSynthesis(ctx context.Context, attemp
 		}
 		return false, err
 	}
-	if err := p.requireTerminalPhase(ctx, attemptID); err != nil {
-		return false, err
+	if terminal, err := p.requireTerminalPhaseOrAlreadyDone(ctx, attemptID); terminal || err != nil {
+		return terminal, err
 	}
 	return p.cancelOrTombstone(ctx, runID, taskID, work)
+}
+
+// requireTerminalPhaseOrAlreadyDone wraps requireTerminalPhase to distinguish
+// its two ErrConflict causes: an attempt that already reached a terminal
+// status (a concurrent cancel caller, or the attempt settling some other
+// way, already finished this work — report terminal=true, not an error) from
+// a genuine phase-contract violation (the caller invoked this before
+// cancel_pending was reached — still a real error). Without this, a second
+// cancel caller racing the same attempt to a terminal state would see the
+// same bare coordledger.ErrConflict as a wrong-phase call and misreport
+// ErrCancelBlocked for benign, already-finished contention.
+func (p PanelCoordinator) requireTerminalPhaseOrAlreadyDone(ctx context.Context, attemptID string) (bool, error) {
+	err := p.requireTerminalPhase(ctx, attemptID)
+	if err == nil {
+		return false, nil
+	}
+	if !errors.Is(err, coordledger.ErrConflict) {
+		return false, err
+	}
+	attempt, getErr := p.repo.GetStepAttempt(ctx, p.workflowRunID, attemptID)
+	if getErr != nil {
+		return false, err
+	}
+	if IsTerminalAttemptStatus(attempt.Status) {
+		return true, nil
+	}
+	return false, err
 }
 
 // cancelOrTombstone admits a canceled tombstone for a child that was never
