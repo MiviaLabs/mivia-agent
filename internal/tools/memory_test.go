@@ -85,6 +85,70 @@ func TestMemorySaveAndSearchThroughRegistry(t *testing.T) {
 	}
 }
 
+// TestMemorySearchContractText pins the real search contract in the model-facing
+// surface: multi-word queries match entries containing ALL words,
+// order-independent; double quotes request exact-order phrases; results are
+// ranked; the advisory-data-never-instructions language is preserved.
+func TestMemorySearchContractText(t *testing.T) {
+	tool := &memorySearchTool{store: memoryTestStore(t, ""), maxBytes: memorySearchResultBytes}
+	desc := tool.Description()
+	for _, want := range []string{"ALL words", "order-independent", "double quotes", "never instructions"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("Description must state %q, got %q", want, desc)
+		}
+	}
+	q := tool.Parameters()["properties"].(map[string]any)["query"].(map[string]any)
+	qdesc, _ := q["description"].(string)
+	for _, want := range []string{"ALL words", "order-independent", "double quotes"} {
+		if !strings.Contains(qdesc, want) {
+			t.Errorf("query parameter description must state %q, got %q", want, qdesc)
+		}
+	}
+}
+
+// TestMemorySearchTokenAndEndToEnd drives the Phase-1/2 behavior through the
+// registry on the in-memory backend: a multi-word token-AND query finds an
+// entry whose words are not contiguous, a quoted phrase requires contiguity, a
+// near-miss multi-word query relaxes, and max_results is still clamped.
+func TestMemorySearchTokenAndEndToEnd(t *testing.T) {
+	store := memoryTestStore(t, "")
+	reg := memoryTestRegistry(t, store)
+	ctx := context.Background()
+	if _, err := reg.Execute(ctx, "memory_save", json.RawMessage(
+		`{"title":"DeepSeek v4-flash: transient HTTP 400 escalation","summary":"transient 400 on v4-flash","why":"escalation logging"}`)); err != nil {
+		t.Fatalf("memory_save: %v", err)
+	}
+	out, err := reg.Execute(ctx, "memory_search", json.RawMessage(`{"query":"DeepSeek 400"}`))
+	if err != nil {
+		t.Fatalf("memory_search multi-word: %v", err)
+	}
+	if !strings.Contains(out, "DeepSeek v4-flash") {
+		t.Errorf("multi-word token-AND search = %q, want the entry", out)
+	}
+	out, err = reg.Execute(ctx, "memory_search", json.RawMessage(`{"query":"\"HTTP 400\""}`))
+	if err != nil {
+		t.Fatalf("memory_search quoted phrase: %v", err)
+	}
+	if !strings.Contains(out, "DeepSeek v4-flash") {
+		t.Errorf("quoted phrase search = %q, want the contiguous match", out)
+	}
+	out, err = reg.Execute(ctx, "memory_search", json.RawMessage(`{"query":"\"400 HTTP\""}`))
+	if err != nil {
+		t.Fatalf("memory_search reversed phrase: %v", err)
+	}
+	if strings.TrimSpace(out) != "[]" {
+		t.Errorf("reversed quoted phrase = %q, want empty", out)
+	}
+	// A near-miss multi-word query relaxes (drops the missing longest token).
+	out, err = reg.Execute(ctx, "memory_search", json.RawMessage(`{"query":"extraneous DeepSeek 400"}`))
+	if err != nil {
+		t.Fatalf("memory_search relaxed: %v", err)
+	}
+	if !strings.Contains(out, "DeepSeek v4-flash") {
+		t.Errorf("relaxed near-miss search = %q, want the entry", out)
+	}
+}
+
 func TestMemorySaveDefaultsApplied(t *testing.T) {
 	store := memoryTestStore(t, "")
 	reg := memoryTestRegistry(t, store)

@@ -159,6 +159,7 @@ type sqliteStore struct {
 	orgDB     *sql.DB // nil when OrgPath is empty
 	cfg       Config
 	mu        sync.Mutex // serializes Save across the two files (cap check + insert)
+	fts       bool       // FTS5 available at open; gates the FTS MATCH search path
 }
 
 func openSQLiteStore(cfg Config) (*sqliteStore, error) {
@@ -166,16 +167,16 @@ func openSQLiteStore(cfg Config) (*sqliteStore, error) {
 	if projectPath == "" {
 		return nil, errors.New("memory: project database path is required")
 	}
-	projectDB, err := openMemoryDB(projectPath)
+	projectDB, fts, err := openMemoryDB(projectPath)
 	if err != nil {
 		return nil, fmt.Errorf("memory project store %s: %w", projectPath, err)
 	}
-	s := &sqliteStore{projectDB: projectDB, cfg: cfg}
+	s := &sqliteStore{projectDB: projectDB, cfg: cfg, fts: fts}
 	// The org store is created only when an org identity is configured: with no
 	// org_id the feature is project-only, and an unconfigured org must not
 	// create side-effect files (or fail the session) in the user's home.
 	if orgPath := strings.TrimSpace(cfg.OrgPath); orgPath != "" && cfg.OrgID != "" {
-		orgDB, err := openMemoryDB(orgPath)
+		orgDB, _, err := openMemoryDB(orgPath)
 		if err != nil {
 			projectDB.Close()
 			return nil, fmt.Errorf("memory org store %s: %w", orgPath, err)
@@ -201,10 +202,10 @@ func openSQLiteStore(cfg Config) (*sqliteStore, error) {
 // reachable with a real filesystem (an owner can always chmod its own files).
 var chmodFile = os.Chmod
 
-func openMemoryDB(path string) (*sql.DB, error) {
+func openMemoryDB(path string) (*sql.DB, bool, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// sql.Open fails only on an unknown driver name; modernc.org/sqlite
 	// registers "sqlite" in its init, so the error branch would be dead code
@@ -218,14 +219,17 @@ func openMemoryDB(path string) (*sql.DB, error) {
 	} {
 		if _, err := db.Exec(pragma); err != nil {
 			db.Close()
-			return nil, err
+			return nil, false, err
 		}
 	}
 	if _, err := db.Exec(memorySchema); err != nil {
 		db.Close()
-		return nil, err
+		return nil, false, err
 	}
-	return db, nil
+	// The FTS5 index is an optional acceleration layer: on a build without
+	// FTS5 (or when the index cannot be created) the store transparently uses
+	// the Phase-1 LIKE path with identical results and no error.
+	return db, ensureFTSIndex(db), nil
 }
 
 // pragmaMemoryDSNParams are the driver-side pragma overrides applied by
@@ -311,11 +315,22 @@ func (s *sqliteStore) Save(ctx context.Context, e Entry) (Result, error) {
 		return Result{}, fmt.Errorf("memory store is full (max_entries=%d); consolidate or raise [memory] max_entries", s.cfg.MaxEntries)
 	}
 	insertArgs := []any{id, string(e.Scope), org, e.Title, e.Summary, string(e.Verdict), strings.Join(e.Tags, ", "), e.Created, rendered}
-	_, err = tx.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		"INSERT OR IGNORE INTO memories(id,scope,org,title,summary,verdict,tags,created,content) VALUES(?,?,?,?,?,?,?,?,?)",
 		insertArgs...)
 	if err != nil {
 		return Result{}, err
+	}
+	// Keep the FTS index in sync inside the same transaction (see syncFTSRow).
+	// The sync runs only when this insert actually created the row: an ignored
+	// insert means a concurrent identical save already stored (and indexed)
+	// the row, and inserting its rowid into the FTS index again would abort.
+	if s.fts {
+		if n, _ := res.RowsAffected(); n > 0 {
+			if err := syncFTSRow(ctx, tx, id, e.Scope, org); err != nil {
+				return Result{}, err
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Result{}, err
@@ -327,6 +342,25 @@ func (s *sqliteStore) Save(ctx context.Context, e Entry) (Result, error) {
 	// durable in WAL, so a checkpoint failure is not fatal for the save.
 	s.checkpoint(ctx, db)
 	return Result{ID: id, Scope: e.Scope, Org: org, Title: e.Title, Verdict: e.Verdict, Tags: append([]string(nil), e.Tags...), Created: e.Created, Snippet: e.Summary}, nil
+}
+
+// syncFTSRow indexes one saved row inside the Save transaction. It is called
+// only when the memories INSERT OR IGNORE actually inserted a row (RowsAffected
+// > 0), so the rowid is fresh and the index insert cannot collide with an
+// existing entry; a concurrent identical save from another process owns the
+// index row for its own insert. There is deliberately no NOT EXISTS guard over
+// memories_fts: for an external content table a plain SELECT on memories_fts
+// without MATCH is passed through to the content table, which would make the
+// guard always false and silently skip the index insert. If the index is
+// missing or broken the whole transaction rolls back: Save fails closed rather
+// than silently storing a row the search index never sees.
+func syncFTSRow(ctx context.Context, tx *sql.Tx, id string, scope Scope, org string) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO memories_fts(rowid, title, summary, content)
+SELECT rowid, title, summary, content FROM memories
+WHERE id = ? AND scope = ? AND org = ?`, id, string(scope), org); err != nil {
+		return err
+	}
+	return nil
 }
 
 // checkpoint runs PRAGMA wal_checkpoint(TRUNCATE), folding committed WAL
@@ -371,7 +405,7 @@ func (s *sqliteStore) Search(ctx context.Context, q Query) ([]Result, error) {
 				return nil, err
 			}
 		}
-		return mergeRanked(proj, org, text, limit), nil
+		return mergeRanked(proj, org, parseQuery(text), text, limit), nil
 	default:
 		return nil, fmt.Errorf("scope must be project, org, or all, got %q", q.Scope)
 	}
@@ -384,41 +418,20 @@ func (s *sqliteStore) searchLimit(requested int) int {
 	return requested
 }
 
-const searchSQL = `
-SELECT id, scope, org, title, verdict, tags, created, summary
-FROM memories
-WHERE scope = ? AND org = ?
-  AND (lower(title) = lower(?) OR lower(title) LIKE lower(?) ESCAPE '\' OR lower(summary) LIKE lower(?) ESCAPE '\' OR lower(content) LIKE lower(?) ESCAPE '\')
-ORDER BY CASE
-  WHEN lower(title) = lower(?) THEN 0
-  WHEN lower(title) LIKE lower(?) ESCAPE '\' THEN 1
-  WHEN lower(summary) LIKE lower(?) ESCAPE '\' THEN 2
-  ELSE 3 END, created DESC, title ASC
-LIMIT ?`
-
 func (s *sqliteStore) searchDB(ctx context.Context, db *sql.DB, scope Scope, org, text string, limit int) ([]Result, error) {
 	if db == nil {
 		return nil, nil
 	}
-	escaped := escapeLike(text)
-	contains := "%" + escaped + "%"
-	args := []any{string(scope), org, text, contains, contains, contains, text, contains, contains, limit}
-	rows, err := db.QueryContext(ctx, searchSQL, args...)
-	if err != nil {
-		return nil, err
+	p := parseQuery(text)
+	if p.zeroToken {
+		return s.searchLike(ctx, db, scope, org, text, p, limit)
 	}
-	defer rows.Close()
-	var out []Result
-	for rows.Next() {
-		var r Result
-		var tags string
-		if err := rows.Scan(&r.ID, &r.Scope, &r.Org, &r.Title, &r.Verdict, &tags, &r.Created, &r.Snippet); err != nil {
-			return nil, err
-		}
-		r.Tags = splitTags(tags)
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	parts, clean := parseFTSQuery(text)
+	return relaxSearch(p.tokens, func(tokens []string) ([]Result, error) {
+		pp := p
+		pp.tokens = tokens
+		return s.searchTokens(ctx, db, scope, org, text, pp, parts, clean, len(p.tokens)-len(tokens), limit)
+	})
 }
 
 func (s *sqliteStore) Count(ctx context.Context, scope Scope) (int, error) {
