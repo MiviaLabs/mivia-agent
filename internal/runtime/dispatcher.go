@@ -428,7 +428,7 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	var err error
 	for i := 0; i < maxAttempts; i++ {
 		attempts++
-		out, err = h.Invoke(callCtx, req)
+		out, err = safeInvoke(h, callCtx, req)
 		if err == nil {
 			break
 		}
@@ -465,6 +465,21 @@ func (d *Dispatcher) execute(ctx context.Context, req Request, res reservation, 
 	d.completeIDKeyed(req, result)
 	d.mu.Unlock()
 	return result
+}
+
+// safeInvoke calls h.Invoke and converts a panic into an error instead of
+// letting it unwind through execute. A panic here would otherwise skip
+// failResult, finish, and releaseIDKeyed's deferred call in Invoke would run
+// with the named result still zero-valued - releasing the dedup/turn-result
+// bookkeeping for this invocation ID without ever recording a terminal
+// result for it (a stuck reservation, not just a lost answer).
+func safeInvoke(h Handler, ctx context.Context, req Request) (out json.RawMessage, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("handler %q panicked: %v", req.Name, rec)
+		}
+	}()
+	return h.Invoke(ctx, req)
 }
 
 func ephemeralMarker(h Handler, req Request) string {
