@@ -11,7 +11,11 @@ import (
 // only — no DNS resolution, no CIDR, no IP normalization — so any other
 // host text fails closed. localhost is trusted as loopback per the locked
 // plan; environments where localhost does not resolve to loopback should
-// use 127.0.0.1.
+// use 127.0.0.1. The provider layer complements this literal predicate with
+// a construction-time resolution check and a pinned dial
+// (newLoopbackDialContext) so keyless traffic can only reach a verified
+// loopback address; a localhost that resolves to a non-loopback address
+// fails closed.
 func IsOllamaLoopback(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {

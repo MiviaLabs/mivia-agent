@@ -96,6 +96,9 @@ daemon mode with **no API key**; any other `base_url` means cloud mode
 and requires `OLLAMA_API_KEY`. localhost is trusted as loopback per the
 design (matching internal/config/loopback.go's doc comment); environments
 where localhost does not resolve to loopback should use 127.0.0.1 instead.
+The client additionally resolves the host once at construction and pins the
+connection to the verified loopback address, so keyless local mode fails
+closed (with a clear error) if localhost resolves to a non-loopback address.
 
 **Cloud profile** (Ollama Cloud, API key required):
 
