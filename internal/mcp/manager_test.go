@@ -403,6 +403,56 @@ func TestManagerAppliesServerTimeout(t *testing.T) {
 	}
 }
 
+func TestManagerBoundsDiscoveryWhenServerTimeoutUnset(t *testing.T) {
+	var connects atomic.Int32
+	m, err := NewManager(config.MCPConfig{Enabled: true, StartupTimeoutSeconds: 1, Servers: []config.MCPServerConfig{{
+		ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t),
+	}}}, ManagerOptions{Connect: func(context.Context, config.MCPServerConfig) (remoteClient, error) {
+		connects.Add(1)
+		return &blockingDiscoveryClient{started: make(chan struct{}), canceled: make(chan struct{})}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	got, err := m.EnsureServers(ctx, []string{"repository"})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("EnsureServers() error = %v, want the discovery outage contained", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("EnsureServers() = %d tools, want 0 for the hung server", len(got))
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("EnsureServers() took %v, want discovery bounded within 3s when timeout_seconds is unset", elapsed)
+	}
+	if len(m.Failures()) != 1 {
+		t.Fatalf("Failures() = %v, want the hung server recorded", m.Failures())
+	}
+	// The failure is memoized: a second call returns immediately, never
+	// reconnects, and still reports no tools for the failed server.
+	start = time.Now()
+	got, err = m.EnsureServers(ctx, []string{"repository"})
+	elapsed = time.Since(start)
+	if err != nil {
+		t.Fatalf("second EnsureServers() error = %v, want the failure contained", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("second EnsureServers() = %d tools, want 0 for the failed server", len(got))
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("second EnsureServers() took %v, want the memoized failure to return immediately", elapsed)
+	}
+	if got := connects.Load(); got != 1 {
+		t.Fatalf("connect count = %d, want 1 after the memoized failure", got)
+	}
+	if len(m.Failures()) != 1 {
+		t.Fatalf("Failures() = %v, want the failure still recorded once", m.Failures())
+	}
+}
+
 func TestManagerOwnsDiscoveredTool(t *testing.T) {
 	m, err := NewManager(config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{
 		ID: "repository", Transport: "stdio", Command: stdioFixtureCommand(t),
