@@ -63,6 +63,20 @@ func writeStackingWorkspace(t *testing.T) string {
 	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// The engine-synthesized steps reference engine-reserved output schemas;
+	// admission loads and pins them exactly like declared steps'.
+	schemasDir := filepath.Join(wfRoot, "schemas")
+	if err := os.MkdirAll(schemasDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, schemaBody := range map[string]string{
+		"chunk-plan-v1.json":        `{"type":"object"}`,
+		"chunk-plan-review-v1.json": `{"type":"object"}`,
+	} {
+		if err := os.WriteFile(filepath.Join(schemasDir, name), []byte(schemaBody), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	body := `version = 1
 name = "stack-me"
 initial_step = "plan"
@@ -268,19 +282,11 @@ func assertLoopIterations(t *testing.T, view agenttools.StatusView, name string,
 
 // --- tests ---
 
-// writeStackingWorkspaceMultiPhase writes a stacking workflow with a
-// multi-step plan phase (plan -> plan_review -> plan_tests ->
-// test_plan_review -> implement), the shape of the shipped feature-delivery
-// workflow. The stacking router must anchor at the plan phase's last step so
-// every plan-phase step stays reachable and admission passes.
-func writeStackingWorkspaceMultiPhase(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
-	wfRoot := filepath.Join(root, ".mivia", "workflows")
-	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	body := `version = 1
+// stackingMultiPhaseWorkflowTOML is a stacking workflow shaped like the
+// shipped feature-delivery workflow: a multi-step plan phase (plan ->
+// plan_review -> plan_tests -> test_plan_review) then implement, so the
+// stacking router must anchor at the plan phase's last step.
+const stackingMultiPhaseWorkflowTOML = `version = 1
 name = "stack-multi"
 initial_step = "plan"
 
@@ -348,7 +354,34 @@ to = "success"
 [transitions.match]
 status = "succeeded"
 `
-	if err := os.WriteFile(filepath.Join(wfRoot, "stack-multi.toml"), []byte(body), 0o600); err != nil {
+
+// writeStackingWorkspaceMultiPhase writes a stacking workflow with a
+// multi-step plan phase (plan -> plan_review -> plan_tests ->
+// test_plan_review -> implement), the shape of the shipped feature-delivery
+// workflow. The stacking router must anchor at the plan phase's last step so
+// every plan-phase step stays reachable and admission passes.
+func writeStackingWorkspaceMultiPhase(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	wfRoot := filepath.Join(root, ".mivia", "workflows")
+	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The engine-synthesized steps reference engine-reserved output schemas;
+	// admission loads and pins them exactly like declared steps'.
+	schemasDir := filepath.Join(wfRoot, "schemas")
+	if err := os.MkdirAll(schemasDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, schemaBody := range map[string]string{
+		"chunk-plan-v1.json":        `{"type":"object"}`,
+		"chunk-plan-review-v1.json": `{"type":"object"}`,
+	} {
+		if err := os.WriteFile(filepath.Join(schemasDir, name), []byte(schemaBody), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(wfRoot, "stack-multi.toml"), []byte(stackingMultiPhaseWorkflowTOML), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root

@@ -238,6 +238,15 @@ type RunListItem struct {
 	Status    string `json:"status"`
 	Age       string `json:"age,omitempty"`
 	StartedAt string `json:"started_at,omitempty"`
+	// ActiveStep is the run's current step id, empty for a terminal run or
+	// one that hasn't started its first step yet.
+	ActiveStep string `json:"active_step,omitempty"`
+	// LastHeartbeatAt mirrors AttemptView's field of the same name, for the
+	// active step's newest attempt - RFC3339 UTC, empty when the run is
+	// terminal, has no active step, or that attempt hasn't heartbeated yet.
+	// A caller rendering a live list (e.g. a desktop app's run list) needs
+	// this without a second per-run round trip through workflow_status.
+	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
 }
 
 // DeliverResult is the response from workflow_deliver.

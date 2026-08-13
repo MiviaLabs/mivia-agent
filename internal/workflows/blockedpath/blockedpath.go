@@ -6,8 +6,11 @@
 // instruction that demands editing one is an admission-time or
 // settle-time failure, never a repair-loop candidate. The detection is
 // deliberately conservative: a path token plus a demand verb on the same line
-// is treated as an instruction to write. A read-only mention (no demand verb)
-// is not.
+// is treated as an instruction to write, except when the line places the path
+// inside a temporary or test-only fixture workspace ("creates a temporary
+// directory with .mivia/workflows"): that describes a throwaway fixture's
+// layout, not a demand to edit the host's path. A read-only mention (no
+// demand verb) is not.
 package blockedpath
 
 import (
@@ -29,6 +32,22 @@ var demandVerbRe = regexp.MustCompile(`(?i)\b(?:edit|change|modify|update|write|
 // "write-blocklisted". A line that only says a path is behind write access is
 // describing a fact, not instructing a write.
 var nounWritePhrases = regexp.MustCompile(`(?i)\bwrite[\s_-]+(?:access|path|permission|policy|blocklist|denylist|list)\b`)
+
+// fixtureContainmentRe matches the tail of a clause that places a blocklisted
+// path inside a temporary or test-only workspace: a fixture noun ("temporary
+// directory", "temp dir", "test workspace") followed by a containment
+// preposition immediately before the path, as in "creates a temporary
+// directory with .mivia/workflows". Such a clause describes a throwaway
+// fixture's layout (a test helper that lays out a temp workspace and writes
+// fixture files into it), not a demand to edit the host's path. The regex is
+// anchored to the end of the clause because the path token follows
+// immediately; a real demand like "update .mivia/workflows/bug-fix.toml"
+// never matches, since the path sits at the start of the clause, not after a
+// containment preposition. The real protection is the write-tool boundary
+// (workflow agents cannot write blocklisted paths at all); this detector is
+// the fail-fast early warning, so a fixture mention that escapes it still
+// ends in a refused write, never an unauthorized change.
+var fixtureContainmentRe = regexp.MustCompile(`(?i)\b(?:temporary|temp|scratch|ephemeral|sandbox|fixture|in-memory|throwaway|isolated|test)\b[^,.;:!?\n]{0,60}\b(?:directory|dir|folder|workspace|root|tree|environment)\b[^,.;:!?\n]{0,24}\b(?:with|containing|inside|under|holding)\b\s*$`)
 
 // LineDemandsEdit reports whether one line of text both names path and
 // instructs editing it: a whitespace-delimited token references the path and a
@@ -60,8 +79,54 @@ func LineDemandsEdit(line, blockedPath string) bool {
 	if !matched {
 		return false
 	}
+	// A path inside a temporary or test-only fixture workspace is content of
+	// that fixture, not a demand to edit the host's path: "creates a temporary
+	// directory with .mivia/workflows" demands creating a temp directory, not
+	// writing the repo's .mivia/workflows.
+	if pathInFixtureWorkspace(line, blockedPath) {
+		return false
+	}
 	cleaned = nounWritePhrases.ReplaceAllString(cleaned, " ")
 	return demandVerbRe.MatchString(cleaned)
+}
+
+// pathInFixtureWorkspace reports whether EVERY path token naming blockedPath
+// in line sits at the end of a fixture-containment clause: a temporary or
+// test-only workspace phrase whose containment preposition ("with",
+// "containing", ...) directly precedes the path. Only when every mention is
+// fixture-contained is the line read as fixture layout; a single non-fixture
+// mention ("Then update .mivia/workflows/bug-fix.toml." after a fixture
+// sentence) keeps the line a demand candidate, and the demand-verb check
+// decides.
+func pathInFixtureWorkspace(line, blockedPath string) bool {
+	pos := 0
+	found := false
+	for _, token := range strings.Fields(line) {
+		off := strings.Index(line[pos:], token)
+		if off < 0 {
+			return false
+		}
+		idx := pos + off
+		pos = idx + len(token)
+		if !tokenNamesPath(token, blockedPath) {
+			continue
+		}
+		found = true
+		start := idx - 120
+		if start < 0 {
+			start = 0
+		}
+		prefix := line[start:idx]
+		// Bound the scan to the clause that ends at the path: a fixture
+		// phrase in an earlier sentence must not excuse a later demand.
+		if cut := strings.LastIndexAny(prefix, ".;:!?\n"); cut >= 0 {
+			prefix = prefix[cut+1:]
+		}
+		if !fixtureContainmentRe.MatchString(prefix) {
+			return false
+		}
+	}
+	return found
 }
 
 // tokenNamesPath reports whether a whitespace-delimited token references

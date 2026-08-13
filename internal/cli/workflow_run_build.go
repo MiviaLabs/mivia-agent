@@ -37,6 +37,18 @@ type workflowControllerBuild struct {
 }
 
 func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, recorded *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+	// A stacking run EXECUTES the synthesized graph: decompose and
+	// chunk_plan_validate are real steps whose agents must be resolved, whose
+	// templates and schemas must be pinned, and whose routing digests must be
+	// recorded before anything is admitted. Synthesize here - where the agent
+	// registry is available - so the runtime build treats them like any
+	// declared step. Synthesizing inside the controller instead would admit
+	// them with a null routing snapshot and fail every dispatch attempt.
+	synth, err := workflowSynthesizeRunGraph(wf)
+	if err != nil {
+		return workflowControllerBuild{}, err
+	}
+	wf = synth
 	setup, err := prepareWorkflowBuild(root, res, wf, runID, recorded)
 	if err != nil {
 		return workflowControllerBuild{}, err
@@ -59,6 +71,26 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 		return workflowControllerBuild{}, err
 	}
 	return workflowControllerBuild{Controller: ctrl, Dispatcher: dispatcher, Admission: workflowAdmission(setup, inputSnapshot, recorded), Cleanup: setup.cleanup}, nil
+}
+
+// workflowSynthesizeRunGraph applies the stacking synthesis an admitted run
+// executes on. A stacking run graph carries engine-synthesized steps
+// (decompose, chunk_plan_validate) that no author declared; they must be part
+// of the workflow BEFORE the runtime build so their agents are resolved from
+// the registry, their templates and schemas are pinned into the snapshot, and
+// their routing digests are recorded - exactly like any declared step. A step
+// admitted without a routing digest could never dispatch (the agent handler
+// refuses null routing snapshots) and could never resume, so synthesis belongs
+// here, next to the registry, and never inside the controller.
+func workflowSynthesizeRunGraph(wf *compiler.CompiledWorkflow) (*compiler.CompiledWorkflow, error) {
+	if wf == nil || wf.Stacking == nil {
+		return wf, nil
+	}
+	synth, err := compiler.SynthesizeStacking(wf)
+	if err != nil {
+		return nil, fmt.Errorf("synthesize stacking run graph: %w", err)
+	}
+	return synth, nil
 }
 
 type workflowBuildSetup struct {

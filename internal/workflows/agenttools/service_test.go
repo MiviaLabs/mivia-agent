@@ -363,6 +363,89 @@ func TestListRunsFromLedger(t *testing.T) {
 // MaxInt64 with no maximum, so offset+limit can wrap negative, which used to
 // slice runs[1:negative] and panic. A huge limit must clamp to the remainder
 // after offset, never panic.
+// TestListRunsIncludesActiveStepAndHeartbeat pins the wire contract a
+// desktop-app live run list needs: active_step and last_heartbeat_at on
+// each RunListItem, without a second per-run workflow_status round trip.
+func TestListRunsIncludesActiveStepAndHeartbeat(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	ctx := context.Background()
+	runID := "wfr-list-heartbeat-1"
+	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
+		Inputs: map[string]string{"task": "build"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
+		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
+		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
+		Status:         workflowledger.RunStatusPending, ActiveStepID: "one",
+		StartedAt: time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
+	}, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, 1, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{
+		AttemptID: "wfa-one-1", RunID: runID, StepID: "one", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusRunning,
+	}
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	heartbeatAt := time.Date(2026, 8, 6, 12, 5, 0, 0, time.UTC)
+	if err := repo.SetStepAttemptHeartbeat(ctx, runID, attempt.AttemptID, heartbeatAt); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := testService(t, repo, nil)
+	list, err := svc.ListRuns(ctx, "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Count != 1 {
+		t.Fatalf("list.Count = %d, want 1", list.Count)
+	}
+	item := list.Runs[0]
+	if item.ActiveStep != "one" {
+		t.Fatalf("ActiveStep = %q, want %q", item.ActiveStep, "one")
+	}
+	if item.LastHeartbeatAt != heartbeatAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("LastHeartbeatAt = %q, want %q", item.LastHeartbeatAt, heartbeatAt.UTC().Format(time.RFC3339))
+	}
+}
+
+// TestListRunsOmitsHeartbeatForTerminalRuns pins that a finished run's list
+// item carries no heartbeat column, matching the CLI text listing's own
+// runHeartbeatFreshness gate (internal/cli/workflow_runs.go) - a terminal
+// run's last attempt heartbeat is stale by definition and would mislead a
+// live-view caller into rendering a "still beating" pulse for a dead run.
+func TestListRunsOmitsHeartbeatForTerminalRuns(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	runID := "wfr-list-terminal-1"
+	seedRunningAttempt(t, repo, runID)
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, run.Version, workflowledger.RunStatusSucceeded, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := testService(t, repo, nil)
+	list, err := svc.ListRuns(ctx, "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Count != 1 || list.Runs[0].LastHeartbeatAt != "" {
+		t.Fatalf("list = %+v, want one terminal run with no heartbeat", list)
+	}
+}
+
 func TestListRunsHugeLimitDoesNotOverflow(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	seedRunningAttempt(t, repo, "wfr-list-huge-1")

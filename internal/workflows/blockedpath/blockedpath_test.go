@@ -161,6 +161,61 @@ func TestLineDemandsEditTokenBoundaries(t *testing.T) {
 	})
 }
 
+// TestLineDemandsEditFixtureWorkspace pins the fixture-containment exclusion:
+// a line that places a blocklisted path inside a temporary or test-only
+// workspace describes a throwaway fixture, not a demand to edit the host's
+// path. This is the smoke regression: the plan reviewer's finding described a
+// test helper that "creates a temporary directory with .mivia/workflows,
+// writes workflow TOML files", and the detector misread the demand verbs as an
+// instruction to write the host's .mivia/workflows, failing the run as
+// blocked.
+func TestLineDemandsEditFixtureWorkspace(t *testing.T) {
+	runLineDemandCases(t, []lineDemandCase{
+		{
+			name: "fixture helper creates a temp dir containing the path",
+			line: "Add writeWorkflowFixture to the new internal/cli/workflows_command_json_test.go (or shared test helpers) that creates a temporary directory with .mivia/workflows, writes workflow TOML files from test definitions, and returns the workspace root.",
+			path: ".mivia/workflows",
+			want: false,
+		},
+		{
+			name: "fixture helper creates a temp dir containing the config path",
+			line: "add a helper that creates a temp directory with .mivia/mivia.toml",
+			path: ".mivia/mivia.toml",
+			want: false,
+		},
+		{
+			name: "test workspace containing the path",
+			line: "the test workspace with .mivia/workflows must be created",
+			path: ".mivia/workflows",
+			want: false,
+		},
+		{
+			name: "real demand still blocked when a fixture phrase appears later",
+			line: "update .mivia/workflows/bug-fix.toml to match the new temp directory fixture",
+			path: ".mivia/workflows",
+			want: true,
+		},
+		{
+			name: "real demand still blocked when a fixture phrase sits in an earlier sentence",
+			line: "Create a temporary directory with .mivia/workflows for the fixture. Then update .mivia/workflows/bug-fix.toml.",
+			path: ".mivia/workflows",
+			want: true,
+		},
+		{
+			name: "real demand still blocked without a containment preposition",
+			line: "write the file .mivia/workflows/bug-fix.toml into the temp directory",
+			path: ".mivia/workflows",
+			want: true,
+		},
+		{
+			name: "containment after the path does not excuse a demand",
+			line: "create .mivia/workflows/evil.toml in the sandbox",
+			path: ".mivia/workflows",
+			want: true,
+		},
+	})
+}
+
 func TestIsBlockedPath(t *testing.T) {
 	blocklist := []string{".git", ".mivia/mivia.toml", ".mivia/workflows", ".mivia/policy"}
 	tests := []struct {
@@ -221,5 +276,13 @@ func TestPathsDemandedInText(t *testing.T) {
 	}
 	if got := PathsDemandedInText("", blocklist); len(got) != 0 {
 		t.Fatalf("PathsDemandedInText() = %v, want none for empty text", got)
+	}
+	// The smoke regression: a test-plan review finding that describes a test
+	// helper creating a temporary directory containing ".mivia/workflows" and
+	// writing fixture TOML files into it describes fixture layout, not a
+	// demand to write the host's path.
+	smokeFinding := "Add writeWorkflowFixture to the new internal/cli/workflows_command_json_test.go (or shared test helpers) that creates a temporary directory with .mivia/workflows, writes workflow TOML files from test definitions, and returns the workspace root."
+	if got := PathsDemandedInText(smokeFinding, blocklist); len(got) != 0 {
+		t.Fatalf("PathsDemandedInText() = %v, want none for a fixture-workspace description", got)
 	}
 }

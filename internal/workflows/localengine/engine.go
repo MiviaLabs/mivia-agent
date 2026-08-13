@@ -310,6 +310,14 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 	if err != nil {
 		return nil, err
 	}
+	// A stacking run EXECUTES the synthesized graph; rebuild it here so the
+	// resumed runtimes carry the engine-synthesized steps (decompose,
+	// chunk_plan_validate) and admission re-validates them with their pinned
+	// routing snapshots instead of refusing a digest-less step.
+	compiled, err = compiler.SynthesizeStacking(compiled)
+	if err != nil {
+		return nil, err
+	}
 	if snapshot.DefinitionDigest != run.WorkflowDigest {
 		return nil, fmt.Errorf("workflow definition digest does not match the admitted definition")
 	}

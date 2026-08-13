@@ -52,8 +52,19 @@ func SynthesizedInputs(cfg *definition.StackingConfig) map[string]definition.Inp
 // returned unchanged (the same pointer). The digest is copied unchanged:
 // synthesis is a post-compile admission step and never moves the definition
 // digest.
+//
+// Synthesis is idempotent: a graph that already carries every engine-reserved
+// stacking artifact (both synthesized steps AND the repair loop) is the run
+// graph itself and is returned unchanged. The runtime build synthesizes once
+// before building step runtimes, and the controller re-synthesizes on direct
+// construction, so both sides must agree on what "already synthesized" means.
+// A workflow that declares only SOME of the reserved identifiers still fails
+// the reserved-identifier check below, exactly as before.
 func SynthesizeStacking(cw *CompiledWorkflow) (*CompiledWorkflow, error) {
 	if cw == nil || cw.Stacking == nil {
+		return cw, nil
+	}
+	if cw.StepIDs[stepDecompose] && cw.StepIDs[stepChunkPlanValidate] && cw.LoopNames[loopDecomposeRepair] {
 		return cw, nil
 	}
 	cfg := *cw.Stacking
