@@ -296,6 +296,7 @@ func repl(sess *chat.Session, res *config.Resolved, toolsOn bool, _ *agentSessio
 		return replLineMode(sess, res, toolsOn, jsonMode)
 	}
 	defer term.Close()
+	defer startClassicReplHub(sess)()
 	r := newREPLRuntime(sess, res, toolsOn, term)
 	return r.run()
 }
@@ -326,6 +327,7 @@ func replLineMode(sess *chat.Session, res *config.Resolved, toolsOn bool, jsonMo
 		activeJSONSlashSink = &jsonSlashSink{w: os.Stdout}
 		defer func() { activeJSONSlashSink = nil }()
 	}
+	defer startLineModeHub(sess, jsonMode)()
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sigCh := make(chan os.Signal, 1)
@@ -358,6 +360,7 @@ func replLineMode(sess *chat.Session, res *config.Resolved, toolsOn bool, jsonMo
 // process (e.g. a GUI wrapper) can parse chunk/turn-end/error boundaries
 // without guessing from a bare trailing newline.
 func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonMode bool) error {
+	publishTurnStartForHub(sess, line)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go cancelOnInterrupt(ctx, cancel, done, sigCh)

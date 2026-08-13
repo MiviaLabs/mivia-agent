@@ -114,6 +114,7 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 
 	renderer.PrintUser(line)
 	renderer.PrintAssistantHeader()
+	publishTurnStartForHub(sess, line)
 	mw := NewMarkdownWriter(term)
 	finalW := io.Writer(mw)
 	if toolsOn {

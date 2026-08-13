@@ -28,6 +28,21 @@ import (
 //	{"type":"cancelled"}                           - exactly once, turn was SIGINT-interrupted
 //	{"type":"error","message":"…"}                 - exactly once, turn failed
 //
+// The "external_*" types (see chat_hub.go) mirror this same vocabulary for a
+// turn running in a DIFFERENT mivia process for the same session (a terminal
+// TUI, another desktop thread) - relayed live via internal/hub, not read
+// from disk. Every one carries "run_id" (that OTHER process's own turn
+// identifier - unrelated to any turn_id this process's own turns use) so a
+// consumer can tell which external turn each line continues:
+//
+//	{"type":"external_turn_start","run_id":"...","session_id":"...","role":"user","text":"..."}  - a new external turn began; text is what the other process's user typed
+//	{"type":"external_chunk","run_id":"...","text":"..."}
+//	{"type":"external_thinking","run_id":"...","text":"..."}
+//	{"type":"external_tool_start","run_id":"...","tool_call_id":"...","name":"...","input":"..."}
+//	{"type":"external_tool_end","run_id":"...","tool_call_id":"...","name":"...","output":"...","status":"ok|failed"}
+//	{"type":"external_done","run_id":"..."}
+//	{"type":"external_error","run_id":"...","message":"…"}
+//
 // "tool_start"/"tool_end" additionally carry "origin_task_id"/"origin_agent"/
 // "origin_depth" when the tool call was made by a delegated subagent rather
 // than the root loop (agent.EventSubagentStart/End - same field shape as
@@ -115,6 +130,12 @@ type ndjsonEvent struct {
 	// the other Origin* fields (a subagent's own nested tool_start), never
 	// on the root loop's own tool calls. See agent.EventOrigin.TaskDescription.
 	OriginTaskDescription string `json:"origin_task_description,omitempty"`
+	// RunID/Role are used only by the "external_*" types (see this file's
+	// top doc comment and chat_hub.go): RunID is the other process's own
+	// turn identifier, Role marks "external_turn_start"'s synthetic user
+	// turn.
+	RunID string `json:"run_id,omitempty"`
+	Role  string `json:"role,omitempty"`
 }
 
 // jsonTurnEventCallback returns an agent.Event handler that translates
