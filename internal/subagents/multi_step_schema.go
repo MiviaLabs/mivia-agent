@@ -114,7 +114,7 @@ func (h *MultiStepHandler) runValidatedReply(
 		if compiled == nil {
 			return reply, nil, nil
 		}
-		candidate := jschema.StripOneCodeFence(reply)
+		candidate := jschema.ExtractOutputCandidate(reply)
 		inst, vErr := compiled.ValidateJSONBytes([]byte(candidate))
 		if vErr == nil {
 			return candidate, inst, nil

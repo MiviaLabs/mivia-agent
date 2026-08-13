@@ -207,6 +207,96 @@ func TestMultiStepSchemaDistinctInvalidGetsFullBudget(t *testing.T) {
 	}
 }
 
+// repeatingCompleter always returns the same reply, regardless of how many
+// times it is called, and counts every call - including ones a scripted
+// completer's fallback branch would leave uncounted. Used to prove an
+// extraction step succeeds on the FIRST attempt rather than being masked by
+// a later retry.
+type repeatingCompleter struct {
+	reply string
+	calls int
+}
+
+func (c *repeatingCompleter) Name() string { return "repeating" }
+func (c *repeatingCompleter) Chat(context.Context, provider.Request) (string, error) {
+	return "", errors.New("Chat unused")
+}
+func (c *repeatingCompleter) ChatStream(context.Context, provider.Request, io.Writer) (string, error) {
+	return "", errors.New("ChatStream unused")
+}
+func (c *repeatingCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
+	c.calls++
+	return &provider.Response{Content: c.reply, FinishReason: "stop"}, nil
+}
+
+// TestMultiStepSchemaEnvelopeWrappedReplyValidates pins the new extraction
+// step: a reply that wraps its JSON in <mivia_output> tags, with narration
+// before and after, must validate on the FIRST attempt. The completer always
+// returns the same narration-wrapped reply, so without envelope extraction
+// every retry attempt fails identically and the call exhausts its retry
+// budget with ErrSchemaViolation; with extraction, the very first attempt
+// succeeds and no retry ever happens.
+func TestMultiStepSchemaEnvelopeWrappedReplyValidates(t *testing.T) {
+	reply := "Sure, here is the result:\n<mivia_output>\n{\"ok\":true}\n</mivia_output>\nLet me know if you need anything else."
+	c := &repeatingCompleter{reply: reply}
+	reg := tools.NewRegistry()
+	h := &subagents.MultiStepHandler{
+		Completer:      c,
+		FullRegistry:   reg,
+		Model:          "m",
+		MaxSteps:       3,
+		SchemaRetryMax: 2,
+		OutputSchema:   schemaObject(),
+	}
+	input, _ := json.Marshal("do the work")
+	out, err := h.Invoke(context.Background(), runtime.Request{
+		ID: "task-1", Name: "worker", Kind: runtime.Subagent, Input: input,
+		OutputSchema: schemaObject(),
+	})
+	if err != nil {
+		t.Fatalf("envelope-wrapped reply must validate on the first attempt: %v", err)
+	}
+	var payload map[string]any
+	if len(out) > 0 {
+		_ = json.Unmarshal(out, &payload)
+	}
+	if payload["schema"] != "ok" {
+		t.Fatalf("envelope-wrapped reply should validate: %#v", payload)
+	}
+	if c.calls != 1 {
+		t.Fatalf("got %d LLM calls, want exactly 1 (validated on first attempt via envelope extraction, no retry)", c.calls)
+	}
+}
+
+// TestMultiStepSchemaFailFastOnIdenticalEnvelopeDespiteDifferentPreamble pins
+// the accepted Step 0 behavior change: raw replies whose envelope content is
+// byte-identical but whose surrounding narration differs now collapse to the
+// same extracted candidate, so the no-progress fail-fast fires on the first
+// confirm instead of burning the full retry budget. Four replies (mirroring
+// TestMultiStepSchemaNoProgressFailsFast) keep the scripted completer's
+// clean-JSON fallback response out of reach.
+func TestMultiStepSchemaFailFastOnIdenticalEnvelopeDespiteDifferentPreamble(t *testing.T) {
+	replies := []string{
+		"Sure!\n<mivia_output>\n{\"ok\":\"yes\"}\n</mivia_output>",
+		"Here you go:\n<mivia_output>\n{\"ok\":\"yes\"}\n</mivia_output>",
+		"Certainly.\n<mivia_output>\n{\"ok\":\"yes\"}\n</mivia_output>",
+		"Done!\n<mivia_output>\n{\"ok\":\"yes\"}\n</mivia_output>",
+	}
+	payload, calls, err := invokeMultiStepCounted(t, replies, schemaObject(), 10, 2)
+	if !errors.Is(err, subagents.ErrSchemaViolation) {
+		t.Fatalf("err=%v, want ErrSchemaViolation", err)
+	}
+	if !strings.Contains(err.Error(), "no progress on schema repair") {
+		t.Fatalf("err=%v, want no-progress cause", err)
+	}
+	if calls != 2 {
+		t.Fatalf("got %d LLM calls, want exactly 2 (identical envelope content despite different preamble)", calls)
+	}
+	if payload["schema"] != "violation" {
+		t.Fatalf("schema=%v payload=%#v", payload["schema"], payload)
+	}
+}
+
 func TestMultiStepSchemaFenceStrip(t *testing.T) {
 	payload, err := invokeMultiStep(t, []string{"```json\n{\"ok\":true}\n```"}, schemaObject(), 3, 2)
 	if err != nil {

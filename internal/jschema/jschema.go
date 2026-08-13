@@ -241,7 +241,7 @@ func PromptAppendix(schema map[string]any) string {
 	if contract == "" {
 		return "\n\nReturn ONLY valid JSON matching the required output schema."
 	}
-	return "\n\nReturn ONLY valid JSON matching this schema (no prose, no markdown fences):\n" + contract
+	return EnvelopeAppendixBody(contract)
 }
 
 // schemaMetaKeys are JSON Schema meta/annotation keywords that describe the

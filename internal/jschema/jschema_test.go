@@ -132,6 +132,16 @@ func TestPromptAppendixRendersAContractNotTheSchemaDocument(t *testing.T) {
 	}
 }
 
+func TestPromptAppendix_MentionsEnvelopeTag(t *testing.T) {
+	appendix := jschema.PromptAppendix(map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+	})
+	if !strings.Contains(appendix, "<mivia_output>") {
+		t.Fatalf("PromptAppendix must instruct the envelope tag: %q", appendix)
+	}
+}
+
 func TestFormatCorrectiveWithSchemaHidesReviewSchemaMetaKeys(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -88,6 +89,24 @@ func TestSchemaSystemAppendixRendersAContractNotTheSchemaDocument(t *testing.T) 
 	}
 	if got := schemaSystemAppendix(nil); got != "" {
 		t.Fatalf("a nil schema must emit nothing, got %q", got)
+	}
+}
+
+// TestSchemaSystemAppendixDelegatesToJschemaEnvelope pins the centralization:
+// schemaSystemAppendix must produce exactly the same envelope-wrapping
+// instruction as jschema.EnvelopeAppendixBody, rather than hand-building its
+// own near-identical string as it did before. That duplication previously
+// required the two renderers' wording to be kept in sync by hand.
+func TestSchemaSystemAppendixDelegatesToJschemaEnvelope(t *testing.T) {
+	schema := map[string]any{
+		"type":       "object",
+		"required":   []any{"ok"},
+		"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+	}
+	got := schemaSystemAppendix(schema)
+	want := jschema.EnvelopeAppendixBody(jschema.ModelSchemaContract(schema))
+	if got != want {
+		t.Fatalf("schemaSystemAppendix = %q, want delegation to jschema.EnvelopeAppendixBody: %q", got, want)
 	}
 }
 

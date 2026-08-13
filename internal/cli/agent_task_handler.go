@@ -206,7 +206,7 @@ func schemaSystemAppendix(schema map[string]any) string {
 	if contract == "" {
 		return ""
 	}
-	return "\n\nReturn ONLY valid JSON matching this required output schema (no prose, no markdown fences):\n" + contract
+	return jschema.EnvelopeAppendixBody(contract)
 }
 
 func messagingDisallowed(names []string) map[string]struct{} {
