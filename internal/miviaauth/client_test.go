@@ -89,6 +89,32 @@ func TestLoginSuccessParsesTokenAndSendsHeaders(t *testing.T) {
 	}
 }
 
+// TestLoginSessionWithoutUserReturnsParseError pins a defensive branch that
+// only exists because Login/Refresh/Verify now decode into sessionEnvelope
+// (client_wire.go), whose Session and User fields are independently
+// optional pointers -- mirroring go-mivia's generated VerifyResponseBody,
+// which models them that way even though the server never actually sends
+// one without the other. A response with a session but no user must not
+// silently produce a Token with a blank OrganizationID/Role; it must error.
+func TestLoginSessionWithoutUserReturnsParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"authenticated":true,"session":{"bearer":"b","expires_at":"2026-08-13T18:00:00Z"}}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = c.Login(context.Background(), "user@example.com", []byte("hunter2"))
+	if err == nil {
+		t.Fatal("Login() error = nil, want an error for a session with no user")
+	}
+}
+
 func TestLoginNon200ReturnsStatusError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
