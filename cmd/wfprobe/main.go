@@ -18,6 +18,55 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
+func main() {
+	if len(os.Args) != 3 {
+		fmt.Fprintln(os.Stderr, "usage: wfprobe <store-dir> <run-id>")
+		os.Exit(2)
+	}
+	srcDir, runID := os.Args[1], os.Args[2]
+
+	tmp := filepath.Join(os.TempDir(), "wfprobe")
+	if err := copyStore(srcDir, tmp); err != nil {
+		panic(err)
+	}
+
+	store, err := storage.OpenSQLite(filepath.Join(tmp, "context.db"))
+	if err != nil {
+		panic(err)
+	}
+	defer store.Close()
+
+	repo := workflowledger.NewStorageRepository(store)
+	ctx := context.Background()
+	probeRun(ctx, repo, runID)
+
+	raw, err := sql.Open("sqlite", "file:"+filepath.Join(tmp, "context.db")+"?mode=ro")
+	if err != nil {
+		panic(err)
+	}
+	defer raw.Close()
+	dumpEvents(ctx, raw, runID)
+}
+
+// copyStore copies the store files into tmp so the live database is never
+// opened for writing. It clears any previous probe copy first.
+func copyStore(srcDir, tmp string) error {
+	_ = os.RemoveAll(tmp)
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		return err
+	}
+	for _, name := range []string{"context.db", "context.db-wal", "context.db-shm"} {
+		src := filepath.Join(srcDir, name)
+		if _, err := os.Stat(src); err == nil {
+			if err := copyFile(src, filepath.Join(tmp, name)); err != nil {
+				return err
+			}
+			fmt.Printf("copied %s\n", name)
+		}
+	}
+	return nil
+}
+
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -33,34 +82,9 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-func main() {
-	srcDir := os.Args[1]
-	runID := os.Args[2]
-
-	tmp := filepath.Join(os.TempDir(), "wfprobe")
-	_ = os.RemoveAll(tmp)
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		panic(err)
-	}
-	for _, name := range []string{"context.db", "context.db-wal", "context.db-shm"} {
-		src := filepath.Join(srcDir, name)
-		if _, err := os.Stat(src); err == nil {
-			if err := copyFile(src, filepath.Join(tmp, name)); err != nil {
-				panic(err)
-			}
-			fmt.Printf("copied %s\n", name)
-		}
-	}
-
-	store, err := storage.OpenSQLite(filepath.Join(tmp, "context.db"))
-	if err != nil {
-		panic(err)
-	}
-	defer store.Close()
-
-	repo := workflowledger.NewStorageRepository(store)
-	ctx := context.Background()
-
+// probeRun prints the run snapshot and its durable delivery records, which
+// is the exact data the TUI dialog renders.
+func probeRun(ctx context.Context, repo workflowledger.Repository, runID string) {
 	run, err := repo.GetRun(ctx, runID)
 	fmt.Printf("GetRun: status=%s workflow=%s err=%v\n", run.Status, run.WorkflowName, err)
 
@@ -70,16 +94,11 @@ func main() {
 		fmt.Printf("  delivery: status=%q mode=%q remoteID=%q url=%q commit=%q base=%q head=%q provider=%q updated=%v\n",
 			d.Status, d.Mode, d.RemoteID, d.URL, d.CommitSHA, d.BaseRef, d.HeadRef, d.Provider, d.UpdatedAt)
 	}
+}
 
-	// Raw event dump through the same SQLite driver (second read-only conn
-	// on the copy; the repository keeps its own pool open).
-	raw, err := sql.Open("sqlite", "file:"+filepath.Join(tmp, "context.db")+"?mode=ro")
-	if err != nil {
-		panic(err)
-	}
-	defer raw.Close()
-
-	// List every run id in the store (sanity: where did inv runs go?).
+// dumpEvents prints every event for one run plus the distinct run ids in the
+// store, through a read-only connection on the copy.
+func dumpEvents(ctx context.Context, raw *sql.DB, runID string) {
 	idRows, err := raw.QueryContext(ctx, `SELECT DISTINCT run_id FROM events ORDER BY run_id`)
 	if err != nil {
 		panic(err)
@@ -93,13 +112,6 @@ func main() {
 		}
 		fmt.Printf("  %s\n", rid)
 	}
-
-	// Search payloads for the run id token (in case the id differs).
-	var hit int
-	if err := raw.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE payload LIKE ?`, "%65fdcfc5%").Scan(&hit); err != nil {
-		panic(err)
-	}
-	fmt.Printf("events mentioning 65fdcfc5 in payload: %d\n", hit)
 
 	rows, err := raw.QueryContext(ctx,
 		`SELECT id, sequence, kind, CAST(payload AS TEXT), created_at FROM events WHERE run_id = ? ORDER BY sequence`, runID)
