@@ -167,9 +167,9 @@ func TestJSONTurnEventCallbackEmitsThinkingAndToolLifecycle(t *testing.T) {
 }
 
 // TestJSONTurnEventCallbackIgnoresOtherKinds ensures event kinds with no
-// --json wire representation (e.g. steps, heartbeats, subagent events) are
-// silently dropped rather than emitting a malformed or unexpected line -
-// the --json protocol only ever grows explicitly documented types.
+// --json wire representation (e.g. steps, heartbeats) are silently dropped
+// rather than emitting a malformed or unexpected line - the --json protocol
+// only ever grows explicitly documented types.
 func TestJSONTurnEventCallbackIgnoresOtherKinds(t *testing.T) {
 	var buf bytes.Buffer
 	onEvent := jsonTurnEventCallback(&buf)
@@ -177,6 +177,67 @@ func TestJSONTurnEventCallbackIgnoresOtherKinds(t *testing.T) {
 	onEvent(agent.Event{Kind: agent.EventHeartbeat, Detail: "tick"})
 	if buf.Len() != 0 {
 		t.Fatalf("expected no output for unhandled event kinds, got: %q", buf.String())
+	}
+}
+
+// TestJSONTurnEventCallbackAttributesSubagentToolCalls pins the wire
+// contract for a delegated subagent's own nested tool calls: they reuse the
+// same tool_start/tool_end types as a root-loop tool call (so an older
+// consumer still renders them), but carry origin_task_id/origin_agent/
+// origin_depth so a --json consumer can group them under their own run
+// instead of flattening them into the parent turn - see
+// mivia-agent-desktop's ToolCallList, which does exactly that.
+func TestJSONTurnEventCallbackAttributesSubagentToolCalls(t *testing.T) {
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	origin := agent.EventOrigin{TaskID: "task-1", Agent: "researcher", Depth: 1}
+
+	onEvent(agent.Event{Kind: agent.EventSubagentStart, ToolCallID: "call_1", Name: "read_file", Input: "path=foo.go", Origin: origin})
+	onEvent(agent.Event{Kind: agent.EventSubagentEnd, ToolCallID: "call_1", Name: "read_file", Output: "12 lines", Origin: origin})
+	onEvent(agent.Event{Kind: agent.EventSubagentDone, Name: "researcher", Origin: origin})
+
+	lines := splitNonEmptyLines(buf.String())
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3: %v", len(lines), lines)
+	}
+
+	var toolStart ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[0]), &toolStart); err != nil {
+		t.Fatalf("line 0 invalid JSON: %v", err)
+	}
+	if toolStart.Type != "tool_start" || toolStart.OriginTaskID != "task-1" || toolStart.OriginAgent != "researcher" || toolStart.OriginDepth != 1 {
+		t.Fatalf("tool_start event = %+v, want origin task-1/researcher/1", toolStart)
+	}
+
+	var toolEnd ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[1]), &toolEnd); err != nil {
+		t.Fatalf("line 1 invalid JSON: %v", err)
+	}
+	if toolEnd.Type != "tool_end" || toolEnd.OriginTaskID != "task-1" || toolEnd.OriginAgent != "researcher" || toolEnd.OriginDepth != 1 {
+		t.Fatalf("tool_end event = %+v, want origin task-1/researcher/1", toolEnd)
+	}
+
+	var done ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[2]), &done); err != nil {
+		t.Fatalf("line 2 invalid JSON: %v", err)
+	}
+	if done.Type != "subagent_done" || done.OriginTaskID != "task-1" {
+		t.Fatalf("subagent_done event = %+v, want origin_task_id=task-1", done)
+	}
+}
+
+// TestJSONTurnEventCallbackOmitsOriginForRootLoopToolCalls ensures a
+// root-loop tool call (agent.EventOrigin's zero value) does not leak empty
+// origin_task_id/origin_agent fields onto the wire - the common case stays
+// byte-identical to before origin attribution was added.
+func TestJSONTurnEventCallbackOmitsOriginForRootLoopToolCalls(t *testing.T) {
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	onEvent(agent.Event{Kind: agent.EventToolStart, ToolCallID: "call_1", Name: "read_file", Input: "path=foo.go"})
+
+	line := strings.TrimSpace(buf.String())
+	if strings.Contains(line, "origin_task_id") || strings.Contains(line, "origin_agent") || strings.Contains(line, "origin_depth") {
+		t.Fatalf("root-loop tool_start leaked origin fields: %s", line)
 	}
 }
 
