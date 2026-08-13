@@ -570,6 +570,130 @@ func TestSynthesizeStacking_MultiStepPlanPhaseAnchorsRouterAtPlanPhaseExit(t *te
 	}
 }
 
+// TestSynthesizeStacking_PlanDirectEdgeWithDistinctAnchor pins the happy-path
+// dead-end regression: a multi-step plan phase (plan -> plan_review ->
+// implement) where the plan step ALSO carries a direct succeeded edge into
+// implement. The router anchors at the last plan-phase step (plan_review);
+// synthesis used to drop BOTH the anchor's succeeded edge and the plan step's
+// direct succeeded edge, leaving the plan step with no succeeded exit. The
+// run then hard-failed ('no matching transition') on its happy path while the
+// plan-failed path still worked. Every plan-phase step must keep at least one
+// succeeded exit: the plan step's direct exit is rewired through the anchor
+// instead of removed.
+func TestSynthesizeStacking_PlanDirectEdgeWithDistinctAnchor(t *testing.T) {
+	wf := stackingFixture()
+	wf.Steps = []definition.Step{
+		{ID: "plan", Kind: "agent", Agent: "workflow-engineer"},
+		{ID: "plan_review", Kind: "agent", Agent: "reviewer"},
+		{ID: "implement", Kind: "agent", Agent: "workflow-engineer",
+			OutputSchema: "schemas/change-summary-v1.json",
+			Context: []definition.ContextBinding{
+				{From: "steps.plan.output", As: "plan"},
+			}},
+	}
+	wf.Transitions = []definition.Transition{
+		{From: "plan", To: "implement", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "plan", To: "plan_review", Match: definition.MatchCriteria{Status: "failed"}},
+		{From: "plan_review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "implement", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+	}
+	cw, err := Compile(wf)
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+	if cw.Stacking == nil {
+		t.Fatal("fixture did not resolve stacking")
+	}
+	synth, err := SynthesizeStacking(cw)
+	if err != nil {
+		t.Fatalf("SynthesizeStacking failed: %v", err)
+	}
+
+	// The router anchors at the last plan-phase step (plan_review).
+	if !transitionMatches(synth, "plan_review", "decompose", "succeeded") {
+		t.Error("router plan_review -> decompose (succeeded) missing")
+	}
+	if transitionMatches(synth, "plan_review", "implement", "succeeded") {
+		t.Error("superseded plan_review -> implement (succeeded) survived synthesis")
+	}
+	// The plan step keeps a succeeded route: its direct implement exit is
+	// rewired through the anchor, not dropped.
+	if transitionMatches(synth, "plan", "implement", "succeeded") {
+		t.Error("plan -> implement (succeeded) survived synthesis")
+	}
+	if !transitionMatches(synth, "plan", "plan_review", "succeeded") {
+		t.Error("plan step lost its succeeded exit: no plan -> plan_review (succeeded) route")
+	}
+	// The declared plan-failed path survives unchanged.
+	if !transitionMatches(synth, "plan", "plan_review", "failed") {
+		t.Error("plan -> plan_review (failed) edge was removed")
+	}
+	// Every declared step stays reachable in the synthesized graph.
+	if unreachable := unreachableStepIDs(synth); len(unreachable) > 0 {
+		t.Errorf("unreachable steps after synthesis: %v", unreachable)
+	}
+}
+
+// TestSynthesizeStacking_PlanDirectEdgeRewireSkipsExistingAnchorEdge pins the
+// rewire guard: when the plan step already declares a plain succeeded edge
+// into the anchor, the direct plan->implement edge is rewired by reusing that
+// edge instead of adding a second identical one (which admission would reject
+// as ambiguous). The plan step keeps its succeeded exit and synthesis
+// succeeds.
+func TestSynthesizeStacking_PlanDirectEdgeRewireSkipsExistingAnchorEdge(t *testing.T) {
+	wf := stackingFixture()
+	wf.Steps = []definition.Step{
+		{ID: "plan", Kind: "agent", Agent: "workflow-engineer"},
+		{ID: "plan_review", Kind: "agent", Agent: "reviewer"},
+		{ID: "implement", Kind: "agent", Agent: "workflow-engineer",
+			OutputSchema: "schemas/change-summary-v1.json",
+			Context: []definition.ContextBinding{
+				{From: "steps.plan.output", As: "plan"},
+			}},
+	}
+	wf.Transitions = []definition.Transition{
+		{From: "plan", To: "implement"}, // empty status; rewired through the anchor
+		{From: "plan", To: "plan_review", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "plan_review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "implement", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+	}
+	cw, err := Compile(wf)
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+	synth, err := SynthesizeStacking(cw)
+	if err != nil {
+		t.Fatalf("SynthesizeStacking failed: %v", err)
+	}
+	// The plan step reuses its declared succeeded exit into the anchor: no
+	// second identical edge is added.
+	if !transitionMatches(synth, "plan", "plan_review", "succeeded") {
+		t.Error("plan step lost its succeeded exit: no plan -> plan_review (succeeded) route")
+	}
+	if count := succeededEdgeCount(synth, "plan", "plan_review"); count != 1 {
+		t.Errorf("plan -> plan_review (succeeded) edges = %d, want exactly 1", count)
+	}
+	// The direct implement exit is superseded by the rewire.
+	if transitionMatches(synth, "plan", "implement", "") || transitionMatches(synth, "plan", "implement", "succeeded") {
+		t.Error("plan -> implement edge survived synthesis")
+	}
+	if !transitionMatches(synth, "plan_review", "decompose", "succeeded") {
+		t.Error("router plan_review -> decompose (succeeded) missing")
+	}
+}
+
+// succeededEdgeCount counts plain transitions from from to to with a
+// succeeded match.
+func succeededEdgeCount(cw *CompiledWorkflow, from, to string) int {
+	n := 0
+	for _, tr := range cw.Transitions {
+		if tr.From == from && tr.To == to && tr.Match.Status == "succeeded" {
+			n++
+		}
+	}
+	return n
+}
+
 // unreachableStepIDs returns the declared step ids not reachable from the
 // initial step over the workflow's transitions.
 func unreachableStepIDs(cw *CompiledWorkflow) []string {

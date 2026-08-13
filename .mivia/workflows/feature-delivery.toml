@@ -522,4 +522,8 @@ on_pr_metadata_failure = "repair_pr_metadata"
 # the run settles terminal (delivery_failed) with the last rejection recorded.
 # The default is 5; set it lower to fail fast or higher for stubborn gates.
 max_repairs = 5
+# deliver_plan_run publishes the plan run's own PR after its chunk stack has
+# been driven. The default is false: the plan run settles succeeded with its
+# plan and artifacts recorded in the ledger, and the chunk PRs carry the work.
+deliver_plan_run = false
 commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs.task }}"

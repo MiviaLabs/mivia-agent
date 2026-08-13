@@ -253,33 +253,33 @@ flowchart TD
     plan_tests --> test_plan_review
     test_plan_review -->|approved| implement
     test_plan_review -->|changes requested| plan_tests
-    implement --> review
-    review -->|approved| review_integration
-    review -->|changes requested| implement
+    implement --> review_panel
+    review_panel -->|approved| review_integration
+    review_panel -->|changes requested| implement
     review_integration -->|approved| test_validate
     review_integration -->|changes requested| implement
     test_validate -->|passed| verify
     test_validate -->|failed| repair_tests
-    repair_tests --> review
+    repair_tests --> review_panel
     verify -->|passed| code_validate
     verify -->|failed| repair_verify
-    repair_verify --> review
+    repair_verify --> review_panel
     code_validate -->|passed| preflight_validate
     code_validate -->|failed| repair_final
-    repair_final --> review
+    repair_final --> review_panel
     preflight_validate -->|passed| preflight_structure
     preflight_validate -->|failed| repair_preflight
-    repair_preflight --> review
+    repair_preflight --> review_panel
     preflight_structure -->|passed| success
     preflight_structure -->|failed| repair_preflight_structure
-    repair_preflight_structure --> review
-    repair_pr_metadata --> review
+    repair_preflight_structure --> review_panel
+    repair_pr_metadata --> review_panel
     success -->|draft PR| delivery
     delivery -->|hook rejects| repair_preflight_structure
     delivery -->|PR metadata rejected| repair_pr_metadata
 ```
 
-Look at the right side of the diagram. Five gates run the tests and checks. Each failed gate sends the run back for repair. The repairs feed into review again.
+Look at the right side of the diagram. Five gates run the tests and checks. Each failed gate sends the run back for repair. The repairs feed into review_panel again.
 
 ### What each part does
 
@@ -382,7 +382,9 @@ flowchart TD
     triage -->|insufficient evidence| hunt
     triage -->|no bug| success
     fix_plan --> implement
-    implement --> review
+    implement --> review_panel
+    review_panel -->|approved| review
+    review_panel -->|changes requested| implement
     review -->|approved, perf finding| perf_verify
     review -->|approved, no perf finding| test_validate
     review -->|changes requested| implement
@@ -398,12 +400,12 @@ flowchart TD
     preflight_validate -->|failed| repair_preflight
     preflight_structure -->|passed| success
     preflight_structure -->|failed| repair_preflight_structure
-    repair_tests --> review
-    repair_verify --> review
-    repair_final --> review
-    repair_preflight --> review
-    repair_preflight_structure --> review
-    repair_pr_metadata --> review
+    repair_tests --> review_panel
+    repair_verify --> review_panel
+    repair_final --> review_panel
+    repair_preflight --> review_panel
+    repair_preflight_structure --> review_panel
+    repair_pr_metadata --> review_panel
     success -->|draft PR| delivery
     delivery -->|hook rejects| repair_preflight_structure
     delivery -->|PR metadata rejected| repair_pr_metadata
@@ -420,23 +422,28 @@ declares no bug. A no-bug run reaches the success terminal with no code change; 
 no-diff gate then settles the run without a pull request.
 
 The `fix_plan` and `implement` steps fix the confirmed findings with the smallest change and
-add a regression test that fails before the fix. The `review` gate checks the fix, the
-regression tests, and the diff scope. It flags any change that makes the verification
-harness more strict as a violation. When a performance-class finding is present, the
-`perf_verify` gate measures the fixed code against the base code and requires the claimed
-improvement or a cost-neutral result. The evidence gates then run the same checks as
+add a regression test that fails before the fix. The `review_panel` step is the main code-review
+gate: three independent `panel-reviewer` members (`correctness`, `security`, `integration`) on
+distinct provider/model pairs, synthesized by `review-synthesizer`, compute the host verdict.
+The `review` step is the post-panel gate that echoes `has_perf` to route conditional perf
+verification and also loops back to `implement` on changes requested. It flags any change that
+makes the verification harness more strict as a violation. When a performance-class finding is
+present, the `perf_verify` gate measures the fixed code against the base code and requires the
+claimed improvement or a cost-neutral result. The evidence gates then run the same checks as
 `feature-delivery`.
 
-All loops are bounded: `triage` to `hunt` (5), `review` to `implement` (8), `perf_verify` to
-`implement` (4), and each evidence-gate repair loop (5). The workflow sets no global step or
-duration cap, so long agentic reviews and tasks can run past 24 hours.
+All loops are bounded: `triage` to `hunt` (5), `review_panel` to `implement` (8), `review` to
+`implement` (8), `perf_verify` to `implement` (4), and each evidence-gate repair loop (5). The
+workflow sets no global step or duration cap, so long agentic reviews and tasks can run past 24
+hours.
 
 | Steps | Kind | Agent and skill | Purpose |
 |-------|------|-----------------|---------|
 | `hunt` | `agent` | `auditor` + `bug-audit` | Read-only hostile audit; report at most 2 confirmed findings. |
 | `triage` | `agent_gate` | `reviewer` + `bug-audit` | Confirm or reject each finding. |
 | `fix_plan`, `implement`, and all `repair_*` steps | `agent` | `workflow-engineer` + `workflow-feature-delivery` | Plan the fix, implement it, and repair failed evidence. |
-| `review` | `agent_gate` | `reviewer` + `secure-change` | Review the fix, the tests, and the diff scope. |
+| `review_panel` | `agent_panel` | Three `panel-reviewer` members (`correctness`, `security`, `integration`, each on a distinct provider/model) synthesized by `review-synthesizer` | Main code-review gate: independently review the fix for correctness, security, and architectural fit; the host, not any single model, computes the final verdict. |
+| `review` | `agent_gate` | `reviewer` + `secure-change` | Post-panel gate: echo `has_perf` to route conditional perf verification; loop back to `implement` on changes requested. |
 | `perf_verify` | `agent_gate` | `performance` + `performance-review` | Measure the fix when a perf finding is present. |
 | `test_validate`, `verify`, `code_validate`, `preflight_validate`, and `preflight_structure` | `evidence_gate` | Fixed verifier or fixed command | Run the required checks outside the implementation agent. |
 | `delivery` | Delivery policy | Not an agent step | Create a draft GitHub pull request after `success`, only after explicit publish approval. |
@@ -461,7 +468,10 @@ Use `mivia workflow status <run-id>` and `mivia workflow events <run-id>` to mon
 run. The workflow contract lives in
 [`.mivia/workflows/bug-fix.toml`](../../.mivia/workflows/bug-fix.toml). Its templates are
 `templates/bugfix-*` and its schemas are `schemas/findings-v1.json`,
-`schemas/triage-v1.json`, `schemas/review-fix-v1.json`, and `schemas/perf-v1.json`.
+`schemas/triage-v1.json`, `schemas/plan-v1.json`,
+`schemas/change-summary-v1.json`, `schemas/verification-v1.json`,
+`schemas/review-panel-v1.json`, `schemas/panel-review-v1.json`,
+`schemas/review-fix-v1.json`, and `schemas/perf-v1.json`.
 
 ## Authoring a workflow
 
@@ -611,8 +621,11 @@ commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs
 | `pr_title_policy` | Relative path to the project PR-title policy file (optional; default: `.mivia/policy/pr-title.toml`) |
 | `on_pr_metadata_failure` | Step to return to when the agent PR title or summary fails the policy check (optional; default: `on_failure`) |
 | `on_diff_size_failure` | Step to return to when the delivered diff exceeds the stacking `hard_lines` limit (optional; default: `on_failure`). The step shrinks or splits the chunk so the diff fits; the run is never failed for size alone |
+| `deliver_plan_run` | Publish a stacking plan run's own PR after its chunk stack has been driven. Default `false`: the plan run settles `succeeded` and nothing is published for it — the chunk PRs carry the work, and the plan and its artifacts stay recorded in the ledger |
 
 Publication requires the invoking user to grant `--allow-publish`. Without the grant, an eligible run finishes as `delivery_pending`.
+
+For a stacking workflow, the plan-mode run is the stack root, not the deliverable. When a multi-chunk plan run finishes, its chunk stack is driven to completion first; only then does the host decide whether to publish the plan run itself. By default (`deliver_plan_run = false`) it does not: the plan run settles `succeeded` with its plan and artifacts recorded in the ledger, and the chunk PRs are the published work. Set `delivery.deliver_plan_run = true` to also publish the plan run's own PR; the stack still drives before publication, and the publish grant still applies.
 
 Delivery runs after the success terminal, outside the step graph. A delivery
 that fails therefore has no route back into the workflow, and the run stops

@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // workflowBusProgressSink adapts controller.ProgressSink to the session event
@@ -103,6 +105,34 @@ func (e *sessionWorkflowEngine) publishDeliveredRunFinished(ctx context.Context,
 	}
 	rec, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(runID, run.WorkflowDigest))
 	if err != nil || (rec.Status != "succeeded" && rec.Status != "no_diff") {
+		return
+	}
+	sink.Emit(controller.ProgressEvent{
+		Kind: controller.ProgressRunFinished, RunID: runID, Detail: "succeeded",
+		Timestamp: time.Now(),
+	})
+}
+
+// publishSkippedPlanRunFinished publishes one run_finished(succeeded) event for
+// a plan run the session auto-delivery path settled WITHOUT publishing it: the
+// workflow's delivery.deliver_plan_run option is false, so after the stack
+// drove, the loop CASed the plan run to succeeded and no delivery record was
+// written. publishDeliveredRunFinished keys on the delivery record, so it
+// cannot emit for this shape; the driven stack plan in the task ledger (seeded
+// during the drive) is the durable marker that this run completed via the skip
+// path. A controller-finished succeeded run - which already emitted
+// run_finished - has no stack plan, so it is never double-published.
+func (e *sessionWorkflowEngine) publishSkippedPlanRunFinished(ctx context.Context, store *storage.SQLite, repo workflowledger.Repository, runID string) {
+	sink := e.workflowProgressSink()
+	if sink == nil || store == nil {
+		return
+	}
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil || run.Status != workflowledger.RunStatusSucceeded {
+		return
+	}
+	ledger := tasks.NewStore(store)
+	if _, err := ledger.ReadBackPlan(runID); err != nil {
 		return
 	}
 	sink.Emit(controller.ProgressEvent{

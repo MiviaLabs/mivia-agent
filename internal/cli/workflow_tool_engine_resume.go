@@ -9,21 +9,26 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 type resumePrepared struct {
-	runID      string
-	workflow   string
-	root       string
-	built      workflowControllerBuild
-	closeFn    func()
-	finishExec func()
-	repo       workflowledger.Repository
-	store      *storage.SQLite
-	res        *config.Resolved
+	runID         string
+	workflow      string
+	root          string
+	built         workflowControllerBuild
+	closeFn       func()
+	finishExec    func()
+	repo          workflowledger.Repository
+	store         *storage.SQLite
+	res           *config.Resolved
+	compiled      *compiler.CompiledWorkflow
+	inputs        map[string]any
+	inputSnapshot map[string]string
+	raw           []byte
 }
 
 // resumeCLI resumes through the same durable preflight as the command path.
@@ -111,7 +116,7 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttool
 		closeFn()
 		return resumePrepared{}, err
 	}
-	return resumePrepared{runID: req.RunID, workflow: run.WorkflowName, root: work.Abs, built: built, closeFn: closeFn, finishExec: finishExecution, repo: repo, store: store, res: res}, nil
+	return resumePrepared{runID: req.RunID, workflow: run.WorkflowName, root: work.Abs, built: built, closeFn: closeFn, finishExec: finishExecution, repo: repo, store: store, res: res, compiled: compiled, inputs: inputs, inputSnapshot: snapshot.Inputs, raw: snapshot.DefinitionTOML}, nil
 }
 
 func refuseNonResumable(run workflowledger.RunSnapshot) error {
@@ -160,11 +165,28 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 				releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
 				return snap, err
 			})
-		})
+		}, func() (bool, error) {
+			// The resume mirror of the CLI run entry point's
+			// drive-before-delivery ordering: a stacking plan run that settles
+			// delivery_pending with a multi-chunk plan drives its stack before
+			// the plan run is delivered.
+			if p.compiled == nil {
+				return false, nil // no compiled workflow data: nothing to stack
+			}
+			return maybeDriveSettledStack(&preparedWorkflowRun{
+				root: p.root, res: p.res, store: p.store, repo: p.repo,
+				compiled: p.compiled, inputs: p.inputs, inputSnapshot: p.inputSnapshot,
+				refBase: "", raw: p.raw,
+			}, p.runID, true, io.Discard, io.Discard)
+		}, compiledDeliverPlanRun(p.compiled))
 		// Delivery completion settles outside the controller (which parked at
 		// delivery_pending and emitted no run_finished), so publish the terminal
 		// event here once delivery actually succeeded.
 		e.publishDeliveredRunFinished(context.Background(), p.repo, p.runID)
+		// A plan run whose own publication is disabled settles succeeded with no
+		// delivery record; publish its terminal event from the stack-ledger
+		// marker.
+		e.publishSkippedPlanRunFinished(context.Background(), p.store, p.repo, p.runID)
 		// done closes once the run loop itself has exited, before resource
 		// teardown below - see launchStartedWorkflow's matching comment.
 		close(done)

@@ -250,6 +250,12 @@ Delivery honors the reserved stacking inputs when present:
   routed to the repair step there. The run is never failed for size alone:
   the repair step (an agent step) always gets the chance to shrink or split
   the change.
+- `deliver_plan_run` (default `false`) controls whether a stacking plan
+  run's own diff is published. The plan run is the stack root, not the
+  deliverable: after its chunk stack drives to completion the plan run
+  settles `succeeded` and nothing is published for it unless the workflow
+  opts in with `delivery.deliver_plan_run = true`. The plan and its
+  artifacts stay recorded in the ledger either way.
 
 ### Driver CLI and recovery model
 

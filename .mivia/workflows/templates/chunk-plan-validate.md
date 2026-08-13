@@ -21,16 +21,19 @@ Re-verify the chunk plan against two sets of rules and report every violation.
 ### Rule set 1 — Schema validity (chunk-plan-v1.json)
 
 Load `schemas/chunk-plan-v1.json` and validate the chunk plan against it.
-Check:
+This schema checks shape and types only. The quantitative limits (chunk
+count, `est_diff_lines`, files per chunk) come from the workflow's declared
+`[stacking]` thresholds and are checked in Rule set 2 below; never apply a
+fixed number here. Check:
 
 - Top-level object has required keys `stack_mode` and `chunk_plan`.
 - `stack_mode` is one of `"no_bug"`, `"single"`, `"multi"`.
 - `chunk_plan` is an object with required key `chunks`.
-- `chunks` is an array with at most 12 items.
+- `chunks` is an array.
 - Each chunk has required keys `id`, `title`, `files`, `est_diff_lines`,
   `tests`, `depends_on`.
 - `files` is a non-empty array of unique strings.
-- `est_diff_lines` is an integer between 1 and 400 inclusive.
+- `est_diff_lines` is a positive integer.
 - `tests` is `true` for every chunk (no false, no missing).
 - `depends_on` is an array of strings referencing chunk `id` values.
 - No additional properties exist at any level.

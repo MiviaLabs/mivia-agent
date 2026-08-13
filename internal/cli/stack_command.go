@@ -84,22 +84,26 @@ func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stder
 }
 
 // parseRunLine extracts the run_id and status values from a workflow run's
-// "run_id=... status=..." output line. It returns "" when absent.
+// "run_id=... status=..." output. A run may print several run_id lines (the
+// immediate post-controller settle and a later delivery/skip settle), so the
+// LAST line carrying a run_id wins - the final settled state. It returns ""
+// when absent.
 func parseRunLine(out string) (runID, status string) {
 	for _, line := range strings.Split(out, "\n") {
+		var lineRunID, lineStatus string
 		for _, field := range strings.Fields(line) {
 			if strings.HasPrefix(field, "run_id=") {
-				runID = strings.TrimPrefix(field, "run_id=")
+				lineRunID = strings.TrimPrefix(field, "run_id=")
 			}
 			if strings.HasPrefix(field, "status=") {
-				status = strings.TrimPrefix(field, "status=")
+				lineStatus = strings.TrimPrefix(field, "status=")
 			}
 		}
-		if runID != "" {
-			return runID, status
+		if lineRunID != "" {
+			runID, status = lineRunID, lineStatus
 		}
 	}
-	return "", ""
+	return runID, status
 }
 
 // runStackStatus prints per-chunk status from the task ledger: chunk id,
