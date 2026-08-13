@@ -336,23 +336,23 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 | `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns; `0` = fall back to the effective orchestration default |
 | `default_budget` | int | `0` (unlimited) | Per-task token budget |
 | `store_backend` | string | `"memory"` | Outside chat: `"memory"` (ephemeral) or `"sqlite"` (durable) |
-| `store_path` | string | platform default | One SQLite file for chat sessions, context, worktree routes, and runs |
+| `store_path` | string | `~/.mivia/context.db` (chat); platform cache dir (non-chat orchestration) | One SQLite file for chat sessions, context, worktree routes, and runs |
 
-For `mivia chat`, mivia uses one SQLite file for all durable chat state. It resolves `store_path` from the main repository configuration. A worktree never creates another chat database. When `store_path` is unset, mivia uses the main repository cache path.
+For `mivia chat`, mivia uses one SQLite file for all durable chat state: sessions, context, worktree routes, and runs. When `store_path` is unset, mivia uses the shared global path `~/.mivia/context.db`, so every workspace on the machine has the same chat history by default. Sessions stay isolated inside that shared file by workspace ID: two projects never see each other's sessions even though they share one file. A worktree never creates another chat database. Set `store_path` to give one workspace its own separate file instead of the shared default.
 
 ## Live cross-process relay
 
-Mivia processes that resolve the same store directory share a live event hub. `hub.lock` and `hub.sock` sit beside `context.db`: one process owns the hub and every other process joins it as a client, so a turn published by one process is relayed to all hub members. Two surfaces relay only when their effective configs agree on the store directory.
+Mivia processes that resolve the same store directory share a live event hub. `hub.lock` and `hub.sock` sit beside `context.db`: one process owns the hub and every other process joins it as a client, so a turn published by one process is relayed to all hub members. Two surfaces relay only when their effective configs agree on the store directory - which happens automatically today, since every workspace defaults to the same shared `~/.mivia/context.db`.
 
-To relay between a terminal `mivia chat` and another surface (for example the desktop app's chat), both must resolve the same `store_path` with a SQLite backend:
+If a workspace pins its own `store_path` (see above), its processes relay only with other processes that resolve that same path:
 
 ```toml
 [subagents]
 store_backend = "sqlite"
-store_path = "~/.mivia/mivia-agent/context.db"
+store_path = "~/.mivia/my-project/context.db"
 ```
 
-`store_backend = "sqlite"` is required: with the default `"memory"` backend a session has no SQLite context store, so the process never joins a hub. The hub is keyed to the store directory, not the workspace, so anything that moves `store_path` (for example a picked project's own `.mivia/mivia.toml` overriding the user config) moves the process to a different hub. The desktop app pins `MIVIA_CONFIG` to the user's global config (`~/.mivia/mivia.toml`), so setting `[subagents] store_backend` and `store_path` there makes its chat sidecars join the same hub as a terminal using that store.
+The hub is keyed to the store directory, not the workspace, so anything that moves `store_path` (for example a picked project's own `.mivia/mivia.toml` overriding the shared default) moves the process to a different hub.
 
 Rendering is directional today. Line-mode `--json` renders turns received from other processes as `external_*` NDJSON events. The TUI and classic REPL publish their own turns to the hub but do not yet render turns received from other processes.
 

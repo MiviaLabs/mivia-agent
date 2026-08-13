@@ -68,8 +68,26 @@ func SessionsDir(root string) string { return NamespacePath(root, "sessions") }
 // WorktreesDir holds git worktree checkouts managed by mivia.
 func WorktreesDir(repoRoot string) string { return NamespacePath(repoRoot, "worktrees") }
 
-// ContextStorePath holds the always-on durable context checkpoint database.
+// ContextStorePath holds the always-on durable context checkpoint database
+// for a specific workspace root. Callers that need the default install-wide
+// store should use GlobalContextStorePath instead; this stays root-scoped for
+// callers (workflow runs) that require per-workspace isolation.
 func ContextStorePath(root string) string { return NamespacePath(root, "context.db") }
+
+// GlobalContextStorePath is the default durable chat/session store shared by
+// every workspace on the machine, so a fresh install already has one history
+// instead of a separate database per project directory. Sessions stay
+// isolated inside this shared file by workspace ID (contextWorkspaceID), the
+// same mechanism that lets managed worktrees share a store safely. An
+// unavailable home directory falls back to root-scoped ContextStorePath so
+// the caller still gets a usable path.
+func GlobalContextStorePath(root string) string {
+	home, err := UserHomeDir()
+	if err != nil || home == "" {
+		return ContextStorePath(root)
+	}
+	return NamespacePath(home, "context.db")
+}
 
 // MemoryDBPath is the default project-scoped memory database (plan 68). A
 // repo owner may point [memory] store_path at a tracked path instead and

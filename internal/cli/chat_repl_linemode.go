@@ -75,6 +75,11 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonM
 	for _, note := range sess.TakeAdmissionNotes() {
 		fmt.Fprintf(os.Stderr, "\n%s\n", note)
 	}
+	// Line mode has no periodic-save timer and no /save-on-exit UI the way
+	// the TUI does, and its host process (e.g. the desktop app's sidecar) is
+	// routinely killed rather than exited cleanly - so every turn must save
+	// itself. SaveAfterTurn no-ops if the turn added no content.
+	sess.SaveAfterTurn()
 	// Read the interrupt BEFORE cancelling. This used to ask ctx.Err() after
 	// its own cancel(), so every turn reported "(cancelled)" and returned nil -
 	// the turn's real error was discarded on the one surface that has nowhere

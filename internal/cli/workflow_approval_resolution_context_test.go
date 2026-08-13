@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // TestOpenWorkflowResolutionContextWorkspaceOpenError pins the workspace.Open
@@ -211,5 +213,5 @@ func workflowApprovalTestStorePath(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return filepath.Join(abs, ".mivia", "context.db")
+	return workspace.ContextStorePath(abs)
 }

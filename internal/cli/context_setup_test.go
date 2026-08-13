@@ -73,6 +73,7 @@ func TestReactivationRejectsConcurrentlyRemovedWorktree(t *testing.T) {
 }
 
 func TestContextDispatcherUsesSessionStoreWithMemoryConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	root := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {
 		t.Fatal(err)

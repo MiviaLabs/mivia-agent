@@ -132,6 +132,82 @@ func TestManagedEnsureAndRotationUseRetainedDirectory(t *testing.T) {
 	}
 }
 
+// TestSaveAfterTurnPromotesContextSessionToCatalog pins the fix for a
+// context-enabled session never appearing in "sessions list": SaveAfterTurn
+// used to no-op whenever context was enabled, so a live conversation was
+// durably logged at the source-event level but never wrote a chat_sessions
+// catalog row - the row "sessions list" actually reads - unless something
+// called the explicit /save path. A session killed before an explicit save
+// (the desktop app's normal shutdown, which force-kills its sidecar) was
+// unrecoverable even though its raw turns were never lost.
+func TestSaveAfterTurnPromotesContextSessionToCatalog(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "autosave-context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := contextstate.NewBindingRevision("fake", "model", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: binding}); err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{PreparationManager: contextmgr.StructuralPreparationManager{}, CheckpointPublisher: contextmgr.PreparationCommitter{Store: store}, Enabled: true}
+	if err := session.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	session.SetContextStore(store)
+
+	infos, err := session.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 0 {
+		t.Fatalf("sessions list before any turn = %d, want 0", len(infos))
+	}
+
+	if _, err := session.SendUser(context.Background(), "hi", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	session.SaveAfterTurn()
+
+	infos, err = session.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("sessions list after SaveAfterTurn = %d, want 1", len(infos))
+	}
+	if infos[0].Name != session.SessionID {
+		t.Fatalf("catalog session name = %q, want %q", infos[0].Name, session.SessionID)
+	}
+
+	// A second turn must update the SAME catalog row (same SessionID name),
+	// not create a duplicate - the whole point of keying the auto-name on
+	// the stable SessionID.
+	if _, err := session.SendUser(context.Background(), "how are you", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	session.SaveAfterTurn()
+
+	infos, err = session.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("sessions list after second SaveAfterTurn = %d, want 1 (upsert, not a new row)", len(infos))
+	}
+	if infos[0].MessageCount < 4 {
+		t.Fatalf("catalog message count = %d, want at least 4 (two user+assistant turns)", infos[0].MessageCount)
+	}
+}
+
 func TestContextEnabledAgentTurnsCommitEveryTurn(t *testing.T) {
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "agent-context.db"))
 	if err != nil {

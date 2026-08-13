@@ -8,6 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func TestRunConfiguredChatRestartsWithCreatedWorktree(t *testing.T) {
@@ -282,7 +283,7 @@ func TestRepositorySessionStorePathDefaultsToMainRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := config.DefaultStorePathForWorkspace(repoRoot); path != want {
+	if want := workspace.GlobalContextStorePath(repoRoot); path != want {
 		t.Fatalf("repository session store = %q, want %q", path, want)
 	}
 }
@@ -301,7 +302,7 @@ func TestRepositorySessionStorePathIgnoresWorktreeConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := config.DefaultStorePathForWorkspace(repoRoot); path != want {
+	if want := workspace.GlobalContextStorePath(repoRoot); path != want {
 		t.Fatalf("repository session store = %q, want %q", path, want)
 	}
 }
