@@ -64,6 +64,11 @@ type chatInvocation struct {
 	allowProgram, denyProgram, disableTool []string
 	allowEnvVar, denyEnvVar                []string
 	noTools, plainUI                       bool
+	// quiet is --quiet: suppress informational startup notices on stderr
+	// (limits summary, lifecycle-hooks armed notice, diagnostics commands
+	// line, one-shot/REPL banner). Genuine config warnings and workflow
+	// session-recovery diagnostics still print.
+	quiet bool
 	// jsonMode is --json: reframe line-mode's stdout as NDJSON events instead
 	// of raw streamed text. Only valid for the non-interactive piped-stdin
 	// line-mode path - runConfiguredChatOnce rejects it for one-shot -p and
@@ -141,7 +146,7 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 	if err != nil {
 		return chatInvocation{}, err
 	}
-	invocation.noTools, invocation.plainUI, invocation.staleBypass, invocation.jsonMode, args = chatFlags(args)
+	invocation.noTools, invocation.plainUI, invocation.staleBypass, invocation.jsonMode, invocation.quiet, args = chatFlags(args)
 	if len(args) > 0 {
 		return chatInvocation{}, fmt.Errorf("chat: unexpected arguments: %v", args)
 	}
@@ -225,14 +230,26 @@ func validateWorkspaceRestart(restart workspaceRestart, invocation chatInvocatio
 	return validateExpectedWorktreeInstanceInStore(store, root, restart.dir, restart.worktreeInstance)
 }
 
-func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) error {
+// prepareChatStartup runs the pre-session startup policy: the API key gate,
+// the tool/override application, the privacy policy, and the once-per-process
+// effective-limits notice. Split out of runConfiguredChatOnce to keep the setup
+// path under the per-function line budget.
+func prepareChatStartup(res *config.Resolved, invocation chatInvocation) (bool, error) {
 	if (!res.APIKeySet || strings.TrimSpace(res.APIKey) == "") && !(res.ProviderName == "ollama" && config.IsOllamaLoopback(res.BaseURL)) {
-		return fmt.Errorf("missing API key: set %s in environment or env file (see mivia doctor)", res.APIKeyEnv)
+		return false, fmt.Errorf("missing API key: set %s in environment or env file (see mivia doctor)", res.APIKeyEnv)
 	}
 	applyChatToolOverrides(res, invocation.allowProgram, invocation.denyProgram, invocation.disableTool, invocation.allowEnvVar, invocation.denyEnvVar)
 	useTools := !invocation.noTools
 	applyPrivacyPolicy(res)
-	logEffectiveLimitsOnce(os.Stderr, res)
+	logEffectiveLimitsOnce(os.Stderr, res, invocation.quiet)
+	return useTools, nil
+}
+
+func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) error {
+	useTools, err := prepareChatStartup(res, invocation)
+	if err != nil {
+		return err
+	}
 	wsRoot, err := enterChatWorkspace(invocation.workspacePath)
 	if err != nil {
 		return err
@@ -247,11 +264,15 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 		return err
 	}
 	applyWorkspacePromptGate(res, agentState.Global)
-	releaseHooks, err := installHookSession(wsRoot, invocation.staleBypass)
+	releaseHooks, err := installHookSession(wsRoot, invocation.staleBypass, invocation.quiet)
 	if err != nil {
 		return err
 	}
 	defer releaseHooks()
+	// The get_diagnostics disclosure prints only when tools are on - the same condition under which the tool is registered.
+	if useTools {
+		logDiagnosticsCommandsOnce(os.Stderr, res.Tools, invocation.quiet)
+	}
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
 			res.SystemPrompt = chat.ComposeSystemPrompt(loadAgentPrompt(invocation.workspacePath, res.Subagents), "")
@@ -274,7 +295,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
 	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
-	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res, agentState)
+	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet)
 	if err != nil {
 		return err
 	}
@@ -315,13 +336,13 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *con
 		}
 	}
 	if invocation.prompt != "" {
-		return oneShot(sess, invocation.prompt, useTools, res)
+		return oneShot(sess, invocation.prompt, useTools, res, invocation.quiet)
 	}
 	// Classic REPL /agent uses package state; TUI stores agentState on the model.
 	classicAgentState = agentState
 	defer func() { classicAgentState = nil }()
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return repl(sess, res, useTools, agentState, invocation.jsonMode)
+		return repl(sess, res, useTools, agentState, invocation.jsonMode, invocation.quiet)
 	}
 	return runTUI(sess, res, useTools, agentState, invocation.resumeSessionName)
 }

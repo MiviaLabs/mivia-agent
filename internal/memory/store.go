@@ -242,7 +242,7 @@ func openMemoryDB(path string, readOnly bool) (*sql.DB, bool, error) {
 	}
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=FULL",
+		"PRAGMA synchronous=NORMAL",
 		"PRAGMA busy_timeout=5000",
 	} {
 		if _, err := db.Exec(pragma); err != nil {

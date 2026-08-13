@@ -25,7 +25,7 @@ func TestConfigureChatWorkspaceWiresMemoryTools(t *testing.T) {
 	root := t.TempDir()
 	res := memoryTestResolved(true)
 	sess := chat.NewSession(res, nil)
-	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil, false)
 	if err != nil {
 		t.Fatalf("configureChatWorkspace: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestConfigureChatWorkspaceOmitsMemoryToolsWhenDisabled(t *testing.T) {
 	root := t.TempDir()
 	res := memoryTestResolved(false)
 	sess := chat.NewSession(res, nil)
-	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil, false)
 	if err != nil {
 		t.Fatalf("configureChatWorkspace: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestConfigureChatWorkspaceMemoryDisabledStillConfiguresOtherTools(t *testin
 	root := t.TempDir()
 	res := memoryTestResolved(false)
 	sess := chat.NewSession(res, nil)
-	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestMemoryStoreErrorSurfacesFromConfigureChatWorkspace(t *testing.T) {
 	// Resolved must still fail loudly at wiring, not silently drop the tools.
 	res.Memory.StoreBackend = "bogus"
 	sess := chat.NewSession(res, nil)
-	_, err := configureChatWorkspace(sess, root, true, res, nil)
+	_, err := configureChatWorkspace(sess, root, true, res, nil, false)
 	if err == nil {
 		t.Fatal("an invalid memory backend must fail the workspace wiring")
 	}
@@ -167,7 +167,7 @@ func TestConfigureChatWorkspaceStashesStoreOnState(t *testing.T) {
 	res := memoryTestResolved(true)
 	sess := chat.NewSession(res, nil)
 	state := &agentSessionState{}
-	memClose, err := configureChatWorkspace(sess, root, true, res, state)
+	memClose, err := configureChatWorkspace(sess, root, true, res, state, false)
 	if err != nil {
 		t.Fatalf("configureChatWorkspace: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestConfigureChatWorkspaceNilStateIsSafe(t *testing.T) {
 	root := t.TempDir()
 	res := memoryTestResolved(true)
 	sess := chat.NewSession(res, nil)
-	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil, false)
 	if err != nil {
 		t.Fatalf("configureChatWorkspace with nil state: %v", err)
 	}

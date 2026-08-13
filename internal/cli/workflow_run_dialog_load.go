@@ -211,6 +211,6 @@ func (m *tuiModel) workflowDialogService() *agenttools.Service {
 	if root == "" {
 		return nil
 	}
-	m.workflowSvc = workflowToolServiceWithBus(root, m.config, func() *events.Bus { return m.eventBus })
+	m.workflowSvc = workflowToolServiceWithBus(root, m.config, func() *events.Bus { return m.eventBus }, false)
 	return m.workflowSvc
 }

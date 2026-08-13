@@ -20,7 +20,7 @@ import (
 // until the stack is fully merged or the driver must stop for a human grant
 // (policy A) or a failure (halt-on-failure). It is resumable: re-running
 // drive after a stop picks up from durable state.
-func driveStack(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	repo := prepared.repo
 	checker := gitMergeChecker{
 		git: workflowDeliverGit,
@@ -67,7 +67,7 @@ func driveStack(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID stri
 		for _, chunkID := range wave {
 			index := chunkPartIndex(chunkID, order)
 			part := fmt.Sprintf("%d/%d", index+1, len(order))
-			halt, err := driveChunk(prepared, ledger, stackID, chunkID, prBase, part, policy, allowPublish, planInputs, stdout, stderr)
+			halt, err := driveChunk(ctx, prepared, ledger, stackID, chunkID, prBase, part, policy, allowPublish, planInputs, stdout, stderr)
 			if err != nil {
 				return fmt.Errorf("stack drive: chunk %s: %w", chunkID, err)
 			}
@@ -89,13 +89,13 @@ func driveStack(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID stri
 		return nil
 	}
 	fmt.Fprintf(stdout, "all chunks merged; admitting the final integration run\n")
-	return driveIntegrationRun(prepared, ledger, stackID, prBase, policy, planInputs, stdout, stderr)
+	return driveIntegrationRun(ctx, prepared, ledger, stackID, prBase, policy, planInputs, stdout, stderr)
 }
 
 // driveChunk admits and runs one chunk, then applies the merge policy.
 // halt=true means the driver must stop: policy A waits for the human publish
 // grant, and any terminal failure halts the stack (halt-on-failure).
-func driveChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
+func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
 	// A live run already exists for this chunk's key: leave it alone (F15 -
 	// never admit a duplicate).
 	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
@@ -120,7 +120,7 @@ func driveChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chu
 	switch snap.Status {
 	case workflowledger.RunStatusDeliveryPending:
 		if policy == "auto" || allowPublish {
-			if err := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, snap.RunID, true, false, stdout, stderr); err != nil {
+			if err := deliverRunWithStore(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, snap.RunID, true, false, stdout, stderr); err != nil {
 				return true, fmt.Errorf("chunk %s auto-delivery failed: %w", chunkID, err)
 			}
 			_ = ledger.TransitionTask(stackID, chunkID, stackStatusPublished)
@@ -192,7 +192,7 @@ func admitStackChunkRun(prepared *preparedWorkflowRun, stackID, chunkID string, 
 
 // driveIntegrationRun admits the final full-suite run (stack_mode=single runs
 // the workflow's own plan+implement steps inline) after every chunk merged.
-func driveIntegrationRun(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, prBase, policy string, planInputs map[string]string, stdout, stderr io.Writer) error {
+func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, prBase, policy string, planInputs map[string]string, stdout, stderr io.Writer) error {
 	chunkID := stackIntegrationChunkID
 	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
 		fmt.Fprintf(stdout, "integration run already exists: run=%s status=%s\n", run.RunID, run.Status)
@@ -205,7 +205,7 @@ func driveIntegrationRun(prepared *preparedWorkflowRun, ledger *tasks.Store, sta
 	}
 	fmt.Fprintf(stdout, "integration run=%s status=%s\n", snap.RunID, snap.Status)
 	if snap.Status == workflowledger.RunStatusDeliveryPending && policy == "auto" {
-		return deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, snap.RunID, true, false, stdout, stderr)
+		return deliverRunWithStore(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, snap.RunID, true, false, stdout, stderr)
 	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {
 		fmt.Fprintf(stdout, "integration run awaits the publish grant: mivia workflow deliver %s --allow-publish\n", snap.RunID)

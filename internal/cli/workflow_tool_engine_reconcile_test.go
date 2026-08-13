@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
@@ -46,7 +47,7 @@ func TestSessionReconcileParkedRunsDelivers(t *testing.T) {
 	var opts tools.DefaultOptions
 	// A non-nil event-bus provider marks production wiring and arms the
 	// parked-run sweep; the nil-provider test paths never sweep.
-	wireWorkflowToolOptions(&opts, root, res, func() *events.Bus { return nil })
+	wireWorkflowToolOptions(&opts, root, res, func() *events.Bus { return nil }, false)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -76,11 +77,12 @@ func TestSessionReconcileParkedRunsDelivers(t *testing.T) {
 // seedParkedStackingPlanRun creates a delivery_pending plan-mode run of the
 // mini-stack workflow (stacking enabled, delivery active,
 // delivery.deliver_plan_run unset = false) and seeds its stack ledger with a
-// two-chunk plan - the durable marker that the chunk stack drove. The run is
-// exactly the crash-window shape the recovery sweep could falsely publish:
-// the stack drove (seeded plan) but settlePlanRunSkippedDelivery's CAS never
-// ran, so the plan run still parks at delivery_pending when the sweep finds
-// it.
+// two-chunk plan whose chunk tasks are still PLANNED - the exact shape a stack
+// drive leaves when it aborts AFTER seeding the ledger but BEFORE any chunk
+// merged. Seeding alone is NOT the completion marker: the recovery sweep must
+// keep such a run delivery_pending until the operator finishes the stack with
+// 'mivia stack drive'. Tests that model a drive that completed call
+// completeParkedStackDrive on top of this.
 func seedParkedStackingPlanRun(t *testing.T, root, storePath string, repo workflowledger.Repository) string {
 	t.Helper()
 	rawDefinition := []byte(miniStackWorkflowTOML)
@@ -140,22 +142,48 @@ func seedParkedStackingPlanRun(t *testing.T, root, storePath string, repo workfl
 	return runID
 }
 
+// completeParkedStackDrive records the durable state a stack drive leaves when
+// it drives to completion: the succeeded decompose output the driver reads
+// (loadStackPlanOutput) plus every chunk task transitioned to merged - the
+// same state stackDriveCompleted checks before the recovery sweep settles a
+// skipped plan run.
+func completeParkedStackDrive(t *testing.T, storePath string, repo workflowledger.Repository, runID string) {
+	t.Helper()
+	seedSucceededDecomposeAttempt(t, repo, runID, []byte(multiChunkPlanOutput))
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	_, chunks, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	if err != nil || len(chunks) != 2 {
+		t.Fatalf("parse multi-chunk plan = %v, %v; want 2 chunks", chunks, err)
+	}
+	ledger := tasks.NewStore(store)
+	for _, c := range chunks {
+		if err := ledger.TransitionTask(runID, c.ID, stackStatusMerged); err != nil {
+			t.Fatalf("transition chunk %s to merged: %v", c.ID, err)
+		}
+	}
+}
+
 // TestSessionReconcileParkedRunsSkipsStackingPlanRunNotOptedIn proves the
 // recovery sweep never publishes a delivery_pending stacking plan run whose
 // own publication is disabled (delivery.deliver_plan_run=false, the default)
-// after its multi-chunk stack already drove: the seeded stack plan in the
-// task ledger is the durable marker that the chunk stack drove, and the crash
-// window between that drive and settlePlanRunSkippedDelivery's CAS must not
-// end with the sweep publishing the plan PR. The sweep settles the plan run
-// succeeded WITHOUT publishing, and a regular delivery_pending run in the
-// same pass is still delivered: exactly one PR is created, and only for the
-// non-stacking run.
+// after its multi-chunk stack drove TO COMPLETION: every chunk task merged is
+// the durable completion marker the gate checks, and the crash window between
+// that drive and settlePlanRunSkippedDelivery's CAS must not end with the
+// sweep publishing the plan PR. The sweep settles the plan run succeeded
+// WITHOUT publishing, and a regular delivery_pending run in the same pass is
+// still delivered: exactly one PR is created, and only for the non-stacking
+// run.
 func TestSessionReconcileParkedRunsSkipsStackingPlanRunNotOptedIn(t *testing.T) {
 	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
 	regularRunID := runFixtureToDeliveryPending(t, root, configPath)
 	repo := openDeliveryStore(t, storePath)
 	seedWorktreeChange(t, root, regularRunID, repo)
 	planRunID := seedParkedStackingPlanRun(t, root, storePath, repo)
+	completeParkedStackDrive(t, storePath, repo, planRunID)
 
 	e := newSessionWorkflowEngine(root, configPath)
 	e.reconcileParkedRuns(context.Background(), false)
@@ -177,6 +205,66 @@ func TestSessionReconcileParkedRunsSkipsStackingPlanRunNotOptedIn(t *testing.T) 
 	}
 	if creates, finds := prRecorder.calls(); creates != 1 || finds != 1 {
 		t.Fatalf("PR client calls: creates=%d finds=%d, want exactly one create and one find (plan run must not publish)", creates, finds)
+	}
+}
+
+// TestReconcileParkedDeliveryLeavesSeededIncompletePlanParked proves the
+// recovery sweep does NOT settle a delivery_pending stacking plan run whose
+// task ledger carries the seeded stack plan but whose stack never drove to
+// completion (the drive aborted after seeding, before any chunk merged): the
+// completion gate requires every chunk task merged - the same durable state
+// the driver checks - so the run stays delivery_pending for the operator to
+// finish with 'mivia stack drive', and no delivery is attempted (which would
+// publish the plan PR over an incomplete stack, the deliver-before-drive bug
+// the skip path exists to prevent).
+func TestReconcileParkedDeliveryLeavesSeededIncompletePlanParked(t *testing.T) {
+	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
+	repo := openDeliveryStore(t, storePath)
+	planRunID := seedParkedStackingPlanRun(t, root, storePath, repo)
+
+	e := newSessionWorkflowEngine(root, configPath)
+	e.reconcileParkedRuns(context.Background(), false)
+
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, planRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("plan run status = %q, want delivery_pending (seeded-but-incomplete stack must stay parked)", run.Status)
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero (no delivery over an incomplete stack)", creates, finds)
+	}
+	if _, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(planRunID, run.WorkflowDigest)); err == nil {
+		t.Fatal("plan run has a delivery record, want none (deliverRunWithStore must not run)")
+	}
+}
+
+// TestReconcileParkedDeliverySettlesCompletedPlanRun proves the recovery sweep
+// settles a delivery_pending stacking plan run succeeded WITHOUT publishing
+// when its stack actually drove to completion: the succeeded decompose output
+// is recorded and every chunk task is merged - the exact durable state the
+// driver leaves and the completion gate checks.
+func TestReconcileParkedDeliverySettlesCompletedPlanRun(t *testing.T) {
+	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
+	repo := openDeliveryStore(t, storePath)
+	planRunID := seedParkedStackingPlanRun(t, root, storePath, repo)
+	completeParkedStackDrive(t, storePath, repo, planRunID)
+
+	e := newSessionWorkflowEngine(root, configPath)
+	e.reconcileParkedRuns(context.Background(), false)
+
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, planRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("plan run status = %q, want succeeded (completed stack settled without publication)", run.Status)
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero (completed plan run settles via the skip path)", creates, finds)
 	}
 }
 
@@ -205,7 +293,7 @@ func wireParkedResumeStubs(t *testing.T, repo workflowledger.Repository, advance
 	workflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 		return nil, repo, func() {}, nil
 	}
-	workflowResumeInstallHooks = func(string, bool) (func(), error) { return func() {}, nil }
+	workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
 	workflowResumeBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, _ workflowledger.Repository, _ *compiler.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, _ string, _ *workflowledger.Snapshot, recorded *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 		ctrl := &controller.LinearController{Holder: parkedSweepHolder}
 		if recorded != nil {

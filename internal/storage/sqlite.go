@@ -41,7 +41,7 @@ func OpenSQLite(path string) (*SQLite, error) {
 	}
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(8)
-	for _, p := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
+	for _, p := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
 		if _, err = db.Exec(p); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("%s: %w", p, err)

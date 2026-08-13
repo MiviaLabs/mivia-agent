@@ -4,14 +4,23 @@ import (
 	"context"
 	"io"
 	"log"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// sessionAutoDeliveryRepairLoop runs one session-engine controller pass, then
-// drives the auto-delivery repair loop that follows it.
+// workflowAutoDeliveryAttemptTimeout bounds ONE drive+deliver attempt in
+// sessionAutoDeliveryRepairLoop. The session auto-delivery goroutine holds the
+// per-run execution flock until it exits, so a stuck stack drive would hold
+// the flock forever and wedge the CLI workflow deliver on 'lock is busy'. A
+// timeout leaves the run delivery_pending - retryable - and the stack ledger
+// is idempotent, so the next attempt resumes safely. A package var so tests
+// can shorten it.
+var workflowAutoDeliveryAttemptTimeout = 30 * time.Minute
+
+// sessionAutoDeliveryRepairLoop runs one session-engine controller pass, then drives the auto-delivery repair loop that follows it.
 //
 // A workflow run that finishes under the session tool surface settles to
 // delivery_pending and is auto-delivered in the same goroutine. When that
@@ -24,8 +33,7 @@ import (
 // resume"; the session tool surface has no operator at the terminal, so it
 // must re-advance itself.
 //
-// This helper closes that gap. It re-advances the controller until delivery
-// succeeds or the run settles terminal. The loop is inherently bounded:
+// This helper closes that gap: it re-advances the controller until delivery succeeds or the run settles terminal. The loop is inherently bounded:
 // reopenForRepair settles delivery_failed once maxDeliveryRepairs repair
 // attempts are spent, and the controller self-settles a run whose deadline
 // expires, so the loop can never spin.
@@ -46,9 +54,11 @@ import (
 // whether it drove one. It runs BEFORE delivery - the plan run's success
 // terminal is delivery-policy active, so it parks at delivery_pending, and
 // delivering first would publish the plan PR while the chunk stack never
-// drives (deliver-before-drive ordering bug). The hook is the whole stack
-// drive (chunks -> merges -> integration run) and is idempotent, so
-// re-invocation on a later repair cycle is safe. It may be nil for callers
+// drives (deliver-before-drive ordering bug). The hook receives a context
+// bounded by workflowAutoDeliveryAttemptTimeout, so a stuck drive cannot hold
+// the per-run execution flock forever (see the var comment). The hook is the
+// whole stack drive (chunks -> merges -> integration run) and is idempotent,
+// so re-invocation on a later repair cycle is safe. It may be nil for callers
 // without a stacking engine. A drive fault is logged and the loop stops: the
 // run stays delivery_pending (never falsely published) and the seeded stack
 // ledger remains resumable via `mivia stack drive`.
@@ -62,7 +72,7 @@ import (
 // executeWorkflowRun): the drive hook is uninterruptible and can outlive a
 // session cancel that kills runCtx, so the terminal CAS must survive it or
 // the run strands at delivery_pending with the stack complete.
-func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string, advance func(context.Context) (workflowledger.RunSnapshot, error), driveStack func() (bool, error), deliverPlanRun bool) {
+func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string, advance func(context.Context) (workflowledger.RunSnapshot, error), driveStack func(context.Context) (bool, error), deliverPlanRun bool) {
 	snap, err := advance(runCtx)
 	if err != nil {
 		settleSessionRunFailure(repo, runID, err)
@@ -73,7 +83,13 @@ func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.R
 			return
 		}
 		if driveStack != nil {
-			drove, err := driveStack()
+			// Bound one drive+deliver attempt so a stuck stack drive cannot
+			// hold the execution flock forever (see the var comment). A drive
+			// timeout leaves the run delivery_pending - retryable - and the
+			// stack ledger is idempotent.
+			driveCtx, cancelDrive := context.WithTimeout(runCtx, workflowAutoDeliveryAttemptTimeout)
+			drove, err := driveStack(driveCtx)
+			cancelDrive()
 			if err != nil {
 				log.Printf("workflow: run %s stack drive before delivery: %v", runID, err)
 				return
@@ -91,7 +107,11 @@ func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.R
 				return
 			}
 		}
-		deliverErr := deliverRunWithStore(context.Background(), root, res, store, repo, runID, true, false, io.Discard, io.Discard)
+		// A FRESH delivery bound, never the (possibly expired) driveCtx: the
+		// delivery claim heartbeat must not die mid-publish.
+		deliverCtx, cancelDeliver := context.WithTimeout(runCtx, workflowDeliveryTimeout)
+		deliverErr := deliverRunWithStore(deliverCtx, root, res, store, repo, runID, true, false, io.Discard, io.Discard)
+		cancelDeliver()
 		if deliverErr != nil {
 			recordAutoDeliveryFailure(context.Background(), repo, runID, deliverErr)
 		}

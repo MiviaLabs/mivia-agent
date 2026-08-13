@@ -17,18 +17,20 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolved) error {
+func oneShot(sess *chat.Session, prompt string, toolsOn bool, res *config.Resolved, quiet bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	return oneShotContext(ctx, sess, prompt, toolsOn, res)
+	return oneShotContext(ctx, sess, prompt, toolsOn, res, quiet)
 }
 
-func oneShotContext(ctx context.Context, sess *chat.Session, prompt string, toolsOn bool, res *config.Resolved) error {
+func oneShotContext(ctx context.Context, sess *chat.Session, prompt string, toolsOn bool, res *config.Resolved, quiet bool) error {
 	mode := "chat"
 	if toolsOn {
 		mode = "agent"
 	}
-	fmt.Fprintf(os.Stderr, "%smivia%s %s  provider=%s model=%s\n", ansiCyan, ansiReset, mode, res.ProviderName, sess.CurrentModel())
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "%smivia%s %s  provider=%s model=%s\n", ansiCyan, ansiReset, mode, res.ProviderName, sess.CurrentModel())
+	}
 	start := time.Now()
 
 	// Collect assistant text then render markdown to stdout for nicer one-shots.

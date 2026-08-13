@@ -23,12 +23,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
@@ -135,7 +137,7 @@ func wireExecuteResumeStackStubs(t *testing.T, storePath string, repo workflowle
 		}
 		return store, repo, func() { _ = store.Close() }, nil
 	}
-	workflowResumeInstallHooks = func(string, bool) (func(), error) { return func() {}, nil }
+	workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
 	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 		return workflowControllerBuild{Dispatcher: workflowTestDispatcher{}}, nil
 	}
@@ -172,9 +174,9 @@ type orderRecordingDrive struct {
 	inner *recordingStackDrive
 }
 
-func (d *orderRecordingDrive) Drive(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+func (d *orderRecordingDrive) Drive(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	d.rec.add("drive")
-	return d.inner.Drive(prepared, ledger, stackID, chunks, planInputs, allowPublish, stdout, stderr)
+	return d.inner.Drive(ctx, prepared, ledger, stackID, chunks, planInputs, allowPublish, stdout, stderr)
 }
 
 // TestExecuteWorkflowResumeDrivesSettledStackBeforeDeliverySkippedPlanRun:
@@ -343,5 +345,121 @@ func TestExecuteWorkflowResumeDrivesSettledStackBeforeDeliveryPublishesPlanRun(t
 	}
 	if run.Status != workflowledger.RunStatusSucceeded {
 		t.Fatalf("run status = %q, want succeeded after the drive + delivery", run.Status)
+	}
+}
+
+// stackingResumeSnapshot builds the run+snapshot pair validateWorkflowResumeSnapshot
+// consumes for a stacking-enabled workflow (mini-stack: plan -> implement ->
+// success with [stacking] plan_step=plan, implement_step=implement). The
+// snapshot's Inputs carry the engine-reserved chunk-mode inputs a real
+// chunk-mode run records, exactly like the admission payload applyStackingInputs
+// merges at start time.
+func stackingResumeSnapshot(t *testing.T, toml string, inputs map[string]string) (workflowledger.RunSnapshot, []byte) {
+	t.Helper()
+	name := workflowTOMLName(t, toml)
+	wf, _, err := definition.ParseWorkflowTOML([]byte(toml), name+".toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := compiler.Compile(&wf)
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+	snapshot := workflowledger.Snapshot{
+		SchemaVersion:    workflowledger.SnapshotSchemaVersion,
+		DefinitionTOML:   []byte(toml),
+		DefinitionDigest: compiled.Digest,
+		Inputs:           inputs,
+		Agents: map[string]workflowledger.AgentSnapshot{
+			"one": {Digest: "agent-one"},
+			"two": {Digest: "agent-two"},
+		},
+	}
+	raw, err := workflowledger.MarshalSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := workflowledger.RunSnapshot{
+		WorkflowName:   compiled.Name,
+		WorkflowDigest: compiled.Digest,
+		SnapshotDigest: workflowledger.SnapshotDigest(raw),
+		InputDigest:    workflowledger.InputDigest(snapshot.Inputs),
+	}
+	return run, raw
+}
+
+// workflowTOMLName extracts the workflow's declared name from its TOML text
+// so the snapshot filename matches the definition's in-file name.
+func workflowTOMLName(t *testing.T, toml string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^\s*name\s*=\s*"([^"]+)"`)
+	m := re.FindStringSubmatch(toml)
+	if len(m) != 2 {
+		t.Fatalf("workflow TOML has no name: %s", toml)
+	}
+	return m[1]
+}
+
+// TestValidateWorkflowResumeSnapshotAcceptsReservedStackingInputs pins the
+// resume-side half of decision D3: admission merges the engine-reserved
+// stacking inputs (stack_mode, chunk, pr_base, stack_part, chunk_plan) into a
+// stacking run's input contract BEFORE input validation, so a chunk-mode run
+// records them in its snapshot. Resume must accept the same contract; before
+// the fix it rejected the snapshot with 'snapshot contains unknown workflow
+// input "chunk"' and no chunk-mode run could be delivered.
+func TestValidateWorkflowResumeSnapshotAcceptsReservedStackingInputs(t *testing.T) {
+	run, raw := stackingResumeSnapshot(t, miniStackWorkflowTOML, map[string]string{
+		"task":       "add feature",
+		"stack_mode": "chunk",
+		"chunk":      "c1",
+	})
+	if _, _, _, err := validateWorkflowResumeSnapshot(run, raw); err != nil {
+		t.Fatalf("resume validation rejected engine-reserved stacking inputs: %v", err)
+	}
+}
+
+// TestValidateWorkflowResumeSnapshotRejectsReservedInputsOnNonStacking guards
+// the other direction: a NON-stacking workflow has no synthesized inputs, so a
+// snapshot carrying an engine-reserved name is still an unknown input and must
+// fail exactly as before. The fix must not widen the accepted contract beyond
+// stacking runs.
+func TestValidateWorkflowResumeSnapshotRejectsReservedInputsOnNonStacking(t *testing.T) {
+	const plainTOML = `version = 1
+name = "plain"
+initial_step = "one"
+
+[inputs.task]
+type = "string"
+required = true
+
+[[steps]]
+id = "one"
+kind = "agent"
+agent = "one"
+
+[[transitions]]
+from = "one"
+to = "success"
+[transitions.match]
+status = "succeeded"
+`
+	wf, _, err := definition.ParseWorkflowTOML([]byte(plainTOML), "plain.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := compiler.Compile(&wf)
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+	if compiled.Stacking != nil {
+		t.Fatal("plain workflow resolved stacking, want nil")
+	}
+	run, raw := stackingResumeSnapshot(t, plainTOML, map[string]string{
+		"task":  "x",
+		"chunk": "c1",
+	})
+	_, _, _, err = validateWorkflowResumeSnapshot(run, raw)
+	if err == nil || !strings.Contains(err.Error(), "snapshot contains unknown workflow input") {
+		t.Fatalf("non-stacking resume error = %v, want 'snapshot contains unknown workflow input'", err)
 	}
 }

@@ -258,12 +258,26 @@ func TestHooksListOnNoHooksSaysSo(t *testing.T) {
 // not be silently swallowed either: the operator needs to know it stopped
 // meaning anything.
 func TestStaleBypassFlagIsAcceptedAndReported(t *testing.T) {
-	noTools, plainUI, staleBypass, _, rest := chatFlags([]string{"--bypass-hook-trust", "keep"})
+	noTools, plainUI, staleBypass, _, _, rest := chatFlags([]string{"--bypass-hook-trust", "keep"})
 	if !staleBypass {
 		t.Fatal("the removed flag must still parse rather than land in rest")
 	}
 	if noTools || plainUI {
 		t.Fatal("the removed flag must not set unrelated flags")
+	}
+	if len(rest) != 1 || rest[0] != "keep" {
+		t.Fatalf("other arguments must survive, got %v", rest)
+	}
+}
+
+// --quiet must parse as a chat flag and suppress the startup notices.
+func TestQuietFlagIsAccepted(t *testing.T) {
+	noTools, plainUI, _, _, quiet, rest := chatFlags([]string{"--quiet", "keep"})
+	if !quiet {
+		t.Fatal("--quiet must parse as a chat flag")
+	}
+	if noTools || plainUI {
+		t.Fatal("--quiet must not set unrelated flags")
 	}
 	if len(rest) != 1 || rest[0] != "keep" {
 		t.Fatalf("other arguments must survive, got %v", rest)

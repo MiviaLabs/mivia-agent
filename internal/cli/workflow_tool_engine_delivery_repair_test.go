@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -297,6 +298,7 @@ func (t transientDeliverGit) Run(_ context.Context, _ delivery.GitContext, _ ...
 func TestSessionAutoDeliveryRepairCancelDuringLoop(t *testing.T) {
 	e, repo, p, runID, _ := newSessionAutoDeliveryRepairFixture(t)
 	var advanceCalls atomic.Int32
+	secondPass := make(chan struct{})
 	prevRun := workflowResumeRun
 	prevGit := workflowDeliverGit
 	t.Cleanup(func() {
@@ -305,6 +307,11 @@ func TestSessionAutoDeliveryRepairCancelDuringLoop(t *testing.T) {
 	})
 	workflowResumeRun = func(ctx context.Context, _ workflowControllerBuild) (workflowledger.RunSnapshot, error) {
 		if advanceCalls.Add(1) >= 2 {
+			// The second pass is the repair-loop re-advance; it blocks on runCtx
+			// until stopActive cancels it. The stub is invoked exactly twice in
+			// this test (the loop exits right after this pass), so the close is
+			// single-fire.
+			close(secondPass)
 			<-ctx.Done()
 			return workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusRunning}, nil
 		}
@@ -314,6 +321,18 @@ func TestSessionAutoDeliveryRepairCancelDuringLoop(t *testing.T) {
 
 	if _, err := e.launchResume(context.Background(), p); err != nil {
 		t.Fatal(err)
+	}
+	// Wait until the second controller pass has STARTED and is blocked on runCtx
+	// before stopping the engine. stopActive must land inside that blocked pass
+	// - the window this test is about - not before the first deliver attempt
+	// has reopened the run at the repair step: an earlier cancellation makes
+	// the deliver attempt fail with the already-cancelled context before
+	// reopenForRepair CASes the run back to running, the loop exits with the
+	// run left delivery_pending (retryable), and the assertion below fails.
+	select {
+	case <-secondPass:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second controller pass did not start within deadline")
 	}
 	e.stopActive(context.Background(), runID)
 	waitForSessionEngineIdle(t, e, runID)
@@ -433,7 +452,7 @@ func TestSessionAutoDeliveryRepairLoopSettlesSkippedPlanAfterCancel(t *testing.T
 			// so the loop reaches the settle branch despite the dead runCtx.
 			return repo.GetRun(context.Background(), runID)
 		},
-		func() (bool, error) {
+		func(context.Context) (bool, error) {
 			cancel()         // stopActive fired while the drive hook ran
 			return true, nil // the multi-chunk stack drove to completion anyway
 		}, false)
@@ -447,5 +466,50 @@ func TestSessionAutoDeliveryRepairLoopSettlesSkippedPlanAfterCancel(t *testing.T
 	}
 	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
 		t.Fatalf("PR client calls: creates=%d finds=%d, want none for a skipped plan run", creates, finds)
+	}
+}
+
+// TestSessionAutoDeliveryRepairLoopBoundsTheDrive proves a stuck stack drive
+// cannot hold the per-run execution flock forever: the auto-delivery goroutine
+// keeps the flock until it exits, so an unbounded drive wedges the CLI
+// workflow deliver on 'lock is busy' (observed: plan runs parked 50+ min).
+// The loop bounds ONE drive+deliver attempt with
+// workflowAutoDeliveryAttemptTimeout; a drive hook that blocks until its
+// context is cancelled must return within the bound and the loop must exit,
+// leaving the run delivery_pending (retryable - the stack ledger is
+// idempotent).
+func TestSessionAutoDeliveryRepairLoopBoundsTheDrive(t *testing.T) {
+	_, repo, p, runID, _ := newSessionAutoDeliveryRepairFixture(t)
+	prevTimeout := workflowAutoDeliveryAttemptTimeout
+	t.Cleanup(func() { workflowAutoDeliveryAttemptTimeout = prevTimeout })
+	workflowAutoDeliveryAttemptTimeout = 200 * time.Millisecond
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sessionAutoDeliveryRepairLoop(context.Background(), repo, p.root, p.res, p.store, runID,
+			func(ctx context.Context) (workflowledger.RunSnapshot, error) {
+				return repo.GetRun(ctx, runID)
+			},
+			func(ctx context.Context) (bool, error) {
+				// A stuck stack drive: block until the loop's attempt bound
+				// expires, then report the deadline error.
+				<-ctx.Done()
+				return false, ctx.Err()
+			}, false)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("sessionAutoDeliveryRepairLoop did not return within 3s of the drive attempt bound expiring")
+	}
+
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("run status = %q, want delivery_pending (retryable) after a bounded drive timeout", run.Status)
 	}
 }

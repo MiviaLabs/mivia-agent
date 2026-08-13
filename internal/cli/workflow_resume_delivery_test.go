@@ -354,7 +354,7 @@ func wireExecuteResumeDeliveryStubs(t *testing.T, repo workflowledger.Repository
 	workflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 		return nil, repo, func() {}, nil
 	}
-	workflowResumeInstallHooks = func(string, bool) (func(), error) { return func() {}, nil }
+	workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
 	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 		return workflowControllerBuild{Dispatcher: workflowTestDispatcher{}}, nil
 	}

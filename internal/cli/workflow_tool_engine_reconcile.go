@@ -31,10 +31,11 @@ func init() {
 
 // reconcileParkedRuns recovers every run an earlier session left unfinished -
 // the restart/crash cases the session engine never re-enters on its own.
-// quiet suppresses the expected per-run skip log (a fresh claim belongs to a
-// live holder): the periodic re-scan passes true so active runs do not log
-// every interval; the session-start sweep passes false so a skipped run is
-// observable.
+// quiet suppresses the expected per-run skip/failure logs (a fresh claim
+// belongs to a live holder, or a snapshot is unresumable): the periodic
+// re-scan passes true so active runs do not log every interval; the
+// session-start sweep passes the session's quiet flag, so --quiet also
+// silences the one-shot recovery notices.
 //
 // See reconcileParkedDelivery and reconcileParkedResume for the per-status
 // behavior.
@@ -90,7 +91,7 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet b
 			defer wg.Done()
 			switch run.Status {
 			case workflowledger.RunStatusDeliveryPending:
-				e.reconcileParkedDelivery(ctx, work.Abs, res, store, repo, storePath, run.RunID)
+				e.reconcileParkedDelivery(ctx, work.Abs, res, store, repo, storePath, run.RunID, quiet)
 			case workflowledger.RunStatusPending, workflowledger.RunStatusRunning, workflowledger.RunStatusWaitingApproval:
 				e.reconcileParkedResume(ctx, run.RunID, quiet)
 			}
@@ -114,8 +115,10 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet b
 // next session start. A transient delivery failure leaves the run
 // delivery_pending for the next reconcile. launchResume (from the repair
 // re-entry) and publishDeliveredRunFinished (for direct deliveries) publish
-// the terminal run_finished event like the in-session loop.
-func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, storePath, runID string) {
+// the terminal run_finished event like the in-session loop. quiet (--quiet)
+// suppresses the expected per-run failure/skip logs: the session-start sweep
+// honors the flag the same way the resume path does.
+func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, storePath, runID string, quiet bool) {
 	finish, err := beginWorkflowExecution(root, storePath, runID)
 	if err != nil {
 		// Another executor holds this run; leave it parked.
@@ -127,7 +130,9 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 		// run reaches - without delivering, so the sweep never publishes the
 		// plan PR for a run that was never meant to publish one.
 		if settleErr := settlePlanRunSkippedDelivery(context.Background(), repo, runID); settleErr != nil {
-			log.Printf("workflow: session recovery: settle skipped plan run %s failed: %v", runID, settleErr)
+			if !quiet {
+				log.Printf("workflow: session recovery: settle skipped plan run %s failed: %v", runID, settleErr)
+			}
 		}
 		finish()
 		return
@@ -135,13 +140,17 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 	deliverErr := deliverRunWithStore(ctx, root, res, store, repo, runID, true, false, io.Discard, io.Discard)
 	finish()
 	if deliverErr != nil {
-		log.Printf("workflow: session recovery: deliver %s failed: %v", runID, deliverErr)
+		if !quiet {
+			log.Printf("workflow: session recovery: deliver %s failed: %v", runID, deliverErr)
+		}
 		return
 	}
 	fresh, getErr := repo.GetRun(ctx, runID)
 	if getErr == nil && fresh.Status == workflowledger.RunStatusRunning {
 		if _, err := e.resumeCLI(ctx, agenttools.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
-			log.Printf("workflow: session recovery: re-advance repair route for %s failed: %v", runID, err)
+			if !quiet {
+				log.Printf("workflow: session recovery: re-advance repair route for %s failed: %v", runID, err)
+			}
 		}
 		return
 	}

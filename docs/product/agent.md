@@ -16,6 +16,12 @@ mivia chat --agent reviewer -p "review the last commit"
 
 `--plain` uses the classic terminal UI. Use it when the modern UI misbehaves.
 
+`--quiet` suppresses the informational startup notices (the limits summary,
+the lifecycle-hooks armed notice, the diagnostics-commands line, the session
+banner, and the workflow session-recovery notices). Genuine warnings - a hook
+that fails to load, a config that signals a misconfiguration - still print.
+`--quiet` does not disable tools or change behavior.
+
 Ctrl-C at the prompt exits. Ctrl-C during a reply stops the reply.
 
 ## File tools

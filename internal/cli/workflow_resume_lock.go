@@ -26,7 +26,28 @@ func beginWorkflowExecution(workspaceRoot, storePath, runID string) (func(), err
 	if err != nil {
 		return nil, err
 	}
-	uninstall, err := workflowExecutionHooks(workspaceRoot, false)
+	uninstall, err := workflowExecutionHooks(workspaceRoot, false, false)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return func() {
+		uninstall()
+		release()
+	}, nil
+}
+
+// beginWorkflowExecutionBounded is beginWorkflowExecution with a bounded wait
+// for a concurrent holder (a settling controller) to release the execution
+// flock: cancel and deliver use it because the plain lock fails with an
+// opaque "lock is busy" error while the in-process controller is still
+// releasing the flock after the cancel wait bound.
+func beginWorkflowExecutionBounded(workspaceRoot, storePath, runID string, maxWait time.Duration) (func(), error) {
+	release, err := acquireWorkflowExecutionLockBounded(storePath, runID, maxWait)
+	if err != nil {
+		return nil, err
+	}
+	uninstall, err := workflowExecutionHooks(workspaceRoot, false, false)
 	if err != nil {
 		release()
 		return nil, err

@@ -2,7 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"slices"
 	"strings"
 
@@ -40,7 +40,7 @@ func stashMemoryOnState(state *agentSessionState, store memory.Store, res *confi
 	}
 }
 
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *agentSessionState) (func(), error) {
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *agentSessionState, quiet bool) (func(), error) {
 	if !useTools {
 		return func() {}, nil
 	}
@@ -84,27 +84,14 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		DiagnosticsCommands:       tc.DiagnosticsCommands,
 	}
 	// get_diagnostics runs the operator-configured diagnostics commands on this
-	// workspace. State every declared command once at startup, before any tool
-	// call: a configured command that runs programs is a disclosure, not a
-	// hidden capability (the same contract as the lifecycle-hooks armedNotice).
-	// Names are sorted so the line is deterministic across runs.
-	if len(tc.DiagnosticsCommands) > 0 {
-		names := make([]string, 0, len(tc.DiagnosticsCommands))
-		for name := range tc.DiagnosticsCommands {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		parts := make([]string, 0, len(names))
-		for _, name := range names {
-			parts = append(parts, fmt.Sprintf("%s=[%s]", name, strings.Join(tc.DiagnosticsCommands[name], " ")))
-		}
-		fmt.Fprintf(os.Stderr, "diagnostics: configured commands: %s\n", strings.Join(parts, ", "))
-	}
+	// workspace (see DiagnosticsCommands above). The startup disclosure that
+	// states which commands are configured lives in logDiagnosticsCommandsOnce,
+	// called from runConfiguredChatOnce beside the other startup notices.
 	// Phase 7: attach in-process workflow tools when .mivia/workflows/ exists.
 	// Pass res so the store path matches prepareWorkflowRun / CLI commands.
 	// The bus provider is read when a controller attaches, so sess.EventBus
 	// (created later by runTUI) still receives workflow progress events.
-	wireWorkflowToolOptions(&opts, ws.Abs, res, func() *events.Bus { return sess.EventBus })
+	wireWorkflowToolOptions(&opts, ws.Abs, res, func() *events.Bus { return sess.EventBus }, quiet)
 	if err := wireSessionMemory(&opts, root, res); err != nil {
 		return func() {}, err
 	}
@@ -119,4 +106,26 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 			_ = opts.Memory.Close()
 		}
 	}, nil
+}
+
+// logDiagnosticsCommandsOnce states every configured get_diagnostics command
+// once at startup, before any tool call: a configured command that runs
+// programs is a disclosure, not a hidden capability (the same contract as the
+// lifecycle-hooks armedNotice). Names are sorted so the line is deterministic
+// across runs. quiet (--quiet) suppresses the line; the tool itself is still
+// registered whenever the workspace declares commands.
+func logDiagnosticsCommandsOnce(w io.Writer, tc config.ToolsConfig, quiet bool) {
+	if w == nil || quiet || len(tc.DiagnosticsCommands) == 0 {
+		return
+	}
+	names := make([]string, 0, len(tc.DiagnosticsCommands))
+	for name := range tc.DiagnosticsCommands {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, fmt.Sprintf("%s=[%s]", name, strings.Join(tc.DiagnosticsCommands[name], " ")))
+	}
+	fmt.Fprintf(w, "diagnostics: configured commands: %s\n", strings.Join(parts, ", "))
 }

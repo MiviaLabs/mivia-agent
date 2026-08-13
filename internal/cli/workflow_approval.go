@@ -115,7 +115,7 @@ func emitCLIRunTerminalProgress(runID string, before, settled workflowledger.Run
 // run), mirroring controller.CancelRun's contract: the caller holds the
 // workflow execution file lock and a live execution claim.
 func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
+	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}

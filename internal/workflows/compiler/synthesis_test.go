@@ -494,6 +494,57 @@ func TestSynthesizedInputs(t *testing.T) {
 	}
 }
 
+func TestMergeStackingInputs(t *testing.T) {
+	// A stacking-enabled workflow gains the engine-reserved input defs in its
+	// input contract (the same set SynthesizeStacking adds to the run graph).
+	cw := compileStackingFixture(t)
+	if _, ok := cw.Inputs["stack_mode"]; ok {
+		t.Fatal("fixture compiled inputs already carry a reserved name")
+	}
+	MergeStackingInputs(cw)
+	for _, name := range []string{"stack_mode", "chunk", "pr_base", "stack_part", "chunk_plan"} {
+		def, ok := cw.Inputs[name]
+		if !ok {
+			t.Errorf("missing reserved input %q after merge", name)
+			continue
+		}
+		if def.Type != "string" {
+			t.Errorf("reserved input %q type = %q, want string", name, def.Type)
+		}
+		if def.Required {
+			t.Errorf("reserved input %q must not be required", name)
+		}
+	}
+
+	// A workflow-declared input with a reserved name is never overwritten.
+	cw = compileStackingFixture(t)
+	cw.Inputs = map[string]definition.InputDef{"chunk": {Type: "integer", Required: true}}
+	MergeStackingInputs(cw)
+	if def := cw.Inputs["chunk"]; def.Type != "integer" || !def.Required {
+		t.Errorf("declared input %q was overwritten by the merge: %+v", "chunk", def)
+	}
+	if len(cw.Inputs) != 5 {
+		t.Errorf("merged inputs = %d, want the declared chunk plus 4 remaining reserved names", len(cw.Inputs))
+	}
+
+	// A non-stacking workflow (nil Stacking) is a no-op.
+	cw, err := Compile(newMinimalWorkflow("plain"))
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+	if cw.Stacking != nil {
+		t.Fatal("minimal workflow resolved stacking, want nil")
+	}
+	before := len(cw.Inputs)
+	MergeStackingInputs(cw)
+	if len(cw.Inputs) != before {
+		t.Errorf("non-stacking merge mutated inputs: %d -> %d", before, len(cw.Inputs))
+	}
+
+	// A nil compiled workflow is a safe no-op.
+	MergeStackingInputs(nil)
+}
+
 // TestSynthesizeStacking_MultiStepPlanPhaseAnchorsRouterAtPlanPhaseExit pins
 // the regression the feature-delivery smoke run found: a workflow with a
 // multi-step plan phase (plan -> plan_review -> plan_tests ->

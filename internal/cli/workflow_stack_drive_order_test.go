@@ -118,7 +118,7 @@ type recordingStackDrive struct {
 	chunks  []ChunkPlan
 }
 
-func (d *recordingStackDrive) Drive(_ *preparedWorkflowRun, _ *tasks.Store, stackID string, chunks []ChunkPlan, _ map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
+func (d *recordingStackDrive) Drive(_ context.Context, _ *preparedWorkflowRun, _ *tasks.Store, stackID string, chunks []ChunkPlan, _ map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
 	d.called = true
 	d.stackID = stackID
 	d.chunks = chunks
@@ -296,7 +296,7 @@ func TestSessionAutoDeliveryRepairLoopDrivesStackBeforeDelivery(t *testing.T) {
 		func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return repo.GetRun(ctx, runID)
 		},
-		func() (bool, error) {
+		func(context.Context) (bool, error) {
 			rec.add("drive")
 			return false, nil // the fixture workflow is not a stacking plan run
 		}, false)
@@ -333,7 +333,7 @@ func TestSessionAutoDeliveryRepairLoopSkipsPlanRunWhenDisabled(t *testing.T) {
 		func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return repo.GetRun(ctx, runID)
 		},
-		func() (bool, error) {
+		func(context.Context) (bool, error) {
 			return true, nil // a multi-chunk stack was driven
 		}, false)
 
@@ -362,7 +362,7 @@ func TestSessionAutoDeliveryRepairLoopPublishesPlanRunWhenEnabled(t *testing.T) 
 		func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return repo.GetRun(ctx, runID)
 		},
-		func() (bool, error) {
+		func(context.Context) (bool, error) {
 			return true, nil // a multi-chunk stack was driven
 		}, true)
 
@@ -402,7 +402,7 @@ func TestMaybeDriveSettledStackDrivesMultiChunkPlan(t *testing.T) {
 
 	prepared := &preparedWorkflowRun{root: root, res: res, store: store, repo: repo, compiled: compiled, inputSnapshot: map[string]string{"task": "x"}}
 	var stdout bytes.Buffer
-	drove, err := maybeDriveSettledStack(prepared, runID, false, &stdout, io.Discard)
+	drove, err := maybeDriveSettledStack(context.Background(), prepared, runID, false, &stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("maybeDriveSettledStack() error = %v", err)
 	}
@@ -447,7 +447,7 @@ func TestMaybeDriveSettledStackNoopForSingleMode(t *testing.T) {
 	workflowStackDriveToCompletion = drive.Drive
 
 	prepared := &preparedWorkflowRun{root: root, res: res, store: store, repo: repo, compiled: compiled, inputSnapshot: map[string]string{"task": "x"}}
-	drove, err := maybeDriveSettledStack(prepared, runID, false, io.Discard, io.Discard)
+	drove, err := maybeDriveSettledStack(context.Background(), prepared, runID, false, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("maybeDriveSettledStack() error = %v", err)
 	}

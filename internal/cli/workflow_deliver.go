@@ -63,7 +63,7 @@ func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string,
 		return err
 	}
 	defer closeFn()
-	finishExecution, err := beginWorkflowExecution(work.Abs, contextStorePath(work.Abs, res.Subagents), runID)
+	finishExecution, err := beginWorkflowExecutionBounded(work.Abs, contextStorePath(work.Abs, res.Subagents), runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}
@@ -137,10 +137,16 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 	deliveryCtx, cancel := context.WithTimeout(ctx, workflowDeliveryTimeout)
 	defer cancel()
 	result, err := delivery.Deliver(deliveryCtx, repo, workflowDeliverGit, workflowDeliverNewPR(), req)
+	// The settle CAS runs on a context that cannot expire mid-transition (S4):
+	// a publish that consumed the full attempt bound must still settle the run
+	// (succeeded, or routed for repair) instead of stranding it delivery_pending
+	// on a deadline-exceeded CAS. settleDeliveryError still classifies the
+	// attempt with deliveryCtx, whose deadline it must observe.
+	settleCtx := context.WithoutCancel(ctx)
 	if err != nil {
-		return settleDeliveryError(ctx, repo, runID, policy, stdout, deliveryCtx, result, err)
+		return settleDeliveryError(settleCtx, repo, runID, policy, stdout, deliveryCtx, result, err)
 	}
-	return settleDeliverySuccess(ctx, repo, runID, result, stdout, stderr)
+	return settleDeliverySuccess(settleCtx, repo, runID, result, stdout, stderr)
 }
 
 // workflowDeliveryStagePrinter returns the delivery stage observer for the

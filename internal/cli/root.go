@@ -88,7 +88,7 @@ func usageText() string {
 	return fmt.Sprintf(`%s - local CLI AI agent (MiviaLabs)
 
 Usage:
-  %s chat [-p prompt] [--provider name] [--model name] [--agent name] [--workspace dir] [--session name] [--no-tools] [--plain] [--config path]
+  %s chat [-p prompt] [--provider name] [--model name] [--agent name] [--workspace dir] [--session name] [--no-tools] [--plain] [--quiet] [--config path]
          [--allow-program name]... [--deny-program name]...
          [--disable-tool name]... [--allow-env-var name]... [--deny-env-var name]...
   %s config show [--config path]
@@ -131,6 +131,7 @@ Agent tools: read_file list_dir grep glob write_file search_replace multi_edit r
   --session resumes a saved session by the name/id "mivia sessions list" reports; fails if it does not exist.
   --no-tools disables tools (pure chat). --workspace confines file/command tools.
   --plain uses classic terminal UI (if Bubble Tea misbehaves).
+  --quiet suppresses the startup notices (limits/hooks/diagnostics lines).
   --allow-program  add program to run_command allowlist (repeatable)
   --deny-program   remove program from run_command allowlist (repeatable)
   --disable-tool   disable a built-in tool by name (repeatable)

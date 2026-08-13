@@ -66,7 +66,7 @@ func TestExecuteWorkflowResumeInjectedFailures(t *testing.T) {
 		workflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 			return nil, selected, func() {}, nil
 		}
-		workflowResumeInstallHooks = func(string, bool) (func(), error) { return func() {}, nil }
+		workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
 		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 			return workflowControllerBuild{
 				Controller: &controller.LinearController{Holder: "resume-test"},
@@ -116,7 +116,7 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 	t.Helper()
 	t.Run("hooks", func(t *testing.T) {
 		reset(repo)
-		workflowResumeInstallHooks = func(string, bool) (func(), error) { return nil, sentinel }
+		workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return nil, sentinel }
 		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
 			t.Fatalf("hook error = %v", err)
 		}
@@ -299,7 +299,7 @@ func TestWorkflowExecutionLockRemainingErrors(t *testing.T) {
 	storePath := filepath.Join(root, "store.db")
 	sentinel := errors.New("injected execution error")
 	originalHooks := workflowExecutionHooks
-	workflowExecutionHooks = func(string, bool) (func(), error) { return nil, sentinel }
+	workflowExecutionHooks = func(string, bool, bool) (func(), error) { return nil, sentinel }
 	if _, err := beginWorkflowExecution(root, storePath, "wfr-hooks"); !errors.Is(err, sentinel) {
 		t.Fatalf("hook error = %v", err)
 	}

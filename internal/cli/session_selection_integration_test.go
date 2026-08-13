@@ -30,7 +30,7 @@ func persistedSessionForSelection(t *testing.T) (*chat.Session, *config.Resolved
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
-	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil, false)
 	if err != nil {
 		t.Fatalf("configure workspace: %v", err)
 	}
