@@ -17,10 +17,15 @@ initial_step = "hunt"
 #          skill). It runs only when the review echoes has_perf="true" (string
 #          enum: transition matchers compare string values). The reviewer sets
 #          has_perf from the retained findings, so the branch is reliable.
+# review_panel : three independent panel-reviewer members (correctness,
+#          security, integration) with distinct provider/model pairs (D4),
+#          then a review-synthesizer aggregation step. The single-agent review
+#          gate below is the post-panel gate: it still echoes has_perf to route
+#          the conditional perf_verify step and stays the repair-loop entry.
 # gates  : the repo's own gates (go-test, go-verify, go-final, invariants,
 #          go-structure) - reused verbatim, never tightened.
-# repairs: one repair step per evidence gate, looping back to review. The two
-#          delivery re-entry steps bind delivery.failure (compiler-enforced).
+# repairs: one repair step per evidence gate, looping back to review_panel. The
+#          two delivery re-entry steps bind delivery.failure (compiler-enforced).
 
 # [inputs.task] and [inputs.scope] max_bytes cap every step's task/scope
 # context binding at 16000. This is a hard engine limit, not a style choice:
@@ -43,8 +48,13 @@ max_bytes = 16000
 # sets no run deadline, so long 24h+ agentic reviews and tasks are the intended
 # workload. Every cycle in this workflow is a bounded loop, so execution is
 # finite by construction even with both limits at 0.
+# max_on_failure_reentries bounds how many times ONE step may re-enter its
+# on_failure target (0 or omitting the key means the controller default of 3).
+# review_panel re-enters itself on member/synthesis failure, so it is pinned
+# explicitly like feature-delivery's review_panel.
 max_step_attempts = 0
 max_duration_seconds = 0
+max_on_failure_reentries = 3
 
 # ---- Hunt: read-only hostile audit, at most 2 confirmed findings ----
 [[steps]]
@@ -106,10 +116,62 @@ context = [
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  { from = "steps.review_panel.output", as = "panel_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
 
-# ---- Review: code review + diff-scope check; echoes has_perf ----
+# ---- Panel review: 3 independent members + synthesis; the code-review gate ----
+[[steps]]
+id = "review_panel"
+kind = "agent_panel"
+agent = "review-synthesizer"
+skill = "review-synthesis"
+template = "templates/review-panel-synthesis.md"
+output_schema = "schemas/review-panel-v1.json"
+context = [
+  { from = "inputs.task", as = "task", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 4096 },
+  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 16384 },
+  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.review_panel.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
+]
+# A member or synthesis failure re-enters the panel; the number of re-entries
+# is bounded by [limits] max_on_failure_reentries (= 3).
+on_failure = "review_panel"
+
+[steps.panel]
+failure_policy = "require_all"
+require_distinct_bindings = true
+
+[[steps.panel.members]]
+id = "correctness"
+agent = "panel-reviewer"
+provider = "deepseek"
+model = "deepseek-v4-flash"
+skill = "panel-bug-audit"
+template = "templates/bugfix-panel-correctness.md"
+output_schema = "schemas/panel-review-v1.json"
+
+[[steps.panel.members]]
+id = "security"
+agent = "panel-reviewer"
+provider = "openrouter"
+model = "tencent/hy3-preview"
+skill = "panel-secure-change"
+template = "templates/bugfix-panel-security.md"
+output_schema = "schemas/panel-review-v1.json"
+
+[[steps.panel.members]]
+id = "integration"
+agent = "panel-reviewer"
+provider = "zai"
+model = "glm-5-turbo"
+skill = "panel-architecture-review"
+template = "templates/bugfix-panel-integration.md"
+output_schema = "schemas/panel-review-v1.json"
+
+# ---- Review: post-panel gate + diff-scope check; echoes has_perf ----
 [[steps]]
 id = "review"
 kind = "agent_gate"
@@ -119,10 +181,11 @@ template = "templates/bugfix-review.md"
 output_schema = "schemas/review-fix-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
-  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
+  { from = "inputs.scope", as = "scope", max_bytes = 4096 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
-  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  { from = "steps.triage.output", as = "findings", max_bytes = 16384 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "steps.review_panel.output", as = "review", max_bytes = 16000, optional = true },
   { from = "steps.review.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 on_failure = "failure"
@@ -179,7 +242,7 @@ command = { check = "go-structure", program = "python3", args = ["scripts/check_
 output_schema = "schemas/verification-v1.json"
 on_failure = "failure"
 
-# ---- Repair steps: one per evidence gate, loop back to review ----
+# ---- Repair steps: one per evidence gate, loop back to review_panel ----
 [[steps]]
 id = "repair_tests"
 kind = "agent"
@@ -313,10 +376,25 @@ from = "fix_plan"
 to = "implement"
 match = { status = "succeeded" }
 
+# implement → review_panel (implementation + tests ready for panel review)
 [[transitions]]
 from = "implement"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
+
+# review_panel approved → the post-panel review gate (echoes has_perf)
+[[transitions]]
+from = "review_panel"
+to = "review"
+match = { status = "succeeded", output = { host_verdict = "approved" } }
+
+# review_panel changes_requested → rework the fix (bounded loop)
+[[transitions]]
+from = "review_panel"
+to = "implement"
+match = { status = "succeeded", output = { host_verdict = "changes_requested" } }
+loop = "panel_repair"
+max_iterations = 8
 
 # review approved with a perf finding -> measurement gate
 [[transitions]]
@@ -366,7 +444,7 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_tests"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 # verify -> code_validate, with repair loop
@@ -384,7 +462,7 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_verify"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 # code_validate -> preflight_validate, with repair loop
@@ -402,7 +480,7 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_final"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 # preflight_validate -> preflight_structure, with repair loop
@@ -420,7 +498,7 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_preflight"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 # preflight_structure -> success, with repair loop
@@ -438,12 +516,12 @@ max_iterations = 5
 
 [[transitions]]
 from = "repair_preflight_structure"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 [[transitions]]
 from = "repair_pr_metadata"
-to = "review"
+to = "review_panel"
 match = { status = "succeeded" }
 
 # ---- Delivery ----

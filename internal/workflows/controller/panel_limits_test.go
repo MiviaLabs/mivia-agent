@@ -6,8 +6,11 @@ func TestPanelWorkLimitSlicesAreFixed(t *testing.T) {
 	if got, want := panelMemberLimits.MaxTurns, 16; got != want {
 		t.Fatalf("member max turns = %d, want %d", got, want)
 	}
-	if got, want := panelMemberLimits.MaxPromptTokens, 524288; got != want {
-		t.Fatalf("member prompt limit = %d, want %d", got, want)
+	// MaxPromptTokens must stay 0 (unlimited cumulative): a finite cap killed
+	// deep read-only reviews mid-panel with "work limit exceeded: prompt tokens"
+	// (see panel_attempt.go). Per-call context is window-bounded with compaction.
+	if got, want := panelMemberLimits.MaxPromptTokens, 0; got != want {
+		t.Fatalf("member prompt limit = %d, want %d (unlimited)", got, want)
 	}
 	if got, want := panelMemberLimits.MaxOutputTokens, 131072; got != want {
 		t.Fatalf("member output limit = %d, want %d", got, want)
@@ -21,8 +24,8 @@ func TestPanelWorkLimitSlicesAreFixed(t *testing.T) {
 	if got, want := panelSynthesisLimits.MaxTurns, 8; got != want {
 		t.Fatalf("synthesis max turns = %d, want %d", got, want)
 	}
-	if got, want := panelSynthesisLimits.MaxPromptTokens, 524288; got != want {
-		t.Fatalf("synthesis prompt limit = %d, want %d", got, want)
+	if got, want := panelSynthesisLimits.MaxPromptTokens, 0; got != want {
+		t.Fatalf("synthesis prompt limit = %d, want %d (unlimited)", got, want)
 	}
 	if got, want := panelSynthesisLimits.MaxOutputTokens, 65536; got != want {
 		t.Fatalf("synthesis output limit = %d, want %d", got, want)

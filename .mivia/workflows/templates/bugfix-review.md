@@ -26,6 +26,10 @@ Implementation summary:
 
 {{ evidence.implementation }}
 
+Prior panel review (present when the panel ran):
+
+{{ evidence.review }}
+
 Prior round findings (present on repair iterations only):
 
 {{ evidence.prior_findings }}

@@ -120,7 +120,7 @@ func TestSessionEngineDeleteRemovesSettledRun(t *testing.T) {
 	repo := openWorkflowTestStore(t, storePath)
 
 	e := newSessionWorkflowEngine(root, config)
-	result, err := e.Delete(context.Background(), runID)
+	result, err := e.Delete(context.Background(), runID, false)
 	if err != nil {
 		t.Fatalf("engine delete: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestSessionEngineDeleteRemovesSettledRun(t *testing.T) {
 func TestSessionEngineDeleteRefusesActiveRun(t *testing.T) {
 	root, configPath, storePath, runID := newGatedApprovalFixture(t)
 	e := newSessionWorkflowEngine(root, configPath)
-	_, err := e.Delete(context.Background(), runID)
+	_, err := e.Delete(context.Background(), runID, false)
 	if err == nil || !strings.Contains(err.Error(), "cancel it before delete") {
 		t.Fatalf("engine delete error = %v, want cancel-first refusal", err)
 	}
@@ -158,7 +158,7 @@ func TestSessionEngineDeleteRefusesForeignClaim(t *testing.T) {
 	}
 
 	e := newSessionWorkflowEngine(root, config)
-	_, err := e.Delete(context.Background(), runID)
+	_, err := e.Delete(context.Background(), runID, false)
 	if err == nil || !strings.Contains(err.Error(), "claimed by another executor") {
 		t.Fatalf("engine delete error = %v, want foreign-claim refusal", err)
 	}
@@ -167,5 +167,64 @@ func TestSessionEngineDeleteRefusesForeignClaim(t *testing.T) {
 	}
 	if _, err := repo.GetRun(context.Background(), runID); err != nil {
 		t.Fatalf("run must survive a refused engine delete: %v", err)
+	}
+}
+
+// TestWorkflowDeleteCommandForceActiveRun pins the crash-recovery override:
+// --force permits deleting a non-terminal run (here: waiting_approval) that a
+// dead executor left stranded, exactly what resume --force and deliver --force
+// are for. Without force the same run is refused (see
+// TestWorkflowDeleteCommandRefusesActiveRun).
+func TestWorkflowDeleteCommandForceActiveRun(t *testing.T) {
+	root, configPath, storePath, runID := newGatedApprovalFixture(t)
+	var stdout strings.Builder
+	if err := runWorkflowWithIO([]string{"delete", runID, "--force", "--workspace", root, "--config", configPath}, &stdout, io.Discard); err != nil {
+		t.Fatalf("workflow delete --force error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "deleted=true") {
+		t.Fatalf("delete output = %q, want deleted=true", stdout.String())
+	}
+	repo := openWorkflowTestStore(t, storePath)
+	if _, err := repo.GetRun(context.Background(), runID); !errors.Is(err, workflowledger.ErrNotFound) {
+		t.Fatalf("GetRun after force delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestSessionEngineDeleteForceActiveRun pins the engine-level override: force
+// deletes a non-terminal run the same way the CLI --force does.
+func TestSessionEngineDeleteForceActiveRun(t *testing.T) {
+	root, configPath, storePath, runID := newGatedApprovalFixture(t)
+	e := newSessionWorkflowEngine(root, configPath)
+	result, err := e.Delete(context.Background(), runID, true)
+	if err != nil {
+		t.Fatalf("engine delete with force: %v", err)
+	}
+	if result.RunID != runID || !result.Deleted {
+		t.Fatalf("delete result = %+v, want deleted for %s", result, runID)
+	}
+	repo := openWorkflowTestStore(t, storePath)
+	if _, err := repo.GetRun(context.Background(), runID); !errors.Is(err, workflowledger.ErrNotFound) {
+		t.Fatalf("GetRun after force delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestSessionEngineDeleteForceStillRefusesFreshClaim pins that force unlocks
+// only the STATUS gate, never the claim fence: a fresh claim held by a live
+// executor still refuses deletion, so an actively executing run can never be
+// deleted even with force.
+func TestSessionEngineDeleteForceStillRefusesFreshClaim(t *testing.T) {
+	root, configPath, storePath, runID := newGatedApprovalFixture(t)
+	repo := openWorkflowTestStore(t, storePath)
+	if err := repo.ClaimRun(context.Background(), runID, "foreign-delete-host"); err != nil {
+		t.Fatal(err)
+	}
+
+	e := newSessionWorkflowEngine(root, configPath)
+	_, err := e.Delete(context.Background(), runID, true)
+	if err == nil || !strings.Contains(err.Error(), "claimed by another executor") {
+		t.Fatalf("engine delete with force = %v, want foreign-claim refusal", err)
+	}
+	if _, err := repo.GetRun(context.Background(), runID); err != nil {
+		t.Fatalf("run must survive a refused force delete: %v", err)
 	}
 }

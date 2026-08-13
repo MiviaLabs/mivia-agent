@@ -25,6 +25,13 @@ Prior review findings (present on repair iterations only):
 
 {{ evidence.review_findings }}
 
+Panel report (present on panel repair iterations only):
+
+{{ evidence.panel_findings }}
+
+When the panel report's host_verdict is "changes_requested", address the issues the panel
+summary describes before you resubmit.
+
 When review findings are present, address each OPEN finding (by its id) before you resubmit.
 Do not repeat a change the reviewer rejected. Implement each required change exactly. In your
 output, set addressed_findings to the ids of every prior finding you addressed. Use an empty

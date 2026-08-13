@@ -348,13 +348,16 @@ func newWorkflowDeleteHolder() string {
 }
 
 // Delete implements agenttools.Engine.
-// It removes a settled run (terminal or delivery_pending) from the durable
-// ledger via the same execution-lock + claim path as `mivia workflow delete`.
-// The status gate resolves BEFORE any claim mutation: a delivery_pending run
-// may be mid-publish under a live claim (this or another host), and a refused
-// delete must leave claims untouched. Active runs are refused, so no
-// in-process controller stop is needed.
-func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string) (agenttools.DeleteResult, error) {
+// It removes a run from the durable ledger via the same execution-lock +
+// claim path as `mivia workflow delete`. Settled runs (terminal or
+// delivery_pending) are always deletable; force also permits a non-terminal
+// run (pending/running/waiting_approval) — the crash-recovery override for a
+// run stranded by a dead executor. The status gate resolves BEFORE any claim
+// mutation: a delivery_pending run may be mid-publish under a live claim (this
+// or another host), and a refused delete must leave claims untouched. A fresh
+// claim held by a live executor is refused even with force; only an expired
+// lease is taken over, so an actively executing run can never be deleted.
+func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string, force bool) (agenttools.DeleteResult, error) {
 	if e == nil {
 		return agenttools.DeleteResult{}, fmt.Errorf("workflow engine is nil")
 	}
@@ -371,8 +374,8 @@ func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string) (agent
 	if err != nil {
 		return agenttools.DeleteResult{}, err
 	}
-	if !workflowledger.IsDeletableRunStatus(run.Status) {
-		return agenttools.DeleteResult{}, fmt.Errorf("run %q is %q; cancel it before delete", runID, run.Status)
+	if !workflowledger.IsDeletableRunStatus(run.Status) && !force {
+		return agenttools.DeleteResult{}, fmt.Errorf("run %q is %q; cancel it before delete, or pass force only after the prior executor stopped (a live claim is still refused)", runID, run.Status)
 	}
 	// Never clear a held claim: delete accepts any run_id, and a blind clear
 	// would strip a live delivery claim (held by this or another host mid-

@@ -67,6 +67,10 @@ mivia workflow cleanup wfr-ABCDEF1234
 
 # Delete a settled run and its stored record
 mivia workflow delete wfr-ABCDEF1234
+
+# Delete a run stranded by a dead executor (claim-free or expired claim only;
+# a live executor's fresh claim is still refused)
+mivia workflow delete wfr-ABCDEF1234 --force
 ```
 
 A run without `--allow-publish` finishes as `delivery_pending`. It stays there until someone delivers it with the grant.
@@ -77,7 +81,7 @@ A run without `--allow-publish` finishes as `delivery_pending`. It stays there u
 |------|------------|---------|-------------|
 | `--workspace <dir>` | all commands | `.` | Directory that owns the repository and run store |
 | `--config <path>` | `workflow *` commands | user default | Config file path |
-| `--force` | `workflow resume` | false | Clear a stale execution claim when resuming |
+| `--force` | `workflow resume`, `workflow delete` | false | Crash recovery override: clear/take over a stale execution claim (resume), or delete a non-terminal run stranded by a dead executor (delete). A live executor's fresh claim is refused either way |
 | `--allow-publish` | `workflow run`, `workflow deliver`, `workflow resume` | false | Grant publish approval for the run |
 | `--watch` | `workflow runs` | false | Poll every 5s; return when every matched run is terminal |
 
@@ -115,7 +119,7 @@ Write tools:
 | `workflow_run` | Start or resume a workflow run |
 | `workflow_deliver` | Deliver a `delivery_pending` run |
 | `workflow_cancel` | Cancel a running or waiting run |
-| `workflow_delete` | Delete a settled workflow run and its durable run record |
+| `workflow_delete` | Delete a workflow run's durable record; `force=true` also deletes a non-terminal run stranded by a dead executor (a live claim is still refused) |
 
 Read tools:
 

@@ -13,35 +13,10 @@ func runCompletionCapture(t *testing.T, args []string) (string, error) {
 	return buf.String(), err
 }
 
-func TestCompletionCommandsIncludesLoginLogout(t *testing.T) {
-	for _, want := range []string{"login", "logout"} {
-		found := false
-		for _, cmd := range completionCommands {
-			if cmd == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("completionCommands is missing %q (must stay in sync with the Execute switch in root.go)", want)
-		}
-	}
-}
-
-func TestCompletionCommandsIncludesMemory(t *testing.T) {
-	for _, want := range []string{"memory"} {
-		found := false
-		for _, cmd := range completionCommands {
-			if cmd == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("completionCommands is missing %q (must stay in sync with the Execute switch in root.go)", want)
-		}
-	}
-}
+// completionCommands' sync with Execute's dispatch switch is covered by
+// TestCompletionCommandsMatchesExecuteSwitch (completion_sync_test.go),
+// which supersedes the old one-directional per-command tests this file used
+// to carry for login/logout and memory.
 
 func TestCompletionMemorySubcommandOffersSearch(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish"} {

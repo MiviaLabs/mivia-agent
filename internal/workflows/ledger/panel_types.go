@@ -38,7 +38,12 @@ func (s PanelTaskSpec) validate(allowMissingWorkFingerprint bool) error {
 	if s.Budget < 0 || s.Timeout <= 0 || s.DeadlineAt.IsZero() || s.WorkLimits.DeadlineAt.IsZero() || !s.WorkLimits.DeadlineAt.Equal(s.DeadlineAt) {
 		return fmt.Errorf("invalid panel task limits")
 	}
-	if s.WorkLimits.MaxTurns <= 0 || s.WorkLimits.MaxPromptTokens <= 0 || s.WorkLimits.MaxOutputTokens <= 0 || s.WorkLimits.MaxOutputPerCall <= 0 || s.WorkLimits.MaxToolCalls <= 0 {
+	// MaxPromptTokens may be 0 (unlimited cumulative prompt, per
+	// runtime.WorkLimits semantics): prompt volume is not a work bound when
+	// every provider call is bounded by the model context window with a
+	// prompt-too-long compaction retry. The child is still bounded by MaxTurns,
+	// MaxOutputTokens, MaxOutputPerCall, MaxToolCalls, and the deadline.
+	if s.WorkLimits.MaxTurns <= 0 || s.WorkLimits.MaxPromptTokens < 0 || s.WorkLimits.MaxOutputTokens <= 0 || s.WorkLimits.MaxOutputPerCall <= 0 || s.WorkLimits.MaxToolCalls <= 0 {
 		return fmt.Errorf("incomplete panel work limits")
 	}
 	if !s.Policy.NoRetry || !s.Policy.FailInterrupted || s.Policy.RetryMaxRetries != 0 || s.Policy.RetryBaseBackoff != 0 || s.Policy.RetryMaxBackoff != 0 || s.Policy.RetryBackoffFactor != 0 || s.Policy.RetryJitterFraction != 0 {

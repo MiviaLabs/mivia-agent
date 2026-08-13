@@ -1,8 +1,10 @@
 // Package textutil provides small, dependency-free string-safety
 // primitives shared by packages that must not depend on each other: rune-safe
 // byte-cap truncation (jschema, delivery) and control-byte detection
-// (workflows/controller, workflows/compiler). Each importer needs the exact
-// same check; this leaf package holds the one implementation.
+// (workflows/controller, workflows/compiler).
+// It also provides ASCII-folded containment (ContainsFold).
+// Each importer needs the exact same check; this leaf package holds the one
+// implementation.
 package textutil
 
 import "unicode/utf8"

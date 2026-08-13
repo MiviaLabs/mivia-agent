@@ -315,3 +315,93 @@ func TestRefOnlyBudgetExhaustedStillRefOnly(t *testing.T) {
 	}
 	assertNoPartialRef(t, got)
 }
+
+// A pass-1-TRUNCATED ref-only result must page the ORIGINAL, not the
+// truncation artifact: buildExecResult already spooled the original under
+// parts.refA via CapWithSpoolRef, so the notice names THAT ref and never
+// spools again. Pre-fix, refOnlyTier spooled p.cappedBody (the artifact) and
+// named a NEW ref - the model's read_output then paged the 4 KiB artifact
+// while the notice called it 'original ~512 KiB', the real body needed an
+// undisclosed second hop, and the store held a redundant second entry.
+func TestRefOnlyNamesPassOneRefForTruncatedResult(t *testing.T) {
+	spool, store := testSpool(t)
+	const cap = 4 << 10
+	original := strings.Repeat("A", 300<<10)
+	capped := capPart(t, spool, original, cap)
+	if !capped.truncated || capped.refA == "" {
+		t.Fatalf("precondition: pass 1 did not truncate+spool (truncated=%v ref=%q)", capped.truncated, capped.refA)
+	}
+	opts := Options{
+		BatchResultBudgetBytes: 1 << 20, // generous: only the ref-only tier may shape
+		RefOnlyTools:           []string{"read_file"},
+		SessionID:              shapeTestPrincipal,
+		RemainderSpool:         spool,
+	}
+	r := toolExecResult{
+		toolCall: toolCall("call_read_file", "read_file", "{}"),
+		result:   capped.cappedBody,
+		parts:    capped,
+	}
+	bodies := shapeBatchResults([]toolExecResult{r}, opts)
+
+	got := bodies[0]
+	if !strings.Contains(got, "elided to a remainder ref (original ~512 KiB)") {
+		t.Fatalf("notice lost the elision wording or the size label: %q", tailOf(got))
+	}
+	ref := refIn(t, got)
+	if ref != capped.refA {
+		t.Fatalf("notice names %q, want the pass-1 original ref %q (a NEW ref would page the artifact)", ref, capped.refA)
+	}
+	if store.Len() != 1 {
+		t.Fatalf("store holds %d bodies, want exactly 1 (the original; the artifact must not be re-spooled)", store.Len())
+	}
+	data, err := spool.Load(t.Context(), shapeTestPrincipal, ref)
+	if err != nil {
+		t.Fatalf("named ref %s does not resolve: %v", ref, err)
+	}
+	if string(data) != original {
+		t.Fatalf("named ref pages %d bytes, want the FULL %d-byte original", len(data), len(original))
+	}
+	if strings.Contains(string(data), "... truncated: kept ") {
+		t.Fatal("named ref pages a truncation artifact, not the original")
+	}
+	assertNoPartialRef(t, got)
+}
+
+// INV-AG-10 on the truncated branch: when pass 1 truncated the result but
+// minted no ref (store failure), the ref-only tier must NOT spool the pass-1
+// artifact - that would repeat the exact defect by naming the artifact as the
+// 'original' - and must not invent a ref. It falls back to the existing plain
+// notice, and the tool call is never failed by the store.
+func TestRefOnlyTruncatedNoPassOneRefFallsBackToPlainNotice(t *testing.T) {
+	spool := remainder.NewSpool(remainder.FailingStore{})
+	const big = 300 << 10
+	original := strings.Repeat("A", big)
+	capped := capPart(t, spool, original, 4<<10)
+	if !capped.truncated || capped.refA != "" {
+		t.Fatalf("precondition: pass 1 did not truncate without a ref (truncated=%v ref=%q)", capped.truncated, capped.refA)
+	}
+	opts := Options{
+		BatchResultBudgetBytes: 1 << 20,
+		RefOnlyTools:           []string{"read_file"},
+		SessionID:              shapeTestPrincipal,
+		RemainderSpool:         spool,
+	}
+	r := toolExecResult{
+		toolCall: toolCall("call_read_file", "read_file", "{}"),
+		result:   capped.cappedBody,
+		parts:    capped,
+	}
+	bodies := shapeBatchResults([]toolExecResult{r}, opts)
+
+	want := refOnlyPlainNotice("read_file", big)
+	if bodies[0] != want {
+		t.Fatalf("truncated-no-ref fallback = %q, want %q", tailOf(bodies[0]), want)
+	}
+	if strings.Contains(bodies[0], "ref:output:") || strings.Contains(bodies[0], "read_output") {
+		t.Fatal("a ref was invented for a truncated result whose pass-1 spool failed")
+	}
+	if strings.HasPrefix(bodies[0], "error:") {
+		t.Fatalf("truncated-no-ref result was failed by the store: %q", tailOf(bodies[0]))
+	}
+}

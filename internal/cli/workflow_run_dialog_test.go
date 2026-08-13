@@ -98,7 +98,7 @@ func (e *recordingWorkflowEngine) Deliver(_ context.Context, runID string, allow
 	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), Mode: "draft"}, e.err
 }
 
-func (e *recordingWorkflowEngine) Delete(_ context.Context, runID string) (agenttools.DeleteResult, error) {
+func (e *recordingWorkflowEngine) Delete(_ context.Context, runID string, _ bool) (agenttools.DeleteResult, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.deletes = append(e.deletes, runID)
