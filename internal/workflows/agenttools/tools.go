@@ -444,12 +444,16 @@ func (t *deleteTool) Name() string           { return ToolWorkflowDelete }
 func (t *deleteTool) Class() string          { return "write" }
 func (t *deleteTool) ResultBudgetBytes() int { return DefaultDeleteBudgetBytes }
 func (t *deleteTool) Description() string {
-	return "Delete a settled workflow run's durable ledger record. Only runs that " +
-		"already finished (succeeded, failed, canceled, timed_out, delivery_failed) or " +
-		"are waiting for delivery (delivery_pending) can be deleted; active runs must " +
-		"be canceled first. The run disappears from every read surface; its worktree " +
-		"and branch, if any, are not removed (use the workspace cleanup command for " +
-		"those). Shared stored content is never deleted. Available to agents by default " +
+	return "Delete a workflow run's durable ledger record. Settled runs " +
+		"(succeeded, failed, canceled, timed_out, delivery_failed) and runs " +
+		"waiting for delivery (delivery_pending) are always deletable; pass " +
+		"force=true to also delete a non-terminal run (pending/running/" +
+		"waiting_approval) stranded by a dead executor. A fresh claim held by a " +
+		"live executor is refused even with force (only an expired lease is " +
+		"taken over), so an actively executing run can never be deleted. The " +
+		"run disappears from every read surface; its worktree and branch, if " +
+		"any, are not removed (use the workspace cleanup command for those). " +
+		"Shared stored content is never deleted. Available to agents by default " +
 		"when the workspace defines workflows; use it to purge stale runs."
 }
 func (t *deleteTool) Parameters() map[string]any {
@@ -460,6 +464,10 @@ func (t *deleteTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Workflow run id to delete (form wfr-...)",
 			},
+			"force": map[string]any{
+				"type":        "boolean",
+				"description": "Delete even a non-terminal run (pending/running/waiting_approval). Refused when a live executor holds the run's claim; only an expired/stale claim is taken over. Use only after the prior executor stopped.",
+			},
 		},
 		"required":             []string{"run_id"},
 		"additionalProperties": false,
@@ -468,11 +476,12 @@ func (t *deleteTool) Parameters() map[string]any {
 func (t *deleteTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
 		RunID string `json:"run_id"`
+		Force bool   `json:"force"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return "", fmt.Errorf("%s: invalid arguments: %w", ToolWorkflowDelete, err)
 	}
-	result, err := t.svc.Delete(ctx, strings.TrimSpace(in.RunID))
+	result, err := t.svc.Delete(ctx, strings.TrimSpace(in.RunID), in.Force)
 	if err != nil {
 		return "", err
 	}

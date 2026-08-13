@@ -91,7 +91,7 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	case "cleanup":
 		return runWorkflowCommandCleanup(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "delete":
-		return runWorkflowCommandDelete(args[1:], workspaceRoot, configPath, stdout, stderr)
+		return runWorkflowCommandDelete(args[1:], workspaceRoot, configPath, force, stdout, stderr)
 	default:
 		return fmt.Errorf("workflow: unknown subcommand %q", args[0])
 	}

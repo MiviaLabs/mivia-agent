@@ -6,16 +6,28 @@ import (
 	"io"
 	"unicode/utf8"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 )
 
 // ndjsonEvent is the wire schema for line-mode --json output. Exactly one
-// event type is populated per line, and there are exactly four types:
+// event type is populated per line, and there are exactly seven types:
 //
-//	{"type":"chunk","text":"..."}                  - one per emitted piece of streamed content
+//	{"type":"chunk","text":"..."}                            - one per emitted piece of streamed answer content
+//	{"type":"thinking","text":"..."}                         - one per emitted piece of model reasoning (chain of thought), for providers that expose it
+//	{"type":"tool_start","tool_call_id":"...","name":"...","input":"..."}  - a tool call began; input is a bounded, redacted preview
+//	{"type":"tool_end","tool_call_id":"...","name":"...","output":"..."}   - that tool call finished; output is a bounded, redacted preview
 //	{"type":"done","session_id":"..."}             - exactly once, turn completed successfully
 //	{"type":"cancelled"}                           - exactly once, turn was SIGINT-interrupted
 //	{"type":"error","message":"…"}                 - exactly once, turn failed
+//
+// "thinking"/"tool_start"/"tool_end" are best-effort progress events: an
+// older consumer that only understands chunk/done/cancelled/error can ignore
+// unknown types and still render a correct transcript, since the final
+// answer text still arrives entirely via "chunk" events. They carry the same
+// redacted preview fields the interactive TUI already renders (see
+// agentEventBridgeCallback in tui_events.go) - the wire representation
+// intentionally does not expose anything the TUI itself would not show.
 //
 // A SIGINT-interrupted turn gets its own "cancelled" type rather than being
 // folded into "error": a caller that wants to distinguish "the user stopped
@@ -28,10 +40,46 @@ import (
 // just minted, without which it has no way to look this conversation up
 // later via `mivia sessions list`/`show`/`--session <id>` resume.
 type ndjsonEvent struct {
-	Type      string `json:"type"`
-	Text      string `json:"text,omitempty"`
-	Message   string `json:"message,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
+	Type       string `json:"type"`
+	Text       string `json:"text,omitempty"`
+	Message    string `json:"message,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Input      string `json:"input,omitempty"`
+	Output     string `json:"output,omitempty"`
+}
+
+// jsonTurnEventCallback returns an agent.Event handler that translates
+// reasoning and tool-lifecycle events into NDJSON lines on w. It is the
+// --json counterpart of agentEventBridgeCallback (tui_events.go), which does
+// the equivalent translation into TUI bridge pushes - both read the same
+// agent.Event fields and the same redacted eventPreview helper, so an
+// external consumer sees the same content the TUI renders, just framed as
+// NDJSON instead of terminal UI.
+func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
+	return func(e agent.Event) {
+		switch e.Kind {
+		case agent.EventThinking:
+			if e.Content != "" {
+				writeNDJSONEvent(w, ndjsonEvent{Type: "thinking", Text: e.Content})
+			}
+		case agent.EventToolStart:
+			writeNDJSONEvent(w, ndjsonEvent{
+				Type:       "tool_start",
+				ToolCallID: e.ToolCallID,
+				Name:       e.Name,
+				Input:      eventPreview(e.Input, e.Detail),
+			})
+		case agent.EventToolEnd:
+			writeNDJSONEvent(w, ndjsonEvent{
+				Type:       "tool_end",
+				ToolCallID: e.ToolCallID,
+				Name:       e.Name,
+				Output:     eventPreview(e.Output, e.Detail),
+			})
+		}
+	}
 }
 
 // writeNDJSONEvent marshals ev as one NDJSON line and writes it to w.

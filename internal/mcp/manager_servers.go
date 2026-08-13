@@ -169,7 +169,18 @@ func (m *Manager) startupContext(parent context.Context) (context.Context, conte
 }
 
 func (m *Manager) serverContext(parent context.Context, server config.MCPServerConfig) (context.Context, context.CancelFunc) {
-	return m.boundContext(parent, server.TimeoutSeconds)
+	// A per-server timeout_seconds of 0 is the allowed default when the key is
+	// unset. It must not produce an unbounded discovery context: the
+	// EnsureServers invariant is that a server outage must never fail a
+	// session or a workflow start, and an unbounded tools/list would hang
+	// discovery (and with it every session and workflow start) forever. Fall
+	// back to the manager's startup timeout, which config resolution
+	// guarantees to be positive (default 10s).
+	timeout := server.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = m.cfg.StartupTimeoutSeconds
+	}
+	return m.boundContext(parent, timeout)
 }
 
 func (m *Manager) boundContext(parent context.Context, timeoutSeconds int) (context.Context, context.CancelFunc) {

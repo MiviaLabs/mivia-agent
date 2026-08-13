@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 )
 
 // TestNDJSONChunkWriterReassemblesSplitMultiByteRune pins the correctness
@@ -119,6 +121,62 @@ func TestNDJSONChunkWriterPlainASCIIEmitsImmediately(t *testing.T) {
 	}
 	if ev.Text != "hello" {
 		t.Fatalf("text = %q, want %q", ev.Text, "hello")
+	}
+}
+
+// TestJSONTurnEventCallbackEmitsThinkingAndToolLifecycle pins the --json
+// wire contract for the three new event types: thinking deltas and a
+// tool_start/tool_end pair each become their own NDJSON line with the
+// expected type tag and fields.
+func TestJSONTurnEventCallbackEmitsThinkingAndToolLifecycle(t *testing.T) {
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+
+	onEvent(agent.Event{Kind: agent.EventThinking, Content: "considering the options"})
+	onEvent(agent.Event{Kind: agent.EventToolStart, ToolCallID: "call_1", Name: "read_file", Input: "path=foo.go"})
+	onEvent(agent.Event{Kind: agent.EventToolEnd, ToolCallID: "call_1", Name: "read_file", Output: "12 lines"})
+
+	lines := splitNonEmptyLines(buf.String())
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3: %v", len(lines), lines)
+	}
+
+	var thinking ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[0]), &thinking); err != nil {
+		t.Fatalf("line 0 invalid JSON: %v", err)
+	}
+	if thinking.Type != "thinking" || thinking.Text != "considering the options" {
+		t.Fatalf("thinking event = %+v, want type=thinking text=%q", thinking, "considering the options")
+	}
+
+	var toolStart ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[1]), &toolStart); err != nil {
+		t.Fatalf("line 1 invalid JSON: %v", err)
+	}
+	if toolStart.Type != "tool_start" || toolStart.ToolCallID != "call_1" || toolStart.Name != "read_file" || toolStart.Input != "path=foo.go" {
+		t.Fatalf("tool_start event = %+v", toolStart)
+	}
+
+	var toolEnd ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[2]), &toolEnd); err != nil {
+		t.Fatalf("line 2 invalid JSON: %v", err)
+	}
+	if toolEnd.Type != "tool_end" || toolEnd.ToolCallID != "call_1" || toolEnd.Name != "read_file" || toolEnd.Output != "12 lines" {
+		t.Fatalf("tool_end event = %+v", toolEnd)
+	}
+}
+
+// TestJSONTurnEventCallbackIgnoresOtherKinds ensures event kinds with no
+// --json wire representation (e.g. steps, heartbeats, subagent events) are
+// silently dropped rather than emitting a malformed or unexpected line -
+// the --json protocol only ever grows explicitly documented types.
+func TestJSONTurnEventCallbackIgnoresOtherKinds(t *testing.T) {
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	onEvent(agent.Event{Kind: agent.EventStep, Detail: "step 1"})
+	onEvent(agent.Event{Kind: agent.EventHeartbeat, Detail: "tick"})
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output for unhandled event kinds, got: %q", buf.String())
 	}
 }
 

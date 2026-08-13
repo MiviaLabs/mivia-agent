@@ -46,7 +46,7 @@ func TestEngineDeleteSettledRun(t *testing.T) {
 	} {
 		t.Run(string(to), func(t *testing.T) {
 			engine, repo, runID := newSettledEngine(t, to)
-			result, err := engine.Delete(context.Background(), runID)
+			result, err := engine.Delete(context.Background(), runID, false)
 			if err != nil {
 				t.Fatalf("Delete: %v", err)
 			}
@@ -74,7 +74,7 @@ func TestEngineDeleteRefusesActiveStatus(t *testing.T) {
 	if err := repo.CompareAndSetRunStatus(context.Background(), run2, 1, workflowledger.RunStatusRunning, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, err := engine.Delete(context.Background(), run2)
+	_, err := engine.Delete(context.Background(), run2, false)
 	if err == nil || !strings.Contains(err.Error(), "cancel it before delete") {
 		t.Fatalf("Delete of running = %v, want cancel-first refusal", err)
 	}
@@ -86,7 +86,7 @@ func TestEngineDeleteRefusesActiveStatus(t *testing.T) {
 // TestEngineDeleteMissingRun propagates ErrNotFound.
 func TestEngineDeleteMissingRun(t *testing.T) {
 	engine, _, _ := newSettledEngine(t, workflowledger.RunStatusSucceeded)
-	_, err := engine.Delete(context.Background(), "wfr-no-such-run")
+	_, err := engine.Delete(context.Background(), "wfr-no-such-run", false)
 	if !errors.Is(err, workflowledger.ErrNotFound) {
 		t.Fatalf("Delete missing = %v, want ErrNotFound", err)
 	}
@@ -99,7 +99,7 @@ func TestEngineDeleteRefusesInProcessDelivery(t *testing.T) {
 	engine.mu.Lock()
 	engine.delivering = map[string]string{runID: "delivery-host"}
 	engine.mu.Unlock()
-	_, err := engine.Delete(context.Background(), runID)
+	_, err := engine.Delete(context.Background(), runID, false)
 	if err == nil || !strings.Contains(err.Error(), "being delivered") {
 		t.Fatalf("Delete during in-process delivery = %v, want delivery refusal", err)
 	}
@@ -118,7 +118,7 @@ func TestEngineDeleteRefusesInProcessActive(t *testing.T) {
 	}
 	engine.active[runID] = &activeRun{done: make(chan struct{})}
 	engine.mu.Unlock()
-	_, err := engine.Delete(context.Background(), runID)
+	_, err := engine.Delete(context.Background(), runID, false)
 	if err == nil || !strings.Contains(err.Error(), "running in this engine") {
 		t.Fatalf("Delete of in-process active run = %v, want in-engine refusal", err)
 	}
@@ -134,7 +134,7 @@ func TestEngineDeleteRefusesFreshForeignClaim(t *testing.T) {
 	if err := repo.ClaimRun(context.Background(), runID, "foreign-host"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := engine.Delete(context.Background(), runID)
+	_, err := engine.Delete(context.Background(), runID, false)
 	if err == nil || !strings.Contains(err.Error(), "claimed by another executor") {
 		t.Fatalf("Delete with foreign claim = %v, want foreign-claim refusal", err)
 	}
@@ -143,5 +143,54 @@ func TestEngineDeleteRefusesFreshForeignClaim(t *testing.T) {
 	}
 	if _, err := repo.GetRun(context.Background(), runID); err != nil {
 		t.Fatalf("run must survive a refused delete: %v", err)
+	}
+}
+
+// TestEngineDeleteForceActiveStatus pins the crash-recovery override: force
+// deletes a non-terminal (running) run stranded by a dead executor.
+func TestEngineDeleteForceActiveStatus(t *testing.T) {
+	engine, repo, _ := newSettledEngine(t, workflowledger.RunStatusDeliveryPending)
+	run2 := "wfr-del-force-running-" + t.Name()
+	snap := workflowledger.RunSnapshot{RunID: run2, WorkflowName: "del-test", Status: workflowledger.RunStatusPending, ActiveStepID: "start"}
+	if err := repo.CreateRun(context.Background(), snap, []byte(`{"schema_version":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(context.Background(), run2, 1, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Delete(context.Background(), run2, true)
+	if err != nil {
+		t.Fatalf("Delete with force: %v", err)
+	}
+	if result.RunID != run2 || !result.Deleted {
+		t.Fatalf("result = %+v, want deleted run_id=%s", result, run2)
+	}
+	if _, err := repo.GetRun(context.Background(), run2); !errors.Is(err, workflowledger.ErrNotFound) {
+		t.Fatalf("GetRun after force delete = %v, want ErrNotFound", err)
+	}
+}
+
+// TestEngineDeleteForceStillRefusesFreshForeignClaim pins that force unlocks
+// only the STATUS gate, never the claim fence: a fresh foreign claim (a live
+// executor on another host) refuses deletion even with force.
+func TestEngineDeleteForceStillRefusesFreshForeignClaim(t *testing.T) {
+	engine, repo, _ := newSettledEngine(t, workflowledger.RunStatusDeliveryPending)
+	run2 := "wfr-del-force-claim-" + t.Name()
+	snap := workflowledger.RunSnapshot{RunID: run2, WorkflowName: "del-test", Status: workflowledger.RunStatusPending, ActiveStepID: "start"}
+	if err := repo.CreateRun(context.Background(), snap, []byte(`{"schema_version":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(context.Background(), run2, 1, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClaimRun(context.Background(), run2, "foreign-host"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := engine.Delete(context.Background(), run2, true)
+	if err == nil || !strings.Contains(err.Error(), "claimed by another executor") {
+		t.Fatalf("Delete with force + foreign claim = %v, want foreign-claim refusal", err)
+	}
+	if _, err := repo.GetRun(context.Background(), run2); err != nil {
+		t.Fatalf("run must survive a refused force delete: %v", err)
 	}
 }

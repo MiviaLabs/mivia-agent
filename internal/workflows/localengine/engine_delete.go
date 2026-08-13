@@ -8,13 +8,16 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// Delete implements agenttools.Engine. It removes a settled run (terminal or
-// delivery_pending) from the durable ledger. It mirrors Cancel's fencing: an
-// in-process delivery or controller on this engine refuses, a fresh foreign
-// claim refuses, and only an expired claim may be taken over — deletion must
-// never blind-clear a live delivery claim. The status gate runs BEFORE any
-// claim mutation, so a refused delete leaves claims untouched.
-func (e *Engine) Delete(ctx context.Context, runID string) (agenttools.DeleteResult, error) {
+// Delete implements agenttools.Engine. It removes a run from the durable
+// ledger. Settled runs (terminal or delivery_pending) are always deletable;
+// force also permits a non-terminal run (pending/running/waiting_approval) —
+// the crash-recovery override for a run stranded by a dead executor. It
+// mirrors Cancel's fencing: an in-process delivery or controller on this
+// engine refuses, a fresh foreign claim refuses, and only an expired claim may
+// be taken over — deletion must never blind-clear a live delivery claim. The
+// status gate runs BEFORE any claim mutation, so a refused delete leaves
+// claims untouched.
+func (e *Engine) Delete(ctx context.Context, runID string, force bool) (agenttools.DeleteResult, error) {
 	if e == nil || e.Repo == nil {
 		return agenttools.DeleteResult{}, fmt.Errorf("workflow engine is incomplete")
 	}
@@ -32,8 +35,8 @@ func (e *Engine) Delete(ctx context.Context, runID string) (agenttools.DeleteRes
 	if err != nil {
 		return agenttools.DeleteResult{}, err
 	}
-	if !workflowledger.IsDeletableRunStatus(run.Status) {
-		return agenttools.DeleteResult{}, fmt.Errorf("run %q is %q; cancel it before delete", runID, run.Status)
+	if !workflowledger.IsDeletableRunStatus(run.Status) && !force {
+		return agenttools.DeleteResult{}, fmt.Errorf("run %q is %q; cancel it before delete, or pass force only after the prior executor stopped (a live claim is still refused)", runID, run.Status)
 	}
 	holder := "wfdelete-" + randomToken(5)
 	if err := e.claimOrTakeoverExpired(ctx, runID, holder); err != nil {

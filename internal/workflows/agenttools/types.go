@@ -274,9 +274,12 @@ type Engine interface {
 	Cancel(ctx context.Context, runID string) (CancelResult, error)
 	// Deliver publishes a delivery_pending run when allow_publish is true.
 	Deliver(ctx context.Context, runID string, allowPublish bool) (DeliverResult, error)
-	// Delete removes a settled run (terminal or delivery_pending) from the
-	// durable ledger. Active runs are refused; cancel them first.
-	Delete(ctx context.Context, runID string) (DeleteResult, error)
+	// Delete removes a run from the durable ledger. Settled runs (terminal or
+	// delivery_pending) are always deletable; with force, a non-terminal run
+	// (pending/running/waiting_approval) is deletable too — the crash-recovery
+	// override for runs stranded by a dead executor. A fresh claim held by a
+	// live executor is refused either way; only an expired lease is taken over.
+	Delete(ctx context.Context, runID string, force bool) (DeleteResult, error)
 }
 
 // RepoFactory opens a workflow ledger repository. The closer releases resources.

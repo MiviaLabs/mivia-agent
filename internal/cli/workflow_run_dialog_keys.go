@@ -303,7 +303,7 @@ func (m *tuiModel) workflowDialogActionCmd(action workflowConfirmAction) tea.Cmd
 			}
 		case workflowConfirmDelete:
 			return func() tea.Msg {
-				res, err := engine.Delete(ctx, runID)
+				res, err := engine.Delete(ctx, runID, false)
 				return workflowRunDialogActionMsg{runID: runID, action: action, result: "deleted · " + res.Status, err: err}
 			}
 		}
