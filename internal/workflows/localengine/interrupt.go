@@ -31,13 +31,22 @@ func (e *Engine) Interrupt(runID string) error {
 		return e.Interrupt(runID)
 	}
 	_, delivering := e.delivering[runID]
-	if e.fence != nil {
-		e.fence.abandon(runID)
-	}
 	active, ok := e.active[runID]
 	if !ok && !delivering {
 		e.mu.Unlock()
 		return fmt.Errorf("workflow run %q is not active in this engine", runID)
+	}
+	// Fence terminal writes from the dying controller before mutating
+	// attempts - but only when this engine owns a live controller to fence.
+	// A run that is only mid-delivery here (delivering, no live active
+	// controller) has no dying goroutine to guard: abandoning it would poison
+	// the fenced repository the in-flight delivery publishes through, fail
+	// every ledger write with ErrConflict (possibly after push/PR-create),
+	// and wedge the run in delivery_pending. The controller (if any) already
+	// parked at delivery_pending before the delivery started, so it cannot
+	// settle the run either.
+	if ok && !delivering && e.fence != nil {
+		e.fence.abandon(runID)
 	}
 	if ok {
 		if e.interrupting == nil {
@@ -79,6 +88,13 @@ func (e *Engine) Interrupt(runID string) error {
 	if ok && !delivering {
 		_ = e.Repo.ReleaseRun(ctx, runID, active.ctrl.Holder)
 	}
+	return e.assertNonTerminal(ctx, runID)
+}
+
+// assertNonTerminal fails when a run ended terminal after interrupt: resume
+// needs a non-terminal run, so an interrupt that let the dying controller
+// settle the run is a bug worth surfacing loudly.
+func (e *Engine) assertNonTerminal(ctx context.Context, runID string) error {
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
 		return err

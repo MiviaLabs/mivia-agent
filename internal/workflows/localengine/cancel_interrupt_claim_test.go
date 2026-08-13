@@ -244,4 +244,25 @@ func TestEngineInterruptDoesNotClearLiveDeliveryClaim(t *testing.T) {
 		t.Fatal("delivery did not finish after unblock")
 	}
 	claimNowFree(t, engine.Repo, run.RunID)
+
+	// Regression (delivery wedge): an Interrupt that lands during this
+	// engine's delivery publish must not poison the abandon fence. The
+	// in-flight delivery completes and settles the run to succeeded; a SECOND
+	// Deliver on the same run must succeed (replay the delivery record)
+	// instead of failing with ErrConflict forever while the run stays
+	// delivery_pending.
+	fresh, getErr = engine.Repo.GetRun(context.Background(), run.RunID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if fresh.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run status after interrupted delivery = %q, want succeeded (Interrupt must not wedge the delivery)", fresh.Status)
+	}
+	res, err := engine.Deliver(context.Background(), run.RunID, true)
+	if err != nil {
+		t.Fatalf("second Deliver after Interrupt during delivery: %v", err)
+	}
+	if res.Status != string(workflowledger.RunStatusSucceeded) {
+		t.Fatalf("second Deliver result = %+v, want succeeded", res)
+	}
 }

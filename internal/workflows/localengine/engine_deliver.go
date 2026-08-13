@@ -62,6 +62,21 @@ func (e *Engine) replayDelivery(ctx context.Context, run workflowledger.RunSnaps
 
 func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnapshot) (agenttools.DeliverResult, error) {
 	runID := run.RunID
+	// A delivery_pending/delivery_failed run has no live controller (the
+	// controller parked and exited), so no dying goroutine can settle it:
+	// clear any abandon residue the fence carries for this run - e.g. an
+	// Interrupt that landed just as the controller parked at delivery_pending
+	// - so this delivery's fenced writes pass. Mirrors clearAbandon in
+	// buildResumeController for resumed runs. Without it a poisoned fence
+	// fails every delivery write with ErrConflict and the run stays
+	// delivery_pending forever (resume refuses delivery_pending before
+	// buildResumeController can clear the fence).
+	_ = e.ctrlRepo()
+	e.mu.Lock()
+	if e.fence != nil {
+		e.fence.clearAbandon(runID)
+	}
+	e.mu.Unlock()
 	raw, err := e.Repo.GetRunSnapshot(ctx, runID)
 	if err != nil {
 		return agenttools.DeliverResult{}, err
