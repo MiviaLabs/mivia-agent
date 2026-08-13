@@ -8,8 +8,57 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
+
+// eventPublishingWriter republishes each write as a live "delta"
+// EventAssistant on bus before forwarding it to w, so a plain (non-tool)
+// chat turn's content streams to a cross-process observer (internal/hub's
+// relay) exactly like the agent-loop path's own teeWriter
+// (internal/agent/loop.go) already does for a tool-enabled turn. Both use
+// Detail="delta" so internal/cli/chat_hub.go's relay treats them
+// identically regardless of which path produced them - a --no-tools
+// session (which never reaches internal/agent at all) previously never
+// published to EventBus, so a relayed --no-tools turn showed no live
+// activity whatsoever, not even the "thinking" the tool-enabled gap this
+// fixes a sibling of still showed.
+type eventPublishingWriter struct {
+	w         io.Writer
+	bus       *events.Bus
+	sessionID string
+	turnID    string
+}
+
+func (e *eventPublishingWriter) Write(p []byte) (int, error) {
+	if len(p) > 0 && e.bus != nil {
+		e.bus.Publish(events.Event{
+			Kind: events.KindAssistant, SessionID: e.sessionID, TurnID: e.turnID,
+			Content: string(p), Detail: "delta",
+		})
+	}
+	if e.w == nil {
+		return len(p), nil
+	}
+	return e.w.Write(p)
+}
+
+// plainTurnStreamWriter builds the writer chain both sendPlainLegacy and
+// sendPlainContext stream a reply through: the caller's own writer (if
+// any) plus the interrupted-turn-recovery capture buffer, wrapped in
+// eventPublishingWriter when the session has a bus to publish to (nil
+// otherwise - a session with no hub membership, and every test that builds
+// a Session by hand, has no EventBus and pays nothing extra).
+func (s *Session) plainTurnStreamWriter(w io.Writer, captured *strings.Builder, turnID string) io.Writer {
+	streamWriter := io.Writer(captured)
+	if w != nil {
+		streamWriter = io.MultiWriter(w, captured)
+	}
+	if s.EventBus == nil {
+		return streamWriter
+	}
+	return &eventPublishingWriter{w: streamWriter, bus: s.EventBus, sessionID: s.SessionID, turnID: turnID}
+}
 
 // sendPlainLegacy streams a plain-chat turn against the pruned (non-compacting)
 // message history.
@@ -23,10 +72,7 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 	// the partial answer the user already read on screen. A nil caller writer
 	// (tests, headless callers) keeps the capture-only surface.
 	var captured strings.Builder
-	streamWriter := io.Writer(&captured)
-	if w != nil {
-		streamWriter = io.MultiWriter(w, &captured)
-	}
+	streamWriter := s.plainTurnStreamWriter(w, &captured, fmt.Sprintf("turn:%d", snapshot.myTurn))
 	reply, err := snapshot.binding.Completer.ChatStream(ctx, provider.Request{
 		Model: snapshot.binding.Model, Messages: prepared, Temperature: snapshot.temperature,
 		MaxTokens: snapshot.maxTokens, Stream: true,
@@ -84,10 +130,7 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 	// the partial answer the user already read on screen. A nil caller writer
 	// (tests, headless callers) keeps the capture-only surface.
 	var captured strings.Builder
-	streamWriter := io.Writer(&captured)
-	if w != nil {
-		streamWriter = io.MultiWriter(w, &captured)
-	}
+	streamWriter := s.plainTurnStreamWriter(w, &captured, fmt.Sprintf("turn:%d", snapshot.myTurn))
 	reply, err := snapshot.binding.Completer.ChatStream(ctx, provider.Request{
 		Model: snapshot.binding.Model, Messages: requestMessages, Temperature: snapshot.temperature,
 		MaxTokens: snapshot.maxTokens, Stream: true,
