@@ -500,6 +500,22 @@ func (r *recordingPR) createdPRs() []delivery.PRInput {
 	return append([]delivery.PRInput(nil), r.created...)
 }
 
+// failingCreatePR refuses every PR create with a generic, non-transient error
+// that is neither delivery.PRMetadataError nor delivery.DiffSizeError (e.g. a
+// host-side rejection of the change itself, such as a branch-protection rule
+// rejecting the diff). It is used to pin that routeDeliveryRepair routes ANY
+// such repairable failure to the policy's repair step, not only the two
+// hardcoded types.
+type failingCreatePR struct{}
+
+func (failingCreatePR) FindByHead(context.Context, string, string) (*delivery.PRRef, error) {
+	return nil, nil
+}
+
+func (failingCreatePR) Create(context.Context, string, delivery.PRInput) (delivery.PRRef, error) {
+	return delivery.PRRef{}, errors.New("host rejected the change: branch protection requires a linked issue")
+}
+
 func runGitT(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -664,6 +680,55 @@ scopes = ["feat"]
 	// must not have been called.
 	if created := pr.createdPRs(); len(created) != 0 {
 		t.Fatalf("PR create calls = %d, want zero before metadata validation: %+v", len(created), created)
+	}
+}
+
+// TestEngineDeliverGenericRepairableFailureRoutesToRepairStep pins that
+// routeDeliveryRepair routes ANY repairable, non-transient delivery failure
+// for which delivery.RepairTarget resolves a policy step - not just
+// PRMetadataError and DiffSizeError - back into the workflow, mirroring the
+// CLI's settleDeliveryError (internal/cli/workflow_deliver.go). Before the
+// fix, routeDeliveryRepair hardcoded an allowlist of the two named error
+// types, so a generic repairable rejection (e.g. a host-side hook refusing
+// the change) fell through unrouted instead of reaching the repair step.
+func TestEngineDeliverGenericRepairableFailureRoutesToRepairStep(t *testing.T) {
+	repoRoot, _, run, repo := newSeededDeliveryFixtureTOML(t, deliverMeRepairTOML)
+	seedEngineChangeSummary(t, repo, run.RunID, `{"pr_title": "feat(scope): add widget", "pr_summary": "Adds the widget."}`)
+	engine := &localengine.Engine{WorkspaceRoot: repoRoot, Repo: repo, PR: failingCreatePR{}}
+
+	res, err := engine.Deliver(context.Background(), run.RunID, true)
+	if err != nil {
+		t.Fatalf("Engine.Deliver: %v", err)
+	}
+	if res.Status != string(workflowledger.RunStatusRunning) {
+		t.Fatalf("deliver result = %+v, want status running at the repair step", res)
+	}
+	fresh, err := repo.GetRun(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Status != workflowledger.RunStatusRunning {
+		t.Fatalf("run status = %q, want %q: a generic repairable delivery failure must not stop the run",
+			fresh.Status, workflowledger.RunStatusRunning)
+	}
+	if fresh.ActiveStepID != "one" {
+		t.Fatalf("active step = %q, want %q (the delivery.on_failure repair step)", fresh.ActiveStepID, "one")
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded *workflowledger.StepAttempt
+	for i := range attempts {
+		if attempts[i].StepID == delivery.DeliveryRepairStepID {
+			recorded = &attempts[i]
+		}
+	}
+	if recorded == nil {
+		t.Fatal("no wf-delivery attempt recorded; the generic repairable failure must be in the run history")
+	}
+	if recorded.ToStepID != "one" {
+		t.Fatalf("delivery attempt route = %q, want %q", recorded.ToStepID, "one")
 	}
 }
 
