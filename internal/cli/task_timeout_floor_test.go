@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -70,10 +71,42 @@ func TestTaskTimeoutFloorDispatchWithoutConfig(t *testing.T) {
 	}
 }
 
-// TestTaskTimeoutFloorSpawnPerTaskRaiseOnly pins the same raise-only contract for
-// spawn_agent's per-task timeout_seconds: a short override resolves to the
-// batch budget, a larger override raises above it.
-func TestTaskTimeoutFloorSpawnPerTaskRaiseOnly(t *testing.T) {
+// TestSpawnAgentCapabilityHonorsAllExplicitTimeouts is the regression test for
+// spawn_agent's whole-call budget. Before the fix, Capability pre-seeded
+// maxBudget with EffectiveTimeoutSec (the 12h default), so even when every task
+// had an explicit timeout_seconds:5, the call ran with a 12h budget — the same
+// root cause as dispatch_tasks. Now the call budget is the max resolved task
+// timeout, not floored to the default.
+func TestSpawnAgentCapabilityHonorsAllExplicitTimeouts(t *testing.T) {
+	tool := &spawnAgentTool{
+		cfg:      config.DefaultSubagentConfig, // DefaultTimeout 0 → 12h default
+		agentReg: testAgentRegistry(t, "worker"),
+	}
+	// All tasks explicit and small: call budget must be 5+slack, NOT 43200+slack.
+	cap := tool.Capability(json.RawMessage(`{"tasks":[{"id":"a","timeout_seconds":5},{"id":"b","timeout_seconds":3}]}`))
+	want := (5 + dispatchOrchestrationSlackSec) * time.Second
+	if cap.Timeout != want {
+		t.Fatalf("all-explicit-small spawn capability=%s, want %s (was floored to 12h=%s before the fix)",
+			cap.Timeout, want, (config.DefaultOrchestrationTimeoutSec+dispatchOrchestrationSlackSec)*time.Second)
+	}
+	// Mix of explicit and default: call budget must include the default.
+	capMix := tool.Capability(json.RawMessage(`{"tasks":[{"id":"a","timeout_seconds":5},{"id":"b"}]}`))
+	wantMix := (config.DefaultOrchestrationTimeoutSec + dispatchOrchestrationSlackSec) * time.Second
+	if capMix.Timeout != wantMix {
+		t.Fatalf("mixed spawn capability=%s, want %s (task b has no explicit timeout → default raises the call budget)", capMix.Timeout, wantMix)
+	}
+	// No tasks: falls back to default.
+	capEmpty := tool.Capability(json.RawMessage(`{}`))
+	if capEmpty.Timeout != wantMix {
+		t.Fatalf("empty spawn capability=%s, want %s (no tasks → default)", capEmpty.Timeout, wantMix)
+	}
+}
+
+// TestTaskTimeoutFloorSpawnPerTaskExplicit pins the new contract for
+// spawn_agent's per-task timeout_seconds: an explicit positive value IS the
+// task's budget (not floored to the configured default), 0 falls back to the
+// configured default, and a huge value clamps to MaxTimeoutSeconds (R2B-1).
+func TestTaskTimeoutFloorSpawnPerTaskExplicit(t *testing.T) {
 	tool := &spawnAgentTool{
 		cfg:      config.SubagentConfig{DefaultTimeout: 600},
 		agentReg: testAgentRegistry(t, "worker"),
@@ -90,14 +123,14 @@ func TestTaskTimeoutFloorSpawnPerTaskRaiseOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]time.Duration{
-		"short":  600 * time.Second,
-		"raised": 900 * time.Second,
-		"plain":  600 * time.Second,
+		"short":  5 * time.Second,   // explicit value honored directly
+		"raised": 900 * time.Second, // explicit value honored directly
+		"plain":  600 * time.Second, // 0 → configured default
 		"huge":   time.Duration(config.MaxTimeoutSeconds) * time.Second,
 	}
 	for _, task := range tasks {
 		if got := task.Timeout; got != want[task.ID] {
-			t.Fatalf("spawn task %q timeout=%s, want %s (raise-only vs batch budget)", task.ID, got, want[task.ID])
+			t.Fatalf("spawn task %q timeout=%s, want %s", task.ID, got, want[task.ID])
 		}
 		if task.Timeout <= 0 {
 			t.Fatalf("spawn task %q timeout=%s must be a positive duration, never a wrapped-negative one", task.ID, task.Timeout)

@@ -33,7 +33,7 @@ type delegateTool struct {
 func (t *delegateTool) Capability(args json.RawMessage) tools.Capability {
 	// Advertise a finite orchestration budget so multi_step delegate is not
 	// capped by the default 60s agent ToolTimeout.
-	sec := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, delegateTimeoutOverride(args))
+	sec := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, delegateTimeoutOverride(args))
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,
 		ResourceKey: handlerDelegate,
@@ -102,7 +102,7 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		handlerName = handlerMultiStep
 	}
 
-	timeoutSec := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
+	timeoutSec := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
 	timeout := time.Duration(timeoutSec) * time.Second
 
 	input, _ := json.Marshal(params.Task)

@@ -29,18 +29,18 @@ type spawnTaskParams struct {
 // resolving each task's timeout and skill permission and propagating the
 // caller's identity and depth.
 func (t *spawnAgentTool) buildSpawnTasks(params []spawnTaskParams, caller runtime.Caller) ([]subagents.Task, error) {
-	batchTimeout := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)
 	subTasks := make([]subagents.Task, len(params))
 	for i, pt := range params {
 		input, err := json.Marshal(pt.Prompt)
 		if err != nil {
 			return nil, fmt.Errorf("spawn_agent: marshal input: %w", err)
 		}
-		// Per-task timeout is raise-only and clamped through EffectiveTimeoutSec:
-		// it may extend, never shrink, the batch budget, and the MaxTimeoutSeconds
-		// clamp stops a huge model-supplied timeout_seconds from wrapping
-		// time.Duration negative (R2B-1).
-		taskTimeout := config.EffectiveTimeoutSec(batchTimeout, pt.TimeoutSeconds)
+		// Per-task timeout: an explicit timeout_seconds IS the task's budget
+		// (not floored to the 12h default); 0 falls back to the configured
+		// default via EffectiveTimeoutSec. The MaxTimeoutSeconds clamp stops a
+		// huge model-supplied timeout_seconds from wrapping time.Duration
+		// negative (R2B-1).
+		taskTimeout := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, pt.TimeoutSeconds)
 		route, err := resolveTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)
 		if err != nil {
 			return nil, fmt.Errorf("spawn_agent: %w", err)

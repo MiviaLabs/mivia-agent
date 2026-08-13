@@ -44,43 +44,6 @@ func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
 	}
 }
 
-// dispatchOrchestrationSlackSec is the headroom the whole-call budget gets over
-// the longest task in the batch, so the call outlives the work it is waiting on.
-const dispatchOrchestrationSlackSec = 15
-
-// timeoutHint is the model-facing guidance for timeout_seconds on the
-// orchestration tools (dispatch_tasks, spawn_agent, delegate). It names the
-// effective default so agents omit the parameter (or pass 0) instead of
-// guessing a small budget, and states the raise-only rule so a guessed value
-// never tightens a tool's own declared budget.
-func timeoutHint() string {
-	return fmt.Sprintf("Omit or pass 0 to use the configured default (%.0fh). A value may only extend the budget, never shorten it.",
-		float64(config.DefaultOrchestrationTimeoutSec)/3600)
-}
-
-// dispatchOrchestrationSec picks the wall-clock budget for the whole
-// dispatch_tasks invocation from config, batch timeout_seconds, and any
-// per-task timeout_seconds (max wins). Always positive.
-func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
-	var params struct {
-		TimeoutSeconds int `json:"timeout_seconds"`
-		Tasks          []struct {
-			TimeoutSeconds int `json:"timeout_seconds"`
-		} `json:"tasks"`
-	}
-	_ = json.Unmarshal(args, &params)
-	overrides := make([]int, 0, 1+len(params.Tasks))
-	overrides = append(overrides, params.TimeoutSeconds)
-	for _, task := range params.Tasks {
-		overrides = append(overrides, task.TimeoutSeconds)
-	}
-	// Headroom over the longest single task. Without it the whole-call budget and
-	// each task's own budget are the same number, and the agent loop arms the
-	// call's clock before the pool arms the task's - so the outer deadline always
-	// fired first, Join returned ctx.Err() with no result, and a batch reported a
-	// bare error instead of the per-task results it was about to produce.
-	return config.EffectiveTimeoutSec(defaultTimeout, overrides...) + dispatchOrchestrationSlackSec
-}
 func (t *dispatchTasksTool) Name() string { return toolDispatchTasks }
 func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
@@ -130,8 +93,16 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 
 	// Always resolve a positive batch timeout so multi_step / pool work is
-	// bounded even when default_timeout_seconds is 0.
-	batchTimeout := config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
+	// bounded even when default_timeout_seconds is 0. An explicit
+	// timeout_seconds IS the budget — not floored to the 12h default. Per-task
+	// overrides can still raise the batch budget so a task never outlives it.
+	overrides := make([]int, 0, len(params.Tasks))
+	for _, p := range params.Tasks {
+		if p.TimeoutSeconds > 0 {
+			overrides = append(overrides, p.TimeoutSeconds)
+		}
+	}
+	batchTimeout := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds, overrides...)
 
 	tasks, err := t.buildTasks(params.Tasks, batchTimeout)
 	if err != nil {
@@ -221,11 +192,11 @@ func (t *dispatchTasksTool) buildTasks(params []dispatchTaskParam, batchTimeout 
 			return nil, fmt.Errorf("dispatch_tasks: %w", err)
 		}
 		input, _ := json.Marshal(pt.Prompt)
-		// Per-task timeout is raise-only and clamped through EffectiveTimeoutSec:
-		// it may extend, never shrink, the batch budget (which is already floored
-		// at the config default / 12h safety ceiling), and the MaxTimeoutSeconds
-		// clamp stops a huge model-supplied timeout_seconds from wrapping
-		// time.Duration negative (R2B-1).
+		// Per-task timeout is raise-only relative to the batch budget:
+		// a task may extend, never shrink, the batch budget (which already
+		// reflects an explicit timeout_seconds or the 12h default), and the
+		// MaxTimeoutSeconds clamp stops a huge model-supplied timeout_seconds
+		// from wrapping time.Duration negative (R2B-1).
 		taskTimeout := config.EffectiveTimeoutSec(batchTimeout, pt.TimeoutSeconds)
 		providerName, model := resolvedTaskBinding(route, t.providerName, t.model)
 		outSchema, inSchema, err := resolveTaskSchemas(pt.OutputSchema, pt.InputSchema, route, t.skillReg)
