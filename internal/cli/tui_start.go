@@ -196,7 +196,12 @@ func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (str
 	bridgeCB := agentEventBridgeCallback(bridge)
 	genToken := SetSubagentProgress(bridgeCB)
 	if m.eventBus != nil {
-		m.eventBus.Publish(events.Event{Kind: events.KindTurnStart, Timestamp: time.Now(), TurnID: turnID, Detail: display, Identity: sessionIdentity(m.session, m.agentState, m.session.CurrentModelGeneration())})
+		// SessionID is required, not cosmetic: internal/hub's chatHubSink
+		// filters relayed KindTurnStart events by SessionID (a hub's
+		// workspace can be shared by several unrelated sessions at once),
+		// so an omitted SessionID here would make this session's own
+		// turn-start invisible to a legitimately-relaying observer.
+		m.eventBus.Publish(events.Event{Kind: events.KindTurnStart, Timestamp: time.Now(), SessionID: m.session.SessionID, TurnID: turnID, Detail: display, Identity: sessionIdentity(m.session, m.agentState, m.session.CurrentModelGeneration())})
 	}
 	go func() {
 		defer m.workerWG.Done()
