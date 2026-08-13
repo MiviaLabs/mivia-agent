@@ -3,11 +3,15 @@
 // stack_part on chunk-mode runs; delivery honors them when present and rejects
 // invalid values with a repairable PRMetadataError, so the delivery repair
 // loop receives a delivery hint naming the problem and fixes it before the
-// next attempt. Absent inputs leave single-PR delivery unchanged.
+// next attempt. An over-limit delivered diff is a repairable DiffSizeError
+// (deliberately NOT a PRMetadataError: metadata edits cannot shrink a diff,
+// so repair routing must send it to a step that edits the worktree). Absent
+// inputs leave single-PR delivery unchanged.
 package delivery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -124,6 +128,45 @@ func resolveStackingInputs(req Request) (Request, error) {
 	return req, nil
 }
 
+// DiffSizeError marks a REPAIRABLE delivery rejection whose cause is a chunk
+// diff that exceeds the stacking hard limit. It is deliberately NOT a
+// PRMetadataError: a metadata step cannot shrink a diff, so delivery repair
+// routing (delivery.RepairTarget) sends it to the workflow's diff-size repair
+// step, which edits the worktree. A RefusalError is permanent; a
+// DiffSizeError returns the run to the agent for a diff-size fix.
+type DiffSizeError struct{ Reason string }
+
+// Error implements error.
+func (e *DiffSizeError) Error() string { return e.Reason }
+
+// IsDiffSizeError reports whether err is a DiffSizeError (possibly wrapped).
+func IsDiffSizeError(err error) bool {
+	var de *DiffSizeError
+	return errors.As(err, &de)
+}
+
+// MeasureChunkDiffSize measures the actual added+deleted line count of the
+// staged worktree diff vs base, using the same staging and numstat rules the
+// delivery gate applies (--find-renames, --ignore-all-space, untracked files
+// included via git add -A). hard <= 0 means the gate is off and 0 is returned
+// without touching git. It is shared by the delivery gate and the controller's
+// post-implement fail-fast gate so both measure identically.
+func MeasureChunkDiffSize(ctx context.Context, git GitRunner, gc GitContext, baseCommit string, hard int) (int, error) {
+	if hard <= 0 {
+		return 0, nil
+	}
+	if _, err := git.Run(ctx, gc, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
+		return 0, fmt.Errorf("cannot stage the delivery diff for size measurement: %w", err)
+	}
+	out, err := git.Run(ctx, gc, "diff", "--cached",
+		"--no-ext-diff", "--no-textconv", "--numstat",
+		"--find-renames", "--ignore-all-space", baseCommit)
+	if err != nil {
+		return 0, fmt.Errorf("cannot measure the delivery diff size: %w", err)
+	}
+	return numstatSize(out)
+}
+
 // checkChunkDiffSize enforces the stacking hard diff-size limit on the actual
 // PR branch diff vs the admitted base. Without a resolved stacking
 // configuration (StackingHardLines <= 0) the gate is OFF and single-PR
@@ -132,28 +175,19 @@ func resolveStackingInputs(req Request) (Request, error) {
 // --ignore-all-space). The change is staged with git add -A first - exactly
 // what commitOrResume stages - so untracked files are measured too: a bare
 // `git diff <commit>` ignores untracked files and would under-count a chunk
-// that adds files. An over-limit diff is a repairable PRMetadataError: the
+// that adds files. An over-limit diff is a repairable DiffSizeError: the
 // repair loop shrinks the chunk and delivers again.
 func checkChunkDiffSize(ctx context.Context, git GitRunner, req Request) error {
 	hard := req.Policy.StackingHardLines
 	if hard <= 0 {
 		return nil
 	}
-	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
-		return fmt.Errorf("cannot stage the delivery diff for size measurement: %w", err)
-	}
-	out, err := git.Run(ctx, req.GitCtx, "diff", "--cached",
-		"--no-ext-diff", "--no-textconv", "--numstat",
-		"--find-renames", "--ignore-all-space", req.BaseCommit)
-	if err != nil {
-		return fmt.Errorf("cannot measure the delivery diff size: %w", err)
-	}
-	size, err := numstatSize(out)
+	size, err := MeasureChunkDiffSize(ctx, git, req.GitCtx, req.BaseCommit, hard)
 	if err != nil {
 		return err
 	}
 	if size > hard {
-		return &PRMetadataError{Reason: fmt.Sprintf("delivery: chunk diff size %d exceeds hard limit %d; shrink the chunk so the delivered diff fits", size, hard)}
+		return &DiffSizeError{Reason: fmt.Sprintf("delivery: chunk diff size %d exceeds hard limit %d; shrink the chunk so the delivered diff fits", size, hard)}
 	}
 	return nil
 }

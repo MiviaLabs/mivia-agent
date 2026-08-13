@@ -137,6 +137,9 @@ func formatDelivery(b *strings.Builder, c *compiler.CompiledWorkflow) {
 	if c.Delivery.OnPRMetadataFailure != "" {
 		b.WriteString(fmt.Sprintf("  on_pr_metadata_failure: %s\n", c.Delivery.OnPRMetadataFailure))
 	}
+	if c.Delivery.OnDiffSizeFailure != "" {
+		b.WriteString(fmt.Sprintf("  on_diff_size_failure: %s\n", c.Delivery.OnDiffSizeFailure))
+	}
 }
 
 // FormatWorkflowValidate formats a validation result for a single workflow.

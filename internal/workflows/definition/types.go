@@ -166,6 +166,11 @@ type Delivery struct {
 	// failures. PR metadata is the pull-request title and summary. An empty
 	// value makes the run use OnFailure for PR-metadata failures.
 	OnPRMetadataFailure string `toml:"on_pr_metadata_failure" json:"on_pr_metadata_failure,omitempty"`
+	// OnDiffSizeFailure names the step that repairs an over-limit delivered
+	// diff (a stacking hard_lines rejection). An empty value makes the run use
+	// OnFailure for diff-size failures, which keeps pre-existing stacking
+	// workflows on their declared generic repair step.
+	OnDiffSizeFailure string `toml:"on_diff_size_failure" json:"on_diff_size_failure,omitempty"`
 	// MaxRepairs bounds the delivery -> repair -> success -> delivery cycle:
 	// how many times a delivery failure may route back into the workflow's
 	// repair step before the run settles terminal (delivery_failed) with the

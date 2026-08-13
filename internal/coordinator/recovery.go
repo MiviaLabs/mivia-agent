@@ -140,15 +140,39 @@ func (c *coordinator) resumeInterruptedRun(ctx context.Context, runID string, li
 	// results, so the resumed run still reports one result per task.
 	opts = append(opts, withRunPolicy(snap.Policy))
 	h := c.newRunHandle(runID, "", newAttempts, "", false, opts...)
-	h.mu.Lock()
-	h.localActor = true
-	h.mu.Unlock()
-
-	// Run the DAG in background, which will execute pending/retry tasks.
-	go c.executeResumedRun(h, originalTasks, alreadyDone)
+	c.startResumedExecution(h, originalTasks, alreadyDone)
 
 	claimed = false
 	return h, nil
+}
+
+// startResumedExecution marks h as the run's local actor and starts executing
+// it in the background. The caller must already hold the run's execution
+// claim; ownership transfers to the executeResumedRun goroutine, which
+// heartbeats and releases it.
+func (c *coordinator) startResumedExecution(h *RunHandle, tasks []subagents.Task, alreadyDone map[string]subagents.Result) {
+	h.mu.Lock()
+	h.localActor = true
+	h.mu.Unlock()
+	go c.executeResumedRun(h, tasks, alreadyDone)
+}
+
+// resumeExecutionOnHandle drives the same interrupted-task marking/requeue
+// resumeInterruptedRun performs, but onto an already-registered handle
+// instead of minting a new one. It is used when a handle was created earlier
+// as a wait-only join (watchJoinedRun) and then wins a later reclaim of the
+// run's execution claim: HandleForRun already resolves to h, so a fresh
+// newRunHandle would be a second, conflicting registration for the same run.
+// The caller must already hold the run's execution claim.
+func (c *coordinator) resumeExecutionOnHandle(ctx context.Context, h *RunHandle, runID string, failInterrupted bool) error {
+	c.resumeMu.Lock()
+	defer c.resumeMu.Unlock()
+	tasks, alreadyDone, err := c.resumeValidateAndMark(ctx, runID, nil, failInterrupted)
+	if err != nil {
+		return err
+	}
+	c.startResumedExecution(h, tasks, alreadyDone)
+	return nil
 }
 
 // resumeValidateAndMark reads the interrupted run's tasks, validates them,

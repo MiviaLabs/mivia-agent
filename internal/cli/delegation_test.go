@@ -87,6 +87,48 @@ func TestDelegateToolRepeatedCallsUseIndependentInvocationKeys(t *testing.T) {
 		t.Fatalf("subagent calls=%d, want 2", got)
 	}
 }
+
+// TestDelegateToolRepeatedCallsUseIndependentTaskIDs guards against a
+// regression to the fixed "d1" Task.ID delegateTool.Execute used to assign
+// on every call - a consumer that keys off Origin.TaskID (see
+// agent.EventOrigin's doc comment - the desktop app's chat transcript is
+// exactly this) would merge two concurrent delegate calls' subagent runs
+// into one. InvocationKey was already unique (see the sibling test above);
+// this checks the task ID actually persisted to the ledger, which is what
+// Origin.TaskID is stamped from.
+func TestDelegateToolRepeatedCallsUseIndependentTaskIDs(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	comp := &mockDelegateCompleter{name: "test", response: "independent"}
+	d := newTestDelegateDispatcher(comp)
+	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: repo}
+	for _, task := range []string{"first", "second"} {
+		if _, err := tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"task":%q}`, task))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	runs, err := repo.ListRuns(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("got %d runs, want 2", len(runs))
+	}
+	seen := map[string]bool{}
+	for _, run := range runs {
+		if len(run.Tasks) != 1 {
+			t.Fatalf("run %s has %d tasks, want 1", run.RunID, len(run.Tasks))
+		}
+		id := run.Tasks[0].TaskID
+		if id == "d1" {
+			t.Fatalf("task id is the old fixed placeholder %q, want a per-call unique id", id)
+		}
+		if seen[id] {
+			t.Fatalf("task id %q reused across two delegate calls in the same session", id)
+		}
+		seen[id] = true
+	}
+}
 func (m *mockDelegateCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
 	return m.Chat(ctx, req)
 }

@@ -230,9 +230,26 @@ Delivery honors the reserved stacking inputs when present:
 - The actual diff size is checked against `hard_lines` after staging. The
   measurement is the added+deleted line count of `git diff --cached`
   (`--find-renames`, `--ignore-all-space`). A diff exceeding the hard limit
-  is a repairable `PRMetadataError`; the repair loop shrinks the chunk and
-  delivers again. Without a stacking configuration the gate is off and
-  single-PR delivery is unchanged.
+  is a repairable `DiffSizeError`: the run returns to the diff-size repair
+  step (`on_diff_size_failure`, falling back to `on_failure`), the agent
+  shrinks or splits the chunk in the worktree so the delivered diff fits,
+  and delivery runs again. The cycle is bounded by `max_repairs`; only an
+  exhausted repair cycle settles the run terminal (`delivery_failed`).
+  Without a stacking configuration the gate is off and single-PR delivery
+  is unchanged.
+- `on_diff_size_failure` names the step that repairs an over-limit diff,
+  exactly like `on_failure` names the generic repair step; an empty value
+  falls back to `on_failure`, so existing stacking workflows keep their
+  declared repair step. The engine additionally runs a post-implement
+  diff-size gate right after the implement step when the run's git context
+  is pinned (fresh starts and resumes both wire it): an over-limit worktree
+  diff reroutes the succeeded implement step to the SAME repair step, so
+  the chunk is broken down BEFORE the panel and preflight pipeline run on
+  it, instead of after a full pipeline pass and a delivery rejection. A
+  diff that slips past the early gate is still caught at delivery and
+  routed to the repair step there. The run is never failed for size alone:
+  the repair step (an agent step) always gets the chance to shrink or split
+  the change.
 
 ### Driver CLI and recovery model
 

@@ -30,7 +30,30 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 	if len(rest) != 0 {
 		return fmt.Errorf("stack drive: unexpected argument %q", rest[0])
 	}
-	prepared, err := prepareWorkflowRun(name, workspaceRoot, configPath, nil)
+	// The driver never runs the plan run itself, but every chunk run must
+	// replay the plan run's declared inputs (D3). Load the stack's plan run
+	// first so its inputs can be threaded through prepare (required-input
+	// validation) and into every chunk admission.
+	_, repo, closeEarly, err := openStackLedger(workspaceRoot, configPath)
+	if err != nil {
+		return fmt.Errorf("stack drive: %w", err)
+	}
+	stackID, err := resolveStackID(repo, name, stackFlag)
+	if err != nil {
+		closeEarly()
+		return err
+	}
+	planInputs, err := stackPlanInputs(repo, stackID)
+	closeEarly()
+	if err != nil {
+		return fmt.Errorf("stack drive: %w", err)
+	}
+
+	rawInputs := make([]string, 0, len(planInputs))
+	for k, v := range planInputs {
+		rawInputs = append(rawInputs, k+"="+v)
+	}
+	prepared, err := prepareWorkflowRun(name, workspaceRoot, configPath, rawInputs)
 	if err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
@@ -44,7 +67,7 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 	if !wf.DeliveryActive() {
 		return fmt.Errorf("stack drive: workflow %q has no active delivery policy; stacking requires chunk PR delivery", name)
 	}
-	stackID, err := resolveStackID(prepared.repo, name, stackFlag)
+	stackID, err = resolveStackID(prepared.repo, name, stackFlag)
 	if err != nil {
 		return err
 	}
@@ -68,204 +91,42 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 	if err := seedStackLedger(ledger, stackID, chunks); err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
-	return driveStack(prepared, ledger, stackID, chunks, stdout, stderr)
+	return driveStack(prepared, ledger, stackID, chunks, planInputs, false, stdout, stderr)
 }
 
-// driveStack reconciles the stack and admits chunk runs in topological order
-// until the stack is fully merged or the driver must stop for a human grant
-// (policy A) or a failure (halt-on-failure). It is resumable: re-running
-// drive after a stop picks up from durable state.
-func driveStack(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, stdout, stderr io.Writer) error {
-	repo := prepared.repo
+// driveStackToCompletion drives the stack until every chunk is merged and the
+// final integration run is published, waiting out publish grants (policy A)
+// and merge-queue times instead of halting for a re-invocation. It is the
+// in-command stacking engine: one `workflow run` invocation owns the whole
+// stack (plan -> chunks -> per-chunk PRs -> integration) and only returns when
+// the stack is complete, a chunk failed terminally, or the process is
+// interrupted (the stack stays resumable from durable state).
+func driveStackToCompletion(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	checker := gitMergeChecker{
 		git: workflowDeliverGit,
 		gc:  delivery.GitContext{Dir: prepared.root, GitDir: filepath.Join(prepared.root, ".git")},
 	}
-	actions, err := reconcileStack(ledger, repo, checker, stackID, stackMaxChunkAttempts)
-	if err != nil {
-		return fmt.Errorf("stack drive: reconcile: %w", err)
-	}
-	for _, a := range actions {
-		switch a.Action {
-		case stackActionMarkFailed:
-			return fmt.Errorf("stack drive: stack %s halted: chunk %s failed terminally (%s)", stackID, a.TaskID, a.Note)
-		case stackActionReopen:
-			fmt.Fprintf(stdout, "chunk=%s reopened (%s)\n", a.TaskID, a.Note)
-		case stackActionMarkMerged:
-			fmt.Fprintf(stdout, "chunk=%s marked merged (git)\n", a.TaskID)
-		case stackActionDeliver:
-			fmt.Fprintf(stdout, "chunk=%s run reached delivery; publish grant required\n", a.TaskID)
-		}
-	}
-
-	order, err := stackTopologicalOrder(chunks)
-	if err != nil {
-		return fmt.Errorf("stack drive: %w", err)
-	}
-	byID, err := stackTaskMap(ledger, stackID)
-	if err != nil {
-		return err
-	}
-	merged := stackMergedSet(byID)
-
-	prBase, err := stackPRBase(prepared.compiled)
-	if err != nil {
-		return err
-	}
 	policy := prepared.compiled.Stacking.MergePolicy
-
 	for {
-		wave := nextAdmissionWave(byID, merged, order)
-		if len(wave) == 0 {
-			break
+		// One drive pass admits the next ready wave and applies the merge
+		// policy; it halts when a chunk needs a grant or a merge to land.
+		if err := driveStack(prepared, ledger, stackID, chunks, planInputs, allowPublish, stdout, stderr); err != nil {
+			return err
 		}
-		for _, chunkID := range wave {
-			index := chunkPartIndex(chunkID, order)
-			part := fmt.Sprintf("%d/%d", index+1, len(order))
-			halt, err := driveChunk(prepared, ledger, stackID, chunkID, prBase, part, policy, stdout, stderr)
-			if err != nil {
-				return fmt.Errorf("stack drive: chunk %s: %w", chunkID, err)
-			}
-			if halt {
-				return nil
-			}
-			// Refresh durable state after the chunk settled so the next
-			// wave sees freshly merged dependencies.
-			byID, err = stackTaskMap(ledger, stackID)
-			if err != nil {
-				return err
-			}
-			merged = stackMergedSet(byID)
+		byID, err := stackTaskMap(ledger, stackID)
+		if err != nil {
+			return err
+		}
+		if allChunksMerged(chunks, stackMergedSet(byID)) {
+			return waitIntegrationRunSettled(prepared, ledger, checker, stackID, policy, allowPublish, stdout, stderr)
+		}
+		// The pass halted before completion: wait for the outstanding chunk's
+		// delivery + merge (or a terminal failure), then drive again. With
+		// merge_policy=auto the wait also merges published PRs itself.
+		if err := waitForChunkMerges(prepared.repo, ledger, checker, stackID, chunks, policy, stdout, stderr); err != nil {
+			return err
 		}
 	}
-
-	if !allChunksMerged(chunks, merged) {
-		fmt.Fprintf(stdout, "stack %s: chunks remain unmerged; re-run `mivia stack drive` after merges land\n", stackID)
-		return nil
-	}
-	fmt.Fprintf(stdout, "all chunks merged; admitting the final integration run\n")
-	return driveIntegrationRun(prepared, ledger, stackID, prBase, policy, stdout, stderr)
-}
-
-// driveChunk admits and runs one chunk, then applies the merge policy.
-// halt=true means the driver must stop: policy A waits for the human publish
-// grant, and any terminal failure halts the stack (halt-on-failure).
-func driveChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID, prBase, part, policy string, stdout, stderr io.Writer) (bool, error) {
-	// A live run already exists for this chunk's key: leave it alone (F15 -
-	// never admit a duplicate).
-	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
-		if isResumableRunStatus(run.Status) {
-			fmt.Fprintf(stdout, "chunk=%s run=%s already in flight (%s); re-run drive after it settles\n", chunkID, run.RunID, run.Status)
-			return true, nil
-		}
-	}
-	_ = ledger.TransitionTask(stackID, chunkID, stackStatusRunning)
-	inputs, snapshot := chunkRunInputs(chunkID, prBase, part)
-	snap, err := admitStackChunkRun(prepared, stackID, chunkID, inputs, snapshot, stdout, stderr)
-	if err != nil {
-		attempts := stackAttemptCount(ledger, stackID, chunkID)
-		act := reopenOrFail(tasks.Task{ID: chunkID, Attempts: attempts}, stackMaxChunkAttempts)
-		_ = applyReconcileAction(ledger, stackID, act)
-		if act.Action == stackActionMarkFailed {
-			return true, fmt.Errorf("chunk %s failed terminally after %d attempts; stack halts", chunkID, attempts)
-		}
-		return true, fmt.Errorf("chunk %s run failed; reopened for retry (%s)", chunkID, act.Note)
-	}
-	fmt.Fprintf(stdout, "chunk=%s run=%s status=%s\n", chunkID, snap.RunID, snap.Status)
-	switch snap.Status {
-	case workflowledger.RunStatusDeliveryPending:
-		if policy == "auto" {
-			if err := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, snap.RunID, true, false, stdout, stderr); err != nil {
-				return true, fmt.Errorf("chunk %s auto-delivery failed: %w", chunkID, err)
-			}
-			_ = ledger.TransitionTask(stackID, chunkID, stackStatusPublished)
-			fmt.Fprintf(stdout, "chunk=%s published; merge queue will merge; re-run drive after the merge lands\n", chunkID)
-			return true, nil // sequential create-merge (v1): one chunk per drive
-		}
-		_ = ledger.TransitionTask(stackID, chunkID, stackStatusReviewed)
-		fmt.Fprintf(stdout, "chunk=%s awaits the publish grant: mivia workflow deliver %s --allow-publish\n", chunkID, snap.RunID)
-		return true, nil // policy A: the human publish grant is the single checkpoint (D1)
-	case workflowledger.RunStatusSucceeded:
-		_ = ledger.TransitionTask(stackID, chunkID, stackStatusImplemented)
-		return false, nil
-	case workflowledger.RunStatusFailed, workflowledger.RunStatusCanceled, workflowledger.RunStatusTimedOut, workflowledger.RunStatusDeliveryFailed:
-		attempts := stackAttemptCount(ledger, stackID, chunkID)
-		act := reopenOrFail(tasks.Task{ID: chunkID, Attempts: attempts}, stackMaxChunkAttempts)
-		_ = applyReconcileAction(ledger, stackID, act)
-		if act.Action == stackActionMarkFailed {
-			return true, fmt.Errorf("chunk %s failed terminally after %d attempts; stack halts", chunkID, attempts)
-		}
-		fmt.Fprintf(stdout, "chunk=%s run failed; reopened for retry (%s)\n", chunkID, act.Note)
-		return true, nil
-	default:
-		fmt.Fprintf(stdout, "chunk=%s run settled at %s; leaving for reconciliation\n", chunkID, snap.Status)
-		return true, nil
-	}
-}
-
-// admitStackChunkRun admits and runs one chunk-mode workflow run with the
-// chunk's stable invocation key (F15). It reuses the exact controller build
-// path the workflow CLI uses; the invocation key is the only addition.
-func admitStackChunkRun(prepared *preparedWorkflowRun, stackID, chunkID string, inputs map[string]any, inputSnapshot map[string]string, stdout, stderr io.Writer) (workflowledger.RunSnapshot, error) {
-	runID := newCLIWorkflowRunID()
-	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
-	if err != nil {
-		return workflowledger.RunSnapshot{}, err
-	}
-	defer finishExecution()
-	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, inputs, inputSnapshot, prepared.raw, runID, nil, nil)
-	if err != nil {
-		return workflowledger.RunSnapshot{}, err
-	}
-	defer built.Dispatcher.Close()
-	admitted := false
-	defer func() {
-		if !admitted {
-			built.Cleanup()
-		}
-	}()
-	key, err := stackAdmissionKey(stackID, chunkID)
-	if err != nil {
-		return workflowledger.RunSnapshot{}, err
-	}
-	built.Admission.InvocationKey = key
-	if err := built.Controller.SetAdmission(built.Admission); err != nil {
-		return workflowledger.RunSnapshot{}, err
-	}
-	wireCLIWorkflowProgress(&built, stderr)
-	if err := built.Controller.Start(context.Background()); err != nil {
-		return workflowledger.RunSnapshot{}, err
-	}
-	admitted = true
-	snap, err := built.Controller.Run(context.Background())
-	if err != nil {
-		settleCLIRunFailure(prepared.repo, built.Controller.RunID, err)
-		return snap, err
-	}
-	return snap, nil
-}
-
-// driveIntegrationRun admits the final full-suite run (stack_mode=single runs
-// the workflow's own plan+implement steps inline) after every chunk merged.
-func driveIntegrationRun(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, prBase, policy string, stdout, stderr io.Writer) error {
-	chunkID := stackIntegrationChunkID
-	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
-		fmt.Fprintf(stdout, "integration run already exists: run=%s status=%s\n", run.RunID, run.Status)
-		return nil
-	}
-	inputs, snapshot := chunkRunInputs(chunkID, prBase, "")
-	snap, err := admitStackChunkRun(prepared, stackID, chunkID, inputs, snapshot, stdout, stderr)
-	if err != nil {
-		return fmt.Errorf("integration run failed: %w", err)
-	}
-	fmt.Fprintf(stdout, "integration run=%s status=%s\n", snap.RunID, snap.Status)
-	if snap.Status == workflowledger.RunStatusDeliveryPending && policy == "auto" {
-		return deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, snap.RunID, true, false, stdout, stderr)
-	}
-	if snap.Status == workflowledger.RunStatusDeliveryPending {
-		fmt.Fprintf(stdout, "integration run awaits the publish grant: mivia workflow deliver %s --allow-publish\n", snap.RunID)
-	}
-	return nil
 }
 
 // loadStackPlanOutput reads the succeeded decompose step output of a
@@ -310,24 +171,49 @@ func seedStackLedger(ledger *tasks.Store, stackID string, chunks []ChunkPlan) er
 }
 
 // chunkRunInputs builds the admission inputs and snapshot for one chunk-mode
-// run (D3 reserved inputs). The integration run uses the same shape with an
-// empty stack_part.
-func chunkRunInputs(chunkID, prBase, stackPart string) (map[string]any, map[string]string) {
-	inputs := map[string]any{
-		"stack_mode": "chunk",
-		"chunk":      chunkID,
-		"pr_base":    prBase,
+// run: the plan run's declared inputs replayed (D3) plus the engine's
+// reserved stack inputs, which win on any name collision. The integration run
+// uses the same shape with an empty stack_part.
+func chunkRunInputs(planInputs map[string]string, chunkID, prBase, stackPart string) (map[string]any, map[string]string) {
+	inputs := make(map[string]any, len(planInputs)+4)
+	snapshot := make(map[string]string, len(planInputs)+4)
+	for k, v := range planInputs {
+		inputs[k] = v
+		snapshot[k] = v
 	}
-	snapshot := map[string]string{
-		"stack_mode": "chunk",
-		"chunk":      chunkID,
-		"pr_base":    prBase,
-	}
+	inputs["stack_mode"] = "chunk"
+	inputs["chunk"] = chunkID
+	inputs["pr_base"] = prBase
+	snapshot["stack_mode"] = "chunk"
+	snapshot["chunk"] = chunkID
+	snapshot["pr_base"] = prBase
 	if stackPart != "" {
 		inputs["stack_part"] = stackPart
 		snapshot["stack_part"] = stackPart
 	}
 	return inputs, snapshot
+}
+
+// stackPlanInputs reads the plan run's admitted snapshot and returns the
+// workflow-declared inputs the chunks were decomposed from, so chunk runs can
+// replay them (D3: chunk runs replay the plan run's inputs).
+func stackPlanInputs(repo workflowledger.Repository, stackID string) (map[string]string, error) {
+	run, found, err := stackRunRef(repo, stackID, "")
+	if err != nil {
+		return nil, fmt.Errorf("plan run lookup: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("stack %s has no plan run", stackID)
+	}
+	raw, err := repo.GetRunSnapshot(context.Background(), run.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("plan run snapshot: %w", err)
+	}
+	snap, err := workflowledger.UnmarshalSnapshot(raw)
+	if err != nil {
+		return nil, fmt.Errorf("plan run snapshot decode: %w", err)
+	}
+	return snap.Inputs, nil
 }
 
 // stackPRBase returns the delivery base branch the chunk PRs branch from:

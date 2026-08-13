@@ -610,6 +610,7 @@ commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs
 | `on_failure` | Step to return to when delivery fails for a repairable reason |
 | `pr_title_policy` | Relative path to the project PR-title policy file (optional; default: `.mivia/policy/pr-title.toml`) |
 | `on_pr_metadata_failure` | Step to return to when the agent PR title or summary fails the policy check (optional; default: `on_failure`) |
+| `on_diff_size_failure` | Step to return to when the delivered diff exceeds the stacking `hard_lines` limit (optional; default: `on_failure`). The step shrinks or splits the chunk so the diff fits; the run is never failed for size alone |
 
 Publication requires the invoking user to grant `--allow-publish`. Without the grant, an eligible run finishes as `delivery_pending`.
 

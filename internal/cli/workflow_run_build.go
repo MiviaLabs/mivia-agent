@@ -228,6 +228,18 @@ func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.D
 	if err := ctrl.SetWorkDir(identity.Root); err != nil {
 		return nil, err
 	}
+	// Wire the run's pinned git context so the controller's post-implement
+	// diff-size gate can measure the worktree diff itself (the delivery-time
+	// gate remains authoritative either way). Best-effort: a worktree that
+	// cannot be verified keeps the gate off and delivery-time enforcement as
+	// the only guard.
+	if identity.Root != "" && identity.MainRoot != "" && identity.WorktreeName != "" {
+		if gitDir, gerr := delivery.VerifyGitDir(context.Background(), identity.MainRoot, identity.WorktreeName, identity.Root); gerr == nil {
+			if serr := ctrl.SetGitContext(delivery.GitContext{Dir: identity.Root, GitDir: gitDir}); serr != nil {
+				return nil, serr
+			}
+		}
+	}
 	if err := ctrl.SetPanelLimiter(processWorkflowServices().panelLimiter); err != nil {
 		return nil, err
 	}

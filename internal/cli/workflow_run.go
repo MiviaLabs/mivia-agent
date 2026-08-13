@@ -17,6 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -146,7 +147,46 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 		}
 		return finishWorkflowRunDelivery(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, built.Controller.RunID, name, mode, allowPublish, stdout, stderr)
 	}
+	// Stacking is part of the run: a stacking-enabled workflow whose plan run
+	// settles with a multi-chunk plan keeps driving from THIS invocation - the
+	// per-chunk runs, their stacked PRs, the merge waits, and the final
+	// integration run - until the whole stack is complete. No separate drive
+	// command is needed; the run itself owns the stack.
+	if err := maybeDriveSettledStack(prepared, built.Controller.RunID, allowPublish, stdout, stderr); err != nil {
+		return err
+	}
 	return nil
+}
+
+// maybeDriveSettledStack continues a just-settled plan-mode run into the
+// stacking driver when the run's decompose step produced a multi-chunk plan
+// (stack_mode=multi). It is a no-op for single/no_bug plans, runs without a
+// succeeded decompose output, and workflows without an active stacking
+// delivery policy.
+func maybeDriveSettledStack(prepared *preparedWorkflowRun, planRunID string, allowPublish bool, stdout, stderr io.Writer) error {
+	if prepared.compiled.Stacking == nil || !prepared.compiled.Stacking.Enabled {
+		return nil
+	}
+	if !prepared.compiled.DeliveryActive() {
+		return nil
+	}
+	planOutput, err := loadStackPlanOutput(prepared.repo, planRunID)
+	if err != nil {
+		return nil // no succeeded decompose output: nothing to stack
+	}
+	mode, chunks, err := parseStackPlanOutput(planOutput)
+	if err != nil {
+		return nil
+	}
+	if mode != "multi" || len(chunks) == 0 {
+		return nil
+	}
+	fmt.Fprintf(stdout, "stack %s: multi-chunk plan (%d chunks); driving the stack to completion\n", planRunID, len(chunks))
+	ledger := tasks.NewStore(prepared.store)
+	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
+		return fmt.Errorf("stack seed: %w", err)
+	}
+	return driveStackToCompletion(prepared, ledger, planRunID, chunks, prepared.inputSnapshot, allowPublish, stdout, stderr)
 }
 
 // preparedWorkflowRun is the immutable input of one workflow run invocation:

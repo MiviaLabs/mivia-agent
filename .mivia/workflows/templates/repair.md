@@ -26,6 +26,13 @@ Findings arrive as a ledger reference envelope (artifact + note). Resolve the fu
 For very large artifacts, use the offset and limit parameters to page through the output.
 If a delivery rejection routed this step, read the latest wf-delivery attempt listed by workflow_status with workflow_inspect and repair the reported error.
 
+A DIFF-SIZE rejection (the delivery hint says the chunk diff exceeds the stacking
+hard limit) is a SPLIT request, not a delete request: shrink this chunk's delivered
+diff below the limit by reverting the least-essential part of the change in the
+worktree (the whole worktree is measured), and record exactly what you deferred and
+why in `summary` so a follow-up chunk can pick it up. Never silently drop scope to
+pass the gate.
+
 The harness hint (delivery.failure evidence) tells you what to repair and whether a commit is involved. Your repair edits stay in the worktree; the delivery host commits them before the next delivery attempt, so do NOT run git commit or push yourself.
 
 Implement each required change exactly. Do not repeat a

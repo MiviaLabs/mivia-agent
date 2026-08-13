@@ -321,16 +321,36 @@ func TestStackingChunkModePreImplementEnvelopeOnlyBindingResolves(t *testing.T) 
 	}
 }
 
-func TestStackingChunkModeRejectsMandatoryPreImplementBinding(t *testing.T) {
+// TestStackingChunkModeMandatoryPreImplementBindingResolves pins the
+// chunk-mode grace for MANDATORY pre-implement bindings: the run starts at the
+// implement step, the plan phase ran in the parent run, and the chunk's own
+// description (inputs.chunk) carries the context - so a mandatory steps.plan
+// binding must ADMIT and resolve absent ("") at runtime instead of failing
+// with "missing prior output". This is what lets the shipped feature-delivery
+// workflow (whose implement and repair steps bind plan outputs mandatorily)
+// run as a stack of chunk runs without per-workflow TOML annotations.
+func TestStackingChunkModeMandatoryPreImplementBindingResolves(t *testing.T) {
 	binding := definition.ContextBinding{From: "steps.plan.output", As: "plan"}
 	wf := stackingFixtureWith(t, []definition.ContextBinding{binding})
-	runner := &scriptedRunner{}
-	_, err := newStackingController(t, runner, wf, chunkInputs())
-	if err == nil {
-		t.Fatal("mandatory pre-implement binding must be an admission error in chunk mode")
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": json.RawMessage(`{"files_changed":["a.go"]}`),
+		"verify#1":    json.RawMessage(`{"verdict":"approved"}`),
+	}}
+	ctrl, err := newStackingController(t, runner, wf, chunkInputs())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "optional") && !strings.Contains(err.Error(), "envelope_only") {
-		t.Fatalf("error %q must explain the optional/envelope_only requirement", err)
+	got, err := ctrl.Run(context.Background())
+	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run = %+v err=%v", got, err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) == 0 {
+		t.Fatal("no step ran")
+	}
+	if ev, ok := runner.calls[0].Evidence["plan"]; !ok || ev != "" {
+		t.Fatalf("mandatory plan binding resolved to %v; want empty string (chunk-mode grace)", runner.calls[0].Evidence["plan"])
 	}
 }
 

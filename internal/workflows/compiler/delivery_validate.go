@@ -43,6 +43,12 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 	if m := wf.Delivery.OnPRMetadataFailure; m != "" && !stepExists(wf, m) {
 		return fmt.Errorf("delivery: on_pr_metadata_failure %q names no step", m)
 	}
+	// on_diff_size_failure names the step that repairs an over-limit delivered
+	// diff (a stacking hard_lines rejection). A name that no step carries
+	// fails admission, like on_failure.
+	if d := wf.Delivery.OnDiffSizeFailure; d != "" && !stepExists(wf, d) {
+		return fmt.Errorf("delivery: on_diff_size_failure %q names no step", d)
+	}
 	// on_failure names the step the run returns to when delivery fails for a
 	// repairable reason. The existence checks for both targets run whether the
 	// policy is active or not: a non-empty name that no step carries is a
@@ -85,18 +91,18 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 }
 
 // validateDeliveryReentryHints requires every step a delivery failure can
-// re-enter (delivery.on_failure and delivery.on_pr_metadata_failure) to bind
-// delivery.failure, so the repair agent deterministically receives the
-// rejection that routed it. Without the hint, the repair step sees only the
-// gates that passed and delivery re-fails identically forever - the blind
-// loop observed when a commit-hook rejection routed a step whose context
-// carried only the passing structure-gate output. Inactive delivery blocks
-// never run, so they impose no binding requirement.
+// re-enter (delivery.on_failure, delivery.on_pr_metadata_failure and
+// delivery.on_diff_size_failure) to bind delivery.failure, so the repair
+// agent deterministically receives the rejection that routed it. Without the
+// hint, the repair step sees only the gates that passed and delivery re-fails
+// identically forever - the blind loop observed when a commit-hook rejection
+// routed a step whose context carried only the passing structure-gate output.
+// Inactive delivery blocks never run, so they impose no binding requirement.
 func validateDeliveryReentryHints(wf *definition.WorkflowFile) error {
 	if !deliveryActive(wf.Delivery) {
 		return nil
 	}
-	for _, target := range []string{wf.Delivery.OnFailure, wf.Delivery.OnPRMetadataFailure} {
+	for _, target := range []string{wf.Delivery.OnFailure, wf.Delivery.OnPRMetadataFailure, wf.Delivery.OnDiffSizeFailure} {
 		if target == "" || !stepExists(wf, target) {
 			continue
 		}
