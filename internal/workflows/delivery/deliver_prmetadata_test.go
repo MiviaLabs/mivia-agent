@@ -306,6 +306,50 @@ func TestDeliverCustomPRTitlePolicyPath(t *testing.T) {
 	})
 }
 
+// TestDeliverRepairedTitleWinsOverImplementReentry pins the metadata-repair
+// loop end to end at the delivery engine. The controller numbers attempts per
+// step and restarts at 1 for the repair step (controller/linear_attempts.go),
+// so in a real feature-delivery run a review-loop re-entry leaves implement
+// with a HIGHER attempt number than the repair step that fixed the title
+// later. The next delivery must validate the FIXED title (the last recorded
+// change summary), never implement#2's stale one: a resolution that preferred
+// the highest AttemptNo shadowed the repair's fix and every re-delivery
+// re-failed byte-identically until the repair budget burned. Regression for
+// the live loop; RED before the ResolveLatestChangeSummary recency fix.
+func TestDeliverRepairedTitleWinsOverImplementReentry(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	// Mirrors .mivia/policy/pr-title.toml's pattern (scopes omitted so the
+	// fixed title is not refused for an unrelated scope-list membership).
+	writeWorkspacePRTitlePolicy(t, repoRoot, worktreeRoot, `[title]
+pattern = '^(?P<type>feat|fix|docs|chore|refactor|test)(\((?P<scope>[a-z0-9-]+)\))?!?: .+$'
+`)
+	oldTitle := "textutil: add TruncateEllipsis rune-safe ellipsis truncation"
+	fixedTitle := "feat(textutil): add TruncateEllipsis rune-safe ellipsis truncation"
+	summary := "Adds the helper. Needed for delivery."
+	// implement#1 and #2 (review-loop re-entry) both carry the old
+	// non-conforming title; the repair step (attempt 1, recorded LAST) fixes
+	// it — the exact ledger shape a real repair loop leaves behind.
+	seedChangeSummary(t, repo, run, "implement", 1, `{"pr_title": "`+oldTitle+`", "pr_summary": "`+summary+`"}`)
+	seedChangeSummary(t, repo, run, "implement", 2, `{"pr_title": "`+oldTitle+`", "pr_summary": "`+summary+`"}`)
+	seedChangeSummary(t, repo, run, "repair_pr_metadata", 1, `{"pr_title": "`+fixedTitle+`", "pr_summary": "`+summary+`"}`)
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "add delivery"}))
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	if n := pr.createdCount(); n != 1 {
+		t.Fatalf("Create calls = %d, want 1", n)
+	}
+	if got := pr.created[0].Title; got != fixedTitle {
+		t.Fatalf("Title = %q, want the repaired title %q", got, fixedTitle)
+	}
+}
+
 // TestDeliverChangeSummaryLoadFailurePropagates: when the change-summary
 // output cannot be loaded, validatePRMetadata must propagate the storage
 // error instead of swallowing it and silently falling back to the legacy
