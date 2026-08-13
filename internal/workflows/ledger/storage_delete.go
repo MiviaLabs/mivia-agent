@@ -26,12 +26,6 @@ func (s *StorageRepository) DeleteRun(ctx context.Context, runID string) error {
 	delete(s.proj, runID)
 	s.mu.Unlock()
 
-	if _, err := s.store.Events(ctx, runID); err != nil {
-		s.mu.Lock()
-		s.proj[runID] = prev
-		s.mu.Unlock()
-		return err
-	}
 	seq := s.nextSequence(runID)
 	payload, err := marshalRunDeleted(runDeletedPayload{RunID: runID, DeletedAt: s.now()})
 	if err != nil {
