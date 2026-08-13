@@ -340,6 +340,22 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 
 For `mivia chat`, mivia uses one SQLite file for all durable chat state. It resolves `store_path` from the main repository configuration. A worktree never creates another chat database. When `store_path` is unset, mivia uses the main repository cache path.
 
+## Live cross-process relay
+
+Mivia processes that resolve the same store directory share a live event hub. `hub.lock` and `hub.sock` sit beside `context.db`: one process owns the hub and every other process joins it as a client, so a turn published by one process is relayed to all hub members. Two surfaces relay only when their effective configs agree on the store directory.
+
+To relay between a terminal `mivia chat` and another surface (for example the desktop app's chat), both must resolve the same `store_path` with a SQLite backend:
+
+```toml
+[subagents]
+store_backend = "sqlite"
+store_path = "~/.mivia/mivia-agent/context.db"
+```
+
+`store_backend = "sqlite"` is required: with the default `"memory"` backend a session has no SQLite context store, so the process never joins a hub. The hub is keyed to the store directory, not the workspace, so anything that moves `store_path` (for example a picked project's own `.mivia/mivia.toml` overriding the user config) moves the process to a different hub. The desktop app pins `MIVIA_CONFIG` to the user's global config (`~/.mivia/mivia.toml`), so setting `[subagents] store_backend` and `store_path` there makes its chat sidecars join the same hub as a terminal using that store.
+
+Rendering is directional today. Line-mode `--json` renders turns received from other processes as `external_*` NDJSON events. The TUI and classic REPL publish their own turns to the hub but do not yet render turns received from other processes.
+
 `default_request_timeout_seconds` never needs to be set below `default_timeout_seconds`. The outer orchestration timeout cancels the turn first. The internal 15-minute HTTP transport timeout is the hard per-request ceiling. It stops a single hung provider call from blocking a sub-agent beyond that limit.
 
 ## See also
