@@ -24,7 +24,7 @@ const workflowApprovalDefaultActor = "operator"
 // the run continue, mirroring executeWorkflowResume's preamble (file lock,
 // then controller resolution under the lock).
 func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 // approve, it reads the before-snapshot BEFORE building the controller, so an
 // unknown run fails fast at the before-read instead of inside the controller.
 func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}

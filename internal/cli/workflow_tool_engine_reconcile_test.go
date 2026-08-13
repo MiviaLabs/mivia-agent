@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -76,16 +77,36 @@ func TestSessionReconcileParkedRunsDelivers(t *testing.T) {
 
 // seedParkedStackingPlanRun creates a delivery_pending plan-mode run of the
 // mini-stack workflow (stacking enabled, delivery active,
-// delivery.deliver_plan_run unset = false) and seeds its stack ledger with a
-// two-chunk plan whose chunk tasks are still PLANNED - the exact shape a stack
-// drive leaves when it aborts AFTER seeding the ledger but BEFORE any chunk
-// merged. Seeding alone is NOT the completion marker: the recovery sweep must
-// keep such a run delivery_pending until the operator finishes the stack with
-// 'mivia stack drive'. Tests that model a drive that completed call
-// completeParkedStackDrive on top of this.
+// delivery.deliver_plan_run unset = false, merge_policy=auto) and seeds its
+// stack ledger with a two-chunk plan whose chunk tasks are still PLANNED - the
+// exact shape a stack drive leaves when it aborts AFTER seeding the ledger but
+// BEFORE any chunk merged. Seeding alone is NOT the completion marker: the
+// recovery sweep must keep such a run delivery_pending until the operator
+// finishes the stack with 'mivia stack drive'. Tests that model a drive that
+// completed call completeParkedStackDrive on top of this.
 func seedParkedStackingPlanRun(t *testing.T, root, storePath string, repo workflowledger.Repository) string {
 	t.Helper()
-	rawDefinition := []byte(miniStackWorkflowTOML)
+	return seedParkedStackingPlanRunTOML(t, root, storePath, repo, miniStackWorkflowTOML, "auto")
+}
+
+// seedGrantPolicyParkedStackingPlanRun is seedParkedStackingPlanRun under the
+// default grant merge policy (merge_policy unset = "approve"): the driver does
+// not auto-merge, so a delivery_pending integration run awaits the publish
+// grant and IS the driver's completion state (policy-A).
+func seedGrantPolicyParkedStackingPlanRun(t *testing.T, root, storePath string, repo workflowledger.Repository) string {
+	t.Helper()
+	grantTOML := strings.Replace(miniStackWorkflowTOML, "merge_policy = \"auto\"\n", "", 1)
+	return seedParkedStackingPlanRunTOML(t, root, storePath, repo, grantTOML, "approve")
+}
+
+// seedParkedStackingPlanRunTOML is the shared seeding body behind the
+// seedParkedStackingPlanRun variants: the given stacking-enabled delivery
+// plan-mode workflow (delivery.deliver_plan_run unset = false) admitted as a
+// delivery_pending run whose task ledger carries a two-chunk plan with every
+// chunk task still PLANNED.
+func seedParkedStackingPlanRunTOML(t *testing.T, root, storePath string, repo workflowledger.Repository, rawTOML, wantMergePolicy string) string {
+	t.Helper()
+	rawDefinition := []byte(rawTOML)
 	wf, _, err := definition.ParseWorkflowTOML(rawDefinition, "mini-stack.toml")
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +117,12 @@ func seedParkedStackingPlanRun(t *testing.T, root, storePath string, repo workfl
 	}
 	if compiled.Delivery == nil || compiled.Delivery.DeliverPlanRun {
 		t.Fatal("mini-stack workflow must keep the plan run unpublished (deliver_plan_run=false)")
+	}
+	if compiled.Stacking == nil {
+		t.Fatal("mini-stack workflow must resolve a stacking config")
+	}
+	if compiled.Stacking.MergePolicy != wantMergePolicy {
+		t.Fatalf("mini-stack workflow merge_policy = %q, want %q", compiled.Stacking.MergePolicy, wantMergePolicy)
 	}
 	snapshot := miniStackSnapshot(t, root, compiled, rawDefinition)
 	rawSnapshot, err := workflowledger.MarshalSnapshot(snapshot)
@@ -142,12 +169,13 @@ func seedParkedStackingPlanRun(t *testing.T, root, storePath string, repo workfl
 	return runID
 }
 
-// completeParkedStackDrive records the durable state a stack drive leaves when
-// it drives to completion: the succeeded decompose output the driver reads
-// (loadStackPlanOutput) plus every chunk task transitioned to merged - the
-// same state stackDriveCompleted checks before the recovery sweep settles a
-// skipped plan run.
-func completeParkedStackDrive(t *testing.T, storePath string, repo workflowledger.Repository, runID string) {
+// mergeParkedStackChunks records the durable merged-chunk state a stack drive
+// leaves once every chunk task is merged: the succeeded decompose output the
+// driver reads (loadStackPlanOutput) plus every chunk task transitioned to
+// merged. It models the crash/expiry window AFTER all chunks merged but
+// BEFORE the final integration run was admitted and settled - the window the
+// recovery sweep must never settle the plan run succeeded over.
+func mergeParkedStackChunks(t *testing.T, storePath string, repo workflowledger.Repository, runID string) {
 	t.Helper()
 	seedSucceededDecomposeAttempt(t, repo, runID, []byte(multiChunkPlanOutput))
 	store, err := openContextStorePath(storePath)
@@ -164,6 +192,63 @@ func completeParkedStackDrive(t *testing.T, storePath string, repo workflowledge
 		if err := ledger.TransitionTask(runID, c.ID, stackStatusMerged); err != nil {
 			t.Fatalf("transition chunk %s to merged: %v", c.ID, err)
 		}
+	}
+}
+
+// completeParkedStackDrive records the durable state a stack drive leaves when
+// it drives to completion: the succeeded decompose output the driver reads
+// (loadStackPlanOutput), every chunk task transitioned to merged, AND the
+// final integration run admitted and settled - the same state
+// waitIntegrationRunSettled resolves before the driver reports the stack
+// complete (stackDriveCompleted checks all three).
+func completeParkedStackDrive(t *testing.T, storePath string, repo workflowledger.Repository, runID string) {
+	t.Helper()
+	mergeParkedStackChunks(t, storePath, repo, runID)
+	seedStackIntegrationRun(t, repo, runID, workflowledger.RunStatusSucceeded)
+}
+
+// seedStackIntegrationRun seeds the final full-suite integration run a
+// completed stack drive admits once every chunk is merged: a run row whose
+// stable invocation key is <stack-id>:integration (stackAdmissionKey; runID
+// here IS the stack id, the keying loadStackPlanOutput uses), settled at the
+// given status. stackDriveCompleted requires this run to be found and settled
+// - not pending/running/waiting_approval - before a plan run counts as driven
+// to completion, mirroring waitIntegrationRunSettled's nil-return conditions.
+func seedStackIntegrationRun(t *testing.T, repo workflowledger.Repository, runID string, status workflowledger.RunStatus) {
+	t.Helper()
+	key, err := stackAdmissionKey(runID, stackIntegrationChunkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-" + runID + "-integration", InvocationKey: key, WorkflowName: "mini-stack",
+		Status: workflowledger.RunStatusPending,
+	}
+	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{Inputs: map[string]string{"task": "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(context.Background(), run, raw); err != nil {
+		t.Fatal(err)
+	}
+	step := func(to workflowledger.RunStatus) {
+		t.Helper()
+		stored, err := repo.GetRun(context.Background(), run.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompareAndSetRunStatus(context.Background(), run.RunID, stored.Version, to, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	switch status {
+	case workflowledger.RunStatusRunning:
+		step(workflowledger.RunStatusRunning)
+	case workflowledger.RunStatusDeliveryPending, workflowledger.RunStatusSucceeded:
+		step(workflowledger.RunStatusRunning)
+		step(status)
+	default:
+		t.Fatalf("seedStackIntegrationRun: unsupported status %q", status)
 	}
 }
 
@@ -265,6 +350,133 @@ func TestReconcileParkedDeliverySettlesCompletedPlanRun(t *testing.T) {
 	}
 	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
 		t.Fatalf("PR client calls: creates=%d finds=%d, want zero (completed plan run settles via the skip path)", creates, finds)
+	}
+}
+
+// TestReconcileParkedDeliveryLeavesAutoPolicyIntegrationPendingParked proves
+// the recovery sweep does NOT settle a delivery_pending stacking plan run whose
+// chunk stack is fully merged with the final integration run admitted at
+// delivery_pending under merge_policy=auto: the driver still auto-merges the
+// integration PR and reports the stack complete only after the merge actually
+// lands (waitIntegrationRunSettled), so the plan run must stay delivery_pending
+// - settling it succeeded now would break the policy-auto merge contract (a
+// later drive sees the integration run terminal and skips autoMergeOne).
+func TestReconcileParkedDeliveryLeavesAutoPolicyIntegrationPendingParked(t *testing.T) {
+	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
+	repo := openDeliveryStore(t, storePath)
+	planRunID := seedParkedStackingPlanRun(t, root, storePath, repo)
+	mergeParkedStackChunks(t, storePath, repo, planRunID)
+	seedStackIntegrationRun(t, repo, planRunID, workflowledger.RunStatusDeliveryPending)
+
+	e := newSessionWorkflowEngine(root, configPath)
+	e.reconcileParkedRuns(context.Background(), false)
+
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, planRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("plan run status = %q, want delivery_pending (auto-policy integration run at delivery_pending must keep the plan run parked)", run.Status)
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero", creates, finds)
+	}
+	if _, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(planRunID, run.WorkflowDigest)); err == nil {
+		t.Fatal("plan run has a delivery record, want none (deliverRunWithStore must not run)")
+	}
+}
+
+// TestReconcileParkedDeliverySettlesGrantPolicyIntegrationPending pins the
+// policy-A acceptance: a delivery_pending stacking plan run whose chunk stack
+// is fully merged with the final integration run admitted at delivery_pending
+// under the DEFAULT grant merge policy (merge_policy unset = "approve") IS
+// complete - the driver reports the stack complete at delivery_pending when it
+// is not auto-merging (waitIntegrationRunSettled returns nil awaiting the
+// publish grant). The sweep settles the plan run succeeded WITHOUT publishing.
+func TestReconcileParkedDeliverySettlesGrantPolicyIntegrationPending(t *testing.T) {
+	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
+	repo := openDeliveryStore(t, storePath)
+	planRunID := seedGrantPolicyParkedStackingPlanRun(t, root, storePath, repo)
+	mergeParkedStackChunks(t, storePath, repo, planRunID)
+	seedStackIntegrationRun(t, repo, planRunID, workflowledger.RunStatusDeliveryPending)
+
+	e := newSessionWorkflowEngine(root, configPath)
+	e.reconcileParkedRuns(context.Background(), false)
+
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, planRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("plan run status = %q, want succeeded (grant-policy delivery_pending integration run settles the stack)", run.Status)
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero (completed plan run settles via the skip path)", creates, finds)
+	}
+}
+
+// TestReconcileParkedDeliveryLeavesChunksMergedButIntegrationAbsentParked
+// proves the recovery sweep does NOT settle a delivery_pending stacking plan
+// run whose chunk stack is fully merged but whose final integration run was
+// never admitted: the bounded drive can expire (or the process die) after
+// every chunk merged but before the integration run is admitted and settled,
+// and the sweep must not draw a different conclusion than the driver - which
+// refuses to call the stack complete when the integration run is missing
+// (waitIntegrationRunSettled errors). The run stays delivery_pending and no
+// delivery is attempted.
+func TestReconcileParkedDeliveryLeavesChunksMergedButIntegrationAbsentParked(t *testing.T) {
+	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
+	repo := openDeliveryStore(t, storePath)
+	planRunID := seedParkedStackingPlanRun(t, root, storePath, repo)
+	mergeParkedStackChunks(t, storePath, repo, planRunID)
+
+	e := newSessionWorkflowEngine(root, configPath)
+	e.reconcileParkedRuns(context.Background(), false)
+
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, planRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("plan run status = %q, want delivery_pending (merged chunks without an admitted integration run must stay parked)", run.Status)
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero (no delivery over an un-integrated stack)", creates, finds)
+	}
+	if _, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(planRunID, run.WorkflowDigest)); err == nil {
+		t.Fatal("plan run has a delivery record, want none (deliverRunWithStore must not run)")
+	}
+}
+
+// TestReconcileParkedDeliveryLeavesIntegrationInProgressParked proves the
+// recovery sweep does NOT settle a delivery_pending stacking plan run whose
+// chunk stack is fully merged while the final integration run is still in
+// flight (pending/running/waiting_approval): the integration run was admitted
+// but not yet settled, and the driver does not call the stack complete until
+// it is. The plan run stays delivery_pending.
+func TestReconcileParkedDeliveryLeavesIntegrationInProgressParked(t *testing.T) {
+	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
+	repo := openDeliveryStore(t, storePath)
+	planRunID := seedParkedStackingPlanRun(t, root, storePath, repo)
+	mergeParkedStackChunks(t, storePath, repo, planRunID)
+	seedStackIntegrationRun(t, repo, planRunID, workflowledger.RunStatusRunning)
+
+	e := newSessionWorkflowEngine(root, configPath)
+	e.reconcileParkedRuns(context.Background(), false)
+
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, planRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("plan run status = %q, want delivery_pending (in-flight integration run must keep the plan run parked)", run.Status)
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero", creates, finds)
 	}
 }
 

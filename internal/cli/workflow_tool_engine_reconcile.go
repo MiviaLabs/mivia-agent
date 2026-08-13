@@ -103,12 +103,13 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet b
 // reconcileParkedDelivery publishes one delivery_pending run. allowPublish
 // is always true: the workflow's delivery policy is the authorization, so no
 // flag is consulted. A stacking plan run whose multi-chunk stack DROVE TO
-// COMPLETION - every chunk task in its task ledger is merged, the same durable
-// state the driver checks - and whose workflow disables publishing the plan
-// run itself (delivery.deliver_plan_run=false) is settled succeeded WITHOUT
-// publication instead: the chunk PRs carry the work, and a sweep publish after
-// the crash window between the drive and the settle's CAS would falsely
-// publish the plan PR (mirrors the in-session skip branch). A seeded-but-
+// COMPLETION - every chunk task in its task ledger is merged AND the final
+// integration run was admitted and settled, the same durable state the driver
+// checks - and whose workflow disables publishing the plan run itself
+// (delivery.deliver_plan_run=false) is settled succeeded WITHOUT publication
+// instead: the chunk PRs carry the work, and a sweep publish after the crash
+// window between the drive and the settle's CAS would falsely publish the
+// plan PR (mirrors the in-session skip branch). A seeded-but-
 // incomplete stack (the drive aborted after seeding the ledger but before any
 // chunk merged) stays delivery_pending for the operator to finish with 'mivia
 // stack drive': settling it succeeded would report a plan run succeeded over
@@ -133,16 +134,17 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 	if skipParkedPlanRunPublication(ctx, store, repo, runID) {
 		// The plan run's own publication is disabled and the task ledger
 		// carries the seeded stack plan. Only a stack that actually drove to
-		// COMPLETION (every chunk task merged - the same durable state the
-		// driver checks) is settled succeeded WITHOUT publishing: the chunk
-		// PRs carry the work, and the crash window between the drive and the
-		// settle's CAS must never publish the plan PR. A seeded-but-incomplete
-		// stack (the drive aborted after seeding the ledger) stays
-		// delivery_pending for the operator to finish with 'mivia stack
-		// drive'; settling or delivering it now would report the plan run
-		// succeeded over an incomplete stack, or publish the plan PR over it
-		// (deliver-before-drive).
-		if !stackDriveCompleted(ctx, store, repo, runID) {
+		// COMPLETION (every chunk task merged AND the final integration run
+		// admitted and settled - the same durable state the driver checks) is
+		// settled succeeded WITHOUT publishing: the chunk PRs carry the work,
+		// and the crash window between the drive and the settle's CAS must
+		// never publish the plan PR. A seeded-but-incomplete stack (the drive
+		// aborted after seeding the ledger) stays delivery_pending for the
+		// operator to finish with 'mivia stack drive'; settling or delivering
+		// it now would report the plan run succeeded over an incomplete
+		// stack, or publish the plan PR over it (deliver-before-drive).
+		policy := stackPlanMergePolicy(ctx, repo, runID)
+		if !stackDriveCompleted(ctx, store, repo, runID, policy) {
 			if !quiet {
 				log.Printf("workflow: session recovery: plan run %s stack incomplete; leaving parked", runID)
 			}
@@ -208,15 +210,58 @@ func skipParkedPlanRunPublication(ctx context.Context, store *storage.SQLite, re
 	return err == nil
 }
 
+// stackPlanMergePolicy resolves the stacking merge_policy of a plan run from
+// its admitted snapshot (the same snapshot validateWorkflowResumeSnapshot
+// validates on the resume path), so stackDriveCompleted can apply the
+// policy-aware delivery_pending rule. Any resolution failure (missing run,
+// corrupt snapshot) returns "" - the grant default: a delivery_pending
+// integration run then counts as complete (admitted, awaiting the publish
+// grant).
+func stackPlanMergePolicy(ctx context.Context, repo workflowledger.Repository, runID string) string {
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return ""
+	}
+	raw, err := repo.GetRunSnapshot(ctx, runID)
+	if err != nil {
+		return ""
+	}
+	_, compiled, _, err := validateWorkflowResumeSnapshot(run, raw)
+	if err != nil {
+		return ""
+	}
+	if compiled == nil || compiled.Stacking == nil {
+		return ""
+	}
+	return compiled.Stacking.MergePolicy
+}
+
 // stackDriveCompleted reports whether a stacking plan run's chunk stack
 // actually drove to completion: the run ledger carries the succeeded decompose
-// output the driver reads (loadStackPlanOutput) and every chunk task in the
-// task ledger is merged - the same durable state driveStackToCompletion checks
-// before it settles (allChunksMerged(chunks, stackMergedSet(byID))). Any
-// resolution failure (missing run, corrupt output, unseeded plan) returns
-// false, so a seeded-but-incomplete stack stays delivery_pending for the
-// operator to finish with 'mivia stack drive'.
-func stackDriveCompleted(ctx context.Context, store *storage.SQLite, repo workflowledger.Repository, runID string) bool {
+// output the driver reads (loadStackPlanOutput), every chunk task in the task
+// ledger is merged - the same durable state driveStackToCompletion checks
+// before it settles (allChunksMerged(chunks, stackMergedSet(byID))) - AND the
+// final integration run was admitted and settled. The integration run resolves
+// via its stable admission key (stackRunRef on the integration chunk id;
+// runID IS the stack id here, loadStackPlanOutput keys by it). The gate is
+// deliberately STRICTER than waitIntegrationRunSettled, which reports the
+// stack complete even for an unsettled integration run (its pending/running/
+// waiting_approval fall-through): conservative by design, the sweep never
+// settles a plan run over a stack the driver is still advancing. A
+// delivery_pending integration run counts as settled ONLY under the grant
+// merge policy - the driver's completion state there is "awaits the publish
+// grant" (waitIntegrationRunSettled returns nil); under merge_policy=auto the
+// driver still auto-merges the integration PR, so delivery_pending is NOT
+// complete there and the plan run stays parked until the merge lands (policy
+// resolves via stackPlanMergePolicy; "" behaves as the grant default). The
+// integration dimension closes the crash-window hole where the bounded drive
+// expired (or the process died) after every chunk merged but before the
+// integration run was admitted or settled: without it the sweep would settle
+// the plan run succeeded over a stack the driver itself refuses to call
+// complete. Any resolution failure (missing run, corrupt output, unseeded
+// plan) returns false, so a seeded-but-incomplete stack stays delivery_pending
+// for the operator to finish with 'mivia stack drive'.
+func stackDriveCompleted(ctx context.Context, store *storage.SQLite, repo workflowledger.Repository, runID, policy string) bool {
 	raw, err := loadStackPlanOutput(repo, runID)
 	if err != nil {
 		return false
@@ -229,7 +274,34 @@ func stackDriveCompleted(ctx context.Context, store *storage.SQLite, repo workfl
 	if err != nil {
 		return false
 	}
-	return allChunksMerged(chunks, stackMergedSet(byID))
+	if !allChunksMerged(chunks, stackMergedSet(byID)) {
+		return false
+	}
+	// The final full-suite integration run must have been admitted and
+	// settled - a STRICTER gate than waitIntegrationRunSettled, which
+	// reports the stack complete even for an unsettled integration run
+	// (conservative by design). runID IS the stack id here, so the
+	// integration run resolves by its stable admission key
+	// <stack-id>:integration.
+	intRun, found, err := stackRunRef(repo, runID, stackIntegrationChunkID)
+	if err != nil || !found {
+		return false
+	}
+	switch intRun.Status {
+	case workflowledger.RunStatusPending, workflowledger.RunStatusRunning, workflowledger.RunStatusWaitingApproval:
+		return false
+	case workflowledger.RunStatusDeliveryPending:
+		// delivery_pending is complete only under the grant policy: the
+		// driver reports the stack complete there awaiting the publish
+		// grant, while under merge_policy=auto it still auto-merges the
+		// integration PR (waitIntegrationRunSettled) - settling now would
+		// break that contract (a later drive skips autoMergeOne once the
+		// integration run is terminal).
+		return policy != "auto"
+	default:
+		// Any terminal status: the integration run settled.
+		return true
+	}
 }
 
 // reconcileParkedResume resumes one interrupted (pending/running/

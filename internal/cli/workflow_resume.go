@@ -58,7 +58,7 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish b
 		return err
 	}
 	defer closeFn()
-	releaseExecution, err := acquireWorkflowExecutionLock(contextStorePath(work.Abs, res.Subagents), runID)
+	releaseExecution, err := acquireWorkflowExecutionLockBounded(contextStorePath(work.Abs, res.Subagents), runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}

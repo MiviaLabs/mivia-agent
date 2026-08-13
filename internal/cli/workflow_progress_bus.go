@@ -143,7 +143,7 @@ func (e *sessionWorkflowEngine) publishSkippedPlanRunFinished(ctx context.Contex
 	if _, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(runID, run.WorkflowDigest)); err == nil {
 		return // delivered runs publish via publishDeliveredRunFinished
 	}
-	if !stackDriveCompleted(ctx, store, repo, runID) {
+	if !stackDriveCompleted(ctx, store, repo, runID, stackPlanMergePolicy(ctx, repo, runID)) {
 		return
 	}
 	sink.Emit(controller.ProgressEvent{

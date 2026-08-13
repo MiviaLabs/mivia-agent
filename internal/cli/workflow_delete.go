@@ -20,7 +20,7 @@ import (
 // run may be mid-publish under a live claim, so deletion claims the run and
 // never blind-clears a held claim.
 func executeWorkflowDelete(runID, root, configPath string, force bool, stdout, stderr io.Writer) error {
-	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}

@@ -146,10 +146,11 @@ func TestPublishTerminalEventOnceForDeliveredAndSkippedStackPlanRuns(t *testing.
 
 // settleSucceededStackPlanRun parks a real two-step run at delivery_pending,
 // settles it succeeded, and seeds the completed-drive stack state (the
-// succeeded decompose output the driver reads plus every chunk task merged) -
-// the exact shape maybeDriveSettledStack leaves behind before the terminal
-// publishers run. Seeding the plan alone is NOT the completion marker: the
-// skip publisher gates on the stack having driven to completion.
+// succeeded decompose output the driver reads, every chunk task merged, and
+// the final integration run admitted and settled) - the exact shape
+// maybeDriveSettledStack leaves behind before the terminal publishers run.
+// Seeding the plan alone is NOT the completion marker: the skip publisher
+// gates on the stack having driven to completion.
 func settleSucceededStackPlanRun(t *testing.T, ctx context.Context) (root, config string, store *storage.SQLite, repo workflowledger.Repository, runID string) {
 	t.Helper()
 	root, storePath, config, _ := newDeliveryFixture(t)
@@ -184,6 +185,10 @@ func settleSucceededStackPlanRun(t *testing.T, ctx context.Context) (root, confi
 			t.Fatalf("transition chunk %s to merged: %v", c.ID, err)
 		}
 	}
+	// A completed drive also admitted and settled the final integration run
+	// (the same state stackDriveCompleted resolves before the skip publisher
+	// fires).
+	seedStackIntegrationRun(t, repo, runID, workflowledger.RunStatusSucceeded)
 	return root, config, store, repo, runID
 }
 
