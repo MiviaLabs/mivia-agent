@@ -25,10 +25,14 @@ max_on_failure_reentries = 3
 # Stacking: this workflow participates in the stacking engine (default ON).
 # plan_step/implement_step are explicit (fail-closed); all other knobs use the
 # engine's global defaults (max_chunks=12, soft_lines=200, hard_lines=400,
-# max_files=5, merge_policy=approve).
+# max_files=5). merge_policy=auto: the run publishes each chunk PR and merges
+# it itself (mark ready -> CI green -> squash-merge) - a 100-chunk stack needs
+# zero human merges. Set merge_policy="approve" to keep the human publish
+# grant per PR instead.
 [stacking]
 plan_step = "plan"
 implement_step = "implement"
+merge_policy = "auto"
 
 [[steps]]
 id = "plan"

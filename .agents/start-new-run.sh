@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -u
+cd /home/mac/projects/mivialabs/mivia-agent || exit 1
+TASK='Finish and harden the stacking engine'"'"'s merge_policy=auto delivery path. (1) Add a cli-level test in internal/cli driving the stack driver'"'"'s auto-merge wait loop (autoMergeOne and waitForChunkMerges with merge_policy=auto) against a fake PR client and scripted git merge checks, covering: published chunk with no PR yet, draft PR marked ready then merged, first merge refusal then checks watch then retry, and chunk merged via the merge queue. Expose a small test seam for delivery.MergePullRequest'"'"'s gh runner if needed. (2) Document merge_policy auto vs approve in docs/product/workflows-guide.md, including what commands the driver runs (pr ready, pr checks --watch, pr merge --squash --delete-branch), the no-checks green shortcut, merge-queue enqueue behavior, and failure modes (red CI, required reviews). (3) Verify with go test ./internal/cli ./internal/workflows/delivery and go build ./... before finishing.'
+exec ./mivia workflow run feature-delivery --input "task=${TASK}" --allow-publish
