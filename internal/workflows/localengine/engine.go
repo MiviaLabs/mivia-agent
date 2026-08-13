@@ -105,11 +105,7 @@ func (e *Engine) Start(ctx context.Context, req agenttools.StartRequest) (agentt
 }
 
 func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
-	compiled, raw, baseDir, err := e.loadWorkflow(req.Workflow)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	inputs, inputSnapshot, err := validateInputs(req.Inputs, compiled.Inputs)
+	compiled, raw, baseDir, inputs, inputSnapshot, err := e.loadAndValidateWorkflow(req)
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
