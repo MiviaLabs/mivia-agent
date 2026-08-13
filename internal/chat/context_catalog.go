@@ -158,10 +158,13 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 	// frozen at its pre-load state, and a new one holding the merged result -
 	// instead of one record whose turn count grew. Reclaiming the loaded
 	// session's ownership before adopting its messages closes that gap.
+	var reclaimedBinding *contextstate.BindingRevision
 	if !readOnly && isContextSession && info.SessionID != principal.SessionID {
-		if err := s.reclaimContextSession(info.SessionID); err != nil {
+		binding, err := s.reclaimContextSession(info.SessionID)
+		if err != nil {
 			return false, fmt.Errorf("resume session %q: %w", name, err)
 		}
+		reclaimedBinding = &binding
 	}
 	msgs, err := decodeCatalogMessages(data)
 	if err != nil {
@@ -173,22 +176,52 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 	}
 	factory := s.bindingFactorySnapshot()
 	if factory != nil {
-		selection := s.CurrentSelection()
-		if selection.ProviderName == info.Provider && selection.Model == info.Model {
-			token := s.captureOperationToken("catalog-load:" + name)
-			return isContextSession, s.adoptLoadedMessages(token, msgs)
-		}
-		binding, err := factory(info.Provider, info.Model)
-		if err != nil {
-			return false, fmt.Errorf("prepare session binding: %w", err)
-		}
-		if err := s.SwitchBinding(binding); err != nil {
-			return false, err
-		}
-		return isContextSession, s.adoptLoadedMessages(s.captureOperationToken("catalog-load:"+name), msgs)
+		return s.reconcileCatalogBinding(name, info, msgs, factory, reclaimedBinding)
 	}
 	token := s.captureOperationToken("catalog-load:" + name)
 	return isContextSession, s.publishLoadedMessages(token, msgs, info.Model)
+}
+
+// reconcileCatalogBinding adopts a loaded session's own saved provider/model
+// when it differs from this process's currently active default (e.g. after
+// switching models mid-conversation via mivia-agent-desktop's
+// ModelSwitcherButton, then reopening the thread in a fresh process that
+// still defaults to the workspace config's own default). This is
+// deliberately not a model *switch*: the context store's row was already
+// durably saved under this exact provider/model, so there is nothing to
+// CAS-advance - SwitchBinding would compute its expected revision from
+// s.binding (still whatever this process started with), which the row's
+// actual binding no longer matches once a session has switched away from
+// that default, failing outright with "stale binding: context binding
+// changed" on every future resume. publishLoadedSession (used by the
+// non-context-catalog loader for the identical "adopt this session's own
+// binding" case) publishes the binding into memory without touching the
+// durable CAS at all.
+//
+// When this load reclaimed a session, the generation it durably carries
+// must be pinned to the reclaimed row's own generation (not derived from
+// s.binding, still the pre-reclaim default) so the very next context
+// checkpoint's CAS - which expects s.binding to already match the row -
+// doesn't immediately fail with the same "stale binding" error on this
+// session's first real turn.
+func (s *Session) reconcileCatalogBinding(name string, info contextstate.SessionCatalogInfo, msgs []provider.Message, factory func(string, string) (ModelBinding, error), reclaimedBinding *contextstate.BindingRevision) (bool, error) {
+	isContextSession := info.SessionID != ""
+	selection := s.CurrentSelection()
+	if selection.ProviderName == info.Provider && selection.Model == info.Model {
+		token := s.captureOperationToken("catalog-load:" + name)
+		return isContextSession, s.adoptLoadedMessages(token, msgs)
+	}
+	binding, err := factory(info.Provider, info.Model)
+	if err != nil {
+		return false, fmt.Errorf("prepare session binding: %w", err)
+	}
+	var generation *uint64
+	if reclaimedBinding != nil {
+		g := reclaimedBinding.Generation
+		generation = &g
+	}
+	token := s.captureOperationToken("catalog-load:" + name)
+	return isContextSession, s.publishLoadedSession(token, binding, msgs, generation)
 }
 
 // reclaimContextSession takes over write ownership of an existing, live
@@ -201,7 +234,7 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 // by workspace, subject and the session's own id, not by proving the old
 // capability. See contextstate.SessionReclaimer's doc comment for the full
 // trust-boundary argument.
-func (s *Session) reclaimContextSession(sessionID string) error {
+func (s *Session) reclaimContextSession(sessionID string) (contextstate.BindingRevision, error) {
 	s.mu.RLock()
 	store := s.contextStore
 	workspaceID, subjectID := s.contextPrincipal.WorkspaceID, s.contextPrincipal.SubjectID
@@ -209,25 +242,25 @@ func (s *Session) reclaimContextSession(sessionID string) error {
 	s.mu.RUnlock()
 	reclaimer, ok := store.(contextstate.SessionReclaimer)
 	if !ok {
-		return fmt.Errorf("context store does not support resuming a live session")
+		return contextstate.BindingRevision{}, fmt.Errorf("context store does not support resuming a live session")
 	}
 	principal, err := contextstate.NewPrincipal(workspaceID, sessionID, subjectID)
 	if err != nil {
-		return err
+		return contextstate.BindingRevision{}, err
 	}
 	snapshot, err := reclaimer.ReclaimSession(context.Background(), principal, sessionID)
 	if err != nil {
-		return err
+		return contextstate.BindingRevision{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.SessionID != oldSessionID {
-		return ErrStaleOperation
+		return contextstate.BindingRevision{}, ErrStaleOperation
 	}
 	s.SessionID = sessionID
 	s.contextPrincipal = principal
 	s.contextHead = snapshot.Revision
-	return nil
+	return snapshot.Binding, nil
 }
 
 // adoptLoadedMessages replaces history after the binding has already been

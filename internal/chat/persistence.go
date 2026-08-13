@@ -321,7 +321,7 @@ func (s *Session) loadFromStore(name string) error {
 	if err != nil {
 		return fmt.Errorf("prepare session binding: %w", err)
 	}
-	return s.publishLoadedSession(token, binding, msgs)
+	return s.publishLoadedSession(token, binding, msgs, nil)
 }
 
 func (s *Session) loadFromFiles(name string) error {
@@ -351,7 +351,7 @@ func (s *Session) loadFromFiles(name string) error {
 	if err != nil {
 		return fmt.Errorf("prepare session binding: %w", err)
 	}
-	return s.publishLoadedSession(token, binding, msgs)
+	return s.publishLoadedSession(token, binding, msgs, nil)
 }
 
 func (s *Session) bindingFactorySnapshot() func(string, string) (ModelBinding, error) {
@@ -360,7 +360,18 @@ func (s *Session) bindingFactorySnapshot() func(string, string) (ModelBinding, e
 	return s.bindingFactory
 }
 
-func (s *Session) publishLoadedSession(token OperationToken, binding ModelBinding, msgs []provider.Message) error {
+// publishLoadedSession publishes binding/msgs into memory without touching
+// any durable context-store CAS - the caller's row already reflects this
+// exact binding (a loaded session republishing its own saved state, not a
+// live model switch), so there is nothing to advance.
+//
+// generation pins the published binding's ModelGeneration when the caller
+// already knows the durable value it must match (e.g. a reclaimed context
+// session's own row - see context_catalog.go's loadContextCatalog); nil
+// falls back to the original "one past whatever this process already had"
+// numbering, correct only when nothing durable needs to agree with it (the
+// non-context-catalog, local-file session loader's case).
+func (s *Session) publishLoadedSession(token OperationToken, binding ModelBinding, msgs []provider.Message, generation *uint64) error {
 	s.mu.Lock()
 	if !s.tokenCurrentLocked(token) {
 		s.mu.Unlock()
@@ -383,7 +394,11 @@ func (s *Session) publishLoadedSession(token OperationToken, binding ModelBindin
 		}
 		return fmt.Errorf("saved provider/model has no usable prompt budget")
 	}
-	binding.ModelGeneration = s.binding.ModelGeneration + 1
+	if generation != nil {
+		binding.ModelGeneration = *generation
+	} else {
+		binding.ModelGeneration = s.binding.ModelGeneration + 1
+	}
 	outgoing := s.prefixIdentity
 	old := s.publishBindingLocked(binding)
 	s.invalidateLocked()
