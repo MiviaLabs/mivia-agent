@@ -59,6 +59,13 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	sess.EventBus = bus
 	model.uiAdapter = NewUIAdapter(bus, model.bridge)
 	SetGlobalBus(bus)
+	// Rendering another process's turns into the TUI's own display is not
+	// implemented yet (nil sink) - joining still publishes this session's
+	// own turns to internal/hub, so an observer (e.g. mivia-agent-desktop)
+	// sees a terminal TUI's live activity even though the TUI itself
+	// doesn't yet render the reverse direction.
+	hubHandle := joinHub(sess, nil)
+	defer hubHandle.Leave()
 
 	// MetricsAdapter: subscribes to all event bus events for diagnostics.
 	metricsAdapter := events.NewMetricsAdapter()

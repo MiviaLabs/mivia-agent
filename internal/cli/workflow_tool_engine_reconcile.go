@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -100,11 +101,17 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet b
 
 // reconcileParkedDelivery publishes one delivery_pending run. allowPublish
 // is always true: the workflow's delivery policy is the authorization, so no
-// flag is consulted. A delivery failure with delivery.on_failure routes the
-// run back to running at the repair step (ReopenForRepair); the sweep
-// re-enters it through the resume path immediately so the bounded in-session
-// repair loop re-advances and re-delivers NOW instead of stranding the run
-// until the next session start. A transient delivery failure leaves the run
+// flag is consulted. A stacking plan run whose multi-chunk stack already
+// drove - its task ledger carries the seeded stack plan - and whose workflow
+// disables publishing the plan run itself (delivery.deliver_plan_run=false)
+// is settled succeeded WITHOUT publication instead: the chunk PRs carry the
+// work, and a sweep publish after the crash window between the drive and the
+// settle's CAS would falsely publish the plan PR (mirrors the in-session skip
+// branch). A delivery failure with delivery.on_failure routes the run back to
+// running at the repair step (ReopenForRepair); the sweep re-enters it
+// through the resume path immediately so the bounded in-session repair loop
+// re-advances and re-delivers NOW instead of stranding the run until the
+// next session start. A transient delivery failure leaves the run
 // delivery_pending for the next reconcile. launchResume (from the repair
 // re-entry) and publishDeliveredRunFinished (for direct deliveries) publish
 // the terminal run_finished event like the in-session loop.
@@ -112,6 +119,17 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 	finish, err := beginWorkflowExecution(root, storePath, runID)
 	if err != nil {
 		// Another executor holds this run; leave it parked.
+		return
+	}
+	if skipParkedPlanRunPublication(ctx, store, repo, runID) {
+		// The stack already drove (seeded stack plan) and the plan run's own
+		// publication is disabled: settle succeeded - the terminal a delivered
+		// run reaches - without delivering, so the sweep never publishes the
+		// plan PR for a run that was never meant to publish one.
+		if settleErr := settlePlanRunSkippedDelivery(context.Background(), repo, runID); settleErr != nil {
+			log.Printf("workflow: session recovery: settle skipped plan run %s failed: %v", runID, settleErr)
+		}
+		finish()
 		return
 	}
 	deliverErr := deliverRunWithStore(ctx, root, res, store, repo, runID, true, false, io.Discard, io.Discard)
@@ -128,6 +146,34 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 		return
 	}
 	e.publishDeliveredRunFinished(ctx, repo, runID)
+}
+
+// skipParkedPlanRunPublication reports whether a delivery_pending run is a
+// stacking plan run the sweep must settle WITHOUT publishing: the compiled
+// workflow disables the plan run's own publication (delivery.deliver_plan_run
+// false - the default) and the run's task ledger carries the seeded stack
+// plan the chunk drive wrote - the durable marker that the stack drove, the
+// same gate publishSkippedPlanRunFinished uses. Any resolution failure
+// (missing run, corrupt snapshot) returns false, so the run falls through to
+// deliverRunWithStore, which reports the error exactly as before.
+func skipParkedPlanRunPublication(ctx context.Context, store *storage.SQLite, repo workflowledger.Repository, runID string) bool {
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return false
+	}
+	raw, err := repo.GetRunSnapshot(ctx, runID)
+	if err != nil {
+		return false
+	}
+	_, compiled, _, err := validateWorkflowResumeSnapshot(run, raw)
+	if err != nil {
+		return false
+	}
+	if compiled == nil || compiled.Delivery == nil || compiled.Delivery.DeliverPlanRun {
+		return false
+	}
+	_, err = tasks.NewStore(store).ReadBackPlan(runID)
+	return err == nil
 }
 
 // reconcileParkedResume resumes one interrupted (pending/running/

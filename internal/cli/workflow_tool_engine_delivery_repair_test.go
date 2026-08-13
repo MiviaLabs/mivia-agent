@@ -412,3 +412,40 @@ func TestSessionAutoDeliveryRepairIgnoresPublishFlag(t *testing.T) {
 		t.Fatalf("PR client calls: creates=%d finds=%d, want one create and one find", creates, finds)
 	}
 }
+
+// TestSessionAutoDeliveryRepairLoopSettlesSkippedPlanAfterCancel proves a
+// cancel during the stack drive cannot poison the skipped-plan-run settle:
+// stopActive cancels runCtx while the uninterruptible drive hook runs, but the
+// drive outlives the cancel and the loop still settles the plan run succeeded
+// (deliver_plan_run=false). Before the fix the settle reused the cancelled
+// runCtx, GetRun failed with context.Canceled, the loop logged and returned,
+// and the run stranded at delivery_pending with the stack complete (F4).
+func TestSessionAutoDeliveryRepairLoopSettlesSkippedPlanAfterCancel(t *testing.T) {
+	_, repo, p, runID, prRecorder := newSessionAutoDeliveryRepairFixture(t)
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	sessionAutoDeliveryRepairLoop(runCtx, repo, p.root, p.res, p.store, runID,
+		func(ctx context.Context) (workflowledger.RunSnapshot, error) {
+			// The controller pass that parked the run at delivery_pending ran
+			// before the cancel; read the parked snapshot from a live context
+			// so the loop reaches the settle branch despite the dead runCtx.
+			return repo.GetRun(context.Background(), runID)
+		},
+		func() (bool, error) {
+			cancel()         // stopActive fired while the drive hook ran
+			return true, nil // the multi-chunk stack drove to completion anyway
+		}, false)
+
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run status = %q, want succeeded (the skipped-plan settle must survive a cancelled runCtx)", run.Status)
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want none for a skipped plan run", creates, finds)
+	}
+}

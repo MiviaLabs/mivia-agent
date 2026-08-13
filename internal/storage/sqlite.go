@@ -67,6 +67,11 @@ func OpenSQLite(path string) (*SQLite, error) {
 	}
 	return &SQLite{db: db, path: path}, nil
 }
+
+// Path returns the database file path this store was opened with - e.g. for
+// internal/hub, which places hub.lock/hub.sock beside it.
+func (s *SQLite) Path() string { return s.path }
+
 func (s *SQLite) Backup(ctx context.Context, d string) error {
 	_, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, d)
 	return err

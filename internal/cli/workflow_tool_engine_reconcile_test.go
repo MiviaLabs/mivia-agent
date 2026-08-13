@@ -14,7 +14,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
@@ -68,6 +70,113 @@ func TestSessionReconcileParkedRunsDelivers(t *testing.T) {
 	}
 	if creates, finds := prRecorder.calls(); creates != 1 || finds != 1 {
 		t.Fatalf("PR client calls: creates=%d finds=%d, want one create and one find", creates, finds)
+	}
+}
+
+// seedParkedStackingPlanRun creates a delivery_pending plan-mode run of the
+// mini-stack workflow (stacking enabled, delivery active,
+// delivery.deliver_plan_run unset = false) and seeds its stack ledger with a
+// two-chunk plan - the durable marker that the chunk stack drove. The run is
+// exactly the crash-window shape the recovery sweep could falsely publish:
+// the stack drove (seeded plan) but settlePlanRunSkippedDelivery's CAS never
+// ran, so the plan run still parks at delivery_pending when the sweep finds
+// it.
+func seedParkedStackingPlanRun(t *testing.T, root, storePath string, repo workflowledger.Repository) string {
+	t.Helper()
+	rawDefinition := []byte(miniStackWorkflowTOML)
+	wf, _, err := definition.ParseWorkflowTOML(rawDefinition, "mini-stack.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := compiler.Compile(&wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.Delivery == nil || compiled.Delivery.DeliverPlanRun {
+		t.Fatal("mini-stack workflow must keep the plan run unpublished (deliver_plan_run=false)")
+	}
+	snapshot := miniStackSnapshot(t, root, compiled, rawDefinition)
+	rawSnapshot, err := workflowledger.MarshalSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	runID := "wfr-parked-plan"
+	run := workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: compiled.Name, WorkflowDigest: compiled.Digest,
+		SnapshotDigest: workflowledger.SnapshotDigest(rawSnapshot),
+		InputDigest:    workflowledger.InputDigest(snapshot.Inputs),
+		Status:         workflowledger.RunStatusPending, ActiveStepID: compiled.InitialStep,
+	}
+	if err := repo.CreateRun(ctx, run, rawSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusDeliveryPending, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, chunks, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	if err != nil || len(chunks) != 2 {
+		t.Fatalf("parse multi-chunk plan = %v, %v; want 2 chunks", chunks, err)
+	}
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := seedStackLedger(tasks.NewStore(store), runID, chunks); err != nil {
+		t.Fatal(err)
+	}
+	return runID
+}
+
+// TestSessionReconcileParkedRunsSkipsStackingPlanRunNotOptedIn proves the
+// recovery sweep never publishes a delivery_pending stacking plan run whose
+// own publication is disabled (delivery.deliver_plan_run=false, the default)
+// after its multi-chunk stack already drove: the seeded stack plan in the
+// task ledger is the durable marker that the chunk stack drove, and the crash
+// window between that drive and settlePlanRunSkippedDelivery's CAS must not
+// end with the sweep publishing the plan PR. The sweep settles the plan run
+// succeeded WITHOUT publishing, and a regular delivery_pending run in the
+// same pass is still delivered: exactly one PR is created, and only for the
+// non-stacking run.
+func TestSessionReconcileParkedRunsSkipsStackingPlanRunNotOptedIn(t *testing.T) {
+	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
+	regularRunID := runFixtureToDeliveryPending(t, root, configPath)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, regularRunID, repo)
+	planRunID := seedParkedStackingPlanRun(t, root, storePath, repo)
+
+	e := newSessionWorkflowEngine(root, configPath)
+	e.reconcileParkedRuns(context.Background(), false)
+
+	ctx := context.Background()
+	planRun, err := repo.GetRun(ctx, planRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planRun.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("plan run status = %q, want succeeded (skipped plan run settled without publication)", planRun.Status)
+	}
+	regularRun, err := repo.GetRun(ctx, regularRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regularRun.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("regular run status = %q, want succeeded (non-stacking delivery_pending run still delivered)", regularRun.Status)
+	}
+	if creates, finds := prRecorder.calls(); creates != 1 || finds != 1 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want exactly one create and one find (plan run must not publish)", creates, finds)
 	}
 }
 

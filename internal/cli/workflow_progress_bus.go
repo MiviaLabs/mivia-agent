@@ -122,6 +122,13 @@ func (e *sessionWorkflowEngine) publishDeliveredRunFinished(ctx context.Context,
 // during the drive) is the durable marker that this run completed via the skip
 // path. A controller-finished succeeded run - which already emitted
 // run_finished - has no stack plan, so it is never double-published.
+//
+// Mutual exclusion with publishDeliveredRunFinished: launchStartedWorkflow and
+// launchResume run the two publishers back to back, and a delivered plan run
+// carries BOTH a succeeded delivery record and a seeded stack plan. This
+// publisher therefore fires only for succeeded runs WITHOUT a delivery record
+// (the skip-settled shape); any delivery record for the run means
+// publishDeliveredRunFinished owns the terminal event.
 func (e *sessionWorkflowEngine) publishSkippedPlanRunFinished(ctx context.Context, store *storage.SQLite, repo workflowledger.Repository, runID string) {
 	sink := e.workflowProgressSink()
 	if sink == nil || store == nil {
@@ -130,6 +137,9 @@ func (e *sessionWorkflowEngine) publishSkippedPlanRunFinished(ctx context.Contex
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil || run.Status != workflowledger.RunStatusSucceeded {
 		return
+	}
+	if _, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(runID, run.WorkflowDigest)); err == nil {
+		return // delivered runs publish via publishDeliveredRunFinished
 	}
 	ledger := tasks.NewStore(store)
 	if _, err := ledger.ReadBackPlan(runID); err != nil {
