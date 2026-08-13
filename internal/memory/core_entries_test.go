@@ -123,3 +123,33 @@ func TestCoreEntriesEmptyWhenNoneCore(t *testing.T) {
 		})
 	}
 }
+
+// TestCoreEntriesScopeAllErrors is the plan-77 (E4) regression for a
+// footgun found during Step 0 investigation: ScopeAll is not a valid
+// CoreEntries argument - dbFor would otherwise silently route anything but
+// ScopeOrg to the project DB, and no entry can ever have scope "all"
+// (rejected by Validate). The original plan text expected this to return
+// zero rows silently; while implementing this test against BOTH backends
+// found the in-memory backend already validates and errors loudly
+// (matching Search's scope-validation shape) - the sqlite backend was
+// fixed to match for parity, since a loud error is strictly safer than a
+// silent empty result for a caller-side mistake.
+func TestCoreEntriesScopeAllErrors(t *testing.T) {
+	for _, backend := range []string{"sqlite", "memory"} {
+		t.Run(backend, func(t *testing.T) {
+			s := newTestStore(t, backend, "")
+			ctx := context.Background()
+			res, err := s.Save(ctx, testEntry("promoted fact", ScopeProject))
+			if err != nil {
+				t.Fatalf("save: %v", err)
+			}
+			if err := s.PromoteToCore(ctx, res.ID); err != nil {
+				t.Fatalf("promote: %v", err)
+			}
+			_, err = s.CoreEntries(ctx, ScopeAll)
+			if err == nil {
+				t.Fatalf("CoreEntries(ScopeAll) succeeded, want an error (ScopeAll is invalid - use ScopeProject/ScopeOrg)")
+			}
+		})
+	}
+}

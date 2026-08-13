@@ -9,13 +9,13 @@ import (
 // the session prompt. It runs once per binding: every later admission
 // republishes this exact prompt, which is what keeps the cached system-prompt
 // prefix intact while the tool array grows.
-func applyDeferredToolPrompt(sess *chat.Session, res *config.Resolved, plan toolTierPlan) {
+func applyDeferredToolPrompt(sess *chat.Session, res *config.Resolved, plan toolTierPlan, state *agentSessionState) {
 	if sess == nil || !plan.Deferred() {
 		return
 	}
 	prompt, maxSteps := sess.AgentSettings()
 	prompt = promptWithDeferredIndex(prompt, plan)
-	sess.SetAgentSettings(prompt, maxSteps)
+	sess.SetAgentSettings(prompt, maxSteps, coreMemoryBlockForState(state))
 	if res != nil {
 		res.SystemPrompt = prompt
 	}
@@ -41,6 +41,7 @@ func newSurfaceWidener(sess *chat.Session, res *config.Resolved, state *agentSes
 		req.Registry = candidate.registry
 		req.Dispatcher = candidate.dispatcher
 		req.SkillRegistry = candidate.skillReg
+		req.MemoryBlock = coreMemoryBlockForState(state)
 		if !sess.TryPublishAgentSurface(req) {
 			candidate.dispatcher.Close()
 			return false, nil

@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -21,7 +22,25 @@ import (
 // opened. The CLI process never needs it (exit reclaims the handle), but a
 // test or embedding that tears the session down must release the SQLite
 // handle: Windows cannot delete a database file that is still open.
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved) (func(), error) {
+// stashMemoryOnState is plan 77's E1: the store configureChatWorkspace just
+// opened becomes the single source of truth every SystemPrompt-composing
+// call site reads from - never a second Open of the same file. state may
+// be nil (a caller that doesn't participate in prompt-level core-memory
+// injection); that's a safe no-op, not an error -
+// coreMemoryBlockForState(nil) returns "".
+func stashMemoryOnState(state *agentSessionState, store memory.Store, res *config.Resolved) {
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.Memory = store
+	if res != nil {
+		state.MemoryConfig = res.Memory
+	}
+}
+
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *agentSessionState) (func(), error) {
 	if !useTools {
 		return func() {}, nil
 	}
@@ -89,6 +108,7 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 	if err := wireSessionMemory(&opts, root, res); err != nil {
 		return func() {}, err
 	}
+	stashMemoryOnState(state, opts.Memory, res)
 	sess.Tools = tools.NewDefaultRegistry(opts)
 	// The attach-time tool surface is wire-affecting and not one of the four
 	// identity-capture triggers; keep the cached prefix identity fresh so the

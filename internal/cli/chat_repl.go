@@ -117,6 +117,8 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		Registry:                  sess.Tools,
 		AuthorityRegistry:         surface.authority,
 		Repo:                      ledgerRepoOf(state),
+		Memory:                    memoryOf(state),
+		MemoryConfig:              memoryConfigOf(state),
 		Completer:                 binding.Completer,
 		Model:                     model,
 		ProviderName:              binding.ProviderName,
@@ -274,7 +276,7 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	// prefix; applyDeferredToolPrompt below republishes the prompt through
 	// SetAgentSettings, which also recaptures (audit RC-1).
 	sess.RefreshPrefixIdentity()
-	applyDeferredToolPrompt(sess, routing.Resolved, plan)
+	applyDeferredToolPrompt(sess, routing.Resolved, plan, state)
 	// Rebuild the skill policy against the final live authority registry (plan
 	// 43) so a skill requiring a disabled/denied tool cannot activate, and store
 	// it for the TUI slash path.

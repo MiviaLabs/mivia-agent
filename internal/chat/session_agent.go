@@ -72,13 +72,15 @@ func (s *Session) SetEventIdentityFactory(factory func(uint64) *events.Identity)
 
 // PublishAgentSurface atomically publishes root-agent prompt, turn settings,
 // scoped tools, dispatcher, and skill registry after candidate construction.
-func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *tools.Registry, dispatcher *runtime.Dispatcher, skillReg *skills.Registry) {
-	prompt = ComposeSystemPrompt(prompt, "")
+func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *tools.Registry, dispatcher *runtime.Dispatcher, skillReg *skills.Registry, memoryBlock string) {
+	base := prompt
+	composed := ComposeSystemPrompt(base, memoryBlock)
 	s.mu.Lock()
 	outgoing := s.prefixIdentity
 	old := s.binding.Dispatcher
 	s.agentSurfaceGeneration++
-	s.SystemPrompt = prompt
+	s.BaseSystemPrompt = base
+	s.SystemPrompt = composed
 	s.MaxSteps = maxSteps
 	s.Tools = registry
 	s.Dispatcher = dispatcher
@@ -86,7 +88,7 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 	s.binding.SkillRegistry = skillReg
 	s.binding.AgentSurfaceGeneration = s.agentSurfaceGeneration
 	s.invalidateLocked()
-	setSystemMessageLocked(s, prompt)
+	setSystemMessageLocked(s, composed)
 	// The host-side agent-surface publication changes the wire prefix
 	// (prompt, tools) and advances the surface generation: recapture so the
 	// cache never describes the pre-publication surface (audit RC-1) and emit
@@ -104,14 +106,16 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 // SetAgentSettings updates only the root prompt and turn limit under the
 // session lock, keeping the system message used by the next provider request
 // consistent with the public fields.
-func (s *Session) SetAgentSettings(prompt string, maxSteps int) {
-	prompt = ComposeSystemPrompt(prompt, "")
+func (s *Session) SetAgentSettings(prompt string, maxSteps int, memoryBlock string) {
+	base := prompt
+	composed := ComposeSystemPrompt(base, memoryBlock)
 	s.mu.Lock()
 	outgoing := s.prefixIdentity
-	s.SystemPrompt = prompt
+	s.BaseSystemPrompt = base
+	s.SystemPrompt = composed
 	s.MaxSteps = maxSteps
 	s.invalidateLocked()
-	setSystemMessageLocked(s, prompt)
+	setSystemMessageLocked(s, composed)
 	// The prompt is wire-affecting: recapture and emit so a prompt change is
 	// reported once and a no-op settings write stays silent (audit RC-1,
 	// INV-68-2).
@@ -139,10 +143,16 @@ func (s *Session) RefreshPrefixIdentity() {
 }
 
 // AgentSettings returns the current root prompt and turn limit atomically.
+// The returned prompt is BaseSystemPrompt (memory-block-free), not
+// SystemPrompt (plan 77, E3) - callers read-modify-write this value
+// (appending a deferred-tool index, capturing a switch baseline) and pass
+// it back through SetAgentSettings/PublishAgentSurface, which recompose
+// the memory block fresh; returning the composed value here would let it
+// duplicate on every such cycle.
 func (s *Session) AgentSettings() (string, int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.SystemPrompt, s.MaxSteps
+	return s.BaseSystemPrompt, s.MaxSteps
 }
 
 // AgentSurfaceSnapshot returns the mutable session surface under one lock.

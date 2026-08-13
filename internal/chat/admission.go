@@ -76,7 +76,11 @@ func TurnIDFromContext(ctx context.Context) (uint64, bool) {
 // preconditions that must still hold when it is published. Zero-valued
 // requirements are not checked.
 type AgentSurfacePublication struct {
-	Prompt        string
+	Prompt string
+	// MemoryBlock is the core-memory block to compose into Prompt (plan 77,
+	// E3/E5). Empty means no injection - ComposeSystemPrompt(Prompt, "") is
+	// a true no-op.
+	MemoryBlock   string
 	MaxSteps      int
 	Registry      *tools.Registry
 	Dispatcher    *runtime.Dispatcher
@@ -386,7 +390,8 @@ func (s *Session) ResetAdmissions() {
 // separate check would let a force-sent sibling turn start in the gap and have
 // its dispatcher closed underneath it (plan tools/05 R2-1).
 func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
-	pub.Prompt = ComposeSystemPrompt(pub.Prompt, "")
+	base := pub.Prompt
+	composed := ComposeSystemPrompt(base, pub.MemoryBlock)
 	s.mu.Lock()
 	if s.switching ||
 		(pub.RequireSoleActiveTurn && s.activeTurns != 1) ||
@@ -398,7 +403,8 @@ func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
 	outgoing := s.prefixIdentity
 	old := s.binding.Dispatcher
 	s.agentSurfaceGeneration++
-	s.SystemPrompt = pub.Prompt
+	s.BaseSystemPrompt = base
+	s.SystemPrompt = composed
 	s.MaxSteps = pub.MaxSteps
 	s.Tools = pub.Registry
 	s.Dispatcher = pub.Dispatcher
@@ -406,7 +412,7 @@ func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
 	s.binding.SkillRegistry = pub.SkillRegistry
 	s.binding.AgentSurfaceGeneration = s.agentSurfaceGeneration
 	s.invalidateLocked()
-	setSystemMessageLocked(s, pub.Prompt)
+	setSystemMessageLocked(s, composed)
 	// TryPublishAgentSurface is one of the four identity-capture triggers
 	// (INV-68-8). The incoming identity reflects the freshly published
 	// surface; when the wire-affecting subset changed, exactly one

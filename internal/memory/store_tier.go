@@ -143,6 +143,15 @@ func (s *sqliteStore) promoteInDB(ctx context.Context, db *sql.DB, id string) er
 }
 
 func (s *sqliteStore) CoreEntries(ctx context.Context, scope Scope) ([]Result, error) {
+	// ScopeAll is invalid here (plan 77, E4/AR-4-adjacent finding): dbFor
+	// silently routes anything but ScopeOrg to the project DB, and no entry
+	// can ever have scope "all" (Entry.Validate rejects it), so an
+	// unguarded call would return an empty result instead of the loud,
+	// catchable error a caller-side mistake deserves. Matches memStore's
+	// existing (already correct) validation for backend parity.
+	if scope != ScopeProject && scope != ScopeOrg {
+		return nil, fmt.Errorf("scope must be project or org, got %q", scope)
+	}
 	db, org := s.dbFor(scope)
 	if db == nil {
 		return nil, nil

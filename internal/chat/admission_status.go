@@ -123,7 +123,9 @@ func (s *Session) publishPendingAdmission(allowCurrentTurn bool) {
 	// TryPublishAgentSurface exists to catch a turn starting between this
 	// check and the swap, which is the R2-1 hazard.
 	turnID := s.turnID
-	prompt, maxSteps := s.SystemPrompt, s.MaxSteps
+	// BaseSystemPrompt, not SystemPrompt: avoids double-composing the memory
+	// block on republish (plan 77, E3).
+	prompt, maxSteps := s.BaseSystemPrompt, s.MaxSteps
 	s.mu.Unlock()
 
 	// Background orchestration that outlives the turn still owns this

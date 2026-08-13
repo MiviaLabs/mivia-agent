@@ -111,3 +111,44 @@ func coreMemoryBlock(ctx context.Context, store memory.Store, scope memory.Scope
 	}
 	return b.String()
 }
+
+// coreMemoryBlockForState is coreMemoryBlock scoped to project-only
+// injection (plan 77, E4 - ScopeAll is invalid for CoreEntries, org-scope
+// injection is a deferred decision), reading state's session-lifetime
+// store. Callers hold state.mu (matching the LedgerRepo/Memory field
+// convention), so the field read is direct. context.Background() is used
+// deliberately: every call site is a session-init or turn-boundary prompt
+// rebuild with no request-scoped context threaded through this call chain,
+// and CoreEntries is a single indexed, 24-row-capped query - not worth
+// plumbing a context through half a dozen signatures for.
+func coreMemoryBlockForState(state *agentSessionState) string {
+	if state == nil {
+		return ""
+	}
+	return coreMemoryBlock(context.Background(), state.Memory, memory.ScopeProject, state.MemoryConfig)
+}
+
+// coreMemoryBlockForOpts is coreMemoryBlockForState's counterpart for the
+// subagent path (plan 77, E2/E5): opts.Memory is nil for every non-chat
+// caller (workflow/background paths), which coreMemoryBlock already
+// degrades safely to "".
+func coreMemoryBlockForOpts(opts SessionDispatcherOpts) string {
+	return coreMemoryBlock(context.Background(), opts.Memory, memory.ScopeProject, opts.MemoryConfig)
+}
+
+// memoryOf and memoryConfigOf mirror chat_repl.go's ledgerRepoOf for the
+// memory store (plan 77, E2), for callers building SessionDispatcherOpts
+// that don't already hold state.mu.
+func memoryOf(state *agentSessionState) memory.Store {
+	if state == nil {
+		return nil
+	}
+	return state.Memory
+}
+
+func memoryConfigOf(state *agentSessionState) config.MemoryConfig {
+	if state == nil {
+		return config.MemoryConfig{}
+	}
+	return state.MemoryConfig
+}

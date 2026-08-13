@@ -80,3 +80,21 @@ func TestCoreMemoryBlockEmptyWhenNoCoreEntries(t *testing.T) {
 		t.Fatalf("coreMemoryBlock with no core entries = %q, want empty", block)
 	}
 }
+
+// TestCoreMemoryBlockForStateNilIsSafe and
+// TestCoreMemoryBlockForOptsNilStoreIsSafe are plan 77's E1/E2 nil-degrade
+// coverage: a nil agentSessionState (e.g. non-chat callers) and a
+// zero-value SessionDispatcherOpts (e.g. workflow/background dispatcher
+// construction, which never sets Memory) must both compose to "", not
+// panic - the whole point of coreMemoryBlock's own nil-store guard.
+func TestCoreMemoryBlockForStateNilIsSafe(t *testing.T) {
+	if got := coreMemoryBlockForState(nil); got != "" {
+		t.Fatalf("coreMemoryBlockForState(nil) = %q, want empty", got)
+	}
+}
+
+func TestCoreMemoryBlockForOptsNilStoreIsSafe(t *testing.T) {
+	if got := coreMemoryBlockForOpts(SessionDispatcherOpts{}); got != "" {
+		t.Fatalf("coreMemoryBlockForOpts(zero value) = %q, want empty", got)
+	}
+}

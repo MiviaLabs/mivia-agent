@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/mcp"
+	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -66,6 +67,16 @@ type agentSessionState struct {
 	BaselinePrompt   string
 	BaselineMaxSteps int
 	BaselineCaptured bool
+	// Memory is the session-lifetime memory store, opened once by
+	// configureChatWorkspace and never closed here - the same store
+	// tools.DefaultOptions.Memory wires into memory_save/memory_search (plan
+	// 77, E1). Nil when memory is disabled or tools are off. Callers hold
+	// state.mu (applySessionAgent does), so the field is read directly,
+	// matching the LedgerRepo convention above.
+	Memory memory.Store
+	// MemoryConfig is the resolved [memory] section, read alongside Memory
+	// to build the core-tier injection block (coreMemoryBlock).
+	MemoryConfig config.MemoryConfig
 }
 
 func (s *agentSessionState) context() agentSessionContext {
@@ -91,6 +102,26 @@ func (s *agentSessionState) ledgerRepo() ledger.LedgerRepository {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.LedgerRepo
+}
+
+// memoryStore and memoryConfig mirror ledgerRepo for callers that do NOT
+// hold s.mu (plan 77, E1/E2).
+func (s *agentSessionState) memoryStore() memory.Store {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Memory
+}
+
+func (s *agentSessionState) memoryConfig() config.MemoryConfig {
+	if s == nil {
+		return config.MemoryConfig{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.MemoryConfig
 }
 
 // setSkillScope stores the selected root agent's skill policy. Writers that
@@ -242,7 +273,7 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 		if res != nil {
 			res.SystemPrompt = prompt
 		}
-		sess.SetAgentSettings(prompt, maxSteps)
+		sess.SetAgentSettings(prompt, maxSteps, coreMemoryBlockForState(state))
 		return nil
 	}
 	prompt = promptWithDeferredIndex(prompt, state.TierPlan)
@@ -252,7 +283,7 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	// A new binding starts from its own core tier: admissions never carry
 	// across an /agent switch (plan tools/05 D4).
 	sess.ResetAdmissions()
-	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg)
+	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg, coreMemoryBlockForState(state))
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(candidate.registry))
 	recordSchemaMassLocked(sess, state, candidate.plan, nil, sel.Name, "agent_switch")
 	if state.TierPlan.Deferred() {
@@ -412,7 +443,11 @@ func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *a
 		// The session owns the ledger store, so no rebuilt dispatcher opens one
 		// it would then close on publication - under the spool this surface
 		// carries. Callers hold state.mu, so the field is read directly.
-		Repo:                      state.LedgerRepo,
+		Repo: state.LedgerRepo,
+		// Same story for the memory store (plan 77, E2): the same instance
+		// configureChatWorkspace opened, never a second Open.
+		Memory:                    state.Memory,
+		MemoryConfig:              state.MemoryConfig,
 		Completer:                 binding.Completer,
 		Model:                     binding.Model,
 		ProviderName:              binding.ProviderName,

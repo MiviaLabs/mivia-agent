@@ -266,16 +266,20 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = useTools
 	installSessionIdentity(sess, agentState)
-	agentState.BaselinePrompt = sess.SystemPrompt
+	// BaseSystemPrompt, not SystemPrompt (plan 77, E3): equivalent right
+	// now (NewSession sets both identically and no compose has happened
+	// yet), but reading the field that's guaranteed memory-block-free stays
+	// correct regardless of future ordering changes.
+	agentState.BaselinePrompt = sess.BaseSystemPrompt
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
 	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
-	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res)
+	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res, agentState)
 	if err != nil {
 		return err
 	}
 	defer memClose()
-	applySelectedAgentPrompt(sess, res, agentState.Selected)
+	applySelectedAgentPrompt(sess, res, agentState.Selected, agentState)
 	contextStore, err := setupChatSessionContext(sess, wsRoot, invocation, res)
 	if err != nil {
 		return err

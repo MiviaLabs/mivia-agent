@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -71,7 +72,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	if err == nil && built == nil {
 		// No captured agent surface: a plain generation clone is correct, and
 		// it publishes no registry because there is no tiered surface to swap.
-		built, err = unscopedModelSurface(sess, res, root, binding, toolBase, toolResultCap, agentCtx, skillReg, state.ledgerRepo())
+		built, err = unscopedModelSurface(sess, res, root, binding, toolBase, toolResultCap, agentCtx, skillReg, state.ledgerRepo(), state.memoryStore(), state.memoryConfig())
 	}
 	if err != nil {
 		return chat.ModelBinding{}, err
@@ -88,7 +89,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 // current tools for a new generation and builds a dispatcher over them. It is
 // only correct because a session with no captured agent surface also defers
 // nothing, so the advertised registry IS the authority registry here.
-func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string, binding chat.ModelBinding, toolBase *tools.Registry, toolResultCap int, agentCtx agentSessionContext, skillReg *skills.Registry, repo ledger.LedgerRepository) (*agentSurface, error) {
+func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string, binding chat.ModelBinding, toolBase *tools.Registry, toolResultCap int, agentCtx agentSessionContext, skillReg *skills.Registry, repo ledger.LedgerRepository, memStore memory.Store, memCfg config.MemoryConfig) (*agentSurface, error) {
 	// Start from a generation clone of the current (already agent-scoped) tools
 	// so the new dispatcher cannot regain excluded tools.
 	toolGeneration := toolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
@@ -100,7 +101,11 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 		Registry: toolGeneration,
 		// Session-owned; see agentSessionState.LedgerRepo. Nil here is the
 		// hand-built caller with no agent state, which owns no session either.
-		Repo:                      repo,
+		Repo: repo,
+		// Same story for the memory store (plan 77, E2) - nil here for the
+		// same hand-built-caller reason.
+		Memory:                    memStore,
+		MemoryConfig:              memCfg,
 		Completer:                 binding.Completer,
 		Model:                     binding.Model,
 		ProviderName:              binding.ProviderName,
