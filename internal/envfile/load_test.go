@@ -1,6 +1,8 @@
 package envfile
 
 import (
+	"bufio"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,5 +128,68 @@ func TestLookupProcessWins(t *testing.T) {
 	v, ok := Lookup("DEEPSEEK_API_KEY", file)
 	if !ok || v != "from-process" {
 		t.Fatalf("got %q ok=%v", v, ok)
+	}
+}
+
+func TestUnquote(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"double quoted", `"double"`, "double"},
+		{"single quoted", `'single'`, "single"}, // previously uncovered branch
+		{"double quoted empty", `""`, ""},
+		{"single quoted empty", `''`, ""},
+		{"plain", "plain", "plain"},
+		{"unterminated double quote passes through", `"foo`, `"foo`},
+		{"unterminated single quote passes through", `'foo`, `'foo`},
+		{"trailing quote only passes through", `foo"`, `foo"`},
+		{"embedded quote stripped once", `"a"b"`, `a"b`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := unquote(tt.in); got != tt.want {
+				t.Fatalf("unquote(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadMalformedLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	content := "A=1\nNOEQUALS\nB=2\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for malformed line, got nil")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "expected KEY=VALUE") {
+		t.Fatalf("error should mention expected KEY=VALUE, got: %q", errStr)
+	}
+	if !strings.Contains(errStr, ":2:") {
+		t.Fatalf("error should name line 2, got: %q", errStr)
+	}
+}
+
+func TestLoadOversizedLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	// 71,680-byte line exceeds bufio.MaxScanTokenSize (64 KiB) so the scanner
+	// must surface ErrTooLong instead of silently truncating.
+	content := strings.Repeat("a", 70<<10) + "=v\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for oversized line, got nil")
+	}
+	if !errors.Is(err, bufio.ErrTooLong) {
+		t.Fatalf("error should be bufio.ErrTooLong, got: %v", err)
 	}
 }
