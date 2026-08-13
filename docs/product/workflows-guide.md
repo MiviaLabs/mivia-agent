@@ -610,6 +610,7 @@ commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs
 | `on_failure` | Step to return to when delivery fails for a repairable reason |
 | `pr_title_policy` | Relative path to the project PR-title policy file (optional; default: `.mivia/policy/pr-title.toml`) |
 | `on_pr_metadata_failure` | Step to return to when the agent PR title or summary fails the policy check (optional; default: `on_failure`) |
+| `on_diff_size_failure` | Step to return to when the delivered diff exceeds the stacking `hard_lines` limit (optional; default: `on_failure`). The step shrinks or splits the chunk so the diff fits; the run is never failed for size alone |
 
 Publication requires the invoking user to grant `--allow-publish`. Without the grant, an eligible run finishes as `delivery_pending`.
 
@@ -760,7 +761,6 @@ soft_lines = 200        # default 200
 hard_lines = 400        # default 400
 max_files = 5           # default 5
 merge_policy = "approve" # "approve" (default) or "auto"
-on_diff_size_failure = "shrink_retry"  # "shrink_retry" (default) or "reroute_fail_fast"
 ```
 
 Explicit step references are validated at compile time (unknown step, out-of-range thresholds, invalid merge policy). When the section is absent, stacking is enabled with the global defaults and inference is best-effort — existing workflows compile unchanged.
