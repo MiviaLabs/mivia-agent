@@ -396,11 +396,11 @@ func handleSlashEffort(fields []string, sess *chat.Session, term *Terminal) (boo
 	}
 	level, err := parseEffortArg(strings.TrimSpace(fields[1]))
 	if err != nil {
-		sink.Info(err.Error())
+		sink.Error(err.Error())
 		return true, false, nil
 	}
 	if err := sess.SetReasoningEffort(level); err != nil {
-		sink.Info(safeEffortError(err))
+		sink.Error(safeEffortError(err))
 		return true, false, nil
 	}
 	sink.Info(formatEffortSet(model, level, sess.ReasoningSetting()))

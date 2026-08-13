@@ -82,7 +82,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		}
 		discarded, err := switchModelCommand(sess, res, providerName, modelName)
 		if err != nil {
-			sink.Info(formatModelUnavailable(providerName, choices))
+			sink.Error(formatModelUnavailable(providerName, choices))
 			return true, false, nil
 		}
 		sink.Info(formatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded))

@@ -41,6 +41,15 @@ import (
 // same stdin it already writes chat turns to had no way to learn whether the
 // switch succeeded. See jsonSlashSink in chat_json_slash.go.
 //
+// /model and /effort route their failure branches (unavailable model,
+// rejected effort) through sink.Error rather than sink.Info specifically so
+// a --json consumer can treat "slash_error" as the authoritative failure
+// signal for a switch attempt and ignore "slash_info" entirely for that
+// purpose - a successful switch always emits slash_info (the same prose
+// confirmation the TUI shows) immediately followed by model_changed/
+// effort_changed, so slash_info alone is never a reliable success/failure
+// discriminator on its own.
+//
 // A SIGINT-interrupted turn gets its own "cancelled" type rather than being
 // folded into "error": a caller that wants to distinguish "the user stopped
 // this on purpose" from "this genuinely failed" (e.g. to decide whether to
