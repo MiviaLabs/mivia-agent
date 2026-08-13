@@ -93,15 +93,37 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 		return c.failAttempt(ctx, run, attempt, fmt.Errorf("panel step runner has no coordinator"))
 	}
 	panel := workflowledger.NewPanelCoordinator(c.RunID, runner.Coordinator, c.Repo)
-	members := make([]PanelMemberRequest, len(attempt.PanelExecution.Members))
-	for i, member := range attempt.PanelExecution.Members {
-		members[i] = PanelMemberRequest{MemberID: member.MemberID, RunID: member.CoordinatorRunID}
+	// The durable panel phase is the authority on which children may still
+	// run. members_admitted means the members still need dispatch (and
+	// synthesis is not admitted yet). synthesis_admitted is the crash window
+	// where CompareAndSetPanelPhase committed members_admitted ->
+	// synthesis_admitted but the executor died before EnsureSynthesis ran:
+	// resume must JOIN the already-persisted synthesis child (D14), never
+	// re-run members. Re-dispatching members for a synthesis_admitted attempt
+	// would trip PanelCoordinator's requireRunnablePhase(members_admitted)
+	// ErrConflict on every member (panel_runner.go's MemberNeedsActorPermit /
+	// panel_coordinator.go's EnsureMember) and settle the run failed for no
+	// reason. Any other phase fails closed with a clear cause.
+	switch attempt.PanelExecution.Phase {
+	case workflowledger.PanelPhaseMembersAdmitted:
+		members := make([]PanelMemberRequest, len(attempt.PanelExecution.Members))
+		for i, member := range attempt.PanelExecution.Members {
+			members[i] = PanelMemberRequest{MemberID: member.MemberID, RunID: member.CoordinatorRunID}
+		}
+		membersResult, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
+		if runErr != nil {
+			return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, runErr)
+		}
+		return c.advancePanelSynthesis(ctx, run, step, attempt, panel, membersResult)
+	case workflowledger.PanelPhaseSynthesisAdmitted:
+		// The members completed before the crash and their bounded reports
+		// are persisted inside the synthesis work input; advancePanelSynthesis
+		// rebuilds the envelope from that persisted input on this branch, so
+		// no in-memory member results are needed and none are re-dispatched.
+		return c.advancePanelSynthesis(ctx, run, step, attempt, panel, PanelMembersResult{})
+	default:
+		return c.failAttempt(ctx, run, attempt, fmt.Errorf("panel step %q has unexpected phase %q", step.ID, attempt.PanelExecution.Phase))
 	}
-	membersResult, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
-	if runErr != nil {
-		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, runErr)
-	}
-	return c.advancePanelSynthesis(ctx, run, step, attempt, panel, membersResult)
 }
 
 // reconcilePanelCancelPending drives one already-cancel_pending panel attempt

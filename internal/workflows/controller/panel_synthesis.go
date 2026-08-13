@@ -140,22 +140,32 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 
 // advancePanelSynthesis drives the panel's synthesis phase after every
 // member has succeeded (D13's split runner: RunMembers completes before this
-// runs). On first entry for one attempt it persists the exact synthesis work
-// spec via CompareAndSetPanelPhase (members_admitted -> synthesis_admitted,
-// D13's only legal forward transition) before any synthesis dispatch, then
-// drives EnsureSynthesis/JoinSynthesis. A later re-entry (resume/takeover)
-// finds the phase already synthesis_admitted and only joins the existing
-// child; it never re-persists or re-dispatches.
+// runs). On first entry for one attempt it builds the synthesis envelope from
+// the in-memory member results, persists the exact synthesis work spec via
+// CompareAndSetPanelPhase (members_admitted -> synthesis_admitted, D13's only
+// legal forward transition) before any synthesis dispatch, then drives
+// EnsureSynthesis/JoinSynthesis. A later re-entry (resume/takeover) finds the
+// phase already synthesis_admitted and only joins the existing child; it
+// never re-persists or re-dispatches. Because the re-entry has no in-memory
+// member results, the envelope is rebuilt from the persisted synthesis work
+// input (rebuildPanelSynthesisEnvelope) instead of from membersResult, so
+// AllCanonicalSourceKeys and HostVerdict stay host-derived (D10/D11).
 func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowledger.PanelCoordinator, membersResult PanelMembersResult) (workflowledger.RunSnapshot, bool, error) {
-	memberInputs, err := panelSynthesisMemberInputs(attempt.PanelExecution, membersResult)
-	if err != nil {
-		return c.failAttempt(ctx, run, attempt, err)
-	}
-	envelopeStruct, envelope, err := BuildSynthesisEnvelope(step.ID, memberInputs)
-	if err != nil {
-		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, err)
-	}
-	if attempt.PanelExecution.Phase == workflowledger.PanelPhaseMembersAdmitted {
+	var envelopeStruct PanelSynthesisEnvelope
+	switch attempt.PanelExecution.Phase {
+	case workflowledger.PanelPhaseMembersAdmitted:
+		// First pass: every member has just completed, so the envelope is
+		// built from the in-memory member results and the synthesis work spec
+		// is persisted exactly once via the claim-fenced phase transition.
+		memberInputs, err := panelSynthesisMemberInputs(attempt.PanelExecution, membersResult)
+		if err != nil {
+			return c.failAttempt(ctx, run, attempt, err)
+		}
+		var envelope []byte
+		envelopeStruct, envelope, err = BuildSynthesisEnvelope(step.ID, memberInputs)
+		if err != nil {
+			return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, err)
+		}
 		work, err := c.buildPanelSynthesisWork(ctx, run, step, attempt, envelope)
 		if err != nil {
 			return c.failAttempt(ctx, run, attempt, err)
@@ -175,7 +185,32 @@ func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workfl
 			return c.fail(ctx, run, err)
 		}
 		attempt = refreshed
+	case workflowledger.PanelPhaseSynthesisAdmitted:
+		// Re-entry (F1): a resume/takeover after the phase transition
+		// committed but before EnsureSynthesis ran has no in-memory member
+		// results. The envelope is rebuilt from the persisted synthesis work
+		// input - the same host-authored, content-addressed, digest-verified
+		// envelope that was validated at admission - so AllCanonicalSourceKeys
+		// and HostVerdict stay host-derived (D10/D11). A missing or corrupt
+		// persisted envelope fails the attempt; it never panics.
+		reconstructed, err := c.rebuildPanelSynthesisEnvelope(ctx, attempt)
+		if err != nil {
+			return c.failAttempt(ctx, run, attempt, err)
+		}
+		envelopeStruct = reconstructed
+	default:
+		return c.failAttempt(ctx, run, attempt, fmt.Errorf("panel attempt %q has unexpected phase %q for synthesis", attempt.AttemptID, attempt.PanelExecution.Phase))
 	}
+	return c.settlePanelSynthesis(ctx, run, step, attempt, panel, envelopeStruct)
+}
+
+// settlePanelSynthesis drives EnsureSynthesis/JoinSynthesis for the already
+// prepared envelope and settles the attempt with the host-assembled final
+// report (PanelFinalReport, HostVerdict from the envelope). It is split out
+// of advancePanelSynthesis so the phase-switch envelope preparation and the
+// join/decode/settle tail each stay under the structure gate's function
+// length limit; the two halves share nothing but the envelope.
+func (c *LinearController) settlePanelSynthesis(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowledger.PanelCoordinator, envelopeStruct PanelSynthesisEnvelope) (workflowledger.RunSnapshot, bool, error) {
 	handle, err := panel.EnsureSynthesis(ctx, attempt.AttemptID)
 	if err != nil {
 		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, err)
@@ -216,6 +251,45 @@ func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workfl
 		Output: output, Status: "completed",
 	}
 	return c.settleAgentAttempt(ctx, run, step, attempt, result2, nil)
+}
+
+// rebuildPanelSynthesisEnvelope reconstructs the host-authored synthesis
+// envelope from the persisted synthesis work input on re-entry
+// (synthesis_admitted). The runtime dispatches every panel child through the
+// multi-step subagent handler, whose Invoke contract is a JSON-string task
+// prompt, so the persisted input is the envelope JSON wrapped in a JSON string
+// (mustJSON). LoadContent verifies the content-addressed sha256 digest, which
+// ties the reconstruction to exactly the envelope the host built and validated
+// at admission (2-4 strict-decoded member reports, a host-computed verdict);
+// AllCanonicalSourceKeys and HostVerdict are derived from that same
+// host-authored document, so D10/D11 hold on the resume path. A missing or
+// corrupt persisted envelope fails with a cause naming the persisted envelope;
+// it never panics.
+func (c *LinearController) rebuildPanelSynthesisEnvelope(ctx context.Context, attempt workflowledger.StepAttempt) (PanelSynthesisEnvelope, error) {
+	if attempt.PanelExecution == nil || attempt.PanelExecution.Synthesis == nil || attempt.PanelExecution.Synthesis.Work.InputRef == "" {
+		return PanelSynthesisEnvelope{}, fmt.Errorf("panel attempt %q has no persisted synthesis work input", attempt.AttemptID)
+	}
+	stored, err := c.Repo.LoadContent(ctx, attempt.PanelExecution.Synthesis.Work.InputRef)
+	if err != nil {
+		return PanelSynthesisEnvelope{}, fmt.Errorf("panel attempt %q: persisted synthesis envelope: %w", attempt.AttemptID, err)
+	}
+	// Unwrap the JSON-string task prompt (mustJSON(string(envelope))) to the
+	// raw envelope JSON before decoding the struct.
+	var envelopeJSON string
+	if err := json.Unmarshal(stored, &envelopeJSON); err != nil {
+		return PanelSynthesisEnvelope{}, fmt.Errorf("panel attempt %q: persisted synthesis envelope is not a JSON-string prompt: %w", attempt.AttemptID, err)
+	}
+	if len(envelopeJSON) > maxSynthesisEnvelopeBytes {
+		return PanelSynthesisEnvelope{}, fmt.Errorf("panel attempt %q: persisted synthesis envelope is %d bytes, exceeds %d byte bound", attempt.AttemptID, len(envelopeJSON), maxSynthesisEnvelopeBytes)
+	}
+	var envelope PanelSynthesisEnvelope
+	if err := json.Unmarshal([]byte(envelopeJSON), &envelope); err != nil {
+		return PanelSynthesisEnvelope{}, fmt.Errorf("panel attempt %q: persisted synthesis envelope decode: %w", attempt.AttemptID, err)
+	}
+	if len(envelope.Members) < 2 || len(envelope.Members) > 4 {
+		return PanelSynthesisEnvelope{}, fmt.Errorf("panel attempt %q: persisted synthesis envelope has %d members, want 2 to 4", attempt.AttemptID, len(envelope.Members))
+	}
+	return envelope, nil
 }
 
 // panelSynthesisTaskStatusError checks the synthesis task's own terminal
