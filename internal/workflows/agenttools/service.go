@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -301,6 +302,33 @@ func (s *Service) inspectWithinBudget(ctx context.Context, repo workflowledger.R
 	return view, nil
 }
 
+// workflowRunStatuses is the accepted status filter set for ListRuns. It
+// mirrors the ledger's RunStatus values (and the CLI twin's
+// workflowRunStatuses in internal/cli/workflow_runs.go); an unknown value is
+// rejected rather than silently filtering to zero rows.
+var workflowRunStatuses = map[string]workflowledger.RunStatus{
+	string(workflowledger.RunStatusPending):         workflowledger.RunStatusPending,
+	string(workflowledger.RunStatusRunning):         workflowledger.RunStatusRunning,
+	string(workflowledger.RunStatusWaitingApproval): workflowledger.RunStatusWaitingApproval,
+	string(workflowledger.RunStatusDeliveryPending): workflowledger.RunStatusDeliveryPending,
+	string(workflowledger.RunStatusSucceeded):       workflowledger.RunStatusSucceeded,
+	string(workflowledger.RunStatusFailed):          workflowledger.RunStatusFailed,
+	string(workflowledger.RunStatusCanceled):        workflowledger.RunStatusCanceled,
+	string(workflowledger.RunStatusTimedOut):        workflowledger.RunStatusTimedOut,
+	string(workflowledger.RunStatusDeliveryFailed):  workflowledger.RunStatusDeliveryFailed,
+}
+
+// workflowRunStatusNames returns the accepted status filter values, sorted,
+// for error messages.
+func workflowRunStatusNames() string {
+	names := make([]string, 0, len(workflowRunStatuses))
+	for name := range workflowRunStatuses {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
 // ListRuns lists active and historical runs with optional status filter.
 func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offset int) (ListRunsView, error) {
 	if limit < 0 || offset < 0 {
@@ -309,15 +337,19 @@ func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offs
 	if limit == 0 {
 		limit = DefaultListRunsPageSize
 	}
+	var statuses []workflowledger.RunStatus
+	if trimmed := strings.TrimSpace(statusFilter); trimmed != "" {
+		status, ok := workflowRunStatuses[trimmed]
+		if !ok {
+			return ListRunsView{}, fmt.Errorf("unknown status %q (want one of %s)", trimmed, workflowRunStatusNames())
+		}
+		statuses = []workflowledger.RunStatus{status}
+	}
 	repo, closeFn, err := s.openRepo(ctx)
 	if err != nil {
 		return ListRunsView{}, err
 	}
 	defer closeFn()
-	var statuses []workflowledger.RunStatus
-	if statusFilter != "" {
-		statuses = []workflowledger.RunStatus{workflowledger.RunStatus(statusFilter)}
-	}
 	runs, err := repo.ListRuns(ctx, statuses...)
 	if err != nil {
 		return ListRunsView{}, err

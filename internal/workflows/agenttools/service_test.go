@@ -465,6 +465,49 @@ func TestListRunsHugeLimitDoesNotOverflow(t *testing.T) {
 	}
 }
 
+// TestListRunsRejectsUnknownStatusFilter is the regression test for the
+// silent false-negative: the caller-supplied status filter was cast straight
+// to workflowledger.RunStatus with no validation, so a typo like
+// "succeeeded" filtered to zero rows and returned Count:0 with a nil error -
+// an agent reads 'no runs' for a misspelled filter. ListRuns must reject an
+// unknown status with an explicit error, mirroring the CLI twin
+// (internal/cli/workflow_runs.go workflowRunStatuses).
+func TestListRunsRejectsUnknownStatusFilter(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	seedRunningAttempt(t, repo, "wfr-list-status-1")
+	svc := testService(t, repo, nil)
+	ctx := context.Background()
+
+	if _, err := svc.ListRuns(ctx, "succeeeded", 0, 0); err == nil {
+		t.Fatal("ListRuns with an unknown status filter must return an error, not silently filter to zero rows")
+	}
+}
+
+// TestListRunsAcceptsEveryKnownStatusFilter pins that every ledger RunStatus
+// value is accepted as a status filter (matching the CLI's accepted set), so
+// strict validation never rejects a legitimate filter.
+func TestListRunsAcceptsEveryKnownStatusFilter(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	seedRunningAttempt(t, repo, "wfr-list-status-1")
+	svc := testService(t, repo, nil)
+	ctx := context.Background()
+	for _, status := range []workflowledger.RunStatus{
+		workflowledger.RunStatusPending,
+		workflowledger.RunStatusRunning,
+		workflowledger.RunStatusWaitingApproval,
+		workflowledger.RunStatusDeliveryPending,
+		workflowledger.RunStatusSucceeded,
+		workflowledger.RunStatusFailed,
+		workflowledger.RunStatusCanceled,
+		workflowledger.RunStatusTimedOut,
+		workflowledger.RunStatusDeliveryFailed,
+	} {
+		if _, err := svc.ListRuns(ctx, string(status), 0, 0); err != nil {
+			t.Fatalf("ListRuns(%q) = %v, want no error for a known status", status, err)
+		}
+	}
+}
+
 func TestDeliverWithoutAllowPublishRefuses(t *testing.T) {
 	svc := testService(t, workflowledger.NewMemoryRepository(), &stubEngine{})
 	out, err := findTool(t, svc, agenttools.ToolWorkflowDeliver).Execute(
