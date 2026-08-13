@@ -11,6 +11,7 @@ type WorkflowFile struct {
 	Steps       []Step              `toml:"steps" json:"steps,omitempty"`
 	Transitions []Transition        `toml:"transitions" json:"transitions,omitempty"`
 	Delivery    *Delivery           `toml:"delivery" json:"delivery,omitempty"`
+	Stacking    *Stacking           `toml:"stacking" json:"stacking,omitempty"`
 }
 
 type InputDef struct {
@@ -173,6 +174,128 @@ type Delivery struct {
 	// selects the delivery package default (delivery.MaxDeliveryRepairs).
 	// Negative values are rejected at admission.
 	MaxRepairs int `toml:"max_repairs" json:"max_repairs,omitempty"`
+}
+
+// Stacking enables the generic stacked-small-PR capability for a workflow.
+// A plan-mode run (no stack_mode input) executes the workflow's own planning
+// steps plus an engine-synthesized decompose step and ends with a chunk plan;
+// chunk-mode runs (stack_mode="chunk") start at implement_step and deliver one
+// small PR each; a driver merges the stack incrementally.
+//
+// The [stacking] section is optional: when omitted, stacking is ENABLED with
+// the global defaults (stacked delivery is on by default). Set enabled = false
+// to deliberately opt out. Every knob is a per-workflow override of a global
+// default.
+type Stacking struct {
+	// Enabled selects stacking for this workflow. nil means the global
+	// default (DefaultStackingEnabled, true); false is a deliberate opt-out.
+	Enabled *bool `toml:"enabled" json:"enabled,omitempty"`
+	// PlanStep is the id of the workflow's planning step (whose output feeds
+	// the decompose step). Empty lets the compiler infer it: the step whose
+	// output implement_step binds as "plan".
+	PlanStep string `toml:"plan_step" json:"plan_step,omitempty"`
+	// ImplementStep is the id where chunk-mode runs start. Empty lets the
+	// compiler infer it: the step with the change-summary output schema, or a
+	// step whose id is "implement".
+	ImplementStep string `toml:"implement_step" json:"implement_step,omitempty"`
+	// MaxChunks bounds the number of chunks in one plan (0 = global default).
+	MaxChunks int `toml:"max_chunks" json:"max_chunks,omitempty"`
+	// SoftLines is the preferred per-chunk diff size (0 = global default).
+	SoftLines int `toml:"soft_lines" json:"soft_lines,omitempty"`
+	// HardLines is the maximum per-chunk diff size; delivery rejects larger
+	// actual diffs (0 = global default).
+	HardLines int `toml:"hard_lines" json:"hard_lines,omitempty"`
+	// MaxFiles bounds the files per chunk (0 = global default).
+	MaxFiles int `toml:"max_files" json:"max_files,omitempty"`
+	// MergePolicy selects how merged PRs are approved: "approve" (human
+	// approves each PR; the default) or "auto" (auto-merge on green with the
+	// publish grant as the single human checkpoint).
+	MergePolicy string `toml:"merge_policy" json:"merge_policy,omitempty"`
+	// Agent names the agent used for the engine-synthesized decompose and
+	// chunk-plan-validate steps. Empty selects the plan step's agent, which
+	// always exists in the workflow, so agent references stay resolvable in
+	// any workspace.
+	Agent string `toml:"agent" json:"agent,omitempty"`
+}
+
+// Stacking defaults. These are the global defaults every workflow inherits;
+// per-workflow [stacking] values override them.
+const (
+	DefaultStackingEnabled     = true
+	DefaultStackingMaxChunks   = 12
+	DefaultStackingSoftLines   = 200
+	DefaultStackingHardLines   = 400
+	DefaultStackingMaxFiles    = 5
+	DefaultStackingMergePolicy = "approve"
+)
+
+// ValidStackingMergePolicies enumerates the allowed merge_policy values.
+var ValidStackingMergePolicies = map[string]bool{
+	"approve": true,
+	"auto":    true,
+}
+
+// StackingEnabled reports whether stacking applies to the workflow. An
+// explicit per-workflow value wins; otherwise the global default (on). A
+// host-level kill-switch, if added later, is applied by the caller before
+// this method runs.
+func (s *Stacking) StackingEnabled() bool {
+	if s == nil || s.Enabled == nil {
+		return DefaultStackingEnabled
+	}
+	return *s.Enabled
+}
+
+// StackingConfig is the resolved stacking configuration: per-workflow values
+// with global defaults filled in for everything unset. PlanStep and
+// ImplementStep are resolved by the compiler (inference needs the step
+// graph) and passed in.
+type StackingConfig struct {
+	Enabled       bool
+	PlanStep      string
+	ImplementStep string
+	MaxChunks     int
+	SoftLines     int
+	HardLines     int
+	MaxFiles      int
+	MergePolicy   string
+	Agent         string
+}
+
+// EffectiveStacking resolves the stacking configuration for a workflow.
+// planStep and implementStep must be the compiler-resolved (possibly
+// inferred) step ids; pass "" when inference did not apply.
+func (s *Stacking) EffectiveStacking(planStep, implementStep string) StackingConfig {
+	cfg := StackingConfig{
+		Enabled:       s.StackingEnabled(),
+		PlanStep:      planStep,
+		ImplementStep: implementStep,
+		MaxChunks:     DefaultStackingMaxChunks,
+		SoftLines:     DefaultStackingSoftLines,
+		HardLines:     DefaultStackingHardLines,
+		MaxFiles:      DefaultStackingMaxFiles,
+		MergePolicy:   DefaultStackingMergePolicy,
+	}
+	if s == nil {
+		return cfg
+	}
+	if s.MaxChunks > 0 {
+		cfg.MaxChunks = s.MaxChunks
+	}
+	if s.SoftLines > 0 {
+		cfg.SoftLines = s.SoftLines
+	}
+	if s.HardLines > 0 {
+		cfg.HardLines = s.HardLines
+	}
+	if s.MaxFiles > 0 {
+		cfg.MaxFiles = s.MaxFiles
+	}
+	if s.MergePolicy != "" {
+		cfg.MergePolicy = s.MergePolicy
+	}
+	cfg.Agent = s.Agent
+	return cfg
 }
 
 // DiscoveredWorkflow is the result of discovering a workflow file.
