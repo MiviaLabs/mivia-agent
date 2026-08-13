@@ -742,6 +742,71 @@ Before a run starts, the compiler checks the workflow file:
 
 Interrupted runs can be resumed from the durable run-record snapshot. The snapshot contains the compiled workflow, templates, schemas, inputs, and resolved agent digests. Use `--force` to clear a stale run claim.
 
+## Stacking small PRs
+
+A workflow with a `[stacking]` section opts into the stacked small-PR engine. The engine decomposes work into chunks, delivers each as a small PR, and merges them incrementally. See [Workflow architecture](../architecture/workflows.md#stacking-small-pr-delivery) for the engine design.
+
+### Authoring `[stacking]`
+
+Add a `[stacking]` section to the workflow TOML. All keys are optional; omitted values take the global defaults.
+
+```toml
+[stacking]
+enabled = true          # default true; set false to opt out
+plan_step = "fix_plan"  # optional; inferred from the implement step's context binding
+implement_step = "implement"  # optional; inferred from the change-summary schema or id "implement"
+max_chunks = 12         # default 12
+soft_lines = 200        # default 200
+hard_lines = 400        # default 400
+max_files = 5           # default 5
+merge_policy = "approve" # "approve" (default) or "auto"
+```
+
+Explicit step references are validated at compile time (unknown step, out-of-range thresholds, invalid merge policy). When the section is absent, stacking is enabled with the global defaults and inference is best-effort — existing workflows compile unchanged.
+
+### What a plan-mode run does
+
+A plan-mode run starts a stacking-enabled workflow without `stack_mode`. It:
+
+1. Executes the workflow's own planning steps (hunt/triage for bug-fix; plan for feature-delivery).
+2. Runs the engine-injected `decompose` step, which produces a chunk plan (`chunk-plan-v1.json`).
+3. Runs the engine-injected `chunk_plan_validate` gate, which deterministically checks the plan (disjoint files, size limits, DAG, tests).
+4. Routes:
+   - `no_bug` / no changes → `success` without a plan (driver reports "nothing to stack").
+   - `single` → continues inline to `implement_step` (today's single-PR path).
+   - `multi` → `success` with the plan as run output (the driver uses this plan).
+
+The plan run id becomes the stack id. Use `mivia stack plan <workflow>` to start one.
+
+### The `mivia stack` commands
+
+```bash
+mivia stack plan <workflow> [--workspace dir] [--config path]
+mivia stack drive <workflow> [--stack <plan-run-id>] [--workspace dir] [--config path]
+mivia stack status <workflow> [--stack <plan-run-id>] [--workspace dir] [--config path]
+```
+
+| Command | What it does |
+|---------|-------------|
+| `stack plan` | Starts a plan-mode run. The plan run id is the stack id. |
+| `stack drive` | Reconciles the stack, admits chunk runs in topological order, applies the merge policy, and runs a final integration run. Resumable on restart. |
+| `stack status` | Prints per-chunk status (chunk id, status, run ref, PR number, depends_on) from the task ledger. |
+
+### Merge policies
+
+| Policy | Behavior |
+|--------|----------|
+| `approve` (default, policy A) | Each PR stays at `delivery_pending` until a human grants publish (`mivia workflow deliver <run-id> --allow-publish`). The driver halts at the publish grant and waits. |
+| `auto` (policy B) | The driver auto-delivers green PRs and continues. The publish grant remains the single human checkpoint. |
+
+### Halt-on-failure
+
+Any chunk that fails terminally (exhausted retry budget) halts the stack. The driver returns an error naming the chunk and the cause. The stack does not continue past a terminal failure.
+
+### Recovery on restart
+
+Every `stack drive` start runs idempotent reconciliation: it loads chunk tasks from the task ledger, reconciles each non-terminal task against its run and git merge state, and schedules the next admission wave. Stable admission keys (`<stack-id>:<chunk-id>`) ensure that re-admission after a restart returns the same run — no duplicate runs, no lost tasks. Reconciliation is derived from durable state only (task ledger, run ledger, git merge state).
+
 ## See also
 
 - [Workflow product overview](workflows.md)
