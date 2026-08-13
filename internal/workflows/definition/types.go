@@ -179,6 +179,14 @@ type Delivery struct {
 	// selects the delivery package default (delivery.MaxDeliveryRepairs).
 	// Negative values are rejected at admission.
 	MaxRepairs int `toml:"max_repairs" json:"max_repairs,omitempty"`
+	// DeliverPlanRun publishes a stacking plan-mode run's own diff as its own
+	// PR after the stack drive. A plan run with a multi-chunk plan settles at
+	// delivery_pending (its success terminal is delivery-policy active) and the
+	// chunk stack is driven to completion; the chunk PRs carry the work. When
+	// false (the default) the plan run is NOT published - the plan and its
+	// artifacts stay recorded in the run ledger and the stack task ledger, and
+	// the run settles succeeded. Set true to also publish the plan run's PR.
+	DeliverPlanRun bool `toml:"deliver_plan_run" json:"deliver_plan_run,omitempty"`
 }
 
 // Stacking enables the generic stacked-small-PR capability for a workflow.

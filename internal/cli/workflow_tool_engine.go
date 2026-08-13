@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -251,11 +252,21 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 	go func() {
 		sessionAutoDeliveryRepairLoop(runCtx, prepared.repo, prepared.root, prepared.res, prepared.store, runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return controller.RunWithCancelReconciliationRetry(ctx, built.Controller.Run)
-		})
+		}, func() (bool, error) {
+			// A stacking plan run that settles delivery_pending with a multi-chunk
+			// plan drives its stack before the plan run is delivered; the hook
+			// mirrors the CLI run entry point's drive-before-delivery ordering and
+			// reports whether it drove a stack.
+			return maybeDriveSettledStack(prepared, runID, true, io.Discard, io.Discard)
+		}, compiledDeliverPlanRun(prepared.compiled))
 		// Delivery completion settles outside the controller (which parked at
 		// delivery_pending and emitted no run_finished), so publish the terminal
 		// event here once delivery actually succeeded.
 		e.publishDeliveredRunFinished(context.Background(), prepared.repo, runID)
+		// A plan run whose own publication is disabled settles succeeded with no
+		// delivery record; publish its terminal event from the stack-ledger
+		// marker.
+		e.publishSkippedPlanRunFinished(context.Background(), prepared.store, prepared.repo, runID)
 		// done closes as soon as the run loop itself has exited (and released
 		// any claim it held), before resource teardown below: stopActive's
 		// callers must be able to observe "the loop stopped" without that

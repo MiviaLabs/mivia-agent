@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -154,54 +155,109 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 		settleCLIRunFailure(prepared.repo, built.Controller.RunID, err)
 		return err
 	}
+	// Stacking is part of the run: a stacking-enabled workflow whose plan run
+	// settles with a multi-chunk plan keeps driving from THIS invocation - the
+	// per-chunk runs, their stacked PRs, the merge waits, and the final
+	// integration run - until the whole stack is complete. No separate drive
+	// command is needed; the run itself owns the stack.
+	//
+	// The drive runs BEFORE the delivery branch below: a multi-chunk plan run
+	// settles at delivery_pending (its success terminal is delivery-policy
+	// active), and returning from the delivery branch first would publish the
+	// plan PR and leave the chunk stack undriven (deliver-before-drive
+	// ordering bug). The drive is a no-op for non-stacking workflows,
+	// non-multi plans, and workflows without an active delivery policy.
+	drove, err := maybeDriveSettledStack(prepared, built.Controller.RunID, allowPublish, stdout, stderr)
+	if err != nil {
+		return err
+	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {
+		// A plan run whose multi-chunk stack just drove is published only when
+		// the workflow opts in (delivery.deliver_plan_run=true). The default
+		// keeps the plan run unpublished: the chunk PRs carry the work, and the
+		// plan and its artifacts are recorded in the ledger. The run settles
+		// succeeded (the same terminal a delivered run reaches) instead of
+		// parking at delivery_pending forever.
+		if drove && !compiledDeliverPlanRun(prepared.compiled) {
+			if err := settlePlanRunSkippedDelivery(context.Background(), prepared.repo, built.Controller.RunID); err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "run_id=%s status=%s plan PR not created (delivery.deliver_plan_run=false); plan and artifacts recorded in the ledger\n", built.Controller.RunID, workflowledger.RunStatusSucceeded)
+			return nil
+		}
 		mode := ""
 		if prepared.compiled.Delivery != nil {
 			mode = prepared.compiled.Delivery.Mode
 		}
 		return finishWorkflowRunDelivery(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, built.Controller.RunID, name, mode, allowPublish, stdout, stderr)
 	}
-	// Stacking is part of the run: a stacking-enabled workflow whose plan run
-	// settles with a multi-chunk plan keeps driving from THIS invocation - the
-	// per-chunk runs, their stacked PRs, the merge waits, and the final
-	// integration run - until the whole stack is complete. No separate drive
-	// command is needed; the run itself owns the stack.
-	if err := maybeDriveSettledStack(prepared, built.Controller.RunID, allowPublish, stdout, stderr); err != nil {
-		return err
-	}
 	return nil
 }
 
 // maybeDriveSettledStack continues a just-settled plan-mode run into the
 // stacking driver when the run's decompose step produced a multi-chunk plan
-// (stack_mode=multi). It is a no-op for single/no_bug plans, runs without a
-// succeeded decompose output, and workflows without an active stacking
-// delivery policy.
-func maybeDriveSettledStack(prepared *preparedWorkflowRun, planRunID string, allowPublish bool, stdout, stderr io.Writer) error {
+// (stack_mode=multi). It reports whether it drove a stack (drove=true only
+// when a multi-chunk drive ran to completion) and is a no-op - (false, nil) -
+// for single/no_bug plans, runs without a succeeded decompose output, and
+// workflows without an active stacking delivery policy.
+func maybeDriveSettledStack(prepared *preparedWorkflowRun, planRunID string, allowPublish bool, stdout, stderr io.Writer) (bool, error) {
 	if prepared.compiled.Stacking == nil || !prepared.compiled.Stacking.Enabled {
-		return nil
+		return false, nil
 	}
 	if !prepared.compiled.DeliveryActive() {
-		return nil
+		return false, nil
 	}
 	planOutput, err := loadStackPlanOutput(prepared.repo, planRunID)
 	if err != nil {
-		return nil // no succeeded decompose output: nothing to stack
+		return false, nil // no succeeded decompose output: nothing to stack
 	}
 	mode, chunks, err := parseStackPlanOutput(planOutput)
 	if err != nil {
-		return nil
+		return false, nil
 	}
 	if mode != "multi" || len(chunks) == 0 {
-		return nil
+		return false, nil
 	}
 	fmt.Fprintf(stdout, "stack %s: multi-chunk plan (%d chunks); driving the stack to completion\n", planRunID, len(chunks))
 	ledger := tasks.NewStore(prepared.store)
 	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
-		return fmt.Errorf("stack seed: %w", err)
+		return false, fmt.Errorf("stack seed: %w", err)
 	}
-	return driveStackToCompletion(prepared, ledger, planRunID, chunks, prepared.inputSnapshot, allowPublish, stdout, stderr)
+	return true, workflowStackDriveToCompletion(prepared, ledger, planRunID, chunks, prepared.inputSnapshot, allowPublish, stdout, stderr)
 }
+
+// compiledDeliverPlanRun reports whether the compiled workflow's delivery
+// policy publishes the plan-mode run's own PR (delivery.deliver_plan_run).
+// The default is false: a stacking plan run's diff is not published; the plan
+// and its artifacts stay recorded in the ledger.
+func compiledDeliverPlanRun(compiled *compiler.CompiledWorkflow) bool {
+	return compiled != nil && compiled.Delivery != nil && compiled.Delivery.DeliverPlanRun
+}
+
+// settlePlanRunSkippedDelivery settles a plan run whose own publication is
+// disabled (delivery.deliver_plan_run=false) after its stack drove to
+// completion. The run's success terminal parked it at delivery_pending; the
+// stack is done and nothing is published for the run itself, so it CASes to
+// succeeded - the same terminal a delivered run reaches - rather than waiting
+// for a delivery that will never come. It is a no-op when the run no longer
+// waits for delivery (for example a concurrent manual deliver already settled
+// it).
+func settlePlanRunSkippedDelivery(ctx context.Context, repo workflowledger.Repository, runID string) error {
+	fresh, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if fresh.Status != workflowledger.RunStatusDeliveryPending {
+		return nil
+	}
+	now := time.Now()
+	return repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusSucceeded, &now)
+}
+
+// workflowStackDriveToCompletion is the stack driver invoked for a settled
+// multi-chunk plan run. It is a package variable so tests can stub the drive
+// and pin the drive-before-delivery ordering without running chunk agents.
+var workflowStackDriveToCompletion = driveStackToCompletion
 
 // preparedWorkflowRun is the immutable input of one workflow run invocation:
 // the opened workspace, store, and compiled definition.

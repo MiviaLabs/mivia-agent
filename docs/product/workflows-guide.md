@@ -621,8 +621,11 @@ commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs
 | `pr_title_policy` | Relative path to the project PR-title policy file (optional; default: `.mivia/policy/pr-title.toml`) |
 | `on_pr_metadata_failure` | Step to return to when the agent PR title or summary fails the policy check (optional; default: `on_failure`) |
 | `on_diff_size_failure` | Step to return to when the delivered diff exceeds the stacking `hard_lines` limit (optional; default: `on_failure`). The step shrinks or splits the chunk so the diff fits; the run is never failed for size alone |
+| `deliver_plan_run` | Publish a stacking plan run's own PR after its chunk stack has been driven. Default `false`: the plan run settles `succeeded` and nothing is published for it — the chunk PRs carry the work, and the plan and its artifacts stay recorded in the ledger |
 
 Publication requires the invoking user to grant `--allow-publish`. Without the grant, an eligible run finishes as `delivery_pending`.
+
+For a stacking workflow, the plan-mode run is the stack root, not the deliverable. When a multi-chunk plan run finishes, its chunk stack is driven to completion first; only then does the host decide whether to publish the plan run itself. By default (`deliver_plan_run = false`) it does not: the plan run settles `succeeded` with its plan and artifacts recorded in the ledger, and the chunk PRs are the published work. Set `delivery.deliver_plan_run = true` to also publish the plan run's own PR; the stack still drives before publication, and the publish grant still applies.
 
 Delivery runs after the success terminal, outside the step graph. A delivery
 that fails therefore has no route back into the workflow, and the run stops
