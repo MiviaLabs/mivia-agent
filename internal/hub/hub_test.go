@@ -105,7 +105,11 @@ func TestJoinOwnerToClientBroadcast(t *testing.T) {
 	clientHandle := Join(dir, clientSess, clientSink.sink)
 	defer clientHandle.Leave()
 
-	waitFor(t, 2*time.Second, func() bool {
+	// 5s, not 2s: a cold test-binary invocation's first flock/socket bind
+	// has occasionally needed longer than 2s in this sandbox (observed
+	// flake, not a correctness issue - every subsequent case in the same
+	// process runs in well under 100ms).
+	waitFor(t, 5*time.Second, func() bool {
 		ownerSess.EventBus.Publish(events.Event{Kind: events.KindAssistant, SessionID: "sess-owner", TurnID: "turn:1", Content: "hello from owner"})
 		return clientSink.count() > 0
 	})
@@ -113,7 +117,7 @@ func TestJoinOwnerToClientBroadcast(t *testing.T) {
 		t.Fatalf("client sink got %+v, want content %q", got, "hello from owner")
 	}
 
-	waitFor(t, 2*time.Second, func() bool {
+	waitFor(t, 5*time.Second, func() bool {
 		clientSess.EventBus.Publish(events.Event{Kind: events.KindAssistant, SessionID: "sess-client", TurnID: "turn:1", Content: "hello from client"})
 		return ownerSink.count() > 0
 	})
@@ -143,7 +147,7 @@ func TestBroadcastExcludesOrigin(t *testing.T) {
 	bHandle := Join(dir, bSess, bSink.sink)
 	defer bHandle.Leave()
 
-	waitFor(t, 2*time.Second, func() bool {
+	waitFor(t, 5*time.Second, func() bool {
 		aSess.EventBus.Publish(events.Event{Kind: events.KindAssistant, SessionID: "sess-a", TurnID: "turn:1", Content: "from a"})
 		return bSink.count() > 0 && ownerSink.count() > 0
 	})
@@ -171,7 +175,7 @@ func TestReconnectAfterOwnerExit(t *testing.T) {
 	// Prove the survivor is actually connected as a client before pulling
 	// the owner out from under it, so the reconnect this test is about is
 	// unambiguous rather than "it never connected to begin with."
-	waitFor(t, 2*time.Second, func() bool {
+	waitFor(t, 5*time.Second, func() bool {
 		ownerSess.EventBus.Publish(events.Event{Kind: events.KindAssistant, SessionID: "sess-owner", TurnID: "turn:0", Content: "warmup"})
 		return survivorSink.count() > 0
 	})

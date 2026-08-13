@@ -53,7 +53,7 @@ func startClassicReplHub(sess *chat.Session) func() {
 }
 
 func startLineModeHub(sess *chat.Session, jsonMode bool) func() {
-	return joinHub(sess, chatHubSink(jsonMode)).Leave
+	return joinHub(sess, chatHubSink(sess, jsonMode)).Leave
 }
 
 // publishTurnStartForHub tells this process's hub participants that a new
@@ -71,32 +71,63 @@ func publishTurnStartForHub(sess *chat.Session, text string) {
 	})
 }
 
-// externalTurnState tracks, per session, the one external turn a hub sink is
-// currently relaying - at most one, matching the single-turn-in-flight
-// invariant a session already enforces. pendingUserText holds a KindTurnStart
-// Detail that hasn't yet been matched to a following turn's first event;
-// activeTurnID (mivia's own internal "turn:%d" id, once seen) is how every
-// subsequent event for that same turn is recognized as a continuation rather
-// than a second new turn.
+// externalTurnState tracks the external turns a hub sink is currently
+// relaying. seenRunIDs is a set, not a single scalar: the hub's workspace
+// (where hub.lock/hub.sock live) can be shared by several UNRELATED
+// sessions at once - e.g. mivia-agent-desktop's own sibling threads, which
+// default to one shared per-app workspace unless a project directory is
+// picked - so more than one external run can legitimately be in flight
+// through this sink at a time, keyed by its own run_id. pendingUserText is
+// still a single scalar: it only bridges a KindTurnStart to the very next
+// unseen run_id's first event, which - because a session's own turns are
+// already single-flight - only needs to survive that narrow window, even
+// when multiple OTHER sessions are relaying through the same hub
+// concurrently (their own KindTurnStart/first-event pairs are filtered out
+// entirely by the SessionID check below before reaching this state at
+// all).
 type externalTurnState struct {
 	mu              sync.Mutex
 	pendingUserText string
-	activeTurnID    string
+	seenRunIDs      map[string]struct{}
 }
 
-// chatHubSink returns a hub.Sink that renders another process's events as
-// the same external_* NDJSON vocabulary line-mode --json already documents
-// (chat_json_writer.go), or nil when jsonMode is false - a plain-text
-// line-mode or one-shot invocation has no framing to carry this on, so
-// there's nothing useful to render.
-func chatHubSink(jsonMode bool) hub.Sink {
+// chatHubSink returns a hub.Sink that renders another process's events for
+// THIS session as the same external_* NDJSON vocabulary line-mode --json
+// already documents (chat_json_writer.go), or nil when jsonMode is false -
+// a plain-text line-mode or one-shot invocation has no framing to carry
+// this on, so there's nothing useful to render.
+//
+// The hub relays every session sharing its workspace, not just this one
+// (see externalTurnState's doc comment) - filtering here on
+// ev.SessionID == sess.SessionID is what makes "another session on the
+// same shared workspace" a silent no-op instead of a different
+// conversation's turns bleeding into this one's transcript. An external
+// participant that hasn't set an EventBus SessionID at all (a defensive
+// case only - every wired publish site sets one) is also dropped rather
+// than matched by two empty strings.
+func chatHubSink(sess *chat.Session, jsonMode bool) hub.Sink {
 	if !jsonMode {
 		return nil
 	}
-	state := &externalTurnState{}
+	state := &externalTurnState{seenRunIDs: make(map[string]struct{})}
 	return func(ev events.Event) {
+		if !externalEventBelongsToSession(sess, ev) {
+			return
+		}
 		renderExternalEvent(os.Stdout, state, ev)
 	}
+}
+
+// externalEventBelongsToSession reports whether ev, received from the hub,
+// is this process's own session's activity rather than an unrelated
+// session sharing the same hub workspace (see externalTurnState's doc
+// comment) - the regression this guards is a relayed event rendering into
+// the wrong session/thread's transcript. An event with no SessionID at all
+// (a defensive case only - every wired publish site sets one; see
+// tui_start.go's KindTurnStart publish and publishTurnStartForHub) is
+// rejected rather than matched by two empty strings.
+func externalEventBelongsToSession(sess *chat.Session, ev events.Event) bool {
+	return ev.SessionID != "" && ev.SessionID == sess.SessionID
 }
 
 func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event) {
@@ -104,14 +135,13 @@ func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event)
 	defer state.mu.Unlock()
 	if ev.Kind == events.KindTurnStart {
 		state.pendingUserText = ev.Detail
-		state.activeTurnID = ""
 		return
 	}
 	if ev.TurnID == "" {
 		return
 	}
-	if state.activeTurnID != ev.TurnID {
-		state.activeTurnID = ev.TurnID
+	if _, seen := state.seenRunIDs[ev.TurnID]; !seen {
+		state.seenRunIDs[ev.TurnID] = struct{}{}
 		writeNDJSONEvent(w, ndjsonEvent{
 			Type: "external_turn_start", RunID: ev.TurnID, SessionID: ev.SessionID,
 			Role: "user", Text: state.pendingUserText,
@@ -119,6 +149,9 @@ func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event)
 		state.pendingUserText = ""
 	}
 	renderExternalTurnEvent(w, ev)
+	if ev.Kind == events.KindSubagentDone || ev.Kind == events.KindTurnEnd || ev.Kind == events.KindError {
+		delete(state.seenRunIDs, ev.TurnID)
+	}
 }
 
 func renderExternalTurnEvent(w io.Writer, ev events.Event) {
