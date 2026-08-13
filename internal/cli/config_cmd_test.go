@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -121,6 +123,68 @@ func TestConfigShowPromptBudgetAdvisoryShown(t *testing.T) {
 	}
 	if !strings.Contains(got, "recommended 200000") {
 		t.Fatalf("advisory missing recommendation = %q", got)
+	}
+}
+
+// TestWriteConfigShowJSONIncludesCatalog pins the --json shape a caller like
+// mivia-agent-desktop parses: provider/model plus the full secret-free
+// catalog (no api_key, no system_prompt, no dialect - see writeConfigShowJSON's
+// doc comment for why).
+func TestWriteConfigShowJSONIncludesCatalog(t *testing.T) {
+	res := loadPickerConfig(t)
+	var buf bytes.Buffer
+	if err := writeConfigShowJSON(&buf, res); err != nil {
+		t.Fatalf("writeConfigShowJSON: %v", err)
+	}
+
+	var got configShowJSON
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v\nraw: %s", err, buf.String())
+	}
+	if got.Provider != res.ProviderName || got.Model != res.Model {
+		t.Fatalf("provider/model = %+v, want %s/%s", got, res.ProviderName, res.Model)
+	}
+	if len(got.Catalog) == 0 {
+		t.Fatalf("catalog is empty: %+v", got)
+	}
+	foundActive := false
+	for _, group := range got.Catalog {
+		if group.Provider == res.ProviderName {
+			foundActive = group.Active
+		}
+		for _, model := range group.Models {
+			if model.Name == "" {
+				t.Errorf("model with empty name in group %q: %+v", group.Provider, model)
+			}
+		}
+	}
+	if !foundActive {
+		t.Fatalf("no catalog group marked active for provider %q: %+v", res.ProviderName, got.Catalog)
+	}
+}
+
+// TestWriteConfigShowJSONOmitsSecrets pins the redaction contract at the
+// wire level, not just at the struct-field level - a field this code never
+// sets can't leak, but a bug that later added one back would only be caught
+// by asserting the actual bytes never contain it.
+func TestWriteConfigShowJSONOmitsSecrets(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "openrouter",
+		Model:        "openai/gpt-4o-mini",
+		APIKey:       "sk-should-never-appear",
+		APIKeySet:    true,
+		SystemPrompt: "should not appear either",
+	}
+	var buf bytes.Buffer
+	if err := writeConfigShowJSON(&buf, res); err != nil {
+		t.Fatalf("writeConfigShowJSON: %v", err)
+	}
+	raw := buf.String()
+	if strings.Contains(raw, "sk-should-never-appear") {
+		t.Fatalf("API key leaked into --json output: %s", raw)
+	}
+	if strings.Contains(raw, "should not appear either") {
+		t.Fatalf("system prompt leaked into --json output: %s", raw)
 	}
 }
 

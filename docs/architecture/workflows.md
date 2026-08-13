@@ -25,6 +25,7 @@ Workflow files live under `.mivia/workflows/*.toml`. A v1 definition has:
 - a version, canonical name, input contract, limits, and one initial step;
 - sequential steps with one of five kinds: `agent`, `agent_gate`, `agent_panel`, `evidence_gate`, or `human_gate`;
 - optional per-step `on_failure` target (defaults to `"failure"` when omitted; a non-terminal target is a repair loop bounded per step by `[limits] max_on_failure_reentries`, default 3);
+- optional per-step `max_turns` (default `0` = unlimited, range `0-10000`): bounds the agent-loop turns of the step's children — for an `agent_panel` step, every panel member and the synthesis child; for `agent` and `agent_gate` steps, the step's own loop;
 - explicit structural transitions to a step or reserved `success` / `failure` terminal;
 - optional terminal delivery policy.
 

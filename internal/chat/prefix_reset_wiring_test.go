@@ -258,7 +258,7 @@ func TestPublishAgentSurfaceRecapturesIdentity(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	reg.Register(fixedBodyTool{name: "read_file"})
-	s.PublishAgentSurface("you are the NEW agent", 4, reg, nil, nil)
+	s.PublishAgentSurface("you are the NEW agent", 4, reg, nil, nil, "")
 	got := collect()
 	if len(got) != 1 || got[0].PrefixReset == nil {
 		t.Fatalf("PublishAgentSurface events = %d, want exactly 1 typed reset", len(got))

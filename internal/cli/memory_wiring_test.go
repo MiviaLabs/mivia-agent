@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ func TestConfigureChatWorkspaceWiresMemoryTools(t *testing.T) {
 	root := t.TempDir()
 	res := memoryTestResolved(true)
 	sess := chat.NewSession(res, nil)
-	memClose, err := configureChatWorkspace(sess, root, true, res)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
 	if err != nil {
 		t.Fatalf("configureChatWorkspace: %v", err)
 	}
@@ -40,7 +41,7 @@ func TestConfigureChatWorkspaceOmitsMemoryToolsWhenDisabled(t *testing.T) {
 	root := t.TempDir()
 	res := memoryTestResolved(false)
 	sess := chat.NewSession(res, nil)
-	memClose, err := configureChatWorkspace(sess, root, true, res)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
 	if err != nil {
 		t.Fatalf("configureChatWorkspace: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestConfigureChatWorkspaceMemoryDisabledStillConfiguresOtherTools(t *testin
 	root := t.TempDir()
 	res := memoryTestResolved(false)
 	sess := chat.NewSession(res, nil)
-	memClose, err := configureChatWorkspace(sess, root, true, res)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,11 +146,70 @@ func TestMemoryStoreErrorSurfacesFromConfigureChatWorkspace(t *testing.T) {
 	// Resolved must still fail loudly at wiring, not silently drop the tools.
 	res.Memory.StoreBackend = "bogus"
 	sess := chat.NewSession(res, nil)
-	_, err := configureChatWorkspace(sess, root, true, res)
+	_, err := configureChatWorkspace(sess, root, true, res, nil)
 	if err == nil {
 		t.Fatal("an invalid memory backend must fail the workspace wiring")
 	}
 	if !strings.Contains(err.Error(), "memory") {
 		t.Errorf("error %q does not mention memory", err)
 	}
+}
+
+// TestConfigureChatWorkspaceStashesStoreOnState is plan 77's E1 test: the
+// store configureChatWorkspace opens must be reachable from
+// agentSessionState.Memory - the single source of truth every
+// SystemPrompt-composing call site reads from - and must actually work
+// (Save through it is visible via the session's own memory_search tool,
+// proving state.Memory and the tool-registered store are wired from the
+// same open, not two independent connections that could diverge).
+func TestConfigureChatWorkspaceStashesStoreOnState(t *testing.T) {
+	root := t.TempDir()
+	res := memoryTestResolved(true)
+	sess := chat.NewSession(res, nil)
+	state := &agentSessionState{}
+	memClose, err := configureChatWorkspace(sess, root, true, res, state)
+	if err != nil {
+		t.Fatalf("configureChatWorkspace: %v", err)
+	}
+	defer memClose()
+
+	if state.Memory == nil {
+		t.Fatal("state.Memory was not populated")
+	}
+	if state.MemoryConfig.StoreBackend != "sqlite" {
+		t.Fatalf("state.MemoryConfig = %+v, want the resolved [memory] config", state.MemoryConfig)
+	}
+
+	if _, err := state.Memory.Save(context.Background(), memory.Entry{
+		Title: "wiring proof", Scope: memory.ScopeProject, Verdict: memory.VerdictNeutral,
+		Summary: "state.Memory and the registered tool store share one open", Why: "test",
+	}); err != nil {
+		t.Fatalf("save through state.Memory: %v", err)
+	}
+
+	tool, ok := sess.Tools.Get("memory_search")
+	if !ok {
+		t.Fatal("memory_search not registered")
+	}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"wiring proof"}`))
+	if err != nil {
+		t.Fatalf("memory_search: %v", err)
+	}
+	if !strings.Contains(out, "wiring proof") {
+		t.Fatalf("memory_search did not see the entry saved through state.Memory - two separate opens? output: %s", out)
+	}
+}
+
+// TestConfigureChatWorkspaceNilStateIsSafe confirms a nil state (the
+// existing test-only calling convention throughout this file) is a true
+// no-op for the stashing step, not a nil-pointer panic.
+func TestConfigureChatWorkspaceNilStateIsSafe(t *testing.T) {
+	root := t.TempDir()
+	res := memoryTestResolved(true)
+	sess := chat.NewSession(res, nil)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
+	if err != nil {
+		t.Fatalf("configureChatWorkspace with nil state: %v", err)
+	}
+	memClose()
 }

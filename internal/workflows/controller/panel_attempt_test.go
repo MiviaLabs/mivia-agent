@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,61 @@ func TestBuildPanelAttemptPinsEachMemberBindingAndDeadline(t *testing.T) {
 		if !member.Work.Policy.NoRetry || !member.Work.Policy.FailInterrupted || !member.Work.WorkLimits.DeadlineAt.Equal(parentDeadline) {
 			t.Fatalf("member %q policy and work limits = %+v", member.MemberID, member.Work)
 		}
+	}
+}
+
+// TestPanelMemberWorkLimitsHonorStepMaxTurns pins that buildPanelAttempt
+// applies the step's max_turns knob (0 default = unlimited) to every member's
+// WorkLimits instead of a hardcoded turn cap.
+func TestPanelMemberWorkLimitsHonorStepMaxTurns(t *testing.T) {
+	cases := []struct {
+		name     string
+		maxTurns int
+		want     int
+	}{
+		{"unset defaults to unlimited", 0, 0},
+		{"positive bounds member turns", 7, 7},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, time.August, 9, 3, 0, 0, 0, time.UTC)
+			step := definition.Step{
+				ID: "review", Kind: "agent_panel", MaxTurns: tc.maxTurns,
+				Context: []definition.ContextBinding{{From: "inputs.task", As: "task", MaxBytes: 1024}},
+				Panel: &definition.AgentPanel{FailurePolicy: "require_all", Members: []definition.PanelMember{
+					{ID: "correctness", Agent: "panel-reviewer", Skill: "bug-audit", Template: "correctness", OutputSchema: "report"},
+				}},
+			}
+			snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+				PanelBindings: map[string]workflowledger.PanelBindingSnapshot{
+					"review/correctness": {AgentName: "panel-reviewer", AgentDigest: "sha256:correctness", ProviderName: "zai", Model: "glm-5.2"},
+				},
+				Templates: map[string]workflowledger.RefSnapshot{"correctness": {Bytes: []byte("Review {{inputs.task}}.")}},
+				Schemas:   map[string]workflowledger.RefSnapshot{"report": {Bytes: []byte(`{"type":"object"}`)}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := workflowledger.NewMemoryRepository()
+			ctrl, err := NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, fmt.Sprintf("wfr-panel-turns-%d", i), snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ctrl.SetTimeSource(func() time.Time { return now }); err != nil {
+				t.Fatal(err)
+			}
+			deadline := now.Add(10 * time.Minute)
+			attempt, err := ctrl.buildPanelAttempt(context.Background(), workflowledger.RunSnapshot{RunID: ctrl.RunID, DeadlineAt: &deadline}, step, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attempt.PanelExecution == nil || len(attempt.PanelExecution.Members) != 1 {
+				t.Fatalf("panel execution = %+v", attempt.PanelExecution)
+			}
+			if got := attempt.PanelExecution.Members[0].Work.WorkLimits.MaxTurns; got != tc.want {
+				t.Fatalf("member WorkLimits.MaxTurns = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 

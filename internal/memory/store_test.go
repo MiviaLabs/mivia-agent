@@ -134,22 +134,46 @@ func TestStoreSaveOrgRequiresOrgID(t *testing.T) {
 	}
 }
 
+// TestStoreMaxEntriesCap covers the two backends' now-different contracts at
+// the cap (plan 76, D2): sqlite consolidates at 80% of MaxEntries and, with
+// no mergeable near-duplicates present, evicts the oldest archive row to
+// make room - the hard-wall refusal only fires when nothing more can be
+// merged or evicted. The in-memory backend is unchanged (out of this plan's
+// scope): it keeps the original hard refusal at the cap.
 func TestStoreMaxEntriesCap(t *testing.T) {
-	for _, backend := range []string{"sqlite", "memory"} {
-		t.Run(backend, func(t *testing.T) {
-			s := newTestStore(t, backend, "github.com/acme")
-			ctx := context.Background()
-			for i := 0; i < 5; i++ {
-				if _, err := s.Save(ctx, testEntry(fmt.Sprintf("p-%d", i), ScopeProject)); err != nil {
-					t.Fatalf("save %d: %v", i, err)
-				}
+	t.Run("sqlite_consolidates_instead_of_refusing", func(t *testing.T) {
+		s := newTestStore(t, "sqlite", "github.com/acme")
+		ctx := context.Background()
+		for i := 0; i < 5; i++ {
+			if _, err := s.Save(ctx, testEntry(fmt.Sprintf("p-%d", i), ScopeProject)); err != nil {
+				t.Fatalf("save %d: %v", i, err)
 			}
-			_, err := s.Save(ctx, testEntry("overflow", ScopeProject))
-			if err == nil || !strings.Contains(err.Error(), "max_entries") {
-				t.Fatalf("over-cap save must fail with max_entries, got %v", err)
+		}
+		if _, err := s.Save(ctx, testEntry("overflow", ScopeProject)); err != nil {
+			t.Fatalf("over-cap save on sqlite must succeed via consolidation, got %v", err)
+		}
+		count, err := s.Count(ctx, ScopeProject)
+		if err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if count > 5 {
+			t.Fatalf("count = %d after a consolidating save, want <= max_entries (5)", count)
+		}
+	})
+
+	t.Run("memory_still_refuses_at_cap", func(t *testing.T) {
+		s := newTestStore(t, "memory", "github.com/acme")
+		ctx := context.Background()
+		for i := 0; i < 5; i++ {
+			if _, err := s.Save(ctx, testEntry(fmt.Sprintf("p-%d", i), ScopeProject)); err != nil {
+				t.Fatalf("save %d: %v", i, err)
 			}
-		})
-	}
+		}
+		_, err := s.Save(ctx, testEntry("overflow", ScopeProject))
+		if err == nil || !strings.Contains(err.Error(), "max_entries") {
+			t.Fatalf("over-cap save on memory backend must still fail with max_entries, got %v", err)
+		}
+	})
 }
 
 func TestStoreSearchResultLimit(t *testing.T) {

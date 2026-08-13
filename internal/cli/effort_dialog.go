@@ -388,7 +388,7 @@ func (m *tuiModel) handleTuiEffortSlash(fields []string) bool {
 // the no-argument form prints what the picker would have shown: the active
 // level and the set this model offers, or why there is nothing to choose.
 func handleSlashEffort(fields []string, sess *chat.Session, term *Terminal) (bool, bool, error) {
-	sink := terminalSlashSink{t: term}
+	sink := slashSinkFor(term)
 	model := sess.CurrentModel()
 	if len(fields) < 2 {
 		sink.Info(formatEffortSummary(model, sess.ReasoningChoices(), sess.ReasoningEffort(), sess.ReasoningDefault()))
@@ -396,13 +396,16 @@ func handleSlashEffort(fields []string, sess *chat.Session, term *Terminal) (boo
 	}
 	level, err := parseEffortArg(strings.TrimSpace(fields[1]))
 	if err != nil {
-		sink.Info(err.Error())
+		sink.Error(err.Error())
 		return true, false, nil
 	}
 	if err := sess.SetReasoningEffort(level); err != nil {
-		sink.Info(safeEffortError(err))
+		sink.Error(safeEffortError(err))
 		return true, false, nil
 	}
 	sink.Info(formatEffortSet(model, level, sess.ReasoningSetting()))
+	if jsink, ok := sink.(*jsonSlashSink); ok {
+		jsink.EffortChanged(model, level)
+	}
 	return true, false, nil
 }

@@ -168,6 +168,26 @@ func TestResolveMemoryConfigMalformedUserFileDegrades(t *testing.T) {
 	}
 }
 
+func TestResolveMemoryConfigInjectCoreDefaultsFalse(t *testing.T) {
+	mc, err := resolveMemoryConfig(File{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mc.InjectCore {
+		t.Error("inject_core must default to false")
+	}
+}
+
+func TestResolveMemoryConfigInjectCoreExplicitTrue(t *testing.T) {
+	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{InjectCore: true}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mc.InjectCore {
+		t.Error("explicit inject_core = true must be preserved")
+	}
+}
+
 func TestMemoryConfigIsEnabledNilMeansTrue(t *testing.T) {
 	var mc MemoryConfig
 	if !mc.IsEnabled() {

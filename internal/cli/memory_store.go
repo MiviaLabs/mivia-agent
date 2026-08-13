@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -81,4 +82,73 @@ func openMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 		ReadOnly:         readOnly,
 	}
 	return memory.Open(cfg)
+}
+
+// coreMemoryBlock builds the auto-injected system-prompt block (D1). It is a
+// true no-op ("") when core-tier injection is disabled or the scope has no
+// core entries - composeSystemPrompt (internal/chat) treats an empty block
+// as "return base unchanged," so this function is the only place that
+// decides whether injection happens at all. Errors reading the store are
+// swallowed to "": a broken query must never break session startup, and the
+// pull-based memory_search tool remains available regardless.
+func coreMemoryBlock(ctx context.Context, store memory.Store, scope memory.Scope, mc config.MemoryConfig) string {
+	if !mc.InjectCore || store == nil {
+		return ""
+	}
+	entries, err := store.CoreEntries(ctx, scope)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, e := range entries {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("- ")
+		b.WriteString(e.Title)
+		b.WriteString(": ")
+		b.WriteString(e.Snippet)
+	}
+	return b.String()
+}
+
+// coreMemoryBlockForState is coreMemoryBlock scoped to project-only
+// injection (plan 77, E4 - ScopeAll is invalid for CoreEntries, org-scope
+// injection is a deferred decision), reading state's session-lifetime
+// store. Callers hold state.mu (matching the LedgerRepo/Memory field
+// convention), so the field read is direct. context.Background() is used
+// deliberately: every call site is a session-init or turn-boundary prompt
+// rebuild with no request-scoped context threaded through this call chain,
+// and CoreEntries is a single indexed, 24-row-capped query - not worth
+// plumbing a context through half a dozen signatures for.
+func coreMemoryBlockForState(state *agentSessionState) string {
+	if state == nil {
+		return ""
+	}
+	return coreMemoryBlock(context.Background(), state.Memory, memory.ScopeProject, state.MemoryConfig)
+}
+
+// coreMemoryBlockForOpts is coreMemoryBlockForState's counterpart for the
+// subagent path (plan 77, E2/E5): opts.Memory is nil for every non-chat
+// caller (workflow/background paths), which coreMemoryBlock already
+// degrades safely to "".
+func coreMemoryBlockForOpts(opts SessionDispatcherOpts) string {
+	return coreMemoryBlock(context.Background(), opts.Memory, memory.ScopeProject, opts.MemoryConfig)
+}
+
+// memoryOf and memoryConfigOf mirror chat_repl.go's ledgerRepoOf for the
+// memory store (plan 77, E2), for callers building SessionDispatcherOpts
+// that don't already hold state.mu.
+func memoryOf(state *agentSessionState) memory.Store {
+	if state == nil {
+		return nil
+	}
+	return state.Memory
+}
+
+func memoryConfigOf(state *agentSessionState) config.MemoryConfig {
+	if state == nil {
+		return config.MemoryConfig{}
+	}
+	return state.MemoryConfig
 }

@@ -113,18 +113,27 @@ func filterSkillRegistryForGate(skillReg *skills.Registry, allowProject bool) *s
 
 // applySelectedAgent applies the selected agent's prompt and turn budget to
 // the session. max_turns: nil leaves the session default; 0 means unlimited.
-func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected *agents.ResolvedAgent) {
-	if selected == nil || sess == nil {
+//
+// Runs even when selected is nil (plan 77: found via a live smoke test that
+// a bare `mivia chat` with no --agent never reached this far otherwise -
+// chat_command.go's own fallback prompt resolution runs BEFORE the memory
+// store opens and is hardcoded to no injection, so this call, right after
+// configureChatWorkspace, is the only site that recomposes the root
+// session's prompt with the real memory block for a no-agent session).
+func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected *agents.ResolvedAgent, state *agentSessionState) {
+	if sess == nil {
 		return
 	}
 	prompt, maxSteps := sess.AgentSettings()
-	if strings.TrimSpace(selected.SystemPrompt) != "" {
-		prompt = selected.SystemPrompt
+	if selected != nil {
+		if strings.TrimSpace(selected.SystemPrompt) != "" {
+			prompt = selected.SystemPrompt
+		}
+		if selected.MaxTurns != nil {
+			maxSteps = *selected.MaxTurns
+		}
 	}
-	if selected.MaxTurns != nil {
-		maxSteps = *selected.MaxTurns
-	}
-	sess.SetAgentSettings(prompt, maxSteps)
+	sess.SetAgentSettings(prompt, maxSteps, coreMemoryBlockForState(state))
 	if res != nil {
 		res.SystemPrompt = prompt
 	}

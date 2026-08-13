@@ -156,7 +156,7 @@ func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, comp
 	sess := chat.NewSession(res, completer)
 	sess.Tools = full
 	sess.UseTools = true
-	sess.SetAgentSettings("ROOT PROMPT", 4)
+	sess.SetAgentSettings("ROOT PROMPT", 4, "")
 	state := &agentSessionState{
 		Registry: reg, Selected: selected, WorkspaceRoot: dir, AllowProjectSkills: true,
 		BaselinePrompt: "ROOT PROMPT", BaselineMaxSteps: 4, BaselineCaptured: true,

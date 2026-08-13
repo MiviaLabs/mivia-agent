@@ -99,10 +99,16 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 	}
 	ctxBudget := promptBudget(profile, res.MaxTokens, operatorCap, 0)
 	s := &Session{
-		Completer:        c,
-		model:            res.Model,
-		allowedModels:    slices.Clone(res.Models),
-		SystemPrompt:     res.SystemPrompt,
+		Completer:     c,
+		model:         res.Model,
+		allowedModels: slices.Clone(res.Models),
+		SystemPrompt:  res.SystemPrompt,
+		// res.SystemPrompt at construction time has no memory block composed
+		// in yet (plan 77, E3) - it's the same value for both fields until
+		// the first PublishAgentSurface/SetAgentSettings call. Without this,
+		// AgentSettings() would return "" here instead of the real initial
+		// prompt, since it reads BaseSystemPrompt, not SystemPrompt.
+		BaseSystemPrompt: res.SystemPrompt,
 		Temperature:      res.Temperature,
 		MaxTokens:        res.MaxTokens,
 		MaxSteps:         resolvedMaxSteps(res), // /steps overrides (0 = unlimited)

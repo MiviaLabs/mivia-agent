@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -40,6 +39,9 @@ type Query struct {
 type Store interface {
 	// Save validates and stores one entry. An identical re-save is
 	// idempotent: it returns the existing result and stores no duplicate.
+	// Save never sets tier: every entry it writes lands as "archive" (the
+	// schema default). Promotion to "core" is a separate, operator-facing
+	// action (PromoteToCore) - not reachable from Save, by design (D1a).
 	Save(ctx context.Context, e Entry) (Result, error)
 	// Search returns up to the configured limit ranked matches. ScopeAll
 	// merges project and org results. Org scope without a configured org
@@ -47,6 +49,16 @@ type Store interface {
 	Search(ctx context.Context, q Query) ([]Result, error)
 	// Count returns the number of stored entries for one scope.
 	Count(ctx context.Context, scope Scope) (int, error)
+	// PromoteToCore marks one existing entry (by id) as tier "core", subject
+	// to CoreTierCap per (scope, org). Promoting an already-core entry is a
+	// no-op. Returns ErrEntryNotFound if no entry with that id exists, or
+	// ErrCoreTierFull if the bucket is already at CoreTierCap.
+	PromoteToCore(ctx context.Context, id string) error
+	// CoreEntries returns up to CoreTierCap "core"-tier entries for scope,
+	// ordered by created DESC, title ASC, id ASC (the same tie-break Search
+	// uses). Not a search - no query text, just the current core set. Used
+	// to build the auto-injected system-prompt block (D1).
+	CoreEntries(ctx context.Context, scope Scope) ([]Result, error)
 	Close() error
 }
 
@@ -155,7 +167,8 @@ CREATE TABLE IF NOT EXISTS memories (
   tags TEXT NOT NULL DEFAULT '',
   created TEXT NOT NULL DEFAULT '',
   content TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  tier TEXT NOT NULL DEFAULT 'archive' CHECK(tier IN ('core','archive'))
 );
 CREATE INDEX IF NOT EXISTS idx_memories_scope_org ON memories(scope, org);
 `
@@ -241,49 +254,14 @@ func openMemoryDB(path string, readOnly bool) (*sql.DB, bool, error) {
 		db.Close()
 		return nil, false, err
 	}
+	if err := migrateTierColumn(db); err != nil {
+		db.Close()
+		return nil, false, err
+	}
 	// The FTS5 index is an optional acceleration layer: on a build without
 	// FTS5 (or when the index cannot be created) the store transparently uses
 	// the Phase-1 LIKE path with identical results and no error.
 	return db, ensureFTSIndex(db), nil
-}
-
-// pragmaMemoryDSNParams are the driver-side pragma overrides applied by
-// modernc.org/sqlite's applyQueryParams to every pooled connection, matching
-// the storage package's pragmaDSNParams (without foreign_keys, which this
-// schema does not use). Keep the two in sync when the set changes.
-const pragmaMemoryDSNParams = "_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)"
-
-// pragmaMemoryDSNReadOnlyParams are the read-only overrides: no
-// journal_mode(WAL) (switching would write the database header), and
-// query_only(1) so no pooled connection can mutate the committed file.
-const pragmaMemoryDSNReadOnlyParams = "_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)&_pragma=query_only(1)"
-
-// sqliteMemoryDSN builds the read-write driver DSN; see memoryDSN.
-func sqliteMemoryDSN(path string) string { return memoryDSN(path, pragmaMemoryDSNParams) }
-
-// sqliteMemoryDSNReadOnly builds the read-only driver DSN; see memoryDSN.
-func sqliteMemoryDSNReadOnly(path string) string {
-	return memoryDSN(path, pragmaMemoryDSNReadOnlyParams)
-}
-
-// memoryDSN builds the driver DSN for a memory store file. The
-// modernc.org/sqlite driver (v1.54.0) splits a DSN at the first literal '?' to
-// separate the filename from its query parameters, so a POSIX filename
-// containing '?' ("ctx?name.db") would be silently truncated to "ctx" and the
-// store would open the wrong database file. Paths without '?' keep the
-// historical path+"?"+pragmas form byte-for-byte; paths with '?' are
-// percent-escaped into a file: URI whose only literal '?' is the query
-// separator, and SQLite's URI decoder (SQLITE_OPEN_URI) restores the literal
-// '?' (and '/' for absolute paths) in the real filename. Escaping the whole
-// path also prevents URI authority ("//"), query ('?'), and fragment ('#')
-// injection into the path portion, so no wrong-file or path-confusion vector
-// remains. Keep this in sync with internal/storage/sqlite_dsn.go; the storage
-// package applies the identical transform.
-func memoryDSN(path, params string) string {
-	if strings.Contains(path, "?") {
-		return "file:" + url.PathEscape(path) + "?" + params
-	}
-	return path + "?" + params
 }
 
 func (s *sqliteStore) dbFor(scope Scope) (*sql.DB, string) {
@@ -335,14 +313,8 @@ func (s *sqliteStore) Save(ctx context.Context, e Entry) (Result, error) {
 		}
 		return Result{ID: id, Scope: e.Scope, Org: org, Title: e.Title, Verdict: e.Verdict, Tags: append([]string(nil), e.Tags...), Created: e.Created, Snippet: e.Summary}, nil
 	}
-	var count int
-	where := "scope = ? AND org = ?"
-	args := []any{string(e.Scope), org}
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM memories WHERE "+where, args...).Scan(&count); err != nil {
+	if err := s.ensureCapacity(ctx, tx, e.Scope, org); err != nil {
 		return Result{}, err
-	}
-	if count >= s.cfg.MaxEntries {
-		return Result{}, fmt.Errorf("memory store is full (max_entries=%d); consolidate or raise [memory] max_entries", s.cfg.MaxEntries)
 	}
 	insertArgs := []any{id, string(e.Scope), org, e.Title, e.Summary, string(e.Verdict), strings.Join(e.Tags, ", "), e.Created, rendered}
 	res, err := tx.ExecContext(ctx,

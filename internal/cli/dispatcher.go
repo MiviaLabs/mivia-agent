@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
@@ -67,6 +68,15 @@ type SessionDispatcherOpts struct {
 	// WorkspaceRoot is the directory lifecycle hooks execute in. Empty means
 	// no hooks are wired, which is what every non-chat caller wants.
 	WorkspaceRoot string
+
+	// Memory is the session's memory store (plan 77, E2), the same instance
+	// agentSessionState.Memory holds - not a second Open. Nil for every
+	// non-chat caller (workflow/background paths); coreMemoryBlockForState
+	// already treats a nil store as "", so subagent prompt composition
+	// degrades safely with no caller-side nil check required.
+	Memory memory.Store
+	// MemoryConfig is the resolved [memory] section read alongside Memory.
+	MemoryConfig config.MemoryConfig
 
 	// Repo, if set, is used as-is and its lifetime is caller-owned.
 	// If nil, the constructor opens a store from Config (with the

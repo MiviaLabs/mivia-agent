@@ -29,10 +29,22 @@ type Session struct {
 	allowedModels      []string
 	rejectedSavedModel *string
 	SystemPrompt       string
-	Temperature        *float64
-	MaxTokens          *int
-	Messages           []provider.Message
-	Tools              *tools.Registry
+	// BaseSystemPrompt is SystemPrompt without any core-memory block
+	// composed in (plan 77, E3). AgentSettings returns this, not
+	// SystemPrompt: every PublishAgentSurface/SetAgentSettings/
+	// TryPublishAgentSurface caller that reads AgentSettings, appends its
+	// own tail, and writes back must operate on a memory-block-free base -
+	// composing over an already-composed prompt would duplicate the block
+	// on every /agent switch or tool admission (found by hostile review
+	// during plan 77's Step 0, AR-1/AR-2). SystemPrompt is always derived
+	// fresh as ComposeSystemPrompt(BaseSystemPrompt, memoryBlock), never
+	// accumulated, so duplication and staleness are structurally
+	// impossible rather than something a stripping pass has to catch.
+	BaseSystemPrompt string
+	Temperature      *float64
+	MaxTokens        *int
+	Messages         []provider.Message
+	Tools            *tools.Registry
 	// UseTools enables the agent loop when Tools is set.
 	UseTools bool
 	// Dispatcher is the runtime dispatcher for tool, skill, and subagent execution.

@@ -159,7 +159,10 @@ func (s *Session) replayAdmission(name string) {
 func (s *Session) republishSurface(admitted []string) bool {
 	s.mu.RLock()
 	widener := s.surfaceWidener
-	prompt, maxSteps := s.SystemPrompt, s.MaxSteps
+	// BaseSystemPrompt, not SystemPrompt (plan 77, E3) - see admission_status.go's
+	// identical fix for why: this feeds AgentSurfacePublication.Prompt,
+	// which gets recomposed with the memory block fresh.
+	prompt, maxSteps := s.BaseSystemPrompt, s.MaxSteps
 	generation := s.agentSurfaceGeneration
 	s.mu.RUnlock()
 	if widener == nil {
