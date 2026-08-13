@@ -103,37 +103,56 @@ func (e *Engine) Start(ctx context.Context, req agenttools.StartRequest) (agentt
 	return e.startNew(ctx, req)
 }
 
+// admitInvocation resolves the run ID for req, handling the InvocationKey
+// idempotency path: reuse or resume an existing run for the key, or admit
+// this call as the run's sole starter. done=true means startNew must return
+// (result, err) immediately; otherwise runID is ready and finish must be
+// deferred by the caller to release invocation admission.
+func (e *Engine) admitInvocation(ctx context.Context, req agenttools.StartRequest) (runID string, result agenttools.StartResult, done bool, err error, finish func()) {
+	noop := func() {}
+	key := strings.TrimSpace(req.InvocationKey)
+	if key == "" {
+		return e.newRunID(), agenttools.StartResult{}, false, nil, noop
+	}
+	runID = agenttools.InvocationRunID(key)
+	existing, getErr := e.Repo.GetRun(ctx, runID)
+	if getErr == nil {
+		if result, resumed, resumeErr := e.resumeExistingInvocation(ctx, existing, req); resumed || resumeErr != nil {
+			return runID, result, true, resumeErr, noop
+		}
+		return runID, agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
+	} else if !errors.Is(getErr, workflowledger.ErrNotFound) {
+		return runID, agenttools.StartResult{}, false, getErr, noop
+	}
+	owner, release := e.beginInvocationAdmission(runID)
+	if !owner {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return runID, agenttools.StartResult{}, false, ctx.Err(), noop
+		}
+		existing, getErr := e.Repo.GetRun(ctx, runID)
+		if getErr != nil {
+			return runID, agenttools.StartResult{}, false, fmt.Errorf("invocation %q did not admit run %q: %w", key, runID, getErr), noop
+		}
+		return runID, agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
+	}
+	return runID, agenttools.StartResult{}, false, nil, func() { e.finishInvocationAdmission(runID, release) }
+}
+
 func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
 	compiled, raw, baseDir, inputs, inputSnapshot, err := e.loadAndValidateWorkflow(req)
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
-	runID := e.newRunID()
-	if key := strings.TrimSpace(req.InvocationKey); key != "" {
-		runID = agenttools.InvocationRunID(key)
-		if existing, getErr := e.Repo.GetRun(ctx, runID); getErr == nil {
-			if result, resumed, resumeErr := e.resumeExistingInvocation(ctx, existing, req); resumed || resumeErr != nil {
-				return result, resumeErr
-			}
-			return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
-		} else if !errors.Is(getErr, workflowledger.ErrNotFound) {
-			return agenttools.StartResult{}, getErr
-		}
-		owner, release := e.beginInvocationAdmission(runID)
-		if !owner {
-			select {
-			case <-release:
-			case <-ctx.Done():
-				return agenttools.StartResult{}, ctx.Err()
-			}
-			existing, getErr := e.Repo.GetRun(ctx, runID)
-			if getErr != nil {
-				return agenttools.StartResult{}, fmt.Errorf("invocation %q did not admit run %q: %w", key, runID, getErr)
-			}
-			return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
-		}
-		defer e.finishInvocationAdmission(runID, release)
+	runID, admitResult, done, admitErr, finish := e.admitInvocation(ctx, req)
+	if done {
+		return admitResult, admitErr
 	}
+	if admitErr != nil {
+		return agenttools.StartResult{}, admitErr
+	}
+	defer finish()
 	ctrl, admission, err := e.newRunController(compiled, raw, baseDir, inputs, inputSnapshot, runID, req.InvocationKey)
 	if err != nil {
 		return agenttools.StartResult{}, err
