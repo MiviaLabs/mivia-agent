@@ -319,7 +319,7 @@ func claimForCancel(ctx context.Context, repo workflowledger.Repository, runID, 
 	return nil
 }
 
-func inputsToRawFlags(inputs map[string]any) ([]string, error) { // OPS-MOVED-MARKER
+func inputsToRawFlags(inputs map[string]any) ([]string, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
