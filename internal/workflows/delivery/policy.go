@@ -70,6 +70,11 @@ type Policy struct {
 	// negative value selects DefaultMaxDeliveryRepairs; the workflow TOML's
 	// delivery.max_repairs sets it per workflow.
 	MaxRepairs int
+	// StackingHardLines is the resolved hard per-chunk diff-size limit
+	// (added+deleted lines) when the workflow has a resolved stacking
+	// configuration (CompiledWorkflow.Stacking). Zero means no stacking
+	// config: delivery runs single-PR behavior with no size gate.
+	StackingHardLines int
 }
 
 // clampMax returns v when positive, otherwise def.
@@ -91,6 +96,10 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 	if onPRMetadataFailure == "" {
 		onPRMetadataFailure = d.OnFailure
 	}
+	hardLines := 0
+	if wf.Stacking != nil {
+		hardLines = wf.Stacking.HardLines
+	}
 	return Policy{
 		Kind:                  d.Kind,
 		Mode:                  d.Mode,
@@ -104,6 +113,7 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		PRTitlePolicyPath:     d.PRTitlePolicy,
 		OnPRMetadataFailure:   onPRMetadataFailure,
 		MaxRepairs:            clampMax(d.MaxRepairs, DefaultMaxDeliveryRepairs),
+		StackingHardLines:     hardLines,
 	}, true
 }
 

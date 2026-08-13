@@ -77,6 +77,15 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 			return "", "", verr
 		}
 	}
+	// Append the host-owned Stack-Part trailer AFTER sanitization and policy
+	// validation, mirroring how the body footer is appended after validation:
+	// the agent-controlled title that passed validation stays intact and the
+	// host adds the stack marker. An invalid stack_part or an over-limit
+	// result is a repairable PRMetadataError.
+	title, err = appendStackPartTitle(title, req.Inputs[InputStackPart])
+	if err != nil {
+		return "", "", err
+	}
 	base := miviaBaseURL()
 	runLink := "[" + req.RunID + "](" + base + "/runs/" + req.RunID + ")"
 	digestLink := "[" + req.WorkflowDigest + "](" + base + "/workflows/digest/" + req.WorkflowDigest + ")"
