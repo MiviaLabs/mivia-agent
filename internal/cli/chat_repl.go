@@ -322,6 +322,10 @@ func autoSaveREPL(sess *chat.Session) {
 }
 
 func replLineMode(sess *chat.Session, res *config.Resolved, toolsOn bool, jsonMode bool) error {
+	if jsonMode {
+		activeJSONSlashSink = &jsonSlashSink{w: os.Stdout}
+		defer func() { activeJSONSlashSink = nil }()
+	}
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sigCh := make(chan os.Signal, 1)

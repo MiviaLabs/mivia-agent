@@ -11,23 +11,35 @@ import (
 )
 
 // ndjsonEvent is the wire schema for line-mode --json output. Exactly one
-// event type is populated per line, and there are exactly seven types:
+// event type is populated per line:
 //
 //	{"type":"chunk","text":"..."}                            - one per emitted piece of streamed answer content
 //	{"type":"thinking","text":"..."}                         - one per emitted piece of model reasoning (chain of thought), for providers that expose it
 //	{"type":"tool_start","tool_call_id":"...","name":"...","input":"..."}  - a tool call began; input is a bounded, redacted preview
 //	{"type":"tool_end","tool_call_id":"...","name":"...","output":"..."}   - that tool call finished; output is a bounded, redacted preview
+//	{"type":"model_changed","provider":"...","model":"...","discarded_effort":"..."}  - a /model switch succeeded; discarded_effort is set only if the switch dropped an active reasoning effort
+//	{"type":"effort_changed","model":"...","effort":"..."}  - an /effort switch succeeded
+//	{"type":"slash_info","message":"..."}          - any other slash command's informational output (status query, current model/effort, a soft failure like "model not available", ...)
+//	{"type":"slash_error","message":"..."}         - a slash command's hard-error output
 //	{"type":"done","session_id":"..."}             - exactly once, turn completed successfully
 //	{"type":"cancelled"}                           - exactly once, turn was SIGINT-interrupted
 //	{"type":"error","message":"…"}                 - exactly once, turn failed
 //
-// "thinking"/"tool_start"/"tool_end" are best-effort progress events: an
-// older consumer that only understands chunk/done/cancelled/error can ignore
+// "thinking"/"tool_start"/"tool_end"/"model_changed"/"effort_changed"/
+// "slash_info"/"slash_error" are best-effort progress events: an older
+// consumer that only understands chunk/done/cancelled/error can ignore
 // unknown types and still render a correct transcript, since the final
-// answer text still arrives entirely via "chunk" events. They carry the same
-// redacted preview fields the interactive TUI already renders (see
-// agentEventBridgeCallback in tui_events.go) - the wire representation
+// answer text still arrives entirely via "chunk" events. The tool events
+// carry the same redacted preview fields the interactive TUI already renders
+// (see agentEventBridgeCallback in tui_events.go) - the wire representation
 // intentionally does not expose anything the TUI itself would not show.
+//
+// model_changed/effort_changed/slash_info/slash_error exist because, before
+// them, every slash command routed through terminalSlashSink, which is a
+// silent no-op when wrapped around a nil *Terminal (line-mode's case) - a
+// caller like mivia-agent-desktop sending "/model provider/model" over the
+// same stdin it already writes chat turns to had no way to learn whether the
+// switch succeeded. See jsonSlashSink in chat_json_slash.go.
 //
 // A SIGINT-interrupted turn gets its own "cancelled" type rather than being
 // folded into "error": a caller that wants to distinguish "the user stopped
@@ -40,14 +52,18 @@ import (
 // just minted, without which it has no way to look this conversation up
 // later via `mivia sessions list`/`show`/`--session <id>` resume.
 type ndjsonEvent struct {
-	Type       string `json:"type"`
-	Text       string `json:"text,omitempty"`
-	Message    string `json:"message,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Input      string `json:"input,omitempty"`
-	Output     string `json:"output,omitempty"`
+	Type            string `json:"type"`
+	Text            string `json:"text,omitempty"`
+	Message         string `json:"message,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	ToolCallID      string `json:"tool_call_id,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Input           string `json:"input,omitempty"`
+	Output          string `json:"output,omitempty"`
+	Provider        string `json:"provider,omitempty"`
+	Model           string `json:"model,omitempty"`
+	Effort          string `json:"effort,omitempty"`
+	DiscardedEffort string `json:"discarded_effort,omitempty"`
 }
 
 // jsonTurnEventCallback returns an agent.Event handler that translates

@@ -52,7 +52,7 @@ func handleSlashCompact(sess *chat.Session, term *Terminal) (bool, bool, error) 
 }
 
 func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
-	sink := terminalSlashSink{t: term}
+	sink := slashSinkFor(term)
 	switch cmd {
 	case "/agents":
 		term.WriteString("\n" + formatAgentCurrent(currentAgentName(classicAgentState), registryForState(classicAgentState)))
@@ -86,6 +86,9 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 			return true, false, nil
 		}
 		sink.Info(formatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded))
+		if jsink, ok := sink.(*jsonSlashSink); ok {
+			jsink.ModelChanged(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded)
+		}
 	case "/provider":
 		term.WriteString(fmt.Sprintf("\nprovider=%s (restart with --provider to switch)", res.ProviderName))
 	case "/tools":
