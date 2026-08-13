@@ -139,6 +139,7 @@ const schemaStepSchema = `{"type":"object","required":["ok"],"properties":{"ok":
 func writeSchemaStepWorkspace(t *testing.T, schemaRef, schemaContent string) string {
 	t.Helper()
 	root := t.TempDir()
+	initGitRepo(t, root)
 	wfRoot := filepath.Join(root, ".mivia", "workflows")
 	if err := os.MkdirAll(filepath.Dir(filepath.Join(wfRoot, schemaRef)), 0o700); err != nil {
 		t.Fatal(err)

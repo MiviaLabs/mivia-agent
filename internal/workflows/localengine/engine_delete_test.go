@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
 // newSettledEngine returns an engine over a fresh memory repo with one run
@@ -57,6 +58,24 @@ func TestEngineDeleteSettledRun(t *testing.T) {
 				t.Fatalf("GetRun after delete = %v, want ErrNotFound", err)
 			}
 		})
+	}
+}
+
+// TestEngineDeleteForgetsWorktree pins that Delete removes the run's entry
+// from e.worktrees, not just the ledger record. Before this fix nothing ever
+// called forgetWorktree/delete on that map, so a long-lived engine process
+// leaked one entry per run forever.
+func TestEngineDeleteForgetsWorktree(t *testing.T) {
+	engine, _, runID := newSettledEngine(t, workflowledger.RunStatusSucceeded)
+	engine.recordWorktree(runID, workflowspace.Identity{Root: "/tmp/wt", WorktreeName: "workflow-" + runID})
+	if _, ok := engine.worktreeIdentity(runID); !ok {
+		t.Fatal("recordWorktree did not record the identity")
+	}
+	if _, err := engine.Delete(context.Background(), runID, false); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, ok := engine.worktreeIdentity(runID); ok {
+		t.Fatal("Delete left the run's worktree identity behind; e.worktrees leaks")
 	}
 }
 

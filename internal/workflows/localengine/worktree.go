@@ -61,6 +61,16 @@ func (e *Engine) worktreeIdentity(runID string) (workflowspace.Identity, bool) {
 	return identity, ok
 }
 
+// forgetWorktree removes runID's recorded worktree identity. Callers use it
+// once a run leaves the engine for good - deleted, or settled to a terminal
+// status - so e.worktrees does not grow forever with entries no run will
+// ever look up again.
+func (e *Engine) forgetWorktree(runID string) {
+	e.mu.Lock()
+	delete(e.worktrees, runID)
+	e.mu.Unlock()
+}
+
 // resolveOriginURL records the delivery origin for the immutable admission
 // record, mirroring the CLI's workflowDeliveryAdmission: the main repository
 // must have an origin remote and the delivery base must sit at the admitted

@@ -132,6 +132,52 @@ func TestAbandonFenceSerializesAbandonWithContentWrite(t *testing.T) {
 	}
 }
 
+// TestAbandonFenceDoesNotSerializeUnrelatedRuns pins that fenced writes for
+// two different run IDs run concurrently: run A's write can block in flight
+// while run B's write completes, and vice versa. Before sharding the lock per
+// run, abandonFence held one process-wide mutex across every fenced write, so
+// this would deadlock (both writes block on the single f.mu, and neither
+// completes until the other times out this test).
+func TestAbandonFenceDoesNotSerializeUnrelatedRuns(t *testing.T) {
+	inner := workflowledger.NewMemoryRepository()
+	for _, runID := range []string{"wfr-shard-a", "wfr-shard-b"} {
+		run := workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusPending, Version: 1}
+		if err := inner.CreateRun(context.Background(), run, []byte(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocking := &blockingContentRepository{Repository: inner, entered: make(chan struct{}), release: make(chan struct{})}
+	fence := newAbandonFence(blocking)
+
+	// Start run A's write and let it block inside blockingContentRepository.
+	ctxA := workflowledger.ContextWithRunID(context.Background(), "wfr-shard-a")
+	aDone := make(chan error, 1)
+	go func() { aDone <- fence.StoreContent(ctxA, "ref:shard-a", []byte("a")) }()
+	<-blocking.entered
+
+	// Run B's write must complete without waiting for A's write to unblock:
+	// CompareAndSetRunStatus does not go through blockingContentRepository, so
+	// it only observes cross-run serialization, never blockingContentRepository
+	// itself.
+	bDone := make(chan error, 1)
+	go func() {
+		bDone <- fence.CompareAndSetRunStatus(context.Background(), "wfr-shard-b", 1, workflowledger.RunStatusRunning, nil)
+	}()
+	select {
+	case err := <-bDone:
+		if err != nil {
+			t.Fatalf("run B write error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("run B's fenced write blocked behind run A's in-flight write; the fence still serializes unrelated runs")
+	}
+
+	close(blocking.release)
+	if err := <-aDone; err != nil {
+		t.Fatalf("run A write error = %v", err)
+	}
+}
+
 // TestAbandonFenceRecordRunResumedForwards checks RecordRunResumed delegates to
 // the inner repository and travels through the fence mutate path: it reaches
 // the inner repo while the run is live, and fails closed with ErrConflict after

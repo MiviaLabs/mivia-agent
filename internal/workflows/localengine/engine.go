@@ -138,25 +138,8 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
-	// Create (or validate) the run's git worktree and record the identity on
-	// the engine so workflow_deliver resolves the run's real git directory.
-	if identity, ok := e.ensureRunWorktree(ctx, runID, nil); ok {
-		admission.BaseRef, admission.BaseCommit, admission.OriginBaseCommit, admission.WorktreeName = identity.BaseRef, identity.BaseCommit, identity.OriginBaseCommit, identity.WorktreeName
-		if compiled.Delivery != nil && compiled.DeliveryActive() {
-			url, uerr := resolveOriginURL(ctx, identity, compiled.Delivery.Base)
-			if uerr != nil {
-				return agenttools.StartResult{}, fmt.Errorf("resolve delivery origin: %w", uerr)
-			}
-			admission.RemoteURL = url
-		}
-		// Pin the run's git context for the fail-fast diff-size gate. This is
-		// the FRESH-start path: stacking chunk runs are fresh engine starts,
-		// so without it the gate would never fire for them.
-		if serr := ctrl.WireGitContext(identity.MainRoot, identity.WorktreeName, identity.Root); serr != nil {
-			return agenttools.StartResult{}, serr
-		}
-	} else if base, commit, wt, rerr := resolveLocalIdentity(e.WorkspaceRoot, runID); rerr == nil {
-		admission.BaseRef, admission.BaseCommit, admission.WorktreeName = base, commit, wt
+	if err := e.pinNewRunIdentity(ctx, ctrl, compiled, &admission, runID); err != nil {
+		return agenttools.StartResult{}, err
 	}
 	if err := ctrl.SetAdmission(admission); err != nil {
 		return agenttools.StartResult{}, err
@@ -181,6 +164,45 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 		return agenttools.StartResult{}, err
 	}
 	return agenttools.StartResult{RunID: runID, Status: string(run.Status), Workflow: compiled.Name}, nil
+}
+
+// pinNewRunIdentity resolves the fresh run's real base ref/commit and pins it
+// on admission, preferring a git worktree and falling back to the local
+// workspace's checked-out identity. It fails closed (returns an error)
+// instead of leaving newRunController's placeholder Admission (BaseRef
+// "main", BaseCommit "test-base") baked into the durable admission record
+// when neither source can resolve a real base.
+func (e *Engine) pinNewRunIdentity(ctx context.Context, ctrl *controller.LinearController, compiled *compiler.CompiledWorkflow, admission *controller.Admission, runID string) error {
+	// Create (or validate) the run's git worktree and record the identity on
+	// the engine so workflow_deliver resolves the run's real git directory.
+	if identity, ok := e.ensureRunWorktree(ctx, runID, nil); ok {
+		admission.BaseRef, admission.BaseCommit, admission.OriginBaseCommit, admission.WorktreeName = identity.BaseRef, identity.BaseCommit, identity.OriginBaseCommit, identity.WorktreeName
+		if compiled.Delivery != nil && compiled.DeliveryActive() {
+			url, uerr := resolveOriginURL(ctx, identity, compiled.Delivery.Base)
+			if uerr != nil {
+				return fmt.Errorf("resolve delivery origin: %w", uerr)
+			}
+			admission.RemoteURL = url
+		}
+		// Pin the run's git context for the fail-fast diff-size gate. This is
+		// the FRESH-start path: stacking chunk runs are fresh engine starts,
+		// so without it the gate would never fire for them.
+		if serr := ctrl.WireGitContext(identity.MainRoot, identity.WorktreeName, identity.Root); serr != nil {
+			return serr
+		}
+		return nil
+	}
+	if base, commit, wt, rerr := resolveLocalIdentity(e.WorkspaceRoot, runID); rerr == nil {
+		admission.BaseRef, admission.BaseCommit, admission.WorktreeName = base, commit, wt
+		return nil
+	} else {
+		// Neither the worktree path nor the local-identity fallback could
+		// resolve a real base ref/commit: admitting the run now would bake
+		// the newRunController placeholder into the durable admission
+		// record. Fail closed instead of starting a run pinned to a
+		// fabricated base.
+		return fmt.Errorf("resolve workflow base identity: %w", rerr)
+	}
 }
 
 func (e *Engine) beginInvocationAdmission(runID string) (bool, chan struct{}) {
@@ -273,11 +295,11 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, force bool) error {
 	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
 		if errors.Is(err, workflowledger.ErrClaimHeld) && force {
-			if err := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); errors.Is(err, workflowledger.ErrClaimNotHeld) {
-				return e.Repo.ClaimRun(ctx, runID, holder)
-			} else if err != nil {
-				return err
-			}
+			// force-resume must actually force: unconditionally replace the
+			// held claim rather than only clear it if the lease already
+			// expired. TakeoverExpiredRunClaim here would make force a no-op
+			// against a live (non-expired) claim.
+			return e.Repo.TakeoverRunClaim(ctx, runID, holder)
 		} else if errors.Is(err, workflowledger.ErrClaimHeld) {
 			if takeoverErr := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); takeoverErr == nil {
 				return nil

@@ -59,6 +59,7 @@ const stackChunkPlanReviewValid = `{"valid":true,"reasons":[]}`
 func writeStackingWorkspace(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	initGitRepo(t, root)
 	wfRoot := filepath.Join(root, ".mivia", "workflows")
 	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
 		t.Fatal(err)
@@ -363,6 +364,7 @@ status = "succeeded"
 func writeStackingWorkspaceMultiPhase(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	initGitRepo(t, root)
 	wfRoot := filepath.Join(root, ".mivia", "workflows")
 	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
 		t.Fatal(err)
