@@ -117,6 +117,7 @@ func (s *Session) currentSaveToken() OperationToken {
 // fenced so a clear, load, switch, or newer turn cannot publish stale state.
 func (s *Session) SaveAfterTurn() {
 	if s.ContextEnabled() {
+		s.autoSaveContextSession()
 		return
 	}
 	if s.SessionDir == "" && s.saveManager == nil {
@@ -162,6 +163,20 @@ func (s *Session) saveAfterTurn(token OperationToken) error {
 		return nil
 	}
 	return s.saveLegacyTurn(token, msgs)
+}
+
+// autoSaveContextSession promotes a live context-backed session into the
+// named catalog under its own SessionID, the same path /save already
+// exercises (saveContextSession), so it appears in "sessions list"
+// immediately after the first turn instead of only once someone runs
+// /save or renames it. SessionID is stable for the session's lifetime, so
+// repeated calls upsert the same catalog row rather than creating new ones.
+// Best-effort: a transient catalog write failure here must not fail the
+// turn that triggered it, so errors are reported, not returned.
+func (s *Session) autoSaveContextSession() {
+	if err := s.Save(s.SessionID); err != nil {
+		fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
+	}
 }
 
 func (s *Session) saveLegacyTurn(token OperationToken, msgs []provider.Message) error {
