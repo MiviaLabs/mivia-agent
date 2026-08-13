@@ -289,3 +289,323 @@ func TestTruncateTailLongestSuffix(t *testing.T) {
 		}
 	}
 }
+
+// TestTruncateEllipsisShortStringUnchanged checks that input at or below the
+// byte limit is returned unchanged with no ellipsis marker.
+func TestTruncateEllipsisShortStringUnchanged(t *testing.T) {
+	cases := []struct {
+		s   string
+		max int
+	}{
+		{"", 5},
+		{"a", 3},
+		{"héllo", 10},
+		{"日本語", 9},
+		{"exact", 5},
+	}
+	for _, c := range cases {
+		got := TruncateEllipsis(c.s, c.max)
+		if got != c.s {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, want unchanged %q", c.s, c.max, got, c.s)
+		}
+		if strings.HasSuffix(got, ellipsisMarker) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, must not add ellipsis on a no-op", c.s, c.max, got)
+		}
+	}
+}
+
+// TestTruncateEllipsisCutAppendsEllipsis checks that a real cut appends the
+// single-rune ellipsis marker, backs off mid-rune, stays valid UTF-8, never
+// exceeds the budget, and keeps the text portion a byte prefix of the input.
+func TestTruncateEllipsisCutAppendsEllipsis(t *testing.T) {
+	cases := []struct {
+		s    string
+		max  int
+		want string
+	}{
+		{"abcdef", 5, "ab…"},
+		{"héllo", 5, "h…"}, // cut inside é backs off to h; 1+3 = 4 bytes
+		{"héllo wörld", 6, "hé…"},
+		{"日本語", 7, "日…"},
+		{"a🙂bcde", 8, "a🙂…"}, // 9 bytes: a(1)+🙂(4)+bcde(4); cut at 5 leaves a🙂 + marker
+	}
+	for _, c := range cases {
+		got := TruncateEllipsis(c.s, c.max)
+		if got != c.want {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, want %q", c.s, c.max, got, c.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, not valid UTF-8", c.s, c.max, got)
+		}
+		if !strings.HasSuffix(got, ellipsisMarker) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, missing ellipsis marker", c.s, c.max, got)
+		}
+		if len(got) > c.max {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, length %d exceeds limit", c.s, c.max, got, len(got))
+		}
+		if !strings.HasPrefix(c.s, strings.TrimSuffix(got, ellipsisMarker)) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, text prefix is not a byte prefix of the input", c.s, c.max, got)
+		}
+	}
+}
+
+// TestTruncateEllipsisTinyBudgetFallback checks that a budget below the marker
+// length falls back to plain rune-safe truncation with no marker. The expected
+// values are the exact TruncateRuneSafe outputs, so the fallback is pinned.
+func TestTruncateEllipsisTinyBudgetFallback(t *testing.T) {
+	cases := []struct {
+		s    string
+		max  int
+		want string
+	}{
+		{"abcdef", 1, "a"},
+		{"héllo", 2, "h"},
+		{"日本語", 2, ""},
+		{"a🙂b", 2, "a"},
+	}
+	for _, c := range cases {
+		got := TruncateEllipsis(c.s, c.max)
+		if got != c.want {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, want fallback %q", c.s, c.max, got, c.want)
+		}
+		if got != TruncateRuneSafe(c.s, c.max) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, want TruncateRuneSafe output %q", c.s, c.max, got, TruncateRuneSafe(c.s, c.max))
+		}
+		if strings.HasSuffix(got, ellipsisMarker) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, must not add ellipsis when it cannot fit", c.s, c.max, got)
+		}
+	}
+}
+
+// TestTruncateEllipsisExactBudgetThree checks that a budget of exactly 3 bytes
+// yields the marker alone on a real cut, and leaves at-or-below-budget input
+// unchanged with no added marker.
+func TestTruncateEllipsisExactBudgetThree(t *testing.T) {
+	cases := []struct {
+		s    string
+		max  int
+		want string
+	}{
+		{"abcdef", 3, "…"},
+		{"日本語", 3, "…"},
+		{"a", 3, "a"},
+		{"…", 3, "…"},
+	}
+	for _, c := range cases {
+		if got := TruncateEllipsis(c.s, c.max); got != c.want {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, want %q", c.s, c.max, got, c.want)
+		}
+	}
+}
+
+// TestTruncateEllipsisZeroAndNegativeMax checks the zero and negative limits.
+func TestTruncateEllipsisZeroAndNegativeMax(t *testing.T) {
+	for _, s := range []string{"", "a", "héllo", "日本語"} {
+		if got := TruncateEllipsis(s, 0); got != "" {
+			t.Errorf("TruncateEllipsis(%q, 0) = %q, want empty", s, got)
+		}
+		if got := TruncateEllipsis(s, -1); got != "" {
+			t.Errorf("TruncateEllipsis(%q, -1) = %q, want empty", s, got)
+		}
+	}
+}
+
+// TestTruncateEllipsisOversizedInput checks multi-KiB and ~896 KiB inputs
+// against small budgets: bounded length, marker present, valid UTF-8, and a
+// byte prefix preserved.
+func TestTruncateEllipsisOversizedInput(t *testing.T) {
+	cases := []struct {
+		s   string
+		max int
+	}{
+		{strings.Repeat("ab", 4096), 16},      // 8 KiB
+		{strings.Repeat("héllo ", 1<<17), 32}, // ~896 KiB
+	}
+	for _, c := range cases {
+		got := TruncateEllipsis(c.s, c.max)
+		if len(got) > c.max {
+			t.Errorf("TruncateEllipsis(len %d, %d) = %q, length %d exceeds limit", len(c.s), c.max, got, len(got))
+		}
+		if !strings.HasSuffix(got, ellipsisMarker) {
+			t.Errorf("TruncateEllipsis(len %d, %d) = %q, missing ellipsis marker", len(c.s), c.max, got)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("TruncateEllipsis(len %d, %d) = %q, not valid UTF-8", len(c.s), c.max, got)
+		}
+		if !strings.HasPrefix(c.s, strings.TrimSuffix(got, ellipsisMarker)) {
+			t.Errorf("TruncateEllipsis(len %d, %d) = %q, text prefix is not a byte prefix of the input", len(c.s), c.max, got)
+		}
+	}
+}
+
+// TestTruncateEllipsisMalformedUTF8 checks invalid UTF-8 seeds across several
+// budgets: no panic, budget respected, fallback equality below 3 bytes, marker
+// plus byte-prefix behavior in the ellipsis branch, and the valid-UTF-8
+// guarantee asserted only for valid input.
+func TestTruncateEllipsisMalformedUTF8(t *testing.T) {
+	seeds := []string{"\xff\xfe\x80", "\x80\x80\x80", "\xff\xfe\x80\xff\xfe\x80"}
+	for _, s := range seeds {
+		for _, max := range []int{1, 2, 3, 5} {
+			got := TruncateEllipsis(s, max) // must not panic
+			if len(got) > max {
+				t.Errorf("TruncateEllipsis(%q, %d) = %q, length %d exceeds limit", s, max, got, len(got))
+			}
+			if max < 3 {
+				if got != TruncateRuneSafe(s, max) {
+					t.Errorf("TruncateEllipsis(%q, %d) = %q, want fallback %q", s, max, got, TruncateRuneSafe(s, max))
+				}
+			} else if len(s) > max {
+				if !strings.HasSuffix(got, ellipsisMarker) {
+					t.Errorf("TruncateEllipsis(%q, %d) = %q, missing ellipsis marker", s, max, got)
+				}
+				if !strings.HasPrefix(s, strings.TrimSuffix(got, ellipsisMarker)) {
+					t.Errorf("TruncateEllipsis(%q, %d) = %q, text prefix is not a byte prefix of the input", s, max, got)
+				}
+			} else if got != s {
+				t.Errorf("TruncateEllipsis(%q, %d) = %q, want unchanged %q", s, max, got, s)
+			}
+			if utf8.ValidString(s) && !utf8.ValidString(got) {
+				t.Errorf("TruncateEllipsis(%q, %d) = %q, not valid UTF-8", s, max, got)
+			}
+		}
+	}
+}
+
+// TestTruncateEllipsisMarkerIsSingleRune pins the DC-9/security claim that the
+// marker is exactly the single rune U+2026 (3 bytes), never an ASCII "...".
+func TestTruncateEllipsisMarkerIsSingleRune(t *testing.T) {
+	if utf8.RuneCountInString(ellipsisMarker) != 1 {
+		t.Errorf("ellipsisMarker %q has %d runes, want exactly 1", ellipsisMarker, utf8.RuneCountInString(ellipsisMarker))
+	}
+	if len(ellipsisMarker) != 3 {
+		t.Errorf("ellipsisMarker %q is %d bytes, want 3", ellipsisMarker, len(ellipsisMarker))
+	}
+	if ellipsisMarker == "..." {
+		t.Error("ellipsisMarker must not be the ASCII \"...\" marker")
+	}
+	if got := TruncateEllipsis("abcdef", 5); !strings.HasSuffix(got, "\u2026") {
+		t.Errorf("truncated output %q must end in U+2026, not an ASCII marker", got)
+	}
+}
+
+// TestTruncateEllipsisProperties checks invariants across every byte limit for
+// a curated input set: valid UTF-8 for valid input, budget respected, unchanged
+// result exactly when no truncation happens, honest marker exactly when a cut
+// happens and the budget fits it, fallback equality below 3 bytes, oracle
+// equality of the text prefix, and the byte-prefix property. Nothing is parsed
+// or decoded, so duplicate-input coverage does not apply; the matrix asserts
+// repeated-invocation determinism instead.
+func TestTruncateEllipsisProperties(t *testing.T) {
+	inputs := []string{
+		"", "a", "abc", "héllo", "héllo wörld", "日本語", "a🙂b", "e\u0301",
+		"\xff\xfe\x80", "\x80\x80", "\xff\xfe\x80\xff\xfe\x80",
+	}
+	for _, s := range inputs {
+		for max := 0; max <= len(s)+2; max++ {
+			got := TruncateEllipsis(s, max)
+			if utf8.ValidString(s) && !utf8.ValidString(got) {
+				t.Errorf("TruncateEllipsis(%q, %d) = %q, not valid UTF-8", s, max, got)
+			}
+			if len(got) > max {
+				t.Errorf("TruncateEllipsis(%q, %d) = %q, length %d exceeds limit", s, max, got, len(got))
+			}
+			if len(s) <= max {
+				if got != s {
+					t.Errorf("TruncateEllipsis(%q, %d) = %q, want unchanged", s, max, got)
+				}
+				continue
+			}
+			// len(s) > max: truncation happened.
+			if max < 3 {
+				if got != TruncateRuneSafe(s, max) {
+					t.Errorf("TruncateEllipsis(%q, %d) = %q, want fallback %q", s, max, got, TruncateRuneSafe(s, max))
+				}
+				continue
+			}
+			if !strings.HasSuffix(got, ellipsisMarker) {
+				t.Errorf("TruncateEllipsis(%q, %d) = %q, missing ellipsis marker", s, max, got)
+			}
+			prefix := strings.TrimSuffix(got, ellipsisMarker)
+			if prefix != TruncateRuneSafe(s, max-3) {
+				t.Errorf("TruncateEllipsis(%q, %d) = %q, text prefix %q != TruncateRuneSafe(s, %d) = %q",
+					s, max, got, prefix, max-3, TruncateRuneSafe(s, max-3))
+			}
+			if !strings.HasPrefix(s, prefix) {
+				t.Errorf("TruncateEllipsis(%q, %d) = %q, text prefix is not a byte prefix of the input", s, max, got)
+			}
+		}
+	}
+}
+
+// TestTruncateEllipsisLongestTextPrefix checks the text portion independently
+// of the TruncateRuneSafe oracle: when a cut appends the ellipsis, the text
+// prefix is the longest rune-safe prefix within maxBytes-3. Valid inputs only,
+// because the decode-next-rune optimality argument assumes well-formed UTF-8.
+func TestTruncateEllipsisLongestTextPrefix(t *testing.T) {
+	inputs := []string{"", "a", "abcdef", "héllo", "héllo wörld", "日本語", "a🙂b", "e\u0301"}
+	for _, s := range inputs {
+		for max := 0; max <= len(s)+2; max++ {
+			got := TruncateEllipsis(s, max)
+			if len(s) <= max || max < 3 {
+				continue // no ellipsis case; optimality applies to the text prefix only
+			}
+			prefix := strings.TrimSuffix(got, ellipsisMarker)
+			b := max - 3
+			if len(prefix) == b || len(prefix) == len(s) {
+				continue
+			}
+			// len(prefix) < b and there is more input beyond prefix. The byte at
+			// s[len(prefix)] is a rune start; a longer rune-safe prefix exists
+			// only when the full rune fits within the remaining budget.
+			if len(prefix) < len(s) && utf8.RuneStart(s[len(prefix)]) {
+				_, runeLen := utf8.DecodeRuneInString(s[len(prefix):])
+				if len(prefix)+runeLen <= b {
+					t.Errorf("TruncateEllipsis(%q, %d) = %q: text prefix %q (%d bytes) is not longest within %d: next rune needs %d bytes",
+						s, max, got, prefix, len(prefix), b, runeLen)
+				}
+			}
+		}
+	}
+}
+
+// FuzzTruncateEllipsisProperties checks the same invariants as the property
+// matrix over arbitrary input and a bounded budget. maxBytes is derived from
+// the fuzz word modulo len(s)+5, so every call stays inside a tiny budget and
+// no unbounded allocation is possible.
+func FuzzTruncateEllipsisProperties(f *testing.F) {
+	for _, s := range []string{
+		"", "a", "abc", "héllo", "héllo wörld", "日本語", "a🙂b", "e\u0301",
+		"\xff\xfe\x80", "\x80\x80", "\xff\xfe\x80\xff\xfe\x80",
+	} {
+		f.Add(s, uint32(0))
+	}
+	f.Fuzz(func(t *testing.T, s string, m uint32) {
+		maxBytes := int(m % uint32(len(s)+5))
+		got := TruncateEllipsis(s, maxBytes)
+		if utf8.ValidString(s) && !utf8.ValidString(got) {
+			t.Fatalf("TruncateEllipsis(%q, %d) = %q, not valid UTF-8", s, maxBytes, got)
+		}
+		if len(got) > maxBytes {
+			t.Fatalf("TruncateEllipsis(%q, %d) = %q, length %d exceeds limit", s, maxBytes, got, len(got))
+		}
+		if len(s) <= maxBytes {
+			if got != s {
+				t.Fatalf("TruncateEllipsis(%q, %d) = %q, want unchanged", s, maxBytes, got)
+			}
+			return
+		}
+		if maxBytes < 3 {
+			if got != TruncateRuneSafe(s, maxBytes) {
+				t.Fatalf("TruncateEllipsis(%q, %d) = %q, want fallback %q", s, maxBytes, got, TruncateRuneSafe(s, maxBytes))
+			}
+			return
+		}
+		if !strings.HasSuffix(got, ellipsisMarker) {
+			t.Fatalf("TruncateEllipsis(%q, %d) = %q, missing ellipsis marker", s, maxBytes, got)
+		}
+		prefix := strings.TrimSuffix(got, ellipsisMarker)
+		if !strings.HasPrefix(s, prefix) {
+			t.Fatalf("TruncateEllipsis(%q, %d) = %q, text prefix is not a byte prefix of the input", s, maxBytes, got)
+		}
+	})
+}
