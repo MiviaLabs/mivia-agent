@@ -164,7 +164,7 @@ func TestOneShotPrintsReplyBeforeAutosaveFailure(t *testing.T) {
 	}
 	stdout := captureStdout(t)
 	stderr := captureStderr(t)
-	err = oneShotContext(context.Background(), sess, "question", false, &config.Resolved{ProviderName: "test", Model: "model"})
+	err = oneShotContext(context.Background(), sess, "question", false, &config.Resolved{ProviderName: "test", Model: "model"}, false)
 	gotOut, _ := stdout(), stderr()
 	if !errors.Is(err, chat.ErrPersistence) {
 		t.Fatalf("error = %v, want ErrPersistence", err)
@@ -182,7 +182,7 @@ func TestOneShotPrintsPartialBeforeCancellation(t *testing.T) {
 	sess.UseTools = true
 	stdout := captureStdout(t)
 	stderr := captureStderr(t)
-	err := oneShotContext(ctx, sess, "question", true, &config.Resolved{ProviderName: "test", Model: "model"})
+	err := oneShotContext(ctx, sess, "question", true, &config.Resolved{ProviderName: "test", Model: "model"}, false)
 	gotOut, gotErr := stdout(), stderr()
 	if err != nil {
 		t.Fatalf("error = %v, want nil", err)
@@ -200,7 +200,7 @@ func TestOneShotHidesOrdinaryFailedStream(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{ProviderName: "test", Model: "model", SystemPrompt: "sys"}, streamingLineCompleter{output: "uncommitted partial", err: want})
 	stdout := captureStdout(t)
 	stderr := captureStderr(t)
-	err := oneShotContext(context.Background(), sess, "question", false, &config.Resolved{ProviderName: "test", Model: "model"})
+	err := oneShotContext(context.Background(), sess, "question", false, &config.Resolved{ProviderName: "test", Model: "model"}, false)
 	gotOut, _ := stdout(), stderr()
 	if !errors.Is(err, want) {
 		t.Fatalf("error = %v, want %v", err, want)

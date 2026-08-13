@@ -165,15 +165,17 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 				releaseWorkflowResumeHandoff(p.repo, p.runID, p.built.Controller)
 				return snap, err
 			})
-		}, func() (bool, error) {
+		}, func(ctx context.Context) (bool, error) {
 			// The resume mirror of the CLI run entry point's
 			// drive-before-delivery ordering: a stacking plan run that settles
 			// delivery_pending with a multi-chunk plan drives its stack before
-			// the plan run is delivered.
+			// the plan run is delivered. The hook ctx is the bounded session
+			// attempt ctx (workflowAutoDeliveryAttemptTimeout), so a stuck
+			// drive can be stopped instead of holding the execution flock.
 			if p.compiled == nil {
 				return false, nil // no compiled workflow data: nothing to stack
 			}
-			return maybeDriveSettledStack(&preparedWorkflowRun{
+			return maybeDriveSettledStack(ctx, &preparedWorkflowRun{
 				root: p.root, res: p.res, store: p.store, repo: p.repo,
 				compiled: p.compiled, inputs: p.inputs, inputSnapshot: p.inputSnapshot,
 				refBase: "", raw: p.raw,

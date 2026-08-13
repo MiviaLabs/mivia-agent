@@ -33,11 +33,5 @@ func (e *Engine) loadAndValidateWorkflow(req agenttools.StartRequest) (*compiler
 // additive and leaves the compile-time digest untouched: the reserved defs are
 // added post-compile, exactly as SynthesizeStacking does for the run graph.
 func applyStackingInputs(compiled *compiler.CompiledWorkflow) {
-	if reserved := compiler.SynthesizedInputs(compiled.Stacking); len(reserved) > 0 {
-		for name, def := range reserved {
-			if _, ok := compiled.Inputs[name]; !ok {
-				compiled.Inputs[name] = def
-			}
-		}
-	}
+	compiler.MergeStackingInputs(compiled)
 }

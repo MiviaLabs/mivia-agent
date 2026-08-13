@@ -252,12 +252,14 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 	go func() {
 		sessionAutoDeliveryRepairLoop(runCtx, prepared.repo, prepared.root, prepared.res, prepared.store, runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
 			return controller.RunWithCancelReconciliationRetry(ctx, built.Controller.Run)
-		}, func() (bool, error) {
+		}, func(ctx context.Context) (bool, error) {
 			// A stacking plan run that settles delivery_pending with a multi-chunk
 			// plan drives its stack before the plan run is delivered; the hook
 			// mirrors the CLI run entry point's drive-before-delivery ordering and
-			// reports whether it drove a stack.
-			return maybeDriveSettledStack(prepared, runID, true, io.Discard, io.Discard)
+			// reports whether it drove a stack. The hook ctx is the bounded
+			// session attempt ctx (workflowAutoDeliveryAttemptTimeout), so a
+			// stuck drive can be stopped instead of holding the execution flock.
+			return maybeDriveSettledStack(ctx, prepared, runID, true, io.Discard, io.Discard)
 		}, compiledDeliverPlanRun(prepared.compiled))
 		// Delivery completion settles outside the controller (which parked at
 		// delivery_pending and emitted no run_finished), so publish the terminal

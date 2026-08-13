@@ -60,3 +60,48 @@ func TestAcquireWorkflowExecutionLockBoundedTimesOutWithClearError(t *testing.T)
 		t.Fatalf("error %q should explain the held lock and suggest a retry", err.Error())
 	}
 }
+
+// TestBeginWorkflowExecutionBoundedWaitsForHeldLock pins
+// beginWorkflowExecutionBounded (the cancel/deliver admission path) waits,
+// bounded, for a concurrent holder to release the execution flock instead of
+// failing with the plain lock's opaque "lock is busy" error, then succeeds
+// once the holder releases, and that its release func returns the flock to a
+// plain acquire.
+func TestBeginWorkflowExecutionBoundedWaitsForHeldLock(t *testing.T) {
+	storePath := lockStorePath(t)
+	originalHooks := workflowExecutionHooks
+	workflowExecutionHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
+	t.Cleanup(func() { workflowExecutionHooks = originalHooks })
+	root := t.TempDir()
+
+	hold, err := acquireWorkflowExecutionLock(storePath, "wfr-bounded-begin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	finish, err := beginWorkflowExecutionBounded(root, storePath, "wfr-bounded-begin", 250*time.Millisecond)
+	if err == nil {
+		if finish != nil {
+			finish()
+		}
+		t.Fatal("expected a busy-lock error while the lock is held")
+	}
+	if !strings.Contains(err.Error(), "still held after") {
+		t.Fatalf("error %q should explain the held lock and suggest a retry", err.Error())
+	}
+
+	hold()
+
+	finish, err = beginWorkflowExecutionBounded(root, storePath, "wfr-bounded-begin", 2*time.Second)
+	if err != nil {
+		t.Fatalf("begin after release: %v", err)
+	}
+
+	// The returned release func must return the flock to a plain acquire.
+	finish()
+	again, err := acquireWorkflowExecutionLock(storePath, "wfr-bounded-begin")
+	if err != nil {
+		t.Fatalf("plain acquire after begin's release = %v, want success", err)
+	}
+	again()
+}

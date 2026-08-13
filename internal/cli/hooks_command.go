@@ -106,13 +106,19 @@ func (h *hookSession) noteRunWarnings(warnings []string) {
 // installHookSession resolves this session's lifecycle hooks, reports what was
 // ignored and what is armed, and publishes the result for /hooks and the
 // dispatcher wiring. The returned function releases the handle at session end.
-func installHookSession(workspaceRoot string, staleBypass bool) (func(), error) {
+// quiet (--quiet) suppresses the armed notice and the project-hook disclosure:
+// the operator explicitly asked for quieter startup, and /hooks still lists
+// every armed hook on demand. Genuine load warnings always print.
+func installHookSession(workspaceRoot string, staleBypass, quiet bool) (func(), error) {
 	state, err := loadHookSession(workspaceRoot)
 	if err != nil {
 		return nil, err
 	}
-	notices := append(state.warnings, state.armedNotice()...)
-	if staleBypass {
+	notices := append([]string{}, state.warnings...)
+	if !quiet {
+		notices = append(notices, state.armedNotice()...)
+	}
+	if staleBypass && !quiet {
 		notices = append(notices, "--bypass-hook-trust no longer does anything and can be removed: "+
 			"a hook declared in ~/.mivia/mivia.toml runs without confirmation.")
 	}

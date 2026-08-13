@@ -43,6 +43,31 @@ func SynthesizedInputs(cfg *definition.StackingConfig) map[string]definition.Inp
 	return stackingReservedInputs()
 }
 
+// MergeStackingInputs merges the engine-reserved stacking input definitions
+// into a compiled stacking workflow's input contract. Names the workflow
+// already declares are left untouched; a non-stacking workflow (nil Stacking)
+// and a nil compiled workflow are no-ops. The merge is additive and
+// post-compile - it never moves the compile-time digest - and mirrors the
+// reserved set SynthesizeStacking adds to the run graph, so admission and
+// resume validate against the same input contract.
+func MergeStackingInputs(compiled *CompiledWorkflow) {
+	if compiled == nil {
+		return
+	}
+	reserved := SynthesizedInputs(compiled.Stacking)
+	if len(reserved) == 0 {
+		return
+	}
+	if compiled.Inputs == nil {
+		compiled.Inputs = make(map[string]definition.InputDef, len(reserved))
+	}
+	for name, def := range reserved {
+		if _, ok := compiled.Inputs[name]; !ok {
+			compiled.Inputs[name] = def
+		}
+	}
+}
+
 // SynthesizeStacking returns the run graph for a compiled stacking workflow:
 // the original graph plus the engine-injected decompose and
 // chunk_plan_validate steps, the reserved inputs, and the router edges from

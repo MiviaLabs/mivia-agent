@@ -332,6 +332,48 @@ that rule (DC-13's "one operation, one path" applies here too).
   allowlist) must not have the side effect of silently blocking a dynamic surface that
   shares the same authorization gate.
 
+## DC-16 A live-content path exists but only some producers feed it
+
+**Mechanism.** A live/streaming signal (an event bus, a push channel) exists and has
+real consumers, but only some of the code paths that produce the underlying content
+actually publish to it. A path added later, or one that takes a structurally different
+route to the same user-visible output, writes straight to its own local sink (a
+terminal, a buffer) and never reaches the shared signal. Every direct consumer of that
+path's own output still works, so the gap is invisible locally - it only shows up to a
+cross-cutting observer that depends on the shared signal instead.
+
+**Evidence.** `9809597d`: `internal/agent/loop.go`'s agent-loop path published exactly
+one aggregate `EventAssistant` after a reply finished streaming to `FinalWriter` -
+`teeWriter` captured bytes for interrupted-turn recovery but never republished them
+live, so a cross-process observer (`internal/hub`'s relay to mivia-agent-desktop) saw
+nothing during generation, then the whole answer at once right before "done". Its own
+sweep flagged, and did not fix, the sibling case a follow-up fix closed the same day:
+`internal/chat/context_plain_send.go`'s plain (`--no-tools`) chat path streams straight
+to the caller's `io.Writer` via `Completer.ChatStream` and never reaches
+`internal/agent`, so it never touched `EventBus` at all - not even the one aggregate
+event the tool-enabled path had. Two different code paths to "the model's reply
+streamed to the user," one shared live-signal consumer, only one path (then, after the
+first fix, still only one of two) actually fed it.
+
+**Probes.**
+- For every live/streaming signal (event bus, push channel, subscription), list EVERY
+  producer path that generates the content it's supposed to carry - not just the one
+  the signal was originally built against. A provider-facing `Completer.ChatStream`/
+  `Completer.Chat` split, a tools-on/tools-off branch, a legacy/context-enabled branch:
+  each is a separate producer path until proven otherwise.
+- For each producer path found, confirm it actually publishes to the signal, not just
+  that it writes correctly to its own direct caller's writer. A path that streams
+  correctly to the terminal in front of it can still be fully silent to every other
+  consumer of the shared signal.
+- A fix that adds publishing to one producer path is not complete until every other
+  producer path feeding the same user-visible signal is checked against the same gap
+  (this is DC-16 restating the Chain control rule below, but the "site" here is a code
+  path, not a name in a list - it's easy to fix one path, ship it, and miss the sibling
+  because the two never look like duplicated code).
+- Test the signal from EVERY producer path, not just the one the bug report named -
+  a passing test suite that only exercises one path (e.g. the tools-on path) will not
+  catch a sibling path's identical gap.
+
 ## Chain control
 
 The history shows chains: one class produced 35, 45, or 26 separate fixes. A chain

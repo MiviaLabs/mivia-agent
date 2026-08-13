@@ -104,7 +104,7 @@ func TestExecuteWorkflowResumeSettlesRunFailureBeforeFirstAdvance(t *testing.T) 
 	}
 	workflowResumeSetAdmission = func(workflowControllerBuild) error { return nil }
 	workflowResumeSetForce = func(workflowControllerBuild) error { return nil }
-	workflowResumeInstallHooks = func(string, bool) (func(), error) { return func() {}, nil }
+	workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
 	workflowResumeRun = func(context.Context, workflowControllerBuild) (workflowledger.RunSnapshot, error) {
 		return workflowledger.RunSnapshot{}, errors.New("ledger read: database is locked")
 	}

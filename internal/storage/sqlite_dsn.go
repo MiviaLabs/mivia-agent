@@ -9,7 +9,7 @@ import (
 // modernc.org/sqlite's applyQueryParams to every pooled connection. OpenSQLite
 // also executes the same PRAGMAs explicitly after open, so this DSN form is
 // per-connection parity, not the only enforcement point.
-const pragmaDSNParams = "_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+const pragmaDSNParams = "_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 
 // sqliteDSN builds the driver DSN for a store file. The modernc.org/sqlite
 // driver (v1.54.0) splits a DSN at the first literal '?' to separate the

@@ -9,12 +9,12 @@ import (
 // modernc.org/sqlite's applyQueryParams to every pooled connection, matching
 // the storage package's pragmaDSNParams (without foreign_keys, which this
 // schema does not use). Keep the two in sync when the set changes.
-const pragmaMemoryDSNParams = "_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)"
+const pragmaMemoryDSNParams = "_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
 
 // pragmaMemoryDSNReadOnlyParams are the read-only overrides: no
 // journal_mode(WAL) (switching would write the database header), and
 // query_only(1) so no pooled connection can mutate the committed file.
-const pragmaMemoryDSNReadOnlyParams = "_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)&_pragma=query_only(1)"
+const pragmaMemoryDSNReadOnlyParams = "_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=query_only(1)"
 
 // sqliteMemoryDSN builds the read-write driver DSN; see memoryDSN.
 func sqliteMemoryDSN(path string) string { return memoryDSN(path, pragmaMemoryDSNParams) }

@@ -51,7 +51,7 @@ func TestLogEffectiveLimitsOnceWarnsHugeToolResult(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	logEffectiveLimitsOnce(&buf, res)
+	logEffectiveLimitsOnce(&buf, res, false)
 	out := buf.String()
 	if !strings.Contains(out, "warning:") || !strings.Contains(out, "not clamped") {
 		t.Fatalf("expected warn: %q", out)
@@ -61,10 +61,29 @@ func TestLogEffectiveLimitsOnceWarnsHugeToolResult(t *testing.T) {
 	}
 }
 
+func TestLogEffectiveLimitsOnceQuietSuppresses(t *testing.T) {
+	res := &config.Resolved{
+		Tools: config.ToolsConfig{
+			MaxToolResultBytes: config.UsefulToolResultRequestBytes + 1,
+			MemoryBackstopMB:   256,
+		},
+	}
+	var buf bytes.Buffer
+	logEffectiveLimitsOnce(&buf, res, true)
+	out := buf.String()
+	if strings.Contains(out, "limits:") {
+		t.Fatalf("quiet should suppress the limits summary line, got %q", out)
+	}
+	// Warnings that signal a misconfiguration still print under --quiet.
+	if !strings.Contains(out, "warning:") {
+		t.Fatalf("quiet must not hide config warnings, got %q", out)
+	}
+}
+
 func TestLogEffectiveLimitsOnceWarnsPlaintextMCP(t *testing.T) {
 	res := &config.Resolved{MCPWarnings: []string{"MCP server \"plain\" uses plaintext HTTP"}}
 	var buf bytes.Buffer
-	logEffectiveLimitsOnce(&buf, res)
+	logEffectiveLimitsOnce(&buf, res, false)
 	if out := buf.String(); !strings.Contains(out, "warning: MCP server \"plain\" uses plaintext HTTP") {
 		t.Fatalf("operator output = %q", out)
 	}

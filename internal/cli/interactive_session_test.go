@@ -102,7 +102,7 @@ func openInteractiveAgentSession(t *testing.T, root string, comp provider.Comple
 		// programs and the helper's registry includes run_command.
 		res.Tools.RunAllowlist = []string{"sh"}
 		var err error
-		memClose, err = configureChatWorkspace(sess, root, true, res, nil)
+		memClose, err = configureChatWorkspace(sess, root, true, res, nil, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -240,7 +240,7 @@ func TestInteractiveAgentSession_DefaultWiringRegistersDelegation(t *testing.T) 
 	res := &config.Resolved{Model: "test-model", SystemPrompt: "sys", Subagents: config.DefaultSubagentConfig}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
-	memClose, err := configureChatWorkspace(sess, root, true, res, nil)
+	memClose, err := configureChatWorkspace(sess, root, true, res, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

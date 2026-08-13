@@ -20,7 +20,7 @@ import (
 // surfacing a terminal chunk failure as a stack halt. Reconcile is idempotent
 // and marks a chunk merged as soon as git reports its PR branch merged, so a
 // later drive pass naturally skips it and admits the next wave.
-func waitForChunkMerges(repo workflowledger.Repository, ledger *tasks.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) error {
+func waitForChunkMerges(ctx context.Context, repo workflowledger.Repository, ledger *tasks.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) error {
 	const pollInterval = 20 * time.Second
 	ticks := 0
 	for {
@@ -50,7 +50,14 @@ func waitForChunkMerges(repo workflowledger.Repository, ledger *tasks.Store, che
 		if ticks%3 == 0 {
 			fmt.Fprintf(stdout, "stack %s: waiting for chunk merges to land...\n", stackID)
 		}
-		time.Sleep(pollInterval)
+		// The poll must honor the caller's context: a cancelled/expired ctx
+		// (the session attempt bound) stops the drive instead of sleeping
+		// through the poll forever and holding the run's execution flock.
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("stack drive: %w", ctx.Err())
+		case <-time.After(pollInterval):
+		}
 	}
 }
 
@@ -112,7 +119,7 @@ func autoMergeOne(repo workflowledger.Repository, stackID, chunkID string, stdou
 // allowed and report the stack's terminal state. With merge_policy=auto the
 // integration PR is merged and the merge waited out before the stack reports
 // complete.
-func waitIntegrationRunSettled(prepared *preparedWorkflowRun, ledger *tasks.Store, checker MergeChecker, stackID string, policy string, allowPublish bool, stdout, stderr io.Writer) error {
+func waitIntegrationRunSettled(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, checker MergeChecker, stackID string, policy string, allowPublish bool, stdout, stderr io.Writer) error {
 	run, found, err := stackRunRef(prepared.repo, stackID, stackIntegrationChunkID)
 	if err != nil {
 		return err
@@ -121,7 +128,7 @@ func waitIntegrationRunSettled(prepared *preparedWorkflowRun, ledger *tasks.Stor
 		return fmt.Errorf("stack %s: integration run was not admitted", stackID)
 	}
 	if run.Status == workflowledger.RunStatusDeliveryPending && allowPublish {
-		if err := deliverRunWithStore(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, run.RunID, true, false, stdout, stderr); err != nil {
+		if err := deliverRunWithStore(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, run.RunID, true, false, stdout, stderr); err != nil {
 			return fmt.Errorf("integration run delivery failed: %w", err)
 		}
 	}
@@ -129,7 +136,7 @@ func waitIntegrationRunSettled(prepared *preparedWorkflowRun, ledger *tasks.Stor
 		if err := autoMergeOne(prepared.repo, stackID, stackIntegrationChunkID, stdout, stderr); err != nil {
 			return err
 		}
-		return waitForIntegrationMerge(prepared.repo, checker, stackID, stdout, stderr)
+		return waitForIntegrationMerge(ctx, prepared.repo, checker, stackID, stdout, stderr)
 	}
 	if run.Status == workflowledger.RunStatusDeliveryPending {
 		fmt.Fprintf(stdout, "stack %s complete; integration run awaits the publish grant: mivia workflow deliver %s --allow-publish\n", stackID, run.RunID)
@@ -142,7 +149,7 @@ func waitIntegrationRunSettled(prepared *preparedWorkflowRun, ledger *tasks.Stor
 // waitForIntegrationMerge polls git until the integration PR's branch is
 // merged into the base, so the stack reports complete only after the final
 // PR actually lands.
-func waitForIntegrationMerge(repo workflowledger.Repository, checker MergeChecker, stackID string, stdout, stderr io.Writer) error {
+func waitForIntegrationMerge(ctx context.Context, repo workflowledger.Repository, checker MergeChecker, stackID string, stdout, stderr io.Writer) error {
 	const pollInterval = 20 * time.Second
 	ticks := 0
 	for {
@@ -167,6 +174,13 @@ func waitForIntegrationMerge(repo workflowledger.Repository, checker MergeChecke
 		if ticks%3 == 0 {
 			fmt.Fprintf(stdout, "stack %s: waiting for the integration PR merge to land...\n", stackID)
 		}
-		time.Sleep(pollInterval)
+		// The poll must honor the caller's context: a cancelled/expired ctx
+		// (the session attempt bound) stops the drive instead of sleeping
+		// through the poll forever and holding the run's execution flock.
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("stack drive: %w", ctx.Err())
+		case <-time.After(pollInterval):
+		}
 	}
 }

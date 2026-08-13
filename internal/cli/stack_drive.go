@@ -91,7 +91,7 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 	if err := seedStackLedger(ledger, stackID, chunks); err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
-	return driveStack(prepared, ledger, stackID, chunks, planInputs, false, stdout, stderr)
+	return driveStack(context.Background(), prepared, ledger, stackID, chunks, planInputs, false, stdout, stderr)
 }
 
 // driveStackToCompletion drives the stack until every chunk is merged and the
@@ -100,17 +100,26 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 // in-command stacking engine: one `workflow run` invocation owns the whole
 // stack (plan -> chunks -> per-chunk PRs -> integration) and only returns when
 // the stack is complete, a chunk failed terminally, or the process is
-// interrupted (the stack stays resumable from durable state).
-func driveStackToCompletion(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+// interrupted (the stack stays resumable from durable state). The ctx is the
+// drive's stop signal: a cancelled/expired ctx (the session attempt bound)
+// returns the cancellation error so the caller can release the run's
+// execution flock instead of polling forever. CLI foreground paths pass
+// context.Background() and stay unbounded by design.
+func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	checker := gitMergeChecker{
 		git: workflowDeliverGit,
 		gc:  delivery.GitContext{Dir: prepared.root, GitDir: filepath.Join(prepared.root, ".git")},
 	}
 	policy := prepared.compiled.Stacking.MergePolicy
 	for {
+		// The drive must stop when its context is done: a stuck merge-queue
+		// poll would otherwise hold the plan run's execution flock forever.
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("stack drive: %w", err)
+		}
 		// One drive pass admits the next ready wave and applies the merge
 		// policy; it halts when a chunk needs a grant or a merge to land.
-		if err := driveStack(prepared, ledger, stackID, chunks, planInputs, allowPublish, stdout, stderr); err != nil {
+		if err := driveStack(ctx, prepared, ledger, stackID, chunks, planInputs, allowPublish, stdout, stderr); err != nil {
 			return err
 		}
 		byID, err := stackTaskMap(ledger, stackID)
@@ -118,12 +127,12 @@ func driveStackToCompletion(prepared *preparedWorkflowRun, ledger *tasks.Store, 
 			return err
 		}
 		if allChunksMerged(chunks, stackMergedSet(byID)) {
-			return waitIntegrationRunSettled(prepared, ledger, checker, stackID, policy, allowPublish, stdout, stderr)
+			return waitIntegrationRunSettled(ctx, prepared, ledger, checker, stackID, policy, allowPublish, stdout, stderr)
 		}
 		// The pass halted before completion: wait for the outstanding chunk's
 		// delivery + merge (or a terminal failure), then drive again. With
 		// merge_policy=auto the wait also merges published PRs itself.
-		if err := waitForChunkMerges(prepared.repo, ledger, checker, stackID, chunks, policy, stdout, stderr); err != nil {
+		if err := waitForChunkMerges(ctx, prepared.repo, ledger, checker, stackID, chunks, policy, stdout, stderr); err != nil {
 			return err
 		}
 	}

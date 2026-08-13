@@ -25,7 +25,7 @@ var (
 // explicit operator choice not to deliver). The caller checkout case (no
 // recorded worktree) is a no-op that prints the reason.
 func executeWorkflowCleanup(runID, root, configPath string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContext(root, configPath, runID)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}

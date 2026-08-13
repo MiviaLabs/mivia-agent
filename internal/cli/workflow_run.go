@@ -167,31 +167,40 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	// plan PR and leave the chunk stack undriven (deliver-before-drive
 	// ordering bug). The drive is a no-op for non-stacking workflows,
 	// non-multi plans, and workflows without an active delivery policy.
-	drove, err := maybeDriveSettledStack(prepared, built.Controller.RunID, allowPublish, stdout, stderr)
+	// CLI foreground paths are unbounded by design: the drive's ctx is the
+	// session attempt bound's stop signal, and this invocation owns the run
+	// until the stack completes (or is interrupted by the process).
+	drove, err := maybeDriveSettledStack(context.Background(), prepared, built.Controller.RunID, allowPublish, stdout, stderr)
 	if err != nil {
 		return err
 	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {
-		// A plan run whose multi-chunk stack just drove is published only when
-		// the workflow opts in (delivery.deliver_plan_run=true). The default
-		// keeps the plan run unpublished: the chunk PRs carry the work, and the
-		// plan and its artifacts are recorded in the ledger. The run settles
-		// succeeded (the same terminal a delivered run reaches) instead of
-		// parking at delivery_pending forever.
-		if drove && !compiledDeliverPlanRun(prepared.compiled) {
-			if err := settlePlanRunSkippedDelivery(context.Background(), prepared.repo, built.Controller.RunID); err != nil {
-				return err
-			}
-			fmt.Fprintf(stdout, "run_id=%s status=%s plan PR not created (delivery.deliver_plan_run=false); plan and artifacts recorded in the ledger\n", built.Controller.RunID, workflowledger.RunStatusSucceeded)
-			return nil
-		}
-		mode := ""
-		if prepared.compiled.Delivery != nil {
-			mode = prepared.compiled.Delivery.Mode
-		}
-		return finishWorkflowRunDelivery(context.Background(), prepared.root, prepared.res, prepared.store, prepared.repo, built.Controller.RunID, name, mode, allowPublish, stdout, stderr)
+		return finishExecutedWorkflowRunDelivery(context.Background(), prepared, built.Controller.RunID, name, drove, allowPublish, stdout, stderr)
 	}
 	return nil
+}
+
+// finishExecutedWorkflowRunDelivery settles a just-run plan-mode workflow at
+// its delivery_pending success terminal. A multi-chunk stack that just drove
+// is published only when the workflow opts in (delivery.deliver_plan_run=true);
+// the default keeps the plan run unpublished: the chunk PRs carry the work and
+// the plan and its artifacts are recorded in the ledger, and the run settles
+// succeeded (the same terminal a delivered run reaches) instead of parking at
+// delivery_pending forever. The delivery mode comes from the compiled
+// workflow (nil-safe), mirroring executeWorkflowResume.
+func finishExecutedWorkflowRunDelivery(ctx context.Context, prepared *preparedWorkflowRun, runID, name string, drove, allowPublish bool, stdout, stderr io.Writer) error {
+	if drove && !compiledDeliverPlanRun(prepared.compiled) {
+		if err := settlePlanRunSkippedDelivery(ctx, prepared.repo, runID); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "run_id=%s status=%s plan PR not created (delivery.deliver_plan_run=false); plan and artifacts recorded in the ledger\n", runID, workflowledger.RunStatusSucceeded)
+		return nil
+	}
+	mode := ""
+	if prepared.compiled.Delivery != nil {
+		mode = prepared.compiled.Delivery.Mode
+	}
+	return finishWorkflowRunDelivery(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, runID, name, mode, allowPublish, stdout, stderr)
 }
 
 // maybeDriveSettledStack continues a just-settled plan-mode run into the
@@ -200,7 +209,7 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 // when a multi-chunk drive ran to completion) and is a no-op - (false, nil) -
 // for single/no_bug plans, runs without a succeeded decompose output, and
 // workflows without an active stacking delivery policy.
-func maybeDriveSettledStack(prepared *preparedWorkflowRun, planRunID string, allowPublish bool, stdout, stderr io.Writer) (bool, error) {
+func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, planRunID string, allowPublish bool, stdout, stderr io.Writer) (bool, error) {
 	if prepared.compiled.Stacking == nil || !prepared.compiled.Stacking.Enabled {
 		return false, nil
 	}
@@ -223,7 +232,7 @@ func maybeDriveSettledStack(prepared *preparedWorkflowRun, planRunID string, all
 	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
 		return false, fmt.Errorf("stack seed: %w", err)
 	}
-	return true, workflowStackDriveToCompletion(prepared, ledger, planRunID, chunks, prepared.inputSnapshot, allowPublish, stdout, stderr)
+	return true, workflowStackDriveToCompletion(ctx, prepared, ledger, planRunID, chunks, prepared.inputSnapshot, allowPublish, stdout, stderr)
 }
 
 // compiledDeliverPlanRun reports whether the compiled workflow's delivery

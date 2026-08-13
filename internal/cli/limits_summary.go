@@ -35,8 +35,10 @@ func formatEffectiveLimitsSummary(res *config.Resolved) string {
 }
 
 // logEffectiveLimitsOnce writes the effective-limits summary and any tools
-// config warnings to w (typically stderr) exactly when chat starts.
-func logEffectiveLimitsOnce(w io.Writer, res *config.Resolved) {
+// config warnings to w (typically stderr) exactly when chat starts. quiet
+// (--quiet) suppresses only the informational limits summary line; warnings
+// that signal a misconfiguration still print.
+func logEffectiveLimitsOnce(w io.Writer, res *config.Resolved, quiet bool) {
 	if w == nil || res == nil {
 		return
 	}
@@ -44,7 +46,7 @@ func logEffectiveLimitsOnce(w io.Writer, res *config.Resolved) {
 		fmt.Fprintf(w, "warning: %s\n", warn)
 	}
 	logMCPWarnings(w, res)
-	if line := formatEffectiveLimitsSummary(res); line != "" {
+	if line := formatEffectiveLimitsSummary(res); line != "" && !quiet {
 		fmt.Fprintln(w, line)
 	}
 }

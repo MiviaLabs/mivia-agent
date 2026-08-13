@@ -221,7 +221,7 @@ func TestOneShotPrintsAdmissionNotesToStderr(t *testing.T) {
 	}
 	oldOut, oldErr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = outW, errW
-	runErr := oneShot(sess, "hello", false, &config.Resolved{ProviderName: "p", Model: "m"})
+	runErr := oneShot(sess, "hello", false, &config.Resolved{ProviderName: "p", Model: "m"}, false)
 	os.Stdout, os.Stderr = oldOut, oldErr
 	_ = outW.Close()
 	_ = errW.Close()

@@ -56,8 +56,8 @@
         "note": "stream markdown"
       },
       "internal/cli/chat_repl.go": {
-        "maxLines": 433,
-        "note": "extracted REPL; split loop handlers"
+        "maxLines": 327,
+        "note": "extracted REPL; split loop handlers; line-mode moved to chat_repl_linemode.go"
       },
       "internal/cli/chat_slash.go": {
         "maxLines": 190,

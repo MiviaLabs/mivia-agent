@@ -447,7 +447,10 @@ func TestWorkflowCommandDispatchErrors(t *testing.T) {
 
 // TestWorkflowOpsCommandsLockSafety verifies that the mutating operator
 // commands run under the workflow execution file lock: a concurrent holder
-// fails the command instead of racing the ledger claim.
+// fails the command instead of racing the ledger claim. The refusal is the
+// bounded acquire's explained "still held after" error (a ~5s wait for a
+// settling controller), not the plain lock's opaque "lock is busy" after its
+// fixed retry budget.
 func TestWorkflowOpsCommandsLockSafety(t *testing.T) {
 	root, configPath, storePath, runID := newGatedApprovalFixture(t)
 	release, err := acquireWorkflowExecutionLock(storePath, runID)
@@ -458,6 +461,9 @@ func TestWorkflowOpsCommandsLockSafety(t *testing.T) {
 	err = runWorkflowWithIO([]string{"approve", runID, "wfa-approval-review-1", "--workspace", root, "--config", configPath}, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("approve under a held execution lock succeeded; want a refusal")
+	}
+	if !strings.Contains(err.Error(), "still held after") {
+		t.Fatalf("approve under a held execution lock error = %v, want the bounded 'still held after' refusal", err)
 	}
 	repo := openWorkflowTestStore(t, storePath)
 	run, getErr := repo.GetRun(t.Context(), runID)
