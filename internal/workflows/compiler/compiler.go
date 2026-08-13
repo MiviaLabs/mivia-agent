@@ -24,6 +24,12 @@ type CompiledWorkflow struct {
 	Delivery    *definition.Delivery
 	Digest      string
 
+	// Stacking is the resolved stacking configuration when stacking is
+	// enabled (explicitly or by default) and both the plan and implement
+	// steps resolved (declared or inferred). Nil otherwise; the run then
+	// behaves exactly as a single-PR workflow always did.
+	Stacking *definition.StackingConfig
+
 	// Derived sets for O(1) lookups
 	StepIDs   map[string]bool
 	LoopNames map[string]bool
@@ -77,6 +83,16 @@ func compile(wf *definition.WorkflowFile, skipCycleValidation bool) (*CompiledWo
 	hash := sha256.Sum256(data)
 	digest := fmt.Sprintf("%x", hash)
 
+	// Resolve stacking configuration. Explicit [stacking] values win;
+	// otherwise inference is best-effort. Only populated when stacking is
+	// enabled and both steps resolved, so existing single-PR workflows keep
+	// their exact compiled shape.
+	var stackingCfg *definition.StackingConfig
+	if planStep, implementStep := ResolveStackingSteps(wf); (wf.Stacking == nil || wf.Stacking.StackingEnabled()) && planStep != "" && implementStep != "" {
+		eff := wf.Stacking.EffectiveStacking(planStep, implementStep)
+		stackingCfg = &eff
+	}
+
 	return &CompiledWorkflow{
 		Name:        wf.Name,
 		Description: wf.Description,
@@ -88,6 +104,7 @@ func compile(wf *definition.WorkflowFile, skipCycleValidation bool) (*CompiledWo
 		Transitions: wf.Transitions,
 		Delivery:    wf.Delivery,
 		Digest:      digest,
+		Stacking:    stackingCfg,
 		StepIDs:     stepIDs,
 		LoopNames:   loopNames,
 	}, nil
@@ -151,8 +168,8 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 		}
 	}
 
-	// Limits validation
-	if err := validateLimits(wf.Limits); err != nil {
+	// Limits and stacking config validation
+	if err := validateLimitsAndStacking(wf, stepIDs); err != nil {
 		errs = append(errs, err.Error())
 	}
 
