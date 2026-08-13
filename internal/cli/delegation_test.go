@@ -258,13 +258,18 @@ func TestDelegateAndDispatchCapabilityExtendsBeyondDefaultToolTimeout(t *testing
 		t.Fatalf("dispatch capability=%s must exceed the 90000s task budget", cap.Timeout)
 	}
 
-	// Short override is raise-only: it must not shrink the capability below the
-	// effective default (the 12h orchestration floor when DefaultTimeout is 0).
-	// It still carries the headroom above, so assert the floor, not an exact
-	// equality that the headroom would break.
+	// An explicit short timeout MUST actually bound the call — this is the
+	// regression that caused stuck runs: EffectiveTimeoutSec was raise-only,
+	// so timeout_seconds:5 was silently ignored and every dispatch_tasks call
+	// got a 12h budget. Now RequestedTimeoutSec honors the explicit value, so
+	// a 5s override yields a ~20s call budget (5 + slack), NOT the 12h floor.
 	short := dispatch.Capability(json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x"}],"timeout_seconds":5}`))
-	if short.Timeout < time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second {
-		t.Fatalf("short dispatch capability=%s must not shrink below the effective default", short.Timeout)
+	wantShort := 5*time.Second + time.Duration(dispatchOrchestrationSlackSec)*time.Second
+	if short.Timeout != wantShort {
+		t.Fatalf("short dispatch capability=%s must honor the explicit 5s override (want %s); before the fix it was silently floored to the 12h default", short.Timeout, wantShort)
+	}
+	if short.Timeout >= time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second {
+		t.Fatalf("short dispatch capability=%s must NOT be floored to the 12h default when an explicit override is present", short.Timeout)
 	}
 }
 
@@ -279,9 +284,11 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}))
-	// The raise-only floor means a 1s override cannot shrink the 12h default
-	// budget, so the tool is configured with a 1s default to make the per-task
-	// budget finite and the timeout observable within the test window.
+	// Use a 1s default so the per-task budget is finite and the timeout is
+	// observable within the test window. (Before the fix, the raise-only floor
+	// meant a 1s override could not shrink the 12h default; the tool was given
+	// a 1s default to compensate. The fix honors explicit overrides, so the 1s
+	// default + 1s override still yields a tight ~16s budget here.)
 	tool := &dispatchTasksTool{dispatcher: d, cfg: config.SubagentConfig{DefaultTimeout: 1, InlineOutputBytes: config.DefaultSubagentConfig.InlineOutputBytes}, agentReg: testAgentRegistry(t, "oneshot")}
 	start := time.Now()
 	// timeout_seconds is integer seconds; use 1s budget vs 5s work.

@@ -265,15 +265,29 @@ func (t *spawnAgentTool) Capability(args json.RawMessage) tools.Capability {
 		} `json:"tasks"`
 	}
 	_ = json.Unmarshal(args, &params)
-	maxTaskTimeout := 0
+	// Each task resolves its own timeout: an explicit > 0 timeout_seconds IS
+	// the actual budget; 0 falls back to the configured default. The whole-call
+	// budget is the max resolved task timeout. Crucially, when every task has an
+	// explicit timeout, the call budget is bounded by the largest one — NOT
+	// floored to the 12h default. (Before the fix, maxBudget was pre-seeded with
+	// EffectiveTimeoutSec, making every spawn_agent call run with a 12h budget
+	// even when all tasks asked for 5 minutes, which caused stuck runs.)
+	maxBudget := 0
 	for _, task := range params.Tasks {
-		if task.TimeoutSeconds > maxTaskTimeout {
-			maxTaskTimeout = task.TimeoutSeconds
+		taskBudget := task.TimeoutSeconds
+		if taskBudget <= 0 {
+			taskBudget = config.EffectiveTimeoutSec(t.cfg.DefaultTimeout)
 		}
+		if taskBudget > maxBudget {
+			maxBudget = taskBudget
+		}
+	}
+	if maxBudget == 0 { // no tasks, or all zero
+		maxBudget = config.EffectiveTimeoutSec(t.cfg.DefaultTimeout)
 	}
 	return tools.Capability{
 		Class:   tools.ExecutionExternal,
-		Timeout: time.Duration(config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, maxTaskTimeout)+dispatchOrchestrationSlackSec) * time.Second,
+		Timeout: time.Duration(maxBudget+dispatchOrchestrationSlackSec) * time.Second,
 	}
 }
 

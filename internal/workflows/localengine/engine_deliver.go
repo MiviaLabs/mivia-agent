@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -245,21 +246,22 @@ func (e *Engine) settleDeliverySucceeded(ctx context.Context, repo workflowledge
 }
 
 // routeDeliveryRepair routes a repairable, in-change delivery failure back
-// into the workflow when the policy names a repair step. The two routed
-// classes are PR-metadata defects (the agent's title or summary violates the
-// workspace pr-title policy) and over-limit delivered diffs (the chunk
-// exceeds the stacking hard limit; only a worktree edit can shrink it).
-// delivery.RepairTarget is the single classifier that maps each class to the
-// step the workflow names (on_pr_metadata_failure, on_diff_size_failure, then
-// on_failure), shared with the CLI so a rejection routes to the same step on
-// both paths. Neither class is ever a refusal or a transport fault; every
-// other failure - transport faults included - stays delivery_pending for a
-// person or a retry, exactly as before. The boolean reports whether the
-// failure was routed (handled); a non-nil error means the routing itself
-// failed and the caller must surface it.
+// into the workflow when the policy names a repair step. Any rejection of
+// the work itself - a PR-metadata defect, an over-limit delivered diff, a
+// commit hook that refuses the change, or any other condition in the change
+// - routes the same way. delivery.RepairTarget is the single classifier that
+// maps each class to the step the workflow names (on_pr_metadata_failure,
+// on_diff_size_failure, then on_failure), shared with the CLI so a rejection
+// routes to the same step on both paths (mirrors the CLI's
+// settleDeliveryError in internal/cli/workflow_deliver.go). A transport
+// fault - marked transient by the provider layer - is never routed: no agent
+// can repair it, so the run stays delivery_pending for a retry, exactly as
+// before. The boolean reports whether the failure was routed (handled); a
+// non-nil error means the routing itself failed and the caller must surface
+// it.
 func routeDeliveryRepair(ctx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (agenttools.DeliverResult, bool, error) {
 	step := delivery.RepairTarget(err, policy)
-	if step == "" || (!delivery.IsPRMetadataError(err) && !delivery.IsDiffSizeError(err)) {
+	if step == "" || provider.IsTransient(err) {
 		return agenttools.DeliverResult{}, false, nil
 	}
 	if rerr := delivery.ReopenForRepair(ctx, repo, runID, step, policy.MaxRepairs, err, io.Discard); rerr != nil {

@@ -211,6 +211,11 @@ const (
 // smaller positive override does not shrink the budget; when several are
 // supplied, the largest override bounds the enclosing operation.
 //
+// EffectiveTimeoutSec is the right helper for fallback budgets (recovery,
+// unset overrides, per-task floors relative to a batch). For explicit
+// caller-requested timeouts that should be honored as the actual budget —
+// not floored to the 12h default — use RequestedTimeoutSec instead.
+//
 // The result is clamped to MaxTimeoutSeconds. This is an overflow-safety
 // clamp, not a policy cap: raise-only semantics still hold for every value
 // below 10 years, and every downstream time.Duration(n)*time.Second stays
@@ -221,6 +226,35 @@ func EffectiveTimeoutSec(configured int, overrides ...int) int {
 		base = DefaultOrchestrationTimeoutSec
 	}
 	for _, o := range overrides {
+		if o > base {
+			base = o
+		}
+	}
+	if base > MaxTimeoutSeconds {
+		return MaxTimeoutSeconds
+	}
+	return base
+}
+
+// RequestedTimeoutSec returns the timeout budget when the caller provides an
+// explicit timeout_seconds value. Unlike EffectiveTimeoutSec's raise-only floor,
+// an explicit positive value IS the budget — it is not floored to the
+// configured default or DefaultOrchestrationTimeoutSec. This lets the root
+// orchestrator bound a dispatch_tasks batch or delegate call to a shorter
+// window than the global default, which is the intended semantics of the
+// timeout_seconds parameter on orchestration tools.
+//
+// When explicit is 0 or negative ("use the default"), the configured default
+// applies via EffectiveTimeoutSec, preserving backward compatibility.
+// taskOverrides may still raise the budget above the explicit value: a task
+// may legitimately need more than the batch budget, and the whole-call budget
+// must accommodate the longest task. The result is clamped to MaxTimeoutSeconds.
+func RequestedTimeoutSec(configured int, explicit int, taskOverrides ...int) int {
+	base := explicit
+	if base <= 0 {
+		base = EffectiveTimeoutSec(configured)
+	}
+	for _, o := range taskOverrides {
 		if o > base {
 			base = o
 		}

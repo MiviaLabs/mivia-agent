@@ -242,6 +242,14 @@ func synthesizeTransitions(cw *CompiledWorkflow, planStep, implementStep string)
 		case anchor:
 			continue // superseded by the anchor -> decompose router edge
 		case planStep:
+			if len(tr.Match.Output) > 0 {
+				// Output-discriminated shortcut (e.g. skip_review=true): not
+				// superseded by the anchor rewire, which only replaces the
+				// plain generic succeeded edge. Preserve it unchanged so the
+				// discriminated route still reaches implementStep directly.
+				out = append(out, tr)
+				continue
+			}
 			if planStep == anchor {
 				continue // same step; superseded by the anchor -> decompose edge
 			}

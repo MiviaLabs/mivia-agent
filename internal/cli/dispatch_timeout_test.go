@@ -154,6 +154,35 @@ func TestDispatchOrchestrationSecClampsHugeOverride(t *testing.T) {
 	}
 }
 
+// TestDispatchOrchestrationSecHonorsExplicitTimeout is the regression test for
+// the root cause: an explicit batch-level timeout_seconds must actually bound
+// the call. Before the fix, EffectiveTimeoutSec(43200, 600) returned 43200
+// (raise-only), silently ignoring the requested 600s and giving every
+// dispatch_tasks call a 12h budget. Now RequestedTimeoutSec(43200, 600)
+// returns 600, so the call budget is 600+slack = 615s — not 43215s.
+func TestDispatchOrchestrationSecHonorsExplicitTimeout(t *testing.T) {
+	// With the 12h default configured (as in production), an explicit 600s
+	// must produce a ~615s call budget, not ~43215s.
+	args := json.RawMessage(`{"timeout_seconds":600,"tasks":[{"id":"a","prompt":"x"}]}`)
+	got := dispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, args)
+	if got != 600+dispatchOrchestrationSlackSec {
+		t.Fatalf("explicit 600s timeout: orchestration budget = %ds, want %ds (was silently floored to %ds before the fix)",
+			got, 600+dispatchOrchestrationSlackSec, config.DefaultOrchestrationTimeoutSec+dispatchOrchestrationSlackSec)
+	}
+	// Sanity: omitting timeout_seconds still yields the 12h default + slack.
+	argsNoTimeout := json.RawMessage(`{"tasks":[{"id":"a","prompt":"x"}]}`)
+	gotDefault := dispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, argsNoTimeout)
+	if gotDefault != config.DefaultOrchestrationTimeoutSec+dispatchOrchestrationSlackSec {
+		t.Fatalf("no explicit timeout: orchestration budget = %ds, want %ds", gotDefault, config.DefaultOrchestrationTimeoutSec+dispatchOrchestrationSlackSec)
+	}
+	// Per-task timeout can still raise above the batch level.
+	argsRaised := json.RawMessage(`{"timeout_seconds":600,"tasks":[{"id":"a","prompt":"x","timeout_seconds":900}]}`)
+	gotRaised := dispatchOrchestrationSec(config.DefaultSubagentConfig.DefaultTimeout, argsRaised)
+	if gotRaised != 900+dispatchOrchestrationSlackSec {
+		t.Fatalf("per-task 900s raises above batch 600s: orchestration budget = %ds, want %ds", gotRaised, 900+dispatchOrchestrationSlackSec)
+	}
+}
+
 func TestRequestTimeout(t *testing.T) {
 	effectiveDefault := time.Duration(config.DefaultOrchestrationTimeoutSec) * time.Second
 	// configured = 0 (default) and fallback = 0: effective orchestration default.

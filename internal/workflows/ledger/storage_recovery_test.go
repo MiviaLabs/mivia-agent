@@ -161,3 +161,74 @@ func TestStorageRepository_RecoverKeepsInterruptedClaim(t *testing.T) {
 		})
 	}
 }
+
+// TestStorageRepository_RecoverKeepsLiveDeliveryClaim covers the
+// delivery_pending carve-out in Recover: a run parked at the reserved
+// "success" step while waiting for publication keeps its live delivery claim
+// across a peer's Recover. Before the fix, Recover classified the run as
+// terminal (IsTerminalStepID("success") is true) and cleared the claim,
+// letting a second host claim and double-deliver (duplicate PR / conflicting
+// push). Stale delivery claims are reclaimed by the delivery path's lease
+// takeover, never by Recover.
+func TestStorageRepository_RecoverKeepsLiveDeliveryClaim(t *testing.T) {
+	ctx := context.Background()
+	for _, p := range repoPairs() {
+		t.Run(p.name, func(t *testing.T) {
+			repoA, repoB, done := p.new(t)
+			defer done()
+
+			run := runID(t, "delivery-claim")
+			snap, raw := newRun(t, run)
+			requireErr(t, repoA.CreateRun(ctx, snap, raw), nil, "CreateRun")
+			requireErr(t, repoA.CompareAndSetRunStatus(ctx, run, 1, RunStatusRunning, nil),
+				nil, "pending -> running")
+			requireErr(t, repoA.CompareAndSetRunStatus(ctx, run, 2, RunStatusDeliveryPending, nil),
+				nil, "running -> delivery_pending")
+
+			// Complete the terminal route: the attempt's ToStepID derives
+			// ActiveStepID "success" — the exact reconcileTerminalRoute shape.
+			att := StepAttempt{AttemptID: "build-1", RunID: run, StepID: "build", AttemptNo: 1}
+			requireErr(t, repoA.CreateStepAttempt(ctx, att), nil, "CreateStepAttempt")
+			requireErr(t, repoA.CompleteStepAttempt(ctx, run, "build-1", 1, AttemptOutcome{
+				Status:   AttemptStatusSucceeded,
+				ToStepID: "success",
+			}), nil, "CompleteStepAttempt -> success")
+
+			// The live publisher holds the delivery claim for the whole publish.
+			requireErr(t, repoA.ClaimRun(ctx, run, "publisher"), nil, "ClaimRun by publisher")
+
+			// repoB recovers: the delivery_pending run is settled but NOT
+			// interrupted, and its live delivery claim survives Recover.
+			recovered, err := repoB.Recover(ctx)
+			if err != nil {
+				t.Fatalf("Recover: %v", err)
+			}
+			var rr *RecoveredRun
+			for i := range recovered {
+				if recovered[i].RunID == run {
+					rr = &recovered[i]
+					break
+				}
+			}
+			if rr == nil {
+				t.Fatalf("Recover missing delivery_pending run %q", run)
+			}
+			if rr.Status != RunStatusDeliveryPending {
+				t.Fatalf("RecoveredRun Status = %q, want delivery_pending", rr.Status)
+			}
+			if rr.WasInterrupted {
+				t.Fatalf("RecoveredRun WasInterrupted = true, want false")
+			}
+
+			// Negative path: the publisher's claim survived Recover, so a
+			// fresh holder cannot take over. Fails before the fix, when
+			// Recover cleared the claim.
+			requireErr(t, repoB.ClaimRun(ctx, run, "fresh-holder"),
+				ErrClaimHeld, "claim by fresh holder after Recover")
+
+			// The owner still releases the claim after the peer's Recover.
+			requireErr(t, repoA.ReleaseRun(ctx, run, "publisher"),
+				nil, "release by publisher")
+		})
+	}
+}
