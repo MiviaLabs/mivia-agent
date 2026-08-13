@@ -21,6 +21,14 @@ func newHolderID() string {
 
 // Recover brings the projection up to date, classifies every run, and
 // clears stale claims on terminal runs only. It mutates no run status.
+//
+// Carve-out: a delivery_pending run parked at a reserved terminal step
+// ("success"/"failure") keeps its claim. The delivery phase runs after the
+// success terminal, outside the step graph, and the live publisher holds the
+// claim for the whole publish; unconditionally clearing it here would let a
+// second host claim the run and double-deliver. Stale delivery claims are
+// reclaimed by the delivery path's lease takeover (TakeoverExpiredRunClaim
+// with DefaultClaimLease), never by Recover.
 func (s *StorageRepository) Recover(ctx context.Context) ([]RecoveredRun, error) {
 	if err := s.checkOpen(); err != nil {
 		return nil, err
@@ -46,7 +54,12 @@ func (s *StorageRepository) Recover(ctx context.Context) ([]RecoveredRun, error)
 			continue
 		}
 		r := p.Run
-		terminal := IsTerminalRunStatus(r.Status) || IsTerminalStepID(p.ActiveStepID)
+		// Delivery-pending carve-out: a run parked at a reserved terminal step
+		// while waiting for publication is settled, but its claim is LIVE — the
+		// publisher holds and heartbeats it for the whole publish. Only clear
+		// the claim on the terminal-status branch or on a terminal step that is
+		// not a delivery_pending pause.
+		clearClaim := IsTerminalRunStatus(r.Status) || (IsTerminalStepID(p.ActiveStepID) && r.Status != RunStatusDeliveryPending)
 		classified = append(classified, classification{
 			run: RecoveredRun{
 				RunID:          id,
@@ -55,7 +68,7 @@ func (s *StorageRepository) Recover(ctx context.Context) ([]RecoveredRun, error)
 				WasInterrupted: IsResumableRunStatus(r.Status) && !IsTerminalStepID(p.ActiveStepID),
 				CreatedAt:      r.StartedAt,
 			},
-			clearClaim: terminal,
+			clearClaim: clearClaim,
 		})
 	}
 	s.mu.RUnlock()
