@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -680,92 +678,6 @@ func mustTool(t *testing.T, svc *agenttools.Service, name string) agenttools.Too
 	}
 	t.Fatalf("missing tool %s", name)
 	return nil
-}
-
-func writeTwoStepWorkspace(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
-	wfRoot := filepath.Join(root, ".mivia", "workflows")
-	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	body := `version = 1
-name = "two-step"
-initial_step = "one"
-
-[inputs.task]
-type = "string"
-required = true
-max_bytes = 100
-
-[[steps]]
-id = "one"
-kind = "agent"
-agent = "one"
-on_failure = "failure"
-
-[[steps]]
-id = "two"
-kind = "agent"
-agent = "two"
-on_failure = "failure"
-
-[[transitions]]
-from = "one"
-to = "two"
-[transitions.match]
-status = "succeeded"
-
-[[transitions]]
-from = "two"
-to = "success"
-[transitions.match]
-status = "succeeded"
-`
-	if err := os.WriteFile(filepath.Join(wfRoot, "two-step.toml"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return root
-}
-
-func writeDeliveryWorkspace(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
-	wfRoot := filepath.Join(root, ".mivia", "workflows")
-	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	body := `version = 1
-name = "deliver-me"
-initial_step = "one"
-
-[inputs.task]
-type = "string"
-required = true
-max_bytes = 100
-
-[delivery]
-kind = "pull_request"
-mode = "draft"
-provider = "github"
-base = "main"
-
-[[steps]]
-id = "one"
-kind = "agent"
-agent = "one"
-on_failure = "failure"
-
-[[transitions]]
-from = "one"
-to = "success"
-[transitions.match]
-status = "succeeded"
-`
-	if err := os.WriteFile(filepath.Join(wfRoot, "deliver-me.toml"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return root
 }
 
 type refusingGit struct{}

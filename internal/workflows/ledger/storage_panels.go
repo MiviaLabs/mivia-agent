@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -84,10 +86,41 @@ func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attempt
 		err = ErrClaimHeld
 	}
 	if err != nil {
-		if errors.Is(err, storage.ErrDuplicate) {
+		if !errors.Is(err, storage.ErrDuplicate) {
+			if cerr := s.catchUpRunLocked(ctx, runID); cerr != nil {
+				return fmt.Errorf("store append: %v; catch up: %w", err, cerr)
+			}
+			return err
+		}
+		// Duplicate: catch up (the rebuild replaces the projection with the
+		// store's durable state) and compare the existing event's payload,
+		// EXCLUDING CreatedAt (stamped fresh on every attempt), against the
+		// payload this call intended to append. A matching retry is
+		// idempotent (nil); a genuinely different transition is a conflict.
+		if cerr := s.catchUpRunLocked(ctx, runID); cerr != nil {
+			return fmt.Errorf("catch up after duplicate: %w", cerr)
+		}
+		events, rerr := s.store.Events(ctx, runID)
+		if rerr != nil {
+			return fmt.Errorf("read events after duplicate: %w", rerr)
+		}
+		for _, e := range events {
+			if e.ID != evt.ID {
+				continue
+			}
+			stored, uerr := unmarshalPanelPhase(e.Payload)
+			if uerr != nil {
+				return fmt.Errorf("decode %s payload: %w", eventKindPanelPhaseSet, uerr)
+			}
+			if panelPhasePayloadEqualIgnoringCreatedAt(stored, panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.clone()}) {
+				return nil
+			}
 			return ErrConflict
 		}
-		return err
+		// The duplicate came from the (run_id, sequence) UNIQUE constraint
+		// with no event carrying our ID: the sequence was lost to another
+		// writer.
+		return ErrConflict
 	}
 	s.mu.Lock()
 	if p, ok := s.proj[runID]; ok && idx < len(p.Attempts) {
@@ -99,6 +132,16 @@ func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attempt
 	}
 	s.mu.Unlock()
 	return nil
+}
+
+// panelPhasePayloadEqualIgnoringCreatedAt reports whether two panel-phase
+// payloads describe the same logical transition, ignoring CreatedAt (which
+// is stamped fresh on every write and would otherwise always differ between
+// a genuine retry and the original write).
+func panelPhasePayloadEqualIgnoringCreatedAt(a, b panelPhasePayload) bool {
+	a.CreatedAt = time.Time{}
+	b.CreatedAt = time.Time{}
+	return reflect.DeepEqual(a, b)
 }
 
 func validPanelTransition(from, to PanelPhase, synthesis *PanelSynthesisExecution) bool {

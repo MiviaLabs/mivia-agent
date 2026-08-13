@@ -343,8 +343,14 @@ func baseStillContains(ctx context.Context, git GitRunner, req Request, admitted
 		return nil
 	}
 	// The object may simply be absent. Fetch the base branch, then retest.
+	// Fetch by the pinned req.OriginURL, never the local "origin" name: the
+	// local remote config is mutable and could be repointed between
+	// admission and this post-PR-creation check (AR-7), which would
+	// otherwise validate against the wrong remote's base branch and defeat
+	// the TOCTOU guard - see verifyRemoteBaseAncestry above for the same
+	// reasoning.
 	if _, ferr := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
-		"fetch", "--no-tags", "origin", req.Policy.Base); ferr != nil {
+		"fetch", "--no-tags", req.OriginURL, req.Policy.Base); ferr != nil {
 		return fmt.Errorf("fetch base %q to test ancestry: %w", req.Policy.Base, ferr)
 	}
 	if _, err := git.Run(ctx, req.GitCtx, "merge-base", "--is-ancestor", admittedBase, prBase); err != nil {

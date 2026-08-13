@@ -142,7 +142,7 @@ func (s *StorageRepository) SetStepAttemptExecution(ctx context.Context, runID, 
 		})
 		return err
 	}
-	evt := storage.Event{ID: EventID(runID, eventKindAttemptExecution, attemptID, coordinatorRunID, taskID), RunID: runID, Sequence: int(s.nextSequence(runID)), Kind: eventKindAttemptExecution, Payload: payload}
+	evt := storage.Event{ID: EventID(runID, eventKindAttemptExecution, attemptID, strconv.Itoa(executionNo), coordinatorRunID, taskID), RunID: runID, Sequence: int(s.nextSequence(runID)), Kind: eventKindAttemptExecution, Payload: payload}
 	rollback := func() {
 		q := s.proj[runID]
 		q.Attempts[idx] = prev

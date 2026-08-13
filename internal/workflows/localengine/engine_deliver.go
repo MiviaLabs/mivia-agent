@@ -173,9 +173,7 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		// refusals): settle the run to delivery_failed so it does not wedge in
 		// delivery_pending forever.
 		if delivery.IsRefusal(err) {
-			if fresh, getErr := repo.GetRun(ctx, runID); getErr == nil {
-				_ = repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
-			}
+			e.settleDeliveryFailed(ctx, repo, runID)
 			e.emitDeliveryRefused(runID, err.Error())
 			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
 		}
@@ -196,9 +194,7 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	result, err := delivery.Deliver(deliveryCtx, repo, git, pr, dreq)
 	if err != nil {
 		if delivery.IsRefusal(err) {
-			if fresh, getErr := repo.GetRun(ctx, runID); getErr == nil {
-				_ = repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
-			}
+			e.settleDeliveryFailed(ctx, repo, runID)
 			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
 		}
 		res, handled, rerr := routeDeliveryRepair(ctx, repo, runID, policy, err)
@@ -210,21 +206,42 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		}
 		return agenttools.DeliverResult{}, err
 	}
+	if err := e.settleDeliverySucceeded(ctx, repo, runID); err != nil {
+		return agenttools.DeliverResult{}, err
+	}
+	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
+}
+
+// settleDeliveryFailed CASes runID to delivery_failed (best-effort) and drops
+// its recorded worktree identity, so a permanently refused delivery does not
+// leave e.worktrees carrying an entry no future call will ever look up again.
+func (e *Engine) settleDeliveryFailed(ctx context.Context, repo workflowledger.Repository, runID string) {
+	if fresh, getErr := repo.GetRun(ctx, runID); getErr == nil {
+		_ = repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil)
+	}
+	e.forgetWorktree(runID)
+}
+
+// settleDeliverySucceeded CASes a still-delivery_pending run to succeeded,
+// publishes the terminal run_finished event, and drops the run's recorded
+// worktree identity now that the run has reached a terminal status.
+func (e *Engine) settleDeliverySucceeded(ctx context.Context, repo workflowledger.Repository, runID string) error {
 	fresh, err := repo.GetRun(ctx, runID)
 	if err != nil {
-		return agenttools.DeliverResult{}, err
+		return err
 	}
 	if fresh.Status == workflowledger.RunStatusDeliveryPending {
 		now := time.Now()
 		if err := repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusSucceeded, &now); err != nil {
-			return agenttools.DeliverResult{}, err
+			return err
 		}
 		// Delivery completion settles outside the controller (which parked at
 		// delivery_pending and emitted no run_finished), so publish the
 		// terminal event here.
 		emitDeliveredRunFinished(runID)
 	}
-	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
+	e.forgetWorktree(runID)
+	return nil
 }
 
 // routeDeliveryRepair routes a repairable, in-change delivery failure back
@@ -307,7 +324,9 @@ func (e *Engine) settleRunFailure(runID string, runErr error) {
 	if err != nil || workflowledger.IsTerminalRunStatus(fresh.Status) {
 		return
 	}
-	_ = e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusFailed, nil)
+	if err := e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusFailed, nil); err == nil {
+		e.forgetWorktree(runID)
+	}
 }
 
 // progressSink is the package progress sink for localengine terminal

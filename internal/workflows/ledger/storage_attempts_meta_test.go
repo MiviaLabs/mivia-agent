@@ -78,6 +78,46 @@ func TestStorageRepository_SetStepAttemptPrompt(t *testing.T) {
 	}
 }
 
+// TestStorageRepository_SetStepAttemptExecutionRedispatchReusesCoordinatorTaskPair
+// covers a legitimate redispatch sequence (A,T1) -> (A,T2) -> (A,T1): the
+// third dispatch reuses the FIRST execution's (coordinatorRunID, taskID)
+// pair. The deterministic wf_attempt_execution event ID must include the
+// execution ordinal so the third dispatch's ID does not collide with the
+// first's (same coordinatorRunID/taskID, different ExecutionNo/CreatedAt) —
+// a collision would make appendEvent's duplicate-payload compare see
+// mismatched payloads and durably reject the legitimate third dispatch with
+// ErrConflict.
+func TestStorageRepository_SetStepAttemptExecutionRedispatchReusesCoordinatorTaskPair(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, raw := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, raw), nil, "CreateRun")
+
+			a1 := StepAttempt{AttemptID: "att-1", RunID: run, StepID: "plan", AttemptNo: 1}
+			requireErr(t, repo.CreateStepAttempt(ctx, a1), nil, "create attempt")
+
+			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-1", "task-1", ""), nil, "dispatch (A,T1)")
+			requireErr(t, repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-2", "task-2", "transient retry"), nil, "dispatch (A,T2)")
+			if err := repo.SetStepAttemptExecution(ctx, run, "att-1", "coord-1", "task-1", "reuse after T2 failed"); err != nil {
+				t.Fatalf("redispatch back to (A,T1) must succeed, got %v", err)
+			}
+
+			got, err := repo.GetStepAttempt(ctx, run, "att-1")
+			if err != nil {
+				t.Fatalf("GetStepAttempt: %v", err)
+			}
+			if len(got.Executions) != 3 {
+				t.Fatalf("Executions = %+v, want 3 distinct executions", got.Executions)
+			}
+			if got.CoordinatorRunID != "coord-1" || got.TaskID != "task-1" {
+				t.Fatalf("attempt active execution = (%q, %q), want (coord-1, task-1)", got.CoordinatorRunID, got.TaskID)
+			}
+		})
+	}
+}
+
 // TestStorageRepository_SetStepAttemptPromptNotFound covers ErrNotFound for an
 // absent run or an unknown attempt.
 func TestStorageRepository_SetStepAttemptPromptNotFound(t *testing.T) {

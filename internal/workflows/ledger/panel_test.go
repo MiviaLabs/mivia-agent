@@ -258,6 +258,94 @@ func TestPanelPhaseCASRejectsStaleHolderAfterTakeover(t *testing.T) {
 	}
 }
 
+// TestAppendPanelPhaseDuplicateIDIsIdempotentRetry simulates a lost response
+// after CompareAndSetPanelPhase already committed: appendPanelPhase is
+// called twice with the SAME logical transition (same attempt/version/phase/
+// synthesis). The deterministic event ID collides on the second call; since
+// the payload matches (ignoring CreatedAt), the retry must return nil, not
+// ErrConflict.
+func TestAppendPanelPhaseDuplicateIDIsIdempotentRetry(t *testing.T) {
+	repo := newMemoryRepo(t)
+	ctx := context.Background()
+	run := runID(t)
+	snap, raw := newRun(t, run)
+	if err := repo.CreateRun(ctx, snap, raw); err != nil {
+		t.Fatal(err)
+	}
+	attempt := StepAttempt{AttemptID: "attempt", RunID: run, StepID: "panel", AttemptNo: 1, Version: 1, PanelExecution: validPanelExecution(t, run, "attempt")}
+	storePanelExecution(t, repo, attempt.PanelExecution)
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClaimRun(ctx, run, "holder"); err != nil {
+		t.Fatal(err)
+	}
+
+	next := attempt.Clone()
+	next.Version++
+	next.PanelExecution.Phase = PanelPhaseCancelPending
+
+	if err := repo.appendPanelPhase(ctx, run, attempt.AttemptID, "holder", PanelPhaseCancelPending, nil, next, 0); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+	// Retry the SAME logical transition: same attempt/version/phase/synthesis.
+	// The deterministic event ID collides; the payload matches (ignoring
+	// CreatedAt), so this must be treated as an idempotent no-op.
+	retryNext := attempt.Clone()
+	retryNext.Version++
+	retryNext.PanelExecution.Phase = PanelPhaseCancelPending
+	if err := repo.appendPanelPhase(ctx, run, attempt.AttemptID, "holder", PanelPhaseCancelPending, nil, retryNext, 0); err != nil {
+		t.Fatalf("idempotent retry must return nil, got %v", err)
+	}
+	got, err := repo.GetStepAttempt(ctx, run, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PanelExecution.Phase != PanelPhaseCancelPending || got.Version != 2 {
+		t.Fatalf("attempt after idempotent retry = %+v", got)
+	}
+}
+
+// TestAppendPanelPhaseDuplicateIDConflictsOnDifferentTransition confirms a
+// genuinely different concurrent transition sharing the same event ID
+// (same attempt/version) still returns ErrConflict.
+func TestAppendPanelPhaseDuplicateIDConflictsOnDifferentTransition(t *testing.T) {
+	repo := newMemoryRepo(t)
+	ctx := context.Background()
+	run := runID(t)
+	snap, raw := newRun(t, run)
+	if err := repo.CreateRun(ctx, snap, raw); err != nil {
+		t.Fatal(err)
+	}
+	attempt := StepAttempt{AttemptID: "attempt", RunID: run, StepID: "panel", AttemptNo: 1, Version: 1, PanelExecution: validPanelExecution(t, run, "attempt")}
+	storePanelExecution(t, repo, attempt.PanelExecution)
+	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClaimRun(ctx, run, "holder"); err != nil {
+		t.Fatal(err)
+	}
+
+	next := attempt.Clone()
+	next.Version++
+	next.PanelExecution.Phase = PanelPhaseCancelPending
+	if err := repo.appendPanelPhase(ctx, run, attempt.AttemptID, "holder", PanelPhaseCancelPending, nil, next, 0); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+
+	synthesis := &PanelSynthesisExecution{Work: validSynthesisTask(t, run, attempt.AttemptID)}
+	storePanelTask(t, repo, synthesis.Work)
+	conflicting := attempt.Clone()
+	conflicting.Version++
+	conflicting.PanelExecution.Phase = PanelPhaseSynthesisAdmitted
+	conflicting.PanelExecution.Synthesis = synthesis.clone()
+	// Same (attempt, version) as the first append -> same deterministic
+	// event ID -> but a different logical transition -> ErrConflict.
+	if err := repo.appendPanelPhase(ctx, run, attempt.AttemptID, "holder", PanelPhaseSynthesisAdmitted, synthesis, conflicting, 0); err != ErrConflict {
+		t.Fatalf("error = %v, want ErrConflict", err)
+	}
+}
+
 func TestPanelReplayRejectsMalformedAndUnknownEvents(t *testing.T) {
 	for name, event := range map[string]storage.Event{
 		"malformed": {ID: "1", RunID: "run", Sequence: 1, Kind: eventKindPanelPhaseSet, Payload: []byte("{")},

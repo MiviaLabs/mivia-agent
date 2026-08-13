@@ -80,6 +80,7 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelRes
 		// Context cancel may already have settled the run; treat terminal as success.
 		run, getErr := e.Repo.GetRun(ctx, runID)
 		if getErr == nil && workflowledger.IsTerminalRunStatus(run.Status) {
+			e.forgetWorktree(runID)
 			return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
 		}
 		return agenttools.CancelResult{}, err
@@ -90,6 +91,9 @@ func (e *Engine) Cancel(ctx context.Context, runID string) (agenttools.CancelRes
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
 		return agenttools.CancelResult{}, err
+	}
+	if workflowledger.IsTerminalRunStatus(run.Status) {
+		e.forgetWorktree(runID)
 	}
 	return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
 }

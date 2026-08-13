@@ -11,43 +11,113 @@ import (
 // abandonFence wraps a Repository so abandoned runs cannot be mutated by a
 // dying controller goroutine after Interrupt. Reads pass through; terminal
 // status CAS and attempt completion for abandoned runs fail closed.
+//
+// Locking is sharded per run ID: abMu guards only the small "abandoned" set
+// bookkeeping, and each run's writes serialize on that run's own runMutex
+// (locksMu guards the map of those). A write for one run never blocks a
+// write for a different, unrelated run - only same-run writes (and that
+// run's abandon/clearAbandon calls) serialize with each other, matching the
+// external mutate/abandon ordering guarantee this type has always offered.
 type abandonFence struct {
-	inner     workflowledger.Repository
-	mu        sync.Mutex
+	inner workflowledger.Repository
+
+	abMu      sync.Mutex
 	abandoned map[string]struct{}
+
+	locksMu  sync.Mutex
+	runLocks map[string]*runMutex
+}
+
+// runMutex is one run's serialization lock, reference-counted so the entry
+// can be dropped from abandonFence.runLocks as soon as no goroutine is
+// waiting on or holding it - the lock map never grows without bound the way
+// abandonFence.worktrees used to (see worktree.go Delete/settle cleanup).
+type runMutex struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// acquireRunLock returns runID's lock, creating it on first use, and
+// increments its reference count. Callers must pair every call with
+// releaseRunLock(runID) after unlocking rm.mu.
+func (f *abandonFence) acquireRunLock(runID string) *runMutex {
+	f.locksMu.Lock()
+	defer f.locksMu.Unlock()
+	if f.runLocks == nil {
+		f.runLocks = make(map[string]*runMutex)
+	}
+	rm, ok := f.runLocks[runID]
+	if !ok {
+		rm = &runMutex{}
+		f.runLocks[runID] = rm
+	}
+	rm.refs++
+	return rm
+}
+
+// releaseRunLock drops one reference to runID's lock, removing the map entry
+// once nothing else references it.
+func (f *abandonFence) releaseRunLock(runID string) {
+	f.locksMu.Lock()
+	defer f.locksMu.Unlock()
+	rm, ok := f.runLocks[runID]
+	if !ok {
+		return
+	}
+	rm.refs--
+	if rm.refs <= 0 {
+		delete(f.runLocks, runID)
+	}
 }
 
 func newAbandonFence(inner workflowledger.Repository) *abandonFence {
 	return &abandonFence{inner: inner, abandoned: make(map[string]struct{})}
 }
 
+// abandon marks runID abandoned. It takes runID's own lock first so it
+// serializes with that run's in-flight mutate/IncrementLoopCounter/
+// TakeoverRunClaim calls: a write that started first still completes before
+// abandon returns, and a write that starts after abandon returns fails.
 func (f *abandonFence) abandon(runID string) {
-	f.mu.Lock()
+	rm := f.acquireRunLock(runID)
+	rm.mu.Lock()
+	f.abMu.Lock()
 	f.abandoned[runID] = struct{}{}
-	f.mu.Unlock()
+	f.abMu.Unlock()
+	rm.mu.Unlock()
+	f.releaseRunLock(runID)
 }
 
 // clearAbandon allows a resumed controller to write again after Interrupt.
-// Callers must use this method; never mutate abandoned without f.mu.
+// Callers must use this method; never mutate abandoned without abMu.
 func (f *abandonFence) clearAbandon(runID string) {
-	f.mu.Lock()
+	f.abMu.Lock()
 	delete(f.abandoned, runID)
-	f.mu.Unlock()
+	f.abMu.Unlock()
 }
 
 func (f *abandonFence) isAbandoned(runID string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	f.abMu.Lock()
+	defer f.abMu.Unlock()
 	_, ok := f.abandoned[runID]
 	return ok
 }
 
-// mutate serializes a run-bound write with abandon. A write that starts first
-// completes before abandon returns. A write that starts after abandon fails.
+// mutate serializes a run-bound write with abandon, but only against other
+// writes/abandon calls for the SAME runID - unrelated runs use their own
+// lock and proceed concurrently. A write that starts first completes before
+// abandon returns. A write that starts after abandon fails.
 func (f *abandonFence) mutate(runID string, write func() error) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, abandoned := f.abandoned[runID]; abandoned {
+	rm := f.acquireRunLock(runID)
+	rm.mu.Lock()
+	defer func() {
+		rm.mu.Unlock()
+		f.releaseRunLock(runID)
+	}()
+	f.abMu.Lock()
+	_, abandoned := f.abandoned[runID]
+	f.abMu.Unlock()
+	if abandoned {
 		return workflowledger.ErrConflict
 	}
 	return write()
@@ -128,9 +198,16 @@ func (f *abandonFence) ListTransitions(ctx context.Context, runID string) ([]wor
 }
 
 func (f *abandonFence) IncrementLoopCounter(ctx context.Context, runID, loopName string) (int, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, abandoned := f.abandoned[runID]; abandoned {
+	rm := f.acquireRunLock(runID)
+	rm.mu.Lock()
+	defer func() {
+		rm.mu.Unlock()
+		f.releaseRunLock(runID)
+	}()
+	f.abMu.Lock()
+	_, abandoned := f.abandoned[runID]
+	f.abMu.Unlock()
+	if abandoned {
 		return 0, workflowledger.ErrConflict
 	}
 	return f.inner.IncrementLoopCounter(ctx, runID, loopName)
@@ -173,9 +250,16 @@ func (f *abandonFence) ClaimRun(ctx context.Context, runID, holder string) error
 }
 
 func (f *abandonFence) TakeoverRunClaim(ctx context.Context, runID, holder string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, abandoned := f.abandoned[runID]; abandoned {
+	rm := f.acquireRunLock(runID)
+	rm.mu.Lock()
+	defer func() {
+		rm.mu.Unlock()
+		f.releaseRunLock(runID)
+	}()
+	f.abMu.Lock()
+	_, abandoned := f.abandoned[runID]
+	f.abMu.Unlock()
+	if abandoned {
 		return workflowledger.ErrClaimHeld
 	}
 	return f.inner.TakeoverRunClaim(ctx, runID, holder)

@@ -48,5 +48,6 @@ func (e *Engine) Delete(ctx context.Context, runID string, force bool) (agenttoo
 	if err := e.Repo.DeleteRun(ctx, runID); err != nil {
 		return agenttools.DeleteResult{}, err
 	}
+	e.forgetWorktree(runID)
 	return agenttools.DeleteResult{RunID: runID, Status: string(run.Status), Deleted: true}, nil
 }

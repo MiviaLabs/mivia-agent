@@ -38,7 +38,9 @@ func (s *scriptedGHRunner) run(_ context.Context, op string, args ...string) ([]
 	case "checks":
 		s.checks++
 		if s.checkErr != nil {
-			return []byte(s.checkErr.Error()), s.checkErr
+			// Match runGH's real contract: nil out on error, the message
+			// only lives in the wrapped error string.
+			return nil, s.checkErr
 		}
 		return []byte("checks passed\n"), nil
 	}
