@@ -180,6 +180,57 @@ func TestJSONTurnEventCallbackIgnoresOtherKinds(t *testing.T) {
 	}
 }
 
+// TestJSONTurnEventCallbackReportsToolFailureStatus pins the failure signal
+// on the wire. Before "status" existed, a failed tool call was
+// indistinguishable from a successful one to a --json consumer: the only
+// failure marker was Event.Detail, which eventPreview discards whenever the
+// tool produced any output at all (the normal case).
+func TestJSONTurnEventCallbackReportsToolFailureStatus(t *testing.T) {
+	cases := []struct {
+		name   string
+		detail string
+		want   string
+	}{
+		{name: "completed", detail: "completed", want: "ok"},
+		{name: "failed", detail: "failed", want: "failed"},
+		{name: "failed truncated", detail: "failed (truncated)", want: "failed"},
+		{name: "failed duplicate", detail: "failed (duplicate)", want: "failed"},
+		// Truncation describes the preview, not the outcome - a truncated
+		// but successful call must not read as an error.
+		{name: "completed truncated", detail: "completed (truncated)", want: "ok"},
+		// No signal at all is ok, not a third "unknown" state.
+		{name: "empty detail", detail: "", want: "ok"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			onEvent := jsonTurnEventCallback(&buf)
+
+			onEvent(agent.Event{
+				Kind: agent.EventToolEnd, ToolCallID: "call_1",
+				Name: "run_command", Output: "exit status 1", Detail: tc.detail,
+			})
+
+			lines := splitNonEmptyLines(buf.String())
+			if len(lines) != 1 {
+				t.Fatalf("got %d lines, want 1: %v", len(lines), lines)
+			}
+			var toolEnd ndjsonEvent
+			if err := json.Unmarshal([]byte(lines[0]), &toolEnd); err != nil {
+				t.Fatalf("invalid JSON: %v", err)
+			}
+			if toolEnd.Status != tc.want {
+				t.Fatalf("status = %q, want %q (detail %q)", toolEnd.Status, tc.want, tc.detail)
+			}
+			// The output preview must stay untouched by the new field.
+			if toolEnd.Output != "exit status 1" {
+				t.Fatalf("output = %q, want it unchanged", toolEnd.Output)
+			}
+		})
+	}
+}
+
 // TestJSONTurnEventCallbackAttributesSubagentToolCalls pins the wire
 // contract for a delegated subagent's own nested tool calls: they reuse the
 // same tool_start/tool_end types as a root-loop tool call (so an older

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -16,7 +17,7 @@ import (
 //	{"type":"chunk","text":"..."}                            - one per emitted piece of streamed answer content
 //	{"type":"thinking","text":"..."}                         - one per emitted piece of model reasoning (chain of thought), for providers that expose it
 //	{"type":"tool_start","tool_call_id":"...","name":"...","input":"..."}  - a tool call began; input is a bounded, redacted preview
-//	{"type":"tool_end","tool_call_id":"...","name":"...","output":"..."}   - that tool call finished; output is a bounded, redacted preview
+//	{"type":"tool_end","tool_call_id":"...","name":"...","output":"...","status":"ok|failed"}   - that tool call finished; output is a bounded, redacted preview, status is its outcome (see toolEndStatus)
 //	{"type":"subagent_done","origin_task_id":"..."}  - a delegated subagent run finished; its loop will emit nothing further
 //	{"type":"subagent_heartbeat","origin_task_id":"...","message":"..."}  - a delegated subagent is still running; message is a short wall-clock progress note (model thinking, tool batch, ...), best-effort and not guaranteed on every tick
 //	{"type":"model_changed","provider":"...","model":"...","discarded_effort":"..."}  - a /model switch succeeded; discarded_effort is set only if the switch dropped an active reasoning effort
@@ -91,6 +92,15 @@ type ndjsonEvent struct {
 	Model           string `json:"model,omitempty"`
 	Effort          string `json:"effort,omitempty"`
 	DiscardedEffort string `json:"discarded_effort,omitempty"`
+	// Status is "ok" or "failed" on a "tool_end", derived from the same
+	// toolEndDetail the TUI renders (see toolEndStatus). Before this field
+	// existed the failure signal lived only in Event.Detail, which
+	// eventPreview drops whenever a tool produced any output at all - so a
+	// --json consumer had no way to tell a failed tool call from a
+	// successful one. Absent means "an older bundled CLI that predates this
+	// field", which a consumer should read as ok (the prior behavior), not
+	// as failure.
+	Status string `json:"status,omitempty"`
 	// OriginTaskID/OriginAgent/OriginDepth attribute a tool_start/tool_end
 	// (or a subagent_done) to the delegated subagent that produced it - see
 	// agent.EventOrigin. Omitted entirely for the root loop's own tool
@@ -114,6 +124,25 @@ type ndjsonEvent struct {
 // agent.Event fields and the same redacted eventPreview helper, so an
 // external consumer sees the same content the TUI renders, just framed as
 // NDJSON instead of terminal UI.
+// toolEndStatus maps a tool_end event's Detail onto the wire's coarse
+// "ok"/"failed" status. Detail is toolEndDetail's vocabulary (see
+// internal/agent/loop_tools.go): "completed", "failed", and either with a
+// "(truncated)"/"(duplicate)" qualifier - every failure variant starts with
+// "failed", so the prefix is the whole test. Truncation is deliberately not
+// surfaced here: it describes the preview, not the call's outcome, and a
+// truncated-but-successful call must not read as an error.
+//
+// An empty Detail (an emitter that never set one) is "ok" rather than
+// unknown: this field exists to let a consumer mark failures, and inventing
+// a third state for a case that means "no signal" would make every such
+// call render as a warning for no reason.
+func toolEndStatus(detail string) string {
+	if strings.HasPrefix(detail, "failed") {
+		return "failed"
+	}
+	return "ok"
+}
+
 func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 	return func(e agent.Event) {
 		switch e.Kind {
@@ -138,6 +167,7 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 				ToolCallID:   e.ToolCallID,
 				Name:         e.Name,
 				Output:       eventPreview(e.Output, e.Detail),
+				Status:       toolEndStatus(e.Detail),
 				OriginTaskID: e.Origin.TaskID,
 				OriginAgent:  e.Origin.Agent,
 				OriginDepth:  e.Origin.Depth,
