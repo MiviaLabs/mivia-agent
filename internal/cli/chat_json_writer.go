@@ -18,6 +18,7 @@ import (
 //	{"type":"tool_start","tool_call_id":"...","name":"...","input":"..."}  - a tool call began; input is a bounded, redacted preview
 //	{"type":"tool_end","tool_call_id":"...","name":"...","output":"..."}   - that tool call finished; output is a bounded, redacted preview
 //	{"type":"subagent_done","origin_task_id":"..."}  - a delegated subagent run finished; its loop will emit nothing further
+//	{"type":"subagent_heartbeat","origin_task_id":"...","message":"..."}  - a delegated subagent is still running; message is a short wall-clock progress note (model thinking, tool batch, ...), best-effort and not guaranteed on every tick
 //	{"type":"model_changed","provider":"...","model":"...","discarded_effort":"..."}  - a /model switch succeeded; discarded_effort is set only if the switch dropped an active reasoning effort
 //	{"type":"effort_changed","model":"...","effort":"..."}  - an /effort switch succeeded
 //	{"type":"slash_info","message":"..."}          - any other slash command's informational output (status query, current model/effort, a soft failure like "model not available", ...)
@@ -133,6 +134,20 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 			writeNDJSONEvent(w, ndjsonEvent{
 				Type:         "subagent_done",
 				OriginTaskID: e.Origin.TaskID,
+			})
+		case agent.EventSubagentHeartbeat:
+			// Origin is required for this event to mean anything (it retires
+			// nothing on its own, just refreshes one subagent's progress
+			// note) - a heartbeat with no origin (should not happen, see
+			// OnEventForMultiStep) is dropped rather than sent as a
+			// meaningless line.
+			if e.Origin.TaskID == "" {
+				return
+			}
+			writeNDJSONEvent(w, ndjsonEvent{
+				Type:         "subagent_heartbeat",
+				OriginTaskID: e.Origin.TaskID,
+				Message:      e.Detail,
 			})
 		}
 	}
