@@ -14,7 +14,7 @@ func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
 	snap := workflowledger.RunSnapshot{
 		RunID: c.RunID, InvocationKey: c.admission.InvocationKey, WorkflowName: c.Workflow.Name, WorkflowDigest: c.admittedWorkflowDigest(),
 		SnapshotDigest: workflowledger.SnapshotDigest(c.Snapshot), InputDigest: c.admission.InputDigest,
-		Status: workflowledger.RunStatusPending, ActiveStepID: c.Workflow.InitialStep,
+		Status: workflowledger.RunStatusPending, ActiveStepID: c.runStartStepID(),
 		BaseRef: c.admission.BaseRef, BaseCommit: c.admission.BaseCommit,
 		OriginBaseCommit: c.admission.OriginBaseCommit, WorktreeName: c.admission.WorktreeName,
 		RemoteURL: c.admission.RemoteURL, StartedAt: admittedAt,

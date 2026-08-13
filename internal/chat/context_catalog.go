@@ -107,7 +107,25 @@ func (s *Session) sessionSaveOptions() contextstate.SessionSaveOptions {
 	return contextstate.SessionSaveOptions{Dir: dir, Worktree: worktree}
 }
 
-func (s *Session) loadContextCatalog(name string) (bool, error) {
+// loadContextCatalog loads a saved context-catalog session's messages.
+//
+// readOnly distinguishes a genuine resume (Load, about to keep issuing
+// turns against this Session - reclaims write ownership and durably
+// publishes/advances a live binding for the session's provider/model) from
+// a read-only display load (LoadReadOnly - a "sessions show" reader that
+// will never write again). A read-only load skips both: reclaiming
+// ownership it will never use is an unwanted side effect of merely
+// viewing a session, and publishing a binding through SwitchBinding
+// requires a working Completer and durably advances the context store's
+// binding revision - neither of which a display-only caller has any
+// business doing, and mismatched with the currently-active default
+// provider/model (e.g. after switching models mid-session, see
+// mivia-agent-desktop's ModelSwitcherButton), it failed outright before
+// this parameter existed ("incomplete model binding", then "stale
+// binding: context binding changed" once a synthetic Completer worked
+// around the first failure) - the raw messages were never actually lost,
+// this path just couldn't reach them without behaving like a live resume.
+func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 	catalog, principal, ok := s.contextCatalogState()
 	if !ok {
 		return false, fmt.Errorf("context session catalog is not configured")
@@ -140,7 +158,7 @@ func (s *Session) loadContextCatalog(name string) (bool, error) {
 	// frozen at its pre-load state, and a new one holding the merged result -
 	// instead of one record whose turn count grew. Reclaiming the loaded
 	// session's ownership before adopting its messages closes that gap.
-	if isContextSession && info.SessionID != principal.SessionID {
+	if !readOnly && isContextSession && info.SessionID != principal.SessionID {
 		if err := s.reclaimContextSession(info.SessionID); err != nil {
 			return false, fmt.Errorf("resume session %q: %w", name, err)
 		}
@@ -148,6 +166,10 @@ func (s *Session) loadContextCatalog(name string) (bool, error) {
 	msgs, err := decodeCatalogMessages(data)
 	if err != nil {
 		return false, err
+	}
+	if readOnly {
+		token := s.captureOperationToken("catalog-load:" + name)
+		return isContextSession, s.adoptLoadedMessages(token, msgs)
 	}
 	factory := s.bindingFactorySnapshot()
 	if factory != nil {

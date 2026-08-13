@@ -75,56 +75,93 @@ func (c *LinearController) settleAttemptOutcome(writeCtx context.Context, step d
 			result.ErrorRef = storeErrorText(writeCtx, c.Repo, mapErr)
 			route = failureRoute(step)
 		} else {
-			// Route computation reads the ledger (loop counters, prior review
-			// output). Use the detached writeCtx, not ctx: at the run deadline
-			// ctx is already expired, and a context.DeadlineExceeded from those
-			// reads would mis-record a completed child as Failed on on_failure.
-			route, err = c.selectRoute(writeCtx, step, status, outMap)
-			if err != nil {
-				degraded = true
-				status, runErr = workflowledger.AttemptStatusFailed, err
-				result.ErrorRef = storeErrorText(writeCtx, c.Repo, err)
-				if route.ToStepID == "" {
-					route = failureRoute(step)
-				}
-			} else if blockedErr, blocked := c.blockedCause(outMap); blocked {
-				// A SUCCEEDED step whose output admits a write it cannot
-				// perform (blocked_paths, a claimed files_changed entry inside
-				// the host write-path blocklist, or a review finding demanding
-				// a blocked-path edit) must fail the run HERE. Routing it to
-				// review would reproduce the same demand and burn the loop
-				// budget into a misattributed zero-progress failure; the run
-				// cannot deliver, so it stops with an honest blocked cause.
-				degraded = true
-				status, runErr = workflowledger.AttemptStatusFailed, blockedErr
-				result.ErrorRef = storeErrorText(writeCtx, c.Repo, blockedErr)
+			route, degraded, runErr, err = c.settleSucceededRoute(writeCtx, step, result, outMap)
+			// Every controller degradation in settleSucceededRoute flips the
+			// child from Succeeded to Failed (route-selection failure, the
+			// chunk-plan gate, a blocked write, zero-progress); mirror it on
+			// the shared status so the caller persists the attempt as Failed.
+			if degraded {
+				status = workflowledger.AttemptStatusFailed
+			}
+			if runErr != nil && route.ToStepID == "" {
 				route = failureRoute(step)
-			} else if noProgress, zpErr := c.reviewMadeNoProgress(writeCtx, step, route, outMap); zpErr != nil {
-				// A ledger-read failure inside the zero-progress check is a HARD
-				// step failure: the controller cannot safely route a review
-				// whose prior findings it could not read, so it must not take
-				// the loop back-edge on a guess. This matches agentStepRequest's
-				// GetLoopCounters error behavior — a loop-bound step whose
-				// counters cannot be read fails hard instead of proceeding with
-				// a fabricated round. The durable cause is persisted so the
-				// attempt carries the exact failure.
-				degraded = true
-				readErr := fmt.Errorf("zero-progress check failed to read prior review output: %w", zpErr)
-				status, runErr, route = c.failReviewNoProgress(writeCtx, result, step, readErr)
-			} else if noProgress {
-				// Zero progress across rounds: a review that repeats the
-				// previous round's findings must NOT take the loop back-edge.
-				// Treat the review as failed with the durable cause so the run
-				// stops instead of spinning identical findings.
-				degraded = true
-				noProgressErr := errors.New("review made no progress across rounds (identical findings set); run failed")
-				status, runErr, route = c.failReviewNoProgress(writeCtx, result, step, noProgressErr)
 			}
 		}
 	} else if status == workflowledger.AttemptStatusFailed {
 		route = failureRoute(step) // transport budget already spent upstream
 	}
 	return status, runErr, route, degraded, err
+}
+
+// settleSucceededRoute computes the durable route for a classified-succeeded
+// child: route selection, the deterministic chunk-plan gate for the
+// engine-synthesized decompose step, blocked-path checks, and the review
+// zero-progress guard. It returns the route, whether the outcome was degraded
+// to Failed by the controller, the effective error, and the route-selection
+// error (for the caller's audit trail).
+func (c *LinearController) settleSucceededRoute(writeCtx context.Context, step definition.Step, result *AgentStepResult, outMap map[string]any) (RouteDecision, bool, error, error) {
+	degraded := false
+	status := workflowledger.AttemptStatusSucceeded
+	var runErr error
+	// Route computation reads the ledger (loop counters, prior review
+	// output). Use the detached writeCtx, not ctx: at the run deadline
+	// ctx is already expired, and a context.DeadlineExceeded from those
+	// reads would mis-record a completed child as Failed on on_failure.
+	route, err := c.selectRoute(writeCtx, step, status, outMap)
+	if err != nil {
+		degraded = true
+		runErr = err
+		result.ErrorRef = storeErrorText(writeCtx, c.Repo, err)
+		if route.ToStepID == "" {
+			route = failureRoute(step)
+		}
+	} else if rr, repaired, rerr := c.chunkPlanRepairRoute(writeCtx, step, route, outMap); rerr != nil {
+		// The deterministic chunk-plan gate could not be honored (loop
+		// exhausted or unparseable decompose output): the run stops with an
+		// honest cause instead of advancing on an unchecked plan.
+		degraded = true
+		runErr = rerr
+		route = rr
+		result.ErrorRef = storeErrorText(writeCtx, c.Repo, rerr)
+	} else if repaired {
+		// The decompose output failed the deterministic rules; the route is
+		// rewritten back to decompose through the engine's repair loop. The
+		// attempt stays Succeeded; the loop counter records the re-entry.
+		route = rr
+	} else if blockedErr, blocked := c.blockedCause(outMap); blocked {
+		// A SUCCEEDED step whose output admits a write it cannot
+		// perform (blocked_paths, a claimed files_changed entry inside
+		// the host write-path blocklist, or a review finding demanding
+		// a blocked-path edit) must fail the run HERE. Routing it to
+		// review would reproduce the same demand and burn the loop
+		// budget into a misattributed zero-progress failure; the run
+		// cannot deliver, so it stops with an honest blocked cause.
+		degraded = true
+		status, runErr = workflowledger.AttemptStatusFailed, blockedErr
+		result.ErrorRef = storeErrorText(writeCtx, c.Repo, blockedErr)
+		route = failureRoute(step)
+	} else if noProgress, zpErr := c.reviewMadeNoProgress(writeCtx, step, route, outMap); zpErr != nil {
+		// A ledger-read failure inside the zero-progress check is a HARD
+		// step failure: the controller cannot safely route a review
+		// whose prior findings it could not read, so it must not take
+		// the loop back-edge on a guess. This matches agentStepRequest's
+		// GetLoopCounters error behavior — a loop-bound step whose
+		// counters cannot be read fails hard instead of proceeding with
+		// a fabricated round. The durable cause is persisted so the
+		// attempt carries the exact failure.
+		degraded = true
+		readErr := fmt.Errorf("zero-progress check failed to read prior review output: %w", zpErr)
+		status, runErr, route = c.failReviewNoProgress(writeCtx, result, step, readErr)
+	} else if noProgress {
+		// Zero progress across rounds: a review that repeats the
+		// previous round's findings must NOT take the loop back-edge.
+		// Treat the review as failed with the durable cause so the run
+		// stops instead of spinning identical findings.
+		degraded = true
+		noProgressErr := errors.New("review made no progress across rounds (identical findings set); run failed")
+		status, runErr, route = c.failReviewNoProgress(writeCtx, result, step, noProgressErr)
+	}
+	return route, degraded, runErr, err
 }
 
 // classifyStepStatus maps a runner error and the child's reported status to

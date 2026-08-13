@@ -86,11 +86,9 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 		return Result{}, &RefusalError{Reason: fmt.Sprintf("delivery requires mode draft or ready, got %q", req.Policy.Mode)}
 	}
 
-	// 3. Idempotency: a previously succeeded attempt replays its durable
-	// result. A no_diff verdict is point-in-time, so it is NOT replayed:
-	// the current worktree is re-verified below, and newly appeared work is
-	// published instead of letting a stale no_diff settle the run with zero
-	// PRs. Any other status is a resumable attempt.
+	// 3. Idempotency: a succeeded attempt replays its durable result; a
+	// no_diff verdict is point-in-time and re-verified below. Any other
+	// status is a resumable attempt.
 	key := DeliveryKey(req.RunID, req.WorkflowDigest)
 	existing, err := repo.GetDeliveryByIdempotencyKey(ctx, key)
 	if err != nil && !errors.Is(err, ledger.ErrNotFound) {
@@ -98,6 +96,13 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 	}
 	if err == nil && existing.Status == "succeeded" {
 		return replayResult(existing), nil
+	}
+
+	// 3a. Reserved stacking inputs (pr_base, stack_part) are honored before
+	// any eligibility work; invalid values are repairable PRMetadataErrors.
+	req, err = resolveStackingInputs(req)
+	if err != nil {
+		return Result{}, err
 	}
 
 	head, porcelainEmpty, diffRef, repoSlug, originBase, noDiff, err := verifyEligibilityAndStage(ctx, repo, git, req, key, run)
@@ -112,19 +117,17 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 		}, nil
 	}
 
-	// 10a. PR metadata: resolve the agent-provided title and summary, or fall
-	// back to the legacy title_template render, then validate the final title
-	// against the OPTIONAL workspace PR-title policy. This runs BEFORE any
-	// commit or push, so a metadata defect writes no delivery record and
-	// travels to the caller classifier unchanged.
+	// 10a. PR metadata: resolve the agent title/summary, or fall back to the
+	// legacy title_template render, then validate the final title against the
+	// OPTIONAL workspace PR-title policy. This runs BEFORE any commit or push,
+	// so a metadata defect writes no record and travels to the classifier.
 	title, body, err := validatePRMetadata(ctx, repo, req)
 	if err != nil {
 		return Result{}, err
 	}
 
 	// 10b. Optional workspace commit-message policy: validate the rendered
-	// subject ONLY when a commit will actually be created (a diff exists, so
-	// the repo's commit-msg hook would fire).
+	// subject only when a commit will actually be created.
 	if err := validateDeliveryCommitMessage(req); err != nil {
 		return Result{}, err
 	}
@@ -306,6 +309,12 @@ func verifyEligibility(ctx context.Context, repo ledger.Repository, git GitRunne
 	}
 	if noDiff {
 		return head, true, "", repoSlug, nil
+	}
+	// 8b. Actual-diff-size gate for stacking workflows: the PR branch diff vs
+	// the admitted base must fit the resolved hard limit. Without a stacking
+	// configuration the gate is off and single-PR behavior is unchanged.
+	if err := checkChunkDiffSize(ctx, git, req); err != nil {
+		return "", false, "", "", err
 	}
 	text := boundText(diffText+"\n"+porcelain, maxDiffBytes, "diff truncated at 64 KiB")
 	diffRef = "sha256:" + ledger.DigestHex([]byte(text))

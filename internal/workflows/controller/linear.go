@@ -105,7 +105,11 @@ func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner,
 	if len(snapshot) == 0 {
 		return nil, fmt.Errorf("workflow snapshot is empty")
 	}
-	return &LinearController{Repo: repo, Runner: runner, Workflow: wf, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now, PanelLimiter: NewPanelActorLimiter(), heartbeatThrottle: newDurableHeartbeatThrottle()}, nil
+	admitted, steps, err := admitStackingRun(wf, steps, inputs)
+	if err != nil {
+		return nil, err
+	}
+	return &LinearController{Repo: repo, Runner: runner, Workflow: admitted, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now, PanelLimiter: NewPanelActorLimiter(), heartbeatThrottle: newDurableHeartbeatThrottle()}, nil
 }
 
 // SetProgressSink sets the workflow progress sink before Start.
@@ -429,6 +433,13 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 			continue
 		}
 		if len(parts) == 3 && parts[0] == "steps" && parts[2] == "output" {
+			// Chunk-mode grace: the run starts at the implement step, so a
+			// binding to a pre-implement step's output (which never exists in
+			// this run) resolves as optional-absent instead of failing.
+			if binding.EnvelopeOnly && c.preImplementStep(parts[1]) {
+				evidence[binding.As] = ""
+				continue
+			}
 			value, ref, ok, err := c.resolveBindingOutput(ctx, binding, attempts)
 			if err != nil {
 				return nil, nil, nil, err

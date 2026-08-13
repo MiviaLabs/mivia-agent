@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Chunk Plan Review v1",
+  "description": "Schema for the chunk-plan gate agent's validation output. Reports whether the chunk plan is valid and lists every violation when it is not.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["valid", "reasons"],
+  "properties": {
+    "valid": {
+      "type": "boolean"
+    },
+    "reasons": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

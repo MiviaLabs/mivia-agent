@@ -252,14 +252,30 @@ func (s *Session) Load(name string) error {
 		return err
 	}
 	defer release()
-	return s.loadReserved(name)
+	return s.loadReserved(name, false)
+}
+
+// LoadReadOnly loads a saved session's messages for display only - the
+// context-catalog counterpart of Load for a caller (a "sessions show"
+// reader) that will never issue a turn against this Session and so must
+// never take on any of Load's durable side effects: reclaiming the loaded
+// session's write ownership, or publishing/advancing a live model binding
+// for a provider/model this process has no working completer for. See
+// loadContextCatalog's readOnly parameter for what specifically changes.
+func (s *Session) LoadReadOnly(name string) error {
+	release, err := s.BeginSessionLoad()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.loadReserved(name, true)
 }
 
 // loadReserved performs the load with the session already reserved.
-func (s *Session) loadReserved(name string) error {
+func (s *Session) loadReserved(name string, readOnly bool) error {
 	if s.ContextEnabled() {
 		resolved := sanitizeSessionName(name)
-		isContextSession, err := s.loadContextCatalog(resolved)
+		isContextSession, err := s.loadContextCatalog(resolved, readOnly)
 		if err != nil {
 			return err
 		}

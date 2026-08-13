@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Chunk Plan v1",
+  "description": "Schema for the decompose agent's chunk plan output. Enforces stack_mode, chunk constraints (max lines, max files, disjoint file sets, tests required, DAG dependencies), and a maximum of 12 chunks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["stack_mode", "chunk_plan"],
+  "properties": {
+    "stack_mode": {
+      "type": "string",
+      "enum": ["no_bug", "single", "multi"]
+    },
+    "chunk_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chunks"],
+      "properties": {
+        "chunks": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "title", "files", "est_diff_lines", "tests", "depends_on"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "files": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "est_diff_lines": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 400
+              },
+              "tests": {
+                "type": "boolean",
+                "const": true
+              },
+              "depends_on": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

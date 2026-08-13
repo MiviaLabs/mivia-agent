@@ -9,6 +9,7 @@ package cli
 // no hooks, no provider.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -106,6 +107,32 @@ func runSessionsWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
+// catalogReadOnlyCompleter satisfies provider.Completer for
+// newCatalogSession's binding factory. It exists purely to be non-nil - see
+// that factory's doc comment for why chat.Session.SwitchBinding requires one
+// even for a session that will only ever be read. Every method here is
+// unreachable from a read-only catalog command; each returns an error rather
+// than silently succeeding or panicking, so a future code path that DOES try
+// to dispatch through a catalog session fails loudly instead of pretending
+// to work.
+type catalogReadOnlyCompleter struct {
+	providerName string
+}
+
+func (c catalogReadOnlyCompleter) Name() string { return c.providerName }
+
+func (c catalogReadOnlyCompleter) Chat(context.Context, provider.Request) (string, error) {
+	return "", fmt.Errorf("catalog session for provider %q is read-only: cannot dispatch", c.providerName)
+}
+
+func (c catalogReadOnlyCompleter) ChatStream(context.Context, provider.Request, io.Writer) (string, error) {
+	return "", fmt.Errorf("catalog session for provider %q is read-only: cannot dispatch", c.providerName)
+}
+
+func (c catalogReadOnlyCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
+	return nil, fmt.Errorf("catalog session for provider %q is read-only: cannot dispatch", c.providerName)
+}
+
 // newCatalogSession builds a session bound to the same context-catalog
 // storage a real `mivia chat` invocation under workspaceRoot would use: the
 // repository-level store when workspaceRoot sits inside a git repo (mirroring
@@ -126,11 +153,28 @@ func newCatalogSession(workspaceRoot string) (*chat.Session, *storage.SQLite, er
 	// requires a binding factory whenever the workspace configures a model
 	// catalog (chat.Session.publishLoadedMessages fails closed otherwise -
 	// "session binding factory is required for configured model catalogs").
-	// A read-only catalog command never actually dispatches to a provider, so
-	// this factory only needs to name the binding, not construct a working
-	// completer.
+	//
+	// A read-only catalog command never actually dispatches to a provider,
+	// but chat.Session.SwitchBinding - invoked here whenever the saved
+	// session's provider/model differs from the config's currently active
+	// one (see loadContextCatalog's fast-path check) - unconditionally
+	// requires a non-nil Completer and a usable prompt budget, regardless of
+	// whether the caller ever intends to dispatch through it. Without a real
+	// Completer/Profile, "sessions show" on any session saved under a
+	// non-default provider/model (e.g. after switching models mid-session)
+	// failed outright with "incomplete model binding" - the raw messages
+	// were never actually lost, this command just couldn't reach them.
+	// catalogReadOnlyCompleter satisfies that non-nil check without ever
+	// being invoked; configuredProfile fills in the prompt-budget inputs
+	// from the same catalog bindingAllowsLocked already validates against.
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
-		return chat.ModelBinding{ProviderName: providerName, Model: model}, nil
+		profile, _ := configuredProfile(res, providerName, model)
+		return chat.ModelBinding{
+			ProviderName: providerName,
+			Model:        model,
+			Completer:    catalogReadOnlyCompleter{providerName: providerName},
+			Profile:      profile,
+		}, nil
 	})
 	invocation := chatInvocation{workspacePath: root}
 	if repoRoot, repoErr := chatRepositoryRoot(root); repoErr == nil {
@@ -227,7 +271,7 @@ func runSessionsShow(args []string, stdout io.Writer) error {
 		return fmt.Errorf("sessions show: %w", err)
 	}
 	defer store.Close()
-	if err := sess.Load(name); err != nil {
+	if err := sess.LoadReadOnly(name); err != nil {
 		return fmt.Errorf("sessions show: %w", err)
 	}
 	msgs := sess.MessagesCopy()
