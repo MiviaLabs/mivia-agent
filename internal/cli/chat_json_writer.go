@@ -17,6 +17,7 @@ import (
 //	{"type":"thinking","text":"..."}                         - one per emitted piece of model reasoning (chain of thought), for providers that expose it
 //	{"type":"tool_start","tool_call_id":"...","name":"...","input":"..."}  - a tool call began; input is a bounded, redacted preview
 //	{"type":"tool_end","tool_call_id":"...","name":"...","output":"..."}   - that tool call finished; output is a bounded, redacted preview
+//	{"type":"subagent_done","origin_task_id":"..."}  - a delegated subagent run finished; its loop will emit nothing further
 //	{"type":"model_changed","provider":"...","model":"...","discarded_effort":"..."}  - a /model switch succeeded; discarded_effort is set only if the switch dropped an active reasoning effort
 //	{"type":"effort_changed","model":"...","effort":"..."}  - an /effort switch succeeded
 //	{"type":"slash_info","message":"..."}          - any other slash command's informational output (status query, current model/effort, a soft failure like "model not available", ...)
@@ -25,14 +26,26 @@ import (
 //	{"type":"cancelled"}                           - exactly once, turn was SIGINT-interrupted
 //	{"type":"error","message":"…"}                 - exactly once, turn failed
 //
-// "thinking"/"tool_start"/"tool_end"/"model_changed"/"effort_changed"/
-// "slash_info"/"slash_error" are best-effort progress events: an older
-// consumer that only understands chunk/done/cancelled/error can ignore
-// unknown types and still render a correct transcript, since the final
-// answer text still arrives entirely via "chunk" events. The tool events
-// carry the same redacted preview fields the interactive TUI already renders
-// (see agentEventBridgeCallback in tui_events.go) - the wire representation
-// intentionally does not expose anything the TUI itself would not show.
+// "tool_start"/"tool_end" additionally carry "origin_task_id"/"origin_agent"/
+// "origin_depth" when the tool call was made by a delegated subagent rather
+// than the root loop (agent.EventSubagentStart/End - same field shape as
+// agent.EventToolStart/End, just attributed - see agent.EventOrigin's doc
+// comment). Root-loop tool calls omit all three origin fields entirely
+// (agent.EventOrigin's zero value), so an older consumer that only reads
+// tool_call_id/name/input/output still renders a correct, if unattributed,
+// transcript - a consumer that wants to group a subagent's nested tool
+// calls under its own run (rather than flatten them into the parent turn)
+// keys off origin_task_id.
+//
+// "thinking"/"tool_start"/"tool_end"/"subagent_done"/"model_changed"/
+// "effort_changed"/"slash_info"/"slash_error" are best-effort progress
+// events: an older consumer that only understands chunk/done/cancelled/error
+// can ignore unknown types and still render a correct transcript, since the
+// final answer text still arrives entirely via "chunk" events. The tool
+// events carry the same redacted preview fields the interactive TUI already
+// renders (see agentEventBridgeCallback in tui_events.go) - the wire
+// representation intentionally does not expose anything the TUI itself
+// would not show.
 //
 // model_changed/effort_changed/slash_info/slash_error exist because, before
 // them, every slash command routed through terminalSlashSink, which is a
@@ -73,6 +86,13 @@ type ndjsonEvent struct {
 	Model           string `json:"model,omitempty"`
 	Effort          string `json:"effort,omitempty"`
 	DiscardedEffort string `json:"discarded_effort,omitempty"`
+	// OriginTaskID/OriginAgent/OriginDepth attribute a tool_start/tool_end
+	// (or a subagent_done) to the delegated subagent that produced it - see
+	// agent.EventOrigin. Omitted entirely for the root loop's own tool
+	// calls (the common case).
+	OriginTaskID string `json:"origin_task_id,omitempty"`
+	OriginAgent  string `json:"origin_agent,omitempty"`
+	OriginDepth  int    `json:"origin_depth,omitempty"`
 }
 
 // jsonTurnEventCallback returns an agent.Event handler that translates
@@ -89,19 +109,30 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 			if e.Content != "" {
 				writeNDJSONEvent(w, ndjsonEvent{Type: "thinking", Text: e.Content})
 			}
-		case agent.EventToolStart:
+		case agent.EventToolStart, agent.EventSubagentStart:
 			writeNDJSONEvent(w, ndjsonEvent{
-				Type:       "tool_start",
-				ToolCallID: e.ToolCallID,
-				Name:       e.Name,
-				Input:      eventPreview(e.Input, e.Detail),
+				Type:         "tool_start",
+				ToolCallID:   e.ToolCallID,
+				Name:         e.Name,
+				Input:        eventPreview(e.Input, e.Detail),
+				OriginTaskID: e.Origin.TaskID,
+				OriginAgent:  e.Origin.Agent,
+				OriginDepth:  e.Origin.Depth,
 			})
-		case agent.EventToolEnd:
+		case agent.EventToolEnd, agent.EventSubagentEnd:
 			writeNDJSONEvent(w, ndjsonEvent{
-				Type:       "tool_end",
-				ToolCallID: e.ToolCallID,
-				Name:       e.Name,
-				Output:     eventPreview(e.Output, e.Detail),
+				Type:         "tool_end",
+				ToolCallID:   e.ToolCallID,
+				Name:         e.Name,
+				Output:       eventPreview(e.Output, e.Detail),
+				OriginTaskID: e.Origin.TaskID,
+				OriginAgent:  e.Origin.Agent,
+				OriginDepth:  e.Origin.Depth,
+			})
+		case agent.EventSubagentDone:
+			writeNDJSONEvent(w, ndjsonEvent{
+				Type:         "subagent_done",
+				OriginTaskID: e.Origin.TaskID,
 			})
 		}
 	}

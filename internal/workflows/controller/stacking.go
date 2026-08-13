@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/matcher"
@@ -64,10 +63,11 @@ func validateStackingReservedInputs(inputs map[string]any, cfg *definition.Stack
 }
 
 // admitStackingRun applies the stacking admission rules to a run's compiled
-// workflow: it validates the reserved inputs, synthesizes the run graph from
-// the compiler when the workflow is stacking, injects runtimes for the
-// synthesized steps, and binds the reserved chunk-mode inputs as context
-// inputs on downstream steps. Non-stacking workflows are returned unchanged.
+// workflow: it validates the reserved inputs, ensures the run graph carries the
+// engine-synthesized steps (decompose, chunk_plan_validate), verifies every
+// synthesized step has a complete agent runtime, and binds the reserved
+// chunk-mode inputs as context inputs on downstream steps. Non-stacking
+// workflows are returned unchanged.
 func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntime, inputs map[string]any) (*compiler.CompiledWorkflow, map[string]StepRuntime, error) {
 	if wf == nil || wf.Stacking == nil {
 		return wf, steps, nil
@@ -76,11 +76,17 @@ func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntim
 	if err != nil {
 		return nil, nil, err
 	}
+	// Synthesis is idempotent (compiler.SynthesizeStacking returns an already
+	// synthesized graph unchanged), so this is safe whether the runtime build
+	// synthesized the graph before building step runtimes or the controller is
+	// constructed directly over the compiled workflow.
 	synth, err := compiler.SynthesizeStacking(wf)
 	if err != nil {
 		return nil, nil, fmt.Errorf("synthesize stacking run graph: %w", err)
 	}
-	steps = ensureSynthesizedStepRuntimes(synth, wf, steps)
+	if err := requireSynthesizedStepRuntimes(synth, steps); err != nil {
+		return nil, nil, err
+	}
 	if mode != "chunk" {
 		return synth, steps, nil
 	}
@@ -90,52 +96,32 @@ func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntim
 	return injectChunkModeInputBindings(synth, inputs), steps, nil
 }
 
-// ensureSynthesizedStepRuntimes adds a runtime for every engine-synthesized
-// step (decompose, chunk_plan_validate) so an admitted stacking run can execute
-// it even though the author never declared one. The synthesized steps carry no
-// output_schema in the compiled definition, so the runtime schema stays nil.
-func ensureSynthesizedStepRuntimes(synth *compiler.CompiledWorkflow, original *compiler.CompiledWorkflow, steps map[string]StepRuntime) map[string]StepRuntime {
-	needed := false
+// requireSynthesizedStepRuntimes refuses to admit a stacking run whose
+// engine-synthesized steps (decompose, chunk_plan_validate) have no complete
+// agent runtime. The controller has no agent registry, so it can never resolve
+// one: the workflow runtime build - which has the registry - must have
+// synthesized the run graph first and resolved the synthesized steps like any
+// declared step, routing digest included. Admitting a synthesized step without
+// a digest would hand the runner a null routing snapshot, and the agent handler
+// would refuse every dispatch attempt ("agent task routing snapshot mismatch"),
+// so the run is refused at admission instead.
+func requireSynthesizedStepRuntimes(synth *compiler.CompiledWorkflow, steps map[string]StepRuntime) error {
 	for _, step := range synth.Steps {
-		if step.ID == synthesizedDecomposeStepID || step.ID == synthesizedChunkPlanValidateStepID {
-			if _, ok := steps[step.ID]; !ok {
-				needed = true
-				break
-			}
+		if step.ID != synthesizedDecomposeStepID && step.ID != synthesizedChunkPlanValidateStepID {
+			continue
+		}
+		rt, ok := steps[step.ID]
+		if !ok {
+			return fmt.Errorf("synthesized step %q has no agent runtime; the workflow runtime build must resolve it before admission", step.ID)
+		}
+		if strings.TrimSpace(rt.Agent.Name) == "" {
+			return fmt.Errorf("synthesized step %q has an empty agent runtime", step.ID)
+		}
+		if strings.TrimSpace(rt.Digest) == "" {
+			return fmt.Errorf("synthesized step %q has no agent routing digest; refusing to admit a step that could never dispatch", step.ID)
 		}
 	}
-	if !needed {
-		return steps
-	}
-	extended := make(map[string]StepRuntime, len(steps)+2)
-	for id, rt := range steps {
-		extended[id] = rt
-	}
-	agent := agentsFromWorkflow(original, synth.Stacking)
-	if _, ok := extended[synthesizedDecomposeStepID]; !ok {
-		extended[synthesizedDecomposeStepID] = StepRuntime{Agent: agent}
-	}
-	if _, ok := extended[synthesizedChunkPlanValidateStepID]; !ok {
-		extended[synthesizedChunkPlanValidateStepID] = StepRuntime{Agent: agent}
-	}
-	return extended
-}
-
-// agentsFromWorkflow names the agent that owns the engine-synthesized steps:
-// the stacking config's agent when set, otherwise the plan step's agent.
-func agentsFromWorkflow(wf *compiler.CompiledWorkflow, cfg *definition.StackingConfig) agents.ResolvedAgent {
-	if wf == nil || cfg == nil {
-		return agents.ResolvedAgent{}
-	}
-	if strings.TrimSpace(cfg.Agent) != "" {
-		return agents.ResolvedAgent{Name: cfg.Agent}
-	}
-	for _, step := range wf.Steps {
-		if step.ID == cfg.PlanStep {
-			return agents.ResolvedAgent{Name: step.Agent}
-		}
-	}
-	return agents.ResolvedAgent{}
+	return nil
 }
 
 // preImplementSteps returns the set of steps whose outputs cannot exist when a
@@ -162,6 +148,12 @@ func preImplementSteps(synth *compiler.CompiledWorkflow) map[string]bool {
 func validateChunkModeBindings(synth *compiler.CompiledWorkflow) error {
 	preImplement := preImplementSteps(synth)
 	for _, step := range synth.Steps {
+		// Engine-synthesized plan-phase steps (decompose, chunk_plan_validate)
+		// never execute in chunk mode - the run starts at the implement step -
+		// so their synthesized plan-phase bindings must not fail admission.
+		if step.ID == synthesizedDecomposeStepID || step.ID == synthesizedChunkPlanValidateStepID {
+			continue
+		}
 		for _, binding := range step.Context {
 			fromStep, ok := bindingStepFrom(binding.From)
 			if !ok || !preImplement[fromStep] {

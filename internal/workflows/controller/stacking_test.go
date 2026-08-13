@@ -58,9 +58,15 @@ func stackingFixtureWith(t *testing.T, implementContext []definition.ContextBind
 
 func stackingRuntimes() map[string]StepRuntime {
 	return map[string]StepRuntime{
-		"plan":      {Agent: agents.ResolvedAgent{Name: "eng"}},
-		"implement": {Agent: agents.ResolvedAgent{Name: "dev"}},
-		"verify":    {Agent: agents.ResolvedAgent{Name: "rev"}},
+		"plan":      {Agent: agents.ResolvedAgent{Name: "eng"}, Digest: "sha256:eng"},
+		"implement": {Agent: agents.ResolvedAgent{Name: "dev"}, Digest: "sha256:dev"},
+		"verify":    {Agent: agents.ResolvedAgent{Name: "rev"}, Digest: "sha256:rev"},
+		// Engine-synthesized steps run on the plan step's agent (the fixture
+		// sets no stacking.agent) and MUST carry a routing digest like any
+		// declared step: admission refuses a synthesized step whose runtime is
+		// missing or digest-less, because such a step could never dispatch.
+		"decompose":           {Agent: agents.ResolvedAgent{Name: "eng"}, Digest: "sha256:eng"},
+		"chunk_plan_validate": {Agent: agents.ResolvedAgent{Name: "eng"}, Digest: "sha256:eng"},
 	}
 }
 
@@ -161,6 +167,49 @@ func TestStackingAdmissionNonStackingWorkflowUnchanged(t *testing.T) {
 	if got := ctrl.runStartStepID(); got != "first" {
 		t.Fatalf("non-stacking run starts at %q; want %q", got, "first")
 	}
+}
+
+// TestStackingAdmissionRefusesDigestlessSynthesizedSteps pins the admission
+// invariant behind the "agent task routing snapshot mismatch (resume not
+// allowed)" failures: a synthesized step (decompose, chunk_plan_validate)
+// admitted with a missing or digest-less runtime could never dispatch - the
+// agent handler refuses null routing snapshots. Admission must refuse the run
+// instead of letting it die at its first synthesized step.
+func TestStackingAdmissionRefusesDigestlessSynthesizedSteps(t *testing.T) {
+	wf := stackingFixture(t)
+	runner := &scriptedRunner{}
+	inputs := map[string]any{"task": "build"}
+
+	t.Run("missing synthesized runtime", func(t *testing.T) {
+		steps := stackingRuntimes()
+		delete(steps, synthesizedDecomposeStepID)
+		repo := workflowledger.NewMemoryRepository()
+		_, err := NewLinearController(repo, runner, wf, steps, inputs, "wfr-stacking", []byte("snap"))
+		if err == nil || !strings.Contains(err.Error(), "no agent runtime") {
+			t.Fatalf("admission error = %v; want missing-runtime refusal", err)
+		}
+	})
+
+	t.Run("empty routing digest", func(t *testing.T) {
+		steps := stackingRuntimes()
+		steps[synthesizedDecomposeStepID] = StepRuntime{Agent: agents.ResolvedAgent{Name: "eng"}}
+		repo := workflowledger.NewMemoryRepository()
+		_, err := NewLinearController(repo, runner, wf, steps, inputs, "wfr-stacking", []byte("snap"))
+		if err == nil || !strings.Contains(err.Error(), "routing digest") {
+			t.Fatalf("admission error = %v; want routing-digest refusal", err)
+		}
+	})
+
+	t.Run("complete runtimes admit and survive", func(t *testing.T) {
+		ctrl, err := newStackingController(t, runner, wf, inputs)
+		if err != nil {
+			t.Fatalf("admission rejected a run with complete synthesized runtimes: %v", err)
+		}
+		rt := ctrl.Steps[synthesizedDecomposeStepID]
+		if rt.Digest == "" || rt.Agent.Name != "eng" {
+			t.Fatalf("admitted decompose runtime = %+v; want the digest-carrying eng runtime", rt)
+		}
+	})
 }
 
 func TestStackingChunkRunStartsAtImplementStep(t *testing.T) {

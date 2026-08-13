@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -179,8 +180,8 @@ func TestSynthesizeStacking_InjectsSteps(t *testing.T) {
 	if decompose.OutputSchema != "schemas/chunk-plan-v1.json" {
 		t.Errorf("decompose output_schema = %q, want schemas/chunk-plan-v1.json", decompose.OutputSchema)
 	}
-	if len(decompose.Context) != 0 {
-		t.Errorf("decompose context = %v, want no bindings", decompose.Context)
+	if !hasBinding(decompose.Context, "steps.plan.output", "plan") {
+		t.Errorf("decompose context = %v, want steps.plan.output bound as plan", decompose.Context)
 	}
 
 	gate := stepByID(t, synth, "chunk_plan_validate")
@@ -192,6 +193,9 @@ func TestSynthesizeStacking_InjectsSteps(t *testing.T) {
 	}
 	if gate.OutputSchema != "schemas/chunk-plan-review-v1.json" {
 		t.Errorf("chunk_plan_validate output_schema = %q, want schemas/chunk-plan-review-v1.json", gate.OutputSchema)
+	}
+	if !hasBinding(gate.Context, "steps.decompose.output", "chunk_plan") {
+		t.Errorf("chunk_plan_validate context = %v, want steps.decompose.output bound as chunk_plan", gate.Context)
 	}
 	if !synth.StepIDs["decompose"] || !synth.StepIDs["chunk_plan_validate"] {
 		t.Error("StepIDs missing synthesized step ids")
@@ -307,13 +311,16 @@ func TestSynthesizeStacking_RepairLoopIsTheOnlyCycle(t *testing.T) {
 		t.Errorf("loop decompose_repair max_iterations = %d, want 3", loop.MaxIterations)
 	}
 
-	// The graph has exactly one cycle: decompose -> chunk_plan_validate -> decompose.
+	// The graph has exactly one cycle: decompose -> chunk_plan_validate ->
+	// decompose. backEdges iterates StepIDs in map order, so the reported
+	// direction of the back edge is nondeterministic; assert the pair.
 	edges := backEdges(synth)
 	if len(edges) != 1 {
 		t.Fatalf("back edges = %v, want exactly one cycle", edges)
 	}
-	if edges[0] != [2]string{"chunk_plan_validate", "decompose"} {
-		t.Errorf("cycle = %v, want [chunk_plan_validate decompose]", edges[0])
+	a, b := edges[0][0], edges[0][1]
+	if !((a == "chunk_plan_validate" && b == "decompose") || (a == "decompose" && b == "chunk_plan_validate")) {
+		t.Errorf("cycle = %v, want the decompose <-> chunk_plan_validate edge", edges[0])
 	}
 }
 
@@ -485,4 +492,120 @@ func TestSynthesizedInputs(t *testing.T) {
 	if got := SynthesizedInputs(nil); got != nil {
 		t.Errorf("SynthesizedInputs(nil) = %v, want nil", got)
 	}
+}
+
+// TestSynthesizeStacking_MultiStepPlanPhaseAnchorsRouterAtPlanPhaseExit pins
+// the regression the feature-delivery smoke run found: a workflow with a
+// multi-step plan phase (plan -> plan_review -> plan_tests ->
+// test_plan_review -> implement) must synthesize a graph that keeps every
+// plan-phase step reachable. The router anchors at the last plan-phase step
+// (test_plan_review), not at the plan step, so admission validation passes
+// and the implement step's plan-phase bindings stay resolvable in single
+// mode.
+func TestSynthesizeStacking_MultiStepPlanPhaseAnchorsRouterAtPlanPhaseExit(t *testing.T) {
+	wf := stackingFixture()
+	wf.Steps = []definition.Step{
+		{ID: "plan", Kind: "agent", Agent: "workflow-engineer"},
+		{ID: "plan_review", Kind: "agent", Agent: "reviewer"},
+		{ID: "plan_tests", Kind: "agent", Agent: "workflow-engineer"},
+		{ID: "test_plan_review", Kind: "agent", Agent: "reviewer"},
+		{ID: "implement", Kind: "agent", Agent: "workflow-engineer",
+			OutputSchema: "schemas/change-summary-v1.json",
+			Context: []definition.ContextBinding{
+				{From: "steps.plan.output", As: "plan"},
+				{From: "steps.plan_tests.output", As: "test_plan"},
+			}},
+	}
+	wf.Transitions = []definition.Transition{
+		{From: "plan", To: "plan_review", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "plan_review", To: "plan_tests", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}}},
+		{From: "plan_review", To: "plan", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "plan_review_repair", MaxIterations: 5},
+		{From: "plan_tests", To: "test_plan_review", Match: definition.MatchCriteria{Status: "succeeded"}},
+		{From: "test_plan_review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}}},
+		{From: "test_plan_review", To: "plan_tests", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "test_plan_review_repair", MaxIterations: 5},
+		{From: "implement", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+	}
+	cw, err := Compile(wf)
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+	if cw.Stacking == nil {
+		t.Fatal("fixture did not resolve stacking")
+	}
+	synth, err := SynthesizeStacking(cw)
+	if err != nil {
+		t.Fatalf("SynthesizeStacking failed: %v", err)
+	}
+
+	// The router anchors at the plan-phase exit, not at the plan step.
+	if !transitionMatches(synth, "test_plan_review", "decompose", "succeeded") {
+		t.Error("router test_plan_review -> decompose (succeeded) missing")
+	}
+	if transitionMatches(synth, "test_plan_review", "implement", "succeeded") {
+		t.Error("superseded test_plan_review -> implement (approved) survived synthesis")
+	}
+	// Plan-phase edges before the anchor survive, including the repair loop.
+	for _, want := range [][3]string{
+		{"plan", "plan_review", "succeeded"},
+		{"plan_review", "plan_tests", "succeeded"},
+		{"plan_tests", "test_plan_review", "succeeded"},
+		{"test_plan_review", "plan_tests", "succeeded"},
+	} {
+		if !transitionMatches(synth, want[0], want[1], want[2]) {
+			t.Errorf("plan-phase edge %s -> %s (%s) was removed", want[0], want[1], want[2])
+		}
+	}
+	// Every declared step stays reachable in the synthesized graph.
+	if unreachable := unreachableStepIDs(synth); len(unreachable) > 0 {
+		t.Errorf("unreachable steps after synthesis: %v", unreachable)
+	}
+	// Synthesized steps carry the context bindings their templates require.
+	decompose := stepByID(t, synth, "decompose")
+	if !hasBinding(decompose.Context, "steps.plan.output", "plan") {
+		t.Errorf("decompose missing plan binding, got %+v", decompose.Context)
+	}
+	gate := stepByID(t, synth, "chunk_plan_validate")
+	if !hasBinding(gate.Context, "steps.decompose.output", "chunk_plan") {
+		t.Errorf("gate missing chunk_plan binding, got %+v", gate.Context)
+	}
+}
+
+// unreachableStepIDs returns the declared step ids not reachable from the
+// initial step over the workflow's transitions.
+func unreachableStepIDs(cw *CompiledWorkflow) []string {
+	seen := map[string]bool{cw.InitialStep: true}
+	queue := []string{cw.InitialStep}
+	adj := map[string][]string{}
+	for _, tr := range cw.Transitions {
+		adj[tr.From] = append(adj[tr.From], tr.To)
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, next := range adj[cur] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	var out []string
+	for id := range cw.StepIDs {
+		if !seen[id] {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// hasBinding reports whether bindings contains a binding with the given from
+// source and as target.
+func hasBinding(bindings []definition.ContextBinding, from, as string) bool {
+	for _, b := range bindings {
+		if b.From == from && b.As == as {
+			return true
+		}
+	}
+	return false
 }

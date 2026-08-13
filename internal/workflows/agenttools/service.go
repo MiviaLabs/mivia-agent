@@ -337,17 +337,40 @@ func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offs
 	items := make([]RunListItem, 0, len(page))
 	for _, r := range page {
 		item := RunListItem{
-			RunID:     r.RunID,
-			Workflow:  r.WorkflowName,
-			Status:    string(r.Status),
-			StartedAt: formatTime(r.StartedAt),
+			RunID:      r.RunID,
+			Workflow:   r.WorkflowName,
+			Status:     string(r.Status),
+			StartedAt:  formatTime(r.StartedAt),
+			ActiveStep: r.ActiveStepID,
 		}
 		if !r.StartedAt.IsZero() {
 			item.Age = now.UTC().Sub(r.StartedAt.UTC()).Truncate(time.Second).String()
 		}
+		if !workflowledger.IsTerminalRunStatus(r.Status) && r.ActiveStepID != "" {
+			item.LastHeartbeatAt = formatTime(activeStepHeartbeat(ctx, repo, r.RunID, r.ActiveStepID))
+		}
 		items = append(items, item)
 	}
 	return ListRunsView{Runs: items, Limit: limit, Offset: offset, Count: len(items)}, nil
+}
+
+// activeStepHeartbeat returns the newest heartbeat recorded for runID's
+// active step, or the zero time when the run has no attempts on that step
+// yet or the ledger read fails - a list view degrades to "no heartbeat
+// column" rather than failing the whole listing over one run's read.
+func activeStepHeartbeat(ctx context.Context, repo workflowledger.Repository, runID, activeStepID string) time.Time {
+	attempts, err := repo.ListStepAttempts(ctx, runID)
+	if err != nil {
+		return time.Time{}
+	}
+	// Attempts are ordered by event sequence; the active attempt is the
+	// newest one recorded for the active step.
+	for i := len(attempts) - 1; i >= 0; i-- {
+		if attempts[i].StepID == activeStepID {
+			return attempts[i].LastHeartbeatAt
+		}
+	}
+	return time.Time{}
 }
 
 // encodeJSON marshals v and enforces a result budget (fail closed, no cut).

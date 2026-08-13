@@ -194,6 +194,39 @@ func TestFindingEvidenceQuotingBlockedPathRoutesNormally(t *testing.T) {
 	}
 }
 
+// TestReviewDemandingTestFixturePathRoutesNormally pins the smoke regression:
+// a review finding whose required text describes a TEST FIXTURE (a helper
+// that creates a temporary directory containing ".mivia/workflows" and writes
+// fixture TOML files into it) describes the future test's layout, not a
+// demand to edit the host's .mivia/workflows. Before the fix, the detector
+// misread "creates ... with .mivia/workflows, writes workflow TOML files" as
+// a write demand and failed the run as blocked instead of routing on the
+// repair-loop back-edge.
+func TestReviewDemandingTestFixturePathRoutesNormally(t *testing.T) {
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": cleanImplementJSON(),
+		"review#1":    json.RawMessage(`{"verdict":"changes_requested","findings":[{"id":"R0-1","severity":"medium","reason":"The test plan references helpers writeWorkflowFixture and runWorkflowsWithIO that do not exist in the tree.","required":"Add writeWorkflowFixture to the new internal/cli/workflows_command_json_test.go (or shared test helpers) that creates a temporary directory with .mivia/workflows, writes workflow TOML files from test definitions, and returns the workspace root."}]}`),
+		"implement#2": cleanImplementJSON("R0-1"),
+		"review#2":    reviewJSON("approved"),
+	}}
+	ctrl := blockedController(t, runner, "wfr-blocked-fixture")
+	got, err := ctrl.Run(context.Background())
+	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run = %+v err=%v, want a succeeded run (the fixture description must route on the loop back-edge)", got, err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	implements := 0
+	for _, call := range runner.calls {
+		if call.StepID == "implement" {
+			implements++
+		}
+	}
+	if implements != 2 {
+		t.Fatalf("implement calls = %d, want 2 (the loop back-edge must still work)", implements)
+	}
+}
+
 // TestZeroProgressStillFailsWhenNothingBlocked pins the existing stall guard:
 // with the blocklist installed but no blocked signal anywhere, identical
 // review findings must still fail with the zero-progress cause, not a blocked

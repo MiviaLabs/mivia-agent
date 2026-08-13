@@ -10,6 +10,15 @@ import (
 
 // newRunController pins admission inputs before it creates a workflow run.
 func (e *Engine) newRunController(compiled *compiler.CompiledWorkflow, raw []byte, baseDir string, inputs map[string]any, inputSnapshot map[string]string, runID, invocationKey string) (*controller.LinearController, controller.Admission, error) {
+	// A stacking run EXECUTES the synthesized graph: decompose and
+	// chunk_plan_validate must be admitted like declared steps - schemas
+	// loaded, runtimes built with a routing digest - or the controller would
+	// refuse a digest-less synthesized step. Synthesis is idempotent, so
+	// non-stacking workflows pass through unchanged.
+	compiled, err := compiler.SynthesizeStacking(compiled)
+	if err != nil {
+		return nil, controller.Admission{}, err
+	}
 	schemas, err := loadOutputSchemas(baseDir, compiled)
 	if err != nil {
 		return nil, controller.Admission{}, err

@@ -25,7 +25,7 @@ func runWorkflowCommandRun(args []string, workspaceRoot, configPath string, stdo
 	return executeWorkflowRun(rest[0], workspaceRoot, configPath, inputs, allowPublish, stdout, stderr)
 }
 
-// runWorkflowCommandRuns parses `workflow runs [--status s] [--limit n]`.
+// runWorkflowCommandRuns parses `workflow runs [--status s] [--limit n] [--json]`.
 // It takes no positional arguments.
 func runWorkflowCommandRuns(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
 	status, rest, err := parseWorkflowStringFlag(args, "--status")
@@ -33,6 +33,10 @@ func runWorkflowCommandRuns(args []string, workspaceRoot, configPath string, std
 		return err
 	}
 	watch, rest, err := parseWorkflowBoolFlag(rest, "--watch")
+	if err != nil {
+		return err
+	}
+	jsonMode, rest, err := parseWorkflowBoolFlag(rest, "--json")
 	if err != nil {
 		return err
 	}
@@ -51,6 +55,12 @@ func runWorkflowCommandRuns(args []string, workspaceRoot, configPath string, std
 		default:
 			return fmt.Errorf("workflow runs: unexpected argument %q", rest[i])
 		}
+	}
+	if jsonMode {
+		if watch {
+			return fmt.Errorf("workflow runs: --json and --watch are mutually exclusive")
+		}
+		return executeWorkflowRunsJSON(workspaceRoot, configPath, status, limit, stdout)
 	}
 	if watch {
 		return executeWorkflowRunsWatch(workspaceRoot, configPath, status, limit, stdout, stderr)
@@ -81,10 +91,17 @@ func runWorkflowCommandResume(args []string, workspaceRoot, configPath string, f
 }
 
 func runWorkflowCommandStatus(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
-	if len(args) != 1 {
+	jsonMode, rest, err := parseWorkflowBoolFlag(args, "--json")
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
 		return fmt.Errorf("workflow status: expected one run ID")
 	}
-	return executeWorkflowStatus(args[0], workspaceRoot, configPath, stdout, stderr)
+	if jsonMode {
+		return executeWorkflowStatusJSON(rest[0], workspaceRoot, configPath, stdout)
+	}
+	return executeWorkflowStatus(rest[0], workspaceRoot, configPath, stdout, stderr)
 }
 
 func runWorkflowCommandEvents(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
