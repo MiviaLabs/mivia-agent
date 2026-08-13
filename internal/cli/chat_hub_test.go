@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -56,7 +57,7 @@ func TestExternalEventBelongsToSession(t *testing.T) {
 // chunks, keyed by run_id, not a single shared scalar.
 func TestRenderExternalEventTracksConcurrentRunsIndependently(t *testing.T) {
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{})}
+	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
 
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "hi from run A"})
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "reply A"})
@@ -101,6 +102,63 @@ func TestRenderExternalEventTracksConcurrentRunsIndependently(t *testing.T) {
 	}
 }
 
+// TestRenderExternalEventStreamsDeltasLiveWithoutDuplicatingContent:
+// regression for a cross-process observer seeing nothing while a plain-text
+// reply generated, then the whole answer at once - only the final
+// aggregate EventAssistant (published once, after generation finished) ever
+// reached the hub. Now teeWriter (internal/agent/loop.go) also publishes
+// each chunk live with Detail="delta" as it streams; the receiver must
+// relay each one as it arrives, and must NOT also relay the final
+// non-delta aggregate for the same run (that would show the reply twice).
+func TestRenderExternalEventStreamsDeltasLiveWithoutDuplicatingContent(t *testing.T) {
+	var buf bytes.Buffer
+	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "hi"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "Hello, ", Detail: "delta"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "world!", Detail: "delta"})
+	// The aggregate that commitFinalAnswer still always publishes, with the
+	// FULL content and no Detail - must be dropped, since deltas already
+	// covered this run.
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "Hello, world!"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnEnd, SessionID: "s1", TurnID: "turn:1"})
+
+	lines := decodeNDJSONLines(t, buf.String())
+	var chunks []string
+	for _, l := range lines {
+		if l.Type == "external_chunk" {
+			chunks = append(chunks, l.Text)
+		}
+	}
+	if !reflect.DeepEqual(chunks, []string{"Hello, ", "world!"}) {
+		t.Fatalf("chunks = %+v, want exactly the two live deltas (aggregate must be suppressed)", chunks)
+	}
+}
+
+// TestRenderExternalEventFallsBackToAggregateWithoutDeltas: a run that never
+// streamed a delta at all (a non-streaming caller, FinalWriter unset) must
+// still surface its content via the final aggregate - the fallback, not a
+// silent drop.
+func TestRenderExternalEventFallsBackToAggregateWithoutDeltas(t *testing.T) {
+	var buf bytes.Buffer
+	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "hi"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "whole reply at once"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnEnd, SessionID: "s1", TurnID: "turn:1"})
+
+	lines := decodeNDJSONLines(t, buf.String())
+	var chunks []string
+	for _, l := range lines {
+		if l.Type == "external_chunk" {
+			chunks = append(chunks, l.Text)
+		}
+	}
+	if !reflect.DeepEqual(chunks, []string{"whole reply at once"}) {
+		t.Fatalf("chunks = %+v, want the fallback aggregate", chunks)
+	}
+}
+
 func decodeNDJSONLines(t *testing.T, s string) []ndjsonEvent {
 	t.Helper()
 	var out []ndjsonEvent
@@ -124,7 +182,7 @@ func decodeNDJSONLines(t *testing.T, s string) []ndjsonEvent {
 // production logic, not a reimplementation of it.
 func newBufSink(sess *chat.Session) (hub.Sink, *hubOutBuffer) {
 	buf := &hubOutBuffer{}
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{})}
+	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
 	return func(ev events.Event) {
 		if !externalEventBelongsToSession(sess, ev) {
 			return

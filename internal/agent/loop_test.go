@@ -722,3 +722,74 @@ func TestLoopSkipsMalformedToolCallArguments(t *testing.T) {
 		t.Fatalf("expected a bounded error result for malformed call; messages: %+v", loop.Messages)
 	}
 }
+
+// TestTeeWriterPublishesLiveDeltas: a cross-process observer (internal/hub's
+// relay) only ever saw commitFinalAnswer's single aggregate EventAssistant,
+// published once the whole reply was already generated - so an external view
+// of a plain-text reply showed nothing while it streamed, then the whole
+// thing at once. teeWriter must republish each Write as its own
+// Detail="delta" EventAssistant, live, in addition to forwarding to the
+// real writer unchanged.
+func TestTeeWriterPublishesLiveDeltas(t *testing.T) {
+	bus := events.New()
+	var mu sync.Mutex
+	var deltas []events.Event
+	bus.Subscribe(events.KindAssistant, events.HandlerFunc(func(_ context.Context, ev events.Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		deltas = append(deltas, ev)
+	}))
+	defer bus.Close()
+
+	var forwarded strings.Builder
+	tw := &teeWriter{w: &forwarded, opts: Options{
+		EventBus: bus, SessionID: "sess-1", TurnID: "turn:1",
+	}}
+
+	if _, err := tw.Write([]byte("Hello, ")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := tw.Write([]byte("world!")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	bus.Flush()
+
+	if forwarded.String() != "Hello, world!" {
+		t.Fatalf("real writer got %q, want the full forwarded text", forwarded.String())
+	}
+	if tw.String() != "Hello, world!" {
+		t.Fatalf("teeWriter.String() = %q, want the buffered copy", tw.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deltas) != 2 {
+		t.Fatalf("expected 2 delta events, got %d: %+v", len(deltas), deltas)
+	}
+	for i, want := range []string{"Hello, ", "world!"} {
+		if deltas[i].Content != want || deltas[i].Detail != "delta" ||
+			deltas[i].SessionID != "sess-1" || deltas[i].TurnID != "turn:1" {
+			t.Fatalf("delta[%d] = %+v, want Content=%q Detail=delta SessionID=sess-1 TurnID=turn:1", i, deltas[i], want)
+		}
+	}
+}
+
+// TestTeeWriterSkipsEmptyWrites: an empty Write (a defensive no-op some
+// writers issue) must not publish a meaningless empty delta.
+func TestTeeWriterSkipsEmptyWrites(t *testing.T) {
+	bus := events.New()
+	var count atomic.Int32
+	bus.Subscribe(events.KindAssistant, events.HandlerFunc(func(_ context.Context, _ events.Event) {
+		count.Add(1)
+	}))
+	defer bus.Close()
+
+	tw := &teeWriter{w: io.Discard, opts: Options{EventBus: bus, SessionID: "s", TurnID: "t"}}
+	if _, err := tw.Write(nil); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	bus.Flush()
+	if count.Load() != 0 {
+		t.Fatalf("expected no delta published for an empty write, got %d", count.Load())
+	}
+}
