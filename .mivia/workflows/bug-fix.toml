@@ -550,4 +550,9 @@ on_pr_metadata_failure = "repair_pr_metadata"
 # the run settles terminal (delivery_failed) with the last rejection recorded.
 # The default is 5; set it lower to fail fast or higher for stubborn gates.
 max_repairs = 5
+# deliver_plan_run defaults to false: a stacking plan run is the stack root,
+# not a deliverable, so after its chunk stack is driven the plan run settles
+# succeeded and no PR is created for it (the plan and its artifacts stay
+# recorded in the ledger). Set true to also publish the plan run's own PR.
+deliver_plan_run = false
 commit_message_template = "fix(agent): bug-fix delivery\n\nDelivers: {{ inputs.scope }}\n\nRegression: none (regression coverage is added by the implement step and verified by the workflow's evidence gates)\nClass: none (workflow-delivered bug fix; the finding class is recorded in the delivery PR body)\nSweep: none (the hunt step runs the same-class sweep inside the declared scope)"
