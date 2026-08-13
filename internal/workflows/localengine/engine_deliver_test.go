@@ -666,3 +666,61 @@ scopes = ["feat"]
 		t.Fatalf("PR create calls = %d, want zero before metadata validation: %+v", len(created), created)
 	}
 }
+
+// TestEngineDeliverReopensDeliveryFailedAndSucceeds pins the engine-level
+// INV-DUR-1 re-entry edge: a run settled delivery_failed (a refused or failed
+// delivery) is re-delivered through Engine.Deliver, which re-opens it
+// (delivery_failed -> delivery_pending via the shared promoteToDeliveryPending
+// guard), publishes, and CASes it terminal (delivery_pending -> succeeded).
+// The delivery package covers the inner guard (TestDeliverDeliveryFailedReentry)
+// and the CLI covers its own path; this test pins the ENGINE path end to end
+// and asserts the terminal settle, a single PR (no duplicate Create), the
+// succeeded delivery record, and the branch pushed to origin.
+func TestEngineDeliverReopensDeliveryFailedAndSucceeds(t *testing.T) {
+	repoRoot, originURL, run, repo := newSeededDeliveryFixture(t)
+
+	// Settle the run to delivery_failed the way a refused or failed delivery
+	// does (the engine's refusal path CASes delivery_pending->delivery_failed).
+	cur, err := repo.GetRun(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(context.Background(), run.RunID, cur.Version, workflowledger.RunStatusDeliveryFailed, nil); err != nil {
+		t.Fatalf("CAS to delivery_failed: %v", err)
+	}
+
+	pr := &recordingPR{}
+	engine := &localengine.Engine{WorkspaceRoot: repoRoot, Repo: repo, PR: pr}
+	res, err := engine.Deliver(context.Background(), run.RunID, true)
+	if err != nil {
+		t.Fatalf("Engine.Deliver on a delivery_failed run: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("deliver result = %+v, want succeeded", res)
+	}
+	created := pr.createdPRs()
+	if len(created) != 1 {
+		t.Fatalf("PR create calls = %d, want 1 (no duplicate Create): %+v", len(created), created)
+	}
+	if created[0].Base != "main" || created[0].Head != "wf/wt-test" {
+		t.Fatalf("PR input = %+v, want base=main head=wf/wt-test", created[0])
+	}
+	fresh, err := repo.GetRun(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run status = %q, want succeeded (engine-level re-entry settles the terminal state)", fresh.Status)
+	}
+	rec, err := repo.GetDeliveryByIdempotencyKey(context.Background(), delivery.DeliveryKey(run.RunID, run.WorkflowDigest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != "succeeded" {
+		t.Fatalf("delivery record status = %q, want succeeded", rec.Status)
+	}
+	// The push stage must have published the branch to the origin remote.
+	if out := runGitOutT(t, originURL, "show-ref", "--verify", "--hash", "refs/heads/wf/wt-test"); out == "" {
+		t.Fatal("branch wf/wt-test was not pushed to origin")
+	}
+}
