@@ -89,6 +89,14 @@ type externalTurnState struct {
 	mu              sync.Mutex
 	pendingUserText string
 	seenRunIDs      map[string]struct{}
+	// deltaSeenRunIDs tracks which runs have already relayed at least one
+	// incremental content chunk (events.Event.Detail=="delta" - see
+	// internal/agent/loop.go's teeWriter) - see renderExternalTurnEvent's
+	// KindAssistant case for why the final aggregate event is skipped for
+	// a run that already streamed live, and kept as a fallback for one
+	// that never streamed at all (FinalWriter unset, a non-interactive
+	// caller).
+	deltaSeenRunIDs map[string]struct{}
 }
 
 // chatHubSink returns a hub.Sink that renders another process's events for
@@ -109,7 +117,10 @@ func chatHubSink(sess *chat.Session, jsonMode bool) hub.Sink {
 	if !jsonMode {
 		return nil
 	}
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{})}
+	state := &externalTurnState{
+		seenRunIDs:      make(map[string]struct{}),
+		deltaSeenRunIDs: make(map[string]struct{}),
+	}
 	return func(ev events.Event) {
 		if !externalEventBelongsToSession(sess, ev) {
 			return
@@ -148,16 +159,30 @@ func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event)
 		})
 		state.pendingUserText = ""
 	}
-	renderExternalTurnEvent(w, ev)
+	renderExternalTurnEvent(w, state, ev)
 	if ev.Kind == events.KindSubagentDone || ev.Kind == events.KindTurnEnd || ev.Kind == events.KindError {
 		delete(state.seenRunIDs, ev.TurnID)
+		delete(state.deltaSeenRunIDs, ev.TurnID)
 	}
 }
 
-func renderExternalTurnEvent(w io.Writer, ev events.Event) {
+// renderExternalTurnEvent's KindAssistant case only relays a "delta" chunk
+// (streamed live - see teeWriter) as it arrives, and only falls back to
+// relaying the turn-end aggregate (Detail!="delta") when this run never
+// streamed one at all - a run that already got live deltas would otherwise
+// see the same content twice, once incrementally and once again in full.
+func renderExternalTurnEvent(w io.Writer, state *externalTurnState, ev events.Event) {
 	switch ev.Kind {
 	case events.KindAssistant:
-		if ev.Content != "" {
+		if ev.Content == "" {
+			break
+		}
+		if ev.Detail == "delta" {
+			state.deltaSeenRunIDs[ev.TurnID] = struct{}{}
+			writeNDJSONEvent(w, ndjsonEvent{Type: "external_chunk", RunID: ev.TurnID, Text: ev.Content})
+			break
+		}
+		if _, streamed := state.deltaSeenRunIDs[ev.TurnID]; !streamed {
 			writeNDJSONEvent(w, ndjsonEvent{Type: "external_chunk", RunID: ev.TurnID, Text: ev.Content})
 		}
 	case events.KindThinking:

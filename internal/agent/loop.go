@@ -211,13 +211,29 @@ func (l *Loop) pruneHistory(opts Options, toolSpecs []provider.ToolSpec) {
 // teeWriter forwards live stream bytes to the real writer while keeping a copy,
 // so an interrupted step can recover the text the user already saw. Writes come
 // from the synchronous provider call on runStep's own goroutine, so no locking.
+//
+// It also republishes each delta to opts.EventBus (Detail="delta") as it
+// streams, not just the one aggregate EventAssistant commitFinalAnswer emits
+// once the whole response is ready. That aggregate is the only signal a
+// cross-process observer (internal/hub's relay, mivia-agent-desktop) ever
+// saw, so an external view of a plain-text reply showed nothing until the
+// entire answer was already done, then the whole thing at once - "thinking"
+// forever, never "streaming". Existing EventBus consumers are unaffected:
+// agentEventBridgeCallback's own EventAssistant case only acts on
+// Detail=="interim" (see its comment - the TUI's own display already gets
+// live text via this same FinalWriter, not through the bus), and
+// jsonTurnEventCallback has no EventAssistant case at all.
 type teeWriter struct {
-	w   io.Writer
-	buf strings.Builder
+	w    io.Writer
+	buf  strings.Builder
+	opts Options
 }
 
 func (t *teeWriter) Write(p []byte) (int, error) {
 	t.buf.Write(p)
+	if len(p) > 0 {
+		emit(t.opts, Event{Kind: EventAssistant, Content: string(p), Detail: "delta"})
+	}
 	if t.w == nil {
 		return len(p), nil
 	}
@@ -300,7 +316,7 @@ func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts 
 	var live *teeWriter
 	streamWriter := opts.FinalWriter
 	if stream {
-		live = &teeWriter{w: opts.FinalWriter}
+		live = &teeWriter{w: opts.FinalWriter, opts: opts}
 		streamWriter = live
 	}
 	req, err := l.stepRequest(ctx, toolSpecs, opts, stream, streamWriter)

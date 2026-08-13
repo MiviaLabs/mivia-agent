@@ -36,6 +36,8 @@ FUNC_START = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)"  # name
 )
 
+COMMENT_LINE = re.compile(r"^\s*//")
+
 
 def load_policy() -> dict:
     if not POLICY_PATH.is_file():
@@ -165,9 +167,27 @@ def parse_functions(path: Path) -> list[tuple[str, int, int]]:
     return funcs
 
 
+def find_comment_blocks(path: Path) -> list[tuple[int, int]]:
+    """Return 1-indexed inclusive (start, end) ranges of consecutive `//` runs."""
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    blocks: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, line in enumerate(lines, start=1):
+        if COMMENT_LINE.match(line):
+            if start is None:
+                start = i
+        elif start is not None:
+            blocks.append((start, i - 1))
+            start = None
+    if start is not None:
+        blocks.append((start, len(lines)))
+    return blocks
+
+
 def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
     fl = policy["fileLines"]
     fn = policy["funcLines"]
+    cb = policy["commentBlockLines"]
     baseline = (policy.get("baseline") or {}).get("files") or {}
     excludes = policy.get("excludeGlobs") or []
     hard_fail = 0
@@ -250,6 +270,34 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
                     file=sys.stderr,
                 )
                 warnings += 1
+
+        # Comment blocks - rule 30 caps a single rationale block; longer
+        # rationale belongs in docs/ with a link, not a comment essay. Soft is
+        # informational only (never strict-promoted): dense WHY comments up
+        # to ~25 lines are established style here, not debt. Hard is a real
+        # gate against new essays; the handful of files already past it are
+        # grandfathered growth-only via cb["baseline"], same as fileLines.
+        csoft = int(cb["soft"])
+        chard = int(cb["hard"])
+        cbase = (cb.get("baseline") or {}).get(r)
+        cbase_max = int(cbase) if cbase is not None else None
+        for start, end in find_comment_blocks(path):
+            clines = end - start + 1
+            ceiling = cbase_max if cbase_max is not None else chard
+            if clines > ceiling:
+                print(
+                    f"HARD comment block: {r} L{start}-L{end} "
+                    f"({clines} lines, max {ceiling}). "
+                    f"Move the rationale to docs/ and link it.",
+                    file=sys.stderr,
+                )
+                hard_fail += 1
+            elif clines > csoft:
+                print(
+                    f"NOTE comment block: {r} L{start}-L{end} "
+                    f"({clines} lines, soft {csoft}) - consider docs/ for long rationale.",
+                    file=sys.stderr,
+                )
 
     if strict and warnings:
         hard_fail += warnings

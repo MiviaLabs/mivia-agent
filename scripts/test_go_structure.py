@@ -59,6 +59,9 @@ def test_policy_exists_and_thresholds() -> None:
     assert p["fileLines"]["hard"] == 800
     assert p["funcLines"]["soft"] == 80
     assert p["funcLines"]["hard"] == 120
+    assert p["commentBlockLines"]["soft"] == 25
+    assert p["commentBlockLines"]["hard"] == 30
+    assert "internal/cli/chat_json_writer.go" in p["commentBlockLines"]["baseline"]
     assert "internal/cli/tui.go" in p["baseline"]["files"]
 
 
@@ -98,6 +101,55 @@ def test_hard_function_fails_without_baseline() -> None:
         assert "HARD function LOC" in proc.stderr or "TooLong" in proc.stderr
 
 
+def test_comment_block_within_soft_ok() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "short_comment.go"
+        lines = ["package p", ""] + [f"// line {i}" for i in range(10)] + [
+            "func Hello() {}", ""]
+        f.write_text("\n".join(lines), encoding="utf-8")
+        proc = run(["python3", str(CHECK), "--strict", str(f)])
+        assert proc.returncode == 0, proc.stderr
+        assert "comment block" not in proc.stderr, proc.stderr
+
+
+def test_comment_block_over_soft_is_informational_only() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "note_comment.go"
+        lines = ["package p", ""] + [f"// line {i}" for i in range(27)] + [
+            "func Hello() {}", ""]
+        f.write_text("\n".join(lines), encoding="utf-8")
+        proc = run(["python3", str(CHECK), str(f)])
+        assert proc.returncode == 0, proc.stderr
+        assert "NOTE comment block" in proc.stderr, proc.stderr
+
+        # Soft-band comment notes are never strict-promoted: this is
+        # established dense-WHY-comment style here, not debt (see policy).
+        strict_proc = run(["python3", str(CHECK), "--strict", str(f)])
+        assert strict_proc.returncode == 0, strict_proc.stderr
+
+
+def test_comment_block_over_hard_fails() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "hard_comment.go"
+        lines = ["package p", ""] + [f"// line {i}" for i in range(31)] + [
+            "func Hello() {}", ""]
+        f.write_text("\n".join(lines), encoding="utf-8")
+        proc = run(["python3", str(CHECK), str(f)])
+        assert proc.returncode == 1, proc.stderr
+        assert "HARD comment block" in proc.stderr, proc.stderr
+
+
+def test_comment_block_baseline_grandfathers_real_outlier() -> None:
+    # rel() resolves against the real repo ROOT, so baseline-path matching
+    # can only be exercised on an actual tracked file (mirrors
+    # test_baseline_growth_fails for the fileLines baseline below).
+    real = ROOT / "internal" / "cli" / "chat_json_writer.go"
+    if not real.is_file():
+        return
+    proc = run(["python3", str(CHECK), "--strict", str(real)])
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_baseline_growth_fails() -> None:
     # Use real policy baseline: tui.go maxLines must not be exceeded by a fake larger copy
     # We only verify checker logic with an explicit oversized path that we map...
@@ -123,7 +175,11 @@ def test_all_repo_exits_zero_today() -> None:
 def test_strict_mode_promotes_warning() -> None:
     with tempfile.TemporaryDirectory() as td:
         f = Path(td) / "warn.go"
-        f.write_text("package p\n" + "\n".join("// x" for _ in range(501)), encoding="utf-8")
+        # Filler must not be `//` comment lines: a run this long would also
+        # trip the comment-block check and break the exact warning count
+        # this test asserts. Blank statement lines pad LOC without parsing
+        # as comments (check_go_structure.py is line-based, not a compiler).
+        f.write_text("package p\n" + "\n".join("_ = 0" for _ in range(501)), encoding="utf-8")
         warning_proc = run(["python3", str(CHECK), str(f)])
         assert warning_proc.returncode == 0, warning_proc.stderr
         assert "WARN file LOC" in warning_proc.stderr
@@ -202,6 +258,10 @@ def main() -> None:
     test_small_file_ok()
     test_hard_file_loc_fails_without_baseline()
     test_hard_function_fails_without_baseline()
+    test_comment_block_within_soft_ok()
+    test_comment_block_over_soft_is_informational_only()
+    test_comment_block_over_hard_fails()
+    test_comment_block_baseline_grandfathers_real_outlier()
     test_baseline_growth_fails()
     test_all_repo_exits_zero_today()
     test_strict_mode_promotes_warning()
