@@ -40,6 +40,8 @@ func Execute(args []string) error {
 		return runWorkflows(args[1:])
 	case "workflow":
 		return runWorkflow(args[1:])
+	case "stack":
+		return runStack(args[1:])
 	case "worktree":
 		return runWorktree(args[1:])
 	case "completion":
@@ -106,6 +108,9 @@ Usage:
   %s workflow runs [--status name] [--limit n] [--watch] [--workspace dir] [--config path]
   %s workflow deliver <run-id> --allow-publish [--workspace dir] [--config path]
   %s workflow resume <run-id> [--workspace dir] [--config path] [--force]
+  %s stack plan <workflow> [--workspace dir] [--config path]
+  %s stack drive <workflow> [--stack <plan-run-id>] [--workspace dir] [--config path]
+  %s stack status <workflow> [--stack <plan-run-id>] [--workspace dir] [--config path]
   %s worktree create <name> [--branch ref] [--workspace dir]
   %s worktree list [--workspace dir]
   %s worktree remove <name> [--workspace dir]
@@ -137,7 +142,7 @@ Chat: /help /tools /hooks /exit /clear /new /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 // flagValue returns the value of the first occurrence of any named flag,
