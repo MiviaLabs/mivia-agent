@@ -35,10 +35,12 @@ func TestWatchJoinedRunReclaimsOrphanedClaim(t *testing.T) {
 	t.Cleanup(func() { _ = aStore.Close(); _ = bStore.Close() })
 
 	var calls atomic.Int32
-	block := make(chan struct{}) // never closed: A's invocation never returns
+	block := make(chan struct{})        // never closed: A's invocation never returns
+	firstStarted := make(chan struct{}) // closed when the first invocation enters the handler
 	dispatcher := runtime.New(runtime.Policy{})
 	if err := dispatcher.Register(runtime.Subagent, "worker", invoker(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
 		if calls.Add(1) == 1 {
+			close(firstStarted)
 			<-block
 			return nil, ctx.Err()
 		}
@@ -59,6 +61,15 @@ func TestWatchJoinedRunReclaimsOrphanedClaim(t *testing.T) {
 	}
 
 	waitForTaskRunning(t, aRepo, req.RunID)
+
+	// The ledger status is not enough. startReady writes status 'running'
+	// (dag.go transitionTask) before the pool dispatches the handler
+	// (subagents.go executeOne -> Invoke with a fresh session ID per
+	// dispatch). The orphan claim has maxAge=0, so B's claimRun takeover
+	// succeeds immediately. Without this wait, B's resumed dispatch can
+	// reach the handler first, consume the block slot, and hang B's Join
+	// to the 5s deadline. Wait for the first handler entry first.
+	<-firstStarted
 
 	// Simulate A crashing without ever releasing or re-heartbeating its
 	// claim: hand it to an orphan holder that will never refresh it again.
