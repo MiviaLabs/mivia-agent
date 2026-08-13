@@ -3,7 +3,6 @@ package controller
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
-	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -74,6 +72,9 @@ type LinearController struct {
 	WorkDir        string
 	ModuleBaseline *verifier.GoModuleBaseline
 	SecretPolicy   secretpath.Policy
+	// gitRunner/gitCtx pin the worktree git context for the diff-size gate.
+	gitRunner delivery.GitRunner
+	gitCtx    delivery.GitContext
 	// WritePathBlocklist is the host write-path denylist for workflow agents
 	// (internal/tools enforced): paths under it can never be written by an
 	// agent step. The controller uses it to recognize a succeeded step whose
@@ -403,83 +404,7 @@ func (c *LinearController) WorkflowStep(id string) (definition.Step, bool) {
 	return definition.Step{}, false
 }
 
-func (c *LinearController) contextForStep(ctx context.Context, step definition.Step, attempts []workflowledger.StepAttempt) (map[string]any, map[string]any, map[string]ArtifactRef, error) {
-	inputs := make(map[string]any)
-	evidence := make(map[string]any)
-	refs := make(map[string]ArtifactRef)
-	for _, binding := range step.Context {
-		parts := strings.Split(binding.From, ".")
-		if len(parts) == 2 && parts[0] == "inputs" {
-			value, ok := c.Inputs[parts[1]]
-			if !ok {
-				return nil, nil, nil, fmt.Errorf("missing input %q", parts[1])
-			}
-			inputs[binding.As] = value
-			continue
-		}
-		if len(parts) == 2 && parts[0] == "run" && parts[1] == "salvage" {
-			// run.salvage binds the verified outputs preserved when a repair
-			// loop exhausted (R2 Phase 2). The partial_target step reads the
-			// content-addressed refs to recover or deliver the verified work.
-			salvaged, err := c.salvageLoopSuccesses(ctx)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			raw, err := json.Marshal(salvaged)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			evidence[binding.As] = string(raw)
-			continue
-		}
-		if len(parts) == 3 && parts[0] == "steps" && parts[2] == "output" {
-			// Chunk-mode grace: the run starts at the implement step, so a
-			// binding to a pre-implement step's output (which never exists in
-			// this run) resolves as optional-absent instead of failing.
-			if binding.EnvelopeOnly && c.preImplementStep(parts[1]) {
-				evidence[binding.As] = ""
-				continue
-			}
-			value, ref, ok, err := c.resolveBindingOutput(ctx, binding, attempts)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			if !ok {
-				// Optional-absent binding: resolve to "" with no artifact to
-				// reference (the evidence-refs block skips it).
-				evidence[binding.As] = ""
-				continue
-			}
-			refs[binding.As] = ref
-			evidence[binding.As] = value
-			continue
-		}
-		// delivery.failure is a HOST-injected context source: the controller
-		// reads the latest wf-delivery failure hint from the ledger and places
-		// it directly into the step's evidence, so the repair agent never
-		// fetches it. Empty text resolves to "" like an optional-absent steps
-		// binding. The binding cap truncates rune-safely WITHOUT a marker; the
-		// full text stays on the wf-delivery attempt for workflow_inspect.
-		if len(parts) == 2 && parts[0] == "delivery" && parts[1] == "failure" {
-			text, err := delivery.LatestFailureText(ctx, c.Repo, c.RunID)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			threshold := binding.MaxBytes
-			if threshold <= 0 {
-				threshold = definition.MaxEvidenceBindingBytes
-			}
-			if len(text) > threshold {
-				text = textutil.TruncateRuneSafe(text, threshold)
-			}
-			evidence[binding.As] = text
-			continue
-		}
-		return nil, nil, nil, fmt.Errorf("unsupported context binding %q", binding.From)
-	}
-	return inputs, evidence, refs, nil
-}
-
+// fail settles the run as Failed via the shared terminal-status path.
 func (c *LinearController) fail(ctx context.Context, run workflowledger.RunSnapshot, cause error) (workflowledger.RunSnapshot, bool, error) {
 	return c.failWithStatus(ctx, run, cause, workflowledger.RunStatusFailed)
 }

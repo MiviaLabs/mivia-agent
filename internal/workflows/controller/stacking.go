@@ -66,8 +66,11 @@ func validateStackingReservedInputs(inputs map[string]any, cfg *definition.Stack
 // workflow: it validates the reserved inputs, ensures the run graph carries the
 // engine-synthesized steps (decompose, chunk_plan_validate), verifies every
 // synthesized step has a complete agent runtime, and binds the reserved
-// chunk-mode inputs as context inputs on downstream steps. Non-stacking
-// workflows are returned unchanged.
+// chunk-mode inputs as context inputs on downstream steps. Chunk-mode runs
+// need no further binding checks: bindings to pre-implement step outputs are
+// legal and resolve absent at runtime (contextForStep's chunk-mode grace),
+// because the plan phase ran in the parent run. Non-stacking workflows are
+// returned unchanged.
 func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntime, inputs map[string]any) (*compiler.CompiledWorkflow, map[string]StepRuntime, error) {
 	if wf == nil || wf.Stacking == nil {
 		return wf, steps, nil
@@ -89,9 +92,6 @@ func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntim
 	}
 	if mode != "chunk" {
 		return synth, steps, nil
-	}
-	if err := validateChunkModeBindings(synth); err != nil {
-		return nil, nil, err
 	}
 	return injectChunkModeInputBindings(synth, inputs), steps, nil
 }
@@ -139,43 +139,6 @@ func preImplementSteps(synth *compiler.CompiledWorkflow) map[string]bool {
 		}
 	}
 	return set
-}
-
-// validateChunkModeBindings enforces that no mandatory binding to a
-// pre-implement step survives into chunk mode: their outputs would not exist
-// when the run starts at the implement step. Optional and envelope_only
-// bindings pass; they resolve empty in contextForStep.
-func validateChunkModeBindings(synth *compiler.CompiledWorkflow) error {
-	preImplement := preImplementSteps(synth)
-	for _, step := range synth.Steps {
-		// Engine-synthesized plan-phase steps (decompose, chunk_plan_validate)
-		// never execute in chunk mode - the run starts at the implement step -
-		// so their synthesized plan-phase bindings must not fail admission.
-		if step.ID == synthesizedDecomposeStepID || step.ID == synthesizedChunkPlanValidateStepID {
-			continue
-		}
-		for _, binding := range step.Context {
-			fromStep, ok := bindingStepFrom(binding.From)
-			if !ok || !preImplement[fromStep] {
-				continue
-			}
-			if binding.Optional || binding.EnvelopeOnly {
-				continue
-			}
-			return fmt.Errorf("chunk mode binding %q on step %q references pre-implement step %q; it must be optional or envelope_only (or sourced from inputs.chunk_plan)", binding.From, step.ID, fromStep)
-		}
-	}
-	return nil
-}
-
-// bindingStepFrom extracts the referenced step ID from a steps.<id>.<field>
-// binding; ok is false for non-step bindings such as inputs.* and delivery.*.
-func bindingStepFrom(from string) (string, bool) {
-	parts := strings.Split(from, ".")
-	if len(parts) < 3 || parts[0] != "steps" {
-		return "", false
-	}
-	return parts[1], true
 }
 
 // injectChunkModeInputBindings binds the reserved chunk-mode inputs as context

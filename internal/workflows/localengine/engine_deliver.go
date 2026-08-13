@@ -186,7 +186,7 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 			}
 			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
 		}
-		res, handled, rerr := routePRMetadataRepair(ctx, repo, runID, policy, err)
+		res, handled, rerr := routeDeliveryRepair(ctx, repo, runID, policy, err)
 		if handled {
 			return res, nil
 		}
@@ -212,19 +212,25 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
 }
 
-// routePRMetadataRepair routes a PR-metadata delivery failure back into the
-// workflow when the policy names a repair step. A PR-metadata failure is a
-// condition in the change: the agent's title or summary violates the workspace
-// pr-title policy, so the agent can fix the metadata and the run returns to the
-// step the workflow names in delivery.on_pr_metadata_failure (which defaults to
-// on_failure). It is never a refusal and never a transport fault. The boolean
-// reports whether the failure was routed (handled); a non-nil error means the
-// routing itself failed and the caller must surface it.
-func routePRMetadataRepair(ctx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (agenttools.DeliverResult, bool, error) {
-	if !delivery.IsPRMetadataError(err) || policy.OnPRMetadataFailure == "" {
+// routeDeliveryRepair routes a repairable, in-change delivery failure back
+// into the workflow when the policy names a repair step. The two routed
+// classes are PR-metadata defects (the agent's title or summary violates the
+// workspace pr-title policy) and over-limit delivered diffs (the chunk
+// exceeds the stacking hard limit; only a worktree edit can shrink it).
+// delivery.RepairTarget is the single classifier that maps each class to the
+// step the workflow names (on_pr_metadata_failure, on_diff_size_failure, then
+// on_failure), shared with the CLI so a rejection routes to the same step on
+// both paths. Neither class is ever a refusal or a transport fault; every
+// other failure - transport faults included - stays delivery_pending for a
+// person or a retry, exactly as before. The boolean reports whether the
+// failure was routed (handled); a non-nil error means the routing itself
+// failed and the caller must surface it.
+func routeDeliveryRepair(ctx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (agenttools.DeliverResult, bool, error) {
+	step := delivery.RepairTarget(err, policy)
+	if step == "" || (!delivery.IsPRMetadataError(err) && !delivery.IsDiffSizeError(err)) {
 		return agenttools.DeliverResult{}, false, nil
 	}
-	if rerr := delivery.ReopenForRepair(ctx, repo, runID, policy.OnPRMetadataFailure, policy.MaxRepairs, err, io.Discard); rerr != nil {
+	if rerr := delivery.ReopenForRepair(ctx, repo, runID, step, policy.MaxRepairs, err, io.Discard); rerr != nil {
 		return agenttools.DeliverResult{}, false, rerr
 	}
 	fresh, gerr := repo.GetRun(ctx, runID)

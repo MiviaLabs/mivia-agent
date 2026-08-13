@@ -29,6 +29,33 @@ func TruncateRuneSafe(s string, maxBytes int) string {
 	return s[:cut]
 }
 
+// ellipsisMarker is the ellipsis rune "…" (U+2026) in its UTF-8 form. It is
+// exactly one rune and three bytes.
+const ellipsisMarker = "\u2026"
+
+// TruncateEllipsis truncates s to a byte budget and appends the ellipsis rune
+// "…" (U+2026, 3 bytes) when truncation happens and the budget can fit the
+// marker.
+//
+// When len(s) <= maxBytes, it returns s unchanged with no marker. When
+// maxBytes <= 0, it returns "". When maxBytes < 3, the marker cannot fit, so
+// it falls back to TruncateRuneSafe(s, maxBytes) with no marker. Otherwise it
+// appends "…" to the longest prefix of s that fits maxBytes-3 bytes on a UTF-8
+// rune boundary. The result never exceeds maxBytes. For valid UTF-8 input, the
+// result is valid UTF-8.
+func TruncateEllipsis(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	if maxBytes < len(ellipsisMarker) {
+		return TruncateRuneSafe(s, maxBytes)
+	}
+	return TruncateRuneSafe(s, maxBytes-len(ellipsisMarker)) + ellipsisMarker
+}
+
 // TruncateTail returns the longest suffix of s that is at most maxBytes bytes
 // and starts on a UTF-8 rune boundary.
 //

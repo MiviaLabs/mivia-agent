@@ -189,17 +189,16 @@ func settleDeliveryError(ctx context.Context, repo workflowledger.Repository, ru
 	// commit hook that refuses the change, a gate that finds a violation.
 	//
 	// A PR-metadata failure is such a condition in the change: the agent's
-	// title or summary violates the workspace pr-title policy, so the agent
-	// can fix the metadata and the run returns to the step the workflow
-	// names in delivery.on_pr_metadata_failure (which defaults to
-	// on_failure). It is never a refusal and never a transport fault.
-	if delivery.IsPRMetadataError(err) && policy.OnPRMetadataFailure != "" {
+	// title or summary violates the workspace pr-title policy. An over-limit
+	// delivered diff is another: the chunk exceeds the stacking hard limit,
+	// and only a worktree edit can shrink it. delivery.RepairTarget is the
+	// single classifier that maps each rejection class to the step the
+	// workflow names (on_pr_metadata_failure, on_diff_size_failure, then
+	// on_failure); the CLI and the local engine share it, so a rejection
+	// routes to the same step on both paths.
+	if step := delivery.RepairTarget(err, policy); step != "" && !provider.IsTransient(err) {
 		recordAutoDeliveryFailure(ctx, repo, runID, err)
-		return delivery.ReopenForRepair(ctx, repo, runID, policy.OnPRMetadataFailure, policy.MaxRepairs, err, stdout)
-	}
-	if policy.OnFailure != "" && !provider.IsTransient(err) {
-		recordAutoDeliveryFailure(ctx, repo, runID, err)
-		return delivery.ReopenForRepair(ctx, repo, runID, policy.OnFailure, policy.MaxRepairs, err, stdout)
+		return delivery.ReopenForRepair(ctx, repo, runID, step, policy.MaxRepairs, err, stdout)
 	}
 	return err
 }

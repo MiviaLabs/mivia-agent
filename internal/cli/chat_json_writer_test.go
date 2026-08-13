@@ -226,6 +226,45 @@ func TestJSONTurnEventCallbackAttributesSubagentToolCalls(t *testing.T) {
 	}
 }
 
+// TestJSONTurnEventCallbackEmitsSubagentHeartbeat ensures a heartbeat with an
+// origin becomes a "subagent_heartbeat" line carrying the origin task id and
+// the detail text as message.
+func TestJSONTurnEventCallbackEmitsSubagentHeartbeat(t *testing.T) {
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	origin := agent.EventOrigin{TaskID: "task-1", Agent: "researcher", Depth: 1}
+
+	onEvent(agent.Event{Kind: agent.EventSubagentHeartbeat, Detail: "reading files", Origin: origin})
+
+	lines := splitNonEmptyLines(buf.String())
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines, want 1: %v", len(lines), lines)
+	}
+
+	var heartbeat ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[0]), &heartbeat); err != nil {
+		t.Fatalf("line 0 invalid JSON: %v", err)
+	}
+	if heartbeat.Type != "subagent_heartbeat" || heartbeat.OriginTaskID != "task-1" || heartbeat.Message != "reading files" {
+		t.Fatalf("subagent_heartbeat event = %+v, want origin_task_id=task-1 message=%q", heartbeat, "reading files")
+	}
+}
+
+// TestJSONTurnEventCallbackDropsHeartbeatWithNoOrigin ensures a root-loop
+// heartbeat (agent.EventOrigin's zero value) - which should not occur per
+// OnEventForMultiStep, but is defensively guarded - is dropped rather than
+// emitted as a meaningless line with no origin_task_id.
+func TestJSONTurnEventCallbackDropsHeartbeatWithNoOrigin(t *testing.T) {
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+
+	onEvent(agent.Event{Kind: agent.EventSubagentHeartbeat, Detail: "thinking"})
+
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output, got %q", buf.String())
+	}
+}
+
 // TestJSONTurnEventCallbackOmitsOriginForRootLoopToolCalls ensures a
 // root-loop tool call (agent.EventOrigin's zero value) does not leak empty
 // origin_task_id/origin_agent fields onto the wire - the common case stays
