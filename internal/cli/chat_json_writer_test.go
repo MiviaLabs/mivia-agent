@@ -226,6 +226,48 @@ func TestJSONTurnEventCallbackAttributesSubagentToolCalls(t *testing.T) {
 	}
 }
 
+// TestJSONTurnEventCallbackCarriesTaskDescriptionOnSubagentStartOnly pins the
+// wire contract for agent.EventOrigin.TaskDescription: present on
+// "tool_start" for a subagent's own nested calls (so a consumer can show
+// what the subagent was asked to do without separately correlating the
+// initiating delegate/dispatch_tasks/spawn_agent call), but never on
+// "tool_end" - the task doesn't change over the run, so repeating it there
+// would be pure duplication.
+func TestJSONTurnEventCallbackCarriesTaskDescriptionOnSubagentStartOnly(t *testing.T) {
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	origin := agent.EventOrigin{
+		TaskID:          "task-1",
+		Agent:           "researcher",
+		Depth:           1,
+		TaskDescription: "investigate the auth module",
+	}
+
+	onEvent(agent.Event{Kind: agent.EventSubagentStart, ToolCallID: "call_1", Name: "read_file", Input: "path=foo.go", Origin: origin})
+	onEvent(agent.Event{Kind: agent.EventSubagentEnd, ToolCallID: "call_1", Name: "read_file", Output: "12 lines", Origin: origin})
+
+	lines := splitNonEmptyLines(buf.String())
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %v", len(lines), lines)
+	}
+
+	var toolStart ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[0]), &toolStart); err != nil {
+		t.Fatalf("line 0 invalid JSON: %v", err)
+	}
+	if toolStart.OriginTaskDescription != "investigate the auth module" {
+		t.Fatalf("tool_start OriginTaskDescription = %q, want %q", toolStart.OriginTaskDescription, "investigate the auth module")
+	}
+
+	var toolEnd ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[1]), &toolEnd); err != nil {
+		t.Fatalf("line 1 invalid JSON: %v", err)
+	}
+	if toolEnd.OriginTaskDescription != "" {
+		t.Fatalf("tool_end OriginTaskDescription = %q, want empty (task_end never carries it)", toolEnd.OriginTaskDescription)
+	}
+}
+
 // TestJSONTurnEventCallbackEmitsSubagentHeartbeat ensures a heartbeat with an
 // origin becomes a "subagent_heartbeat" line carrying the origin task id and
 // the detail text as message.

@@ -45,7 +45,12 @@ func TestMultiStepHandlerEmitsSubagentDoneOnSuccess(t *testing.T) {
 	if last.Kind != agent.EventSubagentDone {
 		t.Fatalf("last event kind=%s want %s (done must be terminal: anything after it revives a retired agent row)", last.Kind, agent.EventSubagentDone)
 	}
-	want := agent.EventOrigin{TaskID: req.ID, Agent: req.Name, Depth: req.Depth + 1}
+	want := agent.EventOrigin{
+		TaskID:          req.ID,
+		Agent:           req.Name,
+		Depth:           req.Depth + 1,
+		TaskDescription: "review the patch",
+	}
 	if last.Origin != want {
 		t.Fatalf("done origin=%+v want %+v - unattributed done retires nothing", last.Origin, want)
 	}

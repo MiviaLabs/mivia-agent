@@ -58,6 +58,14 @@ type EventOrigin struct {
 	TaskID string // runtime request/task id - the attribution key
 	Agent  string // dispatched subagent/skill name
 	Depth  int    // nesting depth (root loop = 0)
+	// TaskDescription is a bounded preview of the task this subagent was
+	// given (see StampEventOrigin's caller), so a consumer attributing
+	// events by TaskID can show what the subagent is actually doing without
+	// having to separately correlate the initiating delegate/dispatch_tasks/
+	// spawn_agent tool call's own Input. Empty for the root loop (zero
+	// EventOrigin) and for any subagent kind that doesn't stamp origin at
+	// all (a one-shot delegate has no nested tool calls to attribute).
+	TaskDescription string
 }
 
 // IsZero reports whether the origin is the root loop.

@@ -80,11 +80,55 @@ func TestMultiStepHandlerStampsEventOrigin(t *testing.T) {
 	if len(events) == 0 {
 		t.Fatal("handler emitted no events")
 	}
-	want := agent.EventOrigin{TaskID: req.ID, Agent: req.Name, Depth: req.Depth + 1}
+	want := agent.EventOrigin{
+		TaskID:          req.ID,
+		Agent:           req.Name,
+		Depth:           req.Depth + 1,
+		TaskDescription: "review the patch",
+	}
 	for i, e := range events {
 		if e.Origin != want {
 			t.Fatalf("event %d (%s) origin=%+v want %+v", i, e.Kind, e.Origin, want)
 		}
+	}
+}
+
+func TestTaskDescriptionFromInputUnwrapsABareJSONString(t *testing.T) {
+	// delegate's Input is always a bare JSON string (json.Marshal(params.Task)).
+	got := taskDescriptionFromInput(json.RawMessage(`"analyze the auth module"`))
+	if got != "analyze the auth module" {
+		t.Fatalf("got %q, want unwrapped string", got)
+	}
+}
+
+func TestTaskDescriptionFromInputFallsBackToRawJSONForStructuredInput(t *testing.T) {
+	// dispatch_tasks/spawn_agent's per-task Input can be arbitrary JSON
+	// shaped by that task's own input schema, not a bare string - still a
+	// useful-enough preview even if it isn't natural language.
+	got := taskDescriptionFromInput(json.RawMessage(`{"topic":"auth","depth":2}`))
+	if got != `{"topic":"auth","depth":2}` {
+		t.Fatalf("got %q, want raw JSON fallback", got)
+	}
+}
+
+func TestTaskDescriptionFromInputEmptyForNoInput(t *testing.T) {
+	if got := taskDescriptionFromInput(nil); got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+func TestTaskDescriptionFromInputBoundsALongDescription(t *testing.T) {
+	long := ""
+	for i := 0; i < 300; i++ {
+		long += "a"
+	}
+	raw, _ := json.Marshal(long)
+	got := taskDescriptionFromInput(raw)
+	if len(got) != maxTaskDescriptionBytes+len("…") {
+		t.Fatalf("got length %d, want %d (bound + ellipsis)", len(got), maxTaskDescriptionBytes+len("…"))
+	}
+	if got[len(got)-len("…"):] != "…" {
+		t.Fatalf("got %q, want trailing ellipsis marking truncation", got)
 	}
 }
 

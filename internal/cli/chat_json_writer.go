@@ -31,10 +31,14 @@ import (
 // "origin_depth" when the tool call was made by a delegated subagent rather
 // than the root loop (agent.EventSubagentStart/End - same field shape as
 // agent.EventToolStart/End, just attributed - see agent.EventOrigin's doc
-// comment). Root-loop tool calls omit all three origin fields entirely
-// (agent.EventOrigin's zero value), so an older consumer that only reads
-// tool_call_id/name/input/output still renders a correct, if unattributed,
-// transcript - a consumer that wants to group a subagent's nested tool
+// comment); "tool_start" further carries "origin_task_description" (the
+// bounded task text the subagent was given, constant across every one of
+// its own tool_start events - a consumer only needs the first one it sees
+// per origin_task_id). Root-loop tool calls omit all four origin fields
+// entirely (agent.EventOrigin's zero value), so an older consumer that only
+// reads tool_call_id/name/input/output still renders a correct, if
+// unattributed, transcript - a consumer that wants to group a subagent's
+// nested tool
 // calls under its own run (rather than flatten them into the parent turn)
 // keys off origin_task_id.
 //
@@ -94,6 +98,13 @@ type ndjsonEvent struct {
 	OriginTaskID string `json:"origin_task_id,omitempty"`
 	OriginAgent  string `json:"origin_agent,omitempty"`
 	OriginDepth  int    `json:"origin_depth,omitempty"`
+	// OriginTaskDescription carries the same value on every "tool_start" a
+	// given subagent run produces (its task doesn't change mid-run) - a
+	// consumer only needs to read it off the first one it sees for a given
+	// origin_task_id and can ignore it on the rest. Present only alongside
+	// the other Origin* fields (a subagent's own nested tool_start), never
+	// on the root loop's own tool calls. See agent.EventOrigin.TaskDescription.
+	OriginTaskDescription string `json:"origin_task_description,omitempty"`
 }
 
 // jsonTurnEventCallback returns an agent.Event handler that translates
@@ -112,13 +123,14 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 			}
 		case agent.EventToolStart, agent.EventSubagentStart:
 			writeNDJSONEvent(w, ndjsonEvent{
-				Type:         "tool_start",
-				ToolCallID:   e.ToolCallID,
-				Name:         e.Name,
-				Input:        eventPreview(e.Input, e.Detail),
-				OriginTaskID: e.Origin.TaskID,
-				OriginAgent:  e.Origin.Agent,
-				OriginDepth:  e.Origin.Depth,
+				Type:                  "tool_start",
+				ToolCallID:            e.ToolCallID,
+				Name:                  e.Name,
+				Input:                 eventPreview(e.Input, e.Detail),
+				OriginTaskID:          e.Origin.TaskID,
+				OriginAgent:           e.Origin.Agent,
+				OriginDepth:           e.Origin.Depth,
+				OriginTaskDescription: e.Origin.TaskDescription,
 			})
 		case agent.EventToolEnd, agent.EventSubagentEnd:
 			writeNDJSONEvent(w, ndjsonEvent{
