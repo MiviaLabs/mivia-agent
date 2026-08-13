@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	ledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -45,19 +46,24 @@ func LatestFailureText(ctx context.Context, repo ledger.Repository, runID string
 
 // ResolveLatestChangeSummary returns the change-summary object of the latest
 // attempt whose output is a JSON object carrying a non-empty string
-// "pr_title" key, or nil when none exists. The attempt with the highest
-// AttemptNo wins; a later attempt in event order wins a tie. Only
-// schema-validated outputs ever carry an OutputRef, so the presence of
-// pr_title marks a change summary. Only a storage or load failure is an
-// error; an output that is not valid JSON is skipped.
+// "pr_title" key, or nil when none exists. "Latest" is GLOBAL event order:
+// the attempt that most recently recorded a change summary wins. Per-step
+// AttemptNo is NOT comparable across steps - a repair step that re-ran after
+// an implement step always has a lower AttemptNo than implement's later
+// attempt even though it happened after it - so the attempt with the latest
+// StartedAt wins, and a later attempt in event order wins a tie (including
+// all-zero synthetic fixtures). Only schema-validated outputs ever carry an
+// OutputRef, so the presence of pr_title marks a change summary. Only a
+// storage or load failure is an error; an output that is not valid JSON is
+// skipped.
 func ResolveLatestChangeSummary(ctx context.Context, repo ledger.Repository, runID string) (map[string]any, error) {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
 	var latest map[string]any
+	var latestAt time.Time
 	found := false
-	bestNo := 0
 	for _, attempt := range attempts {
 		if attempt.OutputRef == "" {
 			continue
@@ -74,9 +80,11 @@ func ResolveLatestChangeSummary(ctx context.Context, repo ledger.Repository, run
 		if !ok || strings.TrimSpace(title) == "" {
 			continue
 		}
-		if !found || attempt.AttemptNo >= bestNo {
+		// StartedAt is the global creation order; a tie (equal timestamps,
+		// including all-zero fixtures) falls to the later entry in event order.
+		if !found || !attempt.StartedAt.Before(latestAt) {
 			latest, found = obj, true
-			bestNo = attempt.AttemptNo
+			latestAt = attempt.StartedAt
 		}
 	}
 	if !found {

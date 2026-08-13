@@ -161,9 +161,10 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	// the run's identity so the parent UI can attribute it. Without the
 	// stamp, parallel subagents are indistinguishable downstream.
 	stamped := StampEventOrigin(h.OnEvent, agent.EventOrigin{
-		TaskID: taskID,
-		Agent:  req.Name,
-		Depth:  req.Depth + 1,
+		TaskID:          taskID,
+		Agent:           req.Name,
+		Depth:           req.Depth + 1,
+		TaskDescription: taskDescriptionFromInput(req.Input),
 	})
 
 	// A run that ends must say so. Nested tool events only ever report tool

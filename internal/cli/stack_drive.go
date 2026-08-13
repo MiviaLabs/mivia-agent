@@ -254,20 +254,43 @@ func reconcileStack(ledger *tasks.Store, repo workflowledger.Repository, checker
 		// missing remote ref must not be mistaken for a merge.
 		if found && (run.Status == workflowledger.RunStatusDeliveryPending || run.Status == workflowledger.RunStatusSucceeded) {
 			if head := stackHeadBranch(run); head != "" {
-				merged, err = checker.Merged(context.Background(), head)
+				merged, err = checker.Merged(context.Background(), head, stackRunPushed(repo, run))
 				if err != nil {
 					return nil, err
 				}
 			}
 		}
 		t.Attempts = stackAttemptCount(ledger, stackID, t.ID)
-		act := reconcileTask(t, info, merged, maxAttempts)
+		act := reconcileTask(t, info, merged, stackRunPushed(repo, run), maxAttempts)
 		actions = append(actions, act)
 		if err := applyReconcileAction(ledger, stackID, act); err != nil {
 			return nil, err
 		}
 	}
 	return actions, nil
+}
+
+// stackRunPushed reports durable pushed evidence for a chunk run: any of its
+// delivery records reached pushed/succeeded with a commit SHA. A record in
+// that state is only written after the branch was actually pushed to origin
+// (the deliverer writes pushed after the push, succeeded after the PR is
+// created). Without this evidence a missing remote ref means "never pushed",
+// not "merged" - a delivery_pending run's PR may never have been created.
+func stackRunPushed(repo workflowledger.Repository, run workflowledger.RunSnapshot) bool {
+	records, err := repo.ListDeliveries(context.Background(), run.RunID)
+	if err != nil {
+		return false
+	}
+	for _, rec := range records {
+		if rec.CommitSHA == "" {
+			continue
+		}
+		switch rec.Status {
+		case "pushed", "succeeded":
+			return true
+		}
+	}
+	return false
 }
 
 // stackTaskMap loads every stack task by id for the drive loop.

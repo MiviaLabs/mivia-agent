@@ -154,7 +154,7 @@ func waitForIntegrationMerge(repo workflowledger.Repository, checker MergeChecke
 			return fmt.Errorf("stack %s: integration run disappeared", stackID)
 		}
 		if head := stackHeadBranch(run); head != "" {
-			merged, err := checker.Merged(context.Background(), head)
+			merged, err := checker.Merged(context.Background(), head, stackRunPushed(repo, run))
 			if err != nil {
 				return err
 			}

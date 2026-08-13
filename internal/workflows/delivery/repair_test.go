@@ -250,7 +250,13 @@ func TestReopenForRepairBudgetExhaustionSettlesDeliveryFailed(t *testing.T) {
 	casRepairRunToDeliveryPending(t, ctx, repo, run.RunID)
 
 	var stdout bytes.Buffer
-	for i := 0; i < MaxDeliveryRepairs; i++ {
+	// The real engine records each failed delivery as a wf-delivery attempt
+	// BEFORE ReopenForRepair runs (the live loop shows attempts 1..k carrying
+	// the refusal errors), so the fixture seeds the first failed delivery and
+	// the reopens below create attempts 2..MaxDeliveryRepairs. After
+	// MaxDeliveryRepairs failed deliveries the budget is spent.
+	seedAttempt(t, repo, run.RunID, DeliveryRepairStepID, 1, "", "hook rejected")
+	for i := 0; i < MaxDeliveryRepairs-1; i++ {
 		if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", MaxDeliveryRepairs, errors.New("hook rejected"), &stdout); err != nil {
 			t.Fatalf("repair %d refused: %v", i+1, err)
 		}
@@ -264,6 +270,14 @@ func TestReopenForRepairBudgetExhaustionSettlesDeliveryFailed(t *testing.T) {
 	}
 	if err := ReopenForRepair(ctx, repo, run.RunID, "repair_preflight_structure", MaxDeliveryRepairs, errors.New("hook rejected"), &stdout); err == nil {
 		t.Fatal("the repair budget is spent; a further re-entry must fail")
+	} else if want := fmt.Sprintf("delivery failed %d times", MaxDeliveryRepairs); !strings.Contains(err.Error(), want) {
+		// The exhaustion diagnostic must report the ACTUAL delivery-failure
+		// count: the seeded failure plus MaxDeliveryRepairs-1 re-entry
+		// failures, i.e. MaxDeliveryRepairs failed deliveries. The message
+		// must print next-1 (the highest recorded attempt number), never
+		// next: the failing attempt is recorded before ReopenForRepair runs,
+		// so the attempt it would create next is not a failure yet.
+		t.Fatalf("exhaustion error = %q, want it to report %q", err.Error(), want)
 	}
 	// The budget-exhausted run must settle terminal instead of waiting at
 	// delivery_pending forever: resume and cancel both refuse delivery_pending,

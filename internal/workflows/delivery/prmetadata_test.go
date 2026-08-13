@@ -187,9 +187,13 @@ func TestResolveLatestChangeSummary(t *testing.T) {
 	})
 
 	t.Run("repair output with newer pr_title wins", func(t *testing.T) {
+		// The repair step is the LATEST change-summary writer, so its title
+		// must win even though its attempt number is 1 (the controller numbers
+		// attempts per step, restarting at 1 for the repair step — it does NOT
+		// inherit the implement step's numbering).
 		repo, run := newPRMetadataRepo(t)
 		seedAttempt(t, repo, run.RunID, "implement", 1, `{"pr_title": "old title"}`, "")
-		seedAttempt(t, repo, run.RunID, DeliveryRepairStepID, 2, `{"pr_title": "new title"}`, "")
+		seedAttempt(t, repo, run.RunID, DeliveryRepairStepID, 1, `{"pr_title": "new title"}`, "")
 		assertResolvedChangeSummary(t, repo, run.RunID, map[string]any{"pr_title": "new title"})
 	})
 
@@ -216,5 +220,24 @@ func TestResolveLatestChangeSummary(t *testing.T) {
 		seedAttempt(t, repo, run.RunID, "implement", 1, `{"pr_title": "first"}`, "")
 		seedAttempt(t, repo, run.RunID, "verify", 1, `{"pr_title": "second"}`, "")
 		assertResolvedChangeSummary(t, repo, run.RunID, map[string]any{"pr_title": "second"})
+	})
+
+	t.Run("repair wins over a higher-numbered implement re-entry", func(t *testing.T) {
+		// The controller numbers attempts per step and restarts at 1 for the
+		// delivery repair step (controller/linear_attempts.nextAttemptNo), so
+		// in a real feature-delivery run a review-loop re-entry gives
+		// implement AttemptNo=2 while the repair step's FIRST attempt is
+		// AttemptNo=1. The repaired title must still win: it was recorded
+		// LAST, and recency — not per-step attempt numbering — is what the
+		// next delivery must validate. Regression for the metadata loop that
+		// re-failed byte-identically because a highest-AttemptNo resolution
+		// shadowed the repair's fix with implement#2's old title.
+		repo, run := newPRMetadataRepo(t)
+		oldTitle := "textutil: add TruncateEllipsis rune-safe ellipsis truncation"
+		fixedTitle := "feat(textutil): add TruncateEllipsis rune-safe ellipsis truncation"
+		seedAttempt(t, repo, run.RunID, "implement", 1, `{"pr_title": "`+oldTitle+`"}`, "")
+		seedAttempt(t, repo, run.RunID, "implement", 2, `{"pr_title": "`+oldTitle+`"}`, "")
+		seedAttempt(t, repo, run.RunID, DeliveryRepairStepID, 1, `{"pr_title": "`+fixedTitle+`"}`, "")
+		assertResolvedChangeSummary(t, repo, run.RunID, map[string]any{"pr_title": fixedTitle})
 	})
 }
