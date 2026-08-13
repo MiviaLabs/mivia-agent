@@ -10,6 +10,23 @@
     "soft": 80,
     "hard": 120
   },
+  "commentBlockLines": {
+    "_comment": "Empirically calibrated against the real tree (17.8k blocks, p90=6, p99=14, max=83) - not the rule-30 prose target. Soft is informational only, never strict-promoted, since dense WHY comments up to ~25 lines are established, audited-as-legitimate style here. Hard blocks genuine essays; the 10 files already past it are grandfathered below via baseline (growth-only, same pattern as fileLines.baseline).",
+    "soft": 25,
+    "hard": 30,
+    "baseline": {
+      "internal/cli/chat_json_writer.go": 83,
+      "internal/cli/session_delivery_repair.go": 52,
+      "internal/cli/e2e_ask_chain_test.go": 51,
+      "internal/ledger/storage_schema.go": 37,
+      "internal/cli/e2e_ask_messaging_test.go": 34,
+      "internal/cli/workflow_session_settle.go": 33,
+      "internal/workflows/delivery/repair.go": 33,
+      "internal/workflows/controller/linear_bindings.go": 32,
+      "internal/config/tools_config.go": 31,
+      "internal/workflows/verifier/sandbox_buildcache.go": 31
+    }
+  },
   "excludeGlobs": [
     "vendor/**",
     "**/*_gen.go",
