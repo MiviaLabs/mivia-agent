@@ -526,6 +526,75 @@ func TestDeliverForeignCommitRefused(t *testing.T) {
 	assertNoRecord(t, repo, run)
 }
 
+// TestBaseStillContainsFetchesPinnedOriginURLNotMutableOriginName pins the
+// AR-7 TOCTOU guard: baseStillContains must fetch by the pinned req.OriginURL
+// (as verifyRemoteBaseAncestry already does), never by the local "origin"
+// remote name, because the local remote config is mutable and could be
+// repointed between admission and this post-PR-creation check. The test
+// repoints the local "origin" remote to an unreachable path between the two
+// checks: if baseStillContains fetched by "origin" it would fail (the object
+// is not yet local and the broken remote cannot supply it); fetching by the
+// pinned OriginURL succeeds regardless of what "origin" now points to.
+func TestBaseStillContainsFetchesPinnedOriginURLNotMutableOriginName(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, _ := newDeliveryFixture(t)
+
+	// Advance the admitted base on a SEPARATE clone (its own object store),
+	// so the new commit (the PR's base, prBase) never lands in repoRoot's or
+	// worktreeRoot's local objects and a real fetch is required to see it.
+	scratch := t.TempDir()
+	runGit(t, filepath.Dir(scratch), "clone", originURL, scratch)
+	runGit(t, scratch, "checkout", "-b", "main", "origin/main")
+	gitConfig(t, scratch)
+	writeWorktreeFile(t, scratch, "c.txt", "advance\n")
+	runGit(t, scratch, "add", "-A")
+	runGit(t, scratch, "commit", "-m", "advance base")
+	runGit(t, scratch, "push", "origin", "main")
+	prBase := runGitOut(t, scratch, "rev-parse", "HEAD")
+
+	// Repoint the local "origin" remote to an unreachable path, simulating a
+	// mutable-remote repoint mid-attempt. req.OriginURL keeps the ADMITTED
+	// URL, unaffected by the repoint.
+	runGit(t, worktreeRoot, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "does-not-exist.git"))
+	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"})
+
+	if err := baseStillContains(ctx, RealGit{}, req, baseCommit, prBase); err != nil {
+		t.Fatalf("baseStillContains = %v, want nil: it must fetch the pinned OriginURL (%s), not the repointed local \"origin\" remote", err, originURL)
+	}
+	_ = repoRoot
+}
+
+// TestBaseStillContainsFailsClosedWhenPinnedOriginURLUnreachable is the
+// converse of the above: when req.OriginURL (the pinned, admitted remote) is
+// unreachable, baseStillContains must fail closed even though the local
+// "origin" remote is perfectly healthy - proving the fetch really targets
+// req.OriginURL and not the mutable local remote name.
+func TestBaseStillContainsFailsClosedWhenPinnedOriginURLUnreachable(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, _ := newDeliveryFixture(t)
+
+	scratch := t.TempDir()
+	runGit(t, filepath.Dir(scratch), "clone", originURL, scratch)
+	runGit(t, scratch, "checkout", "-b", "main", "origin/main")
+	gitConfig(t, scratch)
+	writeWorktreeFile(t, scratch, "c.txt", "advance\n")
+	runGit(t, scratch, "add", "-A")
+	runGit(t, scratch, "commit", "-m", "advance base")
+	runGit(t, scratch, "push", "origin", "main")
+	prBase := runGitOut(t, scratch, "rev-parse", "HEAD")
+
+	// The local "origin" remote is left pointing at the healthy originURL,
+	// but req.OriginURL (the pinned URL a real repoint attack would still
+	// leave untouched) is broken.
+	_ = worktreeRoot
+	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"})
+	req.OriginURL = filepath.Join(t.TempDir(), "does-not-exist.git")
+
+	if err := baseStillContains(ctx, RealGit{}, req, baseCommit, prBase); err == nil {
+		t.Fatal("baseStillContains = nil, want a fetch error when the pinned OriginURL is unreachable, even though the local \"origin\" remote is healthy")
+	}
+}
+
 func TestDeliverTemplateInjectionSingleArgv(t *testing.T) {
 	ctx := context.Background()
 	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
