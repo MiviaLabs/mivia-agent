@@ -78,24 +78,7 @@ func SynthesizeStacking(cw *CompiledWorkflow) (*CompiledWorkflow, error) {
 		inputs[name] = def
 	}
 
-	steps := make([]definition.Step, 0, len(cw.Steps)+2)
-	steps = append(steps, cw.Steps...)
-	steps = append(steps,
-		definition.Step{
-			ID:           stepDecompose,
-			Kind:         "agent",
-			Agent:        agent,
-			Template:     templateDecompose,
-			OutputSchema: schemaChunkPlan,
-		},
-		definition.Step{
-			ID:           stepChunkPlanValidate,
-			Kind:         "agent_gate",
-			Agent:        agent,
-			Template:     templateChunkPlanValid,
-			OutputSchema: schemaChunkPlanReview,
-		},
-	)
+	steps := synthesizedStackingSteps(cw.Steps, agent, cfg.PlanStep)
 
 	transitions := synthesizeTransitions(cw, cfg.PlanStep, cfg.ImplementStep)
 
@@ -126,6 +109,40 @@ func SynthesizeStacking(cw *CompiledWorkflow) (*CompiledWorkflow, error) {
 		return nil, err
 	}
 	return synth, nil
+}
+
+// synthesizedStackingSteps appends the engine-synthesized decompose and
+// chunk_plan_validate steps to the workflow's declared steps. The synthesized
+// steps carry the context bindings their templates require - decompose reads
+// the plan artifact as "plan", the gate reads the decompose output as
+// "chunk_plan" - so a real agent run (not just the scripted harness) sees the
+// artifacts it must judge.
+func synthesizedStackingSteps(declared []definition.Step, agent, planStep string) []definition.Step {
+	steps := make([]definition.Step, 0, len(declared)+2)
+	steps = append(steps, declared...)
+	steps = append(steps,
+		definition.Step{
+			ID:           stepDecompose,
+			Kind:         "agent",
+			Agent:        agent,
+			Template:     templateDecompose,
+			OutputSchema: schemaChunkPlan,
+			Context: []definition.ContextBinding{
+				{From: "steps." + planStep + ".output", As: "plan"},
+			},
+		},
+		definition.Step{
+			ID:           stepChunkPlanValidate,
+			Kind:         "agent_gate",
+			Agent:        agent,
+			Template:     templateChunkPlanValid,
+			OutputSchema: schemaChunkPlanReview,
+			Context: []definition.ContextBinding{
+				{From: "steps." + stepDecompose + ".output", As: "chunk_plan"},
+			},
+		},
+	)
+	return steps
 }
 
 // checkSynthesisIdentifiers fails closed when the workflow already declares an
@@ -159,21 +176,28 @@ func copyIDSet(src map[string]bool) map[string]bool {
 	return dst
 }
 
-// synthesizeTransitions rewires the plan step's outgoing edges and appends
-// the stacking router. Every declared plan edge with an empty or succeeded
-// status is superseded by the router and removed; edges with other explicit
-// statuses (for example failed) survive. The router routes decompose by its
-// stack_mode output and bounds the chunk-plan repair loop.
+// synthesizeTransitions rewires the plan phase's exit edge and appends the
+// stacking router. The router anchors at the last plan-phase step (see
+// stackingRouterAnchor): the anchor's succeeded exit into the implement step
+// is superseded by the router and removed. Every other declared edge - repair
+// loops, failed edges, and plan-phase edges before the anchor - survives, so a
+// multi-step plan phase (plan -> plan_review -> plan_tests -> ... ->
+// implement) keeps every step reachable and the implement step's plan-phase
+// context bindings resolvable in single mode. The router routes decompose by
+// its stack_mode output and bounds the chunk-plan repair loop.
 func synthesizeTransitions(cw *CompiledWorkflow, planStep, implementStep string) []definition.Transition {
+	anchor := stackingRouterAnchor(cw, planStep, implementStep)
 	out := make([]definition.Transition, 0, len(cw.Transitions)+7)
 	for _, tr := range cw.Transitions {
-		if tr.From == planStep && (tr.Match.Status == "" || tr.Match.Status == "succeeded") {
+		if tr.To == implementStep && tr.From != implementStep &&
+			(tr.From == anchor || tr.From == planStep) &&
+			(tr.Match.Status == "" || tr.Match.Status == "succeeded") {
 			continue
 		}
 		out = append(out, tr)
 	}
 	out = append(out,
-		definition.Transition{From: planStep, To: stepDecompose, Match: definition.MatchCriteria{Status: "succeeded"}},
+		definition.Transition{From: anchor, To: stepDecompose, Match: definition.MatchCriteria{Status: "succeeded"}},
 		definition.Transition{From: stepDecompose, To: implementStep, Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"stack_mode": "single"}}},
 		definition.Transition{From: stepDecompose, To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"stack_mode": "no_bug"}}},
 		definition.Transition{From: stepDecompose, To: stepChunkPlanValidate, Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"stack_mode": "multi"}}},
@@ -182,6 +206,114 @@ func synthesizeTransitions(cw *CompiledWorkflow, planStep, implementStep string)
 		definition.Transition{From: stepChunkPlanValidate, To: stepDecompose, Match: definition.MatchCriteria{Status: "failed"}, Loop: loopDecomposeRepair, MaxIterations: 3},
 	)
 	return out
+}
+
+// stackingRouterAnchor returns the step the stacking router rewires: the last
+// step of the workflow's plan phase, i.e. the step whose succeeded edge exits
+// the plan phase into the implement step. A workflow with a multi-step plan
+// phase (plan -> plan_review -> ... -> implement) keeps every plan-phase step
+// reachable and the implement step's plan-phase context bindings resolvable in
+// single mode. Falls back to the plan step when no distinct anchor exists,
+// preserving the original behavior for one-step plan phases (plan ->
+// implement).
+func stackingRouterAnchor(cw *CompiledWorkflow, planStep, implementStep string) string {
+	if implementStep == "" {
+		return planStep
+	}
+	// Candidates: steps whose edge exits into the implement step with an
+	// empty or succeeded status.
+	candidates := map[string]bool{}
+	for _, tr := range cw.Transitions {
+		if tr.From == implementStep || tr.To != implementStep {
+			continue
+		}
+		if tr.Match.Status != "" && tr.Match.Status != "succeeded" {
+			continue
+		}
+		candidates[tr.From] = true
+	}
+	if len(candidates) == 0 {
+		return planStep
+	}
+	// Exclude repair-loop exits into the implement step (for example
+	// review_integration -> implement on changes_requested): those steps are
+	// downstream of the implement step, not part of the plan phase.
+	fromImplement := reachableSteps(cw, implementStep)
+	for s := range candidates {
+		if fromImplement[s] {
+			delete(candidates, s)
+		}
+	}
+	switch len(candidates) {
+	case 0:
+		return planStep
+	case 1:
+		for s := range candidates {
+			return s
+		}
+	}
+	// Multiple plan-phase exits (rare): keep the longest plan phase by
+	// anchoring at the candidate farthest from the plan step.
+	dist := distancesFrom(cw, planStep)
+	best, bestDist := "", -1
+	for s := range candidates {
+		if dist[s] > bestDist {
+			best, bestDist = s, dist[s]
+		}
+	}
+	if best == "" {
+		return planStep
+	}
+	return best
+}
+
+// reachableSteps returns the set of step ids reachable from start over the
+// transition graph, including start itself.
+func reachableSteps(cw *CompiledWorkflow, start string) map[string]bool {
+	adj := transitionAdjacency(cw)
+	seen := map[string]bool{start: true}
+	queue := []string{start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, next := range adj[cur] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return seen
+}
+
+// distancesFrom returns the shortest-path distance from start to every
+// reachable step over the transition graph.
+func distancesFrom(cw *CompiledWorkflow, start string) map[string]int {
+	adj := transitionAdjacency(cw)
+	dist := map[string]int{start: 0}
+	queue := []string{start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, next := range adj[cur] {
+			if _, ok := dist[next]; !ok {
+				dist[next] = dist[cur] + 1
+				queue = append(queue, next)
+			}
+		}
+	}
+	return dist
+}
+
+// transitionAdjacency maps every step id to the step ids it can reach via a
+// declared transition, including the terminal targets "success" and
+// "failure".
+func transitionAdjacency(cw *CompiledWorkflow) map[string][]string {
+	adj := make(map[string][]string, len(cw.StepIDs))
+	for _, tr := range cw.Transitions {
+		adj[tr.From] = append(adj[tr.From], tr.To)
+	}
+	return adj
 }
 
 // validateSynthesizedGraph runs the compiler's own admission validators on

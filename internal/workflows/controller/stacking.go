@@ -162,6 +162,12 @@ func preImplementSteps(synth *compiler.CompiledWorkflow) map[string]bool {
 func validateChunkModeBindings(synth *compiler.CompiledWorkflow) error {
 	preImplement := preImplementSteps(synth)
 	for _, step := range synth.Steps {
+		// Engine-synthesized plan-phase steps (decompose, chunk_plan_validate)
+		// never execute in chunk mode - the run starts at the implement step -
+		// so their synthesized plan-phase bindings must not fail admission.
+		if step.ID == synthesizedDecomposeStepID || step.ID == synthesizedChunkPlanValidateStepID {
+			continue
+		}
 		for _, binding := range step.Context {
 			fromStep, ok := bindingStepFrom(binding.From)
 			if !ok || !preImplement[fromStep] {

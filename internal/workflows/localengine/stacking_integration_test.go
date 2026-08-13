@@ -147,7 +147,13 @@ func (r *scriptedAttemptRunner) callsFor(step string) int {
 // with a scripted agent runner.
 func scriptedStackingEngine(t *testing.T, byStepCall map[string]json.RawMessage) (*localengine.Engine, *agenttools.Service) {
 	t.Helper()
-	root := writeStackingWorkspace(t)
+	return scriptedStackingEngineRoot(t, writeStackingWorkspace(t), byStepCall)
+}
+
+// scriptedStackingEngineRoot builds an engine over an already-written
+// workspace root with a scripted agent runner.
+func scriptedStackingEngineRoot(t *testing.T, root string, byStepCall map[string]json.RawMessage) (*localengine.Engine, *agenttools.Service) {
+	t.Helper()
 	repo := workflowledger.NewMemoryRepository()
 	engine := &localengine.Engine{
 		WorkspaceRoot: root,
@@ -159,15 +165,29 @@ func scriptedStackingEngine(t *testing.T, byStepCall map[string]json.RawMessage)
 	return engine, mustService(t, engine, repo)
 }
 
+// scriptedStackingEngineMultiPhase builds an engine over a workspace whose
+// stacking workflow has a multi-step plan phase (the feature-delivery shape).
+func scriptedStackingEngineMultiPhase(t *testing.T, byStepCall map[string]json.RawMessage) (*localengine.Engine, *agenttools.Service) {
+	t.Helper()
+	return scriptedStackingEngineRoot(t, writeStackingWorkspaceMultiPhase(t), byStepCall)
+}
+
 // startStackingRun admits a run of the "stack-me" workflow with the given
 // extra inputs (nil for a plain plan-mode run).
 func startStackingRun(t *testing.T, svc *agenttools.Service, extra map[string]string) agenttools.StartResult {
+	t.Helper()
+	return startStackingRunFor(t, svc, "stack-me", extra)
+}
+
+// startStackingRunFor admits a run of the named workflow with the given extra
+// inputs (nil for a plain plan-mode run).
+func startStackingRunFor(t *testing.T, svc *agenttools.Service, workflow string, extra map[string]string) agenttools.StartResult {
 	t.Helper()
 	inputs := map[string]any{"task": "build"}
 	for k, v := range extra {
 		inputs[k] = v
 	}
-	payload, err := json.Marshal(map[string]any{"workflow": "stack-me", "inputs": inputs})
+	payload, err := json.Marshal(map[string]any{"workflow": workflow, "inputs": inputs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,10 +268,122 @@ func assertLoopIterations(t *testing.T, view agenttools.StatusView, name string,
 
 // --- tests ---
 
-// TestStackingE2EPlanModeMultiRoutesThroughGate is the happy path: a plan-mode
-// run (no stack_mode input) synthesizes decompose + chunk_plan_validate at
-// admission, decompose emits a valid multi-chunk plan, the gate approves it,
-// and the run succeeds without ever running the implement step.
+// writeStackingWorkspaceMultiPhase writes a stacking workflow with a
+// multi-step plan phase (plan -> plan_review -> plan_tests ->
+// test_plan_review -> implement), the shape of the shipped feature-delivery
+// workflow. The stacking router must anchor at the plan phase's last step so
+// every plan-phase step stays reachable and admission passes.
+func writeStackingWorkspaceMultiPhase(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	wfRoot := filepath.Join(root, ".mivia", "workflows")
+	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := `version = 1
+name = "stack-multi"
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 100
+
+[stacking]
+plan_step = "plan"
+implement_step = "implement"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "planner"
+
+[[steps]]
+id = "plan_review"
+kind = "agent"
+agent = "reviewer"
+
+[[steps]]
+id = "plan_tests"
+kind = "agent"
+agent = "planner"
+
+[[steps]]
+id = "test_plan_review"
+kind = "agent"
+agent = "reviewer"
+
+[[steps]]
+id = "implement"
+kind = "agent"
+agent = "implementer"
+
+[[transitions]]
+from = "plan"
+to = "plan_review"
+[transitions.match]
+status = "succeeded"
+
+[[transitions]]
+from = "plan_review"
+to = "plan_tests"
+[transitions.match]
+status = "succeeded"
+
+[[transitions]]
+from = "plan_tests"
+to = "test_plan_review"
+[transitions.match]
+status = "succeeded"
+
+[[transitions]]
+from = "test_plan_review"
+to = "implement"
+[transitions.match]
+status = "succeeded"
+
+[[transitions]]
+from = "implement"
+to = "success"
+[transitions.match]
+status = "succeeded"
+`
+	if err := os.WriteFile(filepath.Join(wfRoot, "stack-multi.toml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// TestStackingE2EPlanModeMultiStepPlanPhase is the regression for the
+// feature-delivery-shaped workflow: the stacking router must anchor at the
+// last plan-phase step (test_plan_review), keeping every plan-phase step
+// reachable, so admission succeeds and the run walks the full plan phase
+// before decompose and the gate.
+func TestStackingE2EPlanModeMultiStepPlanPhase(t *testing.T) {
+	engine, svc := scriptedStackingEngineMultiPhase(t, map[string]json.RawMessage{
+		"plan":                json.RawMessage(`{"summary":"p"}`),
+		"plan_review":         json.RawMessage(`{"verdict":"approved"}`),
+		"plan_tests":          json.RawMessage(`{"summary":"tp"}`),
+		"test_plan_review":    json.RawMessage(`{"verdict":"approved"}`),
+		"decompose":           json.RawMessage(stackValidMultiPlan),
+		"chunk_plan_validate": json.RawMessage(stackChunkPlanReviewValid),
+	})
+	started := startStackingRunFor(t, svc, "stack-multi", nil)
+	waitRun(t, engine, started.RunID)
+	view := stackStatusView(t, svc, started.RunID)
+	if view.Status != "succeeded" {
+		t.Fatalf("status = %q; want succeeded (%+v)", view.Status, view.Attempts)
+	}
+	assertAttemptSequence(t, view, []wantAttempt{
+		{"plan", "plan_review"},
+		{"plan_review", "plan_tests"},
+		{"plan_tests", "test_plan_review"},
+		{"test_plan_review", "decompose"},
+		{"decompose", "chunk_plan_validate"},
+		{"chunk_plan_validate", "success"},
+	})
+}
+
 func TestStackingE2EPlanModeMultiRoutesThroughGate(t *testing.T) {
 	engine, svc := scriptedStackingEngine(t, map[string]json.RawMessage{
 		"plan":                json.RawMessage(`{"summary":"p"}`),
