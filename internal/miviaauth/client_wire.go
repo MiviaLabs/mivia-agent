@@ -1,45 +1,18 @@
 package miviaauth
 
-// loginRequest is the JSON body for POST /api/v2/auth/login.
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-// registerRequest is the JSON body for POST /api/v2/auth/register.
-type registerRequest struct {
-	Email            string `json:"email"`
-	Password         string `json:"password"`
-	OrganizationName string `json:"organization_name"`
-}
-
-// verifyRequest is the JSON body for POST /api/v2/auth/verify.
-type verifyRequest struct {
-	Token string `json:"token"`
-}
-
-// sessionResponse is the shared 200 response shape for login and refresh:
-// {"authenticated":true,"user":{...},"session":{"bearer":"...","expires_at":"..."}}.
-type sessionResponse struct {
-	Authenticated bool        `json:"authenticated"`
-	User          userWire    `json:"user"`
-	Session       sessionWire `json:"session"`
-}
-
-type userWire struct {
-	AccountID            string `json:"account_id"`
-	OrganizationID       string `json:"organization_id"`
-	OrganizationKey      string `json:"organization_key"`
-	OrganizationName     string `json:"organization_name"`
-	Role                 string `json:"role"`
-	Email                string `json:"email"`
-	IsPlatformSuperAdmin bool   `json:"is_platform_super_admin"`
-	Name                 string `json:"name"`
-	Lastname             string `json:"lastname"`
-	DisplayName          string `json:"display_name"`
-}
-
-type sessionWire struct {
-	Bearer    string `json:"bearer"`
-	ExpiresAt string `json:"expires_at"`
+// sessionEnvelope decodes the session/user portion shared by go-mivia's
+// login, refresh, and verify response bodies (LoginResponseBody,
+// RefreshResponseBody, VerifyResponseBody in openapi_types.gen.go). Those
+// are three distinct generated schemas -- an artifact of how go-mivia's
+// OpenAPI spec models each operation's response, not a meaningful
+// difference for this client -- so decoding into this narrower,
+// hand-written envelope instead of three near-duplicate typed decodes keeps
+// doSessionRequest a single function. Session/User are pointers because
+// LoginResponseBody and VerifyResponseBody both model them as optional
+// (VerifyResponseBody's are absent under ErrVerifiedNoSession); JSON
+// decoding into pointer fields here works the same whether the source
+// schema declared them required or optional.
+type sessionEnvelope struct {
+	Session *SessionInfo `json:"session,omitempty"`
+	User    *UserInfo    `json:"user,omitempty"`
 }

@@ -74,7 +74,7 @@ func newClient(baseURL string) *Client {
 // to a string only at the JSON marshal call site below; it is never stored
 // as a Go string anywhere else in this file.
 func (c *Client) Login(ctx context.Context, email string, password []byte) (Token, error) {
-	body, err := json.Marshal(loginRequest{Email: email, Password: string(password)})
+	body, err := json.Marshal(LoginRequest{Email: email, Password: string(password)})
 	if err != nil {
 		return Token{}, fmt.Errorf("miviaauth: encode login request: %w", err)
 	}
@@ -102,7 +102,7 @@ func (c *Client) Refresh(ctx context.Context, bearer string) (Token, error) {
 // Verify. password is converted to a string only at the JSON marshal call
 // site, matching Login.
 func (c *Client) Register(ctx context.Context, email string, password []byte, organizationName string) error {
-	body, err := json.Marshal(registerRequest{Email: email, Password: string(password), OrganizationName: organizationName})
+	body, err := json.Marshal(RegisterRequest{Email: email, Password: string(password), OrganizationName: organizationName})
 	if err != nil {
 		return fmt.Errorf("miviaauth: encode register request: %w", err)
 	}
@@ -129,7 +129,7 @@ func (c *Client) Register(ctx context.Context, email string, password []byte, or
 // without auto-login-on-verify it returns ErrVerifiedNoSession instead --
 // callers must handle that case explicitly, not treat it as a hard error.
 func (c *Client) Verify(ctx context.Context, token string) (Token, error) {
-	body, err := json.Marshal(verifyRequest{Token: token})
+	body, err := json.Marshal(VerifyRequest{Token: token})
 	if err != nil {
 		return Token{}, fmt.Errorf("miviaauth: encode verify request: %w", err)
 	}
@@ -181,24 +181,23 @@ func (c *Client) doSessionRequest(req *http.Request, sessionOptional bool) (Toke
 		return Token{}, fmt.Errorf("miviaauth: request failed: %w", &StatusError{StatusCode: resp.StatusCode})
 	}
 
-	var wire sessionResponse
+	var wire sessionEnvelope
 	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
 		return Token{}, fmt.Errorf("miviaauth: decode response: %w", err)
 	}
-	if wire.Session.Bearer == "" {
+	if wire.Session == nil {
 		if sessionOptional {
 			return Token{}, ErrVerifiedNoSession
 		}
 		return Token{}, fmt.Errorf("miviaauth: request failed: response had no session")
 	}
-	expiresAt, err := time.Parse(time.RFC3339, wire.Session.ExpiresAt)
-	if err != nil {
-		return Token{}, fmt.Errorf("miviaauth: parse session expiry: %w", err)
+	if wire.User == nil {
+		return Token{}, fmt.Errorf("miviaauth: request failed: response had a session but no user")
 	}
 	return Token{
 		Bearer:         wire.Session.Bearer,
-		ExpiresAt:      expiresAt,
-		OrganizationID: wire.User.OrganizationID,
+		ExpiresAt:      wire.Session.ExpiresAt,
+		OrganizationID: wire.User.OrganizationId,
 		Role:           wire.User.Role,
 	}, nil
 }
