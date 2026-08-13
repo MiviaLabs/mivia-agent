@@ -106,9 +106,15 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	timeout := time.Duration(timeoutSec) * time.Second
 
 	input, _ := json.Marshal(params.Task)
+	// A fixed "d1" here (this tool's original ID, before per-call uniqueness
+	// mattered) collided across every delegate call in a session - two
+	// concurrent delegates would merge into one subagent run in any consumer
+	// that keys off TaskID (e.g. the desktop app's chat transcript), since
+	// InvocationKey below was already unique but ID was not.
+	invocationID := fmt.Sprintf("delegate:%d", t.nextID.Add(1))
 	tasks := []subagents.Task{{
-		ID:            "d1",
-		InvocationKey: fmt.Sprintf("delegate:%d", t.nextID.Add(1)),
+		ID:            invocationID,
+		InvocationKey: invocationID,
 		Name:          handlerName,
 		Owner:         defaultToolOwner,
 		Input:         input,
