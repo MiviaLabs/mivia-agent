@@ -57,8 +57,8 @@ func waitPRChecks(ctx context.Context, repo, number string) error {
 	const mergeCheckWatchTimeout = 45 * time.Minute
 	ctx, cancel := context.WithTimeout(ctx, mergeCheckWatchTimeout)
 	defer cancel()
-	out, err := ghRun(ctx, "pr checks", "pr", "checks", number, "--repo", repo, "--watch")
-	if err != nil && strings.Contains(string(out), "no checks reported") {
+	_, err := ghRun(ctx, "pr checks", "pr", "checks", number, "--repo", repo, "--watch")
+	if err != nil && strings.Contains(err.Error(), "no checks reported") {
 		return nil
 	}
 	return err
