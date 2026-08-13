@@ -33,8 +33,7 @@ var (
 	// workflowResumeJoinBound bounds the pre-Run in-flight attempt join for runs
 	// that carry no deadline of their own, so a coordinator child whose run never
 	// settles cannot park resume forever (runs WITH a deadline bound the join to
-	// the time remaining before it; see workflowResumeJoinCtx). Injectable for
-	// tests.
+	// the time remaining before it; see workflowResumeJoinCtx). Injectable for tests.
 	workflowResumeJoinBound = 10 * time.Minute
 )
 
@@ -91,7 +90,7 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish b
 	if terminal {
 		return finishWorkflowResumeTerminal(ctx, work.Abs, res, store, repo, runID, run.WorkflowName, compiled, allowPublish, stdout, stderr)
 	}
-	uninstallHooks, err := workflowResumeInstallHooks(work.Abs, false)
+	uninstallHooks, err := workflowResumeInstallHooks(work.Abs, false, false)
 	if err != nil {
 		return err
 	}
@@ -195,7 +194,10 @@ func finishWorkflowResumeSettled(ctx context.Context, root string, res *config.R
 	if err != nil {
 		return err
 	}
-	drove, err := maybeDriveSettledStack(&preparedWorkflowRun{
+	// CLI foreground paths are unbounded by design: the drive's ctx is the
+	// session attempt bound's stop signal, and resume owns the run until the
+	// stack completes (or the process is interrupted).
+	drove, err := maybeDriveSettledStack(context.Background(), &preparedWorkflowRun{
 		root: root, res: res, store: store, repo: repo,
 		compiled: compiled, inputSnapshot: snapshot.Inputs,
 		refBase: "", raw: raw,
@@ -372,9 +374,11 @@ func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) 
 	if err != nil {
 		return workflowledger.Snapshot{}, nil, nil, err
 	}
+	// The engine-reserved stacking inputs (D3) were merged into the admitted
+	// contract, so resume accepts them too (a no-op for non-stacking runs).
+	compiler.MergeStackingInputs(compiled)
 	// The two RECORDED digests must agree: the run row and its snapshot must
 	// describe one admission, not two.
-	//
 	// They are deliberately NOT compared against compiled.Digest. That digest
 	// is sha256 over the marshalled Go struct, so it moves whenever the
 	// definition types gain a field, even when the workflow text does not
@@ -383,7 +387,6 @@ func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) 
 	// the binary, not about the definition. Every in-flight run then fails to
 	// resume after an upgrade, and resume is the recovery path an upgrade must
 	// survive.
-	//
 	// Dropping the comparison loses no integrity. The definition text is
 	// already proven: run.SnapshotDigest pins the whole snapshot above, the
 	// snapshot carries definition_toml, and resume parses THAT text rather
@@ -456,8 +459,7 @@ func reconcileWorkflowTerminal(ctx context.Context, repo workflowledger.Reposito
 	// A run whose derived route reached the success terminal under an active
 	// delivery policy must settle at delivery_pending, never succeeded: the
 	// delivery phase still has to publish. This mirrors the controller's
-	// terminal-route routing for the crash window where the route is durable
-	// but the delivery_pending CAS was never recorded.
+	// terminal-route routing for the crash window.
 	if deliveryActive && plan.TerminalStatus == workflowledger.RunStatusSucceeded &&
 		plan.Run.Status != workflowledger.RunStatusDeliveryPending {
 		plan.TerminalStatus = workflowledger.RunStatusDeliveryPending

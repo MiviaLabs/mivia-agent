@@ -31,7 +31,7 @@ This sets `core.hooksPath=.githooks`.
 
 - `verify_agent_config.py`
 - `secret_scan.py --staged`
-- **`file-size-check`** - staged files must be ≤ **500 KiB**
+- **`file-size-check`** - staged files must be ≤ **500 KiB** (binary databases `*.db`, `*.sqlite`, `*.sqlite3` are exempt: opaque blobs that cannot be split)
 - **`check_go_structure.py --staged`** - Go file/function LOC limits (see below)
 - docs ownership when docs staged
 - `gofmt` on staged Go

@@ -145,8 +145,11 @@ func TestPublishTerminalEventOnceForDeliveredAndSkippedStackPlanRuns(t *testing.
 }
 
 // settleSucceededStackPlanRun parks a real two-step run at delivery_pending,
-// settles it succeeded, and seeds its stack plan in the task ledger - the exact
-// shape maybeDriveSettledStack leaves behind before the terminal publishers run.
+// settles it succeeded, and seeds the completed-drive stack state (the
+// succeeded decompose output the driver reads plus every chunk task merged) -
+// the exact shape maybeDriveSettledStack leaves behind before the terminal
+// publishers run. Seeding the plan alone is NOT the completion marker: the
+// skip publisher gates on the stack having driven to completion.
 func settleSucceededStackPlanRun(t *testing.T, ctx context.Context) (root, config string, store *storage.SQLite, repo workflowledger.Repository, runID string) {
 	t.Helper()
 	root, storePath, config, _ := newDeliveryFixture(t)
@@ -167,9 +170,19 @@ func settleSucceededStackPlanRun(t *testing.T, ctx context.Context) (root, confi
 	if err := repo.CompareAndSetRunStatus(ctx, runID, run.Version, workflowledger.RunStatusSucceeded, nil); err != nil {
 		t.Fatal(err)
 	}
+	seedSucceededDecomposeAttempt(t, repo, runID, []byte(multiChunkPlanOutput))
+	_, chunks, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	if err != nil || len(chunks) != 2 {
+		t.Fatalf("parse multi-chunk plan = %v, %v; want 2 chunks", chunks, err)
+	}
 	ledger := tasks.NewStore(store)
-	if _, err := ledger.StorePlan(tasks.Plan{ID: runID, Scope: stackScope(runID), Schema: stackPlanSchema}); err != nil {
-		t.Fatalf("seed stack plan: %v", err)
+	if err := seedStackLedger(ledger, runID, chunks); err != nil {
+		t.Fatalf("seed stack ledger: %v", err)
+	}
+	for _, c := range chunks {
+		if err := ledger.TransitionTask(runID, c.ID, stackStatusMerged); err != nil {
+			t.Fatalf("transition chunk %s to merged: %v", c.ID, err)
+		}
 	}
 	return root, config, store, repo, runID
 }

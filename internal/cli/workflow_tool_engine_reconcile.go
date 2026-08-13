@@ -102,13 +102,19 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet b
 
 // reconcileParkedDelivery publishes one delivery_pending run. allowPublish
 // is always true: the workflow's delivery policy is the authorization, so no
-// flag is consulted. A stacking plan run whose multi-chunk stack already
-// drove - its task ledger carries the seeded stack plan - and whose workflow
-// disables publishing the plan run itself (delivery.deliver_plan_run=false)
-// is settled succeeded WITHOUT publication instead: the chunk PRs carry the
-// work, and a sweep publish after the crash window between the drive and the
-// settle's CAS would falsely publish the plan PR (mirrors the in-session skip
-// branch). A delivery failure with delivery.on_failure routes the run back to
+// flag is consulted. A stacking plan run whose multi-chunk stack DROVE TO
+// COMPLETION - every chunk task in its task ledger is merged, the same durable
+// state the driver checks - and whose workflow disables publishing the plan
+// run itself (delivery.deliver_plan_run=false) is settled succeeded WITHOUT
+// publication instead: the chunk PRs carry the work, and a sweep publish after
+// the crash window between the drive and the settle's CAS would falsely
+// publish the plan PR (mirrors the in-session skip branch). A seeded-but-
+// incomplete stack (the drive aborted after seeding the ledger but before any
+// chunk merged) stays delivery_pending for the operator to finish with 'mivia
+// stack drive': settling it succeeded would report a plan run succeeded over
+// an INCOMPLETE stack, and any non-skipped fall-through would publish the plan
+// PR over it (the exact deliver-before-drive bug the skip path exists to
+// prevent). A delivery failure with delivery.on_failure routes the run back to
 // running at the repair step (ReopenForRepair); the sweep re-enters it
 // through the resume path immediately so the bounded in-session repair loop
 // re-advances and re-delivers NOW instead of stranding the run until the
@@ -125,10 +131,24 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 		return
 	}
 	if skipParkedPlanRunPublication(ctx, store, repo, runID) {
-		// The stack already drove (seeded stack plan) and the plan run's own
-		// publication is disabled: settle succeeded - the terminal a delivered
-		// run reaches - without delivering, so the sweep never publishes the
-		// plan PR for a run that was never meant to publish one.
+		// The plan run's own publication is disabled and the task ledger
+		// carries the seeded stack plan. Only a stack that actually drove to
+		// COMPLETION (every chunk task merged - the same durable state the
+		// driver checks) is settled succeeded WITHOUT publishing: the chunk
+		// PRs carry the work, and the crash window between the drive and the
+		// settle's CAS must never publish the plan PR. A seeded-but-incomplete
+		// stack (the drive aborted after seeding the ledger) stays
+		// delivery_pending for the operator to finish with 'mivia stack
+		// drive'; settling or delivering it now would report the plan run
+		// succeeded over an incomplete stack, or publish the plan PR over it
+		// (deliver-before-drive).
+		if !stackDriveCompleted(ctx, store, repo, runID) {
+			if !quiet {
+				log.Printf("workflow: session recovery: plan run %s stack incomplete; leaving parked", runID)
+			}
+			finish()
+			return
+		}
 		if settleErr := settlePlanRunSkippedDelivery(context.Background(), repo, runID); settleErr != nil {
 			if !quiet {
 				log.Printf("workflow: session recovery: settle skipped plan run %s failed: %v", runID, settleErr)
@@ -157,14 +177,17 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 	e.publishDeliveredRunFinished(ctx, repo, runID)
 }
 
-// skipParkedPlanRunPublication reports whether a delivery_pending run is a
-// stacking plan run the sweep must settle WITHOUT publishing: the compiled
-// workflow disables the plan run's own publication (delivery.deliver_plan_run
-// false - the default) and the run's task ledger carries the seeded stack
-// plan the chunk drive wrote - the durable marker that the stack drove, the
-// same gate publishSkippedPlanRunFinished uses. Any resolution failure
-// (missing run, corrupt snapshot) returns false, so the run falls through to
-// deliverRunWithStore, which reports the error exactly as before.
+// skipParkedPlanRunPublication reports whether a delivery_pending run has the
+// SKIP SHAPE the sweep may settle WITHOUT publishing: the compiled workflow
+// disables the plan run's own publication (delivery.deliver_plan_run false -
+// the default) and the run's task ledger carries the seeded stack plan the
+// chunk drive wrote. The shape predicate alone does NOT authorize the settle:
+// reconcileParkedDelivery settles succeeded only when the stack actually drove
+// to completion (stackDriveCompleted); a seeded-but-incomplete stack stays
+// delivery_pending for the operator to finish with 'mivia stack drive'. Any
+// resolution failure (missing run, corrupt snapshot) returns false, so the run
+// falls through to deliverRunWithStore, which reports the error exactly as
+// before.
 func skipParkedPlanRunPublication(ctx context.Context, store *storage.SQLite, repo workflowledger.Repository, runID string) bool {
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
@@ -183,6 +206,30 @@ func skipParkedPlanRunPublication(ctx context.Context, store *storage.SQLite, re
 	}
 	_, err = tasks.NewStore(store).ReadBackPlan(runID)
 	return err == nil
+}
+
+// stackDriveCompleted reports whether a stacking plan run's chunk stack
+// actually drove to completion: the run ledger carries the succeeded decompose
+// output the driver reads (loadStackPlanOutput) and every chunk task in the
+// task ledger is merged - the same durable state driveStackToCompletion checks
+// before it settles (allChunksMerged(chunks, stackMergedSet(byID))). Any
+// resolution failure (missing run, corrupt output, unseeded plan) returns
+// false, so a seeded-but-incomplete stack stays delivery_pending for the
+// operator to finish with 'mivia stack drive'.
+func stackDriveCompleted(ctx context.Context, store *storage.SQLite, repo workflowledger.Repository, runID string) bool {
+	raw, err := loadStackPlanOutput(repo, runID)
+	if err != nil {
+		return false
+	}
+	_, chunks, err := parseStackPlanOutput(raw)
+	if err != nil {
+		return false
+	}
+	byID, err := stackTaskMap(tasks.NewStore(store), runID)
+	if err != nil {
+		return false
+	}
+	return allChunksMerged(chunks, stackMergedSet(byID))
 }
 
 // reconcileParkedResume resumes one interrupted (pending/running/

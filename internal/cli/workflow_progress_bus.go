@@ -10,7 +10,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // workflowBusProgressSink adapts controller.ProgressSink to the session event
@@ -118,10 +117,13 @@ func (e *sessionWorkflowEngine) publishDeliveredRunFinished(ctx context.Context,
 // workflow's delivery.deliver_plan_run option is false, so after the stack
 // drove, the loop CASed the plan run to succeeded and no delivery record was
 // written. publishDeliveredRunFinished keys on the delivery record, so it
-// cannot emit for this shape; the driven stack plan in the task ledger (seeded
-// during the drive) is the durable marker that this run completed via the skip
-// path. A controller-finished succeeded run - which already emitted
-// run_finished - has no stack plan, so it is never double-published.
+// cannot emit for this shape; the completed stack drive - the succeeded
+// decompose output plus every chunk task merged, the same durable state the
+// driver checks (stackDriveCompleted) - is the marker that this run completed
+// via the skip path. A seeded-but-incomplete stack (the drive aborted after
+// seeding) never emits run_finished. A controller-finished succeeded run -
+// which already emitted run_finished - has no completed stack drive, so it is
+// never double-published.
 //
 // Mutual exclusion with publishDeliveredRunFinished: launchStartedWorkflow and
 // launchResume run the two publishers back to back, and a delivered plan run
@@ -141,8 +143,7 @@ func (e *sessionWorkflowEngine) publishSkippedPlanRunFinished(ctx context.Contex
 	if _, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(runID, run.WorkflowDigest)); err == nil {
 		return // delivered runs publish via publishDeliveredRunFinished
 	}
-	ledger := tasks.NewStore(store)
-	if _, err := ledger.ReadBackPlan(runID); err != nil {
+	if !stackDriveCompleted(ctx, store, repo, runID) {
 		return
 	}
 	sink.Emit(controller.ProgressEvent{

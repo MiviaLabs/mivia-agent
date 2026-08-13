@@ -5,7 +5,9 @@ Modes:
   (default)  staged files only - pre-commit
   --tracked  all git-tracked files - pre-push / make structure-check
 
-Skips vendor/, .git/, node_modules/, go.sum.
+Skips vendor/, .git/, node_modules/, go.sum, and binary database files
+(*.db, *.sqlite, *.sqlite3): databases are single opaque blobs that cannot
+be split, so the size gate never applies to them.
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import sys
 
 MAX_BYTES = 500 * 1024  # 500 KiB
 SKIP_PREFIXES = ("vendor/", ".git/", "node_modules/", "go.sum")
+SKIP_SUFFIXES = (".db", ".sqlite", ".sqlite3")
 
 
 def get_staged_files() -> list[str]:
@@ -55,6 +58,8 @@ def check_file_sizes(files: list[str]) -> int:
             continue
 
         path = os.path.join(cwd, f)
+        if path.endswith(SKIP_SUFFIXES):
+            continue
         try:
             size = os.path.getsize(path)
         except OSError:

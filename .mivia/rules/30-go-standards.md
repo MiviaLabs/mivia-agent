@@ -19,7 +19,7 @@ Mechanical policy: `.mivia/policy/go-structure.json`, enforced by `scripts/check
 | Production `.go` file LOC | 500 | 800 |
 | `*_test.go` file LOC | 800 | 1200 |
 | Function body LOC | 80 | 120 |
-| Staged file bytes (any type) | - | 500 KiB (`file-size-check`) |
+| Staged file bytes (any type except binary DBs: *.db, *.sqlite, *.sqlite3) | - | 500 KiB (`file-size-check`) |
 
 **Agent rules:**
 
