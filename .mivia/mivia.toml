@@ -570,10 +570,11 @@ default_timeout_seconds = 43200
 max_audit_rounds = 0               # ADLC audit loop cap; 0 = unlimited
 
 # Non-chat orchestration storage: memory (ephemeral) or sqlite (durable).
-# Chat always uses one SQLite file for sessions, context, routes, and runs.
+# Chat always uses one SQLite file for sessions, context, routes, and runs,
+# defaulting to ~/.mivia/context.db (shared across every workspace on this
+# machine; sessions stay isolated inside it by workspace ID). Set store_path
+# below only to pin this workspace to its own separate file.
 store_backend = "sqlite"
-# This repository uses one catalog outside every worktree.
-store_path = "~/.mivia/mivia-agent/context.db"
 
 # ---------------------------------------------------------------------------
 # CONTEXT - durable conversation storage ceilings

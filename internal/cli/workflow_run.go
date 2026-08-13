@@ -392,8 +392,13 @@ func workflowConfigPath(root, explicit string) string {
 	return ""
 }
 
+// applyWorkflowStoreRoot pins workflow execution state to the workspace,
+// regardless of the chat/session store's default. Workflow run IDs and
+// locks are not namespaced across projects the way chat sessions are (see
+// contextWorkspaceID), so letting them fall back to the shared global store
+// would let unrelated workflow runs in different repos collide.
 func applyWorkflowStoreRoot(res *config.Resolved, root string) {
-	if res != nil && res.Subagents.StoreBackend == "sqlite" && !res.StorePathSet {
+	if res != nil && !res.StorePathSet {
 		res.Subagents.StorePath = workspace.ContextStorePath(root)
 	}
 }

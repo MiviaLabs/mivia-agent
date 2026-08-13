@@ -23,11 +23,14 @@ var abandonContextWorktreeCreation = func(store *storage.SQLite, principal conte
 	return store.AbandonWorktreeCreation(context.Background(), principal, instance)
 }
 
+// contextStorePath is always SQLite-backed regardless of [subagents]
+// store_backend, which governs the separate orchestration ledger
+// (internal/cli/orchestration_state.go), not this store.
 func contextStorePath(root string, cfg config.SubagentConfig) string {
-	if cfg.StoreBackend == "sqlite" && cfg.StorePath != "" {
+	if cfg.StorePath != "" {
 		return config.ExpandPath(cfg.StorePath)
 	}
-	return workspace.ContextStorePath(root)
+	return workspace.GlobalContextStorePath(root)
 }
 
 func openContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {

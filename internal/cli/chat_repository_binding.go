@@ -124,14 +124,14 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 func repositorySessionStorePath(root string, invocation chatInvocation, _ *config.Resolved) (string, error) {
 	configPath, found := repositoryConfigPath(root, invocation)
 	if !found {
-		return config.DefaultStorePathForWorkspace(root), nil
+		return workspace.GlobalContextStorePath(root), nil
 	}
 	resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: root, AllowMissingConfig: true})
 	if err != nil {
 		return "", err
 	}
 	if !resolved.StorePathSet {
-		return config.DefaultStorePathForWorkspace(root), nil
+		return workspace.GlobalContextStorePath(root), nil
 	}
 	path := config.ExpandPath(resolved.Subagents.StorePath)
 	if filepath.IsAbs(path) {
