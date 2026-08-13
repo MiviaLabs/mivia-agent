@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -154,7 +155,12 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	// The user-turn appendix stays too, but the system prompt is authoritative.
 	schemaBlock := schemaSystemAppendix(h.resolveOutputSchema(req))
 	if req.Skill == "" {
-		return withMessagingProtocol(systemPrompt) + schemaBlock, registry, noop, nil
+		// composeSystemPrompt (D1c) sits before withMessagingProtocol/
+		// schemaBlock deliberately (D1c's ordering decision): the
+		// messaging-protocol/schema tail is operationally load-bearing for
+		// the turn and stays closest to the end of the prompt; the core
+		// memory block is background context and goes right after the base.
+		return withMessagingProtocol(chat.ComposeSystemPrompt(systemPrompt, "")) + schemaBlock, registry, noop, nil
 	}
 	scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
 	if err != nil {
@@ -164,7 +170,7 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	// The skill's instructions replace the agent prompt, so the protocol block
 	// is appended to the skill-activated prompt instead of the resolved one.
 	// This keeps the child-side messaging contract in-context exactly once.
-	return withMessagingProtocol(prompt) + schemaBlock, scoped, closeActivation, nil
+	return withMessagingProtocol(chat.ComposeSystemPrompt(prompt, "")) + schemaBlock, scoped, closeActivation, nil
 }
 
 // resolveOutputSchema returns the output schema that will actually be enforced

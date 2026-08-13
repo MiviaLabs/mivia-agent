@@ -123,6 +123,12 @@ rules:
         - /.github/**
       exclude:
         - /.mivia/quality/**
+        # memory.jsonl (plan 76, D5) is a generated, deterministic export of
+        # recorded project-memory text, not authored guidance - like the
+        # quality-docs exclusion above, its free-form content can contain an
+        # incidental substring match (e.g. a "../mivia-agent-plans/..."
+        # reference path) with no bearing on which binary to invoke.
+        - /.mivia/memory.jsonl
     # Affirmative binary/CLI usage only (not historical rename notes or ban prose).
     # Allowed: mivia-agentkit, github.com/MiviaLabs/mivia-agent, path .../mivia-agent
     pattern-regex: '(?i)(\./mivia-agent\b|\bmivia-agent\s+(doctor|run|audit|adapters|hook|campaign|init|update|version|help|config)\b|\b(install|ship|release)\s+mivia-agent\b|\bbinary\s+(named\s+|is\s+|name[:\s]+)mivia-agent\b)'

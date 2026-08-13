@@ -81,6 +81,9 @@ func formatSteps(b *strings.Builder, c *compiler.CompiledWorkflow) {
 		if s.OutputSchema != "" {
 			b.WriteString(fmt.Sprintf("    output_schema: %s\n", s.OutputSchema))
 		}
+		if s.MaxTurns > 0 {
+			b.WriteString(fmt.Sprintf("    max_turns: %d\n", s.MaxTurns))
+		}
 		if len(s.Context) > 0 {
 			b.WriteString("    context:\n")
 			for _, cb := range s.Context {

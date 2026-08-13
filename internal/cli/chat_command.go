@@ -254,9 +254,9 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	defer releaseHooks()
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
-			res.SystemPrompt = loadAgentPrompt(invocation.workspacePath, res.Subagents)
+			res.SystemPrompt = chat.ComposeSystemPrompt(loadAgentPrompt(invocation.workspacePath, res.Subagents), "")
 		} else {
-			res.SystemPrompt = defaultSystemPrompt
+			res.SystemPrompt = chat.ComposeSystemPrompt(defaultSystemPrompt, "")
 		}
 	}
 	comp, err := provider.New(res)

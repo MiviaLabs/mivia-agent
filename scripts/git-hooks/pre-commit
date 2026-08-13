@@ -67,6 +67,36 @@ else
   GOFMT_SUMMARY="gofmt skipped"
 fi
 
+# Plan 76 (D6): keep a reviewable JSONL export in sync with the committed
+# sqlite memory database, in the same commit as any change to it, so the
+# size gate below sees the freshly staged export too. `go run` avoids a
+# dependency on a prebuilt ./mivia binary (pre-commit has no existing
+# mivia-build step to reuse).
+#
+# Dumps the STAGED blob (`git show :.mivia/memory.db`), not the working-tree
+# file - found in Step 5 hostile review: dumping the working-tree copy
+# directly would let a concurrent write to memory.db (another mivia session
+# saving a memory between `git add` and `git commit`, without re-staging)
+# produce a jsonl that describes content never actually staged, diverging
+# silently from the committed .db blob.
+if git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n' | grep -qx '\.mivia/memory\.db'; then
+  DUMP_TMP="$(mktemp -d "${TMPDIR:-/tmp}/mivia-memory-dump.XXXXXX")"
+  # A self-contained trap: the later TMP_GATE_DIR cleanup() / trap (below)
+  # isn't defined yet at this point in the script, so this must not depend
+  # on it. Fires on any exit from this block, including `fail`'s exit 1.
+  trap 'rm -rf "$DUMP_TMP"' EXIT
+  mkdir -p "$DUMP_TMP/.mivia"
+  if ! git show ":.mivia/memory.db" >"$DUMP_TMP/.mivia/memory.db"; then
+    fail "could not read the staged .mivia/memory.db blob"
+  fi
+  if ! (cd "$ROOT" && go run ./cmd/mivia memory dump --workspace "$DUMP_TMP" >"$ROOT/.mivia/memory.jsonl"); then
+    fail "memory dump failed while staging .mivia/memory.db"
+  fi
+  rm -rf "$DUMP_TMP"
+  trap - EXIT
+  git add "$ROOT/.mivia/memory.jsonl"
+fi
+
 # Independent read-only gates run together; wait preserves every diagnostic and
 # fails only after all results are collected, reducing serial gate latency.
 TMP_GATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mivia-precommit.XXXXXX")"

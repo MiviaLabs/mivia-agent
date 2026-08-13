@@ -34,6 +34,14 @@ func (s gapErrStore) Count(context.Context, memory.Scope) (int, error) {
 	return 0, s.err
 }
 
+func (s gapErrStore) PromoteToCore(context.Context, string) error {
+	return s.err
+}
+
+func (s gapErrStore) CoreEntries(context.Context, memory.Scope) ([]memory.Result, error) {
+	return nil, s.err
+}
+
 func (s gapErrStore) Close() error { return nil }
 
 // gapBigResult builds a search result with an oversized snippet and eight

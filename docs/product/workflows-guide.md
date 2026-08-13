@@ -530,8 +530,18 @@ on_failure = "failure"
 | `verifier` | Verifier name for `evidence_gate` steps (for example: `go-test`) |
 | `template` | Prompt template file path |
 | `output_schema` | JSON schema file for output validation |
+| `max_turns` | Bounds the agent-loop turns each child agent of this step may take: for an `agent_panel` step it bounds every panel member and the panel synthesis child; for `agent` and `agent_gate` steps it bounds the step's own loop. `0` = unlimited (default); range `0-10000`; negative rejected |
 | `context` | Evidence bindings from inputs or prior step outputs |
 | `on_failure` | Target step or terminal on failure (default: `failure`). A non-terminal target is a repair loop: the step re-enters it after genuine failures, bounded per step by `[limits] max_on_failure_reentries` (default 3). A step may name itself (`on_failure = "review"`) to retry the same step; `agent_panel` steps use this to re-run their members. |
+
+`max_turns` is the per-step turn knob for the agent loops the step launches.
+`0` (the default, matching the `[chat] max_steps` config and the agent loop's
+`MaxSteps=0` semantics) means unlimited: the loop runs until the model stops
+calling tools, the step's deadline, or the run deadline. A positive value caps
+the loop, and the compiler rejects a negative value. Panel members and the
+panel synthesis child share the step's value; the read-only panel reviews in
+this repo rely on the unlimited default because deep reviews of large packages
+outgrew a fixed turn cap (the old hardcoded `max_steps (16)` failure).
 
 Context bindings pass typed evidence between steps:
 

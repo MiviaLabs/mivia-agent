@@ -60,6 +60,13 @@ type Step struct {
 	Context      []ContextBinding `toml:"context" json:"context,omitempty"`
 	OnFailure    string           `toml:"on_failure" json:"on_failure,omitempty"`
 	Panel        *AgentPanel      `toml:"panel" json:"panel,omitempty"`
+	// MaxTurns bounds the agent-loop turns each child agent of this step may
+	// take. For an agent_panel step it bounds every panel member and the panel
+	// synthesis child; for agent and agent_gate steps it bounds the step's own
+	// agent loop. 0 means unlimited (the default), matching the agent loop's
+	// MaxSteps=0 semantics and the [chat] max_steps config. Negative values
+	// are rejected by the compiler.
+	MaxTurns int `toml:"max_turns" json:"max_turns,omitempty"`
 }
 
 // AgentPanel defines the static members of one agent_panel step.

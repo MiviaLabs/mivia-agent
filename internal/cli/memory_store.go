@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -81,4 +82,32 @@ func openMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 		ReadOnly:         readOnly,
 	}
 	return memory.Open(cfg)
+}
+
+// coreMemoryBlock builds the auto-injected system-prompt block (D1). It is a
+// true no-op ("") when core-tier injection is disabled or the scope has no
+// core entries - composeSystemPrompt (internal/chat) treats an empty block
+// as "return base unchanged," so this function is the only place that
+// decides whether injection happens at all. Errors reading the store are
+// swallowed to "": a broken query must never break session startup, and the
+// pull-based memory_search tool remains available regardless.
+func coreMemoryBlock(ctx context.Context, store memory.Store, scope memory.Scope, mc config.MemoryConfig) string {
+	if !mc.InjectCore || store == nil {
+		return ""
+	}
+	entries, err := store.CoreEntries(ctx, scope)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, e := range entries {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("- ")
+		b.WriteString(e.Title)
+		b.WriteString(": ")
+		b.WriteString(e.Snippet)
+	}
+	return b.String()
 }

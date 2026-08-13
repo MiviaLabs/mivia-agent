@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // seedCatalogSession opens a context-catalog session under ws and saves it as
@@ -104,6 +106,101 @@ func TestSessionsList(t *testing.T) {
 		if !names[want] {
 			t.Errorf("sessions list: missing %q, got %+v", want, infos)
 		}
+	}
+}
+
+// TestSessionsShowRedactsToolCallsAndResults pins the fix for a real leak:
+// "sessions show" used to print provider.Message straight from storage,
+// never consulting the workspace's configured redaction policy at all - a
+// live turn's NDJSON preview of the same tool call always does (see
+// redactToolInput/redactToolOutputForTool in
+// internal/agent/loop_tool_preview.go). Per redact's own "nothing is a
+// secret until configuration says so" contract, this test brings its own
+// policy (as every redaction test in this codebase must) rather than relying
+// on a compiled-in default - the assertion here is that the policy fires at
+// all through this call site, not that any particular pattern ships.
+func TestSessionsShowRedactsToolCallsAndResults(t *testing.T) {
+	policy, err := redact.Compile([]string{`sk-ant-[A-Za-z0-9]+`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("redact.Compile: %v", err)
+	}
+	old := redact.Current()
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(old) })
+
+	ws := isolatedSessionsWorkspace(t)
+	seedCatalogSession(t, ws, "secretive", []provider.Message{
+		{
+			Role: provider.RoleAssistant,
+			ToolCalls: []provider.ToolCall{
+				{
+					ID:   "call_1",
+					Type: "function",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{
+						Name:      "run_command",
+						Arguments: `{"argv":["curl","-H","Authorization: Bearer sk-ant-abc123"]}`,
+					},
+				},
+			},
+		},
+		{
+			Role:       provider.RoleTool,
+			ToolCallID: "call_1",
+			Content:    "api_key=sk-ant-abc123 succeeded",
+		},
+	})
+
+	var buf bytes.Buffer
+	if err := runSessionsShow([]string{"secretive", "--workspace", ws, "--json"}, &buf); err != nil {
+		t.Fatalf("sessions show secretive: %v", err)
+	}
+	if strings.Contains(buf.String(), "sk-ant-abc123") {
+		t.Fatalf("sessions show secretive: unredacted secret leaked into output: %s", buf.String())
+	}
+
+	var msgs []provider.Message
+	if err := json.Unmarshal(buf.Bytes(), &msgs); err != nil {
+		t.Fatalf("decode sessions show JSON: %v\nraw: %s", err, buf.String())
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("sessions show secretive: got %d messages, want 2: %+v", len(msgs), msgs)
+	}
+	if got := msgs[0].ToolCalls[0].Function.Arguments; strings.Contains(got, "sk-ant-abc123") {
+		t.Errorf("tool call arguments not redacted: %q", got)
+	}
+	if got := msgs[1].Content; strings.Contains(got, "sk-ant-abc123") {
+		t.Errorf("tool result content not redacted: %q", got)
+	}
+}
+
+// TestRedactSessionMessagesForDisplayDoesNotMutateOriginal pins the
+// contract redactSessionMessagesForDisplay's doc comment claims: it must
+// return copies, never mutate a shared ToolCalls backing array MessagesCopy
+// only shallow-copies the slice header of - the caller's original slice's
+// tool-call arguments must be unchanged after redaction.
+func TestRedactSessionMessagesForDisplayDoesNotMutateOriginal(t *testing.T) {
+	original := []provider.Message{
+		{
+			Role: provider.RoleAssistant,
+			ToolCalls: []provider.ToolCall{
+				{
+					ID: "call_1",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{Name: "run_command", Arguments: "api_key=sk-ant-abc123"},
+				},
+			},
+		},
+	}
+
+	_ = redactSessionMessagesForDisplay(original)
+
+	if got := original[0].ToolCalls[0].Function.Arguments; got != "api_key=sk-ant-abc123" {
+		t.Fatalf("redactSessionMessagesForDisplay mutated the original message: %q", got)
 	}
 }
 
