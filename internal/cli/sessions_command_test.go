@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
@@ -237,6 +238,85 @@ func TestSessionsShow(t *testing.T) {
 	}
 	if len(limited) != 1 || limited[0].Content != "hi back" {
 		t.Fatalf("sessions show alpha --limit 1 = %+v, want just the last message", limited)
+	}
+}
+
+// TestSessionsShowSurvivesModelSwitchedAwayFromConfigDefault pins a real
+// regression: a session saved under a provider/model that differs from the
+// workspace config's currently-active default (e.g. after switching models
+// mid-conversation, then reopening the thread later - see
+// mivia-agent-desktop's ModelSwitcherButton) used to fail "sessions show"
+// outright ("incomplete model binding", then "stale binding: context
+// binding changed") - the raw messages were never actually lost, "show"
+// just couldn't reach them without behaving like a live resume. LoadReadOnly
+// (chat/context_catalog.go) fixes this by never requiring a working
+// completer or durably advancing a binding just to display history.
+func TestSessionsShowSurvivesModelSwitchedAwayFromConfigDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, ".mivia"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixture := `[provider]
+name = "ollama"
+
+[providers.ollama]
+base_url = "http://127.0.0.1:1/v1"
+models = [{ name = "llama3.1:8b", context_window_tokens = 128000 }]
+
+[providers.openrouter]
+base_url = "http://127.0.0.1:1/v1"
+models = [{ name = "some/other-model", context_window_tokens = 128000 }]
+`
+	cfgPath := filepath.Join(ws, ".mivia", "mivia.toml")
+	if err := os.WriteFile(cfgPath, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MIVIA_CONFIG", cfgPath)
+
+	// Seed a session, then switch its binding to the SECOND provider/model
+	// (not the config's active "ollama" default) before saving - mirroring
+	// a session that was resumed and switched mid-conversation.
+	sess, store, err := newCatalogSession(ws)
+	if err != nil {
+		t.Fatalf("newCatalogSession: %v", err)
+	}
+	defer store.Close()
+	res, err := config.Load(config.LoadOptions{WorkspaceRoot: ws, AllowMissingConfig: true})
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	profile, ok := configuredProfile(res, "openrouter", "some/other-model")
+	if !ok {
+		t.Fatalf("configuredProfile did not find the seeded openrouter model")
+	}
+	if err := sess.SwitchBinding(chat.ModelBinding{
+		ProviderName: "openrouter",
+		Model:        "some/other-model",
+		Completer:    catalogReadOnlyCompleter{providerName: "openrouter"},
+		Profile:      profile,
+	}); err != nil {
+		t.Fatalf("SwitchBinding to openrouter: %v", err)
+	}
+	sess.Messages = []provider.Message{
+		{Role: provider.RoleUser, Content: "hello from openrouter"},
+		{Role: provider.RoleAssistant, Content: "hi from openrouter"},
+	}
+	if err := sess.Save("switched"); err != nil {
+		t.Fatalf("Save(switched): %v", err)
+	}
+
+	var showBuf bytes.Buffer
+	if err := runSessionsShow([]string{"switched", "--workspace", ws, "--json"}, &showBuf); err != nil {
+		t.Fatalf("sessions show switched: %v", err)
+	}
+	var msgs []provider.Message
+	if err := json.Unmarshal(showBuf.Bytes(), &msgs); err != nil {
+		t.Fatalf("decode sessions show JSON: %v\nraw: %s", err, showBuf.String())
+	}
+	if len(msgs) != 2 || msgs[0].Content != "hello from openrouter" || msgs[1].Content != "hi from openrouter" {
+		t.Fatalf("sessions show switched = %+v, want the seeded openrouter turn", msgs)
 	}
 }
 
