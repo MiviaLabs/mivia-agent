@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Chunk Plan v1",
-  "description": "Schema for the decompose agent's chunk plan output. Enforces stack_mode, chunk constraints (max lines, max files, disjoint file sets, tests required, DAG dependencies), and a maximum of 12 chunks.",
+  "description": "Schema for the decompose agent's chunk plan output. Enforces stack_mode, chunk structure (required fields, disjoint file sets, tests required, DAG dependencies). Quantitative limits (chunk count, est_diff_lines, files per chunk) are enforced by the host validator against the workflow's declared [stacking] thresholds, not by this schema.",
   "type": "object",
   "additionalProperties": false,
   "required": ["stack_mode", "chunk_plan"],
@@ -17,7 +17,6 @@
       "properties": {
         "chunks": {
           "type": "array",
-          "maxItems": 12,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -42,8 +41,7 @@
               },
               "est_diff_lines": {
                 "type": "integer",
-                "minimum": 1,
-                "maximum": 400
+                "minimum": 1
               },
               "tests": {
                 "type": "boolean",

@@ -198,14 +198,35 @@ func copyIDSet(src map[string]bool) map[string]bool {
 // its stack_mode output and bounds the chunk-plan repair loop.
 func synthesizeTransitions(cw *CompiledWorkflow, planStep, implementStep string) []definition.Transition {
 	anchor := stackingRouterAnchor(cw, planStep, implementStep)
-	out := make([]definition.Transition, 0, len(cw.Transitions)+7)
+	out := make([]definition.Transition, 0, len(cw.Transitions)+8)
+	// Only the anchor's succeeded exit into the implement step is superseded
+	// by the router. When the plan phase has a distinct anchor, a direct
+	// plan-step exit into the implement step is rewired through the anchor
+	// instead of dropped: dropping both would leave the plan step without a
+	// succeeded exit and its happy path would hard-fail ('no matching
+	// transition') at runtime while the plan-failed path still worked. Every
+	// plan-phase step keeps at least one succeeded exit.
+	rewirePlanToAnchor := false
 	for _, tr := range cw.Transitions {
-		if tr.To == implementStep && tr.From != implementStep &&
-			(tr.From == anchor || tr.From == planStep) &&
-			(tr.Match.Status == "" || tr.Match.Status == "succeeded") {
+		if tr.To != implementStep || tr.From == implementStep ||
+			(tr.Match.Status != "" && tr.Match.Status != "succeeded") {
+			out = append(out, tr)
 			continue
 		}
-		out = append(out, tr)
+		switch tr.From {
+		case anchor:
+			continue // superseded by the anchor -> decompose router edge
+		case planStep:
+			if planStep == anchor {
+				continue // same step; superseded by the anchor -> decompose edge
+			}
+			rewirePlanToAnchor = true
+		default:
+			out = append(out, tr)
+		}
+	}
+	if rewirePlanToAnchor && !hasPlainSucceededEdge(cw, planStep, anchor) {
+		out = append(out, definition.Transition{From: planStep, To: anchor, Match: definition.MatchCriteria{Status: "succeeded"}})
 	}
 	out = append(out,
 		definition.Transition{From: anchor, To: stepDecompose, Match: definition.MatchCriteria{Status: "succeeded"}},
@@ -217,6 +238,20 @@ func synthesizeTransitions(cw *CompiledWorkflow, planStep, implementStep string)
 		definition.Transition{From: stepChunkPlanValidate, To: stepDecompose, Match: definition.MatchCriteria{Status: "failed"}, Loop: loopDecomposeRepair, MaxIterations: 3},
 	)
 	return out
+}
+
+// hasPlainSucceededEdge reports whether the workflow already declares a plain
+// succeeded edge (no output discriminator) from from to to. Synthesis uses it
+// to avoid rewiring a second identical edge: admission would reject two
+// jointly satisfiable, equally specific criteria as ambiguous, so the rewire
+// is skipped when the plan step already has the route.
+func hasPlainSucceededEdge(cw *CompiledWorkflow, from, to string) bool {
+	for _, tr := range cw.Transitions {
+		if tr.From == from && tr.To == to && tr.Match.Status == "succeeded" && len(tr.Match.Output) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // stackingRouterAnchor returns the step the stacking router rewires: the last
