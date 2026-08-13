@@ -40,3 +40,9 @@ Forbidden in final responses unless user asked:
 | Log excerpts | ≤ 15 lines, scrubbed |
 
 Exceed caps only when correctness requires it (e.g. security finding detail, failing test output the user must act on).
+
+## Inter-Agent Messages
+
+`finding`/`question`/`ask`/`answer`/`steer` bodies (`post_message`, `send_to_task`): target ≤4 sentences. State the claim and its evidence pointer (file:line, command, run id); do not restate the parent task or narrate steps already visible in the sender's own findings.
+
+Mechanically backstopped, not advisory-only: `internal/agentmsg.Validate` rejects (does not truncate) any body over `messaging.max_body_bytes` (default 2048 bytes, `internal/config/defaults.go`) before it reaches the ledger. A sender that hits this must shorten and retry — the reject-not-truncate behavior exists so a compressed evidence pointer is never silently cut off mid-message.
