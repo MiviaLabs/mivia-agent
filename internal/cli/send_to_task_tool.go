@@ -43,7 +43,12 @@ func (t *sendToTaskTool) Parameters() map[string]any {
 				"minItems":    1,
 			},
 			"kind": map[string]any{"type": "string", "enum": []string{"steer", "answer"}, "description": "Message kind"},
-			"body": map[string]any{"type": "string", "description": "Message body"},
+			"body": map[string]any{
+				"type": "string",
+				"description": "Claim plus its evidence pointer (file:line, command, run id) - " +
+					"~4 sentences, not restated task context. Over messaging.max_body_bytes " +
+					"is rejected, not truncated - shorten and retry.",
+			},
 			"interrupt": map[string]any{
 				"type":        "boolean",
 				"description": "(steer only) break into a long in-flight LLM call instead of waiting for the next step boundary",

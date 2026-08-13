@@ -67,8 +67,11 @@ func (t *postMessageTool) Parameters() map[string]any {
 				"enum":        []string{"finding", "question", "ask", "answer"},
 			},
 			"body": map[string]any{
-				"type":        "string",
-				"description": "Message body (bounded by messaging.max_body_bytes)",
+				"type": "string",
+				"description": "Claim plus its evidence pointer (file:line, command, run id) - " +
+					"~4 sentences. Not restated task context or step narration. " +
+					"Bounded by messaging.max_body_bytes; over the limit is rejected, " +
+					"not truncated - shorten and retry.",
 			},
 			"refs": map[string]any{
 				"type":        "array",
