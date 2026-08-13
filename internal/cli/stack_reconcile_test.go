@@ -8,9 +8,9 @@ import (
 )
 
 // reconcileCase drives the pure §5a reconciler.
-func reconcileCase(t *testing.T, task tasks.Task, run RunInfo, merged bool, maxAttempts int) ReconcileAction {
+func reconcileCase(t *testing.T, task tasks.Task, run RunInfo, merged bool, runPushed bool, maxAttempts int) ReconcileAction {
 	t.Helper()
-	return reconcileTask(task, run, merged, maxAttempts)
+	return reconcileTask(task, run, merged, runPushed, maxAttempts)
 }
 
 // --- Reconciliation: restart mid-stack (recovery must be a no-op) --------
@@ -22,13 +22,13 @@ func TestReconcileRestartMidStackNoop(t *testing.T) {
 	b := tasks.Task{ID: "b", Status: stackStatusRunning, Deps: []string{"a"}}
 	c := tasks.Task{ID: "c", Status: stackStatusPlanned, Deps: []string{"b"}}
 
-	if act := reconcileCase(t, a, RunInfo{Present: true, Status: runStatusDeliveryPending}, true, 3); act.Action != stackActionLeave {
+	if act := reconcileCase(t, a, RunInfo{Present: true, Status: runStatusDeliveryPending}, true, true, 3); act.Action != stackActionLeave {
 		t.Fatalf("merged task a: action = %q, want leave", act.Action)
 	}
-	if act := reconcileCase(t, b, RunInfo{Present: true, Status: runStatusRunning}, false, 3); act.Action != stackActionLeave {
+	if act := reconcileCase(t, b, RunInfo{Present: true, Status: runStatusRunning}, false, true, 3); act.Action != stackActionLeave {
 		t.Fatalf("running task b: action = %q, want leave (run is active)", act.Action)
 	}
-	if act := reconcileCase(t, c, RunInfo{Present: false}, false, 3); act.Action != stackActionLeave {
+	if act := reconcileCase(t, c, RunInfo{Present: false}, false, true, 3); act.Action != stackActionLeave {
 		t.Fatalf("planned task c: action = %q, want leave (waiting for admission)", act.Action)
 	}
 }
@@ -39,7 +39,7 @@ func TestReconcileRunDiedMidFlightReopens(t *testing.T) {
 	// The chunk's run failed while the task says running: reopen with a
 	// bounded retry and a durable attempt count.
 	task := tasks.Task{ID: "b", Status: stackStatusRunning, Attempts: 0}
-	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusFailed}, false, 3)
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusFailed}, false, true, 3)
 	if act.Action != stackActionReopen {
 		t.Fatalf("action = %q, want reopen", act.Action)
 	}
@@ -54,7 +54,7 @@ func TestReconcileRunDiedMidFlightReopens(t *testing.T) {
 func TestReconcileReopenBoundedThenHalt(t *testing.T) {
 	// Past the bound the chunk is marked failed and the stack halts.
 	task := tasks.Task{ID: "b", Status: stackStatusReopened, Attempts: 3}
-	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusTimedOut}, false, 3)
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusTimedOut}, false, true, 3)
 	if act.Action != stackActionMarkFailed {
 		t.Fatalf("action = %q, want mark_failed", act.Action)
 	}
@@ -69,7 +69,7 @@ func TestReconcileInterruptedMerge(t *testing.T) {
 	// A chunk reached delivery and its PR merged, but the task ledger never
 	// learned: git merge state decides mark_merged, unblocking dependents.
 	task := tasks.Task{ID: "b", Status: stackStatusReviewed, Deps: []string{"a"}}
-	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusDeliveryPending}, true, 3)
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusDeliveryPending}, true, true, 3)
 	if act.Action != stackActionMarkMerged {
 		t.Fatalf("action = %q, want mark_merged", act.Action)
 	}
@@ -82,16 +82,33 @@ func TestReconcileDeliveryPendingNotesPublish(t *testing.T) {
 	// Succeeded + delivery_pending -> deliver (publish grant note), NOT
 	// merged: the human checkpoint (D1 policy A) still owns publication.
 	task := tasks.Task{ID: "b", Status: stackStatusRunning}
-	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusDeliveryPending}, false, 3)
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusDeliveryPending}, false, true, 3)
 	if act.Action != stackActionDeliver {
 		t.Fatalf("action = %q, want deliver", act.Action)
+	}
+}
+
+// --- Reconciliation: pushed evidence gates merge marking -------------------
+
+func TestReconcileDeliveryPendingNeverPushedNotMerged(t *testing.T) {
+	// A delivery_pending run whose branch was never pushed (its delivery
+	// record never reached pushed/succeeded) must NOT be marked merged even
+	// when git reports ref absence: the PR was never created, and marking the
+	// chunk merged would complete the stack with a silent PR loss.
+	task := tasks.Task{ID: "b", Status: stackStatusRunning, Deps: []string{"a"}}
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusDeliveryPending}, true, false, 3)
+	if act.Action == stackActionMarkMerged {
+		t.Fatalf("never-pushed delivery_pending run was marked merged (action=%q); the chunk must wait for its publish grant", act.Action)
+	}
+	if act.Action != stackActionDeliver {
+		t.Fatalf("action = %q, want deliver (publish grant)", act.Action)
 	}
 }
 
 func TestReconcileMergedTaskNeverReopens(t *testing.T) {
 	// Terminal task statuses are untouched even when the run looks failed.
 	task := tasks.Task{ID: "a", Status: stackStatusMerged}
-	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusFailed}, false, 3)
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusFailed}, false, true, 3)
 	if act.Action != stackActionLeave || act.NewStatus != "" {
 		t.Fatalf("merged task with failed run: action=%q new=%q, want leave/no-op", act.Action, act.NewStatus)
 	}

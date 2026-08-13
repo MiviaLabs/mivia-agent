@@ -57,18 +57,32 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	force := false
-	filtered := args[:0]
-	for _, arg := range args {
-		if arg == "--force" {
-			force = true
-			continue
-		}
-		filtered = append(filtered, arg)
-	}
-	args = filtered
 	if len(args) == 0 {
 		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, cleanup, or delete")
+	}
+	// --force is a flag of deliver/resume/delete only. Strip it for those;
+	// every other subcommand must reject it loudly instead of silently
+	// ignoring it (FIX: silent flag - `workflow run --force x`,
+	// `workflow cancel --force <id>`, ... used to proceed without the flag).
+	sub := args[0]
+	force := false
+	switch sub {
+	case "deliver", "resume", "delete":
+		filtered := args[:0]
+		for _, arg := range args {
+			if arg == "--force" {
+				force = true
+				continue
+			}
+			filtered = append(filtered, arg)
+		}
+		args = filtered
+	default:
+		for _, arg := range args[1:] {
+			if arg == "--force" {
+				return fmt.Errorf("workflow %s: --force is not supported by this subcommand (it is a flag of deliver, resume, and delete only)", sub)
+			}
+		}
 	}
 	switch args[0] {
 	case "run":

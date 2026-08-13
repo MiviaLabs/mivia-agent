@@ -196,10 +196,15 @@ const (
 // from durable state only.
 //
 // Rules: running -> leave; succeeded+delivery_pending -> deliver (publish
-// grant); merged (git) -> mark merged, unblock dependents;
-// failed/timed_out/canceled -> reopen with bounded retries (task Attempts)
-// or mark failed and halt.
-func reconcileTask(t tasks.Task, run RunInfo, merged bool, maxAttempts int) ReconcileAction {
+// grant); merged (git) with durable pushed evidence -> mark merged, unblock
+// dependents; failed/timed_out/canceled -> reopen with bounded retries (task
+// Attempts) or mark failed and halt.
+//
+// merged alone never marks: marking requires runPushed, durable evidence that
+// the branch was ever pushed (a delivery record that reached pushed/succeeded
+// with a commit SHA). A delivery_pending run whose branch was never pushed has
+// no remote ref and no PR; ref absence must not complete its stack.
+func reconcileTask(t tasks.Task, run RunInfo, merged bool, runPushed bool, maxAttempts int) ReconcileAction {
 	leave := func(note string) ReconcileAction {
 		return ReconcileAction{TaskID: t.ID, Action: stackActionLeave, Note: note}
 	}
@@ -207,7 +212,7 @@ func reconcileTask(t tasks.Task, run RunInfo, merged bool, maxAttempts int) Reco
 	case stackStatusMerged, stackStatusFailed, stackStatusSkipped:
 		return leave("")
 	}
-	if merged {
+	if merged && runPushed {
 		return ReconcileAction{TaskID: t.ID, Action: stackActionMarkMerged, NewStatus: stackStatusMerged, Note: "git reports the PR branch merged"}
 	}
 	if !run.Present {
@@ -290,8 +295,13 @@ func nextAdmissionWave(tasksByID map[string]tasks.Task, merged map[string]bool, 
 // state. The CLI implementation treats the disappearance of the pushed head
 // branch on origin as merged (GitHub's default merge behavior deletes the
 // branch). Tests inject a fake.
+//
+// wasPushed is the driver's durable pushed evidence for the run (a delivery
+// record that reached pushed/succeeded with a commit SHA). Ref absence only
+// means merged when the branch was ever pushed: a never-pushed branch has no
+// remote ref and no PR, and must not read as merged.
 type MergeChecker interface {
-	Merged(ctx context.Context, headBranch string) (bool, error)
+	Merged(ctx context.Context, headBranch string, wasPushed bool) (bool, error)
 }
 
 // gitMergeChecker is the MergeChecker over the repository's origin remote.
@@ -303,20 +313,56 @@ type gitMergeChecker struct {
 	gc  delivery.GitContext
 }
 
-// Merged reports whether the head branch ref is gone from origin: GitHub's
-// default "delete branch on merge" makes ref absence a reliable merge proxy.
-func (g gitMergeChecker) Merged(ctx context.Context, headBranch string) (bool, error) {
+// Merged reports whether the head branch is gone from origin (GitHub's
+// default "delete branch on merge" makes ref absence a merge proxy), with two
+// corrections over the old tracking-ref-only check:
+//
+//   - Never pushed: a branch that was never pushed has no tracking ref AND no
+//     remote ref, so ref absence alone read as merged and a delivery_pending
+//     run completed its stack with the PR never created. Ref absence only
+//     means merged when wasPushed carries durable pushed evidence (a delivery
+//     record that reached pushed/succeeded with a commit SHA).
+//   - Stale tracking ref: nothing prunes refs/remotes/origin/wf/*, so after a
+//     real remote merge the local tracking ref persists and rev-parse alone
+//     reads "not merged" forever. The remote is authoritative: a branch that
+//     exists only as a stale local tracking ref (gone from origin per
+//     ls-remote) is merged.
+func (g gitMergeChecker) Merged(ctx context.Context, headBranch string, wasPushed bool) (bool, error) {
 	if strings.TrimSpace(headBranch) == "" {
 		return false, nil
 	}
-	if _, err := g.git.Run(ctx, g.gc, "rev-parse", "--verify", "-q", "refs/remotes/origin/"+headBranch); err != nil {
-		// Ref gone: merged (or never pushed). A never-pushed run is not a
-		// merge; the run ledger decides (delivery_pending/succeeded means it
-		// was delivered). We report merged and let reconciliation's run-state
-		// rules guard the other direction.
-		return true, nil
+	trackingRef := "refs/remotes/origin/" + headBranch
+	local, _ := g.git.Run(ctx, g.gc, "rev-parse", "--verify", "-q", trackingRef)
+	remote, remoteErr := g.git.Run(ctx, g.gc, "ls-remote", "--heads", "origin", headBranch)
+	if remoteErr != nil {
+		// The remote cannot confirm the branch state (network outage, missing
+		// origin). Degrade to "not merged": the stack keeps waiting instead of
+		// completing on a guess, matching the checker's original network-free
+		// posture. A stale local tracking ref alone must not complete a stack
+		// while the remote is unreachable.
+		return false, nil
 	}
-	return false, nil
+	hasLocal := strings.TrimSpace(local) != ""
+	hasRemote := strings.TrimSpace(remote) != ""
+	switch {
+	case hasLocal && hasRemote:
+		// Branch still exists both places: the PR (or at least the push) is
+		// open. ls-remote defeats the false-positive local tracking ref a
+		// merge UI can leave behind.
+		return false, nil
+	case hasLocal && !hasRemote:
+		// Stale local tracking ref: the remote merge deleted the branch.
+		// The remote is authoritative - merged.
+		return true, nil
+	case !hasLocal && !hasRemote && wasPushed:
+		// Branch was pushed (durable evidence) and no longer exists on
+		// origin: merged.
+		return true, nil
+	default:
+		// Never pushed: ref absence is not a merge. The stack keeps waiting
+		// for its publish grant.
+		return false, nil
+	}
 }
 
 // stackRunRef finds the run whose stable invocation key is
