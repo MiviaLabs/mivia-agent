@@ -105,11 +105,26 @@ func (c *coordinator) watchRecoveredRun(h *RunHandle) {
 	close(h.done)
 }
 
-// watchJoinedRun waits for the executor that won an atomic admission race.
-// It does not execute work or claim the run.
+// watchedRunReclaimInterval is how often watchJoinedRun re-probes ownership
+// of the run's execution claim while it waits. It is independent of the poll
+// ticker below: reclaiming only ever succeeds once the held claim's lease has
+// actually expired (defaultRunClaimLease, or a shorter c.claimLease), so
+// probing faster than that would just be wasted repo calls.
+const watchedRunReclaimInterval = 500 * time.Millisecond
+
+// watchJoinedRun waits for the executor that won an atomic admission race. It
+// does not execute work or claim the run itself UNLESS the winner's claim
+// goes stale (its lease expires with no live holder refreshing it, i.e. the
+// winner crashed): a stale claim means no other executor will ever move the
+// run to a terminal status, so an unconditional wait-for-terminal here would
+// hang forever. watchJoinedRun instead re-probes the claim on
+// watchedRunReclaimInterval and, once it can take over an expired claim,
+// resumes the run itself on this same handle via resumeExecutionOnHandle.
 func (c *coordinator) watchJoinedRun(h *RunHandle) {
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
+	pollTicker := time.NewTicker(25 * time.Millisecond)
+	defer pollTicker.Stop()
+	reclaimTicker := time.NewTicker(watchedRunReclaimInterval)
+	defer reclaimTicker.Stop()
 	for {
 		snap, err := c.repo.GetRun(context.Background(), h.runID)
 		if err != nil || isTerminalRunStatus(snap.Status) {
@@ -123,7 +138,27 @@ func (c *coordinator) watchJoinedRun(h *RunHandle) {
 			close(h.done)
 			return
 		}
-		<-ticker.C
+		select {
+		case <-pollTicker.C:
+		case <-reclaimTicker.C:
+			ctx := context.Background()
+			if claimErr := c.claimRun(ctx, h.runID); claimErr != nil {
+				// Still held by a live owner (or a transient repo error): keep
+				// watching. Either way this is not this goroutine's terminal
+				// state, so it never closes h.done here.
+				continue
+			}
+			failInterrupted := err == nil && snap.Policy.FailInterrupted
+			if resumeErr := c.resumeExecutionOnHandle(ctx, h, h.runID, failInterrupted); resumeErr != nil {
+				log.Printf("coordinator: watch joined run %q: reclaimed claim but resume failed: %v", h.runID, resumeErr)
+				_ = c.repo.ReleaseRun(ctx, h.runID, c.holderID)
+				continue
+			}
+			// Ownership of h now belongs to the executeResumedRun goroutine
+			// resumeExecutionOnHandle started: it heartbeats the claim, runs
+			// the work, and closes h.done itself.
+			return
+		}
 	}
 }
 
