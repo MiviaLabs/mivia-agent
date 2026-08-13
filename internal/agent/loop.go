@@ -366,6 +366,18 @@ func (l *Loop) stepRequest(ctx context.Context, toolSpecs []provider.ToolSpec, o
 	if opts.SummaryConfig.Summarizer != nil && l.HasPreparation && l.LastPreparation.Compacted {
 		messages = l.injectSummary(ctx, opts)
 	}
+	// Soft conclude: when a work bound (deadline, output budget, tool-call
+	// budget) is close, tell the model to wrap up so it returns its best valid
+	// result instead of the bound hard-aborting the run mid-work. The
+	// instruction is appended to an EPHEMERAL copy — never to l.Messages — so
+	// history, checkpoints, and replays stay untouched.
+	if conclude := l.concludeInstruction(ctx); conclude != "" {
+		cp := make([]provider.Message, 0, len(messages)+1)
+		cp = append(cp, messages...)
+		cp = append(cp, provider.Message{Role: provider.RoleUser, Content: conclude, CreatedAt: time.Now()})
+		messages = cp
+		emit(opts, Event{Kind: EventWorkLimit, Detail: "conclude: approaching a work bound"})
+	}
 	return provider.Request{
 		Model: opts.Model, Messages: messages, Temperature: opts.Temperature,
 		MaxTokens: maxTokens, Tools: toolSpecs, ToolChoice: "auto", Stream: stream,

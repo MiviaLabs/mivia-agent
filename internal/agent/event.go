@@ -43,6 +43,11 @@ const (
 	// EventTokenUsage carries provider-reported input/output token counts
 	// for one completion turn. See EmitTokenUsage.
 	EventTokenUsage EventKind = "token_usage"
+	// EventWorkLimit is the soft conclude notice: the loop told the model to
+	// wrap up because a work bound (deadline, output budget, or tool-call
+	// budget) is close. It is observability only; the injected instruction
+	// itself travels inside the provider request.
+	EventWorkLimit EventKind = "work_limit"
 )
 
 // EventOrigin identifies the agent that produced an event. The zero value

@@ -106,7 +106,8 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 	}
 	schemaRef := snapshot.Schemas[step.OutputSchema]
 	// Every member shares the same deadline (buildPanelAttempt derives it once
-	// from the run deadline and panelMemberTimeout); reuse it for synthesis so
+	// from the run deadline and panelMemberDeadlineDefault); reuse it for
+	// synthesis so
 	// the synthesis child cannot outlive the attempt that admitted it.
 	deadline := attempt.PanelExecution.Members[0].Work.DeadlineAt
 	if !deadline.After(c.now()) {

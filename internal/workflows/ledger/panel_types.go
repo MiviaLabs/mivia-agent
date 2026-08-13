@@ -41,13 +41,16 @@ func (s PanelTaskSpec) validate(allowMissingWorkFingerprint bool) error {
 	// MaxTurns may be 0 (unlimited) per runtime.WorkLimits semantics and the
 	// per-step max_turns workflow knob (definition.Step.MaxTurns, default 0 =
 	// unlimited): a read-only reviewer's turn count is not a work bound when
-	// the child loop is still bounded by MaxOutputTokens, MaxOutputPerCall,
-	// MaxToolCalls, panelMemberTimeout, and the panel's retry policy.
-	// MaxPromptTokens may also be 0 (unlimited cumulative prompt): prompt
-	// volume is not a work bound when every provider call is bounded by the
-	// model context window with a prompt-too-long compaction retry. Only
-	// negative values are rejected.
-	if s.WorkLimits.MaxTurns < 0 || s.WorkLimits.MaxPromptTokens < 0 || s.WorkLimits.MaxOutputTokens <= 0 || s.WorkLimits.MaxOutputPerCall <= 0 || s.WorkLimits.MaxToolCalls <= 0 {
+	// the child loop is still bounded by MaxOutputPerCall, MaxToolCalls, the
+	// attempt deadline, and the panel's retry policy. MaxPromptTokens may also
+	// be 0 (unlimited cumulative prompt): prompt volume is not a work bound
+	// when every provider call is bounded by the model context window with a
+	// prompt-too-long compaction retry. MaxOutputTokens may also be 0
+	// (unlimited cumulative output): a finite cumulative cap with
+	// ceiling-charged accounting kills deep read-only reviews mid-panel with
+	// "work limit exceeded: output tokens" (same bogus bound class; see
+	// panel_attempt.go). Only negative values are rejected.
+	if s.WorkLimits.MaxTurns < 0 || s.WorkLimits.MaxPromptTokens < 0 || s.WorkLimits.MaxOutputTokens < 0 || s.WorkLimits.MaxOutputPerCall <= 0 || s.WorkLimits.MaxToolCalls <= 0 {
 		return fmt.Errorf("incomplete panel work limits")
 	}
 	if !s.Policy.NoRetry || !s.Policy.FailInterrupted || s.Policy.RetryMaxRetries != 0 || s.Policy.RetryBaseBackoff != 0 || s.Policy.RetryMaxBackoff != 0 || s.Policy.RetryBackoffFactor != 0 || s.Policy.RetryJitterFraction != 0 {

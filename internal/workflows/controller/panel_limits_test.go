@@ -17,8 +17,13 @@ func TestPanelWorkLimitSlicesAreFixed(t *testing.T) {
 	if got, want := panelMemberLimits.MaxPromptTokens, 0; got != want {
 		t.Fatalf("member prompt limit = %d, want %d (unlimited)", got, want)
 	}
-	if got, want := panelMemberLimits.MaxOutputTokens, 131072; got != want {
-		t.Fatalf("member output limit = %d, want %d", got, want)
+	// MaxOutputTokens must stay 0 (unlimited cumulative): with ceiling-charged
+	// accounting a finite cap gives a deep review at most
+	// MaxOutputTokens/MaxOutputPerCall provider calls (131072/8192 = 16) before
+	// "work limit exceeded: output tokens" kills the member mid-panel — the
+	// same bogus bound class as the caps above (observed on live bug-fix runs).
+	if got, want := panelMemberLimits.MaxOutputTokens, 0; got != want {
+		t.Fatalf("member output limit = %d, want %d (unlimited cumulative)", got, want)
 	}
 	if got, want := panelMemberLimits.MaxOutputPerCall, 8192; got != want {
 		t.Fatalf("member output-per-call limit = %d, want %d", got, want)
@@ -32,8 +37,8 @@ func TestPanelWorkLimitSlicesAreFixed(t *testing.T) {
 	if got, want := panelSynthesisLimits.MaxPromptTokens, 0; got != want {
 		t.Fatalf("synthesis prompt limit = %d, want %d (unlimited)", got, want)
 	}
-	if got, want := panelSynthesisLimits.MaxOutputTokens, 65536; got != want {
-		t.Fatalf("synthesis output limit = %d, want %d", got, want)
+	if got, want := panelSynthesisLimits.MaxOutputTokens, 0; got != want {
+		t.Fatalf("synthesis output limit = %d, want %d (unlimited cumulative)", got, want)
 	}
 	if got, want := panelSynthesisLimits.MaxOutputPerCall, 8192; got != want {
 		t.Fatalf("synthesis output-per-call limit = %d, want %d", got, want)
