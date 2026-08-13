@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -338,6 +339,8 @@ func TestRepairHintClassifies(t *testing.T) {
 			[]string{"the delivery gate rejected the change", "rejection output:", "check_go_structure"}},
 		{"PR metadata", &PRMetadataError{Reason: "title too long"},
 			[]string{"pr_title and pr_summary", "title too long"}},
+		{"diff too large", &DiffSizeError{Reason: "delivery: chunk diff size 500 exceeds hard limit 400"},
+			[]string{"delivered diff is too large", "split the change into smaller chunks", "hard limit"}},
 		{"permanent refusal", &RefusalError{Reason: "origin remote changed since admission"},
 			[]string{"permanently refused publication", "origin remote changed"}},
 		{"nil cause", nil, []string{"without a recorded cause"}},
@@ -388,5 +391,37 @@ func TestReopenForRepairStoresHarnessHint(t *testing.T) {
 	}
 	if !strings.Contains(text, cause.Error()) {
 		t.Fatalf("stored evidence = %q, want the raw rejection text", text)
+	}
+}
+
+// TestRepairTarget pins the single delivery-repair classifier both the CLI and
+// the local engine route through: diff-size rejections go to
+// OnDiffSizeFailure (falling back to OnFailure), PR-metadata rejections to
+// OnPRMetadataFailure (falling back to OnFailure), and every other repairable
+// rejection to OnFailure. An empty policy on_failure leaves the class unrouted
+// (the run holds for a person).
+func TestRepairTarget(t *testing.T) {
+	base := Policy{OnFailure: "repair_generic", OnPRMetadataFailure: "repair_meta", OnDiffSizeFailure: "repair_size"}
+	tests := []struct {
+		name string
+		pol  Policy
+		err  error
+		want string
+	}{
+		{"diff-size routes to the diff-size repair step", base, &DiffSizeError{Reason: "too big"}, "repair_size"},
+		{"PR metadata routes to the metadata repair step", base, &PRMetadataError{Reason: "bad title"}, "repair_meta"},
+		{"generic rejection routes to on_failure", base, errors.New("hook rejected"), "repair_generic"},
+		{"nil error routes to on_failure", base, nil, "repair_generic"},
+		{"diff-size falls back to on_failure", Policy{OnFailure: "repair_generic"}, &DiffSizeError{Reason: "too big"}, "repair_generic"},
+		{"PR metadata falls back to on_failure", Policy{OnFailure: "repair_generic"}, &PRMetadataError{Reason: "bad title"}, "repair_generic"},
+		{"wrapped diff-size is classified", base, fmt.Errorf("deliver: %w", &DiffSizeError{Reason: "too big"}), "repair_size"},
+		{"no repair route stays unrouted", Policy{}, errors.New("hook rejected"), ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RepairTarget(tc.err, tc.pol); got != tc.want {
+				t.Fatalf("RepairTarget() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

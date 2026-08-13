@@ -66,6 +66,10 @@ type Policy struct {
 	// OnPRMetadataFailure names the step that repairs PR-metadata failures.
 	// Empty defaults to OnFailure.
 	OnPRMetadataFailure string
+	// OnDiffSizeFailure names the step that repairs an over-limit delivered
+	// diff (a DiffSizeError). Empty defaults to OnFailure, which keeps
+	// pre-existing stacking workflows on their declared generic repair step.
+	OnDiffSizeFailure string
 	// MaxRepairs bounds the delivery repair cycle for this run. Zero or a
 	// negative value selects DefaultMaxDeliveryRepairs; the workflow TOML's
 	// delivery.max_repairs sets it per workflow.
@@ -96,6 +100,10 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 	if onPRMetadataFailure == "" {
 		onPRMetadataFailure = d.OnFailure
 	}
+	onDiffSizeFailure := d.OnDiffSizeFailure
+	if onDiffSizeFailure == "" {
+		onDiffSizeFailure = d.OnFailure
+	}
 	hardLines := 0
 	if wf.Stacking != nil {
 		hardLines = wf.Stacking.HardLines
@@ -112,6 +120,7 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		OnFailure:             d.OnFailure,
 		PRTitlePolicyPath:     d.PRTitlePolicy,
 		OnPRMetadataFailure:   onPRMetadataFailure,
+		OnDiffSizeFailure:     onDiffSizeFailure,
 		MaxRepairs:            clampMax(d.MaxRepairs, DefaultMaxDeliveryRepairs),
 		StackingHardLines:     hardLines,
 	}, true

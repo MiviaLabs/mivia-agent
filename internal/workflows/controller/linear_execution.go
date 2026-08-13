@@ -206,18 +206,16 @@ func (c *LinearController) JoinInFlightAttempt(ctx context.Context, attempt work
 // delivery repair route, so the resume proceeds at the derived repair step
 // instead of hard-erroring "workflow step \"wf-delivery\" is not declared".
 // The route comes only from the snapshot-pinned, compile-validated Delivery
-// config (OnFailure, falling back to OnPRMetadataFailure); it may be empty
-// when the workflow declares no repair target, in which case the attempt is
-// settled Failed without a route. Idempotent: an ErrConflict/ErrNotFound
+// config (OnFailure, falling back to OnPRMetadataFailure and then
+// OnDiffSizeFailure); it may be empty when the workflow declares no repair
+// target, in which case the attempt is settled Failed without a route.
+// Idempotent: an ErrConflict/ErrNotFound
 // followed by a re-read showing the attempt already terminal is treated as
 // settled by a concurrent writer (nil).
 func (c *LinearController) healStaleDeliveryReentry(ctx context.Context, attempt workflowledger.StepAttempt) error {
 	route := ""
-	if c.Workflow != nil && c.Workflow.Delivery != nil {
-		route = c.Workflow.Delivery.OnFailure
-		if route == "" {
-			route = c.Workflow.Delivery.OnPRMetadataFailure
-		}
+	if c.Workflow != nil {
+		route = deliveryRepairRoute(c.Workflow.Delivery)
 	}
 	outcome := workflowledger.AttemptOutcome{
 		Status:   workflowledger.AttemptStatusFailed,

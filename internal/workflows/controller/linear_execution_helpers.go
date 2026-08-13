@@ -128,6 +128,12 @@ func (c *LinearController) settleSucceededRoute(writeCtx context.Context, step d
 		// rewritten back to decompose through the engine's repair loop. The
 		// attempt stays Succeeded; the loop counter records the re-entry.
 		route = rr
+	} else if rr, oversized := c.chunkDiffSizeGate(writeCtx, step, route); oversized {
+		// The implement step succeeded but the actual worktree diff exceeds
+		// the stacking hard limit; the route is rewritten to the workflow's
+		// diff-size repair step so the chunk is shrunk before the panel and
+		// preflight pipeline run on it. The attempt stays Succeeded.
+		route = rr
 	} else if blockedErr, blocked := c.blockedCause(outMap); blocked {
 		// A SUCCEEDED step whose output admits a write it cannot
 		// perform (blocked_paths, a claimed files_changed entry inside
@@ -269,4 +275,22 @@ func (c *LinearController) onFailureReentryLimit() int {
 		return c.Workflow.Limits.MaxOnFailureReentries
 	}
 	return defaultMaxOnFailureReentries
+}
+
+// deliveryRepairRoute resolves the workflow's delivery repair target, falling
+// back from OnFailure to OnPRMetadataFailure to OnDiffSizeFailure. It mirrors
+// the compile-validated route chain used by the stale-delivery heal path; an
+// empty result means the workflow declares no repair target.
+func deliveryRepairRoute(d *definition.Delivery) string {
+	if d == nil {
+		return ""
+	}
+	route := d.OnFailure
+	if route == "" {
+		route = d.OnPRMetadataFailure
+	}
+	if route == "" {
+		route = d.OnDiffSizeFailure
+	}
+	return route
 }

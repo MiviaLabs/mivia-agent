@@ -80,20 +80,20 @@ func validateGraph(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
 
 // seedDeliveryTargets adds delivery re-entry steps to the reachability
 // frontier. The workflow author names them in delivery.on_failure /
-// delivery.on_pr_metadata_failure; a step only those fields reach (the
-// PR-metadata repair step is the shipped example) is not a graph orphan.
-// Seeding applies only to an ACTIVE delivery policy (kind "pull_request"
-// with a mode other than "" or "none"): only an active policy runs after
-// the success terminal and re-enters the graph. An inactive block does not
-// run, so a step named only there stays unreachable and validateGraph flags
-// it as an orphan. validateDelivery still rejects a non-empty
-// on_failure / on_pr_metadata_failure that names no declared step, active or
-// not (a typo is a typo).
+// delivery.on_pr_metadata_failure / delivery.on_diff_size_failure; a step only
+// those fields reach (the PR-metadata repair step is the shipped example) is
+// not a graph orphan. Seeding applies only to an ACTIVE delivery policy (kind
+// "pull_request" with a mode other than "" or "none"): only an active policy
+// runs after the success terminal and re-enters the graph. An inactive block
+// does not run, so a step named only there stays unreachable and
+// validateGraph flags it as an orphan. validateDelivery still rejects a
+// non-empty on_failure / on_pr_metadata_failure / on_diff_size_failure that
+// names no declared step, active or not (a typo is a typo).
 func seedDeliveryTargets(wf *definition.WorkflowFile, stepIDs map[string]bool, visited map[string]bool, queue []string) []string {
 	if !deliveryActive(wf.Delivery) {
 		return queue
 	}
-	for _, target := range []string{wf.Delivery.OnFailure, wf.Delivery.OnPRMetadataFailure} {
+	for _, target := range []string{wf.Delivery.OnFailure, wf.Delivery.OnPRMetadataFailure, wf.Delivery.OnDiffSizeFailure} {
 		if target != "" && stepIDs[target] && !visited[target] {
 			visited[target] = true
 			queue = append(queue, target)

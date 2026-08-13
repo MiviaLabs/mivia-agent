@@ -233,6 +233,17 @@ Delivery honors the reserved stacking inputs when present:
   is a repairable `PRMetadataError`; the repair loop shrinks the chunk and
   delivers again. Without a stacking configuration the gate is off and
   single-PR delivery is unchanged.
+- `on_diff_size_failure` (default `shrink_retry`) selects the failure
+  policy when a post-implement worktree diff exceeds `hard_lines`:
+  `shrink_retry` (default) retries the implement step with tighter per-chunk
+  budgets; `reroute_fail_fast` fails the run immediately instead of
+  delivering an over-limit PR. The engine additionally runs a fail-fast
+  diff-size gate right after the implement step when the worktree can be
+  pinned to its git context (fresh starts and resumes both wire it); it only
+  fires for `reroute_fail_fast` and mirrors the delivery-time measurement
+  with the smaller default estimate. Delivery-time enforcement stays
+  authoritative on both paths: a diff that slips past the fail-fast gate is
+  still caught at delivery and repaired or failed according to policy.
 
 ### Driver CLI and recovery model
 

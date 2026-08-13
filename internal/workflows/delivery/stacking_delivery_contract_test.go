@@ -344,8 +344,8 @@ func TestStackingContractSizeGate(t *testing.T) {
 		pr := &fakePRClient{}
 		req := newRequest(run, gc, baseCommit, originURL, stackedPolicy(t, 400), map[string]string{"task": "x"})
 		_, err := Deliver(ctx, repo, RealGit{}, pr, req)
-		if err == nil || !IsPRMetadataError(err) {
-			t.Fatalf("Deliver err = %v, want a repairable PRMetadataError", err)
+		if err == nil || !IsDiffSizeError(err) {
+			t.Fatalf("Deliver err = %v, want a repairable DiffSizeError", err)
 		}
 		if !strings.Contains(err.Error(), "chunk diff size 500 exceeds hard limit 400") {
 			t.Fatalf("Deliver err = %q, want the exact size hint", err)

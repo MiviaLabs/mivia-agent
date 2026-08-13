@@ -23,7 +23,9 @@ const MaxDeliveryRepairs = DefaultMaxDeliveryRepairs
 
 // ReopenForRepair returns a run whose delivery failed to the step the workflow
 // names in delivery.on_failure (or delivery.on_pr_metadata_failure for a
-// PR-metadata defect).
+// PR-metadata defect, or delivery.on_diff_size_failure for an over-limit
+// delivered diff; delivery.RepairTarget is the single classifier both the CLI
+// and the local engine use).
 //
 // maxRepairs bounds this run's repair cycle; zero or a negative value selects
 // MaxDeliveryRepairs. The policy snapshots delivery.max_repairs from the
@@ -137,6 +139,28 @@ func StoreDeliveryFailureText(ctx context.Context, repo ledger.Repository, cause
 	return ref
 }
 
+// RepairTarget returns the delivery repair step the policy names for a
+// failure class. Diff-size rejections route to OnDiffSizeFailure (falling
+// back to OnFailure), PR-metadata rejections to OnPRMetadataFailure (falling
+// back to OnFailure), and every other repairable rejection to OnFailure. An
+// empty result means the workflow declares no repair route for the class (the
+// run holds for a person). It is the single classifier shared by the CLI and
+// the local engine, so a delivery rejection routes to the same step on both
+// paths.
+func RepairTarget(err error, p Policy) string {
+	switch {
+	case IsDiffSizeError(err):
+		if p.OnDiffSizeFailure != "" {
+			return p.OnDiffSizeFailure
+		}
+	case IsPRMetadataError(err):
+		if p.OnPRMetadataFailure != "" {
+			return p.OnPRMetadataFailure
+		}
+	}
+	return p.OnFailure
+}
+
 // RepairHint renders the harness guidance a repair agent needs to fix a
 // delivery rejection: a short "what to repair" line derived from the failure
 // class, then the raw rejection text. It is project- and language-agnostic:
@@ -147,8 +171,9 @@ func StoreDeliveryFailureText(ctx context.Context, repo ledger.Repository, cause
 // delivery.failure. Without a class-specific lead the agent has to guess what
 // to repair from a wall of hook output; with it, the agent is told up front
 // whether the failure is a gate rejection of the change, a PR-metadata
-// defect, or a permanent host refusal - and, when a commit is involved, that
-// the host commits the repaired worktree before the next delivery attempt.
+// defect, an over-limit diff, or a permanent host refusal - and, when a
+// commit is involved, that the host commits the repaired worktree before the
+// next delivery attempt.
 func RepairHint(cause error) string {
 	var raw string
 	if cause != nil {
@@ -160,6 +185,8 @@ func RepairHint(cause error) string {
 		lead = "delivery failed without a recorded cause"
 	case IsPRMetadataError(cause):
 		lead = "the pull-request metadata (title/summary) was rejected; fix pr_title and pr_summary in your structured output"
+	case IsDiffSizeError(cause):
+		lead = "the delivered diff is too large; split the change into smaller chunks in the worktree so the delivered diff fits under the hard limit (keep tests green and do not commit yourself - the delivery host commits the worktree before the next delivery attempt)"
 	case IsRefusal(cause):
 		lead = "the delivery host permanently refused publication; this is usually not fixable by a workflow step - read the reason below and correct the underlying condition"
 	default:
