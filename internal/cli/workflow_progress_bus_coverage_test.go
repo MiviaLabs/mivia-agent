@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // TestWorkflowProgressSinkNilBusFromProvider covers workflowProgressSink's
@@ -113,4 +115,84 @@ func TestPublishCanceledAttemptsNilSinkNoop(t *testing.T) {
 	e.publishCanceledAttempts("wfr-cancel", []workflowledger.StepAttempt{
 		{AttemptID: "att-1", RunID: "wfr-cancel", StepID: "one", AttemptNo: 1, Status: workflowledger.AttemptStatusSucceeded},
 	})
+}
+
+// TestPublishTerminalEventOnceForDeliveredAndSkippedStackPlanRuns proves the
+// mutual exclusion between the two terminal-event publishers a stacking plan
+// run passes through in launchStartedWorkflow/launchResume: the delivered
+// shape (succeeded delivery record + seeded stack plan) and the skip-settled
+// shape (succeeded, seeded stack plan, no delivery record) each emit exactly
+// ONE run_finished(succeeded) event - never two.
+func TestPublishTerminalEventOnceForDeliveredAndSkippedStackPlanRuns(t *testing.T) {
+	ctx := context.Background()
+	t.Run("delivered plan run with seeded stack plan emits one", func(t *testing.T) {
+		root, config, store, repo, runID := settleSucceededStackPlanRun(t, ctx)
+		run, err := repo.GetRun(ctx, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.UpsertDelivery(ctx, workflowledger.DeliveryRecord{
+			RunID: runID, IdempotencyKey: delivery.DeliveryKey(runID, run.WorkflowDigest), Status: "succeeded",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		assertOneRunFinishedForTest(t, ctx, root, config, store, repo, runID)
+	})
+	t.Run("skip-settled plan run with no delivery record emits one", func(t *testing.T) {
+		root, config, store, repo, runID := settleSucceededStackPlanRun(t, ctx)
+		assertOneRunFinishedForTest(t, ctx, root, config, store, repo, runID)
+	})
+}
+
+// settleSucceededStackPlanRun parks a real two-step run at delivery_pending,
+// settles it succeeded, and seeds its stack plan in the task ledger - the exact
+// shape maybeDriveSettledStack leaves behind before the terminal publishers run.
+func settleSucceededStackPlanRun(t *testing.T, ctx context.Context) (root, config string, store *storage.SQLite, repo workflowledger.Repository, runID string) {
+	t.Helper()
+	root, storePath, config, _ := newDeliveryFixture(t)
+	runID = runFixtureToDeliveryPending(t, root, config)
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repo = workflowledger.NewStorageRepository(store)
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("fixture run status = %q, want delivery_pending", run.Status)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, run.Version, workflowledger.RunStatusSucceeded, nil); err != nil {
+		t.Fatal(err)
+	}
+	ledger := tasks.NewStore(store)
+	if _, err := ledger.StorePlan(tasks.Plan{ID: runID, Scope: stackScope(runID), Schema: stackPlanSchema}); err != nil {
+		t.Fatalf("seed stack plan: %v", err)
+	}
+	return root, config, store, repo, runID
+}
+
+// assertOneRunFinishedForTest runs the publisher sequence used by
+// launchStartedWorkflow/launchResume (delivery first, then the skip publisher)
+// on a fresh engine and bus and requires exactly one run_finished(succeeded).
+func assertOneRunFinishedForTest(t *testing.T, ctx context.Context, root, config string, store *storage.SQLite, repo workflowledger.Repository, runID string) {
+	t.Helper()
+	bus, h := newRecordingWorkflowBus(t)
+	e := newSessionWorkflowEngine(root, config)
+	e.SetEventBus(bus)
+	e.publishDeliveredRunFinished(ctx, repo, runID)
+	e.publishSkippedPlanRunFinished(ctx, store, repo, runID)
+	bus.Flush()
+	got := h.take()
+	if len(got) != 1 {
+		t.Fatalf("published %d run_finished events, want exactly 1", len(got))
+	}
+	if got[0].Kind != events.KindWorkflowRunFinished {
+		t.Fatalf("event kind = %s, want %s", got[0].Kind, events.KindWorkflowRunFinished)
+	}
+	if got[0].Detail != "succeeded" {
+		t.Fatalf("event detail = %q, want %q", got[0].Detail, "succeeded")
+	}
 }

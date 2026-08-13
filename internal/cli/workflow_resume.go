@@ -141,7 +141,7 @@ func validateWorkflowMCPConfigDigest(snapshot workflowledger.Snapshot, current c
 // holder, so a still-held handoff makes the settle a no-op), the settled
 // status is printed, a genuine controller fault is settled with
 // settleCLIRunFailure (DC-9), and a delivery_pending settlement routes to
-// finishWorkflowRunDelivery. executeWorkflowResume's deferred
+// finishWorkflowResumeSettled (drive-before-delivery, mirroring executeWorkflowRun). executeWorkflowResume's deferred
 // releaseWorkflowResumeHandoff stays as the safety net for the pre-Run path.
 func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID, workRoot string, res *config.Resolved, store *storage.SQLite, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, stdout, stderr io.Writer) error {
 	snap, err := workflowResumeRun(ctx, built)
@@ -160,13 +160,14 @@ func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBui
 		return err
 	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {
-		return finishWorkflowRunDelivery(ctx, workRoot, res, store, repo, runID, workflowName, workflowResumeDeliveryMode(compiled), allowPublish, stdout, stderr)
+		return finishWorkflowResumeSettled(ctx, workRoot, res, store, repo, runID, workflowName, compiled, allowPublish, stdout, stderr)
 	}
 	return nil
 }
 
-// finishWorkflowResumeTerminal delivers a run reconcileWorkflowTerminal
-// already settled, when that settlement landed on delivery_pending.
+// finishWorkflowResumeTerminal completes a run reconcileWorkflowTerminal
+// already settled, when that settlement landed on delivery_pending; the
+// settled stack drives before delivery exactly as the normal resume path.
 func finishWorkflowResumeTerminal(ctx context.Context, workRoot string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, stdout, stderr io.Writer) error {
 	settled, err := repo.GetRun(ctx, runID)
 	if err != nil {
@@ -175,7 +176,41 @@ func finishWorkflowResumeTerminal(ctx context.Context, workRoot string, res *con
 	if settled.Status != workflowledger.RunStatusDeliveryPending {
 		return nil
 	}
-	return finishWorkflowRunDelivery(ctx, workRoot, res, store, repo, runID, workflowName, workflowResumeDeliveryMode(compiled), allowPublish, stdout, stderr)
+	return finishWorkflowResumeSettled(ctx, workRoot, res, store, repo, runID, workflowName, compiled, allowPublish, stdout, stderr)
+}
+
+// finishWorkflowResumeSettled completes a resume that settled at
+// delivery_pending, mirroring executeWorkflowRun's drive-before-delivery
+// ordering: a multi-chunk stacking plan run drives its stack BEFORE the plan
+// run is published, and a driven plan run whose own publication is disabled
+// (delivery.deliver_plan_run=false) settles succeeded with the 'plan PR not
+// created' notice instead of delivering. The preparedWorkflowRun is rebuilt
+// from the run snapshot: both resume settle points reach here without it.
+func finishWorkflowResumeSettled(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, stdout, stderr io.Writer) error {
+	raw, err := repo.GetRunSnapshot(ctx, runID)
+	if err != nil {
+		return err
+	}
+	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
+	if err != nil {
+		return err
+	}
+	drove, err := maybeDriveSettledStack(&preparedWorkflowRun{
+		root: root, res: res, store: store, repo: repo,
+		compiled: compiled, inputSnapshot: snapshot.Inputs,
+		refBase: "", raw: raw,
+	}, runID, allowPublish, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	if drove && !compiledDeliverPlanRun(compiled) {
+		if err := settlePlanRunSkippedDelivery(ctx, repo, runID); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "run_id=%s status=%s plan PR not created (delivery.deliver_plan_run=false); plan and artifacts recorded in the ledger\n", runID, workflowledger.RunStatusSucceeded)
+		return nil
+	}
+	return finishWorkflowRunDelivery(ctx, root, res, store, repo, runID, workflowName, workflowResumeDeliveryMode(compiled), allowPublish, stdout, stderr)
 }
 
 // workflowResumeDeliveryMode returns the compiled workflow's delivery mode,

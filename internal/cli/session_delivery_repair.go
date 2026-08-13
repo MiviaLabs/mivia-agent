@@ -57,7 +57,11 @@ import (
 // false). When the hook drove a multi-chunk stack for a plan run whose own
 // publication is disabled, the loop settles the plan run succeeded and stops
 // without publishing anything for it: the chunk PRs carry the work, and the
-// plan and its artifacts stay recorded in the ledger.
+// plan and its artifacts stay recorded in the ledger. The settle uses a
+// non-cancelable context deliberately (mirroring the CLI skip path in
+// executeWorkflowRun): the drive hook is uninterruptible and can outlive a
+// session cancel that kills runCtx, so the terminal CAS must survive it or
+// the run strands at delivery_pending with the stack complete.
 func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string, advance func(context.Context) (workflowledger.RunSnapshot, error), driveStack func() (bool, error), deliverPlanRun bool) {
 	snap, err := advance(runCtx)
 	if err != nil {
@@ -81,7 +85,7 @@ func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.R
 				// are recorded in the ledger; settle the run succeeded (the same
 				// terminal a delivered run reaches) and stop - nothing is
 				// published for this run.
-				if err := settlePlanRunSkippedDelivery(runCtx, repo, runID); err != nil {
+				if err := settlePlanRunSkippedDelivery(context.Background(), repo, runID); err != nil {
 					log.Printf("workflow: run %s settle skipped plan run: %v", runID, err)
 				}
 				return
