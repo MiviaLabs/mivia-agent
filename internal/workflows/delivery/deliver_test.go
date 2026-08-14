@@ -156,11 +156,11 @@ func deliveryRecordByKey(t *testing.T, repo workflowledger.Repository, run workf
 }
 
 func wantBody(run workflowledger.RunSnapshot) string {
-	return "<sub>Co-authored-by: Mivia Agent <noreply@mivia.app></sub>\n\n" +
-		"<details>\n<summary>Mivia Agent run details</summary>\n\n" +
+	return "<details>\n<summary><sub>Mivia Agent run details</sub></summary>\n\n" +
 		"- Run: [" + run.RunID + "](https://mivia.app/runs/" + run.RunID + ")\n" +
 		"- Workflow digest: [" + run.WorkflowDigest + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")\n" +
-		"\n</details>"
+		"\n</details>\n\n---\n" +
+		"<sub><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /> Co-authored-by: [Mivia Agent](https://github.com/MiviaLabs/mivia-agent)</sub>"
 }
 
 // assertNoBranchOnOrigin asserts the delivery branch never reached origin,

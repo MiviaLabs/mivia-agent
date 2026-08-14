@@ -115,11 +115,11 @@ func agentSummaryBody(run workflowledger.RunSnapshot, summary string) string {
 // wantFooter returns the exact attribution + collapsible run-details block
 // the delivery engine appends to every published PR body.
 func wantFooter(run workflowledger.RunSnapshot) string {
-	return "<sub>Co-authored-by: Mivia Agent <noreply@mivia.app></sub>\n\n" +
-		"<details>\n<summary>Mivia Agent run details</summary>\n\n" +
+	return "<details>\n<summary><sub>Mivia Agent run details</sub></summary>\n\n" +
 		"- Run: [" + run.RunID + "](https://mivia.app/runs/" + run.RunID + ")\n" +
 		"- Workflow digest: [" + run.WorkflowDigest + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")\n" +
-		"\n</details>"
+		"\n</details>\n\n---\n" +
+		"<sub><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /> Co-authored-by: [Mivia Agent](https://github.com/MiviaLabs/mivia-agent)</sub>"
 }
 
 // TestDeliverAgentTitleAndSummary: a run whose attempts carry a change-summary
@@ -454,10 +454,10 @@ func TestDeliverBodyIncludesStackPartInRunDetails(t *testing.T) {
 	if !strings.Contains(got, "- Stack part: 2/3\n") {
 		t.Fatalf("Body = %q, want it to contain the stack part line inside run details", got)
 	}
-	if !strings.Contains(got, "<sub>Co-authored-by: Mivia Agent <noreply@mivia.app></sub>") {
-		t.Fatalf("Body = %q, want the co-authored-by attribution line", got)
+	if !strings.HasSuffix(got, "---\n<sub><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /> Co-authored-by: [Mivia Agent](https://github.com/MiviaLabs/mivia-agent)</sub>") {
+		t.Fatalf("Body = %q, want the avatar attribution line LAST, after a horizontal rule", got)
 	}
-	if !strings.Contains(got, "<details>\n<summary>Mivia Agent run details</summary>") {
+	if !strings.Contains(got, "<details>\n<summary><sub>Mivia Agent run details</sub></summary>") {
 		t.Fatalf("Body = %q, want the collapsible run-details section", got)
 	}
 }
