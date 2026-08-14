@@ -103,6 +103,11 @@ func (c *LinearController) settleSucceededRoute(writeCtx context.Context, step d
 	degraded := false
 	status := workflowledger.AttemptStatusSucceeded
 	var runErr error
+	// Chunk finding scope must run BEFORE route selection: the matcher
+	// reads the verdict, so sibling-chunk-only findings are dropped and an
+	// emptied verdict flips to approved here, with the filtered shape
+	// persisted (see applyChunkFindingScope).
+	c.applyChunkFindingScope(step, result, outMap)
 	// Route computation reads the ledger (loop counters, prior review
 	// output). Use the detached writeCtx, not ctx: at the run deadline
 	// ctx is already expired, and a context.DeadlineExceeded from those
