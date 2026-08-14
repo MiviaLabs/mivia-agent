@@ -162,6 +162,33 @@ them before you hunt for novel defects.
 - **Protocol tolerance at an external boundary.** For each field the code reads from an
   external producer, ask what happens when it is absent or malformed. Test the
   malformed response, not only the good one.
+- **One invariant, several sites, one patched.** This is the single most common root
+  cause in this codebase's history: a fix name-checked only the one site a failure was
+  observed at and shipped the next bug at the sibling site in the same commit. It is
+  NOT satisfied by asserting "I checked, looks fine" - do the mechanical step: grep the
+  codebase for every other call site of the function/interface the fix touches (or
+  every sibling implementing the same interface, every sibling step in the same
+  pipeline, the fresh-admission path's twin in resume, the CLI path's twin in the
+  local/service engine). For EACH site found, paste it and state pass/fail against the
+  invariant in the finding - or state explicitly "no sibling exists" if the grep came
+  back empty. A report that asserts the sweep without citing the sites it checked does
+  not meet the confirmation bar below.
+- **One return channel, two outcomes.** When a function's success signal (a nil error,
+  a boolean, an exit code) is reachable by more than one underlying event, the caller
+  that treats it as one meaning is a bug. Mechanical check: read the callee's full body
+  and enumerate every `return nil` / `return true` / zero-exit-code branch; write down,
+  for each one, which real-world outcome it corresponds to (e.g. "the thing happened"
+  vs. "the thing was deferred/re-entered/queued for later"; "the target is absent" vs.
+  "the check itself failed"). If two branches map to different outcomes the caller
+  cannot distinguish, and the caller picks the optimistic reading, that is the bug -
+  cite the specific branches, not just the concern.
+- **One state, two representations.** When the same fact is readable through more than
+  one code path - a cached/snapshotted field alongside a live re-derived value, an
+  admitted definition alongside a resumed/recompiled one, a ledger status column
+  alongside a freshly-queried external system - find both read paths and show they
+  cannot diverge, or find the reconciliation code that keeps them in sync. If no such
+  guarantee or reconciliation exists in the shown code, the two representations WILL
+  diverge under some ordering of events; state the ordering.
 
 When a practical reproduction is possible, prefer executable evidence. A
 **statistically or static-provable** defect may be confirmed without a runtime

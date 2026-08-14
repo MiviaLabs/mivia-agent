@@ -55,6 +55,35 @@ not weaken them into vague advice.
 When the review scope touches a defect class the change's own catalogue
 documents (the task names it), run the probes for every class in scope.
 
+Run these three probes on every change, regardless of scope - they are this
+codebase's most frequently repeated root causes:
+
+- **One invariant, several sites, one patched.** This is this codebase's most
+  frequently repeated root cause. Do not satisfy this probe by asserting "I
+  checked, looks fine" - grep for every other call site of the function or
+  interface the change touches (sibling pipeline steps reading the same kind
+  of context, the fresh-admission path's resume/recovery twin, a CLI entry
+  point's engine/service twin, every implementation of a shared interface).
+  For each site found, cite it and state pass/fail against the invariant in
+  your finding, or state "no sibling exists" if the grep is empty. A finding
+  that asserts the sweep happened without citing the sites checked does not
+  meet the confirmation bar.
+- **One return channel, two outcomes.** If a callee's success signal (nil
+  error, boolean, exit code) is reachable from more than one underlying
+  event, enumerate the callee's return branches and write down which real
+  outcome each maps to. "No error" covering both "it happened" and "it was
+  deferred/re-entered/queued," or a failed subcommand meaning both "absent"
+  and "the check itself failed," are real bugs when the caller picks the
+  optimistic branch without checking which outcome occurred. Cite the
+  specific branches.
+- **One state, two representations.** When the same fact is readable through
+  more than one code path - a cached/snapshotted field alongside a live
+  re-derived value, an admitted definition alongside a resumed/recompiled
+  one, a status column alongside a freshly-queried external system - find
+  both read paths and show they cannot diverge, or find the reconciliation
+  code. If neither exists in the shown code, state the event ordering under
+  which they diverge.
+
 ## Confirmation bar
 
 A finding is Confirmed only when all of these are present:
