@@ -11,78 +11,35 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// workflowAutoDeliveryAttemptTimeout bounds ONE stack-drive attempt in
-// sessionAutoDeliveryRepairLoop, whose goroutine holds the per-run execution
-// flock until it exits; a stuck drive would wedge CLI workflow deliver on
-// 'lock is busy'. The bound covers the merge-wait polls (waitForChunkMerges/
-// waitForIntegrationMerge) and the drive loop-top check; the deliver attempt
-// that follows gets its own fresh bound (workflowDeliveryTimeout). It does
-// NOT cover the in-process chunk/integration controller runs
-// (admitStackChunkRun: Controller.Start/Run on context.Background()) - each
-// runs under its own workflow deadline (max_duration_seconds, cap 24h,
-// sequential across chunks), and a chunk run with no declared deadline gets
-// NO DeadlineAt at all, so it runs unbounded in-process (the 10m join
-// watchdog bounds only the resume-path pre-Run join) - nor the
-// context.Background() git/gh subprocess calls in autoMergeOne/
-// checker.Merged: aborting a chunk run at the session bound would kill
-// legitimate long chunk runs, worse than the bounded hold. Recovery stays
-// consistent: the run stays delivery_pending (retryable), the stack ledger
-// is idempotent, and the reconcile sweep (stackDriveCompleted) plus 'mivia
-// stack drive' recover. A package var so tests can shorten it.
+// workflowAutoDeliveryAttemptTimeout bounds one stack-drive attempt (merge-wait
+// polls plus the drive loop-top check; the deliver attempt after it gets its
+// own bound, workflowDeliveryTimeout). It deliberately does NOT bound the
+// in-process chunk/integration controller runs (each has its own workflow
+// deadline, possibly none) or the git/gh subprocess calls: aborting those at
+// the session bound would kill legitimate long chunk runs, worse than holding
+// the flock. A package var so tests can shorten it.
 var workflowAutoDeliveryAttemptTimeout = 30 * time.Minute
 
-// sessionAutoDeliveryRepairLoop runs one session-engine controller pass, then drives the auto-delivery repair loop that follows it.
+// sessionAutoDeliveryRepairLoop runs one session-engine controller pass, then
+// re-advances it until delivery succeeds or the run settles terminal — the
+// session tool surface has no terminal operator to run "mivia workflow
+// resume" the way the CLI's sync path expects (DC-9), so it re-advances
+// itself. Bounded by reopenForRepair (settles delivery_failed once
+// maxDeliveryRepairs is spent) and the controller's own deadline self-settle.
 //
-// A workflow run that finishes under the session tool surface settles to
-// delivery_pending and is auto-delivered in the same goroutine. When that
-// delivery fails for a condition in the change (delivery.on_failure names a
-// repair step), settleDeliveryError/reopenForRepair CAS the run back to
-// running with the repair step routed. Before this helper, no executor
-// re-advanced the controller after that: the goroutine already ran the
-// controller once and exited, so the run parked at running with zero events
-// (DC-9). The CLI synchronous paths print "continue with: mivia workflow
-// resume"; the session tool surface has no operator at the terminal, so it
-// must re-advance itself.
+// Delivery authorization comes from the workflow's own [delivery] policy; no
+// allow_publish flag is consulted.
 //
-// This helper closes that gap: it re-advances the controller until delivery succeeds or the run settles terminal. The loop is inherently bounded:
-// reopenForRepair settles delivery_failed once maxDeliveryRepairs repair
-// attempts are spent, and the controller self-settles a run whose deadline
-// expires, so the loop can never spin.
+// driveStack runs BEFORE delivery — delivering first would publish the plan
+// PR while the chunk stack never drives. Idempotent, may be nil without a
+// stacking engine; a fault or timeout stops the loop and logs, leaving the
+// run delivery_pending for the reconcile sweep or 'mivia stack drive'.
 //
-// Delivery authorization comes from the workflow itself: a run settles at
-// delivery_pending only when its workflow declares a [delivery] policy, and
-// that policy is the publication grant. No allow_publish flag is consulted -
-// the harness must publish a delivery-defined workflow always, without flags
-// or manual overrides. deliverRunWithStore independently refuses a run whose
-// workflow has no active delivery policy.
-//
-// advance runs one controller pass: the first pass returns the run's settled
-// snapshot; a later pass continues from the repair step.
-//
-// driveStack is the stacking hook: for a run that settles at delivery_pending
-// with a multi-chunk plan it drives the chunk stack to completion and reports
-// whether it drove one. It runs BEFORE delivery - delivering first would
-// publish the plan PR while the chunk stack never drives (deliver-before-drive
-// ordering bug). Its context is bounded by workflowAutoDeliveryAttemptTimeout
-// (see the var comment for the exact scope - what it covers and, just as
-// importantly, what it deliberately does not: in-flight chunk controller runs
-// and git/gh subprocess calls). The hook is the whole stack drive (chunks ->
-// merges -> integration run) and is idempotent, so re-invocation on a later
-// repair cycle is safe; it may be nil for callers without a stacking engine.
-// A drive fault or timeout is logged and the loop stops: the run stays
-// delivery_pending (never falsely published), the stack ledger is idempotent,
-// and the reconcile sweep (stackDriveCompleted) plus 'mivia stack drive'
-// recover.
-//
-// deliverPlanRun is the resolved delivery.deliver_plan_run option (default
-// false). When the hook drove a multi-chunk stack for a plan run whose own
-// publication is disabled, the loop settles the plan run succeeded and stops
-// without publishing anything for it: the chunk PRs carry the work, and the
-// plan and its artifacts stay recorded in the ledger. The settle uses a
-// non-cancelable context deliberately (mirroring the CLI skip path in
-// executeWorkflowRun): the drive hook is uninterruptible and can outlive a
-// session cancel that kills runCtx, so the terminal CAS must survive it or
-// the run strands at delivery_pending with the stack complete.
+// deliverPlanRun mirrors delivery.deliver_plan_run: when the hook drove a
+// multi-chunk stack for a plan run whose own publication is disabled, the
+// loop settles it succeeded without publishing (the chunk PRs carry the
+// work), using a non-cancelable context since the drive hook can outlive a
+// session cancel that kills runCtx.
 func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string, advance func(context.Context) (workflowledger.RunSnapshot, error), driveStack func(context.Context) (bool, error), deliverPlanRun bool) {
 	snap, err := advance(runCtx)
 	if err != nil {

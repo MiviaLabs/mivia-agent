@@ -11,33 +11,19 @@ import (
 )
 
 // blockedPathsFromOutput returns the write-blocklisted paths that a SUCCEEDED
-// step's output admits it needs to write. Three signals are recognized:
+// step's output admits it needs to write. Four signals are recognized:
 //
-//  1. blocked_paths — the agent's explicit record of host-refused writes. This
-//     is the primary signal and works even without a controller-side
-//     blocklist: the agent itself recorded the host refusal.
-//
-//  2. files_changed ∩ blocklist — a claim that the change modified a path the
-//     host write policy makes unwritable for workflow agents. No agent can
-//     legitimately change such a file, so a claim of one is a blocked signal.
-//
-//  3. review findings that DEMAND a blocked-path edit. A finding demands an
-//     edit only through its required field (the review schema guarantees a
-//     non-empty string), so only that field is scanned for a path token plus
-//     demand verb. Evidence and reason are context, not demands: a finding
-//     that merely quotes a blocklisted path (say, doc content mentioning
-//     ".mivia/agents/<name>.toml") while requiring a plan correction must
-//     not be treated as a demand to write that path. A mere mention of a
-//     blocklisted path is not a demand and is ignored.
-//
+//  1. blocked_paths — the agent's own record of host-refused writes.
+//  2. files_changed ∩ blocklist — a self-reported claim of touching an
+//     unwritable path.
+//  3. review findings that DEMAND a blocked-path edit — scanned only in the
+//     required field (evidence/reason are context, not demands, so a finding
+//     that merely quotes a blocklisted path is not treated as a demand).
 //  4. The host-measured actual diff (touchedFilesEvidence) intersected with
-//     the blocklist. Signal 2 above only catches a blocklisted write the
-//     agent VOLUNTEERED in its own files_changed; an agent that writes a
-//     blocklisted path and omits it from that self-report (honestly or not)
-//     would otherwise bypass this gate entirely - the same self-report gap
-//     already confirmed for review visibility (touchedFilesEvidence), but
-//     here it is the actual enforcement mechanism for a hard security
-//     boundary, so ground truth is checked directly rather than trusted.
+//     the blocklist — ground truth, checked directly rather than trusted,
+//     since an agent that writes a blocklisted path and omits it from its
+//     own files_changed self-report would otherwise bypass this hard
+//     security boundary entirely.
 //
 // Paths are deduplicated and sorted for deterministic error messages.
 func (c *LinearController) blockedPathsFromOutput(ctx context.Context, output map[string]any) []string {

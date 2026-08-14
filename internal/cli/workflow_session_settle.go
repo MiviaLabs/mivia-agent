@@ -35,38 +35,22 @@ func isNonTerminalWorkflowStop(err error) bool {
 }
 
 // settleSessionRunFailure records why a session-driven run stopped, and gives
-// it a terminal status when nothing else will.
+// it a terminal status when nothing else will — mirroring the local engine's
+// settleRunFailure, which the session engine previously disagreed with by
+// reading the controller's stop cause only to decide whether to deliver, then
+// dropping it (leaving the run row `running` with no explanation).
 //
-// The controller returns its cause from Run, but the session engine read that
-// cause only to decide whether to deliver, then dropped it. The run row stayed
-// `running` with no explanation anywhere: it looked alive and was not. The
-// local engine already answers this, in settleRunFailure, and the two engines
-// simply disagreed.
+// Carve-outs: a cancelled run, a run another holder owns, an already-terminal
+// run, and a run parked at delivery_pending/pending/waiting_approval are all
+// left alone — none of them is mid-flight running.
 //
-// This is that same answer, with the same carve-outs:
-//   - A cancelled run is left alone. Cancel settles the run itself, and a
-//     failed status written here would race it and win.
-//   - A run another holder owns is left alone. That holder is the live
-//     executor.
-//   - A run that already reached a terminal status is left alone.
-//   - A run parked at delivery_pending, pending, or waiting_approval is left
-//     alone. None of them is mid-flight running: a parked approval must stay
-//     approvable, and a delivery-pending run belongs to the delivery path.
-//
-// For a run that IS mid-flight, the settle consults the ledger's recovery plan
-// instead of failing blindly. The controller persists the ROUTE (the
-// completion's ToStepID) before the run-status CAS, so a transient storage
-// fault between the two leaves a COMPLETED run with derived ActiveStepID
-// "success"/"failure" and Status "running". PlanResume detects that derived
-// terminal route, and the settle records the plan's terminal status
-// (succeeded/failed) rather than failing a finished run — failing it would
-// block delivery of work that is already done.
-//
-// A storage fault that stops the controller therefore settles as failed rather
-// than stranding — unless the run already finished, in which case it settles
-// as succeeded. The work is not lost: every completed step stays durable in
-// the ledger, and the operator can see the cause instead of guessing why a
-// `running` run stopped moving.
+// For a run that IS mid-flight, the settle checks the ledger's recovery plan
+// first: the controller persists the completion route before the run-status
+// CAS, so a storage fault between the two can leave a COMPLETED run with a
+// derived terminal ActiveStepID but Status "running". PlanResume detects
+// that and the settle records the plan's real terminal status instead of
+// failing a run that already finished (which would block delivering
+// already-done work). Otherwise the storage fault settles as failed.
 func settleSessionRunFailure(repo workflowledger.Repository, runID string, runErr error) {
 	if runErr == nil || errors.Is(runErr, context.Canceled) || isNonTerminalWorkflowStop(runErr) {
 		return

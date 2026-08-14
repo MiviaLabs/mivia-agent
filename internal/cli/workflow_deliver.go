@@ -227,6 +227,16 @@ func settleDeliveryError(ctx context.Context, repo workflowledger.Repository, ru
 		recordAutoDeliveryFailure(ctx, repo, runID, err)
 		return delivery.ReopenForRepair(ctx, repo, runID, step, policy.MaxRepairs, err, stdout)
 	}
+	// No repair step resolves for this failure (or it is transient): the run
+	// stays delivery_pending. A durable, non-transient failure still needs a
+	// recorded cause - pre-commit rejections (PR metadata, commit subject)
+	// deliberately write no in-flight record, so without this the run would
+	// sit at delivery_pending with nothing `workflow status` can explain.
+	// Transient transport faults stay unrecorded: they say nothing about the
+	// change and a later deliver succeeds.
+	if !provider.IsTransient(err) {
+		recordAutoDeliveryFailure(ctx, repo, runID, err)
+	}
 	return err
 }
 

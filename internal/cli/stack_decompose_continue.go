@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
@@ -148,7 +149,26 @@ func loadAllStackChunksForDrive(prepared *preparedWorkflowRun, stackID string, p
 	if skippedWave {
 		hasMore = false
 	}
+	if prepared.compiled != nil {
+		if err := enforceMaxTotalChunks(prepared.compiled.Stacking, stackID, len(chunks)); err != nil {
+			return nil, false, "", err
+		}
+	}
 	return chunks, hasMore, remainingScope, nil
+}
+
+// enforceMaxTotalChunks refuses a chunk list that exceeds the workflow's
+// max_total_chunks cap (0 or nil config = uncapped). The cap used to be
+// checked only AFTER a continuation wave was admitted; the error path then
+// left the wave's chunks unseeded, and the next drive replayed and seeded
+// them anyway - silently exceeding the cap. The drive loader and the wave
+// admission sites both call this, so the cap holds whether the chunks arrive
+// from a fresh admission or a re-drive's wave replay.
+func enforceMaxTotalChunks(stacking *definition.StackingConfig, stackID string, have int) error {
+	if stacking == nil || stacking.MaxTotalChunks <= 0 || have <= stacking.MaxTotalChunks {
+		return nil
+	}
+	return fmt.Errorf("stack %s has %d chunks across admitted decompose waves, exceeding max_total_chunks=%d; delete the excess wave runs or raise the cap", stackID, have, stacking.MaxTotalChunks)
 }
 
 // recoverDecomposeContinueWave handles one decompose-continuation wave whose
@@ -253,6 +273,11 @@ func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *tasks.Store, st
 		return fmt.Errorf("stack drive: %w", err)
 	}
 	wave++
+	// Halt BEFORE admitting when the cap is already reached (same rationale
+	// as driveStackToCompletion's pre-admission check).
+	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks) >= maxTotal {
+		return fmt.Errorf("stack drive: stack %s reached max_total_chunks=%d with more scope declared; halting before admitting wave %d", stackID, maxTotal, wave)
+	}
 	nextChunks, _, _, err := admitDecomposeContinuationRun(prepared, stackID, wave, remainingScope, planInputs, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("stack drive: %w", err)
@@ -265,4 +290,27 @@ func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *tasks.Store, st
 		return fmt.Errorf("stack drive: wave %d seed: %w", wave, err)
 	}
 	return nil
+}
+
+// admitNextDecomposeWave admits decompose-continuation wave N and seeds its
+// chunks. It halts BEFORE admitting when the cap is already reached: an
+// admitted continuation run whose chunks the cap then rejects is an orphan
+// (admitted, never seeded, never driven). The post-admission check stays for
+// a wave that alone jumps over the cap.
+func admitNextDecomposeWave(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, wave int, chunks []ChunkPlan, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) ([]ChunkPlan, bool, string, error) {
+	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks) >= maxTotal {
+		return nil, false, "", fmt.Errorf("stack drive: stack %s reached max_total_chunks=%d with more scope declared; halting before admitting wave %d", stackID, maxTotal, wave)
+	}
+	nextChunks, nextHasMore, nextRemaining, err := admitDecomposeContinuationRun(prepared, stackID, wave, remainingScope, planInputs, stdout, stderr)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("stack drive: %w", err)
+	}
+	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks)+len(nextChunks) > maxTotal {
+		return nil, false, "", fmt.Errorf("stack drive: stack %s would admit %d total chunks, exceeding max_total_chunks=%d (already have %d, wave %d adds %d)",
+			stackID, len(chunks)+len(nextChunks), maxTotal, len(chunks), wave, len(nextChunks))
+	}
+	if err := seedStackLedger(ledger, stackID, nextChunks); err != nil {
+		return nil, false, "", fmt.Errorf("stack drive: wave %d seed: %w", wave, err)
+	}
+	return nextChunks, nextHasMore, nextRemaining, nil
 }

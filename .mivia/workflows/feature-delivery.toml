@@ -175,6 +175,7 @@ context = [
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
   { from = "steps.review_panel.output", as = "review", max_bytes = 16000, optional = true },
   { from = "steps.review_integration.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  { from = "inputs.chunk_plan", as = "chunk_scope", max_bytes = 4096, optional = true },
 ]
 on_failure = "failure"
 

@@ -172,36 +172,21 @@ func validateTools(tc ToolsConfig) error {
 }
 
 // validateDiagnosticsCommands validates the whole [tools] diagnostics_commands
-// map (the ONE surface; the deprecated diagnostics_command alias has already
-// been folded into DiagnosticsCommands["default"] and cleared by
-// resolveToolsConfig when it was set alone). It enforces, at load, the same
-// gate the run_command tool applies at runtime (internal/tools/run.go
-// resolveAllowedCommand), so a diagnostics command whose get_diagnostics tool
-// could never register is a load error instead of a silently absent tool. The
-// membership logic is mirrored locally - the config package must not import
-// internal/tools.
+// map (the deprecated diagnostics_command alias is already folded into
+// DiagnosticsCommands["default"] by resolveToolsConfig when set alone; both
+// set is a load error, since resolveToolsConfig cannot return one and leaves
+// that case intact for this check). It enforces, at load, the same
+// allowlist/blocklist gate run_command applies at runtime
+// (internal/tools/run.go resolveAllowedCommand) — mirrored locally since the
+// config package must not import internal/tools — so a diagnostics command
+// that could never register is a load error, not a silently absent tool.
 //
-// STE: the deprecated alias and the map are the same surface; setting both is
-// ambiguous and must be a LOAD ERROR, not a silent precedence choice.
-// resolveToolsConfig cannot return an error, so it leaves the both-set case
-// intact for this check.
+// Map keys are case-folded for duplicate detection: TOML itself is
+// case-sensitive ("Lint" and "lint" both parse), but a model selecting by
+// name can't disambiguate them, so the collision is rejected here.
 //
-// STE: map keys are command names the model selects by. Empty, whitespace-only,
-// and case-folded duplicate keys cannot be selected unambiguously and are load
-// errors. (TOML keys are case-sensitive, so "Lint" and "lint" both parse; the
-// case-folded collision is this layer's rejection, not the parser's.)
-//
-// STE: the effective allowlist is run_allowlist_only when set, else
-// run_allowlist, MINUS run_blocklist (case-folded subtraction, mirroring the
-// tools layer's disabledToolNames in configuredRunAllowlist). resolveToolsConfig
-// has already cleared RunAllowlist when RunAllowlistOnly is set (B7, before
-// Validate runs), so that selection is exactly what the tools layer resolves,
-// and a command allowlisted only in the non-authoritative run_allowlist - or
-// blocklisted - is refused.
-//
-// STE: an unset or empty map is a no-op (the get_diagnostics tool is simply not
-// registered), keeping every pre-existing config loading unchanged - backward
-// compatibility is a hard contract.
+// An unset or empty map is a no-op: the get_diagnostics tool is simply not
+// registered, keeping pre-existing configs loading unchanged.
 func validateDiagnosticsCommands(tc ToolsConfig) error {
 	if len(tc.DiagnosticsCommand) > 0 && len(tc.DiagnosticsCommands) > 0 {
 		return fmt.Errorf("[tools] diagnostics_command and diagnostics_commands are both set; diagnostics_commands is the one surface - remove the deprecated diagnostics_command alias")

@@ -15,30 +15,22 @@ import (
 // auditModelKeys rejects a model entry carrying a key the closed model object
 // does not define.
 //
-// ModelSpec.UnmarshalTOML already does this, but go-toml dispatches
-// unstable.Unmarshaler from handleValue, which an [[providers.x.models]] entry
-// never reaches - only an inline table does. The keys are therefore gone by the
-// time normalizeModels sees []ModelSpec, and loadFile holding the raw bytes is
-// the last place they exist. Auditing that one region is what makes the
-// guarantee hold for both spellings; validation that fires for one way of
-// writing the same config is not validation.
+// ModelSpec.UnmarshalTOML already does this, but go-toml only dispatches
+// unstable.Unmarshaler for an inline table — an [[providers.x.models]] entry
+// never reaches it. Its keys are gone by the time normalizeModels sees
+// []ModelSpec, so loadFile holding the raw bytes is the last place to audit
+// both spellings.
 //
-// The audit reads KEY PATHS off the raw syntax tree instead of re-decoding the
-// region into a Go shape. Any decoding view has to name a type for the values
-// and a type for the tables holding them, and each choice is a shape some legal
-// document does not fit: a value type permissive enough to absorb an
-// out-of-range integer cannot absorb a table nested under an entry, and a view
-// that absorbs the table stops absorbing the integer. Both mistakes are
-// operator-reachable, and either one failing the view reports a broken checker
-// for the whole document instead of the typo sitting next to it. A key path has
-// no value shape and no table shape to disagree with, so no document can defeat
-// the walk.
+// The audit reads KEY PATHS off the raw syntax tree rather than re-decoding
+// into a Go shape: any value/table type permissive enough to absorb one
+// legal document's shape rejects another's (e.g. an out-of-range integer vs.
+// a nested table), and either mismatch reports a broken checker for the
+// whole document instead of the actual typo. A key path has no value or
+// table shape to disagree with.
 //
-// This reads go-toml's unstable package, which model_spec.go already depends on
-// and documents as version-fragile; the dependency is concentrated here rather
-// than widened. Unlike the unstable.Unmarshaler assertion over there, a
-// signature change in this API is a compile error, not a check that quietly
-// stops running.
+// This uses go-toml's unstable package (already depended on by
+// model_spec.go, documented there as version-fragile) — a signature change
+// here is a compile error, not a silently-stopped check.
 func auditModelKeys(data []byte) error {
 	walk := modelKeyWalk{entries: make(map[string]int)}
 	var parser unstable.Parser

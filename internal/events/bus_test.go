@@ -638,29 +638,6 @@ func TestNewSubscriptionZeroBufSize(t *testing.T) {
 	}
 }
 
-// Regression: Flush() must not return before events published before it
-// have been delivered. The old drain() acked a queued flush barrier
-// immediately (case reply := <-s.flushCh: close(reply)), so a second Flush
-// whose barrier was queued while a first Flush's drain was mid-flight could
-// be acked by the random select while events were still queued - Flush()
-// returned early and handler-state assertions raced with delivery.
-//
-// The subscription's flushCh is normally capacity 1 and the second barrier
-// only appears through a second concurrent Flush(), whose scheduling is
-// nondeterministic. This white-box test removes that scheduling race: it
-// constructs a subscription with a capacity-2 flushCh and queues BOTH flush
-// barriers before starting the delivery goroutine, so the interleaving that
-// triggers the bug (a barrier present in flushCh while events remain in the
-// channel) is guaranteed on every iteration. The handler blocks on a
-// goAhead channel for every event (deterministic synchronization, no
-// sleeps), so the delivery goroutine is held mid-drain while the second
-// barrier waits. When a barrier is acked, the handler is either blocked (so
-// the handled count is stable) or all events are done, so reading the count
-// at ack-receipt time reliably detects a barrier acked while events were
-// still queued. The pre-fix drain acks that barrier as soon as its random
-// select reaches it with events still queued; the fixed drainEvents never
-// touches flushCh, so a barrier is only ever acked after the event channel
-// is empty.
 // Regression: Bus.Unsubscribe must not panic when called after Bus.Close.
 // Close sets b.subs = nil after draining delivery goroutines (bus.go line 168),
 // but Unsubscribe reads b.subs[kind] without a nil guard (bus.go line 113).

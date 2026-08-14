@@ -585,6 +585,56 @@ func TestWorkflowDeliverRefusalRecordsReason(t *testing.T) {
 	}
 }
 
+// TestWorkflowDeliverPlainFailureWithoutRepairRouteRecordsCause pins the
+// recording gap: a PR-metadata rejection (or any plain pre-commit delivery
+// failure) on a workflow with NO repair route - no on_failure, no
+// on_pr_metadata_failure - has nowhere to be routed, and validatePRMetadata
+// deliberately writes no in-flight record ("travels to the classifier"), so
+// settleDeliveryError's fall-through must record the failure durably.
+// Without it the run sits at delivery_pending with no stored cause, and
+// `workflow status` cannot say why.
+func TestWorkflowDeliverPlainFailureWithoutRepairRouteRecordsCause(t *testing.T) {
+	root, storePath, config, _ := newDeliveryFixture(t)
+	// No on_failure / on_pr_metadata_failure appended: RepairTarget resolves
+	// no step for the PRMetadataError.
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	seedWorktreeChange(t, root, runID, repo)
+	seedCLIChangeSummary(t, context.Background(), repo, runID, `{"pr_title": "feat(scope): add widget", "pr_summary": "Adds the widget."}`)
+	seedCLIWorkspacePRTitlePolicy(t, root, runID, repo, `[title]
+pattern = '^[a-z]+\((?P<scope>[a-z]+)\): .+$'
+scopes = ["feat"]
+`)
+
+	err := runWorkflowWithIO([]string{"deliver", runID, "--workspace", root, "--config", config, "--allow-publish"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("deliver error = %v, want the pr-title policy violation to surface", err)
+	}
+	run, err := repo.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A plain error, not a refusal: the run stays retryable at
+	// delivery_pending.
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("run status = %q, want delivery_pending", run.Status)
+	}
+	rec, err := repo.GetDeliveryByIdempotencyKey(context.Background(), delivery.DeliveryKey(runID, run.WorkflowDigest))
+	if err != nil {
+		t.Fatalf("no durable delivery record after the failure: %v", err)
+	}
+	if rec.ErrorRef == "" {
+		t.Fatalf("delivery record = %+v, want a recorded ErrorRef naming the failure cause", rec)
+	}
+	body, err := repo.LoadContent(context.Background(), rec.ErrorRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "not allowed") {
+		t.Fatalf("recorded failure cause = %q, want it to name the pr-title policy violation", body)
+	}
+}
+
 // appendWorkflowDeliveryOnPRMetadataFailure adds an on_pr_metadata_failure
 // route to the fixture's [delivery] block so a PR-metadata delivery failure
 // would re-enter the named step.

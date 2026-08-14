@@ -70,3 +70,16 @@ func TestPrToolProbeDefaultRunsRealBinary(t *testing.T) {
 		t.Fatal("probe of a missing binary returned nil")
 	}
 }
+
+// TestPrToolProgramUnknownProviderMessage pins the support-framed refusal:
+// the error states that only "github" is supported, not that a tool is
+// missing for a provider that could otherwise work.
+func TestPrToolProgramUnknownProviderMessage(t *testing.T) {
+	_, err := prToolProgram("gitlab")
+	if err == nil {
+		t.Fatal(`prToolProgram("gitlab") error = nil, want a refusal`)
+	}
+	if !strings.Contains(err.Error(), `provider "gitlab" is not supported (only "github" is currently supported)`) {
+		t.Fatalf("prToolProgram error = %q, want the only-github support message", err)
+	}
+}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -123,6 +124,61 @@ func TestRecordDeliveryRefusalPreservesIdentity(t *testing.T) {
 	}
 	if rec.Mode != "draft" || rec.BaseRef != "main" || rec.HeadRef != "wf/"+run.WorktreeName || rec.Provider != "github" {
 		t.Fatalf("refused record = %+v, want Mode/BaseRef/HeadRef/Provider preserved", rec)
+	}
+}
+
+// TestRecordAutoDeliveryFailurePreservesSplitDecision pins the same
+// invariant markFailed states: the split decision (DeferredFiles) must
+// survive a failed attempt's record rewrite, or the next retry cannot
+// recognize the mid-split state and routes the deferred scope onto the
+// pushed branch. A pending record (a hard crash mid-split writes pending
+// with DeferredFiles and no ErrorRef) must not be clobbered by the
+// end-of-run failure recorder.
+func TestRecordAutoDeliveryFailurePreservesSplitDecision(t *testing.T) {
+	root, storePath, config, _ := newDeliveryFixture(t)
+	runID := runFixtureToDeliveryPending(t, root, config)
+	repo := openDeliveryStore(t, storePath)
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := delivery.DeliveryKey(runID, run.WorkflowDigest)
+
+	// A hard crash mid-split leaves a pending record carrying the split
+	// decision and no ErrorRef.
+	if err := repo.UpsertDelivery(ctx, workflowledger.DeliveryRecord{
+		RunID:          runID,
+		IdempotencyKey: key,
+		Mode:           "draft",
+		BaseRef:        "main",
+		HeadRef:        "wf/" + run.WorktreeName,
+		Provider:       "github",
+		Status:         "pending",
+		CommitSHA:      "c0ffee",
+		TreeSHA:        "tree",
+		DeferredFiles:  `["the.big.txt"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recordAutoDeliveryFailure(ctx, repo, runID, errors.New("host rejected the change"))
+
+	rec, err := repo.GetDeliveryByIdempotencyKey(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != "failed" {
+		t.Fatalf("record status = %q, want failed", rec.Status)
+	}
+	if rec.ErrorRef == "" {
+		t.Fatal("record ErrorRef is empty: the failure cause must be recorded")
+	}
+	if rec.DeferredFiles != `["the.big.txt"]` {
+		t.Fatalf("DeferredFiles = %q, want the split decision preserved for the next retry", rec.DeferredFiles)
+	}
+	if rec.CommitSHA != "c0ffee" || rec.TreeSHA != "tree" {
+		t.Fatalf("record = %+v, want the crash-resume identity preserved", rec)
 	}
 }
 

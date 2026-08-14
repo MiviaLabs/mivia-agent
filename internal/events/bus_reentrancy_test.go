@@ -511,35 +511,22 @@ func runDeliveryCloseNoWaitIteration(t *testing.T, i int) {
 	}
 }
 
-// Regression: Delivery.Close must not deadlock against a subscription whose
-// delivery goroutine starts running a handler after Close's delivering check.
-// The old Close checked s.delivering.Load() and then committed to <-s.done
-// without re-checking (a TOCTOU race): a subscription idle at the check but
-// about to deliver can be joined. If that handler calls Delivery.Flush, it
-// barriers every OTHER subscription — including the caller's own, whose
-// delivery goroutine is blocked inside Close waiting on the joined
-// goroutine's done — so the barrier can never be acked and Close hangs
-// forever. The fixed Close snapshots the subscription's deliveringChange
-// channel (closed on every delivering false->true transition in handle())
-// under deliveringMu, re-checks delivering, and selects on {<-s.done,
-// <-changed}: the moment the joined goroutine starts delivering, the select
-// abandons the wait (it exits on its own once its handler returns).
+// Regression: the old Close checked s.delivering.Load() then committed to
+// <-s.done without re-checking (TOCTOU) — a subscription idle at the check
+// but about to deliver could be joined; if its handler then called
+// Delivery.Flush, that barriers every OTHER subscription including the
+// caller's own (blocked inside Close), so the barrier could never be acked
+// and Close hung forever. The fix: Close snapshots deliveringChange (closed
+// on every delivering false->true transition) under deliveringMu, re-checks
+// delivering, and selects on {<-s.done, <-changed} — the moment the joined
+// goroutine starts delivering, the select abandons the wait instead of
+// hanging on it.
 //
-// subA is a real bus subscription whose handler calls DeliveryFrom(ctx)
-// .Close(). subB is a hand-built subscription registered on the bus with a
-// test-driven delivery goroutine whose delivering transition is gated until
-// Close has passed the delivering check: the driver waits for the bus
-// shutdown context (cancelled by Close's sync.Once body), and the test opens
-// the gate only after confirming Close released b.mu with b.closed set
-// (Close has collected the others list and is entering the wait loop, whose
-// delivering.Load executes before the just-released driver can reach
-// Store). subB's handler calls DeliveryFrom(ctx).Flush(), which barriers
-// every other subscription — including subA, whose delivery goroutine is
-// blocked inside Close and can never ack while Close waits. Pre-fix the
-// iteration deadlocks and times out; post-fix Close's select fires on
-// subB's deliveringChange, Close skips subB and returns, and subB's Flush
-// sees the cleared subs map (or subA's goroutine, now returned from Close,
-// acks the barrier).
+// subA is a real subscription whose handler calls Close(); subB is a
+// hand-built subscription whose delivery goroutine is gated to only start
+// delivering after Close has passed its delivering check, then calls Flush
+// (which would deadlock pre-fix, since subA's goroutine can't ack while
+// blocked inside Close).
 func TestDeliveryCloseDoesNotWaitOnSubThatStartsDelivering(t *testing.T) {
 	const iterations = 50
 	for i := 0; i < iterations; i++ {

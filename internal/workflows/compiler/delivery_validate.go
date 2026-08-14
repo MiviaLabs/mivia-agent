@@ -90,6 +90,23 @@ func validateDelivery(wf *definition.WorkflowFile) error {
 	}
 }
 
+// validateDeliveryProviderSupport refuses a delivery provider the engine
+// cannot publish with: only definition.ProviderGitHub is supported, and the
+// refusal states that boundary instead of implying a provider seam that does
+// not exist. The check is admission-only, like the re-entry-hint requirement:
+// a run admitted under an earlier policy that permitted the provider value
+// must still resume. Delivery keeps its own authoritative check
+// (delivery.Policy.Validate).
+func validateDeliveryProviderSupport(wf *definition.WorkflowFile) error {
+	if wf.Delivery == nil || wf.Delivery.Kind != "pull_request" {
+		return nil
+	}
+	if wf.Delivery.Provider != definition.ProviderGitHub {
+		return fmt.Errorf("delivery: provider %q is not supported (only %q is currently supported)", wf.Delivery.Provider, definition.ProviderGitHub)
+	}
+	return nil
+}
+
 // validateDeliveryReentryHints requires every step a delivery failure can
 // re-enter (delivery.on_failure, delivery.on_pr_metadata_failure and
 // delivery.on_diff_size_failure) to bind delivery.failure, so the repair
