@@ -160,6 +160,23 @@ func TestMatchSameSpecificityTieFailsClosed(t *testing.T) {
 	}
 }
 
+func TestMatchDifferentSizeDisjointCriteriaFailsClosed(t *testing.T) {
+	// Disjoint, differently-sized output criteria are not comparable: the
+	// larger one does not refine the smaller one, so this must fail closed
+	// to multi_match instead of picking the transition with more keys.
+	transitions := []definition.Transition{
+		{From: "a", To: "one-key", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"a": "1"}}},
+		{From: "a", To: "two-keys", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"b": "2", "c": "3"}}},
+	}
+	d, err := Match("a", "succeeded", map[string]any{"a": "1", "b": "2", "c": "3"}, transitions)
+	if err == nil {
+		t.Fatalf("expected multi-match error for disjoint differently-sized criteria, got decision %+v", d)
+	}
+	if d.Outcome != "multi_match" {
+		t.Fatalf("outcome = %q, want multi_match", d.Outcome)
+	}
+}
+
 func TestMatchIgnoresOtherFromSteps(t *testing.T) {
 	transitions := []definition.Transition{
 		{From: "other", To: "x", Match: definition.MatchCriteria{Status: "succeeded"}},

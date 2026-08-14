@@ -183,6 +183,17 @@ func TestSynthesizeStacking_InjectsSteps(t *testing.T) {
 	if !hasBinding(decompose.Context, "steps.plan.output", "plan") {
 		t.Errorf("decompose context = %v, want steps.plan.output bound as plan", decompose.Context)
 	}
+	// The prior rejection is bound back on repair iterations so the decompose
+	// agent sees the exact verdict the deterministic gate refused; it must be
+	// optional so first attempts (no prior output) resolve absent.
+	if !hasBinding(decompose.Context, "steps.decompose.output", "prior_chunk_plan") {
+		t.Errorf("decompose context = %v, want steps.decompose.output bound as prior_chunk_plan", decompose.Context)
+	}
+	for _, b := range decompose.Context {
+		if b.As == "prior_chunk_plan" && !b.Optional {
+			t.Errorf("prior_chunk_plan binding must be optional, got %+v", b)
+		}
+	}
 
 	gate := stepByID(t, synth, "chunk_plan_validate")
 	if gate.Kind != "agent_gate" {

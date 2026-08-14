@@ -1,14 +1,12 @@
 package controller
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/matcher"
 )
 
 // Engine-synthesized step IDs and loop names (compiler s2 contract).
@@ -218,67 +216,6 @@ func (c *LinearController) preImplementStep(stepID string) bool {
 		}
 	}
 	return false
-}
-
-// stackingRepairLoopMax reads the repair loop's max_iterations from the
-// synthesized graph so the controller stays in sync with the compiler.
-func stackingRepairLoopMax(wf *compiler.CompiledWorkflow) int {
-	if wf == nil {
-		return 0
-	}
-	for _, tr := range wf.Transitions {
-		if tr.From == synthesizedChunkPlanValidateStepID && tr.Loop == stackingRepairLoopName {
-			return tr.MaxIterations
-		}
-	}
-	return 0
-}
-
-// chunkPlanRepairRoute is the deterministic decompose gate. When a stacked run
-// routes a succeeded decompose step toward the engine-synthesized
-// chunk_plan_validate gate, the controller validates the decompose output
-// against the stacking rules first. An invalid plan is routed back to
-// decompose through the engine's repair loop (the synthesized graph already
-// carries the edge); the route is only refused when the loop is exhausted.
-// Valid plans and single-mode/no_bug routes pass through untouched.
-func (c *LinearController) chunkPlanRepairRoute(ctx context.Context, step definition.Step, route RouteDecision, outMap map[string]any) (RouteDecision, bool, error) {
-	if c.Workflow == nil || c.Workflow.Stacking == nil {
-		return route, false, nil
-	}
-	if step.ID != synthesizedDecomposeStepID || route.ToStepID != synthesizedChunkPlanValidateStepID {
-		return route, false, nil
-	}
-	raw, err := json.Marshal(outMap)
-	if err != nil {
-		return route, false, fmt.Errorf("chunk plan validation could not marshal decompose output: %w", err)
-	}
-	outcome, err := ValidateChunkPlan(raw, c.Workflow.Stacking)
-	if err != nil {
-		return route, false, fmt.Errorf("chunk plan validation failed: %w", err)
-	}
-	if outcome.Valid {
-		return route, false, nil
-	}
-	maxRepairs := stackingRepairLoopMax(c.Workflow)
-	if err := c.checkLoopCap(ctx, stackingRepairLoopName, maxRepairs); err != nil {
-		decision := matcher.Decision{
-			TransitionIndex: route.TransitionIndex,
-			ToStepID:        route.ToStepID,
-			MatchDigest:     route.MatchDigest,
-			DecisionJSON:    append([]byte(nil), route.DecisionJSON...),
-		}
-		rr, rerr := c.loopExhaustionRoute(ctx, step, decision, c.loopExhaustedRouteError(ctx, err, step.ID))
-		return rr, true, rerr
-	}
-	repair := RouteDecision{
-		ToStepID:        synthesizedDecomposeStepID,
-		TransitionIndex: route.TransitionIndex,
-		MatchDigest:     route.MatchDigest,
-		DecisionJSON:    append([]byte(nil), route.DecisionJSON...),
-		Loop:            stackingRepairLoopName,
-		MaxIterations:   maxRepairs,
-	}
-	return repair, true, nil
 }
 
 // ChunkPlanValidation is the deterministic result of validating a decompose
