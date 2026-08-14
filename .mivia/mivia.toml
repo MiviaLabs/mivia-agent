@@ -85,6 +85,12 @@ base_url = "https://openrouter.ai/api/v1"
 # below; pay-as-you-go keys use https://api.z.ai/api/paas/v4. Crossing them
 # fails every request with code 1113 (no balance on that endpoint).
 models = [
+  # GLM-5.3 (released 2026-08-14, via the GLM Coding Plan integration; the
+  # standalone paas/v4 API/model card is not published yet - source:
+  # https://mlq.ai/news/zhipu-releases-glm-53-through-its-coding-service-with-weights-still-two-weeks-away/,
+  # https://the-decoder.com/zhipu-ai-releases-glm-5-3-claims-its-the-strongest-open-weights-coding-model/).
+  # Same coding-plan endpoint and graded reasoning_effort scheme as GLM-5.2.
+  { name = "glm-5.3", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "thinking_preserved" },
   # GLM-5.2+ supports graded reasoning_effort (low/medium→high, xhigh→max;
   # none/minimal skip thinking). thinking_preserved opts into z.ai Preserved
   # Thinking (clear_thinking:false) while still carrying reasoning_effort for
