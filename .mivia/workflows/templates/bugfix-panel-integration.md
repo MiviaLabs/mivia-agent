@@ -66,7 +66,7 @@ Approved, no open finding:
 Changes requested:
 
 <mivia_output>
-{"verdict": "changes_requested", "findings": [{"id": "PC-1", "title": "Unchecked type assertion on cache lookup", "severity": "high", "description": "internal/cache/store.go:88 asserts v.(*Entry) without the ok form; a wrong-typed cache hit panics the request goroutine. Required: use the two-value assertion and return a miss on failure."}]}
+{"verdict": "changes_requested", "findings": [{"id": "PI-1", "title": "cli package reaches into controller internals, breaking layering", "severity": "medium", "description": "internal/cli/render.go:30 imports internal/workflows/controller directly instead of going through the workflows package's public interface, coupling the CLI to controller internals it does not own. Required: route the call through the existing workflows package boundary."}]}
 </mivia_output>
 
 The examples above are illustrative only - report the findings you actually verified against

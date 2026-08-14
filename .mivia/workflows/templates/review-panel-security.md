@@ -59,7 +59,7 @@ Approved, no open finding:
 Changes requested:
 
 <mivia_output>
-{"verdict": "changes_requested", "findings": [{"id": "PC-1", "title": "Unchecked type assertion on cache lookup", "severity": "high", "description": "internal/cache/store.go:88 asserts v.(*Entry) without the ok form; a wrong-typed cache hit panics the request goroutine. Required: use the two-value assertion and return a miss on failure."}]}
+{"verdict": "changes_requested", "findings": [{"id": "PS-1", "title": "SSRF via unvalidated outbound URL", "severity": "high", "description": "internal/webhook/dispatch.go:41 builds an http.Request from a user-supplied callback URL with no allowlist or private-IP check, letting a caller reach internal-network services. Required: validate the host against an allowlist and reject RFC1918/loopback targets before dialing."}]}
 </mivia_output>
 
 The examples above are illustrative only - report the findings you actually verified against
