@@ -354,7 +354,7 @@ func TestRepairHintClassifies(t *testing.T) {
 		{"PR metadata", &PRMetadataError{Reason: "title too long"},
 			[]string{"pr_title and pr_summary", "title too long"}},
 		{"diff too large", &DiffSizeError{Reason: "delivery: chunk diff size 500 exceeds hard limit 400"},
-			[]string{"delivered diff is too large", "deferred_files", "hard limit"}},
+			[]string{"delivered diff is too large", "automatic file split", "hard limit"}},
 		{"permanent refusal", &RefusalError{Reason: "origin remote changed since admission"},
 			[]string{"permanently refused publication", "origin remote changed"}},
 		{"nil cause", nil, []string{"without a recorded cause"}},

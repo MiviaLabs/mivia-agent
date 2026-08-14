@@ -1,11 +1,22 @@
 package delivery
 
-// Split delivery (spec-auto-split-oversized-prs.md §5.2-5.3): a repair
-// step's deferred_files decision splits the fresh commit into a delivered
-// commit (pushed) and a deferred commit (saved under DeferredBranchName,
-// never pushed on the delivered branch). Uses the same real-git fixture as
-// deliver_test.go, not a fake GitRunner - the git plumbing (add/reset/
-// commit/branch/reset --hard) is exactly what's under test here.
+// Split delivery (spec-auto-split-oversized-prs.md §5.2-5.3, revised per
+// §10): checkChunkDiffSize's own host-computed split decision (never an
+// agent's claim) splits the fresh commit into a delivered commit (pushed)
+// and a deferred commit (saved under DeferredBranchName, never pushed on
+// the delivered branch). Uses the same real-git fixture as deliver_test.go,
+// not a fake GitRunner - the git plumbing (add/reset/commit/branch/reset
+// --hard) is exactly what's under test here.
+//
+// TestDeliverSplitsCommitWhenDeferredFilesPresent and
+// TestDeliverNoSplitWhenDeferredFilesAbsent exercise
+// freshDeliveryCommit(Split) directly via a pre-set InputDeferredFiles input,
+// independent of how that input gets populated - the commit-splitting
+// mechanics are the same regardless of source. The size-gate tests below
+// exercise the real producer (checkChunkDiffSize's deterministic split) end
+// to end: no test ever pre-sets InputDeferredFiles to influence the gate,
+// because the gate does not honor a pre-existing value - only its own
+// measurement decides.
 
 import (
 	"context"
@@ -89,50 +100,90 @@ func TestDeliverNoSplitWhenDeferredFilesAbsent(t *testing.T) {
 	}
 }
 
-func TestDeliverExcludesDeferredFilesFromSizeGate(t *testing.T) {
+func TestDeliverAutoSplitsOversizedDiffWhenEnabled(t *testing.T) {
 	ctx := context.Background()
 	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
-	// essential.txt alone is small; deferred.txt alone would push the total
-	// over a tiny hard_lines - proving the gate measures ONLY the delivered
-	// (non-deferred) portion.
+	// essential.txt alone is small; the.big.txt alone pushes the total over a
+	// tiny hard_lines. No InputDeferredFiles is set anywhere - the host must
+	// measure both files itself and decide to defer the larger one.
 	writeWorktreeFile(t, worktreeRoot, "essential.txt", "one line\n")
-	writeWorktreeFile(t, worktreeRoot, "deferred.txt", strings.Repeat("line\n", 50))
+	writeWorktreeFile(t, worktreeRoot, "the.big.txt", strings.Repeat("line\n", 50))
 
 	policy := defaultPolicy("draft")
 	policy.StackingHardLines = 5
+	policy.SplitDeferred = true
 
-	deferredJSON, err := json.Marshal([]string{"deferred.txt"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	pr := &fakePRClient{}
-	inputs := map[string]string{"task": "gate", InputDeferredFiles: string(deferredJSON)}
-	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, inputs))
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, map[string]string{"task": "gate"}))
 	if err != nil {
-		t.Fatalf("Deliver: %v (want the size gate to pass once deferred.txt is excluded)", err)
+		t.Fatalf("Deliver: %v (want the host's own split to make the gate pass)", err)
 	}
 	if res.Status != "succeeded" {
 		t.Fatalf("Result = %+v, want succeeded", res)
 	}
+	delivered := runGitOut(t, worktreeRoot, "diff", "--name-only", baseCommit, "HEAD")
+	if delivered != "essential.txt" {
+		t.Fatalf("delivered commit files = %q, want exactly essential.txt (the host should have deferred the.big.txt)", delivered)
+	}
+	rec := deliveryRecordByKey(t, repo, run)
+	if rec.StackRemainingCommits != 1 {
+		t.Fatalf("StackRemainingCommits = %d, want 1", rec.StackRemainingCommits)
+	}
 }
 
-func TestDeliverSizeGateStillRejectsOversizedEssentialFiles(t *testing.T) {
+func TestDeliverSizeGateOffByDefaultDespiteSplittableDiff(t *testing.T) {
 	ctx := context.Background()
 	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
-	writeWorktreeFile(t, worktreeRoot, "essential.txt", strings.Repeat("line\n", 50))
-	writeWorktreeFile(t, worktreeRoot, "deferred.txt", "one line\n")
+	writeWorktreeFile(t, worktreeRoot, "essential.txt", "one line\n")
+	writeWorktreeFile(t, worktreeRoot, "the.big.txt", strings.Repeat("line\n", 50))
 
 	policy := defaultPolicy("draft")
 	policy.StackingHardLines = 5
+	// policy.SplitDeferred left false (the opt-in default): a diff that
+	// COULD be split must still be rejected outright, proving the gate
+	// never splits without the workflow explicitly enabling it.
 
-	deferredJSON, err := json.Marshal([]string{"deferred.txt"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	pr := &fakePRClient{}
-	inputs := map[string]string{"task": "gate", InputDeferredFiles: string(deferredJSON)}
-	_, err = Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, inputs))
+	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, map[string]string{"task": "gate"}))
 	if !IsDiffSizeError(err) {
-		t.Fatalf("Deliver error = %v, want a DiffSizeError (deferring deferred.txt does not excuse an oversized essential slice)", err)
+		t.Fatalf("Deliver error = %v, want a DiffSizeError (split_deferred is off)", err)
+	}
+}
+
+func TestDeliverSizeGateStillRejectsWhenNothingSeparable(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	// A single file exceeds hard_lines all on its own: there is nothing else
+	// to defer, so a split cannot help and the gate must still refuse.
+	writeWorktreeFile(t, worktreeRoot, "essential.txt", strings.Repeat("line\n", 50))
+
+	policy := defaultPolicy("draft")
+	policy.StackingHardLines = 5
+	policy.SplitDeferred = true
+
+	pr := &fakePRClient{}
+	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, map[string]string{"task": "gate"}))
+	if !IsDiffSizeError(err) {
+		t.Fatalf("Deliver error = %v, want a DiffSizeError (a single oversized file has nothing separable to defer)", err)
+	}
+}
+
+func TestDeliverSizeGateKeepsAtLeastOneFile(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	// Two files, BOTH individually oversized: deferring the larger alone
+	// still leaves the kept file over hard_lines, so the gate must refuse
+	// rather than defer everything down to an empty delivered commit.
+	writeWorktreeFile(t, worktreeRoot, "big.txt", strings.Repeat("line\n", 50))
+	writeWorktreeFile(t, worktreeRoot, "also-big.txt", strings.Repeat("line\n", 20))
+
+	policy := defaultPolicy("draft")
+	policy.StackingHardLines = 5
+	policy.SplitDeferred = true
+
+	pr := &fakePRClient{}
+	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, map[string]string{"task": "gate"}))
+	if !IsDiffSizeError(err) {
+		t.Fatalf("Deliver error = %v, want a DiffSizeError (the kept file alone still exceeds hard_lines)", err)
 	}
 }

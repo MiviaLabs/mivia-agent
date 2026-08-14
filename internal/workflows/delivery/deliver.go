@@ -43,6 +43,19 @@ type Request struct {
 	Stage func(stage, detail string)
 }
 
+// CloneInputs returns a shallow copy of inputs, safe for a delivery.Request
+// to own and mutate (checkChunkDiffSize writes InputDeferredFiles into it in
+// place - see stacking.go). Every delivery.Request construction site should
+// pass a clone, never the run snapshot's own Inputs map, so that mutation
+// never leaks into cached ledger state.
+func CloneInputs(inputs map[string]string) map[string]string {
+	out := make(map[string]string, len(inputs))
+	for k, v := range inputs {
+		out[k] = v
+	}
+	return out
+}
+
 // Result is the durable outcome of a delivery attempt.
 type Result struct {
 	Mode, BaseRef, HeadRef, CommitSHA, Provider, RemoteID, URL, Status, DiffRef string

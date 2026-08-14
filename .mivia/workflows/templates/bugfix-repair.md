@@ -43,16 +43,13 @@ If a delivery rejection routed this step, the harness hint below tells you what 
 {{ evidence.delivery_hint }}
 
 A DIFF-SIZE rejection (the delivery hint says the chunk diff exceeds the stacking
-hard limit) is a SPLIT request, not a delete request. Decide which files carry the
-essential, review-sized slice of the change and which files are the least-essential
-remainder. KEEP every file's edits in the worktree - do not revert or delete
-anything. List the remainder's paths in `deferred_files` (every path there must
-also appear in `files_changed`). The host commits `files_changed` MINUS
-`deferred_files` as this delivered PR, and automatically commits `deferred_files`
-separately and opens a follow-up PR stacked on this one - you never run git
-yourself either way. Record in `summary` what you deferred and why. Never silently
-drop scope: every edit you keep in the worktree ships, either in this PR or the
-automatic follow-up.
+hard limit) means the host already tried its own automatic split and either the
+split is disabled for this workflow or even the largest files could not be
+deferred far enough to fit. Actually shrink the change: reduce scope, split
+one large file's edit into a smaller one, or move genuinely separable work out
+of this chunk. Do not invent a `deferred_files` field - the host decides and
+executes any split itself, deterministically, from the measured diff; nothing
+you output here influences it.
 
 Scope discipline: edit only files that repair the reported failure and stay within the
 declared scope. Never add checks, thresholds, or rules to the harness. Do NOT make the

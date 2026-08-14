@@ -79,6 +79,11 @@ type Policy struct {
 	// configuration (CompiledWorkflow.Stacking). Zero means no stacking
 	// config: delivery runs single-PR behavior with no size gate.
 	StackingHardLines int
+	// SplitDeferred mirrors StackingConfig.SplitDeferred (§5.2-5.3): when
+	// true and a chunk's delivered diff exceeds StackingHardLines,
+	// checkChunkDiffSize computes a host-side deterministic split instead of
+	// returning a DiffSizeError. Opt-in (default false).
+	SplitDeferred bool
 }
 
 // clampMax returns v when positive, otherwise def.
@@ -105,8 +110,10 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		onDiffSizeFailure = d.OnFailure
 	}
 	hardLines := 0
+	splitDeferred := false
 	if wf.Stacking != nil {
 		hardLines = wf.Stacking.HardLines
+		splitDeferred = wf.Stacking.SplitDeferred
 	}
 	return Policy{
 		Kind:                  d.Kind,
@@ -123,6 +130,7 @@ func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
 		OnDiffSizeFailure:     onDiffSizeFailure,
 		MaxRepairs:            clampMax(d.MaxRepairs, DefaultMaxDeliveryRepairs),
 		StackingHardLines:     hardLines,
+		SplitDeferred:         splitDeferred,
 	}, true
 }
 

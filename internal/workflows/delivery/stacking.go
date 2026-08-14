@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -28,11 +29,15 @@ import (
 const (
 	InputPRBase    = "pr_base"
 	InputStackPart = "stack_part"
-	// InputDeferredFiles carries the repair step's split decision (§5.2): a
-	// JSON-encoded array of workspace-relative paths whose edits must ship in
-	// a separate follow-up PR instead of this delivery. Populated by the
-	// engine/CLI delivery-calling code from the repair step's structured
-	// output (deferred_files), never authored by a human or workflow author.
+	// InputDeferredFiles carries the diff-size gate's own split decision
+	// (§5.2, revised per §10): a JSON-encoded array of workspace-relative
+	// paths whose edits ship in a separate follow-up PR instead of this
+	// delivery. checkAndSplitChunkDiffSize computes this HOST-side from
+	// measured git diff sizes when the diff exceeds the hard limit and
+	// splitting is enabled - never agent-authored, so there is no trust
+	// boundary between what an agent claims and what the worktree actually
+	// contains (the design this replaced was rejected for exactly that
+	// reason; see spec-auto-split-oversized-prs.md §10).
 	InputDeferredFiles = "deferred_files"
 )
 
@@ -201,31 +206,119 @@ func excludePathspecs(paths []string) []string {
 // configuration (StackingHardLines <= 0) the gate is OFF and single-PR
 // delivery is unchanged. The measured size is the added+deleted line count,
 // excluding pure renames and whitespace-only changes (--find-renames,
-// --ignore-all-space) and excluding any files the repair step declared as
-// deferred_files (req.Inputs) - those ship in a separate, automatically
-// admitted follow-up PR (§5.2-5.3), so they must not count against THIS
-// delivery's own size. The change is staged with git add -A first - exactly
+// --ignore-all-space). The change is staged with git add -A first - exactly
 // what commitOrResume stages - so untracked files are measured too: a bare
 // `git diff <commit>` ignores untracked files and would under-count a chunk
-// that adds files. An over-limit diff is a repairable DiffSizeError: the
-// repair loop shrinks the chunk and delivers again.
+// that adds files.
+//
+// An over-limit diff is either a repairable DiffSizeError (split disabled,
+// or no split fits) or, when the workflow's [stacking] split_deferred is on,
+// a host-computed automatic split (§5.2, revised per §10): the largest
+// files are deferred to a follow-up PR until the kept diff fits, and the
+// decision is written into req.Inputs[InputDeferredFiles] for
+// freshDeliveryCommit to execute - req.Inputs is a map (reference type), so
+// this mutation is visible to every later step of this SAME Deliver() call
+// without threading Request back through return values. No repair round
+// trip and no agent involvement: the split is deterministic and re-verified
+// against the actual measured diff before it is trusted.
 func checkChunkDiffSize(ctx context.Context, git GitRunner, req Request) error {
 	hard := req.Policy.StackingHardLines
 	if hard <= 0 {
 		return nil
 	}
-	deferred, err := ParseDeferredFiles(req.Inputs[InputDeferredFiles])
+	size, err := MeasureChunkDiffSize(ctx, git, req.GitCtx, req.BaseCommit, hard, nil)
 	if err != nil {
 		return err
 	}
-	size, err := MeasureChunkDiffSize(ctx, git, req.GitCtx, req.BaseCommit, hard, deferred)
+	if size <= hard {
+		return nil
+	}
+	oversized := &DiffSizeError{Reason: fmt.Sprintf("delivery: chunk diff size %d exceeds hard limit %d; shrink the chunk so the delivered diff fits", size, hard)}
+	if !req.Policy.SplitDeferred {
+		return oversized
+	}
+	deferred, err := computeDeterministicSplit(ctx, git, req.GitCtx, req.BaseCommit, hard)
 	if err != nil {
 		return err
 	}
-	if size > hard {
-		return &DiffSizeError{Reason: fmt.Sprintf("delivery: chunk diff size %d exceeds hard limit %d; shrink the chunk so the delivered diff fits", size, hard)}
+	if len(deferred) == 0 {
+		return oversized
 	}
+	verified, err := MeasureChunkDiffSize(ctx, git, req.GitCtx, req.BaseCommit, hard, deferred)
+	if err != nil {
+		return err
+	}
+	if verified > hard {
+		return &DiffSizeError{Reason: fmt.Sprintf("delivery: chunk diff size %d exceeds hard limit %d even after deferring %d file(s); shrink the chunk", verified, hard, len(deferred))}
+	}
+	encoded, err := json.Marshal(deferred)
+	if err != nil {
+		return fmt.Errorf("cannot encode the automatic split decision: %w", err)
+	}
+	if req.Inputs == nil {
+		return fmt.Errorf("delivery request has no inputs map to record the automatic split decision")
+	}
+	req.Inputs[InputDeferredFiles] = string(encoded)
 	return nil
+}
+
+// fileDiffSize is one file's measured added+deleted line count from a
+// `git diff --numstat` line.
+type fileDiffSize struct {
+	path  string
+	lines int
+}
+
+// computeDeterministicSplit measures the actual per-file diff size (never an
+// agent's claim - see InputDeferredFiles) and greedily defers the LARGEST
+// files first until the remaining (kept) diff fits within hard. Deferring
+// largest-first moves the fewest files out of this delivery. It intentionally
+// does not use --find-renames: a rename line's "old => new" path is
+// ambiguous to stage by exact path, and the selection here only needs to be
+// a good-enough estimate - checkChunkDiffSize re-verifies the actual result
+// with MeasureChunkDiffSize (which does use --find-renames) before trusting
+// it. At least one file always stays kept: a delivered commit with nothing
+// in it defeats the purpose of a split (there is no smaller PR left to
+// review), so deferring literally every file is refused, not attempted. This
+// also naturally refuses a diff with only one file, since deferring it would
+// leave zero kept. Returns nil when it cannot bring the kept diff under hard
+// without deferring everything: the caller falls back to a plain
+// DiffSizeError since no split can help.
+func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext, baseCommit string, hard int) ([]string, error) {
+	if _, err := git.Run(ctx, gc, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
+		return nil, fmt.Errorf("cannot stage the delivery diff for split measurement: %w", err)
+	}
+	out, err := git.Run(ctx, gc, "diff", "--cached",
+		"--no-ext-diff", "--no-textconv", "--numstat", "--ignore-all-space", baseCommit)
+	if err != nil {
+		return nil, fmt.Errorf("cannot measure per-file delivery diff sizes: %w", err)
+	}
+	files, kept, err := numstatPerFile(out)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) < 2 {
+		return nil, nil // nothing separable: one file cannot split into two PRs
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].lines > files[j].lines })
+	var deferred []string
+	for i, f := range files {
+		if kept <= hard {
+			break
+		}
+		if len(deferred) == len(files)-1 {
+			break // always keep at least the smallest remaining file
+		}
+		if f.lines == 0 && i < len(files)-1 {
+			continue // deferring a zero-weight (binary/unmeasurable) file never helps
+		}
+		deferred = append(deferred, f.path)
+		kept -= f.lines
+	}
+	if kept > hard {
+		return nil, nil
+	}
+	return deferred, nil
 }
 
 // ParseDeferredFiles decodes the InputDeferredFiles reserved input: a
@@ -315,4 +408,37 @@ func numstatSize(out string) (int, error) {
 		}
 	}
 	return total, nil
+}
+
+// numstatPerFile parses a plain (no --find-renames) `git diff --numstat`
+// output into one fileDiffSize per line, alongside the summed total. Same
+// parse rules as numstatSize (binary "-" contributes 0); a malformed line is
+// an error for the same fail-closed reason.
+func numstatPerFile(out string) ([]fileDiffSize, int, error) {
+	var files []fileDiffSize
+	total := 0
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) < 3 {
+			return nil, 0, fmt.Errorf("delivery diff size: cannot parse numstat line %q", line)
+		}
+		lines := 0
+		for _, field := range fields[:2] {
+			if field == "-" {
+				continue
+			}
+			n, err := strconv.Atoi(field)
+			if err != nil {
+				return nil, 0, fmt.Errorf("delivery diff size: cannot parse numstat count %q in line %q", field, line)
+			}
+			lines += n
+		}
+		files = append(files, fileDiffSize{path: fields[2], lines: lines})
+		total += lines
+	}
+	return files, total, nil
 }
