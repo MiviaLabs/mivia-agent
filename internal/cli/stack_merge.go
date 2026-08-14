@@ -74,9 +74,10 @@ func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledg
 }
 
 // autoMergePublishedChunks merges every published chunk PR for the stack
-// (merge_policy=auto). A PR that is not mergeable yet (checks pending/red,
-// review requirements) reports why and is retried on the next poll; reconcile
-// marks it merged the moment git reports the merge landed.
+// (merge_policy=auto) that has no unmerged DEPENDENT - see
+// blockedByUnmergedDependent. A PR that is not mergeable yet (checks
+// pending/red, review requirements) reports why and is retried on the next
+// poll; reconcile marks it merged the moment git reports the merge landed.
 func autoMergePublishedChunks(repo workflowledger.Repository, ledger *tasks.Store, stackID string, stdout, stderr io.Writer) error {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
@@ -86,11 +87,38 @@ func autoMergePublishedChunks(repo workflowledger.Repository, ledger *tasks.Stor
 		if t.Status != stackStatusPublished {
 			continue
 		}
+		if blocker, blocked := blockedByUnmergedDependent(byID, id); blocked {
+			fmt.Fprintf(stdout, "chunk=%s merge deferred: dependent chunk %s has not merged yet\n", id, blocker)
+			continue
+		}
 		if err := autoMergeOne(repo, stackID, id, stdout, stderr); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// blockedByUnmergedDependent reports whether chunkID has a DEPENDENT (a task
+// whose Deps names chunkID, for example a diff-size split's follow-up chunk
+// - see registerFollowUpChunk) that has not merged yet. A follow-up's PR is
+// based on its parent's own branch (delivery.EnsureFollowUpPublished), not
+// master: merging the parent first squash-merges and deletes that base
+// branch, and GitHub does not reliably retarget a squash-merged PR's
+// dependents (a live smoke test confirmed the base branch simply disappears
+// and the dependent PR closes unmerged, orphaning its content). Every
+// dependent must land before its dependency is allowed to merge.
+func blockedByUnmergedDependent(byID map[string]tasks.Task, chunkID string) (string, bool) {
+	for id, t := range byID {
+		if id == chunkID {
+			continue
+		}
+		for _, dep := range t.Deps {
+			if dep == chunkID && t.Status != stackStatusMerged {
+				return id, true
+			}
+		}
+	}
+	return "", false
 }
 
 // autoMergeOne resolves one chunk's PR (by its run's head branch) and merges
