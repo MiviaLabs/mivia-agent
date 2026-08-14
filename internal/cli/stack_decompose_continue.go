@@ -9,10 +9,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // decomposeContinuePrefix namespaces decompose-continuation invocation keys
@@ -85,4 +87,40 @@ func latestDecomposeContinueWave(repo workflowledger.Repository, stackID string)
 		}
 	}
 	return best, nil
+}
+
+// admitNextWaveIfReady is runStackDrive's one-pass-per-invocation extension
+// point for §12.1 incremental decompose: if everything currently known just
+// merged and the latest decompose wave declared more scope, request exactly
+// the next wave (a bounded extra step, not a full drive-to-completion loop -
+// the operator re-runs `stack drive` to keep advancing, matching this
+// command's existing one-pass-per-invocation contract).
+func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) error {
+	if !hasMore {
+		return nil
+	}
+	byID, err := stackTaskMap(ledger, stackID)
+	if err != nil {
+		return err
+	}
+	if !allChunksMerged(chunks, stackMergedSet(byID)) {
+		return nil
+	}
+	wave, err := latestDecomposeContinueWave(prepared.repo, stackID)
+	if err != nil {
+		return fmt.Errorf("stack drive: %w", err)
+	}
+	wave++
+	nextChunks, _, _, err := admitDecomposeContinuationRun(prepared, stackID, wave, remainingScope, planInputs, stdout, stderr)
+	if err != nil {
+		return fmt.Errorf("stack drive: %w", err)
+	}
+	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks)+len(nextChunks) > maxTotal {
+		return fmt.Errorf("stack drive: stack %s would admit %d total chunks, exceeding max_total_chunks=%d",
+			stackID, len(chunks)+len(nextChunks), maxTotal)
+	}
+	if err := seedStackLedger(ledger, stackID, nextChunks); err != nil {
+		return fmt.Errorf("stack drive: wave %d seed: %w", wave, err)
+	}
+	return nil
 }

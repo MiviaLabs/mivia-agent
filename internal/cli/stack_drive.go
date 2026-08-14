@@ -108,43 +108,14 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 	if err := driveStack(context.Background(), prepared, ledger, stackID, chunks, planInputs, false, stdout, stderr); err != nil {
 		return err
 	}
-	return admitNextWaveIfReady(prepared, ledger, stackID, chunks, hasMore, remainingScope, planInputs, stdout, stderr)
-}
-
-// admitNextWaveIfReady is runStackDrive's one-pass-per-invocation extension
-// point for §12.1 incremental decompose: if everything currently known just
-// merged and the latest decompose wave declared more scope, request exactly
-// the next wave (a bounded extra step, not a full drive-to-completion loop -
-// the operator re-runs `stack drive` to keep advancing, matching this
-// command's existing one-pass-per-invocation contract).
-func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) error {
-	if !hasMore {
-		return nil
-	}
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return err
 	}
-	if !allChunksMerged(chunks, stackMergedSet(byID)) {
-		return nil
-	}
-	wave, err := latestDecomposeContinueWave(prepared.repo, stackID)
-	if err != nil {
+	if err := admitPendingFollowUps(prepared, ledger, stackID, byID, stdout, stderr); err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
-	wave++
-	nextChunks, _, _, err := admitDecomposeContinuationRun(prepared, stackID, wave, remainingScope, planInputs, stdout, stderr)
-	if err != nil {
-		return fmt.Errorf("stack drive: %w", err)
-	}
-	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks)+len(nextChunks) > maxTotal {
-		return fmt.Errorf("stack drive: stack %s would admit %d total chunks, exceeding max_total_chunks=%d",
-			stackID, len(chunks)+len(nextChunks), maxTotal)
-	}
-	if err := seedStackLedger(ledger, stackID, nextChunks); err != nil {
-		return fmt.Errorf("stack drive: wave %d seed: %w", wave, err)
-	}
-	return nil
+	return admitNextWaveIfReady(prepared, ledger, stackID, chunks, hasMore, remainingScope, planInputs, stdout, stderr)
 }
 
 // driveStackToCompletion drives the stack until every chunk is merged and the
@@ -183,12 +154,22 @@ func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, 
 		if err != nil {
 			return err
 		}
-		if !allChunksMerged(chunks, stackMergedSet(byID)) {
+		// A chunk that just delivered may have left a deferred commit
+		// (§5.2-5.3): admit its follow-up PR before deciding whether the
+		// stack is complete, so allTasksMerged below waits for it too.
+		if err := admitPendingFollowUps(prepared, ledger, stackID, byID, stdout, stderr); err != nil {
+			return fmt.Errorf("stack drive: %w", err)
+		}
+		byID, err = stackTaskMap(ledger, stackID)
+		if err != nil {
+			return err
+		}
+		if !allChunksMerged(chunks, stackMergedSet(byID)) || !allTasksMerged(byID) {
 			// The pass halted before completion: wait for the outstanding
 			// chunk's delivery + merge (or a terminal failure), then drive
 			// again. With merge_policy=auto the wait also merges published
 			// PRs itself.
-			if err := waitForChunkMerges(ctx, prepared.repo, ledger, checker, stackID, chunks, policy, stdout, stderr); err != nil {
+			if err := waitForChunkMerges(ctx, prepared, ledger, checker, stackID, chunks, policy, stdout, stderr); err != nil {
 				return err
 			}
 			continue

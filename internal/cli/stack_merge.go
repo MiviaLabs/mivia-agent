@@ -20,7 +20,8 @@ import (
 // surfacing a terminal chunk failure as a stack halt. Reconcile is idempotent
 // and marks a chunk merged as soon as git reports its PR branch merged, so a
 // later drive pass naturally skips it and admits the next wave.
-func waitForChunkMerges(ctx context.Context, repo workflowledger.Repository, ledger *tasks.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) error {
+func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) error {
+	repo := prepared.repo
 	const pollInterval = 20 * time.Second
 	ticks := 0
 	for {
@@ -43,7 +44,18 @@ func waitForChunkMerges(ctx context.Context, repo workflowledger.Repository, led
 		if err != nil {
 			return err
 		}
-		if allChunksMerged(chunks, stackMergedSet(byID)) {
+		// A chunk delivered (by a human's `mivia workflow deliver
+		// --allow-publish` grant, or just landed since the last poll) may
+		// have left a deferred commit (§5.2-5.3): admit its follow-up PR so
+		// the stack does not report complete while it is still open.
+		if err := admitPendingFollowUps(prepared, ledger, stackID, byID, stdout, stderr); err != nil {
+			return fmt.Errorf("stack drive: %w", err)
+		}
+		byID, err = stackTaskMap(ledger, stackID)
+		if err != nil {
+			return err
+		}
+		if allChunksMerged(chunks, stackMergedSet(byID)) && allTasksMerged(byID) {
 			return nil
 		}
 		ticks++
