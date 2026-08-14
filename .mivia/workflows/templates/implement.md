@@ -88,4 +88,4 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 {"summary": "Added rune-safe TruncateEllipsis in internal/textutil; the one call site in internal/cli/render.go now uses it. Tests cover empty, ASCII, multi-byte, and oversized input.", "files_changed": ["internal/textutil/truncate.go", "internal/textutil/truncate_test.go", "internal/cli/render.go"], "addressed_findings": [], "inspected": ["internal/textutil/truncate.go", "internal/cli/render.go"], "pr_title": "fix(cli): truncate long output on rune boundaries", "pr_summary": "Adds a rune-safe TruncateEllipsis helper and switches the render path to use it. This prevents invalid UTF-8 output when a line is truncated mid-rune."}
 </mivia_output>
 
-This example is for illustration only. Report the change you made.
+This example is for illustration only. Report the change you make for the task you were given.

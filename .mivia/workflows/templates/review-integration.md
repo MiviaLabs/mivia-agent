@@ -133,4 +133,4 @@ Changes requested:
 {"verdict": "changes_requested", "findings": [{"id": "R1-1", "severity": "high", "reason": "The render loop can send a byte-truncated string to the terminal writer without checking valid UTF-8", "claim": "internal/cli/render.go calls TruncateEllipsis and writes the result directly, but no cross-layer test exercises the writer with a multi-byte boundary", "evidence": "internal/cli/render.go:52", "required": "Add an integration test that renders a multi-byte string through the full render path"}], "inspected": ["internal/cli/render.go"]}
 </mivia_output>
 
-This example is for illustration only. Report the findings you verified against the implementation for your own task.
+This example is for illustration only. Report the findings you verify for the task you were given.

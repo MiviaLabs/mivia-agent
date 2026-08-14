@@ -77,4 +77,4 @@ Changes requested:
 {"verdict": "changes_requested", "findings": [{"id": "R1-1", "severity": "medium", "reason": "TruncateEllipsis panics on a truncation length that lands mid-rune", "claim": "Plan step 2 does not test a multi-byte boundary case", "evidence": "internal/textutil/truncate.go:1 (plan step 2)", "required": "Add a test case that truncates at a byte offset inside a multi-byte rune"}], "inspected": ["internal/textutil/truncate.go"]}
 </mivia_output>
 
-This example is for illustration only. Report the findings you verified against the plan for your own task.
+This example is for illustration only. Report the findings you verify for the task you were given.

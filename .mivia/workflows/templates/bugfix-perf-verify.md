@@ -81,4 +81,4 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 {"verdict": "approved", "measurements": [{"name": "BenchmarkTruncateEllipsis", "baseline": "1200 ns/op, 3 allocs/op", "after": "410 ns/op, 1 alloc/op", "notes": "Rune walk replaces a regexp-based split; measured with go test -bench=TruncateEllipsis -benchmem"}], "summary": "The fix reduces allocations and latency; no regression found.", "inspected": ["internal/textutil/truncate.go", "internal/textutil/truncate_bench_test.go"]}
 </mivia_output>
 
-This example is for illustration only. Report the measurements you took.
+This example is for illustration only. Report the measurements you take for the task you were given.

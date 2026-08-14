@@ -73,4 +73,4 @@ Changes requested:
 {"verdict": "changes_requested", "findings": [{"id": "PI-1", "title": "cli package reaches into controller internals, breaking layering", "severity": "medium", "description": "internal/cli/render.go:30 imports internal/workflows/controller directly instead of using the workflows package's public interface. This couples the CLI to controller internals it does not own. Required: route the call through the existing workflows package boundary."}]}
 </mivia_output>
 
-This example is for illustration only. Report the findings you verified against the implementation for your own task.
+This example is for illustration only. Report the findings you verify for the task you were given.

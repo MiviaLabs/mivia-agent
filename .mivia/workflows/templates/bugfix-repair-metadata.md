@@ -59,4 +59,4 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 {"summary": "Shortened pr_title to fit the host's 256-character limit; pr_summary unchanged.", "files_changed": ["internal/textutil/truncate.go"], "addressed_findings": [], "inspected": ["internal/textutil/truncate.go"], "pr_title": "fix(textutil): cut TruncateEllipsis on rune boundaries", "pr_summary": "TruncateEllipsis now walks runes instead of slicing by byte offset. This prevents a panic and invalid UTF-8 output on multi-byte input."}
 </mivia_output>
 
-This example is for illustration only. Repair the metadata for your own task.
+This example is for illustration only. Repair the metadata for the task you were given.

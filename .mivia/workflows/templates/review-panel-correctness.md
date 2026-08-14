@@ -67,4 +67,4 @@ Changes requested:
 {"verdict": "changes_requested", "findings": [{"id": "PC-1", "title": "Unchecked type assertion on cache lookup", "severity": "high", "description": "internal/cache/store.go:88 asserts v.(*Entry) without the ok form; a wrong-typed cache hit panics the request goroutine. Required: use the two-value assertion and return a miss on failure."}]}
 </mivia_output>
 
-This example is for illustration only. Report the findings you verified against the implementation for your own task.
+This example is for illustration only. Report the findings you verify for the task you were given.

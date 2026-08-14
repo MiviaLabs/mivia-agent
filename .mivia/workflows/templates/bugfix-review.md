@@ -104,4 +104,4 @@ Changes requested:
 {"verdict": "changes_requested", "has_perf": "false", "findings": [{"id": "R1-1", "severity": "medium", "reason": "The regression test does not fail on the pre-fix code", "claim": "TestTruncateEllipsis_MultiByteBoundary passes against both the old and new TruncateEllipsis", "evidence": "internal/textutil/truncate_test.go:20", "required": "Adjust the test input so it panics on the pre-fix byte-offset slice"}], "inspected": ["internal/textutil/truncate_test.go"]}
 </mivia_output>
 
-This example is for illustration only. Report the findings you verified against the fix for your own task.
+This example is for illustration only. Report the findings you verify for the task you were given.

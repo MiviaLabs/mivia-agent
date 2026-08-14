@@ -87,4 +87,4 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 {"summary": "Repaired the failing TestTruncateEllipsis_MultiByteBoundary case: the rune walk stopped one byte early. Fixed the loop bound. No scope change.", "files_changed": ["internal/textutil/truncate.go"], "addressed_findings": ["H-1"], "inspected": ["internal/textutil/truncate.go"], "pr_title": "fix(textutil): cut TruncateEllipsis on rune boundaries", "pr_summary": "TruncateEllipsis now walks runes instead of slicing by byte offset. This prevents a panic and invalid UTF-8 output on multi-byte input."}
 </mivia_output>
 
-This example is for illustration only. Report the repair you made.
+This example is for illustration only. Report the repair you make for the task you were given.

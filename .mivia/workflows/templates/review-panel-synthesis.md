@@ -41,4 +41,4 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 {"dispositions": [{"member_id": "correctness", "finding_id": "PC-1", "disposition": "included", "final_finding_id": "PC-1"}, {"member_id": "security", "finding_id": "PS-1", "disposition": "duplicate", "final_finding_id": "PC-1"}], "summary": "Both the correctness and security members flagged the same unchecked type assertion in the cache lookup; kept as one finding."}
 </mivia_output>
 
-This example is for illustration only. Synthesize the member reports for your own task.
+This example is for illustration only. Synthesize the member reports for the task you were given.

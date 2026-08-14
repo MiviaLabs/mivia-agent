@@ -77,4 +77,4 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 {"verdict": "confirmed", "retained_findings": ["H-1"], "has_perf": "false", "rationale": "H-1 reproduces: a multi-byte input to TruncateEllipsis panics with an invalid slice bounds error.", "inspected": ["internal/textutil/truncate.go"]}
 </mivia_output>
 
-This example is for illustration only. Triage the findings for your own task.
+This example is for illustration only. Triage the findings for the task you were given.

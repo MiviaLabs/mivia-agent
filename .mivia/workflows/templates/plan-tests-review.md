@@ -84,4 +84,4 @@ Changes requested:
 {"verdict": "changes_requested", "findings": [{"id": "R1-1", "severity": "medium", "reason": "Test plan omits the empty-string case", "claim": "No test case covers TruncateEllipsis(\"\", n)", "evidence": "internal/textutil/truncate_test.go (test plan step 1)", "required": "Add a table case for empty input"}], "inspected": ["internal/textutil/truncate_test.go"]}
 </mivia_output>
 
-This example is for illustration only. Report the findings you verified against the test plan for your own task.
+This example is for illustration only. Report the findings you verify for the task you were given.

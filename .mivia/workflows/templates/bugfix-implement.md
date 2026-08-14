@@ -111,4 +111,4 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 {"summary": "Fixed H-1: TruncateEllipsis now walks runes to find a safe cut point. Added a regression test for a multi-byte boundary.", "files_changed": ["internal/textutil/truncate.go", "internal/textutil/truncate_test.go"], "addressed_findings": ["H-1"], "inspected": ["internal/textutil/truncate.go"], "pr_title": "fix(textutil): cut TruncateEllipsis on rune boundaries", "pr_summary": "TruncateEllipsis now walks runes instead of slicing by byte offset. This prevents a panic and invalid UTF-8 output on multi-byte input."}
 </mivia_output>
 
-This example is for illustration only. Report the fix you implemented.
+This example is for illustration only. Report the fix you implement for the task you were given.

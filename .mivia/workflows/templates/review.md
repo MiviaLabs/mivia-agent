@@ -101,4 +101,4 @@ Changes requested:
 {"verdict": "changes_requested", "findings": [{"id": "R1-1", "severity": "high", "reason": "Truncation can split a multi-byte rune, producing invalid UTF-8", "claim": "TruncateEllipsis indexes the string by byte offset without checking rune boundaries", "evidence": "internal/textutil/truncate.go:14", "required": "Use utf8.RuneCountInString or walk runes to find a safe cut point"}], "inspected": ["internal/textutil/truncate.go"]}
 </mivia_output>
 
-This example is for illustration only. Report the findings you verified against the implementation for your own task.
+This example is for illustration only. Report the findings you verify for the task you were given.

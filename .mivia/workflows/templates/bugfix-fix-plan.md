@@ -76,4 +76,4 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 {"summary": "Minimal fix for H-1: walk runes in TruncateEllipsis to find a safe cut point instead of slicing by byte offset.", "steps": ["Add TestTruncateEllipsis_MultiByteBoundary reproducing the panic", "Fix TruncateEllipsis to cut on a rune boundary", "Verify the existing call site in internal/cli/render.go needs no change"], "inspected": ["internal/textutil/truncate.go"], "addressed_findings": ["H-1"]}
 </mivia_output>
 
-This example is for illustration only. Plan the fix for the findings for your own task.
+This example is for illustration only. Plan the fix for the task you were given.

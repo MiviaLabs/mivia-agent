@@ -79,4 +79,4 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 {"summary": "Fixed the failing TestTruncateEllipsis_MultiByte case: the cut index landed mid-rune. Now walks runes to find a safe boundary. No scope change.", "files_changed": ["internal/textutil/truncate.go"], "addressed_findings": [], "inspected": ["internal/textutil/truncate.go"], "pr_title": "fix(cli): truncate long output on rune boundaries", "pr_summary": "Adds a rune-safe TruncateEllipsis helper and switches the render path to use it. This prevents invalid UTF-8 output when a line is truncated mid-rune."}
 </mivia_output>
 
-This example is for illustration only. Report the repair you made.
+This example is for illustration only. Report the repair you make for the task you were given.

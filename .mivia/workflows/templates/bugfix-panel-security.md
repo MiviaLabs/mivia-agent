@@ -72,4 +72,4 @@ Changes requested:
 {"verdict": "changes_requested", "findings": [{"id": "PS-1", "title": "SSRF via unvalidated outbound URL", "severity": "high", "description": "internal/webhook/dispatch.go:41 builds an http.Request from a user-supplied callback URL with no allowlist or private-IP check. A caller can reach internal-network services. Required: validate the host against an allowlist. Reject RFC1918 and loopback targets before you dial."}]}
 </mivia_output>
 
-This example is for illustration only. Report the findings you verified against the implementation for your own task.
+This example is for illustration only. Report the findings you verify for the task you were given.

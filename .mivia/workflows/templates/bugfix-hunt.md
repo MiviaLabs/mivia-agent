@@ -90,4 +90,4 @@ One confirmed bug:
 {"findings": [{"id": "H-1", "class": "logic", "severity": "high", "title": "TruncateEllipsis can split a multi-byte rune", "invariant": "Output of TruncateEllipsis must be valid UTF-8", "evidence": "internal/textutil/truncate.go:14 indexes s[:n] by byte offset with no rune-boundary check", "reachable_path": "internal/cli/render.go:52 calls TruncateEllipsis on user-controlled terminal output", "impact": "Invalid UTF-8 written to the terminal writer, corrupting output", "remediation": "Walk runes to find a safe cut point before slicing", "regression_test": "TestTruncateEllipsis_MultiByteBoundary", "sweep": "grepped textutil for other byte-offset slices; none found"}], "finding_count": 1, "no_findings": false, "has_perf": "false", "inspected": ["internal/textutil/truncate.go", "internal/cli/render.go"]}
 </mivia_output>
 
-This example is for illustration only. Report the findings you confirmed in the scope for your own task.
+This example is for illustration only. Report the findings you confirm for the task you were given.
