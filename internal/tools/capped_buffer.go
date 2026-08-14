@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"bytes"
 	"sync"
+	"unicode/utf8"
 )
 
 // captureElisionMarker sits between retained head and tail when a bound drops
@@ -374,22 +376,32 @@ func writeHeadTail(head, tail *[]byte, truncated *bool, headQuota, tailQuota int
 	}
 }
 
+// assembleHeadTail joins the retained head/tail windows into one result. The
+// headQuota/tailQuota cut points are raw byte offsets with no rune awareness
+// (writeHeadTail/pushTail never look at rune boundaries - doing so per-write
+// would need to buffer an extra utf8.UTFMax bytes per stream just in case),
+// so a cut can land inside a multi-byte rune. bytes.ToValidUTF8 repairs that
+// (and any genuinely non-UTF8 tool output) here, once, on the assembled
+// result - the one place a caller ever turns this into a string.
 func assembleHeadTail(head, tail []byte, elide bool) []byte {
-	if !elide || len(tail) == 0 {
-		if len(tail) == 0 {
-			out := make([]byte, len(head))
-			copy(out, head)
-			return out
-		}
-		out := make([]byte, 0, len(head)+len(tail))
+	var out []byte
+	switch {
+	case len(tail) == 0:
+		out = make([]byte, len(head))
+		copy(out, head)
+	case !elide:
+		out = make([]byte, 0, len(head)+len(tail))
 		out = append(out, head...)
 		out = append(out, tail...)
+	default:
+		marker := []byte(captureElisionMarker)
+		out = make([]byte, 0, len(head)+len(marker)+len(tail))
+		out = append(out, head...)
+		out = append(out, marker...)
+		out = append(out, tail...)
+	}
+	if utf8.Valid(out) {
 		return out
 	}
-	marker := []byte(captureElisionMarker)
-	out := make([]byte, 0, len(head)+len(marker)+len(tail))
-	out = append(out, head...)
-	out = append(out, marker...)
-	out = append(out, tail...)
-	return out
+	return bytes.ToValidUTF8(out, []byte(string(utf8.RuneError)))
 }

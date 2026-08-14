@@ -3,6 +3,7 @@ package subagents
 import (
 	"encoding/json"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -129,6 +130,22 @@ func TestTaskDescriptionFromInputBoundsALongDescription(t *testing.T) {
 	}
 	if got[len(got)-len("…"):] != "…" {
 		t.Fatalf("got %q, want trailing ellipsis marking truncation", got)
+	}
+}
+
+// TestTaskDescriptionFromInputStaysValidUTF8AcrossARuneSplit puts a 3-byte
+// rune ("世") straddling the maxTaskDescriptionBytes cut point, so a naive
+// s[:maxTaskDescriptionBytes] byte-offset truncation would split it (DC-6).
+func TestTaskDescriptionFromInputStaysValidUTF8AcrossARuneSplit(t *testing.T) {
+	prefix := ""
+	for i := 0; i < maxTaskDescriptionBytes-1; i++ {
+		prefix += "a"
+	}
+	long := prefix + "世" + "more text after the rune"
+	raw, _ := json.Marshal(long)
+	got := taskDescriptionFromInput(raw)
+	if !utf8.ValidString(got) {
+		t.Fatalf("bounded description is not valid UTF-8: %q", got)
 	}
 }
 

@@ -1,6 +1,7 @@
 package contextstate
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -64,8 +65,17 @@ func SanitizeSourcePayload(ctx context.Context, principal Principal, data []byte
 	}
 	// Whole-payload size is uncapped: large source events persist via ordered
 	// chunks (PayloadChunkSize). Per-chunk invariants are enforced at storage.
+	//
+	// Bad bytes are repaired, not refused, for the same reason the redaction
+	// path below never refuses a turn (INV-AG-35): a byte-capped tool capture
+	// can split a multi-byte rune at its cut point, and some tools legitimately
+	// produce non-text output. Refusing here used to fail the whole turn's
+	// context publication over storage hygiene alone - repairing keeps the
+	// turn's real content associated with the run instead of silently losing
+	// it. The replacement character marks exactly where bytes were lost, same
+	// as Go's own string(invalidBytes) conversion would show.
 	if !utf8.Valid(data) {
-		return SanitizedPayload{}, invalid("payload", "is not valid UTF-8")
+		data = bytes.ToValidUTF8(data, []byte(string(utf8.RuneError)))
 	}
 	// A privacy rule may change WHAT is stored; it may never destroy a turn the
 	// agent already finished. Classification used to return an error here, and
