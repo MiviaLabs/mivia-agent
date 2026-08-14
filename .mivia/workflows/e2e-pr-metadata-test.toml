@@ -11,6 +11,12 @@ required = true
 max_step_attempts = 10
 max_duration_seconds = 900
 
+# Stacking is opt-in: this table (with explicit plan_step/implement_step)
+# keeps the workflow in the stacking engine.
+[stacking]
+plan_step = "plan"
+implement_step = "implement"
+
 [[steps]]
 id = "plan"
 kind = "agent"

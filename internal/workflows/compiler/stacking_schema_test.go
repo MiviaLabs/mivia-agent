@@ -91,7 +91,7 @@ func TestChunkPlanDeclaredThresholdsAcceptPlanEndToEnd(t *testing.T) {
 			{From: "plan", To: "implement"},
 			{From: "implement", To: "success"},
 		},
-		Stacking: &definition.Stacking{HardLines: 600, MaxChunks: 20},
+		Stacking: &definition.Stacking{PlanStep: "plan", ImplementStep: "implement", HardLines: 600, MaxChunks: 20},
 	}
 	cw, err := compiler.Compile(wf)
 	if err != nil {

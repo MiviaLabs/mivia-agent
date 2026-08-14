@@ -15,7 +15,7 @@ import (
 
 func TestCompile_AllowsOptionalChunkPlanBindingWhenStacking(t *testing.T) {
 	wf := newMinimalWorkflow("chunk-plan-ok")
-	wf.Stacking = &definition.Stacking{}
+	wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "plan"}
 	wf.Steps[0].Context = []definition.ContextBinding{{From: "inputs.chunk_plan", As: "chunk_scope", Optional: true}}
 	if _, err := Compile(wf); err != nil {
 		t.Fatalf("Compile rejected an optional chunk_plan binding on a stacking workflow: %v", err)
@@ -30,7 +30,7 @@ func TestCompile_RejectsChunkPlanBindingWithoutStacking(t *testing.T) {
 
 func TestCompile_RejectsMandatoryChunkPlanBinding(t *testing.T) {
 	wf := newMinimalWorkflow("chunk-plan-mandatory")
-	wf.Stacking = &definition.Stacking{}
+	wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "plan"}
 	wf.Steps[0].Context = []definition.ContextBinding{{From: "inputs.chunk_plan", As: "chunk_scope"}}
 	assertCompileError(t, wf, "mandatory", "must be optional")
 }

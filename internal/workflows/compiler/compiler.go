@@ -24,10 +24,10 @@ type CompiledWorkflow struct {
 	Delivery    *definition.Delivery
 	Digest      string
 
-	// Stacking is the resolved stacking configuration when stacking is
-	// enabled (explicitly or by default) and both the plan and implement
-	// steps resolved (declared or inferred). Nil otherwise; the run then
-	// behaves exactly as a single-PR workflow always did.
+	// Stacking is the resolved stacking configuration when the workflow
+	// declares an enabled [stacking] table with explicit plan_step and
+	// implement_step keys. Nil otherwise; the run then behaves exactly as a
+	// single-PR workflow always did.
 	Stacking *definition.StackingConfig
 
 	// Derived sets for O(1) lookups
@@ -83,13 +83,14 @@ func compile(wf *definition.WorkflowFile, skipCycleValidation bool) (*CompiledWo
 	hash := sha256.Sum256(data)
 	digest := fmt.Sprintf("%x", hash)
 
-	// Resolve stacking configuration. Explicit [stacking] values win;
-	// otherwise inference is best-effort. Only populated when stacking is
-	// enabled and both steps resolved, so existing single-PR workflows keep
-	// their exact compiled shape.
+	// Resolve stacking configuration. Stacking is opt-in: only a workflow
+	// that declares a [stacking] table (and does not set enabled = false)
+	// participates, and the plan/implement steps come only from its explicit
+	// plan_step/implement_step keys. There is no step inference. A workflow
+	// without the table keeps the exact compiled shape of a single-PR run.
 	var stackingCfg *definition.StackingConfig
-	if planStep, implementStep := ResolveStackingSteps(wf); (wf.Stacking == nil || wf.Stacking.StackingEnabled()) && planStep != "" && implementStep != "" {
-		eff := wf.Stacking.EffectiveStacking(planStep, implementStep)
+	if s := wf.Stacking; s != nil && s.StackingEnabled() && s.PlanStep != "" && s.ImplementStep != "" {
+		eff := s.EffectiveStacking(s.PlanStep, s.ImplementStep)
 		stackingCfg = &eff
 	}
 
@@ -169,7 +170,7 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 	}
 
 	// Limits and stacking config validation
-	if err := validateLimitsAndStacking(wf, stepIDs); err != nil {
+	if err := validateLimitsAndStacking(wf, stepIDs, skipCycleValidation); err != nil {
 		errs = append(errs, err.Error())
 	}
 

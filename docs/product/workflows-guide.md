@@ -779,13 +779,13 @@ A workflow with a `[stacking]` section opts into the stacked small-PR engine. Th
 
 ### Authoring `[stacking]`
 
-Add a `[stacking]` section to the workflow TOML. All keys are optional; omitted values take the global defaults.
+Add a `[stacking]` section to the workflow TOML. Stacking is opt-in: a workflow without the section always runs as a single-PR workflow. An enabled section must name `plan_step` and `implement_step`; every other key is optional and takes the global default when omitted.
 
 ```toml
 [stacking]
-enabled = true          # default true; set false to opt out
-plan_step = "fix_plan"  # optional; inferred from the implement step's context binding
-implement_step = "implement"  # optional; inferred from the change-summary schema or id "implement"
+enabled = true          # default true for a declared section; set false to opt out
+plan_step = "fix_plan"  # required; the step whose output feeds decompose
+implement_step = "implement"  # required; the step where chunk-mode runs start
 max_chunks = 12         # default 12
 soft_lines = 200        # default 200
 hard_lines = 400        # default 400
@@ -796,7 +796,7 @@ max_wave_chunks = 12          # default 12; ceiling per single decompose call
 max_concurrent_chunks = 4     # default 4; chunk runs the driver admits and drives at once
 ```
 
-Explicit step references are validated at compile time (unknown step, out-of-range thresholds, invalid merge policy). When the section is absent, stacking is enabled with the global defaults and inference is best-effort — existing workflows compile unchanged.
+The section is validated at compile time: an enabled section without explicit `plan_step` and `implement_step` is rejected, as are unknown step references, out-of-range thresholds, and invalid merge policies. Resume of an already admitted run is lenient: a snapshot whose enabled section lacks explicit steps still compiles, with stacking inactive.
 
 `max_concurrent_chunks` is enforced: it bounds how many chunk runs `stack drive` admits and drives at once (see "Concurrent wave execution" below). `max_total_chunks` is enforced across every decompose wave of one stack: the driver refuses to admit a continuation wave that would push the total chunk count over it, with a clear error rather than a silent truncation. `max_wave_chunks` is accepted and validated but not yet enforced as a distinct per-call cap — a workflow's declared `max_chunks` is still what each individual decompose call is checked against; `max_wave_chunks` exists to let a workflow state its intended per-call limit for when that distinction lands.
 
