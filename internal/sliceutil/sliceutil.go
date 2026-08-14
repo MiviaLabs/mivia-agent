@@ -46,3 +46,13 @@ func Dedupe[T comparable](items []T) []T {
 	}
 	return out
 }
+
+// Unique returns a new slice holding the values of input with duplicates
+// removed, preserving the order of first occurrence. The result is freshly
+// allocated, so mutating it never mutates input.
+//
+// Unique returns nil when input is nil or empty. It is the string-typed
+// form of Dedupe.
+func Unique(input []string) []string {
+	return Dedupe(input)
+}
