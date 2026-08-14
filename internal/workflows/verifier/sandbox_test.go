@@ -233,7 +233,7 @@ func TestGoProfileReportsHostFailureWithoutRepairEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := newGoProfile(GoTestName, []commandSpec{{check: "go-test", program: "go", args: []string{"test", "./..."}}}, nil).Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
+	result, err := newDeclaredProfile("go-test", []commandSpec{{check: "go-test", program: "go", args: []string{"test", "./..."}}}, nil).Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func main() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile := newGoProfile("bwrap-stdout-test", []commandSpec{{check: "bwrap-stdout", program: "go", args: []string{"run", mainPath}}}, nil, secretpath.Policy{})
+	profile := newDeclaredProfile("bwrap-stdout-test", []commandSpec{{check: "bwrap-stdout", program: "go", args: []string{"run", mainPath}}}, nil, secretpath.Policy{})
 	result, err := profile.Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +335,7 @@ func TestSandboxedCommandClassifiesStderrBwrapPrefixAsHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile := newGoProfile("bwrap-stderr-test", []commandSpec{{check: "bwrap-stderr", program: "go", args: []string{"version"}}}, nil, secretpath.Policy{})
+	profile := newDeclaredProfile("bwrap-stderr-test", []commandSpec{{check: "bwrap-stderr", program: "go", args: []string{"version"}}}, nil, secretpath.Policy{})
 	result, err := profile.Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
 	if err != nil {
 		t.Fatal(err)
@@ -362,7 +362,7 @@ func TestSandboxedCommandClassifiesMissingBwrapAsHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile := newGoProfile("missing-bwrap-test", []commandSpec{{check: "missing-bwrap", program: "go", args: []string{"version"}}}, nil, secretpath.Policy{})
+	profile := newDeclaredProfile("missing-bwrap-test", []commandSpec{{check: "missing-bwrap", program: "go", args: []string{"version"}}}, nil, secretpath.Policy{})
 	result, err := profile.Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
 	if err != nil {
 		t.Fatal(err)
@@ -521,7 +521,7 @@ func TestSandboxedCommandLargeOutputCaptureIsBounded(t *testing.T) {
 	// would fail on the missing build cache before producing any output.
 	// Emitting from the stub keeps this test about the capture bound, not the
 	// toolchain.
-	profile := newGoProfile("large-output", []commandSpec{{check: "large-output", program: "go", args: []string{"test", "./..."}}}, nil, secretpath.Policy{})
+	profile := newDeclaredProfile("large-output", []commandSpec{{check: "large-output", program: "go", args: []string{"test", "./..."}}}, nil, secretpath.Policy{})
 	result, err := profile.Verify(context.Background(), Request{WorkDir: workDir, ModuleBaseline: baseline})
 	if err != nil {
 		t.Fatal(err)

@@ -58,7 +58,7 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 		setup.cleanup()
 		return workflowControllerBuild{}, err
 	}
-	runtime, baseline, err := prepareWorkflowBuildRuntime(root, refBase, wf, inputSnapshot, definitionTOML, prior, setup, opts)
+	runtime, baseline, err := prepareWorkflowBuildRuntime(root, refBase, res, wf, inputSnapshot, definitionTOML, prior, setup, opts)
 	if err != nil {
 		dispatcher.Close()
 		setup.cleanup()
@@ -170,7 +170,7 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 	return dispatcher, opts, legacy, nil
 }
 
-func prepareWorkflowBuildRuntime(root, refBase string, wf *compiler.CompiledWorkflow, inputs map[string]string, definition []byte, prior *workflowledger.Snapshot, setup workflowBuildSetup, opts SessionDispatcherOpts) (preparedWorkflowRuntime, *verifier.GoModuleBaseline, error) {
+func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]string, definition []byte, prior *workflowledger.Snapshot, setup workflowBuildSetup, opts SessionDispatcherOpts) (preparedWorkflowRuntime, *verifier.GoModuleBaseline, error) {
 	runtime, err := prepareWorkflowRuntime(root, refBase, wf, setup.loaded.Registry, prior, definition, inputs, opts)
 	if err != nil {
 		return preparedWorkflowRuntime{}, nil, err
@@ -178,8 +178,20 @@ func prepareWorkflowBuildRuntime(root, refBase string, wf *compiler.CompiledWork
 	if err := verifyWorkflowSkillSnapshot(wf, setup.skills, prior); err != nil {
 		return preparedWorkflowRuntime{}, nil, err
 	}
+	if err := verifyWorkflowVerifierSnapshot(wf, res.Verifiers, prior); err != nil {
+		return preparedWorkflowRuntime{}, nil, err
+	}
 	if prior == nil {
+		// Fail a fresh run at admission, before any agent step burns tokens,
+		// when a gate references an undeclared profile.
+		if err := validateWorkflowVerifierReferences(wf, res.Verifiers); err != nil {
+			return preparedWorkflowRuntime{}, nil, err
+		}
 		runtime.Snapshot, err = pinWorkflowSkills(runtime.Snapshot, wf, setup.skills)
+		if err != nil {
+			return preparedWorkflowRuntime{}, nil, err
+		}
+		runtime.Snapshot, err = pinWorkflowVerifierDefinitions(runtime.Snapshot, wf, res.Verifiers)
 		if err != nil {
 			return preparedWorkflowRuntime{}, nil, err
 		}
@@ -187,7 +199,11 @@ func prepareWorkflowBuildRuntime(root, refBase string, wf *compiler.CompiledWork
 	if err := installWorkflowSkillSnapshots(opts.WorkflowSkillSnapshots, runtime.Snapshot); err != nil {
 		return preparedWorkflowRuntime{}, nil, err
 	}
-	baseline, err := workflowModuleBaseline(wf, setup.identity.Root, prior)
+	needBaseline, err := workflowNeedsGoBaseline(wf, res.Verifiers, prior)
+	if err != nil {
+		return preparedWorkflowRuntime{}, nil, err
+	}
+	baseline, err := workflowModuleBaseline(needBaseline, setup.identity.Root, prior)
 	if err != nil {
 		return preparedWorkflowRuntime{}, nil, err
 	}
@@ -216,7 +232,11 @@ func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.D
 	if err != nil {
 		return nil, err
 	}
-	if err := ctrl.SetVerifiers(verifier.DefaultCatalogue(policy)); err != nil {
+	catalogue, err := workflowVerifierCatalogue(res.Verifiers, policy)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctrl.SetVerifiers(catalogue); err != nil {
 		return nil, err
 	}
 	if err := ctrl.SetSecretPolicy(policy); err != nil {

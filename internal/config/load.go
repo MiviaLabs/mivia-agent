@@ -117,6 +117,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		Tools:            resolveToolsConfig(file.Tools),
 		Memory:           memCfg,
 		Harness:          file.Harness,
+		Verifiers:        cloneVerifierProfiles(file.Verifiers),
 		MCP:              mcpConfig,
 		MCPWarnings:      append([]string(nil), mcpWarnings...),
 		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
@@ -327,6 +328,14 @@ func decodeConfigInto(data []byte, path string, file *File) error {
 	if err := auditModelKeys(data); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
 	}
+	// [verifiers] is parsed strictly from the raw bytes (closed key sets,
+	// hard errors) because its tables declare commands. A later layer wins
+	// whole-profile, consistent with the struct fields above.
+	verifiers, err := parseVerifiersLayer(data, path)
+	if err != nil {
+		return err
+	}
+	file.Verifiers = mergeVerifierLayer(file.Verifiers, verifiers)
 	return nil
 }
 

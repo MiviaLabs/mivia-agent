@@ -700,3 +700,32 @@ transport = "streamable_http"
 url = "https://mcp.context7.com/mcp"
 global = true
 timeout_seconds = 30
+
+# ---------------------------------------------------------------------------
+# Workspace-declared verifier profiles for evidence_gate steps.
+# The mivia binary ships NO built-in profiles: a workflow's `verifier = "x"`
+# resolves only against these tables, so the engine stays project- and
+# language-generic. Each command runs in the verifier sandbox (copied
+# worktree without secrets, no network, no host home, empty environment).
+# `program` is a bare executable name; `args` are argv, never a shell string.
+# `go_module_baseline = true` pins go.mod/go.sum at admission so a workflow
+# agent cannot change what the gate builds against.
+# ---------------------------------------------------------------------------
+[verifiers.go-test]
+go_module_baseline = true
+commands = [
+  { check = "go-test", program = "go", args = ["test", "./..."] },
+]
+
+[verifiers.go-verify]
+go_module_baseline = true
+commands = [
+  { check = "go-vet", program = "go", args = ["vet", "./..."] },
+  { check = "go-build", program = "go", args = ["build", "./..."] },
+]
+
+[verifiers.go-final]
+go_module_baseline = true
+commands = [
+  { check = "go-test-race", program = "go", args = ["test", "-race", "./..."] },
+]

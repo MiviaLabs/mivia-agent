@@ -1,18 +1,18 @@
-// Package verifier provides a host-owned catalogue of deterministic verifier
-// profiles for evidence_gate steps. Workflow files may name a registered
-// profile only; they cannot supply shell or command strings. One exception:
-// an evidence_gate step may declare a sandboxed command (a bare executable
-// name plus argv, never a shell string) that runs inside the same isolation
-// as the fixed profiles — a copied worktree without secrets, no network, no
-// host home, and an empty environment.
+// Package verifier provides the execution machinery for deterministic
+// verifier profiles behind evidence_gate steps. The host ships NO built-in
+// profiles: the catalogue is filled from workspace config ([verifiers] in
+// mivia.toml), so the engine stays project- and language-generic. Workflow
+// files may name a declared profile only; they cannot supply shell or command
+// strings. One exception: an evidence_gate step may declare a sandboxed
+// command (a bare executable name plus argv, never a shell string) that runs
+// inside the same isolation as the declared profiles — a copied worktree
+// without secrets, no network, no host home, and an empty environment.
 package verifier
 
 import (
 	"context"
 	"fmt"
 	"sync"
-
-	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 )
 
 // Check is one named host verification check result.
@@ -82,15 +82,6 @@ type Catalogue struct {
 // NewCatalogue returns an empty catalogue.
 func NewCatalogue() *Catalogue {
 	return &Catalogue{profiles: make(map[string]Profile)}
-}
-
-// DefaultCatalogue returns a catalogue with fixed host-owned Go profiles.
-func DefaultCatalogue(policy secretpath.Policy) *Catalogue {
-	c := NewCatalogue()
-	for _, profile := range defaultGoProfiles(policy) {
-		c.profiles[profile.Name()] = profile
-	}
-	return c
 }
 
 // Register adds a profile. Duplicate names fail closed.

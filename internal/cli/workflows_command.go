@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -182,7 +183,7 @@ func validateWorkflowReferences(root, base string, wf *compiler.CompiledWorkflow
 	if err := validateWorkflowFiles(base, wf); err != nil {
 		return err
 	}
-	if err := validateWorkflowVerifiers(wf); err != nil {
+	if err := validateWorkflowVerifiers(root, wf); err != nil {
 		return err
 	}
 	if policy, active := delivery.FromCompiled(wf); active {
@@ -318,12 +319,19 @@ func stepIsLoopBound(wf *compiler.CompiledWorkflow, step definition.Step) bool {
 //
 // It resolves in the same order the controller does (see gateProfile): a step
 // that declares a command uses that command, and only a step without one is
-// looked up in the built-in catalogue. Validating the catalogue name first
-// reported every command-form gate as invalid, which is the form a repository
-// uses to declare its own gate and the reason the workflow engine stays
-// project-agnostic.
-func validateWorkflowVerifiers(wf *compiler.CompiledWorkflow) error {
-	catalogue := verifier.DefaultCatalogue(secretpath.Policy{})
+// looked up in the catalogue. The catalogue comes from the WORKSPACE's own
+// [verifiers] tables (config.LoadWorkspaceVerifiers), never from the invoking
+// user's ~/.mivia config: validation of a foreign workspace must give the
+// same verdict on every machine.
+func validateWorkflowVerifiers(root string, wf *compiler.CompiledWorkflow) error {
+	profiles, err := config.LoadWorkspaceVerifiers(root)
+	if err != nil {
+		return err
+	}
+	catalogue, err := workflowVerifierCatalogue(profiles, secretpath.Policy{})
+	if err != nil {
+		return err
+	}
 	for _, step := range wf.Steps {
 		if step.Kind != "evidence_gate" {
 			continue
@@ -335,7 +343,7 @@ func validateWorkflowVerifiers(wf *compiler.CompiledWorkflow) error {
 			continue
 		}
 		if _, err := catalogue.Lookup(step.Verifier); err != nil {
-			return fmt.Errorf("step %q: %w", step.ID, err)
+			return fmt.Errorf("step %q: declare a [verifiers.%s] table in the workspace config: %w", step.ID, step.Verifier, err)
 		}
 	}
 	return nil

@@ -79,7 +79,7 @@ func TestValidateWorkflowVerifiersAcceptsCommandForm(t *testing.T) {
 		Kind:    "evidence_gate",
 		Command: &definition.StepCommand{Check: "invariants", Program: "python3", Args: []string{"scripts/x.py"}},
 	}}}
-	if err := validateWorkflowVerifiers(wf); err != nil {
+	if err := validateWorkflowVerifiers(t.TempDir(), wf); err != nil {
 		t.Fatalf("command-form evidence gate rejected: %v", err)
 	}
 }
@@ -91,7 +91,7 @@ func TestValidateWorkflowVerifiersRejectsBadCommandAndName(t *testing.T) {
 			Kind:    "evidence_gate",
 			Command: &definition.StepCommand{Check: "c", Program: "/usr/bin/python3"},
 		}}}
-		if err := validateWorkflowVerifiers(wf); err == nil {
+		if err := validateWorkflowVerifiers(t.TempDir(), wf); err == nil {
 			t.Fatal("a path-qualified program must be refused")
 		}
 	})
@@ -100,14 +100,14 @@ func TestValidateWorkflowVerifiersRejectsBadCommandAndName(t *testing.T) {
 		wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
 			ID: "gate", Kind: "evidence_gate", Verifier: "no-such-verifier",
 		}}}
-		if err := validateWorkflowVerifiers(wf); err == nil {
+		if err := validateWorkflowVerifiers(t.TempDir(), wf); err == nil {
 			t.Fatal("an unknown verifier name must still be refused")
 		}
 	})
 
 	t.Run("non-gate steps are skipped", func(t *testing.T) {
 		wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "plan", Kind: "agent"}}}
-		if err := validateWorkflowVerifiers(wf); err != nil {
+		if err := validateWorkflowVerifiers(t.TempDir(), wf); err != nil {
 			t.Fatalf("an agent step must not need a verifier: %v", err)
 		}
 	})
