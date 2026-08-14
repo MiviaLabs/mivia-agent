@@ -203,7 +203,7 @@ func TestExecuteWorkflowResumeDrivesSettledStackBeforeDeliverySkippedPlanRun(t *
 	wireExecuteResumeStackStubs(t, storePath, repo, runID, settleResumeStackFixtureToDeliveryPending(t, repo, runID))
 
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(runID, root, configPath, false, true, &stdout, io.Discard); err != nil {
+	if err := executeWorkflowResume(runID, root, configPath, false, true, false, &stdout, io.Discard); err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v; stdout = %q", err, stdout.String())
 	}
 	if !drive.inner.called || drive.inner.stackID != runID || len(drive.inner.chunks) != 2 {
@@ -266,7 +266,7 @@ func TestExecuteWorkflowResumeCrashRecoveryDrivesStackBeforeDeliverySkippedPlanR
 	})
 
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(runID, root, configPath, false, true, &stdout, io.Discard); err != nil {
+	if err := executeWorkflowResume(runID, root, configPath, false, true, false, &stdout, io.Discard); err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v; stdout = %q", err, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "status=delivery_pending") {
@@ -319,7 +319,7 @@ func TestExecuteWorkflowResumeDrivesSettledStackBeforeDeliveryPublishesPlanRun(t
 	wireExecuteResumeStackStubs(t, storePath, repo, runID, settleResumeStackFixtureToDeliveryPending(t, repo, runID))
 
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(runID, root, configPath, false, true, &stdout, io.Discard); err != nil {
+	if err := executeWorkflowResume(runID, root, configPath, false, true, false, &stdout, io.Discard); err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v; stdout = %q", err, stdout.String())
 	}
 	if !drive.inner.called || drive.inner.stackID != runID || len(drive.inner.chunks) != 2 {

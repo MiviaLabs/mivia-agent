@@ -160,7 +160,7 @@ func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event)
 		state.pendingUserText = ""
 	}
 	renderExternalTurnEvent(w, state, ev)
-	if ev.Kind == events.KindSubagentDone || ev.Kind == events.KindTurnEnd || ev.Kind == events.KindError {
+	if ev.Kind == events.KindTurnEnd || ev.Kind == events.KindError {
 		delete(state.seenRunIDs, ev.TurnID)
 		delete(state.deltaSeenRunIDs, ev.TurnID)
 	}
@@ -194,12 +194,17 @@ func renderExternalTurnEvent(w io.Writer, state *externalTurnState, ev events.Ev
 			Type: "external_tool_start", RunID: ev.TurnID, ToolCallID: ev.ToolCallID,
 			Name: ev.Name, Input: ev.Input,
 		})
-	case events.KindToolEnd:
+	case events.KindToolEnd, events.KindSubagentEnd:
 		writeNDJSONEvent(w, ndjsonEvent{
 			Type: "external_tool_end", RunID: ev.TurnID, ToolCallID: ev.ToolCallID,
 			Name: ev.Name, Output: ev.Output, Status: toolEndStatus(ev.Detail),
 		})
-	case events.KindSubagentDone, events.KindTurnEnd:
+	// KindSubagentDone is deliberately NOT a case here: it retires one
+	// subagent inside the turn, not the turn itself. Mapping it to
+	// "external_done" (as this once did) made a consumer mark the whole
+	// external turn finished - and drop it from any live-agents view -
+	// the moment the run's first subagent completed, mid-turn.
+	case events.KindTurnEnd:
 		writeNDJSONEvent(w, ndjsonEvent{Type: "external_done", RunID: ev.TurnID})
 	case events.KindError:
 		writeNDJSONEvent(w, ndjsonEvent{Type: "external_error", RunID: ev.TurnID, Message: errorEventMessage(ev)})

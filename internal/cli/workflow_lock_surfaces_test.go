@@ -38,7 +38,7 @@ func TestWorkflowApproveRejectDeleteCleanupResumeUseBoundedLock(t *testing.T) {
 	assertBoundedHeldError("reject", executeWorkflowReject(runID, "wfa-approval-review-1", root, configPath, "", "not now", io.Discard, io.Discard))
 	assertBoundedHeldError("delete", executeWorkflowDelete(runID, root, configPath, false, io.Discard, io.Discard))
 	assertBoundedHeldError("cleanup", executeWorkflowCleanup(runID, root, configPath, io.Discard, io.Discard))
-	assertBoundedHeldError("resume", executeWorkflowResume(runID, root, configPath, false, false, io.Discard, io.Discard))
+	assertBoundedHeldError("resume", executeWorkflowResume(runID, root, configPath, false, false, false, io.Discard, io.Discard))
 
 	// Every refusal happened at the lock: the parked run is untouched.
 	repo := openWorkflowTestStore(t, storePath)
