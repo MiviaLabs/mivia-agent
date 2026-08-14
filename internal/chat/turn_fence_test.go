@@ -231,7 +231,7 @@ func TestSupersededTurnStillRejectedAfterTurnStartPublication(t *testing.T) {
 
 	// The publication path defers with a sibling turn active, so the widener is
 	// never asked to build a candidate surface.
-	_, _, token := sess.surfaceForTurnStart(turn2, nil)
+	_, _, token, _ := sess.surfaceForTurnStart(turn2, nil)
 	if widener.count() != 0 {
 		t.Fatalf("widener ran %d times, want none: publication defers while turn 3 is active", widener.count())
 	}

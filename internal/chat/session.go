@@ -309,8 +309,9 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	// returned token is re-captured after the start-of-turn publication so the
 	// loop's commit runs under the post-publication fence
 	// (chat-turnstart-admission-fences-own-turn).
-	toolRegistry, turnDispatcher, turnToken := s.surfaceForTurnStart(snapshot, turn)
+	toolRegistry, turnDispatcher, turnToken, turnMessages := s.surfaceForTurnStart(snapshot, turn)
 	snapshot.token = turnToken
+	snapshot.messages = turnMessages
 	loop := &agent.Loop{
 		Completer: snapshot.binding.Completer,
 		Tools:     toolRegistry,
@@ -401,10 +402,10 @@ func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
 // executes on. When the publication deferred (no bump), the re-capture is a
 // no-op re-read. Genuine supersession still refuses: a superseding turn
 // advances s.turnID, and sameFence compares TurnID.
-func (s *Session) surfaceForTurnStart(snapshot agentTurnSnapshot, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher, OperationToken) {
+func (s *Session) surfaceForTurnStart(snapshot agentTurnSnapshot, turn *TurnOptions) (*tools.Registry, *runtime.Dispatcher, OperationToken, []provider.Message) {
 	toolRegistry, turnDispatcher := resolveTurnExecutionSurface(snapshot.toolRegistry, snapshot.binding.Dispatcher, turn)
 	if !snapshot.pendingAdmission {
-		return toolRegistry, turnDispatcher, snapshot.token
+		return toolRegistry, turnDispatcher, snapshot.token, snapshot.messages
 	}
 	s.PublishPendingAdmissionAtTurnStart()
 	// The snapshot predates the start-of-turn publication. Read the live
@@ -414,9 +415,16 @@ func (s *Session) surfaceForTurnStart(snapshot agentTurnSnapshot, turn *TurnOpti
 	s.mu.RLock()
 	liveTools := s.Tools
 	liveDispatcher := s.binding.Dispatcher
+	// The publication can rewrite s.Messages (setMemoryMessageLocked places or
+	// replaces the core-memory frame). The snapshot's message clone predates
+	// that, so running the loop on it - and later committing the loop's
+	// history - would stomp the just-published frame. Re-read the live history
+	// under the same lock so the turn runs on, and commits on top of, the
+	// post-publication messages.
+	liveMessages := cloneContextMessages(s.Messages)
 	s.mu.RUnlock()
 	toolRegistry, turnDispatcher = resolveTurnExecutionSurface(liveTools, liveDispatcher, turn)
-	return toolRegistry, turnDispatcher, s.captureTurnToken(snapshot.myTurn)
+	return toolRegistry, turnDispatcher, s.captureTurnToken(snapshot.myTurn), liveMessages
 }
 
 // adoptCalibration copies a finished turn's rolling token calibration back
