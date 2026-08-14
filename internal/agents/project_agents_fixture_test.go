@@ -36,6 +36,7 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 	wantNames := map[string]bool{
 		"auditor":            true,
 		"docs":               true,
+		"e2e-engineer":       true,
 		"go-engineer":        true,
 		"mivia":              true,
 		"panel-reviewer":     true,
