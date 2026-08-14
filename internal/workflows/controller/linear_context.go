@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -44,29 +45,24 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 			continue
 		}
 		if len(parts) == 3 && parts[0] == "steps" && parts[2] == "output" {
-			// Chunk-mode grace: a binding to a step that produced no output in
-			// THIS run (the plan phase ran in the parent run) resolves as
-			// absent instead of failing, for mandatory bindings too; the chunk
-			// description and replayed plan inputs carry the context. A
-			// binding to a step that DID run resolves to the real evidence,
-			// exactly as in plan mode. Plan and single runs never take this
-			// branch (preImplementStep is chunk-only).
-			if _, hasOutput := latestOutputAttempt(attempts, parts[1]); !hasOutput && c.preImplementStep(parts[1]) {
-				evidence[binding.As] = ""
-				continue
-			}
-			value, ref, ok, err := c.resolveBindingOutput(ctx, binding, attempts)
-			if err != nil {
+			if err := c.resolveStepsOutputBinding(ctx, binding, parts[1], attempts, evidence, refs); err != nil {
 				return nil, nil, nil, err
 			}
-			if !ok {
-				// Optional-absent binding: resolve to "" with no artifact to
-				// reference (the evidence-refs block skips it).
-				evidence[binding.As] = ""
-				continue
-			}
-			refs[binding.As] = ref
-			evidence[binding.As] = value
+			continue
+		}
+		// implement.touched_files is a HOST-injected context source: the
+		// actual worktree diff's file list (git diff --name-only vs the
+		// admitted base), NOT the implementing agent's own self-reported
+		// files_changed. A review panel that only reads the agent's summary
+		// cannot catch an undisclosed out-of-scope file touch (confirmed
+		// live: a chunk silently rewrote the centralized default agent
+		// prompt while claiming to add three unrelated utility packages).
+		// Best-effort: no git context wired, no base commit, or a
+		// measurement failure all resolve to "" like an optional-absent
+		// steps binding, so a workflow without a pinned git context is
+		// unaffected.
+		if len(parts) == 2 && parts[0] == "implement" && parts[1] == "touched_files" {
+			evidence[binding.As] = c.touchedFilesEvidence(ctx)
 			continue
 		}
 		// delivery.failure is a HOST-injected context source: the controller
@@ -93,6 +89,71 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 		return nil, nil, nil, fmt.Errorf("unsupported context binding %q", binding.From)
 	}
 	return inputs, evidence, refs, nil
+}
+
+// touchedFilesEvidence returns the JSON-encoded list of files the worktree
+// diff actually touches vs the admitted base commit, or "" when no git
+// context is wired, no base commit was admitted, or the measurement fails.
+// This is host ground truth, unlike the implementing agent's own
+// self-reported files_changed: a reviewer with only the self-report cannot
+// notice a file the agent touched but never mentioned.
+func (c *LinearController) touchedFilesEvidence(ctx context.Context) string {
+	if c.gitRunner == nil || c.gitCtx.Dir == "" || c.admission.BaseCommit == "" {
+		return ""
+	}
+	gitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if _, err := c.gitRunner.Run(gitCtx, c.gitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
+		return ""
+	}
+	out, err := c.gitRunner.Run(gitCtx, c.gitCtx, "-c", "core.quotePath=false", "diff", "--cached", "--name-only", c.admission.BaseCommit)
+	if err != nil {
+		return ""
+	}
+	var files []string
+	for _, f := range strings.Split(strings.TrimSpace(out), "\n") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	if len(files) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(files)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// resolveStepsOutputBinding resolves one steps.X.output binding into evidence
+// (and refs, when the resolved value has a content-addressed artifact).
+// Split out of contextForStep to keep that function under the file-size
+// gate's function-length cap.
+func (c *LinearController) resolveStepsOutputBinding(ctx context.Context, binding definition.ContextBinding, stepID string, attempts []workflowledger.StepAttempt, evidence map[string]any, refs map[string]ArtifactRef) error {
+	// Chunk-mode grace: a binding to a step that produced no output in THIS
+	// run (the plan phase ran in the parent run) resolves as absent instead
+	// of failing, for mandatory bindings too; the chunk description and
+	// replayed plan inputs carry the context. A binding to a step that DID
+	// run resolves to the real evidence, exactly as in plan mode. Plan and
+	// single runs never take this branch (preImplementStep is chunk-only).
+	if _, hasOutput := latestOutputAttempt(attempts, stepID); !hasOutput && c.preImplementStep(stepID) {
+		evidence[binding.As] = ""
+		return nil
+	}
+	value, ref, ok, err := c.resolveBindingOutput(ctx, binding, attempts)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// Optional-absent binding: resolve to "" with no artifact to
+		// reference (the evidence-refs block skips it).
+		evidence[binding.As] = ""
+		return nil
+	}
+	refs[binding.As] = ref
+	evidence[binding.As] = value
+	return nil
 }
 
 // resolveInputsBinding resolves an inputs.* context binding. An optional

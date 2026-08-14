@@ -17,6 +17,13 @@ Check that the work stays within scope. Check that tests cover success and reach
 paths. Independently verify each claim by reading the cited source paths and the changed files.
 Do not raise a finding about source you did not read.
 
+Actually touched files (host-measured from the real worktree diff, not the implementation
+summary below): {{ evidence.touched_files }}
+
+Compare this list against the implementation summary's own files_changed and against the plan.
+Any file here the summary does not mention, or that the plan does not call for, is a scope
+finding on its own even if its content looks correct: read it and report what changed.
+
 Host evidence gates (go test/build/vet/fuzz, make verify, project invariants, structure checks)
 run in LATER workflow steps and have not run yet at this review. Do not raise their absence as a
 finding; only raise a CLAIMED result the workflow context does not support.
