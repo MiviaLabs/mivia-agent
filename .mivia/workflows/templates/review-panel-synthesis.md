@@ -26,10 +26,14 @@ Return only the declared structured output: `dispositions` and `summary`.
 
 ## Output contract
 
-Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
-the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
-Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -37,5 +41,4 @@ keys. An invalid shape is rejected and you will be asked again with the schema.
 {"dispositions": [{"member_id": "correctness", "finding_id": "PC-1", "disposition": "included", "final_finding_id": "PC-1"}, {"member_id": "security", "finding_id": "PS-1", "disposition": "duplicate", "final_finding_id": "PC-1"}], "summary": "Both the correctness and security members flagged the same unchecked type assertion in the cache lookup; kept as one finding."}
 </mivia_output>
 
-The example above is illustrative only - synthesize the member reports you were bound, not this
-example.
+This example is for illustration only. Synthesize the member reports for your own task.

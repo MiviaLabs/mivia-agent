@@ -2,10 +2,15 @@
 
 ## Output contract (READ FIRST — before the methodology below)
 
-Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. No
-markdown report, headings, bullets, prose, or code fences (```) inside or outside the envelope. The schema
-declares the only valid keys — no extra keys. An invalid shape is rejected and you will be
-asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not add a markdown report, headings, bullets, prose, or code fences (```) inside or outside
+the envelope. The schema lists the only valid keys. It allows no extra keys. The engine rejects
+an invalid shape and asks you again with the schema.
 
 ---
 
@@ -56,10 +61,14 @@ and requested host gates in `summary`. Put ordered actions in `steps`.
 
 ## Output contract
 
-Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
-the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
-Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -67,5 +76,4 @@ keys. An invalid shape is rejected and you will be asked again with the schema.
 {"summary": "Minimal fix for H-1: walk runes in TruncateEllipsis to find a safe cut point instead of slicing by byte offset.", "steps": ["Add TestTruncateEllipsis_MultiByteBoundary reproducing the panic", "Fix TruncateEllipsis to cut on a rune boundary", "Verify the existing call site in internal/cli/render.go needs no change"], "inspected": ["internal/textutil/truncate.go"], "addressed_findings": ["H-1"]}
 </mivia_output>
 
-The example above is illustrative only - plan the fix for the findings you were bound, not this
-example.
+This example is for illustration only. Plan the fix for the findings for your own task.

@@ -78,10 +78,14 @@ Approve only when no open finding remains.
 
 ## Output contract
 
-Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
-the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
-Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -97,5 +101,4 @@ Changes requested:
 {"verdict": "changes_requested", "findings": [{"id": "R1-1", "severity": "high", "reason": "Truncation can split a multi-byte rune, producing invalid UTF-8", "claim": "TruncateEllipsis indexes the string by byte offset without checking rune boundaries", "evidence": "internal/textutil/truncate.go:14", "required": "Use utf8.RuneCountInString or walk runes to find a safe cut point"}], "inspected": ["internal/textutil/truncate.go"]}
 </mivia_output>
 
-The examples above are illustrative only - report the findings you actually verified against
-the implementation you were bound.
+This example is for illustration only. Report the findings you verified against the implementation for your own task.

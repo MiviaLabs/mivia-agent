@@ -2,13 +2,18 @@
 
 ## Output contract (READ FIRST — before the methodology below)
 
-Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. This
-step is NOT the skill's markdown report: do NOT emit the bug-audit skill's Finding Format
-blocks, headings, bullets, prose, or code fences (```) inside or outside the envelope. Keep the skill's CONTENT
-requirements (invariant, evidence, reachable path, impact, regression test, sweep) as the
-JSON field values. The schema declares the only valid keys — no extra keys. `has_perf` is
-the STRING "true" or "false" (quoted), never a boolean. An invalid shape is rejected and
-you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+This step does not use the skill's markdown report. Do not emit the bug-audit skill's Finding
+Format: no blocks, headings, bullets, prose, or code fences (```) inside or outside the
+envelope. Keep the skill's content requirements (invariant, evidence, reachable path, impact,
+regression test, sweep) as JSON field values. The schema lists the only valid keys. It allows
+no extra keys. Set `has_perf` to the quoted string "true" or "false". Never set it to a
+boolean. The engine rejects an invalid shape and asks you again with the schema.
 
 ---
 
@@ -62,10 +67,14 @@ when any finding has class "perf", else "false". List every workspace path you i
 
 ## Output contract
 
-Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
-the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
-Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -81,5 +90,4 @@ One confirmed bug:
 {"findings": [{"id": "H-1", "class": "logic", "severity": "high", "title": "TruncateEllipsis can split a multi-byte rune", "invariant": "Output of TruncateEllipsis must be valid UTF-8", "evidence": "internal/textutil/truncate.go:14 indexes s[:n] by byte offset with no rune-boundary check", "reachable_path": "internal/cli/render.go:52 calls TruncateEllipsis on user-controlled terminal output", "impact": "Invalid UTF-8 written to the terminal writer, corrupting output", "remediation": "Walk runes to find a safe cut point before slicing", "regression_test": "TestTruncateEllipsis_MultiByteBoundary", "sweep": "grepped textutil for other byte-offset slices; none found"}], "finding_count": 1, "no_findings": false, "has_perf": "false", "inspected": ["internal/textutil/truncate.go", "internal/cli/render.go"]}
 </mivia_output>
 
-The examples above are illustrative only - report the findings you actually confirmed in the
-scope you were bound.
+This example is for illustration only. Report the findings you confirmed in the scope for your own task.
