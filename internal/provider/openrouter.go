@@ -27,6 +27,11 @@ func NewOpenRouter(opts Options) (Completer, error) {
 	return NewOpenAICompatWithOptions(CompatOptions{
 		Name: "openrouter", BaseURL: base, APIKey: opts.APIKey,
 		HTTPReferer: referer, XTitle: title, CacheUsageEnabled: opts.CacheUsageEnabled,
+		// OpenRouter forwards Anthropic-style cache_control content markers to
+		// upstream models with explicit caching and documents that models
+		// without it ignore the marker, so the stable prefix is marked
+		// whenever prompt_cache is not "off".
+		CacheMarkersEnabled: opts.CacheMarkersEnabled,
 		// OpenRouter accepts the top-level reasoning_effort shorthand on Chat
 		// Completions and normalizes it per upstream model. A model that wants
 		// the canonical nested object names reasoning_dialect = "openrouter".

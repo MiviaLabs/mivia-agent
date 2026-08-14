@@ -44,9 +44,9 @@ type OpenAICompat struct {
 	// cacheMarkersEnabled mirrors CompatOptions.CacheMarkersEnabled: when true
 	// the client sends explicit cache_control markers (Anthropic-style) on the
 	// stable prefix. Immutable mirror of a construction-time option, safe to
-	// read without synchronization. Default false, and no current provider
-	// factory sets it - poolside/laguna does NOT support caching on
-	// OpenRouter - so this is infrastructure for future cache-capable models.
+	// read without synchronization. The openrouter factory sets it whenever
+	// [provider] prompt_cache is not "off"; implicit-cache providers
+	// (deepseek, zai, ollama) never set it.
 	cacheMarkersEnabled bool
 	// reasoning is this provider's default wire dialect for reasoning control.
 	// Set once at construction and never mutated. Empty means the provider has
@@ -89,8 +89,9 @@ type CompatOptions struct {
 	// request.
 	CacheUsageEnabled bool
 	// CacheMarkersEnabled requests explicit cache_control markers on the
-	// stable prefix. Default false; no factory sets it (laguna has no
-	// OpenRouter caching) - infrastructure for future cache-capable models.
+	// stable prefix. Default false. The openrouter factory enables it when
+	// [provider] prompt_cache != "off"; implicit-cache providers leave it
+	// off so their bodies stay byte-identical.
 	CacheMarkersEnabled bool
 	// Reasoning is this provider's default reasoning wire dialect, used when a
 	// request carries a level but names no dialect of its own. Empty means the
