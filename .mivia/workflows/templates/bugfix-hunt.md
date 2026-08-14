@@ -4,7 +4,7 @@
 
 Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. This
 step is NOT the skill's markdown report: do NOT emit the bug-audit skill's Finding Format
-blocks, headings, bullets, or code fences (```) inside or outside the envelope. Keep the skill's CONTENT
+blocks, headings, bullets, prose, or code fences (```) inside or outside the envelope. Keep the skill's CONTENT
 requirements (invariant, evidence, reachable path, impact, regression test, sweep) as the
 JSON field values. The schema declares the only valid keys — no extra keys. `has_perf` is
 the STRING "true" or "false" (quoted), never a boolean. An invalid shape is rejected and

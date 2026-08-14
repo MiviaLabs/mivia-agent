@@ -3,7 +3,7 @@
 ## Output contract (READ FIRST — before the methodology below)
 
 Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. No
-markdown report, headings, bullets, or code fences (```) inside or outside the envelope. The schema
+markdown report, headings, bullets, prose, or code fences (```) inside or outside the envelope. The schema
 declares the only valid keys — no extra keys. An invalid shape is rejected and you will be
 asked again with the schema.
 
