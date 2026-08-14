@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -32,13 +31,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/budget", "/steps":
 		return m.handleTuiLimitsSlash(cmd, fields)
 	case "/compact":
-		if err := m.session.Compact(context.Background()); err != nil {
-			m.appendInfo("context compaction failed: " + err.Error())
-		} else {
-			usage := m.session.ContextUsage()
-			m.appendInfo(fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens)))
-		}
-		return true
+		return m.handleTuiCompactSlash()
 	case "/new", "/clear", "/sessions", "/worktrees":
 		return m.handleTuiSessionLifecycleSlash(cmd, fields)
 	case "/queue":
