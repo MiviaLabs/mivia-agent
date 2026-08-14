@@ -126,9 +126,10 @@ a later delivery attempt succeeds once the network recovers. See the
 ## Stacking (small-PR delivery)
 
 Stacking is a generic engine capability that produces small, stacked,
-incrementally-merged PRs. Any workflow opts in with a per-workflow
-`[stacking]` section. The global default is on; a workflow deliberately
-turns it off with `enabled = false`. The engine injects the plan, decompose,
+incrementally-merged PRs. A workflow opts in with a per-workflow
+`[stacking]` section that names `plan_step` and `implement_step`; without
+the section the workflow runs single-PR. A declared section is enabled
+unless it sets `enabled = false`. The engine injects the plan, decompose,
 and chunk mechanics — no per-workflow boilerplate.
 
 ### Admission-time synthesis and digest stability

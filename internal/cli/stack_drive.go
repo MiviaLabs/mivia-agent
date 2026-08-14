@@ -70,7 +70,7 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 
 	wf := prepared.compiled
 	if wf.Stacking == nil || !wf.Stacking.Enabled {
-		return fmt.Errorf("stack drive: workflow %q is not stacking-enabled", name)
+		return fmt.Errorf("stack drive: workflow %q is not stacking-enabled; declare a [stacking] table with plan_step and implement_step in its definition", name)
 	}
 	if !wf.DeliveryActive() {
 		return fmt.Errorf("stack drive: workflow %q has no active delivery policy; stacking requires chunk PR delivery", name)

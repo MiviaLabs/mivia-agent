@@ -8,9 +8,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
-// compileStackingFixture compiles the shared stacking fixture (default-on
-// stacking, plan and implement inferred) and fails the test when the resolved
-// config is missing.
+// compileStackingFixture compiles the shared stacking fixture (explicit
+// [stacking] table with plan and implement steps) and fails the test when
+// the resolved config is missing.
 func compileStackingFixture(t *testing.T) *CompiledWorkflow {
 	t.Helper()
 	cw, err := Compile(stackingFixture())
@@ -89,7 +89,7 @@ func TestSynthesizeStacking_NilStackingReturnsSamePointer(t *testing.T) {
 		t.Fatalf("Compile failed: %v", err)
 	}
 	if cw.Stacking != nil {
-		t.Fatal("minimal workflow resolved stacking, want nil (not inferable)")
+		t.Fatal("minimal workflow resolved stacking, want nil (no [stacking] table)")
 	}
 	synth, err := SynthesizeStacking(cw)
 	if err != nil {
