@@ -70,6 +70,11 @@ type Preparation struct {
 	// the agent loop). Both are zero when nothing was elided.
 	ElidedMessages int
 	ElidedBytes    int
+	// ElidedReasoningMessages and ElidedReasoningBytes are content-free
+	// aggregates of stale assistant reasoning replaced with a constant marker
+	// on the planner compaction path. Both are zero when nothing was elided.
+	ElidedReasoningMessages int
+	ElidedReasoningBytes    int
 }
 
 // ValidateToken checks that an asynchronous preparation still belongs to the

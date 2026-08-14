@@ -121,6 +121,8 @@ func (l *Loop) recordPreparation(preparation contextmgr.Preparation) {
 		l.turnAfterTokens = preparation.AfterTokens
 		l.turnElidedMessages += preparation.ElidedMessages
 		l.turnElidedBytes += preparation.ElidedBytes
+		l.turnElidedReasoningMessages += preparation.ElidedReasoningMessages
+		l.turnElidedReasoningBytes += preparation.ElidedReasoningBytes
 	}
 	if l.turnCompacted {
 		preparation.Compacted = true
@@ -128,6 +130,8 @@ func (l *Loop) recordPreparation(preparation contextmgr.Preparation) {
 		preparation.AfterTokens = l.turnAfterTokens
 		preparation.ElidedMessages = l.turnElidedMessages
 		preparation.ElidedBytes = l.turnElidedBytes
+		preparation.ElidedReasoningMessages = l.turnElidedReasoningMessages
+		preparation.ElidedReasoningBytes = l.turnElidedReasoningBytes
 	}
 	l.LastPreparation = preparation
 	l.HasPreparation = true
@@ -139,6 +143,8 @@ func (l *Loop) resetTurnCompaction() {
 	l.turnAfterTokens = 0
 	l.turnElidedMessages = 0
 	l.turnElidedBytes = 0
+	l.turnElidedReasoningMessages = 0
+	l.turnElidedReasoningBytes = 0
 }
 
 func interruptedContext(ctx context.Context, err error) bool {

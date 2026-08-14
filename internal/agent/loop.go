@@ -52,6 +52,11 @@ type Loop struct {
 	turnAfterTokens    int
 	turnElidedMessages int
 	turnElidedBytes    int
+	// turnElidedReasoningMessages/Bytes mirror the tool-result pair for the
+	// reasoning-elision counters, so a later non-compacting step cannot
+	// erase an earlier step's reasoning accounting.
+	turnElidedReasoningMessages int
+	turnElidedReasoningBytes    int
 	// TurnState accumulates bounded, content-free host facts (omitted-message
 	// evidence, tool names, changed surfaces, risks, latest assistant state)
 	// for the summary envelope of the current run. Reset at Run start; it

@@ -62,8 +62,14 @@ type PlanResult struct {
 	// when the request is below the trigger or no body was eligible.
 	ElidedMessages int
 	ElidedBytes    int
-	SourceRange    contextstate.SourceRange
-	IdempotencyKey string
+	// ElidedReasoningMessages and ElidedReasoningBytes are content-free
+	// aggregates of stale assistant reasoning replaced with
+	// reasoningElisionMarker on the compaction path. Both are zero when the
+	// request is below the trigger or no reasoning was eligible.
+	ElidedReasoningMessages int
+	ElidedReasoningBytes    int
+	SourceRange             contextstate.SourceRange
+	IdempotencyKey          string
 }
 
 // PlannerResult is a descriptive alias for PlanResult.
