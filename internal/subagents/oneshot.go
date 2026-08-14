@@ -102,7 +102,6 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 
 	return json.Marshal(map[string]any{
 		"output": reply,
-		"task":   taskPrompt,
 	})
 }
 
