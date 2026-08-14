@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -174,6 +175,18 @@ func (c *coordinator) startReady(h *RunHandle, ready []subagents.Task, pending m
 				cancelErr = context.Canceled
 			}
 			results[task.ID] = subagents.Result{TaskID: task.ID, Status: "canceled", Err: cancelErr}
+			delete(pending, task.ID)
+		} else if settled, ok := c.settledTaskResult(h, task.ID); ok {
+			// The dispatch CAS lost to a task another executor already drove
+			// terminal (live: a panel member's provider call outlives the
+			// claim lease; the rejoining process marks the running task
+			// failed, and this executor's re-dispatch then reads that settled
+			// state). The durable terminal record wins: adopt it as the
+			// task's result and do NOT join the invalid-transition artifact
+			// into the run error - it previously killed the whole workflow
+			// run on every such rejoin.
+			log.Printf("coordinator: task %q already settled as %s by another executor; adopting the durable outcome", task.ID, settled.Status)
+			results[task.ID] = settled
 			delete(pending, task.ID)
 		} else {
 			runErr = joinError(runErr, err)

@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -160,6 +161,19 @@ func (c *coordinator) tryTaskStatusCAS(ctx context.Context, runID, taskID string
 	// when runDAG already terminal-transitioned the task via retry).
 	if snap.Status == newStatus {
 		return true
+	}
+	// Lost to a settled record: another executor (a rejoin after this
+	// holder's claim lease expired mid-execution - live: a panel member's
+	// provider call outlives the lease, the rejoining process marks the
+	// running task failed, then this executor's real result arrives) already
+	// drove the task to a DIFFERENT terminal status with no legal edge to
+	// newStatus. The CAS would deterministically return ErrInvalidTransition
+	// and kill the whole run; the durable record is already terminal, so this
+	// is a benign lost race: skip the write, keep the settled status, and do
+	// not join an error.
+	if IsTaskTerminal(snap.Status) && !ledger.ValidTaskTransition(snap.Status, newStatus) {
+		log.Printf("coordinator: task %q already settled as %s by another executor; dropping late %s result", taskID, snap.Status, newStatus)
+		return false
 	}
 	if err := c.repo.CompareAndSetTaskStatus(ctx, runID, taskID, snap.Version, newStatus); err != nil {
 		*runErr = joinError(*runErr, fmt.Errorf("update task %q: %w", taskID, err))
