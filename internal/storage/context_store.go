@@ -11,16 +11,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
-const (
-	contextFailureAfterSessionCreation = "after-session-creation"
-	contextFailurePayloadInsert        = "payload-insert"
-	contextFailureSourceAppend         = "source-append"
-	contextFailureCheckpointInsert     = "checkpoint-insert"
-	contextFailureCompletionMark       = "completion-mark"
-	contextFailureActivePointerUpdate  = "active-pointer-update"
-	contextFailureRevisionUpdate       = "revision-update"
-)
-
 // EnsureSession creates the zero-revision context head and binds it to the
 // owner capability. Existing heads are idempotent only for the same owner and
 // binding.
@@ -30,6 +20,14 @@ func (s *SQLite) EnsureSession(ctx context.Context, request contextstate.EnsureS
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// Retried while the write lock is busy: this call opens the session for
+	// a first turn, so a transient cross-process lock collision must not
+	// surface as a turn error. The operation is idempotent, so a retry is
+	// safe.
+	return retrySQLiteBusy(ctx, func() error { return s.ensureSessionTx(ctx, request) })
+}
+
+func (s *SQLite) ensureSessionTx(ctx context.Context, request contextstate.EnsureSessionRequest) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -111,6 +109,14 @@ func (s *SQLite) Commit(ctx context.Context, request contextstate.CommitRequest)
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// Retried while the write lock is busy: this call persists a finished
+	// turn, so a transient cross-process lock collision must not lose the
+	// turn. A retry is safe: the operation-key check inside treats a
+	// request that already committed as a no-op.
+	return retrySQLiteBusy(ctx, func() error { return s.commitTx(ctx, request) })
+}
+
+func (s *SQLite) commitTx(ctx context.Context, request contextstate.CommitRequest) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -466,20 +472,4 @@ func requireContextRows(result sql.Result, conflict error) error {
 		return conflict
 	}
 	return nil
-}
-
-func (s *SQLite) contextFailure(step string) error {
-	s.failureMu.Lock()
-	defer s.failureMu.Unlock()
-	if s.contextFailureStep != step {
-		return nil
-	}
-	s.contextFailureStep = ""
-	return fmt.Errorf("injected context failure at %s", step)
-}
-
-func (s *SQLite) injectContextFailure(step string) {
-	s.failureMu.Lock()
-	s.contextFailureStep = step
-	s.failureMu.Unlock()
 }
