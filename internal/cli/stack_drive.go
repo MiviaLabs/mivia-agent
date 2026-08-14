@@ -194,16 +194,9 @@ func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, 
 		// declared more scope than it planned (§12.1). Request the next wave
 		// before considering the stack complete.
 		wave++
-		nextChunks, nextHasMore, nextRemaining, err := admitDecomposeContinuationRun(prepared, stackID, wave, remainingScope, planInputs, stdout, stderr)
+		nextChunks, nextHasMore, nextRemaining, err := admitNextDecomposeWave(prepared, ledger, stackID, wave, chunks, remainingScope, planInputs, stdout, stderr)
 		if err != nil {
-			return fmt.Errorf("stack drive: %w", err)
-		}
-		if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks)+len(nextChunks) > maxTotal {
-			return fmt.Errorf("stack drive: stack %s would admit %d total chunks, exceeding max_total_chunks=%d (already have %d, wave %d adds %d)",
-				stackID, len(chunks)+len(nextChunks), maxTotal, len(chunks), wave, len(nextChunks))
-		}
-		if err := seedStackLedger(ledger, stackID, nextChunks); err != nil {
-			return fmt.Errorf("stack drive: wave %d seed: %w", wave, err)
+			return err
 		}
 		chunks = append(chunks, nextChunks...)
 		hasMore, remainingScope = nextHasMore, nextRemaining
