@@ -64,7 +64,7 @@ func TestContextSetupCoverageConfigureErrorsAndZeroPolicy(t *testing.T) {
 	if policy := contextRedactionPolicy(&config.Resolved{}); policy.Configured {
 		t.Fatal("empty redaction policy is configured")
 	}
-	if err := enableSessionContext(nil, "", nil); err == nil {
+	if err := enableSessionContext(nil, "", nil, nil); err == nil {
 		t.Fatal("nil context components succeeded")
 	}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})

@@ -324,6 +324,14 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 
 `[context] max_source_event_bytes` is the chunk size for durable source event payloads, not a whole-payload reject. `0` uses a built-in default chunk size (64 KiB). Large payloads store as an ordered chunk sequence under one content ref (SHA-256 of the full payload). ReadPayload reassembles byte-identical and fails closed on digest mismatch.
 
+## LLM compaction summaries
+
+`[context.summary] enabled` (default `false`) turns on the bounded provider call that summarizes what context compaction dropped. The call uses the session's provider and model. The validated summary is injected into the next request as a host-authored `context-summary` message.
+
+Two more conditions must hold, or the summary stays off: a configured `[privacy]` redaction policy, and a resolved provider endpoint. A summary the redaction policy refuses is dropped, never sent or stored.
+
+Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call.
+
 ## Subagent knobs
 
 | Key | Type | Default | Meaning |

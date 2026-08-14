@@ -94,6 +94,20 @@ type ContextConfig struct {
 	// CheckpointMetadataBytes bounds the summary_metadata column within a
 	// checkpoint record. Zero means uncapped.
 	CheckpointMetadataBytes int `toml:"checkpoint_metadata_bytes"`
+	// Summary is the [context.summary] policy sub-table. Unlike the numeric
+	// ceilings above, it is behavior policy, not a storage bound.
+	Summary ContextSummaryConfig `toml:"summary"`
+}
+
+// ContextSummaryConfig is the operator switch for LLM-backed compaction
+// summaries. It is disabled by default: a workspace that configures nothing
+// keeps structural-only compaction.
+type ContextSummaryConfig struct {
+	// Enabled turns on the bounded provider call that summarizes what
+	// compaction dropped. The call also requires a configured [privacy]
+	// redaction policy and a resolved provider endpoint; without either, the
+	// summary stays disabled.
+	Enabled bool `toml:"enabled"`
 }
 
 // IntegrationsConfig holds API keys and config for third-party services.
