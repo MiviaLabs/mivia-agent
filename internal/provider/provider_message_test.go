@@ -220,6 +220,63 @@ func TestAdoptingProviderKeepsCurrentReasoningLessToolExchange(t *testing.T) {
 	}
 }
 
+func TestTerminalExchangeSurvivesTrailingInjectedMessages(t *testing.T) {
+	// The host appends messages after the current exchange's tool results
+	// before the request ships: the user-role context summary and the
+	// conclude nudge. The terminal-exchange guard must ignore those trailing
+	// messages, or the reject gate drops the CURRENT exchange with its tool
+	// result and the model never sees the result it just produced.
+	call := toolCall("current", "lookup", `{}`)
+	summary := Message{Role: RoleUser, Content: "[host-injected context summary]", Name: "context-summary"}
+	nudge := Message{Role: RoleUser, Content: "conclude with what you have", Name: "conclude-nudge"}
+	msgs := []Message{
+		{Role: RoleUser, Content: "lookup"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{call}}, // no reasoning
+		{Role: RoleTool, ToolCallID: "current", Name: "lookup", Content: "found"},
+		summary,
+	}
+	out := toAPIMessages(msgs, true, true)
+	if len(out) != 4 || len(out[1].ToolCalls) != 1 || out[2].ToolCallID != "current" {
+		t.Fatalf("summary tail: current tool exchange was dropped: %+v", out)
+	}
+	// Both trailing injections at once (summary then nudge) must also keep it.
+	msgs = append(msgs, nudge)
+	out = toAPIMessages(msgs, true, true)
+	if len(out) != 5 || len(out[1].ToolCalls) != 1 || out[2].ToolCallID != "current" {
+		t.Fatalf("both tails: current tool exchange was dropped: %+v", out)
+	}
+}
+
+func TestTrailingToolCallTurnStillMarksOlderExchangeNonTerminal(t *testing.T) {
+	// The trailing-message trim must never trim exchange-shaped messages: an
+	// older completed exchange followed by a NEW assistant tool-call turn is
+	// still non-terminal and is dropped by the reject gate.
+	c1 := toolCall("c1", "lookup", `{}`)
+	c2 := toolCall("c2", "lookup", `{}`)
+	msgs := []Message{
+		{Role: RoleUser, Content: "lookup twice"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{c1}},
+		{Role: RoleTool, ToolCallID: "c1", Name: "lookup", Content: "a"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{c2}},
+		{Role: RoleTool, ToolCallID: "c2", Name: "lookup", Content: "b"},
+		{Role: RoleUser, Content: "[host-injected context summary]", Name: "context-summary"},
+	}
+	out := toAPIMessages(msgs, false, true)
+	for _, am := range out {
+		if am.ToolCallID == "c1" {
+			t.Fatalf("older tool result survived: %+v", am)
+		}
+		for _, tc := range am.ToolCalls {
+			if tc.ID == "c1" {
+				t.Fatalf("older tool call survived: %+v", am)
+			}
+		}
+	}
+	if len(out) != 4 || out[1].ToolCalls[0].ID != "c2" || out[2].ToolCallID != "c2" {
+		t.Fatalf("terminal exchange or trailing summary lost: %+v", out)
+	}
+}
+
 func TestRejectModeDropsOlderReasoningLessExchangeKeepsTerminal(t *testing.T) {
 	// D2 pins the documented tradeoff: with RejectReasoningLessToolTurns on, an
 	// older reasoning-less exchange is dropped WITH its tool results; only the

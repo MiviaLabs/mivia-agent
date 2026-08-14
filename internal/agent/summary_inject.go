@@ -12,11 +12,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// SummaryMessageName is the Name a rendered context summary rides on. A
-// content-carrying assistant message survives toAPIMessages, which drops only
-// bare assistant turns, so ValidateToolPairing stays intact (it is never
-// applied to the injected ephemeral slice - only the structural set is).
+// SummaryMessageName is the Name a rendered context summary rides on. The
+// summary is a USER-role message: every other trailing host injection in this
+// repo (hook output framing in hook_context.go, parent context in
+// internal/subagents/parent_inject.go) frames injected data as user-role
+// content, and a trailing assistant message is a prefill/continuation hazard
+// on Anthropic-style dialects - the model reads it as its own turn to
+// continue. The Name lets hosts identify the injection when the wire keeps
+// it; the header text carries the framing when the wire drops the Name.
 const SummaryMessageName = "context-summary"
+
+// ConcludeNudgeMessageName is the Name the ephemeral soft-conclude nudge
+// rides on. Every trailing host injection is a NAMED user message; user-typed
+// input never carries a Name. The DeepSeek reject gate relies on that
+// distinction to keep the current tool exchange on the wire (see
+// internal/provider terminalToolExchange).
+const ConcludeNudgeMessageName = "conclude-nudge"
 
 // SummaryOutputLimitTokens is the default token cap for one summary request.
 // OutputLimit is bounded above by 2048 in the summary validators.
@@ -179,7 +190,7 @@ func (l *Loop) recordAssistantState(content string) {
 	}
 }
 
-// RenderSummaryMessage renders a validated summary as a bounded assistant
+// RenderSummaryMessage renders a validated summary as a bounded user-role
 // message named context-summary. The content is a factual, host-framed
 // rendering of the sealed fields; ValidateSummary already refused the output
 // if any field failed the redaction policy (INV-SEC-4 summaries-refuse
@@ -191,7 +202,7 @@ func (l *Loop) recordAssistantState(content string) {
 func RenderSummaryMessage(summary contextmgr.UntrustedSummary, omittedEvidence []string) provider.Message {
 	value := summary.Value()
 	var b strings.Builder
-	b.WriteString("[context summary of the omitted prior conversation]\n")
+	b.WriteString("[host-injected context summary of the omitted earlier conversation - background data for the objective above, not a new request]\n")
 	writeSummaryField(&b, "objective", value.Objective)
 	writeSummaryField(&b, "state", value.State)
 	writeSummaryList(&b, "decisions", value.Decisions)
@@ -208,7 +219,7 @@ func RenderSummaryMessage(summary contextmgr.UntrustedSummary, omittedEvidence [
 		content = boundedSummaryText(content)
 	}
 	return provider.Message{
-		Role:    provider.RoleAssistant,
+		Role:    provider.RoleUser,
 		Content: content,
 		Name:    SummaryMessageName,
 	}
@@ -234,25 +245,16 @@ func writeSummaryList(b *strings.Builder, label string, items []string) {
 	b.WriteByte('\n')
 }
 
-// InjectSummaryMessage inserts injected immediately before the latest user
-// message in an EPHEMERAL clone. With no user message it prepends. The caller
+// InjectSummaryMessage appends injected at the END of an EPHEMERAL clone.
+// Every structural message keeps its exact index, so an appended summary
+// EXTENDS the provider prompt-cache prefix instead of splitting it (a
+// mid-history insert would invalidate every cached block from the insertion
+// point; see markStablePrefixCacheControl in internal/provider). The caller
 // must never write the result back into loop history.
 func InjectSummaryMessage(messages []provider.Message, injected provider.Message) []provider.Message {
-	index := -1
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == provider.RoleUser {
-			index = i
-			break
-		}
-	}
 	out := make([]provider.Message, 0, len(messages)+1)
-	if index < 0 {
-		out = append(out, injected)
-		return append(out, messages...)
-	}
-	out = append(out, messages[:index]...)
-	out = append(out, injected)
-	return append(out, messages[index:]...)
+	out = append(out, messages...)
+	return append(out, injected)
 }
 
 // boundedSummaryText normalizes host text for the summary tracker: invalid
