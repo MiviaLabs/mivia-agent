@@ -63,3 +63,6 @@ bin/
 codegraph.db*
 .codegraph/
 .mivia/run-logs/
+
+# zcode session scratch state
+.zcode/

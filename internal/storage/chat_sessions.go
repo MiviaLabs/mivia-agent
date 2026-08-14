@@ -97,23 +97,32 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 	if err := rejectManagedCatalogKey(ctx, s.db, principal, name); err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
+	live, livePayload, hasLive, err := s.loadLiveContextSession(ctx, principal, name)
+	if err != nil {
+		return nil, contextstate.SessionCatalogInfo{}, err
+	}
+	// A live session's transcript lives in its completed context
+	// checkpoints; the chat_sessions row named by the session id is only a
+	// catalog projection of that state, refreshed by SaveAfterTurn on its
+	// own schedule (every turn in line mode, the save paths in the TUI). A
+	// projection that lags the checkpoints must not shadow the newer state:
+	// serving it made a reload drop every turn after the last projection
+	// write, the user's messages included. A row with no completed
+	// checkpoint (a cleared or never-turned session) serves nothing, and
+	// the snapshot below stays the payload source for it.
+	if hasLive && len(livePayload) > len(emptyContextPayload) {
+		return livePayload, live, nil
+	}
 	var payload []byte
 	var info contextstate.SessionCatalogInfo
-	err := s.db.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree)
-	if err == sql.ErrNoRows {
-		var sourceCount int
-		err = s.db.QueryRowContext(ctx, `SELECT cs.session_id,COALESCE(cs.title,''),cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id IS NULL`, []byte("[]"), principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Title, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree)
-		if err == sql.ErrNoRows {
-			return nil, contextstate.SessionCatalogInfo{}, contextstate.ErrSessionNotFound
+	err = s.db.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree)
+	if errors.Is(err, sql.ErrNoRows) {
+		if hasLive {
+			// No snapshot exists: the live row is the only source, exactly
+			// as the pre-fix fallback arm served it (empty payload included).
+			return livePayload, live, nil
 		}
-		if err != nil {
-			return nil, contextstate.SessionCatalogInfo{}, err
-		}
-		info.Name = info.SessionID
-		info.MessageCount = sourceCount
-		info.TurnCount = sourceCount
-		info.TokenCount = 0
-		return append([]byte(nil), payload...), info, nil
+		return nil, contextstate.SessionCatalogInfo{}, contextstate.ErrSessionNotFound
 	}
 	if err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
@@ -126,18 +135,48 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 	// chat --session <id>" resume fork a new session id - and, after a
 	// mid-session model switch, fail the first checkpoint commit with
 	// "stale binding: context binding changed" ("chat turn failed" on the
-	// wire, the turn lost). The snapshot stays the payload source; only the
-	// live-session identity (and its title) come from the context row.
-	var liveTitle sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(title,'') FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0 AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name).Scan(&liveTitle)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, contextstate.SessionCatalogInfo{}, err
-	}
-	if err == nil {
+	// wire, the turn lost). The live row here has no completed checkpoint
+	// (it was served above otherwise), so only the live-session identity
+	// (and its title) come from it.
+	if hasLive {
 		info.SessionID = name
-		info.Title = liveTitle.String
+		info.Title = live.Title
 	}
 	return append([]byte(nil), payload...), info, nil
+}
+
+// emptyContextPayload is the COALESCE default the live-row query serves when
+// a session row exists but no completed checkpoint backs it. A payload at or
+// below this length carries no messages, so the caller keeps its snapshot.
+var emptyContextPayload = []byte("[]")
+
+// liveContextSessionSQL resolves the live context session row behind a
+// catalog name. It is the payload source for a live session: the session's
+// turns are durable in its completed checkpoints, and the chat_sessions row
+// named by the session id is only a listing projection of that state.
+const liveContextSessionSQL = `SELECT cs.session_id,COALESCE(cs.title,''),cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id IS NULL`
+
+// loadLiveContextSession returns the live context session row behind name.
+// found is false when no live row exists (a plain named snapshot, or a session
+// whose live row is tombstoned); the caller then reads the chat_sessions
+// snapshot instead. The payload is emptyContextPayload when the row carries
+// no completed checkpoint, and the caller decides whether that is usable.
+func (s *SQLite) loadLiveContextSession(ctx context.Context, principal contextstate.Principal, name string) (contextstate.SessionCatalogInfo, []byte, bool, error) {
+	var payload []byte
+	var info contextstate.SessionCatalogInfo
+	var sourceCount int
+	err := s.db.QueryRowContext(ctx, liveContextSessionSQL, emptyContextPayload, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Title, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree)
+	if errors.Is(err, sql.ErrNoRows) {
+		return contextstate.SessionCatalogInfo{}, nil, false, nil
+	}
+	if err != nil {
+		return contextstate.SessionCatalogInfo{}, nil, false, err
+	}
+	info.Name = info.SessionID
+	info.MessageCount = sourceCount
+	info.TurnCount = sourceCount
+	info.TokenCount = 0
+	return info, payload, true, nil
 }
 
 func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Principal) ([]contextstate.SessionCatalogInfo, error) {
