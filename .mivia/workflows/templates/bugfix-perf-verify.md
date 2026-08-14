@@ -2,8 +2,8 @@
 
 ## Output contract (READ FIRST — before the methodology below)
 
-Reply with ONLY one JSON object that satisfies the output schema appended to this task. No
-markdown report, headings, bullets, prose outside the JSON, or code fences (```). The schema
+Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. No
+markdown report, headings, bullets, or code fences (```) inside or outside the envelope. The schema
 declares the only valid keys — no extra keys. An invalid shape is rejected and you will be
 asked again with the schema.
 
@@ -61,6 +61,16 @@ after, and notes.
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to this task. Do not
-use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
-An invalid shape is rejected and you will be asked again with the schema.
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+<mivia_output>
+{"verdict": "approved", "measurements": [{"name": "BenchmarkTruncateEllipsis", "baseline": "1200 ns/op, 3 allocs/op", "after": "410 ns/op, 1 alloc/op", "notes": "Rune walk replaces a regexp-based split; measured with go test -bench=TruncateEllipsis -benchmem"}], "summary": "The fix reduces allocations and latency; no regression found.", "inspected": ["internal/textutil/truncate.go", "internal/textutil/truncate_bench_test.go"]}
+</mivia_output>
+
+The example above is illustrative only - report the measurements you actually took, not this
+example.

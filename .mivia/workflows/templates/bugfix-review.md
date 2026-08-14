@@ -2,8 +2,8 @@
 
 ## Output contract (READ FIRST — before the methodology below)
 
-Reply with ONLY one JSON object that satisfies the output schema appended to this task. No
-markdown report, headings, bullets, prose outside the JSON, or code fences (```). The schema
+Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. No
+markdown report, headings, bullets, or code fences (```) inside or outside the envelope. The schema
 declares the only valid keys — no extra keys. `has_perf` is the STRING "true" or "false"
 (quoted), never a boolean. An invalid shape is rejected and you will be asked again with the
 schema.
@@ -76,6 +76,24 @@ inspected in `inspected`. Do not make a finding about source you did not read.
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to this task. Do not
-use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
-An invalid shape is rejected and you will be asked again with the schema.
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+Approved, no open finding:
+
+<mivia_output>
+{"verdict": "approved", "has_perf": "false", "findings": [], "inspected": ["internal/textutil/truncate.go", "internal/textutil/truncate_test.go"]}
+</mivia_output>
+
+Changes requested:
+
+<mivia_output>
+{"verdict": "changes_requested", "has_perf": "false", "findings": [{"id": "R1-1", "severity": "medium", "reason": "The regression test does not fail on the pre-fix code", "claim": "TestTruncateEllipsis_MultiByteBoundary passes against both the old and new TruncateEllipsis", "evidence": "internal/textutil/truncate_test.go:20", "required": "Adjust the test input so it panics on the pre-fix byte-offset slice"}], "inspected": ["internal/textutil/truncate_test.go"]}
+</mivia_output>
+
+The examples above are illustrative only - report the findings you actually verified against
+the fix you were bound.
