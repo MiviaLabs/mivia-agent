@@ -135,18 +135,30 @@ func markStablePrefixCacheControl(body map[string]any) {
 	if !ok {
 		return
 	}
+	// maxCacheBreakpoints is Anthropic's hard budget; a request carrying more
+	// explicit markers is rejected with a 400. The single-system invariant
+	// keeps real requests at 3, but the cap fails safe if that ever drifts.
+	const maxCacheBreakpoints = 4
+	marked := 0
 	firstUserIndex := -1
 	for i, entry := range messages {
 		msg, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
+		if marked >= maxCacheBreakpoints-1 {
+			break
+		}
 		switch msg["role"] {
 		case "system":
-			markMessageContent(msg)
+			if markMessageContent(msg) {
+				marked++
+			}
 		case "user":
 			if firstUserIndex < 0 {
-				markMessageContent(msg)
+				if markMessageContent(msg) {
+					marked++
+				}
 				firstUserIndex = i
 			}
 		}
@@ -174,18 +186,22 @@ func markRollingBreakpoint(messages []any, firstUserIndex int) {
 }
 
 // markMessageContent converts one message's string content into a single text
-// content part carrying the ephemeral cache marker. Non-string content (or an
-// absent content field) is left untouched.
-func markMessageContent(msg map[string]any) {
+// content part carrying the ephemeral cache marker and reports whether it
+// marked. Non-string content (or an absent content field) is left untouched.
+// Empty content is left as a plain string: a legitimately empty tool result
+// (reading a zero-byte file) wrapped as an empty text part is rejected by
+// Anthropic with a 400, and an empty block is never worth a breakpoint.
+func markMessageContent(msg map[string]any) bool {
 	content, ok := msg["content"].(string)
-	if !ok {
-		return
+	if !ok || content == "" {
+		return false
 	}
 	msg["content"] = []any{map[string]any{
 		"type":          "text",
 		"text":          content,
 		"cache_control": map[string]any{"type": "ephemeral"},
 	}}
+	return true
 }
 
 // renameReasoningContentKey rewrites replayed assistant reasoning inside the
