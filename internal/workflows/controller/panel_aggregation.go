@@ -156,6 +156,22 @@ func walkNoDuplicateJSONKeys(dec *json.Decoder) error {
 	}
 }
 
+// dropPanelFindings returns the findings whose id is not in the dropped
+// set, preserving order.
+func dropPanelFindings(findings []PanelFinding, dropped []string) []PanelFinding {
+	drop := make(map[string]bool, len(dropped))
+	for _, id := range dropped {
+		drop[id] = true
+	}
+	kept := make([]PanelFinding, 0, len(findings))
+	for _, f := range findings {
+		if !drop[f.ID] {
+			kept = append(kept, f)
+		}
+	}
+	return kept
+}
+
 // ComputeHostVerdict computes the final panel gate verdict from decoded
 // member reports (D10). The model cannot override this computation: it is
 // changes_requested if any member reports that verdict or has one or more
@@ -250,13 +266,26 @@ func synthesisSkeleton(stepID string, inputs []PanelSynthesisMemberInput) ([]byt
 }
 
 // BuildSynthesisEnvelope builds the one host-owned JSON envelope the
-// synthesizer receives (D11). It decodes each member's raw output with
-// DecodeStrictPanelMemberReport, so invalid or oversized member JSON never
-// reaches synthesis (Fan-in matrix item 2). It stamps provenance for every
-// member from host-known data only, computes the monotonic host verdict from
-// the bounded reports, and enforces every bound in the plan's Bounds table
-// with overflow-safe sums.
+// synthesizer receives (D11) with no member-report filtering. It decodes
+// each member's raw output with DecodeStrictPanelMemberReport, so invalid
+// or oversized member JSON never reaches synthesis (Fan-in matrix item 2).
+// It stamps provenance for every member from host-known data only, computes
+// the monotonic host verdict from the bounded reports, and enforces every
+// bound in the plan's Bounds table with overflow-safe sums.
 func BuildSynthesisEnvelope(stepID string, inputs []PanelSynthesisMemberInput) (PanelSynthesisEnvelope, []byte, error) {
+	return BuildSynthesisEnvelopeWithFilter(stepID, inputs, nil)
+}
+
+// BuildSynthesisEnvelopeWithFilter is BuildSynthesisEnvelope plus a
+// host-side member-report filter. The filter returns the ids of findings
+// the host drops (the chunk finding-scope rule); the builder removes them,
+// records them in the envelope's DroppedFindings, and neutralizes a
+// changes_requested verdict whose findings list is empty after the drop -
+// or was empty from the start. A verdict with no findings carries no
+// actionable content, and the synthesizer's dispositions validate against
+// the filtered reports only. With a nil filter the builder applies none of
+// this, so non-chunk panels keep the exact legacy behavior.
+func BuildSynthesisEnvelopeWithFilter(stepID string, inputs []PanelSynthesisMemberInput, filter func(memberID string, report *PanelMemberReport) []string) (PanelSynthesisEnvelope, []byte, error) {
 	if len(inputs) < 2 || len(inputs) > 4 {
 		return PanelSynthesisEnvelope{}, nil, fmt.Errorf("panel synthesis envelope requires 2 to 4 members, got %d", len(inputs))
 	}
@@ -289,6 +318,18 @@ func BuildSynthesisEnvelope(stepID string, inputs []PanelSynthesisMemberInput) (
 		report, _, err := DecodeStrictPanelMemberReport(in.RawOutput)
 		if err != nil {
 			return PanelSynthesisEnvelope{}, nil, fmt.Errorf("panel member %q: %w", in.MemberID, err)
+		}
+		if filter != nil {
+			if dropped := filter(in.MemberID, &report); len(dropped) > 0 {
+				if envelope.DroppedFindings == nil {
+					envelope.DroppedFindings = make(map[string][]string, len(inputs))
+				}
+				envelope.DroppedFindings[in.MemberID] = dropped
+				report.Findings = dropPanelFindings(report.Findings, dropped)
+			}
+			if report.Verdict == PanelVerdictChangesRequested && len(report.Findings) == 0 {
+				report.Verdict = PanelVerdictApproved
+			}
 		}
 		reports[i] = report
 		keys := canonicalSourceKeys(in.MemberID, report)

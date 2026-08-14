@@ -36,6 +36,10 @@ const (
 	// grant (allow_publish=false or an inactive [delivery] policy), decided
 	// before any attempt.
 	ProgressDeliveryRefused ProgressKind = "delivery_refused"
+	// ProgressChunkScopeDropped reports the chunk finding-scope filter
+	// dropping review findings that demand sibling-chunk work, with the
+	// dropped finding ids in Detail.
+	ProgressChunkScopeDropped ProgressKind = "chunk_scope_dropped"
 )
 
 // ProgressEvent is one workflow progress observation. The CLI writer marshals

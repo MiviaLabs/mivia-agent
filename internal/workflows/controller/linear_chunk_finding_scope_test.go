@@ -318,6 +318,94 @@ func TestChunkFindingScopeKeepsGluedDeclaredDemand(t *testing.T) {
 	}
 }
 
+// recordingSink collects progress events for assertions.
+type recordingSink struct {
+	events []ProgressEvent
+}
+
+func (s *recordingSink) Emit(e ProgressEvent) {
+	s.events = append(s.events, e)
+}
+
+func (s *recordingSink) byKind(k ProgressKind) []ProgressEvent {
+	var got []ProgressEvent
+	for _, e := range s.events {
+		if e.Kind == k {
+			got = append(got, e)
+		}
+	}
+	return got
+}
+
+// runChunkScopeTestWithSink is runChunkScopeTest plus a recording progress
+// sink wired before Start.
+func runChunkScopeTestWithSink(t *testing.T, planJSON string, runner *scriptedRunner) (*LinearController, workflowledger.Repository, *recordingSink, error) {
+	t.Helper()
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, runner, chunkScopeWorkflow(t, -1), map[string]StepRuntime{
+		"implement":           {Agent: agents.ResolvedAgent{Name: "dev"}},
+		"review":              {Agent: agents.ResolvedAgent{Name: "rev"}},
+		"decompose":           {Agent: agents.ResolvedAgent{Name: "dev"}, Digest: "sha256:" + strings.Repeat("a", 64)},
+		"chunk_plan_validate": {Agent: agents.ResolvedAgent{Name: "dev"}, Digest: "sha256:" + strings.Repeat("b", 64)},
+	}, chunkModeInputs(planJSON), "wfr-chunk-scope-ev", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &recordingSink{}
+	if err := ctrl.SetProgressSink(sink); err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := ctrl.Run(context.Background())
+	return ctrl, repo, sink, runErr
+}
+
+// TestChunkFindingScopeEmitsDropEvent pins observability: dropping a
+// sibling-chunk finding publishes one chunk_scope_dropped event naming the
+// step, the attempt, and the dropped finding ids.
+func TestChunkFindingScopeEmitsDropEvent(t *testing.T) {
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": json.RawMessage(`{"ready":"yes","summary":"v1"}`),
+		"review#1": json.RawMessage(`{"verdict":"changes_requested","findings":[` +
+			scopeFinding("R0-1", "Implement internal/pathutil with SplitExt and internal/envutil with ParseBool") +
+			`],"inspected":["internal"]}`),
+	}}
+	_, _, sink, runErr := runChunkScopeTestWithSink(t, runeutilPlan, runner)
+	if runErr != nil {
+		t.Fatalf("run error = %v, want success", runErr)
+	}
+	drops := sink.byKind(ProgressChunkScopeDropped)
+	if len(drops) != 1 {
+		t.Fatalf("chunk_scope_dropped events = %d, want 1: %+v", len(drops), sink.events)
+	}
+	e := drops[0]
+	if e.StepID != "review" || e.AttemptNo != 1 {
+		t.Fatalf("event = %+v, want step review attempt 1", e)
+	}
+	if !strings.Contains(e.Detail, "R0-1") || !strings.Contains(e.Detail, "dropped 1 out-of-chunk-scope finding") {
+		t.Fatalf("detail = %q, want the dropped id and count", e.Detail)
+	}
+}
+
+// TestChunkFindingScopeNoDropEventWithoutDrops pins that a kept finding
+// publishes no drop event.
+func TestChunkFindingScopeNoDropEventWithoutDrops(t *testing.T) {
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": json.RawMessage(`{"ready":"yes","summary":"v1"}`),
+		"review#1": json.RawMessage(`{"verdict":"changes_requested","findings":[` +
+			scopeFinding("R0-1", "Fix the TrimSpace handling in `internal/runeutil/runeutil.go`") +
+			`],"inspected":["internal"]}`),
+		"implement#2": json.RawMessage(`{"ready":"yes","summary":"v2"}`),
+		"review#2":    json.RawMessage(`{"verdict":"approved","findings":[],"inspected":["internal"]}`),
+	}}
+	_, _, sink, runErr := runChunkScopeTestWithSink(t, runeutilPlan, runner)
+	if runErr != nil {
+		t.Fatalf("run error = %v, want success", runErr)
+	}
+	if drops := sink.byKind(ProgressChunkScopeDropped); len(drops) != 0 {
+		t.Fatalf("chunk_scope_dropped events = %d, want 0", len(drops))
+	}
+}
+
 // --- unit level ---
 
 func TestChunkDeclaredFilesNormalizesAndCounts(t *testing.T) {

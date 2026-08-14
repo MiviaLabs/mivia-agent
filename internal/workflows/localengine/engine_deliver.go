@@ -420,7 +420,7 @@ func localProgressKind(k controller.ProgressKind) events.Kind {
 		return events.KindWorkflowStepCompleted
 	case controller.ProgressRunFinished, controller.ProgressRunFailed:
 		return events.KindWorkflowRunFinished
-	case controller.ProgressDeliveryStage, controller.ProgressDeliveryRefused:
+	case controller.ProgressDeliveryStage, controller.ProgressDeliveryRefused, controller.ProgressChunkScopeDropped:
 		return events.KindWorkflowDeliveryStage
 	default:
 		return events.KindWorkflowStepHeartbeat

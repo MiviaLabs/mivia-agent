@@ -83,6 +83,11 @@ type PanelSynthesisEnvelope struct {
 	StepID      string                         `json:"step_id"`
 	HostVerdict string                         `json:"host_verdict"`
 	Members     []PanelSynthesisMemberEnvelope `json:"members"`
+	// DroppedFindings records, per member id, the finding ids the host
+	// chunk-scope filter removed before synthesis. Nil when nothing was
+	// dropped. Host-authored audit data: it lets an auditor reconcile the
+	// member raw output digest against the filtered report in the envelope.
+	DroppedFindings map[string][]string `json:"dropped_findings,omitempty"`
 }
 
 // PanelSynthesisMemberInput names one member's raw, already-terminal

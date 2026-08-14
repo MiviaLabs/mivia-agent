@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"fmt"
 	"path"
 	"regexp"
 	"sort"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/blockedpath"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // Chunk finding scope: a mechanical backstop for chunk-mode review loops.
@@ -52,14 +54,85 @@ const (
 // only rewrites the string fields this filter touched; the review gate
 // schema carries no numeric fields, so the any-typed round trip stays
 // lossless.
-func (c *LinearController) applyChunkFindingScope(step definition.Step, result *AgentStepResult, outMap map[string]any) {
-	if len(c.enforceChunkFindingScope(step, outMap)) == 0 {
+func (c *LinearController) applyChunkFindingScope(step definition.Step, attempt workflowledger.StepAttempt, result *AgentStepResult, outMap map[string]any) {
+	dropped := c.enforceChunkFindingScope(step, outMap)
+	if len(dropped) == 0 {
 		return
 	}
+	c.emitChunkScopeDrop(step.ID, attempt.AttemptNo, dropped)
 	if raw, err := json.Marshal(outMap); err == nil {
 		result.Output = raw
 		result.ValidatedOutput = outMap
 	}
+}
+
+// panelChunkScopeFilter returns the member-report filter for one panel
+// synthesis, or nil when the run is not an armed chunk-mode review. The
+// filter applies the STRICTER panel drop rule: panel findings carry no
+// required field (only title and description prose), so only
+// directory-shaped sibling tokens (missing packages, the live incident
+// class) may drop, and a base-name mention of a declared file keeps the
+// finding. The builder applies the returned dropped-id set, records it in
+// the envelope, and neutralizes a findings-less changes_requested verdict.
+func (c *LinearController) panelChunkScopeFilter(stepID string, attemptNo int) func(memberID string, report *PanelMemberReport) []string {
+	declared, armed := c.chunkScopeDeclared()
+	if !armed {
+		return nil
+	}
+	return func(memberID string, report *PanelMemberReport) []string {
+		var dropped []string
+		for _, f := range report.Findings {
+			if c.panelFindingDemandsSiblingChunkOnly(f.Title+" "+f.Description, declared) {
+				dropped = append(dropped, f.ID)
+			}
+		}
+		if len(dropped) > 0 {
+			c.emitChunkScopeDrop(stepID, attemptNo, dropped)
+		}
+		return dropped
+	}
+}
+
+// maxChunkScopeDropDetailRunes bounds the drop event's detail. Finding ids
+// are model-authored strings, so the list is capped, never dumped whole.
+const maxChunkScopeDropDetailRunes = 200
+
+// emitChunkScopeDrop publishes one chunk_scope_dropped progress event
+// naming the step, the attempt, and the dropped finding ids.
+func (c *LinearController) emitChunkScopeDrop(stepID string, attemptNo int, dropped []string) {
+	sort.Strings(dropped)
+	detail := fmt.Sprintf("dropped %d out-of-chunk-scope finding(s): %s", len(dropped), strings.Join(dropped, ", "))
+	if runes := []rune(detail); len(runes) > maxChunkScopeDropDetailRunes {
+		detail = string(runes[:maxChunkScopeDropDetailRunes]) + " ..."
+	}
+	c.emitProgress(ProgressEvent{
+		Kind: ProgressChunkScopeDropped, StepID: stepID, AttemptNo: attemptNo, Detail: detail,
+	})
+}
+
+// chunkScopeDeclared resolves the chunk's declared-file set and reports
+// whether the finding-scope filter is armed. Both filter surfaces (the
+// agent_gate output filter and the panel member-report filter) arm on the
+// same predicate, so the two cannot drift: a stacking workflow with hard
+// lines, in chunk mode, with a decodable chunk_plan that declares at least
+// one file.
+func (c *LinearController) chunkScopeDeclared() (map[string]bool, bool) {
+	if c.Workflow == nil || c.Workflow.Stacking == nil || c.Workflow.Stacking.HardLines <= 0 {
+		return nil, false
+	}
+	mode, err := validateStackingReservedInputs(c.Inputs, c.Workflow.Stacking)
+	if err != nil || mode != "chunk" {
+		return nil, false
+	}
+	raw, ok := c.Inputs["chunk_plan"].(string)
+	if !ok {
+		return nil, false
+	}
+	declared := chunkDeclaredFiles(raw)
+	if len(declared) == 0 {
+		return nil, false
+	}
+	return declared, true
 }
 
 // enforceChunkFindingScope drops findings that demand only sibling-chunk
@@ -77,23 +150,8 @@ func (c *LinearController) enforceChunkFindingScope(step definition.Step, output
 	if verdict, _ := output["verdict"].(string); verdict != "changes_requested" {
 		return nil
 	}
-	// Arm on the same predicate the delivery-time chunk-scope guard uses:
-	// a stacking workflow with hard lines, in chunk mode. Anything else
-	// (plan runs, single runs, workflows without stacking) has no declared
-	// slice, so no finding can be out of scope.
-	if c.Workflow == nil || c.Workflow.Stacking == nil || c.Workflow.Stacking.HardLines <= 0 {
-		return nil
-	}
-	mode, err := validateStackingReservedInputs(c.Inputs, c.Workflow.Stacking)
-	if err != nil || mode != "chunk" {
-		return nil
-	}
-	raw, ok := c.Inputs["chunk_plan"].(string)
-	if !ok {
-		return nil
-	}
-	declared := chunkDeclaredFiles(raw)
-	if len(declared) == 0 {
+	declared, armed := c.chunkScopeDeclared()
+	if !armed {
 		return nil
 	}
 	items, ok := output["findings"].([]any)
@@ -133,34 +191,67 @@ func (c *LinearController) enforceChunkFindingScope(step definition.Step, output
 // write-blocklisted path is never dropped: the blocked-path check must keep
 // its chance to fail the run with the honest cause.
 func (c *LinearController) findingDemandsSiblingChunkOnly(required string, declared map[string]bool) bool {
-	if len(c.WritePathBlocklist) > 0 && len(blockedpath.PathsDemandedInText(required, c.WritePathBlocklist)) > 0 {
-		return false
+	dir, file, only := c.siblingDemandBreakdown(required, declared)
+	return only && dir+file > 0
+}
+
+// panelFindingDemandsSiblingChunkOnly is the stricter rule for panel
+// findings. Panel reports carry no required field - only title and
+// description prose, which describes context as often as it demands work -
+// so only DIRECTORY-shaped sibling tokens (missing packages) may drop, and
+// any sibling FILE token keeps the finding: prose that discusses a sibling
+// file is evidence, not a demand for missing work.
+func (c *LinearController) panelFindingDemandsSiblingChunkOnly(text string, declared map[string]bool) bool {
+	dir, file, only := c.siblingDemandBreakdown(text, declared)
+	return only && dir > 0 && file == 0
+}
+
+// siblingDemandBreakdown classifies the path tokens of one demand text
+// against the declared files. only reports that EVERY token is a sibling
+// demand (at least one sibling token, no in-scope token, no foreign token,
+// no declared path or base name named in prose, no write-blocklisted
+// demand); dir and file count the sibling tokens by shape (a last segment
+// without an extension reads as a directory, the missing-package shape).
+func (c *LinearController) siblingDemandBreakdown(text string, declared map[string]bool) (dir, file int, only bool) {
+	if len(c.WritePathBlocklist) > 0 && len(blockedpath.PathsDemandedInText(text, c.WritePathBlocklist)) > 0 {
+		return 0, 0, false
 	}
-	// A slash-less declared file (Makefile, go.mod) named in prose is an
-	// in-scope demand. Such names carry no "/" so the path tokenizer skips
-	// them by design - matching every prose word against the tree would be
-	// guesswork - so an exact whole-word match keeps the finding.
-	for _, field := range strings.Fields(required) {
-		if declared[demandedTokenText(field)] {
-			return false
+	// A declared file named in prose - by full path or by bare base name -
+	// is an in-scope demand. Base names matter because review prose names
+	// files without paths; such words carry no slash, so the path tokenizer
+	// skips them by design and an exact word match is the only signal.
+	bases := declaredBaseNames(declared)
+	for _, field := range strings.Fields(text) {
+		word := demandedTokenText(field)
+		if declared[word] || bases[word] {
+			return 0, 0, false
 		}
 	}
-	tokens := demandedPathTokens(required)
+	tokens := demandedPathTokens(text)
 	if len(tokens) == 0 {
-		return false
+		return 0, 0, false
 	}
-	hasSibling := false
 	for _, token := range tokens {
-		switch classifyChunkToken(token, declared) {
-		case chunkTokenInScope:
-			return false
-		case chunkTokenSibling:
-			hasSibling = true
-		case chunkTokenForeign:
-			return false
+		if classifyChunkToken(token, declared) != chunkTokenSibling {
+			return 0, 0, false
+		}
+		if path.Ext(token) == "" {
+			dir++
+		} else {
+			file++
 		}
 	}
-	return hasSibling
+	return dir, file, true
+}
+
+// declaredBaseNames maps the base names of the declared files, for the
+// prose word match in siblingDemandBreakdown.
+func declaredBaseNames(declared map[string]bool) map[string]bool {
+	bases := make(map[string]bool, len(declared))
+	for f := range declared {
+		bases[path.Base(f)] = true
+	}
+	return bases
 }
 
 // chunkDeclaredFiles decodes the chunk_plan input into its normalized
