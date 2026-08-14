@@ -235,6 +235,16 @@ func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]boo
 				}
 				inputName := parts[1]
 				if _, ok := wf.Inputs[inputName]; !ok {
+					// chunk_plan is the engine-injected reserved input carrying
+					// the chunk's decompose plan slice; only chunk-mode
+					// admissions of a stacking workflow have it, so the binding
+					// must be optional and stacking must be on.
+					if inputName == "chunk_plan" && wf.Stacking != nil && wf.Stacking.StackingEnabled() {
+						if !cb.Optional {
+							return fmt.Errorf("step %q: context from %q must be optional (only chunk-mode runs carry chunk_plan)", s.ID, cb.From)
+						}
+						continue
+					}
 					return fmt.Errorf("step %q: context from %q references unknown input %q", s.ID, cb.From, inputName)
 				}
 			case "steps":
