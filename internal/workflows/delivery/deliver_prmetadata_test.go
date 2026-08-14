@@ -119,11 +119,10 @@ func wantFooter(run workflowledger.RunSnapshot) string {
 	if len(digestText) > 12 {
 		digestText = digestText[:12]
 	}
-	return "<details>\n<summary><sub>Mivia Agent run details</sub></summary>\n\n" +
+	return "<details>\n<summary><sub><a href=\"https://github.com/MiviaLabs/mivia-agent\"><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /></a> <a href=\"https://github.com/MiviaLabs/mivia-agent\">Mivia Agent</a> - Show details</sub></summary>\n\n" +
 		"- Run: [" + run.RunID + "](https://mivia.app/runs/" + run.RunID + ")\n" +
 		"- Workflow digest: [" + digestText + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")\n" +
-		"\n</details>\n\n---\n" +
-		"<sub><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /> [Mivia Agent](https://github.com/MiviaLabs/mivia-agent)</sub>"
+		"\n</details>"
 }
 
 // TestDeliverAgentTitleAndSummary: a run whose attempts carry a change-summary
@@ -458,11 +457,14 @@ func TestDeliverBodyIncludesStackPartInRunDetails(t *testing.T) {
 	if !strings.Contains(got, "- Stack part: 2/3\n") {
 		t.Fatalf("Body = %q, want it to contain the stack part line inside run details", got)
 	}
-	if !strings.HasSuffix(got, "---\n<sub><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /> [Mivia Agent](https://github.com/MiviaLabs/mivia-agent)</sub>") {
-		t.Fatalf("Body = %q, want the avatar attribution line LAST, after a horizontal rule", got)
+	if !strings.HasSuffix(got, "\n</details>") {
+		t.Fatalf("Body = %q, want the collapsible details block LAST with nothing after it", got)
 	}
-	if !strings.Contains(got, "<details>\n<summary><sub>Mivia Agent run details</sub></summary>") {
-		t.Fatalf("Body = %q, want the collapsible run-details section", got)
+	if !strings.Contains(got, "<summary><sub><a href=\"https://github.com/MiviaLabs/mivia-agent\"><img src=\"https://github.com/MiviaLabs.png\"") || !strings.Contains(got, ">Mivia Agent</a> - Show details</sub></summary>") {
+		t.Fatalf("Body = %q, want the linked avatar + Mivia Agent - Show details summary label", got)
+	}
+	if strings.Contains(got, "\n---\n"+"<sub>") {
+		t.Fatalf("Body = %q, want no horizontal rule before the details block footer", got)
 	}
 }
 

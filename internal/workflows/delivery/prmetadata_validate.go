@@ -34,14 +34,15 @@ const (
 	miviaAgentGitHubRepoURL = "https://github.com/MiviaLabs/mivia-agent"
 )
 
-// attributionLine is the small line that closes every PR body the delivery
-// engine publishes: the product avatar plus the Mivia Agent name linked to
-// the product repo. No "Co-authored-by:" prefix - that trailer is git
-// plumbing and lives on the commit (deliver_stage.go), not in prose. <sub>
-// keeps it at footer visual weight.
-func attributionLine() string {
-	avatar := "<img src=\"https://github.com/" + miviaAgentGitHubOwner + ".png\" width=\"16\" height=\"16\" align=\"top\" alt=\"" + mviaCommitAuthorName + "\" />"
-	return "<sub>" + avatar + " [" + mviaCommitAuthorName + "](" + miviaAgentGitHubRepoURL + ")</sub>"
+// attributionSummaryLabel is the <summary> label of the run-details block:
+// the product avatar and the Mivia Agent name (both linked to the product
+// repo) followed by a "Show details" affordance. Markdown does not render
+// inside <summary>, so the links are HTML anchors. <sub> keeps the line at
+// footer visual weight.
+func attributionSummaryLabel() string {
+	avatar := "<a href=\"" + miviaAgentGitHubRepoURL + "\"><img src=\"https://github.com/" + miviaAgentGitHubOwner + ".png\" width=\"16\" height=\"16\" align=\"top\" alt=\"" + mviaCommitAuthorName + "\" /></a>"
+	name := "<a href=\"" + miviaAgentGitHubRepoURL + "\">" + mviaCommitAuthorName + "</a>"
+	return "<sub>" + avatar + " " + name + " - Show details</sub>"
 }
 
 // shortDigest returns the display prefix of a workflow digest. The full
@@ -61,7 +62,7 @@ func shortDigest(digest string) string {
 func runDetailsSection(base, runID, workflowDigest, stackPart string) string {
 	runLink := "[" + runID + "](" + base + "/runs/" + runID + ")"
 	digestLink := "[" + shortDigest(workflowDigest) + "](" + base + "/workflows/digest/" + workflowDigest + ")"
-	body := "<details>\n<summary><sub>Mivia Agent run details</sub></summary>\n\n" +
+	body := "<details>\n<summary>" + attributionSummaryLabel() + "</summary>\n\n" +
 		"- Run: " + runLink + "\n" +
 		"- Workflow digest: " + digestLink + "\n"
 	if strings.TrimSpace(stackPart) != "" {
@@ -70,12 +71,12 @@ func runDetailsSection(base, runID, workflowDigest, stackPart string) string {
 	return body + "\n</details>"
 }
 
-// deliveryFooter is the run-details and attribution block appended to every
-// PR body the delivery engine publishes. The attribution comes LAST, after
-// the footer's single horizontal rule, so the body reads summary -> run
-// details -> rule -> authorship.
+// deliveryFooter is the single collapsible attribution + run-details block
+// appended to every PR body the delivery engine publishes. The summary line
+// itself carries the authorship (avatar + linked name), so no separate
+// attribution line or horizontal rule follows.
 func deliveryFooter(runID, workflowDigest, stackPart string) string {
-	return runDetailsSection(miviaBaseURL(), runID, workflowDigest, stackPart) + "\n\n---\n" + attributionLine()
+	return runDetailsSection(miviaBaseURL(), runID, workflowDigest, stackPart)
 }
 
 // validatePRMetadata resolves the agent-provided PR metadata (title and
