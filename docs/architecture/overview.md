@@ -161,6 +161,15 @@ Mivia runs sub-agents as **in-process concurrent goroutines**, not as separate O
 The orchestration system provides an async Spawn/Inspect/Join/Cancel lifecycle model
 backed by a durable LedgerRepository.
 
+The Coordinator interface is larger than a Spawn/Inspect/Join/Cancel summary suggests. It also owns:
+
+- An ask/question registry for agent-to-agent and agent-to-host questions.
+- A messaging subsystem between concurrent runs.
+- Referral spawning, where one run can hand off work to spawn another.
+- `PanelCoordinator` (`internal/workflows/ledger`), which binds every panel child operation to persisted panel state; it does not itself execute panel fan-out or aggregation — the workflow controller drives fan-out and calls `ComputeHostVerdict` (see [Panel review steps](workflows.md#panel-review-steps)).
+
+`Spawn` also enforces idempotency scoping and conflict detection: a caller-supplied scope key (`scopedKey`) that collides with a different in-flight or completed run's inputs fails closed with `ErrIdempotencyConflict`, rather than silently reusing or duplicating the run.
+
 ```mermaid
 flowchart TD
     subgraph Model["Model (LLM)"]
@@ -193,7 +202,8 @@ flowchart TD
 |-----------|---------|------|
 | `Coordinator` interface | `internal/coordinator` | Public API: Spawn/Inspect/Join/Cancel, retry policy, lifecycle subscriptions |
 | `RunHandle` | `internal/coordinator` | Opaque handle to an active run; safe for concurrent use |
-| `LedgerRepository` interface | `internal/ledger` | Storage boundary: 14 methods for run/task/event CRUD with CAS |
+| `LedgerRepository` interface | `internal/ledger` | Storage boundary: 20 methods for run/task/event CRUD with CAS, including run-claim leasing (`ClaimRun`, `ReleaseRun`, `ClearRunClaim`) |
+| `LeaseRepository` interface | `internal/ledger` | Separate, narrower storage boundary holding only `TakeoverExpiredRunClaim` |
 | `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies - default for ephemeral sessions |
 | `StorageLedgerRepository` | `internal/ledger` | SQLite backend via append-only events + in-memory projection - crash-safe |
 | `DisplayNameGenerator` | `internal/ledger` | Unique human-readable agent names (e.g. "agent-7"), collision-safe |
@@ -225,7 +235,7 @@ a failed task and never inspects provider HTTP responses. Configured via
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `MaxRetries` | 0 (disabled) | Maximum retry attempts per task |
+| `MaxRetries` | 3 (`DefaultRetryPolicy`) | Maximum retry attempts per task; a separate `NoRetry` policy (`MaxRetries: 0`) is available for callers that want retry disabled |
 | `BaseBackoff` | 1s | Initial backoff before first retry |
 | `MaxBackoff` | 30s | Cap on per-retry delay |
 | `BackoffFactor` | 2.0 | Exponential multiplier |
@@ -238,6 +248,14 @@ When `store_backend = "sqlite"` is configured:
 1. Every mutation writes an append-only event to SQLite AND updates an in-memory projection
 2. On startup, `Recover()` scans the store for runs with non-terminal statuses and marks them as `WasInterrupted`
 3. `ResumeInterruptedRun(runID)` transitions running tasks to `failed` with `interrupted_unrecoverable`, then re-runs the DAG (optionally with retry)
+
+Recovery has one deliberate carve-out: a run left at `delivery_pending` (see [Delivery states](#delivery-states-and-repair) below) keeps its run claim uncleared across restart. Clearing the claim on recovery would let a second executor redeliver the same PR; the claim stays held until a delivery attempt actually settles the run.
+
+Run execution itself is guarded by a fenced-lease claim on the `run_claims` table (`ClaimRun` / `ReleaseRun` / `ClearRunClaim` / `TakeoverExpiredRunClaim` in `internal/ledger`), not just the in-process goroutine model above. Only the executor holding the claim may drive a run; an expired claim can be taken over by another executor, which is what makes multi-process recovery and the `delivery_pending` carve-out safe. See [Embedded persistence](embedded-persistence.md#data-model) for the backing table.
+
+### Delivery states and repair
+
+A workflow run that reaches its success terminal is not necessarily done: `delivery_pending` and `delivery_failed` are further run states owned by the delivery subsystem, not the step graph. `delivery_pending` means the run succeeded but a human publish grant or a network-dependent delivery step has not yet completed; `delivery_failed` means the delivery repair cycle exhausted its bound (`max_repairs`) without a successful publish. See [Delivery design](workflows.md#delivery-design) for the PR title/body rendering, `PRMetadataError`/`DiffSizeError` repair routes, and the stacked small-PR delivery engine.
 
 ### Lifecycle event subscriptions
 
