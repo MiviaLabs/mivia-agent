@@ -23,14 +23,15 @@ const (
 // reservedStackingInputs names the inputs the controller owns for stacking
 // runs; they are never forwarded to workflow steps.
 func reservedStackingInputs() []string {
-	return []string{"stack_mode", "chunk", "pr_base", "stack_part", "chunk_plan"}
+	return []string{"stack_mode", "chunk", "pr_base", "stack_part", "chunk_plan", "remaining_scope"}
 }
 
 // validateStackingReservedInputs admits the reserved stacking inputs against
 // the workflow's stacking config. stack_mode=chunk requires chunk, pr_base and
-// stack_part; stack_mode=single and plan forbid chunk_plan; unknown values are
-// admission errors. Runs without stack_mode (plan mode) accept the reserved
-// inputs untouched.
+// stack_part; stack_mode=decompose_continue requires remaining_scope;
+// stack_mode=single and plan forbid chunk_plan; unknown values are admission
+// errors. Runs without stack_mode (plan mode) accept the reserved inputs
+// untouched.
 func validateStackingReservedInputs(inputs map[string]any, cfg *definition.StackingConfig) (string, error) {
 	if cfg == nil {
 		return "", nil
@@ -54,8 +55,16 @@ func validateStackingReservedInputs(inputs map[string]any, cfg *definition.Stack
 				return "", fmt.Errorf("stack_mode=chunk requires reserved input %q", key)
 			}
 		}
+	case "decompose_continue":
+		scope, present := inputs["remaining_scope"]
+		if !present {
+			return "", fmt.Errorf("stack_mode=decompose_continue requires reserved input %q", "remaining_scope")
+		}
+		if s, ok := scope.(string); !ok || strings.TrimSpace(s) == "" {
+			return "", fmt.Errorf("stack_mode=decompose_continue requires a non-empty %q", "remaining_scope")
+		}
 	default:
-		return "", fmt.Errorf("reserved input stack_mode=%q is invalid; want plan, chunk or single", mode)
+		return "", fmt.Errorf("reserved input stack_mode=%q is invalid; want plan, chunk, single or decompose_continue", mode)
 	}
 	return mode, nil
 }
@@ -88,10 +97,14 @@ func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntim
 	if err := requireSynthesizedStepRuntimes(synth, steps); err != nil {
 		return nil, nil, err
 	}
-	if mode != "chunk" {
+	switch mode {
+	case "chunk":
+		return injectChunkModeInputBindings(synth, inputs), steps, nil
+	case "decompose_continue":
+		return injectDecomposeContinueInputBindings(synth), steps, nil
+	default:
 		return synth, steps, nil
 	}
-	return injectChunkModeInputBindings(synth, inputs), steps, nil
 }
 
 // requireSynthesizedStepRuntimes refuses to admit a stacking run whose
@@ -182,14 +195,53 @@ func injectChunkModeInputBindings(synth *compiler.CompiledWorkflow, inputs map[s
 	return &out
 }
 
-// runStartStepID is the workflow's initial step, or the stacking implement step
-// for chunk-mode runs. The controller uses it for the persisted run's
-// ActiveStepID and for resume, so a chunk run always starts at implement.
+// injectDecomposeContinueInputBindings binds the reserved remaining_scope
+// input onto the decompose step's context, so the decompose-continuation
+// run's agent reads inputs.remaining_scope as its planning context instead
+// of the (absent, optional-resolved) plan-step output binding. Only the
+// decompose step needs this binding: it is the only step a continuation run
+// executes. An inputs.X binding is never optional in contextForStep (a
+// missing one always errors "missing input"), so - exactly like
+// injectChunkModeInputBindings - the binding is added post-synthesis, only
+// for the run that actually carries the input, rather than declared
+// statically on the synthesized step.
+func injectDecomposeContinueInputBindings(synth *compiler.CompiledWorkflow) *compiler.CompiledWorkflow {
+	steps := make([]definition.Step, len(synth.Steps))
+	copy(steps, synth.Steps)
+	for i := range steps {
+		if steps[i].ID != synthesizedDecomposeStepID {
+			continue
+		}
+		for _, b := range steps[i].Context {
+			if b.As == "remaining_scope" {
+				out := *synth
+				out.Steps = steps
+				return &out
+			}
+		}
+		steps[i].Context = append(steps[i].Context, definition.ContextBinding{From: "inputs.remaining_scope", As: "remaining_scope"})
+	}
+	out := *synth
+	out.Steps = steps
+	return &out
+}
+
+// runStartStepID is the workflow's initial step, the stacking implement step
+// for chunk-mode runs, or the engine-synthesized decompose step for a
+// decompose-continuation run (a later wave of an incrementally-planned
+// stack, §12.1). The controller uses it for the persisted run's ActiveStepID
+// and for resume, so a chunk run always starts at implement and a
+// continuation run always starts at decompose.
 func (c *LinearController) runStartStepID() string {
 	if c.Workflow != nil && c.Workflow.Stacking != nil {
-		if mode, err := validateStackingReservedInputs(c.Inputs, c.Workflow.Stacking); err == nil && mode == "chunk" {
-			if implement := c.Workflow.Stacking.ImplementStep; implement != "" {
-				return implement
+		if mode, err := validateStackingReservedInputs(c.Inputs, c.Workflow.Stacking); err == nil {
+			switch mode {
+			case "chunk":
+				if implement := c.Workflow.Stacking.ImplementStep; implement != "" {
+					return implement
+				}
+			case "decompose_continue":
+				return synthesizedDecomposeStepID
 			}
 		}
 	}
@@ -199,23 +251,34 @@ func (c *LinearController) runStartStepID() string {
 	return c.Workflow.InitialStep
 }
 
-// preImplementStep reports whether the run starts at the implement step
-// (chunk mode) and stepID belongs to a step whose output cannot exist before
-// the implement step, so bindings to it must resolve optional-absent.
+// preImplementStep reports whether stepID belongs to a step whose output
+// cannot exist in THIS run, so a binding to it must resolve optional-absent
+// instead of failing: a chunk-mode run only runs from the implement step
+// onward (the plan phase ran in the parent run), and a decompose-continuation
+// run only runs the decompose step itself (no plan phase ran in THIS run at
+// all — its planning context is the remaining_scope input, not a plan step
+// output).
 func (c *LinearController) preImplementStep(stepID string) bool {
 	if c.Workflow == nil || c.Workflow.Stacking == nil {
 		return false
 	}
 	mode, err := validateStackingReservedInputs(c.Inputs, c.Workflow.Stacking)
-	if err != nil || mode != "chunk" {
+	if err != nil {
 		return false
 	}
-	for _, step := range c.Workflow.Steps {
-		if step.ID == stepID {
-			return step.ID != c.Workflow.Stacking.ImplementStep
+	switch mode {
+	case "chunk":
+		for _, step := range c.Workflow.Steps {
+			if step.ID == stepID {
+				return step.ID != c.Workflow.Stacking.ImplementStep
+			}
 		}
+		return false
+	case "decompose_continue":
+		return stepID != synthesizedDecomposeStepID
+	default:
+		return false
 	}
-	return false
 }
 
 // ChunkPlanValidation is the deterministic result of validating a decompose

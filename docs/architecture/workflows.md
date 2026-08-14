@@ -292,6 +292,21 @@ at a time, in dependency order, by the merge-policy pass described below.
 Multiple chunks can reach `delivery_pending` or get published in the same
 drive pass, but they still merge one at a time.
 
+**Incremental decompose.** `decompose`'s output may declare `has_more: true`
+plus `remaining_scope` when a change needs more chunks than one call plans
+(bounded by `max_wave_chunks`). Once every currently-known chunk has merged,
+if the latest wave declared `has_more`, the driver admits a new run that
+starts directly at the `decompose` step (`stack_mode = "decompose_continue"`,
+via the same reserved-input/start-step mechanism `stack_mode = "chunk"`
+already uses for chunk runs), seeded with `remaining_scope` in place of the
+plan step's output, and folds the resulting chunks into the same stack
+(same task-ledger scope, same stable invocation-key resumability as chunk
+runs). This repeats until a wave declares no more scope, `max_total_chunks`
+is reached (a refused admission with a clear error, never a silent
+truncation), or a wave fails. A crash-and-resume `stack drive` reconstructs
+the full cross-wave chunk list from the run ledger before driving, so a
+wave admitted by a prior process is never lost.
+
 **Merge policies:**
 - `approve` (default, policy A): each PR stays at `delivery_pending` until a
   human grants publish (`mivia workflow deliver <run-id> --allow-publish`).

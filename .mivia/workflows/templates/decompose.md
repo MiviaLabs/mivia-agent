@@ -2,8 +2,14 @@
 
 ## Read-first contract
 
-You are the decompose agent. The plan step output is bound as `plan`. Read
-the bound value first and classify it:
+You are the decompose agent. On the FIRST wave of a plan, the plan step
+output is bound as `plan`. On a LATER wave (continuing a plan too large for
+one wave, see Step 2a below), there is no `plan` binding — instead
+`remaining_scope` carries the earlier wave's own summary of what is left to
+plan; work from that text directly, it is the only planning context this
+call receives.
+
+When `plan` is bound (first wave), read it first and classify it:
 
 1. **Complete plan object** — the value parses as a single JSON object whose
    keys include `summary`, `steps`, `inspected`, and `addressed_findings`.
@@ -92,17 +98,37 @@ For `multi` mode, produce chunks that satisfy ALL of these constraints:
 7. **Chunk identity**: Each chunk has a unique `id` (string, minLength 1) and
    a descriptive `title` (string, minLength 1).
 
+### Step 2a — Incremental planning for a very large change (multi mode only)
+
+If the full change needs more chunks than fit in one wave
+(`max_wave_chunks`, default 12), plan only the NEXT wave now: produce up to
+`max_wave_chunks` chunks covering the highest-priority or most foundational
+part of the work, set `has_more` to `true`, and write a `remaining_scope`
+string summarizing exactly what is left unplanned (specific enough that a
+later decompose call — which sees ONLY this text, not the original plan
+artifact — can continue from it without re-reading the plan). Most plans fit
+in one wave; only use `has_more` when they genuinely do not. Omit `has_more`
+(or set it `false`) when this wave's chunks are the complete plan.
+
+If you are resuming a later wave, your input carries `remaining_scope`
+instead of a fresh `plan` binding — treat it as the authoritative statement
+of what to plan now, and produce chunk ids that do not collide with any
+chunk id from an earlier wave (the driver rejects a duplicate id).
+
 ### Step 3 — Output
 
 Produce the JSON object with these top-level keys:
 
 - `stack_mode`: one of `"no_bug"`, `"single"`, `"multi"`.
-- `chunk_plan`: object with required key `chunks` (array of chunk objects).
+- `chunk_plan`: object with required key `chunks` (array of chunk objects),
+  plus optional `has_more` (boolean) and `remaining_scope` (string) for
+  incremental planning (Step 2a).
 
 For `no_bug` mode, `chunks` is an empty array.
 For `single` mode, `chunks` contains exactly one chunk with `depends_on` empty.
-For `multi` mode, `chunks` contains 2–12 chunks with `depends_on` forming a
-valid DAG.
+For `multi` mode, `chunks` contains 2–12 chunks (this wave's chunks; more
+waves may follow when `has_more` is true) with `depends_on` forming a valid
+DAG.
 
 The output MUST validate against `schemas/chunk-plan-v1.json`. If it does not,
 the engine will reject it and ask you to re-emit.

@@ -781,7 +781,11 @@ max_concurrent_chunks = 4     # default 4; chunk runs the driver admits and driv
 
 Explicit step references are validated at compile time (unknown step, out-of-range thresholds, invalid merge policy). When the section is absent, stacking is enabled with the global defaults and inference is best-effort — existing workflows compile unchanged.
 
-`max_concurrent_chunks` is enforced today: it bounds how many chunk runs `stack drive` admits and drives at once (see "Concurrent wave execution" below). `max_total_chunks` and `max_wave_chunks` are accepted and validated but not yet enforced — decompose still plans a stacking-enabled workflow's whole chunk DAG in one call, so today's real ceiling is still `max_chunks`. They exist so a workflow can declare its intended limits ahead of the driver requesting decompose output incrementally, one wave at a time.
+`max_concurrent_chunks` is enforced: it bounds how many chunk runs `stack drive` admits and drives at once (see "Concurrent wave execution" below). `max_total_chunks` is enforced across every decompose wave of one stack: the driver refuses to admit a continuation wave that would push the total chunk count over it, with a clear error rather than a silent truncation. `max_wave_chunks` is accepted and validated but not yet enforced as a distinct per-call cap — a workflow's declared `max_chunks` is still what each individual decompose call is checked against; `max_wave_chunks` exists to let a workflow state its intended per-call limit for when that distinction lands.
+
+### Incremental decompose (large changes)
+
+When a change needs more chunks than fit in one `decompose` call, decompose can plan only the next wave and declare `has_more`/`remaining_scope` in its output (see `.mivia/workflows/templates/decompose.md`). Once every currently-known chunk in the stack has merged, if the latest wave declared `has_more`, `stack drive` automatically admits a fresh run that starts directly at the `decompose` step (`stack_mode = "decompose_continue"`), seeded with the prior wave's `remaining_scope` text instead of the original plan artifact, and folds its chunks into the same stack. This repeats until a wave declares no more scope, `max_total_chunks` is reached, or a wave fails. Most plans fit in one wave and never trigger this path.
 
 ### What a plan-mode run does
 

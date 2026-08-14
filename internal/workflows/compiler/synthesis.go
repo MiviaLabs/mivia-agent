@@ -26,11 +26,12 @@ const (
 // run carries them in the admission payload.
 func stackingReservedInputs() map[string]definition.InputDef {
 	return map[string]definition.InputDef{
-		"stack_mode": {Type: "string"},
-		"chunk":      {Type: "string"},
-		"pr_base":    {Type: "string"},
-		"stack_part": {Type: "string"},
-		"chunk_plan": {Type: "string"},
+		"stack_mode":      {Type: "string"},
+		"chunk":           {Type: "string"},
+		"pr_base":         {Type: "string"},
+		"stack_part":      {Type: "string"},
+		"chunk_plan":      {Type: "string"},
+		"remaining_scope": {Type: "string"},
 	}
 }
 

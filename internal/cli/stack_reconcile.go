@@ -90,23 +90,35 @@ type stackPlanDocument struct {
 }
 
 type stackChunks struct {
-	Chunks []ChunkPlan `json:"chunks"`
+	Chunks         []ChunkPlan `json:"chunks"`
+	HasMore        bool        `json:"has_more"`
+	RemainingScope string      `json:"remaining_scope"`
 }
 
-// parseStackPlanOutput decodes a decompose step output into the stack mode
-// and its chunk list. stack_mode=single and no_bug are valid and mean there
-// is nothing to stack; malformed output is an error (fail closed).
-func parseStackPlanOutput(raw []byte) (mode string, chunks []ChunkPlan, err error) {
+// parseStackPlanOutput decodes a decompose step output into the stack mode,
+// its chunk list, and whether decompose declared more scope than this wave
+// planned (§12.1 incremental decompose). stack_mode=single and no_bug are
+// valid and mean there is nothing to stack; malformed output is an error
+// (fail closed). hasMore/remainingScope are always zero-valued for single/
+// no_bug modes, matching decompose.md's contract that incremental planning
+// only applies to multi mode.
+func parseStackPlanOutput(raw []byte) (mode string, chunks []ChunkPlan, hasMore bool, remainingScope string, err error) {
 	var doc stackPlanDocument
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return "", nil, fmt.Errorf("stack plan output is not valid JSON: %w", err)
+		return "", nil, false, "", fmt.Errorf("stack plan output is not valid JSON: %w", err)
 	}
 	switch doc.StackMode {
 	case "single", "no_bug", "multi":
 	default:
-		return "", nil, fmt.Errorf("stack plan stack_mode %q is invalid; want single, multi or no_bug", doc.StackMode)
+		return "", nil, false, "", fmt.Errorf("stack plan stack_mode %q is invalid; want single, multi or no_bug", doc.StackMode)
 	}
-	return doc.StackMode, doc.ChunkPlan.Chunks, nil
+	if doc.StackMode != "multi" {
+		return doc.StackMode, doc.ChunkPlan.Chunks, false, "", nil
+	}
+	if doc.ChunkPlan.HasMore && strings.TrimSpace(doc.ChunkPlan.RemainingScope) == "" {
+		return "", nil, false, "", fmt.Errorf("stack plan declares has_more=true with an empty remaining_scope")
+	}
+	return doc.StackMode, doc.ChunkPlan.Chunks, doc.ChunkPlan.HasMore, doc.ChunkPlan.RemainingScope, nil
 }
 
 // chunkIDRE constrains chunk ids so an admission key stays unambiguous: a

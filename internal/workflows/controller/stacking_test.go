@@ -615,6 +615,84 @@ func TestStackingDecomposeRepairLoopExhausts(t *testing.T) {
 	}
 }
 
+// TestStackingDecomposeContinueRunStartsAtDecompose pins §12.1's
+// incremental-decompose entry point: a run admitted with
+// stack_mode=decompose_continue starts directly at the decompose step (no
+// plan phase runs in this run), and the decompose step's context binding for
+// the plan step's output resolves optional-absent (preImplementStep grace)
+// while its remaining_scope binding carries the caller-provided text.
+func TestStackingDecomposeContinueRunStartsAtDecompose(t *testing.T) {
+	// stack_mode=multi with a valid one-chunk plan (rather than no_bug) so the
+	// run reaches success through chunk_plan_validate without also exercising
+	// chunkPlanRepairRoute's no_bug/planDeclaresActionableSteps gate: that gate
+	// fails closed as "actionable" when a run has no plan-step output at all
+	// (exactly true for a decompose-continuation run, which never ran a plan
+	// step), rerouting no_bug through the repair loop - correct behavior, but
+	// unrelated to what this test pins (the start-step and binding wiring).
+	wf := stackingFixture(t)
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"decompose#1":           json.RawMessage(`{"stack_mode":"multi","chunk_plan":{"chunks":[{"id":"c1","title":"t","files":["a.go"],"est_diff_lines":10,"tests":true,"depends_on":[]}]}}`),
+		"chunk_plan_validate#1": json.RawMessage(`{"valid":true,"reasons":[]}`),
+	}}
+	inputs := map[string]any{"task": "build", "stack_mode": "decompose_continue", "remaining_scope": "chunks c3, c4 remain"}
+	ctrl, err := newStackingController(t, runner, wf, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run, err := ctrl.Repo.GetRun(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ActiveStepID != "decompose" {
+		t.Fatalf("decompose-continuation run active step = %q; want decompose", run.ActiveStepID)
+	}
+	got, err := ctrl.Run(context.Background())
+	if err != nil || got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run = %+v err=%v", got, err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) == 0 || runner.calls[0].StepID != "decompose" {
+		t.Fatalf("first executed step = %v; want decompose", runner.calls)
+	}
+	if ev, ok := runner.calls[0].Evidence["plan"]; !ok || ev != "" {
+		t.Fatalf("plan binding on a continuation run resolved to %v; want empty string (optional-absent)", runner.calls[0].Evidence["plan"])
+	}
+	if got := runner.calls[0].Inputs["remaining_scope"]; got != "chunks c3, c4 remain" {
+		t.Fatalf("remaining_scope input = %v; want %q", got, "chunks c3, c4 remain")
+	}
+}
+
+// TestStackingDecomposeContinueRequiresRemainingScope pins admission
+// validation: stack_mode=decompose_continue without a non-empty
+// remaining_scope is refused before any step runs.
+func TestStackingDecomposeContinueRequiresRemainingScope(t *testing.T) {
+	wf := stackingFixture(t)
+	tests := []struct {
+		name   string
+		inputs map[string]any
+	}{
+		{"missing", map[string]any{"task": "build", "stack_mode": "decompose_continue"}},
+		{"empty", map[string]any{"task": "build", "stack_mode": "decompose_continue", "remaining_scope": ""}},
+		{"blank", map[string]any{"task": "build", "stack_mode": "decompose_continue", "remaining_scope": "   "}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{}}
+			_, err := newStackingController(t, runner, wf, tt.inputs)
+			if err == nil {
+				t.Fatal("expected admission error for missing/empty remaining_scope")
+			}
+			if !strings.Contains(err.Error(), "remaining_scope") {
+				t.Fatalf("error %q must mention remaining_scope", err)
+			}
+		})
+	}
+}
+
 func TestStackingChunkRunSucceedsWithoutChunkPlanInput(t *testing.T) {
 	// The chunk_plan reserved input is for the plan-mode decompose gate only;
 	// a chunk run must never require it, and a chunk_plan passed by a caller
