@@ -70,7 +70,9 @@ func (l *Loop) retryAfterPromptTooLong(req provider.Request, opts Options, llmCt
 		// Re-derive the omitted-evidence diff for the history the retry
 		// actually sends BEFORE the summary is built: summarizeTurn reads the
 		// run's TurnState, which otherwise still describes the rejected
-		// first-attempt history (R0-1).
+		// first-attempt history (R0-1). The pre-prune snapshot also becomes
+		// the excerpt source, so the summary quotes what THIS prune dropped.
+		l.preCompactSource = prePrune
 		l.refreshOmittedEvidenceAfterRetry(prePrune)
 		req.Messages = l.injectSummary(llmCtx, opts)
 	}

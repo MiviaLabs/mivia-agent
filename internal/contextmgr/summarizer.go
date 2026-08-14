@@ -8,7 +8,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
-const summaryTimeout = 10 * time.Second
+// summaryTimeout bounds one summarize call. The request now carries up to
+// 16 KiB of source excerpts, so the call needs more headroom than a bare
+// envelope; a timeout still degrades to structural-only compaction.
+const summaryTimeout = 20 * time.Second
 
 // Summarizer binds one captured provider/model/policy snapshot to a summary
 // request. It has no provider discovery or network fallback path.
@@ -110,6 +113,7 @@ func cloneSummaryRequest(request SummaryRequest) SummaryRequest {
 	request.EndpointAllowlist = append([]string(nil), request.EndpointAllowlist...)
 	request.RedactionPolicy.Patterns = append([]string(nil), request.RedactionPolicy.Patterns...)
 	request.RedactionPolicy.KeyNames = append([]string(nil), request.RedactionPolicy.KeyNames...)
+	request.SourceExcerpts = cloneSummaryExcerpts(request.SourceExcerpts)
 	return request
 }
 

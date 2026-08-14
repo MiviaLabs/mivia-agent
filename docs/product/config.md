@@ -332,6 +332,8 @@ Two more conditions must hold, or the summary stays off: a configured `[privacy]
 
 Any summary failure - transport error, malformed reply, redaction refusal, over-budget reply - degrades silently to structural-only compaction. A turn never fails because of the summary call.
 
+The summarize request carries bounded quotes of the dropped messages' real content (user and assistant text plus truncated tool results, at most 16 KiB, newest first). An excerpt the `[privacy]` policy flags is dropped from the request; tool-call arguments and assistant reasoning are never included.
+
 ## Subagent knobs
 
 | Key | Type | Default | Meaning |

@@ -20,6 +20,7 @@ func buildCompactSummaryRequest(summarizer *contextmgr.Summarizer, redaction con
 		Version:           contextmgr.SummarySchemaVersion,
 		Objective:         agent.SummaryFieldText(latestUserMessage(pre)),
 		Evidence:          uniqueEvidence(contextmgr.OmittedEvidence(pre, retained)),
+		SourceExcerpts:    contextmgr.SourceExcerpts(pre, retained),
 		SourceRange:       sourceRange,
 		PolicyDigest:      summarizer.Policy.PolicyDigest,
 		Provider:          summarizer.Binding.Provider,

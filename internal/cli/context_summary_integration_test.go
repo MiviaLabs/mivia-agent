@@ -201,6 +201,14 @@ func TestContextSummaryIntegrationEndToEnd(t *testing.T) {
 	if !summaryPromptCarriesEnvelope(completer.allRequests(), res.Model) {
 		t.Fatal("summary request did not carry the envelope fields on the configured model")
 	}
+	autoBody := ""
+	for _, req := range completer.summaryRequests() {
+		autoBody = req.Messages[len(req.Messages)-1].Content
+		break
+	}
+	if !strings.Contains(autoBody, "source_excerpts") || !strings.Contains(autoBody, "first") {
+		t.Fatal("auto compaction summary prompt carries no real dropped content")
+	}
 	if !requestCarriesSummary(completer.allRequests()) {
 		t.Fatal("no outgoing request carried the injected context-summary message")
 	}
@@ -278,6 +286,10 @@ func TestContextSummaryIntegrationManualCompact(t *testing.T) {
 	}
 	if len(completer.summaryRequests()) == 0 {
 		t.Fatal("manual compact sent no summary request to the completer")
+	}
+	summaryBody := completer.summaryRequests()[0].Messages[len(completer.summaryRequests()[0].Messages)-1].Content
+	if !strings.Contains(summaryBody, "source_excerpts") || !strings.Contains(summaryBody, "first question") {
+		t.Fatal("manual compact summary prompt carries no real dropped content")
 	}
 	if last := session.Messages[len(session.Messages)-1]; last.Name != "context-summary" && !strings.Contains(last.Content, "[host-injected context summary") {
 		t.Fatalf("manual compact left %q as the last message, want the context summary", last.Content)

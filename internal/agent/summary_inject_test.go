@@ -666,3 +666,60 @@ func TestSummaryInjectionRetryPath(t *testing.T) {
 		t.Fatalf("retry summary message does not render the re-derived evidence: %q", injected.Content)
 	}
 }
+
+// droppingPreparationProbe retains only the tail of the input history, so the
+// preparation really drops the head messages.
+type droppingPreparationProbe struct {
+	compactingPreparationProbe
+	drop int
+}
+
+func (p *droppingPreparationProbe) Prepare(ctx context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	rangeValue := contextstate.SourceRange{
+		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+	}
+	retained := input.Messages
+	if p.drop <= len(retained) {
+		retained = retained[p.drop:]
+	}
+	prep, err := contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
+		SourceRange: rangeValue, ActiveContext: []byte("active"),
+	}, retained, true, "summary-excerpt-test")
+	if err != nil {
+		return contextmgr.Preparation{}, err
+	}
+	prep.BeforeTokens = 1000
+	prep.AfterTokens = 400
+	return prep, nil
+}
+
+// TestSummaryInjectionCarriesDroppedContent pins the loop path: a preparation
+// that drops the head of the history must put the dropped messages' real
+// content on the summary request, not just size labels.
+func TestSummaryInjectionCarriesDroppedContent(t *testing.T) {
+	summ := &capturingSummaryProvider{}
+	summarizer := summaryInjectSummarizer(t, summ)
+	completer := &capturingRequestCompleter{}
+	loop := &Loop{Completer: completer, Tools: tools.NewRegistry()}
+	loop.Messages = append(loop.Messages,
+		provider.Message{Role: provider.RoleUser, Content: "earlier task about the auth module"},
+		provider.Message{Role: provider.RoleAssistant, Content: "I moved jwt.go into internal/auth and added rotation."},
+	)
+	if _, err := loop.Run(context.Background(), "question", summaryProbeOptions(t, &summarizer, &droppingPreparationProbe{drop: 2}, 100_000)); err != nil {
+		t.Fatal(err)
+	}
+	if len(summ.requests) == 0 {
+		t.Fatal("summary provider was never called")
+	}
+	var texts []string
+	for _, excerpt := range summ.requests[0].SourceExcerpts {
+		texts = append(texts, excerpt.Text)
+	}
+	if !slices.ContainsFunc(texts, func(s string) bool { return strings.Contains(s, "jwt.go") }) {
+		t.Fatalf("source excerpts carry no dropped content: %v", texts)
+	}
+	if !slices.ContainsFunc(texts, func(s string) bool { return strings.Contains(s, "auth module") }) {
+		t.Fatalf("first user message missing from excerpts: %v", texts)
+	}
+}
