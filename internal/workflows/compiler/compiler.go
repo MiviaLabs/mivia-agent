@@ -155,19 +155,7 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 	}
 
 	// Delivery config validation
-	if err := validateDelivery(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
-
-	// Delivery re-entry steps must bind delivery.failure so the repair agent
-	// deterministically sees the rejection that routed it (admission-only,
-	// like the evidence-cap check: an in-flight run admitted under an earlier
-	// policy is never stranded).
-	if !skipCycleValidation {
-		if err := validateDeliveryReentryHints(wf); err != nil {
-			errs = append(errs, err.Error())
-		}
-	}
+	errs = append(errs, validateDeliverySection(wf, skipCycleValidation)...)
 
 	// Limits and stacking config validation
 	if err := validateLimitsAndStacking(wf, stepIDs); err != nil {
@@ -189,6 +177,29 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 		errs = append(errs, err.Error())
 	}
 
+	return errs
+}
+
+// validateDeliverySection runs the [delivery] validators: the always-on
+// config check plus the admission-only provider-support and re-entry-hint
+// checks. An in-flight run admitted under an earlier policy is never
+// stranded by the admission-only checks, so resume skips them.
+func validateDeliverySection(wf *definition.WorkflowFile, skipCycleValidation bool) []string {
+	var errs []string
+	if err := validateDelivery(wf); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if skipCycleValidation {
+		return errs
+	}
+	if err := validateDeliveryProviderSupport(wf); err != nil {
+		errs = append(errs, err.Error())
+	}
+	// Delivery re-entry steps must bind delivery.failure so the repair agent
+	// deterministically sees the rejection that routed it.
+	if err := validateDeliveryReentryHints(wf); err != nil {
+		errs = append(errs, err.Error())
+	}
 	return errs
 }
 
@@ -355,22 +366,6 @@ func validateVerifierNames(wf *definition.WorkflowFile) error {
 		}
 	}
 	return nil
-}
-
-// matchCriteriaEqual checks if two match criteria are identical.
-func matchCriteriaEqual(a, b definition.MatchCriteria) bool {
-	if a.Status != b.Status {
-		return false
-	}
-	if len(a.Output) != len(b.Output) {
-		return false
-	}
-	for k, v := range a.Output {
-		if bv, ok := b.Output[k]; !ok || bv != v {
-			return false
-		}
-	}
-	return true
 }
 
 // transitionCriteriaOverlap reports whether two match criteria from the same
