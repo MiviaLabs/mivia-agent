@@ -112,3 +112,15 @@ then a `</mivia_output>` closing tag on its own line. Do not use a skill
 report format, markdown, or extra fields. The schema declares the only valid
 keys. An invalid shape is rejected and you will be asked again with the
 schema.
+
+### Example
+
+For a small change decomposed into one PR:
+
+<mivia_output>
+{"stack_mode": "single", "chunk_plan": {"chunks": [{"id": "c1", "title": "Add rune-safe TruncateEllipsis helper", "files": ["internal/textutil/truncate.go", "internal/textutil/truncate_test.go"], "est_diff_lines": 85, "tests": true, "depends_on": []}]}}
+</mivia_output>
+
+The example above is illustrative only - decompose the plan you were bound,
+not this example. `no_bug` emits `chunks: []`; `multi` emits two or more
+chunks with a valid `depends_on` DAG.

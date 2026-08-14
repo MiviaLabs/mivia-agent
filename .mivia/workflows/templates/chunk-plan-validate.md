@@ -39,6 +39,23 @@ its own line. No prose, markdown report, headings, bullets, or code fences
 inside or outside the envelope. An invalid shape is rejected and you will be
 asked again with the schema.
 
+### Example
+
+For a chunk plan that passes every rule:
+
+<mivia_output>
+{"valid": true, "reasons": []}
+</mivia_output>
+
+For a chunk plan that violates rules (every violation is its own string):
+
+<mivia_output>
+{"valid": false, "reasons": ["chunk c2 est_diff_lines 250 exceeds soft_lines 200", "file shared.go appears in chunks c1 and c2"]}
+</mivia_output>
+
+The examples above are illustrative only - report the violations you actually
+find in the chunk plan you were bound.
+
 ---
 
 ## Your task
