@@ -97,11 +97,6 @@ topics:
     owner: architecture
     description: Workflow contract schemas and templates architecture
 
-  oversized-pr-split:
-    path: docs/architecture/spec-auto-split-oversized-prs.md
-    owner: architecture
-    description: Spec for auto-splitting oversized delivered diffs into a commit stack of follow-up PRs
-
   workflows-guide:
     path: docs/product/workflows-guide.md
     owner: product
