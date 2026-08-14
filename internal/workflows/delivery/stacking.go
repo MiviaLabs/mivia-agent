@@ -175,7 +175,7 @@ func MeasureChunkDiffSize(ctx context.Context, git GitRunner, gc GitContext, bas
 	if _, err := git.Run(ctx, gc, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		return 0, fmt.Errorf("cannot stage the delivery diff for size measurement: %w", err)
 	}
-	args := []string{"diff", "--cached",
+	args := []string{"-c", "core.quotePath=false", "diff", "--cached",
 		"--no-ext-diff", "--no-textconv", "--numstat",
 		"--find-renames", "--ignore-all-space", baseCommit}
 	if len(excludePaths) > 0 {
@@ -288,7 +288,7 @@ func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext
 	if _, err := git.Run(ctx, gc, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		return nil, fmt.Errorf("cannot stage the delivery diff for split measurement: %w", err)
 	}
-	out, err := git.Run(ctx, gc, "diff", "--cached",
+	out, err := git.Run(ctx, gc, "-c", "core.quotePath=false", "diff", "--cached",
 		"--no-ext-diff", "--no-textconv", "--numstat", "--ignore-all-space", baseCommit)
 	if err != nil {
 		return nil, fmt.Errorf("cannot measure per-file delivery diff sizes: %w", err)
@@ -344,7 +344,9 @@ func ParseDeferredFiles(raw string) ([]string, error) {
 // from the chunk's own delivery branch so no extra ledger field is needed to
 // find it afterward: the driver (internal/cli) computes the same name to
 // look it up and push it as a follow-up PR after this chunk's delivery
-// succeeds.
+// succeeds. resumeDeliveryCommitSplit re-creates the same branch from the
+// recorded DeferredFiles when a split attempt crashed after C1, so the name
+// is also the resume contract between the delivery engine and the driver.
 func DeferredBranchName(branch string) string {
 	return branch + "-deferred"
 }
