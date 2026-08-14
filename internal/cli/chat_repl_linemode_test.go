@@ -283,11 +283,11 @@ func TestSendLineModeJSONEmitsChunksThenDone(t *testing.T) {
 		t.Fatalf("sendLineMode: %v", err)
 	}
 	lines := splitNonEmptyLines(got)
-	if len(lines) < 2 {
-		t.Fatalf("got %d NDJSON lines, want at least 2 (chunk + done): %q", len(lines), got)
+	if len(lines) < 3 {
+		t.Fatalf("got %d NDJSON lines, want at least 3 (chunk + context_usage + done): %q", len(lines), got)
 	}
 	var reconstructed strings.Builder
-	for _, line := range lines[:len(lines)-1] {
+	for _, line := range lines[:len(lines)-2] {
 		var ev ndjsonEvent
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			t.Fatalf("line %q is not valid JSON: %v", line, err)
@@ -306,6 +306,49 @@ func TestSendLineModeJSONEmitsChunksThenDone(t *testing.T) {
 	}
 	if last.Type != "done" {
 		t.Fatalf("last line type = %q, want %q", last.Type, "done")
+	}
+}
+
+// TestSendLineModeJSONEmitsContextUsageBeforeDone pins the turn-final
+// context accounting on the wire: a completed --json turn emits one
+// "context_usage" line, immediately before "done", carrying the same
+// ContextUsage numbers the TUI status dialog shows (estimated used tokens,
+// prompt budget, full context window, output reserve, percent). Assertions
+// run on the raw JSON map so the contract an external consumer parses is
+// what is pinned. Emitted before "done" so a consumer that finalizes its
+// turn state on "done" has already received the numbers; on cancelled or
+// errored turns no context_usage is emitted (the turn's growth is not
+// final, and the desktop indicator simply keeps its previous value).
+func TestSendLineModeJSONEmitsContextUsageBeforeDone(t *testing.T) {
+	const answer = "hello there"
+	session := chat.NewSession(&config.Resolved{Model: "model", SystemPrompt: "sys"}, streamingLineCompleter{output: answer})
+	stdout := captureStdout(t)
+	stderr := captureStderr(t)
+	err := sendLineMode(session, "hi", nil, true)
+	got := stdout()
+	_ = stderr()
+	if err != nil {
+		t.Fatalf("sendLineMode: %v", err)
+	}
+	lines := splitNonEmptyLines(got)
+	if len(lines) < 3 {
+		t.Fatalf("got %d NDJSON lines, want at least 3: %q", len(lines), got)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-2]), &raw); err != nil {
+		t.Fatalf("penultimate line %q is not valid JSON: %v", lines[len(lines)-2], err)
+	}
+	if raw["type"] != "context_usage" {
+		t.Fatalf("penultimate line type = %v, want context_usage", raw["type"])
+	}
+	nested, ok := raw["context_usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("no nested context_usage record on line %q", lines[len(lines)-2])
+	}
+	for _, field := range []string{"used_tokens", "budget_tokens", "context_window_tokens", "output_reserve_tokens", "percent"} {
+		if _, ok := nested[field]; !ok {
+			t.Fatalf("context_usage record missing %q on line %q", field, lines[len(lines)-2])
+		}
 	}
 }
 

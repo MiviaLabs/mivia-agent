@@ -114,9 +114,33 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonM
 			return err
 		}
 		jw.Flush()
+		// Turn-final context accounting, emitted before "done" so a
+		// consumer that finalizes turn state on "done" has already received
+		// it. Only on the success path: a cancelled or errored turn's
+		// growth is not final, and a consumer keeps its previous reading.
+		writeContextUsageLine(os.Stdout, sess)
 		writeNDJSONEvent(os.Stdout, ndjsonEvent{Type: "done", SessionID: sess.SessionID})
 	}
 	return err
+}
+
+// writeContextUsageLine frames the session's context accounting - the same
+// numbers the TUI status dialog renders - as a "context_usage" NDJSON line.
+// Extracted from sendLineMode to keep it under the structure-check
+// function-size limit. A fresh ContextUsage call, not a cached pre-turn
+// value, so it reflects the turn that just completed.
+func writeContextUsageLine(w io.Writer, sess *chat.Session) {
+	usage := sess.ContextUsage()
+	writeNDJSONEvent(w, ndjsonEvent{
+		Type: "context_usage",
+		ContextUsage: &ndjsonContextUsage{
+			UsedTokens:          usage.UsedTokens,
+			BudgetTokens:        usage.BudgetTokens,
+			ContextWindowTokens: usage.ContextWindowTokens,
+			OutputReserveTokens: usage.OutputReserveTokens,
+			Percent:             usage.Percent,
+		},
+	})
 }
 
 func cancelOnInterrupt(ctx context.Context, cancel context.CancelFunc, done <-chan struct{}, sigCh <-chan os.Signal) {

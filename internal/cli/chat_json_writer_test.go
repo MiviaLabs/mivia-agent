@@ -186,6 +186,63 @@ func TestJSONTurnEventCallbackIgnoresOtherKinds(t *testing.T) {
 // indistinguishable from a successful one to a --json consumer: the only
 // failure marker was Event.Detail, which eventPreview discards whenever the
 // tool produced any output at all (the normal case).
+// TestJSONTurnEventCallbackEmitsTokenUsage pins the wire contract for
+// provider-reported token accounting: EventTokenUsage must reach the --json
+// stream as a "token_usage" line carrying the typed payload's real
+// input/output counts plus the estimate/drift fields. Assertions run on the
+// raw JSON map, not the ndjsonEvent struct, so this test documents what an
+// external consumer actually parses. Before this case existed the numbers
+// were computed one layer down and silently dropped at this boundary, so a
+// GUI wrapper had no way to show real context usage.
+func TestJSONTurnEventCallbackEmitsTokenUsage(t *testing.T) {
+	typed, err := events.NewTokenUsageEvent("openai", "gpt-x", 1200, 80, 900, 1.33)
+	if err != nil {
+		t.Fatalf("NewTokenUsageEvent: %v", err)
+	}
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	onEvent(agent.Event{Kind: agent.EventTokenUsage, TokenUsage: &typed})
+
+	lines := splitNonEmptyLines(buf.String())
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines, want 1: %v", len(lines), lines)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &raw); err != nil {
+		t.Fatalf("line %q is not valid JSON: %v", lines[0], err)
+	}
+	if raw["type"] != "token_usage" {
+		t.Fatalf("type = %v, want token_usage", raw["type"])
+	}
+	if raw["provider"] != "openai" || raw["model"] != "gpt-x" {
+		t.Fatalf("provider/model = %v/%v, want openai/gpt-x", raw["provider"], raw["model"])
+	}
+	nested, ok := raw["token_usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("no nested token_usage record on line %q", lines[0])
+	}
+	for _, field := range []string{"input_tokens", "output_tokens", "estimated_tokens", "calibration_ratio"} {
+		if _, ok := nested[field]; !ok {
+			t.Fatalf("token_usage record missing %q on line %q", field, lines[0])
+		}
+	}
+	if nested["input_tokens"] != float64(1200) || nested["output_tokens"] != float64(80) {
+		t.Fatalf("token_usage record = %v, want input 1200 / output 80", nested)
+	}
+}
+
+// TestJSONTurnEventCallbackDropsTokenUsageWithoutPayload mirrors
+// cache_usage's rule: the typed payload is required, because an event
+// without it carries no numbers worth a wire record.
+func TestJSONTurnEventCallbackDropsTokenUsageWithoutPayload(t *testing.T) {
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	onEvent(agent.Event{Kind: agent.EventTokenUsage, TokenUsage: nil})
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output for a token_usage event with no payload, got: %q", buf.String())
+	}
+}
+
 func TestJSONTurnEventCallbackReportsToolFailureStatus(t *testing.T) {
 	cases := []struct {
 		name   string

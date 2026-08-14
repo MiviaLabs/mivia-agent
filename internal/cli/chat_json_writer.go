@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
 // ndjsonEvent is the wire schema for line-mode --json output; exactly one
@@ -80,6 +81,14 @@ type ndjsonEvent struct {
 	// all-miss step) survive serialization without forcing zero-valued
 	// token fields onto every other event type.
 	CacheUsage *ndjsonCacheUsage `json:"cache_usage,omitempty"`
+	// TokenUsage is present only on "token_usage" events, nested for the
+	// same zero-value reason as CacheUsage. Real provider-reported counts,
+	// not estimates - see agent.EmitTokenUsage.
+	TokenUsage *ndjsonTokenUsage `json:"token_usage,omitempty"`
+	// ContextUsage is present only on the turn-final "context_usage" event
+	// written by sendLineMode, nested for the same zero-value reason. See
+	// chat.ContextUsage for what each field means.
+	ContextUsage *ndjsonContextUsage `json:"context_usage,omitempty"`
 }
 
 // ndjsonCacheUsage carries one completion turn's provider-reported
@@ -90,6 +99,52 @@ type ndjsonCacheUsage struct {
 	CachedInputTokens int `json:"cached_input_tokens"`
 	CacheWriteTokens  int `json:"cache_write_tokens"`
 	HitPercent        int `json:"hit_percent"`
+}
+
+// ndjsonTokenUsage carries one completion turn's provider-reported
+// input/output token counts plus estimate-vs-actual drift (see
+// agent.EmitTokenUsage). A --json consumer that wants real context usage
+// reads input_tokens here: it is the actual prompt size the provider
+// charged for, so it already includes the whole conversation.
+type ndjsonTokenUsage struct {
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	EstimatedTokens  int     `json:"estimated_tokens"`
+	CalibrationRatio float64 `json:"calibration_ratio"`
+}
+
+// ndjsonContextUsage carries the session-level context accounting the TUI
+// status dialog renders (chat.Session.ContextUsage): used/budget/window/
+// reserve in tokens and the prompt-side percent. UsedTokens is the len(s)/4
+// estimate, unlike ndjsonTokenUsage's provider-reported counts; consumers
+// that see both prefer the real numbers and keep this as the fallback that
+// also states the window and budget.
+type ndjsonContextUsage struct {
+	UsedTokens          int `json:"used_tokens"`
+	BudgetTokens        int `json:"budget_tokens"`
+	ContextWindowTokens int `json:"context_window_tokens"`
+	OutputReserveTokens int `json:"output_reserve_tokens"`
+	Percent             int `json:"percent"`
+}
+
+// writeTokenUsageLine frames one provider-reported token accounting record
+// as a "token_usage" NDJSON line. Extracted from jsonTurnEventCallback to
+// keep that switch under the structure-check function-size limit. The
+// counts are provider-reported (real), unlike the session-level estimate a
+// turn-final "context_usage" event carries - a consumer reading both
+// prefers these.
+func writeTokenUsageLine(w io.Writer, typed events.TokenUsageEvent) {
+	writeNDJSONEvent(w, ndjsonEvent{
+		Type:     "token_usage",
+		Provider: typed.Provider,
+		Model:    typed.Model,
+		TokenUsage: &ndjsonTokenUsage{
+			InputTokens:      typed.InputTokens,
+			OutputTokens:     typed.OutputTokens,
+			EstimatedTokens:  typed.EstimatedTokens,
+			CalibrationRatio: typed.CalibrationRatio,
+		},
+	})
 }
 
 // jsonTurnEventCallback returns an agent.Event handler that translates
@@ -164,6 +219,13 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 					HitPercent:        e.CacheUsage.HitPercent(),
 				},
 			})
+		case agent.EventTokenUsage:
+			// Same payload-required rule as cache_usage: without the typed
+			// record there are no numbers worth a wire line.
+			if e.TokenUsage == nil {
+				return
+			}
+			writeTokenUsageLine(w, *e.TokenUsage)
 		case agent.EventSubagentDone:
 			writeNDJSONEvent(w, ndjsonEvent{
 				Type:         "subagent_done",
