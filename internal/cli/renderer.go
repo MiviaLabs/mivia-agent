@@ -7,8 +7,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
+
+// isMemoryFrameMessage reports whether a message is the session-owned
+// core-memory context frame (by sentinel Name, or by frame shape for legacy
+// un-named frames). The frame is host surface, not conversation: rendering it
+// as the opening user card would show the memory block as the user's words.
+func isMemoryFrameMessage(m provider.Message) bool {
+	if m.Role != provider.RoleUser {
+		return false
+	}
+	return m.Name == chat.MemoryContextMessageName || chat.IsMemoryContextFrameContent(m.Content)
+}
 
 // TerminalWriter is the minimal interface ChatRenderer needs.
 type TerminalWriter interface {
@@ -264,10 +276,11 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 		return nil
 	}
 
-	// Find the start: first user message (or skip leading system).
+	// Find the start: first user message (or skip leading system). The
+	// memory-context frame is user-role host surface, never the opening card.
 	startIdx := -1
 	for i, m := range msgs {
-		if m.Role == provider.RoleUser {
+		if m.Role == provider.RoleUser && !isMemoryFrameMessage(m) {
 			startIdx = i
 			break
 		}
@@ -361,7 +374,7 @@ func RenderHistoryMessages(msgs []provider.Message, modelName string, width int)
 
 	start := -1
 	for i, m := range msgs {
-		if m.Role == provider.RoleUser {
+		if m.Role == provider.RoleUser && !isMemoryFrameMessage(m) {
 			if start >= 0 {
 				turns = append(turns, turnRange{start: start, end: i})
 			}

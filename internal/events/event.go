@@ -284,10 +284,14 @@ func (e TokenUsageEvent) Validate() error {
 // content, digest preimages, tool-schema bodies, or tool-argument values
 // (INV-68-7).
 var prefixResetCategoryAllowlist = map[string]struct{}{
-	"model":          {},
-	"reasoning":      {},
-	"tools":          {},
-	"system_prompt":  {},
+	"model":         {},
+	"reasoning":     {},
+	"tools":         {},
+	"system_prompt": {},
+	// memory reports a changed core-memory context frame (the user-role
+	// message at index 1): it alters wire bytes after the stable prefix, so
+	// identity equality stays equivalent to byte-equal prefixes (INV-68-1).
+	"memory":         {},
 	"agent_switch":   {},
 	"tool_admission": {},
 }

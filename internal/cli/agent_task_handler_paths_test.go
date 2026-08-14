@@ -140,14 +140,14 @@ func TestSkillOutputSchemaWinsOverTheAgentSchema(t *testing.T) {
 		"required":   []any{"agent_field"},
 	}
 
-	multiStep := handler.newMultiStepHandler(handler.binding, tools.NewRegistry(), "prompt", runtime.Request{Skill: "review"})
+	multiStep := handler.newMultiStepHandler(handler.binding, tools.NewRegistry(), "prompt", "", runtime.Request{Skill: "review"})
 	props, _ := multiStep.OutputSchema["properties"].(map[string]any)
 	if _, ok := props["verdict"]; !ok {
 		t.Fatalf("multi-step schema = %v, want the skill's", multiStep.OutputSchema)
 	}
 
 	// Without a skill, the agent's own schema is used.
-	plain := handler.newMultiStepHandler(handler.binding, tools.NewRegistry(), "prompt", runtime.Request{})
+	plain := handler.newMultiStepHandler(handler.binding, tools.NewRegistry(), "prompt", "", runtime.Request{})
 	props, _ = plain.OutputSchema["properties"].(map[string]any)
 	if _, ok := props["agent_field"]; !ok {
 		t.Fatalf("multi-step schema = %v, want the agent's", plain.OutputSchema)

@@ -376,7 +376,10 @@ func (l *Loop) stepRequest(ctx context.Context, toolSpecs []provider.ToolSpec, o
 	messages := l.Messages
 	// Phase 2 summary injection: when the current preparation compacted and a
 	// Summarizer is wired, build the request from an EPHEMERAL clone carrying
-	// the validated summary before the latest user objective. l.Messages stays
+	// the validated summary APPENDED after the latest user objective, so the
+	// structural messages keep their indices and the provider prompt-cache
+	// prefix stays valid (append extends the prefix; a mid-history insert
+	// splits it). l.Messages stays
 	// structural, so planning, idempotency, BaseDigest, and checkpoint bytes
 	// are untouched. On any failure the request falls back structural-only.
 	if opts.SummaryConfig.Summarizer != nil && l.HasPreparation && l.LastPreparation.Compacted {
@@ -386,11 +389,17 @@ func (l *Loop) stepRequest(ctx context.Context, toolSpecs []provider.ToolSpec, o
 	// budget) is close, tell the model to wrap up so it returns its best valid
 	// result instead of the bound hard-aborting the run mid-work. The
 	// instruction is appended to an EPHEMERAL copy — never to l.Messages — so
-	// history, checkpoints, and replays stay untouched.
+	// history, checkpoints, and replays stay untouched. Order is pinned:
+	// structural messages, then the injected summary, then this nudge last.
 	if conclude := l.concludeInstruction(ctx); conclude != "" {
 		cp := make([]provider.Message, 0, len(messages)+1)
 		cp = append(cp, messages...)
-		cp = append(cp, provider.Message{Role: provider.RoleUser, Content: conclude, CreatedAt: time.Now()})
+		// The Name marks this as a host injection: the DeepSeek reject gate
+		// (internal/provider terminalToolExchange) trims trailing NAMED user
+		// messages before it decides whether the current tool exchange is
+		// terminal, so this nudge cannot cause the exchange and its tool
+		// results to be dropped from the wire.
+		cp = append(cp, provider.Message{Role: provider.RoleUser, Content: conclude, Name: ConcludeNudgeMessageName, CreatedAt: time.Now()})
 		messages = cp
 		emit(opts, Event{Kind: EventWorkLimit, Detail: "conclude: approaching a work bound"})
 	}

@@ -86,10 +86,11 @@ func TestPrefixIdentityDistinctFromBindingFencePurpose(t *testing.T) {
 	token := s.currentSaveToken()
 	var _ BindingFence = token.Binding
 
-	// PrefixIdentity is a distinct ten-field value type; BindingFence stays
-	// four fields. Distinctness is structural: the two are not assignable.
-	if n := reflect.TypeOf(PrefixIdentity{}).NumField(); n != 10 {
-		t.Fatalf("PrefixIdentity has %d fields, want 10 (RC-2 added ReasoningDialect)", n)
+	// PrefixIdentity is a distinct eleven-field value type; BindingFence
+	// stays four fields. Distinctness is structural: the two are not
+	// assignable.
+	if n := reflect.TypeOf(PrefixIdentity{}).NumField(); n != 11 {
+		t.Fatalf("PrefixIdentity has %d fields, want 11 (RC-2 added ReasoningDialect; memory fix added MemoryDigest)", n)
 	}
 	if n := reflect.TypeOf(BindingFence{}).NumField(); n != 4 {
 		t.Fatalf("BindingFence has %d fields, want 4 (AR-1: unchanged)", n)

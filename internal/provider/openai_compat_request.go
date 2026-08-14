@@ -130,6 +130,13 @@ func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 // them, so they are not a stable anchor. It runs on the decoded map, so only
 // string contents are converted and already-part content is left alone. Only
 // the CacheMarkersEnabled gate in marshalBody ever calls it.
+//
+// SKIPPED design - intermediate breakpoint: when the gap between the rolling
+// marker and the first-user marker exceeds the provider's lookback window
+// (~15 content blocks on some backends), a lookback miss is possible for one
+// step; it self-heals on the next step when the rolling marker advances. Add
+// one intermediate marker only if EmitCacheUsage shows the hit rate craters
+// on wide batches.
 func markStablePrefixCacheControl(body map[string]any) {
 	messages, ok := body["messages"].([]any)
 	if !ok {
@@ -166,9 +173,15 @@ func markStablePrefixCacheControl(body map[string]any) {
 	markRollingBreakpoint(messages, firstUserIndex)
 }
 
-// markRollingBreakpoint marks the newest user or tool message, walking
-// backward past any trailing assistant turn. The first user message is
-// skipped when it is also the newest - it already carries its fixed marker.
+// markRollingBreakpoint marks the newest STABLE user or tool message, walking
+// backward past any trailing assistant turn and past named user messages.
+// A user message carrying a non-empty "name" is a host injection (context
+// summary, conclude nudge - the same contract terminalToolExchange in
+// api_message.go relies on); these ephemeral trailers never recur on the next
+// request, so anchoring the rolling breakpoint on one guarantees a cache miss.
+// User-typed input and parent steers never carry a Name. The first user
+// message is skipped when it is also the newest - it already carries its
+// fixed marker.
 func markRollingBreakpoint(messages []any, firstUserIndex int) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg, ok := messages[i].(map[string]any)
@@ -176,7 +189,17 @@ func markRollingBreakpoint(messages []any, firstUserIndex int) {
 			continue
 		}
 		switch msg["role"] {
-		case "user", "tool":
+		case "user":
+			if name, _ := msg["name"].(string); name != "" {
+				// Named user messages are host-injected ephemeral trailers;
+				// they are not cache anchors. Keep walking.
+				continue
+			}
+			if i != firstUserIndex {
+				markMessageContent(msg)
+			}
+			return
+		case "tool":
 			if i != firstUserIndex {
 				markMessageContent(msg)
 			}

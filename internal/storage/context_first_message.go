@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
@@ -41,9 +42,36 @@ func (s *SQLite) FirstUserMessage(ctx context.Context, principal contextstate.Pr
 		if role, _ := msg["role"].(string); role != "user" {
 			continue
 		}
+		if isMemoryContextFrame(msg) {
+			continue
+		}
 		if content, ok := msg["content"].(string); ok && content != "" {
 			return content, nil
 		}
 	}
 	return "", nil
+}
+
+// memoryContextMessageName mirrors chat.MemoryContextMessageName. It is
+// duplicated as a literal, not imported: this package deliberately does not
+// depend on internal/chat, and a cross-package contract test in internal/chat
+// (system_prompt_compose_test.go) pins the two literals equal.
+const memoryContextMessageName = "core-memory-context"
+
+// memoryContextOpenTag is the frame's open tag. Legacy frames persisted
+// before the sentinel Name existed carry no name, so the tag prefix is the
+// secondary, display-only skip signal for them.
+const memoryContextOpenTag = "<core-memory-context>"
+
+// isMemoryContextFrame reports whether a persisted user message is the
+// session-owned core-memory context frame. The frame always precedes the
+// first real user objective, so without this skip every session title became
+// the frame text. The check is display-only (titling): Name match first,
+// open-tag prefix second for pre-Name legacy checkpoints.
+func isMemoryContextFrame(msg map[string]any) bool {
+	if name, _ := msg["name"].(string); name == memoryContextMessageName {
+		return true
+	}
+	content, _ := msg["content"].(string)
+	return strings.HasPrefix(content, memoryContextOpenTag)
 }

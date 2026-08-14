@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
+
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -53,6 +55,12 @@ type MultiStepHandler struct {
 	ReasoningFunc func() reasoning.Setting
 	// SystemPrompt is the system prompt for the sub-agent.
 	SystemPrompt string
+	// MemoryContext is the rendered core-memory context frame
+	// (chat.MemoryContextContent), delivered as a user-role message right
+	// after the system message rather than composed into SystemPrompt, so
+	// memory changes never touch the cached system-prompt prefix. Empty
+	// means no memory injection.
+	MemoryContext string
 	// MaxSteps is the maximum number of LLM turns.
 	MaxSteps int
 	// WorkLimits bounds cumulative provider and tool work for this invocation.
@@ -136,13 +144,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	defer scoped.dispatcher.Close()
 	loop := scoped.loop
 	steps, maxTokens, toolTimeout := h.setupAgentLoop()
-	subPrompt := h.SystemPrompt
-	if subPrompt == "" {
-		subPrompt = "You are a focused sub-agent with access to tools. Complete the assigned task."
-	}
-	loop.Messages = []provider.Message{
-		{Role: provider.RoleSystem, Content: subPrompt},
-	}
+	loop.Messages = h.seedMessages()
 
 	// Apply total timeout if specified - but only if it's tighter than parent.
 	// Never extend beyond parent deadline (that's the orchestrator's call).
@@ -453,3 +455,20 @@ func (h *MultiStepHandler) restrictedRegistry() *tools.Registry {
 
 // Ensure MultiStepHandler implements runtime.Handler at compile time.
 var _ runtime.Handler = (*MultiStepHandler)(nil)
+
+// seedMessages builds the loop's starting history: the system prompt at
+// index 0 and, when present, the core-memory frame at index 1, before the
+// task prompt the loop appends. The frame is background context and must
+// precede the real objective; RoleSystem is only valid at index 0, so the
+// frame is a sentinel-named user-role message.
+func (h *MultiStepHandler) seedMessages() []provider.Message {
+	subPrompt := h.SystemPrompt
+	if subPrompt == "" {
+		subPrompt = "You are a focused sub-agent with access to tools. Complete the assigned task."
+	}
+	messages := []provider.Message{{Role: provider.RoleSystem, Content: subPrompt}}
+	if h.MemoryContext != "" {
+		messages = append(messages, provider.Message{Role: provider.RoleUser, Name: chat.MemoryContextMessageName, Content: h.MemoryContext})
+	}
+	return messages
+}
