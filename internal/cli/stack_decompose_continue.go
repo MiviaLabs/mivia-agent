@@ -89,6 +89,148 @@ func latestDecomposeContinueWave(repo workflowledger.Repository, stackID string)
 	return best, nil
 }
 
+// loadAllStackChunksForDrive reconstructs the full chunk list across every
+// already-admitted decompose wave for a drive (runStackDrive). Unlike the
+// strict loadAllStackChunks (kept for the reconcile sweep), it recovers a
+// wedged continuation wave instead of failing on it: a wave whose newest run
+// has no succeeded decompose output is replayed from an older succeeded run
+// under the same key (the wave's chunks are already seeded from that
+// output), re-admitted with a fresh run when the newest run settled failed,
+// or skipped with an actionable message naming the run id while the run is
+// still live (pending/running - resumable). A skipped wave suppresses further
+// wave admission (hasMore=false) so the drive never auto-requests a wave out
+// of order; the operator resolves the live run and re-runs `mivia stack
+// drive`. The wave-0 output is passed in (already loaded by the caller).
+func loadAllStackChunksForDrive(prepared *preparedWorkflowRun, stackID string, planOutput []byte, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, remainingScope string, err error) {
+	mode, waveChunks, waveHasMore, waveRemaining, err := parseStackPlanOutput(planOutput)
+	if err != nil {
+		return nil, false, "", err
+	}
+	if mode != "multi" {
+		return waveChunks, false, "", nil
+	}
+	chunks = append(chunks, waveChunks...)
+	hasMore, remainingScope = waveHasMore, waveRemaining
+	lastWave, err := latestDecomposeContinueWave(prepared.repo, stackID)
+	if err != nil {
+		return nil, false, "", err
+	}
+	skippedWave := false
+	for wave := 1; wave <= lastWave; wave++ {
+		run, found, rerr := stackDecomposeContinueRunRef(prepared.repo, stackID, wave)
+		if rerr != nil {
+			return nil, false, "", rerr
+		}
+		if !found {
+			return nil, false, "", fmt.Errorf("stack %s: decompose continuation wave %d has an invocation key but no run", stackID, wave)
+		}
+		raw, lerr := loadStackPlanOutput(prepared.repo, run.RunID)
+		if lerr == nil {
+			_, waveChunks, waveHasMore, waveRemaining, perr := parseStackPlanOutput(raw)
+			if perr != nil {
+				return nil, false, "", fmt.Errorf("stack %s: decompose continuation wave %d: %w", stackID, wave, perr)
+			}
+			chunks = append(chunks, waveChunks...)
+			hasMore, remainingScope = waveHasMore, waveRemaining
+			continue
+		}
+		waveChunks, waveHasMore, waveRemaining, skipped, rerr := recoverDecomposeContinueWave(prepared, stackID, wave, run, remainingScope, planInputs, stdout, stderr)
+		if rerr != nil {
+			return nil, false, "", rerr
+		}
+		if skipped {
+			skippedWave = true
+			continue
+		}
+		chunks = append(chunks, waveChunks...)
+		hasMore, remainingScope = waveHasMore, waveRemaining
+	}
+	if skippedWave {
+		hasMore = false
+	}
+	return chunks, hasMore, remainingScope, nil
+}
+
+// recoverDecomposeContinueWave handles one decompose-continuation wave whose
+// newest run has no succeeded decompose output. A live (pending/running)
+// run is skipped with an actionable message naming the run id and its
+// resumability; a terminal run is replayed from an older succeeded run under
+// the same key (that output is what seeded the wave's chunks) or re-admitted
+// with a fresh run (same stable key; the newest run wins the run-ref lookup
+// on the next drive). Every path either recovers the wave or reports exactly
+// which run to resume or delete - never the bare 'plan run %q has no
+// succeeded decompose output' wedge error.
+func recoverDecomposeContinueWave(prepared *preparedWorkflowRun, stackID string, wave int, run workflowledger.RunSnapshot, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, nextRemainingScope string, skipped bool, err error) {
+	if isResumableRunStatus(run.Status) {
+		fmt.Fprintf(stderr, "stack %s: decompose continuation wave %d run=%s is %s (resumable); resume it with `mivia workflow resume %s` or wait for it to settle, then re-run `mivia stack drive`\n", stackID, wave, run.RunID, run.Status, run.RunID)
+		return nil, false, "", true, nil
+	}
+	older, found, rerr := succeededDecomposeContinueRunRef(prepared.repo, stackID, wave)
+	if rerr != nil {
+		return nil, false, "", false, rerr
+	}
+	if found {
+		raw, lerr := loadStackPlanOutput(prepared.repo, older.RunID)
+		if lerr != nil {
+			return nil, false, "", false, fmt.Errorf("stack %s: decompose continuation wave %d: %w", stackID, wave, lerr)
+		}
+		_, waveChunks, waveHasMore, waveRemaining, perr := parseStackPlanOutput(raw)
+		if perr != nil {
+			return nil, false, "", false, fmt.Errorf("stack %s: decompose continuation wave %d: %w", stackID, wave, perr)
+		}
+		return waveChunks, waveHasMore, waveRemaining, false, nil
+	}
+	switch run.Status {
+	case workflowledger.RunStatusFailed, workflowledger.RunStatusCanceled, workflowledger.RunStatusTimedOut, workflowledger.RunStatusDeliveryFailed:
+		// Re-admittable: the wave produced no output, so re-admit it with a
+		// fresh run under the same stable key (newest wins the run-ref
+		// lookup, so the recovery run supersedes the failed one).
+	default:
+		fmt.Fprintf(stderr, "stack %s: decompose continuation wave %d run=%s settled at %s with no succeeded decompose output; resume or delete run %s, then re-run `mivia stack drive`\n", stackID, wave, run.RunID, run.Status, run.RunID)
+		return nil, false, "", true, nil
+	}
+	nextChunks, nextHasMore, nextRemaining, aerr := stackDecomposeContinueAdmit(prepared, stackID, wave, remainingScope, planInputs, stdout, stderr)
+	if aerr != nil {
+		fmt.Fprintf(stderr, "stack %s: decompose continuation wave %d run=%s settled at %s with no succeeded decompose output; automatic re-admission failed: %v; resume or delete run %s (`mivia workflow resume %s` / `mivia workflow delete %s`), then re-run `mivia stack drive`\n", stackID, wave, run.RunID, run.Status, aerr, run.RunID, run.RunID, run.RunID)
+		return nil, false, "", true, nil
+	}
+	return nextChunks, nextHasMore, nextRemaining, false, nil
+}
+
+// succeededDecomposeContinueRunRef finds the newest run whose stable
+// invocation key is wave N's decompose-continuation key AND whose decompose
+// output is loadable (a succeeded decompose attempt with a stored output).
+// It backs the drive's wedge recovery: a newer failed or pending run under
+// the same key does not erase the wave's already-produced chunks, whose
+// content-addressed output stays durable. Mirrors
+// stackDecomposeContinueRunRef but filters on loadable output instead of
+// returning the newest run unconditionally.
+func succeededDecomposeContinueRunRef(repo workflowledger.Repository, stackID string, wave int) (workflowledger.RunSnapshot, bool, error) {
+	key, err := stackDecomposeContinueKey(stackID, wave)
+	if err != nil {
+		return workflowledger.RunSnapshot{}, false, err
+	}
+	runs, err := repo.ListRuns(context.Background())
+	if err != nil {
+		return workflowledger.RunSnapshot{}, false, err
+	}
+	var best workflowledger.RunSnapshot
+	found := false
+	for _, r := range runs {
+		if r.InvocationKey != key {
+			continue
+		}
+		if _, err := loadStackPlanOutput(repo, r.RunID); err != nil {
+			continue
+		}
+		if !found || r.StartedAt.After(best.StartedAt) {
+			best = r
+			found = true
+		}
+	}
+	return best, found, nil
+}
+
 // admitNextWaveIfReady is runStackDrive's one-pass-per-invocation extension
 // point for §12.1 incremental decompose: if everything currently known just
 // merged and the latest decompose wave declared more scope, request exactly
