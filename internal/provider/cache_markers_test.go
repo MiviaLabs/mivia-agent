@@ -42,9 +42,69 @@ func TestCacheMarkersGatedOnEmitContentParts(t *testing.T) {
 	// content parts carrying the ephemeral cache marker.
 	assertCacheMarkedContent(t, messages[0], RoleSystem, "you are a test assistant")
 	assertCacheMarkedContent(t, messages[1], RoleUser, "hello")
-	// Tool results and assistant turns keep the plain string shape.
+	// Assistant turns keep the plain string shape; the newest tool result
+	// carries the rolling breakpoint so the accumulated transcript caches.
 	assertPlainStringContent(t, messages[2], RoleAssistant, "I will read the file")
-	assertPlainStringContent(t, messages[3], RoleTool, "tool result")
+	assertCacheMarkedContent(t, messages[3], RoleTool, "tool result")
+}
+
+// The rolling breakpoint tracks the NEWEST user or tool message: older tool
+// results lose the marker as it moves forward, and a trailing assistant turn
+// is walked past rather than marked.
+func TestRollingBreakpointMarksNewestUserOrToolMessage(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{
+		Model: "m",
+		Messages: []Message{
+			{Role: RoleSystem, Content: "sys"},
+			{Role: RoleUser, Content: "objective"},
+			{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{toolCallFor("call_1", "read_file", `{"path":"a"}`)}},
+			{Role: RoleTool, ToolCallID: "call_1", Content: "older result"},
+			{Role: RoleUser, Content: "steer"},
+			{Role: RoleAssistant, Content: "done"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	assertCacheMarkedContent(t, messages[0], RoleSystem, "sys")
+	assertCacheMarkedContent(t, messages[1], RoleUser, "objective")
+	// Older tool result stays plain: the rolling marker has moved past it.
+	assertPlainStringContent(t, messages[3], RoleTool, "older result")
+	// Newest user message carries the rolling marker; the trailing assistant
+	// turn is walked past, never marked.
+	assertCacheMarkedContent(t, messages[4], RoleUser, "steer")
+	assertPlainStringContent(t, messages[5], RoleAssistant, "done")
+}
+
+// A single-turn request (system + one user message) places the fixed
+// first-user marker only once - the rolling pass must not double-wrap it.
+func TestRollingBreakpointSkipsFirstUserMessage(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "hi"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	assertCacheMarkedContent(t, messages[1], RoleUser, "hi")
 }
 
 // assertCacheMarkedContent checks one decoded message whose content is exactly
