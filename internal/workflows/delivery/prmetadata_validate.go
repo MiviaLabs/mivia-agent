@@ -35,14 +35,12 @@ const (
 )
 
 // attributionSummaryLabel is the <summary> label of the run-details block:
-// the product avatar and the Mivia Agent name (both linked to the product
-// repo) followed by a "Show details" affordance. Markdown does not render
-// inside <summary>, so the links are HTML anchors. <sub> keeps the line at
-// footer visual weight.
+// the product avatar linked to the product repo, followed by a "Show
+// details" affordance. Markdown does not render inside <summary>, so the
+// link is an HTML anchor. <sub> keeps the line at footer visual weight.
 func attributionSummaryLabel() string {
 	avatar := "<a href=\"" + miviaAgentGitHubRepoURL + "\"><img src=\"https://github.com/" + miviaAgentGitHubOwner + ".png\" width=\"16\" height=\"16\" align=\"top\" alt=\"" + mviaCommitAuthorName + "\" /></a>"
-	name := "<a href=\"" + miviaAgentGitHubRepoURL + "\">" + mviaCommitAuthorName + "</a>"
-	return "<sub>" + avatar + " " + name + " - Show details</sub>"
+	return "<sub>" + avatar + " Show details</sub>"
 }
 
 // shortDigest returns the display prefix of a workflow digest. The full

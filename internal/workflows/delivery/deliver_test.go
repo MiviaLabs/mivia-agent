@@ -160,7 +160,7 @@ func wantBody(run workflowledger.RunSnapshot) string {
 	if len(digestText) > 12 {
 		digestText = digestText[:12]
 	}
-	return "<details>\n<summary><sub><a href=\"https://github.com/MiviaLabs/mivia-agent\"><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /></a> <a href=\"https://github.com/MiviaLabs/mivia-agent\">Mivia Agent</a> - Show details</sub></summary>\n\n" +
+	return "<details>\n<summary><sub><a href=\"https://github.com/MiviaLabs/mivia-agent\"><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /></a> Show details</sub></summary>\n\n" +
 		"- Run: [" + run.RunID + "](https://mivia.app/runs/" + run.RunID + ")\n" +
 		"- Workflow digest: [" + digestText + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")\n" +
 		"\n</details>"
