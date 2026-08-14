@@ -11,89 +11,28 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 )
 
-// ndjsonEvent is the wire schema for line-mode --json output. Exactly one
-// event type is populated per line:
+// ndjsonEvent is the wire schema for line-mode --json output; exactly one
+// type is populated per line. See docs/ (chat --json wire schema) for the
+// full type vocabulary and field list.
 //
-//	{"type":"chunk","text":"..."}                            - one per emitted piece of streamed answer content
-//	{"type":"thinking","text":"..."}                         - one per emitted piece of model reasoning (chain of thought), for providers that expose it
-//	{"type":"tool_start","tool_call_id":"...","name":"...","input":"..."}  - a tool call began; input is a bounded, redacted preview
-//	{"type":"tool_end","tool_call_id":"...","name":"...","output":"...","status":"ok|failed"}   - that tool call finished; output is a bounded, redacted preview, status is its outcome (see toolEndStatus)
-//	{"type":"subagent_done","origin_task_id":"..."}  - a delegated subagent run finished; its loop will emit nothing further
-//	{"type":"subagent_heartbeat","origin_task_id":"...","message":"..."}  - a delegated subagent is still running; message is a short wall-clock progress note (model thinking, tool batch, ...), best-effort and not guaranteed on every tick
-//	{"type":"model_changed","provider":"...","model":"...","discarded_effort":"..."}  - a /model switch succeeded; discarded_effort is set only if the switch dropped an active reasoning effort
-//	{"type":"effort_changed","model":"...","effort":"..."}  - an /effort switch succeeded
-//	{"type":"slash_info","message":"..."}          - any other slash command's informational output (status query, current model/effort, a soft failure like "model not available", ...)
-//	{"type":"slash_error","message":"..."}         - a slash command's hard-error output
-//	{"type":"done","session_id":"..."}             - exactly once, turn completed successfully
-//	{"type":"cancelled"}                           - exactly once, turn was SIGINT-interrupted
-//	{"type":"error","message":"…"}                 - exactly once, turn failed
+// "external_*" types mirror the same vocabulary for a turn running in a
+// DIFFERENT mivia process for the same session, relayed via internal/hub.
 //
-// The "external_*" types (see chat_hub.go) mirror this same vocabulary for a
-// turn running in a DIFFERENT mivia process for the same session (a terminal
-// TUI, another desktop thread) - relayed live via internal/hub, not read
-// from disk. Every one carries "run_id" (that OTHER process's own turn
-// identifier - unrelated to any turn_id this process's own turns use) so a
-// consumer can tell which external turn each line continues:
+// Older consumers that only understand chunk/done/cancelled/error can
+// safely ignore unknown types, since the final answer always arrives via
+// "chunk" events.
 //
-//	{"type":"external_turn_start","run_id":"...","session_id":"...","role":"user","text":"..."}  - a new external turn began; text is what the other process's user typed
-//	{"type":"external_chunk","run_id":"...","text":"..."}
-//	{"type":"external_thinking","run_id":"...","text":"..."}
-//	{"type":"external_tool_start","run_id":"...","tool_call_id":"...","name":"...","input":"..."}
-//	{"type":"external_tool_end","run_id":"...","tool_call_id":"...","name":"...","output":"...","status":"ok|failed"}
-//	{"type":"external_done","run_id":"..."}
-//	{"type":"external_error","run_id":"...","message":"…"}
+// model_changed/effort_changed/slash_info/slash_error exist because slash
+// commands used to route through terminalSlashSink, a silent no-op with a
+// nil *Terminal (line-mode) — a --json consumer had no way to learn if a
+// switch succeeded. Failure branches use sink.Error (not sink.Info) so
+// "slash_error" is the sole authoritative failure signal.
 //
-// "tool_start"/"tool_end" additionally carry "origin_task_id"/"origin_agent"/
-// "origin_depth" when the tool call was made by a delegated subagent rather
-// than the root loop (agent.EventSubagentStart/End - same field shape as
-// agent.EventToolStart/End, just attributed - see agent.EventOrigin's doc
-// comment); "tool_start" further carries "origin_task_description" (the
-// bounded task text the subagent was given, constant across every one of
-// its own tool_start events - a consumer only needs the first one it sees
-// per origin_task_id). Root-loop tool calls omit all four origin fields
-// entirely (agent.EventOrigin's zero value), so an older consumer that only
-// reads tool_call_id/name/input/output still renders a correct, if
-// unattributed, transcript - a consumer that wants to group a subagent's
-// nested tool
-// calls under its own run (rather than flatten them into the parent turn)
-// keys off origin_task_id.
+// "cancelled" is its own type (not folded into "error") so a consumer can
+// tell "user stopped this" from "this failed" without string-matching.
 //
-// "thinking"/"tool_start"/"tool_end"/"subagent_done"/"model_changed"/
-// "effort_changed"/"slash_info"/"slash_error" are best-effort progress
-// events: an older consumer that only understands chunk/done/cancelled/error
-// can ignore unknown types and still render a correct transcript, since the
-// final answer text still arrives entirely via "chunk" events. The tool
-// events carry the same redacted preview fields the interactive TUI already
-// renders (see agentEventBridgeCallback in tui_events.go) - the wire
-// representation intentionally does not expose anything the TUI itself
-// would not show.
-//
-// model_changed/effort_changed/slash_info/slash_error exist because, before
-// them, every slash command routed through terminalSlashSink, which is a
-// silent no-op when wrapped around a nil *Terminal (line-mode's case) - a
-// caller like mivia-agent-desktop sending "/model provider/model" over the
-// same stdin it already writes chat turns to had no way to learn whether the
-// switch succeeded. See jsonSlashSink in chat_json_slash.go.
-//
-// /model and /effort route their failure branches (unavailable model,
-// rejected effort) through sink.Error rather than sink.Info specifically so
-// a --json consumer can treat "slash_error" as the authoritative failure
-// signal for a switch attempt and ignore "slash_info" entirely for that
-// purpose - a successful switch always emits slash_info (the same prose
-// confirmation the TUI shows) immediately followed by model_changed/
-// effort_changed, so slash_info alone is never a reliable success/failure
-// discriminator on its own.
-//
-// A SIGINT-interrupted turn gets its own "cancelled" type rather than being
-// folded into "error": a caller that wants to distinguish "the user stopped
-// this on purpose" from "this genuinely failed" (e.g. to decide whether to
-// surface an error toast) would otherwise have to string-match a message
-// field, which is fragile - a bare type check is not.
-//
-// "done" carries the session's SessionID so a caller that started a brand
-// new conversation (no --session on the invocation) learns the id mivia
-// just minted, without which it has no way to look this conversation up
-// later via `mivia sessions list`/`show`/`--session <id>` resume.
+// "done" carries SessionID so a caller with no --session on invocation
+// learns the id mivia just minted, for later `mivia sessions show/--session`.
 type ndjsonEvent struct {
 	Type            string `json:"type"`
 	Text            string `json:"text,omitempty"`

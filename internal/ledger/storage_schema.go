@@ -399,40 +399,25 @@ func rebuildTaskStatus(tasks map[string]TaskSnapshot, runID string, payload []by
 
 // fromStorageEvent converts a storage.Event back to a ledger LifecycleEvent.
 //
-// The row carries only ID, RunID and the payload; Kind, TaskID, AttemptID and
-// CreatedAt live inside the payload, because AppendEvent marshals the whole event
-// into it. They have to be decoded back out or a rebuilt projection returns events
-// with an empty Kind - and a caller filtering by kind then matches nothing, which
-// is indistinguishable from "no such events happened". That is the failure this
-// decode exists to prevent, for every run the current process did not create.
+// The row carries only ID, RunID and the payload; Kind/TaskID/AttemptID/
+// CreatedAt live inside the payload (AppendEvent marshals the whole event
+// into it) and must be decoded back out, or a rebuilt projection has empty
+// Kind and a caller filtering by kind silently matches nothing.
 //
-// CreatedAt is recovered, and is durable as of plan 21: AppendEvent now stamps it
-// before marshalling, so the stored payload holds the append instant, and
-// mem.AppendEvent stamps only what arrives unstamped. A replayed event therefore
-// reports when it happened rather than when it was read back. Pinned by
-// TestListEventsPreserveOriginalTimestampAcrossRebuild and, for the statement
-// ordering that makes it possible, TestAppendEventStampsBeforeMarshalling.
+// CreatedAt replays as the original append instant (mem.AppendEvent stamps
+// only what arrives unstamped) — pinned by
+// TestListEventsPreserveOriginalTimestampAcrossRebuild.
 //
-// Two fields are deliberately NOT recovered:
+// Sequence and ID are deliberately NOT recovered from the payload: Sequence
+// stays derived from replay order (trusting a payload value would let a
+// caller open gaps/duplicates). ID stays the storage row id — the
+// coordinator mints ids from a process-local counter reset on restart, so
+// restoring a caller's id on a resumed run would collide with a freshly
+// re-minted one and mem.AppendEvent would reject it as a duplicate.
 //
-//   - Sequence stays derived. mem.AppendEvent numbers the run's events in replay
-//     order, replay order is store append order, and for a serial writer that
-//     reproduces the live numbering exactly. Trusting a payload sequence instead
-//     would let a caller open gaps and duplicates in the projection.
-//   - ID stays the storage row id. Restoring the caller's id looks tempting -
-//     it would make a replayed event report the id the model originally saw - but
-//     the coordinator mints event ids from a PROCESS-LOCAL counter (evt-1, evt-2,
-//     … reset on restart, unlike run ids which are random). A resumed run would
-//     then re-mint an id the replay had just restored, mem.AppendEvent would
-//     reject it as a duplicate, and the event would vanish from the projection
-//     while its store row persisted. Making event ids unguessable is the
-//     prerequisite; see plan 21 correction C2.
-//
-// Rows written before plan 21 hold a zero CreatedAt. There is no schema version
-// to gate on - no version table, no PRAGMA user_version - so they are recognised
-// by content rather than by a version check: a zero arrives at mem.AppendEvent,
-// which stamps what arrives unstamped, and the row replays to the read instant
-// exactly as it always did. Pinned by
+// Rows written before plan 21 hold a zero CreatedAt; with no schema version
+// to gate on, they're recognized by content (a zero arrives unstamped and
+// replays to the read instant) — pinned by
 // TestLegacyRowWithoutTimestampFallsBackToReadInstant.
 func fromStorageEvent(evt storage.Event) (LifecycleEvent, error) {
 	if evt.Kind != storageKindLifecycleEvent {

@@ -228,31 +228,22 @@ func (p PanelCoordinator) requireTerminalPhaseOrAlreadyDone(ctx context.Context,
 // dispatched, or joins an existing child as a recovered (never-locally-
 // resumed) handle and issues the coordinator's normal cancel request on it.
 //
-// Both calls run under the wait-only context (coordinator.ContextWithPanelWaitOnlyJoin),
-// but only the EnsureTerminalSingleTaskRun branch's underlying
-// joinSingleTaskAdmission actually consults that marker today —
-// coordinator.JoinAsRecovered never reads it: it is structurally incapable
-// of becoming a local actor by construction (it only reads durable state and
-// starts a passive watchRecoveredRun), so the marker is a no-op on that path,
-// not an active defense. It is still applied there for one reason: if
-// JoinAsRecovered ever gains any claim-taking or resume behavior in a future
-// change, the marker starts protecting this call automatically instead of
-// requiring that change to remember to add it. On the EnsureTerminalSingleTaskRun
-// branch, the marker is a real, load-bearing defense in depth: today the
-// workflow claim already excludes a concurrent forward dispatcher from
-// winning the child's admission race while cancellation is in flight, but
-// this marker gives cancellation its own independent guarantee that it can
-// never itself become a child's local actor even if that outer invariant is
-// ever violated (an expired workflow claim lease mid-reconciliation, for
-// example) — it fails closed (ErrWaitOnlyJoinLost from the underlying
-// coordinator) instead of silently resuming the very child it is trying to
-// stop.
+// Both calls run under the wait-only context, but only the
+// EnsureTerminalSingleTaskRun branch's joinSingleTaskAdmission actually
+// consults that marker — JoinAsRecovered is structurally incapable of
+// becoming a local actor (it only reads durable state and starts a passive
+// watchRecoveredRun), so the marker is applied there defensively, in case a
+// future change gives JoinAsRecovered claim-taking behavior. On the
+// EnsureTerminalSingleTaskRun branch it is load-bearing: it gives
+// cancellation its own guarantee that it can never become the child's local
+// actor even if the outer claim-exclusion invariant is ever violated — it
+// fails closed (ErrWaitOnlyJoinLost) instead of silently resuming the child
+// it is trying to stop.
 //
-// A context deadline/cancellation while waiting on that cancel request is a
+// A context deadline/cancellation while waiting on the cancel request is a
 // slow-worker signal (D15 item 5), not an ambiguous claim (item 6): it
-// reports (false, nil) so the caller records durable progress and reports
-// cancel_pending, distinct from a genuine ambiguous-claim refusal, which
-// reports (false, err).
+// reports (false, nil) so the caller records progress and reports
+// cancel_pending, distinct from a genuine ambiguous-claim refusal (false, err).
 func (p PanelCoordinator) cancelOrTombstone(ctx context.Context, runID, taskID string, work PanelTaskSpec) (bool, error) {
 	req, err := p.request(ctx, runID, taskID, work, true)
 	if err != nil {

@@ -22,38 +22,27 @@ import (
 const MaxDeliveryRepairs = DefaultMaxDeliveryRepairs
 
 // ReopenForRepair returns a run whose delivery failed to the step the workflow
-// names in delivery.on_failure (or delivery.on_pr_metadata_failure for a
-// PR-metadata defect, or delivery.on_diff_size_failure for an over-limit
-// delivered diff; delivery.RepairTarget is the single classifier both the CLI
-// and the local engine use).
+// names in delivery.on_failure (or the PR-metadata/diff-size variants;
+// delivery.RepairTarget is the single classifier both the CLI and the local
+// engine use). maxRepairs bounds the cycle; <=0 selects MaxDeliveryRepairs.
 //
-// maxRepairs bounds this run's repair cycle; zero or a negative value selects
-// MaxDeliveryRepairs. The policy snapshots delivery.max_repairs from the
-// workflow TOML (see Policy.MaxRepairs).
+// Delivery runs after the success terminal, outside the step graph, so a
+// repairable delivery failure (commit hook rejection is the common case)
+// used to have no route back into the workflow and just waited for a person.
 //
-// Delivery runs after the success terminal, outside the step graph. A delivery
-// that fails for a reason an agent can repair - a commit hook that rejects the
-// change is the common one - therefore had no route back into the workflow.
-// The run stopped with all of its work done and waited for a person.
-//
-// The re-entry writes one attempt for the delivery and its TERMINAL failure
-// outcome with a route to the repair step in ONE durable event (see
-// Repository.RecordStepAttemptOutcome): the attempt is never observable in a
-// non-terminal state, so a crash cannot leave a Running undeclared-step
-// attempt behind. Crash windows are only before the write (nothing durable
-// changed; the run returns to delivery via the success-terminal reconcile) or
-// after it (the attempt is already terminal with the repair route) — both
+// The re-entry writes the delivery attempt and its TERMINAL failure outcome
+// with a route to the repair step in ONE durable event, so the attempt is
+// never observable non-terminal — a crash before the write leaves nothing
+// durable changed (run returns to delivery via reconcile); a crash after
+// leaves it already terminal with the repair route. Either way is
 // recoverable. The ledger derives the active step from the last attempt's
-// route, so the run continues at that step on the next resume, exactly the
-// way a repair loop inside the graph continues. The failure evidence is
-// stored content-addressed (RepairHint, which tells the agent what to repair
-// and whether a commit is involved) and referenced by the attempt, so the
-// repair agent reads why delivery failed instead of guessing.
+// route, so the run continues at the repair step on next resume. Failure
+// evidence (RepairHint: what to repair, whether a commit is involved) is
+// stored content-addressed and referenced by the attempt, so the repair
+// agent reads why delivery failed instead of guessing.
 //
-// The run then repairs, reaches its success terminal again, and delivers
-// again. Nothing here knows what the failure was or which step repairs it:
-// the workflow author names the step, so the mechanism stays generic. The
-// CLI and the local engine share this one implementation.
+// Nothing here knows what the failure was or which step repairs it — the
+// workflow author names the step, so the mechanism stays generic.
 func ReopenForRepair(ctx context.Context, repo ledger.Repository, runID, repairStep string, maxRepairs int, cause error, stdout io.Writer) error {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {

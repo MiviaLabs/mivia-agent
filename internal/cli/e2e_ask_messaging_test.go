@@ -38,39 +38,19 @@ const (
 )
 
 // askToolCompleter drives a dispatched reviewer→auditor ask/answer round-trip
-// through real tool calls. The reviewer's first turn asks (blocking, so it
-// parks); its second turn echoes the post_message tool result, which carries
-// status "answered" plus the answer body. The auditor keeps its loop alive
-// with findings until the ask is injected at a step boundary, then answers it;
-// each keep-alive finding yields for keepAliveYield after the askPosted
-// unblock so the reviewer's ask tool can never be starved.
+// through real tool calls; the auditor keeps its loop alive with findings
+// until the ask lands, then answers it.
 //
-// A4 determinism: askPosted is closed exactly once — when the reviewer emits
-// its post_message(kind=ask) tool call — and the auditor's keep-alive branch
-// blocks on it before posting findings. The coordinator dispatches tasks by
-// iterating a map, so under GOMAXPROCS=1 the auditor goroutine can be
-// scheduled first and, because each fake-completer step is microseconds, run
-// to step exhaustion in a single scheduler quantum before the reviewer's
-// goroutine ever posts the ask. Two mechanisms close this:
-//
-//  1. Channel handoff: a blocked goroutine yields the P — no CPU starvation
-//     is possible — so the reviewer's worker is guaranteed to run and its
-//     blocking ask reaches the auditor's mailbox.
-//
-//  2. keepAliveYield: after the channel unblocks, the keep-alive loop would
-//     otherwise become a tight non-blocking spin — once the reviewer's
-//     ChatTurn closes askPosted, an async scheduler preemption can delay the
-//     reviewer's ask tool call, and the auditor could burn its ENTIRE
-//     256-step budget in one scheduler quantum before the ask reaches its
-//     mailbox (the ask then declines "target_terminal" because the auditor
-//     already failed). Every keep-alive finding therefore yields the P for
-//     keepAliveYield before posting: while the auditor is blocked, the
-//     reviewer's goroutine is the only runnable one, so its ask tool executes
-//     and mailbox-delivers the ask before the loop can consume budget.
-//
-// Each hop only proceeds when the prior hop's ask is actually delivered; the
-// 256-step budget is the backstop for a slow-starting reviewer, not the
-// primary mechanism.
+// A4 determinism: the coordinator dispatches tasks by iterating a map, so
+// under GOMAXPROCS=1 the auditor goroutine could run to step exhaustion
+// before the reviewer ever posts its ask. askPosted (closed once, on the
+// reviewer's post_message(kind=ask) call) blocks the auditor's keep-alive
+// branch until the ask fires — a blocked goroutine yields the P, so the
+// reviewer is guaranteed to run. After the channel unblocks, keepAliveYield
+// yields the P again before each keep-alive finding posts: without it, a
+// scheduler preemption right after askPosted closes could let the auditor
+// burn its entire step budget in one quantum before the ask reaches its
+// mailbox (the ask then wrongly declines "target_terminal").
 type askToolCompleter struct {
 	name string
 	next atomic.Int64

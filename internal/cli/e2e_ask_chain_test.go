@@ -1,56 +1,21 @@
 package cli
 
-// E7: end-to-end three-agent ask chain (A→B→C) through the real dispatched
-// path. Positive relay: the asker's blocking ask is relayed by a middle agent
-// to an end agent, whose answer is forwarded back, unblocking the asker.
+// E7: end-to-end three-agent ask chain (A→B→C), one hop longer than
+// TestE2E_DispatchAskAnswerRoundTrip. asker→auditor→go-engineer, answer
+// relayed back to unblock the asker.
 //
-// Wiring exercised (same seam as TestE2E_DispatchAskAnswerRoundTrip, one hop
-// longer):
+// A4 determinism (-count=10 -cpu 1/4, -race): three concurrent tasks race
+// under GOMAXPROCS=1, so a keep-alive agent could exhaust its step budget
+// before its asker even posts. Two mechanisms prevent that: (1) channel
+// handoffs (askPosted/relayPosted) block each hop's first action until the
+// prior hop's ask tool call actually fires; (2) keepAliveYield yields the P
+// right after a channel unblocks, so the asker's goroutine — the only
+// runnable one at that instant — gets to mailbox-deliver its ask before the
+// keep-alive loop can spin through its step budget in one scheduler quantum.
 //
-//	dispatchTasksTool.Execute → NewSessionDispatcher → coordinator pool →
-//	agent multi_step handler → post_message(kind=ask, to_role=auditor, wait_seconds=120)
-//	→ auditor relays post_message(kind=ask, to_role=go-engineer, wait_seconds=120)
-//	→ go-engineer answers in_reply_to=auditor's ask_id
-//	→ auditor forwards kind=answer in_reply_to=asker's ask_id
-//	→ asker unblocked with the end's answer.
-//
-// The asker's wait_seconds (120) is sized for the whole relay — the relayed
-// round trip must finish inside the asker's park, which is exactly the
-// "wait_seconds bounds the WHOLE round trip" guidance added to
-// subagents.MessagingProtocolPrompt. The fake completer emits real
-// provider.ToolCall replies so the multi_step handlers actually invoke
-// post_message (park, mailbox, fence, ledger).
-//
-// A4 determinism (-count=10 -cpu 1 / -cpu 4 / -race): three concurrent tasks
-// (no depends_on) are dispatched together, so under GOMAXPROCS=1 any task may
-// start first and a starved run could otherwise let a keep-alive agent exhaust
-// its step budget before its asker ever posts. Two mechanisms close this:
-//
-//  1. Channel handoffs: the relayer's first action blocks on askPosted
-//     (closed exactly once, when the asker emits its ask tool call) and the
-//     end's first action blocks on relayPosted (closed when the relayer emits
-//     its ask-to-end tool call), so neither burns a step before its asker has
-//     even emitted.
-//
-//  2. keepAliveYield: after a channel unblocks, the keep-alive loop would
-//     otherwise become a tight non-blocking spin — once the asker's ChatTurn
-//     closes askPosted, an async scheduler preemption can delay the asker's
-//     ask tool call, and the relayer could burn its ENTIRE 256-step budget in
-//     one scheduler quantum before the ask reaches its mailbox (the asker's
-//     ask then declines "target_terminal" because the relayer already failed).
-//     Every keep-alive finding therefore yields the P for keepAliveYield
-//     before posting: while the relayer is blocked, the asker's goroutine is
-//     the only runnable one, so its ask tool executes and mailbox-delivers
-//     the ask before the loop can consume budget. The same applies to the
-//     end's keep-alive (letting the relayer's relayed ask land).
-//
-// Each hop only proceeds when the prior hop's ask is actually delivered; the
-// 256-step budget is the backstop for a slow-starting asker, not the primary
-// mechanism.
-//
-// There is deliberately NO wall-clock negative case here: the mid-park
-// decline/no_answer path is unit-covered elsewhere and a timing-based negative
-// e2e is flaky by construction.
+// No wall-clock negative case here: the mid-park decline/no_answer path is
+// unit-covered elsewhere, and a timing-based negative e2e is flaky by
+// construction.
 
 import (
 	"context"

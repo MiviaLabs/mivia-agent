@@ -1,29 +1,5 @@
-// Package cli - shared reusable chat message bubble component.
-//
-// MessageBubble is a shared, reusable, customizable component for rendering
-// chat messages from any role (user, assistant, etc.). It combines:
-//
-//   - Role-configurable visual style (background, label, padding, colors)
-//   - A pluggable text renderer (plain text wrapping, markdown, etc.)
-//   - Method chaining for composability (WithStyle, MergeStyle)
-//   - Support for custom renderers via the BubbleRenderer interface
-//
-// Usage:
-//
-//	// Pre-built instances for common roles
-//	lines := UserBubble.Render("hello", 80, time.Now())
-//	lines := AssistantBubble.Render("**hello**", 80, time.Time{})
-//
-//	// Customize per-role (padding area gets background color)
-//	bubble := UserBubble.WithStyle(BubbleStyle{
-//	    Background: &myBgStyle,
-//	    Padding:    Padding{Top: 1, Right: 4, Bottom: 1, Left: 4},
-//	})
-//
-//	// Plugin a new renderer
-//	type MyRenderer struct{}
-//	func (r *MyRenderer) RenderText(text string, width int) []string { ... }
-//	b := &MessageBubble{Style: UserBubble.Style, Renderer: &MyRenderer{}}
+// MessageBubble renders a chat message for any role; style and text
+// renderer are both pluggable via WithStyle/MergeStyle and BubbleRenderer.
 package cli
 
 import (
