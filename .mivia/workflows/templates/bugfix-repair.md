@@ -38,8 +38,9 @@ Every prior-step output is stored in the workflow ledger. Its ref, step, and att
 listed in the 'Evidence refs' section of the prompt. Findings arrive as a ledger reference
 envelope (artifact + note). Resolve the full artifact with workflow_inspect(run_id, step,
 attempt) before responding; never guess from the preview.
-If a delivery rejection routed this step, read the latest wf-delivery attempt listed by
-workflow_status with workflow_inspect and repair the reported error.
+If a delivery rejection routed this step, the harness hint below tells you what to repair:
+
+{{ evidence.delivery_hint }}
 
 A DIFF-SIZE rejection (the delivery hint says the chunk diff exceeds the stacking
 hard limit) is a SPLIT request, not a delete request. Decide which files carry the
