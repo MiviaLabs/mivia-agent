@@ -186,7 +186,7 @@ func RepairHint(cause error) string {
 	case IsPRMetadataError(cause):
 		lead = "the pull-request metadata (title/summary) was rejected; fix pr_title and pr_summary in your structured output"
 	case IsDiffSizeError(cause):
-		lead = "the delivered diff is too large; split the change into smaller chunks in the worktree so the delivered diff fits under the hard limit (keep tests green and do not commit yourself - the delivery host commits the worktree before the next delivery attempt)"
+		lead = "the delivered diff is too large; keep every edit in the worktree, but set deferred_files in your structured output to the least-essential files so the delivered diff (files_changed minus deferred_files) fits under the hard limit - the host commits deferred_files separately and opens an automatic follow-up PR for them (keep tests green and do not commit yourself - the delivery host commits the worktree before the next delivery attempt)"
 	case IsRefusal(cause):
 		lead = "the delivery host permanently refused publication; this is usually not fixable by a workflow step - read the reason below and correct the underlying condition"
 	default:

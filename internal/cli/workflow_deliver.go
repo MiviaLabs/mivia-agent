@@ -127,7 +127,7 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 	}
 	req := delivery.Request{
 		RunID: runID, WorkflowDigest: run.WorkflowDigest, Policy: policy,
-		Inputs: snapshot.Inputs, BaseCommit: run.BaseCommit, Branch: "wf/" + run.WorktreeName,
+		Inputs: delivery.InputsWithDeferredFiles(ctx, repo, runID, snapshot.Inputs, policy), BaseCommit: run.BaseCommit, Branch: "wf/" + run.WorktreeName,
 		GitCtx:    delivery.GitContext{Dir: identity.Root, GitDir: gitDir},
 		OriginURL: run.RemoteURL,
 		Stage:     workflowDeliveryStagePrinter(stderr),

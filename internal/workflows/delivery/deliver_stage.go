@@ -86,13 +86,34 @@ func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, 
 // BEFORE creating the commit (so the retry can resume by tree verification),
 // and commits through Git (commitStagedTree). It returns the adopted HEAD
 // and its ACTUAL tree.
+//
+// When the repair step declared deferred_files (req.Inputs, §5.2), this
+// splits the single commit into two INSTEAD: the delivered commit (every
+// staged file except deferred_files, HEAD after this call, exactly what a
+// caller of this function expects) plus a second commit on a separate local
+// branch (deferredBranchName) holding only deferred_files, never on the
+// branch that gets pushed. The deferred branch is left for the driver to
+// push as a follow-up PR after this delivery succeeds; see stacking.go's
+// deferredBranchName and CountUnshippedCommits' doc comment.
 func freshDeliveryCommit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef string) (string, string, error) {
-	// Fresh: stage the intended change (idempotent on retry).
+	deferred, err := ParseDeferredFiles(req.Inputs[InputDeferredFiles])
+	if err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", err
+	}
+	if len(deferred) == 0 {
+		return freshDeliveryCommitSingle(ctx, repo, git, req, key, diffRef)
+	}
+	return freshDeliveryCommitSplit(ctx, repo, git, req, key, diffRef, deferred)
+}
+
+// freshDeliveryCommitSingle is the pre-existing, unsplit fresh-commit path:
+// stage everything, commit once.
+func freshDeliveryCommitSingle(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef string) (string, string, error) {
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
 	}
-	// Snapshot the staged tree; the delivery commit will carry it.
 	treeOut, err := git.Run(ctx, req.GitCtx, "write-tree")
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
@@ -102,7 +123,6 @@ func freshDeliveryCommit(ctx context.Context, repo ledger.Repository, git GitRun
 	if _, err := git.Run(ctx, req.GitCtx, "diff", "--quiet", "--cached", treeSHA); err != nil {
 		return "", "", &RefusalError{Reason: "staged tree changed before commit"}
 	}
-	// Render the commit message.
 	msg, err := req.Policy.RenderCommitMessage(req.Inputs)
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
@@ -123,6 +143,74 @@ func freshDeliveryCommit(ctx context.Context, repo ledger.Repository, git GitRun
 		return "", "", err
 	}
 	return sha, adoptedTree, nil
+}
+
+// freshDeliveryCommitSplit stages and commits everything EXCEPT deferred,
+// exactly like freshDeliveryCommitSingle (same pending-record-before-commit
+// shape, same return contract: HEAD is the delivered commit). It then stages
+// and commits deferred as a SECOND commit, saves that commit under
+// deferredBranchName (git branch -f), and resets the worktree back to the
+// delivered commit - so deferred's content is preserved but never reachable
+// from the branch that gets pushed next.
+func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef string, deferred []string) (string, string, error) {
+	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", err
+	}
+	resetArgs := append([]string{"reset", "--"}, deferred...)
+	if _, err := git.Run(ctx, req.GitCtx, resetArgs...); err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", fmt.Errorf("cannot unstage deferred_files for the split commit: %w", err)
+	}
+	treeOut, err := git.Run(ctx, req.GitCtx, "write-tree")
+	if err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", err
+	}
+	treeSHA := strings.TrimSpace(treeOut)
+	msg, err := req.Policy.RenderCommitMessage(req.Inputs)
+	if err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", err
+	}
+	stage := deliveryRecord(req, key, "pending")
+	stage.DiffRef = diffRef
+	stage.TreeSHA = treeSHA
+	if err := repo.UpsertDelivery(ctx, stage); err != nil {
+		return "", "", err
+	}
+	head, adoptedTree, err := commitStagedTree(ctx, repo, git, req, stage, treeSHA, msg)
+	if err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", err
+	}
+
+	// Second commit: deferred_files only, child of the delivered commit.
+	addArgs := append([]string{"-c", "core.fsmonitor=false", "add", "--"}, deferred...)
+	if _, err := git.Run(ctx, req.GitCtx, addArgs...); err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
+	}
+	deferredMsg := fmt.Sprintf("deferred: %d file(s) split from this chunk's delivery (automatic follow-up)", len(deferred))
+	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
+		"-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
+		"commit", "--allow-empty-message", "-m", deferredMsg); err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", fmt.Errorf("cannot commit deferred_files: %w", err)
+	}
+	// Save the deferred commit under its own branch, then reset the current
+	// worktree back to the delivered commit: the branch about to be pushed
+	// must never carry deferred_files.
+	branch := DeferredBranchName(req.Branch)
+	if _, err := git.Run(ctx, req.GitCtx, "branch", "-f", branch, "HEAD"); err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", fmt.Errorf("cannot save the deferred follow-up branch: %w", err)
+	}
+	if _, err := git.Run(ctx, req.GitCtx, "reset", "--hard", head); err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", fmt.Errorf("cannot restore the worktree to the delivered commit: %w", err)
+	}
+	return head, adoptedTree, nil
 }
 
 // commitWorktreeFollowUp commits uncommitted worktree changes on top of the

@@ -24,6 +24,11 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "pr_title": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "pr_summary": { "type": "string", "minLength": 1 }
+    "pr_summary": { "type": "string", "minLength": 1 },
+    "deferred_files": {
+      "type": "array",
+      "description": "Diff-size repair only: workspace-relative paths of files whose edits are kept in the worktree but must NOT be part of THIS delivered diff (they made the diff exceed the stacking hard limit). The host commits these files separately and opens a follow-up PR for them automatically. Every path here must also appear in files_changed. Omit or leave empty when nothing was deferred.",
+      "items": { "type": "string", "minLength": 1 }
+    }
   }
 }

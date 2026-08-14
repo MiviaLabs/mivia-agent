@@ -185,9 +185,10 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	// session surface observes the delivery attempt the same way the CLI stage
 	// printer does. The engine's stage sink is wired by the same
 	// SetProgressSink/NewBusProgressSink hook the terminal progress events use.
+	inputs := delivery.InputsWithDeferredFiles(ctx, repo, runID, snapshot.Inputs, policy)
 	dreq := delivery.Request{
 		RunID: runID, WorkflowDigest: run.WorkflowDigest, Policy: policy,
-		Inputs: snapshot.Inputs, BaseCommit: run.BaseCommit,
+		Inputs: inputs, BaseCommit: run.BaseCommit,
 		Branch: "wf/" + run.WorktreeName, GitCtx: gitCtx,
 		OriginURL: run.RemoteURL,
 		Stage:     e.deliveryStageEmitter(runID),

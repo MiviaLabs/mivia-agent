@@ -11,6 +11,7 @@ package delivery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -27,6 +28,12 @@ import (
 const (
 	InputPRBase    = "pr_base"
 	InputStackPart = "stack_part"
+	// InputDeferredFiles carries the repair step's split decision (§5.2): a
+	// JSON-encoded array of workspace-relative paths whose edits must ship in
+	// a separate follow-up PR instead of this delivery. Populated by the
+	// engine/CLI delivery-calling code from the repair step's structured
+	// output (deferred_files), never authored by a human or workflow author.
+	InputDeferredFiles = "deferred_files"
 )
 
 // maxPRBaseBytes bounds one pr_base value. GitHub branch names are capped far
@@ -149,22 +156,44 @@ func IsDiffSizeError(err error) bool {
 // staged worktree diff vs base, using the same staging and numstat rules the
 // delivery gate applies (--find-renames, --ignore-all-space, untracked files
 // included via git add -A). hard <= 0 means the gate is off and 0 is returned
-// without touching git. It is shared by the delivery gate and the controller's
-// post-implement fail-fast gate so both measure identically.
-func MeasureChunkDiffSize(ctx context.Context, git GitRunner, gc GitContext, baseCommit string, hard int) (int, error) {
+// without touching git. excludePaths, when non-empty, excludes those
+// workspace-relative paths from the measured diff via a pathspec exclusion
+// (spec-auto-split-oversized-prs.md §5.2: a repair's deferred_files are
+// committed separately and must not count against the delivered diff's own
+// size). It is shared by the delivery gate and the controller's post-implement
+// fail-fast gate so both measure identically; the controller's gate always
+// passes nil (deferred_files is a repair-time decision, unknown that early).
+func MeasureChunkDiffSize(ctx context.Context, git GitRunner, gc GitContext, baseCommit string, hard int, excludePaths []string) (int, error) {
 	if hard <= 0 {
 		return 0, nil
 	}
 	if _, err := git.Run(ctx, gc, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		return 0, fmt.Errorf("cannot stage the delivery diff for size measurement: %w", err)
 	}
-	out, err := git.Run(ctx, gc, "diff", "--cached",
+	args := []string{"diff", "--cached",
 		"--no-ext-diff", "--no-textconv", "--numstat",
-		"--find-renames", "--ignore-all-space", baseCommit)
+		"--find-renames", "--ignore-all-space", baseCommit}
+	if len(excludePaths) > 0 {
+		args = append(args, "--")
+		args = append(args, excludePathspecs(excludePaths)...)
+	}
+	out, err := git.Run(ctx, gc, args...)
 	if err != nil {
 		return 0, fmt.Errorf("cannot measure the delivery diff size: %w", err)
 	}
 	return numstatSize(out)
+}
+
+// excludePathspecs turns workspace-relative paths into git "exclude"
+// pathspecs (":!path", plus the whole tree "." so the exclusions have a
+// positive pathspec to narrow) for a `git diff ... -- <pathspecs>` call.
+func excludePathspecs(paths []string) []string {
+	specs := make([]string, 0, len(paths)+1)
+	specs = append(specs, ".")
+	for _, p := range paths {
+		specs = append(specs, ":!"+p)
+	}
+	return specs
 }
 
 // checkChunkDiffSize enforces the stacking hard diff-size limit on the actual
@@ -172,7 +201,10 @@ func MeasureChunkDiffSize(ctx context.Context, git GitRunner, gc GitContext, bas
 // configuration (StackingHardLines <= 0) the gate is OFF and single-PR
 // delivery is unchanged. The measured size is the added+deleted line count,
 // excluding pure renames and whitespace-only changes (--find-renames,
-// --ignore-all-space). The change is staged with git add -A first - exactly
+// --ignore-all-space) and excluding any files the repair step declared as
+// deferred_files (req.Inputs) - those ship in a separate, automatically
+// admitted follow-up PR (§5.2-5.3), so they must not count against THIS
+// delivery's own size. The change is staged with git add -A first - exactly
 // what commitOrResume stages - so untracked files are measured too: a bare
 // `git diff <commit>` ignores untracked files and would under-count a chunk
 // that adds files. An over-limit diff is a repairable DiffSizeError: the
@@ -182,7 +214,11 @@ func checkChunkDiffSize(ctx context.Context, git GitRunner, req Request) error {
 	if hard <= 0 {
 		return nil
 	}
-	size, err := MeasureChunkDiffSize(ctx, git, req.GitCtx, req.BaseCommit, hard)
+	deferred, err := ParseDeferredFiles(req.Inputs[InputDeferredFiles])
+	if err != nil {
+		return err
+	}
+	size, err := MeasureChunkDiffSize(ctx, git, req.GitCtx, req.BaseCommit, hard, deferred)
 	if err != nil {
 		return err
 	}
@@ -190,6 +226,42 @@ func checkChunkDiffSize(ctx context.Context, git GitRunner, req Request) error {
 		return &DiffSizeError{Reason: fmt.Sprintf("delivery: chunk diff size %d exceeds hard limit %d; shrink the chunk so the delivered diff fits", size, hard)}
 	}
 	return nil
+}
+
+// ParseDeferredFiles decodes the InputDeferredFiles reserved input: a
+// JSON-encoded array of workspace-relative paths, or "" (no deferral). A
+// present-but-malformed value is a repairable PRMetadataError (the engine's
+// own read of the repair step's output was well-formed JSON matching the
+// schema; a malformed value here means something upstream corrupted it,
+// which is worth surfacing as a repair-loop-visible failure rather than
+// silently ignoring the split decision).
+func ParseDeferredFiles(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var files []string
+	if err := json.Unmarshal([]byte(raw), &files); err != nil {
+		return nil, &PRMetadataError{Reason: fmt.Sprintf("delivery: reserved input deferred_files is not a valid JSON string array: %v", err)}
+	}
+	return files, nil
+}
+
+// DeferredBranchName derives the local branch name a split delivery
+// (freshDeliveryCommitSplit) saves its deferred commit under, deterministic
+// from the chunk's own delivery branch so no extra ledger field is needed to
+// find it afterward: the driver (internal/cli) computes the same name to
+// look it up and push it as a follow-up PR after this chunk's delivery
+// succeeds.
+func DeferredBranchName(branch string) string {
+	return branch + "-deferred"
+}
+
+// branchExists reports whether a local branch ref exists, best-effort (a git
+// failure reports false rather than propagating - callers use this only for
+// non-gating evidence, never a correctness-critical decision).
+func branchExists(ctx context.Context, git GitRunner, gc GitContext, branch string) bool {
+	_, err := git.Run(ctx, gc, "rev-parse", "--verify", "--end-of-options", "refs/heads/"+branch)
+	return err == nil
 }
 
 // CountUnshippedCommits counts the commits on the current worktree HEAD after
