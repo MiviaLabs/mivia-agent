@@ -359,6 +359,23 @@ func (s *SQLite) ListRunIDs(ctx context.Context) ([]string, error) {
 	}
 	return ids, rows.Err()
 }
+
+// inTx runs body in one transaction. A body failure and a commit failure are
+// the same outcome - nothing landed - so they share one return path rather than
+// two that cannot both be exercised.
+func (s *SQLite) inTx(ctx context.Context, body func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err = body(tx); err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	return err
+}
+
 func (s *SQLite) Close() error { return s.db.Close() }
 func (s *SQLite) ClaimRun(ctx context.Context, id, h string) error {
 	_, err := s.ClaimRunFenced(ctx, id, h)

@@ -57,3 +57,19 @@ func TestIntegrationRunInputsStripsReplayedChunkPlan(t *testing.T) {
 		t.Fatalf("inputs[task] = %v, want the replayed plan input", inputs["task"])
 	}
 }
+
+// TestIntegrationRunInputsStripSiblingFiles pins the symmetric strip: a
+// plan run may admit with sibling_files reserved input replayed from plan
+// inputs; the integration run (stack_mode=single) must strip it like
+// chunk_plan or admission fails.
+func TestIntegrationRunInputsStripSiblingFiles(t *testing.T) {
+	inputs, snapshot := integrationRunInputs(map[string]string{
+		"task": "whole feature", "sibling_files": `["internal/b/b.go"]`,
+	}, "master")
+	if _, present := inputs["sibling_files"]; present {
+		t.Fatalf("inputs[sibling_files] = %v, want stripped (forbidden in stack_mode=single)", inputs["sibling_files"])
+	}
+	if _, present := snapshot["sibling_files"]; present {
+		t.Fatalf("snapshot[sibling_files] = %v, want stripped", snapshot["sibling_files"])
+	}
+}

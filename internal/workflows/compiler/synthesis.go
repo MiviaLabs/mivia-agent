@@ -31,6 +31,7 @@ func stackingReservedInputs() map[string]definition.InputDef {
 		"pr_base":         {Type: "string"},
 		"stack_part":      {Type: "string"},
 		"chunk_plan":      {Type: "string"},
+		"sibling_files":   {Type: "string"},
 		"remaining_scope": {Type: "string"},
 	}
 }

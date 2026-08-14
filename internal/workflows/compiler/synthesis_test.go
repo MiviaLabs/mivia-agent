@@ -115,7 +115,7 @@ func TestSynthesizeStacking_ReservedInputsAdded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SynthesizeStacking failed: %v", err)
 	}
-	want := []string{"stack_mode", "chunk", "pr_base", "stack_part", "chunk_plan", "remaining_scope"}
+	want := []string{"stack_mode", "chunk", "pr_base", "stack_part", "chunk_plan", "sibling_files", "remaining_scope"}
 	for _, name := range want {
 		def, ok := synth.Inputs[name]
 		if !ok {
@@ -479,10 +479,10 @@ func TestSynthesizeStacking_RejectsReservedStepIDCollision(t *testing.T) {
 func TestSynthesizedInputs(t *testing.T) {
 	cfg := &definition.StackingConfig{Enabled: true}
 	inputs := SynthesizedInputs(cfg)
-	if len(inputs) != 6 {
-		t.Fatalf("SynthesizedInputs = %v, want 6 reserved inputs", inputs)
+	if len(inputs) != 7 {
+		t.Fatalf("SynthesizedInputs = %v, want 7 reserved inputs", inputs)
 	}
-	for _, name := range []string{"stack_mode", "chunk", "pr_base", "stack_part", "chunk_plan", "remaining_scope"} {
+	for _, name := range []string{"stack_mode", "chunk", "pr_base", "stack_part", "chunk_plan", "sibling_files", "remaining_scope"} {
 		def, ok := inputs[name]
 		if !ok {
 			t.Errorf("missing reserved input %q", name)
@@ -534,8 +534,8 @@ func TestMergeStackingInputs(t *testing.T) {
 	if def := cw.Inputs["chunk"]; def.Type != "integer" || !def.Required {
 		t.Errorf("declared input %q was overwritten by the merge: %+v", "chunk", def)
 	}
-	if len(cw.Inputs) != 6 {
-		t.Errorf("merged inputs = %d, want the declared chunk plus 5 remaining reserved names", len(cw.Inputs))
+	if len(cw.Inputs) != 7 {
+		t.Errorf("merged inputs = %d, want the declared chunk plus 6 remaining reserved names", len(cw.Inputs))
 	}
 
 	// A non-stacking workflow (nil Stacking) is a no-op.

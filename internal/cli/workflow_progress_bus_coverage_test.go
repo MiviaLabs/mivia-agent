@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
@@ -212,5 +213,13 @@ func assertOneRunFinishedForTest(t *testing.T, ctx context.Context, root, config
 	}
 	if got[0].Detail != "succeeded" {
 		t.Fatalf("event detail = %q, want %q", got[0].Detail, "succeeded")
+	}
+}
+
+// TestWorkflowProgressKindChunkScopeDrop pins the session-bus mapping: a
+// chunk finding-scope drop is a named observation, never a heartbeat tick.
+func TestWorkflowProgressKindChunkScopeDrop(t *testing.T) {
+	if got := workflowProgressKind(controller.ProgressChunkScopeDropped); got != events.KindWorkflowDeliveryStage {
+		t.Fatalf("workflowProgressKind(chunk_scope_dropped) = %v, want KindWorkflowDeliveryStage", got)
 	}
 }

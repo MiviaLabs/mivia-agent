@@ -80,7 +80,9 @@ func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.R
 		deliverCtx, cancelDeliver := context.WithTimeout(runCtx, workflowDeliveryTimeout)
 		deliverErr := deliverRunWithStore(deliverCtx, root, res, store, repo, runID, true, false, io.Discard, io.Discard)
 		cancelDeliver()
-		if deliverErr != nil {
+		// Transport faults stay unrecorded (same rule as settleDeliveryError):
+		// they say nothing about the change, and a later deliver succeeds.
+		if deliverErr != nil && !deliveryFaultTransient(deliverErr) {
 			recordAutoDeliveryFailure(context.Background(), repo, runID, deliverErr)
 		}
 		fresh, getErr := repo.GetRun(context.Background(), runID)

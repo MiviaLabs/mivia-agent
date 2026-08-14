@@ -23,7 +23,7 @@ const (
 // reservedStackingInputs names the inputs the controller owns for stacking
 // runs; they are never forwarded to workflow steps.
 func reservedStackingInputs() []string {
-	return []string{"stack_mode", "chunk", "pr_base", "stack_part", "chunk_plan", "remaining_scope"}
+	return []string{"stack_mode", "chunk", "pr_base", "stack_part", "chunk_plan", "sibling_files", "remaining_scope"}
 }
 
 // validateStackingReservedInputs admits the reserved stacking inputs against
@@ -46,8 +46,10 @@ func validateStackingReservedInputs(inputs map[string]any, cfg *definition.Stack
 	}
 	switch mode {
 	case "plan", "single":
-		if _, present := inputs["chunk_plan"]; present {
-			return "", fmt.Errorf("reserved input chunk_plan is forbidden in stack_mode=%s", mode)
+		for _, key := range []string{"chunk_plan", "sibling_files"} {
+			if _, present := inputs[key]; present {
+				return "", fmt.Errorf("reserved input %s is forbidden in stack_mode=%s", key, mode)
+			}
 		}
 	case "chunk":
 		for _, key := range []string{"chunk", "pr_base", "stack_part"} {

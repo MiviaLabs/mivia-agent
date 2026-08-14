@@ -163,7 +163,7 @@ func (c *LinearController) advancePanelSynthesis(ctx context.Context, run workfl
 			return c.failAttempt(ctx, run, attempt, err)
 		}
 		var envelope []byte
-		envelopeStruct, envelope, err = BuildSynthesisEnvelope(step.ID, memberInputs)
+		envelopeStruct, envelope, err = BuildSynthesisEnvelopeWithFilter(step.ID, memberInputs, c.panelChunkScopeFilter(step.ID, attempt.AttemptNo))
 		if err != nil {
 			return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, err)
 		}

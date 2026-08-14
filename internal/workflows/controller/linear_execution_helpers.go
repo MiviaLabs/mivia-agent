@@ -48,7 +48,7 @@ func (c *LinearController) agentFailureRepairable(ctx context.Context, step defi
 // selection, a blocked write, or zero-progress — never a genuine agent/runner
 // failure, so never diverted to on_failure), and any error from route
 // selection.
-func (c *LinearController) settleAttemptOutcome(writeCtx context.Context, step definition.Step, result *AgentStepResult, runErr error) (workflowledger.AttemptStatus, error, RouteDecision, bool, error) {
+func (c *LinearController) settleAttemptOutcome(writeCtx context.Context, step definition.Step, attempt workflowledger.StepAttempt, result *AgentStepResult, runErr error) (workflowledger.AttemptStatus, error, RouteDecision, bool, error) {
 	// degraded marks a SUCCEEDED child whose outcome was flipped to Failed by
 	// the controller itself (route selection, zero-progress). Those are not
 	// genuine agent/runner failures and never divert to on_failure.
@@ -75,7 +75,7 @@ func (c *LinearController) settleAttemptOutcome(writeCtx context.Context, step d
 			result.ErrorRef = storeErrorText(writeCtx, c.Repo, mapErr)
 			route = failureRoute(step)
 		} else {
-			route, degraded, runErr, err = c.settleSucceededRoute(writeCtx, step, result, outMap)
+			route, degraded, runErr, err = c.settleSucceededRoute(writeCtx, step, attempt, result, outMap)
 			// Every controller degradation in settleSucceededRoute flips the
 			// child from Succeeded to Failed (route-selection failure, the
 			// chunk-plan gate, a blocked write, zero-progress); mirror it on
@@ -99,10 +99,15 @@ func (c *LinearController) settleAttemptOutcome(writeCtx context.Context, step d
 // zero-progress guard. It returns the route, whether the outcome was degraded
 // to Failed by the controller, the effective error, and the route-selection
 // error (for the caller's audit trail).
-func (c *LinearController) settleSucceededRoute(writeCtx context.Context, step definition.Step, result *AgentStepResult, outMap map[string]any) (RouteDecision, bool, error, error) {
+func (c *LinearController) settleSucceededRoute(writeCtx context.Context, step definition.Step, attempt workflowledger.StepAttempt, result *AgentStepResult, outMap map[string]any) (RouteDecision, bool, error, error) {
 	degraded := false
 	status := workflowledger.AttemptStatusSucceeded
 	var runErr error
+	// Chunk finding scope must run BEFORE route selection: the matcher
+	// reads the verdict, so sibling-chunk-only findings are dropped and an
+	// emptied verdict flips to approved here, with the filtered shape
+	// persisted (see applyChunkFindingScope).
+	c.applyChunkFindingScope(step, attempt, result, outMap)
 	// Route computation reads the ledger (loop counters, prior review
 	// output). Use the detached writeCtx, not ctx: at the run deadline
 	// ctx is already expired, and a context.DeadlineExceeded from those

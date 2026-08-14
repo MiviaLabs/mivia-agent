@@ -48,36 +48,42 @@ func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Princip
 	defer s.writeMu.Unlock()
 	// One transaction: the snapshot row and its directory record either both
 	// land or neither does, so a torn write cannot leave a snapshot whose
-	// restore metadata is missing or points at an older location.
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if err := requireActiveWorktreeTx(ctx, tx, principal, opts.WorktreeInstance); err != nil {
-			return err
-		}
-		if opts.WorktreeInstance.IsZero() {
-			if err := rejectManagedCatalogKey(ctx, tx, principal, name); err != nil {
+	// restore metadata is missing or points at an older location. Retried
+	// while the write lock is busy: the chat process autosaves the catalog
+	// after every turn, and a transient cross-process lock collision must
+	// not keep the session out of the catalog. The upsert is idempotent, so
+	// a retry is safe.
+	return retrySQLiteBusy(ctx, func() error {
+		return s.inTx(ctx, func(tx *sql.Tx) error {
+			if err := requireActiveWorktreeTx(ctx, tx, principal, opts.WorktreeInstance); err != nil {
 				return err
 			}
-		}
-		storedName := name
-		if !opts.WorktreeInstance.IsZero() {
-			var err error
-			storedName, err = worktreeCatalogKeyTx(ctx, tx, principal, opts.WorktreeInstance, "snapshot", name)
+			if opts.WorktreeInstance.IsZero() {
+				if err := rejectManagedCatalogKey(ctx, tx, principal, name); err != nil {
+					return err
+				}
+			}
+			storedName := name
+			if !opts.WorktreeInstance.IsZero() {
+				var err error
+				storedName, err = worktreeCatalogKeyTx(ctx, tx, principal, opts.WorktreeInstance, "snapshot", name)
+				if err != nil {
+					return err
+				}
+			}
+			result, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count WHERE chat_sessions.instance_id IS excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, storedName, model, provider, messages, now, now, turns, tokens, messageCount, nullableText(opts.WorktreeInstance.ID))
 			if err != nil {
 				return err
 			}
-		}
-		result, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count WHERE chat_sessions.instance_id IS excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, storedName, model, provider, messages, now, now, turns, tokens, messageCount, nullableText(opts.WorktreeInstance.ID))
-		if err != nil {
-			return err
-		}
-		if err := requireCatalogMutation(result); err != nil {
-			return err
-		}
-		result, err = tx.ExecContext(ctx, upsertSessionDirSQL, principal.WorkspaceID, principal.SubjectID, storedName, opts.Dir, opts.Worktree, nullableText(opts.WorktreeInstance.ID))
-		if err != nil {
-			return err
-		}
-		return requireCatalogMutation(result)
+			if err := requireCatalogMutation(result); err != nil {
+				return err
+			}
+			result, err = tx.ExecContext(ctx, upsertSessionDirSQL, principal.WorkspaceID, principal.SubjectID, storedName, opts.Dir, opts.Worktree, nullableText(opts.WorktreeInstance.ID))
+			if err != nil {
+				return err
+			}
+			return requireCatalogMutation(result)
+		})
 	})
 }
 
@@ -371,22 +377,6 @@ func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal context
 		return err
 	})
 	return count, err
-}
-
-// inTx runs body in one transaction. A body failure and a commit failure are
-// the same outcome - nothing landed - so they share one return path rather than
-// two that cannot both be exercised.
-func (s *SQLite) inTx(ctx context.Context, body func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if err = body(tx); err == nil {
-		err = tx.Commit()
-	} else {
-		_ = tx.Rollback()
-	}
-	return err
 }
 
 // deleteCatalogContextSession applies the full retention lifecycle to a

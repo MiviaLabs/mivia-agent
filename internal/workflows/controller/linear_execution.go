@@ -380,7 +380,7 @@ func (c *LinearController) agentStepRequest(ctx context.Context, run workflowled
 func (c *LinearController) settleAgentAttempt(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, result AgentStepResult, runErr error) (workflowledger.RunSnapshot, bool, error) {
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
-	status, runErr, route, degraded, err := c.settleAttemptOutcome(writeCtx, step, &result, runErr)
+	status, runErr, route, degraded, err := c.settleAttemptOutcome(writeCtx, step, attempt, &result, runErr)
 	// The outcome is now classified. Report the attempt as completed once
 	// with its terminal status. Every path below records the outcome.
 	c.emitStepCompleted(step, attempt, string(status))

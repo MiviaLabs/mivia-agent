@@ -289,7 +289,10 @@ func (e *Engine) settleDeliverySucceeded(ctx context.Context, repo workflowledge
 // it.
 func routeDeliveryRepair(ctx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (agenttools.DeliverResult, bool, error) {
 	step := delivery.RepairTarget(err, policy)
-	if step == "" || provider.IsTransient(err) {
+	// A git/gh transport fault is no more repairable than a provider one:
+	// provider.IsTransient does not know git's texts, so both classifiers
+	// gate the dispatch (mirrors the CLI's deliveryFaultTransient).
+	if step == "" || provider.IsTransient(err) || delivery.IsTransportFault(err) {
 		return agenttools.DeliverResult{}, false, nil
 	}
 	if rerr := delivery.ReopenForRepair(ctx, repo, runID, step, policy.MaxRepairs, err, io.Discard); rerr != nil {
@@ -417,7 +420,7 @@ func localProgressKind(k controller.ProgressKind) events.Kind {
 		return events.KindWorkflowStepCompleted
 	case controller.ProgressRunFinished, controller.ProgressRunFailed:
 		return events.KindWorkflowRunFinished
-	case controller.ProgressDeliveryStage, controller.ProgressDeliveryRefused:
+	case controller.ProgressDeliveryStage, controller.ProgressDeliveryRefused, controller.ProgressChunkScopeDropped:
 		return events.KindWorkflowDeliveryStage
 	default:
 		return events.KindWorkflowStepHeartbeat

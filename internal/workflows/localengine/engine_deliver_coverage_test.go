@@ -762,3 +762,12 @@ func coveragePendingRun(t *testing.T, repo workflowledger.Repository, snap workf
 	}
 	return cur
 }
+
+// TestCoverageLocalProgressKindChunkScopeDrop pins the mapper: a chunk
+// finding-scope drop is a named observation with detail, never a liveness
+// heartbeat tick.
+func TestCoverageLocalProgressKindChunkScopeDrop(t *testing.T) {
+	if got := localProgressKind(controller.ProgressChunkScopeDropped); got != events.KindWorkflowDeliveryStage {
+		t.Fatalf("localProgressKind(chunk_scope_dropped) = %v, want KindWorkflowDeliveryStage", got)
+	}
+}
