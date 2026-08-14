@@ -22,8 +22,8 @@ max_duration_seconds = 86400
 # on_failure back to "failure" to disable panel retries entirely.
 max_on_failure_reentries = 3
 
-# Stacking: this workflow participates in the stacking engine (default ON).
-# plan_step/implement_step are explicit (fail-closed); all other knobs use the
+# Stacking is opt-in: this table (with the required plan_step/implement_step)
+# puts the workflow in the stacking engine. All other knobs use the
 # engine's global defaults (max_chunks=12, soft_lines=200, hard_lines=400,
 # max_files=5). merge_policy=auto: the run publishes each chunk PR and merges
 # it itself (mark ready -> CI green -> squash-merge) - a 100-chunk stack needs

@@ -1,0 +1,77 @@
+version = 1
+name = "e2e-scope-escape-test"
+description = "LIVE TEST ONLY - never run without explicit human approval (see AGENTS.md 'Live e2e test workflow'). Pushes a real branch and opens a real draft PR against MiviaLabs/mivia-agent. Run in chunk mode with an explicit chunk_plan input. The implement step deliberately writes one file OUTSIDE the declared chunk slice, proving the chunk-scope guard: guardChunkScope refuses the delivery naming the out-of-scope file, the repair step reads the hint, deletes the file, and delivery succeeds on retry."
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+
+[limits]
+max_step_attempts = 10
+max_duration_seconds = 900
+
+# Stacking is opt-in: this table (with explicit plan_step/implement_step)
+# keeps the workflow in the stacking engine, so chunk-mode admission and the
+# delivery-time chunk-scope guard are active.
+[stacking]
+plan_step = "plan"
+implement_step = "implement"
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "e2e-engineer"
+template = "templates/e2e-plan.md"
+output_schema = "schemas/plan-v1.json"
+context = [
+  { from = "inputs.task", as = "task" },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "implement"
+kind = "agent"
+agent = "e2e-engineer"
+template = "templates/e2e-scope-implement.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task" },
+  { from = "inputs.chunk_plan", as = "chunk_scope", optional = true },
+]
+on_failure = "repair"
+
+[[steps]]
+id = "repair"
+kind = "agent"
+agent = "e2e-engineer"
+template = "templates/e2e-scope-repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
+]
+on_failure = "repair"
+
+[[transitions]]
+from = "plan"
+to = "implement"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "implement"
+to = "success"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "repair"
+to = "success"
+match = { status = "succeeded" }
+
+[delivery]
+kind = "pull_request"
+mode = "draft"
+provider = "github"
+base = "master"
+on_failure = "repair"
+title_template = "test(test): {{ inputs.task }}"
+commit_message_template = "Live smoke test for the chunk-scope guard repair path. Safe to close/delete."

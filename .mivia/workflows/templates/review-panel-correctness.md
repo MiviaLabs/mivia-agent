@@ -80,7 +80,7 @@ This example is for illustration only. Report the findings you verify for the ta
 
 Chunk scope:
 
-{{ evidence.chunk_scope }}
+{{ inputs.chunk_scope }}
 
 If the chunk scope above is not empty, this implementation is ONE CHUNK of a
 larger stacked delivery. Compare the actually touched files against the

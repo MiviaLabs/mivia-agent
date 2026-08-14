@@ -94,7 +94,7 @@ This example is for illustration only. Report the change you make for the task y
 
 Chunk scope:
 
-{{ evidence.chunk_scope }}
+{{ inputs.chunk_scope }}
 
 If the chunk scope above is not empty, this run is ONE CHUNK of a larger
 stacked delivery. The task text describes the WHOLE feature; sibling chunk

@@ -43,11 +43,10 @@ func TestImplementTemplateRendersChunkScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read template %q: %v", step.Template, err)
 	}
-	inputs := map[string]any{"task": "whole feature task"}
+	inputs := map[string]any{"task": "whole feature task", "chunk_scope": exampleChunkScope}
 	evidence := map[string]any{
 		"plan": "example plan", "test_plan": "example test plan",
 		"review_findings": "", "integration_findings": "",
-		"chunk_scope": exampleChunkScope,
 	}
 	rendered, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes)
 	if err != nil {
@@ -59,7 +58,7 @@ func TestImplementTemplateRendersChunkScope(t *testing.T) {
 	if !strings.Contains(rendered, "ONLY") {
 		t.Fatalf("rendered implement template must carry an explicit only-this-chunk instruction:\n%s", rendered)
 	}
-	evidence["chunk_scope"] = ""
+	inputs["chunk_scope"] = ""
 	if _, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes); err != nil {
 		t.Fatalf("render implement template without chunk scope: %v", err)
 	}
@@ -73,12 +72,11 @@ func TestPanelMembersReceiveChunkScope(t *testing.T) {
 	workflow, base := loadCommittedFeatureDeliveryWorkflow(t, root)
 	step := featureDeliveryStep(t, workflow, "review_panel")
 	chunkScopeBinding(t, step)
-	inputs := map[string]any{"task": "example task"}
+	inputs := map[string]any{"task": "example task", "chunk_scope": exampleChunkScope}
 	evidence := map[string]any{
 		"plan": "example plan", "test_plan": "example test plan",
 		"implementation": "example implementation summary",
 		"prior_findings": "", "touched_files": `["a.go"]`,
-		"chunk_scope": exampleChunkScope,
 	}
 	for _, member := range step.Panel.Members {
 		templateBytes, err := readWorkflowRef(base, member.Template, template.MaxTemplateBytes)
