@@ -51,3 +51,25 @@ func TestCountGraphemesApproxNeverNegative(t *testing.T) {
 		}
 	}
 }
+
+// FuzzCountGraphemesApproxProperties checks the two documented invariants of
+// CountGraphemesApprox over arbitrary input: the result is never negative and
+// it never exceeds the raw rune count (combining marks count as zero-width,
+// every other rune counts at most one).
+func FuzzCountGraphemesApproxProperties(f *testing.F) {
+	for _, s := range []string{
+		"", "a", "héllo", "e\u0301", "a\u0301\u0301", "😀",
+		"👨\u200D👩\u200D👧\u200D👦", "漢字", "\xff", "\xff\xfe", "a\xffb",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		got := CountGraphemesApprox(s)
+		if got < 0 {
+			t.Fatalf("CountGraphemesApprox(%q) = %d, want >= 0", s, got)
+		}
+		if got > len([]rune(s)) {
+			t.Fatalf("CountGraphemesApprox(%q) = %d, want <= len([]rune(s)) = %d", s, got, len([]rune(s)))
+		}
+	})
+}
