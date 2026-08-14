@@ -29,15 +29,11 @@ import (
 const (
 	InputPRBase    = "pr_base"
 	InputStackPart = "stack_part"
-	// InputDeferredFiles carries the diff-size gate's own split decision
-	// (§5.2, revised per §10): a JSON-encoded array of workspace-relative
-	// paths whose edits ship in a separate follow-up PR instead of this
-	// delivery. checkAndSplitChunkDiffSize computes this HOST-side from
-	// measured git diff sizes when the diff exceeds the hard limit and
-	// splitting is enabled - never agent-authored, so there is no trust
-	// boundary between what an agent claims and what the worktree actually
-	// contains (the design this replaced was rejected for exactly that
-	// reason; see spec-auto-split-oversized-prs.md §10).
+	// InputStackMode is the run's stacking mode input ("chunk", "single",
+	// "plan", "decompose_continue"). Delivery reads it to key per-chunk
+	// behavior: the hard diff-size gate measures chunk deliveries only.
+	InputStackMode     = "stack_mode"
+	StackModeSingle    = "single"
 	InputDeferredFiles = "deferred_files"
 )
 
@@ -224,6 +220,16 @@ func excludePathspecs(paths []string) []string {
 func checkChunkDiffSize(ctx context.Context, git GitRunner, req Request) error {
 	hard := req.Policy.StackingHardLines
 	if hard <= 0 {
+		return nil
+	}
+	// This is a per-chunk gate. A stack_mode=single run (the integration run
+	// a stack drives after every chunk merged) re-implements the whole
+	// feature, so its diff is the full-feature diff by construction -
+	// typically over hard_lines, the very reason decompose split the stack.
+	// Gating it either burns repair rounds on DiffSizeError or opens an
+	// integration-deferred follow-up the driver never drives. Mode absent
+	// means a legacy direct delivery: keep measuring it.
+	if req.Inputs[InputStackMode] == StackModeSingle {
 		return nil
 	}
 	size, err := MeasureChunkDiffSize(ctx, git, req.GitCtx, req.BaseCommit, hard, nil)

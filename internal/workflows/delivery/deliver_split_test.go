@@ -173,6 +173,45 @@ func TestDeliverAutoSplitDefersNonASCIIFilename(t *testing.T) {
 	}
 }
 
+// TestDeliverSizeGateSkipsSingleModeRun pins the integration-run finding: the
+// per-chunk hard diff-size gate must not apply to a stack_mode=single run.
+// The integration run re-implements the whole feature after every chunk
+// merged, so its diff is the full-feature diff by construction - typically
+// over hard_lines (the very reason decompose split the stack). Gating it
+// either burned repair rounds on DiffSizeError or, with split_deferred on,
+// opened an integration-deferred follow-up PR that the stack driver never
+// drives - the drive reports the stack complete with an open, untracked PR.
+// The gate is a per-chunk gate: only stack_mode absent (legacy direct runs)
+// or chunk-mode deliveries are measured.
+func TestDeliverSizeGateSkipsSingleModeRun(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "essential.txt", "one line\n")
+	writeWorktreeFile(t, worktreeRoot, "the.big.txt", strings.Repeat("line\n", 50))
+
+	policy := defaultPolicy("draft")
+	policy.StackingHardLines = 5
+	policy.SplitDeferred = true
+
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, map[string]string{"task": "gate", "stack_mode": "single"}))
+	if err != nil {
+		t.Fatalf("Deliver: %v (a stack_mode=single run is not a chunk; the per-chunk gate must not measure it)", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	// The whole diff delivers - no split, no deferred branch, no follow-up.
+	delivered := runGitOut(t, worktreeRoot, "diff", "--name-only", baseCommit, "HEAD")
+	if delivered != "essential.txt\nthe.big.txt" {
+		t.Fatalf("delivered commit files = %q, want both files (no split for a single-mode run)", delivered)
+	}
+	rec := deliveryRecordByKey(t, repo, run)
+	if rec.StackRemainingCommits != 0 {
+		t.Fatalf("StackRemainingCommits = %d, want 0 (no follow-up for a single-mode run)", rec.StackRemainingCommits)
+	}
+}
+
 func TestDeliverSizeGateOffByDefaultDespiteSplittableDiff(t *testing.T) {
 	ctx := context.Background()
 	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
