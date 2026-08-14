@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
@@ -428,6 +429,78 @@ func TestJSONTurnEventCallbackOmitsOriginForRootLoopToolCalls(t *testing.T) {
 	line := strings.TrimSpace(buf.String())
 	if strings.Contains(line, "origin_task_id") || strings.Contains(line, "origin_agent") || strings.Contains(line, "origin_depth") {
 		t.Fatalf("root-loop tool_start leaked origin fields: %s", line)
+	}
+}
+
+// TestJSONTurnEventCallbackEmitsCompaction pins the wire contract for
+// EventCompaction: it must reach --json consumers as a "compaction" line
+// carrying the human-readable detail as message plus a nested record with
+// the typed payload's numbers, following the same nested-struct pattern as
+// cache_usage/token_usage so a no-elision compaction's legitimate zero
+// values don't vanish.
+func TestJSONTurnEventCallbackEmitsCompaction(t *testing.T) {
+	start := contextstate.SourceID{SessionID: "session-1", Sequence: 1}
+	end := contextstate.SourceID{SessionID: "session-1", Sequence: 5}
+	rng, err := contextstate.NewSourceRange(start, end)
+	if err != nil {
+		t.Fatalf("NewSourceRange: %v", err)
+	}
+	typed, err := events.NewCompactionEvent(events.CompactionEventParams{
+		Trigger:        "threshold",
+		BeforeTokens:   10000,
+		AfterTokens:    3000,
+		ElidedMessages: 5,
+		ElidedBytes:    4200,
+		SourceRange:    rng,
+		SummaryVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewCompactionEvent: %v", err)
+	}
+
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	onEvent(agent.Event{
+		Kind:       agent.EventCompaction,
+		Detail:     "context compacted: 10000 -> 3000 tokens (5 tool results elided, 4200 bytes)",
+		Compaction: &typed,
+	})
+
+	lines := splitNonEmptyLines(buf.String())
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines, want 1: %v", len(lines), lines)
+	}
+	var got ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[0]), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if got.Type != "compaction" {
+		t.Fatalf("type = %q, want %q", got.Type, "compaction")
+	}
+	if got.Message != "context compacted: 10000 -> 3000 tokens (5 tool results elided, 4200 bytes)" {
+		t.Fatalf("message = %q", got.Message)
+	}
+	if got.Compaction == nil {
+		t.Fatal("compaction record missing")
+	}
+	want := ndjsonCompaction{
+		Trigger:        "threshold",
+		BeforeTokens:   10000,
+		AfterTokens:    3000,
+		ElidedMessages: 5,
+		ElidedBytes:    4200,
+		SummaryVersion: 1,
+	}
+	if *got.Compaction != want {
+		t.Fatalf("compaction record = %+v, want %+v", *got.Compaction, want)
+	}
+
+	// The typed payload is required - a bare event emits nothing.
+	buf.Reset()
+	onEvent = jsonTurnEventCallback(&buf)
+	onEvent(agent.Event{Kind: agent.EventCompaction, Detail: "context compacted"})
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output without typed payload, got %q", buf.String())
 	}
 }
 

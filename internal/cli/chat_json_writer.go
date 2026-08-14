@@ -89,6 +89,10 @@ type ndjsonEvent struct {
 	// written by sendLineMode, nested for the same zero-value reason. See
 	// chat.ContextUsage for what each field means.
 	ContextUsage *ndjsonContextUsage `json:"context_usage,omitempty"`
+	// Compaction is present only on "compaction" events, nested for the same
+	// zero-value reason as CacheUsage. SourceRange is deliberately omitted -
+	// it carries session-internal SourceID values, not useful to a consumer.
+	Compaction *ndjsonCompaction `json:"compaction,omitempty"`
 }
 
 // ndjsonCacheUsage carries one completion turn's provider-reported
@@ -127,6 +131,18 @@ type ndjsonContextUsage struct {
 	Percent             int `json:"percent"`
 }
 
+// ndjsonCompaction carries one context-compaction record (see
+// agent.EmitCompaction / events.CompactionEvent), nested for the same
+// zero-value reason as ndjsonCacheUsage.
+type ndjsonCompaction struct {
+	Trigger        string `json:"trigger"`
+	BeforeTokens   int    `json:"before_tokens"`
+	AfterTokens    int    `json:"after_tokens"`
+	ElidedMessages int    `json:"elided_messages"`
+	ElidedBytes    int    `json:"elided_bytes"`
+	SummaryVersion uint32 `json:"summary_version"`
+}
+
 // writeTokenUsageLine frames one provider-reported token accounting record
 // as a "token_usage" NDJSON line. Extracted from jsonTurnEventCallback to
 // keep that switch under the structure-check function-size limit. The
@@ -143,6 +159,42 @@ func writeTokenUsageLine(w io.Writer, typed events.TokenUsageEvent) {
 			OutputTokens:     typed.OutputTokens,
 			EstimatedTokens:  typed.EstimatedTokens,
 			CalibrationRatio: typed.CalibrationRatio,
+		},
+	})
+}
+
+// writeCompactionLine frames one context-compaction record as a
+// "compaction" NDJSON line. Extracted from jsonTurnEventCallback for the
+// same reason as writeTokenUsageLine: keeps that switch under the
+// structure-check function-size limit.
+func writeCompactionLine(w io.Writer, detail string, typed events.CompactionEvent) {
+	writeNDJSONEvent(w, ndjsonEvent{
+		Type:    "compaction",
+		Message: detail,
+		Compaction: &ndjsonCompaction{
+			Trigger:        typed.Trigger,
+			BeforeTokens:   typed.BeforeTokens,
+			AfterTokens:    typed.AfterTokens,
+			ElidedMessages: typed.ElidedMessages,
+			ElidedBytes:    typed.ElidedBytes,
+			SummaryVersion: typed.SummaryVersion,
+		},
+	})
+}
+
+// writeCacheUsageLine frames one provider-reported prompt-cache accounting
+// record as a "cache_usage" NDJSON line. Extracted from
+// jsonTurnEventCallback for the same reason as writeTokenUsageLine.
+func writeCacheUsageLine(w io.Writer, typed events.CacheUsageEvent) {
+	writeNDJSONEvent(w, ndjsonEvent{
+		Type:     "cache_usage",
+		Provider: typed.Provider,
+		Model:    typed.Model,
+		CacheUsage: &ndjsonCacheUsage{
+			InputTokens:       typed.InputTokens,
+			CachedInputTokens: typed.CachedInputTokens,
+			CacheWriteTokens:  typed.CacheWriteTokens,
+			HitPercent:        typed.HitPercent(),
 		},
 	})
 }
@@ -208,17 +260,7 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 			if e.CacheUsage == nil {
 				return
 			}
-			writeNDJSONEvent(w, ndjsonEvent{
-				Type:     "cache_usage",
-				Provider: e.CacheUsage.Provider,
-				Model:    e.CacheUsage.Model,
-				CacheUsage: &ndjsonCacheUsage{
-					InputTokens:       e.CacheUsage.InputTokens,
-					CachedInputTokens: e.CacheUsage.CachedInputTokens,
-					CacheWriteTokens:  e.CacheUsage.CacheWriteTokens,
-					HitPercent:        e.CacheUsage.HitPercent(),
-				},
-			})
+			writeCacheUsageLine(w, *e.CacheUsage)
 		case agent.EventTokenUsage:
 			// Same payload-required rule as cache_usage: without the typed
 			// record there are no numbers worth a wire line.
@@ -245,6 +287,12 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 				OriginTaskID: e.Origin.TaskID,
 				Message:      e.Detail,
 			})
+		case agent.EventCompaction:
+			// The typed payload is required, same rule as cache_usage.
+			if e.Compaction == nil {
+				return
+			}
+			writeCompactionLine(w, e.Detail, *e.Compaction)
 		}
 	}
 }
