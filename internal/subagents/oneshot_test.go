@@ -85,8 +85,8 @@ func TestOneShotHandlerInvoke(t *testing.T) {
 	if parsed["output"] != "Found 3 API endpoints: /users, /auth, /health" {
 		t.Fatalf("unexpected output: %v", parsed["output"])
 	}
-	if parsed["task"] != "Find the API endpoints" {
-		t.Fatalf("unexpected task: %q", parsed["task"])
+	if _, ok := parsed["task"]; ok {
+		t.Fatal("task must not be echoed into parent history")
 	}
 }
 

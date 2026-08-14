@@ -115,51 +115,93 @@ func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 	return json.Marshal(body)
 }
 
-// markStablePrefixCacheControl rewrites the stable prefix - every system
-// message and the FIRST user message - from plain string content to
-// Anthropic-style content parts carrying an explicit cache marker: exactly
-// [{"type":"text","text":<content>,"cache_control":{"type":"ephemeral"}}].
-// It runs on the decoded map, so only string contents are converted and
-// already-part content is left alone. Tool results and assistant turns are
-// deliberately never marked: a tool result could pin mutable tool output into
-// a provider-side cache, and assistant turns are not part of the stable
-// prefix. Only the CacheMarkersEnabled gate in marshalBody ever calls it.
+// markStablePrefixCacheControl rewrites the cacheable prefix from plain
+// string content to Anthropic-style content parts carrying an explicit cache
+// marker: exactly [{"type":"text","text":<content>,"cache_control":
+// {"type":"ephemeral"}}]. Three breakpoints are placed (within Anthropic's
+// budget of 4): every system message, the FIRST user message, and a ROLLING
+// breakpoint on the newest user or tool message - in a multi-step tool loop
+// everything up to that message is an immutable, append-only transcript, and
+// the rolling marker lets the provider cache it instead of re-billing the
+// full history each step. The marker's forward movement between steps is
+// safe: cache_control placement is excluded from provider prefix matching,
+// and a plain string and a single text part normalize to the same upstream
+// text block. Assistant turns are never marked - reasoning replay rewrites
+// them, so they are not a stable anchor. It runs on the decoded map, so only
+// string contents are converted and already-part content is left alone. Only
+// the CacheMarkersEnabled gate in marshalBody ever calls it.
 func markStablePrefixCacheControl(body map[string]any) {
 	messages, ok := body["messages"].([]any)
 	if !ok {
 		return
 	}
-	firstUserSeen := false
-	for _, entry := range messages {
+	// maxCacheBreakpoints is Anthropic's hard budget; a request carrying more
+	// explicit markers is rejected with a 400. The single-system invariant
+	// keeps real requests at 3, but the cap fails safe if that ever drifts.
+	const maxCacheBreakpoints = 4
+	marked := 0
+	firstUserIndex := -1
+	for i, entry := range messages {
 		msg, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
+		if marked >= maxCacheBreakpoints-1 {
+			break
+		}
 		switch msg["role"] {
 		case "system":
-			markMessageContent(msg)
-		case "user":
-			if !firstUserSeen {
-				markMessageContent(msg)
-				firstUserSeen = true
+			if markMessageContent(msg) {
+				marked++
 			}
+		case "user":
+			if firstUserIndex < 0 {
+				if markMessageContent(msg) {
+					marked++
+				}
+				firstUserIndex = i
+			}
+		}
+	}
+	markRollingBreakpoint(messages, firstUserIndex)
+}
+
+// markRollingBreakpoint marks the newest user or tool message, walking
+// backward past any trailing assistant turn. The first user message is
+// skipped when it is also the newest - it already carries its fixed marker.
+func markRollingBreakpoint(messages []any, firstUserIndex int) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg, ok := messages[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		switch msg["role"] {
+		case "user", "tool":
+			if i != firstUserIndex {
+				markMessageContent(msg)
+			}
+			return
 		}
 	}
 }
 
 // markMessageContent converts one message's string content into a single text
-// content part carrying the ephemeral cache marker. Non-string content (or an
-// absent content field) is left untouched.
-func markMessageContent(msg map[string]any) {
+// content part carrying the ephemeral cache marker and reports whether it
+// marked. Non-string content (or an absent content field) is left untouched.
+// Empty content is left as a plain string: a legitimately empty tool result
+// (reading a zero-byte file) wrapped as an empty text part is rejected by
+// Anthropic with a 400, and an empty block is never worth a breakpoint.
+func markMessageContent(msg map[string]any) bool {
 	content, ok := msg["content"].(string)
-	if !ok {
-		return
+	if !ok || content == "" {
+		return false
 	}
 	msg["content"] = []any{map[string]any{
 		"type":          "text",
 		"text":          content,
 		"cache_control": map[string]any{"type": "ephemeral"},
 	}}
+	return true
 }
 
 // renameReasoningContentKey rewrites replayed assistant reasoning inside the
