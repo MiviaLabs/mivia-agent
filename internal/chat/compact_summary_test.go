@@ -2,8 +2,13 @@ package chat
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -84,6 +89,60 @@ func TestBuildCompactSummaryRequestDedupesEvidence(t *testing.T) {
 	}
 	if len(request.Input.Evidence) != 1 {
 		t.Fatalf("evidence = %v, want one deduplicated item", request.Input.Evidence)
+	}
+}
+
+// TestManualCompactSummaryStaysLoadable pins the resume-shape contract: the
+// summary message a manual compact appends to the live history must survive
+// the load path's message-shape validation (provider.ValidateToolPairing
+// refuses NAMED user messages, and every restore path runs it). A named
+// summary message made the session unresumable after one more turn.
+func TestManualCompactSummaryStaysLoadable(t *testing.T) {
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Summarizer:          plainSummarySummarizer(t, &chatSummaryProvider{}),
+		Enabled:             true,
+	}
+	if err := session.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	// Production installs the session redaction policy beside the manager
+	// (configureSessionContext); the summary gate refuses requests without it.
+	session.SetContextRedactionPolicy(contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}})
+	if _, err := session.SendUser(context.Background(), "first", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		session.Messages = append(session.Messages,
+			provider.Message{Role: provider.RoleUser, Content: strings.Repeat("old question ", 20)},
+			provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("old answer ", 20)},
+		)
+	}
+	if err := session.Compact(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if last := session.Messages[len(session.Messages)-1]; !strings.Contains(last.Content, "[host-injected context summary") {
+		t.Fatalf("fixture sanity: post-compact tail = %q, want the summary message", last.Content)
+	}
+	if _, err := session.SendUser(context.Background(), "next question", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.ValidateToolPairing(session.Messages); err != nil {
+		t.Fatalf("post-compact history is not loadable: %v", err)
 	}
 }
 

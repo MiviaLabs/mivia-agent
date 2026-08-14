@@ -58,8 +58,11 @@ func applyCompactSummary(ctx context.Context, summarizer *contextmgr.Summarizer,
 
 // summarizeManualCompact runs the wired summarizer for one manual compact:
 // it stamps the bounded metadata on the preparation's checkpoint candidate
-// and returns the rendered message for the live history. A nil summarizer or
-// any summary failure changes nothing and reports have=false.
+// and returns the rendered message for the live history. The returned message
+// is ANONYMOUS: the wire Name marks ephemeral injections, and every restore
+// path runs provider.ValidateToolPairing, which refuses NAMED user messages -
+// a named summary made the session unresumable after one more turn. A nil
+// summarizer or any summary failure changes nothing and reports have=false.
 func summarizeManualCompact(ctx context.Context, cfg contextTurnConfig, input contextmgr.PrepareInput, pre []provider.Message, preparation *contextmgr.Preparation) (provider.Message, bool) {
 	if cfg.summarizer == nil {
 		return provider.Message{}, false
@@ -69,6 +72,7 @@ func summarizeManualCompact(ctx context.Context, cfg contextTurnConfig, input co
 		return provider.Message{}, false
 	}
 	preparation.Candidate.SummaryMetadata = metadata
+	injected.Name = ""
 	return injected, true
 }
 
