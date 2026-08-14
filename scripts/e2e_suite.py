@@ -303,7 +303,12 @@ def launch(scenario: TopologyScenario | ScriptedScenario) -> dict:
     log_path = LOG_DIR / f"{scenario.name}.log"
     cmd = scenario.command()
     cmd[0] = mivia_binary()
-    with open(log_path, "ab") as log_file:
+    # "wb", not append: a relaunch of the same scenario must start a fresh
+    # log. scan_status scans by pattern priority across the WHOLE file, not
+    # by recency, so a stale terminal marker (run_failed, halted) left over
+    # from a PRIOR launch would otherwise outrank a live run's fresh
+    # progress forever - a launch is a new attempt, not a continuation.
+    with open(log_path, "wb") as log_file:
         proc = subprocess.Popen(
             cmd, cwd=REPO_ROOT, stdout=log_file, stderr=subprocess.STDOUT,
             start_new_session=True,
