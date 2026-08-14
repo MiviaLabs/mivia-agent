@@ -63,6 +63,7 @@ max_on_failure_reentries = 3
 [stacking]
 plan_step = "fix_plan"
 implement_step = "implement"
+split_deferred = true
 
 # ---- Hunt: read-only hostile audit, at most 2 confirmed findings ----
 [[steps]]
@@ -264,6 +265,7 @@ context = [
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.test_validate.output", as = "failed_evidence", max_bytes = 32768 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
 on_failure = "failure"
 
@@ -280,6 +282,7 @@ context = [
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.verify.output", as = "failed_evidence", max_bytes = 32768 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
 on_failure = "failure"
 
@@ -296,6 +299,7 @@ context = [
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.code_validate.output", as = "failed_evidence", max_bytes = 32768 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
 on_failure = "failure"
 
@@ -312,6 +316,7 @@ context = [
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
   { from = "steps.preflight_validate.output", as = "failed_evidence", max_bytes = 32768 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
 on_failure = "failure"
 
