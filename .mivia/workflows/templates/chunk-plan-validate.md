@@ -20,9 +20,9 @@ step is bound as `chunk_plan`. Read the bound value first and classify it:
    Validate the resolved artifact. NEVER guess chunk content from `preview`
    or from the Evidence refs block. `workflow_inspect` refuses in only two
    cases: the artifact exceeds the 8 MiB paging ceiling, or the run is not
-   found. FAIL CLOSED only for a genuine refusal like this: emit
-   `valid: false` with a reason that states `workflow_inspect` refused and
-   names the refusal.
+   found. When `workflow_inspect` refuses for either reason, FAIL CLOSED:
+   emit `valid: false` with a reason that states `workflow_inspect` refused
+   and names the refusal.
 3. **Anything else** — FAIL CLOSED: emit `valid: false` with a reason naming
    the shape you received. An unverifiable chunk plan must never be accepted.
 
