@@ -107,6 +107,138 @@ func TestRollingBreakpointSkipsFirstUserMessage(t *testing.T) {
 	assertCacheMarkedContent(t, messages[1], RoleUser, "hi")
 }
 
+// A trailing NAMED user message (host-injected context summary) is an
+// ephemeral trailer that never recurs, so the rolling breakpoint must skip it
+// and land on the newest stable message - the last tool result.
+func TestRollingBreakpointSkipsTrailingNamedUserMessage(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "objective"},
+		{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{toolCallFor("call_1", "read_file", `{"path":"a"}`)}},
+		{Role: RoleTool, ToolCallID: "call_1", Content: "tool result"},
+		{Role: RoleUser, Content: "context summary trailer", Name: "context-summary"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	assertCacheMarkedContent(t, messages[3], RoleTool, "tool result")
+	assertPlainStringContent(t, messages[4], RoleUser, "context summary trailer")
+}
+
+// Two trailing named user messages (summary + conclude nudge) are both
+// skipped; the marker still lands on the last tool result.
+func TestRollingBreakpointSkipsTwoTrailingNamedUserMessages(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "objective"},
+		{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{toolCallFor("call_1", "read_file", `{"path":"a"}`)}},
+		{Role: RoleTool, ToolCallID: "call_1", Content: "tool result"},
+		{Role: RoleUser, Content: "summary trailer", Name: "context-summary"},
+		{Role: RoleUser, Content: "conclude now", Name: "conclude-nudge"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	assertCacheMarkedContent(t, messages[3], RoleTool, "tool result")
+	assertPlainStringContent(t, messages[4], RoleUser, "summary trailer")
+	assertPlainStringContent(t, messages[5], RoleUser, "conclude now")
+}
+
+// An UNNAMED trailing user message is real user input (or a parent steer) and
+// still carries the rolling marker.
+func TestRollingBreakpointStillMarksUnnamedTrailingUser(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "objective"},
+		{Role: RoleAssistant, Content: "working"},
+		{Role: RoleUser, Content: "steer"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	assertCacheMarkedContent(t, messages[3], RoleUser, "steer")
+}
+
+// A request whose only user message is a named frame (session memory frame)
+// keeps exactly its fixed first-user marker: the rolling pass skips the named
+// message, marks nothing, and does not panic or double-wrap.
+func TestRollingBreakpointNamedFrameOnlyKeepsSingleFirstUserMarker(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "memory frame", Name: "core-memory-context"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	// Exactly one text part - assertCacheMarkedContent fails on a double-wrap.
+	assertCacheMarkedContent(t, messages[1], RoleUser, "memory frame")
+}
+
+// A named frame at index 1 with later tool traffic: the frame keeps its fixed
+// first-user marker and the rolling marker lands on the newest tool result.
+func TestRollingBreakpointNamedFrameThenToolResults(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "memory frame", Name: "core-memory-context"},
+		{Role: RoleUser, Content: "objective"},
+		{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{toolCallFor("call_1", "read_file", `{"path":"a"}`)}},
+		{Role: RoleTool, ToolCallID: "call_1", Content: "older result"},
+		{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{toolCallFor("call_2", "read_file", `{"path":"b"}`)}},
+		{Role: RoleTool, ToolCallID: "call_2", Content: "newest result"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	assertCacheMarkedContent(t, messages[1], RoleUser, "memory frame")
+	assertPlainStringContent(t, messages[4], RoleTool, "older result")
+	assertCacheMarkedContent(t, messages[6], RoleTool, "newest result")
+}
+
 // assertCacheMarkedContent checks one decoded message whose content is exactly
 // one text part with a cache_control:{type:"ephemeral"} marker.
 func assertCacheMarkedContent(t *testing.T, entry any, role, text string) {
@@ -280,4 +412,58 @@ func TestRollingBreakpointLeavesEmptyToolResultPlain(t *testing.T) {
 	}
 	messages := body["messages"].([]any)
 	assertPlainStringContent(t, messages[3], RoleTool, "")
+}
+
+// A trailing named user after a plain assistant answer with no tool traffic:
+// the walk skips the trailer, reaches the first user message (already carrying
+// its fixed marker), and marks nothing else - no double-wrap, no panic.
+func TestRollingBreakpointNamedTrailerAfterPlainAnswerMarksNothingExtra(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "objective"},
+		{Role: RoleAssistant, Content: "answer"},
+		{Role: RoleUser, Name: "context-summary", Content: "summary"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	assertCacheMarkedContent(t, messages[1], RoleUser, "objective")
+	assertPlainStringContent(t, messages[2], RoleAssistant, "answer")
+	if _, isParts := messages[3].(map[string]any)["content"].([]any); isParts {
+		t.Fatal("named trailer must not carry the rolling marker")
+	}
+}
+
+// An empty-content named trailer is skipped by the name check and the
+// remaining anchor is marked normally.
+func TestRollingBreakpointEmptyNamedTrailerSkipped(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "objective"},
+		{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{toolCallFor("call_1", "read_file", `{"path":"a"}`)}},
+		{Role: RoleTool, ToolCallID: "call_1", Content: "result"},
+		{Role: RoleUser, Name: "conclude-nudge", Content: ""},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	assertCacheMarkedContent(t, messages[3], RoleTool, "result")
 }
