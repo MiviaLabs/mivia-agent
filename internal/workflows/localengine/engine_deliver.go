@@ -211,6 +211,15 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	if err := e.settleDeliverySucceeded(ctx, repo, runID); err != nil {
 		return agenttools.DeliverResult{}, err
 	}
+	// A split (checkChunkDiffSize) can leave a deferred branch nobody ever
+	// pushes unless something publishes it - see delivery.EnsureFollowUpPublished's
+	// doc comment. This session-engine path needs the same call the CLI's
+	// deliverRunWithStore makes; EnsureFollowUpPublished is idempotent, so a
+	// stack driver's separate call for the same run stays safe. Best-effort:
+	// a failure here does not undo the just-settled delivery.
+	if _, _, _, _, ferr := delivery.EnsureFollowUpPublished(ctx, git, pr, gitCtx.Dir, repo, run, runID, nil); ferr != nil {
+		log.Printf("workflow %s delivered but its follow-up PR could not be published: %v", runID, ferr)
+	}
 	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
 }
 

@@ -15,8 +15,8 @@ import (
 // adoptOwnFollowUpCommit check to prove a retry-observed HEAD is this
 // package's own commit and not a foreign one.
 const (
-	mviaCommitAuthorName  = "Mivia Agent"
-	mviaCommitAuthorEmail = "noreply@mivia.app"
+	mviaCommitAuthorName  = "mivia-agent[bot]"
+	mviaCommitAuthorEmail = "4525471+mivia-agent[bot]@users.noreply.github.com"
 )
 
 // commitOrResume creates the delivery commit on a fresh attempt, or verifies

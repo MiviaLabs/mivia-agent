@@ -146,7 +146,28 @@ func deliverRunWithStore(ctx context.Context, root string, res *config.Resolved,
 	if err != nil {
 		return settleDeliveryError(settleCtx, repo, runID, policy, stdout, deliveryCtx, result, err)
 	}
-	return settleDeliverySuccess(settleCtx, repo, runID, result, stdout, stderr)
+	if serr := settleDeliverySuccess(settleCtx, repo, runID, result, stdout, stderr); serr != nil {
+		return serr
+	}
+	publishDeliveryFollowUp(settleCtx, repo, identity.Root, run, runID, stdout, stderr)
+	return nil
+}
+
+// publishDeliveryFollowUp pushes a split's deferred branch and opens its
+// follow-up PR, if delivery left one pending. A split (checkChunkDiffSize)
+// can happen on ANY successful delivery, not only a multi-chunk stack chunk
+// the stack driver later visits - a run deliverRunWithStore delivers
+// directly (a plain `workflow run`, `workflow deliver`, or a stack chunk
+// admitted before the driver's own follow-up pass runs) must not leave a
+// deferred branch it created unpublished. delivery.EnsureFollowUpPublished
+// is idempotent (FindByHead before Create), so the stack driver's later,
+// separate call for the same run is safe. Best-effort: a failure here does
+// not undo the already-settled delivery.
+func publishDeliveryFollowUp(ctx context.Context, repo workflowledger.Repository, worktreeRoot string, run workflowledger.RunSnapshot, runID string, stdout, stderr io.Writer) {
+	stdoutFn := func(s string) { fmt.Fprint(stdout, s) }
+	if _, _, _, _, err := delivery.EnsureFollowUpPublished(ctx, workflowDeliverGit, workflowDeliverNewPR(), worktreeRoot, repo, run, runID, stdoutFn); err != nil {
+		fmt.Fprintf(stderr, "warning: run %s delivered but its follow-up PR could not be published: %v\n", runID, err)
+	}
 }
 
 // workflowDeliveryStagePrinter returns the delivery stage observer for the

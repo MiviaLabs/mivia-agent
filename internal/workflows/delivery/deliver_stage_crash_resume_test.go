@@ -28,7 +28,7 @@ func seedCrashResumeTreeMismatch(t *testing.T, repo workflowledger.Repository, r
 	// The tree-mutating pre-commit hook appends a line and stages it.
 	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\nhook-line\n")
 	runGit(t, worktreeRoot, "add", "b.txt")
-	runGit(t, worktreeRoot, "-c", "user.name=Mivia Agent", "-c", "user.email=noreply@mivia.app",
+	runGit(t, worktreeRoot, "-c", "user.name=mivia-agent[bot]", "-c", "user.email=4525471+mivia-agent[bot]@users.noreply.github.com",
 		"commit", "--allow-empty-message", "-m", "feat: resume")
 	head = runGitOut(t, worktreeRoot, "rev-parse", "HEAD")
 	committedTree = runGitOut(t, worktreeRoot, "rev-parse", "HEAD^{tree}")
@@ -420,12 +420,12 @@ func TestDeliverCrashResumeRefusesForeignMismatchedTree(t *testing.T) {
 		preHookTree := runGitOut(t, worktreeRoot, "write-tree")
 		writeWorktreeFile(t, worktreeRoot, "b.txt", "change\nhook-line\n")
 		runGit(t, worktreeRoot, "add", "b.txt")
-		runGit(t, worktreeRoot, "-c", "user.name=Mivia Agent", "-c", "user.email=noreply@mivia.app",
+		runGit(t, worktreeRoot, "-c", "user.name=mivia-agent[bot]", "-c", "user.email=4525471+mivia-agent[bot]@users.noreply.github.com",
 			"commit", "--allow-empty-message", "-m", "first")
 		// A SECOND mivia commit on top: HEAD's parent is not the admitted base.
 		writeWorktreeFile(t, worktreeRoot, "c.txt", "extra\n")
 		runGit(t, worktreeRoot, "add", "-A")
-		runGit(t, worktreeRoot, "-c", "user.name=Mivia Agent", "-c", "user.email=noreply@mivia.app",
+		runGit(t, worktreeRoot, "-c", "user.name=mivia-agent[bot]", "-c", "user.email=4525471+mivia-agent[bot]@users.noreply.github.com",
 			"commit", "--allow-empty-message", "-m", "second")
 		key := DeliveryKey(run.RunID, run.WorkflowDigest)
 		if err := repo.UpsertDelivery(ctx, workflowledger.DeliveryRecord{
@@ -538,18 +538,18 @@ func TestDeliverCrashResumeRefusesForeignAmendedFileSet(t *testing.T) {
 	preHookTree := runGitOut(t, worktreeRoot, "write-tree")
 	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\nhook-line\n")
 	runGit(t, worktreeRoot, "add", "b.txt")
-	runGit(t, worktreeRoot, "-c", "user.name=Mivia Agent", "-c", "user.email=noreply@mivia.app",
+	runGit(t, worktreeRoot, "-c", "user.name=mivia-agent[bot]", "-c", "user.email=4525471+mivia-agent[bot]@users.noreply.github.com",
 		"commit", "--allow-empty-message", "-m", "feat: resume")
 	// A genuinely foreign amend that ADDS a new file: same author, same
 	// parent, same count - only the file set changes.
 	writeWorktreeFile(t, worktreeRoot, "c.txt", "foreign\n")
 	runGit(t, worktreeRoot, "add", "c.txt")
-	runGit(t, worktreeRoot, "-c", "user.name=Mivia Agent", "-c", "user.email=noreply@mivia.app",
+	runGit(t, worktreeRoot, "-c", "user.name=mivia-agent[bot]", "-c", "user.email=4525471+mivia-agent[bot]@users.noreply.github.com",
 		"commit", "--amend", "--no-edit")
 	if got := runGitOut(t, worktreeRoot, "rev-parse", "HEAD~1"); got != baseCommit {
 		t.Fatalf("test setup: amended HEAD parent = %s, want base %s", got, baseCommit)
 	}
-	if got := runGitOut(t, worktreeRoot, "log", "-1", "--format=%an <%ae>"); got != "Mivia Agent <noreply@mivia.app>" {
+	if got := runGitOut(t, worktreeRoot, "log", "-1", "--format=%an <%ae>"); got != "mivia-agent[bot] <4525471+mivia-agent[bot]@users.noreply.github.com>" {
 		t.Fatalf("test setup: amended author = %q, want the mivia delivery identity", got)
 	}
 	if got := runGitOut(t, worktreeRoot, "rev-list", "--count", baseCommit+"..HEAD"); got != "1" {
@@ -622,7 +622,7 @@ func seedRecordedDeliveryCommit(t *testing.T, repo workflowledger.Repository, ru
 	ctx := context.Background()
 	writeWorktreeFile(t, worktreeRoot, "b.txt", "implemented\n")
 	runGit(t, worktreeRoot, "add", "-A")
-	runGit(t, worktreeRoot, "-c", "user.name=Mivia Agent", "-c", "user.email=noreply@mivia.app",
+	runGit(t, worktreeRoot, "-c", "user.name=mivia-agent[bot]", "-c", "user.email=4525471+mivia-agent[bot]@users.noreply.github.com",
 		"commit", "--allow-empty-message", "-m", "feat: task\n\nBody.")
 	head = runGitOut(t, worktreeRoot, "rev-parse", "HEAD")
 	tree = runGitOut(t, worktreeRoot, "rev-parse", "HEAD^{tree}")
@@ -750,11 +750,11 @@ func TestDeliverRetryRefusesForeignCommitAboveRecordedCommit(t *testing.T) {
 		// TWO more mivia commits on top of the recorded commit: count != 1.
 		writeWorktreeFile(t, worktreeRoot, "c.txt", "one\n")
 		runGit(t, worktreeRoot, "add", "-A")
-		runGit(t, worktreeRoot, "-c", "user.name=Mivia Agent", "-c", "user.email=noreply@mivia.app",
+		runGit(t, worktreeRoot, "-c", "user.name=mivia-agent[bot]", "-c", "user.email=4525471+mivia-agent[bot]@users.noreply.github.com",
 			"commit", "--allow-empty-message", "-m", "one")
 		writeWorktreeFile(t, worktreeRoot, "d.txt", "two\n")
 		runGit(t, worktreeRoot, "add", "-A")
-		runGit(t, worktreeRoot, "-c", "user.name=Mivia Agent", "-c", "user.email=noreply@mivia.app",
+		runGit(t, worktreeRoot, "-c", "user.name=mivia-agent[bot]", "-c", "user.email=4525471+mivia-agent[bot]@users.noreply.github.com",
 			"commit", "--allow-empty-message", "-m", "two")
 		if got := runGitOut(t, worktreeRoot, "rev-list", "--count", firstHead+"..HEAD"); got != "2" {
 			t.Fatalf("test setup: rev-list count = %q, want 2", got)
@@ -771,7 +771,7 @@ func TestDeliverRetryRefusesForeignCommitAboveRecordedCommit(t *testing.T) {
 		// porcelainEmpty == false, so the clean-worktree gate must refuse.
 		writeWorktreeFile(t, worktreeRoot, "c.txt", "followup\n")
 		runGit(t, worktreeRoot, "add", "-A")
-		runGit(t, worktreeRoot, "-c", "user.name=Mivia Agent", "-c", "user.email=noreply@mivia.app",
+		runGit(t, worktreeRoot, "-c", "user.name=mivia-agent[bot]", "-c", "user.email=4525471+mivia-agent[bot]@users.noreply.github.com",
 			"commit", "--allow-empty-message", "-m", "followup")
 		if parent := runGitOut(t, worktreeRoot, "rev-parse", "HEAD~1"); parent != firstHead {
 			t.Fatalf("test setup: follow-up HEAD parent = %s, want the recorded commit %s", parent, firstHead)

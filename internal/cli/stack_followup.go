@@ -79,71 +79,26 @@ func admitFollowUpsForChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, 
 	if err != nil || !found {
 		return err
 	}
-	if !hasDeferredFollowUp(prepared.repo, run.RunID) {
-		return nil
-	}
 	followUpID := deferredFollowUpChunkID(chunkID)
 	if _, err := ledger.GetTask(stackID, followUpID); err == nil {
 		return nil // already admitted
 	}
-	parentBranch := stackHeadBranch(run)
-	if parentBranch == "" {
-		return fmt.Errorf("chunk %s: delivered run has no worktree branch to derive a follow-up from", chunkID)
-	}
-	deferredBranch := delivery.DeferredBranchName(parentBranch)
 	worktreeRoot, err := resolveRunWorktreeRoot(ctx, prepared.root, run)
 	if err != nil {
 		return fmt.Errorf("chunk %s: resolve worktree for follow-up: %w", chunkID, err)
 	}
-	gitCtx := delivery.GitContext{Dir: worktreeRoot, GitDir: worktreeRoot + "/.git"}
-	shaOut, err := workflowDeliverGit.Run(ctx, gitCtx, "rev-parse", deferredBranch)
+	stdoutFn := func(s string) { fmt.Fprint(stdout, s) }
+	deferredBranch, deferredSHA, ref, published, err := delivery.EnsureFollowUpPublished(ctx, workflowDeliverGit, workflowDeliverNewPR(), worktreeRoot, prepared.repo, run, chunkID, stdoutFn)
 	if err != nil {
-		return fmt.Errorf("chunk %s: resolve deferred branch %s commit: %w", chunkID, deferredBranch, err)
+		return fmt.Errorf("chunk %s: %w", chunkID, err)
 	}
-	deferredSHA := strings.TrimSpace(shaOut)
-	if _, err := workflowDeliverGit.Run(ctx, gitCtx, "push", "origin", deferredBranch+":refs/heads/"+deferredBranch); err != nil {
-		return fmt.Errorf("chunk %s: push deferred branch %s: %w", chunkID, deferredBranch, err)
+	if !published {
+		return nil
 	}
-	slug, err := delivery.ParseOwnerRepo(run.RemoteURL)
-	if err != nil {
-		return fmt.Errorf("chunk %s: resolve repo for follow-up PR: %w", chunkID, err)
-	}
-	title, body := followUpPRMetadata(chunkID, run)
-	ref, err := workflowDeliverNewPR().Create(ctx, slug, delivery.PRInput{
-		Base: parentBranch, Head: deferredBranch, Title: title, Body: body, Draft: true,
-	})
-	if err != nil {
-		return fmt.Errorf("chunk %s: create follow-up PR: %w", chunkID, err)
-	}
-	fmt.Fprintf(stdout, "chunk=%s follow-up PR %s %s opened (deferred scope, stacked on %s)\n", chunkID, ref.RemoteID, ref.URL, parentBranch)
 	if err := registerFollowUpChunk(prepared.repo, ledger, stackID, chunkID, followUpID, deferredBranch, deferredSHA, run, ref); err != nil {
 		return fmt.Errorf("chunk %s: register follow-up %s: %w", chunkID, followUpID, err)
 	}
 	return nil
-}
-
-// hasDeferredFollowUp reports whether runID's most recent delivery record
-// left a pending deferred commit (DeliveryRecord.StackRemainingCommits > 0).
-func hasDeferredFollowUp(repo workflowledger.Repository, runID string) bool {
-	records, err := repo.ListDeliveries(context.Background(), runID)
-	if err != nil {
-		return false
-	}
-	for _, rec := range records {
-		if rec.Status == "succeeded" && rec.StackRemainingCommits > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// followUpPRMetadata builds the follow-up PR's title/body from its parent
-// chunk, with no agent involvement (the parent's own title/summary already
-// explained the change; this just marks the split).
-func followUpPRMetadata(chunkID string, run workflowledger.RunSnapshot) (title, body string) {
-	title = fmt.Sprintf("deferred: %s follow-up (auto-split)", chunkID)
-	body = fmt.Sprintf("Automatically split from chunk %s's delivery: this PR carries the scope the diff-size repair deferred to fit the stacking hard limit. Stacked on %s; merge after it.", chunkID, stackHeadBranch(run))
-	return title, body
 }
 
 // resolveRunWorktreeRoot resolves the filesystem path of runID's worktree,
