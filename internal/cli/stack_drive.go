@@ -337,28 +337,17 @@ func allChunksMerged(chunks []ChunkPlan, merged map[string]bool) bool {
 }
 
 // chunkPartIndex returns the 0-based position of a chunk in dependency order,
-// for the canonical "k/N" stack_part.
-func chunkPartIndex(chunkID string, order []string) int {
+// for the canonical "k/N" stack_part. An id absent from order is an error,
+// not position 0: silently treating an unknown chunk as "first" would mislabel
+// its stack_part and, once cross-wave chunk ids exist, mask a real bug (an id
+// order was built without).
+func chunkPartIndex(chunkID string, order []string) (int, error) {
 	for i, id := range order {
 		if id == chunkID {
-			return i
+			return i, nil
 		}
 	}
-	return 0
-}
-
-// allMerged reports whether every known task is merged (used by the wave
-// loop to decide whether to keep driving).
-func allMerged(byID map[string]tasks.Task) bool {
-	if len(byID) == 0 {
-		return false
-	}
-	for _, t := range byID {
-		if t.Status != stackStatusMerged {
-			return false
-		}
-	}
-	return true
+	return 0, fmt.Errorf("chunk %q not found in dependency order", chunkID)
 }
 
 // isResumableRunStatus mirrors the ledger's resumable set for the driver.

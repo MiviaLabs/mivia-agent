@@ -34,6 +34,24 @@ const (
 	stackStatusSkipped     = "skipped"
 )
 
+// stackAdmissiblePreStatuses are the statuses nextAdmissionWave selects a
+// chunk from. driveChunk's admission guard (TransitionTaskCAS) uses the same
+// list as its compare-and-swap precondition, so the two never drift apart:
+// a status nextAdmissionWave would offer for admission is always one
+// driveChunk's CAS accepts, and vice versa.
+var stackAdmissiblePreStatuses = []string{stackStatusPlanned, stackStatusQueued, stackStatusBlocked, stackStatusReopened}
+
+// stackStatusIsAdmissiblePre reports whether status is one nextAdmissionWave
+// and driveChunk's admission CAS both treat as "not yet admitted."
+func stackStatusIsAdmissiblePre(status string) bool {
+	for _, s := range stackAdmissiblePreStatuses {
+		if status == s {
+			return true
+		}
+	}
+	return false
+}
+
 // stackPlanSchema is the schema name recorded on the stack's plan artifact.
 const stackPlanSchema = "chunk-plan-v1"
 
@@ -261,6 +279,30 @@ func reopenOrFail(t tasks.Task, maxAttempts int) ReconcileAction {
 	return ReconcileAction{TaskID: t.ID, Action: stackActionReopen, NewStatus: stackStatusReopened, Attempts: t.Attempts + 1, Note: fmt.Sprintf("reopen attempt %d/%d", t.Attempts+1, maxAttempts)}
 }
 
+// reconcileReopenOrFail applies reopenOrFail's decision atomically: the
+// task's attempt count is read and its transition applied inside one
+// TransitionTaskCASDecide call, so two concurrent failure handlers for the
+// SAME chunk (reachable once wave execution runs concurrently) cannot both
+// read the same attempt count and both reopen past maxAttempts. The task
+// must be in stackStatusRunning (the only status a chunk's failure path is
+// reached from); a task no longer running has already been handled by
+// another caller, and this returns a leave action, not an error.
+func reconcileReopenOrFail(ledger *tasks.Store, stackID, chunkID string) (ReconcileAction, error) {
+	var built ReconcileAction
+	applied, _, attempts, err := ledger.TransitionTaskCASDecide(stackID, chunkID, []string{stackStatusRunning}, stackStatusReopened,
+		func(attempts int) (string, bool) {
+			built = reopenOrFail(tasks.Task{ID: chunkID, Attempts: attempts}, stackMaxChunkAttempts)
+			return built.NewStatus, true
+		})
+	if err != nil {
+		return ReconcileAction{}, err
+	}
+	if !applied {
+		return ReconcileAction{TaskID: chunkID, Action: stackActionLeave, Note: fmt.Sprintf("already handled (attempts=%d)", attempts)}, nil
+	}
+	return built, nil
+}
+
 // stackTaskReady reports whether a task's dependencies are all merged.
 func stackTaskReady(t tasks.Task, merged map[string]bool) bool {
 	for _, dep := range t.Deps {
@@ -281,11 +323,8 @@ func nextAdmissionWave(tasksByID map[string]tasks.Task, merged map[string]bool, 
 		if !ok {
 			continue
 		}
-		switch t.Status {
-		case stackStatusPlanned, stackStatusQueued, stackStatusBlocked, stackStatusReopened:
-			if stackTaskReady(t, merged) {
-				wave = append(wave, id)
-			}
+		if stackStatusIsAdmissiblePre(t.Status) && stackTaskReady(t, merged) {
+			wave = append(wave, id)
 		}
 	}
 	return wave

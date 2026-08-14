@@ -65,7 +65,10 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 			break
 		}
 		for _, chunkID := range wave {
-			index := chunkPartIndex(chunkID, order)
+			index, err := chunkPartIndex(chunkID, order)
+			if err != nil {
+				return fmt.Errorf("stack drive: %w", err)
+			}
 			part := fmt.Sprintf("%d/%d", index+1, len(order))
 			halt, err := driveChunk(ctx, prepared, ledger, stackID, chunkID, prBase, part, policy, allowPublish, planInputs, stdout, stderr)
 			if err != nil {
@@ -97,22 +100,36 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 // grant, and any terminal failure halts the stack (halt-on-failure).
 func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
 	// A live run already exists for this chunk's key: leave it alone (F15 -
-	// never admit a duplicate).
+	// never admit a duplicate). This covers crash recovery (a prior process
+	// admitted the run but died before its task-status transition landed);
+	// the CAS below covers the concurrent-goroutine case within one process.
 	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
 		if isResumableRunStatus(run.Status) {
 			fmt.Fprintf(stdout, "chunk=%s run=%s already in flight (%s); re-run drive after it settles\n", chunkID, run.RunID, run.Status)
 			return true, nil
 		}
 	}
-	_ = ledger.TransitionTask(stackID, chunkID, stackStatusRunning)
+	// Atomic check-and-claim: only a caller that observes the task still in
+	// an admissible pre-status (planned/queued/blocked/reopened) wins the
+	// transition to running. A concurrent caller racing for the same chunk
+	// sees claimed=false and backs off cleanly instead of double-admitting.
+	claimed, err := ledger.TransitionTaskCAS(stackID, chunkID, stackAdmissiblePreStatuses, stackStatusRunning)
+	if err != nil {
+		return true, fmt.Errorf("chunk %s: admission transition failed: %w", chunkID, err)
+	}
+	if !claimed {
+		fmt.Fprintf(stdout, "chunk=%s already claimed by a concurrent admission; skipping\n", chunkID)
+		return true, nil
+	}
 	inputs, snapshot := chunkRunInputs(planInputs, chunkID, prBase, part)
 	snap, err := admitStackChunkRun(prepared, stackID, chunkID, inputs, snapshot, stdout, stderr)
 	if err != nil {
-		attempts := stackAttemptCount(ledger, stackID, chunkID)
-		act := reopenOrFail(tasks.Task{ID: chunkID, Attempts: attempts}, stackMaxChunkAttempts)
-		_ = applyReconcileAction(ledger, stackID, act)
+		act, actErr := reconcileReopenOrFail(ledger, stackID, chunkID)
+		if actErr != nil {
+			return true, fmt.Errorf("chunk %s: reopen/fail transition failed: %w", chunkID, actErr)
+		}
 		if act.Action == stackActionMarkFailed {
-			return true, fmt.Errorf("chunk %s failed terminally after %d attempts; stack halts", chunkID, attempts)
+			return true, fmt.Errorf("chunk %s failed terminally after %d attempts; stack halts", chunkID, act.Attempts)
 		}
 		return true, fmt.Errorf("chunk %s run failed; reopened for retry (%s)", chunkID, act.Note)
 	}
@@ -134,11 +151,12 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 		_ = ledger.TransitionTask(stackID, chunkID, stackStatusImplemented)
 		return false, nil
 	case workflowledger.RunStatusFailed, workflowledger.RunStatusCanceled, workflowledger.RunStatusTimedOut, workflowledger.RunStatusDeliveryFailed:
-		attempts := stackAttemptCount(ledger, stackID, chunkID)
-		act := reopenOrFail(tasks.Task{ID: chunkID, Attempts: attempts}, stackMaxChunkAttempts)
-		_ = applyReconcileAction(ledger, stackID, act)
+		act, err := reconcileReopenOrFail(ledger, stackID, chunkID)
+		if err != nil {
+			return true, fmt.Errorf("chunk %s: reopen/fail transition failed: %w", chunkID, err)
+		}
 		if act.Action == stackActionMarkFailed {
-			return true, fmt.Errorf("chunk %s failed terminally after %d attempts; stack halts", chunkID, attempts)
+			return true, fmt.Errorf("chunk %s failed terminally after %d attempts; stack halts", chunkID, act.Attempts)
 		}
 		fmt.Fprintf(stdout, "chunk=%s run failed; reopened for retry (%s)\n", chunkID, act.Note)
 		return true, nil
