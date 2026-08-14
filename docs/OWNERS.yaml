@@ -111,3 +111,8 @@ topics:
     path: docs/product/integrations.md
     owner: product
     description: External services mivia can talk to - AI providers, web search, MCP servers
+
+  e2e-smoke:
+    path: docs/e2e/
+    owner: quality
+    description: End-to-end split delivery smoke test docs
