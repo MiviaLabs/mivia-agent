@@ -15,8 +15,8 @@ commands = [ { check = "go-test", program = "go", args = ["test", "./..."] } ]
 
 [verifiers.lint]
 commands = [
-  { check = "vet", program = "go", args = ["vet", "./..."] },
-  { check = "build", program = "go", args = ["build", "./..."] },
+  { check = "vet", program = "make", args = ["vet"] },
+  { check = "build", program = "make", args = ["build"] },
 ]
 `)
 	profiles, err := parseVerifiersLayer(data, "test.toml")
@@ -62,42 +62,6 @@ func TestParseVerifiersLayerRejections(t *testing.T) {
 	}
 }
 
-// A later layer must replace a profile wholesale: the overlay's go-test below
-// omits go_module_baseline, and the merged result must not keep the base
-// layer's flag or commands.
-func TestVerifierLayerOverlayWinsWholeProfile(t *testing.T) {
-	var file File
-	base := []byte(`
-[verifiers.go-test]
-go_module_baseline = true
-commands = [ { check = "base", program = "go", args = ["test"] } ]
-
-[verifiers.keep]
-commands = [ { check = "keep", program = "go" } ]
-`)
-	overlay := []byte(`
-[verifiers.go-test]
-commands = [ { check = "overlay", program = "make" } ]
-`)
-	for _, layer := range [][]byte{base, overlay} {
-		profiles, err := parseVerifiersLayer(layer, "layer.toml")
-		if err != nil {
-			t.Fatalf("parse layer: %v", err)
-		}
-		file.Verifiers = mergeVerifierLayer(file.Verifiers, profiles)
-	}
-	got := file.Verifiers["go-test"]
-	if got.GoModuleBaseline {
-		t.Fatalf("overlay must clear the base layer's go_module_baseline")
-	}
-	if len(got.Commands) != 1 || got.Commands[0].Check != "overlay" || got.Commands[0].Program != "make" {
-		t.Fatalf("overlay must replace commands wholesale: %+v", got.Commands)
-	}
-	if _, ok := file.Verifiers["keep"]; !ok {
-		t.Fatalf("profiles the overlay does not name must survive")
-	}
-}
-
 func TestLoadWorkspaceVerifiers(t *testing.T) {
 	root := t.TempDir()
 	if profiles, err := LoadWorkspaceVerifiers(root); err != nil || profiles != nil {
@@ -107,7 +71,7 @@ func TestLoadWorkspaceVerifiers(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	toml := "[verifiers.checks]\ncommands = [ { check = \"unit\", program = \"go\", args = [\"test\", \"./...\"] } ]\n"
+	toml := "[verifiers.checks]\ngo_module_baseline = true\ncommands = [ { check = \"unit\", program = \"go\", args = [\"test\", \"./...\"] } ]\n"
 	if err := os.WriteFile(filepath.Join(dir, "mivia.toml"), []byte(toml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -117,5 +81,15 @@ func TestLoadWorkspaceVerifiers(t *testing.T) {
 	}
 	if _, ok := profiles["checks"]; !ok {
 		t.Fatalf("declared profile is missing: %+v", profiles)
+	}
+}
+
+// A go command in a profile without the module baseline flag could never
+// pass at gate time, so the parse rejects it where the author can see it.
+func TestParseVerifiersRejectsGoWithoutBaseline(t *testing.T) {
+	toml := "[verifiers.a]\ncommands = [ { check = \"c\", program = \"go\", args = [\"vet\"] } ]\n"
+	_, err := parseVerifiersLayer([]byte(toml), "test.toml")
+	if err == nil || !strings.Contains(err.Error(), "go_module_baseline = true") {
+		t.Fatalf("want baseline requirement error, got %v", err)
 	}
 }

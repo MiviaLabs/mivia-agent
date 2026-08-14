@@ -722,7 +722,7 @@ A workflow file is untrusted repository input. Anyone can edit it. It may name a
 - a Git base target outside runtime policy;
 - publish permission.
 
-Verifier profiles themselves are declared in the workspace's `.mivia/mivia.toml` `[verifiers.<name>]` tables — the same trust level as `[[hooks]]`. Their commands always run inside the verifier sandbox (copied worktree without secrets, no network, no host home, empty environment), and `.mivia/mivia.toml` is write-blocked for workflow agents by default, so a run cannot rewrite the gate that judges it. Each referenced profile is digest-pinned into the run snapshot at admission; a resume fails closed if the declaration changed.
+Verifier profiles themselves are declared in the workspace's `.mivia/mivia.toml` `[verifiers.<name>]` tables — the same trust level as `[[hooks]]`. Their commands always run inside the verifier sandbox (copied worktree without secrets, no network, no host home, empty environment), and `.mivia/mivia.toml` is write-blocked for workflow agents by default, so a run cannot rewrite the gate that judges it. Each referenced profile is digest-pinned into the run snapshot at admission; a resume fails closed if the declaration changed. Runs whose snapshots predate definition pinning carry no pins and resume without this check.
 
 #### Verifier profile resolution
 

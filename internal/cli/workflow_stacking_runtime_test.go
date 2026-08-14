@@ -161,7 +161,7 @@ func TestWorkflowRuntimeSynthesizedStepsResumeWithPinnedDigests(t *testing.T) {
 		Provider: "openrouter", Selectable: true,
 		Models: []config.ModelSpec{{Name: "test/model", ContextWindowTokens: 1000}},
 	}}}
-	prepared, err := prepareWorkflowRuntime(filepath.Dir(base), base, synth, registry, nil, []byte("definition"), map[string]string{"task": "x"}, opts)
+	prepared, err := prepareWorkflowRuntime(filepath.Dir(base), base, synth, registry, nil, nil, []byte("definition"), map[string]string{"task": "x"}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestWorkflowRuntimeSynthesizedStepsResumeWithPinnedDigests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rebuilt, err := prepareWorkflowRuntime(filepath.Dir(base), base, synth, registry, &prior, nil, nil, opts)
+	rebuilt, err := prepareWorkflowRuntime(filepath.Dir(base), base, synth, registry, &prior, prepared.Snapshot, nil, nil, opts)
 	if err != nil {
 		t.Fatalf("resume rebuild failed: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestBuildWorkflowControllerSynthesizesStackingRuntimesBeforeAdmission(t *te
 		t.Fatal("stacking config did not resolve")
 	}
 
-	built, err := buildWorkflowController(root, res, store, repo, compiled, workflowRoot, map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-stacking-e2e", nil, nil)
+	built, err := buildWorkflowController(root, res, store, repo, compiled, workflowRoot, map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-stacking-e2e", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildWorkflowController() error = %v", err)
 	}

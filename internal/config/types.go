@@ -23,9 +23,11 @@ type File struct {
 	MCP          MCPConfig                 `toml:"mcp"`
 	Memory       MemoryConfig              `toml:"memory"`
 	Harness      HarnessConfig             `toml:"harness"`
-	// Verifiers is populated by the strict raw-byte parse in decodeConfigInto
-	// (parseVerifiersLayer), never by the tolerant struct decode: a verifier
-	// table with an unknown key must fail the load, not lose the key.
+	// Verifiers is populated by LoadWorkspaceVerifiers from the WORKSPACE'S
+	// own .mivia/mivia.toml only (loadFile), never by the tolerant struct
+	// decode and never from a user-level base layer: a verifier table with an
+	// unknown key must fail the load, and the profiles that judge a project's
+	// gates must come from that project's file alone.
 	Verifiers map[string]VerifierProfile `toml:"-"`
 }
 

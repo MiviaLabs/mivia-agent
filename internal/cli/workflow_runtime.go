@@ -23,7 +23,7 @@ type preparedWorkflowRuntime struct {
 	Snapshot []byte
 }
 
-func prepareWorkflowRuntime(root, refBase string, wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, definitionTOML []byte, inputSnapshot map[string]string, dispatcherOpts SessionDispatcherOpts) (preparedWorkflowRuntime, error) {
+func prepareWorkflowRuntime(root, refBase string, wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, priorRaw []byte, definitionTOML []byte, inputSnapshot map[string]string, dispatcherOpts SessionDispatcherOpts) (preparedWorkflowRuntime, error) {
 	steps, snapshot, err := loadWorkflowRuntimes(root, refBase, wf, registry, prior)
 	if err != nil {
 		return preparedWorkflowRuntime{}, err
@@ -56,16 +56,25 @@ func prepareWorkflowRuntime(root, refBase string, wf *compiler.CompiledWorkflow,
 		steps[stepID] = runtime
 	}
 	if prior != nil {
-		snapshot = *prior
-	} else {
-		snapshot.DefinitionTOML = append([]byte(nil), definitionTOML...)
-		snapshot.Inputs = cloneStringMap(inputSnapshot)
-		digest, err := config.MCPConfigDigest(dispatcherOpts.MCP)
-		if err != nil {
-			return preparedWorkflowRuntime{}, err
+		// A resume must carry the STORED admission bytes verbatim: the
+		// controller compares them byte-for-byte against the ledger record
+		// (StartNew), and the run row's SnapshotDigest was computed over
+		// them. Re-marshalling the decoded struct here would couple resume
+		// to round-trip fidelity and break whenever the in-memory prior was
+		// deliberately adjusted (--accept-verifier-change rewrites its pins
+		// for verification only, never for the durable record).
+		if len(priorRaw) == 0 {
+			return preparedWorkflowRuntime{}, fmt.Errorf("workflow resume snapshot bytes are missing")
 		}
-		snapshot.MCPConfigDigest = digest
+		return preparedWorkflowRuntime{Steps: steps, Snapshot: append([]byte(nil), priorRaw...)}, nil
 	}
+	snapshot.DefinitionTOML = append([]byte(nil), definitionTOML...)
+	snapshot.Inputs = cloneStringMap(inputSnapshot)
+	digest, err := config.MCPConfigDigest(dispatcherOpts.MCP)
+	if err != nil {
+		return preparedWorkflowRuntime{}, err
+	}
+	snapshot.MCPConfigDigest = digest
 	// Snapshot contains only JSON-safe field types.
 	data, _ := workflowledger.MarshalSnapshot(snapshot)
 	return preparedWorkflowRuntime{Steps: steps, Snapshot: data}, nil

@@ -67,7 +67,7 @@ func TestExecuteWorkflowResumeInjectedFailures(t *testing.T) {
 			return nil, selected, func() {}, nil
 		}
 		workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
-		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 			return workflowControllerBuild{
 				Controller: &controller.LinearController{Holder: "resume-test"},
 				Dispatcher: workflowTestDispatcher{},
@@ -123,7 +123,7 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 	})
 	t.Run("build", func(t *testing.T) {
 		reset(repo)
-		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 			return workflowControllerBuild{}, sentinel
 		}
 		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
@@ -393,7 +393,7 @@ func TestExecuteWorkflowRunCleansFailedAdmission(t *testing.T) {
 	originalBuild := workflowRunBuild
 	originalAdmission := workflowRunSetAdmission
 	cleaned := false
-	workflowRunBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+	workflowRunBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 		return workflowControllerBuild{Dispatcher: workflowTestDispatcher{}, Cleanup: func() { cleaned = true }}, nil
 	}
 	workflowRunSetAdmission = func(workflowControllerBuild) error { return sentinel }
@@ -428,7 +428,7 @@ func TestBuildWorkflowControllerDependencyFailures(t *testing.T) {
 	}
 	t.Cleanup(reset)
 	call := func() error {
-		_, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-build-failure", nil, nil)
+		_, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-build-failure", nil, nil, nil)
 		return err
 	}
 	runEarlyWorkflowBuildFailureTests(t, sentinel, reset, call)
@@ -459,7 +459,7 @@ max_turns = 1
 		definition.Step{ID: "review", Kind: "agent_gate", Agent: "two", Template: "templates/two.md", OutputSchema: "schemas/out.json"},
 		definition.Step{ID: "verify", Kind: "evidence_gate", Verifier: "go-test", OutputSchema: "schemas/out.json"},
 	)
-	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-evidence-wiring", nil, nil)
+	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-evidence-wiring", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildWorkflowController() error = %v", err)
 	}

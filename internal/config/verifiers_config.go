@@ -57,11 +57,12 @@ var verifierTableKeys = map[string]bool{"go_module_baseline": true, "commands": 
 var verifierCommandKeys = map[string]bool{"check": true, "program": true, "args": true}
 
 // LoadWorkspaceVerifiers parses ONLY the [verifiers] tables of one
-// workspace's own .mivia/mivia.toml. `mivia workflows validate` uses it so
-// validation of a foreign workspace neither requires a full provider config
-// nor mixes in the invoking user's ~/.mivia profiles: what validates here is
-// exactly what the workspace declares. A missing config file means no
-// declared profiles, not an error.
+// workspace's own .mivia/mivia.toml. It is the single source of declared
+// profiles for every surface: config.Load populates Resolved.Verifiers from
+// it (never from a user-level base layer), and `mivia workflows validate`
+// calls it directly, so validation and the run resolve the same catalogue on
+// every machine. A missing config file means no declared profiles, not an
+// error.
 func LoadWorkspaceVerifiers(workspaceRoot string) (map[string]VerifierProfile, error) {
 	path := workspace.NamespacePath(workspaceRoot, "mivia.toml")
 	data, err := os.ReadFile(path)
@@ -74,9 +75,7 @@ func LoadWorkspaceVerifiers(workspaceRoot string) (map[string]VerifierProfile, e
 	return parseVerifiersLayer(data, path)
 }
 
-// parseVerifiersLayer parses one config layer's [verifiers] tables. Later
-// layers overwrite earlier ones whole-profile (no per-command merging), which
-// mergeVerifierLayer applies.
+// parseVerifiersLayer parses one file's [verifiers] tables.
 func parseVerifiersLayer(data []byte, path string) (map[string]VerifierProfile, error) {
 	var file struct {
 		Verifiers map[string]map[string]any `toml:"verifiers"`
@@ -125,6 +124,16 @@ func parseVerifierProfile(name string, raw map[string]any) (VerifierProfile, err
 		return VerifierProfile{}, err
 	}
 	profile.Commands = commands
+	// The sandbox refuses to run `go` without the pinned module baseline, so
+	// a go command in an unflagged profile could never pass at gate time.
+	// Reject it here, where the author reads the message next to the table.
+	if !profile.GoModuleBaseline {
+		for _, command := range commands {
+			if command.Program == "go" {
+				return VerifierProfile{}, fmt.Errorf("a profile that runs %q needs go_module_baseline = true", command.Program)
+			}
+		}
+	}
 	return profile, nil
 }
 
@@ -181,23 +190,6 @@ func parseVerifierCommand(raw map[string]any) (VerifierCommand, error) {
 
 func isBareVerifierProgram(program string) bool {
 	return program != "." && program != ".." && bareVerifierProgramRegex.MatchString(program)
-}
-
-// mergeVerifierLayer applies one layer's profiles over the accumulated set.
-// A later layer wins whole-profile: declaring [verifiers.go-test] in the
-// workspace file replaces every field of a base-layer go-test, so what runs
-// is always exactly one file's declaration, never a field-level blend.
-func mergeVerifierLayer(base, layer map[string]VerifierProfile) map[string]VerifierProfile {
-	if len(layer) == 0 {
-		return base
-	}
-	if base == nil {
-		base = make(map[string]VerifierProfile, len(layer))
-	}
-	for name, profile := range layer {
-		base[name] = profile
-	}
-	return base
 }
 
 // cloneVerifierProfiles deep-copies the declared profile set for Resolved.

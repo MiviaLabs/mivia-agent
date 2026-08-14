@@ -347,7 +347,7 @@ func TestWorkflowRuntimeAndWorkspaceErrors(t *testing.T) {
 	if _, _, err := loadWorkflowRuntimes(t.TempDir(), "", wf, agents.NewRegistry(), nil); err == nil {
 		t.Fatal("loadWorkflowRuntimes() accepted an unknown agent")
 	}
-	if _, err := prepareWorkflowRuntime(t.TempDir(), "", wf, agents.NewRegistry(), nil, nil, nil, SessionDispatcherOpts{}); err == nil {
+	if _, err := prepareWorkflowRuntime(t.TempDir(), "", wf, agents.NewRegistry(), nil, nil, nil, nil, SessionDispatcherOpts{}); err == nil {
 		t.Fatal("prepareWorkflowRuntime() accepted an unknown agent")
 	}
 	root := t.TempDir()
