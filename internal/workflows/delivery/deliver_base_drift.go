@@ -92,21 +92,28 @@ func checkChunkBaseDrift(ctx context.Context, git GitRunner, req Request, origin
 // already contains everything the sibling advance landed: merging the landed
 // content onto the staged content over the admitted-base content is a no-op
 // (the merge output equals the staged content byte for byte). Anything less
-// clean - a conflict, a binary file, or content the sibling added that the
-// staged version would revert - is unreconciled and keeps the drift error.
+// clean - a conflict, a binary file, a submodule pointer, or content the
+// sibling added that the staged version would revert - is unreconciled and
+// keeps the drift error.
 func chunkFileReconciled(ctx context.Context, git GitRunner, req Request, originBase, fetchedBase, file string) bool {
-	staged, stagedOK := fileBlobAt(ctx, git, req, ":"+file)
-	landed, landedOK := fileBlobAt(ctx, git, req, fetchedBase+":"+file)
-	if !stagedOK || !landedOK {
-		// The only deletions that agree: both sides removed the file, so
-		// delivering the staged tree keeps the sibling's removal intact.
-		return !stagedOK && !landedOK
+	staged, stagedState := fileBlobAt(ctx, git, req, ":"+file)
+	landed, landedState := fileBlobAt(ctx, git, req, fetchedBase+":"+file)
+	if stagedState == blobAbsent && landedState == blobAbsent {
+		// Both sides removed the file: delivering the staged tree keeps the
+		// sibling's removal intact.
+		return true
+	}
+	if stagedState != blobPresent || landedState != blobPresent {
+		// A submodule pointer (gitlink) or a one-sided deletion never
+		// reconciles here: it has no blob to merge, and passing it would
+		// silently revert the sibling's change.
+		return false
 	}
 	if staged == landed {
 		return true
 	}
-	base, baseOK := fileBlobAt(ctx, git, req, originBase+":"+file)
-	if !baseOK {
+	base, baseState := fileBlobAt(ctx, git, req, originBase+":"+file)
+	if baseState != blobPresent {
 		// The sibling added the file after admission: no common ancestor to
 		// reconcile against, so only byte-identical content passes (above).
 		return false
@@ -132,14 +139,45 @@ func chunkFileReconciled(ctx context.Context, git GitRunner, req Request, origin
 	return merged == staged
 }
 
-// fileBlobAt reads a blob addressed by a git revision spec (":file" for the
-// staged index entry, "<commit>:file" for a committed version). A missing
-// path reports ok=false, not an error: deletion is a reconcile outcome the
-// caller decides on.
-func fileBlobAt(ctx context.Context, git GitRunner, req Request, spec string) (string, bool) {
-	out, err := git.Run(ctx, req.GitCtx, "cat-file", "blob", spec)
-	if err != nil {
-		return "", false
+// blobState classifies one path at one revision (or the index).
+type blobState int
+
+const (
+	blobAbsent  blobState = iota // no entry at this revision
+	blobPresent                  // a regular file or symlink blob; content set
+	blobOther                    // an entry this guard cannot reconcile (e.g. a submodule gitlink)
+)
+
+// fileBlobAt resolves one path's entry. ls-files/ls-tree report the entry
+// MODE without needing the object to exist locally, so a submodule gitlink
+// (mode 160000, its commit typically not fetched) is distinguishable from an
+// absent path - `git cat-file blob` alone fails identically for both, which
+// made a drifted pointer pair pass as a mutual deletion. A command failure
+// is conservative: blobOther, never reconciled.
+func fileBlobAt(ctx context.Context, git GitRunner, req Request, spec string) (string, blobState) {
+	var out string
+	var err error
+	if strings.HasPrefix(spec, ":") {
+		out, err = git.Run(ctx, req.GitCtx, "-c", "core.quotePath=false", "ls-files", "-s", "--", spec[1:])
+	} else {
+		rev, path, _ := strings.Cut(spec, ":")
+		out, err = git.Run(ctx, req.GitCtx, "-c", "core.quotePath=false", "ls-tree", rev, "--", path)
 	}
-	return out, true
+	if err != nil {
+		return "", blobOther
+	}
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) == 0 {
+		return "", blobAbsent
+	}
+	switch fields[0] {
+	case "100644", "100755", "120000":
+	default:
+		return "", blobOther
+	}
+	content, err := git.Run(ctx, req.GitCtx, "cat-file", "blob", spec)
+	if err != nil {
+		return "", blobOther
+	}
+	return content, blobPresent
 }

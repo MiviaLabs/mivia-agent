@@ -9,6 +9,7 @@ package delivery
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +81,49 @@ func TestDeliverAllowsReconciledOverlapWithMergedSibling(t *testing.T) {
 	}
 	if res.Status != "succeeded" {
 		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+}
+
+// TestDeliverRefusesSubmodulePointerDrift pins the gitlink fail-open: a
+// submodule pointer (gitlink, mode 160000) has no blob, so `git cat-file
+// blob` fails for BOTH sides of an overlap - the same signature as both
+// sides deleting the file. The reconcile check wrongly passed such an
+// overlap, and the chunk's pointer silently reverted the sibling's bump on
+// merge. A gitlink entry must never count as reconciled here.
+func TestDeliverRefusesSubmodulePointerDrift(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, _, originURL, run, repo := newDeliveryFixture(t)
+
+	// Admitted base carries a gitlink "sm" (no submodule checkout needed:
+	// a gitlink entry alone stages and commits).
+	runGit(t, repoRoot, "checkout", "main")
+	runGit(t, repoRoot, "update-index", "--add", "--cacheinfo", "160000,1111111111111111111111111111111111111111,sm")
+	runGit(t, repoRoot, "commit", "-m", "base: add submodule sm")
+	runGit(t, repoRoot, "push", "origin", "main")
+	admittedBase := runGitOut(t, repoRoot, "rev-parse", "HEAD")
+	runGit(t, worktreeRoot, "reset", "--hard", admittedBase)
+
+	// The sibling bumps the submodule pointer.
+	runGit(t, repoRoot, "update-index", "--cacheinfo", "160000,2222222222222222222222222222222222222222,sm")
+	runGit(t, repoRoot, "commit", "-m", "sibling: bump sm")
+	runGit(t, repoRoot, "push", "origin", "main")
+
+	// The chunk stages a DIFFERENT bump of the same pointer.
+	runGit(t, worktreeRoot, "update-index", "--cacheinfo", "160000,3333333333333333333333333333333333333333,sm")
+
+	policy := defaultPolicy("draft")
+	policy.StackingHardLines = 500
+
+	pr := &fakePRClient{}
+	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, admittedBase, originURL, policy, map[string]string{"task": "submodule drift"}))
+	if err == nil {
+		t.Fatal("Deliver succeeded, want a rejection: the chunk's submodule pointer reverts the sibling's bump (no blob to reconcile)")
+	}
+	if IsRefusal(err) {
+		t.Fatalf("Deliver error = %v (%T), want a plain repairable error, not a RefusalError", err, err)
+	}
+	if !strings.Contains(err.Error(), "sm") {
+		t.Fatalf("rejection %q must name the drifted submodule path", err)
 	}
 }
 
