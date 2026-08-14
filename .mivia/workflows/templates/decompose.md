@@ -35,12 +35,15 @@ When `plan` is bound (first wave), read it first and classify it:
    an empty `chunk_plan`, and let the engine's deterministic rejection of
    `no_bug` on a step-declaring plan drive the honest outcome.
 
-Reply with ONLY the output envelope: a `<mivia_output>` opening tag on its own
-line, then one JSON object satisfying the output schema at
-`schemas/chunk-plan-v1.json`, then a `</mivia_output>` closing tag on its own
-line. No prose, markdown report, headings, bullets, or code fences inside or
-outside the envelope. An invalid shape is rejected and you will be asked again
-with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema at `schemas/chunk-plan-v1.json`.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not add prose, a markdown report, headings, bullets, or code fences inside or
+outside the envelope. The engine rejects an invalid shape and asks you again with
+the schema.
 
 ---
 
@@ -135,12 +138,14 @@ the engine will reject it and ask you to re-emit.
 
 ## Output contract
 
-Reply with ONLY the output envelope: a `<mivia_output>` opening tag on its own
-line, then one JSON object satisfying the output schema appended to this task,
-then a `</mivia_output>` closing tag on its own line. Do not use a skill
-report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the
-schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -150,6 +155,5 @@ For a small change decomposed into one PR:
 {"stack_mode": "single", "chunk_plan": {"chunks": [{"id": "c1", "title": "Add rune-safe TruncateEllipsis helper", "files": ["internal/textutil/truncate.go", "internal/textutil/truncate_test.go"], "est_diff_lines": 85, "tests": true, "depends_on": []}]}}
 </mivia_output>
 
-The example above is illustrative only - decompose the plan you were bound,
-not this example. `no_bug` emits `chunks: []`; `multi` emits two or more
-chunks with a valid `depends_on` DAG.
+This example is for illustration only. Decompose the plan for the task you were given.
+`no_bug` emits `chunks: []`. `multi` emits two or more chunks with a valid `depends_on` DAG.

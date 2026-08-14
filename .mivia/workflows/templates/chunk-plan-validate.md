@@ -34,12 +34,15 @@ Emit `valid: true` ONLY after verifying the complete plan text; a falsely
 `valid: true` on an unverified chunk plan would let an unvalidated plan
 proceed.
 
-Reply with ONLY the output envelope: a `<mivia_output>` opening tag on its own
-line, then one JSON object satisfying the output schema at
-`schemas/chunk-plan-review-v1.json`, then a `</mivia_output>` closing tag on
-its own line. No prose, markdown report, headings, bullets, or code fences
-inside or outside the envelope. An invalid shape is rejected and you will be
-asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema at `schemas/chunk-plan-review-v1.json`.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not add prose, a markdown report, headings, bullets, or code fences inside or
+outside the envelope. The engine rejects an invalid shape and asks you again with
+the schema.
 
 ### Example
 
@@ -55,8 +58,8 @@ For a chunk plan that violates rules (every violation is its own string):
 {"valid": false, "reasons": ["chunk c2 est_diff_lines 250 exceeds soft_lines 200", "file shared.go appears in chunks c1 and c2"]}
 </mivia_output>
 
-The examples above are illustrative only - report the violations you actually
-find in the chunk plan you were bound.
+This example is for illustration only. Report the violations you find for the
+chunk plan you were given.
 
 ---
 
