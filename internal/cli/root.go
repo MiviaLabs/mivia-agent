@@ -34,6 +34,8 @@ func Execute(args []string) error {
 		return runAgents(args[1:])
 	case "sessions":
 		return runSessions(args[1:])
+	case "compact":
+		return runCompact(args[1:])
 	case "memory":
 		return runMemory(args[1:])
 	case "workflows":
@@ -101,6 +103,7 @@ Usage:
   %s sessions usage <name> [--workspace dir] [--json]
   %s sessions rename <name> <title> [--workspace dir]
   %s sessions delete <name> [--workspace dir]
+  %s compact --session <name> [--json] [--workspace dir]
   %s workflows list [--workspace dir]
   %s workflows show <name> [--workspace dir]
   %s workflows validate [name] [--workspace dir]
@@ -144,7 +147,7 @@ Chat: /help /tools /hooks /exit /clear /new /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 // flagValue returns the value of the first occurrence of any named flag,

@@ -82,32 +82,20 @@ func (s *Session) ContextPreparation() (contextmgr.PreparationManager, contextmg
 // Compact prepares and durably publishes the current conversation immediately.
 // It is serialized with turn publication and never sends another provider call.
 func (s *Session) Compact(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	s.contextPublishMu.Lock()
-	defer s.contextPublishMu.Unlock()
+	_, err := s.compact(ctx)
+	return err
+}
 
-	s.mu.RLock()
-	if s.activeTurns > 0 {
-		s.mu.RUnlock()
-		return ErrStaleOperation
-	}
-	cfg := s.captureContextLocked()
-	store := s.contextStore
-	messages := cloneContextMessages(s.Messages)
-	binding := s.binding
-	turnID := s.turnID
-	if turnID == 0 {
-		turnID = 1
-	}
-	s.mu.RUnlock()
-	if cfg.manager == nil || store == nil {
-		return fmt.Errorf("context compaction is not configured")
-	}
-	input := prepareInputForContext(messages, s.MaxContextTokens, s.MaxTokens, binding, cfg.principal, cfg.policy, cfg.worktree)
-	input.Revision = cfg.revision
-	input.Force = true
+// CompactWithResult behaves exactly like Compact but also returns the
+// contextmgr.Preparation the compaction produced, for callers (e.g. the
+// `mivia compact` CLI command) that need to report before/after numbers.
+func (s *Session) CompactWithResult(ctx context.Context) (contextmgr.Preparation, error) {
+	return s.compact(ctx)
+}
+
+// compactLoadSnapshot loads the durable snapshot for the bound session,
+// validates it is current, and stamps the compact input's source range.
+func (s *Session) compactLoadSnapshot(ctx context.Context, cfg contextTurnConfig, store contextstate.Store, input *contextmgr.PrepareInput) error {
 	snapshot, err := loadBoundContextStore(ctx, store, cfg.principal, cfg.principal.SessionID, cfg.worktree)
 	if err != nil {
 		return err
@@ -119,13 +107,46 @@ func (s *Session) Compact(ctx context.Context) error {
 		return fmt.Errorf("nothing to compact: no conversation history")
 	}
 	input.SourceRange = snapshot.Active.SourceRange
+	return nil
+}
+
+func (s *Session) compact(ctx context.Context) (contextmgr.Preparation, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.contextPublishMu.Lock()
+	defer s.contextPublishMu.Unlock()
+
+	s.mu.RLock()
+	if s.activeTurns > 0 {
+		s.mu.RUnlock()
+		return contextmgr.Preparation{}, ErrStaleOperation
+	}
+	cfg := s.captureContextLocked()
+	store := s.contextStore
+	messages := cloneContextMessages(s.Messages)
+	binding := s.binding
+	turnID := s.turnID
+	if turnID == 0 {
+		turnID = 1
+	}
+	s.mu.RUnlock()
+	if cfg.manager == nil || store == nil {
+		return contextmgr.Preparation{}, fmt.Errorf("context compaction is not configured")
+	}
+	input := prepareInputForContext(messages, s.MaxContextTokens, s.MaxTokens, binding, cfg.principal, cfg.policy, cfg.worktree)
+	input.Revision = cfg.revision
+	input.Force = true
+	if err := s.compactLoadSnapshot(ctx, cfg, store, &input); err != nil {
+		return contextmgr.Preparation{}, err
+	}
 	preparation, err := cfg.manager.PreparationManager.Prepare(ctx, input)
 	if err != nil {
-		return err
+		return contextmgr.Preparation{}, err
 	}
 	if !preparation.Compacted {
 		cfg.manager.PreparationManager.Discard(preparation)
-		return fmt.Errorf("context compaction made no reduction")
+		return contextmgr.Preparation{}, fmt.Errorf("context compaction made no reduction")
 	}
 	preparedMessages := cloneContextMessages(preparation.Messages)
 	// Manual-compact summary: run the LLM summary before the durable commit
@@ -134,20 +155,29 @@ func (s *Session) Compact(ctx context.Context) error {
 	// after the state swap. Any summary failure keeps the structural compact
 	// unchanged; a summary must never fail a manual compact.
 	summaryMessage, haveSummary := summarizeManualCompact(ctx, cfg, input, messages, &preparation)
+	// The rendered summary joins the committed active context too, not only
+	// the live history: the message is host-generated with no source event of
+	// its own, so the checkpoint is its only durable carrier. Without it, a
+	// restart before any later compaction loses the summary the model never
+	// received (the compact delivered it to live memory only).
+	active := preparedMessages
+	if haveSummary {
+		active = append(cloneContextMessages(preparedMessages), summaryMessage)
+	}
 	result := contextmgr.TurnResult{
-		Active: preparedMessages, TurnID: turnID, Outcome: contextmgr.OutcomeComplete,
+		Active: active, TurnID: turnID, Outcome: contextmgr.OutcomeComplete,
 	}
 	if err == nil {
 		err = cfg.manager.Commit(ctx, preparation, result)
 	}
 	cfg.manager.PreparationManager.Discard(preparation)
 	if err != nil {
-		return err
+		return contextmgr.Preparation{}, err
 	}
 	s.mu.Lock()
 	if s.contextHead != cfg.revision || !s.contextEnabledLocked() {
 		s.mu.Unlock()
-		return ErrStaleOperation
+		return contextmgr.Preparation{}, ErrStaleOperation
 	}
 	s.Messages = preparedMessages
 	if haveSummary {
@@ -156,7 +186,7 @@ func (s *Session) Compact(ctx context.Context) error {
 	s.contextHead = nextContextRevision(preparation, result)
 	s.mu.Unlock()
 	s.emitContextCompaction(preparation, turnID)
-	return nil
+	return preparation, nil
 }
 
 // RotateSessionID starts a fresh principal while retaining the configured
