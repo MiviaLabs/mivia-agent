@@ -13,14 +13,15 @@ step is bound as `chunk_plan`. Read the bound value first and classify it:
    exactly `artifact` and `note`, with `artifact` carrying `step`, `attempt`,
    `ref`, `bytes`, `digest` (and optionally a short `preview`) and `note`
    naming the workflow ledger. This means the chunk plan exceeded the
-   engine's inline cap for prior-step evidence (32KiB). The envelope's `note`
-   invites `workflow_inspect(run_id, step, attempt)`; you may attempt it ONCE
-   with the `artifact` fields. In this worktree context it will not resolve
-   (your ledger view predates the decompose step's output). If it does
-   resolve, validate the full artifact. If it does not resolve, FAIL CLOSED:
-   emit `valid: false` with a reason stating the chunk plan is an unresolved
-   ledger reference and cannot be verified from this context. NEVER guess
-   chunk content from `preview` or from the Evidence refs block.
+   engine's inline cap for prior-step evidence (32KiB). Resolve the full
+   artifact with `workflow_inspect(run_id, step, attempt)` before responding;
+   your own run's prior-step attempts always resolve. For a very large
+   artifact, page through it with the `offset` and `limit` parameters.
+   Validate the resolved artifact. NEVER guess chunk content from `preview`
+   or from the Evidence refs block. FAIL CLOSED only if `workflow_inspect`
+   genuinely refuses (artifact exceeds the 8 MiB paging ceiling, or the run
+   is not found): emit `valid: false` with a reason stating that
+   `workflow_inspect` refused and naming the refusal.
 3. **Anything else** — FAIL CLOSED: emit `valid: false` with a reason naming
    the shape you received. An unverifiable chunk plan must never be accepted.
 

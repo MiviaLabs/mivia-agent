@@ -2,7 +2,7 @@
 
 ## Output contract (READ FIRST — before the methodology below)
 
-Reply with ONLY one JSON object that satisfies the output schema appended to this task. Do
+Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. Do
 NOT emit the bug-audit skill's Finding Format blocks, headings, bullets, prose, or code
 fences (```). The schema declares the only valid keys — no extra keys. `has_perf` is the
 STRING "true" or "false" (quoted), never a boolean. An invalid shape is rejected and you
@@ -57,6 +57,15 @@ inspected in `inspected`. State the verdict rationale in `rationale`.
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to this task. Do not
-use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
-An invalid shape is rejected and you will be asked again with the schema.
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+<mivia_output>
+{"verdict": "confirmed", "retained_findings": ["H-1"], "has_perf": "false", "rationale": "H-1 reproduces: a multi-byte input to TruncateEllipsis panics with an invalid slice bounds error.", "inspected": ["internal/textutil/truncate.go"]}
+</mivia_output>
+
+The example above is illustrative only - triage the findings you were bound, not this example.

@@ -2,8 +2,8 @@
 
 ## Output contract (READ FIRST — before the methodology below)
 
-Reply with ONLY one JSON object that satisfies the output schema appended to this task. No
-markdown report, headings, bullets, prose outside the JSON, or code fences (```). The schema
+Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. No
+markdown report, headings, bullets, or code fences (```) inside or outside the envelope. The schema
 declares the only valid keys — no extra keys. An invalid shape is rejected and you will be
 asked again with the schema.
 
@@ -39,6 +39,15 @@ Return only the declared structured output. List every workspace path you inspec
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to this task. Do not
-use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
-An invalid shape is rejected and you will be asked again with the schema.
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+<mivia_output>
+{"summary": "Shortened pr_title to fit the host's 256-character limit; pr_summary unchanged.", "files_changed": ["internal/textutil/truncate.go"], "addressed_findings": [], "inspected": ["internal/textutil/truncate.go"], "pr_title": "fix(textutil): cut TruncateEllipsis on rune boundaries", "pr_summary": "TruncateEllipsis now walks runes instead of slicing by byte offset. This prevents a panic and invalid UTF-8 output on multi-byte input."}
+</mivia_output>
+
+The example above is illustrative only - repair the metadata you were bound, not this example.

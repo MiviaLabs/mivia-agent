@@ -774,9 +774,14 @@ soft_lines = 200        # default 200
 hard_lines = 400        # default 400
 max_files = 5           # default 5
 merge_policy = "approve" # "approve" (default) or "auto"
+max_total_chunks = 200        # default 200; ceiling across all decompose waves of one plan
+max_wave_chunks = 12          # default 12; ceiling per single decompose call
+max_concurrent_chunks = 4     # default 4; chunk runs the driver admits and drives at once
 ```
 
 Explicit step references are validated at compile time (unknown step, out-of-range thresholds, invalid merge policy). When the section is absent, stacking is enabled with the global defaults and inference is best-effort — existing workflows compile unchanged.
+
+`max_concurrent_chunks` is enforced today: it bounds how many chunk runs `stack drive` admits and drives at once (see "Concurrent wave execution" below). `max_total_chunks` and `max_wave_chunks` are accepted and validated but not yet enforced — decompose still plans a stacking-enabled workflow's whole chunk DAG in one call, so today's real ceiling is still `max_chunks`. They exist so a workflow can declare its intended limits ahead of the driver requesting decompose output incrementally, one wave at a time.
 
 ### What a plan-mode run does
 
@@ -803,8 +808,14 @@ mivia stack status <workflow> [--stack <plan-run-id>] [--workspace dir] [--confi
 | Command | What it does |
 |---------|-------------|
 | `stack plan` | Starts a plan-mode run. The plan run id is the stack id. |
-| `stack drive` | Reconciles the stack, admits chunk runs in topological order, applies the merge policy, and runs a final integration run. Resumable on restart. |
+| `stack drive` | Reconciles the stack, admits the next ready wave of chunk runs, applies the merge policy, and runs a final integration run. Resumable on restart. |
 | `stack status` | Prints per-chunk status (chunk id, status, run ref, PR number, depends_on) from the task ledger. |
+
+### Concurrent wave execution
+
+Each drive pass computes the next admission wave — every chunk whose dependencies have all merged. Chunks in the same wave are independent by construction, so the driver admits and drives the whole wave concurrently, bounded by `max_concurrent_chunks` (default 4). Each chunk runs in its own isolated worktree, and a per-chunk atomic claim guarantees exactly one admission per chunk even when several are dispatched at once — re-running `stack drive` after a restart or a partial failure never double-admits a chunk already in flight.
+
+Only chunk *execution* is concurrent. Merging still happens one PR at a time, in dependency order — multiple chunks can reach `delivery_pending` or get published within the same drive pass, but they merge one at a time.
 
 ### Merge policies
 

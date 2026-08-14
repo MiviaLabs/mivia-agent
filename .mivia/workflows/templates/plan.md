@@ -45,6 +45,15 @@ host gates in `summary`. Put ordered actions in `steps`.
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to this task. Do not
-use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
-An invalid shape is rejected and you will be asked again with the schema.
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+<mivia_output>
+{"summary": "Add rune-safe TruncateEllipsis to internal/textutil; scope locked to that package and its callers.", "steps": ["Write TruncateEllipsis tests for empty, ASCII, multi-byte, and oversized input", "Implement TruncateEllipsis in internal/textutil/truncate.go", "Update the one call site in internal/cli/render.go"], "inspected": ["internal/textutil/truncate.go", "internal/cli/render.go"], "addressed_findings": []}
+</mivia_output>
+
+The example above is illustrative only - plan the task you were bound, not this example.

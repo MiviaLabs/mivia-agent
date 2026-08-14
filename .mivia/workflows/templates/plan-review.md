@@ -54,6 +54,24 @@ Approve only when no open finding remains.
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to this task. Do not
-use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
-An invalid shape is rejected and you will be asked again with the schema.
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+Approved, no open finding:
+
+<mivia_output>
+{"verdict": "approved", "findings": [], "inspected": ["internal/textutil/truncate.go", "internal/textutil/truncate_test.go"]}
+</mivia_output>
+
+Changes requested:
+
+<mivia_output>
+{"verdict": "changes_requested", "findings": [{"id": "R1-1", "severity": "medium", "reason": "TruncateEllipsis panics on a truncation length that lands mid-rune", "claim": "Plan step 2 does not test a multi-byte boundary case", "evidence": "internal/textutil/truncate.go:1 (plan step 2)", "required": "Add a test case that truncates at a byte offset inside a multi-byte rune"}], "inspected": ["internal/textutil/truncate.go"]}
+</mivia_output>
+
+The examples above are illustrative only - report the findings you actually verified against
+the plan you were bound.

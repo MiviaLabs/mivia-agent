@@ -268,10 +268,29 @@ mivia stack status <workflow> [--stack <plan-run-id>] [--workspace dir] [--confi
 ```
 
 `stack plan` starts a plan-mode run (no `stack_mode` input). The plan run
-id becomes the stack id. `stack drive` reconciles the stack, admits chunk
-runs in topological order, applies the merge policy, and finishes with a
-full-suite integration run. `stack status` prints per-chunk status from the
-task ledger.
+id becomes the stack id. `stack drive` reconciles the stack, admits the
+next ready wave of chunk runs, applies the merge policy, and finishes with
+a full-suite integration run. `stack status` prints per-chunk status from
+the task ledger.
+
+**Wave admission and concurrency:** each drive pass computes the next
+admission wave — every chunk whose dependencies (`depends_on`) have all
+merged, in topological order. Chunks within one wave are independent by
+construction (a chunk only enters a wave once every chunk it depends on has
+already merged), so the driver admits and drives the whole wave
+concurrently, bounded by `stacking.max_concurrent_chunks` (default 4). Each
+chunk already runs in its own isolated worktree, so concurrent execution
+needs no extra isolation. A per-chunk atomic claim (compare-and-swap on the
+task's status) guarantees exactly one admission per chunk even when
+multiple chunks are dispatched at once, so re-running `stack drive` after a
+restart or a partial failure never double-admits a chunk that is already in
+flight.
+
+**Merging stays serialized.** Only chunk *execution* (the agent's work in
+each chunk's worktree) runs concurrently; merges are still applied one PR
+at a time, in dependency order, by the merge-policy pass described below.
+Multiple chunks can reach `delivery_pending` or get published in the same
+drive pass, but they still merge one at a time.
 
 **Merge policies:**
 - `approve` (default, policy A): each PR stays at `delivery_pending` until a

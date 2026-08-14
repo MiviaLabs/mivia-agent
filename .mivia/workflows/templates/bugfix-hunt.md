@@ -2,9 +2,9 @@
 
 ## Output contract (READ FIRST — before the methodology below)
 
-Reply with ONLY one JSON object that satisfies the output schema appended to this task. This
+Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. This
 step is NOT the skill's markdown report: do NOT emit the bug-audit skill's Finding Format
-blocks, headings, bullets, prose, or code fences (```). Keep the skill's CONTENT
+blocks, headings, bullets, or code fences (```) inside or outside the envelope. Keep the skill's CONTENT
 requirements (invariant, evidence, reachable path, impact, regression test, sweep) as the
 JSON field values. The schema declares the only valid keys — no extra keys. `has_perf` is
 the STRING "true" or "false" (quoted), never a boolean. An invalid shape is rejected and
@@ -62,6 +62,24 @@ when any finding has class "perf", else "false". List every workspace path you i
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to this task. Do not
-use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
-An invalid shape is rejected and you will be asked again with the schema.
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+No confirmed bug:
+
+<mivia_output>
+{"findings": [], "finding_count": 0, "no_findings": true, "has_perf": "false", "inspected": ["internal/textutil/truncate.go"]}
+</mivia_output>
+
+One confirmed bug:
+
+<mivia_output>
+{"findings": [{"id": "H-1", "class": "logic", "severity": "high", "title": "TruncateEllipsis can split a multi-byte rune", "invariant": "Output of TruncateEllipsis must be valid UTF-8", "evidence": "internal/textutil/truncate.go:14 indexes s[:n] by byte offset with no rune-boundary check", "reachable_path": "internal/cli/render.go:52 calls TruncateEllipsis on user-controlled terminal output", "impact": "Invalid UTF-8 written to the terminal writer, corrupting output", "remediation": "Walk runes to find a safe cut point before slicing", "regression_test": "TestTruncateEllipsis_MultiByteBoundary", "sweep": "grepped textutil for other byte-offset slices; none found"}], "finding_count": 1, "no_findings": false, "has_perf": "false", "inspected": ["internal/textutil/truncate.go", "internal/cli/render.go"]}
+</mivia_output>
+
+The examples above are illustrative only - report the findings you actually confirmed in the
+scope you were bound.
