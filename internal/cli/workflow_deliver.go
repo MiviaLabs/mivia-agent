@@ -223,7 +223,7 @@ func settleDeliveryError(ctx context.Context, repo workflowledger.Repository, ru
 	// workflow names (on_pr_metadata_failure, on_diff_size_failure, then
 	// on_failure); the CLI and the local engine share it, so a rejection
 	// routes to the same step on both paths.
-	if step := delivery.RepairTarget(err, policy); step != "" && !provider.IsTransient(err) {
+	if step := delivery.RepairTarget(err, policy); step != "" && !deliveryFaultTransient(err) {
 		recordAutoDeliveryFailure(ctx, repo, runID, err)
 		return delivery.ReopenForRepair(ctx, repo, runID, step, policy.MaxRepairs, err, stdout)
 	}
@@ -234,10 +234,20 @@ func settleDeliveryError(ctx context.Context, repo workflowledger.Repository, ru
 	// sit at delivery_pending with nothing `workflow status` can explain.
 	// Transient transport faults stay unrecorded: they say nothing about the
 	// change and a later deliver succeeds.
-	if !provider.IsTransient(err) {
+	if !deliveryFaultTransient(err) {
 		recordAutoDeliveryFailure(ctx, repo, runID, err)
 	}
 	return err
+}
+
+// deliveryFaultTransient reports whether a delivery failure is a transport
+// fault no agent can repair: a provider-side transient (provider.IsTransient)
+// or a git/gh network death (delivery.IsTransportFault). provider's phrase
+// list is provider-domain and does not know git's texts ("Could not resolve
+// host", "Connection timed out"), which previously misrouted a fetch failure
+// to the repair step and wrote a failed record for it.
+func deliveryFaultTransient(err error) bool {
+	return provider.IsTransient(err) || delivery.IsTransportFault(err)
 }
 
 // replayDeliveryRecord prints the durable outcome of a run that already
