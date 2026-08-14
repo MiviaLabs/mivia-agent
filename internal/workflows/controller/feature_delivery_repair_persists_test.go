@@ -155,9 +155,7 @@ func repairChainController(t *testing.T, repo workflowledger.Repository) (*Linea
 		t.Fatal(err)
 	}
 	cat := verifier.NewCatalogue()
-	if err := cat.Register(verifier.NewGoDefault(func(context.Context, string) ([]verifier.Check, error) {
-		return []verifier.Check{{Name: "workspace-dir", Status: "passed"}}, nil
-	})); err != nil {
+	if err := cat.Register(stubVerifierProfile{name: "go-default", checks: []verifier.Check{{Name: "workspace-dir", Status: "passed"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctrl.SetVerifiers(cat); err != nil {
@@ -440,9 +438,7 @@ func runPRMetadataRepairSurvivesImplementReviewReentry(t *testing.T, repo workfl
 		t.Fatal(err)
 	}
 	cat := verifier.NewCatalogue()
-	if err := cat.Register(verifier.NewGoDefault(func(context.Context, string) ([]verifier.Check, error) {
-		return []verifier.Check{{Name: "workspace-dir", Status: "passed"}}, nil
-	})); err != nil {
+	if err := cat.Register(stubVerifierProfile{name: "go-default", checks: []verifier.Check{{Name: "workspace-dir", Status: "passed"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctrl.SetVerifiers(cat); err != nil {

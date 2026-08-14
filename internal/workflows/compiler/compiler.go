@@ -264,6 +264,10 @@ func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]boo
 				if len(parts) != 2 || parts[1] != "salvage" {
 					return fmt.Errorf("step %q: context from %q invalid (expected run.salvage)", s.ID, cb.From)
 				}
+			case "implement":
+				if len(parts) != 2 || parts[1] != "touched_files" {
+					return fmt.Errorf("step %q: context from %q invalid (expected implement.touched_files)", s.ID, cb.From)
+				}
 			default:
 				return fmt.Errorf("step %q: context from %q invalid (must start with inputs. or steps.)", s.ID, cb.From)
 			}

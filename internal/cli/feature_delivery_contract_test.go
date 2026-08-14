@@ -6,16 +6,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
-	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // TestFeatureDeliveryWorkflowContract keeps the checked-in delivery
@@ -76,7 +76,7 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	}
 
 	assertFeatureDeliveryAgentSteps(t, workflow)
-	assertFeatureDeliveryEvidenceGates(t, workflow)
+	assertFeatureDeliveryEvidenceGates(t, root, workflow)
 	assertFeatureDeliveryPreflightGate(t, workflow)
 	if workflow.Delivery == nil || workflow.Delivery.Base != "master" {
 		t.Fatalf("feature-delivery base = %#v, want master", workflow.Delivery)
@@ -127,21 +127,43 @@ func assertFeatureDeliveryAgentSteps(t *testing.T, workflow definition.WorkflowF
 	}
 }
 
-func assertFeatureDeliveryEvidenceGates(t *testing.T, workflow definition.WorkflowFile) {
+func assertFeatureDeliveryEvidenceGates(t *testing.T, root string, workflow definition.WorkflowFile) {
 	t.Helper()
 	want := map[string]string{
 		"test_validate": "go-test",
 		"verify":        "go-verify",
 		"code_validate": "go-final",
 	}
-	catalogue := verifier.DefaultCatalogue(secretpath.Policy{})
+	profiles, err := config.LoadWorkspaceVerifiers(root)
+	if err != nil {
+		t.Fatalf("load workspace verifiers: %v", err)
+	}
+	wantCommands := map[string][]config.VerifierCommand{
+		"go-test": {
+			{Check: "go-test", Program: "go", Args: []string{"test", "./..."}},
+		},
+		"go-verify": {
+			{Check: "go-vet", Program: "go", Args: []string{"vet", "./..."}},
+			{Check: "go-build", Program: "go", Args: []string{"build", "./..."}},
+		},
+		"go-final": {
+			{Check: "go-test-race", Program: "go", Args: []string{"test", "-race", "./..."}},
+		},
+	}
 	for id, verifierName := range want {
 		step := featureDeliveryStep(t, workflow, id)
 		if step.Kind != "evidence_gate" || step.Verifier != verifierName {
 			t.Fatalf("step %q = kind %q, verifier %q; want evidence_gate and %q", id, step.Kind, step.Verifier, verifierName)
 		}
-		if _, err := catalogue.Lookup(step.Verifier); err != nil {
-			t.Fatalf("step %q verifier %q is not host-owned: %v", id, step.Verifier, err)
+		profile, ok := profiles[verifierName]
+		if !ok {
+			t.Fatalf("step %q verifier %q has no [verifiers.%s] table in .mivia/mivia.toml", id, verifierName, verifierName)
+		}
+		if !profile.GoModuleBaseline {
+			t.Fatalf("verifier %q must set go_module_baseline = true", verifierName)
+		}
+		if !reflect.DeepEqual(profile.Commands, wantCommands[verifierName]) {
+			t.Fatalf("verifier %q commands = %#v, want %#v", verifierName, profile.Commands, wantCommands[verifierName])
 		}
 	}
 }

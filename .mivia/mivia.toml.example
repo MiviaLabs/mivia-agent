@@ -682,3 +682,21 @@ redaction_placeholder = "[redacted]"
 #
 # $MIVIA_CONFIG names the general config and supplies no hooks; a [[hooks]]
 # table in it is reported and ignored.
+
+# ---------------------------------------------------------------------------
+# Workspace-declared verifier profiles for workflow evidence_gate steps.
+# The mivia binary ships NO built-in profiles: a workflow step's
+# `verifier = "checks"` resolves only against tables you declare here, so
+# the engine works the same for any project or language. Each command runs
+# in the verifier sandbox (copied worktree without secrets, no network, no
+# host home, empty environment). `program` must be a bare executable name;
+# `args` are argv passed verbatim, never a shell string. Set
+# `go_module_baseline = true` on profiles that build or test a Go module:
+# admission then pins go.mod/go.sum so a workflow agent cannot change what
+# the gate builds against. Declare whatever fits your project, for example:
+#
+# [verifiers.checks]
+# commands = [
+#   { check = "unit-tests", program = "npm", args = ["test"] },
+#   { check = "lint", program = "npx", args = ["eslint", "."] },
+# ]

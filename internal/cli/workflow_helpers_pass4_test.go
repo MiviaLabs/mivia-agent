@@ -437,6 +437,11 @@ func TestBuildWorkflowControllerDependencyFailures(t *testing.T) {
 
 func TestBuildWorkflowControllerConfiguresEvidenceInIsolatedWorktree(t *testing.T) {
 	root, res, store, repo, wf := newWorkflowBuildFixture(t)
+	// The workflow references go-test; declare it as the workspace would in
+	// a [verifiers.go-test] table.
+	res.Verifiers = map[string]config.VerifierProfile{
+		"go-test": {GoModuleBaseline: true, Commands: []config.VerifierCommand{{Check: "go-test", Program: "go", Args: []string{"test", "./..."}}}},
+	}
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/workflow-test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

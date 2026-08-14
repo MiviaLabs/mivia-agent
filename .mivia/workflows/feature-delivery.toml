@@ -118,6 +118,7 @@ context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+  { from = "implement.touched_files", as = "touched_files", max_bytes = 4096, optional = true },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.review_panel.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]

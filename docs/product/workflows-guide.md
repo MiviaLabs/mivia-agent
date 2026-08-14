@@ -357,12 +357,14 @@ Use `mivia workflow status <run-id>` and `mivia workflow events <run-id>` to
 monitor the run. Use the general CLI form shown earlier when you do not want
 to grant publish approval.
 
-The evidence gates use fixed verifier profiles:
+The evidence gates use verifier profiles this repository declares in the
+`[verifiers.<name>]` tables of `.mivia/mivia.toml` (the binary ships no
+built-in profiles):
 
 | Gate | What it runs |
 |------|-------------|
 | `test_validate` | `go test ./...` |
-| `verify` | `go vet ./...` and `go build ./cmd/mivia` |
+| `verify` | `go vet ./...` and `go build ./...` |
 | `code_validate` | `go test -race ./...` |
 | `preflight_validate` | `python3 scripts/validate_invariants.py` |
 | `preflight_structure` | `python3 scripts/check_go_structure.py --strict --worktree` |
@@ -537,7 +539,7 @@ on_failure = "failure"
 | `agent` | Agent name for `agent` and `agent_gate` steps; the synthesis agent for `agent_panel` steps |
 | `skill` | Skill to invoke under the agent's policy |
 | `panel` | `[steps.panel]` table for `agent_panel` steps: `failure_policy = "require_all"`, `require_distinct_bindings = true`, and 2-4 `[[steps.panel.members]]`, each with its own `id`, `agent`, `provider`, `model`, `skill`, `template`, and `output_schema` |
-| `verifier` | Verifier name for `evidence_gate` steps (for example: `go-test`) |
+| `verifier` | Verifier name for `evidence_gate` steps (for example: `go-test`). Names resolve against the workspace's `[verifiers.<name>]` tables in `.mivia/mivia.toml`; the binary ships no built-in profiles. Each referenced profile's definition is pinned into the run snapshot at admission and verified on resume |
 | `template` | Prompt template file path |
 | `output_schema` | JSON schema file for output validation |
 | `max_turns` | Bounds the agent-loop turns each child agent of this step may take: for an `agent_panel` step it bounds every panel member and the panel synthesis child; for `agent` and `agent_gate` steps it bounds the step's own loop. `0` = unlimited (default); range `0-10000`; negative rejected |
@@ -718,6 +720,8 @@ A workflow file is untrusted repository input. Anyone can edit it. It may name a
 - a shell command, URL, environment variable, or secret;
 - a Git base target outside runtime policy;
 - publish permission.
+
+Verifier profiles themselves are declared in the workspace's `.mivia/mivia.toml` `[verifiers.<name>]` tables — the same trust level as `[[hooks]]`. Their commands always run inside the verifier sandbox (copied worktree without secrets, no network, no host home, empty environment), and `.mivia/mivia.toml` is write-blocked for workflow agents by default, so a run cannot rewrite the gate that judges it. Each referenced profile is digest-pinned into the run snapshot at admission; a resume fails closed if the declaration changed.
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 

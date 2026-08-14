@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,9 +16,11 @@ import (
 //  1. blocked_paths — the agent's explicit record of host-refused writes. This
 //     is the primary signal and works even without a controller-side
 //     blocklist: the agent itself recorded the host refusal.
+//
 //  2. files_changed ∩ blocklist — a claim that the change modified a path the
 //     host write policy makes unwritable for workflow agents. No agent can
 //     legitimately change such a file, so a claim of one is a blocked signal.
+//
 //  3. review findings that DEMAND a blocked-path edit. A finding demands an
 //     edit only through its required field (the review schema guarantees a
 //     non-empty string), so only that field is scanned for a path token plus
@@ -26,8 +30,17 @@ import (
 //     not be treated as a demand to write that path. A mere mention of a
 //     blocklisted path is not a demand and is ignored.
 //
+//  4. The host-measured actual diff (touchedFilesEvidence) intersected with
+//     the blocklist. Signal 2 above only catches a blocklisted write the
+//     agent VOLUNTEERED in its own files_changed; an agent that writes a
+//     blocklisted path and omits it from that self-report (honestly or not)
+//     would otherwise bypass this gate entirely - the same self-report gap
+//     already confirmed for review visibility (touchedFilesEvidence), but
+//     here it is the actual enforcement mechanism for a hard security
+//     boundary, so ground truth is checked directly rather than trusted.
+//
 // Paths are deduplicated and sorted for deterministic error messages.
-func (c *LinearController) blockedPathsFromOutput(output map[string]any) []string {
+func (c *LinearController) blockedPathsFromOutput(ctx context.Context, output map[string]any) []string {
 	var paths []string
 	seen := make(map[string]bool)
 	add := func(p string) {
@@ -52,6 +65,11 @@ func (c *LinearController) blockedPathsFromOutput(output map[string]any) []strin
 				if s, ok := item.(string); ok && blockedpath.IsBlockedPath(s, c.WritePathBlocklist) {
 					add(s)
 				}
+			}
+		}
+		for _, s := range c.actualTouchedFiles(ctx) {
+			if blockedpath.IsBlockedPath(s, c.WritePathBlocklist) {
+				add(s)
 			}
 		}
 		if raw, ok := output["findings"].([]any); ok {
@@ -83,12 +101,28 @@ func (c *LinearController) blockedPathsFromOutput(output map[string]any) []strin
 	return paths
 }
 
+// actualTouchedFiles decodes touchedFilesEvidence's JSON-encoded file list
+// (the host-measured worktree diff vs the admitted base), or returns nil
+// when no git context is wired, no base commit was admitted, or the JSON is
+// empty - the same best-effort conditions touchedFilesEvidence itself uses.
+func (c *LinearController) actualTouchedFiles(ctx context.Context) []string {
+	raw := c.touchedFilesEvidence(ctx)
+	if raw == "" {
+		return nil
+	}
+	var files []string
+	if err := json.Unmarshal([]byte(raw), &files); err != nil {
+		return nil
+	}
+	return files
+}
+
 // blockedCause reports whether a succeeded step's output admits a write to a
 // write-blocklisted path, and if so returns the durable blocked cause. The
 // cause names the paths so the failure is attributable: the step is not a
 // repair-loop candidate because no workflow agent can satisfy the demand.
-func (c *LinearController) blockedCause(output map[string]any) (error, bool) {
-	paths := c.blockedPathsFromOutput(output)
+func (c *LinearController) blockedCause(ctx context.Context, output map[string]any) (error, bool) {
+	paths := c.blockedPathsFromOutput(ctx, output)
 	if len(paths) == 0 {
 		return nil, false
 	}

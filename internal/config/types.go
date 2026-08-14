@@ -23,6 +23,10 @@ type File struct {
 	MCP          MCPConfig                 `toml:"mcp"`
 	Memory       MemoryConfig              `toml:"memory"`
 	Harness      HarnessConfig             `toml:"harness"`
+	// Verifiers is populated by the strict raw-byte parse in decodeConfigInto
+	// (parseVerifiersLayer), never by the tolerant struct decode: a verifier
+	// table with an unknown key must fail the load, not lose the key.
+	Verifiers map[string]VerifierProfile `toml:"-"`
 }
 
 // MCPConfig controls trusted MCP server definitions. A project definition
@@ -361,6 +365,9 @@ type Resolved struct {
 	Memory MemoryConfig
 	// Harness is the resolved [harness] configuration.
 	Harness HarnessConfig
+	// Verifiers is the workspace-declared verifier profile set from the
+	// [verifiers.<name>] tables. The host ships no built-in profiles.
+	Verifiers map[string]VerifierProfile
 
 	// TavilyAPIKey is the Tavily web search API key (set via TAVILY_API_KEY env).
 	// When set, the search tool uses Tavily as the primary web search engine.

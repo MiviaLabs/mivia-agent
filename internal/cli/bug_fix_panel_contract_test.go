@@ -253,6 +253,7 @@ func TestBugFixPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
 		"findings":       "example confirmed findings",
 		"implementation": "example implementation summary",
 		"prior_findings": "",
+		"touched_files":  `["a.go"]`,
 	}
 	for _, member := range step.Panel.Members {
 		templateBytes, err := readWorkflowRef(base, member.Template, template.MaxTemplateBytes)

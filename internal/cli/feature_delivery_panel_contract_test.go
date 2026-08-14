@@ -111,6 +111,7 @@ func TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
 		"test_plan":      "example test plan",
 		"implementation": "example implementation summary",
 		"prior_findings": "",
+		"touched_files":  `["a.go"]`,
 	}
 	for _, member := range step.Panel.Members {
 		templateBytes, err := readWorkflowRef(base, member.Template, template.MaxTemplateBytes)

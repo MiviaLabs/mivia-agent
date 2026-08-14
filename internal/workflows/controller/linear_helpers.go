@@ -36,6 +36,19 @@ func validateBindingLimits(step definition.Step, inputs map[string]any, evidence
 		if strings.HasPrefix(binding.From, "delivery.") {
 			continue
 		}
+		// An implement.touched_files binding resolves into evidence, not
+		// inputs, despite being a 2-part "prefix.name" path like inputs.X -
+		// measure it via the evidence branch below, not the inputs lookup.
+		if strings.HasPrefix(binding.From, "implement.") {
+			raw, err := json.Marshal(evidence[binding.As])
+			if err != nil {
+				return fmt.Errorf("marshal context binding %q: %w", binding.From, err)
+			}
+			if len(raw) > binding.MaxBytes {
+				return fmt.Errorf("context binding %q exceeds %d bytes", binding.From, binding.MaxBytes)
+			}
+			continue
+		}
 		var value any
 		parts := strings.Split(binding.From, ".")
 		if len(parts) == 2 {

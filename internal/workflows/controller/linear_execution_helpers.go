@@ -134,7 +134,7 @@ func (c *LinearController) settleSucceededRoute(writeCtx context.Context, step d
 		// diff-size repair step so the chunk is shrunk before the panel and
 		// preflight pipeline run on it. The attempt stays Succeeded.
 		route = rr
-	} else if blockedErr, blocked := c.blockedCause(outMap); blocked {
+	} else if blockedErr, blocked := c.blockedCause(writeCtx, outMap); blocked {
 		// A SUCCEEDED step whose output admits a write it cannot
 		// perform (blocked_paths, a claimed files_changed entry inside
 		// the host write-path blocklist, or a review finding demanding

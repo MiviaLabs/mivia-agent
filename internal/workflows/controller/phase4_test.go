@@ -136,9 +136,7 @@ func TestEvidenceGateGoDefaultAndUnknownFailsClosed(t *testing.T) {
 	}
 	repo := workflowledger.NewMemoryRepository()
 	cat := verifier.NewCatalogue()
-	if err := cat.Register(verifier.NewGoDefault(func(context.Context, string) ([]verifier.Check, error) {
-		return []verifier.Check{{Name: "workspace-dir", Status: "passed"}, {Name: "go-module", Status: "passed"}}, nil
-	})); err != nil {
+	if err := cat.Register(stubVerifierProfile{name: "go-default", checks: []verifier.Check{{Name: "workspace-dir", Status: "passed"}, {Name: "go-module", Status: "passed"}}}); err != nil {
 		t.Fatal(err)
 	}
 	ctrl, err := NewLinearController(repo, &linearRunner{}, compiled, nil, map[string]any{"task": "x"}, "wfr-evidence", []byte("snap"))

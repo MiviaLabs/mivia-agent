@@ -23,6 +23,13 @@ Host evidence gates (go test/build/vet/fuzz, make verify, project invariants, st
 checks) run in LATER workflow steps and have not run yet at this review. Do not raise their
 absence as a finding; only raise a CLAIMED result the workflow context does not support.
 
+Actually touched files (host-measured from the real worktree diff, not the implementation
+summary below): {{ evidence.touched_files }}
+
+Compare this list against the declared scope ({{ inputs.scope }}) and the implementation
+summary. Any file here outside the declared scope is a finding on its own even if its content
+looks correct: read it and report what changed.
+
 Task:
 
 {{ inputs.task }}

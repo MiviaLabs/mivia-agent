@@ -142,8 +142,12 @@ const (
 	workflowGoSumBaselineRef = "go-sum-baseline"
 )
 
-func workflowModuleBaseline(wf *compiler.CompiledWorkflow, root string, prior *workflowledger.Snapshot) (*verifier.GoModuleBaseline, error) {
-	if !workflowUsesGoVerifier(wf) {
+// workflowModuleBaseline captures (fresh run) or restores (resume) the pinned
+// Go module baseline. needBaseline comes from workflowNeedsGoBaseline: the
+// declared go_module_baseline flag on a fresh run, the PINNED definitions on
+// resume.
+func workflowModuleBaseline(needBaseline bool, root string, prior *workflowledger.Snapshot) (*verifier.GoModuleBaseline, error) {
+	if !needBaseline {
 		return nil, nil
 	}
 	if prior == nil {
@@ -158,19 +162,6 @@ func workflowModuleBaseline(wf *compiler.CompiledWorkflow, root string, prior *w
 		return nil, fmt.Errorf("workflow module checksum baseline is invalid")
 	}
 	return &verifier.GoModuleBaseline{GoMod: append([]byte(nil), goMod.Bytes...), GoSum: append([]byte(nil), goSum.Bytes...)}, nil
-}
-
-func workflowUsesGoVerifier(wf *compiler.CompiledWorkflow) bool {
-	if wf == nil {
-		return false
-	}
-	for _, step := range wf.Steps {
-		switch step.Verifier {
-		case verifier.GoTestName, verifier.GoVerifyName, verifier.GoFinalName:
-			return true
-		}
-	}
-	return false
 }
 
 func pinWorkflowModuleBaseline(raw []byte, baseline *verifier.GoModuleBaseline) ([]byte, error) {
