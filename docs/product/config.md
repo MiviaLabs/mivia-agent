@@ -326,7 +326,7 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 
 ## LLM compaction summaries
 
-`[context.summary] enabled` (default `false`) turns on the bounded provider call that summarizes what context compaction dropped. The call uses the session's provider and model. The validated summary is injected into the next request as a host-authored `context-summary` message.
+`[context.summary] enabled` (default `false`) turns on the bounded provider call that summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
 
 Two more conditions must hold, or the summary stays off: a configured `[privacy]` redaction policy, and a resolved provider endpoint. A summary the redaction policy refuses is dropped, never sent or stored.
 

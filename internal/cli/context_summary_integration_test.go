@@ -238,3 +238,82 @@ func TestContextSummaryIntegrationDegradesOnBadReply(t *testing.T) {
 		t.Fatal("invalid summary reply still persisted summary metadata")
 	}
 }
+
+// padSessionHistory appends old turns directly to the session's in-memory
+// history so a forced compact has volume to reclaim. This mirrors the
+// structural compact test's fixture technique.
+func padSessionHistory(session *chat.Session) {
+	for i := 0; i < 12; i++ {
+		session.Messages = append(session.Messages,
+			provider.Message{Role: provider.RoleUser, Content: strings.Repeat("old question ", 20)},
+			provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("old answer ", 20)},
+		)
+	}
+}
+
+// TestContextSummaryIntegrationManualCompact drives the /compact path
+// (Session.Compact) through the production wiring: the compacted preparation
+// produces one summary request, the validated reply is stamped onto the
+// durable checkpoint as SummaryMetadata, and the rendered summary message is
+// appended to the live session history for the next request.
+func TestContextSummaryIntegrationManualCompact(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	res := summaryWiringResolved(t, true)
+	completer := &summaryScriptedCompleter{}
+	session := chat.NewSession(res, completer)
+	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.SendUser(context.Background(), "first question", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	padSessionHistory(session)
+
+	if err := session.Compact(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(completer.summaryRequests()) == 0 {
+		t.Fatal("manual compact sent no summary request to the completer")
+	}
+	if last := session.Messages[len(session.Messages)-1]; last.Name != "context-summary" && !strings.Contains(last.Content, "[host-injected context summary") {
+		t.Fatalf("manual compact left %q as the last message, want the context summary", last.Content)
+	}
+	if active := loadActiveSnapshot(t, store, session); len(active.Metadata) == 0 {
+		t.Fatal("manual compact persisted no summary metadata on the checkpoint")
+	}
+}
+
+// TestContextSummaryIntegrationManualCompactDegrades pins the /compact
+// never-fail rule end to end: an invalid summary reply keeps the compact
+// successful, appends no summary message, and persists no metadata.
+func TestContextSummaryIntegrationManualCompactDegrades(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	res := summaryWiringResolved(t, true)
+	completer := &summaryScriptedCompleter{garbage: true}
+	session := chat.NewSession(res, completer)
+	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.SendUser(context.Background(), "first question", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	padSessionHistory(session)
+
+	if err := session.Compact(context.Background()); err != nil {
+		t.Fatalf("manual compact failed on an invalid summary reply: %v", err)
+	}
+	if last := session.Messages[len(session.Messages)-1]; last.Name == "context-summary" || strings.Contains(last.Content, "[host-injected context summary") {
+		t.Fatal("invalid summary reply still appended a context-summary message")
+	}
+	if active := loadActiveSnapshot(t, store, session); len(active.Metadata) != 0 {
+		t.Fatal("invalid summary reply still persisted summary metadata")
+	}
+}
