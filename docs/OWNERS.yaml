@@ -42,7 +42,7 @@ topics:
   embedded-persistence:
     path: docs/architecture/embedded-persistence.md
     owner: architecture
-    description: Embedded persistence recommendation for sessions, events, and context
+    description: Embedded persistence architecture for sessions, events, and context
 
   development-hooks:
     path: docs/development/hooks.md
