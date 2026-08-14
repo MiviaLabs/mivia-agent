@@ -4,8 +4,15 @@ If a delivery rejection routed this step, the harness hint below tells you what 
 
 {{ evidence.delivery_hint }}
 
-Fix exactly what the hint describes. Do not invent a `deferred_files` field -
-the host owns any diff-size split entirely.
+This scratch workflow tests the HOST's automatic diff-size split. Do NOT
+edit, revert, or remove any file. Resubmit `files_changed` EXACTLY as the
+previous attempt reported it: `["testdata/e2e-smoke/essential.md",
+"testdata/e2e-smoke/deferred.md"]`. Do not invent a `deferred_files` field - the
+host owns any diff-size split entirely and needs the full oversized diff
+still in the worktree to split it.
+
+Keep `pr_title` and `pr_summary` exactly as in the example below - they are
+already valid.
 
 Reply with these three parts, in order:
 
@@ -16,5 +23,5 @@ Reply with these three parts, in order:
 ### Example
 
 <mivia_output>
-{"summary": "Repaired the reported delivery rejection.", "files_changed": [], "addressed_findings": [], "inspected": [], "pr_title": "test(test): scratch live smoke test", "pr_summary": "Adds two scratch documentation files for a live delivery smoke test. Safe to close."}
+{"summary": "No edits: the diff-size split is a host-only mechanism, files are unchanged from implement.", "files_changed": ["testdata/e2e-smoke/essential.md", "testdata/e2e-smoke/deferred.md"], "addressed_findings": [], "inspected": [], "pr_title": "test(test): scratch live smoke test", "pr_summary": "Adds two scratch documentation files for a live delivery smoke test. Safe to close."}
 </mivia_output>

@@ -8,8 +8,8 @@ Plan:
 
 Create exactly these two files:
 
-- `docs/e2e-notes/essential.md`: a short markdown file, 2-3 lines, any content.
-- `docs/e2e-notes/deferred.md`: a padded markdown file with at least 60 lines
+- `testdata/e2e-smoke/essential.md`: a short markdown file, 2-3 lines, any content.
+- `testdata/e2e-smoke/deferred.md`: a padded markdown file with at least 60 lines
   of filler content (e.g. a numbered list from 1 to 60), so it is large on
   its own.
 
@@ -22,5 +22,5 @@ Reply with these three parts, in order:
 ### Example
 
 <mivia_output>
-{"summary": "Added two scratch notes files.", "files_changed": ["docs/e2e-notes/essential.md", "docs/e2e-notes/deferred.md"], "addressed_findings": [], "inspected": [], "pr_title": "test(test): scratch live smoke test", "pr_summary": "Adds two scratch documentation files for a live delivery smoke test. Safe to close."}
+{"summary": "Added two scratch notes files.", "files_changed": ["testdata/e2e-smoke/essential.md", "testdata/e2e-smoke/deferred.md"], "addressed_findings": [], "inspected": [], "pr_title": "test(test): scratch live smoke test", "pr_summary": "Adds two scratch documentation files for a live delivery smoke test. Safe to close."}
 </mivia_output>
