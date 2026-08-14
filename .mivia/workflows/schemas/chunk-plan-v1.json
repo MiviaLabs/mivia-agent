@@ -15,6 +15,14 @@
       "additionalProperties": false,
       "required": ["chunks"],
       "properties": {
+        "has_more": {
+          "type": "boolean",
+          "description": "true when this decompose call planned only part of the work (bounded by max_wave_chunks) and more chunks remain to plan in a later wave. Absent or false means this is the complete plan. Enforced by the host driver, not this schema."
+        },
+        "remaining_scope": {
+          "type": "string",
+          "description": "Free-text summary of the unplanned scope, read back by a later decompose call as its 'remaining_scope' input. Required when has_more is true; ignored otherwise."
+        },
         "chunks": {
           "type": "array",
           "items": {

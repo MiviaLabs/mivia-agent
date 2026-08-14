@@ -42,7 +42,7 @@ topics:
   embedded-persistence:
     path: docs/architecture/embedded-persistence.md
     owner: architecture
-    description: Embedded persistence recommendation for sessions, events, and context
+    description: Embedded persistence architecture for sessions, events, and context
 
   development-hooks:
     path: docs/development/hooks.md
@@ -96,11 +96,6 @@ topics:
     path: docs/architecture/workflows.md
     owner: architecture
     description: Workflow contract schemas and templates architecture
-
-  oversized-pr-split:
-    path: docs/architecture/spec-auto-split-oversized-prs.md
-    owner: architecture
-    description: Spec for auto-splitting oversized delivered diffs into a commit stack of follow-up PRs
 
   workflows-guide:
     path: docs/product/workflows-guide.md

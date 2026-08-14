@@ -75,6 +75,12 @@ func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool) erro
 	if s.MaxWaveChunks > 0 && s.MaxTotalChunks > 0 && s.MaxWaveChunks > s.MaxTotalChunks {
 		return fmt.Errorf("stacking: max_wave_chunks %d exceeds max_total_chunks %d", s.MaxWaveChunks, s.MaxTotalChunks)
 	}
+	if s.SplitMaxChunks < 0 || s.SplitMaxChunks > 50 {
+		return fmt.Errorf("stacking: split_max_chunks must be in range [0, 50] (got %d)", s.SplitMaxChunks)
+	}
+	if s.SplitMinLines < 0 || s.SplitMinLines > 10000 {
+		return fmt.Errorf("stacking: split_min_lines must be in range [0, 10000] (got %d)", s.SplitMinLines)
+	}
 	return nil
 }
 

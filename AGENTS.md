@@ -89,6 +89,43 @@ Do not call `mivia workflow run feature-delivery` directly. Without
 `--allow-publish` the run does all the work, reaches its success terminal, then
 stops at `delivery_pending` and opens no pull request.
 
+### Live e2e test workflows (`e2e-split-test`, `e2e-pr-metadata-test`)
+
+`.mivia/workflows/e2e-split-test.toml` and `.mivia/workflows/e2e-pr-metadata-test.toml`
+(plus `.mivia/agents/e2e-engineer.toml` and `.mivia/workflows/templates/e2e-*.md`)
+are real, checked-in workflows that exercise the delivery engine's repair
+paths against the ACTUAL `MiviaLabs/mivia-agent` GitHub repo: real branches
+pushed, real draft PRs opened, real `gh` and DeepSeek API calls.
+
+- `e2e-split-test`: the diff-size gate and automatic split
+  (`[stacking] split_deferred = true`) - its repair template deliberately
+  never shrinks the diff, so the host's own split (and, when the run isn't
+  part of a multi-chunk stack, delivery.EnsureFollowUpPublished) must do
+  all the work.
+- `e2e-pr-metadata-test`: the commit-subject repair path - implement
+  deliberately emits an invalid `pr_title` on its first attempt, proving
+  ValidateCommitSubject's rejection routes to repair and the agent's fix
+  (reading the hint) succeeds on retry.
+
+**Never run either without the user explicitly asking for it in that
+session.** Neither is part of `make verify`, CI, or any other automated
+path, and that must stay true. Each workflow's `description` field repeats
+this warning.
+
+When the user does ask for a live delivery-engine smoke test:
+
+```bash
+./mivia workflow run e2e-split-test --input task="short description" --allow-publish
+./mivia workflow run e2e-pr-metadata-test --input task="short description" --allow-publish
+mivia stack drive e2e-split-test   # only if decompose produced a multi-chunk plan
+```
+
+Keep the `task` input short (the rendered PR title/commit subject must pass
+this repo's own `.mivia/policy/commit-message.json`, ≤72 chars, `type(scope):
+subject` shape). After the run settles, close and delete-branch any PR it
+opened - the workflow's own PR body already says "Safe to close/delete."
+Never merge one.
+
 ## Layout
 
 ```text

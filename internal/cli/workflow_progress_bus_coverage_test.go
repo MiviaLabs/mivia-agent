@@ -172,7 +172,7 @@ func settleSucceededStackPlanRun(t *testing.T, ctx context.Context) (root, confi
 		t.Fatal(err)
 	}
 	seedSucceededDecomposeAttempt(t, repo, runID, []byte(multiChunkPlanOutput))
-	_, chunks, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	_, chunks, _, _, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse multi-chunk plan = %v, %v; want 2 chunks", chunks, err)
 	}

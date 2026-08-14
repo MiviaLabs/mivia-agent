@@ -220,7 +220,7 @@ func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, 
 	if err != nil {
 		return false, nil // no succeeded decompose output: nothing to stack
 	}
-	mode, chunks, err := parseStackPlanOutput(planOutput)
+	mode, chunks, hasMore, remainingScope, err := parseStackPlanOutput(planOutput)
 	if err != nil {
 		return false, nil
 	}
@@ -232,7 +232,7 @@ func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, 
 	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
 		return false, fmt.Errorf("stack seed: %w", err)
 	}
-	return true, workflowStackDriveToCompletion(ctx, prepared, ledger, planRunID, chunks, prepared.inputSnapshot, allowPublish, stdout, stderr)
+	return true, workflowStackDriveToCompletion(ctx, prepared, ledger, planRunID, chunks, hasMore, remainingScope, prepared.inputSnapshot, allowPublish, stdout, stderr)
 }
 
 // compiledDeliverPlanRun reports whether the compiled workflow's delivery

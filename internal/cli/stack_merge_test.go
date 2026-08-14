@@ -40,7 +40,7 @@ func TestWaitForChunkMergesHonorsCancelledContext(t *testing.T) {
 	cancel() // pre-cancelled: the wait must return immediately
 	done := make(chan error, 1)
 	go func() {
-		done <- waitForChunkMerges(ctx, repo, ledger, neverMergedChecker{}, "stack-ctx", []ChunkPlan{{ID: "c1"}}, "", io.Discard, io.Discard)
+		done <- waitForChunkMerges(ctx, &preparedWorkflowRun{repo: repo}, ledger, neverMergedChecker{}, "stack-ctx", []ChunkPlan{{ID: "c1"}}, "", io.Discard, io.Discard)
 	}()
 	select {
 	case err := <-done:

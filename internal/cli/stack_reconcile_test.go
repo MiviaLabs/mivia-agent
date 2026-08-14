@@ -221,7 +221,7 @@ func TestStackAttemptCountFromJournal(t *testing.T) {
 // --- Plan output parsing --------------------------------------------------
 
 func TestParseStackPlanOutput(t *testing.T) {
-	mode, chunks, err := parseStackPlanOutput([]byte(`{"stack_mode":"multi","chunk_plan":{"chunks":[{"id":"a","title":"t","files":["x.go"],"est_diff_lines":10,"tests":true},{"id":"b","title":"u","files":["y.go"],"est_diff_lines":5,"tests":true,"depends_on":["a"]}]}}`))
+	mode, chunks, _, _, err := parseStackPlanOutput([]byte(`{"stack_mode":"multi","chunk_plan":{"chunks":[{"id":"a","title":"t","files":["x.go"],"est_diff_lines":10,"tests":true},{"id":"b","title":"u","files":["y.go"],"est_diff_lines":5,"tests":true,"depends_on":["a"]}]}}`))
 	if err != nil {
 		t.Fatalf("parseStackPlanOutput: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestParseStackPlanOutput(t *testing.T) {
 }
 
 func TestParseStackPlanOutputSingle(t *testing.T) {
-	mode, chunks, err := parseStackPlanOutput([]byte(`{"stack_mode":"single"}`))
+	mode, chunks, _, _, err := parseStackPlanOutput([]byte(`{"stack_mode":"single"}`))
 	if err != nil {
 		t.Fatalf("parseStackPlanOutput: %v", err)
 	}
@@ -241,11 +241,91 @@ func TestParseStackPlanOutputSingle(t *testing.T) {
 }
 
 func TestParseStackPlanOutputMalformed(t *testing.T) {
-	if _, _, err := parseStackPlanOutput([]byte(`{"stack_mode":"bogus"}`)); err == nil {
+	if _, _, _, _, err := parseStackPlanOutput([]byte(`{"stack_mode":"bogus"}`)); err == nil {
 		t.Fatal("parseStackPlanOutput accepted an invalid stack_mode")
 	}
-	if _, _, err := parseStackPlanOutput([]byte(`not json`)); err == nil {
+	if _, _, _, _, err := parseStackPlanOutput([]byte(`not json`)); err == nil {
 		t.Fatal("parseStackPlanOutput accepted malformed JSON")
+	}
+}
+
+// TestParseStackPlanOutputHasMore pins §12.1 incremental-decompose parsing:
+// has_more/remaining_scope round-trip for multi mode, default to
+// false/"" when absent (old decompose responses without the fields stay
+// valid), and are never set for single/no_bug (decompose.md's contract:
+// incremental planning applies to multi mode only).
+func TestParseStackPlanOutputHasMore(t *testing.T) {
+	mode, chunks, hasMore, remaining, err := parseStackPlanOutput([]byte(
+		`{"stack_mode":"multi","chunk_plan":{"has_more":true,"remaining_scope":"c3, c4 remain","chunks":[` +
+			`{"id":"c1","title":"t","files":["a.go"],"est_diff_lines":10,"tests":true,"depends_on":[]}]}}`))
+	if err != nil {
+		t.Fatalf("parseStackPlanOutput: %v", err)
+	}
+	if mode != "multi" || len(chunks) != 1 || !hasMore || remaining != "c3, c4 remain" {
+		t.Fatalf("mode=%q chunks=%d hasMore=%v remaining=%q", mode, len(chunks), hasMore, remaining)
+	}
+}
+
+func TestParseStackPlanOutputHasMoreDefaultsFalse(t *testing.T) {
+	mode, chunks, hasMore, remaining, err := parseStackPlanOutput([]byte(
+		`{"stack_mode":"multi","chunk_plan":{"chunks":[` +
+			`{"id":"c1","title":"t","files":["a.go"],"est_diff_lines":10,"tests":true,"depends_on":[]}]}}`))
+	if err != nil {
+		t.Fatalf("parseStackPlanOutput: %v", err)
+	}
+	if mode != "multi" || len(chunks) != 1 || hasMore || remaining != "" {
+		t.Fatalf("mode=%q chunks=%d hasMore=%v remaining=%q, want hasMore=false remaining=\"\"", mode, len(chunks), hasMore, remaining)
+	}
+}
+
+func TestParseStackPlanOutputHasMoreRequiresRemainingScope(t *testing.T) {
+	_, _, _, _, err := parseStackPlanOutput([]byte(
+		`{"stack_mode":"multi","chunk_plan":{"has_more":true,"chunks":[` +
+			`{"id":"c1","title":"t","files":["a.go"],"est_diff_lines":10,"tests":true,"depends_on":[]}]}}`))
+	if err == nil {
+		t.Fatal("parseStackPlanOutput accepted has_more=true with no remaining_scope")
+	}
+}
+
+func TestParseStackPlanOutputHasMoreIgnoredOutsideMulti(t *testing.T) {
+	mode, _, hasMore, remaining, err := parseStackPlanOutput([]byte(
+		`{"stack_mode":"single","chunk_plan":{"has_more":true,"remaining_scope":"x","chunks":[` +
+			`{"id":"c1","title":"t","files":["a.go"],"est_diff_lines":10,"tests":true,"depends_on":[]}]}}`))
+	if err != nil {
+		t.Fatalf("parseStackPlanOutput: %v", err)
+	}
+	if mode != "single" || hasMore || remaining != "" {
+		t.Fatalf("mode=%q hasMore=%v remaining=%q, want single mode to ignore has_more/remaining_scope", mode, hasMore, remaining)
+	}
+}
+
+// --- Decompose-continuation invocation keys (§12.1) -----------------------
+
+func TestStackDecomposeContinueKey(t *testing.T) {
+	key, err := stackDecomposeContinueKey("wfr-plan1", 1)
+	if err != nil {
+		t.Fatalf("stackDecomposeContinueKey: %v", err)
+	}
+	if key != "wfr-plan1:decompose:1" {
+		t.Fatalf("key = %q, want %q", key, "wfr-plan1:decompose:1")
+	}
+	// Never collides with a real chunk admission key: chunkIDRE forbids
+	// colons in a chunk id, so stackAdmissionKey("wfr-plan1", "decompose:1")
+	// can never be constructed to equal this key.
+	if _, err := stackAdmissionKey("wfr-plan1", "decompose:1"); err == nil {
+		t.Fatal("a chunk id containing a colon must be rejected, or it could collide with a decompose-continuation key")
+	}
+}
+
+func TestStackDecomposeContinueKeyRejectsInvalidInput(t *testing.T) {
+	if _, err := stackDecomposeContinueKey("", 1); err == nil {
+		t.Fatal("empty stack id must be rejected")
+	}
+	if _, err := stackDecomposeContinueKey("wfr-plan1", 0); err == nil {
+		t.Fatal("wave 0 must be rejected (waves are 1-indexed)")
+	}
+	if _, err := stackDecomposeContinueKey("wfr-plan1", -1); err == nil {
+		t.Fatal("negative wave must be rejected")
 	}
 }
 

@@ -20,6 +20,27 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
+// loadStackDrivePlanInputs resolves the stack id and loads its plan run's
+// declared inputs, so chunk runs can replay them (D3). The driver never runs
+// the plan run itself, but every chunk run replays the plan run's declared
+// inputs, so this must happen before prepare (required-input validation).
+func loadStackDrivePlanInputs(workspaceRoot, configPath, name, stackFlag string) (map[string]string, error) {
+	_, repo, closeEarly, err := openStackLedger(workspaceRoot, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("stack drive: %w", err)
+	}
+	defer closeEarly()
+	stackID, err := resolveStackID(repo, name, stackFlag)
+	if err != nil {
+		return nil, err
+	}
+	planInputs, err := stackPlanInputs(repo, stackID)
+	if err != nil {
+		return nil, fmt.Errorf("stack drive: %w", err)
+	}
+	return planInputs, nil
+}
+
 // runStackDrive parses `stack drive <workflow> [--stack <id>]` and runs the
 // driver loop.
 func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
@@ -30,23 +51,9 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 	if len(rest) != 0 {
 		return fmt.Errorf("stack drive: unexpected argument %q", rest[0])
 	}
-	// The driver never runs the plan run itself, but every chunk run must
-	// replay the plan run's declared inputs (D3). Load the stack's plan run
-	// first so its inputs can be threaded through prepare (required-input
-	// validation) and into every chunk admission.
-	_, repo, closeEarly, err := openStackLedger(workspaceRoot, configPath)
+	planInputs, err := loadStackDrivePlanInputs(workspaceRoot, configPath, name, stackFlag)
 	if err != nil {
-		return fmt.Errorf("stack drive: %w", err)
-	}
-	stackID, err := resolveStackID(repo, name, stackFlag)
-	if err != nil {
-		closeEarly()
 		return err
-	}
-	planInputs, err := stackPlanInputs(repo, stackID)
-	closeEarly()
-	if err != nil {
-		return fmt.Errorf("stack drive: %w", err)
 	}
 
 	rawInputs := make([]string, 0, len(planInputs))
@@ -67,7 +74,7 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 	if !wf.DeliveryActive() {
 		return fmt.Errorf("stack drive: workflow %q has no active delivery policy; stacking requires chunk PR delivery", name)
 	}
-	stackID, err = resolveStackID(prepared.repo, name, stackFlag)
+	stackID, err := resolveStackID(prepared.repo, name, stackFlag)
 	if err != nil {
 		return err
 	}
@@ -77,7 +84,7 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 	if err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
-	mode, chunks, err := parseStackPlanOutput(planOutput)
+	mode, _, _, _, err := parseStackPlanOutput(planOutput)
 	if err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
@@ -85,13 +92,30 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 		fmt.Fprintf(stdout, "stack %s: %s - nothing to stack\n", stackID, mode)
 		return nil
 	}
+	// Reconstruct the full chunk list across every already-admitted decompose
+	// wave (not just the plan run's own first wave): a prior process may have
+	// already admitted continuation waves before this invocation.
+	chunks, hasMore, remainingScope, err := loadAllStackChunks(prepared.repo, stackID)
+	if err != nil {
+		return fmt.Errorf("stack drive: %w", err)
+	}
 	if len(chunks) == 0 {
 		return fmt.Errorf("stack drive: stack %s has a multi plan with no chunks", stackID)
 	}
 	if err := seedStackLedger(ledger, stackID, chunks); err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
-	return driveStack(context.Background(), prepared, ledger, stackID, chunks, planInputs, false, stdout, stderr)
+	if err := driveStack(context.Background(), prepared, ledger, stackID, chunks, planInputs, false, stdout, stderr); err != nil {
+		return err
+	}
+	byID, err := stackTaskMap(ledger, stackID)
+	if err != nil {
+		return err
+	}
+	if err := admitPendingFollowUps(prepared, ledger, stackID, byID, stdout, stderr); err != nil {
+		return fmt.Errorf("stack drive: %w", err)
+	}
+	return admitNextWaveIfReady(prepared, ledger, stackID, chunks, hasMore, remainingScope, planInputs, stdout, stderr)
 }
 
 // driveStackToCompletion drives the stack until every chunk is merged and the
@@ -105,12 +129,16 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 // returns the cancellation error so the caller can release the run's
 // execution flock instead of polling forever. CLI foreground paths pass
 // context.Background() and stay unbounded by design.
-func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	checker := gitMergeChecker{
 		git: workflowDeliverGit,
 		gc:  delivery.GitContext{Dir: prepared.root, GitDir: filepath.Join(prepared.root, ".git")},
 	}
 	policy := prepared.compiled.Stacking.MergePolicy
+	wave, err := latestDecomposeContinueWave(prepared.repo, stackID)
+	if err != nil {
+		return fmt.Errorf("stack drive: %w", err)
+	}
 	for {
 		// The drive must stop when its context is done: a stuck merge-queue
 		// poll would otherwise hold the plan run's execution flock forever.
@@ -126,15 +154,46 @@ func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, 
 		if err != nil {
 			return err
 		}
-		if allChunksMerged(chunks, stackMergedSet(byID)) {
-			return waitIntegrationRunSettled(ctx, prepared, ledger, checker, stackID, policy, allowPublish, stdout, stderr)
+		// A chunk that just delivered may have left a deferred commit
+		// (§5.2-5.3): admit its follow-up PR before deciding whether the
+		// stack is complete, so allTasksMerged below waits for it too.
+		if err := admitPendingFollowUps(prepared, ledger, stackID, byID, stdout, stderr); err != nil {
+			return fmt.Errorf("stack drive: %w", err)
 		}
-		// The pass halted before completion: wait for the outstanding chunk's
-		// delivery + merge (or a terminal failure), then drive again. With
-		// merge_policy=auto the wait also merges published PRs itself.
-		if err := waitForChunkMerges(ctx, prepared.repo, ledger, checker, stackID, chunks, policy, stdout, stderr); err != nil {
+		byID, err = stackTaskMap(ledger, stackID)
+		if err != nil {
 			return err
 		}
+		if !allChunksMerged(chunks, stackMergedSet(byID)) || !allTasksMerged(byID) {
+			// The pass halted before completion: wait for the outstanding
+			// chunk's delivery + merge (or a terminal failure), then drive
+			// again. With merge_policy=auto the wait also merges published
+			// PRs itself.
+			if err := waitForChunkMerges(ctx, prepared, ledger, checker, stackID, chunks, policy, stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
+		if !hasMore {
+			return waitIntegrationRunSettled(ctx, prepared, ledger, checker, stackID, policy, allowPublish, stdout, stderr)
+		}
+		// Every currently-known chunk merged, but an earlier decompose call
+		// declared more scope than it planned (§12.1). Request the next wave
+		// before considering the stack complete.
+		wave++
+		nextChunks, nextHasMore, nextRemaining, err := admitDecomposeContinuationRun(prepared, stackID, wave, remainingScope, planInputs, stdout, stderr)
+		if err != nil {
+			return fmt.Errorf("stack drive: %w", err)
+		}
+		if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks)+len(nextChunks) > maxTotal {
+			return fmt.Errorf("stack drive: stack %s would admit %d total chunks, exceeding max_total_chunks=%d (already have %d, wave %d adds %d)",
+				stackID, len(chunks)+len(nextChunks), maxTotal, len(chunks), wave, len(nextChunks))
+		}
+		if err := seedStackLedger(ledger, stackID, nextChunks); err != nil {
+			return fmt.Errorf("stack drive: wave %d seed: %w", wave, err)
+		}
+		chunks = append(chunks, nextChunks...)
+		hasMore, remainingScope = nextHasMore, nextRemaining
 	}
 }
 
@@ -158,6 +217,57 @@ func loadStackPlanOutput(repo workflowledger.Repository, stackID string) ([]byte
 		}
 	}
 	return nil, fmt.Errorf("plan run %q has no succeeded decompose output", stackID)
+}
+
+// loadAllStackChunks reconstructs the FULL chunk list a stack has planned
+// across every already-admitted decompose wave: the plan run's own output
+// (wave 0), plus any decompose-continuation runs (§12.1, waves 1..N) found
+// in the run ledger. This is what lets a crashed-and-resumed `stack drive`
+// see wave-2+ chunks a prior process already admitted - driveStack's
+// dependency ordering and admission are derived entirely from the chunks
+// slice it is called with, so a resumed process that only reconstructed
+// wave 0 would never admit or drive the later waves' chunks again, even
+// though they are already seeded in the task ledger. Returns the final
+// hasMore/remainingScope from the LATEST wave found, so the caller knows
+// whether to request yet another continuation.
+func loadAllStackChunks(repo workflowledger.Repository, stackID string) (chunks []ChunkPlan, hasMore bool, remainingScope string, err error) {
+	planOutput, err := loadStackPlanOutput(repo, stackID)
+	if err != nil {
+		return nil, false, "", err
+	}
+	mode, waveChunks, waveHasMore, waveRemaining, err := parseStackPlanOutput(planOutput)
+	if err != nil {
+		return nil, false, "", err
+	}
+	if mode != "multi" {
+		return waveChunks, false, "", nil
+	}
+	chunks = append(chunks, waveChunks...)
+	hasMore, remainingScope = waveHasMore, waveRemaining
+	lastWave, err := latestDecomposeContinueWave(repo, stackID)
+	if err != nil {
+		return nil, false, "", err
+	}
+	for wave := 1; wave <= lastWave; wave++ {
+		run, found, err := stackDecomposeContinueRunRef(repo, stackID, wave)
+		if err != nil {
+			return nil, false, "", err
+		}
+		if !found {
+			return nil, false, "", fmt.Errorf("stack %s: decompose continuation wave %d has an invocation key but no run", stackID, wave)
+		}
+		raw, err := loadStackPlanOutput(repo, run.RunID)
+		if err != nil {
+			return nil, false, "", fmt.Errorf("stack %s: decompose continuation wave %d: %w", stackID, wave, err)
+		}
+		_, waveChunks, waveHasMore, waveRemaining, err := parseStackPlanOutput(raw)
+		if err != nil {
+			return nil, false, "", fmt.Errorf("stack %s: decompose continuation wave %d: %w", stackID, wave, err)
+		}
+		chunks = append(chunks, waveChunks...)
+		hasMore, remainingScope = waveHasMore, waveRemaining
+	}
+	return chunks, hasMore, remainingScope, nil
 }
 
 // seedStackLedger records the plan artifact and the chunk tasks (D8).

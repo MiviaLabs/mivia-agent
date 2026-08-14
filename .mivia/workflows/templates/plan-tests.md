@@ -34,10 +34,14 @@ and required host evidence gates in `summary`. Put the test-first actions in `st
 
 ## Output contract
 
-Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
-the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
-Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -45,5 +49,4 @@ keys. An invalid shape is rejected and you will be asked again with the schema.
 {"summary": "Test plan for TruncateEllipsis: empty, ASCII, multi-byte, and oversized input; no security-sensitive path.", "steps": ["Write TruncateEllipsis_test.go covering empty, ASCII, multi-byte, and oversized input", "Add a table-driven case for the boundary length"], "inspected": ["internal/textutil/truncate.go"], "addressed_findings": []}
 </mivia_output>
 
-The example above is illustrative only - plan the tests for the task you were bound, not this
-example.
+This example is for illustration only. Plan the tests for the task you were given.

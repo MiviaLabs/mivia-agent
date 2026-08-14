@@ -53,8 +53,15 @@ single-task coordinator run with its own agent/provider/model/skill/template/out
 binding, then dispatches one synthesis child (the step's own `agent`) over the bounded, strictly-
 decoded member reports. `failure_policy = "require_all"` and `require_distinct_bindings = true`
 are the only supported values; the compiler rejects anything else. Every member's report and the
-synthesizer's output are validated against a strict JSON decoder (unknown fields, duplicate keys,
-oversized IDs, and out-of-bound finding counts are all rejected) before the step can settle.
+synthesizer's output are validated against a JSON decoder that rejects duplicate keys, oversized
+IDs, and out-of-bound finding counts before the step can settle; unrecognized fields are skipped
+rather than rejected, so a member report with extra fields does not fail the step on that basis
+alone.
+
+Before any member call, the host reserves the synthesis envelope's full byte
+budget (`BuildSynthesisEnvelope`) — metadata plus the bounded report
+size — so a provider call is never made against a budget that could still
+grow underneath it.
 
 The host, never a model, computes the step's final verdict from the member reports
 (`ComputeHostVerdict`): any member reporting `changes_requested` or a nonempty findings list forces
@@ -76,6 +83,18 @@ members with a fresh attempt (each retry is a fresh, numbered panel attempt in t
 ledger). Re-entries are bounded per step by the workflow's
 `[limits] max_on_failure_reentries` (default 3); a spent budget routes to the terminal
 `failure` step.
+
+Each panel member runs under its own principal (`PanelChildPrincipal`), derived
+fresh per member rather than inherited from the host caller. A panel child
+cannot act with the host's authority; its tool scope is bounded by its own
+declared agent/skill binding, the same as any other single-task coordinator
+run.
+
+Panel dispatch races the same concurrent-admission surface as any coordinator
+fan-out: `cancelOrTombstone` and `EnsureTerminalSingleTaskRun` resolve the case
+where a panel member's task is cancelled or tombstoned while another dispatch
+is admitting it, so a panel attempt settles exactly once even when admission
+and cancellation land close together.
 
 ## Delivery design
 
@@ -100,9 +119,8 @@ step cannot fix does not repeat forever.
 Not every delivery failure repairs. A transport fault - an unreachable
 remote, a failed push - is not a condition in the change, so no agent step
 can fix it. Such a failure leaves the run at `delivery_pending` instead, and
-a later delivery attempt succeeds once the network recovers. See
-[`internal/cli/workflow_deliver_repair.go`](../../internal/cli/workflow_deliver_repair.go)
-and the `delivery.on_failure` field in the
+a later delivery attempt succeeds once the network recovers. See the
+`delivery.on_failure` field in the
 [workflow user guide](../product/workflows-guide.md#authoring-a-workflow).
 
 ## Stacking (small-PR delivery)
@@ -280,17 +298,37 @@ construction (a chunk only enters a wave once every chunk it depends on has
 already merged), so the driver admits and drives the whole wave
 concurrently, bounded by `stacking.max_concurrent_chunks` (default 4). Each
 chunk already runs in its own isolated worktree, so concurrent execution
-needs no extra isolation. A per-chunk atomic claim (compare-and-swap on the
-task's status) guarantees exactly one admission per chunk even when
-multiple chunks are dispatched at once, so re-running `stack drive` after a
-restart or a partial failure never double-admits a chunk that is already in
-flight.
+needs no extra isolation. A per-chunk atomic claim guarantees exactly one
+admission per chunk even when multiple chunks are dispatched at once, so
+re-running `stack drive` after a restart or a partial failure never
+double-admits a chunk that is already in flight. The claim is an optimistic
+compare-and-swap on the chunk task's status in the generic task ledger
+(§ [Generic task ledger (D8) as durable stack state](#generic-task-ledger-d8-as-durable-stack-state)
+below): admission reads the current status, then CASes it to `queued` only if
+it still matches what was read; a losing CAS means another admission already
+claimed the chunk, so the loser simply skips it instead of retrying the
+compare-and-swap.
 
 **Merging stays serialized.** Only chunk *execution* (the agent's work in
 each chunk's worktree) runs concurrently; merges are still applied one PR
 at a time, in dependency order, by the merge-policy pass described below.
 Multiple chunks can reach `delivery_pending` or get published in the same
 drive pass, but they still merge one at a time.
+
+**Incremental decompose.** `decompose`'s output may declare `has_more: true`
+plus `remaining_scope` when a change needs more chunks than one call plans
+(bounded by `max_wave_chunks`). Once every currently-known chunk has merged,
+if the latest wave declared `has_more`, the driver admits a new run that
+starts directly at the `decompose` step (`stack_mode = "decompose_continue"`,
+via the same reserved-input/start-step mechanism `stack_mode = "chunk"`
+already uses for chunk runs), seeded with `remaining_scope` in place of the
+plan step's output, and folds the resulting chunks into the same stack
+(same task-ledger scope, same stable invocation-key resumability as chunk
+runs). This repeats until a wave declares no more scope, `max_total_chunks`
+is reached (a refused admission with a clear error, never a silent
+truncation), or a wave fails. A crash-and-resume `stack drive` reconstructs
+the full cross-wave chunk list from the run ledger before driving, so a
+wave admitted by a prior process is never lost.
 
 **Merge policies:**
 - `approve` (default, policy A): each PR stays at `delivery_pending` until a
