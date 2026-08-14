@@ -63,6 +63,18 @@ func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool) erro
 	if s.MergePolicy != "" && !definition.ValidStackingMergePolicies[s.MergePolicy] {
 		return fmt.Errorf("stacking: merge_policy %q must be one of approve, auto", s.MergePolicy)
 	}
+	if s.MaxTotalChunks < 0 || s.MaxTotalChunks > 2000 {
+		return fmt.Errorf("stacking: max_total_chunks must be in range [0, 2000] (got %d)", s.MaxTotalChunks)
+	}
+	if s.MaxWaveChunks < 0 || s.MaxWaveChunks > 100 {
+		return fmt.Errorf("stacking: max_wave_chunks must be in range [0, 100] (got %d)", s.MaxWaveChunks)
+	}
+	if s.MaxConcurrentChunks < 0 || s.MaxConcurrentChunks > 64 {
+		return fmt.Errorf("stacking: max_concurrent_chunks must be in range [0, 64] (got %d)", s.MaxConcurrentChunks)
+	}
+	if s.MaxWaveChunks > 0 && s.MaxTotalChunks > 0 && s.MaxWaveChunks > s.MaxTotalChunks {
+		return fmt.Errorf("stacking: max_wave_chunks %d exceeds max_total_chunks %d", s.MaxWaveChunks, s.MaxTotalChunks)
+	}
 	return nil
 }
 

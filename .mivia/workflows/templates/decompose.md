@@ -2,15 +2,38 @@
 
 ## Read-first contract
 
-You are the decompose agent. The plan step output is already bound as `plan`
-(ledger reference). Resolve the full plan artifact with
-`workflow_inspect(run_id, step, attempt)` before responding; never guess from
-the preview.
+You are the decompose agent. The plan step output is bound as `plan`. Read
+the bound value first and classify it:
 
-Reply with ONLY one JSON object that satisfies the output schema at
-`schemas/chunk-plan-v1.json`. No markdown report, headings, bullets, prose
-outside the JSON, or code fences. An invalid shape is rejected and you will be
-asked again with the schema.
+1. **Complete plan object** — the value parses as a single JSON object whose
+   keys include `summary`, `steps`, `inspected`, and `addressed_findings`.
+   The engine inlined the FULL plan artifact; this is the authoritative plan.
+   Work from it directly. Do not call `workflow_inspect`.
+2. **Ledger-reference envelope** — the value is an object whose keys are
+   exactly `artifact` and `note`, with `artifact` carrying `step`, `attempt`,
+   `ref`, `bytes`, `digest` (and optionally a short `preview`) and `note`
+   naming the workflow ledger. This means the plan exceeded the engine's
+   inline cap for prior-step evidence (32KiB). The envelope's `note` invites
+   `workflow_inspect(run_id, step, attempt)`; you may attempt it ONCE with
+   the `artifact` fields. In this worktree context it will not resolve (your
+   ledger view predates the plan step's output). If it does resolve, work
+   from the full artifact. If it does not resolve, FAIL CLOSED: emit
+   `stack_mode: "no_bug"` with an empty `chunk_plan` (`chunks: []`). The
+   engine rejects `no_bug` deterministically when the plan declares steps and
+   reroutes you here; a repeated rejection exhausts the bounded repair loop
+   and fails the run honestly. NEVER guess plan content from `preview` or
+   from the Evidence refs block — a guessed chunk plan could pass schema
+   checks while misrepresenting the plan.
+3. **Anything else** — FAIL CLOSED the same way: `stack_mode: "no_bug"` with
+   an empty `chunk_plan`, and let the engine's deterministic rejection of
+   `no_bug` on a step-declaring plan drive the honest outcome.
+
+Reply with ONLY the output envelope: a `<mivia_output>` opening tag on its own
+line, then one JSON object satisfying the output schema at
+`schemas/chunk-plan-v1.json`, then a `</mivia_output>` closing tag on its own
+line. No prose, markdown report, headings, bullets, or code fences inside or
+outside the envelope. An invalid shape is rejected and you will be asked again
+with the schema.
 
 ---
 
@@ -40,11 +63,12 @@ Use the workflow's `[stacking]` thresholds when they are present; otherwise use
 ### Rejected verdicts (repair iterations)
 
 On a repair iteration the engine has rejected your previous decompose output.
-The rejected verdict is bound as `prior_chunk_plan`; resolve it with
-`workflow_inspect` when it is a ledger reference. Do NOT repeat the rejected
-verdict. A `no_bug` verdict on a plan with steps is rejected
-deterministically, and a repeated rejection exhausts the repair loop and
-fails the run. Emit a valid plan per the mode table above.
+The rejected verdict is bound as `prior_chunk_plan`. If it is a complete
+chunk-plan object, read it and do NOT repeat the rejected verdict. If it is a
+ledger-reference envelope you cannot resolve (see the Read-first contract),
+treat it as absent and emit a fresh valid chunk plan per the mode table
+above. A `no_bug` verdict on a plan with steps is rejected deterministically,
+and a repeated rejection exhausts the repair loop and fails the run.
 
 ### Step 2 — Produce chunks (multi mode only)
 
@@ -82,7 +106,9 @@ the engine will reject it and ask you to re-emit.
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to
-this task. Do not use a skill report format, markdown, or extra fields. The
-schema declares the only valid keys. An invalid shape is rejected and you will
-be asked again with the schema.
+Reply with ONLY the output envelope: a `<mivia_output>` opening tag on its own
+line, then one JSON object satisfying the output schema appended to this task,
+then a `</mivia_output>` closing tag on its own line. Do not use a skill
+report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the
+schema.

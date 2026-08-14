@@ -35,14 +35,17 @@ func boolPtr(b bool) *bool { return &b }
 func TestCompile_StackingExplicitValid(t *testing.T) {
 	wf := stackingFixture()
 	wf.Stacking = &definition.Stacking{
-		Enabled:       boolPtr(true),
-		PlanStep:      "plan",
-		ImplementStep: "implement",
-		MaxChunks:     6,
-		SoftLines:     150,
-		HardLines:     300,
-		MaxFiles:      3,
-		MergePolicy:   "auto",
+		Enabled:             boolPtr(true),
+		PlanStep:            "plan",
+		ImplementStep:       "implement",
+		MaxChunks:           6,
+		SoftLines:           150,
+		HardLines:           300,
+		MaxFiles:            3,
+		MergePolicy:         "auto",
+		MaxTotalChunks:      50,
+		MaxWaveChunks:       8,
+		MaxConcurrentChunks: 2,
 	}
 	cw, err := Compile(wf)
 	if err != nil {
@@ -59,6 +62,9 @@ func TestCompile_StackingExplicitValid(t *testing.T) {
 	}
 	if cw.Stacking.MergePolicy != "auto" {
 		t.Errorf("MergePolicy = %q, want auto", cw.Stacking.MergePolicy)
+	}
+	if cw.Stacking.MaxTotalChunks != 50 || cw.Stacking.MaxWaveChunks != 8 || cw.Stacking.MaxConcurrentChunks != 2 {
+		t.Errorf("resolved wave/concurrency knobs wrong: %+v", cw.Stacking)
 	}
 }
 
@@ -156,6 +162,66 @@ func TestCompile_StackingBadConfig(t *testing.T) {
 	}
 }
 
+// TestCompile_StackingWaveConcurrencyBadConfig covers the max_total_chunks /
+// max_wave_chunks / max_concurrent_chunks range and consistency checks,
+// split from TestCompile_StackingBadConfig to keep each function under the
+// repo's per-function line ceiling (.mivia/policy/go-structure.json).
+func TestCompile_StackingWaveConcurrencyBadConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		wf   *definition.WorkflowFile
+		want string
+	}{
+		{
+			name: "max_total_chunks too large",
+			wf: func() *definition.WorkflowFile {
+				wf := stackingFixture()
+				wf.Stacking = &definition.Stacking{MaxTotalChunks: 10000}
+				return wf
+			}(),
+			want: "max_total_chunks must be in range [0, 2000]",
+		},
+		{
+			name: "negative max_wave_chunks",
+			wf: func() *definition.WorkflowFile {
+				wf := stackingFixture()
+				wf.Stacking = &definition.Stacking{MaxWaveChunks: -1}
+				return wf
+			}(),
+			want: "max_wave_chunks must be in range [0, 100]",
+		},
+		{
+			name: "max_concurrent_chunks too large",
+			wf: func() *definition.WorkflowFile {
+				wf := stackingFixture()
+				wf.Stacking = &definition.Stacking{MaxConcurrentChunks: 1000}
+				return wf
+			}(),
+			want: "max_concurrent_chunks must be in range [0, 64]",
+		},
+		{
+			name: "max_wave_chunks exceeds max_total_chunks",
+			wf: func() *definition.WorkflowFile {
+				wf := stackingFixture()
+				wf.Stacking = &definition.Stacking{MaxWaveChunks: 50, MaxTotalChunks: 10}
+				return wf
+			}(),
+			want: "max_wave_chunks 50 exceeds max_total_chunks 10",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Compile(tt.wf)
+			if err == nil {
+				t.Fatal("expected compile error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error %q should contain %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
 func TestCompile_StackingOptOutIgnoresSemantics(t *testing.T) {
 	// A deliberate opt-out must compile even with refs and policy that would
 	// otherwise fail: the author turned the capability off.
@@ -195,6 +261,15 @@ func TestCompile_StackingDefaultOnInference(t *testing.T) {
 	}
 	if cw.Stacking.MaxChunks != definition.DefaultStackingMaxChunks {
 		t.Errorf("MaxChunks = %d, want global default %d", cw.Stacking.MaxChunks, definition.DefaultStackingMaxChunks)
+	}
+	if cw.Stacking.MaxTotalChunks != definition.DefaultStackingMaxTotalChunks {
+		t.Errorf("MaxTotalChunks = %d, want global default %d", cw.Stacking.MaxTotalChunks, definition.DefaultStackingMaxTotalChunks)
+	}
+	if cw.Stacking.MaxWaveChunks != definition.DefaultStackingMaxWaveChunks {
+		t.Errorf("MaxWaveChunks = %d, want global default %d", cw.Stacking.MaxWaveChunks, definition.DefaultStackingMaxWaveChunks)
+	}
+	if cw.Stacking.MaxConcurrentChunks != definition.DefaultStackingMaxConcurrentChunks {
+		t.Errorf("MaxConcurrentChunks = %d, want global default %d", cw.Stacking.MaxConcurrentChunks, definition.DefaultStackingMaxConcurrentChunks)
 	}
 }
 
