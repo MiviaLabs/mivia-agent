@@ -192,6 +192,29 @@ func checkChunkDiffSize(ctx context.Context, git GitRunner, req Request) error {
 	return nil
 }
 
+// CountUnshippedCommits counts the commits on the current worktree HEAD after
+// deliveredCommit (git rev-list --count deliveredCommit..HEAD): the trailing
+// commits a diff-size repair left on the branch after committing the
+// review-sized slice as deliveredCommit (spec-auto-split-oversized-prs.md
+// §5.2-5.3). Zero means no trailing commits: the repair produced exactly one
+// delivered slice and nothing else. Shared by the delivery engine (to record
+// DeliveryRecord.StackRemainingCommits after a successful re-delivery) and by
+// the driver's follow-up chunk admission (§5.3), so both count identically.
+func CountUnshippedCommits(ctx context.Context, git GitRunner, gc GitContext, deliveredCommit string) (int, error) {
+	if strings.TrimSpace(deliveredCommit) == "" {
+		return 0, fmt.Errorf("cannot count unshipped commits: delivered commit is empty")
+	}
+	out, err := git.Run(ctx, gc, "rev-list", "--count", deliveredCommit+"..HEAD")
+	if err != nil {
+		return 0, fmt.Errorf("cannot count unshipped commits after %s: %w", deliveredCommit, err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse unshipped commit count %q: %w", out, err)
+	}
+	return n, nil
+}
+
 // numstatSize sums the added and deleted line counts of a git diff --numstat
 // output. Pure renames report 0/0 (rename detection is on), so a rename
 // contributes nothing; binary entries report "-" and contribute nothing. A

@@ -317,20 +317,29 @@ func (a ApprovalRecord) Clone() ApprovalRecord {
 
 // DeliveryRecord records the retry-safe publish lifecycle for one run.
 type DeliveryRecord struct {
-	RunID          string    `json:"run_id"`
-	IdempotencyKey string    `json:"idempotency_key"`
-	Mode           string    `json:"mode"`
-	BaseRef        string    `json:"base_ref"`
-	HeadRef        string    `json:"head_ref,omitempty"`
-	CommitSHA      string    `json:"commit_sha,omitempty"`
-	TreeSHA        string    `json:"tree_sha,omitempty"`
-	Provider       string    `json:"provider,omitempty"`
-	RemoteID       string    `json:"remote_id,omitempty"`
-	URL            string    `json:"url,omitempty"`
-	Status         string    `json:"status"`
-	ErrorRef       string    `json:"error_ref,omitempty"`
-	DiffRef        string    `json:"diff_ref,omitempty"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	RunID          string `json:"run_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+	Mode           string `json:"mode"`
+	BaseRef        string `json:"base_ref"`
+	HeadRef        string `json:"head_ref,omitempty"`
+	CommitSHA      string `json:"commit_sha,omitempty"`
+	TreeSHA        string `json:"tree_sha,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	RemoteID       string `json:"remote_id,omitempty"`
+	URL            string `json:"url,omitempty"`
+	Status         string `json:"status"`
+	ErrorRef       string `json:"error_ref,omitempty"`
+	DiffRef        string `json:"diff_ref,omitempty"`
+	// StackRemainingCommits is the count of commits still on the delivered
+	// branch after the one that was pushed (git rev-list --count, a derived
+	// integer, never an LLM-authored claim), set when a diff-size repair
+	// commits a review-sized slice plus deferred scope as trailing commits on
+	// the same branch (spec-auto-split-oversized-prs.md §5.2-5.3). Zero means
+	// no split: nothing downstream changes from a chunk that delivered
+	// cleanly. The stack driver reads this to admit the trailing commits as
+	// follow-up chunk runs stacked on this one.
+	StackRemainingCommits int       `json:"stack_remaining_commits,omitempty"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // Clone returns a deep copy.

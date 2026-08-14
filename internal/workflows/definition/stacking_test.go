@@ -43,6 +43,9 @@ func TestEffectiveStacking(t *testing.T) {
 			MaxTotalChunks:      DefaultStackingMaxTotalChunks,
 			MaxWaveChunks:       DefaultStackingMaxWaveChunks,
 			MaxConcurrentChunks: DefaultStackingMaxConcurrentChunks,
+			SplitDeferred:       DefaultStackingSplitDeferred,
+			SplitMaxChunks:      DefaultStackingSplitMaxChunks,
+			SplitMinLines:       DefaultStackingSplitMinLines,
 		}
 		if cfg != want {
 			t.Errorf("EffectiveStacking() = %+v, want %+v", cfg, want)

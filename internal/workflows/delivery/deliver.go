@@ -400,6 +400,16 @@ func pushAndPublish(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	rec.TreeSHA = treeSHA
 	rec.RemoteID = remoteID
 	rec.URL = url
+	// Only a stacking-active delivery can have a follow-up chunk stack to
+	// record for (StackingHardLines <= 0 means no stacking config at all);
+	// the count is best-effort evidence, not a gate - a measurement failure
+	// must never turn an already-pushed, already-PR'd delivery into a
+	// failure this late.
+	if req.Policy.StackingHardLines > 0 {
+		if n, cerr := CountUnshippedCommits(ctx, git, req.GitCtx, head); cerr == nil {
+			rec.StackRemainingCommits = n
+		}
+	}
 	if err := repo.UpsertDelivery(ctx, rec); err != nil {
 		return Result{}, err
 	}
