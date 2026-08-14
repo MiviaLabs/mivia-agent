@@ -121,3 +121,22 @@ func chunkDeliveryOutcomeMessage(chunkID, runID, runStatus string) string {
 	}
 	return fmt.Sprintf("chunk=%s delivery rejected and entered repair (not published yet): mivia workflow resume %s", chunkID, runID)
 }
+
+// chunkNowAdmissible reports whether any chunk decompose declared, but that
+// has not been admitted yet (still at a pre-admission status), now has every
+// dependency merged. It mirrors nextAdmissionWave's readiness check
+// (stackTaskReady) without needing topological order: the caller only needs
+// to know whether SOMETHING is newly admissible, not the wave's sequencing.
+func chunkNowAdmissible(chunks []ChunkPlan, byID map[string]tasks.Task) bool {
+	merged := stackMergedSet(byID)
+	for _, c := range chunks {
+		t, ok := byID[c.ID]
+		if !ok || !stackStatusIsAdmissiblePre(t.Status) {
+			continue
+		}
+		if stackTaskReady(t, merged) {
+			return true
+		}
+	}
+	return false
+}

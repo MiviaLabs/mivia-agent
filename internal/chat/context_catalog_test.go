@@ -132,3 +132,92 @@ func TestLiveResumeSurvivesModelSwitchedAwayFromConfigDefault(t *testing.T) {
 		t.Fatalf("send after resume = %v, want success", err)
 	}
 }
+
+// resumeWithTurnSnapshot is TestLiveResumeSurvivesModelSwitchedAwayFrom-
+// ConfigDefault plus the one step that test never performed:
+// sess.SaveAfterTurn() after every send, which is what the CLI's line mode
+// (sendLineMode - the path every "mivia chat --json" sidecar the desktop
+// app runs goes through) does at the end of every turn. That upserts a
+// chat_sessions SNAPSHOT under the session's own id, and LoadSession
+// prefers a snapshot over the live context row - so a real desktop resume
+// (spawn "mivia chat --session <id>") used to bypass reclaim/reconcile
+// entirely: the fresh process either forked the conversation under a new
+// session id (no error, original entry stops advancing) or, after a
+// mid-session model switch, failed its first checkpoint commit with
+// "stale binding: context binding changed" - surfaced by the CLI as
+// "chat turn failed", with the whole turn lost.
+func resumeWithTurnSnapshot(t *testing.T, switchedAway bool) (*Session, *Session) {
+	t.Helper()
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "resume.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	send := func(sess *Session, prompt string) {
+		t.Helper()
+		if _, err := sess.SendUser(context.Background(), prompt, io.Discard); err != nil {
+			t.Fatalf("send %q: %v", prompt, err)
+		}
+		sess.SaveAfterTurn()
+	}
+
+	original := wireCatalogSession(t, store, &config.Resolved{ProviderName: "ollama", Model: "llama3.1:8b"}, &fakeCompleter{out: "hi from ollama"})
+	send(original, "hello on ollama")
+
+	if switchedAway {
+		// Two switches, per the existing live-resume test's note: one alone
+		// leaves the row's generation coincidentally equal to a fresh
+		// process's own, masking a fix that republishes the wrong one.
+		for _, target := range []struct{ provider, model string }{
+			{"openrouter", "some/other-model"},
+			{"anthropic", "yet-another-model"},
+		} {
+			switched, err := catalogBindingFactory()(target.provider, target.model)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := original.SwitchBinding(switched); err != nil {
+				t.Fatalf("switch to %s: %v", target.model, err)
+			}
+			send(original, "hello on "+target.model)
+		}
+	}
+
+	resumed := wireCatalogSession(t, store, &config.Resolved{ProviderName: "ollama", Model: "llama3.1:8b"}, &fakeCompleter{out: "hi again"})
+	return original, resumed
+}
+
+// TestLiveResumeWithTurnSnapshotKeepsSessionID: with the per-turn snapshot
+// present, a resume must continue the SAME session id, not fork a new one.
+func TestLiveResumeWithTurnSnapshotKeepsSessionID(t *testing.T) {
+	original, resumed := resumeWithTurnSnapshot(t, false)
+
+	if err := resumed.Load(original.SessionID); err != nil {
+		t.Fatalf("Load(%s) = %v, want success", original.SessionID, err)
+	}
+	if resumed.SessionID != original.SessionID {
+		t.Fatalf("resumed SessionID = %q, want the loaded session's own %q (a new id silently forks the conversation)", resumed.SessionID, original.SessionID)
+	}
+}
+
+// TestLiveResumeWithTurnSnapshotSurvivesModelSwitch: with the per-turn
+// snapshot present, a resume of a model-switched session must adopt the
+// saved binding AND land the very next turn's checkpoint commit - the
+// desktop's "chat turn failed" / unsaved-conversation report.
+func TestLiveResumeWithTurnSnapshotSurvivesModelSwitch(t *testing.T) {
+	original, resumed := resumeWithTurnSnapshot(t, true)
+
+	if err := resumed.Load(original.SessionID); err != nil {
+		t.Fatalf("Load(%s) = %v, want success", original.SessionID, err)
+	}
+	if got := resumed.CurrentSelection(); got.ProviderName != "anthropic" || got.Model != "yet-another-model" {
+		t.Fatalf("resumed selection = %+v, want anthropic/yet-another-model", got)
+	}
+	if resumed.SessionID != original.SessionID {
+		t.Fatalf("resumed SessionID = %q, want the loaded session's own %q", resumed.SessionID, original.SessionID)
+	}
+	if _, err := resumed.SendUser(context.Background(), "still there?", io.Discard); err != nil {
+		t.Fatalf("send after resume = %v, want success (this is the \"chat turn failed\" the desktop app showed)", err)
+	}
+}
