@@ -22,61 +22,12 @@ import (
 // and marks a chunk merged as soon as git reports its PR branch merged, so a
 // later drive pass naturally skips it and admits the next wave.
 func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) error {
-	repo := prepared.repo
 	const pollInterval = 20 * time.Second
 	ticks := 0
 	for {
-		// merge_policy=auto: publish the outstanding PRs' merges ourselves.
-		if policy == "auto" {
-			if err := autoMergePublishedChunks(prepared, repo, ledger, stackID, stdout, stderr); err != nil {
-				return err
-			}
-		}
-		actions, err := reconcileStack(ledger, repo, checker, stackID, stackMaxChunkAttempts)
-		if err != nil {
-			return fmt.Errorf("stack drive: reconcile: %w", err)
-		}
-		for _, a := range actions {
-			if a.Action == stackActionMarkFailed {
-				return fmt.Errorf("stack %s halted: chunk %s failed terminally (%s)", stackID, a.TaskID, a.Note)
-			}
-		}
-		// A chunk already durably failed (from an EARLIER pass, not this
-		// one) produces no fresh mark-failed action on resume - reconcileTask
-		// leaves a terminal failed task alone every pass - so the halt above
-		// only fires on the transition INTO failed, never on resuming a
-		// stack that already has one. Without this check the wait polled
-		// every 20s forever: not merged (the failed chunk never will be) and
-		// not grant-only (failed isn't reviewed/merged), an adversarial
-		// audit found.
-		if id, failed := anyChunkDurablyFailed(ledger, stackID); failed {
-			return fmt.Errorf("stack %s halted: chunk %s failed terminally", stackID, id)
-		}
-		byID, err := stackTaskMap(ledger, stackID)
-		if err != nil {
+		done, err := chunkMergePollPass(prepared, ledger, checker, stackID, chunks, policy, stdout, stderr)
+		if err != nil || done {
 			return err
-		}
-		// A chunk delivered (by a human's `mivia workflow deliver
-		// --allow-publish` grant, or just landed since the last poll) may
-		// have left a deferred commit (§5.2-5.3): admit its follow-up PR so
-		// the stack does not report complete while it is still open.
-		if err := admitPendingFollowUps(prepared, ledger, stackID, byID, stdout, stderr); err != nil {
-			return fmt.Errorf("stack drive: %w", err)
-		}
-		byID, err = stackTaskMap(ledger, stackID)
-		if err != nil {
-			return err
-		}
-		if allChunksMerged(chunks, stackMergedSet(byID)) && allTasksMerged(byID) {
-			return nil
-		}
-		// Policy A durable pause (§stackAwaitsGrantOnly): when only human
-		// publish grants can advance the stack, polling is a guaranteed
-		// no-op. Persist-and-exit: print the grant guidance and stop; the
-		// ledger is the resume point.
-		if policy != "auto" && stackAwaitsGrantOnly(byID) {
-			printStackGrantPause(repo, stackID, byID, stdout)
-			return errStackAwaitsGrant
 		}
 		ticks++
 		if ticks%3 == 0 {
@@ -91,6 +42,82 @@ func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledg
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+// chunkMergePollPass runs one iteration of the merge-wait poll: apply the
+// merge policy, reconcile, and decide whether the wait is over. done=true
+// with err=nil covers three distinct exits the caller must not keep polling
+// past: full completion, a dependent chunk newly admissible (the outer
+// driveStackToCompletion loop must re-drive), and errStackAwaitsGrant (a
+// durable pause). Split out of waitForChunkMerges to keep that function
+// under the file-size gate's function-length cap.
+func chunkMergePollPass(prepared *preparedWorkflowRun, ledger *tasks.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) (done bool, err error) {
+	repo := prepared.repo
+	// merge_policy=auto: publish the outstanding PRs' merges ourselves.
+	if policy == "auto" {
+		if err := autoMergePublishedChunks(prepared, repo, ledger, stackID, stdout, stderr); err != nil {
+			return false, err
+		}
+	}
+	actions, err := reconcileStack(ledger, repo, checker, stackID, stackMaxChunkAttempts)
+	if err != nil {
+		return false, fmt.Errorf("stack drive: reconcile: %w", err)
+	}
+	for _, a := range actions {
+		if a.Action == stackActionMarkFailed {
+			return false, fmt.Errorf("stack %s halted: chunk %s failed terminally (%s)", stackID, a.TaskID, a.Note)
+		}
+	}
+	// A chunk already durably failed (from an EARLIER pass, not this one)
+	// produces no fresh mark-failed action on resume - reconcileTask leaves
+	// a terminal failed task alone every pass - so the halt above only
+	// fires on the transition INTO failed, never on resuming a stack that
+	// already has one. Without this check the wait polled every 20s
+	// forever: not merged (the failed chunk never will be) and not
+	// grant-only (failed isn't reviewed/merged), an adversarial audit found.
+	if id, failed := anyChunkDurablyFailed(ledger, stackID); failed {
+		return false, fmt.Errorf("stack %s halted: chunk %s failed terminally", stackID, id)
+	}
+	byID, err := stackTaskMap(ledger, stackID)
+	if err != nil {
+		return false, err
+	}
+	// A chunk delivered (by a human's `mivia workflow deliver
+	// --allow-publish` grant, or just landed since the last poll) may have
+	// left a deferred commit (§5.2-5.3): admit its follow-up PR so the
+	// stack does not report complete while it is still open.
+	if err := admitPendingFollowUps(prepared, ledger, stackID, byID, stdout, stderr); err != nil {
+		return false, fmt.Errorf("stack drive: %w", err)
+	}
+	byID, err = stackTaskMap(ledger, stackID)
+	if err != nil {
+		return false, err
+	}
+	if allChunksMerged(chunks, stackMergedSet(byID)) && allTasksMerged(byID) {
+		return true, nil
+	}
+	// A not-yet-admitted chunk's dependencies just merged: this pass cannot
+	// advance it any further (admission only happens in driveStack, called
+	// by the OUTER loop after this function's caller returns) - polling
+	// again would repeat the same no-op forever. Live deadlock this fixed:
+	// the wait only used to return once EVERY chunk decompose declared
+	// showed merged, but a dependent chunk never shows merged until it is
+	// admitted, and it is never admitted until the wait returns and the
+	// outer loop's `continue` reaches driveStack again - a dependency chain
+	// past the first wave hung forever, even under merge_policy=auto with a
+	// live merge queue.
+	if chunkNowAdmissible(chunks, byID) {
+		return true, nil
+	}
+	// Policy A durable pause (§stackAwaitsGrantOnly): when only human
+	// publish grants can advance the stack, polling is a guaranteed no-op.
+	// Persist-and-exit: print the grant guidance and stop; the ledger is
+	// the resume point.
+	if policy != "auto" && stackAwaitsGrantOnly(byID) {
+		printStackGrantPause(repo, stackID, byID, stdout)
+		return false, errStackAwaitsGrant
+	}
+	return false, nil
 }
 
 // autoMergePublishedChunks merges every published chunk PR for the stack
