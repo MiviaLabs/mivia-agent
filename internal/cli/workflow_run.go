@@ -47,7 +47,7 @@ func runWorkflow(args []string) error {
 
 func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, cleanup, or delete")
+		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, cleanup, delete, or gc")
 	}
 	var workspaceRoot, configPath string
 	var err error
@@ -60,7 +60,7 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, cleanup, or delete")
+		return fmt.Errorf("workflow: expected run, runs, resume, deliver, status, events, approve, reject, cancel, cleanup, delete, or gc")
 	}
 	// --force is a flag of deliver/resume/delete only. Strip it for those;
 	// every other subcommand must reject it loudly instead of silently
@@ -109,6 +109,8 @@ func runWorkflowWithIO(args []string, stdout, stderr io.Writer) error {
 		return runWorkflowCommandCleanup(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "delete":
 		return runWorkflowCommandDelete(args[1:], workspaceRoot, configPath, force, stdout, stderr)
+	case "gc":
+		return runWorkflowCommandGC(args[1:], workspaceRoot, configPath, stdout, stderr)
 	default:
 		return fmt.Errorf("workflow: unknown subcommand %q", args[0])
 	}
