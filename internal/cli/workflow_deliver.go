@@ -63,6 +63,9 @@ func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string,
 		return err
 	}
 	defer closeFn()
+	if err := refuseUndrivenStackPlanRun(ctx, repo, runID); err != nil {
+		return err
+	}
 	finishExecution, err := beginWorkflowExecutionBounded(work.Abs, contextStorePath(work.Abs, res.Subagents), runID, workflowResolutionLockWait)
 	if err != nil {
 		return err

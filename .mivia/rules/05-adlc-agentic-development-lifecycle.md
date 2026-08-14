@@ -254,6 +254,18 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 
 **Gate**: All auditors report zero bugs. `go test -race ./...` passes on ALL packages.
 
+**Unit/race-clean is not the same claim as "verified".** For a change in
+`internal/workflows/delivery/` or `internal/workflows/controller/` (the
+stacked-delivery engine): before telling the user the work is done, state
+explicitly that only static review and unit/integration tests ran, and offer
+a live e2e smoke run (`e2e-split-test`, `e2e-pr-metadata-test`,
+`e2e-scope-escape-test`, or an ad hoc `scripts/run-delivery-workflow.sh`
+task) as the next step. Never imply "tests pass" means "this works" for this
+subsystem - across this codebase's history, live e2e against the real
+GitHub repo is what caught nearly every defect in this class; unit tests
+alone did not. AGENTS.md still governs: never run a live e2e workflow
+without the user explicitly asking for it in that session - offer, don't run.
+
 ---
 
 ### Step 6 - Commit & Push
@@ -276,7 +288,12 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 
 ## Fast Path (trivial changes)
 
-**Trivial** = ≤5 lines, single file, no new types, no config, no test file creation.
+**Trivial** = ≤5 lines, single file, no new types, no config, no test file creation,
+AND not in `internal/workflows/` (any subpackage).
+A change under `internal/workflows/` is never Fast Path, regardless of line count:
+their bugs are near-universally a missed sibling site (see Invariant
+Enforcement above), which only Step 0's caller-reading and Step 5's
+multi-auditor pass catch - the exact machinery Fast Path skips.
 - Skip Steps 0-3. Implement directly in Step 4.
 - Step 5: 1 hostile auditor (not 3-4).
 - Step 6: normal commit.
@@ -304,9 +321,21 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 
 ## Invariant Enforcement
 
-Before Step 0 and Step 4, read `.mivia/invariants.md` + run invariant tests if touching: `internal/cli/`, `internal/tools/`, `internal/agent/`, `internal/chat/`, `internal/config/`, `internal/ledger/`, `internal/coordinator/`, `internal/events/`, `internal/storage/`.
+Before Step 0 and Step 4, read `.mivia/invariants.md` + run invariant tests if touching: `internal/cli/`, `internal/tools/`, `internal/agent/`, `internal/chat/`, `internal/config/`, `internal/ledger/`, `internal/coordinator/`, `internal/events/`, `internal/storage/`, `internal/workflows/` (the whole tree - not just `delivery/`/`controller/`: the recurring bug class also shipped in `localengine/`, `compiler/`, `ledger/`, and `definition/`).
 
 If an invariant fails → blocked until restored or manifest updated.
+
+`internal/workflows/` is on this list because it is a dual/multi-path system
+by construction (CLI delivery vs. local-engine delivery in `localengine/`,
+fresh admission vs. resume, per-chunk steps vs. their sibling steps in the
+same pipeline, the compiler's synthesis vs. its resume-compile twin): a fix
+at one path is not done until every structurally parallel path has been
+checked. This class -
+"satisfied the invariant at the one site the failure was observed at, shipped
+the next bug at the sibling site" - is this codebase's most frequently
+repeated root cause. See the bug-audit and panel-bug-audit skills' "one
+invariant, several sites, one patched" probe; run it explicitly (Step 0 and
+Step 5) for any change in these two packages.
 
 ---
 
