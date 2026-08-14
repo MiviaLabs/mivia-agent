@@ -256,26 +256,48 @@ func failDecision(outcome string, selected map[string]string, err error) (Decisi
 	return d, err
 }
 
-// selectMostSpecific returns the single hit with strictly more output keys
-// than every other hit, or nil when no such candidate exists (identical
-// criteria, or same-size non-comparable criteria). Match uses it to let a
+// selectMostSpecific returns the single hit whose output-match criteria are a
+// strict superset of every other hit's, or nil when no such candidate exists
+// (identical criteria, same-size non-comparable criteria, or criteria that
+// merely differ without one refining the other). Match uses it to let a
 // status-only fallback plus a status+output special case route to the
 // specific transition instead of failing with multi_match.
 func selectMostSpecific(hits []matchCandidate) *matchCandidate {
 	var best *matchCandidate
-	maxKeys := -1
-	unique := true
 	for i := range hits {
 		h := &hits[i]
-		keys := len(h.tr.Match.Output)
-		if keys > maxKeys {
-			maxKeys, best, unique = keys, h, true
-		} else if keys == maxKeys {
-			unique = false
+		refinesAll := true
+		for j := range hits {
+			if i == j {
+				continue
+			}
+			if !outputSupersets(h.tr.Match.Output, hits[j].tr.Match.Output) {
+				refinesAll = false
+				break
+			}
+		}
+		if !refinesAll {
+			continue
+		}
+		if best != nil {
+			// Two distinct hits both refine every other hit: not unique.
+			return nil
+		}
+		best = h
+	}
+	return best
+}
+
+// outputSupersets reports whether every key/value pair in other is also
+// present in super, i.e. super's criteria are at least as specific as other's.
+func outputSupersets(super, other map[string]string) bool {
+	if len(super) < len(other) {
+		return false
+	}
+	for k, v := range other {
+		if super[k] != v {
+			return false
 		}
 	}
-	if unique && best != nil {
-		return best
-	}
-	return nil
+	return len(super) > len(other) || len(other) == 0 && len(super) == 0
 }
