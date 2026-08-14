@@ -110,7 +110,7 @@ func TestSkillSurfaceInjectionDoesNotResurrectDisallowedPostMessage(t *testing.T
 	handler := newSkillInjectionHandler(t, skillReg)
 
 	// Plain path: agent with post_message disallowed → surface lacks it.
-	_, plain, closePlain, err := handler.prepareInvokeSurface(runtime.Request{})
+	_, _, plain, closePlain, err := handler.prepareInvokeSurface(runtime.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestSkillSurfaceInjectionDoesNotResurrectDisallowedPostMessage(t *testing.T
 
 	// Skill path: the skill-activated scoped surface must ALSO lack
 	// post_message while carrying the skill's own tool.
-	_, scoped, closeAct, err := handler.prepareInvokeSurface(runtime.Request{Skill: "review"})
+	_, _, scoped, closeAct, err := handler.prepareInvokeSurface(runtime.Request{Skill: "review"})
 	if err != nil {
 		t.Fatal(err)
 	}

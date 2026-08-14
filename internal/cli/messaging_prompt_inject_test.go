@@ -59,7 +59,7 @@ func TestRoutedAgentPromptIncludesProtocol(t *testing.T) {
 	}
 	handler := newPromptProbeHandler(t, definition, nil)
 
-	prompt, _, closeAct, err := handler.prepareInvokeSurface(runtime.Request{})
+	prompt, _, _, closeAct, err := handler.prepareInvokeSurface(runtime.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestSkillAgentPromptIncludesProtocol(t *testing.T) {
 	}
 	handler := newPromptProbeHandler(t, definition, skillReg)
 
-	prompt, _, closeAct, err := handler.prepareInvokeSurface(runtime.Request{Skill: "review"})
+	prompt, _, _, closeAct, err := handler.prepareInvokeSurface(runtime.Request{Skill: "review"})
 	if err != nil {
 		t.Fatal(err)
 	}
