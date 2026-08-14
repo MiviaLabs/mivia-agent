@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"sync"
 	"time"
 
@@ -164,6 +163,12 @@ type Session struct {
 	// successful autosaves advance the durable domain.
 	operationEpoch  uint64
 	contextRevision contextstate.Revision
+	// liveTurnToken is the operation fence re-captured by the most recent
+	// step-boundary admission publication, under the post-publication fence
+	// (PublishPendingAdmissionAtStepBoundary). The zero value (IdempotencyKey
+	// == "") means no step-boundary publication has happened for the current
+	// turn; commitTurnToken then falls back to the turn's own captured token.
+	liveTurnToken OperationToken
 	// sessionStore is the persistence backend for save/load/list/delete.
 	// When nil, persistence operations return errors (graceful degradation).
 	sessionStore SessionStore
@@ -353,44 +358,37 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	if turnDispatcher != nil {
 		opts.Dispatcher = turnDispatcher
 	}
-	// A tool staged by load_tools becomes callable only after the turn boundary
-	// publishes it. When that boundary defers (R2-1/R2-2), a call to the staged
-	// tool must report pending publication and the reason, instead of the
-	// unknown-tool denial. The check is dynamic so a same-turn stage is visible
-	// too, and it announces the deferral cause mid-turn.
-	opts.StagedToolMessage = func(name string) (string, bool) {
-		names, reason, ok := s.PendingAdmissionStatus()
-		if !ok || !slices.Contains(names, name) {
-			return "", false
-		}
-		if reason != "" {
-			return fmt.Sprintf("tool %q is staged for loading but publication is deferred because %s; retry the call on your next turn", name, reason), true
-		}
-		return fmt.Sprintf("tool %q is staged for loading but is not published to the live tool surface yet. Publication happens at a turn boundary and can be deferred; retry the call on your next turn", name), true
-	}
+	// Mid-turn admission publication (w2a/w2d): a tool staged by load_tools
+	// becomes callable from the next step via the loop's Surface hook, and a
+	// deferred stage reports the reason instead of the unknown-tool denial.
+	s.wireStepBoundaryAdmission(&opts, turn)
 	reply, err := loop.Run(ctx, userText, opts)
 
-	if persistErr := s.finishAgentTurn(ctx, loop, toolRegistry, userText, persistedText, snapshot.token, turn, snapshot.context, err); persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
+	// A step-boundary publication mid-turn swapped the binding surface and
+	// bumped the operation fence (TryPublishAgentSurface -> invalidateLocked);
+	// hand the commit the token re-captured under the post-publication fence so
+	// this turn is not fenced out of its own history. When no step-boundary
+	// publication happened, the fallback (the turn's own token) is unchanged.
+	commitToken := s.commitTurnToken(uint64(snapshot.myTurn), snapshot.token)
+	// loop.Tools is the post-run registry: after a step-boundary publication it
+	// carries the newly admitted tools, so the ephemeral-tool scrub sees them.
+	if persistErr := s.finishAgentTurn(ctx, loop, loop.Tools, userText, persistedText, commitToken, turn, snapshot.context, err); persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
 		return reply, persistErr
 	}
 	return reply, err
 }
 
-// SetRemainderSpool publishes the spool under the session lock so a turn
-// starting concurrently cannot observe a torn pointer.
-func (s *Session) SetRemainderSpool(spool *remainder.Spool) {
-	s.mu.Lock()
-	s.RemainderSpool = spool
-	s.mu.Unlock()
-}
+// commitTurnToken and SetRemainderSpool live in session_turn_surface.go.
 
 // surfaceForTurnStart publishes any stage an earlier boundary could not
 // (guarded boundary, failed save) at the earliest safe point of this turn: no
 // batch is running, so closing the previous dispatcher is safe (R2-1), and the
 // returned surface carries the staged tool so it is callable from the first
-// step (DC-9: the load_tools "next turn" promise must hold). A stage owned by
-// this not-yet-run turn stays deferred for its own boundary (D7). Turns with
-// nothing pending keep the snapshot path byte-for-byte.
+// step (DC-9: staged tools become callable from the next STEP, and this
+// turn-start publication remains the cross-turn path for a stage that no step
+// boundary could publish). A stage owned by this not-yet-run turn stays
+// deferred for its own boundary (D7). Turns with nothing pending keep the
+// snapshot path byte-for-byte.
 //
 // The returned token is the turn's operation fence RE-CAPTURED after the
 // start-of-turn publication. That publication swaps the binding surface and

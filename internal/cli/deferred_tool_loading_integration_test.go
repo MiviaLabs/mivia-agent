@@ -217,8 +217,10 @@ func TestDeferredLoadingAdvertisesOnlyCorePlusLoadTools(t *testing.T) {
 // --- D6: stage inside the turn, publish at the boundary -----------------
 
 // TestAdmittedToolReachesTheNextRequest is the plan's headline ordering
-// sequence: load_tools stages, the turn commits, the surface generation bumps,
-// and the NEXT request carries the new schema - never the current one.
+// sequence: load_tools stages, the surface generation bumps at the next step
+// boundary, and the NEXT request carries the new schema - never the request
+// that triggered load_tools (w2a publishes mid-turn at the step boundary, so
+// the staging turn's second request already advertises grep).
 func TestAdmittedToolReachesTheNextRequest(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{
 		loadToolsCall("c1", `{"names":["grep"]}`),
@@ -233,13 +235,18 @@ func TestAdmittedToolReachesTheNextRequest(t *testing.T) {
 	if len(advertised) < 2 {
 		t.Fatalf("expected at least two requests in the staging turn, got %d", len(advertised))
 	}
-	for i, names := range advertised {
-		if slices.Contains(names, "grep") {
-			t.Fatalf("request %d in the staging turn already advertised grep: %v", i, names)
-		}
+	// Request 0 is the load_tools call itself: the staged tool must not be
+	// advertised on the very request that staged it.
+	if slices.Contains(advertised[0], "grep") {
+		t.Fatalf("request 0 (the load_tools call) already advertised grep: %v", advertised[0])
+	}
+	// Request 1 is the NEXT request: the step-boundary publication must have
+	// made the staged tool callable there (w2a), mid-turn, before the commit.
+	if !slices.Contains(advertised[1], "grep") {
+		t.Fatalf("request 1 (the next step) did not advertise grep: %v (want the step-boundary publication to make it callable from the next request)", advertised[1])
 	}
 	if got := fixture.sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
-		t.Fatalf("admitted = %v, want [grep] after the turn boundary", got)
+		t.Fatalf("admitted = %v, want [grep] after the step-boundary publication", got)
 	}
 
 	before := len(advertised)

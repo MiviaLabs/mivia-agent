@@ -45,6 +45,14 @@ type AdmissionStage struct {
 	// against a binding that an /agent switch has since replaced. A model
 	// switch preserves the generation, so a stage survives one.
 	SurfaceGeneration uint64
+	// Token is the operation fence captured at staging, pinned to the staging
+	// turn. The step-boundary publication (w2a) requires it to still be
+	// current: a stage whose owning turn was superseded by a force-send must
+	// not publish mid-turn (TestStepBoundaryPublishSupersededTurnRejected).
+	// Turn-boundary publications (turn-start/end) deliberately do NOT re-check
+	// it: the owning turn's durable commit advances the revision, so the token
+	// is stale by design there, and DC-9 still lets the stage publish.
+	Token OperationToken
 }
 
 // turnIDPrefix is the caller-frame turn id format produced by sendAgent.
@@ -97,6 +105,14 @@ type AgentSurfacePublication struct {
 	// the previous dispatcher safe: no sibling turn and no background run can
 	// still be executing on it.
 	RequireSoleActiveTurn bool
+	// SkipMessageRewrite suppresses the system/memory message rewrites during
+	// publication. When set, TryPublishAgentSurface must NOT call
+	// setSystemMessageLocked/setMemoryMessageLocked: this is mid-turn
+	// (step-boundary) publication, where s.Messages is the loop's history until
+	// the turn commit and must not be rewritten; the system prompt is
+	// byte-identical across admissions, so the rewrite is redundant, and the
+	// memory frame must not be rewritten mid-turn.
+	SkipMessageRewrite bool
 }
 
 // SurfaceWidener rebuilds the root agent surface with admitted appended to the
@@ -233,7 +249,13 @@ func (s *Session) StageToolAdmission(names []string, turnID uint64) (AdmissionSt
 	}
 	s.admissionNoOps = 0
 	if s.pendingAdmission == nil {
-		s.pendingAdmission = &AdmissionStage{SurfaceGeneration: s.agentSurfaceGeneration}
+		// Pin the stage's fence to the staging turn: captureOperationTokenLocked
+		// would read the session's CURRENT turn id, which a force-sent
+		// superseding turn must not be able to validate (the step-boundary
+		// publish re-checks this token).
+		token := s.captureOperationTokenLocked(fmt.Sprintf("turn:%d", turnID))
+		token.TurnID = turnID
+		s.pendingAdmission = &AdmissionStage{SurfaceGeneration: s.agentSurfaceGeneration, Token: token}
 	}
 	// Each newly staged name is owned by this turn alone. Folding into another
 	// turn's stage never transfers that turn's own names.
@@ -277,9 +299,13 @@ func (s *Session) classifyAdmissionRequestLocked(names []string, turnID uint64) 
 			continue
 		}
 		if i, ok := staged[name]; ok {
-			// This turn is being told the name is callable from its next turn,
-			// so it becomes an owner too. Without that the original owner's
-			// boundary discards the name and the promise is broken (R4-2).
+			// This turn is being told the name is callable from its next step,
+			// so it becomes an owner too. A load_tools call that EXECUTED widens
+			// the surface at the next step boundary, and a turn that published
+			// mid-turn keeps the admission even if it later errors - pinned
+			// semantics, like any tool side effect. Without the co-owner the
+			// original owner's boundary discards the name and the promise is
+			// broken (R4-2).
 			// Turn 0 means "no owning turn": no boundary ever drops it, so
 			// recording it would pin the stage for good.
 			result.AlreadyStaged = append(result.AlreadyStaged, name)
@@ -296,8 +322,8 @@ func (s *Session) classifyAdmissionRequestLocked(names []string, turnID uint64) 
 
 // noOpStreakError is the corrective message a looping model receives. It must
 // be exact about which names are callable now and which only become callable
-// at the next turn: it is the only signal the model gets, and a wrong one sends
-// it straight into an unknown-tool failure.
+// at the next step boundary: it is the only signal the model gets, and a wrong
+// one sends it straight into an unknown-tool failure.
 func noOpStreakError(result AdmissionStageResult) error {
 	var parts []string
 	if len(result.Already) > 0 {
@@ -305,7 +331,7 @@ func noOpStreakError(result AdmissionStageResult) error {
 			boundedNames(result.Already, maxAdmissionNoteNames)))
 	}
 	if len(result.AlreadyStaged) > 0 {
-		parts = append(parts, fmt.Sprintf("%s: already staged and callable from your next turn, not this one",
+		parts = append(parts, fmt.Sprintf("%s: already staged and callable from your next step, not this one",
 			boundedNames(result.AlreadyStaged, maxAdmissionNoteNames)))
 	}
 	return fmt.Errorf("%s. Stop calling load_tools for them. The list of not-loaded tools in your instructions is frozen from when this agent was bound and is never updated as tools load",
@@ -313,7 +339,10 @@ func noOpStreakError(result AdmissionStageResult) error {
 }
 
 // dropPendingAdmissionForTurn discards a stage whose turn errored or was
-// discarded. The names remain deferred and the model may ask again.
+// discarded. The names remain deferred and the model may ask again. These D7
+// drop paths apply only to stages never published: a turn that published
+// mid-turn (step boundary) keeps the admission even if it later errors - pinned
+// semantics, like any tool side effect.
 //
 // The turn id is the whole point: a stage legitimately outlives its staging
 // turn (a deferral keeps it pending across turn boundaries), so an unrelated
@@ -413,8 +442,10 @@ func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
 	s.binding.SkillRegistry = pub.SkillRegistry
 	s.binding.AgentSurfaceGeneration = s.agentSurfaceGeneration
 	s.invalidateLocked()
-	setSystemMessageLocked(s, base)
-	setMemoryMessageLocked(s, pub.MemoryBlock)
+	if !pub.SkipMessageRewrite {
+		setSystemMessageLocked(s, base)
+		setMemoryMessageLocked(s, pub.MemoryBlock)
+	}
 	// TryPublishAgentSurface is one of the four identity-capture triggers
 	// (INV-68-8). The incoming identity reflects the freshly published
 	// surface; when the wire-affecting subset changed, exactly one

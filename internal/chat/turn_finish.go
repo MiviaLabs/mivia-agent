@@ -33,6 +33,7 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 		s.dropPendingAdmissionForTurn(token.TurnID)
 	}
 	s.runTurnCleanup(turn)
+	s.clearLiveTurnToken()
 	return persistErr
 }
 
@@ -49,11 +50,13 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 		// with it (plan tools/05 D7 error path).
 		s.dropPendingAdmissionForTurn(token.TurnID)
 		s.runTurnCleanup(turn)
+		s.clearLiveTurnToken()
 		return nil
 	}
 	if !loop.HasPreparation {
 		s.dropPendingAdmissionForTurn(token.TurnID)
 		s.runTurnCleanup(turn)
+		s.clearLiveTurnToken()
 		if loop.PreparationErr != nil {
 			return loop.PreparationErr
 		}
@@ -69,6 +72,7 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 		// A superseded turn never publishes an admission (R2-1).
 		s.dropPendingAdmissionForTurn(token.TurnID)
 		s.runTurnCleanup(turn)
+		s.clearLiveTurnToken()
 		return ErrStaleOperation
 	}
 	err := s.commitContextTurn(ctx, loop, userText, token, contextCfg, interrupted)
@@ -80,6 +84,7 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 		s.dropPendingAdmissionForTurn(token.TurnID)
 	}
 	s.runTurnCleanup(turn)
+	s.clearLiveTurnToken()
 	return err
 }
 
@@ -144,4 +149,14 @@ func (s *Session) commitPreparedTurn(msgs []provider.Message, token OperationTok
 	}
 	s.mu.Unlock()
 	return s.saveAfterTurn(token)
+}
+
+// clearLiveTurnToken zeroes the step-boundary fence token once the turn has
+// finished and its commit/drop decision is made, so a stale token cannot leak
+// into the next turn's commit fence (w2d: liveTurnToken is a per-turn token).
+// Written under mu to match the write discipline of the other session fields.
+func (s *Session) clearLiveTurnToken() {
+	s.mu.Lock()
+	s.liveTurnToken = OperationToken{}
+	s.mu.Unlock()
 }
