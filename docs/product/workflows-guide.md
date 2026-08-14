@@ -796,7 +796,7 @@ max_wave_chunks = 12          # default 12; ceiling per single decompose call
 max_concurrent_chunks = 4     # default 4; chunk runs the driver admits and drives at once
 ```
 
-The section is validated at compile time: an enabled section without explicit `plan_step` and `implement_step` is rejected, as are unknown step references, out-of-range thresholds, and invalid merge policies. Resume of an already admitted run keeps the activation the run was admitted with: a snapshot without the section, or without explicit steps, resumes with its original compiled shape.
+The section is validated at compile time: an enabled section without explicit `plan_step` and `implement_step` is rejected, as are unknown step references, out-of-range thresholds, and invalid merge policies. Resume recompiles the admitted snapshot definition under the same rule, so a run keeps its compiled shape across interrupts.
 
 `max_concurrent_chunks` is enforced: it bounds how many chunk runs `stack drive` admits and drives at once (see "Concurrent wave execution" below). `max_total_chunks` is enforced across every decompose wave of one stack: the driver refuses to admit a continuation wave that would push the total chunk count over it, with a clear error rather than a silent truncation. `max_wave_chunks` is accepted and validated but not yet enforced as a distinct per-call cap — a workflow's declared `max_chunks` is still what each individual decompose call is checked against; `max_wave_chunks` exists to let a workflow state its intended per-call limit for when that distinction lands.
 

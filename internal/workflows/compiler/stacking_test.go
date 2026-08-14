@@ -344,64 +344,39 @@ func TestCompile_StackingEnabledRequiresExplicitSteps(t *testing.T) {
 	}
 }
 
-func TestCompileForResume_LegacySnapshotsKeepAdmittedActivation(t *testing.T) {
-	// Resume of an admitted snapshot reproduces the activation semantics the
-	// run was admitted under: a table-less or step-less snapshot with the old
-	// inferable graph shape resumes stacking-active with the inferred steps.
-	for _, tc := range []struct {
-		name     string
-		stacking *definition.Stacking
-	}{
-		{"no table", nil},
-		{"step-less table", &definition.Stacking{}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			wf := stackingFixture()
-			wf.Stacking = tc.stacking
-			cw, err := CompileForResume(wf)
-			if err != nil {
-				t.Fatalf("CompileForResume failed: %v", err)
-			}
-			if cw.Stacking == nil {
-				t.Fatal("CompiledWorkflow.Stacking is nil, want legacy-activated config on resume")
-			}
-			if !cw.Stacking.Enabled {
-				t.Error("Stacking.Enabled = false, want true for a legacy-activated snapshot")
-			}
-			if cw.Stacking.PlanStep != "plan" || cw.Stacking.ImplementStep != "implement" {
-				t.Errorf("legacy steps = (%q, %q), want (plan, implement)", cw.Stacking.PlanStep, cw.Stacking.ImplementStep)
-			}
-		})
-	}
-
-	t.Run("opted out stays inactive", func(t *testing.T) {
+func TestCompileForResume_SameOptInRuleAsAdmission(t *testing.T) {
+	// Resume compiles under the same opt-in activation rule as admission: a
+	// table-less definition stays single-PR even when its graph matches the
+	// old inference shape, a step-less enabled table is rejected, and an
+	// explicit table stays active.
+	t.Run("no table stays single-PR", func(t *testing.T) {
 		wf := stackingFixture()
-		wf.Stacking = &definition.Stacking{Enabled: boolPtr(false)}
+		wf.Stacking = nil
 		cw, err := CompileForResume(wf)
 		if err != nil {
 			t.Fatalf("CompileForResume failed: %v", err)
 		}
 		if cw.Stacking != nil {
-			t.Errorf("Stacking = %+v, want nil for an opted-out snapshot", cw.Stacking)
+			t.Errorf("Stacking = %+v, want nil without a [stacking] table", cw.Stacking)
 		}
 	})
 
-	t.Run("non-inferable plain workflow stays inactive", func(t *testing.T) {
-		wf := &definition.WorkflowFile{
-			Version:     1,
-			Name:        "plain",
-			InitialStep: "one",
-			Steps: []definition.Step{
-				{ID: "one", Kind: "agent", Agent: "workflow-engineer"},
-			},
-			Transitions: []definition.Transition{{From: "one", To: "success"}},
+	t.Run("step-less table is rejected", func(t *testing.T) {
+		wf := stackingFixture()
+		wf.Stacking = &definition.Stacking{}
+		if _, err := CompileForResume(wf); err == nil || !strings.Contains(err.Error(), "plan_step and implement_step are required") {
+			t.Fatalf("want required-steps error, got %v", err)
 		}
+	})
+
+	t.Run("explicit table stays active", func(t *testing.T) {
+		wf := stackingFixture()
 		cw, err := CompileForResume(wf)
 		if err != nil {
 			t.Fatalf("CompileForResume failed: %v", err)
 		}
-		if cw.Stacking != nil {
-			t.Errorf("Stacking = %+v, want nil for a non-inferable snapshot", cw.Stacking)
+		if cw.Stacking == nil {
+			t.Fatal("Stacking is nil, want resolved config for an explicit table")
 		}
 	})
 }

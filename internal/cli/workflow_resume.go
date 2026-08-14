@@ -177,6 +177,11 @@ func finishWorkflowResumeSettled(ctx context.Context, root string, res *config.R
 		refBase: "", raw: raw,
 	}, runID, allowPublish, stdout, stderr)
 	if err != nil {
+		if errors.Is(err, errStackAwaitsGrant) {
+			// A durable pause, not a failure: see workflow_run.go's mirror
+			// of this check for the full rationale.
+			return nil
+		}
 		return err
 	}
 	if drove && !compiledDeliverPlanRun(compiled) {

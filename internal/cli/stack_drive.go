@@ -174,11 +174,15 @@ func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, 
 			// again. With merge_policy=auto the wait also merges published
 			// PRs itself.
 			if err := waitForChunkMerges(ctx, prepared, ledger, checker, stackID, chunks, policy, stdout, stderr); err != nil {
-				if errors.Is(err, errStackAwaitsGrant) {
-					// Durable pause, not a failure: the ledger keeps the
-					// stack resumable and the flock releases on return.
-					return nil
-				}
+				// errStackAwaitsGrant propagates as-is (a durable pause, not
+				// a failure - the ledger keeps the stack resumable): the
+				// caller (maybeDriveSettledStack) must see it distinctly
+				// from genuine completion, or it settles the plan run
+				// succeeded while the stack is still incomplete (an
+				// adversarial audit found exactly this after the pause was
+				// first added: driveStackToCompletion swallowed the pause
+				// to nil here, so drove=true reached the plan-run-succeeded
+				// branch with zero chunk PRs published).
 				return err
 			}
 			continue

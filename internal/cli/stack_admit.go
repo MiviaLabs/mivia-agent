@@ -403,7 +403,7 @@ func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, led
 		fmt.Fprintf(stdout, "integration run already exists: run=%s status=%s\n", run.RunID, run.Status)
 		return nil
 	}
-	inputs, snapshot := chunkRunInputs(planInputs, chunkID, prBase, "", nil)
+	inputs, snapshot := integrationRunInputs(planInputs, prBase)
 	snap, err := admitStackChunkRun(prepared, stackID, chunkID, inputs, snapshot, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("integration run failed: %w", err)

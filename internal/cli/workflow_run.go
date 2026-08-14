@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -172,6 +173,14 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	// until the stack completes (or is interrupted by the process).
 	drove, err := maybeDriveSettledStack(context.Background(), prepared, built.Controller.RunID, allowPublish, stdout, stderr)
 	if err != nil {
+		if errors.Is(err, errStackAwaitsGrant) {
+			// A durable pause, not a failure: the drive already printed the
+			// grant guidance and the run stays delivery_pending, resumable.
+			// drove is meaningless here - fall through to it would settle
+			// the plan run succeeded with the stack still incomplete (an
+			// adversarial audit found exactly this).
+			return nil
+		}
 		return err
 	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {
@@ -330,6 +339,11 @@ func prepareWorkflowRun(name, root, configPath string, rawInputs []string) (*pre
 		closeFn()
 		return nil, err
 	}
+	// A stacking workflow accepts the engine-reserved inputs (stack_mode,
+	// chunk, ...) at admission too, so the operator override the controller
+	// supports (e.g. --input stack_mode=single) validates against the same
+	// input contract as resume. A no-op for non-stacking workflows.
+	compiler.MergeStackingInputs(compiled)
 	inputs, inputSnapshot, err := parseWorkflowInputs(rawInputs, compiled.Inputs)
 	if err != nil {
 		closeFn()

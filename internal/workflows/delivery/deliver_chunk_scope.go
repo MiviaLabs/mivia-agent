@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 )
@@ -36,7 +37,7 @@ func guardChunkScope(ctx context.Context, git GitRunner, req Request) error {
 	}
 	declared := make(map[string]bool, len(plan.Files))
 	for _, f := range plan.Files {
-		if f = strings.TrimSpace(f); f != "" {
+		if f = normalizePlanPath(f); f != "" {
 			declared[f] = true
 		}
 	}
@@ -54,7 +55,7 @@ func guardChunkScope(ctx context.Context, git GitRunner, req Request) error {
 	}
 	var outside []string
 	for _, f := range strings.Split(strings.TrimSpace(touchedOut), "\n") {
-		if f != "" && !declared[f] {
+		if f = normalizePlanPath(f); f != "" && !declared[f] {
 			outside = append(outside, f)
 		}
 	}
@@ -62,7 +63,29 @@ func guardChunkScope(ctx context.Context, git GitRunner, req Request) error {
 		return nil
 	}
 	sort.Strings(outside)
-	return &RefusalError{Reason: fmt.Sprintf(
+	// A plain error, NOT a RefusalError: unlike a permanent host refusal
+	// (branch checked out elsewhere, origin mismatch), an out-of-scope write
+	// is exactly what a repair agent can fix by reverting the file - a
+	// RefusalError short-circuits straight to delivery_failed before
+	// RepairTarget/ReopenForRepair ever run (workflow_deliver.go
+	// settleDeliveryError), which would discard the chunk's completed work
+	// on the first overreach instead of giving the repair step one chance.
+	return fmt.Errorf(
 		"delivery: chunk %s touches %d file(s) outside its declared plan slice (%s); declared files: %s. Revert every out-of-scope change - sibling chunks deliver the rest of the task",
-		plan.ID, len(outside), strings.Join(outside, ", "), strings.Join(plan.Files, ", "))}
+		plan.ID, len(outside), strings.Join(outside, ", "), strings.Join(plan.Files, ", "))
+}
+
+// normalizePlanPath canonicalizes a plan file path to the repo-relative form
+// git reports: chunk_plan.files is agent-authored JSON, and a declared
+// "./pkg/file.go" or "/pkg/file.go" is the same file as git's
+// "pkg/file.go". Without normalization the exact-string match judged every
+// touched file out-of-scope, and the repair step cannot fix it - the declared
+// list is host ground truth.
+func normalizePlanPath(f string) string {
+	f = strings.TrimSpace(f)
+	if f == "" {
+		return ""
+	}
+	f = path.Clean(f)
+	return strings.TrimPrefix(f, "/")
 }

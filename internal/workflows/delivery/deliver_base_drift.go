@@ -3,6 +3,8 @@ package delivery
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -66,5 +68,78 @@ func checkChunkBaseDrift(ctx context.Context, git GitRunner, req Request, origin
 	if len(overlap) == 0 {
 		return nil
 	}
-	return &RefusalError{Reason: fmt.Sprintf("delivery: chunk touches %d file(s) already changed on %q since this chunk was admitted (%s): rebase this chunk onto the current base before delivery", len(overlap), req.Policy.Base, strings.Join(overlap, ", "))}
+	// A name overlap alone is not staleness: the repair step may have already
+	// reconciled the chunk's content with what the sibling landed. Keep only
+	// the files whose staged content does not yet contain the landed change.
+	var stale []string
+	for _, f := range overlap {
+		if !chunkFileReconciled(ctx, git, req, originBase, fetchedBase, f) {
+			stale = append(stale, f)
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	// A plain error, NOT a RefusalError: a mid-flight sibling merge is a
+	// timing accident with a worktree-level fix (reconcile this chunk's
+	// change against what the sibling landed), not a permanent host
+	// refusal - a RefusalError would settle the run delivery_failed before
+	// the repair step ever ran (workflow_deliver.go settleDeliveryError).
+	return fmt.Errorf("delivery: chunk touches %d file(s) already changed on %q since this chunk was admitted (%s): reconcile this chunk's change against what already landed before delivery", len(stale), req.Policy.Base, strings.Join(stale, ", "))
+}
+
+// chunkFileReconciled reports whether the chunk's staged content for file
+// already contains everything the sibling advance landed: merging the landed
+// content onto the staged content over the admitted-base content is a no-op
+// (the merge output equals the staged content byte for byte). Anything less
+// clean - a conflict, a binary file, or content the sibling added that the
+// staged version would revert - is unreconciled and keeps the drift error.
+func chunkFileReconciled(ctx context.Context, git GitRunner, req Request, originBase, fetchedBase, file string) bool {
+	staged, stagedOK := fileBlobAt(ctx, git, req, ":"+file)
+	landed, landedOK := fileBlobAt(ctx, git, req, fetchedBase+":"+file)
+	if !stagedOK || !landedOK {
+		// The only deletions that agree: both sides removed the file, so
+		// delivering the staged tree keeps the sibling's removal intact.
+		return !stagedOK && !landedOK
+	}
+	if staged == landed {
+		return true
+	}
+	base, baseOK := fileBlobAt(ctx, git, req, originBase+":"+file)
+	if !baseOK {
+		// The sibling added the file after admission: no common ancestor to
+		// reconcile against, so only byte-identical content passes (above).
+		return false
+	}
+	dir, err := os.MkdirTemp("", "drift-reconcile-")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(dir)
+	stagedPath, basePath, landedPath := filepath.Join(dir, "staged"), filepath.Join(dir, "base"), filepath.Join(dir, "landed")
+	for path, content := range map[string]string{stagedPath: staged, basePath: base, landedPath: landed} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return false
+		}
+	}
+	// git merge-file <current> <base> <other> incorporates other's changes
+	// into current; -p prints the result instead of rewriting current. A
+	// non-zero exit means conflicts (or a binary file): unreconciled.
+	merged, err := git.Run(ctx, req.GitCtx, "merge-file", "-p", stagedPath, basePath, landedPath)
+	if err != nil {
+		return false
+	}
+	return merged == staged
+}
+
+// fileBlobAt reads a blob addressed by a git revision spec (":file" for the
+// staged index entry, "<commit>:file" for a committed version). A missing
+// path reports ok=false, not an error: deletion is a reconcile outcome the
+// caller decides on.
+func fileBlobAt(ctx context.Context, git GitRunner, req Request, spec string) (string, bool) {
+	out, err := git.Run(ctx, req.GitCtx, "cat-file", "blob", spec)
+	if err != nil {
+		return "", false
+	}
+	return out, true
 }

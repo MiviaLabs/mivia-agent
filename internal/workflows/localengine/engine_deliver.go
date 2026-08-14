@@ -195,11 +195,7 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	}
 	result, err := delivery.Deliver(deliveryCtx, repo, git, pr, dreq)
 	if err != nil {
-		if delivery.IsRefusal(err) {
-			e.settleDeliveryFailed(ctx, repo, runID)
-			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
-		}
-		res, handled, rerr := routeDeliveryRepair(ctx, repo, runID, policy, err)
+		res, handled, rerr := e.settleDeliveryAttemptError(ctx, deliveryCtx, repo, runID, policy, err)
 		if handled {
 			return res, nil
 		}
@@ -221,6 +217,28 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		log.Printf("workflow %s delivered but its follow-up PR could not be published: %v", runID, ferr)
 	}
 	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
+}
+
+// settleDeliveryAttemptError routes one failed delivery attempt: a refusal
+// settles delivery_failed (handled), an expired attempt bound is returned
+// unhandled so the run stays delivery_pending (retryable), and anything
+// repairable reopens the policy's repair step.
+func (e *Engine) settleDeliveryAttemptError(ctx, deliveryCtx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (agenttools.DeliverResult, bool, error) {
+	if delivery.IsRefusal(err) {
+		e.settleDeliveryFailed(ctx, repo, runID)
+		return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, true, nil
+	}
+	// The attempt's own bound fired (a hung git push or gh call hit
+	// DeliveryTimeout) or the caller cancelled the attempt: a transport
+	// fault, not a condition in the change - no agent can repair it -
+	// so the run stays delivery_pending (retryable), mirroring the CLI's
+	// settleDeliveryError guard. provider.IsTransient returns false for a
+	// bare context deadline, so without this check the error routes to
+	// the repair step and burns a repair cycle per timeout.
+	if deliveryCtx.Err() != nil {
+		return agenttools.DeliverResult{}, false, err
+	}
+	return routeDeliveryRepair(ctx, repo, runID, policy, err)
 }
 
 // settleDeliveryFailed CASes runID to delivery_failed (best-effort) and drops
