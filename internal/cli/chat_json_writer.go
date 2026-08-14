@@ -136,6 +136,21 @@ type ndjsonEvent struct {
 	// turn.
 	RunID string `json:"run_id,omitempty"`
 	Role  string `json:"role,omitempty"`
+	// CacheUsage is present only on "cache_usage" events. It is a nested
+	// record rather than flat fields so its legitimate zero values (an
+	// all-miss step) survive serialization without forcing zero-valued
+	// token fields onto every other event type.
+	CacheUsage *ndjsonCacheUsage `json:"cache_usage,omitempty"`
+}
+
+// ndjsonCacheUsage carries one completion turn's provider-reported
+// prompt-cache accounting (see agent.EmitCacheUsage). HitPercent repeats the
+// same guarded percent the TUI status line shows: 0 when InputTokens is 0.
+type ndjsonCacheUsage struct {
+	InputTokens       int `json:"input_tokens"`
+	CachedInputTokens int `json:"cached_input_tokens"`
+	CacheWriteTokens  int `json:"cache_write_tokens"`
+	HitPercent        int `json:"hit_percent"`
 }
 
 // jsonTurnEventCallback returns an agent.Event handler that translates
@@ -192,6 +207,23 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 				OriginTaskID: e.Origin.TaskID,
 				OriginAgent:  e.Origin.Agent,
 				OriginDepth:  e.Origin.Depth,
+			})
+		case agent.EventCacheUsage:
+			// The typed payload is required: a cache_usage event without it
+			// carries no numbers worth a wire record.
+			if e.CacheUsage == nil {
+				return
+			}
+			writeNDJSONEvent(w, ndjsonEvent{
+				Type:     "cache_usage",
+				Provider: e.CacheUsage.Provider,
+				Model:    e.CacheUsage.Model,
+				CacheUsage: &ndjsonCacheUsage{
+					InputTokens:       e.CacheUsage.InputTokens,
+					CachedInputTokens: e.CacheUsage.CachedInputTokens,
+					CacheWriteTokens:  e.CacheUsage.CacheWriteTokens,
+					HitPercent:        e.CacheUsage.HitPercent(),
+				},
 			})
 		case agent.EventSubagentDone:
 			writeNDJSONEvent(w, ndjsonEvent{

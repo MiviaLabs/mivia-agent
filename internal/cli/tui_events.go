@@ -195,6 +195,10 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			bridge.PushCompletedBanner(hookBannerLabel(e), hookBannerBody(e))
 		case agent.EventStep, agent.EventHeartbeat:
 			bridge.PushStep(e.Detail)
+		case agent.EventCacheUsage:
+			// Transient status line, same as a step: the detail already
+			// carries the per-step cache hit rate.
+			bridge.PushStep(e.Detail)
 		case agent.EventSubagentStart:
 			bridge.PushSubagentTool(true, e.ToolCallID, e.Origin.Agent, e.Name, eventPreview(e.Input, e.Detail))
 		case agent.EventSubagentEnd:

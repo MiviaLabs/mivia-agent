@@ -66,7 +66,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"tasks": map[string]any{
-				"type": "array", "items": taskItemSchema(t.agentReg, false),
+				"type": "array", "items": taskItemSchema(t.agentReg, false, true),
 				"description": "Array of 1-16 tasks. Tasks without depends_on run concurrently.",
 			},
 			"timeout_seconds": map[string]any{

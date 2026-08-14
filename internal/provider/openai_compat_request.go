@@ -135,8 +135,9 @@ func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 // marker and the first-user marker exceeds the provider's lookback window
 // (~15 content blocks on some backends), a lookback miss is possible for one
 // step; it self-heals on the next step when the rolling marker advances. Add
-// one intermediate marker only if EmitCacheUsage shows the hit rate craters
-// on wide batches.
+// one intermediate marker only if the per-step cache line in the TUI/REPL
+// (EmitCacheUsage detail, "prompt cache: X/Y tokens cached (N%)") shows the
+// hit rate craters on wide batches.
 func markStablePrefixCacheControl(body map[string]any) {
 	messages, ok := body["messages"].([]any)
 	if !ok {

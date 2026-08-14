@@ -2,10 +2,15 @@
 
 ## Output contract (READ FIRST — before the methodology below)
 
-Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. No
-markdown report, headings, bullets, or code fences (```) inside or outside the envelope. The schema
-declares the only valid keys — no extra keys. An invalid shape is rejected and you will be
-asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not add a markdown report, headings, bullets, prose, or code fences (```) inside or outside
+the envelope. The schema lists the only valid keys. It allows no extra keys. The engine rejects
+an invalid shape and asks you again with the schema.
 
 ---
 
@@ -91,10 +96,14 @@ verbatim; sanitize any quoted content.
 
 ## Output contract
 
-Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
-the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
-Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -102,5 +111,4 @@ keys. An invalid shape is rejected and you will be asked again with the schema.
 {"summary": "Fixed H-1: TruncateEllipsis now walks runes to find a safe cut point. Added a regression test for a multi-byte boundary.", "files_changed": ["internal/textutil/truncate.go", "internal/textutil/truncate_test.go"], "addressed_findings": ["H-1"], "inspected": ["internal/textutil/truncate.go"], "pr_title": "fix(textutil): cut TruncateEllipsis on rune boundaries", "pr_summary": "TruncateEllipsis now walks runes instead of slicing by byte offset. This prevents a panic and invalid UTF-8 output on multi-byte input."}
 </mivia_output>
 
-The example above is illustrative only - report the fix you actually implemented, not this
-example.
+This example is for illustration only. Report the fix you implement for the task you were given.

@@ -104,7 +104,7 @@ func (c *LinearController) chunkDiffSizeGate(ctx context.Context, step definitio
 	// context, so a slow worktree is never silently unguarded.
 	gitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	size, err := delivery.MeasureChunkDiffSize(gitCtx, c.gitRunner, c.gitCtx, c.admission.BaseCommit, c.Workflow.Stacking.HardLines)
+	size, err := delivery.MeasureChunkDiffSize(gitCtx, c.gitRunner, c.gitCtx, c.admission.BaseCommit, c.Workflow.Stacking.HardLines, nil)
 	if err != nil {
 		return route, false
 	}

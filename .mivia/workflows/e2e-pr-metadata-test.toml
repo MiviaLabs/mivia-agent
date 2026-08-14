@@ -1,0 +1,70 @@
+version = 1
+name = "e2e-pr-metadata-test"
+description = "LIVE TEST ONLY - never run without explicit human approval (see AGENTS.md 'Live e2e test workflow'). Pushes a real branch and opens a real draft PR against MiviaLabs/mivia-agent. Deliberately emits an invalid pr_title (no scope, exceeding this repo's commit-message policy) on the first delivery attempt, proving the commit-subject repair path: ValidateCommitSubject rejects it as a repairable PRMetadataError, the repair step reads the hint and fixes pr_title, and delivery succeeds on retry."
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+
+[limits]
+max_step_attempts = 10
+max_duration_seconds = 900
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "e2e-engineer"
+template = "templates/e2e-plan.md"
+output_schema = "schemas/plan-v1.json"
+context = [
+  { from = "inputs.task", as = "task" },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "implement"
+kind = "agent"
+agent = "e2e-engineer"
+template = "templates/e2e-pr-implement.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task" },
+  { from = "steps.plan.output", as = "plan" },
+]
+on_failure = "repair"
+
+[[steps]]
+id = "repair"
+kind = "agent"
+agent = "e2e-engineer"
+template = "templates/e2e-pr-repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
+]
+on_failure = "repair"
+
+[[transitions]]
+from = "plan"
+to = "implement"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "implement"
+to = "success"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "repair"
+to = "success"
+match = { status = "succeeded" }
+
+[delivery]
+kind = "pull_request"
+mode = "draft"
+provider = "github"
+base = "master"
+on_failure = "repair"
+title_template = "test(test): {{ inputs.task }}"
+commit_message_template = "Live smoke test for the agent-authored commit-subject repair path. Safe to close/delete."

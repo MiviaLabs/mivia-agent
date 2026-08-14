@@ -11,6 +11,9 @@
 | Logical agents | 20–100 |
 | In-flight LLM calls | 8–40 (provider quota) |
 | Shell workers | 4–16 |
+
+These ranges are design targets, not fixed constants read from a single config knob; the shipped tool scheduler's own default limit (`internal/agent/loop_scheduler.go`) is 4, at the low end of the shell-worker range above. Treat this table as a planning budget, not a promise that a `LogicalAgents`/`InFlight` setting exists with these exact bounds.
+
 ## Async orchestration model
 
 Sub-agents are launched via `spawn_agent` as **DAG tasks** in an orchestration run.
@@ -40,10 +43,14 @@ Failed or timed-out tasks can be retried automatically:
 
 Exponential backoff with jitter prevents thundering herd on retry.
 
+Retries are gated by the provider's own transient-error classification (`provider.IsTransient`), not blanket retried: a task only re-enters `retry_pending` when the failure is a fault the provider layer marks transient (see [Provider transport retry](overview.md#provider-transport-retry)). Cancellation can race a pending retry — the DAG scheduler's `isCancelClaimed` check and the retry CAS both target the same task state, so a cancel that lands mid-retry-transition is resolved by whichever CAS wins, not by ordering.
+
+Spawn requests carry an idempotency key so a duplicate `spawn_agent` call for the same logical run (a retried tool call, a resumed session) recovers the existing run instead of creating a second one (`recoverIdempotentWithRetry`, `ErrDuplicate` path in the coordinator). Run execution is additionally guarded by a fenced-lease claim (`ClaimRun`/`TakeoverExpiredRunClaim`), so only one executor drives a given run at a time; after a crash, `internal/coordinator/recovery_reclaim.go` reconciles runs left with a stale claim before the pool resumes them. See [Durable persistence & crash recovery](overview.md#durable-persistence--crash-recovery) for the full recovery sequence.
+
 ## Required mechanisms
 
 - `context.Context` cancellation trees
-- Semaphores per resource class
+- A generic tool-scheduler concurrency limit, not distinct per-resource-class semaphores — one shared limit channel (`internal/agent/loop_scheduler.go`) bounds tool-call concurrency; there is no separate LLM-call semaphore and shell-worker semaphore
 - Bounded mailboxes and tool output size
 - Shared token/RPM budgets
 - Race tests for concurrent packages (`make race`)

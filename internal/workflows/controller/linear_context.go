@@ -21,9 +21,9 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 	for _, binding := range step.Context {
 		parts := strings.Split(binding.From, ".")
 		if len(parts) == 2 && parts[0] == "inputs" {
-			value, ok := c.Inputs[parts[1]]
-			if !ok {
-				return nil, nil, nil, fmt.Errorf("missing input %q", parts[1])
+			value, err := c.resolveInputsBinding(binding, parts[1])
+			if err != nil {
+				return nil, nil, nil, err
 			}
 			inputs[binding.As] = value
 			continue
@@ -93,4 +93,21 @@ func (c *LinearController) contextForStep(ctx context.Context, step definition.S
 		return nil, nil, nil, fmt.Errorf("unsupported context binding %q", binding.From)
 	}
 	return inputs, evidence, refs, nil
+}
+
+// resolveInputsBinding resolves an inputs.* context binding. An optional
+// binding not present in this run's admission payload resolves to "",
+// mirroring the optional-absent grace steps.*.output bindings already have.
+// Needed for a reserved input only some admission modes carry (for example
+// remaining_scope, carried only by a decompose-continuation run) referenced
+// by a template that always renders the same placeholder regardless of mode.
+func (c *LinearController) resolveInputsBinding(binding definition.ContextBinding, key string) (any, error) {
+	value, ok := c.Inputs[key]
+	if !ok {
+		if binding.Optional {
+			return "", nil
+		}
+		return nil, fmt.Errorf("missing input %q", key)
+	}
+	return value, nil
 }

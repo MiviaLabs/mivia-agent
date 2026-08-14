@@ -159,6 +159,7 @@ func TestMakeAgentUIWithRenderer(t *testing.T) {
 	handler(agent.Event{Kind: agent.EventStep, Detail: "2/∞"})
 	handler(agent.Event{Kind: agent.EventPrune, Detail: "pruned 500 tokens"})
 	handler(agent.Event{Kind: agent.EventToolParallel, Detail: "2 tools: read, grep"})
+	handler(agent.Event{Kind: agent.EventCacheUsage, Detail: "prompt cache: 80/100 tokens cached (80%)"})
 	output := stripANSI(mt.String())
 	if !strings.Contains(output, "grep") || !strings.Contains(output, "◐") {
 		t.Fatalf("expected tool start, got %q", output)
@@ -174,6 +175,9 @@ func TestMakeAgentUIWithRenderer(t *testing.T) {
 	}
 	if !strings.Contains(output, "2 tools") {
 		t.Fatalf("expected parallel, got %q", output)
+	}
+	if !strings.Contains(output, "prompt cache: 80/100 tokens cached (80%)") {
+		t.Fatalf("expected cache usage status line, got %q", output)
 	}
 }
 

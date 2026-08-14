@@ -83,3 +83,20 @@ func TestCacheUsageEventRejectsOverlongModelName(t *testing.T) {
 		t.Fatal("257-char model name accepted")
 	}
 }
+
+func TestCacheUsageEventHitPercent(t *testing.T) {
+	event, err := NewCacheUsageEvent("p", "m", "implicit", 100, 80, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := event.HitPercent(); got != 80 {
+		t.Fatalf("HitPercent = %d, want 80", got)
+	}
+	zero, err := NewCacheUsageEvent("p", "m", "implicit", 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := zero.HitPercent(); got != 0 {
+		t.Fatalf("HitPercent with zero input = %d, want 0", got)
+	}
+}

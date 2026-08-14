@@ -38,6 +38,10 @@ func markFailed(ctx context.Context, repo ledger.Repository, key string, req Req
 		rec.TreeSHA = existing.TreeSHA
 		rec.RemoteID = existing.RemoteID
 		rec.URL = existing.URL
+		// The split decision must survive a failed attempt: without it the
+		// next retry cannot recognize the mid-split state and would route the
+		// deferred scope onto the pushed branch.
+		rec.DeferredFiles = existing.DeferredFiles
 	}
 	_ = repo.UpsertDelivery(ctx, rec)
 }

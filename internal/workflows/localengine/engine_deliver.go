@@ -185,9 +185,10 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	// session surface observes the delivery attempt the same way the CLI stage
 	// printer does. The engine's stage sink is wired by the same
 	// SetProgressSink/NewBusProgressSink hook the terminal progress events use.
+	inputs := delivery.CloneInputs(snapshot.Inputs)
 	dreq := delivery.Request{
 		RunID: runID, WorkflowDigest: run.WorkflowDigest, Policy: policy,
-		Inputs: snapshot.Inputs, BaseCommit: run.BaseCommit,
+		Inputs: inputs, BaseCommit: run.BaseCommit,
 		Branch: "wf/" + run.WorktreeName, GitCtx: gitCtx,
 		OriginURL: run.RemoteURL,
 		Stage:     e.deliveryStageEmitter(runID),
@@ -209,6 +210,15 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	}
 	if err := e.settleDeliverySucceeded(ctx, repo, runID); err != nil {
 		return agenttools.DeliverResult{}, err
+	}
+	// A split (checkChunkDiffSize) can leave a deferred branch nobody ever
+	// pushes unless something publishes it - see delivery.EnsureFollowUpPublished's
+	// doc comment. This session-engine path needs the same call the CLI's
+	// deliverRunWithStore makes; EnsureFollowUpPublished is idempotent, so a
+	// stack driver's separate call for the same run stays safe. Best-effort:
+	// a failure here does not undo the just-settled delivery.
+	if _, _, _, _, ferr := delivery.EnsureFollowUpPublished(ctx, git, pr, gitCtx.Dir, repo, run, runID, nil); ferr != nil {
+		log.Printf("workflow %s delivered but its follow-up PR could not be published: %v", runID, ferr)
 	}
 	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
 }

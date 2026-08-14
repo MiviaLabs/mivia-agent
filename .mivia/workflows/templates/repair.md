@@ -24,16 +24,20 @@ Every prior-step output is stored in the workflow ledger.
 Its ref, step, and attempt are listed in the 'Evidence refs' section of the prompt.
 Findings arrive as a ledger reference envelope (artifact + note). Resolve the full artifact with workflow_inspect(run_id, step, attempt) before responding; never guess from the preview.
 For very large artifacts, use the offset and limit parameters to page through the output.
-If a delivery rejection routed this step, read the latest wf-delivery attempt listed by workflow_status with workflow_inspect and repair the reported error.
-
 A DIFF-SIZE rejection (the delivery hint says the chunk diff exceeds the stacking
-hard limit) is a SPLIT request, not a delete request: shrink this chunk's delivered
-diff below the limit by reverting the least-essential part of the change in the
-worktree (the whole worktree is measured), and record exactly what you deferred and
-why in `summary` so a follow-up chunk can pick it up. Never silently drop scope to
-pass the gate.
+hard limit) means the host already tried its own automatic split and either the
+split is disabled for this workflow or even the largest files could not be
+deferred far enough to fit. Actually shrink the change: reduce scope, split
+one large file's edit into a smaller one, or move genuinely separable work out
+of this chunk. Do not invent a `deferred_files` field - the host decides and
+executes any split itself, deterministically, from the measured diff; nothing
+you output here influences it.
 
-The harness hint (delivery.failure evidence) tells you what to repair and whether a commit is involved. Your repair edits stay in the worktree; the delivery host commits them before the next delivery attempt, so do NOT run git commit or push yourself.
+If a delivery rejection routed this step, the harness hint below tells you what to repair and whether a commit is involved:
+
+{{ evidence.delivery_hint }}
+
+Your repair edits stay in the worktree; the delivery host commits them before the next delivery attempt, so do NOT run git commit or push yourself.
 
 Implement each required change exactly. Do not repeat a
 claim the reviewer rejected. In your output, set addressed_findings to the ids of every OPEN finding you
@@ -64,10 +68,14 @@ State why the change is needed in the second sentence.
 
 ## Output contract
 
-Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
-the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
-Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -75,4 +83,4 @@ keys. An invalid shape is rejected and you will be asked again with the schema.
 {"summary": "Fixed the failing TestTruncateEllipsis_MultiByte case: the cut index landed mid-rune. Now walks runes to find a safe boundary. No scope change.", "files_changed": ["internal/textutil/truncate.go"], "addressed_findings": [], "inspected": ["internal/textutil/truncate.go"], "pr_title": "fix(cli): truncate long output on rune boundaries", "pr_summary": "Adds a rune-safe TruncateEllipsis helper and switches the render path to use it. This prevents invalid UTF-8 output when a line is truncated mid-rune."}
 </mivia_output>
 
-The example above is illustrative only - report the repair you actually made, not this example.
+This example is for illustration only. Report the repair you make for the task you were given.

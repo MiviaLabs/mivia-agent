@@ -52,7 +52,7 @@ func (m StructuralPreparationManager) Prepare(ctx context.Context, input Prepare
 		Messages: input.Messages, Budget: input.Budget, Tools: toolSpecs,
 		OutputReserve: outputReserve, Force: input.Force, CurrentObjective: input.CurrentObjective,
 		SourceRange: rangeValue, RecentTail: recentTail, CalibrationRatio: input.CalibrationRatio,
-		Spool: input.Spool, Principal: input.Principal,
+		Spool: input.Spool, Principal: input.Principal, PreserveNames: input.PreserveNames,
 	})
 	if err != nil {
 		return Preparation{}, err
@@ -84,6 +84,8 @@ func (m StructuralPreparationManager) Prepare(ctx context.Context, input Prepare
 	preparation.TargetTokens = plan.TargetTokens
 	preparation.ElidedMessages = plan.ElidedMessages
 	preparation.ElidedBytes = plan.ElidedBytes
+	preparation.ElidedReasoningMessages = plan.ElidedReasoningMessages
+	preparation.ElidedReasoningBytes = plan.ElidedReasoningBytes
 	return preparation, nil
 }
 

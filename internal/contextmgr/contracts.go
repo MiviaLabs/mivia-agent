@@ -28,6 +28,11 @@ type PrepareInput struct {
 	Force            bool
 	CurrentObjective string
 	RecentTail       int
+	// PreserveNames lists provider.Message.Name values that structural
+	// retention keeps whole alongside the mandatory set. The chat layer uses
+	// it for the session-owned core-memory context frame so compaction never
+	// drops it.
+	PreserveNames []string
 	// CalibrationRatio scales token estimates in the planner for
 	// heuristic drift correction. 0 means no correction.
 	CalibrationRatio float64
@@ -70,6 +75,11 @@ type Preparation struct {
 	// the agent loop). Both are zero when nothing was elided.
 	ElidedMessages int
 	ElidedBytes    int
+	// ElidedReasoningMessages and ElidedReasoningBytes are content-free
+	// aggregates of stale assistant reasoning replaced with a constant marker
+	// on the planner compaction path. Both are zero when nothing was elided.
+	ElidedReasoningMessages int
+	ElidedReasoningBytes    int
 }
 
 // ValidateToken checks that an asynchronous preparation still belongs to the

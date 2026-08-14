@@ -19,8 +19,8 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	// One private clone for elision, selection, costing, fingerprinting, and
 	// the returned messages. Input.Messages is never mutated.
 	working := cloneMessages(input.Messages)
-	mandatory := mandatoryIndexes(working, objectiveIndex)
-	working, elision := elideToolResultsWithSpool(working, objectiveIndex, mandatory, input.Spool, input.Principal)
+	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
+	working, elision, reasoningElision := elideForCompaction(working, objectiveIndex, mandatory, input.Spool, input.Principal)
 	planInput := input
 	planInput.Messages = working
 	retained, err := retainMessages(planInput, objective, objectiveIndex, target, schemaCost)
@@ -53,6 +53,8 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	result.Compacted = true
 	result.ElidedMessages = elision.Messages
 	result.ElidedBytes = elision.Bytes
+	result.ElidedReasoningMessages = reasoningElision.Messages
+	result.ElidedReasoningBytes = reasoningElision.Bytes
 	result.IdempotencyKey = key
 	return result, nil
 }
@@ -69,19 +71,40 @@ type ElisionStats struct {
 }
 
 // mandatoryIndexes returns the message indexes that structural retention must
-// keep whole: optional system at index 0, the current user objective, and the
-// latest complete assistant+tool unit. Shared by elision eligibility and
-// retainMessages so the two cannot drift.
-func mandatoryIndexes(messages []provider.Message, objectiveIndex int) map[int]struct{} {
+// keep whole: optional system at index 0, the current user objective, every
+// message whose Name is in preserveNames (host-owned frames the caller
+// declared session surface), and the latest complete assistant+tool unit.
+// Shared by elision eligibility and retainMessages so the two cannot drift.
+func mandatoryIndexes(messages []provider.Message, objectiveIndex int, preserveNames []string) map[int]struct{} {
 	mandatory := make(map[int]struct{}, len(messages))
 	if len(messages) > 0 && messages[0].Role == provider.RoleSystem {
 		mandatory[0] = struct{}{}
+	}
+	for index, message := range messages {
+		if message.Name != "" && containsPreservedName(message.Name, preserveNames) {
+			mandatory[index] = struct{}{}
+		}
 	}
 	if objectiveIndex >= 0 && objectiveIndex < len(messages) {
 		mandatory[objectiveIndex] = struct{}{}
 	}
 	markLatestToolUnit(messageUnits(messages), messages, mandatory)
 	return mandatory
+}
+
+// containsPreservedName reports whether name is listed in preserveNames.
+// Empty names never match: an unnamed message is ordinary conversation
+// history and stays subject to the recent-tail retention.
+func containsPreservedName(name string, preserveNames []string) bool {
+	if name == "" {
+		return false
+	}
+	for _, candidate := range preserveNames {
+		if name == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // Test seams for defensive error paths that are hard to reach through the
@@ -92,6 +115,61 @@ var (
 	estimateToolSchemaCost = provider.EstimateToolSchemaCost
 	marshalCanonical       = func(v any) ([]byte, error) { return contextstate.MarshalCanonical(v) }
 )
+
+// reasoningElisionMarker replaces stale assistant ReasoningContent on the
+// compaction path. The marker must NOT be the empty string: DeepSeek's
+// documented-400 repair (provider.dropReasoningLessToolExchanges, active when
+// RejectReasoningLessToolTurns is set) wire-drops a non-terminal assistant
+// tool-call turn with empty reasoning TOGETHER with its tool results. A
+// non-empty marker keeps those retained exchanges on the wire.
+const reasoningElisionMarker = "[reasoning elided by context compaction]"
+
+// elideForCompaction runs the two in-place elision passes for one compaction
+// plan: oversized prior tool-result bodies, then stale assistant reasoning.
+// planCompact and the fuzz replica (optionalTailIsSuffix) both call this
+// helper, so the pipelines cannot drift. messages must already be a private
+// clone.
+func elideForCompaction(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, spool *remainder.Spool, principal contextstate.Principal) ([]provider.Message, ElisionStats, ElisionStats) {
+	messages, toolStats := elideToolResultsWithSpool(messages, objectiveIndex, mandatory, spool, principal)
+	reasoningStats := elideStaleReasoning(messages, objectiveIndex, mandatory)
+	return messages, toolStats, reasoningStats
+}
+
+// elideStaleReasoning replaces the ReasoningContent of prior-turn assistant
+// messages with reasoningElisionMarker. messages must already be a private
+// clone; the function mutates ReasoningContent in place and never changes
+// Role, Content, ToolCallID, Name, or ToolCalls. It skips the current
+// objective and later messages, mandatory messages, empty reasoning, and
+// already-marked reasoning (so re-planning is idempotent). A candidate is
+// skipped when the marker is not strictly cheaper by messageTokenCost.
+// Bytes is the sum of original ReasoningContent lengths.
+func elideStaleReasoning(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}) ElisionStats {
+	var stats ElisionStats
+	for index := range messages {
+		if messages[index].Role != provider.RoleAssistant {
+			continue
+		}
+		if index >= objectiveIndex {
+			continue
+		}
+		if _, ok := mandatory[index]; ok {
+			continue
+		}
+		reasoning := messages[index].ReasoningContent
+		if reasoning == "" || reasoning == reasoningElisionMarker {
+			continue
+		}
+		candidate := messages[index]
+		candidate.ReasoningContent = reasoningElisionMarker
+		if messageTokenCost(candidate) >= messageTokenCost(messages[index]) {
+			continue
+		}
+		messages[index].ReasoningContent = reasoningElisionMarker
+		stats.Messages++
+		stats.Bytes += len(reasoning)
+	}
+	return stats
+}
 
 // elideToolResults replaces eligible prior-turn oversized tool-result bodies
 // with a plain host-authored notice. It is the spool-free compatibility seam

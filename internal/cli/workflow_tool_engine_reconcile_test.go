@@ -154,7 +154,7 @@ func seedParkedStackingPlanRunTOML(t *testing.T, root, storePath string, repo wo
 	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusDeliveryPending, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, chunks, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	_, chunks, _, _, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse multi-chunk plan = %v, %v; want 2 chunks", chunks, err)
 	}
@@ -183,7 +183,7 @@ func mergeParkedStackChunks(t *testing.T, storePath string, repo workflowledger.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	_, chunks, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	_, chunks, _, _, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse multi-chunk plan = %v, %v; want 2 chunks", chunks, err)
 	}

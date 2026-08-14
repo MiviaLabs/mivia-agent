@@ -115,6 +115,11 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 		return nil
 	}
 	s.Messages = cloneContextMessages(loop.Messages)
+	// Belt-and-braces: the planner preserves the core-memory frame
+	// (PreserveNames), and this guard re-places it from the session mirror if
+	// it was ever dropped, so a compacted turn can never strip the promoted
+	// memory facts from the live session (BUG 3).
+	reseedMemoryFrameLocked(s)
 	s.contextHead = nextContextRevision(preparation, result)
 	s.mu.Unlock()
 	s.emitContextCompaction(preparation, token.TurnID)

@@ -262,12 +262,15 @@ func stackPlanMergePolicy(ctx context.Context, repo workflowledger.Repository, r
 // plan) returns false, so a seeded-but-incomplete stack stays delivery_pending
 // for the operator to finish with 'mivia stack drive'.
 func stackDriveCompleted(ctx context.Context, store *storage.SQLite, repo workflowledger.Repository, runID, policy string) bool {
-	raw, err := loadStackPlanOutput(repo, runID)
+	// loadAllStackChunks (not the plan run's own output alone) so a pending
+	// decompose-continuation wave (§12.1: hasMore=true with no continuation
+	// admitted yet) is never mistaken for a complete stack just because every
+	// CURRENTLY KNOWN chunk merged.
+	chunks, hasMore, _, err := loadAllStackChunks(repo, runID)
 	if err != nil {
 		return false
 	}
-	_, chunks, err := parseStackPlanOutput(raw)
-	if err != nil {
+	if hasMore {
 		return false
 	}
 	byID, err := stackTaskMap(tasks.NewStore(store), runID)

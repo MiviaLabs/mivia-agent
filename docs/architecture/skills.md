@@ -1,7 +1,5 @@
 # Skill System Architecture
 
-Status: Implemented v1
-
 This document describes the host skill system: how skills are discovered,
 validated, exposed to the model, invoked, and granted access to optional local
 resources. It is not a catalog of the repository's individual skills.
@@ -212,6 +210,29 @@ Linux uses descriptor-relative, no-follow file handling and identity/link checks
 Other supported platforms use `os.Root` plus identity/link checks, but retain a
 replacement-special-file race residual; callers must not treat the boundary as
 an absolute guarantee against every platform filesystem race.
+
+Each resource read is content-addressed: `ResourceContent.Digest` and
+`ResourceSnapshot.Digest` record a SHA-256 hash so a snapshot can be persisted
+and compared durably without keeping the backing path alive. Reads within one
+activation are served from a per-activation cache — a repeat request for the
+same declared ID does not re-touch the filesystem or re-count against the
+activation's byte budget. `SkillActivation.Read` is fully serialized behind a
+single mutex; this trades read concurrency for atomic cache and quota
+accounting within one activation, consistent with the bounded, non-concurrent
+nature of a single skill invocation.
+
+`validateDeclaredSkillTools` checks an agent's declared `tools` against a
+static built-in tool catalogue and fails closed on any name it does not
+recognize. This includes `read_skill_resource` itself: a skill or agent cannot
+self-declare the ephemeral resource-reader tool as a required tool, since the
+host — not skill authoring — grants it during activation.
+
+`checkSkillDefinition` fails closed on an origin mismatch: if the skill
+selected at activation time does not match the origin (user vs. project)
+recorded when the agent's allowlist was resolved, the request is rejected
+rather than silently falling back to a same-named skill from the other
+origin. This is a distinct guarantee from the directory-identity recheck
+described in step 1 of the activation lifecycle above.
 
 ## Verification and maintenance
 

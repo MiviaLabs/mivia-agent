@@ -1,0 +1,80 @@
+version = 1
+name = "e2e-split-test"
+description = "LIVE TEST ONLY - never run without explicit human approval (see AGENTS.md 'Live e2e test workflow'). Pushes real branches and opens real draft PRs against MiviaLabs/mivia-agent. Exercises the automatic oversized-diff split (checkChunkDiffSize's host-computed defer + auto follow-up PR) end to end against real GitHub."
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+
+[limits]
+max_step_attempts = 20
+max_duration_seconds = 1800
+
+[stacking]
+plan_step = "plan"
+implement_step = "implement"
+merge_policy = "auto"
+hard_lines = 30
+soft_lines = 20
+max_files = 10
+split_deferred = true
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "e2e-engineer"
+template = "templates/e2e-plan.md"
+output_schema = "schemas/plan-v1.json"
+context = [
+  { from = "inputs.task", as = "task" },
+]
+on_failure = "failure"
+
+[[steps]]
+id = "implement"
+kind = "agent"
+agent = "e2e-engineer"
+template = "templates/e2e-implement.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "inputs.task", as = "task" },
+  { from = "steps.plan.output", as = "plan" },
+]
+on_failure = "repair"
+
+[[steps]]
+id = "repair"
+kind = "agent"
+agent = "e2e-engineer"
+template = "templates/e2e-repair.md"
+output_schema = "schemas/change-summary-v1.json"
+context = [
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
+]
+on_failure = "repair"
+
+[[transitions]]
+from = "plan"
+to = "implement"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "implement"
+to = "success"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "repair"
+to = "success"
+match = { status = "succeeded" }
+
+[delivery]
+kind = "pull_request"
+mode = "draft"
+provider = "github"
+base = "master"
+on_failure = "repair"
+on_diff_size_failure = "repair"
+title_template = "test(test): {{ inputs.task }}"
+commit_message_template = "Live smoke test for the automatic oversized-diff split. Safe to close/delete."

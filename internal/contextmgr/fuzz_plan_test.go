@@ -126,8 +126,10 @@ func FuzzPlanInvariants(f *testing.F) {
 // optionalTailIsSuffix reports whether the retained optional messages of a
 // compacted plan form a contiguous suffix of the optional messages in the
 // pre-retention (post-elision) state. It replicates only the deterministic
-// elision pipeline (currentObjective -> mandatoryIndexes -> elideToolResults)
-// to learn the pre-retention fingerprints; the retention selection itself is
+// elision pipeline (currentObjective -> mandatoryIndexes -> elideForCompaction,
+// the SAME helper planCompact calls, so tool-result and reasoning elision
+// cannot drift) to learn the pre-retention fingerprints; the retention
+// selection itself is
 // read from the real Plan result, so the check observes behavior instead of
 // re-implementing the walk under test. All seeded histories have distinct
 // message fingerprints, so membership and sequence comparison are exact.
@@ -139,8 +141,8 @@ func optionalTailIsSuffix(input PlanInput, plan PlanResult) bool {
 		// cannot fail; refuse to assert rather than misreport.
 		return true
 	}
-	mandatory := mandatoryIndexes(working, objectiveIndex)
-	working, _ = elideToolResults(working, objectiveIndex, mandatory)
+	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
+	working, _, _ = elideForCompaction(working, objectiveIndex, mandatory, nil, contextstate.Principal{})
 	fingerprint := func(message provider.Message) string {
 		b, err := contextstate.MarshalCanonical(plannerMessages([]provider.Message{message}))
 		if err != nil {

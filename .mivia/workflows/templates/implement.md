@@ -73,10 +73,14 @@ State why the change is needed in the second sentence.
 
 ## Output contract
 
-Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
-the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
-Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -84,4 +88,4 @@ keys. An invalid shape is rejected and you will be asked again with the schema.
 {"summary": "Added rune-safe TruncateEllipsis in internal/textutil; the one call site in internal/cli/render.go now uses it. Tests cover empty, ASCII, multi-byte, and oversized input.", "files_changed": ["internal/textutil/truncate.go", "internal/textutil/truncate_test.go", "internal/cli/render.go"], "addressed_findings": [], "inspected": ["internal/textutil/truncate.go", "internal/cli/render.go"], "pr_title": "fix(cli): truncate long output on rune boundaries", "pr_summary": "Adds a rune-safe TruncateEllipsis helper and switches the render path to use it. This prevents invalid UTF-8 output when a line is truncated mid-rune."}
 </mivia_output>
 
-The example above is illustrative only - report the change you actually made, not this example.
+This example is for illustration only. Report the change you make for the task you were given.

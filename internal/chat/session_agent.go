@@ -224,6 +224,29 @@ func setMemoryMessageLocked(s *Session, memoryBlock string) {
 	}
 }
 
+// reseedMemoryFrameLocked re-places the session-owned core-memory frame at its
+// canonical position when a history adoption dropped it. It is the
+// belt-and-braces half of compaction preservation: the planner keeps the frame
+// on purpose (PlanInput.PreserveNames), and this guard re-inserts it from the
+// session's own mirror if a retention change ever forgets the seam. The mirror
+// already holds the rendered block, so re-seeding never re-renders: it mirrors
+// setMemoryMessageLocked except that it takes s.memoryContext verbatim, the
+// same value /clear re-seeds from.
+func reseedMemoryFrameLocked(s *Session) {
+	content := s.memoryContext
+	if content == "" {
+		return
+	}
+	idx := 0
+	if len(s.Messages) > 0 && s.Messages[0].Role == provider.RoleSystem {
+		idx = 1
+	}
+	if len(s.Messages) > idx && isMemoryContextMessage(s.Messages[idx]) {
+		return
+	}
+	s.Messages = append(s.Messages[:idx], append([]provider.Message{{Role: provider.RoleUser, Content: content, Name: MemoryContextMessageName}}, s.Messages[idx:]...)...)
+}
+
 // SetDispatcher attaches the startup dispatcher to the current binding
 // generation. This keeps the initial generation subject to the same lifecycle
 // boundary as every later model switch.

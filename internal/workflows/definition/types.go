@@ -240,6 +240,23 @@ type Stacking struct {
 	// MaxConcurrentChunks bounds how many chunk runs the stack driver admits
 	// and drives concurrently within one ready wave (0 = global default).
 	MaxConcurrentChunks int `toml:"max_concurrent_chunks" json:"max_concurrent_chunks,omitempty"`
+	// SplitDeferred enables follow-up PR creation from a repair-produced
+	// commit stack (spec-auto-split-oversized-prs.md §5.2-5.3): when a
+	// chunk's delivered diff was still oversized despite a good estimate,
+	// the diff-size repair step commits the review-sized slice plus one or
+	// more additional commits for the deferred scope, and the driver admits
+	// those trailing commits as follow-up chunk runs stacked on the first.
+	// Opt-in (default false): shipped workflows must enable it explicitly.
+	SplitDeferred *bool `toml:"split_deferred" json:"split_deferred,omitempty"`
+	// SplitMaxChunks bounds how many follow-up PRs one oversized chunk's
+	// repair may produce (0 = global default). Caps stack length; a repair
+	// that produces more trailing commits than this allows folds the excess
+	// into the last admitted follow-up chunk, logged, never silently dropped.
+	SplitMaxChunks int `toml:"split_max_chunks" json:"split_max_chunks,omitempty"`
+	// SplitMinLines: a trailing commit at or under this size folds into the
+	// previous follow-up chunk instead of becoming its own PR (0 = global
+	// default). Avoids a flood of trivial single-line follow-up PRs.
+	SplitMinLines int `toml:"split_min_lines" json:"split_min_lines,omitempty"`
 }
 
 // Stacking defaults. These are the global defaults every workflow inherits;
@@ -254,6 +271,9 @@ const (
 	DefaultStackingMaxTotalChunks      = 200
 	DefaultStackingMaxWaveChunks       = 12
 	DefaultStackingMaxConcurrentChunks = 4
+	DefaultStackingSplitDeferred       = false
+	DefaultStackingSplitMaxChunks      = 4
+	DefaultStackingSplitMinLines       = 10
 )
 
 // ValidStackingMergePolicies enumerates the allowed merge_policy values.
@@ -273,6 +293,16 @@ func (s *Stacking) StackingEnabled() bool {
 	return *s.Enabled
 }
 
+// SplitDeferredEnabled reports whether the repair-produced commit-stack
+// correction path (§5.2-5.3) is enabled for the workflow. An explicit
+// per-workflow value wins; otherwise the global default (off - opt-in).
+func (s *Stacking) SplitDeferredEnabled() bool {
+	if s == nil || s.SplitDeferred == nil {
+		return DefaultStackingSplitDeferred
+	}
+	return *s.SplitDeferred
+}
+
 // StackingConfig is the resolved stacking configuration: per-workflow values
 // with global defaults filled in for everything unset. PlanStep and
 // ImplementStep are resolved by the compiler (inference needs the step
@@ -290,6 +320,9 @@ type StackingConfig struct {
 	MaxTotalChunks      int
 	MaxWaveChunks       int
 	MaxConcurrentChunks int
+	SplitDeferred       bool
+	SplitMaxChunks      int
+	SplitMinLines       int
 }
 
 // EffectiveStacking resolves the stacking configuration for a workflow.
@@ -308,6 +341,9 @@ func (s *Stacking) EffectiveStacking(planStep, implementStep string) StackingCon
 		MaxTotalChunks:      DefaultStackingMaxTotalChunks,
 		MaxWaveChunks:       DefaultStackingMaxWaveChunks,
 		MaxConcurrentChunks: DefaultStackingMaxConcurrentChunks,
+		SplitDeferred:       DefaultStackingSplitDeferred,
+		SplitMaxChunks:      DefaultStackingSplitMaxChunks,
+		SplitMinLines:       DefaultStackingSplitMinLines,
 	}
 	if s == nil {
 		return cfg
@@ -335,6 +371,13 @@ func (s *Stacking) EffectiveStacking(planStep, implementStep string) StackingCon
 	}
 	if s.MaxConcurrentChunks > 0 {
 		cfg.MaxConcurrentChunks = s.MaxConcurrentChunks
+	}
+	cfg.SplitDeferred = s.SplitDeferredEnabled()
+	if s.SplitMaxChunks > 0 {
+		cfg.SplitMaxChunks = s.SplitMaxChunks
+	}
+	if s.SplitMinLines > 0 {
+		cfg.SplitMinLines = s.SplitMinLines
 	}
 	cfg.Agent = s.Agent
 	return cfg

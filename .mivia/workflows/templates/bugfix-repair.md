@@ -2,10 +2,15 @@
 
 ## Output contract (READ FIRST — before the methodology below)
 
-Reply with a `<mivia_output>` opening tag on its own line, then ONE JSON object that satisfies the output schema appended to this task, then a `</mivia_output>` closing tag on its own line. No
-markdown report, headings, bullets, or code fences (```) inside or outside the envelope. The schema
-declares the only valid keys — no extra keys. An invalid shape is rejected and you will be
-asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not add a markdown report, headings, bullets, prose, or code fences (```) inside or outside
+the envelope. The schema lists the only valid keys. It allows no extra keys. The engine rejects
+an invalid shape and asks you again with the schema.
 
 ---
 
@@ -33,15 +38,18 @@ Every prior-step output is stored in the workflow ledger. Its ref, step, and att
 listed in the 'Evidence refs' section of the prompt. Findings arrive as a ledger reference
 envelope (artifact + note). Resolve the full artifact with workflow_inspect(run_id, step,
 attempt) before responding; never guess from the preview.
-If a delivery rejection routed this step, read the latest wf-delivery attempt listed by
-workflow_status with workflow_inspect and repair the reported error.
+If a delivery rejection routed this step, the harness hint below tells you what to repair:
+
+{{ evidence.delivery_hint }}
 
 A DIFF-SIZE rejection (the delivery hint says the chunk diff exceeds the stacking
-hard limit) is a SPLIT request, not a delete request: shrink this chunk's delivered
-diff below the limit by reverting the least-essential part of the change in the
-worktree (the whole worktree is measured), and record exactly what you deferred and
-why in `summary` so a follow-up chunk can pick it up. Never silently drop scope to
-pass the gate.
+hard limit) means the host already tried its own automatic split and either the
+split is disabled for this workflow or even the largest files could not be
+deferred far enough to fit. Actually shrink the change: reduce scope, split
+one large file's edit into a smaller one, or move genuinely separable work out
+of this chunk. Do not invent a `deferred_files` field - the host decides and
+executes any split itself, deterministically, from the measured diff; nothing
+you output here influences it.
 
 Scope discipline: edit only files that repair the reported failure and stay within the
 declared scope. Never add checks, thresholds, or rules to the harness. Do NOT make the
@@ -67,10 +75,14 @@ cli, agent, mcp, hooks, ai, docs, security, quality, build, ci, test, deps, or r
 
 ## Output contract
 
-Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
-the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
-Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
-keys. An invalid shape is rejected and you will be asked again with the schema.
+Reply with these three parts, in order:
+
+1. A `<mivia_output>` opening tag, alone on a line.
+2. One JSON object that satisfies the output schema for this task.
+3. A `</mivia_output>` closing tag, alone on a line.
+
+Do not use a skill report format, markdown, or extra fields. The schema lists the only
+valid keys. The engine rejects an invalid shape and asks you again with the schema.
 
 ### Example
 
@@ -78,4 +90,4 @@ keys. An invalid shape is rejected and you will be asked again with the schema.
 {"summary": "Repaired the failing TestTruncateEllipsis_MultiByteBoundary case: the rune walk stopped one byte early. Fixed the loop bound. No scope change.", "files_changed": ["internal/textutil/truncate.go"], "addressed_findings": ["H-1"], "inspected": ["internal/textutil/truncate.go"], "pr_title": "fix(textutil): cut TruncateEllipsis on rune boundaries", "pr_summary": "TruncateEllipsis now walks runes instead of slicing by byte offset. This prevents a panic and invalid UTF-8 output on multi-byte input."}
 </mivia_output>
 
-The example above is illustrative only - report the repair you actually made, not this example.
+This example is for illustration only. Report the repair you make for the task you were given.

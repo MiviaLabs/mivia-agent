@@ -78,7 +78,8 @@ func (s *StorageRepository) upsertDeliveryOnce(ctx context.Context, d DeliveryRe
 			existing.URL == d.URL &&
 			existing.Status == d.Status &&
 			existing.ErrorRef == d.ErrorRef &&
-			existing.DiffRef == d.DiffRef {
+			existing.DiffRef == d.DiffRef &&
+			existing.DeferredFiles == d.DeferredFiles {
 			s.mu.Unlock()
 			return false, nil
 		}

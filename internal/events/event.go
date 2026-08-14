@@ -235,6 +235,15 @@ func (e CacheUsageEvent) Validate() error {
 	return nil
 }
 
+// HitPercent returns the cache hit rate as an integer percent. It guards
+// the division: zero input tokens reads as 0.
+func (e CacheUsageEvent) HitPercent() int {
+	if e.InputTokens <= 0 {
+		return 0
+	}
+	return e.CachedInputTokens * 100 / e.InputTokens
+}
+
 // TokenUsageEvent is the sealed progress payload for provider-reported
 // input/output token counts, carrying estimate-vs-actual drift metrics
 // so operators can see when the len(s)/4 heuristic diverges.

@@ -315,6 +315,86 @@ func admitStackChunkRun(prepared *preparedWorkflowRun, stackID, chunkID string, 
 	return snap, nil
 }
 
+// admitDecomposeContinuationRun admits and runs a decompose-continuation run
+// for wave N (§12.1 incremental decompose): a fresh run of the same compiled
+// workflow, started directly at the decompose step (stack_mode=
+// decompose_continue), seeded with remaining_scope instead of a plan-step
+// output. It reuses admitStackChunkRun's exact admission path (same
+// per-run worktree isolation, same stable-key resumability), differing only
+// in which reserved inputs it carries. Returns the next wave's chunks and
+// whether decompose declared yet more scope beyond THIS wave.
+func admitDecomposeContinuationRun(prepared *preparedWorkflowRun, stackID string, wave int, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, nextRemainingScope string, err error) {
+	key, err := stackDecomposeContinueKey(stackID, wave)
+	if err != nil {
+		return nil, false, "", err
+	}
+	inputs := make(map[string]any, len(planInputs)+2)
+	snapshot := make(map[string]string, len(planInputs)+2)
+	for k, v := range planInputs {
+		inputs[k] = v
+		snapshot[k] = v
+	}
+	inputs["stack_mode"] = "decompose_continue"
+	inputs["remaining_scope"] = remainingScope
+	snapshot["stack_mode"] = "decompose_continue"
+	snapshot["remaining_scope"] = remainingScope
+
+	runID := newCLIWorkflowRunID()
+	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
+	if err != nil {
+		return nil, false, "", err
+	}
+	defer finishExecution()
+	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, inputs, snapshot, prepared.raw, runID, nil, nil)
+	if err != nil {
+		return nil, false, "", err
+	}
+	defer built.Dispatcher.Close()
+	admitted := false
+	defer func() {
+		if !admitted {
+			built.Cleanup()
+		}
+	}()
+	built.Admission.InvocationKey = key
+	if err := built.Controller.SetAdmission(built.Admission); err != nil {
+		return nil, false, "", err
+	}
+	wireCLIWorkflowProgress(&built, stderr)
+	if err := built.Controller.Start(context.Background()); err != nil {
+		return nil, false, "", err
+	}
+	admitted = true
+	snap, err := built.Controller.Run(context.Background())
+	if err != nil {
+		settleCLIRunFailure(prepared.repo, built.Controller.RunID, err)
+		return nil, false, "", fmt.Errorf("decompose continuation wave %d failed: %w", wave, err)
+	}
+	fmt.Fprintf(stdout, "stack %s: decompose continuation wave %d run=%s status=%s\n", stackID, wave, snap.RunID, snap.Status)
+	if snap.Status != workflowledger.RunStatusSucceeded && snap.Status != workflowledger.RunStatusDeliveryPending {
+		return nil, false, "", fmt.Errorf("decompose continuation wave %d settled at %s, not succeeded", wave, snap.Status)
+	}
+	raw, err := loadStackPlanOutput(prepared.repo, snap.RunID)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("decompose continuation wave %d: %w", wave, err)
+	}
+	mode, waveChunks, waveHasMore, waveRemaining, err := parseStackPlanOutput(raw)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("decompose continuation wave %d: %w", wave, err)
+	}
+	if mode != "multi" {
+		return nil, false, "", fmt.Errorf("decompose continuation wave %d: stack_mode %q; want multi (a continuation wave cannot change the stack's mode)", wave, mode)
+	}
+	return waveChunks, waveHasMore, waveRemaining, nil
+}
+
+// stackDecomposeContinueAdmit is the decompose-continuation admission entry
+// point the drive's wave recovery calls (loadAllStackChunksForDrive) to
+// re-admit a failed wave with a fresh run under the same stable key. It is a
+// package variable so tests can stub the admission without running a full
+// controller; production always points at admitDecomposeContinuationRun.
+var stackDecomposeContinueAdmit = admitDecomposeContinuationRun
+
 // driveIntegrationRun admits the final full-suite run (stack_mode=single runs
 // the workflow's own plan+implement steps inline) after every chunk merged.
 func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, prBase, policy string, planInputs map[string]string, stdout, stderr io.Writer) error {
