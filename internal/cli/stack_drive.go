@@ -344,14 +344,15 @@ func chunkRunInputs(planInputs map[string]string, chunkID, prBase, stackPart str
 // workflow-declared inputs the chunks were decomposed from, so chunk runs can
 // replay them (D3: chunk runs replay the plan run's inputs).
 func stackPlanInputs(repo workflowledger.Repository, stackID string) (map[string]string, error) {
-	run, found, err := stackRunRef(repo, stackID, "")
-	if err != nil {
-		return nil, fmt.Errorf("plan run lookup: %w", err)
-	}
-	if !found {
-		return nil, fmt.Errorf("stack %s has no plan run", stackID)
-	}
-	raw, err := repo.GetRunSnapshot(context.Background(), run.RunID)
+	// The plan run's own RunID IS the stack id (resolveStackID resolves a
+	// plan run by InvocationKey==""; every chunk run's stable key embeds
+	// this RunID as the stack id - see stackAdmissionKey). It was never
+	// admitted with a "<stack>:<chunk>" key, so looking it up through
+	// stackRunRef(repo, stackID, "") - the chunk-run admission-key lookup -
+	// with an empty chunk id hit stackAdmissionKey's chunk-id validation and
+	// failed on every call (live finding: `mivia stack drive` never worked).
+	// Read it directly by RunID instead.
+	raw, err := repo.GetRunSnapshot(context.Background(), stackID)
 	if err != nil {
 		return nil, fmt.Errorf("plan run snapshot: %w", err)
 	}
