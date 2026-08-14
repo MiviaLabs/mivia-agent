@@ -8,13 +8,24 @@ import (
 	ledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
+// mviaCommitAuthorName and mviaCommitAuthorEmail identify every
+// host-mechanical commit this package creates (fresh delivery commits,
+// follow-up commits, deferred-split commits) - never an agent, which never
+// runs git itself (see repair.md). Also the identity adoptOwnDeliveryCommit/
+// adoptOwnFollowUpCommit check to prove a retry-observed HEAD is this
+// package's own commit and not a foreign one.
+const (
+	mviaCommitAuthorName  = "Mivia Agent"
+	mviaCommitAuthorEmail = "noreply@mivia.app"
+)
+
 // commitOrResume creates the delivery commit on a fresh attempt, or verifies
 // and adopts the recorded delivery commit on a retry. The delivery commit is
 // built deterministically: the tree is recorded with the diff ref BEFORE the
 // branch ref moves, so a crash between the commit and the pushed record can
 // be resumed by verifying HEAD against the recorded tree instead of refusing
 // the worktree as foreign. It returns the adopted HEAD and tree SHA.
-func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key string, existing ledger.DeliveryRecord, head string, porcelainEmpty bool, diffRef string) (string, string, error) {
+func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key string, existing ledger.DeliveryRecord, head string, porcelainEmpty bool, diffRef, title, body string) (string, string, error) {
 	treeSHA := existing.TreeSHA
 	if head != req.BaseCommit {
 		// Retry path: verify the recorded record against HEAD BEFORE any
@@ -29,7 +40,7 @@ func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, 
 			// already have pushed) and adopt the new HEAD.
 			if !porcelainEmpty {
 				var ferr error
-				head, treeSHA, ferr = commitWorktreeFollowUp(ctx, repo, git, req, existing, diffRef)
+				head, treeSHA, ferr = commitWorktreeFollowUp(ctx, repo, git, req, existing, diffRef, title, body)
 				if ferr != nil {
 					return "", "", ferr
 				}
@@ -78,7 +89,22 @@ func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, 
 	}
 
 	// Fresh: create the delivery commit (idempotent on retry).
-	return freshDeliveryCommit(ctx, repo, git, req, key, diffRef)
+	return freshDeliveryCommit(ctx, repo, git, req, key, diffRef, title, body)
+}
+
+// buildCommitMessage composes the actual git commit message: the SUBJECT is
+// always title (the agent's own pr_title - already resolved and validated
+// against both the PR-title policy and, via validateDeliveryCommitSubject,
+// the workspace commit-message policy), never a workflow-static template, so
+// a subject-shape rejection is always fixable by the same repair hint that
+// already tells the agent to fix pr_title. body (rendered
+// commit_message_template, or the agent's own pr_summary when the template
+// is empty) becomes the commit body, separated by a blank line.
+func buildCommitMessage(title, body string) string {
+	if strings.TrimSpace(body) == "" {
+		return title
+	}
+	return title + "\n\n" + body
 }
 
 // freshDeliveryCommit stages the intended change (idempotent on retry),
@@ -95,21 +121,21 @@ func commitOrResume(ctx context.Context, repo ledger.Repository, git GitRunner, 
 // branch that gets pushed. The deferred branch is left for the driver to
 // push as a follow-up PR after this delivery succeeds; see stacking.go's
 // deferredBranchName and CountUnshippedCommits' doc comment.
-func freshDeliveryCommit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef string) (string, string, error) {
+func freshDeliveryCommit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef, title, body string) (string, string, error) {
 	deferred, err := ParseDeferredFiles(req.Inputs[InputDeferredFiles])
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
 	}
 	if len(deferred) == 0 {
-		return freshDeliveryCommitSingle(ctx, repo, git, req, key, diffRef)
+		return freshDeliveryCommitSingle(ctx, repo, git, req, key, diffRef, title, body)
 	}
-	return freshDeliveryCommitSplit(ctx, repo, git, req, key, diffRef, deferred)
+	return freshDeliveryCommitSplit(ctx, repo, git, req, key, diffRef, deferred, title, body)
 }
 
 // freshDeliveryCommitSingle is the pre-existing, unsplit fresh-commit path:
 // stage everything, commit once.
-func freshDeliveryCommitSingle(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef string) (string, string, error) {
+func freshDeliveryCommitSingle(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef, title, body string) (string, string, error) {
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
@@ -123,11 +149,15 @@ func freshDeliveryCommitSingle(ctx context.Context, repo ledger.Repository, git 
 	if _, err := git.Run(ctx, req.GitCtx, "diff", "--quiet", "--cached", treeSHA); err != nil {
 		return "", "", &RefusalError{Reason: "staged tree changed before commit"}
 	}
-	msg, err := req.Policy.RenderCommitMessage(req.Inputs)
+	bodyText, err := req.Policy.RenderCommitMessage(req.Inputs)
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
 	}
+	if strings.TrimSpace(bodyText) == "" {
+		bodyText = body
+	}
+	msg := buildCommitMessage(title, bodyText)
 	// Record the pending attempt with the tree BEFORE creating the commit,
 	// so the retry can resume by tree verification. This is the ONLY stage
 	// record written on the fresh path.
@@ -152,7 +182,7 @@ func freshDeliveryCommitSingle(ctx context.Context, repo ledger.Repository, git 
 // deferredBranchName (git branch -f), and resets the worktree back to the
 // delivered commit - so deferred's content is preserved but never reachable
 // from the branch that gets pushed next.
-func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef string, deferred []string) (string, string, error) {
+func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef string, deferred []string, title, body string) (string, string, error) {
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
@@ -168,11 +198,15 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 		return "", "", err
 	}
 	treeSHA := strings.TrimSpace(treeOut)
-	msg, err := req.Policy.RenderCommitMessage(req.Inputs)
+	bodyText, err := req.Policy.RenderCommitMessage(req.Inputs)
 	if err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
 	}
+	if strings.TrimSpace(bodyText) == "" {
+		bodyText = body
+	}
+	msg := buildCommitMessage(title, bodyText)
 	stage := deliveryRecord(req, key, "pending")
 	stage.DiffRef = diffRef
 	stage.TreeSHA = treeSHA
@@ -191,9 +225,18 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 		markFailed(ctx, repo, key, req, err)
 		return "", "", fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
 	}
-	deferredMsg := fmt.Sprintf("deferred: %d file(s) split from this chunk's delivery (automatic follow-up)", len(deferred))
+	// Reuse the SAME subject that just passed both the PR-title and
+	// commit-message policy checks above - a host-invented subject (for
+	// example a hardcoded "deferred: N file(s)...") is not guaranteed to
+	// satisfy an arbitrary workspace's commit-msg hook (wrong type/scope
+	// shape, too long), and this host-only commit never goes through
+	// validateDeliveryCommitSubject itself since it is never pushed on the
+	// delivered branch. Reusing title sidesteps that entirely: it is
+	// proven-valid, and per-workspace commit-msg hooks generally do not
+	// reject a repeated subject.
+	deferredMsg := buildCommitMessage(title, fmt.Sprintf("deferred: %d file(s) split from this chunk's delivery (automatic follow-up)", len(deferred)))
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
-		"-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
+		"-c", "user.name="+mviaCommitAuthorName, "-c", "user.email="+mviaCommitAuthorEmail,
 		"commit", "--allow-empty-message", "-m", deferredMsg); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", fmt.Errorf("cannot commit deferred_files: %w", err)
@@ -224,7 +267,7 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 // attempt's FRESH diff ref, preserving every other field (RemoteID, URL,
 // Mode, BaseRef, HeadRef, Provider) so the run keeps proving ownership of its
 // own PR on further retries.
-func commitWorktreeFollowUp(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, existing ledger.DeliveryRecord, diffRef string) (string, string, error) {
+func commitWorktreeFollowUp(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, existing ledger.DeliveryRecord, diffRef, title, body string) (string, string, error) {
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		return "", "", err
 	}
@@ -236,14 +279,18 @@ func commitWorktreeFollowUp(ctx context.Context, repo ledger.Repository, git Git
 	if _, err := git.Run(ctx, req.GitCtx, "diff", "--quiet", "--cached", treeSHA); err != nil {
 		return "", "", &RefusalError{Reason: "staged tree changed before commit"}
 	}
-	msg, err := req.Policy.RenderCommitMessage(req.Inputs)
+	bodyText, err := req.Policy.RenderCommitMessage(req.Inputs)
 	if err != nil {
 		return "", "", err
 	}
+	if strings.TrimSpace(bodyText) == "" {
+		bodyText = body
+	}
+	msg := buildCommitMessage(title, bodyText)
 	// Commit through Git so pre-commit and commit-msg hooks can reject it,
 	// mirroring commitStagedTree on the fresh path.
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
-		"-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
+		"-c", "user.name="+mviaCommitAuthorName, "-c", "user.email="+mviaCommitAuthorEmail,
 		"commit", "--allow-empty-message", "-m", msg); err != nil {
 		return "", "", err
 	}
@@ -309,7 +356,7 @@ func adoptOwnDeliveryCommit(ctx context.Context, repo ledger.Repository, git Git
 	if aeerr != nil {
 		return "", "", fmt.Errorf("cannot verify delivery commit author: %w", aeerr)
 	}
-	if strings.TrimSpace(authorName) != "mivia" || strings.TrimSpace(authorEmail) != "mivia@localhost" {
+	if strings.TrimSpace(authorName) != mviaCommitAuthorName || strings.TrimSpace(authorEmail) != mviaCommitAuthorEmail {
 		return "", "", &RefusalError{Reason: "worktree has foreign commits or uncommitted changes"}
 	}
 	// File-set verification: a `git commit --amend` with DIFFERENT
@@ -392,7 +439,7 @@ func adoptOwnFollowUpCommit(ctx context.Context, repo ledger.Repository, git Git
 	if aerr != nil {
 		return "", "", fmt.Errorf("cannot verify delivery commit author: %w", aerr)
 	}
-	if strings.TrimSpace(author) != "mivia/mivia@localhost" {
+	if strings.TrimSpace(author) != mviaCommitAuthorName+"/"+mviaCommitAuthorEmail {
 		return "", "", &RefusalError{Reason: "worktree has foreign commits or uncommitted changes"}
 	}
 	treeOut, terr := git.Run(ctx, req.GitCtx, "rev-parse", "HEAD^{tree}")
@@ -429,7 +476,7 @@ func adoptOwnFollowUpCommit(ctx context.Context, repo ledger.Repository, git Git
 func commitStagedTree(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, stage ledger.DeliveryRecord, treeSHA, msg string) (string, string, error) {
 	// Commit through Git so pre-commit and commit-msg hooks can reject it.
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
-		"-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
+		"-c", "user.name="+mviaCommitAuthorName, "-c", "user.email="+mviaCommitAuthorEmail,
 		"commit", "--allow-empty-message", "-m", msg); err != nil {
 		return "", "", err
 	}

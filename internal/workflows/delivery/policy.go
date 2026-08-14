@@ -180,9 +180,14 @@ func (p Policy) RenderTitle(inputs map[string]string) (string, error) {
 	return truncateRunes(rendered, MaxTitleRunes), nil
 }
 
-// RenderCommitMessage renders commit_message_template against the admitted inputs.
-// If the rendered result exceeds MaxCommitMessageBytes, it is truncated
-// at a byte boundary with "..." appended.
+// RenderCommitMessage renders commit_message_template against the admitted
+// inputs. This is BODY content only (trailers, "Delivers: ..." context) -
+// the commit SUBJECT line is always the agent's own pr_title (see
+// buildCommitMessage in deliver_stage.go), never this template, so the
+// workspace commit-message policy's subject rules are enforced against
+// something the agent can actually edit. If the rendered result exceeds
+// MaxCommitMessageBytes, it is truncated at a byte boundary with "..."
+// appended.
 func (p Policy) RenderCommitMessage(inputs map[string]string) (string, error) {
 	max := clampMax(p.MaxCommitMessageBytes, DefaultMaxCommitMessageBytes)
 	return renderTemplate(p.CommitMessageTemplate, inputs, max, true)
@@ -355,15 +360,18 @@ type commitMessagePolicy struct {
 // workspace's own commit-msg hook's business, never this binary's.
 var scopeSubjectRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*\(([^()]+)\)(!)?: .+$`)
 
-// ValidateCommitMessage validates the rendered commit message against the
-// OPTIONAL workspace commit-message policy file
-// (.mivia/policy/commit-message.json) under workspaceRoot, when present. An
-// absent file validates nothing. A non-conforming subject, an unreadable
-// policy file, or a malformed policy file is a permanent RefusalError: each is
-// a condition the repo's commit-msg hook would reject forever, and refusing
-// here (before any record write, commit, or push) turns the infinite
-// delivery_pending loop into a settled delivery_failed with a clear reason.
-func (p Policy) ValidateCommitMessage(workspaceRoot string, inputs map[string]string) error {
+// ValidateCommitSubject validates ONE commit subject line (the agent's own
+// pr_title, already resolved and PR-title-policy-validated by
+// validatePRMetadata - see deliver.go) against the OPTIONAL workspace
+// commit-message policy file (.mivia/policy/commit-message.json) under
+// workspaceRoot, when present. An absent file validates nothing. A
+// non-conforming subject is a repairable PRMetadataError: the agent
+// controls pr_title, so the SAME repair hint that already tells it to fix
+// pr_title for the PR-title policy also fixes this - there is exactly one
+// subject line and exactly one field the agent edits to change it. An
+// unreadable or malformed policy file is a permanent RefusalError: that is a
+// workspace configuration defect, not something any agent edit can fix.
+func (p Policy) ValidateCommitSubject(workspaceRoot, subject string) error {
 	data, err := os.ReadFile(filepath.Join(workspaceRoot, commitMessagePolicyPath))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -375,23 +383,17 @@ func (p Policy) ValidateCommitMessage(workspaceRoot string, inputs map[string]st
 	if err := json.Unmarshal(data, &pol); err != nil {
 		return &RefusalError{Reason: fmt.Sprintf("delivery: %s is not valid JSON: %v", commitMessagePolicyPath, err)}
 	}
-	msg, err := p.RenderCommitMessage(inputs)
-	if err != nil {
-		return err
-	}
-	return pol.validate(msg)
+	return pol.validate(subject)
 }
 
-// validate checks the rendered commit message against the generic policy
-// fields. The subject is the first non-empty, non-comment line, matching the
-// commit-msg hook's subject_line semantics.
-func (p commitMessagePolicy) validate(msg string) error {
-	subject := commitSubject(msg)
+// validate checks a commit subject line against the generic policy fields.
+func (p commitMessagePolicy) validate(subject string) error {
+	subject = commitSubject(subject)
 	if p.MaxSubjectLength > 0 && utf8.RuneCountInString(subject) > p.MaxSubjectLength {
-		return &RefusalError{Reason: fmt.Sprintf("delivery: commit message subject is %d characters, exceeding maxSubjectLength %d from %s", utf8.RuneCountInString(subject), p.MaxSubjectLength, commitMessagePolicyPath)}
+		return &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title (used as the commit subject) is %d characters, exceeding maxSubjectLength %d from %s; shorten pr_title", utf8.RuneCountInString(subject), p.MaxSubjectLength, commitMessagePolicyPath)}
 	}
 	if p.RequireScope && !scopeSubjectRE.MatchString(subject) {
-		return &RefusalError{Reason: fmt.Sprintf("delivery: commit message subject %q does not satisfy requireScope from %s; expected type(scope): subject", subject, commitMessagePolicyPath)}
+		return &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title (used as the commit subject) %q does not satisfy requireScope from %s; expected type(scope): subject - fix pr_title", subject, commitMessagePolicyPath)}
 	}
 	return nil
 }

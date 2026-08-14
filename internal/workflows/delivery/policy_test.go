@@ -594,12 +594,16 @@ func TestRenderTemplateRedactsNothingWithoutPolicy(t *testing.T) {
 	}
 }
 
-// TestValidateCommitMessage pins the optional workspace commit-message policy
-// (.mivia/policy/commit-message.json): absent file validates nothing; a
-// scope-less or oversized subject is a permanent RefusalError; a conforming
-// subject passes. Only the generic requireScope/maxSubjectLength fields are
-// enforced - no workspace's type or scope lists are compiled in.
-func TestValidateCommitMessage(t *testing.T) {
+// TestValidateCommitSubject pins the optional workspace commit-message
+// policy (.mivia/policy/commit-message.json): absent file validates nothing;
+// a scope-less or oversized subject is a repairable PRMetadataError (the
+// subject is always the agent's own pr_title - see buildCommitMessage - so a
+// shape violation is always fixable by editing pr_title); a conforming
+// subject passes; an unreadable/malformed policy file is a permanent
+// RefusalError (a workspace config defect, not something pr_title can fix).
+// Only the generic requireScope/maxSubjectLength fields are enforced - no
+// workspace's type or scope lists are compiled in.
+func TestValidateCommitSubject(t *testing.T) {
 	writeCommitPolicy := func(t *testing.T, root, jsonContent string) {
 		t.Helper()
 		dir := filepath.Join(root, ".mivia", "policy")
@@ -612,80 +616,72 @@ func TestValidateCommitMessage(t *testing.T) {
 	}
 
 	t.Run("absent policy file validates nothing", func(t *testing.T) {
-		p := Policy{CommitMessageTemplate: "fix: no scope here"}
-		if err := p.ValidateCommitMessage(t.TempDir(), nil); err != nil {
-			t.Fatalf("ValidateCommitMessage with absent policy = %v, want nil", err)
+		p := Policy{}
+		if err := p.ValidateCommitSubject(t.TempDir(), "fix: no scope here"); err != nil {
+			t.Fatalf("ValidateCommitSubject with absent policy = %v, want nil", err)
 		}
 	})
 
-	t.Run("scope-less subject is a permanent refusal", func(t *testing.T) {
+	t.Run("scope-less subject is a repairable PRMetadataError", func(t *testing.T) {
 		root := t.TempDir()
 		writeCommitPolicy(t, root, `{"requireScope": true, "maxSubjectLength": 72}`)
-		p := Policy{CommitMessageTemplate: "fix: no scope here"}
-		err := p.ValidateCommitMessage(root, nil)
-		if err == nil || !IsRefusal(err) {
-			t.Fatalf("ValidateCommitMessage = %v, want RefusalError", err)
+		p := Policy{}
+		err := p.ValidateCommitSubject(root, "fix: no scope here")
+		if err == nil || !IsPRMetadataError(err) {
+			t.Fatalf("ValidateCommitSubject = %v, want PRMetadataError", err)
 		}
 		if !strings.Contains(err.Error(), "type(scope)") {
-			t.Errorf("refusal %q should mention the type(scope) shape", err.Error())
+			t.Errorf("error %q should mention the type(scope) shape", err.Error())
 		}
 	})
 
-	t.Run("oversized subject is a permanent refusal", func(t *testing.T) {
+	t.Run("oversized subject is a repairable PRMetadataError", func(t *testing.T) {
 		root := t.TempDir()
 		writeCommitPolicy(t, root, `{"requireScope": true, "maxSubjectLength": 10}`)
-		p := Policy{CommitMessageTemplate: "fix(delivery): this subject is way too long"}
-		err := p.ValidateCommitMessage(root, nil)
-		if err == nil || !IsRefusal(err) {
-			t.Fatalf("ValidateCommitMessage = %v, want RefusalError", err)
+		p := Policy{}
+		err := p.ValidateCommitSubject(root, "fix(delivery): this subject is way too long")
+		if err == nil || !IsPRMetadataError(err) {
+			t.Fatalf("ValidateCommitSubject = %v, want PRMetadataError", err)
 		}
 		if !strings.Contains(err.Error(), "maxSubjectLength") {
-			t.Errorf("refusal %q should mention maxSubjectLength", err.Error())
+			t.Errorf("error %q should mention maxSubjectLength", err.Error())
 		}
 	})
 
 	t.Run("conforming subject passes", func(t *testing.T) {
 		root := t.TempDir()
 		writeCommitPolicy(t, root, `{"requireScope": true, "maxSubjectLength": 72}`)
-		p := Policy{CommitMessageTemplate: "fix(delivery): add validation"}
-		if err := p.ValidateCommitMessage(root, nil); err != nil {
-			t.Fatalf("ValidateCommitMessage = %v, want nil", err)
+		p := Policy{}
+		if err := p.ValidateCommitSubject(root, "fix(delivery): add validation"); err != nil {
+			t.Fatalf("ValidateCommitSubject = %v, want nil", err)
 		}
 	})
 
 	t.Run("requireScope false allows a scope-less subject", func(t *testing.T) {
 		root := t.TempDir()
 		writeCommitPolicy(t, root, `{"requireScope": false, "maxSubjectLength": 72}`)
-		p := Policy{CommitMessageTemplate: "fix: no scope needed"}
-		if err := p.ValidateCommitMessage(root, nil); err != nil {
-			t.Fatalf("ValidateCommitMessage = %v, want nil", err)
-		}
-	})
-
-	t.Run("subject is the first non-empty line", func(t *testing.T) {
-		root := t.TempDir()
-		writeCommitPolicy(t, root, `{"requireScope": true, "maxSubjectLength": 72}`)
-		p := Policy{CommitMessageTemplate: "\n\nfix(delivery): body paragraph"}
-		if err := p.ValidateCommitMessage(root, nil); err != nil {
-			t.Fatalf("ValidateCommitMessage = %v, want nil", err)
+		p := Policy{}
+		if err := p.ValidateCommitSubject(root, "fix: no scope needed"); err != nil {
+			t.Fatalf("ValidateCommitSubject = %v, want nil", err)
 		}
 	})
 
 	t.Run("malformed policy file is a permanent refusal", func(t *testing.T) {
 		root := t.TempDir()
 		writeCommitPolicy(t, root, `{not json`)
-		p := Policy{CommitMessageTemplate: "fix(delivery): x"}
-		err := p.ValidateCommitMessage(root, nil)
+		p := Policy{}
+		err := p.ValidateCommitSubject(root, "fix(delivery): x")
 		if err == nil || !IsRefusal(err) {
-			t.Fatalf("ValidateCommitMessage = %v, want RefusalError", err)
+			t.Fatalf("ValidateCommitSubject = %v, want RefusalError", err)
 		}
 	})
 }
 
 // TestDeliverValidatesCommitMessageAgainstWorkspacePolicy pins the
 // admission-time validation end to end: when .mivia/policy/commit-message.json
-// is present in the workspace, a non-conforming rendered subject refuses the
-// delivery BEFORE any commit or push; when absent, delivery proceeds.
+// is present in the workspace, a non-conforming title (the commit subject)
+// is a repairable PRMetadataError BEFORE any commit or push; when absent,
+// delivery proceeds.
 func TestDeliverValidatesCommitMessageAgainstWorkspacePolicy(t *testing.T) {
 	t.Run("absent policy file: delivery proceeds", func(t *testing.T) {
 		res, err, _, _, _ := deliverWithCommitPolicy(t, false, "fix: no scope here")
@@ -697,13 +693,13 @@ func TestDeliverValidatesCommitMessageAgainstWorkspacePolicy(t *testing.T) {
 		}
 	})
 
-	t.Run("scope-less subject is a permanent refusal", func(t *testing.T) {
+	t.Run("scope-less title is a repairable PRMetadataError", func(t *testing.T) {
 		_, err, worktreeRoot, baseCommit, pr := deliverWithCommitPolicy(t, true, "fix: no scope here")
-		if err == nil || !IsRefusal(err) {
-			t.Fatalf("Deliver = %v, want RefusalError", err)
+		if err == nil || !IsPRMetadataError(err) {
+			t.Fatalf("Deliver = %v, want PRMetadataError", err)
 		}
 		if !strings.Contains(err.Error(), "scope") {
-			t.Errorf("refusal %q should mention scope", err.Error())
+			t.Errorf("error %q should mention scope", err.Error())
 		}
 		assertZeroCreates(t, pr)
 		if got := runGitOut(t, worktreeRoot, "rev-parse", "HEAD"); got != baseCommit {
@@ -711,21 +707,21 @@ func TestDeliverValidatesCommitMessageAgainstWorkspacePolicy(t *testing.T) {
 		}
 	})
 
-	t.Run("oversized subject is a permanent refusal", func(t *testing.T) {
+	t.Run("oversized title is a repairable PRMetadataError", func(t *testing.T) {
 		_, err, _, _, pr := deliverWithCommitPolicy(t, true, "fix(delivery): "+strings.Repeat("x", 80))
-		if err == nil || !IsRefusal(err) {
-			t.Fatalf("Deliver = %v, want RefusalError", err)
+		if err == nil || !IsPRMetadataError(err) {
+			t.Fatalf("Deliver = %v, want PRMetadataError", err)
 		}
 		if !strings.Contains(err.Error(), "maxSubjectLength") {
-			t.Errorf("refusal %q should mention maxSubjectLength", err.Error())
+			t.Errorf("error %q should mention maxSubjectLength", err.Error())
 		}
 		assertZeroCreates(t, pr)
 	})
 
-	t.Run("conforming subject passes with policy present", func(t *testing.T) {
+	t.Run("conforming title passes with policy present", func(t *testing.T) {
 		res, err, worktreeRoot, _, _ := deliverWithCommitPolicy(t, true, "fix(delivery): add validation")
 		if err != nil {
-			t.Fatalf("Deliver with conforming subject = %v, want success", err)
+			t.Fatalf("Deliver with conforming title = %v, want success", err)
 		}
 		if res.Status != "succeeded" {
 			t.Fatalf("Result = %+v, want succeeded", res)
@@ -740,11 +736,14 @@ func TestDeliverValidatesCommitMessageAgainstWorkspacePolicy(t *testing.T) {
 }
 
 // deliverWithCommitPolicy runs one Deliver attempt against a fresh fixture,
-// writing the workspace commit-message policy file when writePolicy is true and
-// rendering the given commit subject. It returns the delivery outcome plus the
-// fixture values subtests need for their post-conditions: worktree root, base
-// commit, and the PR client used for the attempt.
-func deliverWithCommitPolicy(t *testing.T, writePolicy bool, template string) (Result, error, string, string, *fakePRClient) {
+// writing the workspace commit-message policy file when writePolicy is true.
+// title becomes both the resolved PR title (title_template has no {{ }}
+// bindings, so it renders verbatim) and, per buildCommitMessage, the commit
+// subject - the single field the workspace commit-message policy now
+// validates. It returns the delivery outcome plus the fixture values
+// subtests need for their post-conditions: worktree root, base commit, and
+// the PR client used for the attempt.
+func deliverWithCommitPolicy(t *testing.T, writePolicy bool, title string) (Result, error, string, string, *fakePRClient) {
 	t.Helper()
 	ctx := context.Background()
 	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
@@ -753,7 +752,8 @@ func deliverWithCommitPolicy(t *testing.T, writePolicy bool, template string) (R
 	}
 	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
 	pol := defaultPolicy("draft")
-	pol.CommitMessageTemplate = template
+	pol.TitleTemplate = title
+	pol.CommitMessageTemplate = ""
 	pr := &fakePRClient{}
 	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, pol, map[string]string{"task": "x"}))
 	return res, err, worktreeRoot, baseCommit, pr

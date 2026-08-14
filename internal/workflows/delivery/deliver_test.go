@@ -628,8 +628,12 @@ func TestDeliverTemplateInjectionSingleArgv(t *testing.T) {
 	if c.Title != "x --draft --base evil" || !c.Draft || c.Body != wantBody(run) {
 		t.Fatalf("Create = %+v, want exact rendered Title, Draft=true, Body=%q", c, wantBody(run))
 	}
-	if msg := runGitOut(t, worktreeRoot, "log", "-1", "--format=%B"); strings.TrimSuffix(msg, "\n") != "x\n--draft\n--base evil" {
-		t.Fatalf("commit message = %q, want the newline payload intact", msg)
+	// The commit subject is always title (buildCommitMessage), never
+	// CommitMessageTemplate directly - CommitMessageTemplate is body-only -
+	// so the full message is title + blank line + the rendered body.
+	wantMsg := "x --draft --base evil\n\nx\n--draft\n--base evil"
+	if msg := runGitOut(t, worktreeRoot, "log", "-1", "--format=%B"); strings.TrimSuffix(msg, "\n") != wantMsg {
+		t.Fatalf("commit message = %q, want %q (the newline payload intact in the body)", msg, wantMsg)
 	}
 
 	// The newline payload folds to one line and still publishes. The defense

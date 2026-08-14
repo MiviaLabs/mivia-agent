@@ -139,9 +139,9 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 		return Result{}, err
 	}
 
-	// 10b. Optional workspace commit-message policy: validate the rendered
-	// subject only when a commit will actually be created.
-	if err := validateDeliveryCommitMessage(req); err != nil {
+	// 10b. Optional workspace commit-message policy: validate title (the
+	// commit subject) only when a commit will actually be created.
+	if err := validateDeliveryCommitSubject(req, title); err != nil {
 		return Result{}, err
 	}
 
@@ -149,7 +149,7 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 	// delivery commit (retry). All retry-path verification happens BEFORE
 	// any record write in this attempt.
 	req.stage("commit", "commit the intended change or resume the delivery commit")
-	head, treeSHA, err := commitOrResume(ctx, repo, git, req, key, existing, head, porcelainEmpty, diffRef)
+	head, treeSHA, err := commitOrResume(ctx, repo, git, req, key, existing, head, porcelainEmpty, diffRef, title, body)
 	if err != nil {
 		return Result{}, err
 	}
@@ -202,15 +202,20 @@ func deliveryRunGuard(ctx context.Context, repo ledger.Repository, req Request) 
 	return run, nil
 }
 
-// validateDeliveryCommitMessage checks the optional workspace commit-message
-// policy. It runs only when a commit will actually be created (a diff exists,
-// so the repo's commit-msg hook would fire): a no_diff run never fires the
-// hook, so a present policy must not refuse it. The check stays BEFORE
-// commitOrResume, so a subject the hook would reject mid-flight becomes a
-// permanent refusal instead of a delivery_pending retry loop; a refusal here
-// writes no delivery record, commits nothing, and pushes nothing.
-func validateDeliveryCommitMessage(req Request) error {
-	return req.Policy.ValidateCommitMessage(req.GitCtx.Dir, req.Inputs)
+// validateDeliveryCommitSubject checks title (the agent's own pr_title,
+// already resolved by validatePRMetadata) against the optional workspace
+// commit-message policy, since title becomes the commit subject
+// (buildCommitMessage in deliver_stage.go). It runs only when a commit will
+// actually be created (a diff exists, so the repo's commit-msg hook would
+// fire): a no_diff run never fires the hook, so a present policy must not
+// reject it. The check stays BEFORE commitOrResume, so a subject the hook
+// would reject mid-flight is caught here instead: a non-conforming subject
+// is a repairable PRMetadataError (fix pr_title), an unreadable or malformed
+// policy file is a permanent RefusalError (a workspace config defect no
+// agent edit can fix) - either way nothing is written, committed, or pushed
+// before this check runs.
+func validateDeliveryCommitSubject(req Request, title string) error {
+	return req.Policy.ValidateCommitSubject(req.GitCtx.Dir, title)
 }
 
 // promoteToDeliveryPending is the single enforcing re-eligibility transition
