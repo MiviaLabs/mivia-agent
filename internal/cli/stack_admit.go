@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -30,17 +31,8 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 	if err != nil {
 		return fmt.Errorf("stack drive: reconcile: %w", err)
 	}
-	for _, a := range actions {
-		switch a.Action {
-		case stackActionMarkFailed:
-			return fmt.Errorf("stack drive: stack %s halted: chunk %s failed terminally (%s)", stackID, a.TaskID, a.Note)
-		case stackActionReopen:
-			fmt.Fprintf(stdout, "chunk=%s reopened (%s)\n", a.TaskID, a.Note)
-		case stackActionMarkMerged:
-			fmt.Fprintf(stdout, "chunk=%s marked merged (git)\n", a.TaskID)
-		case stackActionDeliver:
-			fmt.Fprintf(stdout, "chunk=%s run reached delivery; publish grant required\n", a.TaskID)
-		}
+	if err := reportReconcileActions(stackID, actions, stdout); err != nil {
+		return err
 	}
 
 	order, err := stackTopologicalOrder(chunks)
@@ -59,32 +51,31 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 	}
 	policy := prepared.compiled.Stacking.MergePolicy
 
+	maxConcurrent := 1
+	if prepared.compiled.Stacking.MaxConcurrentChunks > 0 {
+		maxConcurrent = prepared.compiled.Stacking.MaxConcurrentChunks
+	}
+
 	for {
 		wave := nextAdmissionWave(byID, merged, order)
 		if len(wave) == 0 {
 			break
 		}
-		for _, chunkID := range wave {
-			index, err := chunkPartIndex(chunkID, order)
-			if err != nil {
-				return fmt.Errorf("stack drive: %w", err)
-			}
-			part := fmt.Sprintf("%d/%d", index+1, len(order))
-			halt, err := driveChunk(ctx, prepared, ledger, stackID, chunkID, prBase, part, policy, allowPublish, planInputs, stdout, stderr)
-			if err != nil {
-				return fmt.Errorf("stack drive: chunk %s: %w", chunkID, err)
-			}
-			if halt {
-				return nil
-			}
-			// Refresh durable state after the chunk settled so the next
-			// wave sees freshly merged dependencies.
-			byID, err = stackTaskMap(ledger, stackID)
-			if err != nil {
-				return err
-			}
-			merged = stackMergedSet(byID)
+		results := driveWave(ctx, prepared, ledger, stackID, wave, order, prBase, policy, allowPublish, planInputs, maxConcurrent, stdout, stderr)
+		halt, err := resolveWaveResults(results)
+		if err != nil {
+			return err
 		}
+		if halt {
+			return nil
+		}
+		// Refresh durable state after the whole wave settled so the next
+		// wave sees freshly merged dependencies.
+		byID, err = stackTaskMap(ledger, stackID)
+		if err != nil {
+			return err
+		}
+		merged = stackMergedSet(byID)
 	}
 
 	if !allChunksMerged(chunks, merged) {
@@ -93,6 +84,122 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 	}
 	fmt.Fprintf(stdout, "all chunks merged; admitting the final integration run\n")
 	return driveIntegrationRun(ctx, prepared, ledger, stackID, prBase, policy, planInputs, stdout, stderr)
+}
+
+// reportReconcileActions prints one line per reconcile action and returns an
+// error if any chunk failed terminally (stack-wide halt).
+func reportReconcileActions(stackID string, actions []ReconcileAction, stdout io.Writer) error {
+	for _, a := range actions {
+		switch a.Action {
+		case stackActionMarkFailed:
+			return fmt.Errorf("stack drive: stack %s halted: chunk %s failed terminally (%s)", stackID, a.TaskID, a.Note)
+		case stackActionReopen:
+			fmt.Fprintf(stdout, "chunk=%s reopened (%s)\n", a.TaskID, a.Note)
+		case stackActionMarkMerged:
+			fmt.Fprintf(stdout, "chunk=%s marked merged (git)\n", a.TaskID)
+		case stackActionDeliver:
+			fmt.Fprintf(stdout, "chunk=%s run reached delivery; publish grant required\n", a.TaskID)
+		}
+	}
+	return nil
+}
+
+// resolveWaveResults decides driveStack's next move from one wave's outcomes.
+// Every chunk in the wave is independent by construction (nextAdmissionWave
+// only admits a chunk once its deps are merged, and merged chunks are never
+// re-admitted into the same wave), so dispatch order carries no dependency
+// meaning. Resolution order does: scanning in wave (topological) order first
+// for any error, then for any halt, keeps a single-chunk wave
+// (max_concurrent_chunks=1, or any wave of size 1) byte-identical to the old
+// sequential loop's outcome, while a multi-chunk wave now runs every member
+// concurrently instead of processing only the first one per pass.
+func resolveWaveResults(results []driveWaveResult) (halt bool, err error) {
+	for _, r := range results {
+		if r.err != nil {
+			return false, fmt.Errorf("stack drive: chunk %s: %w", r.chunkID, r.err)
+		}
+	}
+	for _, r := range results {
+		if r.halt {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// driveWaveResult is one chunk's outcome from a concurrently-dispatched wave.
+type driveWaveResult struct {
+	chunkID string
+	halt    bool
+	err     error
+}
+
+// driveWave dispatches every chunk in wave concurrently, bounded by
+// maxConcurrent chunk runs in flight at once. Each chunk already gets its own
+// isolated worktree via admitStackChunkRun's per-runID ensureRunWorktree
+// (through workflowRunBuild), so concurrent dispatch is safe by construction;
+// this function adds no new isolation, only bounded fan-out. Results are
+// returned in wave order (index-addressed, not completion order) so the
+// caller's resolution stays deterministic. stdout/stderr are wrapped in a
+// mutex so concurrent Fprintf calls from different chunks never interleave
+// mid-line.
+func driveWave(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, wave []string, order []string, prBase, policy string, allowPublish bool, planInputs map[string]string, maxConcurrent int, stdout, stderr io.Writer) []driveWaveResult {
+	syncStdout := newSyncWriter(stdout)
+	syncStderr := newSyncWriter(stderr)
+	work := func(chunkID string) (bool, error) {
+		index, err := chunkPartIndex(chunkID, order)
+		if err != nil {
+			return false, fmt.Errorf("stack drive: %w", err)
+		}
+		part := fmt.Sprintf("%d/%d", index+1, len(order))
+		return driveChunk(ctx, prepared, ledger, stackID, chunkID, prBase, part, policy, allowPublish, planInputs, syncStdout, syncStderr)
+	}
+	return dispatchWave(wave, maxConcurrent, work)
+}
+
+// dispatchWave runs work for every id in wave concurrently, bounded by
+// maxConcurrent in-flight calls at once, and returns results in wave order
+// (index-addressed, not completion order) so callers get deterministic
+// resolution regardless of goroutine scheduling. Factored out of driveWave so
+// the concurrency/aggregation contract (bounded fan-out, stable result order,
+// no dropped or duplicated results) is unit-testable without standing up the
+// full workflow-run fixture machinery driveChunk itself requires.
+func dispatchWave(wave []string, maxConcurrent int, work func(chunkID string) (bool, error)) []driveWaveResult {
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
+	results := make([]driveWaveResult, len(wave))
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	for i, chunkID := range wave {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, chunkID string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			halt, err := work(chunkID)
+			results[i] = driveWaveResult{chunkID: chunkID, halt: halt, err: err}
+		}(i, chunkID)
+	}
+	wg.Wait()
+	return results
+}
+
+// syncWriter serializes concurrent writes to an underlying io.Writer so
+// output from concurrently-dispatched chunks never interleaves mid-line.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func newSyncWriter(w io.Writer) *syncWriter {
+	return &syncWriter{w: w}
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
 
 // driveChunk admits and runs one chunk, then applies the merge policy.
