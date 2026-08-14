@@ -490,18 +490,21 @@ batch_result_budget_bytes = -1
 # Declaring a deferred tool in an agent's tools = [...] is fine and stays fine -
 # only prose instructions are the defect.
 #
-# Measured against this repo's registry with provider.EstimateToolSchemaCost
-# (before the web tools moved to core):
-#   core kept   1737 tok (8 tools)
-#   deferred    1263 tok (5 tools: search, fetch_url, find_references,
-#                         list_symbols, go_to_definition)
-#   index        125 tok   load_tools 208 tok
-#   NET SAVING   930 tok/request while none of the five are loaded
+# Measured against this repo's registry with provider.EstimateToolSchemaCost:
+#   deferred ~2082 tok across 7 tools: find_references, list_symbols,
+#   go_to_definition, workflow_events (194), workflow_list_runs (182),
+#   workflow_cancel (130), workflow_delete (313)
 #
-# search, fetch_url, and extract are CORE now: web research is a first-class
-# root/research capability, not something to discover and load. Re-measure if
-# you want current numbers; the remaining deferred set is find_references,
-# list_symbols, and go_to_definition.
+# search, fetch_url, and extract are CORE: web research is a first-class
+# root/research capability, not something to discover and load.
+#
+# Prompted or routinely-needed tools stay CORE even when rarely used in a
+# given session (multi_edit, memory_save, extract, workflow_inspect,
+# workflow_deliver): a mid-session load_tools admission changes the tool
+# schema digest and resets the whole cached prompt prefix
+# (internal/chat/prefix_identity.go, category "tool_admission"), which in a
+# mature session costs far more than the deferred schema saves. Only tools
+# most sessions never touch are worth deferring.
 core = [
     "read_file",
     "list_dir",
@@ -519,17 +522,14 @@ core = [
     # their schemas ship always (check_core_tier_covers_prompted_tools).
     "memory_save",
     "memory_search",
-    # Phase 7 workflow tools are default for the root session: the root
-    # prompt names them as required process, so their schemas must ship
-    # always, never deferred (check_core_tier_covers_prompted_tools).
+    # Workflow tools the root prompt names as required process ship always
+    # (check_core_tier_covers_prompted_tools). workflow_events,
+    # workflow_list_runs, workflow_cancel, and workflow_delete are deferred:
+    # rare at root, loaded via load_tools when needed.
     "workflow_run",
     "workflow_status",
-    "workflow_events",
     "workflow_inspect",
-    "workflow_list_runs",
     "workflow_deliver",
-    "workflow_cancel",
-    "workflow_delete",
 ]
 
 
