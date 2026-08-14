@@ -17,7 +17,7 @@ import (
 func TestTaskItemSchemaEnumNeverMarshalsToNullWithNoAgents(t *testing.T) {
 	reg := agents.NewRegistry()
 
-	schema := taskItemSchema(reg, false)
+	schema := taskItemSchema(reg, false, true)
 
 	encoded, err := json.Marshal(schema)
 	if err != nil {
@@ -54,5 +54,37 @@ func TestAgentNamesNeverReturnsNil(t *testing.T) {
 	}
 	if got := agentNames(agents.NewRegistry()); got == nil {
 		t.Fatal("agentNames(empty registry) returned nil, want non-nil empty slice")
+	}
+}
+
+// The roster prose ships once per request: dispatch_tasks (the primary
+// router the compiled prompt orders) carries agentRoutingDescription;
+// spawn_agent keeps only the enum for validation. Both schemas are core in
+// the same request, so the model always sees the roster exactly once.
+func TestTaskItemSchemaRosterProseShipsOnce(t *testing.T) {
+	reg := agents.NewRegistry()
+	if err := reg.Publish(agents.ResolvedAgent{Name: "researcher", Description: "web research"}); err != nil {
+		t.Fatal(err)
+	}
+
+	withRoster, err := json.Marshal(taskItemSchema(reg, false, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutRoster, err := json.Marshal(taskItemSchema(reg, true, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(withRoster), "Available agents: ") {
+		t.Fatalf("roster variant must carry the agent roster: %s", withRoster)
+	}
+	if strings.Contains(string(withoutRoster), "Available agents: ") {
+		t.Fatalf("rosterless variant must not duplicate the roster: %s", withoutRoster)
+	}
+	for _, encoded := range [][]byte{withRoster, withoutRoster} {
+		if !strings.Contains(string(encoded), `"enum":["researcher"]`) {
+			t.Fatalf("both variants must keep the agent enum: %s", encoded)
+		}
 	}
 }

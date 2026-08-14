@@ -113,8 +113,14 @@ func TestAgentEnumInParameters(t *testing.T) {
 			if got := agent["enum"].([]string); len(got) != 2 || got[0] != "researcher" || got[1] != "writer" {
 				t.Fatalf("agent enum = %#v", got)
 			}
-			if !strings.Contains(agent["description"].(string), "researcher: Research evidence") {
+			// The roster prose ships once per request: dispatch_tasks carries
+			// it, spawn_agent keeps only the enum (see taskItemSchema).
+			hasRoster := strings.Contains(agent["description"].(string), "researcher: Research evidence")
+			if name == "dispatch" && !hasRoster {
 				t.Fatalf("agent routing hint = %q", agent["description"])
+			}
+			if name == "spawn" && hasRoster {
+				t.Fatalf("spawn_agent must not duplicate the roster: %q", agent["description"])
 			}
 		})
 	}

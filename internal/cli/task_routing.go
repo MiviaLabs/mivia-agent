@@ -76,12 +76,21 @@ func resolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agen
 	return taskRoute{agent: agent, digest: digest, skill: skillName}, nil
 }
 
-func taskItemSchema(reg *agents.AgentRegistry, includeBudget bool) map[string]any {
+// taskItemSchema builds one task's schema. includeRoster controls whether the
+// agent property carries the full roster prose (agentRoutingDescription):
+// dispatch_tasks and spawn_agent both embed this schema in every request, so
+// the roster ships once - in dispatch_tasks, the primary router the compiled
+// prompt orders - and spawn_agent keeps only the enum for validation.
+func taskItemSchema(reg *agents.AgentRegistry, includeBudget, includeRoster bool) map[string]any {
+	agentDescription := agentRoutingDescription(nil)
+	if includeRoster {
+		agentDescription = agentRoutingDescription(reg)
+	}
 	properties := map[string]any{
 		"id": map[string]any{"type": "string", "description": "Unique task identifier within this run"},
 		"agent": map[string]any{
 			"type": "string", "enum": agentNames(reg),
-			"description": agentRoutingDescription(reg),
+			"description": agentDescription,
 		},
 		"skill":           map[string]any{"type": "string", "description": "Optional skill invoked under the selected agent's policy"},
 		"depends_on":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Task IDs that must complete first"},
