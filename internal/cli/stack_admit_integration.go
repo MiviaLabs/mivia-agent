@@ -16,6 +16,11 @@ func integrationRunInputs(planInputs map[string]string, prBase string) (map[stri
 		inputs[k] = v
 		snapshot[k] = v
 	}
+	// stack_mode=single forbids chunk_plan (validateStackingReservedInputs),
+	// and a plan run admits with one (the implicit-plan path never checks
+	// it), so the replay must strip it instead of carrying it over.
+	delete(inputs, "chunk_plan")
+	delete(snapshot, "chunk_plan")
 	inputs["stack_mode"] = "single"
 	snapshot["stack_mode"] = "single"
 	if prBase != "" {

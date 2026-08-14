@@ -32,3 +32,28 @@ func TestIntegrationRunInputsAdmitAsStackModeSingle(t *testing.T) {
 		t.Fatalf("inputs[task] = %v, want the replayed plan input", inputs["task"])
 	}
 }
+
+// A plan run admits with an explicit chunk_plan input (the no-stack_mode path
+// of validateStackingReservedInputs returns "plan" without checking it), so
+// replaying the plan inputs verbatim carries chunk_plan over - and
+// stack_mode=single forbids it: every such stack then died at "integration
+// run failed: reserved input chunk_plan is forbidden in stack_mode=single".
+// The replay must strip chunk_plan.
+func TestIntegrationRunInputsStripsReplayedChunkPlan(t *testing.T) {
+	inputs, snapshot := integrationRunInputs(map[string]string{
+		"task":       "whole feature",
+		"chunk_plan": `{"id":"c1","title":"leak","files":["a.go"]}`,
+	}, "master")
+	if _, present := inputs["chunk_plan"]; present {
+		t.Fatalf("inputs[chunk_plan] = %v, want stripped (forbidden in stack_mode=single)", inputs["chunk_plan"])
+	}
+	if _, present := snapshot["chunk_plan"]; present {
+		t.Fatalf("snapshot[chunk_plan] = %v, want stripped (forbidden in stack_mode=single)", snapshot["chunk_plan"])
+	}
+	if inputs["stack_mode"] != "single" || snapshot["stack_mode"] != "single" {
+		t.Fatalf("stack_mode = %v/%v, want single/single", inputs["stack_mode"], snapshot["stack_mode"])
+	}
+	if inputs["task"] != "whole feature" {
+		t.Fatalf("inputs[task] = %v, want the replayed plan input", inputs["task"])
+	}
+}
