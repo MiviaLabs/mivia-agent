@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -147,4 +148,51 @@ func TestCompile_DeliveryMaxRepairsNegativeRejected(t *testing.T) {
 	wf := base()
 	wf.Delivery.MaxRepairs = -1
 	assertCompileError(t, wf, "negative max_repairs", "max_repairs must be >= 0")
+}
+
+// TestCompile_DeliveryProviderValue pins the admission-time provider check:
+// only "github" is supported, and the refusal says so plainly instead of
+// implying a provider seam that does not exist. An inactive block (kind "")
+// never runs, so its provider value stays unchecked.
+func TestCompile_DeliveryProviderValue(t *testing.T) {
+	t.Run("non-github provider rejected with support message", func(t *testing.T) {
+		wf := newMinimalWorkflow("delivery-provider-foreign")
+		wf.Delivery = &definition.Delivery{Kind: "pull_request", Mode: "draft", Provider: "gitlab", Base: "main"}
+		_, err := Compile(wf)
+		if err == nil {
+			t.Fatal(`Compile accepted provider "gitlab", want a refusal`)
+		}
+		if !strings.Contains(err.Error(), `provider "gitlab" is not supported (only "github" is currently supported)`) {
+			t.Fatalf("Compile error = %q, want the only-github support message", err)
+		}
+	})
+	t.Run("mode none with foreign provider rejected on fresh compile", func(t *testing.T) {
+		wf := newMinimalWorkflow("delivery-provider-mode-none")
+		wf.Delivery = &definition.Delivery{Kind: "pull_request", Mode: "none", Provider: "gitlab", Base: "main"}
+		if _, err := Compile(wf); err == nil {
+			t.Fatal(`Compile accepted provider "gitlab" with mode "none", want a refusal`)
+		}
+	})
+	t.Run("empty provider still rejected as non-empty", func(t *testing.T) {
+		wf := newMinimalWorkflow("delivery-provider-empty")
+		wf.Delivery = &definition.Delivery{Kind: "pull_request", Mode: "draft", Base: "main"}
+		_, err := Compile(wf)
+		if err == nil || !strings.Contains(err.Error(), "provider must be non-empty") {
+			t.Fatalf("Compile error = %v, want the non-empty provider refusal", err)
+		}
+	})
+	t.Run("inactive block with foreign provider still compiles", func(t *testing.T) {
+		wf := newMinimalWorkflow("delivery-provider-inactive")
+		wf.Delivery = &definition.Delivery{Kind: "", Mode: "", Provider: "gitlab"}
+		if _, err := Compile(wf); err != nil {
+			t.Fatalf("Compile rejected an inactive delivery block: %v", err)
+		}
+	})
+	t.Run("resume of an admitted foreign-provider definition is not stranded", func(t *testing.T) {
+		wf := newMinimalWorkflow("delivery-provider-resume")
+		wf.Delivery = &definition.Delivery{Kind: "pull_request", Mode: "none", Provider: "gitlab", Base: "main"}
+		if _, err := CompileForResume(wf); err != nil {
+			t.Fatalf("CompileForResume rejected an admitted definition: %v", err)
+		}
+	})
 }

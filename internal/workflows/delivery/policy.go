@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -145,8 +146,8 @@ func (p Policy) Validate() error {
 	default:
 		return fmt.Errorf("delivery policy: mode %q is not supported (must be one of: none, draft, ready)", p.Mode)
 	}
-	if p.Provider != "github" {
-		return fmt.Errorf("delivery policy: provider %q is not supported (must be \"github\")", p.Provider)
+	if p.Provider != definition.ProviderGitHub {
+		return fmt.Errorf("delivery policy: provider %q is not supported (must be %q)", p.Provider, definition.ProviderGitHub)
 	}
 	if p.Kind == "pull_request" && p.Base == "" {
 		return fmt.Errorf("delivery policy: base must be non-empty for pull_request delivery")

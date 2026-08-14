@@ -3,6 +3,8 @@ package delivery
 import (
 	"fmt"
 	"os/exec"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
 // prToolProbe runs the provider's PR tool with a harmless offline argument.
@@ -37,12 +39,14 @@ func ProbePRTool(provider string) error {
 }
 
 // prToolProgram maps a delivery provider to the executable that publishes for
-// it. An unknown provider is refused rather than assumed.
+// it. An unknown provider is refused rather than assumed. The refusal states
+// the support boundary instead of a missing tool: only
+// definition.ProviderGitHub is supported, and no installed CLI changes that.
 func prToolProgram(provider string) (string, error) {
 	switch provider {
-	case "github":
+	case definition.ProviderGitHub:
 		return "gh", nil
 	default:
-		return "", fmt.Errorf("delivery provider %q has no known pull-request tool", provider)
+		return "", fmt.Errorf("delivery provider %q is not supported (only %q is currently supported)", provider, definition.ProviderGitHub)
 	}
 }

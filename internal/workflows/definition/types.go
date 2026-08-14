@@ -135,6 +135,12 @@ type MatchCriteria struct {
 	Output map[string]string `toml:"output" json:"output,omitempty"`
 }
 
+// ProviderGitHub is the only delivery provider the engine supports. It lives
+// in the schema package, next to the field it constrains, so the compiler
+// (admission) and the delivery package (run probe and delivery-time
+// backstop) share one value instead of drifting literals.
+const ProviderGitHub = "github"
+
 type Delivery struct {
 	Kind                  string `toml:"kind" json:"kind,omitempty"`
 	Mode                  string `toml:"mode" json:"mode,omitempty"`
