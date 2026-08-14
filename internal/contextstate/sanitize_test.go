@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestClassify(t *testing.T) {
@@ -178,13 +179,6 @@ func TestSanitizeSourcePayload(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid UTF-8 rejected", func(t *testing.T) {
-		_, err := SanitizeSourcePayload(nil, principal, []byte("hello\xffworld"), RedactionPolicy{})
-		if err == nil {
-			t.Fatal("expected error for invalid UTF-8")
-		}
-	})
-
 	t.Run("large payload accepted for chunking", func(t *testing.T) {
 		// SourceEventBytes is chunk size, not whole-payload reject.
 		SetLimits(Limits{SourceEventBytes: 10})
@@ -197,6 +191,32 @@ func TestSanitizeSourcePayload(t *testing.T) {
 			t.Fatalf("size = %d, want 11", got.Ref.Size)
 		}
 	})
+}
+
+// TestSanitizeSourcePayloadRepairsInvalidUTF8 is its own function (not a
+// t.Run under TestSanitizeSourcePayload) to keep that function's line count
+// under this repo's function-length gate.
+func TestSanitizeSourcePayloadRepairsInvalidUTF8(t *testing.T) {
+	t.Parallel()
+	principal, err := NewPrincipal("ws", "s", "sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A byte-capped tool capture can split a multi-byte rune at its cut
+	// point (see internal/tools/capped_buffer.go) - that must never fail
+	// the whole turn's context publication (INV-AG-35).
+	result, err := SanitizeSourcePayload(nil, principal, []byte("hello\xffworld"), RedactionPolicy{
+		Configured: true, Patterns: []string{"never-match"},
+	})
+	if err != nil {
+		t.Fatalf("invalid UTF-8 must be repaired, not rejected: %v", err)
+	}
+	if !utf8.Valid(result.Bytes) {
+		t.Fatalf("stored bytes must be valid UTF-8 after repair: %q", result.Bytes)
+	}
+	if !strings.Contains(string(result.Bytes), "hello") || !strings.Contains(string(result.Bytes), "world") {
+		t.Fatalf("repair must preserve the surrounding valid text: %q", result.Bytes)
+	}
 }
 
 func TestRedactSourcePayload(t *testing.T) {

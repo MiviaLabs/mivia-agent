@@ -3,6 +3,7 @@ package tasks
 import (
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -259,4 +260,104 @@ func TestTransitionTask(t *testing.T) {
 	requireErr(t, s.TransitionTask("no-such-plan", "task-1", "running"), ErrPlanNotFound, "unknown plan")
 	_, err = s.ListTransitions("no-such-plan")
 	requireErr(t, err, ErrPlanNotFound, "ListTransitions unknown plan")
+}
+
+// TestTransitionTaskCAS pins the compare-and-swap admission guard: the
+// transition only applies when the task's current status is one of the
+// caller's expected preconditions, so two concurrent callers racing to admit
+// the same task can never both win.
+func TestTransitionTaskCAS(t *testing.T) {
+	s := NewMemoryStore()
+	s.SetTimeSource(func() time.Time { return fixedClock })
+	ref, err := s.StorePlan(Plan{ID: "plan-1", Scope: Scope{Type: ScopeRun, ID: "run-1"}})
+	requireErr(t, err, nil, "StorePlan")
+	requireErr(t, s.CreateTask(Task{ID: "task-1", PlanRef: ref, Scope: Scope{Type: ScopeRun, ID: "run-1"}, Status: "planned"}), nil, "CreateTask")
+
+	// A precondition that does not match the current status is a clean no-op,
+	// not an error: the caller learns it lost the race and moves on.
+	ok, err := s.TransitionTaskCAS(ref, "task-1", []string{"queued", "reopened"}, "running")
+	requireErr(t, err, nil, "CAS mismatched precondition")
+	if ok {
+		t.Fatal("CAS with mismatched precondition should not apply")
+	}
+	got, err := s.GetTask(ref, "task-1")
+	requireErr(t, err, nil, "GetTask after failed CAS")
+	if got.Status != "planned" {
+		t.Fatalf("task status = %q, want unchanged %q", got.Status, "planned")
+	}
+
+	// A matching precondition applies exactly once.
+	ok, err = s.TransitionTaskCAS(ref, "task-1", []string{"planned", "reopened"}, "running")
+	requireErr(t, err, nil, "CAS matching precondition")
+	if !ok {
+		t.Fatal("CAS with matching precondition should apply")
+	}
+	got, err = s.GetTask(ref, "task-1")
+	requireErr(t, err, nil, "GetTask after successful CAS")
+	if got.Status != "running" {
+		t.Fatalf("task status = %q, want %q", got.Status, "running")
+	}
+
+	// The now-stale precondition ("planned") no longer matches, so a second
+	// caller racing behind the first observes a clean loss, never a second win.
+	ok, err = s.TransitionTaskCAS(ref, "task-1", []string{"planned", "reopened"}, "running")
+	requireErr(t, err, nil, "CAS second racer")
+	if ok {
+		t.Fatal("second CAS racer should lose: task already transitioned")
+	}
+
+	// Error cases mirror TransitionTask.
+	_, err = s.TransitionTaskCAS(ref, "task-1", []string{"running"}, "")
+	requireErr(t, err, ErrEmptyStatus, "empty status")
+	_, err = s.TransitionTaskCAS(ref, "no-such-task", []string{"planned"}, "running")
+	requireErr(t, err, ErrTaskNotFound, "unknown task")
+	_, err = s.TransitionTaskCAS("no-such-plan", "task-1", []string{"planned"}, "running")
+	requireErr(t, err, ErrPlanNotFound, "unknown plan")
+}
+
+// TestTransitionTaskCAS_ConcurrentRace exercises the actual concurrency
+// scenario the guard exists for: many goroutines racing to admit the same
+// task must produce exactly one winner, never zero and never more than one.
+func TestTransitionTaskCAS_ConcurrentRace(t *testing.T) {
+	s := NewMemoryStore()
+	ref, err := s.StorePlan(Plan{ID: "plan-1", Scope: Scope{Type: ScopeRun, ID: "run-1"}})
+	requireErr(t, err, nil, "StorePlan")
+	requireErr(t, s.CreateTask(Task{ID: "task-1", PlanRef: ref, Scope: Scope{Type: ScopeRun, ID: "run-1"}, Status: "planned"}), nil, "CreateTask")
+
+	const racers = 32
+	wins := make([]bool, racers)
+	var wg sync.WaitGroup
+	wg.Add(racers)
+	for i := 0; i < racers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			ok, err := s.TransitionTaskCAS(ref, "task-1", []string{"planned"}, "running")
+			if err != nil {
+				t.Errorf("racer %d: unexpected error: %v", i, err)
+				return
+			}
+			wins[i] = ok
+		}(i)
+	}
+	wg.Wait()
+
+	winCount := 0
+	for _, w := range wins {
+		if w {
+			winCount++
+		}
+	}
+	if winCount != 1 {
+		t.Fatalf("winCount = %d, want exactly 1", winCount)
+	}
+	got, err := s.GetTask(ref, "task-1")
+	requireErr(t, err, nil, "GetTask after race")
+	if got.Status != "running" {
+		t.Fatalf("task status = %q, want %q", got.Status, "running")
+	}
+	trans, err := s.ListTransitions(ref)
+	requireErr(t, err, nil, "ListTransitions after race")
+	if len(trans) != 1 {
+		t.Fatalf("journal length = %d, want exactly 1 (no double-admission)", len(trans))
+	}
 }

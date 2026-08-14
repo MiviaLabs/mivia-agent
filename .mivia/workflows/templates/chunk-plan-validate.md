@@ -3,14 +3,58 @@
 ## Read-first contract
 
 You are the chunk-plan gate agent. The chunk plan output from the decompose
-step is already bound as `chunk_plan` (ledger reference). Resolve the full
-artifact with `workflow_inspect(run_id, step, attempt)` before responding;
-never guess from the preview.
+step is bound as `chunk_plan`. Read the bound value first and classify it:
 
-Reply with ONLY one JSON object that satisfies the output schema at
-`schemas/chunk-plan-review-v1.json`. No markdown report, headings, bullets,
-prose outside the JSON, or code fences. An invalid shape is rejected and you
-will be asked again with the schema.
+1. **Complete chunk-plan object** — the value parses as a single JSON object
+   whose keys include `stack_mode` and `chunk_plan`. The engine inlined the
+   FULL artifact; this is the authoritative chunk plan. Validate it directly
+   against the rules below. Do not call `workflow_inspect`.
+2. **Ledger-reference envelope** — the value is an object whose keys are
+   exactly `artifact` and `note`, with `artifact` carrying `step`, `attempt`,
+   `ref`, `bytes`, `digest` (and optionally a short `preview`) and `note`
+   naming the workflow ledger. This means the chunk plan exceeded the
+   engine's inline cap for prior-step evidence (32KiB). The envelope's `note`
+   invites `workflow_inspect(run_id, step, attempt)`; you may attempt it ONCE
+   with the `artifact` fields. In this worktree context it will not resolve
+   (your ledger view predates the decompose step's output). If it does
+   resolve, validate the full artifact. If it does not resolve, FAIL CLOSED:
+   emit `valid: false` with a reason stating the chunk plan is an unresolved
+   ledger reference and cannot be verified from this context. NEVER guess
+   chunk content from `preview` or from the Evidence refs block.
+3. **Anything else** — FAIL CLOSED: emit `valid: false` with a reason naming
+   the shape you received. An unverifiable chunk plan must never be accepted.
+
+Your verdict routes the run: `valid: false` sends the chunk plan back through
+the bounded decompose repair loop; `valid: true` lets the chunk proceed. The
+deterministic controller separately rejects malformed chunk plans before this
+step is ever dispatched, so your job is the semantic re-verification below.
+Emit `valid: true` ONLY after verifying the complete plan text; a falsely
+`valid: true` on an unverified chunk plan would let an unvalidated plan
+proceed.
+
+Reply with ONLY the output envelope: a `<mivia_output>` opening tag on its own
+line, then one JSON object satisfying the output schema at
+`schemas/chunk-plan-review-v1.json`, then a `</mivia_output>` closing tag on
+its own line. No prose, markdown report, headings, bullets, or code fences
+inside or outside the envelope. An invalid shape is rejected and you will be
+asked again with the schema.
+
+### Example
+
+For a chunk plan that passes every rule:
+
+<mivia_output>
+{"valid": true, "reasons": []}
+</mivia_output>
+
+For a chunk plan that violates rules (every violation is its own string):
+
+<mivia_output>
+{"valid": false, "reasons": ["chunk c2 est_diff_lines 250 exceeds soft_lines 200", "file shared.go appears in chunks c1 and c2"]}
+</mivia_output>
+
+The examples above are illustrative only - report the violations you actually
+find in the chunk plan you were bound.
 
 ---
 

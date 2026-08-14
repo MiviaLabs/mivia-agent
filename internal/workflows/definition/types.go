@@ -229,17 +229,31 @@ type Stacking struct {
 	// always exists in the workflow, so agent references stay resolvable in
 	// any workspace.
 	Agent string `toml:"agent" json:"agent,omitempty"`
+	// MaxTotalChunks bounds the number of chunks across all decompose waves
+	// of one plan (0 = global default). It is the real ceiling on plan size;
+	// MaxWaveChunks bounds only a single decompose call.
+	MaxTotalChunks int `toml:"max_total_chunks" json:"max_total_chunks,omitempty"`
+	// MaxWaveChunks bounds the number of chunks a single decompose call may
+	// emit (0 = global default). Keeps one LLM call reliable; total plan size
+	// is bounded by MaxTotalChunks instead.
+	MaxWaveChunks int `toml:"max_wave_chunks" json:"max_wave_chunks,omitempty"`
+	// MaxConcurrentChunks bounds how many chunk runs the stack driver admits
+	// and drives concurrently within one ready wave (0 = global default).
+	MaxConcurrentChunks int `toml:"max_concurrent_chunks" json:"max_concurrent_chunks,omitempty"`
 }
 
 // Stacking defaults. These are the global defaults every workflow inherits;
 // per-workflow [stacking] values override them.
 const (
-	DefaultStackingEnabled     = true
-	DefaultStackingMaxChunks   = 12
-	DefaultStackingSoftLines   = 200
-	DefaultStackingHardLines   = 400
-	DefaultStackingMaxFiles    = 5
-	DefaultStackingMergePolicy = "approve"
+	DefaultStackingEnabled             = true
+	DefaultStackingMaxChunks           = 12
+	DefaultStackingSoftLines           = 200
+	DefaultStackingHardLines           = 400
+	DefaultStackingMaxFiles            = 5
+	DefaultStackingMergePolicy         = "approve"
+	DefaultStackingMaxTotalChunks      = 200
+	DefaultStackingMaxWaveChunks       = 12
+	DefaultStackingMaxConcurrentChunks = 4
 )
 
 // ValidStackingMergePolicies enumerates the allowed merge_policy values.
@@ -264,15 +278,18 @@ func (s *Stacking) StackingEnabled() bool {
 // ImplementStep are resolved by the compiler (inference needs the step
 // graph) and passed in.
 type StackingConfig struct {
-	Enabled       bool
-	PlanStep      string
-	ImplementStep string
-	MaxChunks     int
-	SoftLines     int
-	HardLines     int
-	MaxFiles      int
-	MergePolicy   string
-	Agent         string
+	Enabled             bool
+	PlanStep            string
+	ImplementStep       string
+	MaxChunks           int
+	SoftLines           int
+	HardLines           int
+	MaxFiles            int
+	MergePolicy         string
+	Agent               string
+	MaxTotalChunks      int
+	MaxWaveChunks       int
+	MaxConcurrentChunks int
 }
 
 // EffectiveStacking resolves the stacking configuration for a workflow.
@@ -280,14 +297,17 @@ type StackingConfig struct {
 // inferred) step ids; pass "" when inference did not apply.
 func (s *Stacking) EffectiveStacking(planStep, implementStep string) StackingConfig {
 	cfg := StackingConfig{
-		Enabled:       s.StackingEnabled(),
-		PlanStep:      planStep,
-		ImplementStep: implementStep,
-		MaxChunks:     DefaultStackingMaxChunks,
-		SoftLines:     DefaultStackingSoftLines,
-		HardLines:     DefaultStackingHardLines,
-		MaxFiles:      DefaultStackingMaxFiles,
-		MergePolicy:   DefaultStackingMergePolicy,
+		Enabled:             s.StackingEnabled(),
+		PlanStep:            planStep,
+		ImplementStep:       implementStep,
+		MaxChunks:           DefaultStackingMaxChunks,
+		SoftLines:           DefaultStackingSoftLines,
+		HardLines:           DefaultStackingHardLines,
+		MaxFiles:            DefaultStackingMaxFiles,
+		MergePolicy:         DefaultStackingMergePolicy,
+		MaxTotalChunks:      DefaultStackingMaxTotalChunks,
+		MaxWaveChunks:       DefaultStackingMaxWaveChunks,
+		MaxConcurrentChunks: DefaultStackingMaxConcurrentChunks,
 	}
 	if s == nil {
 		return cfg
@@ -306,6 +326,15 @@ func (s *Stacking) EffectiveStacking(planStep, implementStep string) StackingCon
 	}
 	if s.MergePolicy != "" {
 		cfg.MergePolicy = s.MergePolicy
+	}
+	if s.MaxTotalChunks > 0 {
+		cfg.MaxTotalChunks = s.MaxTotalChunks
+	}
+	if s.MaxWaveChunks > 0 {
+		cfg.MaxWaveChunks = s.MaxWaveChunks
+	}
+	if s.MaxConcurrentChunks > 0 {
+		cfg.MaxConcurrentChunks = s.MaxConcurrentChunks
 	}
 	cfg.Agent = s.Agent
 	return cfg

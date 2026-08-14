@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 )
 
 // maxTaskDescriptionBytes bounds EventOrigin.TaskDescription the same way
@@ -30,11 +31,19 @@ func taskDescriptionFromInput(input json.RawMessage) string {
 	return boundTaskDescription(string(input))
 }
 
+// boundTaskDescription truncates on a UTF-8 rune boundary
+// (textutil.TruncateRuneSafe) rather than a raw byte offset - a task
+// description is free text and can carry any script, so a naive
+// s[:maxTaskDescriptionBytes] cut can split a multi-byte rune and hand the
+// caller invalid UTF-8 (DC-6). The ellipsis is appended after the bound, not
+// carved out of it (unlike textutil.TruncateEllipsis) - matches this
+// function's existing contract of an up-to-maxTaskDescriptionBytes-byte
+// content prefix plus a trailing marker.
 func boundTaskDescription(s string) string {
 	if len(s) <= maxTaskDescriptionBytes {
 		return s
 	}
-	return s[:maxTaskDescriptionBytes] + "…"
+	return textutil.TruncateRuneSafe(s, maxTaskDescriptionBytes) + "…"
 }
 
 // StampEventOrigin decorates onEvent so every event it receives carries the

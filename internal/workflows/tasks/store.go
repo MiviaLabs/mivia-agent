@@ -165,19 +165,104 @@ func (s *Store) CreateTask(task Task) error {
 func (s *Store) TransitionTask(planRef, taskID, newStatus string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if newStatus == "" {
-		return ErrEmptyStatus
-	}
+	_, err := s.transitionTaskLocked(planRef, taskID, nil, newStatus)
+	return err
+}
+
+// TransitionTaskCAS atomically changes a task status only when its current
+// status is one of fromStatuses (compare-and-swap). ok=false with a nil
+// error means the precondition did not hold: some other caller already moved
+// the task, and this caller cleanly lost the race rather than double-admitting
+// it. Store.mu already serializes every call (see mu's doc comment), so the
+// check and the write are indivisible with respect to any other Store method.
+func (s *Store) TransitionTaskCAS(planRef, taskID string, fromStatuses []string, newStatus string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.transitionTaskLocked(planRef, taskID, fromStatuses, newStatus)
+}
+
+// TransitionTaskCASDecide atomically reads the task's current status and its
+// reopened-attempt count (the count of prior transitions into reopenStatus),
+// then applies decide's verdict, all inside one critical section. This closes
+// the read-then-decide-then-write race a separate attempt-count read plus a
+// later TransitionTaskCAS call would still have: two concurrent failure
+// handlers for the same task cannot both observe the same attempt count and
+// both decide to reopen, because the second handler's decide call runs after
+// the first's write has already landed and sees the incremented count.
+//
+// fromStatuses gates eligibility exactly like TransitionTaskCAS: decide is
+// only invoked when the task's current status is one of fromStatuses;
+// otherwise this returns (false, "", 0, nil), the same clean-loss shape.
+func (s *Store) TransitionTaskCASDecide(planRef, taskID string, fromStatuses []string, reopenStatus string, decide func(attempts int) (newStatus string, apply bool)) (applied bool, newStatus string, attempts int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.catchUp(context.Background()); err != nil {
-		return err
+		return false, "", 0, err
 	}
 	state, ok := s.plans[planRef]
 	if !ok {
-		return ErrPlanNotFound
+		return false, "", 0, ErrPlanNotFound
 	}
 	task, ok := state.tasks[taskID]
 	if !ok {
-		return ErrTaskNotFound
+		return false, "", 0, ErrTaskNotFound
+	}
+	if fromStatuses != nil {
+		matched := false
+		for _, want := range fromStatuses {
+			if task.Status == want {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false, "", 0, nil
+		}
+	}
+	for _, tr := range state.journal {
+		if tr.TaskID == taskID && tr.ToStatus == reopenStatus {
+			attempts++
+		}
+	}
+	want, apply := decide(attempts)
+	if !apply {
+		return false, "", attempts, nil
+	}
+	ok2, err := s.transitionTaskLocked(planRef, taskID, fromStatuses, want)
+	return ok2, want, attempts, err
+}
+
+// transitionTaskLocked is the shared implementation for TransitionTask and
+// TransitionTaskCAS. Callers must hold s.mu. A nil fromStatuses applies
+// unconditionally (TransitionTask's semantics); a non-nil fromStatuses only
+// applies when the task's current status appears in it, returning
+// (false, nil) otherwise.
+func (s *Store) transitionTaskLocked(planRef, taskID string, fromStatuses []string, newStatus string) (bool, error) {
+	if newStatus == "" {
+		return false, ErrEmptyStatus
+	}
+	if err := s.catchUp(context.Background()); err != nil {
+		return false, err
+	}
+	state, ok := s.plans[planRef]
+	if !ok {
+		return false, ErrPlanNotFound
+	}
+	task, ok := state.tasks[taskID]
+	if !ok {
+		return false, ErrTaskNotFound
+	}
+	if fromStatuses != nil {
+		matched := false
+		for _, want := range fromStatuses {
+			if task.Status == want {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false, nil
+		}
 	}
 	// The ordinal is derived from durable state (transitions already in the
 	// journal), so two writers of the same task agree on the event ID; the
@@ -197,8 +282,11 @@ func (s *Store) TransitionTask(planRef, taskID, newStatus string) error {
 		PlanRef: planRef, TaskID: taskID,
 		FromStatus: from, ToStatus: newStatus, At: at,
 	})
-	return s.marshalAndAppend(planRunID(planRef), eventID(planRef, eventKindTaskTransitioned, taskID, strconv.Itoa(ordinal)),
-		eventKindTaskTransitioned, taskTransitionedPayload{TaskID: taskID, FromStatus: from, ToStatus: newStatus, CreatedAt: at})
+	if err := s.marshalAndAppend(planRunID(planRef), eventID(planRef, eventKindTaskTransitioned, taskID, strconv.Itoa(ordinal)),
+		eventKindTaskTransitioned, taskTransitionedPayload{TaskID: taskID, FromStatus: from, ToStatus: newStatus, CreatedAt: at}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ListTasksByScope returns defensive copies of every task bound to scope.

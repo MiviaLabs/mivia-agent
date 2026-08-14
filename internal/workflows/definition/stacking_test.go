@@ -32,14 +32,17 @@ func TestEffectiveStacking(t *testing.T) {
 		var s *Stacking
 		cfg := s.EffectiveStacking("plan", "implement")
 		want := StackingConfig{
-			Enabled:       true,
-			PlanStep:      "plan",
-			ImplementStep: "implement",
-			MaxChunks:     DefaultStackingMaxChunks,
-			SoftLines:     DefaultStackingSoftLines,
-			HardLines:     DefaultStackingHardLines,
-			MaxFiles:      DefaultStackingMaxFiles,
-			MergePolicy:   DefaultStackingMergePolicy,
+			Enabled:             true,
+			PlanStep:            "plan",
+			ImplementStep:       "implement",
+			MaxChunks:           DefaultStackingMaxChunks,
+			SoftLines:           DefaultStackingSoftLines,
+			HardLines:           DefaultStackingHardLines,
+			MaxFiles:            DefaultStackingMaxFiles,
+			MergePolicy:         DefaultStackingMergePolicy,
+			MaxTotalChunks:      DefaultStackingMaxTotalChunks,
+			MaxWaveChunks:       DefaultStackingMaxWaveChunks,
+			MaxConcurrentChunks: DefaultStackingMaxConcurrentChunks,
 		}
 		if cfg != want {
 			t.Errorf("EffectiveStacking() = %+v, want %+v", cfg, want)
