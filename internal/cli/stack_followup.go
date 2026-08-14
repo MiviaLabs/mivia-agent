@@ -12,6 +12,9 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -71,8 +74,10 @@ func deferredFollowUpChunkID(parentChunkID string) string {
 // commit (a StackRemainingCommits > 0 delivery record) and, if so and no
 // follow-up has been admitted yet, pushes the deferred branch and opens a
 // stacked PR for it (base = chunkID's own just-delivered branch). Safe to
-// call repeatedly and from multiple driver loop iterations: idempotent by
-// construction (task-existence check) before any git/GitHub call.
+// call repeatedly and from multiple driver loop iterations: the follow-up
+// run row is reserved with a DETERMINISTIC run id BEFORE any git/GitHub
+// call, so a retry or a concurrent admission resumes the same registration
+// instead of duplicating run rows, delivery records, or PRs (bug 4).
 func admitFollowUpsForChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 	run, found, err := stackRunRef(prepared.repo, stackID, chunkID)
@@ -82,6 +87,14 @@ func admitFollowUpsForChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, 
 	followUpID := deferredFollowUpChunkID(chunkID)
 	if _, err := ledger.GetTask(stackID, followUpID); err == nil {
 		return nil // already admitted
+	}
+	// The durable fence: reserve the follow-up run row (deterministic run
+	// id) before any side effect. A crash after the PR was created, or a
+	// concurrent admission, then resumes the SAME row instead of minting a
+	// duplicate.
+	runID, err := reserveFollowUpRun(prepared.repo, stackID, followUpID, run)
+	if err != nil {
+		return fmt.Errorf("chunk %s: reserve follow-up run: %w", chunkID, err)
 	}
 	worktreeRoot, err := resolveRunWorktreeRoot(ctx, prepared.root, run)
 	if err != nil {
@@ -95,10 +108,45 @@ func admitFollowUpsForChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, 
 	if !published {
 		return nil
 	}
-	if err := registerFollowUpChunk(prepared.repo, ledger, stackID, chunkID, followUpID, deferredBranch, deferredSHA, run, ref); err != nil {
+	if err := registerFollowUpChunk(prepared.repo, ledger, stackID, chunkID, followUpID, runID, deferredBranch, deferredSHA, run, ref); err != nil {
 		return fmt.Errorf("chunk %s: register follow-up %s: %w", chunkID, followUpID, err)
 	}
 	return nil
+}
+
+// followUpRunID derives the follow-up run id deterministically from its
+// stable admission key (<stack>:<chunk>-deferred): the same key always
+// yields the same run id, so CreateRun itself is the idempotency fence. The
+// wfr-followup- prefix keeps the wfr- run-id prefix the run ledger's
+// admission validation enforces.
+func followUpRunID(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return "wfr-followup-" + hex.EncodeToString(sum[:16])
+}
+
+// reserveFollowUpRun durably reserves the follow-up run row BEFORE any
+// git/GitHub side effect: this row is the admission's fence. The run id is
+// deterministic, so a retry or a concurrent admission can never mint a
+// second row - CreateRun returns ErrDuplicate and the caller resumes from
+// the row this or an earlier reservation left.
+func reserveFollowUpRun(repo workflowledger.Repository, stackID, followUpID string, parentRun workflowledger.RunSnapshot) (string, error) {
+	ctx := context.Background()
+	key, err := stackAdmissionKey(stackID, followUpID)
+	if err != nil {
+		return "", err
+	}
+	runID := followUpRunID(key)
+	snap := workflowledger.RunSnapshot{
+		RunID: runID, InvocationKey: key,
+		WorkflowName: parentRun.WorkflowName, WorkflowDigest: parentRun.WorkflowDigest,
+		Status: workflowledger.RunStatusPending, ActiveStepID: "success",
+		BaseRef: parentRun.BaseRef, BaseCommit: parentRun.BaseCommit,
+		WorktreeName: parentRun.WorktreeName + "-deferred", RemoteURL: parentRun.RemoteURL,
+	}
+	if err := repo.CreateRun(ctx, snap, []byte("{}")); err != nil && !errors.Is(err, workflowledger.ErrDuplicate) {
+		return "", fmt.Errorf("create follow-up run: %w", err)
+	}
+	return runID, nil
 }
 
 // resolveRunWorktreeRoot resolves the filesystem path of runID's worktree,
@@ -116,38 +164,53 @@ func resolveRunWorktreeRoot(ctx context.Context, sourceRoot string, run workflow
 	return identity.Root, nil
 }
 
+// followUpRunRank orders the statuses a follow-up run row moves through
+// (pending -> running -> succeeded). Anything else is treated as past every
+// target so the settle loop never forces a transition away from it.
+func followUpRunRank(status workflowledger.RunStatus) int {
+	switch status {
+	case workflowledger.RunStatusPending:
+		return 0
+	case workflowledger.RunStatusRunning:
+		return 1
+	case workflowledger.RunStatusSucceeded:
+		return 2
+	default:
+		return 3
+	}
+}
+
 // registerFollowUpChunk writes the synthetic ledger state a follow-up chunk
 // needs to be indistinguishable from a normal, already-delivered chunk to
-// every existing reconcile/merge code path: a run row (CreateRun, CASed
-// pending->running->succeeded, exactly the transitions ValidRunTransition
-// allows), a delivery record proving it was pushed (stackRunPushed's
-// evidence contract), and a task with Deps on the parent (so it participates
-// in reconcileStack/stackTaskMap like any seeded chunk).
-func registerFollowUpChunk(repo workflowledger.Repository, ledger *tasks.Store, stackID, parentChunkID, followUpID, deferredBranch, deferredSHA string, parentRun workflowledger.RunSnapshot, ref delivery.PRRef) error {
+// every existing reconcile/merge code path: the run row already reserved by
+// reserveFollowUpRun is CASed pending->running->succeeded (the transitions
+// ValidRunTransition allows), a delivery record proves it was pushed
+// (stackRunPushed's evidence contract), and a task with Deps on the parent
+// makes it participate in reconcileStack/stackTaskMap like any seeded
+// chunk. Every step is idempotent, so a retry resumes a crashed or
+// concurrent registration instead of duplicating it.
+func registerFollowUpChunk(repo workflowledger.Repository, ledger *tasks.Store, stackID, parentChunkID, followUpID, runID, deferredBranch, deferredSHA string, parentRun workflowledger.RunSnapshot, ref delivery.PRRef) error {
 	ctx := context.Background()
-	key, err := stackAdmissionKey(stackID, followUpID)
-	if err != nil {
-		return err
-	}
-	runID := newCLIWorkflowRunID()
-	worktreeName := parentRun.WorktreeName + "-deferred"
-	snap := workflowledger.RunSnapshot{
-		RunID: runID, InvocationKey: key,
-		WorkflowName: parentRun.WorkflowName, WorkflowDigest: parentRun.WorkflowDigest,
-		Status: workflowledger.RunStatusPending, ActiveStepID: "success",
-		BaseRef: parentRun.BaseRef, BaseCommit: parentRun.BaseCommit,
-		WorktreeName: worktreeName, RemoteURL: parentRun.RemoteURL,
-	}
-	if err := repo.CreateRun(ctx, snap, []byte("{}")); err != nil {
-		return fmt.Errorf("create follow-up run: %w", err)
-	}
+	// Settle the reserved run row toward succeeded. A crashed or concurrent
+	// admission may have left it at any status (pending, running, or
+	// succeeded); a step already reached or passed is skipped (same-status
+	// and backward edges are rejected by ValidRunTransition), and a CAS
+	// conflict just means a concurrent admission advanced the row: re-read
+	// and retry.
 	for _, next := range []workflowledger.RunStatus{workflowledger.RunStatusRunning, workflowledger.RunStatusSucceeded} {
-		cur, err := repo.GetRun(ctx, runID)
-		if err != nil {
-			return fmt.Errorf("read follow-up run for CAS: %w", err)
-		}
-		if err := repo.CompareAndSetRunStatus(ctx, runID, cur.Version, next, nil); err != nil {
-			return fmt.Errorf("settle follow-up run to %s: %w", next, err)
+		for attempt := 0; attempt < 3; attempt++ {
+			cur, err := repo.GetRun(ctx, runID)
+			if err != nil {
+				return fmt.Errorf("read follow-up run for CAS: %w", err)
+			}
+			if followUpRunRank(cur.Status) >= followUpRunRank(next) {
+				break
+			}
+			if err := repo.CompareAndSetRunStatus(ctx, runID, cur.Version, next, nil); err == nil {
+				break
+			} else if !errors.Is(err, workflowledger.ErrConflict) {
+				return fmt.Errorf("settle follow-up run to %s: %w", next, err)
+			}
 		}
 	}
 	rec := workflowledger.DeliveryRecord{
