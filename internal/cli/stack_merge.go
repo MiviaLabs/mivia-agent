@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -27,7 +28,7 @@ func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledg
 	for {
 		// merge_policy=auto: publish the outstanding PRs' merges ourselves.
 		if policy == "auto" {
-			if err := autoMergePublishedChunks(repo, ledger, stackID, stdout, stderr); err != nil {
+			if err := autoMergePublishedChunks(prepared, repo, ledger, stackID, stdout, stderr); err != nil {
 				return err
 			}
 		}
@@ -78,7 +79,7 @@ func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledg
 // blockedByUnmergedDependent. A PR that is not mergeable yet (checks
 // pending/red, review requirements) reports why and is retried on the next
 // poll; reconcile marks it merged the moment git reports the merge landed.
-func autoMergePublishedChunks(repo workflowledger.Repository, ledger *tasks.Store, stackID string, stdout, stderr io.Writer) error {
+func autoMergePublishedChunks(prepared *preparedWorkflowRun, repo workflowledger.Repository, ledger *tasks.Store, stackID string, stdout, stderr io.Writer) error {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return err
@@ -91,7 +92,7 @@ func autoMergePublishedChunks(repo workflowledger.Repository, ledger *tasks.Stor
 			fmt.Fprintf(stdout, "chunk=%s merge deferred: dependent chunk %s has not merged yet\n", id, blocker)
 			continue
 		}
-		if err := autoMergeOne(repo, stackID, id, stdout, stderr); err != nil {
+		if err := autoMergeOne(prepared, repo, stackID, id, stdout, stderr); err != nil {
 			return err
 		}
 	}
@@ -123,7 +124,7 @@ func blockedByUnmergedDependent(byID map[string]tasks.Task, chunkID string) (str
 
 // autoMergeOne resolves one chunk's PR (by its run's head branch) and merges
 // it. No PR yet, or a merge refusal, is not an error: the wait loop retries.
-func autoMergeOne(repo workflowledger.Repository, stackID, chunkID string, stdout, stderr io.Writer) error {
+func autoMergeOne(prepared *preparedWorkflowRun, repo workflowledger.Repository, stackID, chunkID string, stdout, stderr io.Writer) error {
 	run, found, err := stackRunRef(repo, stackID, chunkID)
 	if err != nil {
 		return err
@@ -145,6 +146,13 @@ func autoMergeOne(repo workflowledger.Repository, stackID, chunkID string, stdou
 	}
 	if ref == nil {
 		return nil // PR not visible yet; poll later
+	}
+	// Merge-time overlap guard (§guardChunkMergeOverlap): the last host
+	// checkpoint before content lands on the base.
+	base := prepared.compiled.Delivery.Base
+	gc := delivery.GitContext{Dir: prepared.root, GitDir: filepath.Join(prepared.root, ".git")}
+	if err := guardChunkMergeOverlap(context.Background(), workflowDeliverGit, gc, base, head, chunkID); err != nil {
+		return err
 	}
 	if err := delivery.MergePullRequest(context.Background(), slug, ref.RemoteID, ref.Draft); err != nil {
 		fmt.Fprintf(stdout, "chunk=%s PR %s not mergeable yet: %v\n", chunkID, ref.RemoteID, err)
@@ -173,7 +181,7 @@ func waitIntegrationRunSettled(ctx context.Context, prepared *preparedWorkflowRu
 		}
 	}
 	if policy == "auto" && run.Status == workflowledger.RunStatusDeliveryPending {
-		if err := autoMergeOne(prepared.repo, stackID, stackIntegrationChunkID, stdout, stderr); err != nil {
+		if err := autoMergeOne(prepared, prepared.repo, stackID, stackIntegrationChunkID, stdout, stderr); err != nil {
 			return err
 		}
 		return waitForIntegrationMerge(ctx, prepared.repo, checker, stackID, stdout, stderr)
