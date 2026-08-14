@@ -89,9 +89,10 @@ Do not call `mivia workflow run feature-delivery` directly. Without
 `--allow-publish` the run does all the work, reaches its success terminal, then
 stops at `delivery_pending` and opens no pull request.
 
-### Live e2e test workflows (`e2e-split-test`, `e2e-pr-metadata-test`)
+### Live e2e test workflows (`e2e-split-test`, `e2e-pr-metadata-test`, `e2e-scope-escape-test`)
 
-`.mivia/workflows/e2e-split-test.toml` and `.mivia/workflows/e2e-pr-metadata-test.toml`
+`.mivia/workflows/e2e-split-test.toml`, `.mivia/workflows/e2e-pr-metadata-test.toml`,
+and `.mivia/workflows/e2e-scope-escape-test.toml`
 (plus `.mivia/agents/e2e-engineer.toml` and `.mivia/workflows/templates/e2e-*.md`)
 are real, checked-in workflows that exercise the delivery engine's repair
 paths against the ACTUAL `MiviaLabs/mivia-agent` GitHub repo: real branches
@@ -106,6 +107,11 @@ pushed, real draft PRs opened, real `gh` and DeepSeek API calls.
   deliberately emits an invalid `pr_title` on its first attempt, proving
   ValidateCommitSubject's rejection routes to repair and the agent's fix
   (reading the hint) succeeds on retry.
+- `e2e-scope-escape-test`: the chunk-scope guard repair path - run in chunk
+  mode with an explicit `chunk_plan` input, implement deliberately writes one
+  file outside the declared slice, proving guardChunkScope's refusal routes
+  to repair and the agent's fix (deleting the file per the hint) succeeds on
+  retry.
 
 **Never run either without the user explicitly asking for it in that
 session.** Neither is part of `make verify`, CI, or any other automated
@@ -117,6 +123,10 @@ When the user does ask for a live delivery-engine smoke test:
 ```bash
 ./mivia workflow run e2e-split-test --input task="short description" --allow-publish
 ./mivia workflow run e2e-pr-metadata-test --input task="short description" --allow-publish
+./mivia workflow run e2e-scope-escape-test --input task="short description" \
+  --input stack_mode=chunk --input chunk=c1 --input pr_base=master --input stack_part=1/1 \
+  --input chunk_plan='{"id":"c1","title":"scope smoke","files":["testdata/e2e-smoke/scope-ok.md"]}' \
+  --allow-publish
 mivia stack drive e2e-split-test   # only if decompose produced a multi-chunk plan
 ```
 

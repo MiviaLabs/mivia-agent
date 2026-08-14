@@ -436,7 +436,7 @@ func validateSynthesizedGraph(cw *CompiledWorkflow) error {
 		{"validateCycles", func() error { return validateCycles(wf) }},
 		{"validateContextBindings", func() error { return validateContextBindings(wf, stepIDs, false) }},
 		{"validateOnFailure", func() error { return validateOnFailure(wf, stepIDs) }},
-		{"validateLimitsAndStacking", func() error { return validateLimitsAndStacking(wf, stepIDs) }},
+		{"validateLimitsAndStacking", func() error { return validateLimitsAndStacking(wf, stepIDs, false) }},
 		{"validateStepMaxTurns", func() error { return validateStepMaxTurns(wf) }},
 		{"validatePanels", func() error { return validatePanels(wf) }},
 	}

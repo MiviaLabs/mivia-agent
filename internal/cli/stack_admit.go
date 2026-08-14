@@ -61,7 +61,7 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 		if len(wave) == 0 {
 			break
 		}
-		results := driveWave(ctx, prepared, ledger, stackID, wave, order, prBase, policy, allowPublish, planInputs, maxConcurrent, stdout, stderr)
+		results := driveWave(ctx, prepared, ledger, stackID, wave, order, chunkPlanIndex(chunks), prBase, policy, allowPublish, planInputs, maxConcurrent, stdout, stderr)
 		halt, err := resolveWaveResults(results)
 		if err != nil {
 			return err
@@ -143,7 +143,7 @@ type driveWaveResult struct {
 // caller's resolution stays deterministic. stdout/stderr are wrapped in a
 // mutex so concurrent Fprintf calls from different chunks never interleave
 // mid-line.
-func driveWave(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, wave []string, order []string, prBase, policy string, allowPublish bool, planInputs map[string]string, maxConcurrent int, stdout, stderr io.Writer) []driveWaveResult {
+func driveWave(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, wave []string, order []string, chunkPlans map[string]*ChunkPlan, prBase, policy string, allowPublish bool, planInputs map[string]string, maxConcurrent int, stdout, stderr io.Writer) []driveWaveResult {
 	syncStdout := newSyncWriter(stdout)
 	syncStderr := newSyncWriter(stderr)
 	work := func(chunkID string) (bool, error) {
@@ -152,7 +152,7 @@ func driveWave(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks
 			return false, fmt.Errorf("stack drive: %w", err)
 		}
 		part := fmt.Sprintf("%d/%d", index+1, len(order))
-		return driveChunk(ctx, prepared, ledger, stackID, chunkID, prBase, part, policy, allowPublish, planInputs, syncStdout, syncStderr)
+		return driveChunk(ctx, prepared, ledger, stackID, chunkID, chunkPlans[chunkID], prBase, part, policy, allowPublish, planInputs, syncStdout, syncStderr)
 	}
 	return dispatchWave(wave, maxConcurrent, work)
 }
@@ -205,7 +205,7 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 // driveChunk admits and runs one chunk, then applies the merge policy.
 // halt=true means the driver must stop: policy A waits for the human publish
 // grant, and any terminal failure halts the stack (halt-on-failure).
-func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
+func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID string, chunkPlan *ChunkPlan, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
 	// A live run already exists for this chunk's key: leave it alone (F15 -
 	// never admit a duplicate). This covers crash recovery (a prior process
 	// admitted the run but died before its task-status transition landed);
@@ -228,7 +228,7 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 		fmt.Fprintf(stdout, "chunk=%s already claimed by a concurrent admission; skipping\n", chunkID)
 		return true, nil
 	}
-	inputs, snapshot := chunkRunInputs(planInputs, chunkID, prBase, part)
+	inputs, snapshot := chunkRunInputs(planInputs, chunkID, prBase, part, chunkPlan)
 	snap, err := admitStackChunkRun(prepared, stackID, chunkID, inputs, snapshot, stdout, stderr)
 	if err != nil {
 		act, actErr := reconcileReopenOrFail(ledger, stackID, chunkID)
@@ -403,7 +403,7 @@ func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, led
 		fmt.Fprintf(stdout, "integration run already exists: run=%s status=%s\n", run.RunID, run.Status)
 		return nil
 	}
-	inputs, snapshot := chunkRunInputs(planInputs, chunkID, prBase, "")
+	inputs, snapshot := chunkRunInputs(planInputs, chunkID, prBase, "", nil)
 	snap, err := admitStackChunkRun(prepared, stackID, chunkID, inputs, snapshot, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("integration run failed: %w", err)
@@ -416,4 +416,14 @@ func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, led
 		fmt.Fprintf(stdout, "integration run awaits the publish grant: mivia workflow deliver %s --allow-publish\n", snap.RunID)
 	}
 	return nil
+}
+
+// chunkPlanIndex maps chunk IDs to their decompose plan entries so a wave
+// dispatch can hand each chunk run its own scope slice.
+func chunkPlanIndex(chunks []ChunkPlan) map[string]*ChunkPlan {
+	out := make(map[string]*ChunkPlan, len(chunks))
+	for i := range chunks {
+		out[chunks[i].ID] = &chunks[i]
+	}
+	return out
 }

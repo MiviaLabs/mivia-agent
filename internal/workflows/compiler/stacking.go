@@ -10,12 +10,12 @@ import (
 // validateLimitsAndStacking runs the [limits] and [stacking] config
 // validators and joins their errors, so the aggregator reports every broken
 // section at once.
-func validateLimitsAndStacking(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
+func validateLimitsAndStacking(wf *definition.WorkflowFile, stepIDs map[string]bool, resume bool) error {
 	var errs []string
 	if err := validateLimits(wf.Limits); err != nil {
 		errs = append(errs, err.Error())
 	}
-	if err := validateStacking(wf, stepIDs); err != nil {
+	if err := validateStacking(wf, stepIDs, resume); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if len(errs) > 0 {
@@ -24,13 +24,17 @@ func validateLimitsAndStacking(wf *definition.WorkflowFile, stepIDs map[string]b
 	return nil
 }
 
-// validateStacking checks the [stacking] section. Explicit configuration is
-// fail-closed: unknown step references, out-of-range thresholds, and invalid
-// merge policies are errors. When the section is absent (stacking on by
-// default), inference is best-effort and never errors, so existing workflows
-// keep compiling unchanged.
-func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
+// validateStacking checks the [stacking] section. Stacking is opt-in and
+// fail-closed: a workflow participates only when it declares the table, and
+// an enabled table must name its plan_step and implement_step explicitly.
+// Unknown step references, out-of-range thresholds, and invalid merge
+// policies are errors. On resume of an admitted snapshot the explicit-steps
+// requirement is waived and legacyResumeStacking reproduces the admitted
+// activation, so no admitted run strands or changes shape.
+func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool, resume bool) error {
 	if wf.Stacking == nil {
+		// No [stacking] table: the workflow does not participate in stacking
+		// and no semantics apply.
 		return nil
 	}
 	s := wf.Stacking
@@ -38,6 +42,9 @@ func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool) erro
 		// Deliberate opt-out: shape is already enforced by the strict TOML
 		// decoder, and no semantics apply.
 		return nil
+	}
+	if !resume && (s.PlanStep == "" || s.ImplementStep == "") {
+		return fmt.Errorf("stacking: plan_step and implement_step are required when stacking is enabled")
 	}
 	if s.PlanStep != "" && !stepIDs[s.PlanStep] {
 		return fmt.Errorf("stacking: plan_step %q is not a declared step", s.PlanStep)
@@ -84,10 +91,47 @@ func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool) erro
 	return nil
 }
 
-// InferImplementStep identifies the workflow's implement step for stacking:
-// the step whose output schema is the change-summary schema, else a step
-// whose id is "implement". Returns "" when neither matches.
-func InferImplementStep(wf *definition.WorkflowFile) string {
+// legacyResumeStacking reproduces the earlier activation semantics for
+// resume of an admitted snapshot ONLY: a missing [stacking] table means
+// enabled, and missing steps are inferred from the step graph. A run
+// admitted under those semantics resumes with the exact compiled shape of
+// its admission - synthesized decompose/chunk_plan_validate steps, reserved
+// stack inputs, and delivery guards included. Fresh admission never calls
+// this; new definitions must declare the table with explicit steps.
+func legacyResumeStacking(wf *definition.WorkflowFile) *definition.StackingConfig {
+	if wf.Stacking != nil && !wf.Stacking.StackingEnabled() {
+		return nil
+	}
+	planStep, implementStep := legacyResolveStackingSteps(wf)
+	if planStep == "" || implementStep == "" {
+		return nil
+	}
+	eff := wf.Stacking.EffectiveStacking(planStep, implementStep)
+	// A nil table reports disabled under the opt-in semantics; the admitted
+	// run was active, so the resolved config says so.
+	eff.Enabled = true
+	return &eff
+}
+
+// legacyResolveStackingSteps mirrors the earlier step resolution: explicit
+// [stacking] values win, inference fills the gaps.
+func legacyResolveStackingSteps(wf *definition.WorkflowFile) (planStep, implementStep string) {
+	if wf.Stacking != nil {
+		planStep = wf.Stacking.PlanStep
+		implementStep = wf.Stacking.ImplementStep
+	}
+	if implementStep == "" {
+		implementStep = legacyInferImplementStep(wf)
+	}
+	if planStep == "" {
+		planStep = legacyInferPlanStep(wf, implementStep)
+	}
+	return planStep, implementStep
+}
+
+// legacyInferImplementStep: the step with the change-summary output schema,
+// else a step whose id is "implement".
+func legacyInferImplementStep(wf *definition.WorkflowFile) string {
 	for _, s := range wf.Steps {
 		if s.OutputSchema == "schemas/change-summary-v1.json" {
 			return s.ID
@@ -101,10 +145,9 @@ func InferImplementStep(wf *definition.WorkflowFile) string {
 	return ""
 }
 
-// InferPlanStep identifies the workflow's planning step for stacking: the
-// step whose output implementStep binds into context as "plan". Returns ""
-// when no such binding exists.
-func InferPlanStep(wf *definition.WorkflowFile, implementStep string) string {
+// legacyInferPlanStep: the step whose output implementStep binds into
+// context as "plan".
+func legacyInferPlanStep(wf *definition.WorkflowFile, implementStep string) string {
 	if implementStep == "" {
 		return ""
 	}
@@ -123,21 +166,4 @@ func InferPlanStep(wf *definition.WorkflowFile, implementStep string) string {
 		}
 	}
 	return ""
-}
-
-// ResolveStackingSteps returns the effective plan and implement step ids for
-// a workflow: explicit [stacking] values win (already validated by
-// validateStacking), otherwise best-effort inference from the step graph.
-func ResolveStackingSteps(wf *definition.WorkflowFile) (planStep, implementStep string) {
-	if wf.Stacking != nil {
-		planStep = wf.Stacking.PlanStep
-		implementStep = wf.Stacking.ImplementStep
-	}
-	if implementStep == "" {
-		implementStep = InferImplementStep(wf)
-	}
-	if planStep == "" {
-		planStep = InferPlanStep(wf, implementStep)
-	}
-	return planStep, implementStep
 }

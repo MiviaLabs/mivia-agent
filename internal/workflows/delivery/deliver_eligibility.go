@@ -63,5 +63,10 @@ func verifyWorktreeAndRemote(ctx context.Context, git GitRunner, req Request, or
 	if err := guardChunkBaseDrift(ctx, git, req, originBase); err != nil {
 		return "", err
 	}
+	// 7c. Scope guard for stacked chunks (§guardChunkScope): refuses a chunk
+	// whose diff touches files outside its declared decompose plan slice.
+	if err := guardChunkScope(ctx, git, req); err != nil {
+		return "", err
+	}
 	return repoSlug, nil
 }

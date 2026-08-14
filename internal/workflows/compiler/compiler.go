@@ -24,10 +24,10 @@ type CompiledWorkflow struct {
 	Delivery    *definition.Delivery
 	Digest      string
 
-	// Stacking is the resolved stacking configuration when stacking is
-	// enabled (explicitly or by default) and both the plan and implement
-	// steps resolved (declared or inferred). Nil otherwise; the run then
-	// behaves exactly as a single-PR workflow always did.
+	// Stacking is the resolved stacking configuration when the workflow
+	// declares an enabled [stacking] table with explicit plan_step and
+	// implement_step keys. Nil otherwise; the run then behaves exactly as a
+	// single-PR workflow always did.
 	Stacking *definition.StackingConfig
 
 	// Derived sets for O(1) lookups
@@ -51,9 +51,12 @@ func Compile(wf *definition.WorkflowFile) (*CompiledWorkflow, error) {
 }
 
 // CompileForResume compiles a definition that was already admitted in a run
-// snapshot. It skips the unbounded-cycle admission check so an in-flight run
-// admitted under an earlier policy can still resume. All other validators
-// still run.
+// snapshot. It skips the admission-only checks - the unbounded-cycle check
+// and the stacking explicit-steps requirement - so an in-flight run admitted
+// under an earlier policy can still resume. A snapshot without an explicit
+// [stacking] table (or without explicit steps) resumes under the activation
+// semantics it was admitted with (legacyResumeStacking). All other
+// validators still run.
 func CompileForResume(wf *definition.WorkflowFile) (*CompiledWorkflow, error) {
 	return compile(wf, true)
 }
@@ -83,14 +86,20 @@ func compile(wf *definition.WorkflowFile, skipCycleValidation bool) (*CompiledWo
 	hash := sha256.Sum256(data)
 	digest := fmt.Sprintf("%x", hash)
 
-	// Resolve stacking configuration. Explicit [stacking] values win;
-	// otherwise inference is best-effort. Only populated when stacking is
-	// enabled and both steps resolved, so existing single-PR workflows keep
-	// their exact compiled shape.
+	// Resolve stacking configuration. Stacking is opt-in: only a workflow
+	// that declares a [stacking] table (and does not set enabled = false)
+	// participates, and the plan/implement steps come only from its explicit
+	// plan_step/implement_step keys. There is no step inference. A workflow
+	// without the table keeps the exact compiled shape of a single-PR run.
 	var stackingCfg *definition.StackingConfig
-	if planStep, implementStep := ResolveStackingSteps(wf); (wf.Stacking == nil || wf.Stacking.StackingEnabled()) && planStep != "" && implementStep != "" {
-		eff := wf.Stacking.EffectiveStacking(planStep, implementStep)
+	if s := wf.Stacking; s != nil && s.StackingEnabled() && s.PlanStep != "" && s.ImplementStep != "" {
+		eff := s.EffectiveStacking(s.PlanStep, s.ImplementStep)
 		stackingCfg = &eff
+	} else if skipCycleValidation {
+		// Resume of an admitted snapshot: apply the activation semantics the
+		// run was admitted under, so its compiled shape (synthesized steps,
+		// reserved inputs, delivery guards) is rebuilt identically.
+		stackingCfg = legacyResumeStacking(wf)
 	}
 
 	return &CompiledWorkflow{
@@ -169,7 +178,7 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 	}
 
 	// Limits and stacking config validation
-	if err := validateLimitsAndStacking(wf, stepIDs); err != nil {
+	if err := validateLimitsAndStacking(wf, stepIDs, skipCycleValidation); err != nil {
 		errs = append(errs, err.Error())
 	}
 
@@ -206,80 +215,6 @@ func validateOnFailure(wf *definition.WorkflowFile, stepIDs map[string]bool) err
 		}
 		if !stepIDs[target] && !definition.ReservedStepIDs[target] {
 			return fmt.Errorf("step %q: on_failure target %q is not a declared step or terminal", s.ID, target)
-		}
-	}
-	return nil
-}
-
-// validateContextBindings checks that context source references are structurally valid.
-// skipCycleValidation is true only for resume of an admitted snapshot; the
-// evidence-cap check is admission-only, matching the cycle-check precedent,
-// so an in-flight run admitted under an earlier policy is never stranded.
-func validateContextBindings(wf *definition.WorkflowFile, stepIDs map[string]bool, skipCycleValidation bool) error {
-	for _, s := range wf.Steps {
-		for _, cb := range s.Context {
-			if strings.TrimSpace(cb.From) == "" {
-				return fmt.Errorf("step %q: context from is empty", s.ID)
-			}
-			// Reject path traversal
-			if strings.Contains(cb.From, "..") {
-				return fmt.Errorf("step %q: context from %q contains path traversal", s.ID, cb.From)
-			}
-			// Validate source format: inputs.<name>, steps.<id>.output,
-			// delivery.failure, or run.salvage
-			parts := strings.Split(cb.From, ".")
-			switch parts[0] {
-			case "inputs":
-				if len(parts) != 2 {
-					return fmt.Errorf("step %q: context from %q invalid (expected inputs.<name>)", s.ID, cb.From)
-				}
-				inputName := parts[1]
-				if _, ok := wf.Inputs[inputName]; !ok {
-					return fmt.Errorf("step %q: context from %q references unknown input %q", s.ID, cb.From, inputName)
-				}
-			case "steps":
-				if len(parts) != 3 || parts[2] != "output" {
-					return fmt.Errorf("step %q: context from %q invalid (expected steps.<id>.output)", s.ID, cb.From)
-				}
-				stepID := parts[1]
-				if !stepIDs[stepID] {
-					return fmt.Errorf("step %q: context from %q references unknown step %q", s.ID, cb.From, stepID)
-				}
-				if !skipCycleValidation && stepID == s.ID && !cb.Optional {
-					return fmt.Errorf("step %q: mandatory self-output context binding %q is impossible on its first attempt", s.ID, cb.From)
-				}
-				// The executor caps a prior step output bound into context at
-				// MaxEvidenceBindingBytes, so reject larger requests at admission.
-				// Admission-only: a run admitted under an earlier policy whose
-				// snapshot carries a larger max_bytes binding must still resume
-				// (the runtime cap on actual output bytes stays the safety bound).
-				if !skipCycleValidation && cb.MaxBytes > definition.MaxEvidenceBindingBytes {
-					return fmt.Errorf("step %q: context binding %q max_bytes %d exceeds maximum of %d for prior step evidence", s.ID, cb.From, cb.MaxBytes, definition.MaxEvidenceBindingBytes)
-				}
-			case "delivery":
-				if len(parts) != 2 || parts[1] != "failure" {
-					return fmt.Errorf("step %q: context from %q invalid (expected delivery.failure)", s.ID, cb.From)
-				}
-			case "run":
-				if len(parts) != 2 || parts[1] != "salvage" {
-					return fmt.Errorf("step %q: context from %q invalid (expected run.salvage)", s.ID, cb.From)
-				}
-			case "implement":
-				if len(parts) != 2 || parts[1] != "touched_files" {
-					return fmt.Errorf("step %q: context from %q invalid (expected implement.touched_files)", s.ID, cb.From)
-				}
-			default:
-				return fmt.Errorf("step %q: context from %q invalid (must start with inputs. or steps.)", s.ID, cb.From)
-			}
-			if strings.TrimSpace(cb.As) == "" {
-				return fmt.Errorf("step %q: context as is empty", s.ID)
-			}
-			if cb.MaxBytes < 0 {
-				return fmt.Errorf("step %q: context binding %q max_bytes must be >= 0 (got %d)", s.ID, cb.From, cb.MaxBytes)
-			}
-			if cb.MaxBytes > definition.MaxInputBytes {
-				return fmt.Errorf("step %q: context binding %q max_bytes %d exceeds maximum of %d", s.ID, cb.From, cb.MaxBytes, definition.MaxInputBytes)
-			}
 		}
 	}
 	return nil

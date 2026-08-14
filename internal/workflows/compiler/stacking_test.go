@@ -7,14 +7,17 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
-// stackingFixture returns a minimal but fully valid workflow with a plan step
-// ("plan"), an implement step that binds the plan and emits the change-summary
-// schema, and a linear plan -> implement -> success graph.
+// stackingFixture returns a minimal but fully valid stacked workflow: a plan
+// step ("plan"), an implement step that binds the plan and emits the
+// change-summary schema, a linear plan -> implement -> success graph, and an
+// explicit [stacking] table (stacking is opt-in). Tests that need a
+// non-stacked or differently configured workflow overwrite wf.Stacking.
 func stackingFixture() *definition.WorkflowFile {
 	return &definition.WorkflowFile{
 		Version:     1,
 		Name:        "stacked-fixture",
 		InitialStep: "plan",
+		Stacking:    &definition.Stacking{PlanStep: "plan", ImplementStep: "implement"},
 		Steps: []definition.Step{
 			{ID: "plan", Kind: "agent", Agent: "workflow-engineer"},
 			{ID: "implement", Kind: "agent", Agent: "workflow-engineer",
@@ -116,7 +119,7 @@ func TestCompile_StackingBadConfig(t *testing.T) {
 			name: "max_chunks too large",
 			wf: func() *definition.WorkflowFile {
 				wf := stackingFixture()
-				wf.Stacking = &definition.Stacking{MaxChunks: 1000}
+				wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement", MaxChunks: 1000}
 				return wf
 			}(),
 			want: "max_chunks must be in range [0, 100]",
@@ -125,7 +128,7 @@ func TestCompile_StackingBadConfig(t *testing.T) {
 			name: "negative max_files",
 			wf: func() *definition.WorkflowFile {
 				wf := stackingFixture()
-				wf.Stacking = &definition.Stacking{MaxFiles: -1}
+				wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement", MaxFiles: -1}
 				return wf
 			}(),
 			want: "max_files must be in range [0, 1000]",
@@ -134,7 +137,7 @@ func TestCompile_StackingBadConfig(t *testing.T) {
 			name: "soft exceeds hard",
 			wf: func() *definition.WorkflowFile {
 				wf := stackingFixture()
-				wf.Stacking = &definition.Stacking{SoftLines: 500, HardLines: 400}
+				wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement", SoftLines: 500, HardLines: 400}
 				return wf
 			}(),
 			want: "soft_lines 500 exceeds hard_lines 400",
@@ -143,7 +146,7 @@ func TestCompile_StackingBadConfig(t *testing.T) {
 			name: "invalid merge policy",
 			wf: func() *definition.WorkflowFile {
 				wf := stackingFixture()
-				wf.Stacking = &definition.Stacking{MergePolicy: "merge-queue"}
+				wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement", MergePolicy: "merge-queue"}
 				return wf
 			}(),
 			want: `merge_policy "merge-queue" must be one of approve, auto`,
@@ -176,7 +179,7 @@ func TestCompile_StackingWaveConcurrencyBadConfig(t *testing.T) {
 			name: "max_total_chunks too large",
 			wf: func() *definition.WorkflowFile {
 				wf := stackingFixture()
-				wf.Stacking = &definition.Stacking{MaxTotalChunks: 10000}
+				wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement", MaxTotalChunks: 10000}
 				return wf
 			}(),
 			want: "max_total_chunks must be in range [0, 2000]",
@@ -185,7 +188,7 @@ func TestCompile_StackingWaveConcurrencyBadConfig(t *testing.T) {
 			name: "negative max_wave_chunks",
 			wf: func() *definition.WorkflowFile {
 				wf := stackingFixture()
-				wf.Stacking = &definition.Stacking{MaxWaveChunks: -1}
+				wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement", MaxWaveChunks: -1}
 				return wf
 			}(),
 			want: "max_wave_chunks must be in range [0, 100]",
@@ -194,7 +197,7 @@ func TestCompile_StackingWaveConcurrencyBadConfig(t *testing.T) {
 			name: "max_concurrent_chunks too large",
 			wf: func() *definition.WorkflowFile {
 				wf := stackingFixture()
-				wf.Stacking = &definition.Stacking{MaxConcurrentChunks: 1000}
+				wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement", MaxConcurrentChunks: 1000}
 				return wf
 			}(),
 			want: "max_concurrent_chunks must be in range [0, 64]",
@@ -203,7 +206,7 @@ func TestCompile_StackingWaveConcurrencyBadConfig(t *testing.T) {
 			name: "max_wave_chunks exceeds max_total_chunks",
 			wf: func() *definition.WorkflowFile {
 				wf := stackingFixture()
-				wf.Stacking = &definition.Stacking{MaxWaveChunks: 50, MaxTotalChunks: 10}
+				wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement", MaxWaveChunks: 50, MaxTotalChunks: 10}
 				return wf
 			}(),
 			want: "max_wave_chunks 50 exceeds max_total_chunks 10",
@@ -241,23 +244,38 @@ func TestCompile_StackingOptOutIgnoresSemantics(t *testing.T) {
 	}
 }
 
-func TestCompile_StackingDefaultOnInference(t *testing.T) {
-	// No [stacking] section: stacking is on by default and steps are inferred
-	// from the graph (implement via change-summary schema, plan via the "plan"
-	// binding).
+func TestCompile_StackingAbsentTableStaysSinglePR(t *testing.T) {
+	// Stacking is opt-in: a workflow without a [stacking] table compiles as a
+	// plain single-PR workflow, even when its step graph has the plan/implement
+	// shape the old inference used to match.
 	wf := stackingFixture()
+	wf.Stacking = nil
+	cw, err := Compile(wf)
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+	if cw.Stacking != nil {
+		t.Errorf("CompiledWorkflow.Stacking = %+v, want nil without a [stacking] table", cw.Stacking)
+	}
+}
+
+func TestCompile_StackingDeclaredTableUsesGlobalDefaults(t *testing.T) {
+	// A minimal declared table (only the required steps) is enabled and fills
+	// every other knob from the global defaults.
+	wf := stackingFixture()
+	wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement"}
 	cw, err := Compile(wf)
 	if err != nil {
 		t.Fatalf("Compile failed: %v", err)
 	}
 	if cw.Stacking == nil {
-		t.Fatal("CompiledWorkflow.Stacking is nil, want inferred config (default on)")
+		t.Fatal("CompiledWorkflow.Stacking is nil, want resolved config for a declared table")
 	}
 	if cw.Stacking.Enabled != true {
 		t.Errorf("Stacking.Enabled = %v, want true", cw.Stacking.Enabled)
 	}
 	if cw.Stacking.PlanStep != "plan" || cw.Stacking.ImplementStep != "implement" {
-		t.Errorf("inferred steps wrong: plan=%q implement=%q", cw.Stacking.PlanStep, cw.Stacking.ImplementStep)
+		t.Errorf("resolved steps wrong: plan=%q implement=%q", cw.Stacking.PlanStep, cw.Stacking.ImplementStep)
 	}
 	if cw.Stacking.MaxChunks != definition.DefaultStackingMaxChunks {
 		t.Errorf("MaxChunks = %d, want global default %d", cw.Stacking.MaxChunks, definition.DefaultStackingMaxChunks)
@@ -273,9 +291,9 @@ func TestCompile_StackingDefaultOnInference(t *testing.T) {
 	}
 }
 
-func TestCompile_StackingNonInferableStaysSinglePR(t *testing.T) {
-	// A workflow with no plan/implement shape must compile unchanged (default
-	// on is best-effort; nothing breaks) and carry no stacking config.
+func TestCompile_StackingPlainWorkflowStaysSinglePR(t *testing.T) {
+	// A plain workflow with no [stacking] table compiles unchanged and
+	// carries no stacking config.
 	wf := &definition.WorkflowFile{
 		Version:     1,
 		Name:        "plain",
@@ -294,70 +312,96 @@ func TestCompile_StackingNonInferableStaysSinglePR(t *testing.T) {
 		t.Fatalf("Compile failed for plain workflow: %v", err)
 	}
 	if cw.Stacking != nil {
-		t.Errorf("CompiledWorkflow.Stacking = %+v, want nil (not inferable)", cw.Stacking)
+		t.Errorf("CompiledWorkflow.Stacking = %+v, want nil (no [stacking] table)", cw.Stacking)
 	}
 	if len(cw.StepIDs) != 2 {
 		t.Errorf("StepIDs = %v, want exactly the two declared steps", cw.StepIDs)
 	}
 }
 
-func TestInferImplementStep(t *testing.T) {
-	wf := stackingFixture()
-	if got := InferImplementStep(wf); got != "implement" {
-		t.Errorf("InferImplementStep() = %q, want implement (schema match)", got)
-	}
-
-	idFallback := &definition.WorkflowFile{Steps: []definition.Step{
-		{ID: "step_one", Kind: "agent"},
-		{ID: "implement", Kind: "agent"},
-	}}
-	if got := InferImplementStep(idFallback); got != "implement" {
-		t.Errorf("InferImplementStep() = %q, want implement (id fallback)", got)
-	}
-
-	none := &definition.WorkflowFile{Steps: []definition.Step{
-		{ID: "a", Kind: "agent"},
-		{ID: "b", Kind: "agent"},
-	}}
-	if got := InferImplementStep(none); got != "" {
-		t.Errorf("InferImplementStep() = %q, want empty", got)
-	}
-}
-
-func TestInferPlanStep(t *testing.T) {
-	wf := stackingFixture()
-	if got := InferPlanStep(wf, "implement"); got != "plan" {
-		t.Errorf("InferPlanStep() = %q, want plan (binding match)", got)
-	}
-	if got := InferPlanStep(wf, ""); got != "" {
-		t.Errorf("InferPlanStep() with empty implement = %q, want empty", got)
-	}
-	// A binding from a step that does not exist cannot name a plan step.
-	if got := InferPlanStep(wf, "missing"); got != "" {
-		t.Errorf("InferPlanStep() with unknown implement = %q, want empty", got)
+func TestCompile_StackingEnabledRequiresExplicitSteps(t *testing.T) {
+	// An enabled [stacking] table must name both steps; there is no
+	// inference. The error is loud at admission.
+	for _, tc := range []struct {
+		name     string
+		stacking *definition.Stacking
+	}{
+		{"both missing", &definition.Stacking{}},
+		{"plan_step missing", &definition.Stacking{ImplementStep: "implement"}},
+		{"implement_step missing", &definition.Stacking{PlanStep: "plan"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wf := stackingFixture()
+			wf.Stacking = tc.stacking
+			_, err := Compile(wf)
+			if err == nil {
+				t.Fatal("expected compile error, got nil")
+			}
+			if !strings.Contains(err.Error(), "plan_step and implement_step are required") {
+				t.Errorf("error %q should name the required steps", err.Error())
+			}
+		})
 	}
 }
 
-func TestResolveStackingSteps(t *testing.T) {
-	// Explicit values win over inference.
-	wf := stackingFixture()
-	wf.Stacking = &definition.Stacking{PlanStep: "plan", ImplementStep: "implement"}
-	plan, implement := ResolveStackingSteps(wf)
-	if plan != "plan" || implement != "implement" {
-		t.Errorf("ResolveStackingSteps() = (%q, %q), want (plan, implement)", plan, implement)
+func TestCompileForResume_LegacySnapshotsKeepAdmittedActivation(t *testing.T) {
+	// Resume of an admitted snapshot reproduces the activation semantics the
+	// run was admitted under: a table-less or step-less snapshot with the old
+	// inferable graph shape resumes stacking-active with the inferred steps.
+	for _, tc := range []struct {
+		name     string
+		stacking *definition.Stacking
+	}{
+		{"no table", nil},
+		{"step-less table", &definition.Stacking{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wf := stackingFixture()
+			wf.Stacking = tc.stacking
+			cw, err := CompileForResume(wf)
+			if err != nil {
+				t.Fatalf("CompileForResume failed: %v", err)
+			}
+			if cw.Stacking == nil {
+				t.Fatal("CompiledWorkflow.Stacking is nil, want legacy-activated config on resume")
+			}
+			if !cw.Stacking.Enabled {
+				t.Error("Stacking.Enabled = false, want true for a legacy-activated snapshot")
+			}
+			if cw.Stacking.PlanStep != "plan" || cw.Stacking.ImplementStep != "implement" {
+				t.Errorf("legacy steps = (%q, %q), want (plan, implement)", cw.Stacking.PlanStep, cw.Stacking.ImplementStep)
+			}
+		})
 	}
 
-	// Inference when the section is absent.
-	wf2 := stackingFixture()
-	plan, implement = ResolveStackingSteps(wf2)
-	if plan != "plan" || implement != "implement" {
-		t.Errorf("ResolveStackingSteps() inferred = (%q, %q), want (plan, implement)", plan, implement)
-	}
+	t.Run("opted out stays inactive", func(t *testing.T) {
+		wf := stackingFixture()
+		wf.Stacking = &definition.Stacking{Enabled: boolPtr(false)}
+		cw, err := CompileForResume(wf)
+		if err != nil {
+			t.Fatalf("CompileForResume failed: %v", err)
+		}
+		if cw.Stacking != nil {
+			t.Errorf("Stacking = %+v, want nil for an opted-out snapshot", cw.Stacking)
+		}
+	})
 
-	// No inference possible.
-	wf3 := &definition.WorkflowFile{Steps: []definition.Step{{ID: "a", Kind: "agent"}}}
-	plan, implement = ResolveStackingSteps(wf3)
-	if plan != "" || implement != "" {
-		t.Errorf("ResolveStackingSteps() = (%q, %q), want empty", plan, implement)
-	}
+	t.Run("non-inferable plain workflow stays inactive", func(t *testing.T) {
+		wf := &definition.WorkflowFile{
+			Version:     1,
+			Name:        "plain",
+			InitialStep: "one",
+			Steps: []definition.Step{
+				{ID: "one", Kind: "agent", Agent: "workflow-engineer"},
+			},
+			Transitions: []definition.Transition{{From: "one", To: "success"}},
+		}
+		cw, err := CompileForResume(wf)
+		if err != nil {
+			t.Fatalf("CompileForResume failed: %v", err)
+		}
+		if cw.Stacking != nil {
+			t.Errorf("Stacking = %+v, want nil for a non-inferable snapshot", cw.Stacking)
+		}
+	})
 }

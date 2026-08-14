@@ -13,7 +13,7 @@ func TestStackingEnabled(t *testing.T) {
 		s    *Stacking
 		want bool
 	}{
-		{"nil section defaults to enabled", nil, true},
+		{"nil section means no participation", nil, false},
 		{"explicit true", &Stacking{Enabled: boolPtr(true)}, true},
 		{"explicit false opts out", &Stacking{Enabled: boolPtr(false)}, false},
 		{"absent enabled field defaults to enabled", &Stacking{MaxChunks: 6}, true},
@@ -32,7 +32,7 @@ func TestEffectiveStacking(t *testing.T) {
 		var s *Stacking
 		cfg := s.EffectiveStacking("plan", "implement")
 		want := StackingConfig{
-			Enabled:             true,
+			Enabled:             false,
 			PlanStep:            "plan",
 			ImplementStep:       "implement",
 			MaxChunks:           DefaultStackingMaxChunks,

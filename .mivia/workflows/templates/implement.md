@@ -89,3 +89,17 @@ valid keys. The engine rejects an invalid shape and asks you again with the sche
 </mivia_output>
 
 This example is for illustration only. Report the change you make for the task you were given.
+
+## Chunk scope (stacked delivery only)
+
+Chunk scope:
+
+{{ inputs.chunk_scope }}
+
+If the chunk scope above is not empty, this run is ONE CHUNK of a larger
+stacked delivery. The task text describes the WHOLE feature; sibling chunk
+runs deliver the other parts. You must implement ONLY the chunk above:
+change only the files the chunk declares (plus new files inside the same
+directories), and do not implement any part of the task that belongs to a
+different chunk. Work outside the chunk scope is a defect: the host refuses
+it and sibling PRs would merge duplicate implementations.

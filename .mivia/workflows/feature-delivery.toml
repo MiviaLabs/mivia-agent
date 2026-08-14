@@ -22,8 +22,8 @@ max_duration_seconds = 86400
 # on_failure back to "failure" to disable panel retries entirely.
 max_on_failure_reentries = 3
 
-# Stacking: this workflow participates in the stacking engine (default ON).
-# plan_step/implement_step are explicit (fail-closed); all other knobs use the
+# Stacking is opt-in: this table (with the required plan_step/implement_step)
+# puts the workflow in the stacking engine. All other knobs use the
 # engine's global defaults (max_chunks=12, soft_lines=200, hard_lines=400,
 # max_files=5). merge_policy=auto: the run publishes each chunk PR and merges
 # it itself (mark ready -> CI green -> squash-merge) - a 100-chunk stack needs
@@ -104,6 +104,7 @@ context = [
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.review_panel.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
   { from = "steps.review_integration.output", as = "integration_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  { from = "inputs.chunk_plan", as = "chunk_scope", max_bytes = 4096, optional = true },
 ]
 on_failure = "failure"
 
@@ -121,6 +122,7 @@ context = [
   { from = "implement.touched_files", as = "touched_files", max_bytes = 4096, optional = true },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.review_panel.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  { from = "inputs.chunk_plan", as = "chunk_scope", max_bytes = 4096, optional = true },
 ]
 # review_panel retries: a member or synthesis failure re-enters the panel with
 # a fresh attempt (all members re-run) instead of failing the run. The number

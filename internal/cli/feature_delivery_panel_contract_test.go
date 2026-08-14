@@ -105,7 +105,7 @@ func TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
 	// context binds from "inputs.*" (here, just task); evidence holds every
 	// "steps.*.output" binding resolved to a placeholder string. Neither map
 	// ever carries "round".
-	inputs := map[string]any{"task": "example task"}
+	inputs := map[string]any{"task": "example task", "chunk_scope": ""}
 	evidence := map[string]any{
 		"plan":           "example plan",
 		"test_plan":      "example test plan",

@@ -195,21 +195,19 @@ type Delivery struct {
 // chunk-mode runs (stack_mode="chunk") start at implement_step and deliver one
 // small PR each; a driver merges the stack incrementally.
 //
-// The [stacking] section is optional: when omitted, stacking is ENABLED with
-// the global defaults (stacked delivery is on by default). Set enabled = false
-// to deliberately opt out. Every knob is a per-workflow override of a global
-// default.
+// Stacking is opt-in: a workflow participates only when it declares a
+// [stacking] table. A declared table is enabled unless it sets
+// enabled = false, and must name plan_step and implement_step explicitly.
+// Every knob is a per-workflow override of a global default.
 type Stacking struct {
-	// Enabled selects stacking for this workflow. nil means the global
-	// default (DefaultStackingEnabled, true); false is a deliberate opt-out.
+	// Enabled selects stacking for a workflow that declares this table. nil
+	// means enabled (DefaultStackingEnabled); false is a deliberate opt-out.
 	Enabled *bool `toml:"enabled" json:"enabled,omitempty"`
 	// PlanStep is the id of the workflow's planning step (whose output feeds
-	// the decompose step). Empty lets the compiler infer it: the step whose
-	// output implement_step binds as "plan".
+	// the decompose step). Required when stacking is enabled.
 	PlanStep string `toml:"plan_step" json:"plan_step,omitempty"`
-	// ImplementStep is the id where chunk-mode runs start. Empty lets the
-	// compiler infer it: the step with the change-summary output schema, or a
-	// step whose id is "implement".
+	// ImplementStep is the id where chunk-mode runs start. Required when
+	// stacking is enabled.
 	ImplementStep string `toml:"implement_step" json:"implement_step,omitempty"`
 	// MaxChunks bounds the number of chunks in one plan (0 = global default).
 	MaxChunks int `toml:"max_chunks" json:"max_chunks,omitempty"`
@@ -282,12 +280,14 @@ var ValidStackingMergePolicies = map[string]bool{
 	"auto":    true,
 }
 
-// StackingEnabled reports whether stacking applies to the workflow. An
-// explicit per-workflow value wins; otherwise the global default (on). A
-// host-level kill-switch, if added later, is applied by the caller before
-// this method runs.
+// StackingEnabled reports whether stacking applies to the workflow.
+// Stacking is opt-in: a workflow without a [stacking] table does not
+// participate. A declared table is enabled unless it sets enabled = false.
 func (s *Stacking) StackingEnabled() bool {
-	if s == nil || s.Enabled == nil {
+	if s == nil {
+		return false
+	}
+	if s.Enabled == nil {
 		return DefaultStackingEnabled
 	}
 	return *s.Enabled
@@ -326,8 +326,8 @@ type StackingConfig struct {
 }
 
 // EffectiveStacking resolves the stacking configuration for a workflow.
-// planStep and implementStep must be the compiler-resolved (possibly
-// inferred) step ids; pass "" when inference did not apply.
+// planStep and implementStep are the workflow's explicit [stacking] step
+// ids, passed through by the compiler.
 func (s *Stacking) EffectiveStacking(planStep, implementStep string) StackingConfig {
 	cfg := StackingConfig{
 		Enabled:             s.StackingEnabled(),
