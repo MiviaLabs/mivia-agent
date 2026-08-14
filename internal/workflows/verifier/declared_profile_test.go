@@ -150,3 +150,41 @@ func TestDeclaredProfileSurfacesContextErrorFromRun(t *testing.T) {
 		t.Fatalf("result status = %q, want failed", result.Status)
 	}
 }
+
+func TestDeclaredProfileNilReceiverName(t *testing.T) {
+	var p *declaredProfile
+	if p.Name() != "" {
+		t.Fatalf("nil profile name must be empty, got %q", p.Name())
+	}
+	if _, err := p.Verify(context.Background(), Request{}); err == nil {
+		t.Fatal("nil profile must refuse to verify")
+	}
+}
+
+// An empty Request.WorkDir must resolve to the current directory, not fail.
+func TestDeclaredProfileResolvesEmptyWorkDir(t *testing.T) {
+	var got string
+	p := newDeclaredProfile("p", []commandSpec{{check: "c", program: "go"}}, func(_ context.Context, workDir, _ string, _ ...string) error {
+		got = workDir
+		return nil
+	})
+	result, err := p.Verify(context.Background(), Request{})
+	if err != nil || result.Status != "passed" {
+		t.Fatalf("verify: %v, %+v", err, result)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != wd {
+		t.Fatalf("work dir = %q, want current directory %q", got, wd)
+	}
+}
+
+// runFixedCommand must fail before any execution when the work directory has
+// no Go module baseline to capture.
+func TestRunFixedCommandRequiresModuleBaseline(t *testing.T) {
+	if err := runFixedCommand(context.Background(), t.TempDir(), "go", "version"); err == nil {
+		t.Fatal("missing go.mod must fail the baseline capture")
+	}
+}
