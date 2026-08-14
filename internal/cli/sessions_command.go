@@ -90,7 +90,7 @@ func runSessions(args []string) error {
 
 func runSessionsWithIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("sessions: expected list, show, rename, or delete")
+		return fmt.Errorf("sessions: expected list, show, usage, rename, or delete")
 	}
 	subcommand, rest := args[0], args[1:]
 	switch subcommand {
@@ -98,6 +98,8 @@ func runSessionsWithIO(args []string, stdout, stderr io.Writer) error {
 		return runSessionsList(rest, stdout)
 	case "show":
 		return runSessionsShow(rest, stdout)
+	case "usage":
+		return runSessionsUsage(rest, stdout)
 	case "rename":
 		return runSessionsRename(rest, stderr)
 	case "delete":
@@ -140,13 +142,21 @@ func (c catalogReadOnlyCompleter) ChatTurn(context.Context, provider.Request) (*
 // setupChatSessionContext's managed-worktree binding), falling back to the
 // plain per-workspace store otherwise. Caller must close the returned store.
 func newCatalogSession(workspaceRoot string) (*chat.Session, *storage.SQLite, error) {
+	sess, store, _, _, err := newCatalogSessionAt(workspaceRoot)
+	return sess, store, err
+}
+
+// newCatalogSessionAt is newCatalogSession plus the resolved workspace root
+// and config - the extra outputs "sessions usage" needs to wire the same
+// tool registry a live resume builds (see runSessionsUsage).
+func newCatalogSessionAt(workspaceRoot string) (*chat.Session, *storage.SQLite, string, *config.Resolved, error) {
 	root, err := chatWorkspaceRoot(workspaceRoot)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	res, err := config.Load(config.LoadOptions{WorkspaceRoot: root, AllowMissingConfig: true})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	sess := chat.NewSession(res, nil)
 	// Load (used by "show" and internally by DeleteSession's catalog paths)
@@ -180,15 +190,15 @@ func newCatalogSession(workspaceRoot string) (*chat.Session, *storage.SQLite, er
 	if repoRoot, repoErr := chatRepositoryRoot(root); repoErr == nil {
 		storePath, spErr := repositorySessionStorePath(repoRoot, invocation, res)
 		if spErr != nil {
-			return nil, nil, fmt.Errorf("resolve repository session store: %w", spErr)
+			return nil, nil, "", nil, fmt.Errorf("resolve repository session store: %w", spErr)
 		}
 		invocation.repositorySessionStorePath = storePath
 	}
 	store, err := setupChatSessionContext(sess, root, invocation, res)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
-	return sess, store, nil
+	return sess, store, root, res, nil
 }
 
 func parseSessionsWorkspaceAndJSON(cmdLabel string, args []string, allowPositional int) (workspaceRoot string, jsonFlag bool, positional []string, err error) {
@@ -283,6 +293,52 @@ func runSessionsShow(args []string, stdout io.Writer) error {
 		return writeSessionsJSON(stdout, msgs)
 	}
 	writeSessionsShowText(stdout, msgs)
+	return nil
+}
+
+// runSessionsUsage reports a saved session's context accounting - the same
+// ContextUsage numbers a resumed chat session's TUI status dialog shows,
+// computed over the loaded (post-compaction) messages with the session's
+// own model binding and tool schemas. The desktop app seeds its context
+// indicator from this when a saved thread is reopened; the catalog's stored
+// token_count is a whole-session estimate that goes stale the moment
+// compaction rewrites the conversation.
+func runSessionsUsage(args []string, stdout io.Writer) error {
+	workspaceRoot, jsonFlag, positional, err := parseSessionsWorkspaceAndJSON("sessions usage", args, 1)
+	if err != nil {
+		return err
+	}
+	sess, store, root, res, err := newCatalogSessionAt(workspaceRoot)
+	if err != nil {
+		return fmt.Errorf("sessions usage: %w", err)
+	}
+	defer store.Close()
+	if err := sess.LoadReadOnly(positional[0]); err != nil {
+		return fmt.Errorf("sessions usage: %w", err)
+	}
+	// The same tool registry a live resume builds (configureChatWorkspace),
+	// so the estimate includes tool schemas exactly like the TUI's number
+	// instead of silently under-counting by their cost. quiet=true: a
+	// usage query is not a session start and must not print startup
+	// notices into the JSON stream.
+	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true)
+	defer cleanup()
+	if err != nil {
+		return fmt.Errorf("sessions usage: %w", err)
+	}
+	usage := sess.ContextUsage()
+	if jsonFlag {
+		return writeSessionsJSON(stdout, map[string]any{
+			"used_tokens":           usage.UsedTokens,
+			"budget_tokens":         usage.BudgetTokens,
+			"context_window_tokens": usage.ContextWindowTokens,
+			"output_reserve_tokens": usage.OutputReserveTokens,
+			"percent":               usage.Percent,
+		})
+	}
+	fmt.Fprintf(stdout, "context: %d%% used, %s/%s prompt, window %s, output reserve %s\n",
+		usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens),
+		chat.FormatTokenK(usage.ContextWindowTokens), chat.FormatTokenK(usage.OutputReserveTokens))
 	return nil
 }
 

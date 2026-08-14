@@ -98,6 +98,7 @@ Usage:
   %s agents explain <name> [--workspace dir]
   %s sessions list [--workspace dir] [--json]
   %s sessions show <name> [--workspace dir] [--json] [--limit N]
+  %s sessions usage <name> [--workspace dir] [--json]
   %s sessions rename <name> <title> [--workspace dir]
   %s sessions delete <name> [--workspace dir]
   %s workflows list [--workspace dir]
@@ -143,7 +144,7 @@ Chat: /help /tools /hooks /exit /clear /new /model /status
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
 Secrets: env file or process environment (never in TOML)
-`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
+`, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary, version.Binary)
 }
 
 // flagValue returns the value of the first occurrence of any named flag,

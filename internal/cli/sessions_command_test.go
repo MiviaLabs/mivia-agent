@@ -205,6 +205,54 @@ func TestRedactSessionMessagesForDisplayDoesNotMutateOriginal(t *testing.T) {
 	}
 }
 
+// TestSessionsUsageReportsContextEstimate pins the read-only context
+// accounting query the desktop app seeds its context indicator from when a
+// saved thread is reopened: the SAME numbers a resumed chat session's TUI
+// status dialog shows (Session.ContextUsage over the loaded, post-compaction
+// messages), not the stale whole-session token_count the catalog carries.
+// Assertions run on the raw JSON map so the contract an external consumer
+// parses is what is pinned.
+func TestSessionsUsageReportsContextEstimate(t *testing.T) {
+	ws := isolatedSessionsWorkspace(t)
+	seedThreeCatalogSessions(t, ws)
+
+	var buf bytes.Buffer
+	if err := runSessionsWithIO([]string{"usage", "alpha", "--workspace", ws, "--json"}, &buf, &bytes.Buffer{}); err != nil {
+		t.Fatalf("sessions usage alpha: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &raw); err != nil {
+		t.Fatalf("decode sessions usage JSON: %v\nraw: %s", err, buf.String())
+	}
+	for _, field := range []string{"used_tokens", "budget_tokens", "context_window_tokens", "output_reserve_tokens", "percent"} {
+		if _, ok := raw[field]; !ok {
+			t.Fatalf("sessions usage JSON missing %q: %s", field, buf.String())
+		}
+	}
+	// alpha carries two seeded messages, so the estimate must be non-zero.
+	if raw["used_tokens"].(float64) <= 0 {
+		t.Fatalf("sessions usage used_tokens = %v, want > 0 for a seeded session", raw["used_tokens"])
+	}
+	budget := raw["budget_tokens"].(float64)
+	used := raw["used_tokens"].(float64)
+	if budget <= 0 {
+		t.Fatalf("sessions usage budget_tokens = %v, want > 0", budget)
+	}
+	wantPercent := int(used * 100 / budget)
+	if raw["percent"].(float64) != float64(wantPercent) {
+		t.Fatalf("sessions usage percent = %v, want %d (used*100/budget)", raw["percent"], wantPercent)
+	}
+}
+
+// TestSessionsUsageUnknownNameFails keeps the query's failure shape aligned
+// with the other read-only sessions subcommands.
+func TestSessionsUsageUnknownNameFails(t *testing.T) {
+	ws := isolatedSessionsWorkspace(t)
+	if err := runSessionsWithIO([]string{"usage", "nope", "--workspace", ws, "--json"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("sessions usage on an unknown session should fail")
+	}
+}
+
 func TestSessionsShow(t *testing.T) {
 	ws := isolatedSessionsWorkspace(t)
 	seedThreeCatalogSessions(t, ws)
