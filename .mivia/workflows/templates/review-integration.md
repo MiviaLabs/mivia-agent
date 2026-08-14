@@ -110,6 +110,24 @@ Approve only when no open finding remains.
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to this task. Do not
-use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
-An invalid shape is rejected and you will be asked again with the schema.
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+Approved, no open finding:
+
+<mivia_output>
+{"verdict": "approved", "findings": [], "inspected": ["internal/cli/render.go", "internal/textutil/truncate.go"]}
+</mivia_output>
+
+Changes requested:
+
+<mivia_output>
+{"verdict": "changes_requested", "findings": [{"id": "R1-1", "severity": "high", "reason": "The render loop can send a byte-truncated string to the terminal writer without checking valid UTF-8", "claim": "internal/cli/render.go calls TruncateEllipsis and writes the result directly, but no cross-layer test exercises the writer with a multi-byte boundary", "evidence": "internal/cli/render.go:52", "required": "Add an integration test that renders a multi-byte string through the full render path"}], "inspected": ["internal/cli/render.go"]}
+</mivia_output>
+
+The examples above are illustrative only - report the findings you actually verified against
+the implementation you were bound.

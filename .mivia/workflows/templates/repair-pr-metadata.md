@@ -24,6 +24,15 @@ changed file in `files_changed`.
 
 ## Output contract
 
-Reply with only a JSON object that satisfies the output schema appended to this task. Do not
-use a skill report format, markdown, or extra fields. The schema declares the only valid keys.
-An invalid shape is rejected and you will be asked again with the schema.
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+<mivia_output>
+{"summary": "Shortened pr_title to fit the host's 256-character limit; pr_summary unchanged.", "files_changed": ["internal/textutil/truncate.go"], "addressed_findings": [], "inspected": ["internal/textutil/truncate.go"], "pr_title": "fix(cli): truncate long output on rune boundaries", "pr_summary": "Adds a rune-safe TruncateEllipsis helper and switches the render path to use it. This prevents invalid UTF-8 output when a line is truncated mid-rune."}
+</mivia_output>
+
+The example above is illustrative only - repair the metadata you were bound, not this example.

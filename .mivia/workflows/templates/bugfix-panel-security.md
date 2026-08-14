@@ -46,3 +46,27 @@ Return only the declared structured output: `verdict` (`approved` or `changes_re
 `findings` (up to 16). Use `approved` only when no finding remains. Otherwise use
 `changes_requested` and list each finding with a stable `id`, a short `title`, a `severity`, and a
 `description` that states the concrete claim, the cited evidence, and why it is required.
+
+## Output contract
+
+Reply with a `<mivia_output>` opening tag on its own line, then one JSON object that satisfies
+the output schema appended to this task, then a `</mivia_output>` closing tag on its own line.
+Do not use a skill report format, markdown, or extra fields. The schema declares the only valid
+keys. An invalid shape is rejected and you will be asked again with the schema.
+
+### Example
+
+Approved, no open finding:
+
+<mivia_output>
+{"verdict": "approved", "findings": []}
+</mivia_output>
+
+Changes requested:
+
+<mivia_output>
+{"verdict": "changes_requested", "findings": [{"id": "PC-1", "title": "Unchecked type assertion on cache lookup", "severity": "high", "description": "internal/cache/store.go:88 asserts v.(*Entry) without the ok form; a wrong-typed cache hit panics the request goroutine. Required: use the two-value assertion and return a miss on failure."}]}
+</mivia_output>
+
+The examples above are illustrative only - report the findings you actually verified against
+the implementation you were bound.
