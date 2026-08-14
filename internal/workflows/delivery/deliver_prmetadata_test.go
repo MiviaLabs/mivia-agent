@@ -109,17 +109,21 @@ scopes = ["feat"]
 // agentSummaryBody returns the exact PR body the delivery engine must build
 // when the agent provides a change summary.
 func agentSummaryBody(run workflowledger.RunSnapshot, summary string) string {
-	return summary + "\n\n---\n" + wantFooter(run)
+	return summary + "\n\n" + wantFooter(run)
 }
 
 // wantFooter returns the exact attribution + collapsible run-details block
 // the delivery engine appends to every published PR body.
 func wantFooter(run workflowledger.RunSnapshot) string {
+	digestText := run.WorkflowDigest
+	if len(digestText) > 12 {
+		digestText = digestText[:12]
+	}
 	return "<details>\n<summary><sub>Mivia Agent run details</sub></summary>\n\n" +
 		"- Run: [" + run.RunID + "](https://mivia.app/runs/" + run.RunID + ")\n" +
-		"- Workflow digest: [" + run.WorkflowDigest + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")\n" +
+		"- Workflow digest: [" + digestText + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")\n" +
 		"\n</details>\n\n---\n" +
-		"<sub><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /> Co-authored-by: [Mivia Agent](https://github.com/MiviaLabs/mivia-agent)</sub>"
+		"<sub><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /> [Mivia Agent](https://github.com/MiviaLabs/mivia-agent)</sub>"
 }
 
 // TestDeliverAgentTitleAndSummary: a run whose attempts carry a change-summary
@@ -454,7 +458,7 @@ func TestDeliverBodyIncludesStackPartInRunDetails(t *testing.T) {
 	if !strings.Contains(got, "- Stack part: 2/3\n") {
 		t.Fatalf("Body = %q, want it to contain the stack part line inside run details", got)
 	}
-	if !strings.HasSuffix(got, "---\n<sub><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /> Co-authored-by: [Mivia Agent](https://github.com/MiviaLabs/mivia-agent)</sub>") {
+	if !strings.HasSuffix(got, "---\n<sub><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /> [Mivia Agent](https://github.com/MiviaLabs/mivia-agent)</sub>") {
 		t.Fatalf("Body = %q, want the avatar attribution line LAST, after a horizontal rule", got)
 	}
 	if !strings.Contains(got, "<details>\n<summary><sub>Mivia Agent run details</sub></summary>") {
