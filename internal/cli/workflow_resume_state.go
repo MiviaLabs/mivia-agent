@@ -12,9 +12,9 @@ import (
 // loadWorkflowResumeState reads and validates everything a resume needs from
 // the ledger before any hook or controller is built: the run row, its
 // digest-checked admission snapshot, and the recompiled definition.
-func loadWorkflowResumeState(ctx context.Context, repo workflowledger.Repository, runID string, res *config.Resolved) (workflowledger.RunSnapshot, workflowledger.Snapshot, *compiler.CompiledWorkflow, map[string]any, error) {
-	fail := func(err error) (workflowledger.RunSnapshot, workflowledger.Snapshot, *compiler.CompiledWorkflow, map[string]any, error) {
-		return workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, err
+func loadWorkflowResumeState(ctx context.Context, repo workflowledger.Repository, runID string, res *config.Resolved) (workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *compiler.CompiledWorkflow, map[string]any, error) {
+	fail := func(err error) (workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *compiler.CompiledWorkflow, map[string]any, error) {
+		return workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, nil, err
 	}
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
@@ -34,7 +34,7 @@ func loadWorkflowResumeState(ctx context.Context, repo workflowledger.Repository
 	if err := validateWorkflowMCPConfigDigest(snapshot, res.MCP); err != nil {
 		return fail(err)
 	}
-	return run, snapshot, compiled, inputs, nil
+	return run, snapshot, raw, compiled, inputs, nil
 }
 
 func validateWorkflowMCPConfigDigest(snapshot workflowledger.Snapshot, current config.MCPConfig) error {

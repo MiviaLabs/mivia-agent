@@ -120,6 +120,26 @@ func runWorkflowCommandEvents(args []string, workspaceRoot, configPath string, s
 	if err != nil {
 		return err
 	}
+	// The run ID is the only positional argument, so anything after it that
+	// is not part of --limit/--offset is a typo the operator should hear
+	// about rather than have silently ignored (a dropped --offset prints
+	// every event as if the flag worked).
+	rest := args[1:]
+	for i := 0; i < len(rest); i++ {
+		switch {
+		case strings.HasPrefix(rest[i], "--limit="), strings.HasPrefix(rest[i], "--offset="):
+		case rest[i] == "--limit" || rest[i] == "--offset":
+			if i+1 >= len(rest) {
+				return fmt.Errorf("workflow events: %s requires an integer value", rest[i])
+			}
+			i++
+		default:
+			return fmt.Errorf("workflow events: unexpected argument %q", rest[i])
+		}
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("workflow events: expected a run ID, got flag %q", args[0])
+	}
 	return executeWorkflowEvents(args[0], workspaceRoot, configPath, limit, offset, stdout, stderr)
 }
 

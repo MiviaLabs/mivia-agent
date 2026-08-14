@@ -95,7 +95,7 @@ func TestExecuteWorkflowResumeSettlesRunFailureBeforeFirstAdvance(t *testing.T) 
 	workflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 		return nil, repo, func() {}, nil
 	}
-	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 		return workflowControllerBuild{
 			Controller: ctrl,
 			Dispatcher: workflowTestDispatcher{},
@@ -141,7 +141,7 @@ func TestExecuteWorkflowRunSettlesStorageFault(t *testing.T) {
 	var runID string
 	originalBuild := workflowRunBuild
 	t.Cleanup(func() { workflowRunBuild = originalBuild })
-	workflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *compiler.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+	workflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *compiler.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 		runID = id
 		fault := &failWhenRunningRepository{Repository: repo, err: sentinel}
 		ctrl, err := controller.NewLinearController(fault, &workflowResumeJoinRunner{}, compiled, nil, map[string]any{"task": "test"}, id, rawSnapshot)

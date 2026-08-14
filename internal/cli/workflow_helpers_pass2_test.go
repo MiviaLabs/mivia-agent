@@ -298,7 +298,7 @@ func TestWorkflowRuntimeSuccessAndPriorChecks(t *testing.T) {
 		Steps: []definition.Step{{ID: "one", Kind: "agent", Agent: "worker"}},
 	}
 	opts := SessionDispatcherOpts{ProviderName: "openrouter", Model: "test/model"}
-	prepared, err := prepareWorkflowRuntime(t.TempDir(), "", wf, registry, nil, []byte("definition"), map[string]string{"key": "value"}, opts)
+	prepared, err := prepareWorkflowRuntime(t.TempDir(), "", wf, registry, nil, nil, []byte("definition"), map[string]string{"key": "value"}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,13 +313,13 @@ func TestWorkflowRuntimeSuccessAndPriorChecks(t *testing.T) {
 		Provider: "openrouter", Selectable: true,
 		Models: []config.ModelSpec{{Name: "test/model", ContextWindowTokens: 1000}},
 	}}
-	if _, err := prepareWorkflowRuntime(t.TempDir(), "", wf, registry, &prior, nil, nil, opts); err != nil {
+	if _, err := prepareWorkflowRuntime(t.TempDir(), "", wf, registry, &prior, prepared.Snapshot, nil, nil, opts); err != nil {
 		t.Fatalf("prepareWorkflowRuntime(prior) error = %v", err)
 	}
 	pinned := prior.Agents["worker"]
 	pinned.ProviderName = "deepseek"
 	prior.Agents["worker"] = pinned
-	if _, err := prepareWorkflowRuntime(t.TempDir(), "", wf, registry, &prior, nil, nil, opts); err == nil {
+	if _, err := prepareWorkflowRuntime(t.TempDir(), "", wf, registry, &prior, prepared.Snapshot, nil, nil, opts); err == nil {
 		t.Fatal("prepareWorkflowRuntime() accepted a provider that is not in the catalog")
 	}
 	pinned.ProviderName = "openrouter"
@@ -367,5 +367,49 @@ func TestSelectWorkflowWorkspaceWriteLifecycle(t *testing.T) {
 	resolved, err = vcs.Resolve(t.Context(), root, identity.WorktreeName)
 	if err != nil || resolved != nil {
 		t.Fatalf("removed worktree = %+v, %v", resolved, err)
+	}
+}
+
+// A resume must return the STORED snapshot bytes verbatim: the controller
+// compares them byte-for-byte against the ledger record, and acceptance
+// (--accept-verifier-change) mutates only the decoded prior for
+// verification, never the durable bytes.
+func TestPrepareWorkflowRuntimeResumeKeepsStoredBytes(t *testing.T) {
+	registry := agents.NewRegistry()
+	if err := registry.Publish(agents.ResolvedAgent{Name: "worker"}); err != nil {
+		t.Fatal(err)
+	}
+	wf := &compiler.CompiledWorkflow{
+		Name: "test", Digest: "workflow-digest",
+		Steps: []definition.Step{{ID: "one", Kind: "agent", Agent: "worker"}},
+	}
+	opts := SessionDispatcherOpts{ProviderName: "openrouter", Model: "test/model"}
+	prepared, err := prepareWorkflowRuntime(t.TempDir(), "", wf, registry, nil, nil, []byte("definition"), map[string]string{"key": "value"}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := workflowledger.UnmarshalSnapshot(prepared.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.ModelCatalog = []config.ProviderModelGroup{{
+		Provider: "openrouter", Selectable: true,
+		Models: []config.ModelSpec{{Name: "test/model", ContextWindowTokens: 1000}},
+	}}
+	// Mutate the decoded prior the way acceptance does: the stored bytes
+	// must still come through untouched.
+	if prior.Verifiers == nil {
+		prior.Verifiers = map[string]workflowledger.RefSnapshot{}
+	}
+	prior.Verifiers["verifier-def:x"] = workflowledger.RefSnapshot{Digest: "sha256:changed"}
+	rebuilt, err := prepareWorkflowRuntime(t.TempDir(), "", wf, registry, &prior, prepared.Snapshot, nil, nil, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(rebuilt.Snapshot, prepared.Snapshot) {
+		t.Fatalf("resume snapshot bytes differ from stored bytes")
+	}
+	if _, err := prepareWorkflowRuntime(t.TempDir(), "", wf, registry, &prior, nil, nil, nil, opts); err == nil {
+		t.Fatal("resume without stored snapshot bytes must fail closed")
 	}
 }

@@ -36,7 +36,7 @@ type workflowControllerBuild struct {
 	Cleanup    func()
 }
 
-func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, recorded *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, priorRaw []byte, recorded *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 	// A stacking run EXECUTES the synthesized graph: decompose and
 	// chunk_plan_validate are real steps whose agents must be resolved, whose
 	// templates and schemas must be pinned, and whose routing digests must be
@@ -58,7 +58,7 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 		setup.cleanup()
 		return workflowControllerBuild{}, err
 	}
-	runtime, baseline, err := prepareWorkflowBuildRuntime(root, refBase, res, wf, inputSnapshot, definitionTOML, prior, setup, opts)
+	runtime, baseline, err := prepareWorkflowBuildRuntime(root, refBase, res, wf, inputSnapshot, definitionTOML, prior, priorRaw, setup, opts)
 	if err != nil {
 		dispatcher.Close()
 		setup.cleanup()
@@ -170,8 +170,8 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 	return dispatcher, opts, legacy, nil
 }
 
-func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]string, definition []byte, prior *workflowledger.Snapshot, setup workflowBuildSetup, opts SessionDispatcherOpts) (preparedWorkflowRuntime, *verifier.GoModuleBaseline, error) {
-	runtime, err := prepareWorkflowRuntime(root, refBase, wf, setup.loaded.Registry, prior, definition, inputs, opts)
+func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]string, definition []byte, prior *workflowledger.Snapshot, priorRaw []byte, setup workflowBuildSetup, opts SessionDispatcherOpts) (preparedWorkflowRuntime, *verifier.GoModuleBaseline, error) {
+	runtime, err := prepareWorkflowRuntime(root, refBase, wf, setup.loaded.Registry, prior, priorRaw, definition, inputs, opts)
 	if err != nil {
 		return preparedWorkflowRuntime{}, nil, err
 	}

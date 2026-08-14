@@ -156,10 +156,13 @@ func deliveryRecordByKey(t *testing.T, repo workflowledger.Repository, run workf
 }
 
 func wantBody(run workflowledger.RunSnapshot) string {
-	return "<sub>Co-authored-by: Mivia Agent <noreply@mivia.app></sub>\n\n" +
-		"<details>\n<summary>Mivia Agent run details</summary>\n\n" +
+	digestText := run.WorkflowDigest
+	if len(digestText) > 12 {
+		digestText = digestText[:12]
+	}
+	return "<details>\n<summary><sub><a href=\"https://github.com/MiviaLabs/mivia-agent\"><img src=\"https://github.com/MiviaLabs.png\" width=\"16\" height=\"16\" align=\"top\" alt=\"Mivia Agent\" /></a> Show details</sub></summary>\n\n" +
 		"- Run: [" + run.RunID + "](https://mivia.app/runs/" + run.RunID + ")\n" +
-		"- Workflow digest: [" + run.WorkflowDigest + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")\n" +
+		"- Workflow digest: [" + digestText + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")\n" +
 		"\n</details>"
 }
 

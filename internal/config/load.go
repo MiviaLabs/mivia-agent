@@ -328,14 +328,6 @@ func decodeConfigInto(data []byte, path string, file *File) error {
 	if err := auditModelKeys(data); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
 	}
-	// [verifiers] is parsed strictly from the raw bytes (closed key sets,
-	// hard errors) because its tables declare commands. A later layer wins
-	// whole-profile, consistent with the struct fields above.
-	verifiers, err := parseVerifiersLayer(data, path)
-	if err != nil {
-		return err
-	}
-	file.Verifiers = mergeVerifierLayer(file.Verifiers, verifiers)
 	return nil
 }
 
@@ -393,6 +385,18 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 			return File{}, path, false, err
 		}
 	}
+
+	// [verifiers] deliberately does NOT layer: evidence-gate profiles are the
+	// WORKSPACE'S property, so they come only from the workspace's own
+	// .mivia/mivia.toml — the same file `mivia workflows validate` reads.
+	// Resolving them from a user-level base config would let validation pass
+	// on one machine and fail on another, and would let a user file define
+	// the commands that judge a project's gates.
+	verifiers, err := LoadWorkspaceVerifiers(opts.WorkspaceRoot)
+	if err != nil {
+		return File{}, path, false, err
+	}
+	file.Verifiers = verifiers
 
 	return file, path, true, nil
 }

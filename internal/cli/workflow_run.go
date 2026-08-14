@@ -126,7 +126,7 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 		return err
 	}
 	defer finishExecution()
-	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil)
+	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil, nil)
 	if err != nil {
 		return err
 	}

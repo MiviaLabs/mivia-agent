@@ -65,7 +65,7 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish, 
 	defer releaseExecution()
 
 	ctx := context.Background()
-	run, snapshot, compiled, inputs, err := loadWorkflowResumeState(ctx, repo, runID, res)
+	run, snapshot, priorRaw, compiled, inputs, err := loadWorkflowResumeState(ctx, repo, runID, res)
 	if err != nil {
 		return err
 	}
@@ -86,7 +86,7 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish, 
 		return err
 	}
 	defer uninstallHooks()
-	built, err := workflowResumeBuild(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, runID, &snapshot, &run)
+	built, err := workflowResumeBuild(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, runID, &snapshot, priorRaw, &run)
 	if err != nil {
 		return err
 	}
