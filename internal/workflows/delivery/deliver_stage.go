@@ -191,7 +191,7 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 		markFailed(ctx, repo, key, req, err)
 		return "", "", fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
 	}
-	deferredMsg := fmt.Sprintf("deferred: %d file(s) split from this chunk's delivery (automatic follow-up)", len(deferred))
+	deferredMsg := fmt.Sprintf("chore(ci): defer %d file(s) from this delivery\n\nautomatic follow-up: %d file(s) split from this chunk's delivery", len(deferred), len(deferred))
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
 		"-c", "user.name=mivia", "-c", "user.email=mivia@localhost",
 		"commit", "--allow-empty-message", "-m", deferredMsg); err != nil {
