@@ -95,8 +95,9 @@ func TestContextSetupSummarySeamStructuralDefault(t *testing.T) {
 	}
 	t.Cleanup(func() { setContextManagerForSetup = original })
 
-	session := chat.NewSession(&config.Resolved{Model: "model", ProviderName: "fake", SystemPrompt: "sys"}, stubAgentCompleter{})
-	if err := enableSessionContext(session, t.TempDir(), store); err != nil {
+	res := &config.Resolved{Model: "model", ProviderName: "fake", SystemPrompt: "sys"}
+	session := chat.NewSession(res, stubAgentCompleter{})
+	if err := enableSessionContext(session, t.TempDir(), store, res); err != nil {
 		t.Fatal(err)
 	}
 	if captured == nil {
@@ -155,8 +156,9 @@ func TestContextSetupSummarySeamPersistsMetadata(t *testing.T) {
 	}
 	t.Cleanup(func() { setContextManagerForSetup = original })
 
-	session := chat.NewSession(&config.Resolved{Model: "model", ProviderName: "fake", SystemPrompt: "sys"}, stubAgentCompleter{})
-	if err := enableSessionContext(session, t.TempDir(), store); err != nil {
+	res := &config.Resolved{Model: "model", ProviderName: "fake", SystemPrompt: "sys"}
+	session := chat.NewSession(res, stubAgentCompleter{})
+	if err := enableSessionContext(session, t.TempDir(), store, res); err != nil {
 		t.Fatal(err)
 	}
 	// Seed history, then tighten the budget so the next turn's preparation

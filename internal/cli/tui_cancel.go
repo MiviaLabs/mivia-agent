@@ -29,14 +29,23 @@ import (
 // takePendingSlashCmds drains the terminal command a slash handler produced.
 // The state change already happened in the handler; this only carries the
 // escape sequence out to bubbletea. Every caller of handleSlash must drain,
-// or the mode and the terminal disagree.
+// or the mode and the terminal disagree. Staged async work (see
+// pendingAsyncCmds) drains here too, so /compact's worker starts on the same
+// paths.
 func (m *tuiModel) takePendingSlashCmds() []tea.Cmd {
-	if m.pendingSelectCmd == nil {
+	var cmds []tea.Cmd
+	if m.pendingSelectCmd != nil {
+		cmds = append(cmds, m.pendingSelectCmd)
+		m.pendingSelectCmd = nil
+	}
+	if len(m.pendingAsyncCmds) > 0 {
+		cmds = append(cmds, m.pendingAsyncCmds...)
+		m.pendingAsyncCmds = nil
+	}
+	if len(cmds) == 0 {
 		return nil
 	}
-	cmd := m.pendingSelectCmd
-	m.pendingSelectCmd = nil
-	return []tea.Cmd{cmd}
+	return cmds
 }
 
 // quitArmWindow bounds how long an armed quit stays armed.

@@ -32,6 +32,12 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.uiAdapter.PollCmd())
 		}
 		return m, tea.Batch(cmds...)
+	case compactionDoneMsg:
+		// The staged /compact worker finished. Clear the busy state, report
+		// the outcome, and repaint - the message arrives outside key
+		// handling, so nothing else triggers a render.
+		m.applyCompactionDone(msg.err)
+		return m, nil
 	case uiTickMsg:
 		// Adapter heartbeat only - do not drain bridge here (tuiTickMsg owns it).
 		if m.uiAdapter != nil {

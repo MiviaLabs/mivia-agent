@@ -57,13 +57,17 @@ max_duration_seconds = 0
 max_on_failure_reentries = 3
 
 # Stacking is opt-in: this table (with the required plan_step/implement_step)
-# puts the workflow in the stacking engine. All other knobs use the
+# puts the workflow in the stacking engine. merge_policy=auto matches
+# feature-delivery.toml: a bug-fix run's PR merges itself once CI is green,
+# same as any other stacked delivery - a confirmed, regression-tested fix is
+# not held for a human publish grant by default. All other knobs use the
 # engine's global defaults (max_chunks=12, soft_lines=200, hard_lines=400,
-# max_files=5, merge_policy=approve).
+# max_files=5).
 [stacking]
 plan_step = "fix_plan"
 implement_step = "implement"
 split_deferred = true
+merge_policy = "auto"
 
 # ---- Hunt: read-only hostile audit, at most 2 confirmed findings ----
 [[steps]]

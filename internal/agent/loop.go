@@ -27,6 +27,12 @@ type Loop struct {
 	// succeeds. The owning chat surface commits it; the loop never publishes.
 	LastPreparation contextmgr.Preparation
 	HasPreparation  bool
+	// preCompactSource holds the pre-compaction history of the CURRENT
+	// compacted preparation, so the summary request can quote the dropped
+	// messages' real content. Set only when a prepare compacts, cleared at
+	// the next prepare start; the prompt-too-long retry sets it from the
+	// pre-prune history.
+	preCompactSource []provider.Message
 	// PreparationErr records an interrupted recovery failure so the session can
 	// surface the real cause instead of misreporting a checkpoint conflict.
 	PreparationErr error

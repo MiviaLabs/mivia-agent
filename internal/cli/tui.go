@@ -209,6 +209,15 @@ type tuiModel struct {
 	// toggle itself happens immediately in the handler; only the terminal
 	// sequence needs a tea.Cmd, and every caller of handleSlash drains it.
 	pendingSelectCmd tea.Cmd
+	// pendingAsyncCmds holds work commands a slash handler staged instead of
+	// running inline (today: /compact, whose LLM summary call must not block
+	// the update goroutine). takePendingSlashCmds drains them beside the
+	// select command, so every handleSlash caller carries them out.
+	pendingAsyncCmds []tea.Cmd
+	// compacting marks an asynchronous /compact in flight. It drives the
+	// status-bar busy treatment and refuses a second compact until the done
+	// message lands.
+	compacting bool
 	// queuedSlashCmds collects terminal commands from slash commands that ran
 	// from the queue, where the caller has no tea.Cmd return of its own.
 	queuedSlashCmds []tea.Cmd

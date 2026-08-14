@@ -103,7 +103,7 @@ func TestTuiLoadReportsAContextSessionDifferently(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := enableSessionContext(m.session, t.TempDir(), store); err != nil {
+	if err := enableSessionContext(m.session, t.TempDir(), store, &config.Resolved{}); err != nil {
 		t.Fatal(err)
 	}
 	// A committed turn persists through the durable context path, so loading

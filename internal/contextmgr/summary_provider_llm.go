@@ -110,6 +110,7 @@ func summarySystemPrompt() string {
 	var b strings.Builder
 	b.WriteString("You summarize an earlier part of a conversation. A later assistant uses your summary as its only record of that part.\n\n")
 	b.WriteString("Read the input data in the user message. Keep the facts a later turn needs. Drop the rest.\n\n")
+	b.WriteString("The source_excerpts section holds the real content of the messages compaction dropped. Build your summary from it; the other fields are host-side framing.\n\n")
 	b.WriteString("Reply with one JSON object and nothing else. Do not add prose before or after the object. Do not wrap it in a code fence.\n\n")
 	b.WriteString("Use exactly this schema:\n")
 	b.WriteString(summaryReplySkeleton)
@@ -143,6 +144,7 @@ func summaryUserPrompt(request SummaryRequest) string {
 	writeSummaryList(&b, "changed_surfaces", request.Input.ChangedSurfaces)
 	writeSummaryList(&b, "open_work", request.Input.OpenWork)
 	writeSummaryList(&b, "risks", request.Input.Risks)
+	writeSourceExcerpts(&b, request.SourceExcerpts)
 	b.WriteString("\nEcho these values without any change:\n")
 	b.WriteString("version: " + strconv.FormatUint(uint64(request.Input.Version), 10) + "\n")
 	b.WriteString("source_range: " + string(sourceRange) + "\n")
@@ -160,6 +162,23 @@ func writeSummaryList(b *strings.Builder, name string, values []string) {
 	}
 	for _, value := range values {
 		b.WriteString("  - " + value + "\n")
+	}
+}
+
+// writeSourceExcerpts renders the dropped-message quotes. The first line is
+// always the segment's first user message; the rest are newest first.
+func writeSourceExcerpts(b *strings.Builder, excerpts []SourceExcerpt) {
+	b.WriteString("source_excerpts (real content of the dropped messages; first line is the segment's opening user message, the rest newest first):\n")
+	if len(excerpts) == 0 {
+		b.WriteString("  (none)\n")
+		return
+	}
+	for _, excerpt := range excerpts {
+		label := "[" + excerpt.Role + "]"
+		if excerpt.Name != "" {
+			label = "[tool " + excerpt.Name + "]"
+		}
+		b.WriteString("  - " + label + " " + excerpt.Text + "\n")
 	}
 }
 

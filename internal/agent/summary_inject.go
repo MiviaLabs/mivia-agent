@@ -114,6 +114,7 @@ func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (contextmgr.Untr
 		ChangedSurfaces:   snapshot.ChangedSurfaces,
 		OpenWork:          snapshot.OpenWork,
 		Risks:             snapshot.Risks,
+		SourceExcerpts:    contextmgr.SourceExcerpts(l.preCompactSource, l.Messages),
 		SourceRange:       l.LastPreparation.Token.Range,
 		PolicyDigest:      summarizer.Policy.PolicyDigest,
 		Provider:          summarizer.Binding.Provider,

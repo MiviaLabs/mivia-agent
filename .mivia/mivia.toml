@@ -610,6 +610,14 @@ store_backend = "sqlite"
 # max_session_state_bytes = 0   # a stored session's serialized messages
 # max_export_bytes        = 0   # a context export
 
+# LLM compaction summary: on compaction, ask the session model to summarize
+# what was dropped and inject the validated summary into the next request.
+# Requires the [privacy] patterns below and the provider base_url; both are
+# configured in this workspace. Any summary failure degrades silently to
+# structural-only compaction.
+[context.summary]
+enabled = true
+
 # ---------------------------------------------------------------------------
 # Privacy
 # ---------------------------------------------------------------------------

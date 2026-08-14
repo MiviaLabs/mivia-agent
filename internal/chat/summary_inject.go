@@ -24,6 +24,7 @@ func injectPlainSummary(ctx context.Context, snapshot plainTurnSnapshot, prepara
 		Version:           contextmgr.SummarySchemaVersion,
 		Objective:         agent.SummaryFieldText(latestUserMessage(snapshot.messages)),
 		Evidence:          contextmgr.OmittedEvidence(snapshot.messages, preparation.Messages),
+		SourceExcerpts:    contextmgr.SourceExcerpts(snapshot.messages, preparation.Messages),
 		SourceRange:       preparation.Token.Range,
 		PolicyDigest:      summarizer.Policy.PolicyDigest,
 		Provider:          summarizer.Binding.Provider,

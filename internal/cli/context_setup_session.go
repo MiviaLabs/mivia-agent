@@ -44,7 +44,7 @@ func setupRepositorySessionContext(sess *chat.Session, repositoryRoot, storePath
 }
 
 func configureSessionContext(sess *chat.Session, catalogRoot string, store *storage.SQLite, res *config.Resolved) (*storage.SQLite, error) {
-	if err := enableSessionContext(sess, catalogRoot, store); err != nil {
+	if err := enableSessionContext(sess, catalogRoot, store, res); err != nil {
 		_ = store.Close()
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func contextWorkspaceID(root string) string {
 	return "workspace-" + hex.EncodeToString(digest[:8])
 }
 
-func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite) error {
+func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite, res *config.Resolved) error {
 	if sess == nil || store == nil {
 		return fmt.Errorf("context session and store are required")
 	}
@@ -108,19 +108,26 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 	if err != nil {
 		return err
 	}
-	// The committer exposes the commit-time SummaryRequestBuilder seam for a
-	// future summary section. Today no SummaryProvider exists, so the builder
-	// and the Summarizer stay nil and every path keeps structural-only
-	// behavior; the policy passed below is the summary-disabled default.
+	publisher := contextmgr.PreparationCommitter{Store: store}
 	manager := &contextmgr.ContextManager{
 		PreparationManager:  contextmgr.StructuralPreparationManager{},
-		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		CheckpointPublisher: publisher,
 		Enabled:             true,
 	}
-	// The summary policy is the summary-disabled default: no summary section
-	// exists in config yet. When one lands, this is the seam that populates
-	// the PolicySnapshot and the ContextManager.Summarizer.
-	if err := setContextManagerForSetup(sess, manager, principal, contextstate.PolicySnapshot{}); err != nil {
+	// The summary gate is explicit: the [context.summary] flag, a configured
+	// [privacy] policy, and a resolved provider endpoint together wire the LLM
+	// summarizer into the request path (manager.Summarizer, read per turn by
+	// the agent loop and plain chat). Anything less keeps every path
+	// structural-only. The committer's summary seam stays unwired on purpose:
+	// CommitPreparation fails the turn when the summary call fails, and a
+	// background metadata call must never destroy a turn the model already
+	// finished. The injection path degrades on every summary failure.
+	policy := contextstate.PolicySnapshot{}
+	if summarizer, snapshot, ok := summaryWiring(sess, res); ok {
+		manager.Summarizer = summarizer
+		policy = snapshot
+	}
+	if err := setContextManagerForSetup(sess, manager, principal, policy); err != nil {
 		return err
 	}
 	return sess.SetContextStore(store)

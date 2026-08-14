@@ -48,10 +48,17 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 
 // captureOmittedEvidence folds the content-free diff of the pre-compaction
 // history against the retained preparation into the run's TurnState BEFORE
-// l.Messages is overwritten. Omitted evidence is bounded by the tracker; a
-// rejected item (list full, envelope-invalid) is dropped, never an error.
+// l.Messages is overwritten, and stashes the pre-compaction history so the
+// summary request can quote the dropped messages' real content. Omitted
+// evidence is bounded by the tracker; a rejected item (list full,
+// envelope-invalid) is dropped, never an error.
 func (l *Loop) captureOmittedEvidence(input contextmgr.PrepareInput, preparation contextmgr.Preparation) {
-	if l.TurnState == nil || !preparation.Compacted {
+	l.preCompactSource = nil
+	if !preparation.Compacted {
+		return
+	}
+	l.preCompactSource = clonePreparedMessages(input.Messages)
+	if l.TurnState == nil {
 		return
 	}
 	for _, item := range contextmgr.OmittedEvidence(input.Messages, preparation.Messages) {

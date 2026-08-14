@@ -54,6 +54,14 @@ LOG_DIR = Path(os.environ.get("MIVIA_RUN_LOG_DIR", REPO_ROOT / ".mivia" / "run-l
 MANIFEST_PATH = LOG_DIR / "manifest.json"
 
 
+def _random_suffix() -> str:
+    """A short, unique-enough token for scenario task text: two smoke runs
+    launched in the same process (or two processes started in the same
+    second) must never target the same package name, or a rerun's PR
+    collides with whatever a prior run already merged into master."""
+    return f"{int(time.time())}{os.getpid() % 10000:04d}"
+
+
 @dataclass
 class TopologyScenario:
     """Drives the real feature-delivery workflow with an engineered task."""
@@ -90,8 +98,13 @@ class ScriptedScenario:
 # --- Topology scenarios --------------------------------------------------
 # Each task is engineered so the constraints force a specific, known
 # chunk-dependency shape while leaving decompose's own judgment about file
-# layout and package naming intact - this is breadth testing of the real
-# agent pipeline, not a scripted replay.
+# layout intact - this is breadth testing of the real agent pipeline, not a
+# scripted replay. Package names carry _SUITE_SUFFIX (one value per script
+# invocation, shared across every scenario in that run): a fixed name would
+# collide with whatever a PRIOR launch already merged into master the
+# moment this suite runs a second time.
+
+_SUITE_SUFFIX = _random_suffix()
 
 TOPOLOGY_SCENARIOS: list[TopologyScenario] = [
     TopologyScenario(
@@ -100,18 +113,18 @@ TOPOLOGY_SCENARIOS: list[TopologyScenario] = [
                      "Regression for chunk-scope safety (guardChunkScope) and "
                      "the final integration-run admission (stack_mode=single).",
         task=(
-            "Add three independent, dependency-free leaf utility packages, each in its own "
-            "new directory, each with its own table-driven test file: "
-            "1. internal/runeutil: a function CountGraphemesApprox(s string) int that counts "
-            "user-perceived characters approximately (runes, treating combining marks as "
-            "zero-width). "
-            "2. internal/pathutil: a function SplitExt(p string) (base, ext string) that splits "
-            "a file path into its base and extension parts. "
-            "3. internal/envutil: a function ParseBool(s string, def bool) bool that parses "
-            "common boolean strings (\"1\", \"true\", \"yes\", \"on\" and their negatives, "
-            "case-insensitive), returning def when unrecognized. "
-            "These three packages must not import each other and must not modify any existing "
-            "file outside their own new directory."
+            f"Add three independent, dependency-free leaf utility packages, each in its own "
+            f"new directory, each with its own table-driven test file: "
+            f"1. internal/runeutil{_SUITE_SUFFIX}: a function CountGraphemesApprox(s string) int that counts "
+            f"user-perceived characters approximately (runes, treating combining marks as "
+            f"zero-width). "
+            f"2. internal/pathutil{_SUITE_SUFFIX}: a function SplitExt(p string) (base, ext string) that splits "
+            f"a file path into its base and extension parts. "
+            f"3. internal/envutil{_SUITE_SUFFIX}: a function ParseBool(s string, def bool) bool that parses "
+            f"common boolean strings (\"1\", \"true\", \"yes\", \"on\" and their negatives, "
+            f"case-insensitive), returning def when unrecognized. "
+            f"These three packages must not import each other and must not modify any existing "
+            f"file outside their own new directory."
         ),
     ),
     TopologyScenario(
@@ -120,25 +133,25 @@ TOPOLOGY_SCENARIOS: list[TopologyScenario] = [
                      "that. Regression for the merge-order deadlock fix "
                      "(blockedByUnmergedDependent) and the sibling-file scope filter.",
         task=(
-            "Add four small Go packages under internal/dagutil/ that form a strict dependency "
-            "chain, each in its own subdirectory with its own table-driven test file: "
-            "1. internal/dagutil/setops: function Union(a, b []string) []string returning the "
-            "sorted union of two string slices, no duplicates. No dependency on the other three "
-            "packages below. "
-            "2. internal/dagutil/strops: function Dedup(a []string) []string returning a with "
-            "duplicates removed, order preserved. No dependency on the other three packages below. "
-            "3. internal/dagutil/combine: function CombineUnique(a, b []string) []string that "
-            "MUST import both internal/dagutil/setops and internal/dagutil/strops, calling "
-            "Union(a, b) and then Dedup on the result. This package cannot be implemented or "
-            "compiled until setops and strops both exist. "
-            "4. internal/dagutil/report: function Report(a, b []string) string that MUST import "
-            "internal/dagutil/combine, calls CombineUnique(a, b), and returns a comma-joined "
-            "string of the result. This package cannot be implemented or compiled until combine "
-            "exists. "
-            "Decompose this into chunks that respect this exact dependency chain: setops and "
-            "strops are independent of each other and can be parallel chunks; combine depends on "
-            "both setops and strops; report depends on combine. Do not modify any existing file "
-            "outside these four new directories."
+            f"Add four small Go packages under internal/dagutil{_SUITE_SUFFIX}/ that form a strict dependency "
+            f"chain, each in its own subdirectory with its own table-driven test file: "
+            f"1. internal/dagutil{_SUITE_SUFFIX}/setops: function Union(a, b []string) []string returning the "
+            f"sorted union of two string slices, no duplicates. No dependency on the other three "
+            f"packages below. "
+            f"2. internal/dagutil{_SUITE_SUFFIX}/strops: function Dedup(a []string) []string returning a with "
+            f"duplicates removed, order preserved. No dependency on the other three packages below. "
+            f"3. internal/dagutil{_SUITE_SUFFIX}/combine: function CombineUnique(a, b []string) []string that "
+            f"MUST import both internal/dagutil{_SUITE_SUFFIX}/setops and internal/dagutil{_SUITE_SUFFIX}/strops, calling "
+            f"Union(a, b) and then Dedup on the result. This package cannot be implemented or "
+            f"compiled until setops and strops both exist. "
+            f"4. internal/dagutil{_SUITE_SUFFIX}/report: function Report(a, b []string) string that MUST import "
+            f"internal/dagutil{_SUITE_SUFFIX}/combine, calls CombineUnique(a, b), and returns a comma-joined "
+            f"string of the result. This package cannot be implemented or compiled until combine "
+            f"exists. "
+            f"Decompose this into chunks that respect this exact dependency chain: setops and "
+            f"strops are independent of each other and can be parallel chunks; combine depends on "
+            f"both setops and strops; report depends on combine. Do not modify any existing file "
+            f"outside these four new directories."
         ),
     ),
     TopologyScenario(
@@ -148,24 +161,24 @@ TOPOLOGY_SCENARIOS: list[TopologyScenario] = [
                      "sibling-file union with more than two dependencies at once - a shape "
                      "the dag-diamond scenario does not cover.",
         task=(
-            "Add four small Go packages under internal/fanin/, each in its own subdirectory "
-            "with its own table-driven test file: "
-            "1. internal/fanin/red: function Count(s string) int returning the number of times "
-            "the byte 'r' appears in s (case-insensitive). No dependency on the other packages. "
-            "2. internal/fanin/green: function Count(s string) int returning the number of "
-            "times the byte 'g' appears in s (case-insensitive). No dependency on the other "
-            "packages. "
-            "3. internal/fanin/blue: function Count(s string) int returning the number of times "
-            "the byte 'b' appears in s (case-insensitive). No dependency on the other packages. "
-            "4. internal/fanin/summary: function Totals(s string) map[string]int that MUST "
-            "import all three of internal/fanin/red, internal/fanin/green, and "
-            "internal/fanin/blue, calling each package's Count(s) and returning a map with keys "
-            "\"red\", \"green\", \"blue\". This package cannot be implemented or compiled until "
-            "red, green, and blue all exist. "
-            "Decompose this into chunks that respect this exact dependency chain: red, green, "
-            "and blue are mutually independent and can be parallel chunks; summary depends on "
-            "all three of them. Do not modify any existing file outside these four new "
-            "directories."
+            f"Add four small Go packages under internal/fanin{_SUITE_SUFFIX}/, each in its own subdirectory "
+            f"with its own table-driven test file: "
+            f"1. internal/fanin{_SUITE_SUFFIX}/red: function Count(s string) int returning the number of times "
+            f"the byte 'r' appears in s (case-insensitive). No dependency on the other packages. "
+            f"2. internal/fanin{_SUITE_SUFFIX}/green: function Count(s string) int returning the number of "
+            f"times the byte 'g' appears in s (case-insensitive). No dependency on the other "
+            f"packages. "
+            f"3. internal/fanin{_SUITE_SUFFIX}/blue: function Count(s string) int returning the number of times "
+            f"the byte 'b' appears in s (case-insensitive). No dependency on the other packages. "
+            f"4. internal/fanin{_SUITE_SUFFIX}/summary: function Totals(s string) map[string]int that MUST "
+            f"import all three of internal/fanin{_SUITE_SUFFIX}/red, internal/fanin{_SUITE_SUFFIX}/green, and "
+            f"internal/fanin{_SUITE_SUFFIX}/blue, calling each package's Count(s) and returning a map with keys "
+            f"\"red\", \"green\", \"blue\". This package cannot be implemented or compiled until "
+            f"red, green, and blue all exist. "
+            f"Decompose this into chunks that respect this exact dependency chain: red, green, "
+            f"and blue are mutually independent and can be parallel chunks; summary depends on "
+            f"all three of them. Do not modify any existing file outside these four new "
+            f"directories."
         ),
     ),
     TopologyScenario(
@@ -174,33 +187,38 @@ TOPOLOGY_SCENARIOS: list[TopologyScenario] = [
                      "for ordering when there is no fan-out to get wrong - the simplest real "
                      "case a merge-order bug could still break.",
         task=(
-            "Add four small Go packages under internal/chain/ that form a strict linear "
-            "dependency chain, each in its own subdirectory with its own table-driven test "
-            "file: "
-            "1. internal/chain/stepa: function A(n int) int that returns n + 1. No dependency "
-            "on the other packages. "
-            "2. internal/chain/stepb: function B(n int) int that MUST import internal/chain/stepa "
-            "and returns stepa.A(n) * 2. Cannot be implemented until stepa exists. "
-            "3. internal/chain/stepc: function C(n int) int that MUST import internal/chain/stepb "
-            "and returns stepb.B(n) - 3. Cannot be implemented until stepb exists. "
-            "4. internal/chain/stepd: function D(n int) int that MUST import internal/chain/stepc "
-            "and returns stepc.C(n) squared. Cannot be implemented until stepc exists. "
-            "Decompose this into exactly four chunks in this exact linear dependency order: "
-            "stepa, then stepb (depends on stepa), then stepc (depends on stepb), then stepd "
-            "(depends on stepc). No two chunks may run in parallel. Do not modify any existing "
-            "file outside these four new directories."
+            f"Add four small Go packages under internal/chain{_SUITE_SUFFIX}/ that form a strict linear "
+            f"dependency chain, each in its own subdirectory with its own table-driven test "
+            f"file: "
+            f"1. internal/chain{_SUITE_SUFFIX}/stepa: function A(n int) int that returns n + 1. No dependency "
+            f"on the other packages. "
+            f"2. internal/chain{_SUITE_SUFFIX}/stepb: function B(n int) int that MUST import internal/chain{_SUITE_SUFFIX}/stepa "
+            f"and returns stepa.A(n) * 2. Cannot be implemented until stepa exists. "
+            f"3. internal/chain{_SUITE_SUFFIX}/stepc: function C(n int) int that MUST import internal/chain{_SUITE_SUFFIX}/stepb "
+            f"and returns stepb.B(n) - 3. Cannot be implemented until stepb exists. "
+            f"4. internal/chain{_SUITE_SUFFIX}/stepd: function D(n int) int that MUST import internal/chain{_SUITE_SUFFIX}/stepc "
+            f"and returns stepc.C(n) squared. Cannot be implemented until stepc exists. "
+            f"Decompose this into exactly four chunks in this exact linear dependency order: "
+            f"stepa, then stepb (depends on stepa), then stepc (depends on stepb), then stepd "
+            f"(depends on stepc). No two chunks may run in parallel. Do not modify any existing "
+            f"file outside these four new directories."
         ),
     ),
     TopologyScenario(
         name="single-package",
-        description="One tiny package: forces stack_mode=single (the non-stacking path). "
-                     "Cheap sanity check that the plain single-PR path still works "
-                     "alongside the stacking changes.",
+        description="One tiny package: forces stack_mode=single (the non-stacking path), "
+                     "the ONE topology scenario that never exercises the merge queue - "
+                     "decompose picks single mode for a task this small, so there is no "
+                     "chunk to auto-merge. Do not read this as an auto-merge test; it is a "
+                     "cheap sanity check that the plain single-PR path still works "
+                     "alongside the stacking changes. Target package name is randomized "
+                     "per run so repeated launches never collide with a package a prior "
+                     "run already merged into master.",
         task=(
-            "Add one small dependency-free leaf package internal/sliceutil with a single "
-            "function Unique(in []string) []string that returns the input without duplicates, "
-            "preserving first-seen order, plus one table-driven test file. Do not modify any "
-            "existing file."
+            f"Add one small dependency-free leaf package internal/smoke{_random_suffix()} "
+            f"with a single function Unique(in []string) []string that returns the input "
+            f"without duplicates, preserving first-seen order, plus one table-driven test "
+            f"file. Do not modify any existing file."
         ),
     ),
 ]

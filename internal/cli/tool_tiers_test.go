@@ -611,7 +611,7 @@ func TestAdoptSessionLedgerRepoSkipsASharedStore(t *testing.T) {
 	// the second guard reads it back off the session rather than trusting
 	// the caller to have plumbed it.
 	contextual := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
-	if err := enableSessionContext(contextual, t.TempDir(), store); err != nil {
+	if err := enableSessionContext(contextual, t.TempDir(), store, &config.Resolved{}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.DefaultSubagentConfig

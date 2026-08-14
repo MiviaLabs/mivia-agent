@@ -128,6 +128,12 @@ func (s *Session) Compact(ctx context.Context) error {
 		return fmt.Errorf("context compaction made no reduction")
 	}
 	preparedMessages := cloneContextMessages(preparation.Messages)
+	// Manual-compact summary: run the LLM summary before the durable commit
+	// (the same order CommitPreparation uses), stamp the bounded metadata on
+	// the candidate, and append the rendered message to the live history
+	// after the state swap. Any summary failure keeps the structural compact
+	// unchanged; a summary must never fail a manual compact.
+	summaryMessage, haveSummary := summarizeManualCompact(ctx, cfg, input, messages, &preparation)
 	result := contextmgr.TurnResult{
 		Active: preparedMessages, TurnID: turnID, Outcome: contextmgr.OutcomeComplete,
 	}
@@ -144,6 +150,9 @@ func (s *Session) Compact(ctx context.Context) error {
 		return ErrStaleOperation
 	}
 	s.Messages = preparedMessages
+	if haveSummary {
+		s.Messages = append(s.Messages, summaryMessage)
+	}
 	s.contextHead = nextContextRevision(preparation, result)
 	s.mu.Unlock()
 	s.emitContextCompaction(preparation, turnID)

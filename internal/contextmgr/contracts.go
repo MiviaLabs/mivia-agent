@@ -111,7 +111,11 @@ type SummaryRequest struct {
 	Provider          string
 	Model             string
 	EndpointAllowlist []string
-	RedactionPolicy   contextstate.RedactionPolicy `json:"-"`
+	// SourceExcerpts are bounded quotes of the dropped messages, for the
+	// summarize request only. The sealed envelope never carries them, so no
+	// durable record or injected message contains excerpt content.
+	SourceExcerpts  []SourceExcerpt              `json:"-"`
+	RedactionPolicy contextstate.RedactionPolicy `json:"-"`
 }
 
 // SummaryEnvelope is the only input accepted by a summary provider. The
@@ -218,6 +222,30 @@ func (r SummaryRequest) Validate() error {
 	}
 	if r.Input.SourceRange != r.SourceRange {
 		return fmt.Errorf("%w: summary source range mismatch", contextstate.ErrInvalidDTO)
+	}
+	if len(r.SourceExcerpts) > MaxSummaryItems {
+		return fmt.Errorf("%w: too many source excerpts", contextstate.ErrInvalidDTO)
+	}
+	excerptTotal := 0
+	for _, excerpt := range r.SourceExcerpts {
+		switch excerpt.Role {
+		case provider.RoleUser, provider.RoleAssistant, provider.RoleTool:
+		default:
+			return fmt.Errorf("%w: unknown source excerpt role %q", contextstate.ErrInvalidDTO, excerpt.Role)
+		}
+		if err := validateSummaryText("source excerpt", excerpt.Text, false); err != nil {
+			return err
+		}
+		if err := validateSummaryText("source excerpt name", excerpt.Name, true); err != nil {
+			return err
+		}
+		if len(excerpt.Name) > contextstate.MaxIdentifierBytes {
+			return fmt.Errorf("%w: source excerpt name is too large", contextstate.ErrInvalidDTO)
+		}
+		excerptTotal += len(excerpt.Text)
+	}
+	if excerptTotal > MaxSummaryExcerptTotalBytes {
+		return fmt.Errorf("%w: source excerpts exceed the total bound", contextstate.ErrInvalidDTO)
 	}
 	return nil
 }

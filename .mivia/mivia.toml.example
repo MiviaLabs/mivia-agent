@@ -525,6 +525,13 @@ default_timeout_seconds = 43200
 # max_commit_event_bytes = 0
 # max_session_state_bytes = 0
 # max_export_bytes = 0
+# LLM compaction summary: OFF by default. Also requires a configured
+# [privacy] redaction policy and a resolved provider endpoint; otherwise
+# it stays off. On compaction, mivia asks the session model to summarize
+# what was dropped and injects the validated summary into the next request.
+# Any summary failure degrades silently to structural-only compaction.
+# [context.summary]
+# enabled = false
 
 # Storage backend: memory (ephemeral) or sqlite (durable)
 store_backend = "sqlite"

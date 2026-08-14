@@ -376,7 +376,7 @@ func TestRuntimeCoverageEnableContextRejectsInvalidSessionID(t *testing.T) {
 	defer store.Close()
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
 	session.SessionID = ""
-	if err := enableSessionContext(session, t.TempDir(), store); err == nil {
+	if err := enableSessionContext(session, t.TempDir(), store, nil); err == nil {
 		t.Fatal("context setup accepted an invalid session ID")
 	}
 }
@@ -394,7 +394,7 @@ func TestRuntimeCoverageEnableContextReturnsManagerFailure(t *testing.T) {
 	}
 	defer store.Close()
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
-	if err := enableSessionContext(session, t.TempDir(), store); !errors.Is(err, want) {
+	if err := enableSessionContext(session, t.TempDir(), store, nil); !errors.Is(err, want) {
 		t.Fatalf("manager error = %v, want %v", err, want)
 	}
 }
