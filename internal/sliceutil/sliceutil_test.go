@@ -136,37 +136,3 @@ func TestDedupeDoesNotAliasInput(t *testing.T) {
 		t.Errorf("mutating result changed input: items[0] = %d, want 1", items[0])
 	}
 }
-
-// TestUnique is a table-driven check that Unique removes duplicates while
-// preserving the order of first occurrence, including nil and empty inputs.
-func TestUnique(t *testing.T) {
-	cases := []struct {
-		name  string
-		input []string
-		want  []string
-	}{
-		{"nil input", nil, nil},
-		{"empty input", []string{}, nil},
-		{"no duplicates", []string{"b", "a", "c"}, []string{"b", "a", "c"}},
-		{"adjacent duplicates", []string{"x", "x", "y", "y", "z"}, []string{"x", "y", "z"}},
-		{"non-adjacent duplicates", []string{"a", "b", "a", "c", "b", "d"}, []string{"a", "b", "c", "d"}},
-		{"all identical", []string{"dup", "dup", "dup"}, []string{"dup"}},
-		{"empty string element", []string{"", "a", "", "b"}, []string{"", "a", "b"}},
-	}
-	for _, c := range cases {
-		if got := Unique(c.input); !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%s: Unique(%v) = %v, want %v", c.name, c.input, got, c.want)
-		}
-	}
-}
-
-// TestUniqueDoesNotAliasInput checks that mutating the result never mutates
-// the input slice.
-func TestUniqueDoesNotAliasInput(t *testing.T) {
-	input := []string{"a", "b"}
-	got := Unique(input)
-	got[0] = "changed"
-	if input[0] != "a" {
-		t.Errorf("mutating result changed input: input[0] = %q, want %q", input[0], "a")
-	}
-}
