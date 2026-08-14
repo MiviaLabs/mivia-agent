@@ -190,7 +190,7 @@ func TestElisionThreshold2048(t *testing.T) {
 		{Role: provider.RoleUser, Content: "new"},
 	}
 	// No mandatory tool unit after objective: latest tool unit is index 1-2.
-	mandatory := mandatoryIndexes(messagesAt, 3)
+	mandatory := mandatoryIndexes(messagesAt, 3, nil)
 	out, stats := elideToolResults(cloneMessages(messagesAt), 3, mandatory)
 	if stats.Messages != 0 || out[2].Content != at {
 		t.Fatalf("2048-byte body elided: stats=%+v content_len=%d", stats, len(out[2].Content))
@@ -204,7 +204,7 @@ func TestElisionThreshold2048(t *testing.T) {
 		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call2}},
 		provider.Message{Role: provider.RoleTool, ToolCallID: call2.ID, Name: "read_file", Content: "now"},
 	)
-	mandatory = mandatoryIndexes(messagesOver, 3)
+	mandatory = mandatoryIndexes(messagesOver, 3, nil)
 	out, stats = elideToolResults(cloneMessages(messagesOver), 3, mandatory)
 	if stats.Messages != 1 || out[2].Content == over {
 		t.Fatalf("2049-byte body not elided: stats=%+v content_len=%d", stats, len(out[2].Content))
@@ -254,7 +254,7 @@ func TestElisionSkipsWhenNoticeNotCheaper(t *testing.T) {
 		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call2}},
 		{Role: provider.RoleTool, ToolCallID: "c2", Name: "t", Content: "ok"},
 	}
-	mandatory := mandatoryIndexes(messages, 3)
+	mandatory := mandatoryIndexes(messages, 3, nil)
 
 	// Positive control: real estimator finds the notice cheaper.
 	out, stats := elideToolResults(cloneMessages(messages), 3, mandatory)
