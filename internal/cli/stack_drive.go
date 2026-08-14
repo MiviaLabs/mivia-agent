@@ -94,8 +94,11 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 	}
 	// Reconstruct the full chunk list across every already-admitted decompose
 	// wave (not just the plan run's own first wave): a prior process may have
-	// already admitted continuation waves before this invocation.
-	chunks, hasMore, remainingScope, err := loadAllStackChunks(prepared.repo, stackID)
+	// already admitted continuation waves before this invocation. The drive
+	// loader recovers a wedged wave instead of failing on it (see
+	// loadAllStackChunksForDrive); loadAllStackChunks stays strict for the
+	// reconcile sweep.
+	chunks, hasMore, remainingScope, err := loadAllStackChunksForDrive(prepared, stackID, planOutput, planInputs, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}

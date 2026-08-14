@@ -131,6 +131,48 @@ func TestDeliverAutoSplitsOversizedDiffWhenEnabled(t *testing.T) {
 	}
 }
 
+// TestDeliverAutoSplitDefersNonASCIIFilename pins bug 2: git C-quotes
+// numstat paths with non-ASCII characters (core.quotePath defaults true, so a
+// file named cafe\303\251.txt appears as "caf\303\251.txt" with quotes and
+// octal escapes). The split then fed those quoted strings into exclude
+// pathspecs (':!<quoted>'), which git rejects with 'fatal: Unimplemented
+// pathspec magic "”, and into git reset -- <quoted>, which silently no-ops.
+// The gate must measure numstat with -c core.quotePath=false so the deferred
+// path is literal: excludePathspecs, the reset, and the add all agree, the
+// file is excluded from C1, and it lands on the deferred branch.
+func TestDeliverAutoSplitDefersNonASCIIFilename(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "essential.txt", "one line\n")
+	writeWorktreeFile(t, worktreeRoot, "caf\u00e9.txt", strings.Repeat("line\n", 50))
+
+	policy := defaultPolicy("draft")
+	policy.StackingHardLines = 5
+	policy.SplitDeferred = true
+
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, map[string]string{"task": "gate"}))
+	if err != nil {
+		t.Fatalf("Deliver with a non-ASCII filename = %v, want the host's split to measure and defer the literal path", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	delivered := runGitOut(t, worktreeRoot, "-c", "core.quotePath=false", "diff", "--name-only", baseCommit, "HEAD")
+	if delivered != "essential.txt" {
+		t.Fatalf("delivered commit files = %q, want exactly essential.txt (caf\u00e9.txt must be deferred, not pushed)", delivered)
+	}
+	deferredBranch := DeferredBranchName("wf/wt-test")
+	deferredDiff := runGitOut(t, worktreeRoot, "-c", "core.quotePath=false", "diff", "--name-only", "HEAD", deferredBranch)
+	if deferredDiff != "caf\u00e9.txt" {
+		t.Fatalf("deferred branch diff vs HEAD = %q, want exactly caf\u00e9.txt", deferredDiff)
+	}
+	rec := deliveryRecordByKey(t, repo, run)
+	if rec.StackRemainingCommits != 1 {
+		t.Fatalf("StackRemainingCommits = %d, want 1", rec.StackRemainingCommits)
+	}
+}
+
 func TestDeliverSizeGateOffByDefaultDespiteSplittableDiff(t *testing.T) {
 	ctx := context.Background()
 	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)

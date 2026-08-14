@@ -28,6 +28,11 @@ type PrepareInput struct {
 	Force            bool
 	CurrentObjective string
 	RecentTail       int
+	// PreserveNames lists provider.Message.Name values that structural
+	// retention keeps whole alongside the mandatory set. The chat layer uses
+	// it for the session-owned core-memory context frame so compaction never
+	// drops it.
+	PreserveNames []string
 	// CalibrationRatio scales token estimates in the planner for
 	// heuristic drift correction. 0 means no correction.
 	CalibrationRatio float64

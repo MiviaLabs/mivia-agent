@@ -34,6 +34,11 @@ type PlanInput struct {
 	SourceEvents     []contextstate.SourceEvent
 	IdempotencyKey   string
 	RecentTail       int
+	// PreserveNames lists provider.Message.Name values that structural
+	// retention keeps whole alongside the mandatory set. The chat layer uses
+	// it for the session-owned core-memory context frame so compaction never
+	// drops it.
+	PreserveNames []string
 	// CalibrationRatio scales token estimates to correct for heuristic drift.
 	// 0 means use 1.0 (no correction). Should come from a Calibration.Ratio.
 	CalibrationRatio float64
@@ -159,7 +164,7 @@ func currentObjective(messages []provider.Message, explicit string) (provider.Me
 
 func retainMessages(input PlanInput, objective provider.Message, objectiveIndex, target, schemaCost int) ([]provider.Message, error) {
 	units := messageUnits(input.Messages)
-	mandatory := mandatoryIndexes(input.Messages, objectiveIndex)
+	mandatory := mandatoryIndexes(input.Messages, objectiveIndex, input.PreserveNames)
 
 	selected := make(map[int]struct{}, len(mandatory))
 	for index := range mandatory {
@@ -388,9 +393,33 @@ func validatePlanKey(key string) error {
 // validateMessageShape is shared by planning and durable turn mapping. It
 // delegates pairing semantics to provider, then wraps failures in the stable
 // context DTO error family.
+//
+// User-message Names are exempt from the shape gate: host-owned frames (the
+// session's core-memory context, preserved through PlanInput.PreserveNames)
+// legitimately ride on a user message with a sentinel Name that the wire
+// keeps, so the structural check evaluates the message without it. Every
+// other pairing rule (tool pairing, roles, empty content, tool-call ids)
+// still applies exactly as provider defines it.
 func validateMessageShape(messages []provider.Message) error {
-	if err := provider.ValidateToolPairing(messages); err != nil {
+	if err := provider.ValidateToolPairing(maskUserMessageNames(messages)); err != nil {
 		return fmt.Errorf("%w: message shape: %v", contextstate.ErrInvalidDTO, err)
 	}
 	return nil
+}
+
+// maskUserMessageNames returns a shallow clone in which the Name of every
+// user-role message is cleared for pairing validation. Host frames are the
+// only named user messages this planner ever sees (chat input never sets
+// Name), and their Name is what makes them preservable, so it must not fail
+// the structural gate. Assistant and tool messages are not masked: a Name
+// there is never a host frame and stays a hard shape error.
+func maskUserMessageNames(messages []provider.Message) []provider.Message {
+	output := make([]provider.Message, len(messages))
+	copy(output, messages)
+	for index := range output {
+		if output[index].Role == provider.RoleUser {
+			output[index].Name = ""
+		}
+	}
+	return output
 }

@@ -141,7 +141,7 @@ func optionalTailIsSuffix(input PlanInput, plan PlanResult) bool {
 		// cannot fail; refuse to assert rather than misreport.
 		return true
 	}
-	mandatory := mandatoryIndexes(working, objectiveIndex)
+	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
 	working, _, _ = elideForCompaction(working, objectiveIndex, mandatory, nil, contextstate.Principal{})
 	fingerprint := func(message provider.Message) string {
 		b, err := contextstate.MarshalCanonical(plannerMessages([]provider.Message{message}))

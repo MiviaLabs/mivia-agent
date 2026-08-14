@@ -193,7 +193,7 @@ func (s *Session) loadContextSnapshot(operationName string) error {
 		if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &messages); err != nil {
 			return fmt.Errorf("decode active context: %w", err)
 		}
-		if err := provider.ValidateToolPairing(messages); err != nil {
+		if err := validateRestoredMessages(messages); err != nil {
 			return fmt.Errorf("active context message shape: %w", err)
 		}
 	}
@@ -205,6 +205,9 @@ func (s *Session) loadContextSnapshot(operationName string) error {
 		return ErrStaleOperation
 	}
 	s.Messages = cloneContextMessages(messages)
+	// Mirror the restored frame so a later /clear or surface publication
+	// re-seeds from the same block the checkpoint carries (BUG 3).
+	s.memoryContext = memoryFrameContent(messages)
 	s.contextHead = snapshot.Revision
 	s.invalidateLocked()
 	return nil
@@ -241,6 +244,7 @@ func (s *Session) resyncContextHead() error {
 	s.mu.Lock()
 	if s.contextStore == store && s.contextPrincipal == principal {
 		s.Messages = cloneContextMessages(messages)
+		s.memoryContext = memoryFrameContent(messages)
 		s.contextHead = snapshot.Revision
 		s.invalidateLocked()
 	}

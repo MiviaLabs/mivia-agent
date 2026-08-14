@@ -330,6 +330,17 @@ type DeliveryRecord struct {
 	Status         string `json:"status"`
 	ErrorRef       string `json:"error_ref,omitempty"`
 	DiffRef        string `json:"diff_ref,omitempty"`
+	// DeferredFiles is the host-computed split decision of a deferred-split
+	// delivery (spec-auto-split-oversized-prs.md §5.2, revised per §10): a
+	// JSON-encoded array of workspace-relative paths whose edits ship in a
+	// separate follow-up commit on DeferredBranchName, never on the pushed
+	// branch. It is recorded on the pending stage record BEFORE the delivered
+	// commit is created, so a crash or transient failure mid-split can be
+	// resumed by delivery.resumeDeliveryCommitSplit instead of the retry
+	// committing or adopting the deferred scope onto the pushed branch
+	// (commitWorktreeFollowUp/adoptOwnFollowUpCommit never see a split state).
+	// Empty means no split attempt.
+	DeferredFiles string `json:"deferred_files,omitempty"`
 	// StackRemainingCommits is the count of commits still on the delivered
 	// branch after the one that was pushed (git rev-list --count, a derived
 	// integer, never an LLM-authored claim), set when a diff-size repair

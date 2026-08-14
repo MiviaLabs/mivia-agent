@@ -33,6 +33,7 @@ max_on_failure_reentries = 3
 plan_step = "plan"
 implement_step = "implement"
 merge_policy = "auto"
+split_deferred = true
 
 [[steps]]
 id = "plan"
@@ -186,6 +187,7 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.test_validate.output", as = "failed_evidence", max_bytes = 32768 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
 on_failure = "failure"
 
@@ -201,6 +203,7 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.verify.output", as = "failed_evidence", max_bytes = 32768 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
 on_failure = "failure"
 
@@ -216,6 +219,7 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.code_validate.output", as = "failed_evidence", max_bytes = 32768 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
 on_failure = "failure"
 
@@ -231,6 +235,7 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.preflight_validate.output", as = "failed_evidence", max_bytes = 32768 },
+  { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
 on_failure = "failure"
 

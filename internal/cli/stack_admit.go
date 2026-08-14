@@ -388,6 +388,13 @@ func admitDecomposeContinuationRun(prepared *preparedWorkflowRun, stackID string
 	return waveChunks, waveHasMore, waveRemaining, nil
 }
 
+// stackDecomposeContinueAdmit is the decompose-continuation admission entry
+// point the drive's wave recovery calls (loadAllStackChunksForDrive) to
+// re-admit a failed wave with a fresh run under the same stable key. It is a
+// package variable so tests can stub the admission without running a full
+// controller; production always points at admitDecomposeContinuationRun.
+var stackDecomposeContinueAdmit = admitDecomposeContinuationRun
+
 // driveIntegrationRun admits the final full-suite run (stack_mode=single runs
 // the workflow's own plan+implement steps inline) after every chunk merged.
 func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, prBase, policy string, planInputs map[string]string, stdout, stderr io.Writer) error {

@@ -19,7 +19,7 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	// One private clone for elision, selection, costing, fingerprinting, and
 	// the returned messages. Input.Messages is never mutated.
 	working := cloneMessages(input.Messages)
-	mandatory := mandatoryIndexes(working, objectiveIndex)
+	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
 	working, elision, reasoningElision := elideForCompaction(working, objectiveIndex, mandatory, input.Spool, input.Principal)
 	planInput := input
 	planInput.Messages = working
@@ -71,19 +71,40 @@ type ElisionStats struct {
 }
 
 // mandatoryIndexes returns the message indexes that structural retention must
-// keep whole: optional system at index 0, the current user objective, and the
-// latest complete assistant+tool unit. Shared by elision eligibility and
-// retainMessages so the two cannot drift.
-func mandatoryIndexes(messages []provider.Message, objectiveIndex int) map[int]struct{} {
+// keep whole: optional system at index 0, the current user objective, every
+// message whose Name is in preserveNames (host-owned frames the caller
+// declared session surface), and the latest complete assistant+tool unit.
+// Shared by elision eligibility and retainMessages so the two cannot drift.
+func mandatoryIndexes(messages []provider.Message, objectiveIndex int, preserveNames []string) map[int]struct{} {
 	mandatory := make(map[int]struct{}, len(messages))
 	if len(messages) > 0 && messages[0].Role == provider.RoleSystem {
 		mandatory[0] = struct{}{}
+	}
+	for index, message := range messages {
+		if message.Name != "" && containsPreservedName(message.Name, preserveNames) {
+			mandatory[index] = struct{}{}
+		}
 	}
 	if objectiveIndex >= 0 && objectiveIndex < len(messages) {
 		mandatory[objectiveIndex] = struct{}{}
 	}
 	markLatestToolUnit(messageUnits(messages), messages, mandatory)
 	return mandatory
+}
+
+// containsPreservedName reports whether name is listed in preserveNames.
+// Empty names never match: an unnamed message is ordinary conversation
+// history and stays subject to the recent-tail retention.
+func containsPreservedName(name string, preserveNames []string) bool {
+	if name == "" {
+		return false
+	}
+	for _, candidate := range preserveNames {
+		if name == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // Test seams for defensive error paths that are hard to reach through the
