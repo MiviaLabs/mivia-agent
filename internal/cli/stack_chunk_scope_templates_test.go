@@ -88,3 +88,39 @@ func TestPanelMembersReceiveChunkScope(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewIntegrationTemplateRendersChunkScope pins the fix for a live
+// finding: review_integration had no chunk_scope binding (unlike implement
+// and review_panel), so it graded a chunk's diff against the WHOLE task
+// spec and repeatedly raised "missing sibling packages" - a finding that can
+// never be fixed (implement correctly refuses to touch sibling files), so
+// reviewMadeNoProgress's identical-findings-across-rounds guard killed every
+// affected chunk run (confirmed live across three separate stacked
+// deliveries on 2026-08-15).
+func TestReviewIntegrationTemplateRendersChunkScope(t *testing.T) {
+	root := committedWorkflowRoot(t)
+	workflow, base := loadCommittedFeatureDeliveryWorkflow(t, root)
+	step := featureDeliveryStep(t, workflow, "review_integration")
+	chunkScopeBinding(t, step)
+	templateBytes, err := readWorkflowRef(base, step.Template, template.MaxTemplateBytes)
+	if err != nil {
+		t.Fatalf("read template %q: %v", step.Template, err)
+	}
+	inputs := map[string]any{"task": "whole feature task", "chunk_scope": exampleChunkScope, "round": "1"}
+	evidence := map[string]any{
+		"plan": "example plan", "test_plan": "example test plan",
+		"implementation": "example implementation summary",
+		"review":         "", "prior_findings": "",
+	}
+	rendered, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes)
+	if err != nil {
+		t.Fatalf("render review_integration template with chunk scope: %v", err)
+	}
+	if !strings.Contains(rendered, "internal/pathutil/pathutil.go") {
+		t.Fatalf("rendered review_integration template must show the chunk's declared files:\n%s", rendered)
+	}
+	inputs["chunk_scope"] = ""
+	if _, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes); err != nil {
+		t.Fatalf("render review_integration template without chunk scope: %v", err)
+	}
+}

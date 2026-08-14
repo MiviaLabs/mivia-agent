@@ -134,3 +134,17 @@ Changes requested:
 </mivia_output>
 
 This example is for illustration only. Report the findings you verify for the task you were given.
+
+## Chunk scope (stacked delivery only)
+
+Chunk scope:
+
+{{ inputs.chunk_scope }}
+
+If the chunk scope above is not empty, the implementation is ONE CHUNK of a
+larger stacked delivery. The task above describes the WHOLE feature; sibling
+chunk runs deliver the other parts. Do NOT raise a finding that a file, package,
+or piece of the task outside the chunk scope's declared files is missing or
+incomplete - that work belongs to a different chunk and is out of scope for
+this review. Judge the implementation only against the chunk scope's declared
+files.
