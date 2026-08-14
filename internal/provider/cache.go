@@ -2,10 +2,10 @@ package provider
 
 // CacheStyle describes how a provider's wire format expresses prompt-cache
 // reuse. Implicit means the provider caches automatically based on
-// request-prefix bytes with no request-side marker - the only style any
-// provider in this codebase speaks today. Explicit (marker-style, e.g.
-// Anthropic cache_control content blocks) is reserved for a future provider
-// this codebase does not yet configure or test against.
+// request-prefix bytes with no request-side marker (deepseek, zai, ollama).
+// Explicit (marker-style, Anthropic cache_control content blocks) is spoken
+// by the openrouter path, which marks the stable prefix by default and turns
+// off with [provider] prompt_cache = "off".
 type CacheStyle string
 
 const (

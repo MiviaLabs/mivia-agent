@@ -122,11 +122,11 @@ type PrivacyConfig struct {
 // ProviderSection selects the active provider.
 type ProviderSection struct {
 	Name string `toml:"name"`
-	// PromptCache is "auto" (default) or "off". It gates only this host's
-	// capture and publication of provider-reported prompt-cache usage
-	// accounting - it cannot disable a provider's own automatic caching,
-	// which every provider this repo speaks today performs server-side with
-	// no request-side control.
+	// PromptCache is "auto" (default) or "off". "auto" enables capture of
+	// provider-reported prompt-cache usage accounting and, on providers that
+	// honor explicit markers (openrouter), emission of cache_control markers
+	// on the stable prefix. "off" disables both. It cannot disable a
+	// provider's own automatic server-side caching.
 	PromptCache string `toml:"prompt_cache"`
 }
 
@@ -366,8 +366,8 @@ type Resolved struct {
 	// When set, the search tool uses Tavily as the primary web search engine.
 	TavilyAPIKey string
 
-	// PromptCache is the resolved "auto" or "off" policy for capturing
-	// provider-reported prompt-cache usage accounting. Always one of those
+	// PromptCache is the resolved "auto" or "off" policy for prompt-cache
+	// usage capture and explicit cache_control markers. Always one of those
 	// two values after Load - see ProviderSection.PromptCache.
 	PromptCache string
 }

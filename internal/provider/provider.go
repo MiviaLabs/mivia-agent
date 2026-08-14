@@ -131,6 +131,13 @@ type Options struct {
 	// CacheUsageEnabled gates capture of provider-reported prompt-cache usage
 	// accounting. It never changes what is sent to the provider.
 	CacheUsageEnabled bool
+	// CacheMarkersEnabled requests explicit cache_control markers on the
+	// stable prefix for providers whose upstream honors them (OpenRouter
+	// forwards them to Anthropic-family models; models without explicit
+	// caching ignore the marker). Factories for providers that only cache
+	// implicitly (deepseek, zai, ollama) ignore this option so their request
+	// bodies stay byte-identical.
+	CacheMarkersEnabled bool
 	// ContextWindowTokens is the configured model's declared context capacity
 	// (config.ModelSpec.ContextWindowTokens for the resolved model name), or 0
 	// if the model is unrecognized. Only consumed by providers whose server
@@ -254,6 +261,7 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 		HTTPReferer:         runtime.HTTPReferer,
 		XTitle:              runtime.XTitle,
 		CacheUsageEnabled:   res.PromptCache != "off",
+		CacheMarkersEnabled: res.PromptCache != "off",
 		ContextWindowTokens: contextWindowTokens,
 	}
 	factory, ok := builtinFactories.lookup(providerName)
