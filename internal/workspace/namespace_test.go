@@ -12,9 +12,6 @@ import (
 
 func TestNamespaceResolvesMivia(t *testing.T) {
 	root := "/w"
-	if got, want := AgentPromptPath(root), filepath.Join("/w", ".mivia", "agent-prompt.md"); got != want {
-		t.Errorf("AgentPromptPath: got %q want %q", got, want)
-	}
 	if got, want := SkillsDir(root), filepath.Join("/w", ".mivia", "skills"); got != want {
 		t.Errorf("SkillsDir: got %q want %q", got, want)
 	}
@@ -31,7 +28,7 @@ func TestWorktreesDir(t *testing.T) {
 }
 
 func TestNamespaceEmptyRootIsWorkingDirectory(t *testing.T) {
-	if got, want := AgentPromptPath(""), filepath.Join(".mivia", "agent-prompt.md"); got != want {
+	if got, want := SkillsDir(""), filepath.Join(".mivia", "skills"); got != want {
 		t.Errorf("got %q want %q", got, want)
 	}
 }

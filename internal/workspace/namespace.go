@@ -42,12 +42,6 @@ func NamespacePath(root string, elem ...string) string {
 	return filepath.Join(parts...)
 }
 
-// AgentPromptPath is the workspace system prompt. mivia never creates it;
-// the user or the agent writes it, and mivia reads it when present.
-func AgentPromptPath(root string) string {
-	return NamespacePath(root, "agent-prompt.md")
-}
-
 // SkillsDir holds workspace skill definitions as <name>/SKILL.md.
 func SkillsDir(root string) string { return NamespacePath(root, "skills") }
 
