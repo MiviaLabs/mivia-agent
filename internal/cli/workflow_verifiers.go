@@ -136,10 +136,6 @@ func pinWorkflowVerifierDefinitions(raw []byte, wf *compiler.CompiledWorkflow, p
 	// on resume, version >= 1 with a missing verifier-def key means the key
 	// was stripped, never that this binary did not write it.
 	snapshot.VerifierPinsVersion = workflowVerifierPinsVersion
-	// Stamp the stacking semantics of this admission in the same pass: the
-	// run's activation is exactly what the strict opt-in compile produced,
-	// so resume must never apply the legacy inference to it.
-	snapshot.StackingSemanticsVersion = workflowledger.StackingSemanticsOptIn
 	names := workflowReferencedVerifiers(wf)
 	if snapshot.Verifiers == nil {
 		snapshot.Verifiers = make(map[string]workflowledger.RefSnapshot)

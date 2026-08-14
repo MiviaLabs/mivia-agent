@@ -76,3 +76,18 @@ func printStackGrantPause(repo workflowledger.Repository, stackID string, byID m
 	}
 	fmt.Fprintf(stdout, "stack %s paused: re-run the drive after granting; state is durable\n", stackID)
 }
+
+// anyChunkDurablyFailed reports whether the stack has a chunk task at
+// stackStatusFailed right now, regardless of which pass produced it.
+func anyChunkDurablyFailed(ledger *tasks.Store, stackID string) (string, bool) {
+	byID, err := stackTaskMap(ledger, stackID)
+	if err != nil {
+		return "", false
+	}
+	for id, t := range byID {
+		if t.Status == stackStatusFailed {
+			return id, true
+		}
+	}
+	return "", false
+}

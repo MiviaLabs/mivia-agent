@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -172,6 +173,14 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	// until the stack completes (or is interrupted by the process).
 	drove, err := maybeDriveSettledStack(context.Background(), prepared, built.Controller.RunID, allowPublish, stdout, stderr)
 	if err != nil {
+		if errors.Is(err, errStackAwaitsGrant) {
+			// A durable pause, not a failure: the drive already printed the
+			// grant guidance and the run stays delivery_pending, resumable.
+			// drove is meaningless here - fall through to it would settle
+			// the plan run succeeded with the stack still incomplete (an
+			// adversarial audit found exactly this).
+			return nil
+		}
 		return err
 	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {

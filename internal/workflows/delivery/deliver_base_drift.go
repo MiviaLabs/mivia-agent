@@ -66,5 +66,10 @@ func checkChunkBaseDrift(ctx context.Context, git GitRunner, req Request, origin
 	if len(overlap) == 0 {
 		return nil
 	}
-	return &RefusalError{Reason: fmt.Sprintf("delivery: chunk touches %d file(s) already changed on %q since this chunk was admitted (%s): rebase this chunk onto the current base before delivery", len(overlap), req.Policy.Base, strings.Join(overlap, ", "))}
+	// A plain error, NOT a RefusalError: a mid-flight sibling merge is a
+	// timing accident with a worktree-level fix (reconcile this chunk's
+	// change against what the sibling landed), not a permanent host
+	// refusal - a RefusalError would settle the run delivery_failed before
+	// the repair step ever ran (workflow_deliver.go settleDeliveryError).
+	return fmt.Errorf("delivery: chunk touches %d file(s) already changed on %q since this chunk was admitted (%s): reconcile this chunk's change against what already landed before delivery", len(overlap), req.Policy.Base, strings.Join(overlap, ", "))
 }

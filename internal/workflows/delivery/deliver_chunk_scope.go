@@ -62,7 +62,14 @@ func guardChunkScope(ctx context.Context, git GitRunner, req Request) error {
 		return nil
 	}
 	sort.Strings(outside)
-	return &RefusalError{Reason: fmt.Sprintf(
+	// A plain error, NOT a RefusalError: unlike a permanent host refusal
+	// (branch checked out elsewhere, origin mismatch), an out-of-scope write
+	// is exactly what a repair agent can fix by reverting the file - a
+	// RefusalError short-circuits straight to delivery_failed before
+	// RepairTarget/ReopenForRepair ever run (workflow_deliver.go
+	// settleDeliveryError), which would discard the chunk's completed work
+	// on the first overreach instead of giving the repair step one chance.
+	return fmt.Errorf(
 		"delivery: chunk %s touches %d file(s) outside its declared plan slice (%s); declared files: %s. Revert every out-of-scope change - sibling chunks deliver the rest of the task",
-		plan.ID, len(outside), strings.Join(outside, ", "), strings.Join(plan.Files, ", "))}
+		plan.ID, len(outside), strings.Join(outside, ", "), strings.Join(plan.Files, ", "))
 }

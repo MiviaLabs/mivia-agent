@@ -177,6 +177,11 @@ func finishWorkflowResumeSettled(ctx context.Context, root string, res *config.R
 		refBase: "", raw: raw,
 	}, runID, allowPublish, stdout, stderr)
 	if err != nil {
+		if errors.Is(err, errStackAwaitsGrant) {
+			// A durable pause, not a failure: see workflow_run.go's mirror
+			// of this check for the full rationale.
+			return nil
+		}
 		return err
 	}
 	if drove && !compiledDeliverPlanRun(compiled) {
@@ -324,17 +329,6 @@ func refuseWorkflowDeliverySettled(runID string, status workflowledger.RunStatus
 	return nil
 }
 
-// compileWorkflowResumeSnapshot recompiles an admitted snapshot definition
-// with the stacking semantics recorded at admission: snapshots marked
-// StackingSemanticsOptIn get the strict opt-in activation, unmarked
-// (pre-marker) snapshots get the legacy inference activation.
-func compileWorkflowResumeSnapshot(snapshot workflowledger.Snapshot, wf *definition.WorkflowFile) (*compiler.CompiledWorkflow, error) {
-	if snapshot.StackingSemanticsVersion >= workflowledger.StackingSemanticsOptIn {
-		return compiler.CompileForResumeOptIn(wf)
-	}
-	return compiler.CompileForResume(wf)
-}
-
 func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) (workflowledger.Snapshot, *compiler.CompiledWorkflow, map[string]any, error) {
 	if run.SnapshotDigest == "" || run.SnapshotDigest != workflowledger.SnapshotDigest(raw) {
 		return workflowledger.Snapshot{}, nil, nil, fmt.Errorf("workflow snapshot digest does not match the admitted snapshot")
@@ -355,9 +349,7 @@ func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) 
 	}
 	// Resume is recovery, not admission: the definition was already admitted,
 	// so the unbounded-cycle admission check must not strand an in-flight run.
-	// The snapshot's stacking marker selects the activation semantics the run
-	// was admitted under, so the compiled shape never changes on resume.
-	compiled, err := compileWorkflowResumeSnapshot(snapshot, &wf)
+	compiled, err := compiler.CompileForResume(&wf)
 	if err != nil {
 		return workflowledger.Snapshot{}, nil, nil, err
 	}

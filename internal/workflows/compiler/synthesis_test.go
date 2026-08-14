@@ -372,7 +372,7 @@ func TestSynthesizeStacking_GraphPassesAllValidators(t *testing.T) {
 		{"validateCycles", func() error { return validateCycles(wf) }},
 		{"validateContextBindings", func() error { return validateContextBindings(wf, stepIDs, false) }},
 		{"validateOnFailure", func() error { return validateOnFailure(wf, stepIDs) }},
-		{"validateLimitsAndStacking", func() error { return validateLimitsAndStacking(wf, stepIDs, false) }},
+		{"validateLimitsAndStacking", func() error { return validateLimitsAndStacking(wf, stepIDs) }},
 		{"validateStepMaxTurns", func() error { return validateStepMaxTurns(wf) }},
 		{"validatePanels", func() error { return validatePanels(wf) }},
 	}

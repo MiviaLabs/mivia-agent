@@ -47,30 +47,18 @@ func (c *CompiledWorkflow) DeliveryActive() bool {
 // workflow. It applies the full admission policy, including the
 // unbounded-cycle check.
 func Compile(wf *definition.WorkflowFile) (*CompiledWorkflow, error) {
-	return compile(wf, false, false)
+	return compile(wf, false)
 }
 
 // CompileForResume compiles a definition that was already admitted in a run
-// snapshot UNDER THE LEGACY STACKING SEMANTICS (the snapshot carries no
-// StackingSemanticsVersion marker). It skips the admission-only checks - the
-// unbounded-cycle check and the stacking explicit-steps requirement - and a
-// snapshot without an explicit [stacking] table (or without explicit steps)
-// resumes under the inference activation it was admitted with
-// (legacyResumeStacking). All other validators still run.
+// snapshot. It skips the unbounded-cycle admission check so an in-flight run
+// admitted under an earlier policy can still resume. All other validators
+// still run, and stacking resolves under the same opt-in rule as admission.
 func CompileForResume(wf *definition.WorkflowFile) (*CompiledWorkflow, error) {
-	return compile(wf, true, true)
+	return compile(wf, true)
 }
 
-// CompileForResumeOptIn compiles a definition admitted under the opt-in
-// stacking semantics (snapshot marked with StackingSemanticsOptIn). It skips
-// the same admission-only checks as CompileForResume, but stacking resolves
-// exactly as at admission: no legacy inference, so a run admitted without a
-// [stacking] table resumes single-PR.
-func CompileForResumeOptIn(wf *definition.WorkflowFile) (*CompiledWorkflow, error) {
-	return compile(wf, true, false)
-}
-
-func compile(wf *definition.WorkflowFile, skipCycleValidation, legacyStacking bool) (*CompiledWorkflow, error) {
+func compile(wf *definition.WorkflowFile, skipCycleValidation bool) (*CompiledWorkflow, error) {
 	errs := validateWorkflow(wf, skipCycleValidation)
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("compilation failed:\n  - %s", strings.Join(errs, "\n  - "))
@@ -104,13 +92,6 @@ func compile(wf *definition.WorkflowFile, skipCycleValidation, legacyStacking bo
 	if s := wf.Stacking; s != nil && s.StackingEnabled() && s.PlanStep != "" && s.ImplementStep != "" {
 		eff := s.EffectiveStacking(s.PlanStep, s.ImplementStep)
 		stackingCfg = &eff
-	} else if skipCycleValidation && legacyStacking {
-		// Resume of a snapshot admitted under the legacy semantics: apply the
-		// activation the run was admitted under, so its compiled shape
-		// (synthesized steps, reserved inputs, delivery guards) is rebuilt
-		// identically. Snapshots marked StackingSemanticsOptIn never take
-		// this branch - their admitted activation is the strict rule above.
-		stackingCfg = legacyResumeStacking(wf)
 	}
 
 	return &CompiledWorkflow{
@@ -189,7 +170,7 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 	}
 
 	// Limits and stacking config validation
-	if err := validateLimitsAndStacking(wf, stepIDs, skipCycleValidation); err != nil {
+	if err := validateLimitsAndStacking(wf, stepIDs); err != nil {
 		errs = append(errs, err.Error())
 	}
 

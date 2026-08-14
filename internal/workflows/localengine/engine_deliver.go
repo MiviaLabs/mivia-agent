@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -89,7 +90,7 @@ func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnaps
 	if err != nil {
 		return agenttools.DeliverResult{}, err
 	}
-	compiled, err := compileResumeSnapshot(snapshot, &wf)
+	compiled, err := compiler.CompileForResume(&wf)
 	if err != nil {
 		return agenttools.DeliverResult{}, err
 	}

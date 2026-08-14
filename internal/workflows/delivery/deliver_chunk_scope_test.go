@@ -30,13 +30,13 @@ func TestDeliverRefusesChunkTouchingFilesOutsideItsPlanSlice(t *testing.T) {
 	pr := &fakePRClient{}
 	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, inputs))
 	if err == nil {
-		t.Fatal("Deliver succeeded, want a refusal: undeclared.txt is outside the chunk's declared files")
+		t.Fatal("Deliver succeeded, want a rejection: undeclared.txt is outside the chunk's declared files")
 	}
-	if !IsRefusal(err) {
-		t.Fatalf("Deliver error = %v (%T), want a RefusalError", err, err)
+	if IsRefusal(err) {
+		t.Fatalf("Deliver error = %v (%T), want a plain repairable error, not a RefusalError (which bypasses the repair step)", err, err)
 	}
 	if !strings.Contains(err.Error(), "undeclared.txt") {
-		t.Fatalf("refusal %q must name the out-of-scope file", err)
+		t.Fatalf("rejection %q must name the out-of-scope file", err)
 	}
 	if pr.createdCount() != 0 {
 		t.Fatal("a PR was created for an out-of-scope chunk diff")

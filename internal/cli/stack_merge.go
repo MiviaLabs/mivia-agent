@@ -41,6 +41,17 @@ func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledg
 				return fmt.Errorf("stack %s halted: chunk %s failed terminally (%s)", stackID, a.TaskID, a.Note)
 			}
 		}
+		// A chunk already durably failed (from an EARLIER pass, not this
+		// one) produces no fresh mark-failed action on resume - reconcileTask
+		// leaves a terminal failed task alone every pass - so the halt above
+		// only fires on the transition INTO failed, never on resuming a
+		// stack that already has one. Without this check the wait polled
+		// every 20s forever: not merged (the failed chunk never will be) and
+		// not grant-only (failed isn't reviewed/merged), an adversarial
+		// audit found.
+		if id, failed := anyChunkDurablyFailed(ledger, stackID); failed {
+			return fmt.Errorf("stack %s halted: chunk %s failed terminally", stackID, id)
+		}
 		byID, err := stackTaskMap(ledger, stackID)
 		if err != nil {
 			return err
@@ -107,18 +118,26 @@ func autoMergePublishedChunks(prepared *preparedWorkflowRun, repo workflowledger
 	return nil
 }
 
-// blockedByUnmergedDependent reports whether chunkID has a DEPENDENT (a task
-// whose Deps names chunkID, for example a diff-size split's follow-up chunk
-// - see registerFollowUpChunk) that has not merged yet. A follow-up's PR is
-// based on its parent's own branch (delivery.EnsureFollowUpPublished), not
+// blockedByUnmergedDependent reports whether chunkID has an UNMERGED
+// FOLLOW-UP dependent (a diff-size split's follow-up chunk - see
+// registerFollowUpChunk, always named "<chunkID>-deferred"). A follow-up's PR
+// is based on its parent's own branch (delivery.EnsureFollowUpPublished), not
 // master: merging the parent first squash-merges and deletes that base
 // branch, and GitHub does not reliably retarget a squash-merged PR's
 // dependents (a live smoke test confirmed the base branch simply disappears
 // and the dependent PR closes unmerged, orphaning its content). Every
-// dependent must land before its dependency is allowed to merge.
+// follow-up must land before its parent is allowed to merge.
+//
+// This must NOT match a normal decompose dependency edge (chunk B declares
+// depends_on: [A]): that edge only gates B's ADMISSION until A merges - it
+// does not mean A must wait for B. An adversarial audit found the original
+// unqualified Deps scan treated every such edge as follow-up-shaped and
+// deadlocked auto-merge on any stack with a genuine dependency: A publishes,
+// this function finds unmerged B depending on A and defers A's merge
+// forever, while B can never be admitted because A never merges.
 func blockedByUnmergedDependent(byID map[string]tasks.Task, chunkID string) (string, bool) {
 	for id, t := range byID {
-		if id == chunkID {
+		if id != chunkID+"-deferred" {
 			continue
 		}
 		for _, dep := range t.Deps {

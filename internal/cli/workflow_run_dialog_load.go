@@ -115,7 +115,7 @@ func compileWorkflowRunSnapshot(raw []byte, workflowName string) *compiler.Compi
 	if err != nil {
 		return nil
 	}
-	compiled, err := compileWorkflowResumeSnapshot(snapshot, &wf)
+	compiled, err := compiler.CompileForResume(&wf)
 	if err != nil {
 		return nil
 	}

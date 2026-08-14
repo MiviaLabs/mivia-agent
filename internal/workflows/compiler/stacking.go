@@ -10,12 +10,12 @@ import (
 // validateLimitsAndStacking runs the [limits] and [stacking] config
 // validators and joins their errors, so the aggregator reports every broken
 // section at once.
-func validateLimitsAndStacking(wf *definition.WorkflowFile, stepIDs map[string]bool, resume bool) error {
+func validateLimitsAndStacking(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
 	var errs []string
 	if err := validateLimits(wf.Limits); err != nil {
 		errs = append(errs, err.Error())
 	}
-	if err := validateStacking(wf, stepIDs, resume); err != nil {
+	if err := validateStacking(wf, stepIDs); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if len(errs) > 0 {
@@ -28,10 +28,8 @@ func validateLimitsAndStacking(wf *definition.WorkflowFile, stepIDs map[string]b
 // fail-closed: a workflow participates only when it declares the table, and
 // an enabled table must name its plan_step and implement_step explicitly.
 // Unknown step references, out-of-range thresholds, and invalid merge
-// policies are errors. On resume of an admitted snapshot the explicit-steps
-// requirement is waived and legacyResumeStacking reproduces the admitted
-// activation, so no admitted run strands or changes shape.
-func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool, resume bool) error {
+// policies are errors.
+func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
 	if wf.Stacking == nil {
 		// No [stacking] table: the workflow does not participate in stacking
 		// and no semantics apply.
@@ -43,7 +41,7 @@ func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool, resu
 		// decoder, and no semantics apply.
 		return nil
 	}
-	if !resume && (s.PlanStep == "" || s.ImplementStep == "") {
+	if s.PlanStep == "" || s.ImplementStep == "" {
 		return fmt.Errorf("stacking: plan_step and implement_step are required when stacking is enabled")
 	}
 	if s.PlanStep != "" && !stepIDs[s.PlanStep] {
@@ -89,81 +87,4 @@ func validateStacking(wf *definition.WorkflowFile, stepIDs map[string]bool, resu
 		return fmt.Errorf("stacking: split_min_lines must be in range [0, 10000] (got %d)", s.SplitMinLines)
 	}
 	return nil
-}
-
-// legacyResumeStacking reproduces the earlier activation semantics for
-// resume of an admitted snapshot ONLY: a missing [stacking] table means
-// enabled, and missing steps are inferred from the step graph. A run
-// admitted under those semantics resumes with the exact compiled shape of
-// its admission - synthesized decompose/chunk_plan_validate steps, reserved
-// stack inputs, and delivery guards included. Fresh admission never calls
-// this; new definitions must declare the table with explicit steps.
-func legacyResumeStacking(wf *definition.WorkflowFile) *definition.StackingConfig {
-	if wf.Stacking != nil && !wf.Stacking.StackingEnabled() {
-		return nil
-	}
-	planStep, implementStep := legacyResolveStackingSteps(wf)
-	if planStep == "" || implementStep == "" {
-		return nil
-	}
-	eff := wf.Stacking.EffectiveStacking(planStep, implementStep)
-	// A nil table reports disabled under the opt-in semantics; the admitted
-	// run was active, so the resolved config says so.
-	eff.Enabled = true
-	return &eff
-}
-
-// legacyResolveStackingSteps mirrors the earlier step resolution: explicit
-// [stacking] values win, inference fills the gaps.
-func legacyResolveStackingSteps(wf *definition.WorkflowFile) (planStep, implementStep string) {
-	if wf.Stacking != nil {
-		planStep = wf.Stacking.PlanStep
-		implementStep = wf.Stacking.ImplementStep
-	}
-	if implementStep == "" {
-		implementStep = legacyInferImplementStep(wf)
-	}
-	if planStep == "" {
-		planStep = legacyInferPlanStep(wf, implementStep)
-	}
-	return planStep, implementStep
-}
-
-// legacyInferImplementStep: the step with the change-summary output schema,
-// else a step whose id is "implement".
-func legacyInferImplementStep(wf *definition.WorkflowFile) string {
-	for _, s := range wf.Steps {
-		if s.OutputSchema == "schemas/change-summary-v1.json" {
-			return s.ID
-		}
-	}
-	for _, s := range wf.Steps {
-		if s.ID == "implement" {
-			return s.ID
-		}
-	}
-	return ""
-}
-
-// legacyInferPlanStep: the step whose output implementStep binds into
-// context as "plan".
-func legacyInferPlanStep(wf *definition.WorkflowFile, implementStep string) string {
-	if implementStep == "" {
-		return ""
-	}
-	for _, s := range wf.Steps {
-		if s.ID != implementStep {
-			continue
-		}
-		for _, cb := range s.Context {
-			if cb.As != "plan" {
-				continue
-			}
-			parts := strings.Split(cb.From, ".")
-			if len(parts) == 3 && parts[0] == "steps" && parts[2] == "output" {
-				return parts[1]
-			}
-		}
-	}
-	return ""
 }

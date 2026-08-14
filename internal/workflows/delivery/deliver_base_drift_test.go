@@ -33,10 +33,10 @@ func TestDeliverRefusesChunkThatDriftedAgainstMergedSibling(t *testing.T) {
 	pr := &fakePRClient{}
 	_, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, map[string]string{"task": "drift"}))
 	if err == nil {
-		t.Fatal("Deliver succeeded, want a refusal: this chunk's diff of shared.txt is stale against the sibling's merged change")
+		t.Fatal("Deliver succeeded, want a rejection: this chunk's diff of shared.txt is stale against the sibling's merged change")
 	}
-	if !IsRefusal(err) {
-		t.Fatalf("Deliver error = %v (%T), want a RefusalError", err, err)
+	if IsRefusal(err) {
+		t.Fatalf("Deliver error = %v (%T), want a plain repairable error, not a RefusalError (which bypasses the repair step)", err, err)
 	}
 }
 
