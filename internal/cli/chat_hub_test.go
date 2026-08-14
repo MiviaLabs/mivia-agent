@@ -319,3 +319,46 @@ func TestHubDoesNotBleedBetweenSiblingSessions(t *testing.T) {
 		t.Fatalf("same-session participant did not receive the relayed reply: %q", outSame.String())
 	}
 }
+
+// Regression: a subagent finishing INSIDE an external turn must not
+// terminate the whole turn's relay. KindSubagentDone once mapped to
+// "external_done" (and deleted the run from seenRunIDs), so a consumer
+// like mivia-agent-desktop marked the external turn finished - dropping
+// it from its live-agents overlay - the moment the run's first subagent
+// completed, mid-turn. Only KindTurnEnd/KindError are terminal. Its
+// nested tool calls relay as a paired external_tool_start/-end
+// (KindSubagentStart/KindSubagentEnd) so no consumer-side call is left
+// open forever.
+func TestRenderExternalEventSubagentLifecycleDoesNotEndTheTurn(t *testing.T) {
+	var buf bytes.Buffer
+	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "audit the repo"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindSubagentStart, SessionID: "s1", TurnID: "turn:1", ToolCallID: "c1", Name: "read_file"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindSubagentEnd, SessionID: "s1", TurnID: "turn:1", ToolCallID: "c1", Name: "read_file"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindSubagentDone, SessionID: "s1", TurnID: "turn:1"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "after subagent"})
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnEnd, SessionID: "s1", TurnID: "turn:1"})
+
+	lines := decodeNDJSONLines(t, buf.String())
+	byType := map[string][]ndjsonEvent{}
+	for _, line := range lines {
+		byType[line.Type] = append(byType[line.Type], line)
+	}
+
+	if len(byType["external_done"]) != 1 {
+		t.Fatalf("expected exactly 1 external_done (turn end only), got %d", len(byType["external_done"]))
+	}
+	if len(byType["external_tool_start"]) != 1 || len(byType["external_tool_end"]) != 1 {
+		t.Fatalf("expected paired external_tool_start/-end for the subagent's nested call, got %d/%d",
+			len(byType["external_tool_start"]), len(byType["external_tool_end"]))
+	}
+	// The run must still be live (one external_turn_start, no re-mint)
+	// across the subagent's completion.
+	if len(byType["external_turn_start"]) != 1 {
+		t.Fatalf("expected 1 external_turn_start (no re-mint after subagent done), got %d", len(byType["external_turn_start"]))
+	}
+	if len(byType["external_chunk"]) != 1 || byType["external_chunk"][0].Text != "after subagent" {
+		t.Fatalf("content after the subagent finished must still relay: %+v", byType["external_chunk"])
+	}
+}
