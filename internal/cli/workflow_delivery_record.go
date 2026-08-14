@@ -55,6 +55,11 @@ func recordAutoDeliveryFailure(ctx context.Context, repo workflowledger.Reposito
 		rec.TreeSHA = existing.TreeSHA
 		rec.RemoteID = existing.RemoteID
 		rec.URL = existing.URL
+		// The split decision must survive a failed attempt (same invariant
+		// as delivery/errors.go markFailed): without it the next retry cannot
+		// recognize the mid-split state and would route the deferred scope
+		// onto the pushed branch.
+		rec.DeferredFiles = existing.DeferredFiles
 	}
 	// Best effort: carry the delivery policy shape for operator context.
 	if raw, serr := repo.GetRunSnapshot(ctx, runID); serr == nil {
