@@ -256,3 +256,28 @@ func TestCacheUsageReportsExplicitStyleWhenMarkersEnabled(t *testing.T) {
 		t.Fatalf("markers-off usage = %+v, want reported with Style %q", got, CacheStyleImplicit)
 	}
 }
+
+// A legitimately empty tool result (zero-byte file read) at the rolling
+// breakpoint must keep its plain empty-string shape: an empty text content
+// part is rejected by Anthropic with a 400 through OpenRouter.
+func TestRollingBreakpointLeavesEmptyToolResultPlain(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{
+		Name: "test", BaseURL: "https://example.test", APIKey: "k",
+		CacheMarkersEnabled: true,
+	})
+	raw, err := c.marshalBody(Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "read the empty file"},
+		{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{toolCallFor("call_1", "read_file", `{"path":"empty"}`)}},
+		{Role: RoleTool, ToolCallID: "call_1", Content: ""},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := body["messages"].([]any)
+	assertPlainStringContent(t, messages[3], RoleTool, "")
+}
