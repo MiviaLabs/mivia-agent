@@ -8,6 +8,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -295,8 +296,12 @@ func seedStackLedger(ledger *tasks.Store, stackID string, chunks []ChunkPlan) er
 // chunkRunInputs builds the admission inputs and snapshot for one chunk-mode
 // run: the plan run's declared inputs replayed (D3) plus the engine's
 // reserved stack inputs, which win on any name collision. The integration run
-// uses the same shape with an empty stack_part.
-func chunkRunInputs(planInputs map[string]string, chunkID, prBase, stackPart string) (map[string]any, map[string]string) {
+// uses the same shape with an empty stack_part and a nil plan entry. When the
+// chunk's decompose plan entry is given, it rides along as chunk_plan JSON:
+// without it the implement agent sees only the FULL task text and a bare
+// chunk ID, and (live finding, smoke-stack-3chunk-v3) implements the whole
+// task instead of its slice.
+func chunkRunInputs(planInputs map[string]string, chunkID, prBase, stackPart string, plan *ChunkPlan) (map[string]any, map[string]string) {
 	inputs := make(map[string]any, len(planInputs)+4)
 	snapshot := make(map[string]string, len(planInputs)+4)
 	for k, v := range planInputs {
@@ -312,6 +317,12 @@ func chunkRunInputs(planInputs map[string]string, chunkID, prBase, stackPart str
 	if stackPart != "" {
 		inputs["stack_part"] = stackPart
 		snapshot["stack_part"] = stackPart
+	}
+	if plan != nil {
+		if raw, err := json.Marshal(plan); err == nil {
+			inputs["chunk_plan"] = string(raw)
+			snapshot["chunk_plan"] = string(raw)
+		}
 	}
 	return inputs, snapshot
 }

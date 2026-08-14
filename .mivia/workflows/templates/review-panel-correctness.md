@@ -75,3 +75,16 @@ Changes requested:
 </mivia_output>
 
 This example is for illustration only. Report the findings you verify for the task you were given.
+
+## Chunk scope (stacked delivery only)
+
+Chunk scope:
+
+{{ evidence.chunk_scope }}
+
+If the chunk scope above is not empty, this implementation is ONE CHUNK of a
+larger stacked delivery. Compare the actually touched files against the
+chunk's declared files: any touched file outside the chunk scope is a
+finding on its own (severity high), even if the code is correct - sibling
+chunk runs deliver the rest of the task, and out-of-scope work merges
+duplicate implementations.
