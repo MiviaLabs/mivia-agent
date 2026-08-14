@@ -136,6 +136,33 @@ subject` shape). After the run settles, close and delete-branch any PR it
 opened - the workflow's own PR body already says "Safe to close/delete."
 Never merge one.
 
+### e2e suite runner (`scripts/e2e_suite.py`)
+
+`scripts/e2e_suite.py` is a small, versioned suite over live e2e scenarios,
+so a live delivery-engine check does not mean inventing a fresh ad hoc task
+prompt every time. Same never-run-without-explicit-ask rule as above; it
+never runs itself and is not part of `make verify`/CI. Three scenario
+kinds: **topology** (drives the real `feature-delivery` workflow with a
+task engineered to force a known chunk-dependency shape - independent
+chunks, a DAG diamond, a wide fan-in, a linear chain, a single-package
+run), **scripted** (the checked-in `e2e-*.toml` workflows above), and
+**bug-fix** (a real `bug-fix.toml` run, scope narrowed to a bug-dense area,
+told to fix only the first confirmed bug rather than hunt exhaustively -
+small and bounded, not an open-ended audit).
+
+```bash
+scripts/e2e_suite.py list                 # see every scenario
+scripts/e2e_suite.py run independent-3    # launch one, backgrounded
+scripts/e2e_suite.py run --all            # launch the whole suite in parallel
+scripts/e2e_suite.py status               # summarize every launched run
+scripts/e2e_suite.py kill --all           # stop every launched driver process
+```
+
+Logs land in `.mivia/run-logs/e2e-suite/`, one file per scenario name, with
+a `manifest.json` tracking pid/log/start time so `status`/`kill` work in a
+later session too. As with the checked-in workflows above: close and
+delete-branch any PR a run opens; never merge one.
+
 ## Layout
 
 ```text
