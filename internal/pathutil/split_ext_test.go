@@ -59,3 +59,20 @@ func TestSplitExtLongPath(t *testing.T) {
 		t.Errorf("SplitExt(long path) does not round-trip")
 	}
 }
+
+// FuzzSplitExtRoundTrip checks the core invariant of SplitExt over arbitrary
+// input: base + ext always equals the original path, for any separator style.
+func FuzzSplitExtRoundTrip(f *testing.F) {
+	for _, p := range []string{
+		"", "file", "file.txt", "dir/file.txt", "archive.tar.gz", ".bashrc",
+		"dir/.bashrc", "file.", "a.b/c", `a.b\c.d`, "dir/file/", "..",
+	} {
+		f.Add(p)
+	}
+	f.Fuzz(func(t *testing.T, p string) {
+		base, ext := SplitExt(p)
+		if base+ext != p {
+			t.Fatalf("SplitExt(%q) = (%q, %q), base+ext = %q, want round-trip", p, base, ext, base+ext)
+		}
+	})
+}

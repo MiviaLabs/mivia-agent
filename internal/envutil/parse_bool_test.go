@@ -1,6 +1,9 @@
 package envutil
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestParseBool covers every recognized true and false form, case variants,
 // and fallback to the default for unrecognized input in both directions.
@@ -53,4 +56,37 @@ func TestParseBool(t *testing.T) {
 			}
 		})
 	}
+}
+
+// FuzzParseBoolCanonical checks the canonical mapping of ParseBool over
+// arbitrary input: it never panics, a recognized token (case-insensitive)
+// always maps to its canonical value regardless of def, and an unrecognized
+// token always returns def.
+func FuzzParseBoolCanonical(f *testing.F) {
+	for _, def := range []bool{false, true} {
+		for _, s := range []string{
+			"1", "true", "yes", "on", "0", "false", "no", "off",
+			"TRUE", "Yes", "ON", "FALSE", "No", "OFF",
+			"", " ", " true", "true ", "maybe", "2", "-1",
+		} {
+			f.Add(s, def)
+		}
+	}
+	f.Fuzz(func(t *testing.T, s string, def bool) {
+		got := ParseBool(s, def)
+		switch strings.ToLower(s) {
+		case "1", "true", "yes", "on":
+			if !got {
+				t.Fatalf("ParseBool(%q, %t) = %t, want true", s, def, got)
+			}
+		case "0", "false", "no", "off":
+			if got {
+				t.Fatalf("ParseBool(%q, %t) = %t, want false", s, def, got)
+			}
+		default:
+			if got != def {
+				t.Fatalf("ParseBool(%q, %t) = %t, want def %t for unrecognized token", s, def, got, def)
+			}
+		}
+	})
 }
