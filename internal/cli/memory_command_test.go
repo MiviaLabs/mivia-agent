@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -284,6 +285,9 @@ func TestMemorySearchParseError(t *testing.T) {
 // exists. The test is intentionally sequential (no t.Parallel): it changes the
 // process cwd, and parallel tests only run after sequential tests finish.
 func TestMemorySearchResolveWorkspaceError(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("macOS getcwd does not fail after the cwd directory is removed; this test needs the Linux stale-cwd quirk")
+	}
 	origWD, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
