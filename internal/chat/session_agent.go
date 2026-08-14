@@ -74,13 +74,12 @@ func (s *Session) SetEventIdentityFactory(factory func(uint64) *events.Identity)
 // scoped tools, dispatcher, and skill registry after candidate construction.
 func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *tools.Registry, dispatcher *runtime.Dispatcher, skillReg *skills.Registry, memoryBlock string) {
 	base := prompt
-	composed := ComposeSystemPrompt(base, memoryBlock)
 	s.mu.Lock()
 	outgoing := s.prefixIdentity
 	old := s.binding.Dispatcher
 	s.agentSurfaceGeneration++
 	s.BaseSystemPrompt = base
-	s.SystemPrompt = composed
+	s.SystemPrompt = base
 	s.MaxSteps = maxSteps
 	s.Tools = registry
 	s.Dispatcher = dispatcher
@@ -88,7 +87,8 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 	s.binding.SkillRegistry = skillReg
 	s.binding.AgentSurfaceGeneration = s.agentSurfaceGeneration
 	s.invalidateLocked()
-	setSystemMessageLocked(s, composed)
+	setSystemMessageLocked(s, base)
+	setMemoryMessageLocked(s, memoryBlock)
 	// The host-side agent-surface publication changes the wire prefix
 	// (prompt, tools) and advances the surface generation: recapture so the
 	// cache never describes the pre-publication surface (audit RC-1) and emit
@@ -108,14 +108,14 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 // consistent with the public fields.
 func (s *Session) SetAgentSettings(prompt string, maxSteps int, memoryBlock string) {
 	base := prompt
-	composed := ComposeSystemPrompt(base, memoryBlock)
 	s.mu.Lock()
 	outgoing := s.prefixIdentity
 	s.BaseSystemPrompt = base
-	s.SystemPrompt = composed
+	s.SystemPrompt = base
 	s.MaxSteps = maxSteps
 	s.invalidateLocked()
-	setSystemMessageLocked(s, composed)
+	setSystemMessageLocked(s, base)
+	setMemoryMessageLocked(s, memoryBlock)
 	// The prompt is wire-affecting: recapture and emit so a prompt change is
 	// reported once and a no-op settings write stays silent (audit RC-1,
 	// INV-68-2).
@@ -184,6 +184,43 @@ func setSystemMessageLocked(s *Session, prompt string) {
 		}
 	} else if prompt != "" {
 		s.Messages = append([]provider.Message{{Role: provider.RoleSystem, Content: prompt}}, s.Messages...)
+	}
+}
+
+// setMemoryMessageLocked maintains the session-owned core-memory context
+// message: a user-role message carrying the framed block, kept at the one
+// position immediately after the system message (index 1, or 0 when there is
+// no system message) so it always precedes the first real user objective.
+//
+// It lives in the conversation rather than the system prompt so a memory
+// promotion no longer changes the system message - the first explicitly
+// cache-marked block (markStablePrefixCacheControl) - and so no longer
+// invalidates tools + system + the whole history cache. A mid-session memory
+// refresh still rewrites this message and therefore invalidates the provider
+// cache from index 1 onward; that is deliberate and still far cheaper than
+// invalidating the stable prefix itself. When this frame is the FIRST user
+// message, the provider's first-user-message cache marker lands on it, which
+// is fine: it is stable within a session between memory changes.
+//
+// s.memoryContext mirrors the current frame so /clear (resetSystem) can
+// re-seed it.
+func setMemoryMessageLocked(s *Session, memoryBlock string) {
+	content := MemoryContextContent(memoryBlock)
+	s.memoryContext = content
+	idx := 0
+	if len(s.Messages) > 0 && s.Messages[0].Role == provider.RoleSystem {
+		idx = 1
+	}
+	has := len(s.Messages) > idx && isMemoryContextMessage(s.Messages[idx])
+	switch {
+	case content == "" && has:
+		s.Messages = append(s.Messages[:idx], s.Messages[idx+1:]...)
+	case content == "":
+		// No frame wanted, none present: a true no-op.
+	case has:
+		s.Messages[idx].Content = content
+	default:
+		s.Messages = append(s.Messages[:idx], append([]provider.Message{{Role: provider.RoleUser, Content: content, Name: MemoryContextMessageName}}, s.Messages[idx:]...)...)
 	}
 }
 

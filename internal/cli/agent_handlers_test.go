@@ -48,11 +48,24 @@ func TestApplySelectedAgentPromptInjectsMemoryWithNoAgentSelected(t *testing.T) 
 	// selected is nil - the no-agent case the fix targets.
 	applySelectedAgentPrompt(sess, res, nil, state)
 
-	if !strings.Contains(sess.SystemPrompt, "core-memory-context") {
-		t.Fatalf("no-agent session did not get core-memory injection:\n%s", sess.SystemPrompt)
+	// The block never enters the system prompt anymore (cache locality):
+	// it rides in a dedicated user-role message right after the system
+	// message. Assert on the conversation, not the prompt.
+	if strings.Contains(sess.SystemPrompt, "core-memory-context") {
+		t.Fatalf("memory block leaked into the system prompt:\n%s", sess.SystemPrompt)
 	}
-	if !strings.Contains(sess.SystemPrompt, "promoted fact") {
-		t.Fatalf("injected block missing the promoted entry:\n%s", sess.SystemPrompt)
+	var memoryMsg string
+	for _, m := range sess.MessagesCopy() {
+		if strings.Contains(m.Content, "<core-memory-context>") {
+			memoryMsg = m.Content
+			break
+		}
+	}
+	if memoryMsg == "" {
+		t.Fatalf("no-agent session did not get core-memory injection as a message")
+	}
+	if !strings.Contains(memoryMsg, "promoted fact") {
+		t.Fatalf("injected block missing the promoted entry:\n%s", memoryMsg)
 	}
 }
 

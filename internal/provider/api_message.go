@@ -125,7 +125,24 @@ func dropReasoningLessToolExchanges(msgs []Message) []Message {
 }
 
 // terminalToolExchange identifies the current loop's pending exchange: the
-// assistant tool-call message is followed only by its matching tool results.
+// assistant tool-call message is followed only by its matching tool results,
+// ignoring trailing host injections.
+//
+// The host appends messages AFTER the current exchange's tool results before
+// the request ships: the user-role context summary (internal/agent
+// RenderSummaryMessage) and the conclude nudge. Those trailing messages are
+// not part of the exchange, so the trim below drops them from the check.
+// Without the trim, an appended summary made the current exchange
+// non-terminal and dropReasoningLessToolExchanges removed it WITH its tool
+// results - the model never saw the result it just produced.
+//
+// Only trailing NAMED user messages are trimmed. Host injections always
+// carry a Name (agent.SummaryMessageName, agent.ConcludeNudgeMessageName)
+// and user-typed input never does, so an un-named trailing user message is a
+// real follow-up request: the exchange before it was already answered, stays
+// non-terminal, and remains droppable (the D2 tradeoff pinned by
+// TestReasoningReplayIntegrationLegacyExchangeDropped). A trailing assistant
+// message likewise means the loop moved past the exchange.
 func terminalToolExchange(msgs []Message, assistantIndex int) bool {
 	ids := make(map[string]struct{})
 	for _, call := range msgs[assistantIndex].ToolCalls {
@@ -134,8 +151,12 @@ func terminalToolExchange(msgs []Message, assistantIndex int) bool {
 	if len(ids) == 0 {
 		return false
 	}
+	end := len(msgs)
+	for end > assistantIndex+1 && msgs[end-1].Role == RoleUser && msgs[end-1].Name != "" {
+		end--
+	}
 	seen := make(map[string]struct{})
-	for _, m := range msgs[assistantIndex+1:] {
+	for _, m := range msgs[assistantIndex+1 : end] {
 		if m.Role != RoleTool {
 			return false
 		}

@@ -16,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -201,17 +202,22 @@ func TestSummaryInjectionSentRequestCarriesSummary(t *testing.T) {
 	if !strings.Contains(injected.Content, "context summary") {
 		t.Fatalf("summary content missing header: %q", injected.Content)
 	}
-	// The injected message sits before the latest user objective.
-	if len(completer.requests[0].Messages) < 2 {
-		t.Fatal("request too short to place the summary before the objective")
+	// The injection is user-role framed data: a trailing assistant message is
+	// a prefill/continuation hazard on Anthropic-style dialects.
+	if injected.Role != provider.RoleUser {
+		t.Fatalf("summary role = %q, want user", injected.Role)
 	}
+	if !strings.Contains(injected.Content, "host-injected") || !strings.Contains(injected.Content, "not a new request") {
+		t.Fatalf("summary header lacks host-injected data framing: %q", injected.Content)
+	}
+	// The injected message is APPENDED after the latest user objective, so the
+	// structural prefix keeps its indices (prompt-cache stability).
 	messages := completer.requests[0].Messages
-	for index := range messages {
-		if messages[index].Name == SummaryMessageName {
-			if index+1 >= len(messages) || messages[index+1].Role != provider.RoleUser {
-				t.Fatalf("summary message at index %d is not followed by the user objective", index)
-			}
-		}
+	if len(messages) < 2 {
+		t.Fatal("request too short to place the summary after the objective")
+	}
+	if messages[len(messages)-1].Name != SummaryMessageName {
+		t.Fatalf("summary message is not the last message: last name=%q role=%q", messages[len(messages)-1].Name, messages[len(messages)-1].Role)
 	}
 	if len(summ.requests) == 0 {
 		t.Fatal("summary provider was never called")
@@ -505,6 +511,76 @@ func summaryInjectedLoopFixture(t *testing.T, facts *contextmgr.TurnState) *Loop
 	loop.LastPreparation = prep
 	loop.Messages = []provider.Message{{Role: provider.RoleUser, Content: "question"}}
 	return loop
+}
+
+// TestInjectSummaryMessageAppendsAfterPrefix pins the cache-friendly shape:
+// every pre-existing message keeps its exact index (the provider prompt-cache
+// prefix stays valid) and the summary is appended last.
+func TestInjectSummaryMessageAppendsAfterPrefix(t *testing.T) {
+	structural := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "old question"},
+		{Role: provider.RoleAssistant, Content: "old answer"},
+		{Role: provider.RoleUser, Content: "objective"},
+	}
+	injected := provider.Message{Role: provider.RoleUser, Content: "summary", Name: SummaryMessageName}
+	out := InjectSummaryMessage(structural, injected)
+	if len(out) != len(structural)+1 {
+		t.Fatalf("len=%d, want %d", len(out), len(structural)+1)
+	}
+	for index := range structural {
+		if !reflect.DeepEqual(out[index], structural[index]) {
+			t.Fatalf("structural message at index %d changed: %+v", index, out[index])
+		}
+	}
+	if out[len(out)-1].Name != SummaryMessageName {
+		t.Fatalf("summary is not last: %+v", out[len(out)-1])
+	}
+	// Empty history: the summary is the only message.
+	solo := InjectSummaryMessage(nil, injected)
+	if len(solo) != 1 || solo[0].Name != SummaryMessageName {
+		t.Fatalf("empty-history inject = %+v", solo)
+	}
+}
+
+// TestStepRequestOrderSummaryThenConcludeNudge pins the ephemeral request
+// order when both injections fire: structural prefix unchanged, then the
+// summary, then the soft-conclude nudge LAST.
+func TestStepRequestOrderSummaryThenConcludeNudge(t *testing.T) {
+	summ := &capturingSummaryProvider{}
+	summarizer := summaryInjectSummarizer(t, summ)
+	loop := summaryInjectedLoopFixture(t, contextmgr.NewTurnState())
+	// MaxToolCalls=1 leaves fewer than concludeToolCallsLeft reservations, so
+	// the conclude nudge fires on the next request.
+	loop.workLimits = &workLimitMeter{limits: runtime.WorkLimits{MaxToolCalls: 1}}
+	structural := append([]provider.Message(nil), loop.Messages...)
+	opts := Options{
+		MaxContextTokens: 100_000,
+		SummaryConfig:    SummaryConfig{Summarizer: &summarizer, Redaction: summaryRedaction()},
+	}
+	req, err := loop.stepRequest(context.Background(), nil, opts, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := req.Messages
+	if len(messages) != len(structural)+2 {
+		t.Fatalf("len=%d, want structural+summary+nudge=%d", len(messages), len(structural)+2)
+	}
+	for index := range structural {
+		if !reflect.DeepEqual(messages[index], structural[index]) {
+			t.Fatalf("structural message at index %d changed: %+v", index, messages[index])
+		}
+	}
+	if messages[len(structural)].Name != SummaryMessageName {
+		t.Fatalf("summary is not directly after the structural prefix: %+v", messages[len(structural)])
+	}
+	last := messages[len(messages)-1]
+	if last.Role != provider.RoleUser || last.Content != concludeMessage {
+		t.Fatalf("conclude nudge is not last: %+v", last)
+	}
+	if !reflect.DeepEqual(loop.Messages, structural) {
+		t.Fatal("stepRequest mutated loop history")
+	}
 }
 
 // TestSummaryInjectionToolFactsReachLaterRequest drives the recording seam

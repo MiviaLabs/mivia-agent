@@ -396,3 +396,50 @@ func TestRefreshPrefixIdentityAfterToolSurfaceWrite(t *testing.T) {
 		t.Fatalf("no-op republish after refresh emitted %d events, want 0", len(got))
 	}
 }
+
+// TestMemoryChangeEmitsPrefixResetWithMemoryCategory pins the INV-68-1
+// repair: a memory promotion rewrites the user-role frame at index 1, which
+// changes wire bytes without touching the system prompt, so the identity
+// carries a MemoryDigest and the reset names "memory" - and ONLY "memory"
+// when the prompt, tools, model, and reasoning are unchanged.
+func TestMemoryChangeEmitsPrefixResetWithMemoryCategory(t *testing.T) {
+	s := prefixResetSession(t)
+	collect, _ := prefixResetSubscriber(t, s)
+
+	s.SetAgentSettings("stable prompt", 4, "- fact one")
+	_ = collect() // drain the baseline event
+
+	s.SetAgentSettings("stable prompt", 4, "- fact one\n- fact two")
+	got := collect()
+	if len(got) != 1 {
+		t.Fatalf("reset events = %d, want exactly 1", len(got))
+	}
+	ev := got[0].PrefixReset
+	if ev == nil {
+		t.Fatal("bus event carried no typed payload")
+	}
+	if !containsCategory(ev.Categories, "memory") {
+		t.Fatalf("categories = %v, want memory", ev.Categories)
+	}
+	for _, forbidden := range []string{"model", "reasoning", "tools", "system_prompt", "agent_switch", "tool_admission"} {
+		if containsCategory(ev.Categories, forbidden) {
+			t.Fatalf("memory change named an unrelated category %q in %v", forbidden, ev.Categories)
+		}
+	}
+
+	// An unchanged memory block with an unchanged prompt emits nothing.
+	s.SetAgentSettings("stable prompt", 4, "- fact one\n- fact two")
+	if got := collect(); len(got) != 0 {
+		t.Fatalf("no-op settings write emitted %d reset events, want 0", len(got))
+	}
+
+	// Clearing the block also changes the wire bytes: memory again.
+	s.SetAgentSettings("stable prompt", 4, "")
+	got = collect()
+	if len(got) != 1 || got[0].PrefixReset == nil || !containsCategory(got[0].PrefixReset.Categories, "memory") {
+		t.Fatalf("clearing the memory block did not emit a memory reset: %+v", got)
+	}
+	if containsCategory(got[0].PrefixReset.Categories, "system_prompt") {
+		t.Fatalf("unchanged prompt reported system_prompt: %v", got[0].PrefixReset.Categories)
+	}
+}

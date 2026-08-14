@@ -102,12 +102,12 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	if err != nil {
 		return nil, err
 	}
-	systemPrompt, registry, closeAct, err := h.prepareInvokeSurface(req)
+	systemPrompt, memoryContext, registry, closeAct, err := h.prepareInvokeSurface(req)
 	if err != nil {
 		return nil, err
 	}
 	defer closeAct()
-	handler := h.newMultiStepHandler(binding, registry, systemPrompt, req)
+	handler := h.newMultiStepHandler(binding, registry, systemPrompt, memoryContext, req)
 	// The agent's own wall-clock ceiling layers over the caller's task timeout
 	// rather than replacing it, so unlimited turns still cannot produce an
 	// unbounded run and a generous agent policy cannot loosen a tight task
@@ -125,10 +125,19 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	return out, err
 }
 
-func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *tools.Registry, func(), error) {
+// prepareInvokeSurface returns the system prompt, the rendered core-memory
+// context frame (empty when there is none), the scoped registry, and an
+// activation closer. The memory frame is returned separately - never composed
+// into the prompt - so the subagent loop can deliver it as its own user-role
+// message right after the system message. That keeps the system prompt
+// byte-stable across memory promotions, so a memory change no longer
+// invalidates the provider's cached prompt prefix (system + tools); it only
+// changes the message at index 1, which is stable within one invocation
+// anyway.
+func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, string, *tools.Registry, func(), error) {
 	if h.opts.EnsureMCPTools != nil {
 		if err := h.opts.EnsureMCPTools(h.definition.EffectiveMCPServers); err != nil {
-			return "", nil, func() {}, fmt.Errorf("MCP tools: %w", err)
+			return "", "", nil, func() {}, fmt.Errorf("MCP tools: %w", err)
 		}
 	}
 	systemPrompt := h.definition.SystemPrompt
@@ -154,24 +163,22 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, *t
 	// the workflow step's output contract (observed as schema_violation runs).
 	// The user-turn appendix stays too, but the system prompt is authoritative.
 	schemaBlock := schemaSystemAppendix(h.resolveOutputSchema(req))
-	memoryBlock := coreMemoryBlockForOpts(h.opts)
+	// The core-memory block rides in its own message (D1c's ordering
+	// concern - keeping the messaging-protocol/schema tail closest to the
+	// prompt's end - is moot now that the block never enters the prompt).
+	memoryContext := chat.MemoryContextContent(coreMemoryBlockForOpts(h.opts))
 	if req.Skill == "" {
-		// composeSystemPrompt (D1c) sits before withMessagingProtocol/
-		// schemaBlock deliberately (D1c's ordering decision): the
-		// messaging-protocol/schema tail is operationally load-bearing for
-		// the turn and stays closest to the end of the prompt; the core
-		// memory block is background context and goes right after the base.
-		return withMessagingProtocol(chat.ComposeSystemPrompt(systemPrompt, memoryBlock)) + schemaBlock, registry, noop, nil
+		return withMessagingProtocol(systemPrompt) + schemaBlock, memoryContext, registry, noop, nil
 	}
 	scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
 	if err != nil {
-		return "", nil, noop, err
+		return "", "", nil, noop, err
 	}
 	injectBaselineMessaging(h.full, scoped, h.opts.Config, disallowed)
 	// The skill's instructions replace the agent prompt, so the protocol block
 	// is appended to the skill-activated prompt instead of the resolved one.
 	// This keeps the child-side messaging contract in-context exactly once.
-	return withMessagingProtocol(chat.ComposeSystemPrompt(prompt, memoryBlock)) + schemaBlock, scoped, closeActivation, nil
+	return withMessagingProtocol(prompt) + schemaBlock, memoryContext, scoped, closeActivation, nil
 }
 
 // resolveOutputSchema returns the output schema that will actually be enforced
@@ -227,7 +234,7 @@ func withMessagingProtocol(prompt string) string {
 	return prompt + "\n\n" + subagents.MessagingProtocolPrompt
 }
 
-func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *tools.Registry, systemPrompt string, req runtime.Request) *subagents.MultiStepHandler {
+func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *tools.Registry, systemPrompt, memoryContext string, req runtime.Request) *subagents.MultiStepHandler {
 	limits := h.effectiveWorkLimits(binding, req)
 	instanceID := runtime.NewSessionID()
 	generation := h.opts.ModelGeneration
@@ -258,7 +265,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		Completer: binding.completer, FullRegistry: registry,
 		Dispatcher: h.dispatcher, Model: binding.model, Reasoning: binding.reasoning,
 		ReasoningFunc: binding.effectiveReasoning,
-		SystemPrompt:  systemPrompt, MaxSteps: maxSteps,
+		SystemPrompt:  systemPrompt, MemoryContext: memoryContext, MaxSteps: maxSteps,
 		WorkLimits: limits, DisableProviderReplay: req.DisableProviderReplay,
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
 		MaxTokens:   maxTokens, MaxContextTokens: binding.contextBudget(),

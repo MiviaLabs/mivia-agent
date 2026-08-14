@@ -275,9 +275,9 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	}
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
-			res.SystemPrompt = chat.ComposeSystemPrompt(buildAgentPrompt(res.Subagents), "")
+			res.SystemPrompt = buildAgentPrompt(res.Subagents)
 		} else {
-			res.SystemPrompt = chat.ComposeSystemPrompt(defaultSystemPrompt, "")
+			res.SystemPrompt = defaultSystemPrompt
 		}
 	}
 	comp, err := provider.New(res)

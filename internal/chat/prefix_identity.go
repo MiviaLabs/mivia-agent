@@ -10,9 +10,11 @@ import (
 // The wire-affecting fields are exactly the inputs to the stable request
 // prefix that the trigger events can change: provider/model (temperature rides
 // with the model), the effective reasoning dial (level and provider-resolved
-// dialect), the tool-schema digest, and the system-prompt digest. Equality of
-// those fields is necessary and sufficient for byte-equal request prefixes
-// (INV-68-1). The two generation counters ride along as observability only:
+// dialect), the tool-schema digest, the system-prompt digest, and the
+// memory-context digest (the core-memory frame rides as the user-role message
+// at index 1, so a memory promotion changes wire bytes without touching the
+// system prompt). Equality of those fields is necessary and sufficient for
+// byte-equal request prefixes (INV-68-1). The two generation counters ride along as observability only:
 // they never gate equality by themselves, because a republish that only
 // advances a counter is byte-stable and must not emit a false reset (INV-68-2,
 // test-plan correction 4).
@@ -36,6 +38,10 @@ type PrefixIdentity struct {
 	Temperature            float64
 	ToolSchemaDigest       string
 	SystemPromptDigest     string
+	// MemoryDigest fingerprints the rendered core-memory context frame
+	// (Session.memoryContext, the user-role message at index 1). The empty
+	// frame hashes deterministically like any other value.
+	MemoryDigest string
 }
 
 // capturePrefixIdentityLocked snapshots the prefix identity from the same
@@ -56,7 +62,7 @@ func (s *Session) capturePrefixIdentityLocked() PrefixIdentity {
 	// coincides with the model default. The offset never touches
 	// binding.ModelGeneration, so fencing, context-state binding revisions,
 	// and surface-generation checks are unaffected.
-	return PrefixIdentity{ProviderName: s.binding.ProviderName, Model: s.binding.Model, ModelGeneration: s.binding.ModelGeneration + s.prefixGeneration, AgentSurfaceGeneration: s.binding.AgentSurfaceGeneration, ReasoningLevel: string(s.effectiveReasoningLocked()), ReasoningDialect: s.reasoningDialectLocked(), HasTemperature: s.Temperature != nil, Temperature: temperatureValue(s.Temperature), ToolSchemaDigest: toolSchemaDigest(s.Tools), SystemPromptDigest: systemPromptDigest(s.SystemPrompt)}
+	return PrefixIdentity{ProviderName: s.binding.ProviderName, Model: s.binding.Model, ModelGeneration: s.binding.ModelGeneration + s.prefixGeneration, AgentSurfaceGeneration: s.binding.AgentSurfaceGeneration, ReasoningLevel: string(s.effectiveReasoningLocked()), ReasoningDialect: s.reasoningDialectLocked(), HasTemperature: s.Temperature != nil, Temperature: temperatureValue(s.Temperature), ToolSchemaDigest: toolSchemaDigest(s.Tools), SystemPromptDigest: systemPromptDigest(s.SystemPrompt), MemoryDigest: systemPromptDigest(s.memoryContext)}
 }
 
 // reasoningDialectLocked resolves the wire dialect the effective level will
@@ -125,6 +131,9 @@ func prefixResetCategories(out, in PrefixIdentity, surfacePublication bool) []st
 	}
 	if out.SystemPromptDigest != in.SystemPromptDigest {
 		cats = append(cats, "system_prompt")
+	}
+	if out.MemoryDigest != in.MemoryDigest {
+		cats = append(cats, "memory")
 	}
 	if surfacePublication && out.AgentSurfaceGeneration != in.AgentSurfaceGeneration {
 		if out.SystemPromptDigest != in.SystemPromptDigest {

@@ -77,9 +77,11 @@ func TurnIDFromContext(ctx context.Context) (uint64, bool) {
 // requirements are not checked.
 type AgentSurfacePublication struct {
 	Prompt string
-	// MemoryBlock is the core-memory block to compose into Prompt (plan 77,
-	// E3/E5). Empty means no injection - ComposeSystemPrompt(Prompt, "") is
-	// a true no-op.
+	// MemoryBlock is the core-memory block delivered as a separate
+	// user-role message right after the system message (plan 77, E3/E5,
+	// revised for cache locality: it never enters Prompt, so a memory
+	// change cannot invalidate the cached system-prompt prefix). Empty
+	// means no injection - setMemoryMessageLocked with "" is a true no-op.
 	MemoryBlock   string
 	MaxSteps      int
 	Registry      *tools.Registry
@@ -391,7 +393,6 @@ func (s *Session) ResetAdmissions() {
 // its dispatcher closed underneath it (plan tools/05 R2-1).
 func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
 	base := pub.Prompt
-	composed := ComposeSystemPrompt(base, pub.MemoryBlock)
 	s.mu.Lock()
 	if s.switching ||
 		(pub.RequireSoleActiveTurn && s.activeTurns != 1) ||
@@ -404,7 +405,7 @@ func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
 	old := s.binding.Dispatcher
 	s.agentSurfaceGeneration++
 	s.BaseSystemPrompt = base
-	s.SystemPrompt = composed
+	s.SystemPrompt = base
 	s.MaxSteps = pub.MaxSteps
 	s.Tools = pub.Registry
 	s.Dispatcher = pub.Dispatcher
@@ -412,7 +413,8 @@ func (s *Session) TryPublishAgentSurface(pub AgentSurfacePublication) bool {
 	s.binding.SkillRegistry = pub.SkillRegistry
 	s.binding.AgentSurfaceGeneration = s.agentSurfaceGeneration
 	s.invalidateLocked()
-	setSystemMessageLocked(s, composed)
+	setSystemMessageLocked(s, base)
+	setMemoryMessageLocked(s, pub.MemoryBlock)
 	// TryPublishAgentSurface is one of the four identity-capture triggers
 	// (INV-68-8). The incoming identity reflects the freshly published
 	// surface; when the wire-affecting subset changed, exactly one

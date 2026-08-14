@@ -144,7 +144,7 @@ func TestWorkflowSkillSnapshotRejectsChangedResourceBeforeActivation(t *testing.
 	if err := os.WriteFile(filepath.Join(root, "review", "template.md"), []byte("changed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, closeActivation, err := handler.prepareInvokeSurface(runtime.Request{Skill: "review"})
+	_, _, _, closeActivation, err := handler.prepareInvokeSurface(runtime.Request{Skill: "review"})
 	defer closeActivation()
 	if err == nil || !strings.Contains(err.Error(), "changed after admission") {
 		t.Fatalf("prepareInvokeSurface() error = %v", err)

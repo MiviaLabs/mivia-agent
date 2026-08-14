@@ -29,22 +29,23 @@ type Session struct {
 	allowedModels      []string
 	rejectedSavedModel *string
 	SystemPrompt       string
-	// BaseSystemPrompt is SystemPrompt without any core-memory block
-	// composed in (plan 77, E3). AgentSettings returns this, not
-	// SystemPrompt: every PublishAgentSurface/SetAgentSettings/
-	// TryPublishAgentSurface caller that reads AgentSettings, appends its
-	// own tail, and writes back must operate on a memory-block-free base -
-	// composing over an already-composed prompt would duplicate the block
-	// on every /agent switch or tool admission (found by hostile review
-	// during plan 77's Step 0, AR-1/AR-2). SystemPrompt is always derived
-	// fresh as ComposeSystemPrompt(BaseSystemPrompt, memoryBlock), never
-	// accumulated, so duplication and staleness are structurally
-	// impossible rather than something a stripping pass has to catch.
+	// BaseSystemPrompt is the memory-block-free prompt (plan 77, E3). The
+	// core-memory block never enters the system prompt - it rides in a
+	// separate user-role message (setMemoryMessageLocked) - so SystemPrompt
+	// and BaseSystemPrompt are always equal. AgentSettings still returns
+	// BaseSystemPrompt so surface callers keep a guaranteed block-free base
+	// (the AR-1/AR-2 duplication hazard stays structurally impossible).
 	BaseSystemPrompt string
-	Temperature      *float64
-	MaxTokens        *int
-	Messages         []provider.Message
-	Tools            *tools.Registry
+	// memoryContext is the rendered core-memory frame carried as a
+	// user-role message after the system message (setMemoryMessageLocked).
+	// It never enters SystemPrompt: a byte-stable system message is what
+	// keeps a memory promotion from invalidating the provider's cached
+	// prefix. Stored so /clear (resetSystem) re-seeds it. Guarded by mu.
+	memoryContext string
+	Temperature   *float64
+	MaxTokens     *int
+	Messages      []provider.Message
+	Tools         *tools.Registry
 	// UseTools enables the agent loop when Tools is set.
 	UseTools bool
 	// Dispatcher is the runtime dispatcher for tool, skill, and subagent execution.
@@ -206,53 +207,6 @@ type TurnOptions struct {
 	Tools      *tools.Registry
 	Dispatcher *runtime.Dispatcher
 	Cleanup    func()
-}
-
-func (s *Session) resetSystem() error {
-	s.contextPublishMu.Lock()
-	defer s.contextPublishMu.Unlock()
-	s.mu.Lock()
-	contextStore := s.contextStore
-	contextPrincipal := s.contextPrincipal
-	contextWorktree := s.contextWorktree
-	contextExpected := s.contextHead
-	contextBinding := captureBindingRevision(s.binding)
-	contextEnabled := s.contextEnabledLocked() && contextStore != nil
-	s.mu.Unlock()
-	// Advance the durable head BEFORE mutating in-memory state, so that a
-	// failure leaves the conversation intact and the user can retry.  This is
-	// the INV-AG-35 guarantee: a refused commit must never destroy state
-	// the user already has, and /clear is a commit from the user's
-	// perspective.
-	if contextEnabled {
-		if err := s.advanceContextHead(contextStore, contextPrincipal, contextWorktree, contextExpected, contextBinding, contextBinding, "clear", true); err != nil {
-			return err
-		}
-	}
-	s.mu.Lock()
-	// Replacing history wholesale invalidates any turn already in flight: bump
-	// the generation so its writeback fails the myTurn == s.turnID check.
-	// Without this, /clear is silently undone by the running turn and the
-	// purged conversation is restored - then persisted by SaveAfterTurn.
-	s.invalidateLocked()
-	s.turnID++
-	s.Messages = nil
-	if s.SystemPrompt != "" {
-		s.Messages = append(s.Messages, provider.Message{
-			Role:    provider.RoleSystem,
-			Content: s.SystemPrompt,
-		})
-	}
-	if contextEnabled {
-		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
-	}
-	s.mu.Unlock()
-	return nil
-}
-
-// Clear drops conversation history but keeps the system prompt.
-func (s *Session) Clear() error {
-	return s.resetSystem()
 }
 
 // MessagesCount returns the number of messages under the read lock.
