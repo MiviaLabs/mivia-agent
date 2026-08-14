@@ -405,3 +405,39 @@ func TestCompileForResume_LegacySnapshotsKeepAdmittedActivation(t *testing.T) {
 		}
 	})
 }
+
+func TestCompileForResumeOptIn_NoLegacyActivation(t *testing.T) {
+	// A snapshot stamped with the opt-in stacking semantics resumes with the
+	// strict activation rule: a table-less (or step-less) definition stays
+	// single-PR even when its graph matches the old inference shape.
+	for _, tc := range []struct {
+		name     string
+		stacking *definition.Stacking
+	}{
+		{"no table", nil},
+		{"step-less table", &definition.Stacking{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wf := stackingFixture()
+			wf.Stacking = tc.stacking
+			cw, err := CompileForResumeOptIn(wf)
+			if err != nil {
+				t.Fatalf("CompileForResumeOptIn failed: %v", err)
+			}
+			if cw.Stacking != nil {
+				t.Errorf("Stacking = %+v, want nil under opt-in resume semantics", cw.Stacking)
+			}
+		})
+	}
+
+	t.Run("explicit table stays active", func(t *testing.T) {
+		wf := stackingFixture()
+		cw, err := CompileForResumeOptIn(wf)
+		if err != nil {
+			t.Fatalf("CompileForResumeOptIn failed: %v", err)
+		}
+		if cw.Stacking == nil {
+			t.Fatal("Stacking is nil, want resolved config for an explicit table")
+		}
+	})
+}

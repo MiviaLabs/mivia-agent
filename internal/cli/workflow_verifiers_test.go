@@ -226,3 +226,44 @@ func TestAcceptWorkflowVerifierChanges(t *testing.T) {
 		t.Fatalf("legacy acceptance must be a no-op, got %v, %v", drifted, err)
 	}
 }
+
+// Fresh admission stamps the stacking semantics marker, and the resume
+// compile selector honors it: marked snapshots resume with the strict
+// opt-in activation, unmarked (pre-marker) snapshots with the legacy one.
+func TestPinStampsStackingSemanticsAndSelectorHonorsIt(t *testing.T) {
+	prior := pinnedSnapshot(t, gateWorkflow(), nil)
+	if prior.StackingSemanticsVersion != workflowledger.StackingSemanticsOptIn {
+		t.Fatalf("stacking semantics version = %d, want %d", prior.StackingSemanticsVersion, workflowledger.StackingSemanticsOptIn)
+	}
+	// A table-less definition whose graph matches the old inference shape:
+	// plan -> implement with the change-summary schema and a "plan" binding.
+	wf := definition.WorkflowFile{
+		Version:     1,
+		Name:        "inferable",
+		InitialStep: "plan",
+		Steps: []definition.Step{
+			{ID: "plan", Kind: "agent", Agent: "workflow-engineer"},
+			{ID: "implement", Kind: "agent", Agent: "workflow-engineer",
+				OutputSchema: "schemas/change-summary-v1.json",
+				Context:      []definition.ContextBinding{{From: "steps.plan.output", As: "plan"}}},
+		},
+		Transitions: []definition.Transition{
+			{From: "plan", To: "implement"},
+			{From: "implement", To: "success"},
+		},
+	}
+	optIn, err := compileWorkflowResumeSnapshot(*prior, &wf)
+	if err != nil {
+		t.Fatalf("opt-in resume compile failed: %v", err)
+	}
+	if optIn.Stacking != nil {
+		t.Fatalf("marked snapshot resumed stacking-active: %+v", optIn.Stacking)
+	}
+	legacy, err := compileWorkflowResumeSnapshot(workflowledger.Snapshot{}, &wf)
+	if err != nil {
+		t.Fatalf("legacy resume compile failed: %v", err)
+	}
+	if legacy.Stacking == nil {
+		t.Fatal("unmarked snapshot lost its legacy stacking activation")
+	}
+}

@@ -349,7 +349,7 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 	if err != nil {
 		return nil, err
 	}
-	compiled, err := compiler.CompileForResume(&wf)
+	compiled, err := compileResumeSnapshot(snapshot, &wf)
 	if err != nil {
 		return nil, err
 	}

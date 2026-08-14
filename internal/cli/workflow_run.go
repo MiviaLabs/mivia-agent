@@ -330,6 +330,11 @@ func prepareWorkflowRun(name, root, configPath string, rawInputs []string) (*pre
 		closeFn()
 		return nil, err
 	}
+	// A stacking workflow accepts the engine-reserved inputs (stack_mode,
+	// chunk, ...) at admission too, so the operator override the controller
+	// supports (e.g. --input stack_mode=single) validates against the same
+	// input contract as resume. A no-op for non-stacking workflows.
+	compiler.MergeStackingInputs(compiled)
 	inputs, inputSnapshot, err := parseWorkflowInputs(rawInputs, compiled.Inputs)
 	if err != nil {
 		closeFn()

@@ -5,6 +5,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -46,9 +47,20 @@ func (e *Engine) newRunController(compiled *compiler.CompiledWorkflow, raw []byt
 }
 
 func newRunSnapshot(compiled *compiler.CompiledWorkflow, raw []byte, inputs map[string]string, schemas, templates map[string]workflowledger.RefSnapshot, bindings map[string]workflowledger.PanelBindingSnapshot) workflowledger.Snapshot {
-	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: append([]byte(nil), raw...), DefinitionDigest: compiled.Digest, Inputs: inputs, Schemas: schemas, Templates: templates, PanelBindings: bindings}
+	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: append([]byte(nil), raw...), DefinitionDigest: compiled.Digest, Inputs: inputs, Schemas: schemas, Templates: templates, PanelBindings: bindings, StackingSemanticsVersion: workflowledger.StackingSemanticsOptIn}
 	if compiled.Delivery != nil && compiled.DeliveryActive() {
 		snapshot.Delivery = &workflowledger.DeliverySnapshot{Mode: compiled.Delivery.Mode, Provider: compiled.Delivery.Provider, Base: compiled.Delivery.Base}
 	}
 	return snapshot
+}
+
+// compileResumeSnapshot recompiles an admitted snapshot definition with the
+// stacking semantics recorded at admission: snapshots marked
+// StackingSemanticsOptIn get the strict opt-in activation, unmarked
+// (pre-marker) snapshots get the legacy inference activation.
+func compileResumeSnapshot(snapshot workflowledger.Snapshot, wf *definition.WorkflowFile) (*compiler.CompiledWorkflow, error) {
+	if snapshot.StackingSemanticsVersion >= workflowledger.StackingSemanticsOptIn {
+		return compiler.CompileForResumeOptIn(wf)
+	}
+	return compiler.CompileForResume(wf)
 }
