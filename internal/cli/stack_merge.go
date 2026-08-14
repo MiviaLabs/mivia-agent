@@ -59,6 +59,14 @@ func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledg
 		if allChunksMerged(chunks, stackMergedSet(byID)) && allTasksMerged(byID) {
 			return nil
 		}
+		// Policy A durable pause (§stackAwaitsGrantOnly): when only human
+		// publish grants can advance the stack, polling is a guaranteed
+		// no-op. Persist-and-exit: print the grant guidance and stop; the
+		// ledger is the resume point.
+		if policy != "auto" && stackAwaitsGrantOnly(byID) {
+			printStackGrantPause(repo, stackID, byID, stdout)
+			return errStackAwaitsGrant
+		}
 		ticks++
 		if ticks%3 == 0 {
 			fmt.Fprintf(stdout, "stack %s: waiting for chunk merges to land...\n", stackID)

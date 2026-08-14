@@ -141,6 +141,17 @@ func runStackStatus(args []string, workspaceRoot, configPath string, stdout, std
 		runRef, pr := stackRunDisplay(repo, stackID, t.ID)
 		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, runRef, pr, strings.Join(t.Deps, ","))
 	}
+	// Reviewed chunks wait on a human publish grant: print the exact
+	// command per chunk so status and the drive's pause guidance agree.
+	for _, line := range stackGrantHintLines(list, func(chunkID string) string {
+		run, found, err := stackRunRef(repo, stackID, chunkID)
+		if err != nil || !found {
+			return ""
+		}
+		return run.RunID
+	}) {
+		fmt.Fprintln(stdout, line)
+	}
 	return nil
 }
 

@@ -174,6 +174,11 @@ func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, 
 			// again. With merge_policy=auto the wait also merges published
 			// PRs itself.
 			if err := waitForChunkMerges(ctx, prepared, ledger, checker, stackID, chunks, policy, stdout, stderr); err != nil {
+				if errors.Is(err, errStackAwaitsGrant) {
+					// Durable pause, not a failure: the ledger keeps the
+					// stack resumable and the flock releases on return.
+					return nil
+				}
 				return err
 			}
 			continue
