@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // Options is one agent turn's immutable configuration. Every field is read,
@@ -139,6 +140,26 @@ type Options struct {
 	// most one interrupt per window. 0 disables the cooldown (tests). The
 	// production 5s default lives in the subagents wiring, NOT here.
 	SoftInterruptCooldown time.Duration
+	// Surface, when non-nil, is invoked by Loop.Run at the top of EVERY step
+	// iteration (before runStep, hence before BeforeStep inside prepareStep) to
+	// fetch that step's host surface. Non-nil fields of the returned Surface
+	// are applied to that step only; nil fields leave the loop's own state
+	// unchanged. The host must supply Registry, Dispatcher, and ToolSpecs from
+	// one consistent read so the registry/dispatcher/spec agreement invariant
+	// (M3) holds for the step. Nil is a no-op.
+	Surface func() Surface
+}
+
+// Surface is one step's host-supplied tool surface: the registry the loop
+// dispatches against, the runtime dispatcher for per-turn dedup, the tool
+// specs published to the model for the step, and the spool for remainder refs.
+// Fields come from one consistent host read; a zero field means "keep the
+// loop's current value for this step".
+type Surface struct {
+	Registry       *tools.Registry
+	Dispatcher     *runtime.Dispatcher
+	ToolSpecs      []provider.ToolSpec
+	RemainderSpool *remainder.Spool
 }
 
 // SummaryConfig is one turn's immutable summary wiring. It is read, never

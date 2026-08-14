@@ -514,8 +514,8 @@ func TestNoOpStreakErrorDoesNotClaimStagedToolsAreCallable(t *testing.T) {
 	if strings.Contains(callable, "glob") {
 		t.Fatalf("streak error claims the staged-but-unpublished glob is callable now: %q", msg)
 	}
-	if !strings.Contains(msg, "glob") || !strings.Contains(msg, "next turn") {
-		t.Fatalf("streak error gives no next-turn signal for the staged glob: %q", msg)
+	if !strings.Contains(msg, "glob") || !strings.Contains(msg, "next step") {
+		t.Fatalf("streak error gives no next-step signal for the staged glob: %q", msg)
 	}
 }
 

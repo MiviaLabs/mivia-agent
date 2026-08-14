@@ -15,15 +15,14 @@ func TestDefaultAgentPromptIsShort(t *testing.T) {
 	// Keep the compiled prompt lean; content-ref routing (read_output /
 	// ledger_read) is intentional and worth a few hundred bytes of budget.
 	//
-	// The budget went from 4100 to 4700 for prompts.WritingStandard. The
-	// standard is about 530 bytes, and it applies to every piece of prose the
-	// agent writes, so the agent must see it before it writes, not after a
-	// reviewer rejects the text. Keep the fragment compact. Do not raise this
-	// budget again to make room for content that a project agent definition
-	// under .mivia/agents/ can carry instead.
+	// The budget went to 4150 when the ADLC block was compressed to a terse
+	// step contract (the full spec lives in the workspace rules; a workspace
+	// prompt supersedes this fallback anyway). Do not raise this budget
+	// again to make room for content that a project agent definition under
+	// .mivia/agents/ can carry instead.
 	prompt := buildAgentPrompt(config.SubagentConfig{})
-	if len(prompt) > 4700 {
-		t.Fatalf("buildAgentPrompt is %d bytes, expected < 4700", len(prompt))
+	if len(prompt) > 4150 {
+		t.Fatalf("buildAgentPrompt is %d bytes, expected < 4150", len(prompt))
 	}
 	if !strings.Contains(prompt, "ASD-STE100") {
 		t.Fatal("buildAgentPrompt must carry the writing standard")

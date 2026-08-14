@@ -13,6 +13,7 @@ const (
 	deferralReasonOrchestration = "background orchestration is active"
 	deferralReasonWidener       = "the surface publisher refused the update"
 	deferralReasonStagingTurn   = "the staging turn has not completed"
+	deferralReasonSuperseded    = "the staging turn was superseded"
 )
 
 // stageOwnedAtOrAfter reports whether any staged name is owned by a turn at or
@@ -38,7 +39,7 @@ func (s *Session) deferAdmissionLocked(reason string) {
 		return
 	}
 	s.admissionNotes = append(s.admissionNotes,
-		fmt.Sprintf("tool loading deferred: %s could not be added to the tool surface yet (%s); it will be retried at the next turn boundary",
+		fmt.Sprintf("tool loading deferred: %s could not be added to the tool surface yet (%s); it will be retried at the next step boundary",
 			boundedNames(s.pendingAdmission.Names, maxAdmissionNoteNames), reason))
 }
 
@@ -66,24 +67,64 @@ func (s *Session) PublishPendingAdmission() { s.publishPendingAdmission(true) }
 
 // PublishPendingAdmissionAtTurnStart attempts publication at the start of a
 // turn, before the loop runs. A stage whose owning turns have all finished may
-// publish here - the earliest safe point, so the load_tools "next turn"
+// publish here - the earliest safe point, so the load_tools "next step"
 // promise holds (DC-9). A stage still owned by the current, not yet run turn
-// stays deferred: its own boundary, after its durable commit, is the first
-// allowed point (D7).
+// stays deferred: its own boundary - the staging turn's first step boundary or
+// its durable commit - is the first allowed point (D7).
 func (s *Session) PublishPendingAdmissionAtTurnStart() { s.publishPendingAdmission(false) }
 
-// publishPendingAdmission is the shared publication core. allowCurrentTurn
-// admits a stage owned by the current turn (the boundary case, where that turn
-// has durably committed); false refuses it (the turn-start case, where the
-// staging turn has not run yet).
+// PublishPendingAdmissionAtStepBoundary attempts the mid-turn publication of a
+// stage owned by the CURRENT, executing turn at a step boundary. The loop
+// invokes it through the host Surface hook before building the next step's
+// request, so a tool staged by load_tools is callable from the next model
+// step. skipMessageRewrite is set: s.Messages is the loop's in-flight history
+// until the turn commit, so the publish must not rewrite the system message or
+// memory frame (the system prompt is byte-identical across admissions anyway).
+// The caller re-captures the turn's operation token so the same turn's commit
+// still succeeds under the post-publication fence (the turn-start analog:
+// chat-turnstart-admission-fences-own-turn). The same R2-1/R2-2/switch/generation
+// checks apply as at turn boundaries; a deferred stage stays pending for the
+// next qualifying boundary.
+//
+// It returns whether a publication occurred (a no-op when nothing is pending).
+// On success it ALSO re-captures the executing turn's operation token into
+// liveTurnToken: the publication bumped the operation fence
+// (TryPublishAgentSurface -> invalidateLocked), which would otherwise fence
+// this turn's own commit out of commitPreparedTurn. sendAgent reads the
+// re-captured token via commitTurnToken, gated on the committing turn's id so
+// a superseded turn can never borrow a newer turn's fence.
+func (s *Session) PublishPendingAdmissionAtStepBoundary() bool {
+	if !s.publishPendingAdmissionFull(true, true) {
+		return false
+	}
+	s.mu.Lock()
+	s.liveTurnToken = s.captureOperationTokenLocked(fmt.Sprintf("turn:%d", s.turnID))
+	s.mu.Unlock()
+	return true
+}
+
+// publishPendingAdmission is the turn-boundary publication entry point: the
+// end-of-turn path (after the turn's durable commit) admits the current turn's
+// own stage; the turn-start path defers it (D7).
 func (s *Session) publishPendingAdmission(allowCurrentTurn bool) {
+	s.publishPendingAdmissionFull(allowCurrentTurn, false)
+}
+
+// publishPendingAdmissionFull is the shared publication core. allowCurrentTurn
+// admits a stage owned by the current turn (the boundary case, where that turn
+// has durably committed or is executing at a step boundary); false refuses it
+// (the turn-start case, where the staging turn has not run yet).
+// skipMessageRewrite suppresses the system/memory message rewrites inside
+// TryPublishAgentSurface for mid-turn (step-boundary) publications. It returns
+// whether a publication occurred.
+func (s *Session) publishPendingAdmissionFull(allowCurrentTurn, skipMessageRewrite bool) bool {
 	s.mu.Lock()
 	stage := s.pendingAdmission
 	widener := s.surfaceWidener
 	if stage == nil {
 		s.admissionDeferralReason = ""
 		s.mu.Unlock()
-		return
+		return false
 	}
 	if widener == nil || stage.SurfaceGeneration != s.agentSurfaceGeneration {
 		// The binding this stage was authored against is gone (/agent switch),
@@ -91,14 +132,14 @@ func (s *Session) publishPendingAdmission(allowCurrentTurn bool) {
 		s.pendingAdmission = nil
 		s.admissionDeferralReason = ""
 		s.mu.Unlock()
-		return
+		return false
 	}
 	if !allowCurrentTurn && stageOwnedAtOrAfter(stage, s.turnID) {
 		// The staging turn has not run yet: publication must wait for that
 		// turn's own boundary, after its durable commit (D7).
 		s.deferAdmissionLocked(deferralReasonStagingTurn)
 		s.mu.Unlock()
-		return
+		return false
 	}
 	// Sole-active-turn is what makes closing the old dispatcher safe: no
 	// sibling turn and no background run can still be executing on it (R2-1).
@@ -110,12 +151,23 @@ func (s *Session) publishPendingAdmission(allowCurrentTurn bool) {
 	if s.switching {
 		s.deferAdmissionLocked(deferralReasonSwitching)
 		s.mu.Unlock()
-		return
+		return false
 	}
 	if s.activeTurns != 1 {
 		s.deferAdmissionLocked(deferralReasonActiveTurn)
 		s.mu.Unlock()
-		return
+		return false
+	}
+	if skipMessageRewrite && !stage.Token.zero() && !s.tokenCurrentLocked(stage.Token) {
+		// The step-boundary path exists for the CURRENT turn's own stage: a
+		// tool staged by load_tools during this turn becomes callable from the
+		// next model step. A stage whose staging turn was superseded by a
+		// force-send (or whose fence moved) must not publish here - it stays
+		// pending for a turn-boundary publication (turn-start/end), which DC-9
+		// still allows once the owning turn is done.
+		s.deferAdmissionLocked(deferralReasonSuperseded)
+		s.mu.Unlock()
+		return false
 	}
 	admitted := append(slices.Clone(s.admittedTools), stage.Names...)
 	generation := s.agentSurfaceGeneration
@@ -126,30 +178,38 @@ func (s *Session) publishPendingAdmission(allowCurrentTurn bool) {
 	// BaseSystemPrompt, not SystemPrompt: avoids double-composing the memory
 	// block on republish (plan 77, E3).
 	prompt, maxSteps := s.BaseSystemPrompt, s.MaxSteps
+	pub := AgentSurfacePublication{
+		Prompt: prompt, MaxSteps: maxSteps,
+		RequireTurnID: turnID, RequireSurfaceGeneration: generation,
+		RequireSoleActiveTurn: true,
+		SkipMessageRewrite:    skipMessageRewrite,
+	}
 	s.mu.Unlock()
+	return s.widenSurface(widener, admitted, stage, pub)
+}
 
-	// Background orchestration that outlives the turn still owns this
-	// session's dispatcher; widening would close it underneath (R2-2).
+// widenSurface is the tail of publishPendingAdmissionFull: the checks that
+// must run outside the session lock, the host widener call, and the success
+// bookkeeping. Background orchestration that outlives the turn still owns this
+// session's dispatcher; widening would close it underneath (R2-2).
+func (s *Session) widenSurface(widener SurfaceWidener, admitted []string, stage *AdmissionStage, pub AgentSurfacePublication) bool {
 	if err := s.CheckSwitchAllowed(); err != nil {
 		s.mu.Lock()
 		s.deferAdmissionLocked(deferralReasonOrchestration)
 		s.mu.Unlock()
-		return
+		return false
 	}
-	published, err := widener(admitted, AgentSurfacePublication{
-		Prompt: prompt, MaxSteps: maxSteps,
-		RequireTurnID: turnID, RequireSurfaceGeneration: generation,
-		RequireSoleActiveTurn: true,
-	})
+	published, err := widener(admitted, pub)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil || !published {
 		s.deferAdmissionLocked(deferralReasonWidener)
-		return
+		return false
 	}
 	s.admittedTools = admitted
 	s.pendingAdmission = nil
 	s.admissionPublications++
 	s.admissionDeferrals = 0
 	s.admissionDeferralReason = ""
+	return true
 }

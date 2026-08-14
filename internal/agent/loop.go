@@ -11,7 +11,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -112,6 +111,10 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 			l.discardPreparation(opts)
 			return lastText, fmt.Errorf("agent exceeded max_steps (%d)", opts.MaxSteps)
 		}
+		// The surface hook is the host's mid-turn publication point: it runs at
+		// the top of every step after the first and may replace this step's
+		// registry, dispatcher, specs, and spool (applySurfaceHook).
+		l.applySurfaceHook(&opts, &toolSpecs, step)
 		l.emitStep(opts, step)
 
 		out, err := l.runStep(ctx, toolSpecs, opts, step)
@@ -143,28 +146,8 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 	}
 }
 
-// emitReasoning surfaces model chain of thought when the provider exposes
-// it. The event sink gets a redacted copy: reasoning is operator-facing, so it
-// passes through the workspace's redaction policy before reaching OnEvent
-// consumers (redact.Text is an identity when no policy is installed).
-// Persistence into host history is separate and stays verbatim
-// (commitFinalAnswer / processToolCalls copy resp.ReasoningContent onto the
-// assistant Message), because the provider that produced the reasoning needs
-// the raw bytes back on replay.
-func emitReasoning(opts Options, resp *provider.Response) {
-	if resp == nil || resp.ReasoningContent == "" {
-		return
-	}
-	emit(opts, Event{Kind: EventThinking, Content: redact.Text(resp.ReasoningContent)})
-}
-
-func (l *Loop) emitStep(opts Options, step int) {
-	d := fmt.Sprintf("%d/∞", step)
-	if opts.MaxSteps > 0 {
-		d = fmt.Sprintf("%d/%d", step, opts.MaxSteps)
-	}
-	emit(opts, Event{Kind: EventStep, Detail: d})
-}
+// Step emission (emitReasoning, emitStep) and the per-step surface refresh
+// (applySurfaceHook) live in loop_step.go.
 
 // pruneHistory trims history to the context budget and reports what went.
 //

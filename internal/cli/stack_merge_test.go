@@ -87,3 +87,30 @@ func TestWaitForIntegrationMergeHonorsCancelledContext(t *testing.T) {
 		t.Fatal("waitForIntegrationMerge did not return after its context was cancelled; the wait loop is not context-cooperative")
 	}
 }
+
+// TestBlockedByUnmergedDependentBlocksParentUntilFollowUpMerges pins a live
+// e2e finding: a diff-size split's follow-up PR is based on its parent
+// chunk's own branch (delivery.EnsureFollowUpPublished), not master.
+// Squash-merging the parent first deletes that base branch; GitHub does not
+// reliably retarget the follow-up PR onto master, and it closes unmerged,
+// orphaning its content. autoMergePublishedChunks must never merge a chunk
+// while a task that depends on it (its follow-up) has not merged yet.
+func TestBlockedByUnmergedDependentBlocksParentUntilFollowUpMerges(t *testing.T) {
+	byID := map[string]tasks.Task{
+		"c1":          {ID: "c1", Status: stackStatusPublished},
+		"c1-deferred": {ID: "c1-deferred", Status: stackStatusPublished, Deps: []string{"c1"}},
+	}
+	if blocker, blocked := blockedByUnmergedDependent(byID, "c1"); !blocked || blocker != "c1-deferred" {
+		t.Fatalf("blockedByUnmergedDependent(c1) = (%q, %v), want (\"c1-deferred\", true)", blocker, blocked)
+	}
+	// The follow-up itself has no dependents, so it must never be blocked -
+	// otherwise nothing could ever merge first and the stack would wedge.
+	if _, blocked := blockedByUnmergedDependent(byID, "c1-deferred"); blocked {
+		t.Fatal("blockedByUnmergedDependent(c1-deferred) = blocked, want unblocked (it has no dependents)")
+	}
+
+	byID["c1-deferred"] = tasks.Task{ID: "c1-deferred", Status: stackStatusMerged, Deps: []string{"c1"}}
+	if _, blocked := blockedByUnmergedDependent(byID, "c1"); blocked {
+		t.Fatal("blockedByUnmergedDependent(c1) = blocked after its follow-up merged, want unblocked")
+	}
+}
