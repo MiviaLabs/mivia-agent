@@ -185,14 +185,36 @@ func MeasureChunkDiffSize(ctx context.Context, git GitRunner, gc GitContext, bas
 	return numstatSize(out)
 }
 
-// excludePathspecs turns workspace-relative paths into git "exclude"
-// pathspecs (":!path", plus the whole tree "." so the exclusions have a
-// positive pathspec to narrow) for a `git diff ... -- <pathspecs>` call.
+// literalPathspecs turns workspace-relative paths into git "literal" magic
+// pathspecs (":(literal)path") so git treats each path as the exact file
+// name, never as a glob. A deferred filename containing glob metacharacters
+// (e.g. "data[1].txt", where "[1]" is a character class to git) would
+// otherwise match nothing or the wrong file: a bare path would leave the
+// file staged in the delivered commit C1, stage the wrong paths for the
+// deferred commit C2, and never be excluded from a size measurement. The
+// literal magic also makes a leading '-' or ':' inside a path inert after
+// the command's own '--'.
+func literalPathspecs(paths []string) []string {
+	specs := make([]string, 0, len(paths))
+	for _, p := range paths {
+		specs = append(specs, ":(literal)"+p)
+	}
+	return specs
+}
+
+// excludePathspecs turns workspace-relative paths into git "exclude" magic
+// pathspecs (":(exclude,literal)path", plus the whole tree "." so the
+// exclusions have a positive pathspec to narrow) for a
+// `git diff ... -- <pathspecs>` call. The literal magic keeps a deferred
+// path that contains glob metacharacters (e.g. "data[1].txt") excluded
+// exactly: a plain ":!path" would be interpreted as a glob and exclude
+// nothing, so the re-verification would still measure the deferred file and
+// reject the split with a DiffSizeError.
 func excludePathspecs(paths []string) []string {
 	specs := make([]string, 0, len(paths)+1)
 	specs = append(specs, ".")
 	for _, p := range paths {
-		specs = append(specs, ":!"+p)
+		specs = append(specs, ":(exclude,literal)"+p)
 	}
 	return specs
 }

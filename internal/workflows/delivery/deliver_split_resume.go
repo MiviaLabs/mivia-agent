@@ -164,7 +164,12 @@ func verifyMiviaCommitOnTop(ctx context.Context, git GitRunner, gc GitContext, p
 // paths, saved under the deferred branch, and the worktree is reset back to
 // c1. It returns c1 and its tree unchanged.
 func reexecuteDeferredCommit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, deferred []string, branch, c1, c1Tree, title string) (string, string, error) {
-	addArgs := append([]string{"-c", "core.fsmonitor=false", "add", "--"}, deferred...)
+	// Stage exactly the recorded deferred files as LITERAL paths so the
+	// samePathSet verification below compares the staged set against the
+	// recorded paths exactly: a glob-metacharacter name (e.g. "data[1].txt")
+	// must not be interpreted as a glob and silently stage nothing or the
+	// wrong files.
+	addArgs := append([]string{"-c", "core.fsmonitor=false", "add", "--"}, literalPathspecs(deferred)...)
 	if _, err := git.Run(ctx, req.GitCtx, addArgs...); err != nil {
 		return "", "", fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
 	}

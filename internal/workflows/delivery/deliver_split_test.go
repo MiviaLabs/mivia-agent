@@ -21,6 +21,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -267,4 +268,145 @@ func TestDeliverSizeGateKeepsAtLeastOneFile(t *testing.T) {
 	if !IsDiffSizeError(err) {
 		t.Fatalf("Deliver error = %v, want a DiffSizeError (the kept file alone still exceeds hard_lines)", err)
 	}
+}
+
+// TestDeliverAutoSplitDefersGlobMetacharFilename pins bug D-1: a deferred
+// filename containing glob metacharacters must act as a LITERAL git path,
+// never as a glob. Here data[1].txt is a character class to git, so the old
+// exclude pathspec ':!data[1].txt' matched nothing (no file named data1.txt
+// exists): the re-verification still measured 51 > 5 and Deliver returned a
+// DiffSizeError even though a valid split existed. After the fix the exclude
+// pathspec is ':(exclude,literal)data[1].txt', the literal file is excluded
+// from C1, and the deferred branch carries exactly data[1].txt.
+func TestDeliverAutoSplitDefersGlobMetacharFilename(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "essential.txt", "one line\n")
+	writeWorktreeFile(t, worktreeRoot, "data[1].txt", strings.Repeat("line\n", 50))
+
+	policy := defaultPolicy("draft")
+	policy.StackingHardLines = 5
+	policy.SplitDeferred = true
+
+	pr := &fakePRClient{}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, policy, map[string]string{"task": "gate"}))
+	if err != nil {
+		t.Fatalf("Deliver with a glob-metacharacter filename = %v, want the host's split to defer the literal path (a DiffSizeError means the exclude still glob-matched nothing)", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	delivered := runGitOut(t, worktreeRoot, "diff", "--name-only", baseCommit, "HEAD")
+	if delivered != "essential.txt" {
+		t.Fatalf("delivered commit files = %q, want exactly essential.txt (data[1].txt must be deferred, never pushed)", delivered)
+	}
+	deferredBranch := DeferredBranchName("wf/wt-test")
+	deferredDiff := runGitOut(t, worktreeRoot, "diff", "--name-only", "HEAD", deferredBranch)
+	if deferredDiff != "data[1].txt" {
+		t.Fatalf("deferred branch diff vs HEAD = %q, want exactly data[1].txt", deferredDiff)
+	}
+	rec := deliveryRecordByKey(t, repo, run)
+	if rec.StackRemainingCommits != 1 {
+		t.Fatalf("StackRemainingCommits = %d, want 1", rec.StackRemainingCommits)
+	}
+}
+
+// TestDeliverSplitsCommitWhenDeferredFilesGlobMetacharPresent pins the
+// commit-splitting side of bug D-1 with the gate off: a pre-set
+// InputDeferredFiles value whose path contains glob metacharacters must
+// unstage exactly that literal file out of the delivered commit C1. Before
+// the fix `git reset -- data[1].txt` glob-matched nothing, so data[1].txt
+// stayed staged and C1 carried it (delivered != essential.txt); after the
+// fix the literal reset unstages exactly data[1].txt and the deferred branch
+// carries it.
+func TestDeliverSplitsCommitWhenDeferredFilesGlobMetacharPresent(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "essential.txt", "essential change\n")
+	writeWorktreeFile(t, worktreeRoot, "data[1].txt", "deferred change\n")
+
+	deferredJSON, err := json.Marshal([]string{"data[1].txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := &fakePRClient{}
+	inputs := map[string]string{"task": "split delivery", InputDeferredFiles: string(deferredJSON)}
+	res, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), inputs))
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	delivered := runGitOut(t, worktreeRoot, "diff", "--name-only", baseCommit, "HEAD")
+	if delivered != "essential.txt" {
+		t.Fatalf("delivered commit files = %q, want exactly essential.txt (data[1].txt must be unstaged out of C1)", delivered)
+	}
+	deferredBranch := DeferredBranchName("wf/wt-test")
+	deferredDiff := runGitOut(t, worktreeRoot, "diff", "--name-only", "HEAD", deferredBranch)
+	if deferredDiff != "data[1].txt" {
+		t.Fatalf("deferred branch diff vs HEAD = %q, want exactly data[1].txt", deferredDiff)
+	}
+	rec := deliveryRecordByKey(t, repo, run)
+	if rec.StackRemainingCommits != 1 {
+		t.Fatalf("StackRemainingCommits = %d, want 1", rec.StackRemainingCommits)
+	}
+}
+
+// TestParseDeferredFilesSurface pins the untrusted structured-input surface
+// that feeds the split pathspecs: the reserved deferred_files value is
+// JSON-decoded with no silent loss. Empty (and whitespace-only) values mean
+// no deferral; malformed JSON is a repairable PRMetadataError; duplicate
+// entries are preserved (the consumers are set-semantics - samePathSet - or
+// idempotent git add/reset over literal pathspecs); and an oversized array
+// is returned whole, never truncated - the OS exec arg-length limit is the
+// only downstream bound and it surfaces as a hard git error (fail closed),
+// never a silently partial deferral.
+func TestParseDeferredFilesSurface(t *testing.T) {
+	t.Run("empty means no deferral", func(t *testing.T) {
+		if files, err := ParseDeferredFiles(""); err != nil || files != nil {
+			t.Fatalf("ParseDeferredFiles(\"\") = %v, %v; want nil, nil", files, err)
+		}
+		if files, err := ParseDeferredFiles("  \n "); err != nil || files != nil {
+			t.Fatalf("ParseDeferredFiles(whitespace) = %v, %v; want nil, nil", files, err)
+		}
+	})
+	t.Run("malformed JSON is a repairable PRMetadataError", func(t *testing.T) {
+		for _, raw := range []string{"{not json", "just a string", `["a"`} {
+			if _, err := ParseDeferredFiles(raw); err == nil || !IsPRMetadataError(err) {
+				t.Fatalf("ParseDeferredFiles(%q) err = %v, want a repairable PRMetadataError", raw, err)
+			}
+		}
+	})
+	t.Run("duplicate entries are preserved for the set-semantics consumers", func(t *testing.T) {
+		files, err := ParseDeferredFiles(`["a.txt","a.txt"]`)
+		if err != nil {
+			t.Fatalf("ParseDeferredFiles(duplicates) = %v, want no error", err)
+		}
+		if len(files) != 2 || files[0] != "a.txt" || files[1] != "a.txt" {
+			t.Fatalf("ParseDeferredFiles(duplicates) = %v, want both copies preserved", files)
+		}
+	})
+	t.Run("oversized arrays are returned whole, never truncated", func(t *testing.T) {
+		big := make([]string, 2000)
+		for i := range big {
+			big[i] = fmt.Sprintf("f%d.txt", i)
+		}
+		raw, err := json.Marshal(big)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files, err := ParseDeferredFiles(string(raw))
+		if err != nil {
+			t.Fatalf("ParseDeferredFiles(2000 entries) = %v, want no error", err)
+		}
+		if len(files) != len(big) {
+			t.Fatalf("ParseDeferredFiles(2000 entries) returned %d entries, want all %d (a truncation would drop a deferred file from the split)", len(files), len(big))
+		}
+		for i := range big {
+			if files[i] != big[i] {
+				t.Fatalf("entry %d = %q, want %q", i, files[i], big[i])
+			}
+		}
+	})
 }
