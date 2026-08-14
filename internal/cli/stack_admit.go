@@ -152,7 +152,7 @@ func driveWave(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks
 			return false, fmt.Errorf("stack drive: %w", err)
 		}
 		part := fmt.Sprintf("%d/%d", index+1, len(order))
-		return driveChunk(ctx, prepared, ledger, stackID, chunkID, chunkPlans[chunkID], prBase, part, policy, allowPublish, planInputs, syncStdout, syncStderr)
+		return driveChunk(ctx, prepared, ledger, stackID, chunkID, chunkPlans[chunkID], chunkPlans, prBase, part, policy, allowPublish, planInputs, syncStdout, syncStderr)
 	}
 	return dispatchWave(wave, maxConcurrent, work)
 }
@@ -205,7 +205,7 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 // driveChunk admits and runs one chunk, then applies the merge policy.
 // halt=true means the driver must stop: policy A waits for the human publish
 // grant, and any terminal failure halts the stack (halt-on-failure).
-func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID string, chunkPlan *ChunkPlan, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
+func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID string, chunkPlan *ChunkPlan, chunkPlans map[string]*ChunkPlan, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
 	// A live run already exists for this chunk's key: leave it alone (F15 -
 	// never admit a duplicate). This covers crash recovery (a prior process
 	// admitted the run but died before its task-status transition landed);
@@ -228,7 +228,7 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 		fmt.Fprintf(stdout, "chunk=%s already claimed by a concurrent admission; skipping\n", chunkID)
 		return true, nil
 	}
-	inputs, snapshot := chunkRunInputs(planInputs, chunkID, prBase, part, chunkPlan)
+	inputs, snapshot := chunkRunInputs(planInputs, chunkID, prBase, part, chunkPlan, siblingChunkFiles(chunkPlans, chunkID))
 	snap, err := admitStackChunkRun(prepared, stackID, chunkID, inputs, snapshot, stdout, stderr)
 	if err != nil {
 		act, actErr := reconcileReopenOrFail(ledger, stackID, chunkID)
@@ -247,8 +247,21 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 			if err := deliverRunWithStore(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, snap.RunID, true, false, stdout, stderr); err != nil {
 				return true, fmt.Errorf("chunk %s auto-delivery failed: %w", chunkID, err)
 			}
-			_ = ledger.TransitionTask(stackID, chunkID, stackStatusPublished)
-			fmt.Fprintf(stdout, "chunk=%s published; merge queue will merge; waiting for the merge\n", chunkID)
+			// deliverRunWithStore returns nil both on a REAL publish and on a
+			// repairable rejection ReopenForRepair re-entered (the run settles
+			// back to "running", not "succeeded" - live finding: dag-v3
+			// chunks c1/c2 and stack-v8 chunk c3 were all falsely marked
+			// published with no PR ever created, orphaning the repair since
+			// nothing re-drives a "running" chunk without a manual resume).
+			// Re-read the run's fresh status to tell the two apart.
+			fresh, freshErr := prepared.repo.GetRun(ctx, snap.RunID)
+			if freshErr != nil {
+				return true, fmt.Errorf("chunk %s: read run status after delivery: %w", chunkID, freshErr)
+			}
+			if chunkDeliverySucceeded(string(fresh.Status)) {
+				_ = ledger.TransitionTask(stackID, chunkID, stackStatusPublished)
+			}
+			fmt.Fprintln(stdout, chunkDeliveryOutcomeMessage(chunkID, snap.RunID, string(fresh.Status)))
 			return true, nil // sequential create-merge (v1): one chunk per drive pass
 		}
 		_ = ledger.TransitionTask(stackID, chunkID, stackStatusReviewed)

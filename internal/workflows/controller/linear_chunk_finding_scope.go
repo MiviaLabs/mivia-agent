@@ -75,14 +75,14 @@ func (c *LinearController) applyChunkFindingScope(step definition.Step, attempt 
 // finding. The builder applies the returned dropped-id set, records it in
 // the envelope, and neutralizes a findings-less changes_requested verdict.
 func (c *LinearController) panelChunkScopeFilter(stepID string, attemptNo int) func(memberID string, report *PanelMemberReport) []string {
-	declared, armed := c.chunkScopeDeclared()
+	declared, siblings, armed := c.chunkScopeDeclared()
 	if !armed {
 		return nil
 	}
 	return func(memberID string, report *PanelMemberReport) []string {
 		var dropped []string
 		for _, f := range report.Findings {
-			if c.panelFindingDemandsSiblingChunkOnly(f.Title+" "+f.Description, declared) {
+			if c.panelFindingDemandsSiblingChunkOnly(f.Title+" "+f.Description, declared, siblings) {
 				dropped = append(dropped, f.ID)
 			}
 		}
@@ -116,23 +116,34 @@ func (c *LinearController) emitChunkScopeDrop(stepID string, attemptNo int, drop
 // same predicate, so the two cannot drift: a stacking workflow with hard
 // lines, in chunk mode, with a decodable chunk_plan that declares at least
 // one file.
-func (c *LinearController) chunkScopeDeclared() (map[string]bool, bool) {
+func (c *LinearController) chunkScopeDeclared() (map[string]bool, map[string]bool, bool) {
 	if c.Workflow == nil || c.Workflow.Stacking == nil || c.Workflow.Stacking.HardLines <= 0 {
-		return nil, false
+		return nil, nil, false
 	}
 	mode, err := validateStackingReservedInputs(c.Inputs, c.Workflow.Stacking)
 	if err != nil || mode != "chunk" {
-		return nil, false
+		return nil, nil, false
 	}
 	raw, ok := c.Inputs["chunk_plan"].(string)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	declared := chunkDeclaredFiles(raw)
 	if len(declared) == 0 {
-		return nil, false
+		return nil, nil, false
 	}
-	return declared, true
+	// The sibling union is optional ground truth from the stack driver.
+	// An undecodable payload degrades to the directory heuristic, never
+	// disarms the filter; own declared files never count as siblings even
+	// when another chunk's plan lists them.
+	var siblings map[string]bool
+	if sibRaw, ok := c.Inputs["sibling_files"].(string); ok {
+		siblings = chunkSiblingFiles(sibRaw)
+		for f := range declared {
+			delete(siblings, f)
+		}
+	}
+	return declared, siblings, true
 }
 
 // enforceChunkFindingScope drops findings that demand only sibling-chunk
@@ -150,7 +161,7 @@ func (c *LinearController) enforceChunkFindingScope(step definition.Step, output
 	if verdict, _ := output["verdict"].(string); verdict != "changes_requested" {
 		return nil
 	}
-	declared, armed := c.chunkScopeDeclared()
+	declared, siblings, armed := c.chunkScopeDeclared()
 	if !armed {
 		return nil
 	}
@@ -168,7 +179,7 @@ func (c *LinearController) enforceChunkFindingScope(step definition.Step, output
 		}
 		id, _ := finding["id"].(string)
 		required, hasRequired := finding["required"].(string)
-		if !hasRequired || strings.TrimSpace(required) == "" || !c.findingDemandsSiblingChunkOnly(required, declared) {
+		if !hasRequired || strings.TrimSpace(required) == "" || !c.findingDemandsSiblingChunkOnly(required, declared, siblings) {
 			kept = append(kept, item)
 			continue
 		}
@@ -190,8 +201,8 @@ func (c *LinearController) enforceChunkFindingScope(step definition.Step, output
 // in-scope token, and no foreign token. A finding that demands a
 // write-blocklisted path is never dropped: the blocked-path check must keep
 // its chance to fail the run with the honest cause.
-func (c *LinearController) findingDemandsSiblingChunkOnly(required string, declared map[string]bool) bool {
-	dir, file, only := c.siblingDemandBreakdown(required, declared)
+func (c *LinearController) findingDemandsSiblingChunkOnly(required string, declared, siblings map[string]bool) bool {
+	dir, file, only := c.siblingDemandBreakdown(required, declared, siblings)
 	return only && dir+file > 0
 }
 
@@ -201,8 +212,8 @@ func (c *LinearController) findingDemandsSiblingChunkOnly(required string, decla
 // so only DIRECTORY-shaped sibling tokens (missing packages) may drop, and
 // any sibling FILE token keeps the finding: prose that discusses a sibling
 // file is evidence, not a demand for missing work.
-func (c *LinearController) panelFindingDemandsSiblingChunkOnly(text string, declared map[string]bool) bool {
-	dir, file, only := c.siblingDemandBreakdown(text, declared)
+func (c *LinearController) panelFindingDemandsSiblingChunkOnly(text string, declared, siblings map[string]bool) bool {
+	dir, file, only := c.siblingDemandBreakdown(text, declared, siblings)
 	return only && dir > 0 && file == 0
 }
 
@@ -212,7 +223,7 @@ func (c *LinearController) panelFindingDemandsSiblingChunkOnly(text string, decl
 // no declared path or base name named in prose, no write-blocklisted
 // demand); dir and file count the sibling tokens by shape (a last segment
 // without an extension reads as a directory, the missing-package shape).
-func (c *LinearController) siblingDemandBreakdown(text string, declared map[string]bool) (dir, file int, only bool) {
+func (c *LinearController) siblingDemandBreakdown(text string, declared, siblings map[string]bool) (dir, file int, only bool) {
 	if len(c.WritePathBlocklist) > 0 && len(blockedpath.PathsDemandedInText(text, c.WritePathBlocklist)) > 0 {
 		return 0, 0, false
 	}
@@ -232,7 +243,7 @@ func (c *LinearController) siblingDemandBreakdown(text string, declared map[stri
 		return 0, 0, false
 	}
 	for _, token := range tokens {
-		if classifyChunkToken(token, declared) != chunkTokenSibling {
+		if classifyChunkToken(token, declared, siblings) != chunkTokenSibling {
 			return 0, 0, false
 		}
 		if path.Ext(token) == "" {
@@ -351,16 +362,52 @@ func normalizeChunkPath(p string) string {
 
 // classifyChunkToken classifies one normalized token against the declared
 // file set.
-func classifyChunkToken(token string, declared map[string]bool) chunkTokenClass {
-	parent := path.Dir(token)
+func classifyChunkToken(token string, declared map[string]bool, siblings map[string]bool) chunkTokenClass {
+	// Own declared scope wins over sibling membership: a token that IS a
+	// declared file, or an ancestor directory of one, is in scope even
+	// when it also covers sibling files (the shared-ancestor case).
 	for f := range declared {
 		if f == token || strings.HasPrefix(f, token+"/") {
 			return chunkTokenInScope
 		}
+	}
+	// Exact plan membership: a token inside a sibling chunk's declared
+	// files - or an ancestor directory of them, at least one level below
+	// the root - is sibling ground truth, independent of directory trees.
+	// The one-segment floor keeps a bare root name ("cmd") out of the
+	// membership class: too coarse to drop on.
+	if strings.Contains(token, "/") {
+		for f := range siblings {
+			if f == token || strings.HasPrefix(f, token+"/") {
+				return chunkTokenSibling
+			}
+		}
+	}
+	// Directory heuristic: the token sits beside or inside the declared
+	// files' tree without being declared itself.
+	parent := path.Dir(token)
+	for f := range declared {
 		dir := path.Dir(f)
 		if parent == dir || strings.HasPrefix(dir, parent+"/") || strings.HasPrefix(parent, dir+"/") {
 			return chunkTokenSibling
 		}
 	}
 	return chunkTokenForeign
+}
+
+// chunkSiblingFiles decodes the sibling_files input (the union of every
+// OTHER chunk's declared files) into its normalized set. An undecodable
+// payload yields nil: the caller falls back to the directory heuristic.
+func chunkSiblingFiles(raw string) map[string]bool {
+	var files []string
+	if err := json.Unmarshal([]byte(raw), &files); err != nil {
+		return nil
+	}
+	siblings := make(map[string]bool, len(files))
+	for _, f := range files {
+		if n := normalizeDeclaredFile(f); n != "" {
+			siblings[n] = true
+		}
+	}
+	return siblings
 }

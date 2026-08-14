@@ -713,3 +713,45 @@ func TestStackingChunkRunSucceedsWithoutChunkPlanInput(t *testing.T) {
 		t.Fatalf("run = %+v err=%v", got, err)
 	}
 }
+
+// TestStackingSiblingFilesValidation pins that sibling_files follows the
+// chunk_plan contract: optional in chunk mode, forbidden where chunk_plan is
+// forbidden.
+func TestStackingSiblingFilesValidation(t *testing.T) {
+	wf := stackingFixture(t)
+	tests := []struct {
+		name    string
+		inputs  map[string]any
+		wantErr string
+	}{
+		{
+			name: "chunk mode accepts sibling_files",
+			inputs: map[string]any{"task": "build", "stack_mode": "chunk", "chunk": "c1",
+				"pr_base": "main", "stack_part": "1/3", "sibling_files": `["internal/b/b.go"]`},
+		},
+		{
+			name:    "single mode forbids sibling_files",
+			inputs:  map[string]any{"task": "build", "stack_mode": "single", "sibling_files": `["internal/b/b.go"]`},
+			wantErr: "sibling_files",
+		},
+		{
+			name:    "plan mode forbids sibling_files",
+			inputs:  map[string]any{"task": "build", "stack_mode": "plan", "sibling_files": `["internal/b/b.go"]`},
+			wantErr: "sibling_files",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := newStackingController(t, &scriptedRunner{}, wf, tt.inputs)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("admission rejected valid run: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want it to name %q", err, tt.wantErr)
+			}
+		})
+	}
+}

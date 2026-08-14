@@ -102,3 +102,22 @@ func anyChunkDurablyFailed(ledger *tasks.Store, stackID string) (string, bool) {
 	}
 	return "", false
 }
+
+// chunkDeliverySucceeded reports whether a run's status, freshly read AFTER
+// deliverRunWithStore returned a nil error, reflects a REAL publish. A nil
+// error also covers a repairable rejection that ReopenForRepair re-entered
+// (the run settles back to "running", not "succeeded") - see
+// stack_deliver_repair_test.go for the live finding this guards against.
+func chunkDeliverySucceeded(runStatus string) bool {
+	return runStatus == "succeeded"
+}
+
+// chunkDeliveryOutcomeMessage reports the driver's post-delivery status line
+// for a chunk, honest about whether it actually published or re-entered
+// repair.
+func chunkDeliveryOutcomeMessage(chunkID, runID, runStatus string) string {
+	if chunkDeliverySucceeded(runStatus) {
+		return fmt.Sprintf("chunk=%s published; merge queue will merge; waiting for the merge", chunkID)
+	}
+	return fmt.Sprintf("chunk=%s delivery rejected and entered repair (not published yet): mivia workflow resume %s", chunkID, runID)
+}
