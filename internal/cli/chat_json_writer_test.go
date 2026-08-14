@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
 // TestNDJSONChunkWriterReassemblesSplitMultiByteRune pins the correctness
@@ -381,4 +382,60 @@ func splitNonEmptyLines(s string) []string {
 		}
 	}
 	return out
+}
+
+// TestJSONTurnEventCallbackEmitsCacheUsage pins the cache_usage wire record:
+// the numeric fields ride a nested record so an all-miss step's legitimate
+// zero values survive serialization, and HitPercent repeats the same guarded
+// percent the TUI status line shows (0 when InputTokens is 0).
+func TestJSONTurnEventCallbackEmitsCacheUsage(t *testing.T) {
+	typed, err := events.NewCacheUsageEvent("deepseek", "deepseek-v4-pro", "implicit", 100, 80, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	onEvent(agent.Event{Kind: agent.EventCacheUsage, Detail: "prompt cache: 80/100 tokens cached (80%)", CacheUsage: &typed})
+
+	lines := splitNonEmptyLines(buf.String())
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %q", len(lines), buf.String())
+	}
+	var got ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[0]), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if got.Type != "cache_usage" || got.Provider != "deepseek" || got.Model != "deepseek-v4-pro" {
+		t.Fatalf("cache_usage event = %+v", got)
+	}
+	if got.CacheUsage == nil {
+		t.Fatal("cache_usage record missing")
+	}
+	if got.CacheUsage.InputTokens != 100 || got.CacheUsage.CachedInputTokens != 80 || got.CacheUsage.CacheWriteTokens != 5 || got.CacheUsage.HitPercent != 80 {
+		t.Fatalf("cache_usage record = %+v", got.CacheUsage)
+	}
+
+	// Zero input tokens must serialize as a 0 percent record, not vanish.
+	zero, err := events.NewCacheUsageEvent("deepseek", "deepseek-v4-pro", "implicit", 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	onEvent = jsonTurnEventCallback(&buf)
+	onEvent(agent.Event{Kind: agent.EventCacheUsage, CacheUsage: &zero})
+	var gotZero ndjsonEvent
+	if err := json.Unmarshal([]byte(splitNonEmptyLines(buf.String())[0]), &gotZero); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if gotZero.CacheUsage == nil || gotZero.CacheUsage.HitPercent != 0 {
+		t.Fatalf("zero-input record = %+v", gotZero.CacheUsage)
+	}
+
+	// The typed payload is required - a bare event emits nothing.
+	buf.Reset()
+	onEvent = jsonTurnEventCallback(&buf)
+	onEvent(agent.Event{Kind: agent.EventCacheUsage, Detail: "prompt cache: 0/0 tokens cached (0%)"})
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output without typed payload, got %q", buf.String())
+	}
 }

@@ -113,6 +113,12 @@ func (ui *classicAgentUI) handle(e agent.Event) {
 		if e.Detail != "" {
 			ui.r.PrintStep(e.Detail)
 		}
+	case agent.EventCacheUsage:
+		// Status line only, same as a step: the detail carries the
+		// per-step cache hit rate.
+		if e.Detail != "" {
+			ui.r.PrintStep(e.Detail)
+		}
 	case agent.EventToolParallel:
 		if e.Detail != "" {
 			ui.r.PrintParallel(e.Detail)

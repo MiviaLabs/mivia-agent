@@ -39,4 +39,14 @@ func TestEmitCacheUsagePublishesOnlyWhenReported(t *testing.T) {
 	if busEvent.Content != "" || busEvent.Input != "" || busEvent.Output != "" {
 		t.Fatalf("bus event carried content: %+v", busEvent)
 	}
+	if got.Detail != "prompt cache: 80/100 tokens cached (80%)" {
+		t.Fatalf("detail must carry the hit rate percent, got %q", got.Detail)
+	}
+
+	// Zero input tokens must not panic and must read as 0%.
+	EmitCacheUsage(Options{OnEvent: func(event Event) { got = event }}, "deepseek", "deepseek-v4-pro",
+		provider.CacheUsage{Reported: true, Style: provider.CacheStyleImplicit, InputTokens: 0, CachedInputTokens: 0})
+	if got.Detail != "prompt cache: 0/0 tokens cached (0%)" {
+		t.Fatalf("zero-input detail = %q", got.Detail)
+	}
 }

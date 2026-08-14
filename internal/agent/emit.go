@@ -57,7 +57,9 @@ func EmitCacheUsage(opts Options, providerName, model string, usage provider.Cac
 	if err != nil {
 		return
 	}
-	detail := fmt.Sprintf("prompt cache: %d/%d tokens cached", typed.CachedInputTokens, typed.InputTokens)
+	// Show the hit rate so operators can read cache health from one line.
+	// HitPercent guards the division: zero input tokens reads as 0%.
+	detail := fmt.Sprintf("prompt cache: %d/%d tokens cached (%d%%)", typed.CachedInputTokens, typed.InputTokens, typed.HitPercent())
 	e := Event{Kind: EventCacheUsage, Detail: detail, CacheUsage: &typed}
 	if opts.OnEvent != nil {
 		opts.OnEvent(e)

@@ -450,3 +450,14 @@ func stringsJoinLines(n int, prefix string) string {
 	}
 	return string(b)
 }
+
+func TestCacheUsageEventPushesStepDetail(t *testing.T) {
+	t.Parallel()
+	b := newStreamBridge()
+	cb := agentEventBridgeCallback(b)
+	cb(agent.Event{Kind: agent.EventCacheUsage, Detail: "prompt cache: 80/100 tokens cached (80%)"})
+	d := b.Drain()
+	if d.StepDetail != "prompt cache: 80/100 tokens cached (80%)" {
+		t.Fatalf("cache usage event must push a step detail, got %q", d.StepDetail)
+	}
+}
