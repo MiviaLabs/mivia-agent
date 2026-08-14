@@ -109,7 +109,17 @@ scopes = ["feat"]
 // agentSummaryBody returns the exact PR body the delivery engine must build
 // when the agent provides a change summary.
 func agentSummaryBody(run workflowledger.RunSnapshot, summary string) string {
-	return summary + "\n\n---\nAutomated workflow delivery from [Mivia Agent](https://mivia.app).\nRun: [" + run.RunID + "](https://mivia.app/runs/" + run.RunID + ")\nWorkflow digest: [" + run.WorkflowDigest + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")"
+	return summary + "\n\n---\n" + wantFooter(run)
+}
+
+// wantFooter returns the exact attribution + collapsible run-details block
+// the delivery engine appends to every published PR body.
+func wantFooter(run workflowledger.RunSnapshot) string {
+	return "<sub>Co-authored-by: Mivia Agent <noreply@mivia.app></sub>\n\n" +
+		"<details>\n<summary>Mivia Agent run details</summary>\n\n" +
+		"- Run: [" + run.RunID + "](https://mivia.app/runs/" + run.RunID + ")\n" +
+		"- Workflow digest: [" + run.WorkflowDigest + "](https://mivia.app/workflows/digest/" + run.WorkflowDigest + ")\n" +
+		"\n</details>"
 }
 
 // TestDeliverAgentTitleAndSummary: a run whose attempts carry a change-summary
@@ -424,5 +434,47 @@ func TestDeliverAgentSummaryMultiline(t *testing.T) {
 	want := agentSummaryBody(run, "Adds the widget.\nNeeded for delivery.")
 	if got := pr.created[0].Body; got != want {
 		t.Fatalf("Body = %q, want %q", got, want)
+	}
+}
+
+// TestDeliverBodyIncludesStackPartInRunDetails pins the collapsible run
+// details section: a chunk admitted with a stack_part input must publish it
+// inside <details>, alongside the run and workflow digest links.
+func TestDeliverBodyIncludesStackPartInRunDetails(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	seedChangeSummary(t, repo, run, "implement", 1, `{"pr_title": "feat: x", "pr_summary": "Adds the widget."}`)
+	pr := &fakePRClient{}
+	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x", InputStackPart: "2/3"})
+	if _, err := Deliver(ctx, repo, RealGit{}, pr, req); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	got := pr.created[0].Body
+	if !strings.Contains(got, "- Stack part: 2/3\n") {
+		t.Fatalf("Body = %q, want it to contain the stack part line inside run details", got)
+	}
+	if !strings.Contains(got, "<sub>Co-authored-by: Mivia Agent <noreply@mivia.app></sub>") {
+		t.Fatalf("Body = %q, want the co-authored-by attribution line", got)
+	}
+	if !strings.Contains(got, "<details>\n<summary>Mivia Agent run details</summary>") {
+		t.Fatalf("Body = %q, want the collapsible run-details section", got)
+	}
+}
+
+// TestDeliverBodyOmitsStackPartWhenAbsent: a non-stacked delivery (no
+// stack_part input) publishes the run-details section without a Stack part
+// line - the field must not appear as an empty or zero-value line.
+func TestDeliverBodyOmitsStackPartWhenAbsent(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	seedChangeSummary(t, repo, run, "implement", 1, `{"pr_title": "feat: x", "pr_summary": "Adds the widget."}`)
+	pr := &fakePRClient{}
+	if _, err := Deliver(ctx, repo, RealGit{}, pr, newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x"})); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if got := pr.created[0].Body; strings.Contains(got, "Stack part") {
+		t.Fatalf("Body = %q, want no Stack part line for a non-stacked delivery", got)
 	}
 }

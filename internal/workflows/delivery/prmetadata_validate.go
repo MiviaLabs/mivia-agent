@@ -25,10 +25,33 @@ func miviaBaseURL() string {
 	return defaultMiviaBaseURL
 }
 
-// deliveryFooter is the attribution line appended to every PR body the
-// delivery engine publishes.
-func deliveryFooter() string {
-	return "Automated workflow delivery from [Mivia Agent](" + miviaBaseURL() + ")."
+// coAuthoredByLine is the small attribution line appended to every PR body
+// the delivery engine publishes, mirroring the commit trailer used for every
+// delivery commit (mviaCommitAuthorName/mviaCommitAuthorEmail, deliver_stage.go).
+// <sub> renders it small on GitHub, matching a footer's visual weight.
+func coAuthoredByLine() string {
+	return "<sub>Co-authored-by: " + mviaCommitAuthorName + " <" + mviaCommitAuthorEmail + "></sub>"
+}
+
+// runDetailsSection builds the collapsible "Mivia Agent run details" block:
+// the run link, the workflow digest link, and (when the chunk carries one)
+// its stack-part marker.
+func runDetailsSection(base, runID, workflowDigest, stackPart string) string {
+	runLink := "[" + runID + "](" + base + "/runs/" + runID + ")"
+	digestLink := "[" + workflowDigest + "](" + base + "/workflows/digest/" + workflowDigest + ")"
+	body := "<details>\n<summary>Mivia Agent run details</summary>\n\n" +
+		"- Run: " + runLink + "\n" +
+		"- Workflow digest: " + digestLink + "\n"
+	if strings.TrimSpace(stackPart) != "" {
+		body += "- Stack part: " + stackPart + "\n"
+	}
+	return body + "\n</details>"
+}
+
+// deliveryFooter is the attribution and run-details block appended to every
+// PR body the delivery engine publishes.
+func deliveryFooter(runID, workflowDigest, stackPart string) string {
+	return coAuthoredByLine() + "\n\n" + runDetailsSection(miviaBaseURL(), runID, workflowDigest, stackPart)
 }
 
 // validatePRMetadata resolves the agent-provided PR metadata (title and
@@ -86,13 +109,11 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 	if err != nil {
 		return "", "", err
 	}
-	base := miviaBaseURL()
-	runLink := "[" + req.RunID + "](" + base + "/runs/" + req.RunID + ")"
-	digestLink := "[" + req.WorkflowDigest + "](" + base + "/workflows/digest/" + req.WorkflowDigest + ")"
+	footer := deliveryFooter(req.RunID, req.WorkflowDigest, req.Inputs[InputStackPart])
 	if strings.TrimSpace(agentSummary) != "" {
-		body = agentSummary + "\n\n---\n" + deliveryFooter() + "\nRun: " + runLink + "\nWorkflow digest: " + digestLink
+		body = agentSummary + "\n\n---\n" + footer
 	} else {
-		body = deliveryFooter() + "\n\nRun: " + runLink + "\nWorkflow digest: " + digestLink
+		body = footer
 	}
 	return title, body, nil
 }
