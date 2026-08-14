@@ -23,15 +23,28 @@ that the engine can validate and execute.
 
 | Mode | When to use |
 |------|-------------|
-| `no_bug` | The plan finds no actionable change. Output a chunk_plan with zero
-  chunks. |
-| `single` | The change is small enough for one PR. Output exactly one chunk. |
-| `multi` | The change must be split into multiple small PRs. Produce the
-  required chunks (see constraints below). |
+| `no_bug` | ONLY when the plan declares zero actionable steps (its `steps`
+  array is empty). The engine rejects `no_bug` deterministically when the
+  plan declares any step and reroutes it back to you. A plan with steps MUST
+  be `single` or `multi`. |
+| `single` | The plan declares actionable steps and the change is small
+  enough for one PR. Output exactly one chunk. |
+| `multi` | The plan declares actionable steps and the change must be split
+  into multiple small PRs. Produce the required chunks (see constraints
+  below). |
 
 Use the workflow's `[stacking]` thresholds when they are present; otherwise use
-the global defaults: `soft_lines=200`, `hard_lines=400`, `max_files=5`,
+`soft_lines=200`, `hard_lines=400`, `max_files=5`,
 `max_chunks=12`.
+
+### Rejected verdicts (repair iterations)
+
+On a repair iteration the engine has rejected your previous decompose output.
+The rejected verdict is bound as `prior_chunk_plan`; resolve it with
+`workflow_inspect` when it is a ledger reference. Do NOT repeat the rejected
+verdict. A `no_bug` verdict on a plan with steps is rejected
+deterministically, and a repeated rejection exhausts the repair loop and
+fails the run. Emit a valid plan per the mode table above.
 
 ### Step 2 — Produce chunks (multi mode only)
 

@@ -165,6 +165,13 @@ func synthesizedStackingSteps(declared []definition.Step, agent, planStep string
 			OutputSchema: schemaChunkPlan,
 			Context: []definition.ContextBinding{
 				{From: "steps." + planStep + ".output", As: "plan"},
+				// A rejected verdict is bound back to the decompose step on
+				// repair iterations (latestOutputAttempt resolves the prior
+				// attempt's output), so the agent sees the exact verdict the
+				// deterministic gate refused and can correct it instead of
+				// repeating it until the repair loop is exhausted. Absent on
+				// the first attempt (optional-absent).
+				{From: "steps." + stepDecompose + ".output", As: "prior_chunk_plan", Optional: true},
 			},
 		},
 		definition.Step{
