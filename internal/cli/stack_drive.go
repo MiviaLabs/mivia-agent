@@ -303,7 +303,7 @@ func seedStackLedger(ledger *tasks.Store, stackID string, chunks []ChunkPlan) er
 // without it the implement agent sees only the FULL task text and a bare
 // chunk ID, and (live finding, smoke-stack-3chunk-v3) implements the whole
 // task instead of its slice.
-func chunkRunInputs(planInputs map[string]string, chunkID, prBase, stackPart string, plan *ChunkPlan) (map[string]any, map[string]string) {
+func chunkRunInputs(planInputs map[string]string, chunkID, prBase, stackPart string, plan *ChunkPlan, siblingFiles []string) (map[string]any, map[string]string) {
 	inputs := make(map[string]any, len(planInputs)+4)
 	snapshot := make(map[string]string, len(planInputs)+4)
 	for k, v := range planInputs {
@@ -324,6 +324,17 @@ func chunkRunInputs(planInputs map[string]string, chunkID, prBase, stackPart str
 		if raw, err := json.Marshal(plan); err == nil {
 			inputs["chunk_plan"] = string(raw)
 			snapshot["chunk_plan"] = string(raw)
+		}
+	}
+	// The sibling union is the stack's ground truth for the engine's
+	// chunk finding-scope filter: a demanded path declared by ANOTHER
+	// chunk is out of scope for this one, whatever directory tree it
+	// lives in. Absent (integration run, single-chunk stack) leaves the
+	// engine's directory heuristic in charge.
+	if len(siblingFiles) > 0 {
+		if raw, err := json.Marshal(siblingFiles); err == nil {
+			inputs["sibling_files"] = string(raw)
+			snapshot["sibling_files"] = string(raw)
 		}
 	}
 	return inputs, snapshot

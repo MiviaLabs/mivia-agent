@@ -458,8 +458,99 @@ func TestClassifyChunkToken(t *testing.T) {
 		{"internal/errors/errors.go", chunkTokenForeign}, // reference-style foreign file
 	}
 	for _, tc := range cases {
-		if got := classifyChunkToken(tc.token, declared); got != tc.want {
+		if got := classifyChunkToken(tc.token, declared, nil); got != tc.want {
 			t.Errorf("classifyChunkToken(%q) = %v, want %v", tc.token, got, tc.want)
 		}
+	}
+}
+
+// TestChunkFindingScopeDropsCrossTreeSiblingViaPlan pins the full-plan
+// ground truth: a sibling chunk in a different top-level tree (cmd/... vs
+// internal/...) classifies sibling through the sibling_files input, not the
+// directory heuristic, so its demand drops.
+func TestChunkFindingScopeDropsCrossTreeSiblingViaPlan(t *testing.T) {
+	inputs := chunkModeInputs(runeutilPlan)
+	inputs["sibling_files"] = `["cmd/mivia/wire.go"]`
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": json.RawMessage(`{"ready":"yes","summary":"v1"}`),
+		"review#1": json.RawMessage(`{"verdict":"changes_requested","findings":[` +
+			scopeFinding("R0-1", "Wire the new flag in cmd/mivia/wire.go and add its test") +
+			`],"inspected":["internal"]}`),
+		"implement#2": json.RawMessage(`{"ready":"yes","summary":"v2"}`),
+		"review#2":    json.RawMessage(`{"verdict":"approved","findings":[],"inspected":["internal"]}`),
+	}}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, runner, chunkScopeWorkflow(t, -1), map[string]StepRuntime{
+		"implement":           {Agent: agents.ResolvedAgent{Name: "dev"}},
+		"review":              {Agent: agents.ResolvedAgent{Name: "rev"}},
+		"decompose":           {Agent: agents.ResolvedAgent{Name: "dev"}, Digest: "sha256:" + strings.Repeat("a", 64)},
+		"chunk_plan_validate": {Agent: agents.ResolvedAgent{Name: "dev"}, Digest: "sha256:" + strings.Repeat("b", 64)},
+	}, inputs, "wfr-cross-tree", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, runErr := ctrl.Run(context.Background()); runErr != nil {
+		t.Fatalf("run error = %v, want success via the dropped cross-tree finding", runErr)
+	}
+	runner.mu.Lock()
+	calls := len(runner.calls)
+	runner.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("runner calls = %d, want 2 (cross-tree sibling finding dropped)", calls)
+	}
+}
+
+// TestChunkFindingScopeUndecodableSiblingFilesFallsBack pins that a bad
+// sibling_files payload degrades to the directory heuristic, never disarms
+// the filter.
+func TestChunkFindingScopeUndecodableSiblingFilesFallsBack(t *testing.T) {
+	ctrl := &LinearController{
+		Workflow: &compiler.CompiledWorkflow{Stacking: &definition.StackingConfig{HardLines: 400}},
+		Inputs: func() map[string]any {
+			in := chunkModeInputs(runeutilPlan)
+			in["sibling_files"] = "not json"
+			return in
+		}(),
+	}
+	declared, siblings, armed := ctrl.chunkScopeDeclared()
+	if !armed {
+		t.Fatal("filter must stay armed when sibling_files is undecodable")
+	}
+	if len(declared) != 2 || len(siblings) != 0 {
+		t.Fatalf("declared=%d siblings=%d, want 2 declared and heuristic-only fallback", len(declared), len(siblings))
+	}
+	// Same-tree sibling still drops through the heuristic.
+	if !ctrl.findingDemandsSiblingChunkOnly("Implement internal/pathutil with SplitExt", declared, nil) {
+		t.Fatal("heuristic sibling drop must survive the fallback")
+	}
+}
+
+// TestClassifyChunkTokenPrecedence pins the ordering rule from the
+// challenge: own declared scope wins over sibling membership. A token that
+// is an ancestor of the chunk's OWN file stays in scope even when it is
+// also an ancestor of sibling files.
+func TestClassifyChunkTokenPrecedence(t *testing.T) {
+	declared := chunkDeclaredFiles(runeutilPlan)
+	siblings := chunkSiblingFiles(`["internal/pathutil/pathutil.go","cmd/mivia/wire.go"]`)
+	cases := []struct {
+		token string
+		want  chunkTokenClass
+	}{
+		{"internal", chunkTokenInScope},                  // own ancestor: keep beats membership
+		{"internal/runeutil", chunkTokenInScope},         // own directory
+		{"internal/pathutil", chunkTokenSibling},         // cross-membership dir (same tree)
+		{"cmd/mivia/wire.go", chunkTokenSibling},         // cross-TREE membership file
+		{"cmd/mivia", chunkTokenSibling},                 // cross-tree ancestor dir of a sibling file
+		{"cmd", chunkTokenForeign},                       // root ancestor of a sibling tree: not own, not exact
+		{"internal/errors/errors.go", chunkTokenForeign}, // unplanned reference
+	}
+	for _, tc := range cases {
+		if got := classifyChunkToken(tc.token, declared, siblings); got != tc.want {
+			t.Errorf("classifyChunkToken(%q) = %v, want %v", tc.token, got, tc.want)
+		}
+	}
+	// Heuristic still applies without the sibling set.
+	if got := classifyChunkToken("internal/pathutil", declared, nil); got != chunkTokenSibling {
+		t.Errorf("heuristic sibling = %v, want sibling", got)
 	}
 }

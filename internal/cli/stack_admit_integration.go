@@ -21,6 +21,8 @@ func integrationRunInputs(planInputs map[string]string, prBase string) (map[stri
 	// it), so the replay must strip it instead of carrying it over.
 	delete(inputs, "chunk_plan")
 	delete(snapshot, "chunk_plan")
+	delete(inputs, "sibling_files")
+	delete(snapshot, "sibling_files")
 	inputs["stack_mode"] = "single"
 	snapshot["stack_mode"] = "single"
 	if prBase != "" {
