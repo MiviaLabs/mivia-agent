@@ -8,6 +8,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -23,6 +24,10 @@ import (
 // carry, so a declared profile can never overwrite or forge the module
 // baseline refs (go-mod-baseline / go-sum-baseline) that share the map.
 const workflowVerifierDefPrefix = "verifier-def:"
+
+// workflowVerifierPinsVersion is written to Snapshot.VerifierPinsVersion at
+// fresh admission. See that field's doc for the resume semantics.
+const workflowVerifierPinsVersion = 1
 
 // Legacy built-in profile names. Snapshots admitted before definitions were
 // pinned carry no verifier-def entries; the baseline decision for those runs
@@ -123,14 +128,15 @@ func validateWorkflowVerifierReferences(wf *compiler.CompiledWorkflow, profiles 
 // definition into the fresh run's snapshot, so a resumed run's gate executes
 // exactly what admission saw regardless of later config or binary changes.
 func pinWorkflowVerifierDefinitions(raw []byte, wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile) ([]byte, error) {
-	names := workflowReferencedVerifiers(wf)
-	if len(names) == 0 {
-		return raw, nil
-	}
 	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
 	if err != nil {
 		return nil, err
 	}
+	// Mark the snapshot generation even when no step references a profile:
+	// on resume, version >= 1 with a missing verifier-def key means the key
+	// was stripped, never that this binary did not write it.
+	snapshot.VerifierPinsVersion = workflowVerifierPinsVersion
+	names := workflowReferencedVerifiers(wf)
 	if snapshot.Verifiers == nil {
 		snapshot.Verifiers = make(map[string]workflowledger.RefSnapshot)
 	}
@@ -148,13 +154,18 @@ func pinWorkflowVerifierDefinitions(raw []byte, wf *compiler.CompiledWorkflow, p
 	return workflowledger.MarshalSnapshot(snapshot)
 }
 
-// snapshotHasVerifierDefinitions reports whether the prior snapshot pinned
-// any verifier definitions. A snapshot admitted by an older binary has none;
-// those runs resume without definition verification instead of failing on a
-// pin that never existed.
+// snapshotHasVerifierDefinitions reports whether the prior snapshot carries
+// pinned verifier definitions. The version marker is authoritative; the key
+// scan keeps older marker-less snapshots that DO carry pins (written between
+// the pinning and marker changes) on the strict path. A snapshot with
+// neither predates definition pinning and resumes without definition
+// verification instead of failing on a pin that never existed.
 func snapshotHasVerifierDefinitions(prior *workflowledger.Snapshot) bool {
 	if prior == nil {
 		return false
+	}
+	if prior.VerifierPinsVersion >= workflowVerifierPinsVersion {
+		return true
 	}
 	for key := range prior.Verifiers {
 		if strings.HasPrefix(key, workflowVerifierDefPrefix) {
@@ -187,6 +198,74 @@ func verifyWorkflowVerifierSnapshot(wf *compiler.CompiledWorkflow, profiles map[
 		if pinned.Digest != digestBytes(bytes) || string(pinned.Bytes) != string(bytes) {
 			return fmt.Errorf("workflow verifier %q changed since admission", name)
 		}
+	}
+	return nil
+}
+
+// acceptWorkflowVerifierChanges is the operator's explicit re-admit path for
+// a run whose declared verifier definitions changed after admission
+// (`workflow resume --accept-verifier-change`). It rewrites the IN-MEMORY
+// prior snapshot's pins to the current declarations and returns the names
+// that drifted. The durable admission record is never touched: the snapshot
+// is immutable and digest-checked, so acceptance is per-invocation - a later
+// resume needs the flag again unless the config change is reverted.
+//
+// One change cannot be accepted mid-run: turning go_module_baseline ON for a
+// profile whose run pinned no module baseline at admission. There is no
+// admitted baseline to enforce, and capturing one mid-run would pin whatever
+// the workflow already wrote.
+func acceptWorkflowVerifierChanges(prior *workflowledger.Snapshot, wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile) ([]string, error) {
+	if prior == nil || !snapshotHasVerifierDefinitions(prior) {
+		return nil, nil
+	}
+	_, hadBaseline := prior.Verifiers[workflowGoModBaselineRef]
+	var drifted []string
+	for _, name := range workflowReferencedVerifiers(wf) {
+		profile, ok := profiles[name]
+		if !ok {
+			return nil, fmt.Errorf("cannot accept verifier change: %q is not declared; restore its [verifiers.%s] table", name, name)
+		}
+		bytes, err := verifierDefinitionBytes(name, profile)
+		if err != nil {
+			return nil, err
+		}
+		pinned, ok := prior.Verifiers[workflowVerifierDefPrefix+name]
+		if ok && string(pinned.Bytes) == string(bytes) {
+			continue
+		}
+		var wasBaseline bool
+		if ok {
+			var previous pinnedVerifierDefinition
+			if err := json.Unmarshal(pinned.Bytes, &previous); err != nil {
+				return nil, fmt.Errorf("workflow verifier %q pin is invalid: %w", name, err)
+			}
+			wasBaseline = previous.GoModuleBaseline
+		}
+		if profile.GoModuleBaseline && !wasBaseline && !hadBaseline {
+			return nil, fmt.Errorf("cannot accept verifier change: %q now requires the Go module baseline but the run pinned none at admission", name)
+		}
+		drifted = append(drifted, name)
+		if prior.Verifiers == nil {
+			prior.Verifiers = make(map[string]workflowledger.RefSnapshot)
+		}
+		prior.Verifiers[workflowVerifierDefPrefix+name] = workflowledger.RefSnapshot{Digest: digestBytes(bytes), Bytes: bytes}
+	}
+	return drifted, nil
+}
+
+// applyAcceptedVerifierChanges runs the acceptance rewrite for a resume that
+// passed --accept-verifier-change and reports each accepted profile to the
+// operator.
+func applyAcceptedVerifierChanges(prior *workflowledger.Snapshot, wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile, stderr io.Writer) error {
+	drifted, err := acceptWorkflowVerifierChanges(prior, wf, profiles)
+	if err != nil {
+		return err
+	}
+	for _, name := range drifted {
+		fmt.Fprintf(stderr, "accepting changed verifier %q for this resume; the admission pin is unchanged\n", name)
+	}
+	if len(drifted) == 0 {
+		fmt.Fprintln(stderr, "no verifier definitions drifted; --accept-verifier-change had no effect")
 	}
 	return nil
 }

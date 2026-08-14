@@ -83,6 +83,7 @@ A run without `--allow-publish` finishes as `delivery_pending`. It stays there u
 | `--config <path>` | `workflow *` commands | user default | Config file path |
 | `--force` | `workflow resume`, `workflow delete` | false | Crash recovery override: clear/take over a stale execution claim (resume), or delete a non-terminal run stranded by a dead executor (delete). A live executor's fresh claim is refused either way |
 | `--allow-publish` | `workflow run`, `workflow deliver`, `workflow resume` | false | Grant publish approval for the run |
+| `--accept-verifier-change` | `workflow resume` | false | Resume a run whose `[verifiers.<name>]` declarations changed after admission. Without it the resume fails closed. Acceptance is per-invocation and never rewrites the admission record, so a later resume needs the flag again while the definitions differ. Turning `go_module_baseline` on mid-run cannot be accepted |
 | `--watch` | `workflow runs` | false | Poll every 5s; return when every matched run is terminal |
 
 ## Worktrees
@@ -722,6 +723,18 @@ A workflow file is untrusted repository input. Anyone can edit it. It may name a
 - publish permission.
 
 Verifier profiles themselves are declared in the workspace's `.mivia/mivia.toml` `[verifiers.<name>]` tables — the same trust level as `[[hooks]]`. Their commands always run inside the verifier sandbox (copied worktree without secrets, no network, no host home, empty environment), and `.mivia/mivia.toml` is write-blocked for workflow agents by default, so a run cannot rewrite the gate that judges it. Each referenced profile is digest-pinned into the run snapshot at admission; a resume fails closed if the declaration changed.
+
+#### Verifier profile resolution
+
+The binary ships no verifier profiles. Every profile a workflow's
+`verifier = "<name>"` gate references must be declared as a
+`[verifiers.<name>]` table in the workspace's `.mivia/mivia.toml` (see this
+repository's file for working tables). A fresh run whose gate references an
+undeclared profile fails at admission, before any agent step runs, with an
+error that names the missing table. If a declared profile changes while a
+run is in flight, resume fails closed; `workflow resume
+--accept-verifier-change` accepts the current declaration for that
+invocation.
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 

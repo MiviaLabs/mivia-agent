@@ -107,7 +107,7 @@ Usage:
   %s workflow run <name> [--workspace dir] [--config path] [--input name=value]... [--allow-publish]
   %s workflow runs [--status name] [--limit n] [--watch] [--workspace dir] [--config path]
   %s workflow deliver <run-id> --allow-publish [--workspace dir] [--config path]
-  %s workflow resume <run-id> [--workspace dir] [--config path] [--force]
+  %s workflow resume <run-id> [--workspace dir] [--config path] [--force] [--accept-verifier-change]
   %s stack plan <workflow> [--workspace dir] [--config path]
   %s stack drive <workflow> [--stack <plan-run-id>] [--workspace dir] [--config path]
   %s stack status <workflow> [--stack <plan-run-id>] [--workspace dir] [--config path]

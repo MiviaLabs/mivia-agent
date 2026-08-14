@@ -88,7 +88,7 @@ func TestResumeRefusesDeliveryPending(t *testing.T) {
 		return nil, repo, func() {}, nil
 	}
 
-	err = executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard)
+	err = executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "waiting for delivery") {
 		t.Fatalf("executeWorkflowResume() error = %v, want a 'waiting for delivery' refusal", err)
 	}
@@ -394,7 +394,7 @@ func TestExecuteWorkflowResumeAllowPublishDeliversNormalPath(t *testing.T) {
 	wireExecuteResumeDeliveryStubs(t, repo, runID, settleResumeFixtureToDeliveryPending(repo, runID))
 
 	var stdout bytes.Buffer
-	err := executeWorkflowResume(runID, root, configPath, false, true, &stdout, io.Discard)
+	err := executeWorkflowResume(runID, root, configPath, false, true, false, &stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v; stdout = %q", err, stdout.String())
 	}
@@ -426,7 +426,7 @@ func TestExecuteWorkflowResumeWithoutAllowPublishSkipsDeliverNormalPath(t *testi
 	wireExecuteResumeDeliveryStubs(t, repo, runID, settleResumeFixtureToDeliveryPending(repo, runID))
 
 	var stdout bytes.Buffer
-	err := executeWorkflowResume(runID, root, configPath, false, false, &stdout, io.Discard)
+	err := executeWorkflowResume(runID, root, configPath, false, false, false, &stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v; stdout = %q", err, stdout.String())
 	}
@@ -455,7 +455,7 @@ func TestExecuteWorkflowResumeNonDeliveryPendingTerminalIgnoresAllowPublish(t *t
 			root, run := newForcedResumeFixture(t)
 			configPath := filepath.Join(root, "config.toml")
 			var stdout bytes.Buffer
-			if err := executeWorkflowResume(run.RunID, root, configPath, false, allowPublish, &stdout, io.Discard); err != nil {
+			if err := executeWorkflowResume(run.RunID, root, configPath, false, allowPublish, false, &stdout, io.Discard); err != nil {
 				t.Fatalf("executeWorkflowResume() error = %v", err)
 			}
 			if !strings.Contains(stdout.String(), "status=succeeded") {
@@ -492,7 +492,7 @@ func TestExecuteWorkflowResumeAllowPublishPropagatesDeliveryFailure(t *testing.T
 	}
 
 	var stdout bytes.Buffer
-	err := executeWorkflowResume(runID, root, configPath, false, true, &stdout, io.Discard)
+	err := executeWorkflowResume(runID, root, configPath, false, true, false, &stdout, io.Discard)
 	if err == nil {
 		t.Fatalf("executeWorkflowResume() error = nil, want a propagated delivery failure; stdout = %q", stdout.String())
 	}
@@ -522,7 +522,7 @@ func TestExecuteWorkflowResumeAllowPublishDeliversCrashRecoveryPath(t *testing.T
 	t.Cleanup(func() { workflowDeliverNewPR = originalNewPR })
 
 	var stdout bytes.Buffer
-	err := executeWorkflowResume(runID, root, configPath, false, true, &stdout, io.Discard)
+	err := executeWorkflowResume(runID, root, configPath, false, true, false, &stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v; stdout = %q", err, stdout.String())
 	}

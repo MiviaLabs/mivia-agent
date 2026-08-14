@@ -109,7 +109,7 @@ func TestExecuteWorkflowResumeSettlesRunFailureBeforeFirstAdvance(t *testing.T) 
 		return workflowledger.RunSnapshot{}, errors.New("ledger read: database is locked")
 	}
 
-	err = executeWorkflowResume(run.RunID, root, filepath.Join(root, "config.toml"), false, false, io.Discard, io.Discard)
+	err = executeWorkflowResume(run.RunID, root, filepath.Join(root, "config.toml"), false, false, false, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "database is locked") {
 		t.Fatalf("executeWorkflowResume() error = %v, want the injected run failure", err)
 	}

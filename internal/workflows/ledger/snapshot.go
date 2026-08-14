@@ -66,7 +66,13 @@ type Snapshot struct {
 	Templates       map[string]RefSnapshot          `json:"templates,omitempty"`
 	Skills          map[string]RefSnapshot          `json:"skills,omitempty"`
 	Verifiers       map[string]RefSnapshot          `json:"verifiers,omitempty"`
-	Delivery        *DeliverySnapshot               `json:"delivery,omitempty"`
+	// VerifierPinsVersion marks snapshots admitted by a binary that pins
+	// verifier definitions (verifier-def: keys in Verifiers). 0 means the run
+	// predates definition pinning and resumes without definition
+	// verification; >= 1 means a referenced definition whose key is absent
+	// was stripped, not merely never written, and resume fails closed.
+	VerifierPinsVersion int               `json:"verifier_pins_version,omitempty"`
+	Delivery            *DeliverySnapshot `json:"delivery,omitempty"`
 }
 
 // MarshalSnapshot serializes the snapshot to its canonical JSON form. The

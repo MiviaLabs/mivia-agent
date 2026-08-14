@@ -84,10 +84,14 @@ func runWorkflowCommandResume(args []string, workspaceRoot, configPath string, f
 	if err != nil {
 		return err
 	}
+	acceptVerifierChange, rest, err := parseWorkflowBoolFlag(rest, "--accept-verifier-change")
+	if err != nil {
+		return err
+	}
 	if len(rest) != 1 {
 		return fmt.Errorf("workflow resume: expected one run ID")
 	}
-	return executeWorkflowResume(rest[0], workspaceRoot, configPath, force, allowPublish, stdout, stderr)
+	return executeWorkflowResume(rest[0], workspaceRoot, configPath, force, allowPublish, acceptVerifierChange, stdout, stderr)
 }
 
 func runWorkflowCommandStatus(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {

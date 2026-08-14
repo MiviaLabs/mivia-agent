@@ -90,14 +90,14 @@ func runResumeReadFailureTests(t *testing.T, root, configPath string, repo workf
 		workflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 			return nil, nil, func() {}, sentinel
 		}
-		err := executeWorkflowResume(run.RunID, "", configPath, true, false, io.Discard, io.Discard)
+		err := executeWorkflowResume(run.RunID, "", configPath, true, false, false, io.Discard, io.Discard)
 		if !errors.Is(err, sentinel) {
 			t.Fatalf("store error = %v", err)
 		}
 	})
 	t.Run("snapshot read", func(t *testing.T) {
 		reset(workflowSnapshotFailureRepository{Repository: repo, err: sentinel})
-		err := executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard)
+		err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard)
 		if !errors.Is(err, sentinel) {
 			t.Fatalf("snapshot error = %v", err)
 		}
@@ -106,7 +106,7 @@ func runResumeReadFailureTests(t *testing.T, root, configPath string, repo workf
 		bad := run
 		bad.SnapshotDigest = "bad"
 		reset(workflowRunFailureRepository{Repository: repo, run: bad})
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard); err == nil {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); err == nil {
 			t.Fatal("executeWorkflowResume() accepted a bad snapshot digest")
 		}
 	})
@@ -117,7 +117,7 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 	t.Run("hooks", func(t *testing.T) {
 		reset(repo)
 		workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return nil, sentinel }
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
 			t.Fatalf("hook error = %v", err)
 		}
 	})
@@ -126,28 +126,28 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
 			return workflowControllerBuild{}, sentinel
 		}
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
 			t.Fatalf("build error = %v", err)
 		}
 	})
 	t.Run("admission", func(t *testing.T) {
 		reset(repo)
 		workflowResumeSetAdmission = func(workflowControllerBuild) error { return sentinel }
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
 			t.Fatalf("admission error = %v", err)
 		}
 	})
 	t.Run("force", func(t *testing.T) {
 		reset(repo)
 		workflowResumeSetForce = func(workflowControllerBuild) error { return sentinel }
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
 			t.Fatalf("force error = %v", err)
 		}
 	})
 	t.Run("claim", func(t *testing.T) {
 		failing := &workflowFailureRepository{Repository: repo, takeoverErr: sentinel}
 		reset(failing)
-		err := executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard)
+		err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard)
 		if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "claim workflow resume handoff") {
 			t.Fatalf("claim error = %v", err)
 		}
@@ -157,7 +157,7 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 		workflowResumeRun = func(context.Context, workflowControllerBuild) (workflowledger.RunSnapshot, error) {
 			return workflowledger.RunSnapshot{}, sentinel
 		}
-		err := executeWorkflowResume(run.RunID, root, configPath, true, false, io.Discard, io.Discard)
+		err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard)
 		if !errors.Is(err, sentinel) {
 			t.Fatalf("run error = %v", err)
 		}

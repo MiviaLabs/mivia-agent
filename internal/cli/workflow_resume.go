@@ -37,7 +37,7 @@ var (
 	workflowResumeJoinBound = 10 * time.Minute
 )
 
-func executeWorkflowResume(runID, root, configPath string, force, allowPublish bool, stdout, stderr io.Writer) error {
+func executeWorkflowResume(runID, root, configPath string, force, allowPublish, acceptVerifierChange bool, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
@@ -65,22 +65,8 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish b
 	defer releaseExecution()
 
 	ctx := context.Background()
-	run, err := repo.GetRun(ctx, runID)
+	run, snapshot, compiled, inputs, err := loadWorkflowResumeState(ctx, repo, runID, res)
 	if err != nil {
-		return err
-	}
-	if err := refuseWorkflowDeliverySettled(runID, run.Status); err != nil {
-		return err
-	}
-	raw, err := repo.GetRunSnapshot(ctx, runID)
-	if err != nil {
-		return err
-	}
-	snapshot, compiled, inputs, err := validateWorkflowResumeSnapshot(run, raw)
-	if err != nil {
-		return err
-	}
-	if err := validateWorkflowMCPConfigDigest(snapshot, res.MCP); err != nil {
 		return err
 	}
 	terminal, err := reconcileWorkflowTerminal(ctx, repo, runID, compiled.DeliveryActive(), stdout)
@@ -89,6 +75,11 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish b
 	}
 	if terminal {
 		return finishWorkflowResumeTerminal(ctx, work.Abs, res, store, repo, runID, run.WorkflowName, compiled, allowPublish, stdout, stderr)
+	}
+	if acceptVerifierChange {
+		if err := applyAcceptedVerifierChanges(&snapshot, compiled, res.Verifiers, stderr); err != nil {
+			return err
+		}
 	}
 	uninstallHooks, err := workflowResumeInstallHooks(work.Abs, false, false)
 	if err != nil {
@@ -115,23 +106,6 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish b
 	// ReleaseRun is a no-op when the caller is not the current holder.
 	defer releaseWorkflowResumeHandoff(repo, runID, built.Controller)
 	return runWorkflowResumeAndSettle(ctx, built, repo, runID, work.Abs, res, store, run.WorkflowName, compiled, allowPublish, stdout, stderr)
-}
-
-func validateWorkflowMCPConfigDigest(snapshot workflowledger.Snapshot, current config.MCPConfig) error {
-	if snapshot.MCPConfigDigest == "" {
-		if current.Enabled && len(current.Servers) > 0 {
-			return fmt.Errorf("workflow snapshot does not pin the enabled MCP configuration")
-		}
-		return nil
-	}
-	digest, err := config.MCPConfigDigest(current)
-	if err != nil {
-		return err
-	}
-	if digest != snapshot.MCPConfigDigest {
-		return fmt.Errorf("MCP configuration changed since workflow admission")
-	}
-	return nil
 }
 
 // runWorkflowResumeAndSettle runs the resumed controller and settles the run

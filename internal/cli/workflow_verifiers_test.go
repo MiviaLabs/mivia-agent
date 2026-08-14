@@ -164,3 +164,65 @@ func TestWorkflowNeedsGoBaseline(t *testing.T) {
 		t.Fatalf("resume must honor the pinned flag, got %v, %v", need, err)
 	}
 }
+
+// Fresh pins must stamp the version marker even when the workflow references
+// no profile: on resume, version >= 1 with a missing verifier-def key means
+// the key was stripped, never that the binary did not write it.
+func TestPinStampsVerifierPinsVersion(t *testing.T) {
+	prior := pinnedSnapshot(t, gateWorkflow(), nil)
+	if prior.VerifierPinsVersion != workflowVerifierPinsVersion {
+		t.Fatalf("pins version = %d, want %d", prior.VerifierPinsVersion, workflowVerifierPinsVersion)
+	}
+	if err := verifyWorkflowVerifierSnapshot(gateWorkflow("go-test"), testVerifierProfiles(), prior); err == nil {
+		t.Fatal("a marked snapshot without the referenced pin must fail closed")
+	}
+}
+
+func TestAcceptWorkflowVerifierChanges(t *testing.T) {
+	wf := gateWorkflow("go-test")
+	profiles := testVerifierProfiles()
+	prior := pinnedSnapshot(t, wf, profiles)
+
+	// Unchanged definitions: acceptance is a no-op.
+	drifted, err := acceptWorkflowVerifierChanges(prior, wf, profiles)
+	if err != nil || len(drifted) != 0 {
+		t.Fatalf("no drift expected, got %v, %v", drifted, err)
+	}
+
+	// Drifted commands: acceptance rewrites the in-memory pin so the
+	// standard verification then passes against the new declaration.
+	changed := testVerifierProfiles()
+	changed["go-test"] = config.VerifierProfile{GoModuleBaseline: true, Commands: []config.VerifierCommand{{Check: "go-test", Program: "go", Args: []string{"test", "-count=1", "./..."}}}}
+	if err := verifyWorkflowVerifierSnapshot(wf, changed, prior); err == nil {
+		t.Fatal("drift must fail closed before acceptance")
+	}
+	drifted, err = acceptWorkflowVerifierChanges(prior, wf, changed)
+	if err != nil || len(drifted) != 1 || drifted[0] != "go-test" {
+		t.Fatalf("accept = %v, %v", drifted, err)
+	}
+	if err := verifyWorkflowVerifierSnapshot(wf, changed, prior); err != nil {
+		t.Fatalf("verification must pass after acceptance: %v", err)
+	}
+
+	// A deleted declaration cannot be accepted.
+	if _, err := acceptWorkflowVerifierChanges(prior, wf, map[string]config.VerifierProfile{}); err == nil {
+		t.Fatal("acceptance must refuse an undeclared profile")
+	}
+
+	// Turning go_module_baseline ON mid-run cannot be accepted when the run
+	// pinned no baseline at admission.
+	off := map[string]config.VerifierProfile{"lint": {Commands: []config.VerifierCommand{{Check: "vet", Program: "go", Args: []string{"vet"}}}}}
+	lintWf := gateWorkflow("lint")
+	lintPrior := pinnedSnapshot(t, lintWf, off)
+	on := map[string]config.VerifierProfile{"lint": {GoModuleBaseline: true, Commands: off["lint"].Commands}}
+	if _, err := acceptWorkflowVerifierChanges(lintPrior, lintWf, on); err == nil {
+		t.Fatal("acceptance must refuse a new baseline requirement without an admitted baseline")
+	}
+
+	// Legacy snapshot: nothing pinned, acceptance is a no-op.
+	legacy := &workflowledger.Snapshot{}
+	drifted, err = acceptWorkflowVerifierChanges(legacy, wf, changed)
+	if err != nil || drifted != nil {
+		t.Fatalf("legacy acceptance must be a no-op, got %v, %v", drifted, err)
+	}
+}
