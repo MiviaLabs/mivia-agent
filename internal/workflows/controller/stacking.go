@@ -97,11 +97,14 @@ func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntim
 	if err := requireSynthesizedStepRuntimes(synth, steps); err != nil {
 		return nil, nil, err
 	}
+	// decompose_continue needs no post-synthesis input injection: its
+	// remaining_scope binding is now declared statically (and optionally) on
+	// the decompose step by synthesizedStackingSteps, so it resolves the same
+	// way for every mode - present with the real value on a continuation run,
+	// resolved blank ("") everywhere else. No decompose_continue case here.
 	switch mode {
 	case "chunk":
 		return injectChunkModeInputBindings(synth, inputs), steps, nil
-	case "decompose_continue":
-		return injectDecomposeContinueInputBindings(synth), steps, nil
 	default:
 		return synth, steps, nil
 	}
@@ -189,37 +192,6 @@ func injectChunkModeInputBindings(synth *compiler.CompiledWorkflow, inputs map[s
 			}
 			steps[i].Context = append(steps[i].Context, definition.ContextBinding{From: "inputs." + key, As: key})
 		}
-	}
-	out := *synth
-	out.Steps = steps
-	return &out
-}
-
-// injectDecomposeContinueInputBindings binds the reserved remaining_scope
-// input onto the decompose step's context, so the decompose-continuation
-// run's agent reads inputs.remaining_scope as its planning context instead
-// of the (absent, optional-resolved) plan-step output binding. Only the
-// decompose step needs this binding: it is the only step a continuation run
-// executes. An inputs.X binding is never optional in contextForStep (a
-// missing one always errors "missing input"), so - exactly like
-// injectChunkModeInputBindings - the binding is added post-synthesis, only
-// for the run that actually carries the input, rather than declared
-// statically on the synthesized step.
-func injectDecomposeContinueInputBindings(synth *compiler.CompiledWorkflow) *compiler.CompiledWorkflow {
-	steps := make([]definition.Step, len(synth.Steps))
-	copy(steps, synth.Steps)
-	for i := range steps {
-		if steps[i].ID != synthesizedDecomposeStepID {
-			continue
-		}
-		for _, b := range steps[i].Context {
-			if b.As == "remaining_scope" {
-				out := *synth
-				out.Steps = steps
-				return &out
-			}
-		}
-		steps[i].Context = append(steps[i].Context, definition.ContextBinding{From: "inputs.remaining_scope", As: "remaining_scope"})
 	}
 	out := *synth
 	out.Steps = steps
@@ -381,6 +353,14 @@ func validateChunkPlanEntry(out *ChunkPlanValidation, chunk *chunkPlanEntry, ind
 		out.Valid = false
 		out.Reasons = append(out.Reasons, fmt.Sprintf("chunk %d has no id", index))
 		return
+	}
+	// "-deferred" is the driver's own naming convention for a follow-up chunk
+	// admitted from a diff-size repair's deferred commit (§5.2-5.3,
+	// internal/cli/stack_followup.go): a real chunk using this suffix would
+	// collide with - and be silently skipped by - the driver's follow-up scan.
+	if strings.HasSuffix(chunk.ID, "-deferred") {
+		out.Valid = false
+		out.Reasons = append(out.Reasons, fmt.Sprintf("chunk id %q must not end in \"-deferred\": that suffix is reserved for driver-admitted follow-up chunks", chunk.ID))
 	}
 	if ids[chunk.ID] {
 		out.Valid = false

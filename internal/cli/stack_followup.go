@@ -96,6 +96,11 @@ func admitFollowUpsForChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, 
 		return fmt.Errorf("chunk %s: resolve worktree for follow-up: %w", chunkID, err)
 	}
 	gitCtx := delivery.GitContext{Dir: worktreeRoot, GitDir: worktreeRoot + "/.git"}
+	shaOut, err := workflowDeliverGit.Run(ctx, gitCtx, "rev-parse", deferredBranch)
+	if err != nil {
+		return fmt.Errorf("chunk %s: resolve deferred branch %s commit: %w", chunkID, deferredBranch, err)
+	}
+	deferredSHA := strings.TrimSpace(shaOut)
 	if _, err := workflowDeliverGit.Run(ctx, gitCtx, "push", "origin", deferredBranch+":refs/heads/"+deferredBranch); err != nil {
 		return fmt.Errorf("chunk %s: push deferred branch %s: %w", chunkID, deferredBranch, err)
 	}
@@ -111,7 +116,7 @@ func admitFollowUpsForChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, 
 		return fmt.Errorf("chunk %s: create follow-up PR: %w", chunkID, err)
 	}
 	fmt.Fprintf(stdout, "chunk=%s follow-up PR %s %s opened (deferred scope, stacked on %s)\n", chunkID, ref.RemoteID, ref.URL, parentBranch)
-	if err := registerFollowUpChunk(prepared.repo, ledger, stackID, chunkID, followUpID, deferredBranch, run, ref); err != nil {
+	if err := registerFollowUpChunk(prepared.repo, ledger, stackID, chunkID, followUpID, deferredBranch, deferredSHA, run, ref); err != nil {
 		return fmt.Errorf("chunk %s: register follow-up %s: %w", chunkID, followUpID, err)
 	}
 	return nil
@@ -163,7 +168,7 @@ func resolveRunWorktreeRoot(ctx context.Context, sourceRoot string, run workflow
 // allows), a delivery record proving it was pushed (stackRunPushed's
 // evidence contract), and a task with Deps on the parent (so it participates
 // in reconcileStack/stackTaskMap like any seeded chunk).
-func registerFollowUpChunk(repo workflowledger.Repository, ledger *tasks.Store, stackID, parentChunkID, followUpID, deferredBranch string, parentRun workflowledger.RunSnapshot, ref delivery.PRRef) error {
+func registerFollowUpChunk(repo workflowledger.Repository, ledger *tasks.Store, stackID, parentChunkID, followUpID, deferredBranch, deferredSHA string, parentRun workflowledger.RunSnapshot, ref delivery.PRRef) error {
 	ctx := context.Background()
 	key, err := stackAdmissionKey(stackID, followUpID)
 	if err != nil {
@@ -194,6 +199,12 @@ func registerFollowUpChunk(repo workflowledger.Repository, ledger *tasks.Store, 
 		RunID: runID, IdempotencyKey: delivery.DeliveryKey(runID, parentRun.WorkflowDigest),
 		Mode: "draft", BaseRef: stackHeadBranch(parentRun), HeadRef: deferredBranch,
 		Provider: "github", RemoteID: ref.RemoteID, URL: ref.URL, Status: "succeeded",
+		// stackRunPushed (the durable-pushed-evidence check reconcileTask
+		// requires before ever marking a task merged) skips any record with
+		// an empty CommitSHA - without this, a follow-up PR could merge on
+		// GitHub and the stack would still loop forever reporting "publish
+		// grant required" for a chunk that was never awaiting one.
+		CommitSHA: deferredSHA,
 	}
 	if err := repo.UpsertDelivery(ctx, rec); err != nil {
 		return fmt.Errorf("record follow-up delivery: %w", err)
