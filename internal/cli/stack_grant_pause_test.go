@@ -37,7 +37,9 @@ func TestStackAwaitsGrantOnly(t *testing.T) {
 	}{
 		{"all reviewed", map[string]string{"c1": stackStatusReviewed, "c2": stackStatusReviewed}, true},
 		{"reviewed plus merged", map[string]string{"c1": stackStatusReviewed, "c2": stackStatusMerged}, true},
-		{"published can merge externally", map[string]string{"c1": stackStatusReviewed, "c2": stackStatusPublished}, false},
+		{"reviewed plus published pauses too", map[string]string{"c1": stackStatusReviewed, "c2": stackStatusPublished}, true},
+		{"published only pauses", map[string]string{"c1": stackStatusPublished}, true},
+		{"published plus merged pauses", map[string]string{"c1": stackStatusPublished, "c2": stackStatusMerged}, true},
 		{"running chunk still working", map[string]string{"c1": stackStatusReviewed, "c2": stackStatusRunning}, false},
 		{"nothing waiting", map[string]string{"c1": stackStatusMerged}, false},
 		{"empty", map[string]string{}, false},
@@ -52,6 +54,44 @@ func TestStackAwaitsGrantOnly(t *testing.T) {
 				t.Fatalf("stackAwaitsGrantOnly = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestWaitForChunkMergesPausesWhenPublishedFollowUpRemains pins the
+// follow-up variant of the durable pause: under a non-auto policy a
+// published chunk's PR (a diff-size split's follow-up is seeded published
+// with its PR already open) waits on a HUMAN merge, so polling is a
+// guaranteed no-op. The wait must pause with merge guidance instead of
+// polling every 20s while holding the plan run's execution flock.
+func TestWaitForChunkMergesPausesWhenPublishedFollowUpRemains(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	ledger := tasks.NewMemoryStore()
+	stackID := "stack-published"
+	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+		t.Fatal(err)
+	}
+	seedStackTaskStatus(t, ledger, stackID, "c1", stackStatusMerged)
+	seedStackTaskStatus(t, ledger, stackID, "c1-deferred", stackStatusPublished)
+	// The published follow-up needs a live run row: reconcile reopens an
+	// in-flight task whose run vanished, which would defeat the pause.
+	seedDeliveryPendingRun(t, repo, workflowledger.RunSnapshot{RunID: "wfr-c1-deferred", InvocationKey: stackID + ":c1-deferred"}, []byte("snapshot"))
+
+	var out strings.Builder
+	done := make(chan error, 1)
+	go func() {
+		done <- waitForChunkMerges(context.Background(), &preparedWorkflowRun{repo: repo}, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "", &out, io.Discard)
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errStackAwaitsGrant) {
+			t.Fatalf("waitForChunkMerges = %v, want errStackAwaitsGrant", err)
+		}
+		if !strings.Contains(out.String(), "merge") {
+			t.Fatalf("output %q must carry the merge guidance for the published follow-up", out.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waitForChunkMerges kept polling; a human-merge-only stack must pause durably instead")
 	}
 }
 

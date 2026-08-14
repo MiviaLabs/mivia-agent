@@ -1,11 +1,13 @@
 package cli
 
-// Policy-A durable pause: when merge_policy is not "auto", the only actor
-// that can advance a "reviewed" chunk is a human running `mivia workflow
-// deliver <run> --allow-publish`. A wait loop over such a stack can never
-// make progress by itself, so it must return cleanly (persist-and-exit; the
-// tasks ledger is already the durable resume point) instead of polling and
-// holding the plan run's execution flock while the human is away.
+// Policy-A durable pause: when merge_policy is not "auto", the only actors
+// that can advance the stack are humans - a "reviewed" chunk needs `mivia
+// workflow deliver <run> --allow-publish`, a "published" chunk (its PR
+// already open, e.g. a diff-size split's follow-up) needs a manual merge. A
+// wait loop over such a stack can never make progress by itself, so it must
+// return cleanly (persist-and-exit; the tasks ledger is already the durable
+// resume point) instead of polling and holding the plan run's execution
+// flock while the human is away.
 
 import (
 	"errors"
@@ -18,42 +20,51 @@ import (
 )
 
 // errStackAwaitsGrant reports a stack whose every unmerged chunk waits on a
-// human publish grant. driveStackToCompletion treats it as a clean stop,
-// mirroring waitIntegrationRunSettled's existing pause for the integration
-// run.
-var errStackAwaitsGrant = errors.New("stack awaits a human publish grant")
+// human action: a publish grant (`mivia workflow deliver <run>
+// --allow-publish`) for a reviewed chunk, or a PR merge under
+// merge_policy=approve for a published one. driveStackToCompletion treats it
+// as a clean stop, mirroring waitIntegrationRunSettled's existing pause for
+// the integration run.
+var errStackAwaitsGrant = errors.New("stack awaits a human publish grant or merge")
 
 // stackAwaitsGrantOnly reports whether at least one chunk waits at
-// "reviewed" and NOTHING else can advance without a human: every task is
-// either reviewed or merged. A published chunk's PR can merge externally and
-// a running chunk is still working, so either keeps the wait alive.
+// "reviewed" (a human publish grant) or "published" (a human PR merge under
+// a non-auto policy) and NOTHING else can advance without a human: every
+// task is reviewed, published, or merged. A running chunk is still working,
+// so it keeps the wait alive. This predicate is policy-agnostic; the caller
+// applies it only when merge_policy != "auto" (under auto the driver itself
+// merges published PRs, so polling does advance the stack).
 func stackAwaitsGrantOnly(byID map[string]tasks.Task) bool {
-	reviewed := 0
+	waiting := 0
 	for _, t := range byID {
 		switch t.Status {
-		case stackStatusReviewed:
-			reviewed++
+		case stackStatusReviewed, stackStatusPublished:
+			waiting++
 		case stackStatusMerged:
 		default:
 			return false
 		}
 	}
-	return reviewed > 0
+	return waiting > 0
 }
 
-// stackGrantHintLines returns one ready-to-paste guidance line per reviewed
-// chunk. runRefByChunk resolves a chunk's run ID ("" when unknown).
+// stackGrantHintLines returns one ready-to-paste guidance line per waiting
+// chunk: reviewed chunks get the deliver command, published chunks get the
+// human-merge instruction (merge_policy=approve). runRefByChunk resolves a
+// chunk's run ID ("" when unknown).
 func stackGrantHintLines(list []tasks.Task, runRefByChunk func(chunkID string) string) []string {
 	var lines []string
 	for _, t := range list {
-		if t.Status != stackStatusReviewed {
-			continue
+		switch t.Status {
+		case stackStatusReviewed:
+			ref := runRefByChunk(t.ID)
+			if ref == "" {
+				ref = "<run>"
+			}
+			lines = append(lines, fmt.Sprintf("chunk=%s awaits the publish grant: mivia workflow deliver %s --allow-publish", t.ID, ref))
+		case stackStatusPublished:
+			lines = append(lines, fmt.Sprintf("chunk=%s has an open PR: merge it (merge_policy=approve), then re-run the drive", t.ID))
 		}
-		ref := runRefByChunk(t.ID)
-		if ref == "" {
-			ref = "<run>"
-		}
-		lines = append(lines, fmt.Sprintf("chunk=%s awaits the publish grant: mivia workflow deliver %s --allow-publish", t.ID, ref))
 	}
 	return lines
 }
