@@ -153,6 +153,7 @@ func (m *tuiModel) resetTurnState() {
 	m.stepDetailAt = time.Time{}
 	m.cachedCtxPercent = 0
 	m.cachedCtxPercentAt = time.Time{}
+	m.liveCtxSampled = false
 	m.stalledWarning = false
 	m.liveThinkingScroll = 0
 	m.awaitingFirstActivity = true

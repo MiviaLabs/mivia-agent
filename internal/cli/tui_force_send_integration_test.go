@@ -140,6 +140,7 @@ func (c *forceSendIntegrationCompleter) Requests() []provider.Request {
 }
 
 func TestIntegrationForceSendCanceledTurnRemainsInContextHistory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	completer := &forceSendIntegrationCompleter{firstStarted: make(chan struct{})}
 	session := chat.NewSession(&config.Resolved{Model: "model", SystemPrompt: "sys"}, completer)
@@ -192,6 +193,7 @@ func TestIntegrationForceSendCanceledTurnRemainsInContextHistory(t *testing.T) {
 }
 
 func TestIntegrationForceSendTransportErrorAfterCancelRemainsInContextHistory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	completer := &forceSendIntegrationCompleter{
 		firstStarted: make(chan struct{}),
@@ -204,26 +206,11 @@ func TestIntegrationForceSendTransportErrorAfterCancelRemainsInContextHistory(t 
 		t.Fatal(err)
 	}
 	session.Tools = tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	store, err := openContextStore(root, config.DefaultSubagentConfig)
+	store, err := setupSessionContext(session, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := contextstate.NewPrincipal(contextWorkspaceID(root), session.SessionID, "local-user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := &contextmgr.ContextManager{
-		PreparationManager:  contextmgr.StructuralPreparationManager{},
-		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
-		Enabled:             true,
-	}
-	if err := session.SetContextManager(manager, principal); err != nil {
-		t.Fatal(err)
-	}
-	if err := session.SetContextStore(store); err != nil {
-		t.Fatal(err)
-	}
 
 	sp := startScrollProgram(t, func(m *tuiModel) {
 		m.session = session
@@ -259,7 +246,11 @@ func TestIntegrationForceSendTransportErrorAfterCancelRemainsInContextHistory(t 
 	if got := messagesContent(session.MessagesCopy()); !strings.Contains(got, "first question") || !strings.Contains(got, "partial first answer") {
 		t.Fatalf("session history lost canceled transport-error content: %q", got)
 	}
-	snapshot, err := store.Load(context.Background(), principal, session.SessionID)
+	_, input, ok := session.ContextPreparation()
+	if !ok {
+		t.Fatal("session is not context-enabled")
+	}
+	snapshot, err := store.Load(context.Background(), input.Principal, session.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,6 +264,7 @@ func TestIntegrationForceSendTransportErrorAfterCancelRemainsInContextHistory(t 
 }
 
 func TestIntegrationForceSendBetweenToolStepsCommitsHistory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	preparation := &blockSecondPreparation{blockAt: 2, started: make(chan struct{})}
 	completer := &forceSendToolStepCompleter{}
@@ -337,6 +329,7 @@ func TestIntegrationForceSendBetweenToolStepsCommitsHistory(t *testing.T) {
 }
 
 func TestIntegrationForceSendDuringInitialPreparationCommitsUserHistory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	preparation := &blockSecondPreparation{blockAt: 1, started: make(chan struct{})}
 	completer := &forceSendIntegrationCompleter{firstStarted: make(chan struct{}), answerFirst: "queued answer"}

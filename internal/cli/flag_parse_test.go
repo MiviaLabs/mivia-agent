@@ -139,6 +139,32 @@ func TestParseChatInvocationKeepsPlainFlag(t *testing.T) {
 	}
 }
 
+// TestParseChatInvocationKeepsFullDiskFlag verifies the --full-disk flag
+// is parsed and stored on the invocation.
+func TestParseChatInvocationKeepsFullDiskFlag(t *testing.T) {
+	inv, err := parseChatInvocation([]string{"--full-disk", "--json"})
+	if err != nil {
+		t.Fatalf("parseChatInvocation([--full-disk --json]) error = %v", err)
+	}
+	if !inv.fullDisk {
+		t.Fatal("fullDisk = false, want true; --full-disk was dropped")
+	}
+	if !inv.jsonMode {
+		t.Fatal("jsonMode = false, want true; --json was dropped")
+	}
+}
+
+// TestParseChatInvocationFullDiskDefault verifies fullDisk defaults to false.
+func TestParseChatInvocationFullDiskDefault(t *testing.T) {
+	inv, err := parseChatInvocation([]string{"--json"})
+	if err != nil {
+		t.Fatalf("parseChatInvocation([--json]) error = %v", err)
+	}
+	if inv.fullDisk {
+		t.Fatal("fullDisk = true without --full-disk flag")
+	}
+}
+
 // TestParseChatInvocationRejectsSwallowedPlain is the entry-level RED case:
 // `mivia chat -p --plain` must refuse instead of sending "--plain" to the
 // model as the prompt while silently dropping the --plain flag.

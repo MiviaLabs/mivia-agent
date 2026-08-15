@@ -183,7 +183,11 @@ claims more than the code did.
 **Evidence.** 95 commits. `30b5643` surfaced workflow file read errors. `51f04e7`
 removed a fake workflow runner and made interrupt and resume honest. `1fb54f4`
 reported the enforced read bound on oversized lines. `820817a` refused a delivery start
-when the origin was unresolved instead of proceeding.
+when the origin was unresolved instead of proceeding. `b151445e` accepted and
+normalized a `[context.summary] provider/model` override that no wiring consumed - every
+compaction kept billing the session's (expensive) model while the config claimed a cheap
+one - and `1befc767` rewired it through a fail-closed completer with the misconfig
+promoted to a load error.
 
 **Probes.**
 - Find every discarded error value. Each one needs a stated reason.
@@ -192,6 +196,11 @@ when the origin was unresolved instead of proceeding.
 - A status must be derived from what happened, never from what was requested.
   `report the effort that results, not the one requested` is the same defect.
 - A missing precondition must refuse the operation, not select a default and continue.
+- A config key that load resolves and normalizes must have a runtime consumer.
+  Normalization is the tell: a key that parse, normalize, and doc but no wiring reads is
+  a silent default-keep - the operator configures the override and the runtime does the
+  default thing with no error, which is exactly how `b151445e`'s summary override
+  shipped dead.
 
 ## DC-10 Path, environment, and isolation escape
 
@@ -373,6 +382,43 @@ first fix, still only one of two) actually fed it.
 - Test the signal from EVERY producer path, not just the one the bug report named -
   a passing test suite that only exercises one path (e.g. the tools-on path) will not
   catch a sibling path's identical gap.
+
+## DC-17 Two producers write one cached display value with no precedence rule
+
+**Mechanism.** A UI or status value has two producers: an exact, event-driven update
+and a periodic, time-throttled recompute that falls back to a cheaper or staler
+source. Both write the same cache field. The throttle's only test is "has enough wall
+time passed since the last write", not "is the pending write more or less authoritative
+than what is already there." Once the throttle window elapses, the stale recompute
+overwrites a fresher exact value with no comparison, and the display visibly regresses
+mid-turn even though better data already arrived and nothing asked for a refresh.
+
+**Evidence.** mivia-agent TUI status bar: the "ctx N%" indicator had two writers to
+`tuiModel.cachedCtxPercent` - `updateFromDrain`, fed by the agent loop's per-step
+`EventTokenUsage` (exact, provider-reported), and `liveCtxPercent`'s own 500ms-throttle
+fallback, which recomputed from `session.ContextUsage()` (an estimate over
+`Session.Messages`, itself frozen at the turn's start until the whole turn commits).
+The throttle had no way to know a step's exact sample had already landed, so any tool
+call running longer than 500ms let the next redraw's fallback stomp the exact value
+with the stale pre-turn estimate - the number would jump to the right value once, then
+visibly fall back down mid-turn. Fixed by adding an explicit precedence latch
+(`liveCtxSampled`): once the exact producer writes this turn, the fallback producer is
+locked out for the rest of the turn instead of being allowed to overwrite on a timer.
+
+**Probes.**
+- For every cache/display field with more than one writer, name each writer's
+  precision (exact/measured vs. estimated/derived) and the condition under which it
+  writes.
+- A time-only throttle ("have N ms passed") is not a precedence rule. If a lower-
+  precision writer can fire after a higher-precision one, the cache needs an explicit
+  flag or generation counter recording which producer wrote last, not just when.
+- Test the specific failure shape: exact write, then enough time passes for the
+  throttle to expire with no new exact write, then a redraw. The stale writer must not
+  fire, or must not be allowed to overwrite.
+- Check every place the same field is read, not just the one render path a bug report
+  named - a fix that adds the latch to one read site and misses a sibling read
+  (idle-vs-busy render branches are a common split) leaves the regression reachable
+  from the other site.
 
 ## Chain control
 

@@ -196,6 +196,148 @@ func TestStepDefaultsDigestSafeForExistingFiles(t *testing.T) {
 	t.Logf("bug-fix.toml digest: %s", first)
 }
 
+// stepDefaultsPanelSugared exercises the fix in 2119c4d4: an agent_panel
+// step's top-level synthesis fields (agent, skill, template, output_schema,
+// context) come from [step_defaults] exactly like an agent step's, while its
+// panel (member list) stays entirely step-specific, matching the real
+// review_panel shape in bug-fix.toml and feature-delivery.toml.
+const stepDefaultsPanelSugared = `version = 1
+name = "delivery"
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 100
+
+[step_defaults]
+kind = "agent"
+agent = "worker"
+skill = "delivery-skill"
+template = "templates/plan.md"
+output_schema = "schemas/result.json"
+on_failure = "failure"
+context = [{ from = "inputs.task", as = "task", max_bytes = 100 }]
+
+[[steps]]
+id = "plan"
+
+[[steps]]
+id = "review_panel"
+kind = "agent_panel"
+
+[steps.panel]
+failure_policy = "require_all"
+require_distinct_bindings = true
+members = [
+  { id = "a", agent = "worker", provider = "deepseek", model = "deepseek-v4-flash", skill = "delivery-skill", template = "templates/plan.md", output_schema = "schemas/result.json" },
+  { id = "b", agent = "worker", provider = "openrouter", model = "tencent/hy3-preview", skill = "delivery-skill", template = "templates/plan.md", output_schema = "schemas/result.json" },
+]
+
+[[transitions]]
+from = "plan"
+to = "review_panel"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "review_panel"
+to = "success"
+match = { status = "succeeded" }
+`
+
+// stepDefaultsPanelExpanded is the hand-expanded twin of
+// stepDefaultsPanelSugared: review_panel's top-level fields are written
+// directly instead of inherited. Must validate and digest identically.
+const stepDefaultsPanelExpanded = `version = 1
+name = "delivery"
+initial_step = "plan"
+
+[inputs.task]
+type = "string"
+required = true
+max_bytes = 100
+
+[[steps]]
+id = "plan"
+kind = "agent"
+agent = "worker"
+skill = "delivery-skill"
+template = "templates/plan.md"
+output_schema = "schemas/result.json"
+on_failure = "failure"
+context = [{ from = "inputs.task", as = "task", max_bytes = 100 }]
+
+[[steps]]
+id = "review_panel"
+kind = "agent_panel"
+agent = "worker"
+skill = "delivery-skill"
+template = "templates/plan.md"
+output_schema = "schemas/result.json"
+on_failure = "failure"
+context = [{ from = "inputs.task", as = "task", max_bytes = 100 }]
+
+[steps.panel]
+failure_policy = "require_all"
+require_distinct_bindings = true
+members = [
+  { id = "a", agent = "worker", provider = "deepseek", model = "deepseek-v4-flash", skill = "delivery-skill", template = "templates/plan.md", output_schema = "schemas/result.json" },
+  { id = "b", agent = "worker", provider = "openrouter", model = "tencent/hy3-preview", skill = "delivery-skill", template = "templates/plan.md", output_schema = "schemas/result.json" },
+]
+
+[[transitions]]
+from = "plan"
+to = "review_panel"
+match = { status = "succeeded" }
+
+[[transitions]]
+from = "review_panel"
+to = "success"
+match = { status = "succeeded" }
+`
+
+// TestWorkflowsValidateAcceptsStepDefaultsForAgentPanel proves the
+// agent_panel fix at the real CLI pipeline layer (discovery -> parse ->
+// compile -> agent/skill/schema reference validation), not just the
+// definition-package unit tests that construct Go structs directly. A pass
+// proves step_defaults reaches an agent_panel step's top-level fields while
+// its panel member list, resolved by the same real agent/skill/schema
+// references, is left untouched.
+func TestWorkflowsValidateAcceptsStepDefaultsForAgentPanel(t *testing.T) {
+	root := newWorkflowValidationFixture(t)
+	writeWorkflowFixture(t, root, "delivery", stepDefaultsPanelSugared)
+
+	var out, errOut strings.Builder
+	err := runWorkflowsWithIO([]string{"validate", "delivery", "--workspace", root}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("validate rejected a [step_defaults] agent_panel workflow: %v\noutput: %s", err, out.String())
+	}
+}
+
+// TestStepDefaultsPanelDigestEqualsExpanded proves digest equality for the
+// agent_panel case through the real Compile() path, closing the gap flagged
+// in review: the field-level unit tests (TestApplyStepDefaults_
+// FillsAgentPanelTopLevelFields) never called Compile, so nothing proved the
+// digest path treats a step_defaults-filled agent_panel step identically to
+// a hand-written one.
+func TestStepDefaultsPanelDigestEqualsExpanded(t *testing.T) {
+	digestOf := func(body string) string {
+		t.Helper()
+		wf, _, err := definition.ParseWorkflowTOML([]byte(body), "delivery.toml")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		compiled, err := compiler.Compile(&wf)
+		if err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+		return compiled.Digest
+	}
+	if s, e := digestOf(stepDefaultsPanelSugared), digestOf(stepDefaultsPanelExpanded); s != e {
+		t.Fatalf("digest mismatch: sugared %s != expanded %s", s, e)
+	}
+}
+
 // TestStepDefaultsDoNotLeakIntoGates pins the containment rule: only steps
 // whose resolved kind is "agent" inherit scalar defaults. An evidence_gate
 // step declaring only its own required command must come out of parse with

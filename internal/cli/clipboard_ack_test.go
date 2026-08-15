@@ -55,14 +55,19 @@ func TestCopyAckVisibleWhenIdle(t *testing.T) {
 }
 
 // TestCopyAckExpires: a notice that never clears becomes furniture and then
-// becomes a lie about a copy made minutes ago.
+// becomes a lie about a copy made minutes ago. Copy acks live in the notice
+// chrome (m.notice/m.noticeAt, not the tool-heartbeat stepDetail field), so
+// the stale-notice leg must backdate noticeAt past the TTL.
 func TestCopyAckExpires(t *testing.T) {
 	m := newReadyChatModel(30, 80)
 	m.mode = modeChat
 	m.waiting = false
-	m.stepDetail = copiedNotice(11)
-	m.stepDetailAt = time.Now().Add(-copyNoticeTTL - time.Second)
+	m.setNotice(copiedNotice(11))
+	m.noticeAt = time.Now().Add(-copyNoticeTTL - time.Second)
 
+	if n := m.freshNotice(); n != "" {
+		t.Fatalf("stale copy notice still fresh: %q", n)
+	}
 	if strings.Contains(stripANSI(m.View()), "copied") {
 		t.Fatal("a stale copy notice must expire from the chrome")
 	}

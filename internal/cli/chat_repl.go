@@ -14,39 +14,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-func chatFlags(args []string) (noTools, plainUI, staleBypass, jsonMode, quiet bool, rest []string) {
-	for _, arg := range args {
-		switch arg {
-		case "--no-tools":
-			noTools = true
-		case "--plain":
-			plainUI = true
-		case "--bypass-hook-trust":
-			// Accepted and ignored. The flag existed to run hooks that were
-			// never confirmed; there is no confirmation to bypass any more.
-			// Rejecting it would break the CI configs it was written for, and
-			// those are the runs least able to explain a startup failure.
-			staleBypass = true
-		case "--json":
-			// Reframes line-mode's stdout as NDJSON (chunk/done/cancelled/
-			// error events - see ndjsonEvent) instead of raw streamed text.
-			// Only valid for the non-interactive piped-stdin path;
-			// runConfiguredChatOnce rejects it for the TUI/classic-REPL and
-			// one-shot -p paths.
-			jsonMode = true
-		case "--quiet":
-			// Suppress informational startup notices on stderr: the limits
-			// summary, the lifecycle-hooks armed notice, the diagnostics
-			// commands line, and the one-shot/REPL banner. Genuine config
-			// warnings and workflow session-recovery diagnostics still print.
-			quiet = true
-		default:
-			rest = append(rest, arg)
-		}
-	}
-	return noTools, plainUI, staleBypass, jsonMode, quiet, rest
-}
-
 // attachSessionDispatcher wires NewSessionDispatcher onto the session using the
 // shared agent-aware builder (same contract as model switch). skillReg may be
 // pre-loaded by the caller so agent/skill collisions were already checked.

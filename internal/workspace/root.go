@@ -19,6 +19,14 @@ type Root struct {
 	// through a symlink alias of the root maps to the same relative name as
 	// the direct spelling.
 	LexicalAbs string
+
+	// Unrestricted lifts the workspace escape check: file tools may resolve
+	// paths anywhere on the filesystem, not only under Abs. Set only by the
+	// operator-level `mivia chat --full-disk` flag (OpenFullDisk) - never by
+	// workspace config, so a repository cannot grant itself full disk access.
+	// The operator-invocation-only provenance is the security property; keep
+	// it that way.
+	Unrestricted bool
 }
 
 // SameExistingPath reports whether two existing paths name the same file.
@@ -64,6 +72,19 @@ func Open(rootPath string) (*Root, error) {
 	return &Root{Abs: abs, LexicalAbs: lexicalAbs}, nil
 }
 
+// OpenFullDisk resolves rootPath like Open but sets Unrestricted, allowing
+// file tools to operate anywhere on the filesystem. Must only be called when
+// the operator explicitly requested full disk access (e.g. --full-disk flag),
+// never from workspace config.
+func OpenFullDisk(rootPath string) (*Root, error) {
+	r, err := Open(rootPath)
+	if err != nil {
+		return nil, err
+	}
+	r.Unrestricted = true
+	return r, nil
+}
+
 // Resolve maps a user path (relative or absolute) into the workspace.
 // Rejects escapes via .. or symlinks outside the root.
 func (r *Root) Resolve(userPath string) (string, error) {
@@ -84,7 +105,7 @@ func (r *Root) Resolve(userPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !isUnder(r.Abs, resolved) {
+	if !r.Unrestricted && !isUnder(r.Abs, resolved) {
 		return "", fmt.Errorf("path %q escapes workspace %s", userPath, r.Abs)
 	}
 	return resolved, nil
@@ -154,8 +175,14 @@ func (r *Root) LexicalRel(userPath string) (string, error) {
 	if !filepath.IsAbs(cleaned) {
 		return filepath.ToSlash(cleaned), nil
 	}
-	if !isUnder(r.LexicalAbs, cleaned) {
+	if !r.Unrestricted && !isUnder(r.LexicalAbs, cleaned) {
 		return "", fmt.Errorf("path %q escapes workspace %s", userPath, r.LexicalAbs)
+	}
+	if !isUnder(r.LexicalAbs, cleaned) {
+		// Unrestricted mode: outside the workspace — return the cleaned
+		// absolute path so callers (e.g. write-denylist) have a usable key
+		// rather than silently re-confining the operation.
+		return filepath.ToSlash(cleaned), nil
 	}
 	rel, err := filepath.Rel(r.LexicalAbs, cleaned)
 	if err != nil {

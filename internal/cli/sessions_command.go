@@ -158,7 +158,20 @@ func newCatalogSessionAt(workspaceRoot string) (*chat.Session, *storage.SQLite, 
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
-	sess := chat.NewSession(res, nil)
+	// Resolve a REAL initial completer when the workspace's provider and
+	// credential resolve, so summaryWiring (which reads binding.Completer)
+	// can wire an LLM summarizer for `mivia compact --session` under a
+	// [context.summary]-enabled policy. When no provider/key resolves (e.g. a
+	// workspace with no API key), keep the structural fallback: a read-only
+	// catalog command must still work, and summaryDisabledReason names the
+	// cause when compaction stays structural-only. The SetBindingFactory below
+	// still supplies catalogReadOnlyCompleter for Load-time SwitchBinding.
+	var sess *chat.Session
+	if comp, compErr := provider.New(res); compErr == nil {
+		sess = chat.NewSession(res, comp)
+	} else {
+		sess = chat.NewSession(res, nil)
+	}
 	// Load (used by "show" and internally by DeleteSession's catalog paths)
 	// requires a binding factory whenever the workspace configures a model
 	// catalog (chat.Session.publishLoadedMessages fails closed otherwise -
@@ -321,7 +334,7 @@ func runSessionsUsage(args []string, stdout io.Writer) error {
 	// instead of silently under-counting by their cost. quiet=true: a
 	// usage query is not a session start and must not print startup
 	// notices into the JSON stream.
-	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true)
+	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("sessions usage: %w", err)

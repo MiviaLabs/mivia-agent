@@ -61,13 +61,17 @@ func (m *tuiModel) updateFromDrain(d bridgeDrain) {
 		}
 	}
 	// Live per-step context usage: a real provider-reported token count beats
-	// the throttled, s.Messages-derived estimate liveCtxPercent() falls back
-	// to, and updating cachedCtxPercentAt here keeps that fallback from
-	// immediately overwriting a fresher live sample.
+	// the s.Messages-derived estimate liveCtxPercent() falls back to before
+	// the turn's first sample. liveCtxSampled latches permanently (for the
+	// rest of this turn) once a sample lands, so a later quiet stretch
+	// between provider calls (e.g. a long-running tool) cannot make
+	// liveCtxPercent's own throttled fallback overwrite this with the stale
+	// pre-turn estimate - see the cachedCtxPercent field comment in tui.go.
 	if d.CtxTokensSet {
 		if budget := m.session.PromptBudget(); budget > 0 {
 			m.cachedCtxPercent = d.CtxTokens * 100 / budget
 			m.cachedCtxPercentAt = time.Now()
+			m.liveCtxSampled = true
 		}
 	}
 	// Content-then-tools: clear optimistic final stream; speech becomes interim bubble.
