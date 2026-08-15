@@ -17,6 +17,38 @@ import (
 // summary call uses the same credential scope as the main turns.
 const summaryCredentialScope = "env-api-key"
 
+// summaryDisabledReason names the first unmet condition keeping compaction
+// structural-only, or "" when summarization is wired. A workspace that has not
+// configured it gets an instant /compact that makes no LLM call, which is
+// correct but indistinguishable from a broken summarizer: the operator sees a
+// compaction succeed while the summary they expected never runs. The false
+// return stays a policy state rather than an error; this only makes the state
+// legible.
+func summaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
+	if sess == nil || res == nil {
+		// Nothing to report rather than a guess: silence is safer than a
+		// wrong reason on a caller that has no resolved configuration.
+		return ""
+	}
+	if !res.Context.Summary.Enabled {
+		return "[context.summary] enabled is not set"
+	}
+	if !contextRedactionPolicy(res).Configured {
+		return "[privacy] configures no redaction_patterns or redaction_key_names"
+	}
+	if strings.TrimSpace(res.BaseURL) == "" {
+		return "the provider endpoint (base_url) did not resolve"
+	}
+	binding := sess.CurrentBinding()
+	if binding.Completer == nil || binding.ProviderName == "" || binding.Model == "" {
+		return "the session has no resolved provider/model binding"
+	}
+	if _, _, ok := summaryWiring(sess, res); !ok {
+		return "the summarizer could not be built from the resolved policy"
+	}
+	return ""
+}
+
 // summaryWiring builds the config-gated LLM summarizer for one session setup.
 // The gate has three conditions, all explicit: the [context.summary] flag, a
 // configured [privacy] redaction policy, and a resolved provider endpoint.

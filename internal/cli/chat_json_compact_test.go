@@ -52,7 +52,7 @@ func TestSlashCompactJSONEmitsTypedEvents(t *testing.T) {
 	activeJSONSlashSink = &jsonSlashSink{w: &buf}
 	defer func() { activeJSONSlashSink = nil }()
 
-	handled, exit, err := handleSlashCompact("/compact", sess, nil)
+	handled, exit, err := handleSlashCompact("/compact", sess, nil, nil)
 	if err != nil {
 		t.Fatalf("handleSlashCompact: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestHandleSlashCompactParsesFocusFromTheRawLine(t *testing.T) {
 	sess, done := seedLiveCompactableSession(t, ws)
 	defer done()
 
-	handled, exit, err := handleSlashCompact("/compact keep the auth discussion", sess, nil)
+	handled, exit, err := handleSlashCompact("/compact keep the auth discussion", sess, nil, nil)
 	if err != nil {
 		t.Fatalf("handleSlashCompact with focus text: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestSlashCompactJSONFailureEmitsSlashError(t *testing.T) {
 	var buf bytes.Buffer
 	activeJSONSlashSink = &jsonSlashSink{w: &buf}
 	defer func() { activeJSONSlashSink = nil }()
-	handled, _, err := handleSlashCompact("/compact", sess, nil)
+	handled, _, err := handleSlashCompact("/compact", sess, nil, nil)
 	if err != nil {
 		t.Fatalf("handleSlashCompact failure leg returned err: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestSlashCompactTwiceSucceeds(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		var buf bytes.Buffer
 		activeJSONSlashSink = &jsonSlashSink{w: &buf}
-		handled, _, err := handleSlashCompact("/compact", sess, nil)
+		handled, _, err := handleSlashCompact("/compact", sess, nil, nil)
 		if i == 1 {
 			activeJSONSlashSink = nil
 		}

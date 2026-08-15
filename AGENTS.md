@@ -163,6 +163,27 @@ a `manifest.json` tracking pid/log/start time so `status`/`kill` work in a
 later session too. As with the checked-in workflows above: close and
 delete-branch any PR a run opens; never merge one.
 
+### Context-compaction e2e (`scripts/e2e_context_compaction.py`)
+
+Drives the real `mivia` binary through automatic compaction, manual
+`/compact`, the tool-enabled agent loop, and the summary-gate-off path.
+Every assertion reads a surface a user or host app observes - the NDJSON
+wire and the durable SQLite checkpoint - so a regression that unit tests
+pass by construction still fails here.
+
+```bash
+scripts/e2e_context_compaction.py                  # hermetic, no credentials
+scripts/e2e_context_compaction.py --provider real  # real API calls, costs money
+```
+
+The default `stub` backend runs its own local OpenAI-compatible server, so
+it needs no key and is safe anywhere. `--provider real` uses
+`DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `ZAI_API_KEY`, or
+`OLLAMA_API_KEY` from the environment.
+
+Same rule as every other e2e above: never part of `make verify` or CI, and
+never run `--provider real` without the user asking for it in that session.
+
 ## Layout
 
 ```text
