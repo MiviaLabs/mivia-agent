@@ -101,9 +101,9 @@ func runSessionsWithIO(args []string, stdout, stderr io.Writer) error {
 	case "usage":
 		return runSessionsUsage(rest, stdout)
 	case "rename":
-		return runSessionsRename(rest, stderr)
+		return runSessionsRename(rest, stdout, stderr)
 	case "delete":
-		return runSessionsDelete(rest, stderr)
+		return runSessionsDelete(rest, stdout, stderr)
 	default:
 		return fmt.Errorf("sessions: unknown subcommand %q", safeCatalogText(subcommand, 80))
 	}
@@ -345,8 +345,11 @@ func runSessionsUsage(args []string, stdout io.Writer) error {
 // runSessionsRename sets a saved session's display title. The session's own
 // id/name is never changed - only chat.SessionInfo.Title, the human-facing
 // label "sessions list" and a sidebar would show in place of the raw id.
-func runSessionsRename(args []string, stderr io.Writer) error {
-	workspaceRoot, _, positional, err := parseSessionsWorkspaceAndJSON("sessions rename", args, 2)
+// With --json a success writes {"renamed":{"session":...,"title":...}} to
+// stdout: a frontend confirms the stored title without inferring success
+// from the exit code.
+func runSessionsRename(args []string, stdout, stderr io.Writer) error {
+	workspaceRoot, jsonFlag, positional, err := parseSessionsWorkspaceAndJSON("sessions rename", args, 2)
 	if err != nil {
 		return err
 	}
@@ -360,11 +363,18 @@ func runSessionsRename(args []string, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "sessions rename: %v\n", err)
 		return fmt.Errorf("sessions rename: %w", err)
 	}
+	if jsonFlag {
+		return writeSessionsJSON(stdout, map[string]any{
+			"renamed": map[string]string{"session": name, "title": title},
+		})
+	}
 	return nil
 }
 
-func runSessionsDelete(args []string, stderr io.Writer) error {
-	workspaceRoot, _, positional, err := parseSessionsWorkspaceAndJSON("sessions delete", args, 1)
+// runSessionsDelete removes a saved session. With --json a success writes
+// {"deleted":"<name>"} to stdout - same frontend contract as rename.
+func runSessionsDelete(args []string, stdout, stderr io.Writer) error {
+	workspaceRoot, jsonFlag, positional, err := parseSessionsWorkspaceAndJSON("sessions delete", args, 1)
 	if err != nil {
 		return err
 	}
@@ -377,6 +387,9 @@ func runSessionsDelete(args []string, stderr io.Writer) error {
 	if err := sess.DeleteSession(name); err != nil {
 		fmt.Fprintf(stderr, "sessions delete: %v\n", err)
 		return fmt.Errorf("sessions delete: %w", err)
+	}
+	if jsonFlag {
+		return writeSessionsJSON(stdout, map[string]any{"deleted": name})
 	}
 	return nil
 }

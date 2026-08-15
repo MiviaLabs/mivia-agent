@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -373,7 +374,7 @@ func TestSessionsDelete(t *testing.T) {
 	seedThreeCatalogSessions(t, ws)
 
 	var deleteStderr bytes.Buffer
-	if err := runSessionsDelete([]string{"beta", "--workspace", ws}, &deleteStderr); err != nil {
+	if err := runSessionsDelete([]string{"beta", "--workspace", ws}, io.Discard, &deleteStderr); err != nil {
 		t.Fatalf("sessions delete beta: %v (stderr: %s)", err, deleteStderr.String())
 	}
 
@@ -397,7 +398,7 @@ func TestSessionsDelete(t *testing.T) {
 	// Deleting an already-deleted (or never-existing) session must fail
 	// clearly, not silently succeed.
 	var missingStderr bytes.Buffer
-	if err := runSessionsDelete([]string{"beta", "--workspace", ws}, &missingStderr); err == nil {
+	if err := runSessionsDelete([]string{"beta", "--workspace", ws}, io.Discard, &missingStderr); err == nil {
 		t.Fatal("sessions delete beta (already gone): want an error, got nil")
 	}
 }
@@ -417,13 +418,71 @@ func TestSessionsRenameUnknownOrNamedSnapshotFails(t *testing.T) {
 	seedThreeCatalogSessions(t, ws)
 
 	var snapshotStderr bytes.Buffer
-	if err := runSessionsRename([]string{"alpha", "Project kickoff", "--workspace", ws}, &snapshotStderr); err == nil {
+	if err := runSessionsRename([]string{"alpha", "Project kickoff", "--workspace", ws}, io.Discard, &snapshotStderr); err == nil {
 		t.Fatal("sessions rename alpha (a named snapshot, not a live session): want an error, got nil")
 	}
 
 	var missingStderr bytes.Buffer
-	if err := runSessionsRename([]string{"does-not-exist", "New title", "--workspace", ws}, &missingStderr); err == nil {
+	if err := runSessionsRename([]string{"does-not-exist", "New title", "--workspace", ws}, io.Discard, &missingStderr); err == nil {
 		t.Fatal("sessions rename does-not-exist: want an error, got nil")
+	}
+}
+
+// TestSessionsRenameJSONEnvelope pins the --json success shape a frontend
+// consumes: without it, rename reported success only through the exit code,
+// and a caller had no confirmation of the title actually stored.
+func TestSessionsRenameJSONEnvelope(t *testing.T) {
+	ws := isolatedSessionsWorkspace(t)
+	sess, done := seedLiveCompactableSession(t, ws)
+	defer done()
+	name := sess.SessionID
+
+	var stdout, stderr bytes.Buffer
+	if err := runSessionsRename([]string{name, "Project kickoff", "--workspace", ws, "--json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("sessions rename %s: %v (stderr: %s)", name, err, stderr.String())
+	}
+	var envelope struct {
+		Renamed struct {
+			Session string `json:"session"`
+			Title   string `json:"title"`
+		} `json:"renamed"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode rename JSON: %v\nraw: %s", err, stdout.String())
+	}
+	if envelope.Renamed.Session != name || envelope.Renamed.Title != "Project kickoff" {
+		t.Fatalf("rename envelope = %+v", envelope.Renamed)
+	}
+}
+
+// TestSessionsDeleteJSONEnvelope pins the --json success shape: the deleted
+// session name on stdout, so a frontend confirms the removal without
+// inferring it from the exit code.
+func TestSessionsDeleteJSONEnvelope(t *testing.T) {
+	ws := isolatedSessionsWorkspace(t)
+	seedThreeCatalogSessions(t, ws)
+
+	var stdout, stderr bytes.Buffer
+	if err := runSessionsDelete([]string{"beta", "--workspace", ws, "--json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("sessions delete beta: %v (stderr: %s)", err, stderr.String())
+	}
+	var envelope struct {
+		Deleted string `json:"deleted"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode delete JSON: %v\nraw: %s", err, stdout.String())
+	}
+	if envelope.Deleted != "beta" {
+		t.Fatalf("delete envelope = %+v, want beta", envelope)
+	}
+
+	// Without --json the success path keeps writing nothing to stdout.
+	var plainStdout bytes.Buffer
+	if err := runSessionsDelete([]string{"alpha", "--workspace", ws}, &plainStdout, &stderr); err != nil {
+		t.Fatalf("sessions delete alpha (plain): %v", err)
+	}
+	if plainStdout.Len() != 0 {
+		t.Fatalf("plain delete wrote to stdout: %s", plainStdout.String())
 	}
 }
 
