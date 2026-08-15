@@ -37,11 +37,44 @@ jobs:
       - uses: ./.github/actions/setup-linux
       - name: Verify control surface and gates
         run: make verify
-      # Master only. These gates are slow and they do not gate a merge.
-      # verifier-integration is here rather than in `make verify` because its
-      # sandbox test runs the whole repository test profile a second time.
-      - name: Invariants, race detector and sandbox profile
-        run: make invariants && make race && make verifier-integration
+
+  # Master only. These gates are slow, they do not gate a merge, and each one
+  # re-runs the whole repository test profile - so they run in separate
+  # parallel jobs rather than one job's sequential steps, one runner apiece,
+  # instead of stacking three full-suite runs on top of `make verify` on a
+  # single shared runner.
+  verify-master-invariants:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-linux
+      - name: Invariants
+        run: make invariants
+
+  verify-master-race:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-linux
+      - name: Race detector
+        run: make race
+
+  verify-master-verifier-integration:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-linux
+      - name: Verifier integration sandbox profile
+        run: make verifier-integration
 
   verify-macos:
     if: github.event_name == 'push'

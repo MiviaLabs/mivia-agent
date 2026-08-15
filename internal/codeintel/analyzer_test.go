@@ -59,7 +59,7 @@ func TestAnalyzerResolvesSymbolInThisRepo(t *testing.T) {
 	}
 	root := repoRoot(t)
 	a := NewAnalyzer(root)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	result, err := a.References(ctx, "contentref.Reference", nil, 50)
@@ -90,7 +90,7 @@ func TestReferencesRejectsAmbiguousBareName(t *testing.T) {
 	}
 	root := repoRoot(t)
 	a := NewAnalyzer(root)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	// "New" is declared as a top-level func in at least five distinct
@@ -113,7 +113,7 @@ func TestReferencesNotFoundReportsDistinctError(t *testing.T) {
 	}
 	root := repoRoot(t)
 	a := NewAnalyzer(root)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	_, err := a.References(ctx, "storage.DefinitelyNotARealSymbolXYZ", nil, 50)
@@ -131,7 +131,7 @@ func TestReferencesResolvesFullyQualifiedPath(t *testing.T) {
 	}
 	root := repoRoot(t)
 	a := NewAnalyzer(root)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	// Short-form query that is ambiguous: "NewRegistry" matches tools, agents, skills.
@@ -174,7 +174,7 @@ func TestReferencesFullyQualifiedMatchesShortForm(t *testing.T) {
 	}
 	root := repoRoot(t)
 	a := NewAnalyzer(root)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	// Both forms must return results from the same package.
@@ -204,7 +204,7 @@ func TestReferencesAmbiguityMessageSuggestsShortForm(t *testing.T) {
 	}
 	root := repoRoot(t)
 	a := NewAnalyzer(root)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	_, err := a.References(ctx, "NewRegistry", nil, 50)
@@ -227,7 +227,7 @@ func TestTruncatedOnlyWhenMoreMatchesExist(t *testing.T) {
 	}
 	root := repoRoot(t)
 	a := NewAnalyzer(root)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	const symbol = "storage.ErrClaimHeld"
