@@ -16,6 +16,7 @@ import (
 )
 
 func TestWorkflowForceResumeStopsBeforeClaimWorkWhenLockIsHeld(t *testing.T) {
+	shortenWorkflowResolutionLockWait(t)
 	rootPath := t.TempDir()
 	storePath := filepath.Join(rootPath, "context.db")
 	configPath := filepath.Join(rootPath, "config.toml")

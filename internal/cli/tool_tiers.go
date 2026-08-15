@@ -2,7 +2,9 @@ package cli
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -174,6 +176,65 @@ func promptWithDeferredIndex(prompt string, plan toolTierPlan) string {
 		return index
 	}
 	return prompt + "\n\n" + index
+}
+
+// advertisedToolSpecs computes the binding's pinned tools[] array (plan
+// tools-advertising/01): core tier then every deferred candidate, in the
+// frozen plan's registry order, truncated to tools.MaxAdvertisedTools. This is
+// the SESSION ADMISSIBLE UNION - what the model may ever be told about for
+// this binding - not the live execution registry, so it must be built from
+// base (the full pre-scope registry), never from a scoped/admitted registry.
+// Ordering here is load-bearing: OpenAI-compatible providers invalidate their
+// implicit prompt cache on any change to the tools[] array, INCLUDING a
+// reorder, so this order must stay stable for the binding's whole lifetime.
+// Returns the dropped-name count so callers can log a truncation instead of
+// silently shipping fewer tools than the plan authorizes.
+func advertisedToolSpecs(base *tools.Registry, plan toolTierPlan) ([]provider.ToolSpec, int) {
+	if base == nil {
+		return nil, 0
+	}
+	// Reserve one slot for load_tools' own schema when it will be appended
+	// below (plan.Deferred()), so core+deferred truncation leaves room for it
+	// and the FINAL wire array never exceeds tools.MaxAdvertisedTools (a
+	// prior version truncated core+deferred to the full cap and then
+	// appended load_tools on top, silently producing a 129th schema).
+	reserve := 0
+	if plan.Deferred() {
+		reserve = 1
+	}
+	names, dropped := tools.AdvertisedNames(plan.Tiers.Core, plan.Tiers.Deferred, reserve)
+	reg := tools.NewRegistry()
+	for _, name := range names {
+		if tool, ok := base.Get(name); ok {
+			reg.Register(tool)
+		}
+	}
+	specs := reg.OpenAITools()
+	if plan.Deferred() {
+		// load_tools is a privileged session tool the dispatcher registers
+		// separately (registerSessionTool) onto the EXECUTION registry, not
+		// base, so it is invisible to the lookup above. Its Name/Description/
+		// Parameters read no runtime state, so a zero-value instance is a
+		// faithful schema source for advertising purposes; every caller
+		// (attach and /agent and /model) reaches this same code path, so the
+		// tail position is identical to where the dispatcher actually
+		// registers it.
+		holder := tools.NewRegistry()
+		holder.Register(&loadToolsTool{})
+		specs = append(specs, holder.OpenAITools()...)
+	}
+	return specs, dropped
+}
+
+// pinAttachAdvertisedToolSpecs computes and pins the initial-attach binding's
+// advertised union BEFORE sess.Tools is narrowed to its core-tier execution
+// registry: the union must be built from the full pre-scope base (plan
+// tools-advertising/01), same as buildSurfaceFromBase does for /agent and
+// /model. Must be called before sess.Tools is reassigned.
+func pinAttachAdvertisedToolSpecs(sess *chat.Session, selected *agents.ResolvedAgent, plan toolTierPlan) {
+	advertised, dropped := advertisedToolSpecs(sess.Tools, plan)
+	warnAdvertisedToolsTruncated(selected, dropped)
+	sess.SetAdvertisedToolSpecs(advertised)
 }
 
 // agentNameOf is the empty-safe agent name used to key persisted admissions.

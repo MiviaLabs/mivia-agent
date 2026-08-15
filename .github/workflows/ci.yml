@@ -38,8 +38,10 @@ jobs:
       - name: Verify control surface and gates
         run: make verify
       # Master only. These gates are slow and they do not gate a merge.
-      - name: Invariants and race detector
-        run: make invariants && make race
+      # verifier-integration is here rather than in `make verify` because its
+      # sandbox test runs the whole repository test profile a second time.
+      - name: Invariants, race detector and sandbox profile
+        run: make invariants && make race && make verifier-integration
 
   verify-macos:
     if: github.event_name == 'push'

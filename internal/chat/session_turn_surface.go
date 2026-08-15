@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
@@ -29,6 +30,43 @@ func (s *Session) wireStepBoundaryAdmission(opts *agent.Options, turn *TurnOptio
 		}
 		return fmt.Sprintf("tool %q is staged for loading but is not published to the live tool surface yet. Publication happens at the step boundary and can be deferred; retry the call on your next step", name), true
 	}
+	// UnadmittedToolHandler covers the model-behavior risk that advertising
+	// the whole admissible union (plan tools-advertising/01) introduces: a
+	// deferred tool now LOOKS callable (its schema is on the wire) even
+	// before load_tools ever ran for it. Rather than a bare "not available"
+	// denial, recognize any advertised name and auto-stage it through the
+	// same load_tools machinery, so the model recovers in exactly one extra
+	// step instead of having to learn to call load_tools first. Root turns
+	// only (turn == nil): a scoped skill turn does not own the session's
+	// admission state, matching the Surface hook's own turn == nil gate.
+	opts.UnadmittedToolHandler = func(ctx context.Context, name string) (string, bool) {
+		if !s.isAdvertisedToolName(name) {
+			return "", false
+		}
+		if turn != nil {
+			return fmt.Sprintf("tool %q is authorized but not currently loaded for this scoped run; ask the root agent to load it first", name), true
+		}
+		if err := s.ChargeAdmissionAttempt(); err != nil {
+			return err.Error(), true
+		}
+		// TurnIDFromContext reads a dispatcher-stamped caller frame
+		// (runtime.ContextWithCaller) that only exists inside
+		// Dispatcher.Invoke - this call site is the "tool not found" branch
+		// in executeToolTask, which never reaches the dispatcher, so it is
+		// always (0, false) here. turnID 0 means "no owning turn" to
+		// StageToolAdmission: dropPendingAdmissionForTurn would never be able
+		// to drop this stage if the turn that requested it later errors or is
+		// superseded, pinning it forever. Read the session's own live turn id
+		// instead - correct here because this handler only ever runs
+		// synchronously inside that turn's own loop.Run call.
+		s.mu.RLock()
+		turnID := s.turnID
+		s.mu.RUnlock()
+		if _, err := s.StageToolAdmission([]string{name}, turnID); err != nil {
+			return err.Error(), true
+		}
+		return fmt.Sprintf("tool %q is authorized but was not yet loaded. It has been queued to load automatically; publication happens at the next step boundary and can be deferred - retry the call on your next step", name), true
+	}
 	opts.Surface = func() agent.Surface {
 		if turn == nil {
 			s.PublishPendingAdmissionAtStepBoundary()
@@ -36,8 +74,37 @@ func (s *Session) wireStepBoundaryAdmission(opts *agent.Options, turn *TurnOptio
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 		reg, disp := resolveTurnExecutionSurface(s.Tools, s.binding.Dispatcher, turn)
-		return agent.Surface{Registry: reg, Dispatcher: disp, ToolSpecs: reg.OpenAITools(), RemainderSpool: s.RemainderSpool}
+		// ToolSpecs advertises the session's pinned binding-lifetime snapshot
+		// (plan tools-advertising/01), NOT reg.OpenAITools(): admission
+		// widening (PublishPendingAdmissionAtStepBoundary above) and skill
+		// scoping change execution authority (reg, disp) only. Advertising the
+		// live registry here was the mid-turn cache-invalidation bug this plan
+		// fixes - a load_tools admission or a scoped skill turn must never
+		// change the wire tools[] array.
+		return agent.Surface{Registry: reg, Dispatcher: disp, ToolSpecs: s.advertisedToolSpecs, RemainderSpool: s.RemainderSpool}
 	}
+}
+
+// isAdvertisedToolName reports whether name appears in the pinned advertised
+// snapshot. It is the authority UnadmittedToolHandler uses to distinguish a
+// real (deferred-but-advertised) tool from a hallucinated name: the snapshot
+// is built from the frozen tier plan's admissible union (buildSurfaceFromBase
+// / advertisedToolSpecs), so a name outside it was never authorized for this
+// binding and must fall through to the generic denial instead of being staged.
+func (s *Session) isAdvertisedToolName(name string) bool {
+	s.mu.RLock()
+	specs := s.advertisedToolSpecs
+	s.mu.RUnlock()
+	for _, spec := range specs {
+		fn, _ := spec["function"].(map[string]any)
+		if fn == nil {
+			continue
+		}
+		if n, _ := fn["name"].(string); n == name {
+			return true
+		}
+	}
+	return false
 }
 
 // commitTurnToken returns the token a step-boundary publication re-captured

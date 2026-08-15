@@ -80,7 +80,7 @@ func buildOversizedHistory() []provider.Message {
 // run completes normally with a bounded number of provider calls.
 func TestAgentRetriesOnceAfterPromptTooLongWithCompaction(t *testing.T) {
 	history := buildOversizedHistory()
-	beforeTokens := provider.MessagesTokens(history)
+	beforeTokens := provider.MessagesTokens(history, provider.ContextAccountingProfile{})
 	if beforeTokens <= 16<<10 {
 		t.Fatalf("test history too small to exercise pruning: %d tokens", beforeTokens)
 	}
@@ -114,7 +114,7 @@ func TestAgentRetriesOnceAfterPromptTooLongWithCompaction(t *testing.T) {
 
 	// The retry must carry the compacted history: below the 16K target and
 	// strictly smaller than what the provider rejected.
-	retryTokens := provider.MessagesTokens(comp.lastReq.Messages)
+	retryTokens := provider.MessagesTokens(comp.lastReq.Messages, provider.ContextAccountingProfile{})
 	if retryTokens >= 16<<10 {
 		t.Fatalf("retry history not compacted to 16K target: %d tokens", retryTokens)
 	}

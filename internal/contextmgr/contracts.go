@@ -36,12 +36,15 @@ type PrepareInput struct {
 	// CalibrationRatio scales token estimates in the planner for
 	// heuristic drift correction. 0 means no correction.
 	CalibrationRatio float64
-	SourceRange      contextstate.SourceRange
-	Principal        contextstate.Principal
-	Revision         contextstate.Revision
-	Binding          contextstate.BindingRevision
-	WorktreeInstance contextstate.WorktreeInstance
-	Policy           contextstate.PolicySnapshot
+	// ContextAccounting carries the bound provider's declared context-billing
+	// profile through to Plan(), opaquely - see PlanInput.ContextAccounting.
+	ContextAccounting provider.ContextAccountingProfile
+	SourceRange       contextstate.SourceRange
+	Principal         contextstate.Principal
+	Revision          contextstate.Revision
+	Binding           contextstate.BindingRevision
+	WorktreeInstance  contextstate.WorktreeInstance
+	Policy            contextstate.PolicySnapshot
 }
 
 type CheckpointCandidate struct {

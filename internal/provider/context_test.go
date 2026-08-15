@@ -97,7 +97,7 @@ func TestMessagesTokens(t *testing.T) {
 		{Role: RoleUser, Content: "hi"},
 		{Role: RoleAssistant, Content: "hello"},
 	}
-	tokens := MessagesTokens(msgs)
+	tokens := MessagesTokens(msgs, ContextAccountingProfile{})
 	if tokens < 3 || tokens > 20 {
 		t.Fatalf("MessagesTokens=%d", tokens)
 	}
@@ -109,7 +109,7 @@ func TestPruneMessagesKeepTurnsUnderBudget(t *testing.T) {
 		{Role: RoleUser, Content: "hi"},
 		{Role: RoleAssistant, Content: "hello"},
 	}
-	pruned := PruneMessagesKeepTurns(msgs, 999999)
+	pruned := PruneMessagesKeepTurns(msgs, 999999, ContextAccountingProfile{})
 	if len(pruned) != len(msgs) {
 		t.Fatalf("under budget should not prune: len=%d", len(pruned))
 	}
@@ -127,7 +127,7 @@ func TestPruneMessagesKeepTurnsDropsOldTurns(t *testing.T) {
 		{Role: RoleAssistant, Content: "small response"},
 	}
 	// Budget ~70 tokens: should keep system + most recent turn(s).
-	pruned := PruneMessagesKeepTurns(msgs, 70)
+	pruned := PruneMessagesKeepTurns(msgs, 70, ContextAccountingProfile{})
 	if len(pruned) >= len(msgs) {
 		t.Fatalf("expected pruning, len=%d", len(pruned))
 	}
@@ -154,7 +154,7 @@ func TestPruneMessagesKeepTurnsNoSystem(t *testing.T) {
 		{Role: RoleAssistant, Content: bigMsg},
 		{Role: RoleUser, Content: "recent"},
 	}
-	pruned := PruneMessagesKeepTurns(msgs, 20)
+	pruned := PruneMessagesKeepTurns(msgs, 20, ContextAccountingProfile{})
 	if len(pruned) == 0 {
 		t.Fatal("expected at least 1 message")
 	}
@@ -165,7 +165,7 @@ func TestPruneMessagesKeepTurnsNoSystem(t *testing.T) {
 
 func TestPruneMessagesKeepTurnsSingleMessage(t *testing.T) {
 	msgs := []Message{{Role: RoleUser, Content: "hi"}}
-	pruned := PruneMessagesKeepTurns(msgs, 1)
+	pruned := PruneMessagesKeepTurns(msgs, 1, ContextAccountingProfile{})
 	if len(pruned) != 1 {
 		t.Fatalf("single message should not be pruned, len=%d", len(pruned))
 	}
@@ -191,7 +191,7 @@ func TestMessagesTokensWithToolCalls(t *testing.T) {
 		{Role: RoleTool, Name: "read_file", Content: "package main"},
 		{Role: RoleUser, Content: "thanks"},
 	}
-	tokens := MessagesTokens(msgs)
+	tokens := MessagesTokens(msgs, ContextAccountingProfile{})
 	if tokens < 5 {
 		t.Fatalf("expected at least 5 tokens, got %d", tokens)
 	}
@@ -216,21 +216,21 @@ func TestEstimatorRetainsPairingCompatibility(t *testing.T) {
 		t.Fatalf("repaired legacy history is not valid: %v", err)
 	}
 
-	base, err := EstimateRequestCost([]Message{{Role: RoleUser, Content: "inspect"}}, nil, 0)
+	base, err := EstimateRequestCost([]Message{{Role: RoleUser, Content: "inspect"}}, nil, 0, ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	call := toolCallMsg("call-2", "result")
 	call[0].Name = "assistant-name"
 	call[1].Name = "read_file"
-	withFields, err := EstimateRequestCost(call, []ToolSpec{{"type": "function", "function": map[string]any{"name": "read_file", "parameters": map[string]any{"type": "object"}}}}, 32)
+	withFields, err := EstimateRequestCost(call, []ToolSpec{{"type": "function", "function": map[string]any{"name": "read_file", "parameters": map[string]any{"type": "object"}}}}, 32, ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if withFields <= base {
 		t.Fatalf("request cost did not include call/schema/reserve fields: base=%d with=%d", base, withFields)
 	}
-	if got, err := RequestTokens(Request{Messages: []Message{{Role: RoleUser, Content: strings.Repeat("x", 8)}}, MaxTokens: intPtr(7)}); err != nil || got <= 7 {
+	if got, err := RequestTokens(Request{Messages: []Message{{Role: RoleUser, Content: strings.Repeat("x", 8)}}, MaxTokens: intPtr(7)}, ContextAccountingProfile{}); err != nil || got <= 7 {
 		t.Fatalf("RequestTokens=%d, err=%v; output reserve was not included", got, err)
 	}
 }
@@ -256,7 +256,7 @@ func TestPruneMessagesKeepTurnsWithToolCalls(t *testing.T) {
 	}
 
 	// Budget ~100 tokens - should drop turn 1.
-	pruned := PruneMessagesKeepTurns(msgs, 100)
+	pruned := PruneMessagesKeepTurns(msgs, 100, ContextAccountingProfile{})
 	if len(pruned) >= len(msgs) {
 		t.Fatalf("expected pruning, len=%d", len(pruned))
 	}
@@ -277,8 +277,8 @@ func TestPruneMessagesKeepTurnsEdgeCaseBudgetExact(t *testing.T) {
 		{Role: RoleAssistant, Content: "a1"},
 		{Role: RoleUser, Content: "u2"},
 	}
-	tokens := MessagesTokens(msgs)
-	pruned := PruneMessagesKeepTurns(msgs, tokens)
+	tokens := MessagesTokens(msgs, ContextAccountingProfile{})
+	pruned := PruneMessagesKeepTurns(msgs, tokens, ContextAccountingProfile{})
 	if len(pruned) != 4 {
 		t.Fatalf("exact budget should keep all, len=%d", len(pruned))
 	}
@@ -292,7 +292,7 @@ func TestPruneMessagesKeepTurns_SystemExceedsBudget(t *testing.T) {
 		{Role: RoleUser, Content: "hi"},
 	}
 	budget := 1 // artificially tiny
-	pruned := PruneMessagesKeepTurns(msgs, budget)
+	pruned := PruneMessagesKeepTurns(msgs, budget, ContextAccountingProfile{})
 	if len(pruned) == 0 {
 		t.Fatal("PruneMessagesKeepTurns returned empty - system message should always be kept")
 	}
@@ -307,7 +307,7 @@ func TestPruneMessagesKeepTurns_ZeroBudget(t *testing.T) {
 		{Role: RoleSystem, Content: "system"},
 		{Role: RoleUser, Content: "user"},
 	}
-	pruned := PruneMessagesKeepTurns(msgs, 0)
+	pruned := PruneMessagesKeepTurns(msgs, 0, ContextAccountingProfile{})
 	if len(pruned) == 0 {
 		t.Fatal("PruneMessagesKeepTurns returned empty with zero budget")
 	}
@@ -376,8 +376,8 @@ func TestPruneMessagesKeepTurnsPrunesInsideNewestTurn(t *testing.T) {
 		msgs = append(msgs, toolCallMsg(fmt.Sprintf("call_%d", i), payload)...)
 	}
 
-	pruned := PruneMessagesKeepTurns(msgs, 300)
-	if got := MessagesTokens(pruned); got > 300 {
+	pruned := PruneMessagesKeepTurns(msgs, 300, ContextAccountingProfile{})
+	if got := MessagesTokens(pruned, ContextAccountingProfile{}); got > 300 {
 		t.Fatalf("pruner left %d tokens over a 300 budget (%d messages)", got, len(pruned))
 	}
 	if pruned[0].Role != RoleSystem || pruned[1].Role != RoleUser {
@@ -409,9 +409,9 @@ func TestPruneMessagesKeepTurnsKeepsPlainAssistantBetweenDroppedExchanges(t *tes
 	// older exchanges must be dropped, but the plain reply fits and must stay.
 	budget := MessageTokens(msgs[0]) + MessageTokens(msgs[1]) + MessageTokens(msgs[4]) +
 		MessageTokens(msgs[7]) + MessageTokens(msgs[8])
-	pruned := PruneMessagesKeepTurns(msgs, budget)
+	pruned := PruneMessagesKeepTurns(msgs, budget, ContextAccountingProfile{})
 
-	if got := MessagesTokens(pruned); got > budget {
+	if got := MessagesTokens(pruned, ContextAccountingProfile{}); got > budget {
 		t.Fatalf("pruner left %d tokens over a %d budget", got, budget)
 	}
 	if pruned[0].Role != RoleSystem || pruned[1].Role != RoleUser {
@@ -452,7 +452,7 @@ func TestPruneMessagesKeepTurnsNeverSplitsToolExchanges(t *testing.T) {
 		msgs = append(msgs, toolCallMsg(fmt.Sprintf("call_%d", i), payload)...)
 	}
 
-	pruned := PruneMessagesKeepTurns(msgs, 250)
+	pruned := PruneMessagesKeepTurns(msgs, 250, ContextAccountingProfile{})
 	announced := map[string]bool{}
 	for _, m := range pruned {
 		for _, c := range m.ToolCalls {
@@ -488,9 +488,9 @@ func TestPruneMessagesKeepTurnsWireShapeStaysValid(t *testing.T) {
 		msgs = append(msgs, toolCallMsg(fmt.Sprintf("call_%d", i), payload)...)
 	}
 
-	pruned := PruneMessagesKeepTurns(msgs, 500)
-	if MessagesTokens(pruned) > 500 {
-		t.Fatalf("prompt still over budget: %d tokens", MessagesTokens(pruned))
+	pruned := PruneMessagesKeepTurns(msgs, 500, ContextAccountingProfile{})
+	if MessagesTokens(pruned, ContextAccountingProfile{}) > 500 {
+		t.Fatalf("prompt still over budget: %d tokens", MessagesTokens(pruned, ContextAccountingProfile{}))
 	}
 	// RepairToolPairing is a no-op on a healthy history; any change means the
 	// pruner emitted a shape the API would reject.
@@ -524,7 +524,7 @@ func TestEstimateMessagesPromptCostMatchesEstimatePromptCost(t *testing.T) {
 		{"type": "function", "function": map[string]any{"name": "read_file", "description": "Read a file", "parameters": map[string]any{"type": "object"}}},
 		{"type": "function", "function": map[string]any{"name": "grep", "description": "Search", "parameters": map[string]any{"type": "object"}}},
 	}
-	want, err := EstimatePromptCost(messages, specs)
+	want, err := EstimatePromptCost(messages, specs, ContextAccountingProfile{})
 	if err != nil {
 		t.Fatalf("EstimatePromptCost: %v", err)
 	}
@@ -532,10 +532,10 @@ func TestEstimateMessagesPromptCostMatchesEstimatePromptCost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EstimateToolSchemaCost: %v", err)
 	}
-	if got := EstimateMessagesPromptCost(messages, schemaCost); got != want {
+	if got := EstimateMessagesPromptCost(messages, schemaCost, ContextAccountingProfile{}); got != want {
 		t.Fatalf("hoisted cost = %d, want %d", got, want)
 	}
-	if got := EstimateMessagesPromptCost(messages, 0); got >= want {
+	if got := EstimateMessagesPromptCost(messages, 0, ContextAccountingProfile{}); got >= want {
 		t.Fatalf("zero schema cost = %d, want below the schema-charged %d", got, want)
 	}
 }
@@ -562,15 +562,15 @@ func TestPruneMessagesKeepTurnsLinearInsideTurn(t *testing.T) {
 
 	// Budget that fits the header plus exactly the newest exchange: nearly all
 	// 80,000 exchanges must be dropped.
-	header := MessagesTokens(msgs[:2])
+	header := MessagesTokens(msgs[:2], ContextAccountingProfile{})
 	newest := MessageTokens(msgs[len(msgs)-2]) + MessageTokens(msgs[len(msgs)-1])
 	budget := header + newest
 
 	start := time.Now()
-	pruned := PruneMessagesKeepTurns(msgs, budget)
+	pruned := PruneMessagesKeepTurns(msgs, budget, ContextAccountingProfile{})
 	elapsed := time.Since(start)
 
-	if got := MessagesTokens(pruned); got > budget {
+	if got := MessagesTokens(pruned, ContextAccountingProfile{}); got > budget {
 		t.Fatalf("pruner left %d tokens over a %d budget (%d messages)", got, budget, len(pruned))
 	}
 	if pruned[0].Role != RoleSystem || pruned[1].Role != RoleUser {
@@ -598,7 +598,7 @@ func TestPruneMessagesKeepTurnsLinearInsideTurn(t *testing.T) {
 		{Role: RoleUser, Content: "hi"},
 		{Role: RoleAssistant, Content: "hello"},
 	}
-	if got := PruneMessagesKeepTurns(under, 999999); len(got) != len(under) {
+	if got := PruneMessagesKeepTurns(under, 999999, ContextAccountingProfile{}); len(got) != len(under) {
 		t.Fatalf("under-budget input pruned: %d -> %d", len(under), len(got))
 	}
 
@@ -609,7 +609,7 @@ func TestPruneMessagesKeepTurnsLinearInsideTurn(t *testing.T) {
 		{Role: RoleUser, Content: string(make([]byte, 800))},
 		{Role: RoleAssistant, Content: string(make([]byte, 800))},
 	}
-	if got := PruneMessagesKeepTurns(plain, 10); len(got) != len(plain) {
+	if got := PruneMessagesKeepTurns(plain, 10, ContextAccountingProfile{}); len(got) != len(plain) {
 		t.Fatalf("tool-less turn pruned: %d -> %d", len(plain), len(got))
 	}
 }
@@ -642,11 +642,11 @@ func TestEstimatorsCountReasoningContent(t *testing.T) {
 		t.Fatalf("EstimateMessageTokens must count ReasoningContent: base=%d with=%d",
 			EstimateMessageTokens(base), EstimateMessageTokens(withReasoning))
 	}
-	baseCost, err := EstimateRequestCost([]Message{base}, nil, 0)
+	baseCost, err := EstimateRequestCost([]Message{base}, nil, 0, ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	withCost, err := EstimateRequestCost([]Message{withReasoning}, nil, 0)
+	withCost, err := EstimateRequestCost([]Message{withReasoning}, nil, 0, ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -663,7 +663,7 @@ func TestEstimatorsCountReasoningContent(t *testing.T) {
 	}
 	// Budget that fits system + newest turn but not the heavy reasoning turn.
 	budget := MessageTokens(msgs[0]) + MessageTokens(msgs[3]) + MessageTokens(msgs[4]) + 10
-	pruned := PruneMessagesKeepTurns(msgs, budget)
+	pruned := PruneMessagesKeepTurns(msgs, budget, ContextAccountingProfile{})
 	for _, m := range pruned {
 		if m.Content == "old" || (m.Content == "old-ans" && m.ReasoningContent != "") {
 			t.Fatalf("expected heavy reasoning turn pruned under budget=%d, got %+v", budget, pruned)
@@ -687,7 +687,7 @@ func TestPruneKeepsReasoningWithExchange(t *testing.T) {
 		{Role: RoleAssistant, Content: "welcome"},
 	}
 	// Generous budget: full history retained, reasoning still on the tool turn.
-	kept := PruneMessagesKeepTurns(msgs, 999999)
+	kept := PruneMessagesKeepTurns(msgs, 999999, ContextAccountingProfile{})
 	if len(kept) != len(msgs) {
 		t.Fatalf("under budget pruned unexpectedly: %d", len(kept))
 	}
@@ -706,7 +706,7 @@ func TestPruneKeepsReasoningWithExchange(t *testing.T) {
 	// Tight budget that keeps only the newest user/assistant: the whole prior
 	// exchange (including reasoning) must be gone, not half-present.
 	tight := MessageTokens(msgs[0]) + MessageTokens(msgs[4]) + MessageTokens(msgs[5]) + 5
-	pruned := PruneMessagesKeepTurns(msgs, tight)
+	pruned := PruneMessagesKeepTurns(msgs, tight, ContextAccountingProfile{})
 	for _, m := range pruned {
 		if m.ReasoningContent == "must stay with the call" {
 			t.Fatalf("pruned exchange left orphan reasoning: %+v", pruned)

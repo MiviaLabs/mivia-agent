@@ -452,6 +452,7 @@ func TestWorkflowCommandDispatchErrors(t *testing.T) {
 // settling controller), not the plain lock's opaque "lock is busy" after its
 // fixed retry budget.
 func TestWorkflowOpsCommandsLockSafety(t *testing.T) {
+	shortenWorkflowResolutionLockWait(t)
 	root, configPath, storePath, runID := newGatedApprovalFixture(t)
 	release, err := acquireWorkflowExecutionLock(storePath, runID)
 	if err != nil {

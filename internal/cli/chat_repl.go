@@ -271,6 +271,7 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	// build: the scope intersects with the registry, so its own report is
 	// always empty.
 	warnDisabledAgentTools(ctx.Selected, disabledForAgent(ctx.Selected, sess.Tools))
+	pinAttachAdvertisedToolSpecs(sess, ctx.Selected, plan)
 	sess.Tools = tieredRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions, plan, nil)
 	// Same attach-time refresh: the scoped tool surface changed the wire
 	// prefix; applyDeferredToolPrompt below republishes the prompt through

@@ -3,7 +3,16 @@ package contextmgr
 import "math"
 
 const (
-	calibrationMinRatio     = 0.5
+	// calibrationMinRatio floors the correction ratio. 0.2 (not the former
+	// 0.5) so a genuine, large overestimate - e.g. a reasoning-replay
+	// provider's history inflated by ReasoningContent the provider never
+	// actually bills - can still be corrected down instead of pinning at a
+	// floor that keeps the overestimate permanent (see
+	// ContextAccountingProfile, which fixes the estimate itself; this floor
+	// bounds the EWMA correction for whatever the estimate still misses).
+	// 0.2 keeps a floor at all: a ratio of exactly 0 would zero out every
+	// future estimate outright on one bad sample.
+	calibrationMinRatio     = 0.2
 	calibrationMaxRatio     = 3.0
 	defaultCalibrationAlpha = 0.2
 )

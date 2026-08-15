@@ -135,7 +135,7 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 		Content:   userText,
 		CreatedAt: time.Now(),
 	})
-	toolSpecs := l.Tools.OpenAITools()
+	toolSpecs := l.initialToolSpecs(opts)
 	var lastText string
 	for step := 1; ; step++ {
 		if opts.MaxSteps > 0 && step > opts.MaxSteps {
@@ -188,8 +188,18 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 // is still awaiting results would drop the call and orphan the results appended
 // afterwards: the request would stay valid (RepairToolPairing discards them)
 // but the model would silently lose the output it asked for.
+// contextAccounting returns l.Completer's declared context-billing profile
+// (provider.ContextAccountingFor's conservative zero value when the
+// Completer does not declare one), so every accounting call this loop makes
+// - pruning, budget rejection, and the calibration estimate in loop_request.go
+// - prices context the same way.
+func (l *Loop) contextAccounting() provider.ContextAccountingProfile {
+	return provider.ContextAccountingFor(l.Completer)
+}
+
 func (l *Loop) pruneHistory(opts Options, toolSpecs []provider.ToolSpec) {
-	beforeTokens := provider.MessagesTokens(l.Messages)
+	profile := l.contextAccounting()
+	beforeTokens := provider.MessagesTokens(l.Messages, profile)
 	if opts.MaxContextTokens > 0 {
 		schemaCost := 0
 		if len(toolSpecs) > 0 {
@@ -207,17 +217,17 @@ func (l *Loop) pruneHistory(opts Options, toolSpecs []provider.ToolSpec) {
 		if pass1 < 1 {
 			pass1 = 1
 		}
-		l.Messages = provider.PruneMessagesKeepTurns(l.Messages, pass1)
-		overhead := provider.EstimateMessagesPromptCost(l.Messages, 0) - provider.MessagesTokens(l.Messages)
+		l.Messages = provider.PruneMessagesKeepTurns(l.Messages, pass1, profile)
+		overhead := provider.EstimateMessagesPromptCost(l.Messages, 0, profile) - provider.MessagesTokens(l.Messages, profile)
 		target := opts.MaxContextTokens - schemaCost - overhead
 		if target < 1 {
 			target = 1
 		}
-		if provider.MessagesTokens(l.Messages) > target {
-			l.Messages = provider.PruneMessagesKeepTurns(l.Messages, target)
+		if provider.MessagesTokens(l.Messages, profile) > target {
+			l.Messages = provider.PruneMessagesKeepTurns(l.Messages, target, profile)
 		}
 	}
-	afterTokens := provider.MessagesTokens(l.Messages)
+	afterTokens := provider.MessagesTokens(l.Messages, profile)
 	if afterTokens >= beforeTokens {
 		return
 	}
@@ -242,25 +252,6 @@ func (l *Loop) pruneHistory(opts Options, toolSpecs []provider.ToolSpec) {
 // Detail=="interim" (see its comment - the TUI's own display already gets
 // live text via this same FinalWriter, not through the bus), and
 // jsonTurnEventCallback has no EventAssistant case at all.
-type teeWriter struct {
-	w    io.Writer
-	buf  strings.Builder
-	opts Options
-}
-
-func (t *teeWriter) Write(p []byte) (int, error) {
-	t.buf.Write(p)
-	if len(p) > 0 {
-		emit(t.opts, Event{Kind: EventAssistant, Content: string(p), Detail: "delta"})
-	}
-	if t.w == nil {
-		return len(p), nil
-	}
-	return t.w.Write(p)
-}
-
-func (t *teeWriter) String() string { return t.buf.String() }
-
 // stepOutcome is one agent step's result. text is the assistant prose the step
 // produced, empty when the model said nothing renderable; finishReason is the
 // upstream's own account of why it stopped, which is the only way to tell a
@@ -450,51 +441,5 @@ func (l *Loop) emitTurnUsage(opts Options, req provider.Request, resp *provider.
 	EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
 }
 
-// streamRevoker is implemented by the TUI streamBridge to clear optimistic
-// content that was streamed before tool_calls arrived.
-type streamRevoker interface {
-	RevokeStream() string
-}
-
-func revokeStreamWriter(w io.Writer) {
-	if w == nil {
-		return
-	}
-	if r, ok := w.(streamRevoker); ok {
-		_ = r.RevokeStream()
-	}
-}
-
-// modelThinkingHeartbeatInterval is the UI progress cadence while a provider
-// request is in flight. Overridable in tests.
-var modelThinkingHeartbeatInterval = 2 * time.Second
-
-// emitModelThinkingHeartbeat runs the model-thinking progress heartbeat at the
-// current package-level cadence. It exists for tests that override the interval
-// before calling; production uses emitModelThinkingHeartbeatAt so the read
-// happens before the goroutine spawns.
-func emitModelThinkingHeartbeat(ctx context.Context, opts Options) {
-	emitModelThinkingHeartbeatAt(ctx, opts, modelThinkingHeartbeatInterval)
-}
-
-// emitModelThinkingHeartbeatAt is the heartbeat loop. interval is captured by
-// the caller so the package-level override variable is never read inside the
-// goroutine (data-race-free under -race with concurrent test overrides).
-func emitModelThinkingHeartbeatAt(ctx context.Context, opts Options, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if ctx.Err() != nil {
-				return
-			}
-			emit(opts, Event{
-				Kind:   EventHeartbeat,
-				Detail: "working",
-			})
-		case <-ctx.Done():
-			return
-		}
-	}
-}
+// streamRevoker, revokeStreamWriter, teeWriter, and the model-thinking
+// heartbeat live in loop_stream.go.

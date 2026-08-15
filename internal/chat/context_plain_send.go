@@ -63,9 +63,10 @@ func (s *Session) plainTurnStreamWriter(w io.Writer, captured *strings.Builder, 
 // sendPlainLegacy streams a plain-chat turn against the pruned (non-compacting)
 // message history.
 func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w io.Writer, snapshot plainTurnSnapshot) (string, error) {
-	prepared := provider.PruneMessagesKeepTurns(snapshot.messages, snapshot.budget)
-	if snapshot.budget > 0 && provider.MessagesTokens(prepared) > snapshot.budget {
-		return "", fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(prepared), snapshot.budget)
+	profile := provider.ContextAccountingFor(snapshot.binding.Completer)
+	prepared := provider.PruneMessagesKeepTurns(snapshot.messages, snapshot.budget, profile)
+	if snapshot.budget > 0 && provider.MessagesTokens(prepared, profile) > snapshot.budget {
+		return "", fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, provider.MessagesTokens(prepared, profile), snapshot.budget)
 	}
 	// The tee captures the already-streamed bytes: on an interrupted turn
 	// ChatStream returns "" as the reply, so the writer is the only record of

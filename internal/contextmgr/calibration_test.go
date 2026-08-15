@@ -126,6 +126,23 @@ func TestCalibrationAlphaUpperBound(t *testing.T) {
 	}
 }
 
+// TestCalibrationRecoversFromLargeOverestimate pins the lowered floor
+// (calibrationMinRatio=0.2, was 0.5): a genuine estimate-vs-reported ratio of
+// 0.3 - the shape a reasoning-replay provider's inflated ReasoningContent
+// history used to produce before ContextAccountingProfile existed - must
+// survive uncorrected instead of pinning at a floor that keeps the
+// overestimate permanent.
+func TestCalibrationRecoversFromLargeOverestimate(t *testing.T) {
+	c := Calibration{Alpha: 1.0}
+	c.Update(1000, 300) // reported/estimated = 0.3
+	if c.Ratio != 0.3 {
+		t.Fatalf("Ratio = %f, want 0.3 (unclamped: 0.3 > calibrationMinRatio %f)", c.Ratio, calibrationMinRatio)
+	}
+	if c.Ratio <= calibrationMinRatio {
+		t.Fatalf("Ratio %f must be strictly above the floor %f to prove it is not pinned", c.Ratio, calibrationMinRatio)
+	}
+}
+
 func TestCalibrationDefaultAlpha(t *testing.T) {
 	// When Alpha is 0, Update should use defaultCalibrationAlpha (0.2)
 	var c Calibration

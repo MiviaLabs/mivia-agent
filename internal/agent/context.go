@@ -19,7 +19,7 @@ func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, o
 	}
 	if opts.PreparationManager == nil {
 		l.pruneHistory(opts, toolSpecs)
-		return promptBudgetErrorWithTools(l.Messages, opts.MaxContextTokens, toolSpecs)
+		return promptBudgetErrorWithTools(l.Messages, opts.MaxContextTokens, toolSpecs, l.contextAccounting())
 	}
 	input := l.buildPrepareInput(toolSpecs, opts)
 	preparation, err := opts.PreparationManager.Prepare(ctx, input)
@@ -80,6 +80,7 @@ func (l *Loop) buildPrepareInput(toolSpecs []provider.ToolSpec, opts Options) co
 	}
 	input.Tools = toolSpecs
 	input.OutputReserve = outputReserve(opts.MaxTokens)
+	input.ContextAccounting = l.contextAccounting()
 	if input.CurrentObjective == "" {
 		input.CurrentObjective = latestUserObjective(l.Messages)
 	}
@@ -217,15 +218,15 @@ func clonePreparedMessages(messages []provider.Message) []provider.Message {
 	return output
 }
 
-func promptBudgetError(messages []provider.Message, budget int) error {
-	return promptBudgetErrorWithTools(messages, budget, nil)
+func promptBudgetError(messages []provider.Message, budget int, profile provider.ContextAccountingProfile) error {
+	return promptBudgetErrorWithTools(messages, budget, nil, profile)
 }
 
-func promptBudgetErrorWithTools(messages []provider.Message, budget int, tools []provider.ToolSpec) error {
+func promptBudgetErrorWithTools(messages []provider.Message, budget int, tools []provider.ToolSpec, profile provider.ContextAccountingProfile) error {
 	if budget <= 0 {
 		return nil
 	}
-	tokens, err := provider.EstimatePromptCost(messages, tools)
+	tokens, err := provider.EstimatePromptCost(messages, tools, profile)
 	if err != nil {
 		return fmt.Errorf("%w: estimate request cost: %v", ErrPromptBudgetExceeded, err)
 	}

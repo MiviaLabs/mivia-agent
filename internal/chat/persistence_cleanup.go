@@ -63,7 +63,7 @@ func recoverOrphanedSession(dir string) bool {
 		CreatedAt:    oldest,
 		UpdatedAt:    newest,
 		TurnCount:    turnCount,
-		TokenCount:   provider.MessagesTokens(msgs),
+		TokenCount:   provider.MessagesTokens(msgs, provider.ContextAccountingProfile{}),
 		ChunkCount:   len(chunkFiles),
 		MessageCount: len(msgs),
 	}

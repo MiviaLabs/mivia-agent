@@ -48,12 +48,16 @@ func (f *fakeProviderServer) advertised() [][]string {
 	return out
 }
 
-// TestRunConfiguredChatOneShotDefersToolSchemas drives the real chat entrypoint
-// end to end - config, agent selection, workspace tools, context store,
-// dispatcher attach, one-shot turn - against a stub provider, and asserts that
-// the deferred tier reaches the wire: the request advertises the core tool and
-// load_tools, not the deferred ones.
-func TestRunConfiguredChatOneShotDefersToolSchemas(t *testing.T) {
+// TestRunConfiguredChatOneShotAdvertisesTheWholeUnion drives the real chat
+// entrypoint end to end - config, agent selection, workspace tools, context
+// store, dispatcher attach, one-shot turn - against a stub provider, and
+// asserts plan tools-advertising/01's wire contract: the request advertises
+// the core tool, load_tools, AND every deferred candidate (grep, glob) -
+// the whole admissible union is pinned on the wire from the first request,
+// not withheld until load_tools admits it. Execution authority still starts
+// narrow (that is a dispatcher-level concern, covered elsewhere); this test
+// is about what the request itself serializes.
+func TestRunConfiguredChatOneShotAdvertisesTheWholeUnion(t *testing.T) {
 	fake := &fakeProviderServer{}
 	server := httptest.NewServer(http.HandlerFunc(fake.handler))
 	t.Cleanup(server.Close)
@@ -101,8 +105,8 @@ tools_core = ["read_file"]
 		t.Fatalf("advertised = %v, want the discovery tool", first)
 	}
 	for _, deferred := range []string{"grep", "glob"} {
-		if slices.Contains(first, deferred) {
-			t.Fatalf("advertised = %v, want %q withheld", first, deferred)
+		if !slices.Contains(first, deferred) {
+			t.Fatalf("advertised = %v, want %q advertised (locked, not withheld - plan tools-advertising/01)", first, deferred)
 		}
 	}
 }

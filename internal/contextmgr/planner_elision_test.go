@@ -30,7 +30,7 @@ func elisionHistory(priorToolContent, currentToolContent string) []provider.Mess
 
 func forceCompactBudget(t *testing.T, messages []provider.Message) int {
 	t.Helper()
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestPlanDoesNotElideAtOrAfterObjective(t *testing.T) {
 func TestPlanBelowTriggerReturnsCloneWithZeroElision(t *testing.T) {
 	big := strings.Repeat("x", 3000)
 	messages := elisionHistory(big, "small")
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +432,7 @@ func TestPlanElisionKeepsToolPairingAndAfterTokensMatchEstimate(t *testing.T) {
 	if err := provider.ValidateToolPairing(plan.Messages); err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := provider.EstimatePromptCost(plan.Messages, nil)
+	fresh, err := provider.EstimatePromptCost(plan.Messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +573,7 @@ func TestPlanCompactRedactsCandidateReasoning(t *testing.T) {
 func TestPlanExactTriggerCanElide(t *testing.T) {
 	big := strings.Repeat("x", 3000)
 	messages := elisionHistory(big, "small")
-	before, err := provider.EstimatePromptCost(messages, nil)
+	before, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

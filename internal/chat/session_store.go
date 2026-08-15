@@ -120,7 +120,7 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, pr
 		CreatedAt:     createdAt,
 		UpdatedAt:     time.Now(),
 		TurnCount:     turnCount,
-		TokenCount:    provider.MessagesTokens(msgs),
+		TokenCount:    provider.MessagesTokens(msgs, provider.ContextAccountingProfile{}),
 		ChunkCount:    chunkCount,
 		MessageCount:  len(msgs),
 		Dir:           ctxDir,

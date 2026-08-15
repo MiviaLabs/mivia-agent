@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/mcp"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -153,65 +154,6 @@ type agentListRow struct {
 	Current     bool
 }
 
-// agentListRows builds ordered rows from a registry. Pure; unit-tested without TUI.
-func agentListRows(reg *agents.AgentRegistry, current string) []agentListRow {
-	if reg == nil {
-		return nil
-	}
-	current = strings.TrimSpace(current)
-	names := reg.Names()
-	out := make([]agentListRow, 0, len(names))
-	for _, name := range names {
-		a, ok := reg.Get(name)
-		if !ok {
-			continue
-		}
-		out = append(out, agentListRow{
-			Name:        a.Name,
-			Description: a.Description,
-			Current:     a.Name == current,
-		})
-	}
-	return out
-}
-
-func currentAgentName(state *agentSessionState) string {
-	if state == nil {
-		return ""
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.Selected == nil {
-		return ""
-	}
-	return state.Selected.Name
-}
-
-func formatAgentAvailable(reg *agents.AgentRegistry) string {
-	if reg == nil || reg.Len() == 0 {
-		return "(none)"
-	}
-	rows := make([]string, 0, reg.Len())
-	for _, name := range reg.Names() {
-		a, ok := reg.Get(name)
-		if ok {
-			rows = append(rows, name+"("+string(a.Provenance.Source)+")")
-		}
-	}
-	return strings.Join(rows, ", ")
-}
-
-func formatAgentSet(name string) string {
-	return "agent set to " + name
-}
-
-func formatAgentCurrent(name string, reg *agents.AgentRegistry) string {
-	if name == "" {
-		name = "(compiled default)"
-	}
-	return fmt.Sprintf("current agent=%s\nusage: /agent <name>\navailable: %s", name, formatAgentAvailable(reg))
-}
-
 // applySessionAgent switches the root agent for the idle session. busy is the
 // TUI waiting flag; active turns and switch guards are checked on sess.
 // It reuses ToolBase for re-scope and rebuilds the dispatcher like model switch.
@@ -261,6 +203,7 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 			return err
 		}
 		warnDisabledAgentTools(&selected, disabledForAgent(&selected, state.ToolBase))
+		warnAdvertisedToolsTruncated(&selected, candidate.advertisedDropped)
 	}
 	// Commit selection and every session-owned surface only after all candidate
 	// construction and validation has succeeded.
@@ -280,20 +223,26 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 	if res != nil {
 		res.SystemPrompt = prompt
 	}
-	// A new binding starts from its own core tier: admissions never carry
-	// across an /agent switch (plan tools/05 D4).
+	commitAgentSwitchSurface(sess, res, state, candidate, sel.Name, prompt, maxSteps)
+	return nil
+}
+
+// commitAgentSwitchSurface publishes a successfully built agent-switch
+// candidate and wires its admission state. A new binding starts from its own
+// core tier: admissions never carry across an /agent switch (plan tools/05
+// D4).
+func commitAgentSwitchSurface(sess *chat.Session, res *config.Resolved, state *agentSessionState, candidate *agentSurface, agentName, prompt string, maxSteps int) {
 	sess.ResetAdmissions()
-	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg, coreMemoryBlockForState(state))
+	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg, coreMemoryBlockForState(state), candidate.advertised)
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(candidate.registry))
-	recordSchemaMassLocked(sess, state, candidate.plan, nil, sel.Name, "agent_switch")
+	recordSchemaMassLocked(sess, state, candidate.plan, nil, agentName, "agent_switch")
 	if state.TierPlan.Deferred() {
 		sess.SetSurfaceWidener(newSurfaceWidener(sess, res, state))
-		sess.SetAdmissionBinding(sel.Name, state.TierPlan.Digest)
+		sess.SetAdmissionBinding(agentName, state.TierPlan.Digest)
 	} else {
 		sess.SetSurfaceWidener(nil)
 		sess.SetAdmissionBinding("", "")
 	}
-	return nil
 }
 
 func selectedAgentSettings(selected *agents.ResolvedAgent, state *agentSessionState) (string, int) {
@@ -327,6 +276,12 @@ type agentSurface struct {
 	plan         toolTierPlan
 	skillRegFull *skills.Registry
 	skillScope   agentSkillScope
+	// advertised is the binding's pinned tools[] array (plan
+	// tools-advertising/01): the session admissible union, computed once from
+	// base and plan, independent of what is currently admitted. advertisedDropped
+	// counts names truncated by tools.MaxAdvertisedTools.
+	advertised        []provider.ToolSpec
+	advertisedDropped int
 }
 
 // commitTo installs a successfully built surface's derived state. Callers hold
@@ -370,6 +325,12 @@ func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *agentSess
 	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
 		selected: state.Selected, base: base, skillReg: state.SkillRegFull,
 		plan: state.TierPlan, admitted: admitted,
+		// TryPublishAgentSurface (the admission-widening publication path
+		// this candidate feeds) never writes AdvertisedToolSpecs onto the
+		// session by design (plan tools-advertising/01: admission changes
+		// execution authority only) - computing the advertised union here
+		// would be thrown away unread on every load_tools call.
+		skipAdvertised: true,
 	})
 }
 
@@ -383,6 +344,13 @@ type surfaceBuildRequest struct {
 	plan     toolTierPlan
 	admitted []string
 	binding  *chat.ModelBinding
+	// skipAdvertised skips the advertised-union computation for a build whose
+	// caller never applies agentSurface.advertised to the session (currently
+	// only buildWidenedWith: TryPublishAgentSurface never writes
+	// AdvertisedToolSpecs, so computing it there was pure wasted work on the
+	// admission-widening hot path - up to MaxAdvertisedTools schema
+	// constructions thrown away on every load_tools call).
+	skipAdvertised bool
 }
 
 func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agentSessionState, req surfaceBuildRequest) (*agentSurface, error) {
@@ -415,13 +383,26 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}
+	// The advertised union is computed from base (the full pre-scope
+	// registry) and the frozen plan, NOT from registry: registry is scoped to
+	// core-plus-admitted execution authority, while the advertised snapshot
+	// must cover the whole admissible union regardless of what has been
+	// admitted so far (plan tools-advertising/01). Skipped entirely when the
+	// caller (buildWidenedWith) never applies it to the session.
+	var advertised []provider.ToolSpec
+	var advertisedDropped int
+	if !req.skipAdvertised {
+		advertised, advertisedDropped = advertisedToolSpecs(base, plan)
+	}
 	return &agentSurface{
-		registry:     registry,
-		dispatcher:   dispatcher,
-		skillReg:     filterSkillsForScope(skillReg, skillScope),
-		plan:         plan,
-		skillRegFull: skillReg,
-		skillScope:   skillScope,
+		registry:          registry,
+		dispatcher:        dispatcher,
+		skillReg:          filterSkillsForScope(skillReg, skillScope),
+		plan:              plan,
+		skillRegFull:      skillReg,
+		skillScope:        skillScope,
+		advertised:        advertised,
+		advertisedDropped: advertisedDropped,
 	}, nil
 }
 

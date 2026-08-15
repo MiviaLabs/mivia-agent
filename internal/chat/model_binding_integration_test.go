@@ -64,8 +64,8 @@ func TestIntegrationPlainTurnUsesPreparedPromptSnapshot(t *testing.T) {
 		t.Fatalf("provider requests = %d, want 1", len(comp.requests))
 	}
 	req := comp.requests[0]
-	if provider.MessagesTokens(req.Messages) > s.PromptBudget() {
-		t.Fatalf("request tokens = %d, budget = %d", provider.MessagesTokens(req.Messages), s.PromptBudget())
+	if provider.MessagesTokens(req.Messages, provider.ContextAccountingProfile{}) > s.PromptBudget() {
+		t.Fatalf("request tokens = %d, budget = %d", provider.MessagesTokens(req.Messages, provider.ContextAccountingProfile{}), s.PromptBudget())
 	}
 	for _, message := range req.Messages {
 		if strings.Contains(message.Content, "old") {
@@ -112,7 +112,7 @@ func TestIntegrationAgentPromptBudgetDoesNotDoubleChargeOutputReserve(t *testing
 	if request.MaxTokens == nil || *request.MaxTokens != 800 {
 		t.Fatalf("request max tokens = %#v, want 800", request.MaxTokens)
 	}
-	total, err := provider.RequestTokens(request)
+	total, err := provider.RequestTokens(request, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -121,42 +122,43 @@ func TestPublishAgentSurfaceEmitsPrefixResetOnAgentSwitch(t *testing.T) {
 	}
 }
 
-// TestPublishAgentSurfaceEmitsPrefixResetOnToolAdmission pins that a surface
-// publication with a widened registry emits exactly one event naming the
-// tool-admission category (plus tools), with no prompt category because the
-// prompt is unchanged.
-func TestPublishAgentSurfaceEmitsPrefixResetOnToolAdmission(t *testing.T) {
+// TestToolAdmissionPublicationLeavesThePrefixIdentityUnchanged pins the core
+// invariant of plan tools-advertising/01: TryPublishAgentSurface (the
+// admission-widening path load_tools and its step-boundary publication use)
+// changes execution authority (Registry, Dispatcher) but never
+// AdvertisedToolSpecs. The prefix identity's tool digest is derived from the
+// pinned advertised snapshot, not the live registry, so widening the
+// execution registry alone must emit NO reset - a mid-turn load_tools
+// admission must never change the wire tools[] array, or the provider's
+// implicit prompt-cache prefix would invalidate from token 0 on every
+// admission.
+func TestToolAdmissionPublicationLeavesThePrefixIdentityUnchanged(t *testing.T) {
 	s := prefixResetSession(t)
 	collect, _ := prefixResetSubscriber(t, s)
 
 	core := tools.NewRegistry()
 	core.Register(fixedBodyTool{name: "read_file"})
-	if !s.TryPublishAgentSurface(AgentSurfacePublication{Prompt: "p", Registry: core}) {
-		t.Fatal("core publication refused")
-	}
+	// Only PublishAgentSurface (attach / /agent / /model) may pin a snapshot;
+	// establish the baseline through it, exactly like production does.
+	s.PublishAgentSurface("p", 0, core, nil, nil, "", core.OpenAITools())
 	_ = collect() // drain the baseline event
+	before := s.AdvertisedToolSpecs()
 
 	wider := tools.NewRegistry()
 	wider.Register(fixedBodyTool{name: "read_file"})
 	wider.Register(fixedBodyTool{name: "grep"})
+	// A real admission-widening call never sets AdvertisedToolSpecs - only
+	// PublishAgentSurface (attach / /agent / /model) may pin a new snapshot.
 	if !s.TryPublishAgentSurface(AgentSurfacePublication{Prompt: "p", Registry: wider}) {
 		t.Fatal("tool-admission publication refused")
 	}
 	got := collect()
-	if len(got) != 1 {
-		t.Fatalf("reset events = %d, want exactly 1", len(got))
+	if len(got) != 0 {
+		t.Fatalf("reset events = %d, want 0: admission publication must not change the advertised tools[] array", len(got))
 	}
-	ev := got[0].PrefixReset
-	if ev == nil {
-		t.Fatal("bus event carried no typed payload")
-	}
-	if !containsCategory(ev.Categories, "tools") || !containsCategory(ev.Categories, "tool_admission") {
-		t.Fatalf("categories = %v, want tools + tool_admission", ev.Categories)
-	}
-	for _, forbidden := range []string{"model", "reasoning", "system_prompt", "agent_switch"} {
-		if containsCategory(ev.Categories, forbidden) {
-			t.Fatalf("tool admission named an unrelated category %q in %v", forbidden, ev.Categories)
-		}
+	after := s.AdvertisedToolSpecs()
+	if fmt.Sprintf("%v", before) != fmt.Sprintf("%v", after) {
+		t.Fatalf("advertised snapshot changed across admission: before=%v after=%v", before, after)
 	}
 }
 
@@ -258,7 +260,7 @@ func TestPublishAgentSurfaceRecapturesIdentity(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	reg.Register(fixedBodyTool{name: "read_file"})
-	s.PublishAgentSurface("you are the NEW agent", 4, reg, nil, nil, "")
+	s.PublishAgentSurface("you are the NEW agent", 4, reg, nil, nil, "", reg.OpenAITools())
 	got := collect()
 	if len(got) != 1 || got[0].PrefixReset == nil {
 		t.Fatalf("PublishAgentSurface events = %d, want exactly 1 typed reset", len(got))
@@ -267,7 +269,10 @@ func TestPublishAgentSurfaceRecapturesIdentity(t *testing.T) {
 		t.Fatalf("categories = %v, want system_prompt + agent_switch", got[0].PrefixReset.Categories)
 	}
 
-	// A pure tool admission right after must NOT re-report the prompt.
+	// A pure tool admission right after must NOT re-report the prompt, AND
+	// (plan tools-advertising/01) must emit no reset at all: it never touches
+	// AdvertisedToolSpecs, so the wire tools[] array - and therefore the
+	// prefix identity - is unchanged by construction.
 	wider := tools.NewRegistry()
 	wider.Register(fixedBodyTool{name: "read_file"})
 	wider.Register(fixedBodyTool{name: "grep"})
@@ -275,16 +280,8 @@ func TestPublishAgentSurfaceRecapturesIdentity(t *testing.T) {
 		t.Fatal("tool admission refused")
 	}
 	got = collect()
-	if len(got) != 1 || got[0].PrefixReset == nil {
-		t.Fatalf("tool admission events = %d, want exactly 1", len(got))
-	}
-	for _, forbidden := range []string{"system_prompt", "agent_switch"} {
-		if containsCategory(got[0].PrefixReset.Categories, forbidden) {
-			t.Fatalf("pure admission re-reported %q from the stale cache: %v", forbidden, got[0].PrefixReset.Categories)
-		}
-	}
-	if !containsCategory(got[0].PrefixReset.Categories, "tool_admission") {
-		t.Fatalf("categories = %v, want tool_admission", got[0].PrefixReset.Categories)
+	if len(got) != 0 {
+		t.Fatalf("tool admission events = %d, want 0: admission must not change the pinned advertised snapshot", len(got))
 	}
 }
 
@@ -381,6 +378,11 @@ func TestRefreshPrefixIdentityAfterToolSurfaceWrite(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(fixedBodyTool{name: "read_file"})
 	s.Tools = reg
+	// Mirrors the real attach path (scopeAttachedToolSurface): the advertised
+	// snapshot is pinned alongside the direct registry write, since
+	// RefreshPrefixIdentity reads the pinned snapshot, not the live registry
+	// (plan tools-advertising/01).
+	s.SetAdvertisedToolSpecs(reg.OpenAITools())
 	s.RefreshPrefixIdentity()
 	got := collect()
 	if len(got) != 1 || got[0].PrefixReset == nil || !containsCategory(got[0].PrefixReset.Categories, "tools") {

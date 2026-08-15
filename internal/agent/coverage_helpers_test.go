@@ -42,10 +42,10 @@ func TestCoverageHelpersContextAndTruncate(t *testing.T) {
 		t.Fatal("ordinary error was treated as interrupted")
 	}
 
-	if err := promptBudgetError(nil, 0); err != nil {
+	if err := promptBudgetError(nil, 0, provider.ContextAccountingProfile{}); err != nil {
 		t.Fatalf("unlimited budget error = %v", err)
 	}
-	if err := promptBudgetError([]provider.Message{{Role: provider.RoleUser, Content: "token budget"}}, 1); !errors.Is(err, ErrPromptBudgetExceeded) {
+	if err := promptBudgetError([]provider.Message{{Role: provider.RoleUser, Content: "token budget"}}, 1, provider.ContextAccountingProfile{}); !errors.Is(err, ErrPromptBudgetExceeded) {
 		t.Fatalf("small budget error = %v, want ErrPromptBudgetExceeded", err)
 	}
 }

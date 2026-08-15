@@ -78,6 +78,7 @@ func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 		return chat.ModelBinding{}, err
 	}
 	binding.Registry = built.registry
+	binding.AdvertisedToolSpecs = built.advertised
 	binding.Dispatcher = built.dispatcher
 	if built.skillReg != nil {
 		binding.SkillRegistry = built.skillReg

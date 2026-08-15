@@ -43,14 +43,14 @@ func TestPrepareStepPrunesToSchemaAwareBudget(t *testing.T) {
 		{Role: provider.RoleTool, Content: "result", ToolCallID: "c1"},
 		{Role: provider.RoleUser, Content: "continue"},
 	}
-	contentTokens := provider.MessagesTokens(msgs)
+	contentTokens := provider.MessagesTokens(msgs, provider.ContextAccountingProfile{})
 	budget := contentTokens + schemaCost/2
 
 	l := &Loop{Messages: append([]provider.Message(nil), msgs...)}
 	if err := l.prepareStep(context.Background(), toolSpecs, Options{MaxContextTokens: budget}); err != nil {
 		t.Fatalf("prepareStep must prune to a schema-aware budget, got: %v", err)
 	}
-	got, err := provider.EstimatePromptCost(l.Messages, toolSpecs)
+	got, err := provider.EstimatePromptCost(l.Messages, toolSpecs, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -62,7 +62,7 @@ func (s *Session) capturePrefixIdentityLocked() PrefixIdentity {
 	// coincides with the model default. The offset never touches
 	// binding.ModelGeneration, so fencing, context-state binding revisions,
 	// and surface-generation checks are unaffected.
-	return PrefixIdentity{ProviderName: s.binding.ProviderName, Model: s.binding.Model, ModelGeneration: s.binding.ModelGeneration + s.prefixGeneration, AgentSurfaceGeneration: s.binding.AgentSurfaceGeneration, ReasoningLevel: string(s.effectiveReasoningLocked()), ReasoningDialect: s.reasoningDialectLocked(), HasTemperature: s.Temperature != nil, Temperature: temperatureValue(s.Temperature), ToolSchemaDigest: toolSchemaDigest(s.Tools), SystemPromptDigest: systemPromptDigest(s.SystemPrompt), MemoryDigest: systemPromptDigest(s.memoryContext)}
+	return PrefixIdentity{ProviderName: s.binding.ProviderName, Model: s.binding.Model, ModelGeneration: s.binding.ModelGeneration + s.prefixGeneration, AgentSurfaceGeneration: s.binding.AgentSurfaceGeneration, ReasoningLevel: string(s.effectiveReasoningLocked()), ReasoningDialect: s.reasoningDialectLocked(), HasTemperature: s.Temperature != nil, Temperature: temperatureValue(s.Temperature), ToolSchemaDigest: toolSchemaDigest(s.advertisedToolSpecs), SystemPromptDigest: systemPromptDigest(s.SystemPrompt), MemoryDigest: systemPromptDigest(s.memoryContext)}
 }
 
 // reasoningDialectLocked resolves the wire dialect the effective level will

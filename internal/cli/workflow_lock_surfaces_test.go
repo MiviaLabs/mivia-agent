@@ -18,6 +18,7 @@ import (
 // resume on the parked fixture re-drives the controller, which is heavy and
 // would attempt agent execution).
 func TestWorkflowApproveRejectDeleteCleanupResumeUseBoundedLock(t *testing.T) {
+	shortenWorkflowResolutionLockWait(t)
 	root, configPath, storePath, runID := newGatedApprovalFixture(t)
 	hold, err := acquireWorkflowExecutionLock(storePath, runID)
 	if err != nil {

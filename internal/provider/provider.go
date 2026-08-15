@@ -120,6 +120,27 @@ type Completer interface {
 	ChatTurn(ctx context.Context, req Request) (*Response, error)
 }
 
+// ContextAccountingAware is an optional Completer capability: a client that
+// knows how its provider bills context (see ContextAccountingProfile). It is
+// a separate interface, not a Completer method, so the many test fakes that
+// implement Completer without it keep compiling; ContextAccountingFor below
+// treats a Completer that does not implement it exactly like the conservative
+// zero-value profile.
+type ContextAccountingAware interface {
+	ContextAccounting() ContextAccountingProfile
+}
+
+// ContextAccountingFor returns c's declared context-billing profile, or the
+// conservative zero-value profile (bill everything) when c is nil or does
+// not implement ContextAccountingAware.
+func ContextAccountingFor(c Completer) ContextAccountingProfile {
+	aware, ok := c.(ContextAccountingAware)
+	if !ok {
+		return ContextAccountingProfile{}
+	}
+	return aware.ContextAccounting()
+}
+
 // Options for constructing a completer from resolved config.
 type Options struct {
 	Name        string

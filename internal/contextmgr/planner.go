@@ -24,9 +24,20 @@ const (
 // Spool is nil there are no side effects and output is byte-identical to
 // before; when set, elision spools bytes through that seam only.
 type PlanInput struct {
-	Messages         []provider.Message
-	Budget           int
-	Tools            []provider.ToolSpec
+	Messages []provider.Message
+	Budget   int
+	Tools    []provider.ToolSpec
+	// OutputReserve is validated (must not be negative) and folded into the
+	// idempotency-key fingerprint (planIdempotencyKey) - it is NOT subtracted
+	// from Budget anywhere in the trigger/target math below. Budget already
+	// excludes the reserved completion allowance (callers derive it from
+	// config.EffectivePromptTokens, which does the subtraction once, upstream
+	// of the planner). Using OutputReserve again here would double-subtract
+	// the same reserve. If a future caller needs the planner itself to
+	// account for an output reserve, pass a Budget that has NOT already
+	// excluded it and remove this comment along with the double-subtraction
+	// it warns against - do not add a second, silent subtraction beside this
+	// one.
 	OutputReserve    int
 	Force            bool
 	CurrentObjective string
@@ -50,6 +61,13 @@ type PlanInput struct {
 	// CalibrationRatio scales token estimates to correct for heuristic drift.
 	// 0 means use 1.0 (no correction). Should come from a Calibration.Ratio.
 	CalibrationRatio float64
+	// ContextAccounting carries the bound provider's declared context-billing
+	// profile (provider.ContextAccountingProfile) opaquely: the planner never
+	// interprets its fields itself, only passes it to the provider estimators
+	// it already calls. The zero value is the conservative "bill everything"
+	// default, so a caller that leaves this unset behaves exactly as before
+	// the field existed.
+	ContextAccounting provider.ContextAccountingProfile
 	// Spool: nil = elision mints no refs (plain notices), keeping the planner free of storage side effects.
 	Spool *remainder.Spool
 	// Principal: the session principal that receives the remainder grant when Spool is set.
@@ -123,7 +141,9 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
-	before := applyCalibration(provider.EstimateMessagesPromptCost(input.Messages, schemaCost), input.CalibrationRatio)
+	before := applyCalibration(provider.EstimateMessagesPromptCost(input.Messages, schemaCost, input.ContextAccounting), input.CalibrationRatio)
+	// Percentages of Budget alone - see PlanInput.OutputReserve for why it is
+	// not subtracted here too.
 	trigger := percentFloor(input.Budget, 4, 5)
 	target := percentFloor(input.Budget, 1, 2)
 	result := PlanResult{
@@ -144,8 +164,8 @@ func invalidPlan(field, reason string) error {
 	return fmt.Errorf("%w: planner %s: %s", contextstate.ErrInvalidDTO, field, reason)
 }
 
-func promptOverflow(after, budget int, objective provider.Message, schemaCost int, ratio float64) error {
-	objectiveCost := applyCalibration(provider.EstimateMessagesPromptCost([]provider.Message{objective}, schemaCost), ratio)
+func promptOverflow(after, budget int, objective provider.Message, schemaCost int, ratio float64, profile provider.ContextAccountingProfile) error {
+	objectiveCost := applyCalibration(provider.EstimateMessagesPromptCost([]provider.Message{objective}, schemaCost, profile), ratio)
 	if objectiveCost > budget {
 		return fmt.Errorf("%w: current objective cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, objectiveCost, budget)
 	}
@@ -178,9 +198,9 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	for index := range mandatory {
 		selected[index] = struct{}{}
 	}
-	selectedCost := calibratedCost(input.Messages, selected, schemaCost, input.CalibrationRatio)
+	selectedCost := calibratedCost(input.Messages, selected, schemaCost, input.CalibrationRatio, input.ContextAccounting)
 	if selectedCost > input.Budget {
-		return nil, promptOverflow(selectedCost, input.Budget, objective, schemaCost, input.CalibrationRatio)
+		return nil, promptOverflow(selectedCost, input.Budget, objective, schemaCost, input.CalibrationRatio, input.ContextAccounting)
 	}
 	tailLimit := input.RecentTail
 	if tailLimit == 0 {
@@ -209,7 +229,7 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 		// adding this unit rather than re-estimating the entire selection.
 		unitTokens := 0
 		for _, index := range unit {
-			unitTokens += provider.EstimateMessageTokens(input.Messages[index])
+			unitTokens += provider.EstimateMessageTokensAt(input.Messages, index, input.ContextAccounting)
 		}
 		candidateCost := runningCost + applyCalibration(unitTokens, input.CalibrationRatio)
 		if candidateCost > target {
@@ -278,8 +298,8 @@ func unitSelected(unit messageUnit, selected map[int]struct{}) bool {
 	return false
 }
 
-func calibratedCost(messages []provider.Message, selected map[int]struct{}, schemaCost int, ratio float64) int {
-	return applyCalibration(provider.EstimateMessagesPromptCost(messagesFromIndexes(messages, selected), schemaCost), ratio)
+func calibratedCost(messages []provider.Message, selected map[int]struct{}, schemaCost int, ratio float64, profile provider.ContextAccountingProfile) int {
+	return applyCalibration(provider.EstimateMessagesPromptCost(messagesFromIndexes(messages, selected), schemaCost, profile), ratio)
 }
 
 func messagesFromIndexes(messages []provider.Message, selected map[int]struct{}) []provider.Message {

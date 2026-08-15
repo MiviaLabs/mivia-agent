@@ -117,6 +117,13 @@ type Session struct {
 	// admittedTools, pendingAdmission and the admission counters are the
 	// deferred-tool-loading state for the CURRENT agent binding (plan
 	// tools/05). ResetAdmissions clears them on an /agent switch.
+	// advertisedToolSpecs is the binding-lifetime pinned tools[] array (plan
+	// tools-advertising/01). Only PublishAgentSurface (attach / /agent /
+	// /model) writes it; admission publication (TryPublishAgentSurface)
+	// changes execution authority (Tools, Dispatcher) only, never this field,
+	// so a provider's implicit prompt-cache prefix survives a mid-turn
+	// load_tools admission.
+	advertisedToolSpecs   []provider.ToolSpec
 	admittedTools         []string
 	pendingAdmission      *AdmissionStage
 	admissionPublications int
@@ -355,6 +362,11 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		FinalWriter: w,
 		OnEvent:     snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
 		RequireFinalText: true,
+		// Step 1 has no Surface hook call (applySurfaceHook skips it), so the
+		// turn's very first request must already carry the pinned snapshot;
+		// safe to read fresh here since an active turn blocks /agent and
+		// /model from republishing it mid-turn (BeginSurfaceSwitch).
+		AdvertisedToolSpecs: s.AdvertisedToolSpecs(),
 	}
 	if snapshot.context.manager != nil {
 		input := prepareInputForContext(snapshot.messages, snapshot.contextBudget, snapshot.maxTokens, snapshot.binding, snapshot.context.principal, snapshot.context.policy, snapshot.context.worktree)

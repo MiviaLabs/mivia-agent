@@ -30,7 +30,7 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	// No budget re-check here: retainMessages already rejects a mandatory set
 	// that exceeds the budget, and everything it adds after that is capped at
 	// target (half the budget).
-	after := applyCalibration(provider.EstimateMessagesPromptCost(retained, schemaCost), input.CalibrationRatio)
+	after := applyCalibration(provider.EstimateMessagesPromptCost(retained, schemaCost, input.ContextAccounting), input.CalibrationRatio)
 	key, err := planIdempotencyKey(input, rng, target, retained)
 	if err != nil {
 		return PlanResult{}, err
@@ -117,7 +117,7 @@ var (
 )
 
 // reasoningElisionMarker replaces stale assistant ReasoningContent on the
-// compaction path. The marker must NOT be the empty string: DeepSeek's
+// compaction path. The marker must NOT be the empty string: a provider's
 // documented-400 repair (provider.dropReasoningLessToolExchanges, active when
 // RejectReasoningLessToolTurns is set) wire-drops a non-terminal assistant
 // tool-call turn with empty reasoning TOGETHER with its tool results. A

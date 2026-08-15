@@ -48,7 +48,7 @@ func managerDefaultsPrincipal(t *testing.T) (contextstate.Principal, contextstat
 func TestStructuralPreparationHonorsRecentTailDefault(t *testing.T) {
 	principal, binding := managerDefaultsPrincipal(t)
 	messages := managerDefaultsHistory()
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestStructuralPreparationHonorsRecentTailDefault(t *testing.T) {
 func TestStructuralPreparationOutputReserveChangesIdempotencyKey(t *testing.T) {
 	principal, binding := managerDefaultsPrincipal(t)
 	messages := managerDefaultsHistory()
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

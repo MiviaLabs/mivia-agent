@@ -27,7 +27,12 @@ type ModelBinding struct {
 	// the session would advertise tools from the previous generation that the
 	// live dispatcher cannot invoke. Nil leaves the session surface untouched,
 	// which is what a binding that reuses the current dispatcher wants.
-	Registry              *tools.Registry
+	Registry *tools.Registry
+	// AdvertisedToolSpecs is this generation's pinned tools[] array (plan
+	// tools-advertising/01), published onto the session alongside Registry.
+	// Nil Registry means "session surface untouched" (a generation clone with
+	// no captured agent surface); AdvertisedToolSpecs follows the same rule.
+	AdvertisedToolSpecs   []provider.ToolSpec
 	Profile               config.ModelSpec
 	RequestedPromptTokens int
 	PromptBudgetTokens    int
@@ -418,6 +423,7 @@ func (s *Session) publishBindingLocked(binding ModelBinding) ModelBinding {
 	// dispatcher never registered (INV-CE-05-A).
 	if binding.Registry != nil {
 		s.Tools = binding.Registry
+		s.advertisedToolSpecs = binding.AdvertisedToolSpecs
 	}
 	s.model = binding.Model
 	s.MaxContextTokens = binding.PromptBudgetTokens

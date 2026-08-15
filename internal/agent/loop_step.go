@@ -7,6 +7,18 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
+// initialToolSpecs is the turn's step-1 advertised array, before any
+// applySurfaceHook call (which is skipped for step 1). A host-pinned snapshot
+// (plan tools-advertising/01) takes over the whole turn; without one, fall
+// back to the live registry (today's behavior - subagent and workflow-engine
+// loops).
+func (l *Loop) initialToolSpecs(opts Options) []provider.ToolSpec {
+	if opts.AdvertisedToolSpecs != nil {
+		return opts.AdvertisedToolSpecs
+	}
+	return l.Tools.OpenAITools()
+}
+
 // applySurfaceHook applies the host's per-step surface at the top of every
 // step after the first. Non-nil fields replace this step's registry,
 // dispatcher, specs, and spool; the host supplies them from one consistent

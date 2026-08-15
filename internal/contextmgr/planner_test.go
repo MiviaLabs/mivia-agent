@@ -14,7 +14,7 @@ func TestPlanThresholdAndTarget(t *testing.T) {
 		{Role: provider.RoleSystem, Content: "sys"},
 		{Role: provider.RoleUser, Content: "objective"},
 	}
-	before, err := provider.EstimateRequestCost(messages, nil, 0)
+	before, err := provider.EstimateRequestCost(messages, nil, 0, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestPlanForceCompactsBelowThreshold(t *testing.T) {
 		{Role: provider.RoleUser, Content: "current objective"},
 		{Role: provider.RoleAssistant, Content: "older answer"},
 	}
-	budget, err := provider.EstimateRequestCost(messages, nil, 0)
+	budget, err := provider.EstimateRequestCost(messages, nil, 0, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestPlanRejectsOversizedCurrentObjectiveLocally(t *testing.T) {
 
 func TestPlanDoesNotChargeOutputReserveAgainstPromptBudget(t *testing.T) {
 	messages := []provider.Message{{Role: provider.RoleUser, Content: "objective"}}
-	promptCost, err := provider.EstimateRequestCost(messages, nil, 0)
+	promptCost, err := provider.EstimateRequestCost(messages, nil, 0, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestPlanCalibrationScalesEstimates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	est, _ := provider.EstimatePromptCost(input.Messages, nil)
+	est, _ := provider.EstimatePromptCost(input.Messages, nil, provider.ContextAccountingProfile{})
 	if plan.BeforeTokens != 2*est {
 		t.Fatalf("ratio=2.0: BeforeTokens=%d, want 2*%d=%d", plan.BeforeTokens, est, 2*est)
 	}
@@ -237,7 +237,7 @@ func TestPlanCalibrationDefaultZeroIsUnity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	est, _ := provider.EstimatePromptCost(input.Messages, nil)
+	est, _ := provider.EstimatePromptCost(input.Messages, nil, provider.ContextAccountingProfile{})
 	if plan.BeforeTokens != est {
 		t.Fatalf("ratio=0 (unity): BeforeTokens=%d, want estimate=%d", plan.BeforeTokens, est)
 	}
@@ -250,7 +250,7 @@ func TestPlanCalibrationTriggersCompactionEarlier(t *testing.T) {
 		{Role: provider.RoleSystem, Content: "system"},
 		{Role: provider.RoleUser, Content: content},
 	}
-	est, _ := provider.EstimatePromptCost(msgs, nil)
+	est, _ := provider.EstimatePromptCost(msgs, nil, provider.ContextAccountingProfile{})
 	// Set budget such that at ratio=1.0, est < 80%*budget (no compaction)
 	// but at ratio=2.0, 2*est >= 80%*budget (compaction triggers).
 	// trigger = floor(budget * 4/5)
@@ -315,7 +315,7 @@ func TestPlanOverflowEvenWithObjective(t *testing.T) {
 
 func TestPlanCalibrationOverflow(t *testing.T) {
 	msgs := []provider.Message{{Role: "user", Content: "hi"}}
-	est, _ := provider.EstimateRequestCost(msgs, nil, 0)
+	est, _ := provider.EstimateRequestCost(msgs, nil, 0, provider.ContextAccountingProfile{})
 	// Budget is large enough at ratio=1.0 but overflows at ratio=10.0
 	budget := est * 3
 	input := PlanInput{
@@ -331,7 +331,7 @@ func TestPlanCalibrationOverflow(t *testing.T) {
 
 func TestPlanToolMarshalError(t *testing.T) {
 	msgs := []provider.Message{{Role: "user", Content: "hi"}}
-	est, _ := provider.EstimateRequestCost(msgs, nil, 0)
+	est, _ := provider.EstimateRequestCost(msgs, nil, 0, provider.ContextAccountingProfile{})
 	budget := est * 3
 	ch := make(chan int)
 	tools := []provider.ToolSpec{{"type": "function", "function": map[string]any{"name": "bad", "params": ch}}}
@@ -349,18 +349,18 @@ func TestPlanToolMarshalError(t *testing.T) {
 func TestCalibratedCostAddsTheHoistedSchemaCost(t *testing.T) {
 	msgs := []provider.Message{{Role: "user", Content: "hi"}}
 	selected := map[int]struct{}{0: {}}
-	base := calibratedCost(msgs, selected, 0, 1.0)
-	if got := calibratedCost(msgs, selected, 500, 1.0); got != base+500 {
+	base := calibratedCost(msgs, selected, 0, 1.0, provider.ContextAccountingProfile{})
+	if got := calibratedCost(msgs, selected, 500, 1.0, provider.ContextAccountingProfile{}); got != base+500 {
 		t.Fatalf("cost = %d, want %d (base %d + hoisted schema charge)", got, base+500, base)
 	}
-	if got := calibratedCost(msgs, selected, 0, 2.0); got != base*2 {
+	if got := calibratedCost(msgs, selected, 0, 2.0, provider.ContextAccountingProfile{}); got != base*2 {
 		t.Fatalf("calibrated cost = %d, want %d", got, base*2)
 	}
 }
 
 func TestPromptOverflow(t *testing.T) {
 	msg := provider.Message{Role: "user", Content: "hi"}
-	err := promptOverflow(100, 50, msg, 0, 1.0)
+	err := promptOverflow(100, 50, msg, 0, 1.0, provider.ContextAccountingProfile{})
 	if err == nil {
 		t.Fatal("expected error")
 	}

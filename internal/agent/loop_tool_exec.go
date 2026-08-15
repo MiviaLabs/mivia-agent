@@ -17,6 +17,12 @@ func executeToolTask(idx int, task *toolTask, reg *tools.Registry, scheduler *to
 				return
 			}
 		}
+		if opts.UnadmittedToolHandler != nil {
+			if msg, ok := opts.UnadmittedToolHandler(task.callCtx, task.call.Function.Name); ok {
+				failToolTask(idx, task, opts, results, finished, fmt.Errorf("%s", msg))
+				return
+			}
+		}
 		failToolTask(idx, task, opts, results, finished, fmt.Errorf("tool %q is not available to this agent", task.call.Function.Name))
 		return
 	}

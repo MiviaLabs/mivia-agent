@@ -287,6 +287,53 @@ def test_coverage_profile_run_disables_the_test_cache() -> None:
     assert '"-count=1"' in source, "coverage profile run must pass -count=1 to bypass the test cache"
 
 
+def test_supplied_profile_is_used_instead_of_running_the_suite() -> None:
+    """`make verify` runs the instrumented suite once and shares the profile.
+
+    The proof has to distinguish "reused the profile" from "ran the suite and
+    got the same answer", so the fixture is rigged to disagree: the change is
+    genuinely uncovered (the suite would fail it, as
+    test_uncovered_changed_line_fails_staged pins), while the supplied profile
+    reports the same lines covered. Passing therefore means the supplied
+    profile was read and no suite run happened.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        add_uncovered_function(root)
+        git("add", "-A", cwd=root)
+
+        lib = (root / "pkg" / "lib.go").read_text(encoding="utf-8").splitlines()
+        start = next(i for i, l in enumerate(lib, 1) if l.startswith("func Uncovered"))
+        profile = root / "shared.out"
+        profile.write_text(
+            "mode: set\n"
+            f"fixturemod/pkg/lib.go:{start}.24,{start + 2}.2 1 1\n",
+            encoding="utf-8",
+        )
+
+        proc = run_script(["--staged", "--profile", str(profile)], root)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert profile.is_file(), "the caller owns the supplied profile; the gate must not delete it"
+
+
+def test_missing_supplied_profile_is_a_usage_error() -> None:
+    """A profile path that does not exist must fail loudly.
+
+    Silently falling back to running the suite would hide a broken verify-go
+    hand-off: the gate would still pass, just after paying the full cost the
+    sharing exists to avoid.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        add_uncovered_function(root)
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged", "--profile", str(root / "absent.out")], root)
+        assert proc.returncode == 2, proc.stdout + proc.stderr
+        assert "does not exist" in proc.stderr
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

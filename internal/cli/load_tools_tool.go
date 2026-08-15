@@ -50,7 +50,7 @@ var (
 func (t *loadToolsTool) Name() string { return tools.LoadToolsToolName }
 
 func (t *loadToolsTool) Description() string {
-	return "Load additional tools into your tool surface. The tools listed as not currently loaded in your instructions are authorized but their schemas are withheld to keep each request small. Name them exactly with \"names\", or describe what you need with \"query\" to match against tool names and descriptions. Loaded tools become callable on your NEXT turn, not the current one: finish this turn, then call them."
+	return "Enable additional tools for execution. The tools listed as not currently loaded in your instructions are authorized and their schemas are visible to you, but they are locked: calling one directly before loading it is refused. Name them exactly with \"names\", or describe what you need with \"query\" to match against tool names and descriptions. Loaded tools become callable on your NEXT turn, not the current one: finish this turn, then call them. Calling a locked tool directly also queues it to load automatically, so you can just retry the call next turn instead."
 }
 
 func (t *loadToolsTool) Parameters() map[string]any {

@@ -72,7 +72,15 @@ func (s *Session) SetEventIdentityFactory(factory func(uint64) *events.Identity)
 
 // PublishAgentSurface atomically publishes root-agent prompt, turn settings,
 // scoped tools, dispatcher, and skill registry after candidate construction.
-func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *tools.Registry, dispatcher *runtime.Dispatcher, skillReg *skills.Registry, memoryBlock string) {
+//
+// advertisedToolSpecs is the binding's pinned tools[] array (plan
+// tools-advertising/01): the caller computes it once from the frozen tier
+// plan's admissible union, and it is what every provider request of this
+// binding serializes for its whole lifetime. This is the ONLY production path
+// that may set it - admission publication (TryPublishAgentSurface) must never
+// touch it, or a mid-turn load_tools call would change the wire tools[] array
+// and invalidate the provider's implicit prompt-cache prefix.
+func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *tools.Registry, dispatcher *runtime.Dispatcher, skillReg *skills.Registry, memoryBlock string, advertisedToolSpecs []provider.ToolSpec) {
 	base := prompt
 	s.mu.Lock()
 	outgoing := s.prefixIdentity
@@ -86,6 +94,7 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 	s.binding.Dispatcher = dispatcher
 	s.binding.SkillRegistry = skillReg
 	s.binding.AgentSurfaceGeneration = s.agentSurfaceGeneration
+	s.advertisedToolSpecs = advertisedToolSpecs
 	s.invalidateLocked()
 	setSystemMessageLocked(s, base)
 	setMemoryMessageLocked(s, memoryBlock)
@@ -101,6 +110,29 @@ func (s *Session) PublishAgentSurface(prompt string, maxSteps int, registry *too
 		old.Close()
 	}
 	publishPrefixResetEvent(s.EventBus, s.SessionID, reset)
+}
+
+// AdvertisedToolSpecs returns the current binding's pinned tools[] array. Set
+// once per binding by PublishAgentSurface (attach / /agent / /model); never
+// mutated by admission publication.
+func (s *Session) AdvertisedToolSpecs() []provider.ToolSpec {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.advertisedToolSpecs
+}
+
+// SetAdvertisedToolSpecs pins the binding's tools[] array without touching any
+// other surface field. It exists for the initial-attach path
+// (scopeAttachedToolSurface), which scopes sess.Tools directly before the
+// session dispatcher and the rest of the agent surface exist, so the full
+// PublishAgentSurface publication cannot run yet. Every later change to the
+// binding (/agent, /model) goes through PublishAgentSurface instead. Callers
+// must call RefreshPrefixIdentity (or another identity-capture trigger)
+// afterwards so the cached identity reflects the new snapshot.
+func (s *Session) SetAdvertisedToolSpecs(specs []provider.ToolSpec) {
+	s.mu.Lock()
+	s.advertisedToolSpecs = specs
+	s.mu.Unlock()
 }
 
 // SetAgentSettings updates only the root prompt and turn limit under the

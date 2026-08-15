@@ -30,5 +30,10 @@ func NewDeepSeek(opts Options) (Completer, error) {
 		RequiresReasoningReplay:      true,
 		RejectReasoningLessToolTurns: true,
 		Reasoning:                    defaultReasoningDialect("deepseek"),
+		// DeepSeek's reasoning_model guide documents that reasoning_content
+		// from a previous round is not sent back as billed input on later
+		// requests - only the current, still-open tool exchange's reasoning
+		// counts.
+		ContextAccounting: ContextAccountingProfile{ReasoningBilling: ReasoningBillingTerminalExchange},
 	}), nil
 }

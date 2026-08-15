@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -22,6 +23,14 @@ type Options struct {
 	Model       string
 	Temperature *float64
 	MaxTokens   *int
+	// AdvertisedToolSpecs, when non-nil, is the tools[] array Run serializes
+	// on every step of this turn - the host's pinned, binding-lifetime
+	// snapshot (plan tools-advertising/01), computed once from the session's
+	// admissible union and byte-identical across turns and admissions. Run
+	// falls back to Tools.OpenAITools() when nil, which is today's behavior:
+	// subagent and workflow-engine loops that never set this field are
+	// unaffected.
+	AdvertisedToolSpecs []provider.ToolSpec
 	// Reasoning is the selected model's reasoning dial, carried onto every
 	// request this loop makes. Its zero value sends nothing.
 	Reasoning  reasoning.Setting
@@ -85,6 +94,17 @@ type Options struct {
 	// nil means no check and the generic denial message is used. It must be
 	// safe for concurrent calls.
 	StagedToolMessage func(name string) (string, bool)
+	// UnadmittedToolHandler is checked when a call names a tool absent from
+	// the live registry AND StagedToolMessage found no pending stage for it.
+	// It lets the host recognize a tool that IS advertised (plan
+	// tools-advertising/01: the wire tools[] array now includes every
+	// deferred candidate, not just admitted ones) but not yet admitted for
+	// execution, auto-stage it for publication at the next step boundary, and
+	// return a message explaining the call must be retried after that. False
+	// means the name is not recognized at all (a hallucinated tool), and the
+	// generic denial message is used. Nil disables the check. Must be safe
+	// for concurrent calls.
+	UnadmittedToolHandler func(ctx context.Context, name string) (string, bool)
 	// RemainderSpool, when non-nil, stores truncated tool-result bodies under
 	// content refs so the model can page them via read_output. Nil means
 	// truncation notices omit refs (legacy plain notices).

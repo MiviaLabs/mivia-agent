@@ -15,31 +15,38 @@ import (
 )
 
 // TestMeasureSchemaMassExcludesAdmittedTools: once a deferred tool is admitted
-// its schema is inside the advertised total, so counting it as withheld reports
-// the same tokens twice and tells the operator the tier is still saving them.
+// it is no longer locked, but it stays inside the advertised total - it was
+// advertised (and priced) before admission too (plan tools-advertising/01).
 func TestMeasureSchemaMassExcludesAdmittedTools(t *testing.T) {
 	base := tierRegistry("read_file", "grep", "glob")
-	advertised := tierRegistry("read_file", "grep")
+	advertised := tierRegistry("read_file", "grep", "glob").OpenAITools()
 	plan := toolTierPlan{Candidates: []tools.TierCandidate{{Name: "grep"}, {Name: "glob"}}}
 	held := measureSchemaMass(advertised, base, plan, nil, "reader", "attach")
 	mass := measureSchemaMass(advertised, base, plan, []string{"grep"}, "reader", "tool_admission")
-	if mass.Deferred != 1 {
-		t.Fatalf("deferred = %d, want only the still-withheld tool counted", mass.Deferred)
+	if mass.Locked != 1 {
+		t.Fatalf("locked = %d, want only the still-locked tool counted", mass.Locked)
 	}
-	if mass.HeldTokens >= held.HeldTokens {
-		t.Fatalf("held tokens = %d, want less than the pre-admission %d", mass.HeldTokens, held.HeldTokens)
+	if mass.LockedTokens >= held.LockedTokens {
+		t.Fatalf("locked tokens = %d, want less than the pre-admission %d", mass.LockedTokens, held.LockedTokens)
+	}
+	if mass.Advertised != held.Advertised || mass.Tokens != held.Tokens {
+		t.Fatalf("advertised total changed across admission (mass=%+v, held=%+v); the wire tools[] must stay pinned", mass, held)
 	}
 	all := measureSchemaMass(advertised, base, plan, []string{"grep", "glob"}, "reader", "tool_admission")
-	if all.Deferred != 0 || all.HeldTokens != 0 {
-		t.Fatalf("mass = %+v, want nothing withheld once everything is admitted", all)
+	if all.Locked != 0 || all.LockedTokens != 0 {
+		t.Fatalf("mass = %+v, want nothing locked once everything is admitted", all)
 	}
-	if strings.Contains(all.String(), "deferred") {
-		t.Fatalf("operator line still claims a deferred tier: %q", all.String())
+	if strings.Contains(all.String(), "locked") {
+		t.Fatalf("operator line still claims a locked tier: %q", all.String())
 	}
 }
 
-// TestSchemaMassStopsCountingAnAdmittedToolAsWithheld is the same property
-// end to end: the advertised total grows by exactly what leaves the held total.
+// TestSchemaMassStopsCountingAnAdmittedToolAsWithheld pins the wire-level
+// point of plan tools-advertising/01: admitting a tool moves it out of the
+// locked count, but the advertised total (what serializes onto the wire)
+// does NOT change - it already included every deferred candidate before
+// admission, which is exactly what keeps the provider's prompt-cache prefix
+// stable across a load_tools call.
 func TestSchemaMassStopsCountingAnAdmittedToolAsWithheld(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{
 		loadToolsCall("c1", `{"names":["grep"]}`),
@@ -51,13 +58,14 @@ func TestSchemaMassStopsCountingAnAdmittedToolAsWithheld(t *testing.T) {
 		t.Fatalf("turn: %v", err)
 	}
 	after := fixture.state.schemaMassSnapshot()
-	if after.Deferred != before.Deferred-1 {
-		t.Fatalf("deferred = %d, want one fewer than the pre-admission %d", after.Deferred, before.Deferred)
+	if after.Locked != before.Locked-1 {
+		t.Fatalf("locked = %d, want one fewer than the pre-admission %d", after.Locked, before.Locked)
 	}
-	grew := after.Tokens - before.Tokens
-	freed := before.HeldTokens - after.HeldTokens
-	if grew <= 0 || grew != freed {
-		t.Fatalf("advertised grew by %d but the held total dropped by %d; the admitted schema is counted twice", grew, freed)
+	if after.Tokens != before.Tokens || after.Advertised != before.Advertised {
+		t.Fatalf("advertised total changed on admission (before=%+v after=%+v); the wire tools[] must stay byte-stable", before, after)
+	}
+	if after.LockedTokens >= before.LockedTokens {
+		t.Fatalf("locked tokens = %d, want less than the pre-admission %d", after.LockedTokens, before.LockedTokens)
 	}
 }
 
@@ -97,28 +105,28 @@ func TestLoadToolsChargesTheAttemptBoundOnMalformedArguments(t *testing.T) {
 
 func TestMeasureSchemaMassSkipsAnAdmittedToolMissingFromTheBase(t *testing.T) {
 	// An admitted name is skipped before the base lookup, so a plan naming a
-	// tool the base no longer holds cannot inflate the withheld figure.
+	// tool the base no longer holds cannot inflate the locked figure.
 	base := tierRegistry("read_file")
 	plan := toolTierPlan{Candidates: []tools.TierCandidate{{Name: "grep"}, {Name: "gone"}}}
-	mass := measureSchemaMass(tierRegistry("read_file"), base, plan, []string{"grep"}, "reader", "attach")
-	if mass.Deferred != 1 {
-		t.Fatalf("deferred = %d, want only the unadmitted candidate counted", mass.Deferred)
+	mass := measureSchemaMass(tierRegistry("read_file").OpenAITools(), base, plan, []string{"grep"}, "reader", "attach")
+	if mass.Locked != 1 {
+		t.Fatalf("locked = %d, want only the unadmitted candidate counted", mass.Locked)
 	}
-	if mass.HeldTokens != 0 {
-		t.Fatalf("held tokens = %d, want 0 when the remaining candidate is absent from the base", mass.HeldTokens)
+	if mass.LockedTokens != 0 {
+		t.Fatalf("locked tokens = %d, want 0 when the remaining candidate is absent from the base", mass.LockedTokens)
 	}
 }
 
 func TestMeasureSchemaMassWithoutABaseRegistry(t *testing.T) {
 	// The advertised surface can still be priced when no pre-scope base is
-	// available; only the withheld figure is unknowable.
+	// available; only the locked figure is unknowable.
 	plan := toolTierPlan{Candidates: []tools.TierCandidate{{Name: "grep"}}}
-	mass := measureSchemaMass(tierRegistry("read_file"), nil, plan, nil, "reader", "attach")
-	if mass.Deferred != 1 {
-		t.Fatalf("deferred = %d, want the candidate still counted", mass.Deferred)
+	mass := measureSchemaMass(tierRegistry("read_file").OpenAITools(), nil, plan, nil, "reader", "attach")
+	if mass.Locked != 1 {
+		t.Fatalf("locked = %d, want the candidate still counted", mass.Locked)
 	}
-	if mass.HeldTokens != 0 {
-		t.Fatalf("held tokens = %d, want 0 with no base to price against", mass.HeldTokens)
+	if mass.LockedTokens != 0 {
+		t.Fatalf("locked tokens = %d, want 0 with no base to price against", mass.LockedTokens)
 	}
 }
 

@@ -146,27 +146,27 @@ func TestAgentNameOf(t *testing.T) {
 
 func TestMeasureSchemaMassCountsBothTiers(t *testing.T) {
 	base := tierRegistry("read_file", "grep", "glob")
-	advertised := tierRegistry("read_file")
+	advertised := tierRegistry("read_file", "grep", "glob").OpenAITools()
 	plan := toolTierPlan{Candidates: []tools.TierCandidate{{Name: "grep"}, {Name: "glob"}}}
 	mass := measureSchemaMass(advertised, base, plan, nil, "reader", "attach")
-	if mass.Advertised != 1 || mass.Deferred != 2 {
-		t.Fatalf("mass = %+v, want 1 advertised and 2 deferred", mass)
+	if mass.Advertised != 3 || mass.Locked != 2 {
+		t.Fatalf("mass = %+v, want 3 advertised (core plus both deferred candidates) and 2 locked", mass)
 	}
-	if mass.Tokens <= 0 || mass.HeldTokens <= 0 {
+	if mass.Tokens <= 0 || mass.LockedTokens <= 0 {
 		t.Fatalf("mass = %+v, want positive token measurements", mass)
 	}
-	if !strings.Contains(mass.String(), "1 tools advertised") || !strings.Contains(mass.String(), "2 deferred") {
+	if !strings.Contains(mass.String(), "3 tools advertised") || !strings.Contains(mass.String(), "2 locked") {
 		t.Fatalf("line = %q", mass.String())
 	}
 }
 
 func TestMeasureSchemaMassOnAnInertSurface(t *testing.T) {
-	mass := measureSchemaMass(tierRegistry("read_file"), nil, toolTierPlan{}, nil, "", "attach")
-	if mass.Deferred != 0 || mass.HeldTokens != 0 {
-		t.Fatalf("mass = %+v, want nothing withheld", mass)
+	mass := measureSchemaMass(tierRegistry("read_file").OpenAITools(), nil, toolTierPlan{}, nil, "", "attach")
+	if mass.Locked != 0 || mass.LockedTokens != 0 {
+		t.Fatalf("mass = %+v, want nothing locked", mass)
 	}
-	if strings.Contains(mass.String(), "deferred") {
-		t.Fatalf("inert line mentions deferral: %q", mass.String())
+	if strings.Contains(mass.String(), "locked") {
+		t.Fatalf("inert line mentions locking: %q", mass.String())
 	}
 	empty := measureSchemaMass(nil, nil, toolTierPlan{}, nil, "", "attach")
 	if empty.Advertised != 0 || empty.Tokens != 0 {
@@ -186,14 +186,14 @@ func TestPublishSchemaMassEmitsAConfigChangeEvent(t *testing.T) {
 		}
 	}))
 	sess.EventBus = bus
-	publishSchemaMass(sess, schemaMass{Advertised: 3, Tokens: 120, Deferred: 2, HeldTokens: 80, AgentName: "reader", Publication: "attach"})
+	publishSchemaMass(sess, schemaMass{Advertised: 3, Tokens: 120, Locked: 2, LockedTokens: 80, AgentName: "reader", Publication: "attach"})
 	bus.Flush()
 	select {
 	case ev := <-received:
 		if ev.Name != "tool_schema_mass" {
 			t.Fatalf("event name = %q", ev.Name)
 		}
-		if ev.Metadata["tools_deferred"] != "2" || ev.Metadata["deferred_held_tokens"] != "80" {
+		if ev.Metadata["tools_locked"] != "2" || ev.Metadata["locked_tokens"] != "80" {
 			t.Fatalf("metadata = %v", ev.Metadata)
 		}
 	case <-time.After(2 * time.Second):

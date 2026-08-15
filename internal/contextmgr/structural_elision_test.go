@@ -31,7 +31,7 @@ func TestStructuralPreparationCarriesElisionCounters(t *testing.T) {
 		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{newCall}},
 		{Role: provider.RoleTool, ToolCallID: newCall.ID, Name: "read_file", Content: "small"},
 	}
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestStructuralPreparationZeroElisionBelowTrigger(t *testing.T) {
 		{Role: provider.RoleSystem, Content: "system"},
 		{Role: provider.RoleUser, Content: "hi"},
 	}
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

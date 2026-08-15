@@ -182,7 +182,7 @@ func TestPlainCompactionEmitsTypedEventToTheTurnCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := "second question"
-	cost, err := provider.EstimatePromptCost(append(session.MessagesCopy(), provider.Message{Role: provider.RoleUser, Content: next}), nil)
+	cost, err := provider.EstimatePromptCost(append(session.MessagesCopy(), provider.Message{Role: provider.RoleUser, Content: next}), nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestTuiBridgeReceivesAutomaticCompactionBanner(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := "second question"
-	cost, err := provider.EstimatePromptCost(append(session.MessagesCopy(), provider.Message{Role: provider.RoleUser, Content: next}), nil)
+	cost, err := provider.EstimatePromptCost(append(session.MessagesCopy(), provider.Message{Role: provider.RoleUser, Content: next}), nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

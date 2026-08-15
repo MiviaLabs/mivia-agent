@@ -247,6 +247,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--staged", action="store_true", help="check staged changes vs HEAD")
     parser.add_argument("--base", help="base ref; checks --base..--tip")
     parser.add_argument("--tip", default="HEAD", help="tip ref for --base mode (default HEAD)")
+    parser.add_argument(
+        "--profile",
+        help="reuse an existing coverage profile instead of running the suite. "
+        "It MUST come from a -count=1 run against the current tree (see "
+        "run_coverage_profile); a stale or cached profile reports phantom "
+        "uncovered lines. The caller owns the file and this script never deletes it.",
+    )
     return parser.parse_args(argv)
 
 
@@ -283,11 +290,19 @@ def main(argv: list[str] | None = None) -> int:
         print("diff_coverage: no changed non-test Go lines in scope; skipping")
         return 0
 
-    profile = run_coverage_profile(root)
+    # A caller-supplied profile is reused as-is. `make verify` runs the
+    # instrumented suite once and shares that profile with this gate, instead
+    # of paying for a second full run of the same tests.
+    supplied = Path(args.profile) if args.profile else None
+    if supplied is not None and not supplied.is_file():
+        print(f"diff_coverage: --profile {supplied} does not exist", file=sys.stderr)
+        return 2
+    profile = supplied if supplied is not None else run_coverage_profile(root)
     try:
         blocks_by_file = parse_profile(profile, module_path(root))
     finally:
-        profile.unlink(missing_ok=True)
+        if supplied is None:
+            profile.unlink(missing_ok=True)
 
     total_checked = 0
     total_uncovered = 0
