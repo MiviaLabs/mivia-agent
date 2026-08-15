@@ -17,7 +17,7 @@ func TestLookupAndNamesAreStable(t *testing.T) {
 		t.Fatalf("ollama descriptor=%+v ok=%v", ollama, ok)
 	}
 	names := Names()
-	if len(names) != 4 || names[0] != "deepseek" || names[1] != "ollama" || names[2] != "openrouter" || names[3] != "zai" {
+	if len(names) != 5 || names[0] != "deepseek" || names[1] != "llmgateway" || names[2] != "ollama" || names[3] != "openrouter" || names[4] != "zai" {
 		t.Fatalf("names=%v", names)
 	}
 	names[0] = "mutated"

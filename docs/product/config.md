@@ -123,9 +123,43 @@ base_url = "http://127.0.0.1:11434/v1"
 Local daemon model names must be declared in `models` and match the
 output of `ollama list`. The local profile needs no key in the env file.
 
+### LLM Gateway
+
+The `llmgateway` provider sends requests to the OpenAI-compatible endpoint of
+LLM Gateway (`https://api.llmgateway.io/v1`). One factory serves both key
+types: a fixed-price DevPass coding-plan key and a pay-as-you-go key. Both
+key types use the same endpoint, the same `Authorization: Bearer <key>`
+header, and the same error format.
+
+```toml
+[providers.llmgateway]
+models = [
+  { name = "deepseek-v4-pro", context_window_tokens = 1100000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high" },
+  { name = "muse-spark-1.2", context_window_tokens = 1000000 },
+  { name = "glm-5.2", context_window_tokens = 1000000 },
+]
+default_model = "deepseek-v4-pro"
+api_key_env = "LLMGATEWAY_API_KEY"
+base_url = "https://api.llmgateway.io/v1"
+```
+
+A DevPass coding-plan key accepts root model IDs only, for example
+`deepseek-v4-pro`. A provider-prefixed model ID, for example
+`openai/gpt-4o`, gets a `403` response on DevPass. A `403` with a
+provider-prefixed model ID means: use the root ID. It does not mean the
+key is wrong. A pay-as-you-go key accepts both root and provider-prefixed
+model IDs.
+
+The gateway sends the top-level `reasoning_effort` field to the upstream
+model. mivia's vetted default dialect for `llmgateway` is `openai`. A model
+entry may set `reasoning_dialect` to override this default.
+
+The gateway adds its own cache markers on the request. mivia does not send
+its own cache markers to this provider.
+
 ## Provider support
 
-mivia currently supports `deepseek`, `openrouter`, `zai`, and `ollama`. Do not add an
+mivia currently supports `deepseek`, `openrouter`, `zai`, `ollama`, and `llmgateway`. Do not add an
 arbitrary OpenAI-compatible provider name. The provider registry rejects names
 that it does not support.
 

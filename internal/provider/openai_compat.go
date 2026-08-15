@@ -129,7 +129,7 @@ type CompatOptions struct {
 	ContextAccounting ContextAccountingProfile
 	// SendSessionUserKey opts into emitting a hashed session-stickiness key
 	// as the wire "user" field (see OpenAICompat.sendSessionUserKey). Only
-	// the openrouter factory sets this true.
+	// the openrouter and llmgateway factories set this true.
 	SendSessionUserKey bool
 	// DialContext pins every dial for keyless loopback clients; nil keeps http.DefaultTransport.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
