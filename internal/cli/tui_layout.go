@@ -60,6 +60,16 @@ func (m *tuiModel) updateFromDrain(d bridgeDrain) {
 			m.refreshLiveToolWaveStatus()
 		}
 	}
+	// Live per-step context usage: a real provider-reported token count beats
+	// the throttled, s.Messages-derived estimate liveCtxPercent() falls back
+	// to, and updating cachedCtxPercentAt here keeps that fallback from
+	// immediately overwriting a fresher live sample.
+	if d.CtxTokensSet {
+		if budget := m.session.PromptBudget(); budget > 0 {
+			m.cachedCtxPercent = d.CtxTokens * 100 / budget
+			m.cachedCtxPercentAt = time.Now()
+		}
+	}
 	// Content-then-tools: clear optimistic final stream; speech becomes interim bubble.
 	if d.ResetStream {
 		m.streamBuf.Reset()

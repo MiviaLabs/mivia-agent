@@ -209,6 +209,15 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			if e.Compaction != nil {
 				bridge.PushCompletedBanner("context", renderCompactionNotice(*e.Compaction))
 			}
+		case agent.EventTokenUsage:
+			// Provider-reported input tokens for this step's own request - the
+			// same quantity ContextUsage() estimates from s.Messages, but
+			// available live, mid-turn, before the turn commits its history
+			// back to the session. Lets the status bar track context growth
+			// step by step instead of jumping once at turn finish.
+			if e.TokenUsage != nil && e.TokenUsage.InputTokens > 0 {
+				bridge.PushCtxTokens(e.TokenUsage.InputTokens)
+			}
 		}
 	}
 }

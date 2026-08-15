@@ -38,7 +38,11 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 // client emits cache_control on the stable prefix when CacheMarkersEnabled,
 // so an extraBody smuggling its own marker (or a prompt_cache_* alias some
 // OpenAI-compatible dialects honor) could inject a conflicting or
-// unvetted cache instruction onto the wire.
+// unvetted cache instruction onto the wire. "user" is reserved for the same
+// reason: it carries the session-stickiness key this client computes (see
+// sendSessionUserKey in marshalBody), reserved unconditionally so an
+// extra_body smuggling its own value can never collide with it, even for a
+// provider that doesn't currently send the field.
 func (c *OpenAICompat) checkReservedExtras() error {
 	for key := range c.extraHeaders {
 		for _, reserved := range []string{"Authorization", "Content-Type", "Accept", "Idempotency-Key"} {
@@ -49,7 +53,7 @@ func (c *OpenAICompat) checkReservedExtras() error {
 	}
 	for key := range c.extraBody {
 		switch key {
-		case "model", "messages", "stream", "cache_control", "prompt_cache_breakpoint", "prompt_cache_options":
+		case "model", "messages", "stream", "cache_control", "prompt_cache_breakpoint", "prompt_cache_options", "user":
 			return fmt.Errorf("%s: extra body field %q is reserved", c.name, key)
 		}
 	}
@@ -97,6 +101,13 @@ func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 	for key, value := range c.reasoningFields(req) {
 		body[key] = value
 	}
+	// A client opted into session-keyed routing sends a stable hash of the
+	// caller's session id as "user" whenever the request carries one. The
+	// gate is narrow: off, or no session id, leaves the merged map untouched,
+	// so non-adopting request bodies stay byte-identical.
+	if c.sendSessionUserKey && req.SessionID != "" {
+		body["user"] = sessionUserKey(req.SessionID)
+	}
 	// Dialects that replay assistant reasoning under a non-default wire field
 	// (e.g. OpenRouter's "reasoning") get the key renamed here. The gate is
 	// deliberately narrow: replay off, an empty field, or the legacy field
@@ -113,6 +124,19 @@ func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 		markStablePrefixCacheControl(body)
 	}
 	return json.Marshal(body)
+}
+
+// sessionUserKey derives the wire "user" value from a caller's session id.
+// sessionID is already an unguessable crypto/rand token (runtime.
+// NewSessionID), so hashing it adds no confidentiality the token didn't
+// already have - it exists so an internal identifier never crosses the wire
+// verbatim, matching the "no raw session state in provider payloads"
+// boundary this client holds everywhere else (redaction, secret paths).
+// Truncated to 32 hex chars: plenty of entropy for a stickiness key, and
+// short enough not to bloat every request body.
+func sessionUserKey(sessionID string) string {
+	sum := sha256.Sum256([]byte(sessionID))
+	return fmt.Sprintf("%x", sum)[:32]
 }
 
 // markStablePrefixCacheControl rewrites the cacheable prefix from plain

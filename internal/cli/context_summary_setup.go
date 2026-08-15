@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 // summaryCredentialScope labels the credential class every summary request
@@ -33,14 +34,20 @@ func summaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
 	if !res.Context.Summary.SummaryEnabled() {
 		return "[context.summary] enabled is not set"
 	}
-	if strings.TrimSpace(res.BaseURL) == "" {
-		return "the provider endpoint (base_url) did not resolve"
-	}
-	binding := sess.CurrentBinding()
-	if binding.Completer == nil || binding.ProviderName == "" || binding.Model == "" {
-		return "the session has no resolved provider/model binding"
+	override := res.Context.Summary.Provider != nil && res.Context.Summary.Model != nil
+	if !override {
+		if strings.TrimSpace(res.BaseURL) == "" {
+			return "the provider endpoint (base_url) did not resolve"
+		}
+		binding := sess.CurrentBinding()
+		if binding.Completer == nil || binding.ProviderName == "" || binding.Model == "" {
+			return "the session has no resolved provider/model binding"
+		}
 	}
 	if _, _, ok := summaryWiring(sess, res); !ok {
+		if override {
+			return "the [context.summary] provider/model override could not be built (is the provider configured with a usable API key?)"
+		}
 		return "the summarizer could not be built from the resolved policy"
 	}
 	return ""
@@ -54,19 +61,27 @@ func summaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
 // cannot run - but summaryDisabledReason names the cause so it is never
 // silent.
 //
-// The summarizer captures the session binding once, here. A model switch
-// later in the session does not rebuild it; summaries keep the startup model
-// until a new session starts.
+// A [context.summary] provider/model override replaces the session binding
+// for the summary call (the cost-containment escape hatch for cheap
+// summarizer models). It is built through newProviderCompleter, which is
+// fail-closed: an unknown provider, a provider with no configured runtime, or
+// a provider with no usable credential all refuse here, so the override never
+// silently falls back to the session binding and its (expensive) model.
+//
+// The summarizer captures the binding once, here. A model switch later in the
+// session does not rebuild it; summaries keep the startup binding until a new
+// session starts.
 func summaryWiring(sess *chat.Session, res *config.Resolved) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
 	if sess == nil || res == nil || !res.Context.Summary.SummaryEnabled() {
 		return nil, contextstate.PolicySnapshot{}, false
 	}
-	// [privacy] is no longer a precondition. It governs what the checkpoint
-	// may persist (see PolicySnapshot.RedactionConfigured below, which stays
-	// honest), not whether the summary may run at all - requiring it meant a
-	// workspace without that section compacted with no record of what it
-	// dropped.
-	redaction := contextRedactionPolicy(res)
+	// Override path: [context.summary] provider/model. Load-time validation
+	// (Resolved.Validate) guarantees both keys are set together and the
+	// provider is declared under [providers]; the checks are repeated here
+	// because summaryWiring is also reached with hand-built Resolved values.
+	if res.Context.Summary.Provider != nil && res.Context.Summary.Model != nil {
+		return summaryWiringOverride(sess, res)
+	}
 	endpoint := strings.TrimSpace(res.BaseURL)
 	if endpoint == "" {
 		return nil, contextstate.PolicySnapshot{}, false
@@ -75,20 +90,63 @@ func summaryWiring(sess *chat.Session, res *config.Resolved) (*contextmgr.Summar
 	if binding.Completer == nil || binding.ProviderName == "" || binding.Model == "" {
 		return nil, contextstate.PolicySnapshot{}, false
 	}
+	return buildSummaryWiring(sess, res, binding.Completer, binding.ProviderName, binding.Model,
+		binding.ModelGeneration, endpoint)
+}
+
+// summaryWiringOverride resolves the [context.summary] provider/model override
+// into a completer and delegates to buildSummaryWiring. newProviderCompleter
+// is fail-closed: an unknown provider, a provider with no configured runtime,
+// or a provider with no usable credential all refuse here, so the override
+// never silently falls back to the session binding and its (expensive) model.
+func summaryWiringOverride(sess *chat.Session, res *config.Resolved) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
+	provider := strings.ToLower(strings.TrimSpace(*res.Context.Summary.Provider))
+	model, err := config.NormalizeModelName(*res.Context.Summary.Model)
+	if err != nil {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	runtime, ok := res.ProviderRuntimes[provider]
+	if !ok {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	completer, err := newProviderCompleter(res, provider, model)
+	if err != nil {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	endpoint := strings.TrimSpace(runtime.BaseURL)
+	if endpoint == "" {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	return buildSummaryWiring(sess, res, completer, provider, model,
+		sess.CurrentBinding().ModelGeneration, endpoint)
+}
+
+// buildSummaryWiring captures one resolved provider/model binding into a
+// Summarizer and its PolicySnapshot: the binding fields, the endpoint
+// allowlist, and the policy digest that makes a later policy change refuse
+// requests minted under the old capture.
+func buildSummaryWiring(sess *chat.Session, res *config.Resolved, completer provider.Completer,
+	providerName, model string, generation uint64, endpoint string) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
+	// [privacy] is no longer a precondition. It governs what the checkpoint
+	// may persist (see PolicySnapshot.RedactionConfigured below, which stays
+	// honest), not whether the summary may run at all - requiring it meant a
+	// workspace without that section compacted with no record of what it
+	// dropped.
+	redaction := contextRedactionPolicy(res)
 	policy := contextstate.PolicySnapshot{
 		SummaryEnabled: true, RedactionConfigured: redaction.Configured, NetworkEnabled: true,
-		Provider: binding.ProviderName, Model: binding.Model,
+		Provider: providerName, Model: model,
 		CredentialScope:   summaryCredentialScope,
 		EndpointAllowlist: []string{endpoint},
-		PolicyDigest: summaryPolicyDigest(binding.ProviderName, binding.Model, endpoint,
+		PolicyDigest: summaryPolicyDigest(providerName, model, endpoint,
 			res.Privacy.RedactionPatterns, res.Privacy.RedactionKeyNames),
 	}
-	adapter, err := contextmgr.NewLLMSummaryProvider(binding.Completer)
+	adapter, err := contextmgr.NewLLMSummaryProvider(completer, sess.SessionID)
 	if err != nil {
 		return nil, contextstate.PolicySnapshot{}, false
 	}
 	summarizer, err := contextmgr.NewSummarizer(adapter, contextstate.BindingRevision{
-		Provider: binding.ProviderName, Model: binding.Model, Generation: binding.ModelGeneration,
+		Provider: providerName, Model: model, Generation: generation,
 	}, policy)
 	if err != nil {
 		return nil, contextstate.PolicySnapshot{}, false

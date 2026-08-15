@@ -22,6 +22,9 @@ import (
 // build one of these and call buildPanelTaskSpec; this file holds the
 // plumbing neither phase owns exclusively.
 type panelWorkSpecParams struct {
+	// RunID is the per-child coordinator run id (workflowledger.PanelChildIDs),
+	// unique to this member or the synthesis step - used for Scope, never for
+	// SessionID (see WorkflowRunID).
 	RunID, TaskID          string
 	AgentName, AgentDigest string
 	Skill, Provider, Model string
@@ -29,6 +32,12 @@ type panelWorkSpecParams struct {
 	OutputSchema           []byte
 	Deadline               time.Time
 	Limits                 runtime.WorkLimits
+	// WorkflowRunID is the parent workflow run's own id (LinearController.
+	// RunID) - the same value PanelCoordinator.workflowRunID carries at
+	// dispatch time. It must match exactly, or the fingerprint computed here
+	// diverges from the one PanelCoordinator.request recomputes at dispatch
+	// and every panel member/synthesis call fails closed with ErrConflict.
+	WorkflowRunID string
 }
 
 // buildPanelTaskSpec builds one panel child's PanelTaskSpec and matching
@@ -66,7 +75,7 @@ func (c *LinearController) buildPanelTaskSpec(ctx context.Context, p panelWorkSp
 		Timeout: p.Deadline.Sub(c.now()), DeadlineAt: p.Deadline, WorkLimits: limits,
 		Policy: coordledger.RunPolicy{NoRetry: true, FailInterrupted: true},
 	}
-	task := subagents.Task{ID: p.TaskID, Name: work.TaskName, Input: p.Input, InputSchema: inputSchemaValue, OutputSchema: outputSchemaValue, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}
+	task := subagents.Task{ID: p.TaskID, Name: work.TaskName, Input: p.Input, InputSchema: inputSchemaValue, OutputSchema: outputSchemaValue, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true, SessionID: p.WorkflowRunID}
 	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{task}, work.Policy)
 	if err != nil {
 		return workflowledger.PanelTaskSpec{}, err

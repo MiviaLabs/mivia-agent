@@ -22,6 +22,15 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 	s.resetAdmissionNoOps()
 	s.adoptCalibration(loop.Calibration)
 	agent.ScrubEphemeralToolMessages(loop.Messages, registry)
+	// Repair reasoning-less tool-call exchanges ONCE, here, at turn adoption -
+	// not on every later request serialization. Without this, a provider that
+	// rejects such exchanges (DeepSeek) has toAPIMessages silently re-rewrite
+	// persisted history on every request, breaking the prompt-cache prefix and
+	// hiding context with no persisted trace. See
+	// provider.RepairReasoningLessToolExchanges.
+	if policy := provider.ReasoningPolicyFor(loop.Completer); policy.RejectReasoningLess {
+		loop.Messages = provider.RepairReasoningLessToolExchanges(loop.Messages)
+	}
 	replaceNewestUserText(loop.Messages, userText, persistedText)
 	if contextCfg.manager != nil {
 		return s.finishContextTurn(ctx, loop, userText, token, turn, contextCfg, turnErr)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 )
@@ -44,6 +45,36 @@ func (r *Resolved) Validate() error {
 	}
 	if r.PromptCache != "auto" && r.PromptCache != "off" {
 		return fmt.Errorf("[provider] prompt_cache must be \"auto\" or \"off\", got %q", r.PromptCache)
+	}
+	if err := validateSummaryOverride(r); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateSummaryOverride enforces the [context.summary] provider/model
+// override contract from ContextSummaryConfig: both keys must be set together,
+// the provider must be declared under [providers], and the model must be a
+// valid model identifier. The summary wiring consumes the override only after
+// this gate, so a structural misconfiguration is a load error instead of a
+// silently ignored key that keeps charging the session's (expensive) model for
+// every compaction summary.
+func validateSummaryOverride(r *Resolved) error {
+	summary := r.Context.Summary
+	hasProvider := summary.Provider != nil && strings.TrimSpace(*summary.Provider) != ""
+	hasModel := summary.Model != nil && strings.TrimSpace(*summary.Model) != ""
+	if hasProvider != hasModel {
+		return fmt.Errorf("[context.summary] provider and model must be configured together")
+	}
+	if !hasProvider {
+		return nil
+	}
+	provider := strings.ToLower(strings.TrimSpace(*summary.Provider))
+	if _, ok := r.ProviderRuntimes[provider]; !ok {
+		return fmt.Errorf("[context.summary] provider %q is not a configured provider", provider)
+	}
+	if _, err := NormalizeModelName(*summary.Model); err != nil {
+		return fmt.Errorf("[context.summary] model is invalid: %w", err)
 	}
 	return nil
 }

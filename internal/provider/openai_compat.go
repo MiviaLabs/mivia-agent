@@ -68,6 +68,14 @@ type OpenAICompat struct {
 	// contextAccounting mirrors CompatOptions.ContextAccounting. Set once at
 	// construction and never mutated; safe to read without synchronization.
 	contextAccounting ContextAccountingProfile
+	// sendSessionUserKey mirrors CompatOptions.SendSessionUserKey: when true
+	// and a request carries Request.SessionID, the client emits a stable
+	// hash of it as the OpenAI-compatible "user" field, so a provider that
+	// keys routing stickiness on that field (OpenRouter) can route
+	// follow-up requests in the same session to the same warm upstream.
+	// Default false: non-adopting providers never see the field, so request
+	// bodies stay byte-identical. Set once at construction and never mutated.
+	sendSessionUserKey bool
 }
 
 // CompatOptions configures an OpenAI-compatible client.
@@ -119,6 +127,10 @@ type CompatOptions struct {
 	// conservative "bill everything" default, so a factory that leaves this
 	// unset behaves exactly as before the field existed.
 	ContextAccounting ContextAccountingProfile
+	// SendSessionUserKey opts into emitting a hashed session-stickiness key
+	// as the wire "user" field (see OpenAICompat.sendSessionUserKey). Only
+	// the openrouter factory sets this true.
+	SendSessionUserKey bool
 	// DialContext pins every dial for keyless loopback clients; nil keeps http.DefaultTransport.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
@@ -144,6 +156,7 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		replayReasoningField:         opts.ReplayReasoningField,
 		rejectReasoningLessToolTurns: opts.RejectReasoningLessToolTurns,
 		contextAccounting:            opts.ContextAccounting,
+		sendSessionUserKey:           opts.SendSessionUserKey,
 		client: &http.Client{
 			Timeout:       DefaultHTTPTimeout,
 			Transport:     newRetryRoundTripper(compatBaseRoundTripper(opts.DialContext), retry),
@@ -201,6 +214,7 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		replayReasoningField:         options.ReplayReasoningField,
 		rejectReasoningLessToolTurns: options.RejectReasoningLessToolTurns,
 		contextAccounting:            options.ContextAccounting,
+		sendSessionUserKey:           options.SendSessionUserKey,
 		client: &http.Client{
 			Timeout:       DefaultHTTPTimeout,
 			Transport:     newRetryRoundTripper(compatBaseRoundTripper(options.DialContext), baseOpts),
@@ -270,6 +284,15 @@ type chatResponseBody struct {
 	// stream_options.include_usage (or includes it unconditionally) may put
 	// it on a chunk whose choices array is otherwise empty.
 	Usage *usageWire `json:"usage,omitempty"`
+}
+
+// ReasoningPolicy reports c's construction-time reasoning-replay wire
+// contract, implementing ReasoningPolicyAware.
+func (c *OpenAICompat) ReasoningPolicy() ReasoningPolicy {
+	return ReasoningPolicy{
+		RequiresReplay:      c.replayReasoning,
+		RejectReasoningLess: c.rejectReasoningLessToolTurns,
+	}
 }
 
 // cacheUsage derives Response.CacheUsage from a decoded usage object,

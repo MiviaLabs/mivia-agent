@@ -28,6 +28,11 @@ type bridgeDrain struct {
 	// Interim is user-visible assistant speech before/between tool batches
 	// ("I'll search…"). Committed as ChatBlockAssistant, not thinking chrome.
 	Interim string
+	// CtxTokens/CtxTokensSet carry the provider-reported input-token count of
+	// the step's own request (see PushCtxTokens) so the status bar can show
+	// context growth mid-turn instead of only after the turn commits.
+	CtxTokens    int
+	CtxTokensSet bool
 }
 
 // streamBridge - agent goroutine → UI (coalesced, no goroutine storms)
@@ -52,6 +57,10 @@ type streamBridge struct {
 	stepDetailAt time.Time
 	// anonOpen counts Start/End pairs without ToolCallID (legacy/parallel banner).
 	anonOpen int
+	// ctxTokens/ctxTokensSet hold the most recent per-step token count pushed
+	// by PushCtxTokens, so Drain can report live context growth mid-turn.
+	ctxTokens    int
+	ctxTokensSet bool
 	// resetStream is set by RevokeStream; next Drain reports it so the TUI
 	// clears streamBuf (content already drained before tool_calls arrived).
 	resetStream bool
@@ -250,6 +259,17 @@ func (b *streamBridge) PushStep(detail string) {
 	b.signal()
 }
 
+// PushCtxTokens stores the input-token count of the step's own provider
+// request, so the status bar can show context growth as it happens instead
+// of only after the turn commits its history to the session.
+func (b *streamBridge) PushCtxTokens(tokens int) {
+	b.mu.Lock()
+	b.ctxTokens = tokens
+	b.ctxTokensSet = true
+	b.mu.Unlock()
+	b.signal()
+}
+
 // Pending reports whether the bridge still holds undrained UI content
 // (stream text, tool events, thinking, interim speech, step detail, an
 // unconsumed RevokeStream directive, or a Finish that Drain has not seen).
@@ -268,6 +288,7 @@ func (b *streamBridge) Pending() bool {
 		b.interim.Len() > 0 ||
 		b.stepDetail != "" ||
 		b.resetStream ||
+		b.ctxTokensSet ||
 		b.done
 }
 
@@ -285,6 +306,8 @@ func (b *streamBridge) Drain() bridgeDrain {
 		StepDetailAt: b.stepDetailAt,
 		ResetStream:  b.resetStream,
 		Interim:      b.interim.String(),
+		CtxTokens:    b.ctxTokens,
+		CtxTokensSet: b.ctxTokensSet,
 	}
 	b.pending.Reset()
 	b.tools = nil
@@ -292,6 +315,7 @@ func (b *streamBridge) Drain() bridgeDrain {
 	b.interim.Reset()
 	b.stepDetail = ""
 	b.resetStream = false
+	b.ctxTokensSet = false
 	if d.Done {
 		b.done = false
 		b.doneErr = nil

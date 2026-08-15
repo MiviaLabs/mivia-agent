@@ -144,8 +144,8 @@ func Plan(input PlanInput) (PlanResult, error) {
 	before := applyCalibration(provider.EstimateMessagesPromptCost(input.Messages, schemaCost, input.ContextAccounting), input.CalibrationRatio)
 	// Percentages of Budget alone - see PlanInput.OutputReserve for why it is
 	// not subtracted here too.
-	trigger := percentFloor(input.Budget, 4, 5)
-	target := percentFloor(input.Budget, 1, 2)
+	trigger := PercentFloor(input.Budget, 4, 5)
+	target := PercentFloor(input.Budget, 1, 2)
 	result := PlanResult{
 		Messages:      cloneMessages(input.Messages),
 		BeforeTokens:  before,
@@ -172,7 +172,11 @@ func promptOverflow(after, budget int, objective provider.Message, schemaCost in
 	return fmt.Errorf("%w: retained request cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, after, budget)
 }
 
-func percentFloor(value, numerator, denominator int) int {
+// PercentFloor returns floor(value * numerator / denominator) without
+// overflowing on large token budgets. Shared by Plan's trigger/target math
+// and any other caller that needs the same hysteresis shape (trigger at
+// numerator/denominator of a budget, prune down to a lower target).
+func PercentFloor(value, numerator, denominator int) int {
 	quotient, remainder := value/denominator, value%denominator
 	return quotient*numerator + remainder*numerator/denominator
 }

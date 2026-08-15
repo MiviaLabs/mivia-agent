@@ -69,7 +69,7 @@ func TestPlanTriggerRespectsReasoningBillingProfile(t *testing.T) {
 	// estimate crosses it.
 	mid := (costTerminal + costAllTurns) / 2
 	budget := mid * 5 / 4
-	trigger := percentFloor(budget, 4, 5)
+	trigger := PercentFloor(budget, 4, 5)
 	if !(costTerminal < trigger && trigger <= costAllTurns) {
 		t.Fatalf("fixture did not place trigger (%d) strictly between terminal (%d) and all-turns (%d) costs", trigger, costTerminal, costAllTurns)
 	}

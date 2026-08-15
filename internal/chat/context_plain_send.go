@@ -78,6 +78,7 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 		Model: snapshot.binding.Model, Messages: prepared, Temperature: snapshot.temperature,
 		MaxTokens: snapshot.maxTokens, Stream: true,
 		ReasoningLevel: snapshot.binding.Profile.Reasoning, ReasoningDialect: snapshot.binding.Profile.ReasoningDialect,
+		SessionID: s.SessionID,
 	}, streamWriter)
 	if err != nil {
 		// An interrupted turn (Ctrl+C / force-send / deadline) must not lose
@@ -137,6 +138,7 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 		Model: snapshot.binding.Model, Messages: requestMessages, Temperature: snapshot.temperature,
 		MaxTokens: snapshot.maxTokens, Stream: true,
 		ReasoningLevel: snapshot.binding.Profile.Reasoning, ReasoningDialect: snapshot.binding.Profile.ReasoningDialect,
+		SessionID: s.SessionID,
 	}, streamWriter)
 	if err != nil {
 		// An interrupted turn (Ctrl+C / force-send / deadline) must not lose

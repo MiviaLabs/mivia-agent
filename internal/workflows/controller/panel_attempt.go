@@ -105,7 +105,7 @@ func (c *LinearController) buildPanelAttempt(ctx context.Context, run workflowle
 			RunID: runID, TaskID: taskID, AgentName: binding.AgentName, AgentDigest: binding.AgentDigest,
 			Skill: member.Skill, Provider: binding.ProviderName, Model: binding.Model,
 			Input: input, InputSchema: []byte(`{"type":"string"}`), OutputSchema: schemaRef.Bytes,
-			Deadline: deadline, Limits: memberLimits,
+			Deadline: deadline, Limits: memberLimits, WorkflowRunID: c.RunID,
 		})
 		if err != nil {
 			return workflowledger.StepAttempt{}, fmt.Errorf("panel member %q: %w", member.ID, err)

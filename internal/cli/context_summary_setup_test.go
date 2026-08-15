@@ -128,6 +128,92 @@ func TestSummaryPolicyDigestTracksPolicyContent(t *testing.T) {
 	}
 }
 
+// TestSummaryWiringUsesOverrideBinding pins the [context.summary]
+// provider/model override path: the summary call binds the override
+// provider/model and that provider's endpoint, never the session binding. A
+// misconfigured override must degrade to structural-only (fail closed), not
+// silently fall back to the session's model - the fallback is exactly what
+// would keep charging the expensive session model for every compaction
+// summary.
+func TestSummaryWiringUsesOverrideBinding(t *testing.T) {
+	res := summaryWiringResolved(t, true)
+	provider, model := "openrouter", "cheap-model"
+	res.Context.Summary.Provider = &provider
+	res.Context.Summary.Model = &model
+	res.ProviderRuntimes = map[string]config.ProviderRuntime{
+		"stub": {ProviderName: "stub", BaseURL: "https://api.stub.invalid", APIKeyEnv: "STUB_KEY", APIKeySet: true},
+		"openrouter": {
+			ProviderName: "openrouter", BaseURL: "https://api.cheap.invalid",
+			APIKeyEnv: "CHEAP_KEY", APIKeySet: true, APIKey: "cheap-key",
+		},
+	}
+	session := summaryWiringSession(t, res)
+	summarizer, policy, ok := summaryWiring(session, res)
+	if !ok || summarizer == nil {
+		t.Fatal("override wiring produced no summarizer")
+	}
+	if policy.Provider != "openrouter" || policy.Model != "cheap-model" {
+		t.Fatalf("policy binding = %s/%s, want override openrouter/cheap-model", policy.Provider, policy.Model)
+	}
+	if len(policy.EndpointAllowlist) != 1 || policy.EndpointAllowlist[0] != "https://api.cheap.invalid" {
+		t.Fatalf("endpoint allowlist = %v, want [https://api.cheap.invalid] (the override provider's endpoint, not the session's %s)", policy.EndpointAllowlist, res.BaseURL)
+	}
+	if summarizer.Binding.Provider != "openrouter" || summarizer.Binding.Model != "cheap-model" {
+		t.Fatalf("summarizer binding = %s/%s, want override openrouter/cheap-model", summarizer.Binding.Provider, summarizer.Binding.Model)
+	}
+	if summarizer.Binding.Generation == 0 {
+		t.Fatal("override summarizer binding has zero generation")
+	}
+	if !reflect.DeepEqual(summarizer.Policy, policy) {
+		t.Fatal("summarizer policy differs from the returned policy snapshot")
+	}
+	if !policy.SummaryEnabled || !policy.NetworkEnabled || !policy.RedactionConfigured {
+		t.Fatalf("policy gate fields missing: %+v", policy)
+	}
+	if len(policy.PolicyDigest) != 64 || strings.Trim(policy.PolicyDigest, "0123456789abcdef") != "" {
+		t.Fatalf("policy digest %q is not 64 lowercase hex characters", policy.PolicyDigest)
+	}
+}
+
+// TestSummaryWiringOverrideDegradesOnUnusableProvider pins fail-closed
+// behavior for an override that cannot be built: a provider runtime with no
+// usable credential keeps the summary structural-only and names the override
+// as the cause. The session binding (whose model would be more expensive)
+// must not be substituted.
+func TestSummaryWiringOverrideDegradesOnUnusableProvider(t *testing.T) {
+	res := summaryWiringResolved(t, true)
+	provider, model := "openrouter", "cheap-model"
+	res.Context.Summary.Provider = &provider
+	res.Context.Summary.Model = &model
+	res.ProviderRuntimes = map[string]config.ProviderRuntime{
+		"openrouter": {ProviderName: "openrouter", BaseURL: "https://api.cheap.invalid", APIKeyEnv: "CHEAP_KEY", APIKeySet: false},
+	}
+	session := summaryWiringSession(t, res)
+	summarizer, policy, ok := summaryWiring(session, res)
+	if ok || summarizer != nil || policy.SummaryEnabled {
+		t.Fatalf("unusable override wired a summarizer: ok=%v summarizer=%v policy=%+v", ok, summarizer != nil, policy)
+	}
+	if reason := summaryDisabledReason(session, res); !strings.Contains(reason, "override") {
+		t.Fatalf("summaryDisabledReason = %q, want it to name the override", reason)
+	}
+}
+
+// TestSummaryWiringOverrideMissingRuntimeDegrades pins the second fail-closed
+// branch: an override whose provider has no runtime entry (hand-built
+// Resolved bypassing load validation) stays structural-only.
+func TestSummaryWiringOverrideMissingRuntimeDegrades(t *testing.T) {
+	res := summaryWiringResolved(t, true)
+	provider, model := "openrouter", "cheap-model"
+	res.Context.Summary.Provider = &provider
+	res.Context.Summary.Model = &model
+	// No ProviderRuntimes entry for openrouter.
+	session := summaryWiringSession(t, res)
+	summarizer, _, ok := summaryWiring(session, res)
+	if ok || summarizer != nil {
+		t.Fatalf("override with no provider runtime wired a summarizer: ok=%v", ok)
+	}
+}
+
 // TestEnableSessionContextWiresSummary drives the production setup path end to
 // end: an enabled config routes a Summarizer into the context manager and the
 // PolicySnapshot into SetContextManager. The committer stays structural-only

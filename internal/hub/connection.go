@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"net"
+	"sync"
 )
 
 // connBufSize bounds one connection's outbound queue. Overflow policy is
@@ -16,9 +17,10 @@ const connBufSize = 256
 // connected client, or a client's view of the owner - with a bounded,
 // drop-oldest outbound queue.
 type conn struct {
-	nc   net.Conn
-	out  chan WireEvent
-	done chan struct{}
+	nc        net.Conn
+	out       chan WireEvent
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func newConn(nc net.Conn) *conn {
@@ -79,11 +81,15 @@ func (c *conn) readLoop(onReceive func(WireEvent)) {
 	}
 }
 
+// close is safe to call concurrently and more than once: client.go's ctx.Done
+// watcher and its normal run()/stop() sequence can both race to close the
+// same conn (owner exit and ctx cancellation landing together), and a
+// check-then-close on c.done without synchronization let two callers both
+// pass the check before either closed the channel, panicking on the second
+// close.
 func (c *conn) close() {
-	select {
-	case <-c.done:
-	default:
+	c.closeOnce.Do(func() {
 		close(c.done)
-	}
-	_ = c.nc.Close()
+		_ = c.nc.Close()
+	})
 }

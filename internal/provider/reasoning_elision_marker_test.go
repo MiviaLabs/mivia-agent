@@ -5,7 +5,7 @@ import "testing"
 // compactionReasoningMarker mirrors contextmgr.reasoningElisionMarker. The
 // planner replaces stale assistant reasoning with this constant instead of
 // the empty string, exactly because of the D2 gate this test pins: with
-// RejectReasoningLessToolTurns set, dropReasoningLessToolExchanges wire-drops
+// RejectReasoningLessToolTurns set, RepairReasoningLessToolExchanges wire-drops
 // a non-terminal tool-call turn with empty reasoning together with its tool
 // results. The marker keeps compacted exchanges on the wire.
 const compactionReasoningMarker = "[reasoning elided by context compaction]"
