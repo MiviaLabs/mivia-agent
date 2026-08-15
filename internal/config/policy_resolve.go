@@ -31,6 +31,14 @@ func resolveContextConfig(c ContextConfig) ContextConfig {
 		enabled := true
 		c.Summary.Enabled = &enabled
 	}
+	// Normalize the optional provider/model override: lowercase the provider
+	// name so it compares against canonical [providers.<name>] keys and the
+	// runtime table. Pairing and configured-ness are validated where an error
+	// can be returned (resolveLoaded), not here.
+	if c.Summary.Provider != nil {
+		p := strings.ToLower(strings.TrimSpace(*c.Summary.Provider))
+		c.Summary.Provider = &p
+	}
 	for _, field := range []*int{
 		&c.MaxSourceEventBytes, &c.MaxCheckpointBytes, &c.MaxCommitEvents,
 		&c.MaxCommitEventBytes, &c.MaxSessionStateBytes, &c.MaxExportBytes,
