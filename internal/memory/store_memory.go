@@ -266,4 +266,24 @@ func (s *memStore) Count(ctx context.Context, scope Scope) (int, error) {
 	}
 }
 
+// Delete removes one entry (by id) from the project or org slice, mirroring
+// the sqlite backend's project-then-org search. Returns ErrEntryNotFound if
+// no row with that id exists. Refused on a read-only store.
+func (s *memStore) Delete(ctx context.Context, id string) error {
+	if s.cfg.ReadOnly {
+		return errors.New("memory store is read-only")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rows := range []*[]memRow{&s.project, &s.org} {
+		for i := range *rows {
+			if (*rows)[i].id == id {
+				*rows = append((*rows)[:i], (*rows)[i+1:]...)
+				return nil
+			}
+		}
+	}
+	return ErrEntryNotFound
+}
+
 func (s *memStore) Close() error { return nil }

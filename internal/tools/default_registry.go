@@ -380,6 +380,7 @@ func registerMemoryTools(register func(Tool), opts DefaultOptions) {
 	}
 	register(&memorySaveTool{store: opts.Memory})
 	register(&memorySearchTool{store: opts.Memory, maxBytes: maxSearchBytes})
+	register(&memoryDeleteTool{store: opts.Memory})
 }
 
 // registerCodeNavTools registers the code-intelligence tools when the

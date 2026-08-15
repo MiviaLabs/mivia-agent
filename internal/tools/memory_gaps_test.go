@@ -42,6 +42,10 @@ func (s gapErrStore) CoreEntries(context.Context, memory.Scope) ([]memory.Result
 	return nil, s.err
 }
 
+func (s gapErrStore) Delete(context.Context, string) error {
+	return s.err
+}
+
 func (s gapErrStore) Close() error { return nil }
 
 // gapBigResult builds a search result with an oversized snippet and eight
@@ -106,6 +110,39 @@ func TestGapMemorySearchStoreError(t *testing.T) {
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"x","scope":"all"}`))
 	if err != errGapSearch {
 		t.Fatalf("memory_search error = %v, want store error to propagate", err)
+	}
+}
+
+func TestGapMemoryDeleteInvalidJSON(t *testing.T) {
+	store := memoryTestStore(t, "")
+	tool := &memoryDeleteTool{store: store}
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"id":`))
+	if err == nil {
+		t.Fatal("memory_delete must reject malformed JSON")
+	}
+	if !strings.Contains(err.Error(), "invalid arguments") {
+		t.Errorf("error = %v, want invalid-arguments wrapping", err)
+	}
+}
+
+func TestGapMemoryDeleteMissingID(t *testing.T) {
+	store := memoryTestStore(t, "")
+	tool := &memoryDeleteTool{store: store}
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("memory_delete must reject a missing id")
+	}
+	if !strings.Contains(err.Error(), "id is required") {
+		t.Errorf("error = %v, want id-required error", err)
+	}
+}
+
+func TestGapMemoryDeleteStoreError(t *testing.T) {
+	boom := &gapErrStore{err: errGapSearch}
+	tool := &memoryDeleteTool{store: boom}
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"id":"x"}`))
+	if err != errGapSearch {
+		t.Fatalf("memory_delete error = %v, want store error to propagate", err)
 	}
 }
 

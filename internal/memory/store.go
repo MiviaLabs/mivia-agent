@@ -59,6 +59,10 @@ type Store interface {
 	// uses). Not a search - no query text, just the current core set. Used
 	// to build the auto-injected system-prompt block (D1).
 	CoreEntries(ctx context.Context, scope Scope) ([]Result, error)
+	// Delete removes one entry (by id) from whichever store this Store has
+	// access to (project, then org). Returns ErrEntryNotFound if no entry
+	// with that id exists in any store. Refused on a read-only store.
+	Delete(ctx context.Context, id string) error
 	Close() error
 }
 
