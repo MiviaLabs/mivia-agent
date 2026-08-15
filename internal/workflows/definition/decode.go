@@ -30,6 +30,9 @@ func ParseWorkflowTOML(data []byte, filename string) (WorkflowFile, string, erro
 		return WorkflowFile{}, "", fmt.Errorf(
 			"workflow %q: in-file name %q does not match filename", canonical, wf.Name)
 	}
+	if err := applyStepDefaults(&wf); err != nil {
+		return WorkflowFile{}, "", fmt.Errorf("workflow %q: %w", canonical, err)
+	}
 	if err := validateWorkflowBasics(&wf); err != nil {
 		return WorkflowFile{}, "", fmt.Errorf("workflow %q: %w", canonical, err)
 	}

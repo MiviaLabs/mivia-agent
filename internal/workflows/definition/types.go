@@ -12,6 +12,26 @@ type WorkflowFile struct {
 	Transitions []Transition        `toml:"transitions" json:"transitions,omitempty"`
 	Delivery    *Delivery           `toml:"delivery" json:"delivery,omitempty"`
 	Stacking    *Stacking           `toml:"stacking" json:"stacking,omitempty"`
+	// StepDefaults is decode-time sugar: ParseWorkflowTOML copies each
+	// non-empty field into every agent step whose own field is empty, then
+	// clears this to nil. It never reaches the compiler or the digest - the
+	// json:"-" tag keeps a sugared file and its hand-expanded twin
+	// byte-identical after json.Marshal, so they compile to the same digest.
+	StepDefaults *StepDefaults `toml:"step_defaults" json:"-"`
+}
+
+// StepDefaults holds shared step field values applied at decode time to
+// every step whose resolved kind is "agent" and whose own field is empty.
+// Only Kind is considered for non-agent-kind steps. See applyStepDefaults.
+type StepDefaults struct {
+	Kind         string           `toml:"kind" json:"-"`
+	Agent        string           `toml:"agent" json:"-"`
+	Skill        string           `toml:"skill" json:"-"`
+	Template     string           `toml:"template" json:"-"`
+	OutputSchema string           `toml:"output_schema" json:"-"`
+	OnFailure    string           `toml:"on_failure" json:"-"`
+	MaxTurns     int              `toml:"max_turns" json:"-"`
+	Context      []ContextBinding `toml:"context" json:"-"`
 }
 
 type InputDef struct {
