@@ -551,9 +551,12 @@ core = [
     "fetch_url",
     "extract",
     # Durable memory: the prompts order memory_search and memory_save, so
-    # their schemas ship always (check_core_tier_covers_prompted_tools).
+    # their schemas ship always (check_core_tier_covers_prompted_tools);
+    # memory_delete ships with them so a loaded tool admission never churns
+    # the schema digest mid-session.
     "memory_save",
     "memory_search",
+    "memory_delete",
     # Workflow tools the root prompt names as required process ship always
     # (check_core_tier_covers_prompted_tools). workflow_events,
     # workflow_list_runs, workflow_cancel, and workflow_delete are deferred:
