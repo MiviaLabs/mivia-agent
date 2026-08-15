@@ -75,6 +75,7 @@ Repo-native:
 - `simplification-review` - post-implementation over-engineering and pattern-fitness review of landed code
 - `performance-review` - measurement-driven profiling and benchmarking; no findings without measurements
 - `feature-delivery` - bounded feature slice with verification
+- `memory-housekeeping` - audit the memory store: verify facts, delete stale or duplicate entries, update outdated ones, create missing ones
 
 Workflow panel (read-only, JSON-only; used by the `feature-delivery` and `bug-fix` `review_panel` members):
 

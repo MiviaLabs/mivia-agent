@@ -38,6 +38,7 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 		"docs":               true,
 		"e2e-engineer":       true,
 		"go-engineer":        true,
+		"memory-curator":     true,
 		"mivia":              true,
 		"panel-reviewer":     true,
 		"performance":        true,
@@ -228,7 +229,8 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 	}
 	wantNames := []string{
 		"architecture-review", "bug-audit", "concurrency-review",
-		"docs-update", "feature-delivery", "panel-architecture-review",
+		"docs-update", "feature-delivery",
+		"memory-housekeeping", "panel-architecture-review",
 		"panel-bug-audit", "panel-secure-change", "performance-review",
 		"review-synthesis",
 		"secure-change", "simplification-review",
