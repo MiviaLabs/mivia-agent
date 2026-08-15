@@ -14,7 +14,9 @@ require (
 
 require (
 	git.sr.ht/~jamesponddotco/gitignore-go v1.0.0
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/creack/pty v1.1.24
+	github.com/gofrs/flock v0.13.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	golang.org/x/mod v0.38.0
@@ -23,12 +25,10 @@ require (
 
 require (
 	git.sr.ht/~jamesponddotco/xstd-go v0.9.0 // indirect
-	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
-	github.com/getkin/kin-openapi v0.142.0 // indirect
+	github.com/getkin/kin-openapi v0.144.0 // indirect
 	github.com/go-openapi/jsonpointer v0.23.1 // indirect
 	github.com/go-openapi/swag/jsonname v0.26.0 // indirect
-	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
