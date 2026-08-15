@@ -137,7 +137,7 @@ func TestLLMGatewayErrorEnvelopeParsesThroughSharedParser(t *testing.T) {
 	}
 	req := Request{Model: "deepseek-v4-pro", Messages: []Message{{Role: RoleUser, Content: "hi"}}}
 	_, err = comp.ChatTurn(context.Background(), req)
-	if err == nil || !strings.Contains(err.Error(), "rate_limit") {
+	if err == nil || !strings.Contains(err.Error(), "rate limited (HTTP 429)") {
 		t.Fatalf("err=%v, want a rate-limit classification from the shared parser", err)
 	}
 }
