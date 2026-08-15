@@ -28,10 +28,10 @@ func TestBugFixWorkflowPanelContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile committed bug-fix workflow: %v", err)
 	}
-	if err := compiler.ValidateAgentReferences(&workflow, root); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateAgentReferences(&workflow, root)); err != nil {
 		t.Fatalf("validate committed bug-fix workflow agents: %v", err)
 	}
-	if err := compiler.ValidateSchemaReferences(&workflow, base); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateSchemaReferences(&workflow, base)); err != nil {
 		t.Fatalf("validate committed bug-fix workflow schemas: %v", err)
 	}
 	for _, step := range workflow.Steps {
@@ -54,7 +54,7 @@ func TestBugFixWorkflowPanelContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load committed bug-fix workflow agents: %v", err)
 	}
-	if err := compiler.ValidateAgentSkillReferences(compiled, loaded.Registry, skillRegistry); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateAgentSkillReferences(compiled, loaded.Registry, skillRegistry)); err != nil {
 		t.Fatalf("validate committed bug-fix workflow agent skills: %v", err)
 	}
 

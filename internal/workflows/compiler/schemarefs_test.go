@@ -66,6 +66,46 @@ func TestValidateSchemaReferences_SchemaNotFound(t *testing.T) {
 	}
 }
 
+// TestValidateSchemaReferences_AggregatesLoadAndContentErrors proves the
+// aggregated []string behavior across the load and content phases: one call
+// reports the missing-file error from the load phase and the invalid-JSON
+// error from the content phase, and the load error is not re-reported by the
+// content phase.
+func TestValidateSchemaReferences_AggregatesLoadAndContentErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	schemasDir := filepath.Join(tmpDir, "schemas")
+	if err := os.MkdirAll(schemasDir, 0755); err != nil {
+		t.Fatalf("creating schemas dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(schemasDir, "bad.json"), []byte("not json at all"), 0644); err != nil {
+		t.Fatalf("creating schema file: %v", err)
+	}
+
+	wf := &definition.WorkflowFile{
+		Version:     1,
+		Name:        "test-schema-refs",
+		Description: "test",
+		InitialStep: "step1",
+		Steps: []definition.Step{
+			{ID: "step1", Kind: "agent", Agent: "test", OutputSchema: "schemas/missing.json"},
+			{ID: "step2", Kind: "agent", Agent: "test", OutputSchema: "schemas/bad.json"},
+		},
+		Transitions: []definition.Transition{
+			{From: "step1", To: "step2", Match: definition.MatchCriteria{Status: "succeeded"}},
+			{From: "step2", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+		},
+	}
+
+	errs := ValidateSchemaReferences(wf, tmpDir)
+	if len(errs) != 2 {
+		t.Fatalf("expected 2 aggregated errors, got %d: %v", len(errs), strings.Join(errs, "; "))
+	}
+	joined := strings.Join(errs, "; ")
+	if !strings.Contains(joined, "file not found") || !strings.Contains(joined, "invalid JSON") {
+		t.Errorf("aggregated errors %q must report both the load error and the content error", joined)
+	}
+}
+
 func TestValidateSchemaReferences_PathTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
 
