@@ -49,7 +49,19 @@ func (s *Session) wireStepBoundaryAdmission(opts *agent.Options, turn *TurnOptio
 		if err := s.ChargeAdmissionAttempt(); err != nil {
 			return err.Error(), true
 		}
-		turnID, _ := TurnIDFromContext(ctx)
+		// TurnIDFromContext reads a dispatcher-stamped caller frame
+		// (runtime.ContextWithCaller) that only exists inside
+		// Dispatcher.Invoke - this call site is the "tool not found" branch
+		// in executeToolTask, which never reaches the dispatcher, so it is
+		// always (0, false) here. turnID 0 means "no owning turn" to
+		// StageToolAdmission: dropPendingAdmissionForTurn would never be able
+		// to drop this stage if the turn that requested it later errors or is
+		// superseded, pinning it forever. Read the session's own live turn id
+		// instead - correct here because this handler only ever runs
+		// synchronously inside that turn's own loop.Run call.
+		s.mu.RLock()
+		turnID := s.turnID
+		s.mu.RUnlock()
 		if _, err := s.StageToolAdmission([]string{name}, turnID); err != nil {
 			return err.Error(), true
 		}

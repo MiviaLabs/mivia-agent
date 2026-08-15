@@ -325,6 +325,12 @@ func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *agentSess
 	return buildSurfaceFromBase(sess, res, state, surfaceBuildRequest{
 		selected: state.Selected, base: base, skillReg: state.SkillRegFull,
 		plan: state.TierPlan, admitted: admitted,
+		// TryPublishAgentSurface (the admission-widening publication path
+		// this candidate feeds) never writes AdvertisedToolSpecs onto the
+		// session by design (plan tools-advertising/01: admission changes
+		// execution authority only) - computing the advertised union here
+		// would be thrown away unread on every load_tools call.
+		skipAdvertised: true,
 	})
 }
 
@@ -338,6 +344,13 @@ type surfaceBuildRequest struct {
 	plan     toolTierPlan
 	admitted []string
 	binding  *chat.ModelBinding
+	// skipAdvertised skips the advertised-union computation for a build whose
+	// caller never applies agentSurface.advertised to the session (currently
+	// only buildWidenedWith: TryPublishAgentSurface never writes
+	// AdvertisedToolSpecs, so computing it there was pure wasted work on the
+	// admission-widening hot path - up to MaxAdvertisedTools schema
+	// constructions thrown away on every load_tools call).
+	skipAdvertised bool
 }
 
 func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agentSessionState, req surfaceBuildRequest) (*agentSurface, error) {
@@ -374,8 +387,13 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 	// registry) and the frozen plan, NOT from registry: registry is scoped to
 	// core-plus-admitted execution authority, while the advertised snapshot
 	// must cover the whole admissible union regardless of what has been
-	// admitted so far (plan tools-advertising/01).
-	advertised, advertisedDropped := advertisedToolSpecs(base, plan)
+	// admitted so far (plan tools-advertising/01). Skipped entirely when the
+	// caller (buildWidenedWith) never applies it to the session.
+	var advertised []provider.ToolSpec
+	var advertisedDropped int
+	if !req.skipAdvertised {
+		advertised, advertisedDropped = advertisedToolSpecs(base, plan)
+	}
 	return &agentSurface{
 		registry:          registry,
 		dispatcher:        dispatcher,

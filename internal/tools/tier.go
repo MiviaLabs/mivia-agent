@@ -40,18 +40,25 @@ const MaxAdmissionNamesPerCall = 64
 const MaxAdvertisedTools = 128
 
 // AdvertisedNames returns core then deferred tool names for the advertised
-// union, truncated to MaxAdvertisedTools. It reports how many names were
-// dropped by truncation so callers can surface the loss instead of it going
-// silent (no silent caps).
-func AdvertisedNames(core, deferred []string) (names []string, dropped int) {
+// union, truncated to MaxAdvertisedTools minus reserve. reserve budgets slots
+// for schemas the caller will append on top of these names (e.g. load_tools),
+// so the FINAL wire tools[] array - names plus whatever the caller adds -
+// never exceeds MaxAdvertisedTools; passing 0 truncates to MaxAdvertisedTools
+// directly. It reports how many names were dropped by truncation so callers
+// can surface the loss instead of it going silent (no silent caps).
+func AdvertisedNames(core, deferred []string, reserve int) (names []string, dropped int) {
+	budget := MaxAdvertisedTools - reserve
+	if budget < 0 {
+		budget = 0
+	}
 	names = make([]string, 0, len(core)+len(deferred))
 	names = append(names, core...)
 	names = append(names, deferred...)
-	if len(names) <= MaxAdvertisedTools {
+	if len(names) <= budget {
 		return names, 0
 	}
-	dropped = len(names) - MaxAdvertisedTools
-	return names[:MaxAdvertisedTools], dropped
+	dropped = len(names) - budget
+	return names[:budget], dropped
 }
 
 // TierCandidate is one deferred tool's advertisement metadata. The host builds

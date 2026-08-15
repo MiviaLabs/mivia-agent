@@ -193,7 +193,16 @@ func advertisedToolSpecs(base *tools.Registry, plan toolTierPlan) ([]provider.To
 	if base == nil {
 		return nil, 0
 	}
-	names, dropped := tools.AdvertisedNames(plan.Tiers.Core, plan.Tiers.Deferred)
+	// Reserve one slot for load_tools' own schema when it will be appended
+	// below (plan.Deferred()), so core+deferred truncation leaves room for it
+	// and the FINAL wire array never exceeds tools.MaxAdvertisedTools (a
+	// prior version truncated core+deferred to the full cap and then
+	// appended load_tools on top, silently producing a 129th schema).
+	reserve := 0
+	if plan.Deferred() {
+		reserve = 1
+	}
+	names, dropped := tools.AdvertisedNames(plan.Tiers.Core, plan.Tiers.Deferred, reserve)
 	reg := tools.NewRegistry()
 	for _, name := range names {
 		if tool, ok := base.Get(name); ok {

@@ -63,12 +63,22 @@ func TestUnadmittedAdvertisedToolAutoStagesAndRefuses(t *testing.T) {
 	full.Register(fixedBodyTool{name: "grep"})
 	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
 
+	// A nonzero live turn id, matching a real in-flight turn - the exact
+	// state a real UnadmittedToolHandler call runs under.
+	s.mu.Lock()
+	s.turnID = 7
+	s.mu.Unlock()
+
 	var opts agent.Options
 	s.wireStepBoundaryAdmission(&opts, nil)
 	if opts.UnadmittedToolHandler == nil {
 		t.Fatal("UnadmittedToolHandler not wired")
 	}
 
+	// A bare context.Background(), exactly as executeToolTask's "tool not
+	// found" branch supplies (it never reaches Dispatcher.Invoke, so no
+	// runtime.Caller is ever stamped onto task.callCtx at this call site) -
+	// TurnIDFromContext(ctx) would return (0, false) here.
 	msg, ok := opts.UnadmittedToolHandler(context.Background(), "grep")
 	if !ok {
 		t.Fatal("advertised-but-unadmitted tool was not recognized")
@@ -82,6 +92,17 @@ func TestUnadmittedAdvertisedToolAutoStagesAndRefuses(t *testing.T) {
 	}
 	if len(stage.Names) != 1 || stage.Names[0] != "grep" {
 		t.Fatalf("staged names = %v, want [grep]", stage.Names)
+	}
+	// The stage must be owned by the session's REAL live turn (7), never 0:
+	// turn 0 means "no owning turn" to StageToolAdmission, so
+	// dropPendingAdmissionForTurn could never discard this stage if turn 7
+	// later errors or is superseded - it would be pinned forever regardless
+	// of that turn's outcome.
+	if _, has7 := stage.nameOwners[0][7]; !has7 {
+		t.Fatalf("staged owners = %v, want the stage owned by turn 7 (not turn 0)", stage.nameOwners[0])
+	}
+	if _, has0 := stage.nameOwners[0][0]; has0 {
+		t.Fatal("staged owners must not include turn 0 (a stage that no turn boundary can ever drop)")
 	}
 
 	// A hallucinated name outside the advertised snapshot is not recognized:

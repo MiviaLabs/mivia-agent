@@ -18,7 +18,7 @@ func TestAdvertisedNamesTruncatesDeterministically(t *testing.T) {
 	for i := range deferred {
 		deferred[i] = "tool_" + string(rune('a'+i%26)) + string(rune('0'+i/26))
 	}
-	names, dropped := AdvertisedNames(core, deferred)
+	names, dropped := AdvertisedNames(core, deferred, 0)
 	if len(names) != MaxAdvertisedTools {
 		t.Fatalf("len(names) = %d, want %d", len(names), MaxAdvertisedTools)
 	}
@@ -32,16 +32,41 @@ func TestAdvertisedNamesTruncatesDeterministically(t *testing.T) {
 		t.Fatal("deferred names were not truncated from the tail in order")
 	}
 	// A repeat call is deterministic: the same truncation every time.
-	again, droppedAgain := AdvertisedNames(core, deferred)
+	again, droppedAgain := AdvertisedNames(core, deferred, 0)
 	if !slices.Equal(names, again) || dropped != droppedAgain {
 		t.Fatal("AdvertisedNames is not deterministic across repeated calls")
+	}
+}
+
+// TestAdvertisedNamesReservesSlotsForCallerAppendedSchemas pins the fix for
+// the off-by-one bug where a caller appending its own schema (load_tools) on
+// top of a full-128 truncated union produced a 129-entry wire array. A
+// nonzero reserve must shrink the effective budget so names+reserve never
+// exceeds MaxAdvertisedTools.
+func TestAdvertisedNamesReservesSlotsForCallerAppendedSchemas(t *testing.T) {
+	core := []string{"read_file"}
+	deferred := make([]string, MaxAdvertisedTools-1) // core+deferred == MaxAdvertisedTools exactly
+	for i := range deferred {
+		deferred[i] = "tool_" + string(rune('a'+i%26)) + string(rune('0'+i/26))
+	}
+	names, dropped := AdvertisedNames(core, deferred, 1)
+	if len(names) != MaxAdvertisedTools-1 {
+		t.Fatalf("len(names) = %d, want %d (one slot reserved)", len(names), MaxAdvertisedTools-1)
+	}
+	if dropped != 1 {
+		t.Fatalf("dropped = %d, want 1 (the reserved slot must be reported as a drop)", dropped)
+	}
+	// Appending one more schema (simulating load_tools) now lands exactly at
+	// the cap, never over it.
+	if len(names)+1 != MaxAdvertisedTools {
+		t.Fatalf("names+reserved = %d, want exactly %d", len(names)+1, MaxAdvertisedTools)
 	}
 }
 
 // TestAdvertisedNamesUnderTheCapDropsNothing pins the common case: a union
 // under the cap is untouched and reports zero drops.
 func TestAdvertisedNamesUnderTheCapDropsNothing(t *testing.T) {
-	names, dropped := AdvertisedNames([]string{"read_file"}, []string{"grep", "glob"})
+	names, dropped := AdvertisedNames([]string{"read_file"}, []string{"grep", "glob"}, 0)
 	if dropped != 0 {
 		t.Fatalf("dropped = %d, want 0", dropped)
 	}
