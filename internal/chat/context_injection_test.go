@@ -263,3 +263,45 @@ func TestPlainChatSummarizerErrorFallsBack(t *testing.T) {
 		t.Fatal("fallback commit carried summary content")
 	}
 }
+
+// TestPlainChatSummaryBuildFailureFallsBackStructural pins the degrade leg
+// that hid this whole defect. When BuildSummaryRequest rejects the envelope
+// (the real failure was duplicate evidence items), the turn must still commit
+// and must carry no summary anywhere - but it must also not pretend a summary
+// exists. An unbuildable envelope is forced here with an objective the
+// configured redaction policy refuses.
+func TestPlainChatSummaryBuildFailureFallsBackStructural(t *testing.T) {
+	store, _ := openSharedContextStore(t)
+	summaryProvider := &chatSummaryProvider{}
+	completer := &capturingStreamCompleter{}
+	session, principal := newPlainContextSession(t, store, completer, plainSummarySummarizer(t, summaryProvider))
+	// The envelope validator refuses a field that matches the redaction
+	// policy. The objective is the LATEST user message, so a pattern matching
+	// the compacting turn's own text makes BuildSummaryRequest fail.
+	session.SetContextRedactionPolicy(contextstate.RedactionPolicy{
+		Configured: true, Patterns: []string{"second question"},
+	})
+
+	if _, err := session.SendUser(context.Background(), "first question "+strings.Repeat("x", 2000), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	next := "second question"
+	forceCompactionBudget(t, session, next)
+	if _, err := session.SendUser(context.Background(), next, io.Discard); err != nil {
+		t.Fatalf("a summary build failure must never fail the turn: %v", err)
+	}
+
+	if requestsCarrySummary(completer.requests) {
+		t.Fatal("a failed summary build still injected a summary message")
+	}
+	snapshot, err := store.Load(context.Background(), principal, session.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(snapshot.Active.ActiveContext), agent.SummaryMessageName) {
+		t.Fatal("a failed summary build still committed a summary")
+	}
+	if activeCarriesSummaryMessage(session.MessagesCopy()) {
+		t.Fatal("a failed summary build still adopted a summary into history")
+	}
+}

@@ -1,6 +1,7 @@
 package contextmgr
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -342,5 +343,31 @@ func TestOmittedEvidenceCapCountsDistinctItems(t *testing.T) {
 	}
 	if !sawAssistant {
 		t.Fatalf("distinct assistant evidence lost behind duplicate user items: %v", evidence)
+	}
+}
+
+// TestOmittedEvidenceCapsDistinctItems exercises the MaxSummaryItems bound
+// itself with genuinely distinct items (distinct tool names), which the
+// duplicate-heavy cases above never reach.
+func TestOmittedEvidenceCapsDistinctItems(t *testing.T) {
+	var input []provider.Message
+	for i := 0; i < MaxSummaryItems*2; i++ {
+		input = append(input, provider.Message{
+			Role: provider.RoleTool, Name: fmt.Sprintf("tool%03d", i), Content: strings.Repeat("x", 400),
+		})
+	}
+	input = append(input, provider.Message{Role: provider.RoleUser, Content: "kept"})
+	retained := []provider.Message{{Role: provider.RoleUser, Content: "kept"}}
+
+	evidence := OmittedEvidence(input, retained)
+	if len(evidence) != MaxSummaryItems {
+		t.Fatalf("evidence length = %d, want the cap %d", len(evidence), MaxSummaryItems)
+	}
+	seen := map[string]bool{}
+	for _, item := range evidence {
+		if seen[item] {
+			t.Fatalf("capped evidence still repeats %q", item)
+		}
+		seen[item] = true
 	}
 }
