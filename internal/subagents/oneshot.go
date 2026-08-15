@@ -95,6 +95,7 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		MaxTokens:        h.MaxTokens,
 		ReasoningLevel:   dial.Level,
 		ReasoningDialect: dial.Dialect,
+		SessionID:        req.SessionID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("subagent %q: %w", req.Name, err)

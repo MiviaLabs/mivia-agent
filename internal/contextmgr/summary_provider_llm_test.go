@@ -118,7 +118,7 @@ func TestLLMSummaryProviderHappyPath(t *testing.T) {
 	request := llmSummaryRequestFixture(t)
 	want := llmSummaryReplyFixture(request)
 	completer := &fakeSummaryCompleter{response: provider.Response{Content: llmSummaryReplyJSON(t, want)}}
-	adapter, err := NewLLMSummaryProvider(completer)
+	adapter, err := NewLLMSummaryProvider(completer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestLLMSummaryProviderHappyPath(t *testing.T) {
 func TestLLMSummaryProviderPromptCarriesEnvelope(t *testing.T) {
 	request := llmSummaryRequestFixture(t)
 	completer := &fakeSummaryCompleter{response: provider.Response{Content: llmSummaryReplyJSON(t, llmSummaryReplyFixture(request))}}
-	adapter, err := NewLLMSummaryProvider(completer)
+	adapter, err := NewLLMSummaryProvider(completer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestLLMSummaryProviderDecodesAndRejectsReplies(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			completer := &fakeSummaryCompleter{response: provider.Response{Content: tc.content}}
-			adapter, err := NewLLMSummaryProvider(completer)
+			adapter, err := NewLLMSummaryProvider(completer, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -297,7 +297,7 @@ func TestLLMSummaryProviderDecodesAndRejectsReplies(t *testing.T) {
 // TestLLMSummaryProviderRefusesNilCompleter pins the constructor guard and
 // the in-call guard on the zero value, mirroring NewSummarizer.
 func TestLLMSummaryProviderRefusesNilCompleter(t *testing.T) {
-	if _, err := NewLLMSummaryProvider(nil); !errors.Is(err, contextstate.ErrSummaryUnavailable) {
+	if _, err := NewLLMSummaryProvider(nil, ""); !errors.Is(err, contextstate.ErrSummaryUnavailable) {
 		t.Fatalf("nil completer error = %v, want ErrSummaryUnavailable", err)
 	}
 	var zero LLMSummaryProvider
@@ -311,7 +311,7 @@ func TestLLMSummaryProviderRefusesNilCompleter(t *testing.T) {
 func TestLLMSummaryProviderReturnsTransportError(t *testing.T) {
 	transportErr := errors.New("connection refused")
 	completer := &fakeSummaryCompleter{err: transportErr}
-	adapter, err := NewLLMSummaryProvider(completer)
+	adapter, err := NewLLMSummaryProvider(completer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestLLMSummaryProviderRejectsInvalidRequestBeforeCall(t *testing.T) {
 	request := llmSummaryRequestFixture(t)
 	request.Budget = 0
 	completer := &fakeSummaryCompleter{response: provider.Response{Content: "{}"}}
-	adapter, err := NewLLMSummaryProvider(completer)
+	adapter, err := NewLLMSummaryProvider(completer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestLLMSummaryProviderIgnoresBlankedRedactionPolicy(t *testing.T) {
 	request.RedactionPolicy = contextstate.RedactionPolicy{}
 	want := llmSummaryReplyFixture(request)
 	completer := &fakeSummaryCompleter{response: provider.Response{Content: llmSummaryReplyJSON(t, want)}}
-	adapter, err := NewLLMSummaryProvider(completer)
+	adapter, err := NewLLMSummaryProvider(completer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestLLMSummaryProviderIgnoresBlankedRedactionPolicy(t *testing.T) {
 // adapter instead of panicking.
 func TestLLMSummaryProviderRefusesMissingResponse(t *testing.T) {
 	completer := &fakeSummaryCompleter{nilResponse: true}
-	adapter, err := NewLLMSummaryProvider(completer)
+	adapter, err := NewLLMSummaryProvider(completer, "")
 	if err != nil {
 		t.Fatal(err)
 	}

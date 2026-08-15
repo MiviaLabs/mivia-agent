@@ -83,7 +83,7 @@ func summaryWiring(sess *chat.Session, res *config.Resolved) (*contextmgr.Summar
 		PolicyDigest: summaryPolicyDigest(binding.ProviderName, binding.Model, endpoint,
 			res.Privacy.RedactionPatterns, res.Privacy.RedactionKeyNames),
 	}
-	adapter, err := contextmgr.NewLLMSummaryProvider(binding.Completer)
+	adapter, err := contextmgr.NewLLMSummaryProvider(binding.Completer, sess.SessionID)
 	if err != nil {
 		return nil, contextstate.PolicySnapshot{}, false
 	}

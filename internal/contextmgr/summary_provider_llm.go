@@ -40,19 +40,24 @@ const summaryReplySkeleton = `{
 // compaction.
 type LLMSummaryProvider struct {
 	completer provider.Completer
+	// sessionID is the owning chat session's id, threaded onto every summary
+	// call's provider.Request so a provider that keys routing stickiness on
+	// it routes the summary call to the same warm upstream as the session's
+	// own turns. Empty is safe - the field simply sends nothing.
+	sessionID string
 }
 
-// The assertion pins the contract from contracts.go. No production wiring
-// binds this type yet, so the compiler is the only guard against drift.
+// The assertion pins the contract from contracts.go.
 var _ SummaryProvider = LLMSummaryProvider{}
 
-// NewLLMSummaryProvider binds one completer. A nil completer is refused the
-// same way NewSummarizer refuses a nil provider.
-func NewLLMSummaryProvider(completer provider.Completer) (LLMSummaryProvider, error) {
+// NewLLMSummaryProvider binds one completer to one session. A nil completer
+// is refused the same way NewSummarizer refuses a nil provider. sessionID may
+// be empty for callers with no session concept.
+func NewLLMSummaryProvider(completer provider.Completer, sessionID string) (LLMSummaryProvider, error) {
 	if completer == nil {
 		return LLMSummaryProvider{}, fmt.Errorf("%w: summary completer is missing", contextstate.ErrSummaryUnavailable)
 	}
-	return LLMSummaryProvider{completer: completer}, nil
+	return LLMSummaryProvider{completer: completer, sessionID: sessionID}, nil
 }
 
 // Summarize runs one non-stream completion and decodes the reply. It checks
@@ -75,6 +80,7 @@ func (p LLMSummaryProvider) Summarize(ctx context.Context, request SummaryReques
 	reply, err := p.completer.ChatTurn(ctx, provider.Request{
 		Model: request.Model, Messages: summaryMessages(request),
 		Temperature: &temperature, MaxTokens: &outputCap, Stream: false,
+		SessionID: p.sessionID,
 	})
 	if err != nil {
 		return Summary{}, fmt.Errorf("summary completer call: %w", err)

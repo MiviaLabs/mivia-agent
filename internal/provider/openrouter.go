@@ -44,5 +44,10 @@ func NewOpenRouter(opts Options) (Completer, error) {
 		// replays it on tool-call turns.
 		RequiresReasoningReplay: true,
 		ReplayReasoningField:    "reasoning",
+		// OpenRouter keys upstream routing stickiness on the OpenAI-compatible
+		// "user" field: requests sharing the same value are more likely to land
+		// on the same warm upstream provider connection. Only openrouter opts in
+		// - other factories leave this false so their bodies stay unchanged.
+		SendSessionUserKey: true,
 	}), nil
 }

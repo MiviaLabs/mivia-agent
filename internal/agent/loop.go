@@ -429,6 +429,7 @@ func (l *Loop) stepRequest(ctx context.Context, toolSpecs []provider.ToolSpec, o
 		StreamWriter: streamWriter, Timeout: opts.RequestTimeout,
 		ReasoningLevel: opts.Reasoning.Level, ReasoningDialect: opts.Reasoning.Dialect,
 		DisableProviderReplay: opts.DisableProviderReplay,
+		SessionID:             opts.SessionID,
 	}, nil
 }
 

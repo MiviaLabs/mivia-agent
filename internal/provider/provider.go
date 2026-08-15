@@ -81,6 +81,13 @@ type Request struct {
 	// request. Empty falls back to the client default; when neither resolves,
 	// nothing is sent rather than a guessed wire shape.
 	ReasoningDialect reasoning.Dialect
+	// SessionID is the caller's session/run identifier, threaded through
+	// unchanged from whatever principal issued this turn (chat session,
+	// delegated subagent, workflow step). Empty means unknown - only a
+	// client that opts into session-keyed routing (CompatOptions.
+	// SendSessionUserKey) ever reads it, and only then does it reach the
+	// wire, hashed rather than sent verbatim.
+	SessionID string
 }
 
 // WebSearchResult is provider-supplied search context attached to a completion.

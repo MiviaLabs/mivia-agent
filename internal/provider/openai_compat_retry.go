@@ -40,6 +40,7 @@ func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w
 		Stream:           false,
 		ReasoningLevel:   req.ReasoningLevel,
 		ReasoningDialect: req.ReasoningDialect,
+		SessionID:        req.SessionID,
 	})
 	if err != nil {
 		return content, err
