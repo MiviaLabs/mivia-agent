@@ -214,6 +214,72 @@ func TestSummaryWiringOverrideMissingRuntimeDegrades(t *testing.T) {
 	}
 }
 
+// TestSummaryWiringOverrideInvalidModelDegrades pins the fail-closed branch
+// for an override model that is not a valid model identifier: the override
+// cannot be built and compaction stays structural-only.
+func TestSummaryWiringOverrideInvalidModelDegrades(t *testing.T) {
+	res := summaryWiringResolved(t, true)
+	provider, badModel := "openrouter", "bad\x00model"
+	res.Context.Summary.Provider = &provider
+	res.Context.Summary.Model = &badModel
+	res.ProviderRuntimes = map[string]config.ProviderRuntime{
+		"openrouter": {ProviderName: "openrouter", BaseURL: "https://api.cheap.invalid", APIKeyEnv: "CHEAP_KEY", APIKeySet: true, APIKey: "cheap-key"},
+	}
+	summarizer, _, ok := summaryWiring(summaryWiringSession(t, res), res)
+	if ok || summarizer != nil {
+		t.Fatalf("override with an invalid model wired a summarizer: ok=%v", ok)
+	}
+}
+
+// TestSummaryWiringOverrideEmptyEndpointDegrades pins the fail-closed branch
+// for an override provider runtime with no base URL. Without the endpoint
+// check, the completer would silently fall back to the provider's default
+// endpoint (NewOpenRouter substitutes the built-in descriptor URL), which
+// would make the captured EndpointAllowlist dishonest - the policy would
+// claim an endpoint the summary calls do not actually use.
+func TestSummaryWiringOverrideEmptyEndpointDegrades(t *testing.T) {
+	res := summaryWiringResolved(t, true)
+	provider, model := "openrouter", "cheap-model"
+	res.Context.Summary.Provider = &provider
+	res.Context.Summary.Model = &model
+	res.ProviderRuntimes = map[string]config.ProviderRuntime{
+		"openrouter": {ProviderName: "openrouter", BaseURL: "", APIKeyEnv: "CHEAP_KEY", APIKeySet: true, APIKey: "cheap-key"},
+	}
+	summarizer, _, ok := summaryWiring(summaryWiringSession(t, res), res)
+	if ok || summarizer != nil {
+		t.Fatalf("override with an empty endpoint wired a summarizer: ok=%v", ok)
+	}
+}
+
+// TestSummaryWiringOverrideZeroGenerationSessionDegrades pins the fail-closed
+// branch for a session with no binding generation: NewSummarizer refuses the
+// zero-generation BindingRevision, so the override stays structural-only
+// instead of capturing an invalid revision.
+func TestSummaryWiringOverrideZeroGenerationSessionDegrades(t *testing.T) {
+	res := summaryWiringResolved(t, true)
+	provider, model := "openrouter", "cheap-model"
+	res.Context.Summary.Provider = &provider
+	res.Context.Summary.Model = &model
+	res.ProviderRuntimes = map[string]config.ProviderRuntime{
+		"openrouter": {ProviderName: "openrouter", BaseURL: "https://api.cheap.invalid", APIKeyEnv: "CHEAP_KEY", APIKeySet: true, APIKey: "cheap-key"},
+	}
+	summarizer, _, ok := summaryWiring(&chat.Session{}, res)
+	if ok || summarizer != nil {
+		t.Fatalf("override with a zero-generation session wired a summarizer: ok=%v", ok)
+	}
+}
+
+// TestSummaryDisabledReasonNamesMissingSessionBinding covers the session-path
+// branch of summaryDisabledReason (no override configured): a session with no
+// resolved binding gets the binding reason, and the override branch is
+// skipped.
+func TestSummaryDisabledReasonNamesMissingSessionBinding(t *testing.T) {
+	res := summaryWiringResolved(t, true)
+	if reason := summaryDisabledReason(&chat.Session{}, res); reason != "the session has no resolved provider/model binding" {
+		t.Fatalf("summaryDisabledReason = %q, want the missing-binding reason", reason)
+	}
+}
+
 // TestEnableSessionContextWiresSummary drives the production setup path end to
 // end: an enabled config routes a Summarizer into the context manager and the
 // PolicySnapshot into SetContextManager. The committer stays structural-only
