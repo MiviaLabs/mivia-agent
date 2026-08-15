@@ -705,3 +705,68 @@ func TestStatusViewSurfacesDeliveryErrorText(t *testing.T) {
 		t.Fatalf("error text = %q, want %q", view.Delivery[0].ErrorText, errText)
 	}
 }
+
+// TestBuildStatusViewDeliveryClaim pins the delivery-liveness surface added
+// alongside the desktop app's heartbeat fix: a delivery_pending run with no
+// execution claim reports DeliveryClaimHeld=false (parked, waiting for
+// workflow_deliver), and one actively holding a claim reports
+// DeliveryClaimHeld=true with the claim's acquired_at - the same fresh/stale
+// distinction the TUI's workflowDeliveryClaimLine already renders.
+func TestBuildStatusViewDeliveryClaim(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	ctx := context.Background()
+	const runID = "wfr-claim"
+	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
+		Inputs: map[string]string{"task": "build"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
+		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
+		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
+		Status:         workflowledger.RunStatusPending,
+		StartedAt:      time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
+	}, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range []workflowledger.RunStatus{
+		workflowledger.RunStatusRunning,
+		workflowledger.RunStatusDeliveryPending,
+	} {
+		run, getErr := repo.GetRun(ctx, runID)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if casErr := repo.CompareAndSetRunStatus(ctx, runID, run.Version, next, nil); casErr != nil {
+			t.Fatal(casErr)
+		}
+	}
+
+	view, err := buildStatusView(ctx, repo, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.DeliveryClaimHeld {
+		t.Fatalf("DeliveryClaimHeld = true before any claim, want false")
+	}
+	if view.DeliveryClaimAt != "" {
+		t.Fatalf("DeliveryClaimAt = %q before any claim, want empty", view.DeliveryClaimAt)
+	}
+
+	if err := repo.ClaimRun(ctx, runID, "delivery-worker"); err != nil {
+		t.Fatal(err)
+	}
+	view, err = buildStatusView(ctx, repo, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.DeliveryClaimHeld {
+		t.Fatal("DeliveryClaimHeld = false while a claim is held, want true")
+	}
+	if view.DeliveryClaimAt == "" {
+		t.Fatal("DeliveryClaimAt is empty while a claim is held, want a timestamp")
+	}
+}

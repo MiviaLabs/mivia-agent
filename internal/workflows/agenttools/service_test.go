@@ -508,6 +508,80 @@ func TestListRunsAcceptsEveryKnownStatusFilter(t *testing.T) {
 	}
 }
 
+// TestListRunsSurfacesDeliveryClaim pins the delivery-liveness fields added
+// alongside the desktop app's heartbeat fix: RunListItem.DeliveryClaimHeld
+// is false for a delivery_pending run nobody is delivering (parked,
+// distinct from "actively working"), and true with a non-empty
+// DeliveryClaimAt once a delivery attempt holds the run's execution claim.
+func TestListRunsSurfacesDeliveryClaim(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	ctx := context.Background()
+	const runID = "wfr-list-claim"
+	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
+		Inputs: map[string]string{"task": "build"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
+		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
+		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
+		Status:         workflowledger.RunStatusPending,
+		StartedAt:      time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
+	}, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range []workflowledger.RunStatus{
+		workflowledger.RunStatusRunning,
+		workflowledger.RunStatusDeliveryPending,
+	} {
+		run, getErr := repo.GetRun(ctx, runID)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if casErr := repo.CompareAndSetRunStatus(ctx, runID, run.Version, next, nil); casErr != nil {
+			t.Fatal(casErr)
+		}
+	}
+	svc := testService(t, repo, nil)
+
+	findRow := func(view agenttools.ListRunsView) agenttools.RunListItem {
+		t.Helper()
+		for _, item := range view.Runs {
+			if item.RunID == runID {
+				return item
+			}
+		}
+		t.Fatalf("ListRuns did not return run %q", runID)
+		return agenttools.RunListItem{}
+	}
+
+	before, err := svc.ListRuns(ctx, "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row := findRow(before); row.DeliveryClaimHeld || row.DeliveryClaimAt != "" {
+		t.Fatalf("row before any claim = %+v, want DeliveryClaimHeld=false and DeliveryClaimAt=\"\"", row)
+	}
+
+	if err := repo.ClaimRun(ctx, runID, "delivery-worker"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := svc.ListRuns(ctx, "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := findRow(after)
+	if !row.DeliveryClaimHeld {
+		t.Fatal("DeliveryClaimHeld = false while a claim is held, want true")
+	}
+	if row.DeliveryClaimAt == "" {
+		t.Fatal("DeliveryClaimAt is empty while a claim is held, want a timestamp")
+	}
+}
+
 func TestDeliverWithoutAllowPublishRefuses(t *testing.T) {
 	svc := testService(t, workflowledger.NewMemoryRepository(), &stubEngine{})
 	out, err := findTool(t, svc, agenttools.ToolWorkflowDeliver).Execute(

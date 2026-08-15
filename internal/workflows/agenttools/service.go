@@ -381,6 +381,12 @@ func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offs
 		if !workflowledger.IsTerminalRunStatus(r.Status) && r.ActiveStepID != "" {
 			item.LastHeartbeatAt = formatTime(activeStepHeartbeat(ctx, repo, r.RunID, r.ActiveStepID))
 		}
+		if r.Status == workflowledger.RunStatusDeliveryPending {
+			if _, at, ok, err := repo.GetRunClaim(ctx, r.RunID); err == nil && ok {
+				item.DeliveryClaimHeld = true
+				item.DeliveryClaimAt = formatTime(at)
+			}
+		}
 		items = append(items, item)
 	}
 	return ListRunsView{Runs: items, Limit: limit, Offset: offset, Count: len(items)}, nil
