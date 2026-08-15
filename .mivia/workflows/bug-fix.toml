@@ -69,10 +69,23 @@ implement_step = "implement"
 split_deferred = true
 merge_policy = "auto"
 
+# [step_defaults] desugars at decode time into every step whose own field is
+# empty: kind, agent, skill, output_schema, and on_failure below fill the
+# agent steps (fix_plan, implement, the repairs). A step that needs a
+# different value - hunt (auditor/bug-audit), fix_plan (plan schema),
+# review_panel (self-loop on_failure), the gates - declares its own field,
+# which always wins. template and context are step-specific and stay on each
+# step.
+[step_defaults]
+kind = "agent"
+agent = "workflow-engineer"
+skill = "workflow-feature-delivery"
+output_schema = "schemas/change-summary-v1.json"
+on_failure = "failure"
+
 # ---- Hunt: read-only hostile audit, at most 2 confirmed findings ----
 [[steps]]
 id = "hunt"
-kind = "agent"
 agent = "auditor"
 skill = "bug-audit"
 template = "templates/bugfix-hunt.md"
@@ -82,7 +95,6 @@ context = [
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.triage.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
-on_failure = "failure"
 
 # ---- Triage: independent confirmation of each finding ----
 [[steps]]
@@ -103,9 +115,6 @@ on_failure = "failure"
 # ---- Fix plan: minimal change per retained finding ----
 [[steps]]
 id = "fix_plan"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/bugfix-fix-plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [
@@ -113,16 +122,11 @@ context = [
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
 ]
-on_failure = "failure"
 
 # ---- Implement: fix + regression tests ----
 [[steps]]
 id = "implement"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/bugfix-implement.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
@@ -131,7 +135,6 @@ context = [
   { from = "steps.review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
   { from = "steps.review_panel.output", as = "panel_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
-on_failure = "failure"
 
 # ---- Panel review: 3 independent members + synthesis; the code-review gate ----
 [[steps]]
@@ -259,11 +262,7 @@ on_failure = "failure"
 # ---- Repair steps: one per evidence gate, loop back to review_panel ----
 [[steps]]
 id = "repair_tests"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
@@ -272,15 +271,10 @@ context = [
   { from = "steps.test_validate.output", as = "failed_evidence", max_bytes = 32768 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "repair_verify"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
@@ -289,15 +283,10 @@ context = [
   { from = "steps.verify.output", as = "failed_evidence", max_bytes = 32768 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "repair_final"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
@@ -306,15 +295,10 @@ context = [
   { from = "steps.code_validate.output", as = "failed_evidence", max_bytes = 32768 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "repair_preflight"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
@@ -323,18 +307,13 @@ context = [
   { from = "steps.preflight_validate.output", as = "failed_evidence", max_bytes = 32768 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 # repair_preflight_structure is also the delivery.on_failure target. It MUST
 # bind delivery.failure (compiler-enforced): the rejection text is its only
 # deterministic hint, and without it delivery re-fails identically forever.
 [[steps]]
 id = "repair_preflight_structure"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
@@ -343,24 +322,18 @@ context = [
   { from = "steps.preflight_structure.output", as = "failed_evidence", max_bytes = 32768 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 # repair_pr_metadata fixes only the PR title and summary when the host rejects
 # the change-summary metadata. It is the delivery.on_pr_metadata_failure target
 # and must bind delivery.failure.
 [[steps]]
 id = "repair_pr_metadata"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/bugfix-repair-metadata.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
 ]
-on_failure = "failure"
 
 # ---- Transitions ----
 [[transitions]]

@@ -17,10 +17,17 @@ max_duration_seconds = 900
 plan_step = "plan"
 implement_step = "implement"
 
-[[steps]]
-id = "plan"
+# [step_defaults] desugars at decode time into every step whose own field is
+# empty: kind, agent, and output_schema below fill the three agent steps;
+# plan overrides output_schema with its plan schema, and on_failure stays per
+# step (failure for plan, repair for implement/repair) because it differs.
+[step_defaults]
 kind = "agent"
 agent = "e2e-engineer"
+output_schema = "schemas/change-summary-v1.json"
+
+[[steps]]
+id = "plan"
 template = "templates/e2e-plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [
@@ -30,10 +37,7 @@ on_failure = "failure"
 
 [[steps]]
 id = "implement"
-kind = "agent"
-agent = "e2e-engineer"
 template = "templates/e2e-pr-implement.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task" },
   { from = "steps.plan.output", as = "plan" },
@@ -42,10 +46,7 @@ on_failure = "repair"
 
 [[steps]]
 id = "repair"
-kind = "agent"
-agent = "e2e-engineer"
 template = "templates/e2e-pr-repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
