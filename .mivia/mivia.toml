@@ -17,7 +17,8 @@ env_file = "~/.mivia/.env"
 [provider]
 # Default provider: DeepSeek v4 Flash (cloud).
 # Set DEEPSEEK_API_KEY in ~/.mivia/.env.
-# Switch with: --provider ollama, --provider openrouter, --provider zai.
+# Switch with: --provider ollama, --provider openrouter, --provider zai,
+# --provider llmgateway.
 name = "deepseek"
 
 [providers.deepseek]
@@ -143,6 +144,19 @@ models = [
 ]
 default_model = "qwen3.6:27b-q4_K_M"
 base_url = "http://127.0.0.1:11434/v1"
+
+[providers.llmgateway]
+# Switch with: mivia --provider llmgateway
+# LLM Gateway OpenAI-compatible endpoint. One key type works: a DevPass
+# coding-plan key or a pay-as-you-go key, same endpoint and auth header. The
+# gateway normalizes reasoning_effort per upstream model (vetted default
+# dialect "openai" - no reasoning_dialect override needed here).
+models = [
+  { name = "deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high" },
+]
+default_model = "deepseek-v4-flash"
+api_key_env = "LLMGATEWAY_API_KEY"
+base_url = "https://api.llmgateway.io/v1"
 
 # ---------------------------------------------------------------------------
 # AGENTS - file-backed definitions under .mivia/agents/
