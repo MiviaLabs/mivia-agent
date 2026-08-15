@@ -24,6 +24,25 @@ func TestFactoryRegistryRejectsDuplicateAndKeepsSortedNames(t *testing.T) {
 	}
 }
 
+// TestRegisterAllStopsAtFirstError pins the aggregation contract
+// registerBuiltins relies on: registerAll registers entries in order and
+// returns the first registration error without registering the rest.
+func TestRegisterAllStopsAtFirstError(t *testing.T) {
+	registry := newFactoryRegistry()
+	factory := func(Options) (Completer, error) { return nil, nil }
+	err := registerAll(registry, []builtinEntry{
+		{"deepseek", factory},
+		{"deepseek", factory}, // duplicate: register fails here
+		{"openrouter", factory},
+	})
+	if err == nil {
+		t.Fatal("expected a duplicate-registration error")
+	}
+	if got := registry.names(); len(got) != 1 || got[0] != "deepseek" {
+		t.Fatalf("names=%v, want only the entry registered before the error", got)
+	}
+}
+
 func TestNewDispatchesBuiltinsAndRejectsUnknown(t *testing.T) {
 	res := &config.Resolved{ProviderName: "deepseek", BaseURL: "https://example.com/v1", APIKey: "fake", APIKeySet: true}
 	comp, err := New(res)

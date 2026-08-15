@@ -1,8 +1,6 @@
 package provider
 
 import (
-	"fmt"
-
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 )
 
@@ -13,10 +11,9 @@ import (
 func NewLLMGateway(opts Options) (Completer, error) {
 	base := opts.BaseURL
 	if base == "" {
-		descriptor, ok := providerregistry.Lookup("llmgateway")
-		if !ok {
-			return nil, fmt.Errorf("provider %q has no built-in descriptor", "llmgateway")
-		}
+		// "llmgateway" is a compile-time-registered descriptor key
+		// (providerregistry/registry.go), so Lookup here always succeeds.
+		descriptor, _ := providerregistry.Lookup("llmgateway")
 		base = descriptor.DefaultURL
 	}
 	return NewOpenAICompatWithOptions(CompatOptions{
