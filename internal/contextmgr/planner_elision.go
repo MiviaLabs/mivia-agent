@@ -117,7 +117,7 @@ var (
 )
 
 // reasoningElisionMarker replaces stale assistant ReasoningContent on the
-// compaction path. The marker must NOT be the empty string: DeepSeek's
+// compaction path. The marker must NOT be the empty string: a provider's
 // documented-400 repair (provider.dropReasoningLessToolExchanges, active when
 // RejectReasoningLessToolTurns is set) wire-drops a non-terminal assistant
 // tool-call turn with empty reasoning TOGETHER with its tool results. A

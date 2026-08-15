@@ -65,8 +65,9 @@ func MessagesTokens(msgs []Message, profile ContextAccountingProfile) int {
 // billsReasoningAt reports whether msgs[index]'s ReasoningContent is charged
 // under profile. Empty ReasoningContent never contributes regardless of
 // profile. ReasoningBillingTerminalExchange reuses terminalToolExchange (the
-// same walk DeepSeek's reasoning-less-tool-turn gate uses) so the two never
-// disagree about what "the current round" means.
+// same walk the reasoning-less-tool-turn repair gate uses, see
+// RejectReasoningLessToolTurns) so the two never disagree about what "the
+// current round" means.
 func billsReasoningAt(profile ContextAccountingProfile, msgs []Message, index int) bool {
 	if msgs[index].ReasoningContent == "" {
 		return false

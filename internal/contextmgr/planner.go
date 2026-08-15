@@ -24,9 +24,20 @@ const (
 // Spool is nil there are no side effects and output is byte-identical to
 // before; when set, elision spools bytes through that seam only.
 type PlanInput struct {
-	Messages         []provider.Message
-	Budget           int
-	Tools            []provider.ToolSpec
+	Messages []provider.Message
+	Budget   int
+	Tools    []provider.ToolSpec
+	// OutputReserve is validated (must not be negative) and folded into the
+	// idempotency-key fingerprint (planIdempotencyKey) - it is NOT subtracted
+	// from Budget anywhere in the trigger/target math below. Budget already
+	// excludes the reserved completion allowance (callers derive it from
+	// config.EffectivePromptTokens, which does the subtraction once, upstream
+	// of the planner). Using OutputReserve again here would double-subtract
+	// the same reserve. If a future caller needs the planner itself to
+	// account for an output reserve, pass a Budget that has NOT already
+	// excluded it and remove this comment along with the double-subtraction
+	// it warns against - do not add a second, silent subtraction beside this
+	// one.
 	OutputReserve    int
 	Force            bool
 	CurrentObjective string
@@ -131,6 +142,8 @@ func Plan(input PlanInput) (PlanResult, error) {
 		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
 	before := applyCalibration(provider.EstimateMessagesPromptCost(input.Messages, schemaCost, input.ContextAccounting), input.CalibrationRatio)
+	// Percentages of Budget alone - see PlanInput.OutputReserve for why it is
+	// not subtracted here too.
 	trigger := percentFloor(input.Budget, 4, 5)
 	target := percentFloor(input.Budget, 1, 2)
 	result := PlanResult{
