@@ -134,6 +134,10 @@ func EmitCompaction(opts Options, preparation contextmgr.Preparation) {
 	if opts.EventBus != nil {
 		ev := events.NewEvent(events.KindCompaction)
 		ev.SessionID, ev.TurnID, ev.Detail = opts.SessionID, opts.TurnID, detail
+		// The typed payload rides the bus event too, so bus consumers (the
+		// cross-process hub, a --json sidecar) get the real numbers instead
+		// of parsing Detail.
+		ev.Compaction = &typed
 		if opts.EventIdentity != nil {
 			copy := *opts.EventIdentity
 			ev.Identity = &copy

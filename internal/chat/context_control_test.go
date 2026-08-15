@@ -177,6 +177,100 @@ func TestCompactPublishesStructuralCheckpointImmediately(t *testing.T) {
 	}
 }
 
+func TestCompactWithResultReturnsPreparationNumbers(t *testing.T) {
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := session.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.SendUser(context.Background(), "first", nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		session.Messages = append(session.Messages,
+			provider.Message{Role: provider.RoleUser, Content: strings.Repeat("old question ", 20)},
+			provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("old answer ", 20)},
+		)
+	}
+	preparation, err := session.CompactWithResult(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preparation.Compacted {
+		t.Fatal("preparation.Compacted = false, want true")
+	}
+	if preparation.BeforeTokens <= preparation.AfterTokens {
+		t.Fatalf("preparation before/after = %d/%d, want before > after", preparation.BeforeTokens, preparation.AfterTokens)
+	}
+	if len(preparation.Messages) == 0 {
+		t.Fatal("preparation.Messages is empty")
+	}
+}
+
+func TestCompactWithResultMatchesCompactErrorBehavior(t *testing.T) {
+	newSession := func() (*Session, *storage.SQLite) {
+		session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
+		store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+		if err != nil {
+			t.Fatal(err)
+		}
+		principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+		if err != nil {
+			t.Fatal(err)
+		}
+		manager := &contextmgr.ContextManager{
+			PreparationManager:  contextmgr.StructuralPreparationManager{},
+			CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+			Enabled:             true,
+		}
+		if err := session.SetContextManager(manager, principal); err != nil {
+			t.Fatal(err)
+		}
+		if err := session.SetContextStore(store); err != nil {
+			t.Fatal(err)
+		}
+		session.Messages = append(session.Messages,
+			provider.Message{Role: provider.RoleUser, Content: "question"},
+			provider.Message{Role: provider.RoleAssistant, Content: "answer"},
+		)
+		return session, store
+	}
+
+	compactSession, compactStore := newSession()
+	defer compactStore.Close()
+	compactErr := compactSession.Compact(context.Background())
+
+	resultSession, resultStore := newSession()
+	defer resultStore.Close()
+	preparation, resultErr := resultSession.CompactWithResult(context.Background())
+
+	if compactErr == nil || resultErr == nil {
+		t.Fatalf("expected both Compact and CompactWithResult to error on empty history, got compactErr=%v resultErr=%v", compactErr, resultErr)
+	}
+	if compactErr.Error() != resultErr.Error() {
+		t.Fatalf("Compact error = %q, CompactWithResult error = %q, want identical", compactErr.Error(), resultErr.Error())
+	}
+	if preparation.Compacted {
+		t.Fatal("preparation.Compacted = true on error path, want false (zero value)")
+	}
+}
+
 func TestCompactRejectsDeletingManagedWorktreeBeforePreparation(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
 	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")

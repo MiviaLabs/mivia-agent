@@ -73,7 +73,7 @@ func filterSourceExcerpts(excerpts []SourceExcerpt, policy contextstate.Redactio
 	out := make([]SourceExcerpt, 0, len(excerpts))
 	for _, excerpt := range excerpts {
 		excerpt.Role = strings.TrimSpace(excerpt.Role)
-		excerpt.Name = truncateExcerptText(excerpt.Name)
+		excerpt.Name = truncateExcerptTextTo(excerpt.Name, contextstate.MaxIdentifierBytes)
 		excerpt.Text = truncateExcerptText(excerpt.Text)
 		if excerpt.Text == "" {
 			continue
@@ -168,7 +168,7 @@ func excerptOf(message provider.Message) (SourceExcerpt, bool) {
 	}
 	excerpt := SourceExcerpt{Role: message.Role, Text: text}
 	if message.Role == provider.RoleTool {
-		excerpt.Name = truncateExcerptText(message.Name)
+		excerpt.Name = truncateExcerptTextTo(message.Name, contextstate.MaxIdentifierBytes)
 	}
 	return excerpt, true
 }
@@ -177,11 +177,22 @@ func excerptOf(message provider.Message) (SourceExcerpt, bool) {
 // characters become spaces) and truncates it to MaxSummaryFieldBytes on a
 // rune boundary.
 func truncateExcerptText(value string) string {
+	return truncateExcerptTextTo(value, MaxSummaryFieldBytes)
+}
+
+// truncateExcerptTextTo is truncateExcerptText with a caller-chosen byte
+// bound. excerpt.Name must use contextstate.MaxIdentifierBytes here, not
+// MaxSummaryFieldBytes: SummaryRequest.Validate rejects any excerpt Name
+// over MaxIdentifierBytes (128B), so truncating a tool name to the larger
+// 2048B field bound let names in the 129-2048B range pass truncation only
+// to fail validation afterward - silently discarding the whole summary
+// (applyCompactSummary swallows that error) instead of just the name.
+func truncateExcerptTextTo(value string, maxBytes int) string {
 	value = sanitizeEvidenceText(value)
-	if len(value) <= MaxSummaryFieldBytes {
+	if len(value) <= maxBytes {
 		return strings.TrimSpace(value)
 	}
-	value = value[:MaxSummaryFieldBytes]
+	value = value[:maxBytes]
 	for len(value) > 0 && !utf8.ValidString(value) {
 		value = value[:len(value)-1]
 	}

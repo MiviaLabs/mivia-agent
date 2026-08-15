@@ -31,14 +31,20 @@ func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 	return true, false, nil
 }
 
+// handleSlashCompact runs /compact. In --json line mode the result must reach
+// stdout as typed NDJSON (a frontend driving this process over stdin has
+// nowhere else to look), so handleSlashCompactJSON attaches the turn event
+// callback for the duration of the compact: the session's own post-commit
+// emission (emitContextCompaction -> agent.EmitCompaction) then writes the
+// same "compaction" event a turn's automatic compaction emits - one field
+// mapping, not a second one here. At slash time no turn is in flight, so
+// OnAgentEvent is otherwise unset and nothing double-emits.
 func handleSlashCompact(sess *chat.Session, term *Terminal) (bool, bool, error) {
-	if err := sess.Compact(context.Background()); err != nil {
-		message := "context compaction failed: " + err.Error()
-		if term == nil {
-			fmt.Fprintln(os.Stderr, message)
-		} else {
-			term.WriteString("\n" + message)
-		}
+	if term == nil && activeJSONSlashSink != nil {
+		return handleSlashCompactJSON(sess)
+	}
+	if _, err := sess.CompactWithResult(context.Background()); err != nil {
+		reportCompactFailure(term, err)
 		return true, false, nil
 	}
 	usage := sess.ContextUsage()
@@ -49,6 +55,34 @@ func handleSlashCompact(sess *chat.Session, term *Terminal) (bool, bool, error) 
 		term.WriteString("\n" + message)
 	}
 	return true, false, nil
+}
+
+// handleSlashCompactJSON is the --json line-mode /compact leg: the typed
+// "compaction" event flows through the temporarily-attached callback, then a
+// context_usage refresh follows so a consumer updates its context indicator in
+// the same read. On failure, slash_error is the sole authoritative signal -
+// stderr prose is invisible to a frontend parsing stdout.
+func handleSlashCompactJSON(sess *chat.Session) (bool, bool, error) {
+	w := activeJSONSlashSink.w
+	previous := sess.OnAgentEvent
+	sess.OnAgentEvent = jsonTurnEventCallback(w)
+	_, err := sess.CompactWithResult(context.Background())
+	sess.OnAgentEvent = previous
+	if err != nil {
+		activeJSONSlashSink.Error("context compaction failed: " + err.Error())
+		return true, false, nil
+	}
+	writeContextUsageLine(w, sess)
+	return true, false, nil
+}
+
+func reportCompactFailure(term *Terminal, err error) {
+	message := "context compaction failed: " + err.Error()
+	if term == nil {
+		fmt.Fprintln(os.Stderr, message)
+	} else {
+		term.WriteString("\n" + message)
+	}
 }
 
 func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {

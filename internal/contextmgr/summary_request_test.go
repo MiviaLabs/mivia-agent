@@ -143,6 +143,47 @@ func TestBuildSummaryRequestSealsAndValidates(t *testing.T) {
 	}
 }
 
+// TestSourceExcerptsTruncatesOversizedToolNameToIdentifierBound pins the
+// fix for a bug where a tool-result excerpt's Name was truncated to the much
+// larger MaxSummaryFieldBytes (2048B), then rejected by
+// SummaryRequest.Validate for exceeding contextstate.MaxIdentifierBytes
+// (128B) - a tool name in the 129-2048B range passed truncation only to fail
+// validation, silently discarding the whole summary. Name must now be
+// truncated to MaxIdentifierBytes up front, so BuildSummaryRequest succeeds.
+func TestSourceExcerptsTruncatesOversizedToolNameToIdentifierBound(t *testing.T) {
+	oversizedName := strings.Repeat("n", contextstate.MaxIdentifierBytes+200)
+	call := plannerToolCall("call-name", oversizedName, `{}`)
+	input := []provider.Message{
+		{Role: provider.RoleUser, Content: "objective"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call}},
+		{Role: provider.RoleTool, ToolCallID: call.ID, Name: oversizedName, Content: "tool body"},
+		{Role: provider.RoleUser, Content: "current objective"},
+	}
+	retained := []provider.Message{
+		{Role: provider.RoleUser, Content: "current objective"},
+	}
+	excerpts := SourceExcerpts(input, retained)
+	var found bool
+	for _, excerpt := range excerpts {
+		if excerpt.Role != provider.RoleTool {
+			continue
+		}
+		found = true
+		if len(excerpt.Name) > contextstate.MaxIdentifierBytes {
+			t.Fatalf("excerpt.Name is %d bytes, want <= %d", len(excerpt.Name), contextstate.MaxIdentifierBytes)
+		}
+	}
+	if !found {
+		t.Fatal("no tool excerpt produced")
+	}
+
+	buildInput := summaryBuildInputFixture()
+	buildInput.SourceExcerpts = excerpts
+	if _, err := BuildSummaryRequest(buildInput); err != nil {
+		t.Fatalf("BuildSummaryRequest rejected a request with a truncated tool name: %v", err)
+	}
+}
+
 // TestBuildSummaryRequestNegativeCases drives every rejection the constructor
 // must surface before any provider call.
 func TestBuildSummaryRequestNegativeCases(t *testing.T) {

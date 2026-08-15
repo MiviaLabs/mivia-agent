@@ -13,7 +13,7 @@ var completionShells = []string{"bash", "zsh", "fish"}
 // completionCommands lists the top-level mivia commands. Keep it in sync with
 // the Execute switch in root.go.
 var completionCommands = []string{
-	"chat", "config", "doctor", "agents", "memory", "sessions", "workflows",
+	"chat", "config", "doctor", "agents", "memory", "sessions", "compact", "workflows",
 	"workflow", "stack", "worktree", "version", "help", "completion", "setup", "login",
 	"logout", "register", "verify",
 }
