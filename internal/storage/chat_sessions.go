@@ -257,9 +257,45 @@ func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextsta
 		return err
 	}
 	if count == 0 {
+		// The name-keyed lookup found nothing, but a caller may be passing a
+		// snapshot's stored session_id rather than its catalog name (e.g.
+		// mivia-agent-desktop's AgentSessionSummary.session_id, which is
+		// backfilled from other columns and is not guaranteed to equal the
+		// row's `name` for legacy/diverged data - see
+		// TestSQLiteChatSessionCatalogDeleteFindsSnapshotByStoredSessionID).
+		// Resolve name from session_id before falling through to the
+		// context-session tombstone path, which only matches
+		// context_sessions.session_id and would otherwise silently no-op,
+		// leaving the snapshot (and its chat_session_dirs project
+		// association) orphaned forever.
+		if resolvedName, ok, err := s.resolveSnapshotNameBySessionID(ctx, principal, name); err != nil {
+			return err
+		} else if ok {
+			count, err = s.deleteSessionSnapshotRow(ctx, principal, resolvedName)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if count == 0 {
 		return s.deleteContextSessionOrOrphanedAdmission(ctx, principal, name)
 	}
 	return nil
+}
+
+// resolveSnapshotNameBySessionID looks up a chat_sessions snapshot's catalog
+// name from its stored session_id column, for callers that identify a
+// session by session_id rather than by name. See DeleteSessionSnapshot.
+func (s *SQLite) resolveSnapshotNameBySessionID(ctx context.Context, principal contextstate.Principal, sessionID string) (string, bool, error) {
+	var name string
+	err := s.db.QueryRowContext(ctx, `SELECT name FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, sessionID).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return name, true, nil
 }
 
 // deleteContextSessionOrOrphanedAdmission handles the case the snapshot delete
