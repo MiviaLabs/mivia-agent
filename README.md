@@ -18,7 +18,7 @@ Your files stay on your machine by default. mivia sends prompts and selected con
 
 ## Quick start
 
-Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need an API key for a supported provider (DeepSeek by default).
+Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need an API key for a supported provider. See [Supported providers](#supported-providers) below.
 
 ### Install
 
@@ -84,6 +84,28 @@ One-shot mode:
 ```
 
 Shell completions: `mivia completion bash|zsh|fish` prints a completion script for your shell.
+
+## Supported providers
+
+mivia is a local-first agent: prompts and selected context go to exactly one
+configured AI provider. Five providers are built in:
+
+| Provider | Default model | Default API base URL |
+|----------|---------------|-----------------------|
+| DeepSeek (default) | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
+| OpenRouter | `openai/gpt-4o-mini` | `https://openrouter.ai/api/v1` |
+| ZAI (z.ai) | `glm-5.2` | `https://api.z.ai/api/paas/v4` |
+| Ollama | `gpt-oss:120b` | `https://ollama.com/v1` |
+| LLM Gateway | `deepseek-v4-pro` | `https://api.llmgateway.io/v1` |
+
+mivia does not accept an arbitrary OpenAI-compatible provider name: the
+provider registry rejects names it does not support, and every provider must
+declare its model catalog in the settings file (there is no remote model
+discovery). Configure a provider and its API key under
+[Configuration](docs/product/config.md#provider-support); see
+[Integrations](docs/product/integrations.md) for the external-service picture.
+Default provider: DeepSeek, model `deepseek-v4-flash`; switch with
+`--provider` or in `[provider] name = ...`.
 
 Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributing.md). Provider and config options: see [Configuration](docs/product/config.md).
 Successful workflow runs stop at `delivery_pending` until you pass the explicit `--allow-publish` flag. See the [Workflow guide](docs/product/workflows-guide.md).

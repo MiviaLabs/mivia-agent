@@ -26,4 +26,8 @@ if [[ -f scripts/check_docs_ownership.py ]]; then
   python3 scripts/check_docs_ownership.py
 fi
 
+if [[ -f scripts/check_provider_docs.py ]]; then
+  python3 scripts/check_provider_docs.py
+fi
+
 printf 'docs-check: ok\n'
