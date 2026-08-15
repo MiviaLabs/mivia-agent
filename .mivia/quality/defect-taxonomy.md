@@ -383,6 +383,43 @@ first fix, still only one of two) actually fed it.
   a passing test suite that only exercises one path (e.g. the tools-on path) will not
   catch a sibling path's identical gap.
 
+## DC-17 Two producers write one cached display value with no precedence rule
+
+**Mechanism.** A UI or status value has two producers: an exact, event-driven update
+and a periodic, time-throttled recompute that falls back to a cheaper or staler
+source. Both write the same cache field. The throttle's only test is "has enough wall
+time passed since the last write", not "is the pending write more or less authoritative
+than what is already there." Once the throttle window elapses, the stale recompute
+overwrites a fresher exact value with no comparison, and the display visibly regresses
+mid-turn even though better data already arrived and nothing asked for a refresh.
+
+**Evidence.** mivia-agent TUI status bar: the "ctx N%" indicator had two writers to
+`tuiModel.cachedCtxPercent` - `updateFromDrain`, fed by the agent loop's per-step
+`EventTokenUsage` (exact, provider-reported), and `liveCtxPercent`'s own 500ms-throttle
+fallback, which recomputed from `session.ContextUsage()` (an estimate over
+`Session.Messages`, itself frozen at the turn's start until the whole turn commits).
+The throttle had no way to know a step's exact sample had already landed, so any tool
+call running longer than 500ms let the next redraw's fallback stomp the exact value
+with the stale pre-turn estimate - the number would jump to the right value once, then
+visibly fall back down mid-turn. Fixed by adding an explicit precedence latch
+(`liveCtxSampled`): once the exact producer writes this turn, the fallback producer is
+locked out for the rest of the turn instead of being allowed to overwrite on a timer.
+
+**Probes.**
+- For every cache/display field with more than one writer, name each writer's
+  precision (exact/measured vs. estimated/derived) and the condition under which it
+  writes.
+- A time-only throttle ("have N ms passed") is not a precedence rule. If a lower-
+  precision writer can fire after a higher-precision one, the cache needs an explicit
+  flag or generation counter recording which producer wrote last, not just when.
+- Test the specific failure shape: exact write, then enough time passes for the
+  throttle to expire with no new exact write, then a redraw. The stale writer must not
+  fire, or must not be allowed to overwrite.
+- Check every place the same field is read, not just the one render path a bug report
+  named - a fix that adds the latch to one read site and misses a sibling read
+  (idle-vs-busy render branches are a common split) leaves the regression reachable
+  from the other site.
+
 ## Chain control
 
 The history shows chains: one class produced 35, 45, or 26 separate fixes. A chain

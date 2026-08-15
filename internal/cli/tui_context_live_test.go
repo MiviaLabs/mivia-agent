@@ -57,11 +57,12 @@ func TestLiveContextUsageAppearsInStatusDuringTurn(t *testing.T) {
 		t.Fatalf("waiting render missing live context %q:\n%s", want, plain)
 	}
 
-	// Idle turns must not show a context percentage.
+	// Idle turns keep showing the context percentage too - it must not
+	// disappear the moment a turn finishes.
 	m.waiting = false
 	plainIdle := stripANSI(m.View())
-	if strings.Contains(plainIdle, "ctx ") {
-		t.Fatalf("idle render must not show context percentage:\n%s", plainIdle)
+	if !strings.Contains(plainIdle, "ctx ") {
+		t.Fatalf("idle render must still show context percentage:\n%s", plainIdle)
 	}
 }
 
@@ -102,7 +103,46 @@ func TestLiveContextUsagePerStepBeatsStaleSessionMessages(t *testing.T) {
 	}
 }
 
-func TestStatusDetailAppendsContextOnlyWhileWaiting(t *testing.T) {
+// TestLiveContextUsageSurvivesQuietStretchBetweenSteps guards the regression
+// where a live sample would render correctly once and then revert to the
+// stale pre-turn percentage: liveCtxPercent()'s own 500ms-throttle fallback
+// unconditionally recomputed session.ContextUsage() (stale, since s.Messages
+// is not updated until turn finish) whenever more than 500ms had passed since
+// the last update - including a live push - clobbering a fresher live sample
+// with a worse one during any tool call that runs longer than 500ms. Once a
+// live sample lands this turn, it must win for the rest of the turn
+// regardless of how much later liveCtxPercent() is polled.
+func TestLiveContextUsageSurvivesQuietStretchBetweenSteps(t *testing.T) {
+	m := newReadyChatModel(24, 80)
+	if err := m.session.SetPromptBudget(1000); err != nil {
+		t.Fatal(err)
+	}
+	// A short, turn-start history: ContextUsage() alone reports near 0%.
+	m.session.Messages = []provider.Message{
+		{Role: provider.RoleUser, Content: "hi"},
+	}
+	m.waiting = true
+
+	m.updateFromDrain(bridgeDrain{CtxTokens: 500, CtxTokensSet: true})
+	if got := m.liveCtxPercent(); got != 50 {
+		t.Fatalf("liveCtxPercent() right after the push = %d, want 50", got)
+	}
+
+	// Simulate a long-running tool call: no new EventTokenUsage arrives, and
+	// enough wall-clock time passes that the old throttle window would have
+	// expired and recomputed from the stale session history.
+	m.cachedCtxPercentAt = time.Now().Add(-time.Second)
+
+	if got := m.liveCtxPercent(); got != 50 {
+		t.Fatalf("liveCtxPercent() after a quiet stretch = %d, want the live sample (50) to still win, not the stale pre-turn estimate", got)
+	}
+}
+
+// TestStatusDetailAlwaysShowsContext pins that the ctx% suffix is not
+// turn-scoped chrome: it appears whether the model is mid-turn (with or
+// without other step detail text) or idle, so the number a user relies on
+// to judge when to /compact never disappears just because the turn ended.
+func TestStatusDetailAlwaysShowsContext(t *testing.T) {
 	m := newReadyChatModel(24, 80)
 	if err := m.session.SetPromptBudget(1000); err != nil {
 		t.Fatal(err)
@@ -123,9 +163,11 @@ func TestStatusDetailAppendsContextOnlyWhileWaiting(t *testing.T) {
 		t.Fatalf("waiting statusDetail with empty step = %q, want ctx", got)
 	}
 
+	// Idle: stepDetail is cleared by the turn-finish path, but ctx% must
+	// still render on its own.
 	m.waiting = false
-	m.stepDetail = "searching"
-	if got := m.statusDetail(); got != "searching" {
-		t.Fatalf("idle statusDetail = %q, want stepDetail unchanged", got)
+	m.stepDetail = ""
+	if got := m.statusDetail(); !strings.Contains(got, "ctx ") {
+		t.Fatalf("idle statusDetail = %q, want it to still show ctx", got)
 	}
 }

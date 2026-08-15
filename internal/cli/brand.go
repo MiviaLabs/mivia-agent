@@ -324,6 +324,14 @@ func renderStatusBar(
 			fmt.Sprintf(" ▣ %d ", queueLen),
 		) + right
 	}
+	// Idle stepDetail carries only the "ctx N%" suffix (statusDetail never
+	// sets step text once idle) - render it here too, or the number that
+	// renderWorkChrome shows while busy would vanish the instant the turn
+	// finishes, the one time a user most wants to check it before deciding
+	// whether to /compact.
+	if detail := sanitizeStatusDetail(stepDetail); detail != "" {
+		right = right + tuiDimStyle.Render(" · "+detail)
+	}
 	// Show git branch context.
 	if gitBranch != "" {
 		branch := gitBranch

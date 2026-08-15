@@ -137,11 +137,21 @@ type tuiModel struct {
 	stepDetail     string
 	stepDetailAt   time.Time
 	stalledWarning bool
-	// cachedCtxPercent / cachedCtxPercentAt throttle ContextUsage() to at
-	// most once per 500 ms during a turn — the method deep-clones messages
-	// and marshals tool schemas, which is too expensive for per-frame calls.
+	// cachedCtxPercent is the single authoritative value the status bar
+	// reads (liveCtxPercent). Two producers feed it, in strict precedence
+	// order: a per-step EventTokenUsage push (updateFromDrain) is exact and,
+	// once one has landed this turn, permanently wins - liveCtxSampled locks
+	// out the second producer, session.ContextUsage() (liveCtxPercent's own
+	// fallback), so a quiet stretch between provider calls (e.g. a
+	// long-running tool) can never overwrite a fresher live sample with the
+	// stale, s.Messages-derived pre-turn estimate. Before the turn's first
+	// push, ContextUsage() is the only source, throttled to at most once per
+	// 500 ms since it deep-clones messages and marshals tool schemas - too
+	// expensive for per-frame calls. Both cachedCtxPercent and
+	// liveCtxSampled are reset to zero/false in resetTurnState at turn start.
 	cachedCtxPercent   int
 	cachedCtxPercentAt time.Time
+	liveCtxSampled     bool
 	// awaitingFirstActivity: after send, before first interim/tool/stream/status.
 	awaitingFirstActivity bool
 	// followOutput: auto-scroll transcript to bottom when user is following.
