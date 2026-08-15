@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -212,6 +213,66 @@ func TestResumeReportsOneResultPerTaskIncludingCompleted(t *testing.T) {
 	}
 	if completedT1 != 0 {
 		t.Errorf("seeded task t1 recorded %d task_completed events during resume; must be 0 (never re-recorded)", completedT1)
+	}
+}
+
+// C-1 regression: resumeInterruptedRun registered its handle with an empty
+// idempotency key, so newRunHandle never started the evictor goroutine and the
+// handle stayed in handlesByRun forever (evictHandleAfterTerminal is the only
+// site that deletes from handlesByRun). After the run reaches terminal and the
+// retention window elapses, HandleForRun must return nil.
+func TestResumedRunHandleEvictedAfterTerminal(t *testing.T) {
+	c, _ := resumeLifecycleFixture(t, func(ctx context.Context, repo ledger.LedgerRepository) {
+		_ = repo.CreateTask(ctx, lifecycleTask("t1", string(ledger.TaskStatusQueued)))
+		_ = repo.CompareAndSetTaskStatus(ctx, "r", "t1", 1, string(ledger.TaskStatusRunning))
+	})
+	c.handleRetention = 10 * time.Millisecond
+	ctx := context.Background()
+	h, err := c.ResumeInterruptedRun(ctx, "r")
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for c.HandleForRun("r") != nil && time.Now().Before(deadline) {
+		timer := time.NewTimer(time.Millisecond)
+		<-timer.C
+	}
+	if got := c.HandleForRun("r"); got != nil {
+		t.Fatalf("resumed run handle was never evicted from handlesByRun; HandleForRun = %v", got)
+	}
+}
+
+// C-1 negative path: a resume whose execution ended without terminalizing the
+// run (done closed on a non-terminal run) used to leak its handle in
+// handlesByRun, and the stale handle then permanently refused any later
+// in-process resume of the same run via the guard in recovery.go. After the
+// retention window the stale handle must be evicted so a later resume succeeds.
+func TestStaleResumeHandleDoesNotBlockLaterResume(t *testing.T) {
+	c, _ := resumeLifecycleFixture(t, func(ctx context.Context, repo ledger.LedgerRepository) {
+		_ = repo.CreateTask(ctx, lifecycleTask("t1", string(ledger.TaskStatusQueued)))
+		_ = repo.CompareAndSetTaskStatus(ctx, "r", "t1", 1, string(ledger.TaskStatusRunning))
+	})
+	c.handleRetention = 10 * time.Millisecond
+	// Stage the leaked state exactly as the finding describes: an empty-key
+	// resume handle whose execution ended (done closed) without the run
+	// reaching terminal, so nothing ever evicted it.
+	stale := c.newRunHandle("r", "", map[string]string{"t1": "attempt-1"}, "", false)
+	close(stale.done)
+	deadline := time.Now().Add(time.Second)
+	for c.HandleForRun("r") != nil && time.Now().Before(deadline) {
+		timer := time.NewTimer(time.Millisecond)
+		<-timer.C
+	}
+	ctx := context.Background()
+	h, err := c.ResumeInterruptedRun(ctx, "r")
+	if err != nil {
+		t.Fatalf("later resume refused by stale handle: %v", err)
+	}
+	if _, err := c.Join(ctx, h); err != nil {
+		t.Fatalf("join: %v", err)
 	}
 }
 

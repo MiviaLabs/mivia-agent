@@ -295,9 +295,16 @@ func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string
 		c.handles[key] = h
 	}
 	c.handlesMu.Unlock()
-	if key != "" {
-		go c.evictHandleAfterTerminal(key, h)
-	}
+	// Every handle is evicted from handlesByRun once the run reaches terminal
+	// and the retention window elapses, so the goroutine MUST start for every
+	// handle, keyed or not. resumeInterruptedRun registers its handle with an
+	// empty idempotency key, and evictHandleAfterTerminal is the only site that
+	// deletes from handlesByRun: without it, a resumed run's handle leaked in
+	// handlesByRun forever, so HandleForRun kept returning a stale handle and
+	// the resume guard at recovery.go refused any later in-process resume of
+	// that run. The empty key is handled inside evictHandleAfterTerminal, which
+	// never touches the keyed map for empty keys.
+	go c.evictHandleAfterTerminal(key, h)
 	return h
 }
 
