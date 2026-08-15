@@ -7,12 +7,18 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 )
 
 // compactionDoneMsg carries the result of one asynchronous /compact run from
-// the tea command goroutine back to the update goroutine.
-type compactionDoneMsg struct{ err error }
+// the tea command goroutine back to the update goroutine. notice is the
+// rendered typed compaction record (before/after tokens, elision counts), or
+// empty when the run emitted none.
+type compactionDoneMsg struct {
+	err    error
+	notice string
+}
 
 // handleTuiCompactSlash starts the manual compact off the update goroutine.
 // The indicator shows at once: the transcript gets the notice, the status bar
@@ -37,20 +43,42 @@ func (m *tuiModel) handleTuiCompactSlash(focus string) bool {
 // compactCmd runs the compact and reports through compactionDoneMsg. The
 // session serializes compaction against turn publication itself; the command
 // only moves the blocking call off the update goroutine.
+//
+// The agent-event sink is attached for the duration of the run, the same way
+// the --json leg does it (handleSlashCompactJSON): the bridge callback is
+// installed per turn inside SendUser*, so a compact started from a slash
+// command runs with no sink and the session's typed compaction record - the
+// only carrier of the before/after token delta and the elision counts -
+// reached nobody. The swap is mutex-guarded because the compaction reads the
+// field from this goroutine.
 func (m *tuiModel) compactCmd(focus string) tea.Cmd {
 	return func() tea.Msg {
-		return compactionDoneMsg{err: m.session.Compact(context.Background(), focus)}
+		var notice string
+		previous := m.session.SwapOnAgentEvent(func(ev agent.Event) {
+			if ev.Kind == agent.EventCompaction && ev.Compaction != nil {
+				notice = renderCompactionNotice(*ev.Compaction)
+			}
+		})
+		err := m.session.Compact(context.Background(), focus)
+		m.session.SwapOnAgentEvent(previous)
+		return compactionDoneMsg{err: err, notice: notice}
 	}
 }
 
 // applyCompactionDone clears the busy state and reports the outcome in the
-// transcript with the same words the inline handler used.
-func (m *tuiModel) applyCompactionDone(err error) {
+// transcript with the same words the inline handler used. A typed notice, when
+// the run produced one, precedes the usage line: it carries the detail the
+// percentage cannot (how much was dropped, and how much of that was elided
+// tool output).
+func (m *tuiModel) applyCompactionDone(msg compactionDoneMsg) {
 	m.compacting = false
-	if err != nil {
-		m.appendInfo("context compaction failed: " + err.Error())
+	if msg.err != nil {
+		m.appendInfo("context compaction failed: " + msg.err.Error())
 		m.renderVP()
 		return
+	}
+	if msg.notice != "" {
+		m.appendInfo(msg.notice)
 	}
 	usage := m.session.ContextUsage()
 	m.appendInfo(fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens)))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -77,6 +78,21 @@ func (s *Session) ContextPreparation() (contextmgr.PreparationManager, contextmg
 	input := prepareInputForContext(s.Messages, s.MaxContextTokens, s.MaxTokens, s.binding, cfg.principal, cfg.policy, cfg.worktree)
 	input.Revision = cfg.revision
 	return cfg.manager.PreparationManager, input, true
+}
+
+// SwapOnAgentEvent installs handler as the session's agent-event sink and
+// returns the handler it replaced, so a caller that needs the events of one
+// bounded operation (a manual compact runs outside any turn, where no turn
+// callback is attached) can restore the previous sink afterwards. The swap
+// takes the session mutex: emitContextCompaction reads the field under the
+// read lock from the goroutine running the compaction, so a bare field
+// assignment races it.
+func (s *Session) SwapOnAgentEvent(handler func(agent.Event)) func(agent.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.OnAgentEvent
+	s.OnAgentEvent = handler
+	return previous
 }
 
 // Compact prepares and durably publishes the current conversation immediately.
