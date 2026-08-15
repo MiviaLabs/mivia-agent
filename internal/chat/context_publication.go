@@ -58,7 +58,7 @@ func nextContextRevision(preparation contextmgr.Preparation, result contextmgr.T
 	}
 }
 
-func (s *Session) emitContextCompaction(preparation contextmgr.Preparation, turnID uint64, summarized bool) {
+func (s *Session) emitContextCompaction(cfg contextTurnConfig, preparation contextmgr.Preparation, turnID uint64, summarized bool) {
 	s.mu.RLock()
 	onEvent := s.OnAgentEvent
 	bus := s.EventBus
@@ -73,7 +73,30 @@ func (s *Session) emitContextCompaction(preparation contextmgr.Preparation, turn
 	agent.EmitCompaction(agent.Options{
 		OnEvent: onEvent, EventBus: bus, SessionID: sessionID,
 		TurnID: fmt.Sprintf("turn:%d", turnID), EventIdentity: identity,
-	}, preparation, summarized)
+	}, preparation, summarized, summaryUnavailableReason(cfg, summarized))
+}
+
+// summaryUnavailableReason classifies why a compaction produced no LLM
+// summary, for the compaction event's Reason field. Empty when summarized is
+// true. Two tiers: the session never had a summarizer wired at all (the
+// classified setup-time cause captured on cfg.manager.SummaryUnavailableReason
+// - a missing/misconfigured provider, credential, or endpoint), or a
+// summarizer was wired but this particular compaction's call still produced
+// nothing usable (a transient provider/network failure, or the summary was
+// dropped for staying within budget) - the underlying error is discarded by
+// design (see applyCompactSummary/summarizeTurn) since it could carry prompt
+// or response content onto this content-free event.
+func summaryUnavailableReason(cfg contextTurnConfig, summarized bool) string {
+	if summarized {
+		return ""
+	}
+	if cfg.summarizer == nil {
+		if cfg.manager != nil && cfg.manager.SummaryUnavailableReason != "" {
+			return cfg.manager.SummaryUnavailableReason
+		}
+		return "no summarizer is configured for this session"
+	}
+	return "the summary call failed or produced nothing usable for this compaction"
 }
 
 func (s *Session) advanceContextHead(store contextstate.Store, principal contextstate.Principal, instance contextstate.WorktreeInstance, expected contextstate.Revision, expectedBinding, newBinding contextstate.BindingRevision, reason string, clearActive bool) error {

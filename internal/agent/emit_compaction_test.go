@@ -38,7 +38,7 @@ func TestEmitCompactionAfterCommitOnly(t *testing.T) {
 	var busEvent events.Event
 	bus := events.New()
 	bus.Subscribe(events.KindCompaction, events.HandlerFunc(func(_ context.Context, event events.Event) { busEvent = event }))
-	EmitCompaction(Options{OnEvent: func(event Event) { got = event }, EventBus: bus}, preparation, true)
+	EmitCompaction(Options{OnEvent: func(event Event) { got = event }, EventBus: bus}, preparation, true, "")
 	bus.Flush()
 	if got.Kind != EventCompaction || got.Compaction == nil {
 		t.Fatalf("typed event = %+v", got)

@@ -143,7 +143,16 @@ type CompactionEvent struct {
 	// banner for a summary-less compaction is why an operator sees an
 	// instant, LLM-free compact and concludes compaction is broken.
 	Summarized bool `json:"summarized"`
-	sealed     bool `json:"-"`
+	// Reason names why Summarized is false, as a fixed, classified,
+	// content-free string (e.g. "no summarizer is configured for this
+	// session") - never a raw provider/library error, which could carry
+	// prompt or response fragments onto this sealed wire contract. Empty
+	// when Summarized is true. Without this a renderer could only ever tell
+	// an operator to "enable" summarization, even when it was already
+	// enabled and something else (a missing credential, an unresolved
+	// endpoint, a failed provider call) was the real cause.
+	Reason string `json:"reason,omitempty"`
+	sealed bool   `json:"-"`
 }
 
 // CompactionEventParams is the only constructor input for CompactionEvent.
@@ -157,6 +166,7 @@ type CompactionEventParams struct {
 	SourceRange    contextstate.SourceRange
 	SummaryVersion uint32
 	Summarized     bool
+	Reason         string
 }
 
 // NewCompactionEvent constructs the only valid compaction event. Callers get
@@ -167,7 +177,7 @@ func NewCompactionEvent(p CompactionEventParams) (CompactionEvent, error) {
 		Trigger: p.Trigger, BeforeTokens: p.BeforeTokens, AfterTokens: p.AfterTokens,
 		ElidedMessages: p.ElidedMessages, ElidedBytes: p.ElidedBytes,
 		SourceRange: p.SourceRange, SummaryVersion: p.SummaryVersion,
-		Summarized: p.Summarized, sealed: true,
+		Summarized: p.Summarized, Reason: p.Reason, sealed: true,
 	}
 	return event, event.Validate()
 }
@@ -207,6 +217,14 @@ func (e CompactionEvent) Validate() error {
 	}
 	if e.SummaryVersion == 0 {
 		return fmt.Errorf("invalid compaction event: summary version")
+	}
+	if len(e.Reason) > 256 {
+		return fmt.Errorf("invalid compaction event: reason")
+	}
+	for _, r := range e.Reason {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid compaction event: reason contains control character")
+		}
 	}
 	return nil
 }

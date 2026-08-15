@@ -126,6 +126,12 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 	if summarizer, snapshot, ok := summaryWiring(sess, res); ok {
 		manager.Summarizer = summarizer
 		policy = snapshot
+	} else {
+		// Captured once here so every compaction this session ever emits can
+		// report the real cause (see summaryDisabledReason) instead of a
+		// generic "no summary" banner that always points at [context.summary]
+		// even when that key was never the problem.
+		manager.SummaryUnavailableReason = summaryDisabledReason(sess, res)
 	}
 	if err := setContextManagerForSetup(sess, manager, principal, policy); err != nil {
 		return err
