@@ -335,7 +335,7 @@ the review gates an independent provider from the implementation steps.
 
 | Agent | Provider | Model | Used by |
 |-------|----------|-------|---------|
-| `workflow-engineer` | `llmgateway` | `runware/deepseek-v4-flash` | Plan, test plan, implementation, and repairs. |
+| `workflow-engineer` | `deepseek` | `deepseek-v4-flash` | Plan, test plan, implementation, and repairs. |
 | `reviewer` | `openrouter` | `tencent/hy3-preview` | Plan review, test-plan review, change review, and integration review. |
 
 The agent file selects its provider and model. The provider catalog in

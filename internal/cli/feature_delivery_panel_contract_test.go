@@ -43,7 +43,7 @@ func assertFeatureDeliveryReviewPanel(t *testing.T, workflow definition.Workflow
 		t.Fatal("step review_panel require_distinct_bindings must be true")
 	}
 	wantMembers := map[string]struct{ provider, model, skill, template string }{
-		"correctness": {"llmgateway", "runware/deepseek-v4-flash", "panel-bug-audit", "templates/review-panel-correctness.md"},
+		"correctness": {"deepseek", "deepseek-v4-flash", "panel-bug-audit", "templates/review-panel-correctness.md"},
 		"security":    {"openrouter", "tencent/hy3-preview", "panel-secure-change", "templates/review-panel-security.md"},
 		"integration": {"zai", "glm-5-turbo", "panel-architecture-review", "templates/review-panel-integration.md"},
 	}

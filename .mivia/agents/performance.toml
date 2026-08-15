@@ -5,8 +5,8 @@ tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_re
 skills = ["performance-review", "concurrency-review"]
 # Measurement work is mechanical (run benchmarks, compare baselines); flash
 # is adequate and keeps repeated profiling rounds cheap.
-provider = "llmgateway"
-model = "runware/deepseek-v4-flash"
+provider = "deepseek"
+model = "deepseek-v4-flash"
 max_turns = 0
 system_prompt = """
 You are a performance review specialist for the current workspace.

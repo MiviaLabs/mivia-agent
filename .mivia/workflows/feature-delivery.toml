@@ -141,8 +141,8 @@ require_distinct_bindings = true
 [[steps.panel.members]]
 id = "correctness"
 agent = "panel-reviewer"
-provider = "llmgateway"
-model = "runware/deepseek-v4-flash"
+provider = "deepseek"
+model = "deepseek-v4-flash"
 skill = "panel-bug-audit"
 template = "templates/review-panel-correctness.md"
 output_schema = "schemas/panel-review-v1.json"
