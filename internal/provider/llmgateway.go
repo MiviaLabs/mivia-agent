@@ -34,9 +34,10 @@ func NewLLMGateway(opts Options) (Completer, error) {
 	// default behavior.
 	thinkingMode := dialect == reasoning.DialectThinkingEffort
 	return NewOpenAICompatWithOptions(CompatOptions{
-		Name:    "llmgateway",
-		BaseURL: base,
-		APIKey:  opts.APIKey,
+		Name:         "llmgateway",
+		BaseURL:      base,
+		APIKey:       opts.APIKey,
+		ExtraHeaders: llmgatewayExtraHeaders(thinkingMode),
 		// LLM Gateway injects Anthropic cache_control markers itself using
 		// per-model minimums and TTL ordering, and strips all client markers
 		// when the project disables provider cache writes. mivia marking the
@@ -76,4 +77,28 @@ func NewLLMGateway(opts Options) (Completer, error) {
 		// this with no raw session id on the wire.
 		SendSessionUserKey: true,
 	}), nil
+}
+
+// llmgatewayExtraHeaders returns the extra headers for a thinking-mode
+// (thinking_effort dialect) client, or nil for every other model.
+//
+// A provider-prefixed model id (e.g. runware/deepseek-v4-flash) still
+// auto-fails-over to a DIFFERENT upstream if the pinned provider's uptime
+// drops below the gateway's threshold (LLM Gateway routing docs). For a
+// thinking_effort model that is a correctness risk, not just a
+// cache-locality one: RejectReasoningLessToolTurns (set alongside this in
+// NewLLMGateway) was validated against THIS provider's reasoning_content
+// handling, and a silent mid-session jump to an unverified host could
+// reintroduce the exact 400-loop that gate exists to prevent, with nothing
+// in mivia able to tell the two apart from an ordinary cache miss.
+// X-No-Fallback trades that away for a request that fails outright on an
+// outage instead - recoverable through mivia's own retry/step-error path,
+// unlike a silent behavior change. Left off for every other model: there, a
+// failover only costs cache locality, and losing gateway resilience for
+// that is not worth it.
+func llmgatewayExtraHeaders(thinkingMode bool) map[string]string {
+	if !thinkingMode {
+		return nil
+	}
+	return map[string]string{"X-No-Fallback": "true"}
 }

@@ -69,6 +69,33 @@ func TestNewLLMGatewayThinkingEffortModelGetsDeepSeekToolTurnContract(t *testing
 	}
 }
 
+// TestNewLLMGatewayPinsProviderOnlyForThinkingEffortModels pins the
+// X-No-Fallback gate to the same resolved-dialect signal as the tool-turn
+// contract: a thinking_effort model (validated against its pinned provider's
+// reasoning_content handling) must refuse silent cross-provider failover,
+// while every other model keeps the gateway's default resilience.
+func TestNewLLMGatewayPinsProviderOnlyForThinkingEffortModels(t *testing.T) {
+	comp, err := NewLLMGateway(Options{APIKey: "fake", ReasoningDialect: reasoning.DialectThinkingEffort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := comp.(*OpenAICompat)
+	if got := client.extraHeaders["X-No-Fallback"]; got != "true" {
+		t.Fatalf("X-No-Fallback=%q, want %q for a thinking_effort model", got, "true")
+	}
+
+	for _, dialect := range []reasoning.Dialect{reasoning.DialectOpenAI, ""} {
+		comp, err := NewLLMGateway(Options{APIKey: "fake", ReasoningDialect: dialect})
+		if err != nil {
+			t.Fatal(err)
+		}
+		client := comp.(*OpenAICompat)
+		if _, has := client.extraHeaders["X-No-Fallback"]; has {
+			t.Fatalf("dialect %q must not set X-No-Fallback: failover there only costs cache locality, not correctness", dialect)
+		}
+	}
+}
+
 // TestNewLLMGatewayIgnoresCacheMarkersOption pins the deliberate
 // gateway-owns-markers decision: the gateway injects its own cache_control
 // markers with per-model minimums and TTL ordering mivia cannot know, so the
