@@ -202,7 +202,8 @@ store_backend = "sqlite"
 {privacy_section}
 """
 
-SUMMARY_ON = '\n[context.summary]\nenabled = true\n'
+SUMMARY_ON = ''
+SUMMARY_OFF = '\n[context.summary]\nenabled = false\n'
 PRIVACY_ON = '\n[privacy]\nredaction_patterns = ["never-match-this-e2e-pattern"]\n'
 
 
@@ -281,7 +282,7 @@ def make_workspace(
             output=output,
             key_env=backend.key_env,
             base_url=backend.base_url,
-            summary_section=SUMMARY_ON if summary else "",
+            summary_section=SUMMARY_ON if summary else SUMMARY_OFF,
             privacy_section=PRIVACY_ON if privacy else "",
         )
     )
@@ -519,12 +520,52 @@ def scenario_agent_loop(base: Path, backend: Backend, report: Report) -> None:
     )
 
 
+def scenario_default_on(base: Path, backend: Backend, report: Report) -> None:
+    """A workspace that configures NOTHING must still summarize.
+
+    This is the opt-out contract. It was opt-in, so every workspace without an
+    explicit [context.summary] section compacted with no summary and no
+    signal - the reported "compaction does nothing, no LLM call" symptom.
+    """
+    print("\n[5] zero-config workspace: summary is on by default")
+    if backend.stub:
+        backend.stub.reset()
+    # summary=False AND privacy=False writes neither section - a bare config.
+    ws = make_workspace(base, "bare", backend, summary=True, privacy=False)
+    turns = [big(f"b{i}-MARKER") for i in range(1, 8)]
+    events = run_chat(ws, backend, turns)
+
+    report.check(
+        "a zero-config workspace still compacts",
+        any(e.get("type") == "compaction" for e in events),
+        detail="no compaction happened at all",
+    )
+    report.check(
+        "a zero-config workspace reports the compaction as summarized",
+        all((e.get("compaction") or {}).get("summarized") is True
+            for e in events if e.get("type") == "compaction"),
+        detail="compaction ran structural-only despite the opt-out default",
+    )
+    bodies = checkpoint_bodies(ws)
+    report.check(
+        "a zero-config workspace persists its summary",
+        bool(bodies) and SUMMARY_NAME in bodies[-1],
+        detail="no summary in the durable active context",
+    )
+    if backend.stub:
+        report.check(
+            "a zero-config workspace really calls the summarizer",
+            backend.stub.summary_calls() > 0,
+            detail="no summarize request was sent",
+            evidence=f"{backend.stub.summary_calls()} request(s)",
+        )
+
+
 def scenario_gate_off(base: Path, backend: Backend, report: Report) -> None:
     """An unconfigured workspace must SAY it is structural-only."""
-    print("\n[4] summary gate off: honest, diagnosable structural-only compaction")
+    print("\n[4] explicit opt-out: honest, diagnosable structural-only compaction")
     for name, summary, privacy, expect in [
-        ("no-summary-flag", False, True, "context.summary"),
-        ("no-privacy", True, False, "privacy"),
+        ("explicit-opt-out", False, True, "context.summary"),
     ]:
         if backend.stub:
             backend.stub.reset()
@@ -620,6 +661,7 @@ def main() -> int:
         scenario_automatic(base, backend, report)
         scenario_manual(base, backend, report)
         scenario_agent_loop(base, backend, report)
+        scenario_default_on(base, backend, report)
         scenario_gate_off(base, backend, report)
     finally:
         if stub is not None:

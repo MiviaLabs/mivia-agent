@@ -525,11 +525,23 @@ default_timeout_seconds = 43200
 # max_commit_event_bytes = 0
 # max_session_state_bytes = 0
 # max_export_bytes = 0
-# LLM compaction summary: OFF by default. Also requires a configured
-# [privacy] redaction policy and a resolved provider endpoint; otherwise
-# it stays off. On compaction, mivia asks the session model to summarize
-# what was dropped and injects the validated summary into the next request.
-# Any summary failure degrades silently to structural-only compaction.
+# LLM compaction summary: ON by default - this is opt-OUT. Compaction drops
+# messages permanently, so the summary is the only record of what was removed;
+# a workspace that configures nothing must not lose it silently. On compaction
+# mivia asks the session model to summarize what was dropped, injects the
+# validated summary into the next request, and keeps it in the durable active
+# context so later turns (and resumed processes) still have the account.
+#
+# It needs a resolved provider endpoint. A [privacy] redaction policy is NOT
+# required to run it - the summary is derived from conversation content the
+# same provider already received - but it does govern durability: without one,
+# the checkpoint keeps only a digest of the summary, never its content.
+#
+# Any summary failure degrades to structural-only compaction, and the
+# compaction event/banner then says "structural only, no summary" rather than
+# reading identically to a summarized one.
+#
+# To turn it off:
 # [context.summary]
 # enabled = false
 

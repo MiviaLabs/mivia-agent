@@ -75,7 +75,17 @@ func (s Summarizer) available(request SummaryRequest) error {
 	if err := s.Binding.Validate(); err != nil {
 		return err
 	}
-	if !s.Policy.SummaryEnabled || !s.Policy.NetworkEnabled || !s.Policy.RedactionConfigured || !redactionConfigured(request.RedactionPolicy) || s.Policy.CredentialScope == "" {
+	// A configured redaction policy is deliberately NOT required here.
+	// Compaction drops its messages permanently, so the summary is the only
+	// record of what was removed; gating it on [privacy] meant every
+	// workspace without that section compacted with no summary at all. The
+	// summary is derived from conversation content this same provider already
+	// received in full, so withholding it protected nothing on the wire.
+	//
+	// Redaction still governs DURABILITY, not availability: Metadata()
+	// persists summary content only when the policy is configured, and keeps
+	// a digest otherwise. Availability and persistence are separate rules.
+	if !s.Policy.SummaryEnabled || !s.Policy.NetworkEnabled || s.Policy.CredentialScope == "" {
 		return fmt.Errorf("%w: summary policy is not explicitly enabled", contextstate.ErrSummaryUnavailable)
 	}
 	if request.Provider != s.Binding.Provider || request.Model != s.Binding.Model {

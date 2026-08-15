@@ -36,11 +36,7 @@ func TestSummaryDisabledReasonNamesTheMissingCondition(t *testing.T) {
 		mutate func(*config.Resolved)
 		want   string
 	}{
-		{"flag off", func(r *config.Resolved) { r.Context.Summary.Enabled = false }, "context.summary"},
-		{"no redaction", func(r *config.Resolved) {
-			r.Privacy.RedactionPatterns = nil
-			r.Privacy.RedactionKeyNames = nil
-		}, "privacy"},
+		{"flag off", func(r *config.Resolved) { off := false; r.Context.Summary.Enabled = &off }, "context.summary"},
 		{"no endpoint", func(r *config.Resolved) { r.BaseURL = "" }, "endpoint"},
 	}
 	for _, tc := range cases {
@@ -64,6 +60,19 @@ func TestSummaryDisabledReasonNamesTheMissingCondition(t *testing.T) {
 
 // TestSummaryDisabledReasonIsEmptyWhenWired pins the quiet path: a fully
 // configured workspace must report nothing, so the notice never becomes noise.
+// TestSummaryDisabledReasonIgnoresMissingRedaction pins that [privacy] is no
+// longer a blocker: a workspace without it summarizes, so nothing should be
+// reported as disabling the summary.
+func TestSummaryDisabledReasonIgnoresMissingRedaction(t *testing.T) {
+	res := summaryWiringResolved(t, true)
+	res.RedactionPolicy = nil
+	res.Privacy = config.PrivacyConfig{}
+	sess := chat.NewSession(res, nullCompleter{})
+	if reason := summaryDisabledReason(sess, res); reason != "" {
+		t.Fatalf("missing [privacy] reported as disabling the summary: %q", reason)
+	}
+}
+
 func TestSummaryDisabledReasonIsEmptyWhenWired(t *testing.T) {
 	res := summaryWiringResolved(t, true)
 	sess := chat.NewSession(res, nullCompleter{})

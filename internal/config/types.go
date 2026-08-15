@@ -100,14 +100,24 @@ type ContextConfig struct {
 }
 
 // ContextSummaryConfig is the operator switch for LLM-backed compaction
-// summaries. It is disabled by default: a workspace that configures nothing
-// keeps structural-only compaction.
+// summaries. It is ENABLED by default: compaction drops messages permanently,
+// so the summary is the only record of what was removed, and a workspace that
+// configures nothing should not silently lose that record. Opting out is
+// explicit.
 type ContextSummaryConfig struct {
 	// Enabled turns on the bounded provider call that summarizes what
-	// compaction dropped. The call also requires a configured [privacy]
-	// redaction policy and a resolved provider endpoint; without either, the
-	// summary stays disabled.
-	Enabled bool `toml:"enabled"`
+	// compaction dropped. Nil means unset, which resolves to true - the
+	// pointer exists precisely so an explicit `enabled = false` is
+	// distinguishable from an absent key, which a plain bool cannot express.
+	// The call still requires a resolved provider endpoint; without one the
+	// summary stays off and summaryDisabledReason names why.
+	Enabled *bool `toml:"enabled"`
+}
+
+// SummaryEnabled reports the resolved switch: absent means on. Read this
+// rather than the pointer so the opt-out default lives in one place.
+func (c ContextSummaryConfig) SummaryEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // IntegrationsConfig holds API keys and config for third-party services.
