@@ -3,8 +3,8 @@ name = "workflow-engineer"
 description = "Workflow implementation specialist that plans and edits in an isolated worktree."
 tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "write_file", "search_replace", "multi_edit", "delete_file", "search", "fetch_url", "extract", "workflow_inspect"]
 skills = ["workflow-feature-delivery"]
-provider = "llmgateway"
-model = "runware/deepseek-v4-flash"
+provider = "deepseek"
+model = "deepseek-v4-flash"
 max_turns = 0
 system_prompt = """
 You plan and implement the requested workflow change in the isolated worktree.

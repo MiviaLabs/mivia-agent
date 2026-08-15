@@ -175,6 +175,69 @@ func TestConfigLoadLLMGatewayResolvesPerModelReasoningDialect(t *testing.T) {
 	}
 }
 
+// TestLLMGatewayPinsProviderOnWireOnlyForThinkingEffortModel proves the
+// X-No-Fallback header actually reaches the HTTP request, and only for the
+// sibling model whose resolved dialect is thinking_effort - the same
+// two-model config as TestConfigLoadLLMGatewayResolvesPerModelReasoningDialect,
+// this time asserting the wire header rather than the policy struct.
+func TestLLMGatewayPinsProviderOnWireOnlyForThinkingEffortModel(t *testing.T) {
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-No-Fallback")
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "ok"}, "finish_reason": "stop"}}})
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	configPath := filepath.Join(dir, "mivia.toml")
+	if err := os.WriteFile(envPath, []byte("LLMGATEWAY_API_KEY=integration-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data := "env_file = \"" + filepath.ToSlash(envPath) + "\"\n\n[provider]\nname = \"llmgateway\"\n\n" +
+		"[providers.llmgateway]\n" +
+		"default_model = \"runware/deepseek-v4-flash\"\n" +
+		"base_url = \"" + srv.URL + "/v1\"\n" +
+		"models = [\n" +
+		"  {name=\"runware/deepseek-v4-flash\", context_window_tokens=1000000, reasoning_efforts=[\"high\",\"max\"], reasoning=\"high\", reasoning_dialect=\"thinking_effort\"},\n" +
+		"  {name=\"runware/gpt-oss-120b\", context_window_tokens=131072, reasoning_efforts=[\"low\",\"medium\",\"high\"], reasoning=\"high\"},\n" +
+		"]\n\n[chat]\nmax_tokens=8192\n"
+	if err := os.WriteFile(configPath, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deepseekResolved := *resolved
+	deepseekResolved.Model = "runware/deepseek-v4-flash"
+	deepseekCompleter, err := New(&deepseekResolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deepseekCompleter.ChatTurn(context.Background(), Request{Model: "runware/deepseek-v4-flash", Messages: []Message{{Role: RoleUser, Content: "hi"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "true" {
+		t.Fatalf("X-No-Fallback=%q for the thinking_effort model, want %q", gotHeader, "true")
+	}
+
+	gptOSSResolved := *resolved
+	gptOSSResolved.Model = "runware/gpt-oss-120b"
+	gptOSSCompleter, err := New(&gptOSSResolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotHeader = "unset"
+	if _, err := gptOSSCompleter.ChatTurn(context.Background(), Request{Model: "runware/gpt-oss-120b", Messages: []Message{{Role: RoleUser, Content: "hi"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "" {
+		t.Fatalf("X-No-Fallback=%q for the sibling non-thinking model, want it unset", gotHeader)
+	}
+}
+
 // TestLLMGatewayReplaysReasoningContentWithoutDroppingReasoningLessTurns pins
 // the fix for a DeepSeek-family model behind the gateway losing its own
 // prior chain-of-thought: RequiresReasoningReplay must be on (so the terminal

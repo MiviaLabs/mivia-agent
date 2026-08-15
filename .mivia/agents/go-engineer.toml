@@ -13,8 +13,8 @@ skills = [
 ]
 # Implementation throughput over peak reasoning: flash carries the same 1M
 # window as pro, and this agent works from an already-decided plan.
-provider = "llmgateway"
-model = "runware/deepseek-v4-flash"
+provider = "deepseek"
+model = "deepseek-v4-flash"
 max_turns = 0
 system_prompt = """
 You are an implementation specialist for the current workspace.
