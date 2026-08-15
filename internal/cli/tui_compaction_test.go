@@ -4,9 +4,67 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
+
+// compactionTestEvent builds one valid typed compaction record for the TUI
+// tests. The counts are the ones renderCompactionNotice reports.
+func compactionTestEvent(t *testing.T) events.CompactionEvent {
+	t.Helper()
+	event, err := events.NewCompactionEvent(events.CompactionEventParams{
+		Trigger: "threshold", BeforeTokens: 80, AfterTokens: 40,
+		ElidedMessages: 1, ElidedBytes: 4096, SummaryVersion: 1,
+		SourceRange: contextstate.SourceRange{
+			Start: contextstate.SourceID{SessionID: "session", Sequence: 1},
+			End:   contextstate.SourceID{SessionID: "session", Sequence: 3},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+
+// TestCompactionEventReachesBridgeAsBanner pins the dispatch, not the
+// formatter: an automatic (threshold) compaction emitted during a turn must
+// travel agentEventBridgeCallback -> PushCompletedBanner and land in the
+// transcript with its elision counts. Only renderCompactionNotice was
+// covered before, so deleting the whole `case agent.EventCompaction` arm
+// kept the suite green.
+func TestCompactionEventReachesBridgeAsBanner(t *testing.T) {
+	typed := compactionTestEvent(t)
+	bridge := newStreamBridge()
+	agentEventBridgeCallback(bridge)(agent.Event{Kind: agent.EventCompaction, Compaction: &typed})
+
+	drain := bridge.Drain()
+	if len(drain.Tools) == 0 {
+		t.Fatal("compaction event never reached the bridge")
+	}
+	var notice string
+	for _, evt := range drain.Tools {
+		if evt.Name == "context" && evt.Detail != "completed" {
+			notice = evt.Detail
+		}
+	}
+	if !strings.Contains(notice, "80 -> 40") {
+		t.Fatalf("banner detail = %q, want the token delta", notice)
+	}
+	if !strings.Contains(notice, "1 tool result elided") {
+		t.Fatalf("banner detail = %q, want the elision counts", notice)
+	}
+}
+
+// TestCompactionEventWithoutPayloadPushesNoBanner pins the nil guard: a
+// compaction event that carries no typed record must not open a row.
+func TestCompactionEventWithoutPayloadPushesNoBanner(t *testing.T) {
+	bridge := newStreamBridge()
+	agentEventBridgeCallback(bridge)(agent.Event{Kind: agent.EventCompaction, Detail: "context compacted"})
+	if drain := bridge.Drain(); len(drain.Tools) != 0 {
+		t.Fatalf("payload-less compaction pushed %d tool rows, want 0", len(drain.Tools))
+	}
+}
 
 func TestRenderCompactionNoticeOmitsContent(t *testing.T) {
 	rangeValue := contextstate.SourceRange{
