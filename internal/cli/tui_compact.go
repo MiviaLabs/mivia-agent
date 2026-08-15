@@ -19,7 +19,7 @@ type compactionDoneMsg struct{ err error }
 // reads busy, and the work rides a drained tea command. A manual compact may
 // reach an LLM summary call bounded by a ten-second timeout, so running it
 // inline froze the UI with no visible cause for the whole call.
-func (m *tuiModel) handleTuiCompactSlash() bool {
+func (m *tuiModel) handleTuiCompactSlash(focus string) bool {
 	switch {
 	case m.waiting:
 		m.appendInfo("(finish the current turn before /compact)")
@@ -29,7 +29,7 @@ func (m *tuiModel) handleTuiCompactSlash() bool {
 		m.compacting = true
 		m.turnStart = time.Now()
 		m.appendInfo("compacting context…")
-		m.pendingAsyncCmds = append(m.pendingAsyncCmds, m.compactCmd())
+		m.pendingAsyncCmds = append(m.pendingAsyncCmds, m.compactCmd(focus))
 	}
 	return true
 }
@@ -37,9 +37,9 @@ func (m *tuiModel) handleTuiCompactSlash() bool {
 // compactCmd runs the compact and reports through compactionDoneMsg. The
 // session serializes compaction against turn publication itself; the command
 // only moves the blocking call off the update goroutine.
-func (m *tuiModel) compactCmd() tea.Cmd {
+func (m *tuiModel) compactCmd(focus string) tea.Cmd {
 	return func() tea.Msg {
-		return compactionDoneMsg{err: m.session.Compact(context.Background())}
+		return compactionDoneMsg{err: m.session.Compact(context.Background(), focus)}
 	}
 }
 

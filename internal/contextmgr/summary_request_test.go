@@ -184,6 +184,32 @@ func TestSourceExcerptsTruncatesOversizedToolNameToIdentifierBound(t *testing.T)
 	}
 }
 
+// TestBuildSummaryRequestFocusRoundTrips pins the /compact [focus
+// instructions] request-side wiring: a non-empty Focus survives
+// BuildSummaryRequest/Validate unchanged, and the empty default (no focus
+// supplied) keeps validating too - the common, unbiased case must not
+// require callers to pass anything special.
+func TestBuildSummaryRequestFocusRoundTrips(t *testing.T) {
+	input := summaryBuildInputFixture()
+	input.Focus = "keep the auth discussion"
+	request, err := BuildSummaryRequest(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Focus != "keep the auth discussion" {
+		t.Fatalf("request.Focus = %q, want the input focus", request.Focus)
+	}
+
+	input.Focus = ""
+	request, err = BuildSummaryRequest(input)
+	if err != nil {
+		t.Fatalf("empty focus rejected: %v", err)
+	}
+	if request.Focus != "" {
+		t.Fatalf("request.Focus = %q, want empty", request.Focus)
+	}
+}
+
 // TestBuildSummaryRequestNegativeCases drives every rejection the constructor
 // must surface before any provider call.
 func TestBuildSummaryRequestNegativeCases(t *testing.T) {

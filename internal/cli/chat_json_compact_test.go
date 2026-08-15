@@ -52,7 +52,7 @@ func TestSlashCompactJSONEmitsTypedEvents(t *testing.T) {
 	activeJSONSlashSink = &jsonSlashSink{w: &buf}
 	defer func() { activeJSONSlashSink = nil }()
 
-	handled, exit, err := handleSlashCompact(sess, nil)
+	handled, exit, err := handleSlashCompact("/compact", sess, nil)
 	if err != nil {
 		t.Fatalf("handleSlashCompact: %v", err)
 	}
@@ -92,6 +92,26 @@ func TestSlashCompactJSONEmitsTypedEvents(t *testing.T) {
 	}
 }
 
+// TestHandleSlashCompactParsesFocusFromTheRawLine pins the /compact [focus
+// instructions] slash-parsing contract: text after "/compact" must not break
+// the command (no summarizer is wired in this fixture, so focus has no
+// visible effect here beyond not erroring - the prompt-threading effect is
+// covered by TestContextSummaryIntegrationManualCompactThreadsFocus), and
+// bare "/compact" must keep working exactly as before (empty focus).
+func TestHandleSlashCompactParsesFocusFromTheRawLine(t *testing.T) {
+	ws := isolatedSessionsWorkspace(t)
+	sess, done := seedLiveCompactableSession(t, ws)
+	defer done()
+
+	handled, exit, err := handleSlashCompact("/compact keep the auth discussion", sess, nil)
+	if err != nil {
+		t.Fatalf("handleSlashCompact with focus text: %v", err)
+	}
+	if !handled || exit {
+		t.Fatalf("handled/exit = %v/%v, want true/false", handled, exit)
+	}
+}
+
 // TestSlashCompactJSONFailureEmitsSlashError pins the failure leg: a compact
 // that cannot run reports "slash_error" (the authoritative failure signal on
 // the json wire), never stderr prose the frontend cannot see.
@@ -103,12 +123,12 @@ func TestSlashCompactJSONFailureEmitsSlashError(t *testing.T) {
 	// so the same live session provides the failure leg without a second seed.
 	var first bytes.Buffer
 	activeJSONSlashSink = &jsonSlashSink{w: &first}
-	_, _, _ = handleSlashCompact(sess, nil)
+	_, _, _ = handleSlashCompact("/compact", sess, nil)
 
 	var buf bytes.Buffer
 	activeJSONSlashSink = &jsonSlashSink{w: &buf}
 	defer func() { activeJSONSlashSink = nil }()
-	handled, _, err := handleSlashCompact(sess, nil)
+	handled, _, err := handleSlashCompact("/compact", sess, nil)
 	if err != nil {
 		t.Fatalf("handleSlashCompact failure leg returned err: %v", err)
 	}

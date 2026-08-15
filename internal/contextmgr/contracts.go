@@ -114,7 +114,13 @@ type SummaryRequest struct {
 	// SourceExcerpts are bounded quotes of the dropped messages, for the
 	// summarize request only. The sealed envelope never carries them, so no
 	// durable record or injected message contains excerpt content.
-	SourceExcerpts  []SourceExcerpt              `json:"-"`
+	SourceExcerpts []SourceExcerpt `json:"-"`
+	// Focus is an optional caller-supplied bias string (e.g. `/compact <focus
+	// instructions>`) telling the summarizer what to prioritize. It rides the
+	// request only - never the sealed envelope the model echoes back or the
+	// durable metadata - since it is host-side guidance, not conversation
+	// content the model needs to round-trip.
+	Focus           string                       `json:"-"`
 	RedactionPolicy contextstate.RedactionPolicy `json:"-"`
 }
 
@@ -200,6 +206,9 @@ func (r SummaryRequest) Validate() error {
 	}
 	if r.Budget <= 0 || r.OutputLimit <= 0 || r.OutputLimit > 2048 {
 		return fmt.Errorf("%w: invalid summary budget", contextstate.ErrInvalidDTO)
+	}
+	if err := validateSummaryText("focus", r.Focus, true); err != nil {
+		return err
 	}
 	if strings.TrimSpace(r.Provider) == "" || strings.TrimSpace(r.Model) == "" {
 		return fmt.Errorf("%w: summary provider and model are required", contextstate.ErrInvalidDTO)

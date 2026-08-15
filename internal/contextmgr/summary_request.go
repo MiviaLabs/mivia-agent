@@ -39,6 +39,10 @@ type SummaryBuildInput struct {
 	// summarize REQUEST. BuildSummaryRequest sanitizes them and drops every
 	// item the redaction policy flags; the envelope never sees them.
 	SourceExcerpts []SourceExcerpt
+	// Focus is an optional caller-supplied bias string telling the
+	// summarizer what to prioritize (e.g. `/compact <focus instructions>`).
+	// Empty is the default, unbiased behavior. See SummaryRequest.Focus.
+	Focus string
 }
 
 // BuildSummaryRequest is the production constructor for a summary request: it
@@ -59,6 +63,7 @@ func BuildSummaryRequest(input SummaryBuildInput) (SummaryRequest, error) {
 		EndpointAllowlist: append([]string(nil), input.EndpointAllowlist...),
 		RedactionPolicy:   cloneRedactionPolicy(input.RedactionPolicy),
 		SourceExcerpts:    filterSourceExcerpts(input.SourceExcerpts, input.RedactionPolicy),
+		Focus:             truncateExcerptText(input.Focus),
 	}
 	if err := request.Validate(); err != nil {
 		return SummaryRequest{}, err

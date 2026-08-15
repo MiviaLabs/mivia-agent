@@ -118,7 +118,7 @@ func TestCompactRejectsEmptyHistory(t *testing.T) {
 		provider.Message{Role: provider.RoleUser, Content: "question"},
 		provider.Message{Role: provider.RoleAssistant, Content: "answer"},
 	)
-	err = session.Compact(context.Background())
+	err = session.Compact(context.Background(), "")
 	if err == nil {
 		t.Fatal("Compact on empty history succeeded, want error")
 	}
@@ -162,7 +162,7 @@ func TestCompactPublishesStructuralCheckpointImmediately(t *testing.T) {
 		)
 	}
 	before := len(session.Messages)
-	if err := session.Compact(context.Background()); err != nil {
+	if err := session.Compact(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(session.Messages) >= before {
@@ -208,7 +208,7 @@ func TestCompactWithResultReturnsPreparationNumbers(t *testing.T) {
 			provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("old answer ", 20)},
 		)
 	}
-	preparation, err := session.CompactWithResult(context.Background())
+	preparation, err := session.CompactWithResult(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,11 +254,11 @@ func TestCompactWithResultMatchesCompactErrorBehavior(t *testing.T) {
 
 	compactSession, compactStore := newSession()
 	defer compactStore.Close()
-	compactErr := compactSession.Compact(context.Background())
+	compactErr := compactSession.Compact(context.Background(), "")
 
 	resultSession, resultStore := newSession()
 	defer resultStore.Close()
-	preparation, resultErr := resultSession.CompactWithResult(context.Background())
+	preparation, resultErr := resultSession.CompactWithResult(context.Background(), "")
 
 	if compactErr == nil || resultErr == nil {
 		t.Fatalf("expected both Compact and CompactWithResult to error on empty history, got compactErr=%v resultErr=%v", compactErr, resultErr)
@@ -312,7 +312,7 @@ func TestCompactRejectsDeletingManagedWorktreeBeforePreparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	prepareCalls := preparation.calls
-	err = session.Compact(context.Background())
+	err = session.Compact(context.Background(), "")
 	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Errorf("Compact error = %v, want ErrWorktreeDeleted", err)
 	}

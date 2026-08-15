@@ -121,6 +121,7 @@ func summarySystemPrompt() string {
 	b.WriteString("- Use the input list items that help a later turn. Drop the rest.\n")
 	b.WriteString("- Use an empty array for a list with no content.\n")
 	b.WriteString("- Use plain UTF-8 text. Do not use control characters.\n")
+	b.WriteString("- If a focus line is present, prioritize it when choosing what to keep, but still fill every field the schema requires.\n")
 	return b.String()
 }
 
@@ -137,6 +138,9 @@ func summaryUserPrompt(request SummaryRequest) string {
 	}
 	var b strings.Builder
 	b.WriteString("Input data from the conversation to summarize:\n\n")
+	if request.Focus != "" {
+		b.WriteString("focus: " + request.Focus + "\n")
+	}
 	b.WriteString("objective: " + request.Input.Objective + "\n")
 	b.WriteString("state: " + request.Input.State + "\n")
 	writeSummaryList(&b, "decisions", request.Input.Decisions)
