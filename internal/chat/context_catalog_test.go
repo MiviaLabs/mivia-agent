@@ -133,6 +133,56 @@ func TestLiveResumeSurvivesModelSwitchedAwayFromConfigDefault(t *testing.T) {
 	}
 }
 
+// TestLiveResumeSurvivesGenerationDriftWithUnchangedModelName covers the gap
+// TestLiveResumeSurvivesModelSwitchedAwayFromConfigDefault did not: a
+// resuming process whose config default names the SAME provider/model the
+// row was last saved under, but whose durable binding_generation has moved
+// on (any in-process rebind - here a switch back to the very same
+// provider/model - bumps it). reconcileCatalogBinding used to take a
+// string-only "nothing changed" fast path in exactly this case and never
+// looked at reclaimedBinding's generation, leaving the resuming process's
+// freshly-minted generation (1) in memory while the durable row already sat
+// at a higher one - so the session's first post-resume turn failed its
+// checkpoint commit with "stale binding: context binding changed" even
+// though nothing about the provider/model ever visibly changed.
+func TestLiveResumeSurvivesGenerationDriftWithUnchangedModelName(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "resume.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	original := wireCatalogSession(t, store, &config.Resolved{ProviderName: "ollama", Model: "llama3.1:8b"}, &fakeCompleter{out: "hi from ollama"})
+	if _, err := original.SendUser(context.Background(), "hello on ollama", io.Discard); err != nil {
+		t.Fatalf("send on ollama: %v", err)
+	}
+	// Switch back to the SAME provider/model this process already resolves
+	// to by default: the row's binding_generation still advances, but the
+	// provider/model strings a fresh resuming process would compute never
+	// diverge from what it loads.
+	sameAgain, err := catalogBindingFactory()("ollama", "llama3.1:8b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := original.SwitchBinding(sameAgain); err != nil {
+		t.Fatalf("switch back to ollama/llama3.1:8b: %v", err)
+	}
+	if _, err := original.SendUser(context.Background(), "still on ollama", io.Discard); err != nil {
+		t.Fatalf("send after switch-back: %v", err)
+	}
+
+	resumed := wireCatalogSession(t, store, &config.Resolved{ProviderName: "ollama", Model: "llama3.1:8b"}, &fakeCompleter{out: "hi again"})
+	if err := resumed.Load(original.SessionID); err != nil {
+		t.Fatalf("Load(%s) = %v, want success", original.SessionID, err)
+	}
+	if got := resumed.CurrentSelection(); got.ProviderName != "ollama" || got.Model != "llama3.1:8b" {
+		t.Fatalf("resumed selection = %+v, want ollama/llama3.1:8b", got)
+	}
+	if _, err := resumed.SendUser(context.Background(), "still there?", io.Discard); err != nil {
+		t.Fatalf("send after resume = %v, want success (this used to fail: stale binding: context binding changed)", err)
+	}
+}
+
 // resumeWithTurnSnapshot is TestLiveResumeSurvivesModelSwitchedAwayFrom-
 // ConfigDefault plus the one step that test never performed:
 // sess.SaveAfterTurn() after every send, which is what the CLI's line mode
