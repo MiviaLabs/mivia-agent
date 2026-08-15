@@ -13,16 +13,20 @@ type WorkflowFile struct {
 	Delivery    *Delivery           `toml:"delivery" json:"delivery,omitempty"`
 	Stacking    *Stacking           `toml:"stacking" json:"stacking,omitempty"`
 	// StepDefaults is decode-time sugar: ParseWorkflowTOML copies each
-	// non-empty field into every agent step whose own field is empty, then
-	// clears this to nil. It never reaches the compiler or the digest - the
-	// json:"-" tag keeps a sugared file and its hand-expanded twin
-	// byte-identical after json.Marshal, so they compile to the same digest.
+	// non-empty field into every agent/agent_panel step whose own field is
+	// empty, then clears this to nil. It never reaches the compiler or the
+	// digest - the json:"-" tag keeps a sugared file and its hand-expanded
+	// twin byte-identical after json.Marshal, so they compile to the same
+	// digest.
 	StepDefaults *StepDefaults `toml:"step_defaults" json:"-"`
 }
 
 // StepDefaults holds shared step field values applied at decode time to
-// every step whose resolved kind is "agent" and whose own field is empty.
-// Only Kind is considered for non-agent-kind steps. See applyStepDefaults.
+// every step whose resolved kind is "agent" or "agent_panel" and whose own
+// field is empty (for agent_panel this fills only the step's top-level
+// synthesis fields, never per-member PanelMember entries). Only Kind is
+// considered for the other kinds (agent_gate, evidence_gate, human_gate).
+// See applyStepDefaults.
 type StepDefaults struct {
 	Kind         string           `toml:"kind" json:"-"`
 	Agent        string           `toml:"agent" json:"-"`
