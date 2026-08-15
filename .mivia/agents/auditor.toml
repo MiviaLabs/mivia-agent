@@ -6,11 +6,12 @@ skills = ["bug-audit", "concurrency-review"]
 # Evaluation binding: the bug-fix hunt step requires a closed-schema JSON
 # reply, and inclusionai/ling-3.0-flash never delivered one (3 failed
 # workflow runs; final replies were prose, not the schema's JSON — verified
-# by direct reproduction). deepseek-v4-flash is the model proven to produce
-# closed-schema JSON with this engine (workflow-engineer / feature-delivery
-# run every step against additionalProperties:false schemas).
-provider = "deepseek"
-model = "deepseek-v4-flash"
+# by direct reproduction). runware/deepseek-v4-flash is the model proven to
+# produce closed-schema JSON with this engine (workflow-engineer /
+# feature-delivery run every step against additionalProperties:false
+# schemas), routed through the LLM Gateway provider.
+provider = "llmgateway"
+model = "runware/deepseek-v4-flash"
 max_turns = 0
 system_prompt = """
 You are a hostile defect auditor for the current workspace.
