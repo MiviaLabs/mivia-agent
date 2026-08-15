@@ -74,6 +74,7 @@ func TestRenderCompactionNoticeOmitsContent(t *testing.T) {
 	event, err := events.NewCompactionEvent(events.CompactionEventParams{
 		Trigger: "threshold", BeforeTokens: 80, AfterTokens: 40,
 		ElidedMessages: 1, ElidedBytes: 4096, SourceRange: rangeValue, SummaryVersion: 1,
+		Summarized: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +89,7 @@ func TestRenderCompactionNoticeOmitsContent(t *testing.T) {
 	// Zero elision keeps the base form.
 	plain, err := events.NewCompactionEvent(events.CompactionEventParams{
 		Trigger: "threshold", BeforeTokens: 80, AfterTokens: 40,
-		SourceRange: rangeValue, SummaryVersion: 1,
+		SourceRange: rangeValue, SummaryVersion: 1, Summarized: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,5 +97,31 @@ func TestRenderCompactionNoticeOmitsContent(t *testing.T) {
 	plainNotice := renderCompactionNotice(plain)
 	if strings.Contains(plainNotice, "elided") {
 		t.Fatalf("zero-elision notice included counts: %q", plainNotice)
+	}
+	// A summarized compaction must NOT carry the structural-only suffix.
+	if strings.Contains(plainNotice, "structural only") {
+		t.Fatalf("a summarized compaction claimed structural-only: %q", plainNotice)
+	}
+}
+
+// TestRenderCompactionNoticeMarksStructuralOnly pins the banner an operator
+// sees when a compaction dropped messages without summarizing them. The two
+// cases used to render identically, so an instant, LLM-free compaction was
+// indistinguishable from a summarized one - the report that started this.
+func TestRenderCompactionNoticeMarksStructuralOnly(t *testing.T) {
+	event, err := events.NewCompactionEvent(events.CompactionEventParams{
+		Trigger: "threshold", BeforeTokens: 25000, AfterTokens: 17000,
+		SourceRange: contextstate.SourceRange{
+			Start: contextstate.SourceID{SessionID: "session", Sequence: 1},
+			End:   contextstate.SourceID{SessionID: "session", Sequence: 3},
+		},
+		SummaryVersion: 1, Summarized: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notice := renderCompactionNotice(event)
+	if !strings.Contains(notice, "structural only") || !strings.Contains(notice, "no summary") {
+		t.Fatalf("notice = %q, want it to say the compaction produced no summary", notice)
 	}
 }

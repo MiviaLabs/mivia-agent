@@ -134,7 +134,16 @@ type CompactionEvent struct {
 	ElidedBytes    int                      `json:"elided_bytes"`
 	SourceRange    contextstate.SourceRange `json:"source_range"`
 	SummaryVersion uint32                   `json:"summary_version"`
-	sealed         bool                     `json:"-"`
+	// Summarized reports whether an LLM summary of the dropped messages was
+	// actually produced. A compaction can succeed structurally with no
+	// summary at all (the workspace never configured one, or the summary
+	// call degraded), and SummaryVersion cannot express that: the validator
+	// requires it to be non-zero, so it was hardcoded to 1 and claimed a
+	// summary existed either way. A renderer that shows a clean "compacted"
+	// banner for a summary-less compaction is why an operator sees an
+	// instant, LLM-free compact and concludes compaction is broken.
+	Summarized bool `json:"summarized"`
+	sealed     bool `json:"-"`
 }
 
 // CompactionEventParams is the only constructor input for CompactionEvent.
@@ -147,6 +156,7 @@ type CompactionEventParams struct {
 	ElidedBytes    int
 	SourceRange    contextstate.SourceRange
 	SummaryVersion uint32
+	Summarized     bool
 }
 
 // NewCompactionEvent constructs the only valid compaction event. Callers get
@@ -156,7 +166,8 @@ func NewCompactionEvent(p CompactionEventParams) (CompactionEvent, error) {
 	event := CompactionEvent{
 		Trigger: p.Trigger, BeforeTokens: p.BeforeTokens, AfterTokens: p.AfterTokens,
 		ElidedMessages: p.ElidedMessages, ElidedBytes: p.ElidedBytes,
-		SourceRange: p.SourceRange, SummaryVersion: p.SummaryVersion, sealed: true,
+		SourceRange: p.SourceRange, SummaryVersion: p.SummaryVersion,
+		Summarized: p.Summarized, sealed: true,
 	}
 	return event, event.Validate()
 }

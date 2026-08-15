@@ -88,6 +88,7 @@ class _StubHandler(BaseHTTPRequestHandler):
             content = _summary_echo_reply(messages[-1].get("content") or "")
         else:
             content = "ok"
+        prompt_tokens = max(1, len(json.dumps(body)) // 4)
         payload = json.dumps(
             {
                 "id": "1",
@@ -100,7 +101,18 @@ class _StubHandler(BaseHTTPRequestHandler):
                         "finish_reason": "stop",
                     }
                 ],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                "usage": {
+                    # Realistic, not a constant. The host feeds
+                    # reported/estimated into a rolling calibration ratio and
+                    # scales the planner's budget math by it, clamped to
+                    # [0.5, 3.0]. A fixed tiny number pins the ratio at the
+                    # 0.5 floor, so the planner prices every request at half
+                    # its real cost and scenarios silently mis-size. Mirror
+                    # the host's own len/4 heuristic so the ratio stays ~1.0.
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": max(1, len(content) // 4),
+                    "total_tokens": prompt_tokens + max(1, len(content) // 4),
+                },
             }
         ).encode()
         self.send_response(200)
@@ -377,6 +389,11 @@ def scenario_automatic(base: Path, backend: Backend, report: Report) -> None:
     if compactions:
         rec = compactions[0].get("compaction") or {}
         report.check(
+            "a configured workspace reports the compaction as summarized",
+            rec.get("summarized") is True,
+            detail=f"summarized={rec.get('summarized')} despite a wired summarizer",
+        )
+        report.check(
             "the compaction record reports a real reduction",
             rec.get("before_tokens", 0) > rec.get("after_tokens", 0),
             detail="the record reports no reduction",
@@ -531,6 +548,18 @@ def scenario_gate_off(base: Path, backend: Backend, report: Report) -> None:
             detail=f"notices did not mention {expect!r}: {notices}",
         )
         bodies = checkpoint_bodies(ws)
+        comp_events = [e.get("compaction") or {} for e in events if e.get("type") == "compaction"]
+        report.check(
+            f"{name}: the compaction event admits it produced no summary",
+            bool(comp_events) and all(c.get("summarized") is False for c in comp_events),
+            detail=f"events claimed a summary that never ran: {comp_events}",
+        )
+        report.check(
+            f"{name}: the banner text says structural only",
+            all("structural only" in (e.get("message") or "")
+                for e in events if e.get("type") == "compaction"),
+            detail="the rendered banner reads identically to a summarized compaction",
+        )
         report.check(
             f"{name}: no summary is persisted",
             not bodies or SUMMARY_NAME not in bodies[-1],
