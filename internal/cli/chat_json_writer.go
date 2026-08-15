@@ -13,7 +13,7 @@ import (
 )
 
 // ndjsonEvent is the wire schema for line-mode --json output; exactly one
-// type is populated per line. See docs/ (chat --json wire schema) for the
+// type is populated per line. See docs/product/wire-schema.md for the
 // full type vocabulary and field list.
 //
 // "external_*" types mirror the same vocabulary for a turn running in a
