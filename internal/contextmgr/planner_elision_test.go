@@ -120,7 +120,7 @@ func TestPlanBelowTriggerReturnsCloneWithZeroElision(t *testing.T) {
 	}
 	// Budget high enough that trigger > before.
 	budget := cost*5/4 + 1000
-	if percentFloor(budget, 4, 5) <= cost {
+	if PercentFloor(budget, 4, 5) <= cost {
 		budget = cost*2 + 1000
 	}
 	plan, err := Plan(PlanInput{Messages: messages, Budget: budget})
@@ -580,13 +580,13 @@ func TestPlanExactTriggerCanElide(t *testing.T) {
 	// budget such that trigger == before: trigger = floor(4/5 * budget) == before
 	// => budget = ceil(before * 5/4)
 	budget := before * 5 / 4
-	for percentFloor(budget, 4, 5) < before {
+	for PercentFloor(budget, 4, 5) < before {
 		budget++
 	}
-	for percentFloor(budget, 4, 5) > before {
+	for PercentFloor(budget, 4, 5) > before {
 		budget--
 	}
-	if percentFloor(budget, 4, 5) != before {
+	if PercentFloor(budget, 4, 5) != before {
 		t.Skipf("cannot construct exact trigger for before=%d", before)
 	}
 	// Mandatory set must fit in budget.

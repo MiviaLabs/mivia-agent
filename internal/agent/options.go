@@ -41,7 +41,10 @@ type Options struct {
 	PreserveWorkLimits    bool
 	DisableProviderReplay bool
 	// MaxContextTokens sets the approximate token limit for the prompt context.
-	// When exceeded, old messages are pruned (keeping system prompt and recent turns).
+	// Pruning is hysteretic, mirroring contextmgr.Plan: history is left
+	// untouched below 80% of the budget, and once that trigger is crossed old
+	// turns are dropped (keeping system prompt and recent turns) down to ~50%,
+	// so one provider prompt-cache miss buys many cache hits before the next.
 	// 0 or negative means no pruning.
 	MaxContextTokens int
 	// MaxToolResultChars caps each tool result stored in conversation history,

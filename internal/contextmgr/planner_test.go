@@ -19,7 +19,7 @@ func TestPlanThresholdAndTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	budget := before * 5 / 4
-	if budget <= 0 || percentFloor(budget, 4, 5) != before {
+	if budget <= 0 || PercentFloor(budget, 4, 5) != before {
 		t.Fatalf("fixture cost=%d cannot exercise exact trigger with budget=%d", before, budget)
 	}
 
@@ -270,7 +270,7 @@ func TestPlanCalibrationTriggersCompactionEarlier(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !plan.Compacted {
-		t.Fatalf("ratio=2.0 with budget %d should trigger compaction (est=%d, doubled=%d, trigger=%d)", budget, est, 2*est, percentFloor(budget, 4, 5))
+		t.Fatalf("ratio=2.0 with budget %d should trigger compaction (est=%d, doubled=%d, trigger=%d)", budget, est, 2*est, PercentFloor(budget, 4, 5))
 	}
 	// Verify ratio=1.0 does NOT compact with same budget
 	input.CalibrationRatio = 1.0
@@ -279,7 +279,7 @@ func TestPlanCalibrationTriggersCompactionEarlier(t *testing.T) {
 		t.Fatal(err)
 	}
 	if plan1.Compacted {
-		t.Fatalf("ratio=1.0 with budget %d should NOT trigger compaction (est=%d, trigger=%d)", budget, est, percentFloor(budget, 4, 5))
+		t.Fatalf("ratio=1.0 with budget %d should NOT trigger compaction (est=%d, trigger=%d)", budget, est, PercentFloor(budget, 4, 5))
 	}
 }
 

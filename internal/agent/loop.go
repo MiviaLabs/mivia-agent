@@ -207,24 +207,34 @@ func (l *Loop) pruneHistory(opts Options, toolSpecs []provider.ToolSpec) {
 				schemaCost = cost
 			}
 		}
-		// The rejection check (promptBudgetErrorWithTools) prices content,
-		// message frames, and tool schemas, while PruneMessagesKeepTurns
-		// accounts content only. Prune with the same accounting so a history
-		// at the boundary is trimmed instead of rejected: pass 1 drops old
-		// turns by content minus schema cost, pass 2 trims to the exact
-		// frame- and schema-aware target of the remaining set.
-		pass1 := opts.MaxContextTokens - schemaCost
-		if pass1 < 1 {
-			pass1 = 1
-		}
-		l.Messages = provider.PruneMessagesKeepTurns(l.Messages, pass1, profile)
-		overhead := provider.EstimateMessagesPromptCost(l.Messages, 0, profile) - provider.MessagesTokens(l.Messages, profile)
-		target := opts.MaxContextTokens - schemaCost - overhead
-		if target < 1 {
-			target = 1
-		}
-		if provider.MessagesTokens(l.Messages, profile) > target {
-			l.Messages = provider.PruneMessagesKeepTurns(l.Messages, target, profile)
+		// Hysteresis mirrors contextmgr.Plan (trigger 80%, target 50% of the
+		// budget): pruning only once the estimated request cost crosses the
+		// trigger, and down past it to the target when it does, means the
+		// front-dropped prefix - and the provider prompt-cache miss it costs -
+		// happens once per many steps instead of once per step at the boundary.
+		trigger := contextmgr.PercentFloor(opts.MaxContextTokens, 4, 5)
+		totalCost := provider.EstimateMessagesPromptCost(l.Messages, schemaCost, profile)
+		if totalCost >= trigger {
+			budget := contextmgr.PercentFloor(opts.MaxContextTokens, 1, 2)
+			// The rejection check (promptBudgetErrorWithTools) prices content,
+			// message frames, and tool schemas, while PruneMessagesKeepTurns
+			// accounts content only. Prune with the same accounting so a history
+			// at the boundary is trimmed instead of rejected: pass 1 drops old
+			// turns by content minus schema cost, pass 2 trims to the exact
+			// frame- and schema-aware target of the remaining set.
+			pass1 := budget - schemaCost
+			if pass1 < 1 {
+				pass1 = 1
+			}
+			l.Messages = provider.PruneMessagesKeepTurns(l.Messages, pass1, profile)
+			overhead := provider.EstimateMessagesPromptCost(l.Messages, 0, profile) - provider.MessagesTokens(l.Messages, profile)
+			target := budget - schemaCost - overhead
+			if target < 1 {
+				target = 1
+			}
+			if provider.MessagesTokens(l.Messages, profile) > target {
+				l.Messages = provider.PruneMessagesKeepTurns(l.Messages, target, profile)
+			}
 		}
 	}
 	afterTokens := provider.MessagesTokens(l.Messages, profile)
