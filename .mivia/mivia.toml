@@ -150,9 +150,16 @@ base_url = "http://127.0.0.1:11434/v1"
 # LLM Gateway OpenAI-compatible endpoint. One key type works: a DevPass
 # coding-plan key or a pay-as-you-go key, same endpoint and auth header. The
 # gateway normalizes reasoning_effort per upstream model (vetted default
-# dialect "openai" - no reasoning_dialect override needed here).
+# dialect "openai" - no reasoning_dialect override needed here) UNLESS the
+# upstream model is itself a DeepSeek thinking-mode model (see below).
 models = [
-  { name = "runware/deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high" },
+  # runware/deepseek-v4-flash proxies to DeepSeek's own thinking-mode model,
+  # which speaks the "thinking_effort" wire dialect ({"thinking":{...},
+  # "reasoning_effort":...}), not the plain openai shorthand the gateway
+  # defaults to. The override keeps this entry's requests shaped the way the
+  # underlying model actually expects, matching the native "deepseek"
+  # provider's own dialect (internal/provider/deepseek.go).
+  { name = "runware/deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
   # runware/gpt-oss-120b: OpenAI's open-weight MoE reasoning model (117B
   # total / 5.1B active, MXFP4), served via runware on the gateway. Native
   # 131072-token context; OpenAI API reference caps a single response at

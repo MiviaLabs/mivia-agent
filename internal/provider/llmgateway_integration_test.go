@@ -120,6 +120,65 @@ func TestConfigLoadLLMGatewayProviderAppliesDescriptorDefaults(t *testing.T) {
 	}
 }
 
+// TestLLMGatewayReplaysReasoningContentWithoutDroppingReasoningLessTurns pins
+// the fix for a DeepSeek-family model behind the gateway losing its own
+// prior chain-of-thought: RequiresReasoningReplay must be on (so the terminal
+// tool-call turn's reasoning_content reaches the wire), while
+// RejectReasoningLessToolTurns must stay off (so an OLDER tool-call turn from
+// a non-thinking model with no reasoning_content is NOT silently dropped -
+// that repair is DeepSeek-only and would corrupt history for any other model
+// sharing this gateway client).
+func TestLLMGatewayReplaysReasoningContentWithoutDroppingReasoningLessTurns(t *testing.T) {
+	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &gotBody); err != nil {
+			t.Fatalf("decoding request body: %v\nbody: %s", err, raw)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "ok"}, "finish_reason": "stop"}}})
+	}))
+	defer srv.Close()
+	comp, err := NewLLMGateway(Options{BaseURL: srv.URL, APIKey: "fake-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := Request{
+		Model: "runware/deepseek-v4-flash",
+		Messages: []Message{
+			{Role: RoleUser, Content: "step 1"},
+			// An older, non-terminal tool-call turn with no reasoning_content -
+			// as a non-thinking model on this gateway would produce. Must
+			// survive: only DeepSeek's RejectReasoningLessToolTurns gate drops
+			// these, and llmgateway never sets it.
+			{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_1", Type: "function"}}},
+			{Role: RoleTool, ToolCallID: "call_1", Content: "result 1"},
+			{Role: RoleUser, Content: "step 2"},
+			// The terminal exchange, carrying reasoning_content like a DeepSeek
+			// thinking-mode turn would.
+			{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_2", Type: "function"}}, ReasoningContent: "because X implies Y"},
+			{Role: RoleTool, ToolCallID: "call_2", Content: "result 2"},
+		},
+	}
+	if _, err := comp.ChatTurn(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(gotBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "because X implies Y") {
+		t.Fatalf("expected the terminal turn's reasoning_content on the wire, got %s", body)
+	}
+	if !strings.Contains(body, "call_1") {
+		t.Fatalf("the older reasoning-less tool-call turn must not be dropped, got %s", body)
+	}
+}
+
 // TestLLMGatewayErrorEnvelopeParsesThroughSharedParser pins that a
 // documented OpenAI-shaped error envelope from the gateway is classified by
 // the shared openaiErrorParser; llmgateway adds no per-provider parser.

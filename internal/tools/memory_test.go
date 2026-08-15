@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -326,5 +327,75 @@ func TestMemorySaveTrimsMetadata(t *testing.T) {
 	}
 	if len(res[0].Tags) != 2 || res[0].Tags[0] != "go" || res[0].Tags[1] != "concurrency" {
 		t.Errorf("tags = %v, want [go concurrency]", res[0].Tags)
+	}
+}
+
+// TestMemorySaveClampsOverLengthFields pins the reliability fix: an
+// over-length summary/why/title must be auto-truncated to the rune limit and
+// saved, not rejected. Agents routinely over-shoot these limits; a hard
+// rejection just makes them retry the same long text.
+func TestMemorySaveClampsOverLengthFields(t *testing.T) {
+	store := memoryTestStore(t, "")
+	reg := memoryTestRegistry(t, store)
+	ctx := context.Background()
+	longSummary := strings.Repeat("s", 500) // over the 400 limit
+	longWhy := strings.Repeat("w", 1200)    // over the 1000 limit
+	longTitle := strings.Repeat("t", 150)   // over the 120 limit
+	_, err := reg.Execute(ctx, "memory_save", json.RawMessage(fmt.Sprintf(
+		`{"title":%q,"summary":%q,"why":%q}`,
+		longTitle, longSummary, longWhy)))
+	if err != nil {
+		t.Fatalf("memory_save with over-length fields must not fail: %v", err)
+	}
+	res, err := store.Search(ctx, memory.Query{Text: "tttt", Scope: memory.ScopeProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("search = %d results, want 1", len(res))
+	}
+	if len([]rune(res[0].Title)) > 120 {
+		t.Errorf("stored title = %d runes, want <= 120", len([]rune(res[0].Title)))
+	}
+	if len([]rune(res[0].Snippet)) > 400 {
+		t.Errorf("stored summary = %d runes, want <= 400", len([]rune(res[0].Snippet)))
+	}
+}
+
+// TestMemoryEntryClampPinsRuneTruncation verifies the Clamp helper directly:
+// it truncates each free-text field to its rune limit without splitting a
+// UTF-8 rune, and leaves within-limit fields unchanged.
+func TestMemoryEntryClampPinsRuneTruncation(t *testing.T) {
+	e := memory.Entry{
+		Title:   strings.Repeat("t", 130),
+		Summary: strings.Repeat("s", 450),
+		Why:     strings.Repeat("w", 1100),
+		Good:    strings.Repeat("g", 2500),
+		Bad:     strings.Repeat("b", 2500),
+	}
+	c := e.Clamp()
+	if len([]rune(c.Title)) != 120 {
+		t.Errorf("clamped title = %d runes, want 120", len([]rune(c.Title)))
+	}
+	if len([]rune(c.Summary)) != 400 {
+		t.Errorf("clamped summary = %d runes, want 400", len([]rune(c.Summary)))
+	}
+	if len([]rune(c.Why)) != 1000 {
+		t.Errorf("clamped why = %d runes, want 1000", len([]rune(c.Why)))
+	}
+	if len([]rune(c.Good)) != 2000 {
+		t.Errorf("clamped good = %d runes, want 2000", len([]rune(c.Good)))
+	}
+	if len([]rune(c.Bad)) != 2000 {
+		t.Errorf("clamped bad = %d runes, want 2000", len([]rune(c.Bad)))
+	}
+	// A multi-byte rune at the boundary must not be split.
+	mb := strings.Repeat("界", 500) // 3 bytes each
+	c2 := memory.Entry{Title: "t", Summary: mb, Why: "w"}.Clamp()
+	if len([]rune(c2.Summary)) != 400 {
+		t.Errorf("clamped multibyte summary = %d runes, want 400", len([]rune(c2.Summary)))
+	}
+	if !utf8.ValidString(c2.Summary) {
+		t.Error("clamped multibyte summary is not valid UTF-8")
 	}
 }

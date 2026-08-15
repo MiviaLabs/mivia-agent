@@ -261,7 +261,7 @@ func (c *LinearController) settlePanelSynthesis(ctx context.Context, run workflo
 // prompt, so the persisted input is the envelope JSON wrapped in a JSON string
 // (mustJSON). LoadContent verifies the content-addressed sha256 digest, which
 // ties the reconstruction to exactly the envelope the host built and validated
-// at admission (2-4 strict-decoded member reports, a host-computed verdict);
+// at admission (1-4 strict-decoded member reports, a host-computed verdict);
 // AllCanonicalSourceKeys and HostVerdict are derived from that same
 // host-authored document, so D10/D11 hold on the resume path. A missing or
 // corrupt persisted envelope fails with a cause naming the persisted envelope;
@@ -287,8 +287,8 @@ func (c *LinearController) rebuildPanelSynthesisEnvelope(ctx context.Context, at
 	if err := json.Unmarshal([]byte(envelopeJSON), &envelope); err != nil {
 		return PanelSynthesisEnvelope{}, fmt.Errorf("panel attempt %q: persisted synthesis envelope decode: %w", attempt.AttemptID, err)
 	}
-	if len(envelope.Members) < 2 || len(envelope.Members) > 4 {
-		return PanelSynthesisEnvelope{}, fmt.Errorf("panel attempt %q: persisted synthesis envelope has %d members, want 2 to 4", attempt.AttemptID, len(envelope.Members))
+	if len(envelope.Members) < 1 || len(envelope.Members) > 4 {
+		return PanelSynthesisEnvelope{}, fmt.Errorf("panel attempt %q: persisted synthesis envelope has %d members, want 1 to 4", attempt.AttemptID, len(envelope.Members))
 	}
 	return envelope, nil
 }
@@ -316,8 +316,12 @@ func panelSynthesisTaskStatusError(taskResult subagents.Result) error {
 
 // panelSynthesisMemberInputs gathers each successful member's raw output and
 // host-known identity fields, in the member's declaration order, for
-// BuildSynthesisEnvelope. It is only called after RunPanelMembers returns a
-// nil error, so every member result here is a successful terminal result.
+// BuildSynthesisEnvelope. Failed members (result.Err != nil, or nil result
+// with no task results) are skipped. Only an error is returned for a genuine
+// structural problem: when no member succeeded at all (the caller requires at
+// least one successful member to build an envelope). It is only called after
+// RunPanelMembers returns a nil error, so the member results here are all
+// terminal.
 func panelSynthesisMemberInputs(execution *workflowledger.PanelExecution, results PanelMembersResult) ([]PanelSynthesisMemberInput, error) {
 	byID := make(map[string]PanelMemberResult, len(results.Members))
 	for _, r := range results.Members {
@@ -326,8 +330,11 @@ func panelSynthesisMemberInputs(execution *workflowledger.PanelExecution, result
 	inputs := make([]PanelSynthesisMemberInput, 0, len(execution.Members))
 	for _, member := range execution.Members {
 		result, ok := byID[member.MemberID]
-		if !ok || result.Result == nil || len(result.Result.Results) == 0 {
-			return nil, fmt.Errorf("panel member %q has no coordinator result", member.MemberID)
+		// Skip failed members rather than failing the whole panel synthesis:
+		// a member that errored, produced no coordinator result, or produced
+		// no task results is omitted from the envelope.
+		if !ok || result.Err != nil || result.Result == nil || len(result.Result.Results) == 0 {
+			continue
 		}
 		taskResult := result.Result.Results[0]
 		inputs = append(inputs, PanelSynthesisMemberInput{
@@ -345,6 +352,9 @@ func panelSynthesisMemberInputs(execution *workflowledger.PanelExecution, result
 			// root cause by letting the envelope decode "successfully".
 			TerminalStatus: taskResult.Status, RawOutput: extractTaskOutput(taskResult.Output),
 		})
+	}
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("panel synthesis has no successful member results to build an envelope from")
 	}
 	return inputs, nil
 }

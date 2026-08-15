@@ -21,6 +21,12 @@ func TestNewLLMGatewayAppliesDefaultsAndOverrides(t *testing.T) {
 	if client.reasoning != reasoning.DialectOpenAI {
 		t.Fatalf("reasoning=%q, want %q", client.reasoning, reasoning.DialectOpenAI)
 	}
+	if !client.replayReasoning {
+		t.Fatalf("replayReasoning=%v, want true so a DeepSeek-family model behind the gateway gets its reasoning_content replayed", client.replayReasoning)
+	}
+	if client.rejectReasoningLessToolTurns {
+		t.Fatalf("rejectReasoningLessToolTurns=%v, want false: that gate drops tool-call history and is only safe for a single-vendor DeepSeek client", client.rejectReasoningLessToolTurns)
+	}
 	comp, err = NewLLMGateway(Options{APIKey: "fake", BaseURL: "https://example.com/v1"})
 	if err != nil {
 		t.Fatal(err)

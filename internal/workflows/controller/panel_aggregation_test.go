@@ -206,13 +206,17 @@ func TestComputeHostVerdict_FourMembersAnyPositionForcesChangesRequested(t *test
 	}
 }
 
-// Test-review regression: BuildSynthesisEnvelope's 2..4 member bound (D7)
+// Test-review regression: BuildSynthesisEnvelope's 1..4 member bound (D7)
 // was never exercised at 1 or 5 members; a broken boundary (e.g. <= vs <)
-// would go undetected.
+// would go undetected. A single surviving member must still synthesize.
 func TestBuildSynthesisEnvelope_RejectsMemberCountOutsideTwoToFour(t *testing.T) {
 	one := []PanelSynthesisMemberInput{panelMemberInput("security", validPanelReportJSON(PanelVerdictApproved))}
-	if _, _, err := BuildSynthesisEnvelope("review", one); err == nil {
-		t.Fatal("1 member: BuildSynthesisEnvelope() error = nil, want rejection")
+	envelope, _, err := BuildSynthesisEnvelope("review", one)
+	if err != nil {
+		t.Fatalf("1 member: BuildSynthesisEnvelope() error = %v, want nil (one surviving member synthesizes)", err)
+	}
+	if len(envelope.Members) != 1 {
+		t.Fatalf("1 member: envelope members = %d, want 1", len(envelope.Members))
 	}
 	five := make([]PanelSynthesisMemberInput, 0, 5)
 	for i := 0; i < 5; i++ {

@@ -25,11 +25,14 @@ func (failedPanelAdmission) JoinMember(context.Context, string, string, *coordin
 
 func TestRunPanelMembersReleasesPermitAfterAdmissionFailure(t *testing.T) {
 	limiter := NewPanelActorLimiter()
-	_, err := RunPanelMembers(context.Background(), limiter, PanelMembersRequest{
+	result, err := RunPanelMembers(context.Background(), limiter, PanelMembersRequest{
 		AttemptID: "attempt", Members: []PanelMemberRequest{{MemberID: "member", RunID: "run-member"}}, Coordinator: failedPanelAdmission{},
 	})
-	if err == nil {
-		t.Fatal("panel admission failure was accepted")
+	if err != nil {
+		t.Fatalf("admission failure should not fail the panel, got aggregate error: %v", err)
+	}
+	if len(result.Members) != 1 || result.Members[0].Err == nil {
+		t.Fatal("panel admission failure was not captured in the member's Err")
 	}
 	leases := make([]*panelActorLease, 4)
 	for i := range leases {
@@ -55,18 +58,28 @@ func TestRunPanelMembersCancelStopsPermitWait(t *testing.T) {
 		leases[i] = lease
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
+	type outcome struct {
+		res PanelMembersResult
+		err error
+	}
+	done := make(chan outcome, 1)
 	go func() {
-		_, err := RunPanelMembers(ctx, limiter, PanelMembersRequest{
+		res, err := RunPanelMembers(ctx, limiter, PanelMembersRequest{
 			AttemptID: "attempt", Members: []PanelMemberRequest{{MemberID: "member", RunID: "run-member"}}, Coordinator: failedPanelAdmission{},
 		})
-		done <- err
+		done <- outcome{res: res, err: err}
 	}()
 	cancel()
 	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancel result = %v, want context canceled", err)
+	case out := <-done:
+		if out.err != nil {
+			t.Fatalf("canceled member should not fail the panel, got aggregate error: %v", out.err)
+		}
+		if len(out.res.Members) != 1 {
+			t.Fatalf("member results = %d, want 1", len(out.res.Members))
+		}
+		if !errors.Is(out.res.Members[0].Err, context.Canceled) {
+			t.Fatalf("canceled member Err = %v, want context canceled", out.res.Members[0].Err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cancel did not stop the permit wait")
@@ -103,11 +116,17 @@ func TestRunPanelMembersReportsMemberTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	coord := coordinator.New(ledger.NewMemoryLedgerRepository(), subagents.New(dispatcher, subagents.Policy{Workers: 1}))
-	_, err := RunPanelMembers(context.Background(), NewPanelActorLimiter(), PanelMembersRequest{
+	result, err := RunPanelMembers(context.Background(), NewPanelActorLimiter(), PanelMembersRequest{
 		AttemptID: "attempt", Members: []PanelMemberRequest{{MemberID: "member", RunID: "run-member"}}, Coordinator: timeoutPanelMember{c: coord},
 	})
-	if err == nil {
-		t.Fatal("member timeout did not fail the panel")
+	if err != nil {
+		t.Fatalf("member timeout should not fail the panel, got aggregate error: %v", err)
+	}
+	if len(result.Members) != 1 {
+		t.Fatalf("member results = %d, want 1", len(result.Members))
+	}
+	if result.Members[0].Err == nil {
+		t.Fatal("member timeout was not captured in the member's Err")
 	}
 }
 

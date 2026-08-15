@@ -29,8 +29,29 @@ func NewLLMGateway(opts Options) (Completer, error) {
 		CacheUsageEnabled: opts.CacheUsageEnabled,
 		// The OpenAI-compatible surface accepts the reasoning_effort
 		// shorthand and normalizes it per upstream model. Vetted default
-		// dialect "openai"; see defaultReasoningDialect.
+		// dialect "openai"; see defaultReasoningDialect. A model entry whose
+		// upstream is itself a thinking-mode model (e.g. a DeepSeek route)
+		// overrides this per-model via [providers.llmgateway].models[].reasoning_dialect.
 		Reasoning: defaultReasoningDialect("llmgateway"),
+		// llmgateway fronts a heterogeneous, caller-chosen set of upstream
+		// models - unlike the single-vendor "deepseek" factory, it cannot
+		// declare RejectReasoningLessToolTurns (DeepSeek's documented-400
+		// gate): that gate DROPS older tool-call turns lacking
+		// reasoning_content, which is the correct repair only for DeepSeek
+		// and would silently corrupt tool-call history for a non-thinking
+		// model routed through the same gateway.
+		//
+		// RequiresReasoningReplay is safe to enable unconditionally, though:
+		// toAPIMessages only ever copies reasoning_content onto the wire for
+		// an assistant message that already carries it (see api_message.go),
+		// so a model that never populates the field sees no change to its
+		// request body. For a DeepSeek-family model behind the gateway, this
+		// closes the gap where mivia dropped the model's own prior
+		// chain-of-thought on every tool-call turn - replaying it verbatim,
+		// like the native "deepseek" provider does, so consecutive requests
+		// reconstruct the same prefix the upstream's own prompt cache
+		// indexed instead of a structurally different one on every turn.
+		RequiresReasoningReplay: true,
 		// LLM Gateway resolves a session key from (in priority order)
 		// x-session-id, x-session-affinity, prompt_cache_key, or the
 		// OpenAI-compatible "user" field; sessions pin provider routing for

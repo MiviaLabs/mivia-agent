@@ -23,6 +23,52 @@ func (completedPanelHandler) Invoke(context.Context, runtime.Request) (json.RawM
 	return json.RawMessage(`{"ok":true}`), nil
 }
 
+// TestBuildPanelAttemptAdmitsAllowPartial mirrors the require_all admission
+// path for the allow_partial failure policy: buildPanelAttempt must accept it
+// and produce a members_admitted panel attempt without error.
+func TestBuildPanelAttemptAdmitsAllowPartial(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 3, 0, 0, 0, time.UTC)
+	parentDeadline := now.Add(10 * time.Minute)
+	step := definition.Step{
+		ID: "review", Kind: "agent_panel", Context: []definition.ContextBinding{{From: "inputs.task", As: "task", MaxBytes: 1024}},
+		Panel: &definition.AgentPanel{FailurePolicy: "allow_partial", Members: []definition.PanelMember{
+			{ID: "security", Agent: "panel-reviewer", Skill: "secure-change", Template: "security", OutputSchema: "report"},
+			{ID: "correctness", Agent: "panel-reviewer", Skill: "bug-audit", Template: "correctness", OutputSchema: "report"},
+		}},
+	}
+	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		PanelBindings: map[string]workflowledger.PanelBindingSnapshot{
+			"review/security":    {AgentName: "panel-reviewer", AgentDigest: "sha256:security", ProviderName: "deepseek", Model: "deepseek-v4-flash"},
+			"review/correctness": {AgentName: "panel-reviewer", AgentDigest: "sha256:correctness", ProviderName: "zai", Model: "glm-5.2"},
+		},
+		Templates: map[string]workflowledger.RefSnapshot{
+			"security": {Bytes: []byte("Review {{inputs.task}}.")}, "correctness": {Bytes: []byte("Review {{inputs.task}}.")},
+		},
+		Schemas: map[string]workflowledger.RefSnapshot{"report": {Bytes: []byte(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-allow-partial", snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetTimeSource(func() time.Time { return now }); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := ctrl.buildPanelAttempt(context.Background(), workflowledger.RunSnapshot{RunID: ctrl.RunID, DeadlineAt: &parentDeadline}, step, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempt.PanelExecution == nil || attempt.PanelExecution.Phase != workflowledger.PanelPhaseMembersAdmitted {
+		t.Fatalf("panel execution = %+v, want members_admitted attempt", attempt.PanelExecution)
+	}
+	if len(attempt.PanelExecution.Members) != 2 {
+		t.Fatalf("members = %d, want 2", len(attempt.PanelExecution.Members))
+	}
+}
+
 func TestBuildPanelAttemptPinsEachMemberBindingAndDeadline(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 3, 0, 0, 0, time.UTC)
 	parentDeadline := now.Add(10 * time.Minute)

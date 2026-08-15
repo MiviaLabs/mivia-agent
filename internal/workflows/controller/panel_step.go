@@ -54,6 +54,22 @@ func findResumablePanelAttempt(attempts []workflowledger.StepAttempt, stepID str
 	return workflowledger.StepAttempt{}, false
 }
 
+// panelMemberFailureDetail renders one failed member as "<memberID>: <cause>"
+// for progress/error reporting. A member can fail with nil Err when the
+// coordinator returns no Result, so it falls back to a stable placeholder.
+func panelMemberFailureDetail(r PanelMemberResult) string {
+	if r.Err != nil {
+		return fmt.Sprintf("%s: %v", r.MemberID, r.Err)
+	}
+	return fmt.Sprintf("%s: no coordinator result", r.MemberID)
+}
+
+// panelMemberFailureError builds the settle error describing the first failed
+// member. It never wraps a nil error.
+func panelMemberFailureError(r PanelMemberResult) error {
+	return errors.New(panelMemberFailureDetail(r))
+}
+
 func (c *LinearController) advancePanelStep(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step) (workflowledger.RunSnapshot, bool, error) {
 	attempts, err := c.Repo.ListStepAttempts(ctx, c.RunID)
 	if err != nil {
@@ -106,15 +122,7 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 	// reason. Any other phase fails closed with a clear cause.
 	switch attempt.PanelExecution.Phase {
 	case workflowledger.PanelPhaseMembersAdmitted:
-		members := make([]PanelMemberRequest, len(attempt.PanelExecution.Members))
-		for i, member := range attempt.PanelExecution.Members {
-			members[i] = PanelMemberRequest{MemberID: member.MemberID, RunID: member.CoordinatorRunID}
-		}
-		membersResult, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
-		if runErr != nil {
-			return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, runErr)
-		}
-		return c.advancePanelSynthesis(ctx, run, step, attempt, panel, membersResult)
+		return c.advancePanelMembersAdmitted(ctx, run, step, attempt, panel)
 	case workflowledger.PanelPhaseSynthesisAdmitted:
 		// The members completed before the crash and their bounded reports
 		// are persisted inside the synthesis work input; advancePanelSynthesis
@@ -124,6 +132,50 @@ func (c *LinearController) advancePanelStep(ctx context.Context, run workflowled
 	default:
 		return c.failAttempt(ctx, run, attempt, fmt.Errorf("panel step %q has unexpected phase %q", step.ID, attempt.PanelExecution.Phase))
 	}
+}
+
+// advancePanelMembersAdmitted runs the admitted panel members and applies the
+// step's failure policy to their outcomes. RunPanelMembers is policy-agnostic:
+// it returns every member outcome (success and failure alike) and only
+// surfaces request-level errors. require_all preserves the legacy behavior
+// (any member failure settles the attempt failed); allow_partial proceeds to
+// synthesis as long as at least one member succeeded, reporting each failed
+// member via ProgressPanelMemberFailed, and settles failed only when ALL
+// members fail.
+func (c *LinearController) advancePanelMembersAdmitted(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempt workflowledger.StepAttempt, panel workflowledger.PanelCoordinator) (workflowledger.RunSnapshot, bool, error) {
+	members := make([]PanelMemberRequest, len(attempt.PanelExecution.Members))
+	for i, member := range attempt.PanelExecution.Members {
+		members[i] = PanelMemberRequest{MemberID: member.MemberID, RunID: member.CoordinatorRunID}
+	}
+	membersResult, runErr := RunPanelMembers(ctx, c.PanelLimiter, PanelMembersRequest{AttemptID: attempt.AttemptID, Members: members, Coordinator: panel})
+	if runErr != nil {
+		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, runErr)
+	}
+	policy := ""
+	if step.Panel != nil {
+		policy = step.Panel.FailurePolicy
+	}
+	var failedMembers []PanelMemberResult
+	for _, r := range membersResult.Members {
+		if r.Err != nil || r.Result == nil {
+			failedMembers = append(failedMembers, r)
+		}
+	}
+	switch {
+	case len(failedMembers) > 0 && policy == definition.PanelFailurePolicyRequireAll:
+		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, panelMemberFailureError(failedMembers[0]))
+	case len(failedMembers) == len(membersResult.Members) && policy == definition.PanelFailurePolicyAllowPartial:
+		return c.settleAgentAttempt(ctx, run, step, attempt, AgentStepResult{Status: "failed"}, panelMemberFailureError(failedMembers[0]))
+	case len(failedMembers) > 0 && policy == definition.PanelFailurePolicyAllowPartial:
+		// Some members succeeded: report every failed member and continue.
+		for _, r := range failedMembers {
+			c.emitProgress(ProgressEvent{
+				Kind: ProgressPanelMemberFailed, StepID: step.ID, AttemptNo: attempt.AttemptNo,
+				Detail: panelMemberFailureDetail(r),
+			})
+		}
+	}
+	return c.advancePanelSynthesis(ctx, run, step, attempt, panel, membersResult)
 }
 
 // reconcilePanelCancelPending drives one already-cancel_pending panel attempt

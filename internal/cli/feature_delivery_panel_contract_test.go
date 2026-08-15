@@ -36,14 +36,14 @@ func assertFeatureDeliveryReviewPanel(t *testing.T, workflow definition.Workflow
 	if step.Panel == nil {
 		t.Fatal("step review_panel must declare [steps.panel]")
 	}
-	if step.Panel.FailurePolicy != "require_all" {
-		t.Fatalf("step review_panel failure_policy = %q, want require_all", step.Panel.FailurePolicy)
+	if step.Panel.FailurePolicy != "allow_partial" {
+		t.Fatalf("step review_panel failure_policy = %q, want allow_partial", step.Panel.FailurePolicy)
 	}
 	if !step.Panel.RequireDistinctBindings {
 		t.Fatal("step review_panel require_distinct_bindings must be true")
 	}
 	wantMembers := map[string]struct{ provider, model, skill, template string }{
-		"correctness": {"deepseek", "deepseek-v4-flash", "panel-bug-audit", "templates/review-panel-correctness.md"},
+		"correctness": {"llmgateway", "runware/deepseek-v4-flash", "panel-bug-audit", "templates/review-panel-correctness.md"},
 		"security":    {"openrouter", "tencent/hy3-preview", "panel-secure-change", "templates/review-panel-security.md"},
 		"integration": {"zai", "glm-5-turbo", "panel-architecture-review", "templates/review-panel-integration.md"},
 	}

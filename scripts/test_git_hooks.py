@@ -598,9 +598,14 @@ def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path)
     root.parent.mkdir(parents=True, exist_ok=True)
     run(["git", "worktree", "add", "--detach", str(root)], ROOT)
     try:
-        run(["git", "config", "user.email", "hook-test@example.invalid"], root)
-        run(["git", "config", "user.name", "Hook Test"], root)
-        run(["git", "config", "commit.gpgsign", "false"], root)
+        # Scope these to the WORKTREE only. This is a linked worktree of the
+        # real repo (extensions.worktreeconfig=true), so a bare `git config`
+        # would write to the shared common .git/config and permanently
+        # override the operator's real identity for every worktree. --worktree
+        # keeps the test identity in the worktree-local config file only.
+        run(["git", "config", "--worktree", "user.email", "hook-test@example.invalid"], root)
+        run(["git", "config", "--worktree", "user.name", "Hook Test"], root)
+        run(["git", "config", "--worktree", "commit.gpgsign", "false"], root)
 
         mivia_db = root / ".mivia" / "memory.db"
         assert mivia_db.is_file(), "worktree must carry the real committed memory.db"

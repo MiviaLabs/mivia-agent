@@ -61,8 +61,12 @@ var panelSynthesisLimits = runtime.WorkLimits{
 }
 
 func (c *LinearController) buildPanelAttempt(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step, attempts []workflowledger.StepAttempt) (workflowledger.StepAttempt, error) {
-	if step.Panel == nil || step.Panel.FailurePolicy != "require_all" {
-		return workflowledger.StepAttempt{}, fmt.Errorf("panel step %q must use require_all", step.ID)
+	policy := ""
+	if step.Panel != nil {
+		policy = step.Panel.FailurePolicy
+	}
+	if policy != "require_all" && policy != "allow_partial" {
+		return workflowledger.StepAttempt{}, fmt.Errorf("panel step %q has unsupported failure_policy %q", step.ID, policy)
 	}
 	snapshot, err := workflowledger.UnmarshalSnapshot(c.Snapshot)
 	if err != nil {
