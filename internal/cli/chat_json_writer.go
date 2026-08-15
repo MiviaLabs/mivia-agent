@@ -169,17 +169,25 @@ func writeTokenUsageLine(w io.Writer, typed events.TokenUsageEvent) {
 // structure-check function-size limit.
 func writeCompactionLine(w io.Writer, detail string, typed events.CompactionEvent) {
 	writeNDJSONEvent(w, ndjsonEvent{
-		Type:    "compaction",
-		Message: detail,
-		Compaction: &ndjsonCompaction{
-			Trigger:        typed.Trigger,
-			BeforeTokens:   typed.BeforeTokens,
-			AfterTokens:    typed.AfterTokens,
-			ElidedMessages: typed.ElidedMessages,
-			ElidedBytes:    typed.ElidedBytes,
-			SummaryVersion: typed.SummaryVersion,
-		},
+		Type:       "compaction",
+		Message:    detail,
+		Compaction: compactionPayload(typed),
 	})
+}
+
+// compactionPayload maps the typed compaction record onto the wire struct -
+// the ONE mapping, shared by the local turn path (writeCompactionLine) and
+// the cross-process relay path (chat_hub.go's renderExternalCompaction), so
+// the two surfaces cannot drift apart.
+func compactionPayload(typed events.CompactionEvent) *ndjsonCompaction {
+	return &ndjsonCompaction{
+		Trigger:        typed.Trigger,
+		BeforeTokens:   typed.BeforeTokens,
+		AfterTokens:    typed.AfterTokens,
+		ElidedMessages: typed.ElidedMessages,
+		ElidedBytes:    typed.ElidedBytes,
+		SummaryVersion: typed.SummaryVersion,
+	}
 }
 
 // writeCacheUsageLine frames one provider-reported prompt-cache accounting

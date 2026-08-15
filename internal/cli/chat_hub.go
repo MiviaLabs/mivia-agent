@@ -148,6 +148,13 @@ func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event)
 		state.pendingUserText = ev.Detail
 		return
 	}
+	// Compaction is NOT a turn: it must not mint an "external_turn_start"
+	// (no user text belongs to it) nor fall under the run-minting logic
+	// below, or a post-turn compact would fabricate a phantom external turn.
+	if ev.Kind == events.KindCompaction {
+		renderExternalCompaction(w, ev)
+		return
+	}
 	if ev.TurnID == "" {
 		return
 	}
@@ -166,8 +173,20 @@ func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event)
 	}
 }
 
-// renderExternalTurnEvent's KindAssistant case only relays a "delta" chunk
-// (streamed live - see teeWriter) as it arrives, and only falls back to
+// renderExternalCompaction relays a compaction another process committed on
+// this session as its own typed NDJSON event. An older publisher that sent
+// only the Detail string (no typed payload) still announces the compaction -
+// a consumer's context indicator refresh is better served by a payload-less
+// notice than by silence. Called with state.mu held.
+func renderExternalCompaction(w io.Writer, ev events.Event) {
+	line := ndjsonEvent{Type: "external_compaction", RunID: ev.TurnID, Message: ev.Detail}
+	if ev.Compaction != nil {
+		line.Compaction = compactionPayload(*ev.Compaction)
+	}
+	writeNDJSONEvent(w, line)
+}
+
+// renderExternalTurnEvent's KindAssistant case only relays a "delta" chunk// (streamed live - see teeWriter) as it arrives, and only falls back to
 // relaying the turn-end aggregate (Detail!="delta") when this run never
 // streamed one at all - a run that already got live deltas would otherwise
 // see the same content twice, once incrementally and once again in full.

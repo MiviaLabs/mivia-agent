@@ -41,6 +41,10 @@ var relayedKinds = []events.Kind{
 	events.KindSubagentHeartbeat,
 	events.KindSubagentDone,
 	events.KindTurnEnd,
+	// KindCompaction carries the typed, content-free compaction payload (see
+	// events.CompactionEvent) - safe to relay by construction (INV-AG-32:
+	// no prompts, tool arguments, hidden content, or summary payloads).
+	events.KindCompaction,
 	events.KindError,
 }
 

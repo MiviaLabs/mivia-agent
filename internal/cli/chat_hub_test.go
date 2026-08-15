@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/hub"
 )
@@ -360,5 +361,52 @@ func TestRenderExternalEventSubagentLifecycleDoesNotEndTheTurn(t *testing.T) {
 	}
 	if len(byType["external_chunk"]) != 1 || byType["external_chunk"][0].Text != "after subagent" {
 		t.Fatalf("content after the subagent finished must still relay: %+v", byType["external_chunk"])
+	}
+}
+
+// TestRenderExternalCompaction pins the external_compaction wire shape: a
+// compaction committed by ANOTHER process on this session (e.g. the TUI,
+// observed by a --json sidecar) arrives as its own typed NDJSON event carrying
+// the content-free payload and the originating run_id - without it, a desktop
+// sidecar's context indicator silently disagrees with the real session state.
+func TestRenderExternalCompaction(t *testing.T) {
+	typed, err := events.NewCompactionEvent(events.CompactionEventParams{
+		Trigger: "threshold", BeforeTokens: 10_000, AfterTokens: 3_000,
+		ElidedMessages: 5, ElidedBytes: 4_200,
+		SourceRange: contextstate.SourceRange{
+			Start: contextstate.SourceID{SessionID: "s1", Sequence: 1},
+			End:   contextstate.SourceID{SessionID: "s1", Sequence: 40},
+		},
+		SummaryVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	renderExternalEvent(&buf, state, events.Event{
+		Kind: events.KindCompaction, SessionID: "s1", TurnID: "turn:3",
+		Detail: "context compacted: 10000 -> 3000 tokens", Compaction: &typed,
+	})
+
+	lines := decodeNDJSONLines(t, buf.String())
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines, want 1: %q", len(lines), buf.String())
+	}
+	ev := lines[0]
+	if ev.Type != "external_compaction" {
+		t.Fatalf("type = %q, want external_compaction", ev.Type)
+	}
+	if ev.RunID != "turn:3" {
+		t.Fatalf("run_id = %q, want turn:3", ev.RunID)
+	}
+	if ev.Compaction == nil {
+		t.Fatalf("compaction payload missing: %+v", ev)
+	}
+	if ev.Compaction.BeforeTokens != 10_000 || ev.Compaction.AfterTokens != 3_000 || ev.Compaction.ElidedMessages != 5 {
+		t.Fatalf("compaction payload = %+v", ev.Compaction)
+	}
+	if ev.Message == "" {
+		t.Fatalf("message (detail) missing: %+v", ev)
 	}
 }

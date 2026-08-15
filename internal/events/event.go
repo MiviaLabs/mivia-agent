@@ -116,6 +116,12 @@ type Event struct {
 	// (KindPrefixReset). It is not copied into generic content/input/output
 	// envelopes and carries no prompt or digest content (INV-68-7).
 	PrefixReset *PrefixResetEvent
+	// Compaction is present only for the typed context-compaction progress
+	// event (KindCompaction). It carries the content-free payload
+	// (events.CompactionEvent) so bus consumers - the cross-process hub, a
+	// --json sidecar - get the real before/after numbers instead of parsing
+	// Detail. Nil on every other kind.
+	Compaction *CompactionEvent
 }
 
 // CompactionEvent is the sealed, content-free progress payload for context
@@ -153,6 +159,18 @@ func NewCompactionEvent(p CompactionEventParams) (CompactionEvent, error) {
 		SourceRange: p.SourceRange, SummaryVersion: p.SummaryVersion, sealed: true,
 	}
 	return event, event.Validate()
+}
+
+// RehydrateCompactionEvent seals a compaction payload reconstructed from a
+// cross-process wire projection (e.g. internal/hub's WireCompaction). The
+// original publisher validated the values through NewCompactionEvent;
+// re-validating here is impossible without the sealed flag and re-deriving it
+// would drop a relayed event for rules the sender already met. An unsealed
+// reconstruction fails its own Validate, which is the trap this exists to
+// close for later consumers.
+func RehydrateCompactionEvent(c CompactionEvent) *CompactionEvent {
+	c.sealed = true
+	return &c
 }
 
 func (e CompactionEvent) Validate() error {

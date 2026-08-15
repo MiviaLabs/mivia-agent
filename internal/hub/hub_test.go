@@ -1,12 +1,14 @@
 package hub
 
 import (
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
@@ -205,5 +207,44 @@ func TestToWireFromWireRoundTrip(t *testing.T) {
 		got.Input != original.Input || got.Output != original.Output || got.AgentTask != original.AgentTask ||
 		got.AgentName != original.AgentName || got.AgentDepth != original.AgentDepth {
 		t.Fatalf("round trip mismatch: got %+v, want %+v", got, original)
+	}
+}
+
+// TestCompactionRelayRoundTrip pins the compaction relay contract: the typed,
+// content-free payload survives toWire/fromWire (a desktop sidecar observing
+// another process's session gets the real before/after numbers, not a Detail
+// string to parse), and KindCompaction is in relayedKinds - without the
+// relayedKinds entry the hub drops the event entirely, cross-process.
+func TestCompactionRelayRoundTrip(t *testing.T) {
+	if !slices.Contains(relayedKinds, events.KindCompaction) {
+		t.Fatal("KindCompaction missing from relayedKinds: the hub drops compaction events cross-process")
+	}
+	typed, err := events.NewCompactionEvent(events.CompactionEventParams{
+		Trigger: "threshold", BeforeTokens: 10_000, AfterTokens: 3_000,
+		ElidedMessages: 5, ElidedBytes: 4_200,
+		SourceRange: contextstate.SourceRange{
+			Start: contextstate.SourceID{SessionID: "s1", Sequence: 1},
+			End:   contextstate.SourceID{SessionID: "s1", Sequence: 40},
+		},
+		SummaryVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := events.Event{
+		Kind: events.KindCompaction, SessionID: "s1", TurnID: "turn:3",
+		Detail: "context compacted: 10000 -> 3000 tokens", Compaction: &typed,
+	}
+	got := fromWire(toWire(original))
+	if got.Kind != events.KindCompaction || got.SessionID != original.SessionID || got.TurnID != original.TurnID {
+		t.Fatalf("scalar fields mismatch: got %+v", got)
+	}
+	if got.Compaction == nil {
+		t.Fatal("compaction payload dropped on the wire round trip")
+	}
+	if got.Compaction.BeforeTokens != 10_000 || got.Compaction.AfterTokens != 3_000 ||
+		got.Compaction.ElidedMessages != 5 || got.Compaction.ElidedBytes != 4_200 ||
+		got.Compaction.Trigger != "threshold" || got.Compaction.SummaryVersion != 1 {
+		t.Fatalf("compaction payload mismatch: %+v", got.Compaction)
 	}
 }
