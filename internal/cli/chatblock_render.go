@@ -116,7 +116,7 @@ func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExp
 	case ChatBlockTool:
 		return renderToolBlock(block, text, model, width)
 	case ChatBlockThinking:
-		return renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, thinkingExpandDefault)
+		return renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, thinkingExpandDefault, width)
 	case ChatBlockSystem:
 		if isWorkStatusBlock(block) {
 			return renderWorkStatusBlock(text, block.Collapsed)
@@ -250,7 +250,7 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 // maxThinkingLines is the max visible lines for a windowed thinking block.
 const maxThinkingLines = 6
 
-func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinkingExpandDefault bool) []string {
+func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinkingExpandDefault bool, width int) []string {
 	// Per-block Collapsed controls visibility. thinkingExpandDefault only
 	// seeds new blocks; it must not erase already-committed thinking content
 	// (that made thinking flash live then disappear as "▸ thinking").
@@ -259,17 +259,30 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 	if strings.TrimSpace(text) == "" {
 		return []string{tuiThinkingStyle.Render("  " + glyphTriR + " thinking")}
 	}
-	allLines := strings.Split(SafeChatBlockText(text, 0), "\n")
+	rawLines := strings.Split(SafeChatBlockText(text, 0), "\n")
 	if effectivelyCollapsed {
 		// Say what the fold is hiding: a bare "thinking" gave no reason to
 		// open it and no sense of how much reasoning happened.
 		n := 0
-		for _, l := range allLines {
+		for _, l := range rawLines {
 			if strings.TrimSpace(l) != "" {
 				n++
 			}
 		}
 		return []string{tuiThinkingStyle.Render(fmt.Sprintf("  %s thinking · %d lines", glyphTriR, n))}
+	}
+	// Wrap each raw line to the pane width before windowing, so a single long
+	// reasoning line does not overflow the viewport (every other block kind
+	// wraps its text; this one used to emit raw lines unwrapped).
+	contentWidth := max(20, width-4)
+	allLines := make([]string, 0, len(rawLines))
+	for _, l := range rawLines {
+		if l == "" {
+			allLines = append(allLines, "")
+			continue
+		}
+		wrapped := wrapANSIv2(l, contentWidth)
+		allLines = append(allLines, strings.Split(wrapped, "\n")...)
 	}
 	n := len(allLines)
 
