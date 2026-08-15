@@ -53,6 +53,7 @@ func (m StructuralPreparationManager) Prepare(ctx context.Context, input Prepare
 		OutputReserve: outputReserve, Force: input.Force, CurrentObjective: input.CurrentObjective,
 		SourceRange: rangeValue, RecentTail: recentTail, CalibrationRatio: input.CalibrationRatio,
 		Spool: input.Spool, Principal: input.Principal, PreserveNames: input.PreserveNames,
+		Revision: input.Revision,
 	})
 	if err != nil {
 		return Preparation{}, err

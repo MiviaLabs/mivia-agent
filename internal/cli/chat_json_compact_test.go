@@ -114,16 +114,29 @@ func TestHandleSlashCompactParsesFocusFromTheRawLine(t *testing.T) {
 
 // TestSlashCompactJSONFailureEmitsSlashError pins the failure leg: a compact
 // that cannot run reports "slash_error" (the authoritative failure signal on
-// the json wire), never stderr prose the frontend cannot see.
+// the json wire), never stderr prose the frontend cannot see. The failure
+// trigger is a compact on a live session with no committed history (a
+// brand-new thread compacting before its first turn) - "nothing to compact".
+// (An earlier revision used a second compact of the same session here; that
+// now SUCCEEDS by design: the plan key folds in the from-revision, so
+// re-compacting an already-compacted session - including from a resumed
+// process - is a new operation, not a conflicting retry.)
 func TestSlashCompactJSONFailureEmitsSlashError(t *testing.T) {
 	ws := isolatedSessionsWorkspace(t)
-	sess, done := seedLiveCompactableSession(t, ws)
-	defer done()
-	// A second compact immediately after the first has nothing left to drop,
-	// so the same live session provides the failure leg without a second seed.
-	var first bytes.Buffer
-	activeJSONSlashSink = &jsonSlashSink{w: &first}
-	_, _, _ = handleSlashCompact("/compact", sess, nil)
+	root, err := chatWorkspaceRoot(ws)
+	if err != nil {
+		t.Fatalf("chatWorkspaceRoot: %v", err)
+	}
+	res, err := config.Load(config.LoadOptions{WorkspaceRoot: root, AllowMissingConfig: true})
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	sess := chat.NewSession(res, nullCompleter{})
+	store, err := setupChatSessionContext(sess, root, chatInvocation{workspacePath: root}, res)
+	if err != nil {
+		t.Fatalf("setupChatSessionContext: %v", err)
+	}
+	defer store.Close()
 
 	var buf bytes.Buffer
 	activeJSONSlashSink = &jsonSlashSink{w: &buf}
@@ -145,5 +158,45 @@ func TestSlashCompactJSONFailureEmitsSlashError(t *testing.T) {
 	}
 	if ev.Type != "slash_error" || !strings.Contains(ev.Message, "compaction failed") {
 		t.Fatalf("event = %+v, want slash_error naming the failure", ev)
+	}
+}
+
+// TestSlashCompactTwiceSucceeds pins the second-compact contract the resumed
+// desktop sidecar drives: compacting the same session again - here in the
+// same process, which once collided on the plan's idempotency key - must
+// answer with a second typed compaction event, not a failure.
+func TestSlashCompactTwiceSucceeds(t *testing.T) {
+	ws := isolatedSessionsWorkspace(t)
+	sess, done := seedLiveCompactableSession(t, ws)
+	defer done()
+	for i := 0; i < 2; i++ {
+		var buf bytes.Buffer
+		activeJSONSlashSink = &jsonSlashSink{w: &buf}
+		handled, _, err := handleSlashCompact("/compact", sess, nil)
+		if i == 1 {
+			activeJSONSlashSink = nil
+		}
+		if err != nil {
+			t.Fatalf("handleSlashCompact #%d: %v", i+1, err)
+		}
+		if !handled {
+			t.Fatalf("handleSlashCompact #%d not handled", i+1)
+		}
+		var sawCompaction bool
+		for _, line := range splitNonEmptyLines(buf.String()) {
+			var ev ndjsonEvent
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				t.Fatalf("decode #%d: %v (line %q)", i+1, err, line)
+			}
+			if ev.Type == "slash_error" {
+				t.Fatalf("compact #%d failed: %s", i+1, ev.Message)
+			}
+			if ev.Type == "compaction" {
+				sawCompaction = true
+			}
+		}
+		if !sawCompaction {
+			t.Fatalf("compact #%d emitted no typed compaction event: %q", i+1, buf.String())
+		}
 	}
 }

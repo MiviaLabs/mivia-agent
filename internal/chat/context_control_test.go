@@ -130,6 +130,81 @@ func TestCompactRejectsEmptyHistory(t *testing.T) {
 	}
 }
 
+// TestCompactAfterResumeCompactsAgain pins the resumed-process flow a
+// desktop sidecar drives (`mivia chat --json --session <id>` after the
+// original process compacted): the resumed session's own compact must
+// never collide with the earlier compaction's operation key. The
+// collision surfaced as `checkpoint conflict: operation key was already
+// used by a commit with different work` on every second manual /compact.
+func TestCompactAfterResumeCompactsAgain(t *testing.T) {
+	first := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal, err := contextstate.NewPrincipal("workspace", first.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := first.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.SendUser(context.Background(), "first", nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		first.Messages = append(first.Messages,
+			provider.Message{Role: provider.RoleUser, Content: strings.Repeat("old question ", 20)},
+			provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("old answer ", 20)},
+		)
+	}
+	if err := first.Compact(context.Background(), ""); err != nil {
+		t.Fatalf("first compact: %v", err)
+	}
+	sessionID := first.SessionID
+
+	// "Process 2": a fresh Session with its own principal, as
+	// `mivia chat --session` mints, resumes the compacted session.
+	second := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
+	secondPrincipal, err := contextstate.NewPrincipal("workspace", second.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.SetContextManager(&contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}, secondPrincipal); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Load(sessionID); err != nil {
+		t.Fatalf("Load(%q): %v", sessionID, err)
+	}
+	err = second.Compact(context.Background(), "")
+	if err == nil {
+		return
+	}
+	// A resumed, already-small context may legitimately have nothing left
+	// to drop - that is the honest outcome. An operation-key collision
+	// with the previous process's compaction is not.
+	if strings.Contains(err.Error(), "checkpoint conflict") {
+		t.Fatalf("resumed compact collided with the earlier compaction: %v", err)
+	}
+	t.Fatalf("resumed compact: %v", err)
+}
+
 func TestCompactPublishesStructuralCheckpointImmediately(t *testing.T) {
 	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model", SystemPrompt: "system"}, &fakeCompleter{out: "answer"})
 	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
