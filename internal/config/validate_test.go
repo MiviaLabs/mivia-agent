@@ -58,6 +58,66 @@ func TestValidEnvNameRejectsOutOfRangeAndBadFirstChar(t *testing.T) {
 	}
 }
 
+// TestResolvedValidateSummaryOverrideContract pins the [context.summary]
+// provider/model override contract: a one-sided override is a load error (a
+// typo must not silently keep charging the session's model for compaction
+// summaries), an override naming a provider that is not declared under
+// [providers] is a load error (the wiring must never invent a runtime), a
+// model that is not a valid model identifier is a load error, and a valid
+// both-keys override passes.
+func TestResolvedValidateSummaryOverrideContract(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+	base := Resolved{
+		ProviderName: "deepseek", Model: "model", BaseURL: "https://example.test", APIKeyEnv: "KEY",
+		PromptCache: "auto",
+		Tools:       ToolsConfig{MaxInspectRepositoryBytes: 64 << 10, MaxTavilyResponseBytes: 4 << 20},
+		ProviderRuntimes: map[string]ProviderRuntime{
+			"deepseek": {ProviderName: "deepseek", BaseURL: "https://example.test", APIKeyEnv: "KEY", APIKeySet: true},
+			"cheap":    {ProviderName: "cheap", BaseURL: "https://cheap.test", APIKeyEnv: "CHEAP_KEY", APIKeySet: true},
+		},
+	}
+	tests := []struct {
+		name            string
+		mutate          func(*Resolved)
+		wantErrContains string
+	}{
+		{"provider without model", func(r *Resolved) {
+			r.Context.Summary.Provider = ptr("cheap")
+		}, "provider and model must be configured together"},
+		{"model without provider", func(r *Resolved) {
+			r.Context.Summary.Model = ptr("cheap-model")
+		}, "provider and model must be configured together"},
+		{"unknown provider", func(r *Resolved) {
+			r.Context.Summary.Provider = ptr("nonexistent")
+			r.Context.Summary.Model = ptr("cheap-model")
+		}, `[context.summary] provider "nonexistent" is not a configured provider`},
+		{"invalid model", func(r *Resolved) {
+			r.Context.Summary.Provider = ptr("cheap")
+			r.Context.Summary.Model = ptr("bad\x01model")
+		}, "[context.summary] model is invalid"},
+		{"valid override", func(r *Resolved) {
+			r.Context.Summary.Provider = ptr("cheap")
+			r.Context.Summary.Model = ptr("cheap-model")
+		}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := base
+			tt.mutate(&res)
+			err := res.Validate()
+			if tt.wantErrContains == "" {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErrContains) {
+				t.Fatalf("Validate() = %v, want error containing %q", err, tt.wantErrContains)
+			}
+		})
+	}
+}
+
 // TestValidateHTTPSURL pins ValidateHTTPSURL's strict https-only structural
 // checks: it accepts a well-formed absolute https URL and returns the parsed
 // *url.URL, and rejects the same structural defects validateBaseURL rejects
