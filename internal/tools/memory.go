@@ -15,6 +15,7 @@ import (
 const (
 	MemorySaveToolName   = "memory_save"
 	MemorySearchToolName = "memory_search"
+	MemoryDeleteToolName = "memory_delete"
 )
 
 // Result budgets. memory_search's envelope is built from bounded fields and
@@ -22,6 +23,7 @@ const (
 const (
 	memorySaveResultBytes   = 4 << 10
 	memorySearchResultBytes = 16 << 10
+	memoryDeleteResultBytes = 4 << 10
 )
 
 // memorySaveTool records one clean, concrete memory entry.
@@ -169,6 +171,49 @@ func (t *memorySearchTool) Capability(json.RawMessage) Capability {
 }
 
 func (t *memorySearchTool) ResultBudgetBytes() int { return t.maxBytes }
+
+// memoryDeleteTool removes one saved memory by id.
+type memoryDeleteTool struct {
+	store memory.Store
+}
+
+func (t *memoryDeleteTool) Name() string { return MemoryDeleteToolName }
+
+func (t *memoryDeleteTool) Description() string {
+	return "Delete one saved memory by its id. " +
+		"The id is the stable identifier returned by memory_save and memory_search. " +
+		"Deleting is permanent and cannot be undone. " +
+		"Use memory_search first to find the id of the entry you want to remove. " +
+		"Deleting a memory is a write to the durable store; it cannot be recovered."
+}
+
+func (t *memoryDeleteTool) Parameters() map[string]any {
+	return schemaObject(map[string]any{
+		"id": map[string]any{"type": "string", "description": "The id of the memory entry to delete, as returned by memory_save or memory_search."},
+	}, []string{"id"})
+}
+
+func (t *memoryDeleteTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var in struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+	if strings.TrimSpace(in.ID) == "" {
+		return "", fmt.Errorf("id is required")
+	}
+	if err := t.store.Delete(ctx, strings.TrimSpace(in.ID)); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("deleted memory %q", in.ID), nil
+}
+
+func (t *memoryDeleteTool) Capability(json.RawMessage) Capability {
+	return Capability{Class: ExecutionWrite, ResourceKey: "memory"}
+}
+
+func (t *memoryDeleteTool) ResultBudgetBytes() int { return memoryDeleteResultBytes }
 
 // marshalSearchResults builds the bounded JSON envelope for a search. The
 // envelope is shrunk (snippet length first, then result count) until it fits

@@ -142,6 +142,57 @@ func (s *sqliteStore) promoteInDB(ctx context.Context, db *sql.DB, id string) er
 	return nil
 }
 
+// Delete removes one entry (by id) from whichever database holds it. The
+// project and org stores are separate SQLite files, so a transaction cannot
+// span them: each is tried in its own transaction (mirroring PromoteToCore's
+// per-DB iteration), and ErrEntryNotFound is returned only when neither holds
+// the id. deleteRow removes the FTS5 index entry and the row atomically.
+func (s *sqliteStore) Delete(ctx context.Context, id string) error {
+	if s.cfg.ReadOnly {
+		return errors.New("memory store is read-only")
+	}
+	for _, db := range []*sql.DB{s.projectDB, s.orgDB} {
+		if db == nil {
+			continue
+		}
+		err := s.deleteInDB(ctx, db, id)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, errNotFoundHere) {
+			return err
+		}
+	}
+	return ErrEntryNotFound
+}
+
+// deleteInDB runs the delete inside its own transaction, serialized against
+// concurrent Saves the same way promoteInDB serializes against them.
+func (s *sqliteStore) deleteInDB(ctx context.Context, db *sql.DB, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?)", id).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return errNotFoundHere
+	}
+	if err := s.deleteRow(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.checkpoint(ctx, db)
+	return nil
+}
+
 func (s *sqliteStore) CoreEntries(ctx context.Context, scope Scope) ([]Result, error) {
 	// ScopeAll is invalid here (plan 77, E4/AR-4-adjacent finding): dbFor
 	// silently routes anything but ScopeOrg to the project DB, and no entry

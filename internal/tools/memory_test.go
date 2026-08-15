@@ -50,10 +50,93 @@ func TestMemoryToolsRegisteredOnlyWithStore(t *testing.T) {
 		t.Fatal("memory_search must not register without a memory store")
 	}
 	reg = memoryTestRegistry(t, memoryTestStore(t, ""))
-	for _, name := range []string{"memory_save", "memory_search"} {
+	for _, name := range []string{"memory_save", "memory_search", "memory_delete"} {
 		if _, ok := reg.Get(name); !ok {
 			t.Fatalf("%s must register when a memory store is set", name)
 		}
+	}
+}
+
+// TestMemoryDeleteThroughRegistry drives the full delete path through the
+// registry: save an entry, find its id, delete it, and confirm it no longer
+// matches a search.
+func TestMemoryDeleteThroughRegistry(t *testing.T) {
+	store := memoryTestStore(t, "")
+	reg := memoryTestRegistry(t, store)
+	ctx := context.Background()
+	saveOut, err := reg.Execute(ctx, "memory_save", json.RawMessage(`{"title":"delete me","summary":"a memory to remove","why":"cleanup test"}`))
+	if err != nil {
+		t.Fatalf("memory_save: %v", err)
+	}
+	// Extract the id from the save confirmation: "saved memory %q (project, id %s)".
+	id := memoryIDFromSaveOutput(t, saveOut)
+
+	delOut, err := reg.Execute(ctx, "memory_delete", json.RawMessage(`{"id":"`+id+`"}`))
+	if err != nil {
+		t.Fatalf("memory_delete: %v", err)
+	}
+	if !strings.Contains(delOut, "deleted memory") || !strings.Contains(delOut, id) {
+		t.Fatalf("memory_delete output = %q, want a deleted-memory confirmation naming %q", delOut, id)
+	}
+
+	// The deleted entry must no longer match a search.
+	searchOut, err := reg.Execute(ctx, "memory_search", json.RawMessage(`{"query":"delete me","scope":"project"}`))
+	if err != nil {
+		t.Fatalf("memory_search after delete: %v", err)
+	}
+	if strings.TrimSpace(searchOut) != "[]" {
+		t.Fatalf("memory_search after delete = %q, want empty result set", searchOut)
+	}
+}
+
+// memoryIDFromSaveOutput extracts the id from a memory_save confirmation of
+// the form `saved memory "title" (project, id <id>)`.
+func memoryIDFromSaveOutput(t *testing.T, out string) string {
+	t.Helper()
+	const marker = "id "
+	idx := strings.LastIndex(out, marker)
+	if idx < 0 {
+		t.Fatalf("save output %q has no id", out)
+	}
+	id := strings.TrimSpace(out[idx+len(marker):])
+	id = strings.TrimSuffix(id, ")")
+	id = strings.TrimSpace(id)
+	if id == "" {
+		t.Fatalf("save output %q has an empty id", out)
+	}
+	return id
+}
+
+// TestMemoryDeleteUnknownID pins that deleting an id that does not exist
+// propagates the store's ErrEntryNotFound to the caller.
+func TestMemoryDeleteUnknownID(t *testing.T) {
+	store := memoryTestStore(t, "")
+	reg := memoryTestRegistry(t, store)
+	_, err := reg.Execute(context.Background(), "memory_delete", json.RawMessage(`{"id":"does-not-exist"}`))
+	if err == nil {
+		t.Fatal("memory_delete of an unknown id must fail")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("memory_delete unknown id error = %v, want a not-found error", err)
+	}
+}
+
+// TestMemoryDeleteCapability pins the delete tool's capability class: a write
+// to the memory resource, matching memory_save.
+func TestMemoryDeleteCapability(t *testing.T) {
+	store := memoryTestStore(t, "")
+	reg := memoryTestRegistry(t, store)
+	tool, ok := reg.Get("memory_delete")
+	if !ok {
+		t.Fatal("memory_delete not registered")
+	}
+	capable, ok := tool.(CapableTool)
+	if !ok {
+		t.Fatal("memory_delete must be a CapableTool")
+	}
+	c := capable.Capability(nil)
+	if c.Class != ExecutionWrite || c.ResourceKey != "memory" {
+		t.Fatalf("memory_delete capability = %+v, want write class with memory key", c)
 	}
 }
 
