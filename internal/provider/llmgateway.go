@@ -2,6 +2,7 @@ package provider
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // NewLLMGateway returns an LLM Gateway OpenAI-compatible completer.
@@ -16,6 +17,22 @@ func NewLLMGateway(opts Options) (Completer, error) {
 		descriptor, _ := providerregistry.Lookup("llmgateway")
 		base = descriptor.DefaultURL
 	}
+	dialect := opts.ReasoningDialect
+	if dialect == "" {
+		dialect = defaultReasoningDialect("llmgateway")
+	}
+	// llmgateway fronts a heterogeneous, caller-chosen set of upstream
+	// models - unlike a single-vendor factory (deepseek, zai), it cannot
+	// hard-code one wire dialect or one reasoning-replay contract. Instead it
+	// reads what config already resolved for the SPECIFIC model this client
+	// was built for (opts.ReasoningDialect, set by NewForProvider from
+	// [providers.llmgateway].models[].reasoning_dialect - see
+	// reasoningDialectFor in provider.go). Only a model explicitly declared
+	// thinking_effort (DeepSeek's own wire dialect, e.g.
+	// runware/deepseek-v4-flash) opts into DeepSeek's documented tool-turn
+	// contract below; any other model, present or future, keeps the plain
+	// default behavior.
+	thinkingMode := dialect == reasoning.DialectThinkingEffort
 	return NewOpenAICompatWithOptions(CompatOptions{
 		Name:    "llmgateway",
 		BaseURL: base,
@@ -28,20 +45,11 @@ func NewLLMGateway(opts Options) (Completer, error) {
 		// with the gateway. Cached-token usage capture still works.
 		CacheUsageEnabled: opts.CacheUsageEnabled,
 		// The OpenAI-compatible surface accepts the reasoning_effort
-		// shorthand and normalizes it per upstream model. Vetted default
-		// dialect "openai"; see defaultReasoningDialect. A model entry whose
-		// upstream is itself a thinking-mode model (e.g. a DeepSeek route)
-		// overrides this per-model via [providers.llmgateway].models[].reasoning_dialect.
-		Reasoning: defaultReasoningDialect("llmgateway"),
-		// llmgateway fronts a heterogeneous, caller-chosen set of upstream
-		// models - unlike the single-vendor "deepseek" factory, it cannot
-		// declare RejectReasoningLessToolTurns (DeepSeek's documented-400
-		// gate): that gate DROPS older tool-call turns lacking
-		// reasoning_content, which is the correct repair only for DeepSeek
-		// and would silently corrupt tool-call history for a non-thinking
-		// model routed through the same gateway.
-		//
-		// RequiresReasoningReplay is safe to enable unconditionally, though:
+		// shorthand and normalizes it per upstream model. Falls back to the
+		// vetted provider default ("openai"; see defaultReasoningDialect)
+		// when the resolved model declares no reasoning_dialect override.
+		Reasoning: dialect,
+		// RequiresReasoningReplay is safe to enable unconditionally:
 		// toAPIMessages only ever copies reasoning_content onto the wire for
 		// an assistant message that already carries it (see api_message.go),
 		// so a model that never populates the field sees no change to its
@@ -52,6 +60,14 @@ func NewLLMGateway(opts Options) (Completer, error) {
 		// reconstruct the same prefix the upstream's own prompt cache
 		// indexed instead of a structurally different one on every turn.
 		RequiresReasoningReplay: true,
+		// RejectReasoningLessToolTurns (DeepSeek's documented-400 gate) DROPS
+		// older tool-call turns lacking reasoning_content - the correct
+		// repair only for a DeepSeek-dialect model, and one that would
+		// silently corrupt tool-call history for any other model sharing
+		// this gateway client. Gating it on the resolved dialect, instead of
+		// a hard-coded provider-wide flag, is what keeps this safe for a
+		// model set the caller can extend at any time via mivia.toml.
+		RejectReasoningLessToolTurns: thinkingMode,
 		// LLM Gateway resolves a session key from (in priority order)
 		// x-session-id, x-session-affinity, prompt_cache_key, or the
 		// OpenAI-compatible "user" field; sessions pin provider routing for

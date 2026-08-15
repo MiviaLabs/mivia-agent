@@ -203,6 +203,16 @@ type Options struct {
 	// does not infer context length from the model name on its own (ollama's
 	// num_ctx); other factories ignore it.
 	ContextWindowTokens int
+	// ReasoningDialect is the resolved model's effective wire dialect
+	// (config.ModelSpec.ReasoningDialect for the resolved model name, falling
+	// back to the provider's own vetted default when the model entry sets
+	// none - see reasoningDialectFor). Only a factory whose provider serves a
+	// caller-chosen, heterogeneous model set needs this: a single-vendor
+	// factory (deepseek, zai) already knows its own dialect and ignores this
+	// field. llmgateway reads it to decide, per model, whether the upstream
+	// speaks a DeepSeek-style thinking dialect that requires the matching
+	// reasoning-replay and reasoning-less-tool-turn-reject wire contract.
+	ReasoningDialect reasoning.Dialect
 }
 
 type providerFactory func(Options) (Completer, error)
@@ -333,12 +343,27 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 		CacheUsageEnabled:   res.PromptCache != "off",
 		CacheMarkersEnabled: res.PromptCache != "off",
 		ContextWindowTokens: contextWindowTokens,
+		ReasoningDialect:    reasoningDialectFor(runtime.Models, res.Model, providerName),
 	}
 	factory, ok := builtinFactories.lookup(providerName)
 	if !ok {
 		return nil, fmt.Errorf("unsupported provider %q (available: %s)", providerName, strings.Join(builtinFactories.names(), ", "))
 	}
 	return factory(opts)
+}
+
+// reasoningDialectFor returns the resolved model's effective reasoning
+// dialect: the model entry's own override when it declares one, otherwise
+// the provider's vetted default (mirrors reasoning.Resolve, which
+// internal/config cannot call directly without an import cycle). Returns ""
+// when the model is unrecognized and the provider has no default.
+func reasoningDialectFor(models []config.ModelSpec, name, providerName string) reasoning.Dialect {
+	for _, model := range models {
+		if model.Name == name {
+			return reasoning.Resolve(providerName, reasoning.Setting{Dialect: model.ReasoningDialect}).Dialect
+		}
+	}
+	return reasoning.Resolve(providerName, reasoning.Setting{}).Dialect
 }
 
 // contextWindowTokensFor returns the declared context capacity of the model

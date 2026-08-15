@@ -120,6 +120,61 @@ func TestConfigLoadLLMGatewayProviderAppliesDescriptorDefaults(t *testing.T) {
 	}
 }
 
+// TestConfigLoadLLMGatewayResolvesPerModelReasoningDialect proves the
+// end-to-end wiring config.Load -> provider.NewForProvider -> NewLLMGateway:
+// two sibling models declared under the SAME [providers.llmgateway] table
+// must get independent reasoning-replay contracts. The model that opts into
+// DeepSeek's thinking_effort dialect gets DeepSeek's documented
+// reject/repair gate; its sibling with no override keeps the provider's
+// plain openai default and must NOT.
+func TestConfigLoadLLMGatewayResolvesPerModelReasoningDialect(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	configPath := filepath.Join(dir, "mivia.toml")
+	if err := os.WriteFile(envPath, []byte("LLMGATEWAY_API_KEY=integration-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data := "env_file = \"" + filepath.ToSlash(envPath) + "\"\n\n[provider]\nname = \"llmgateway\"\n\n" +
+		"[providers.llmgateway]\n" +
+		"default_model = \"runware/deepseek-v4-flash\"\n" +
+		"models = [\n" +
+		"  {name=\"runware/deepseek-v4-flash\", context_window_tokens=1000000, reasoning_efforts=[\"high\",\"max\"], reasoning=\"high\", reasoning_dialect=\"thinking_effort\"},\n" +
+		"  {name=\"runware/gpt-oss-120b\", context_window_tokens=131072, reasoning_efforts=[\"low\",\"medium\",\"high\"], reasoning=\"high\"},\n" +
+		"]\n\n[chat]\nmax_tokens=8192\n"
+	if err := os.WriteFile(configPath, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := config.Load(config.LoadOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deepseekResolved := *resolved
+	deepseekResolved.Model = "runware/deepseek-v4-flash"
+	deepseekCompleter, err := New(&deepseekResolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deepseekPolicy := ReasoningPolicyFor(deepseekCompleter)
+	if !deepseekPolicy.RequiresReplay || !deepseekPolicy.RejectReasoningLess {
+		t.Fatalf("runware/deepseek-v4-flash policy=%+v, want both true", deepseekPolicy)
+	}
+
+	gptOSSResolved := *resolved
+	gptOSSResolved.Model = "runware/gpt-oss-120b"
+	gptOSSCompleter, err := New(&gptOSSResolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gptOSSPolicy := ReasoningPolicyFor(gptOSSCompleter)
+	if !gptOSSPolicy.RequiresReplay {
+		t.Fatalf("runware/gpt-oss-120b policy=%+v, want RequiresReplay true (safe no-op)", gptOSSPolicy)
+	}
+	if gptOSSPolicy.RejectReasoningLess {
+		t.Fatalf("runware/gpt-oss-120b policy=%+v, want RejectReasoningLess false: it must not inherit its sibling model's DeepSeek-only contract", gptOSSPolicy)
+	}
+}
+
 // TestLLMGatewayReplaysReasoningContentWithoutDroppingReasoningLessTurns pins
 // the fix for a DeepSeek-family model behind the gateway losing its own
 // prior chain-of-thought: RequiresReasoningReplay must be on (so the terminal
