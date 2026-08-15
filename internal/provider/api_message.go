@@ -46,7 +46,12 @@ type apiMessage struct {
 func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []apiMessage {
 	msgs = RepairToolPairing(msgs)
 	if rejectReasoningLess {
-		msgs = dropReasoningLessToolExchanges(msgs)
+		// Backstop only: the primary repair runs once at turn-adoption time
+		// (chat.finishAgentTurn -> RepairReasoningLessToolExchanges), so a
+		// correctly persisted history hits this as a no-op. This still
+		// protects sessions persisted before that repair existed, and any
+		// caller that serializes without going through finishAgentTurn.
+		msgs = RepairReasoningLessToolExchanges(msgs)
 	}
 	out := make([]apiMessage, 0, len(msgs))
 	for _, m := range msgs {
@@ -73,8 +78,8 @@ func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []
 	return out
 }
 
-// dropReasoningLessToolExchanges removes assistant tool-call turns that lack
-// reasoning_content, together with their tool results. Used only when
+// RepairReasoningLessToolExchanges removes assistant tool-call turns that
+// lack reasoning_content, together with their tool results. Used only when
 // RejectReasoningLessToolTurns is set (DeepSeek): those turns 400 on a
 // tools-carrying request. Non-tool assistant turns without reasoning are kept.
 //
@@ -82,10 +87,19 @@ func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []
 // context: an older reasoning-less exchange is dropped WITH its results, so
 // only the terminal exchange (the current loop's pending call plus its
 // results) survives. The tradeoff is accepted because the alternative is a
-// session the API rejects on every later turn. The shipped config never
-// reaches this path: deepseek declares only ["high","max"] reasoning and the
-// shipped reasoning-off model is z.ai, which does not set the reject bit.
-func dropReasoningLessToolExchanges(msgs []Message) []Message {
+// session the API rejects on every later turn.
+//
+// The gate is unconditional for every DeepSeek client regardless of
+// configured reasoning effort - it is NOT limited to any particular
+// thinking_effort value. Do not assume a shipped config avoids this path.
+// Because dropping here is per-serialization, a caller that re-derives the
+// wire body on every request (toAPIMessages) would otherwise silently
+// re-rewrite history every time it is asked, breaking the provider's
+// prompt-cache prefix and hiding context with no persisted trace. The primary
+// call site is chat.finishAgentTurn, which runs this once at turn-adoption
+// time so persisted history is already valid; toAPIMessages's own call is a
+// defensive no-op backstop, not the source of truth.
+func RepairReasoningLessToolExchanges(msgs []Message) []Message {
 	dropIDs := map[string]struct{}{}
 	for i, m := range msgs {
 		if m.Role != RoleAssistant || len(m.ToolCalls) == 0 {
@@ -133,7 +147,7 @@ func dropReasoningLessToolExchanges(msgs []Message) []Message {
 // RenderSummaryMessage) and the conclude nudge. Those trailing messages are
 // not part of the exchange, so the trim below drops them from the check.
 // Without the trim, an appended summary made the current exchange
-// non-terminal and dropReasoningLessToolExchanges removed it WITH its tool
+// non-terminal and RepairReasoningLessToolExchanges removed it WITH its tool
 // results - the model never saw the result it just produced.
 //
 // Only trailing NAMED user messages are trimmed. Host injections always

@@ -272,6 +272,15 @@ type chatResponseBody struct {
 	Usage *usageWire `json:"usage,omitempty"`
 }
 
+// ReasoningPolicy reports c's construction-time reasoning-replay wire
+// contract, implementing ReasoningPolicyAware.
+func (c *OpenAICompat) ReasoningPolicy() ReasoningPolicy {
+	return ReasoningPolicy{
+		RequiresReplay:      c.replayReasoning,
+		RejectReasoningLess: c.rejectReasoningLessToolTurns,
+	}
+}
+
 // cacheUsage derives Response.CacheUsage from a decoded usage object,
 // honoring cacheUsageEnabled. It is the single conversion point shared by
 // the streaming and non-streaming response paths.

@@ -141,6 +141,37 @@ func ContextAccountingFor(c Completer) ContextAccountingProfile {
 	return aware.ContextAccounting()
 }
 
+// ReasoningPolicy is a client's reasoning-replay wire contract, mirroring the
+// CompatOptions bits an OpenAI-compatible client was constructed with.
+type ReasoningPolicy struct {
+	// RequiresReplay reports whether this client's dialect requires assistant
+	// reasoning_content to be echoed back verbatim on later tool-call turns.
+	RequiresReplay bool
+	// RejectReasoningLess reports whether this client's provider 400s on a
+	// tools-carrying request that includes a reasoning-less tool-call turn
+	// (see RepairReasoningLessToolExchanges).
+	RejectReasoningLess bool
+}
+
+// ReasoningPolicyAware is an optional Completer capability: a client that
+// knows its own reasoning-replay wire contract. Separate from Completer for
+// the same reason as ContextAccountingAware - test fakes implementing
+// Completer alone keep compiling.
+type ReasoningPolicyAware interface {
+	ReasoningPolicy() ReasoningPolicy
+}
+
+// ReasoningPolicyFor returns c's declared reasoning policy, or the zero value
+// (no replay, no reject) when c is nil or does not implement
+// ReasoningPolicyAware.
+func ReasoningPolicyFor(c Completer) ReasoningPolicy {
+	aware, ok := c.(ReasoningPolicyAware)
+	if !ok {
+		return ReasoningPolicy{}
+	}
+	return aware.ReasoningPolicy()
+}
+
 // Options for constructing a completer from resolved config.
 type Options struct {
 	Name        string
