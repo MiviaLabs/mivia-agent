@@ -267,6 +267,10 @@ func registerBuiltins() error {
 			builtinsErr = err
 			return
 		}
+		if err := registry.register("llmgateway", NewLLMGateway); err != nil {
+			builtinsErr = err
+			return
+		}
 		builtinFactories = registry
 	})
 	return builtinsErr

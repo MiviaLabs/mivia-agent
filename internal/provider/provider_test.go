@@ -32,7 +32,7 @@ func TestNewDispatchesBuiltinsAndRejectsUnknown(t *testing.T) {
 	}
 	res.ProviderName = "unknown"
 	_, err = New(res)
-	if err == nil || !strings.Contains(err.Error(), "available: deepseek, ollama, openrouter, zai") {
+	if err == nil || !strings.Contains(err.Error(), "available: deepseek, llmgateway, ollama, openrouter, zai") {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -41,6 +41,14 @@ func TestNewForProviderOllamaCloudFailsClosedWithoutKey(t *testing.T) {
 	res := &config.Resolved{ProviderRuntimes: map[string]config.ProviderRuntime{"ollama": {ProviderName: "ollama", BaseURL: "https://ollama.com/v1", APIKeyEnv: "OLLAMA_API_KEY"}}}
 	_, err := NewForProvider(res, "ollama")
 	if err == nil || !strings.Contains(err.Error(), "missing API key") || strings.Contains(err.Error(), "OLLAMA_API_KEY") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNewForProviderLLMGatewayFailsClosedWithoutKey(t *testing.T) {
+	res := &config.Resolved{ProviderRuntimes: map[string]config.ProviderRuntime{"llmgateway": {ProviderName: "llmgateway", BaseURL: "https://api.llmgateway.io/v1", APIKeyEnv: "LLMGATEWAY_API_KEY"}}}
+	_, err := NewForProvider(res, "llmgateway")
+	if err == nil || !strings.Contains(err.Error(), `missing API key for provider "llmgateway"`) || strings.Contains(err.Error(), "LLMGATEWAY_API_KEY") {
 		t.Fatalf("err=%v", err)
 	}
 }
