@@ -116,3 +116,8 @@ topics:
     path: docs/product/wire-schema.md
     owner: product
     description: NDJSON wire contract for chat --json, external_* relay events, and session command JSON
+
+  token-usage-ledger:
+    path: docs/architecture/token-usage-ledger.md
+    owner: architecture
+    description: Token usage ledger design - durable per-event usage recording
