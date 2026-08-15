@@ -152,15 +152,37 @@ def check_hook_events() -> None:
                 )
 
 
-# Tools that [tools] core can never defer, because the CLI registers them onto
-# the advertised surface AFTER the tier split is computed
-# (registerDelegationTools / registerOrchestrationTools / registerLedgerTools in
-# internal/cli/dispatcher.go). A prompt may name these freely.
-NON_DEFERRABLE_TOOLS = {
-    "delegate", "dispatch_tasks", "spawn_agent", "inspect_agents",
-    "join_run", "cancel_run", "ledger_read", "list_run_events", "read_output",
-    "post_message", "send_to_task", "load_tools", "read_skill_resource",
-}
+# The session-tool catalog in internal/cli/session_tool_catalog.go is the
+# single source of truth for the dispatcher-owned tools every root binding
+# advertises: the pinned wire tools[] array (advertisedToolSpecs) ships the
+# catalog as a tail after the core block, with load_tools gated on the binding
+# deferring something. [tools] core can never defer any of them, because the
+# tier split is computed from the pre-scope base BEFORE the dispatcher
+# registers them onto the scoped execution registry (plan
+# tools-advertising/01) - so a prompt may name them freely. Deriving the set
+# here keeps the gate in lockstep with the Go side: adding or renaming a
+# session tool in the catalog automatically updates the exemption, and a
+# catalog that stops parsing fails closed instead of passing silently.
+def session_tool_catalog_names() -> set[str]:
+    path = ROOT / "internal" / "cli" / "session_tool_catalog.go"
+    if not path.is_file():
+        fail("missing internal/cli/session_tool_catalog.go")
+    body = path.read_text(encoding="utf-8")
+    block = re.search(r"sessionToolCatalog\s*=\s*\[\]sessionToolSpec\{(.*?)\n\}", body, re.S)
+    if not block:
+        fail("could not parse sessionToolCatalog in internal/cli/session_tool_catalog.go")
+    names = set(re.findall(r'Name:\s*"([a-z_]+)"', block.group(1)))
+    if not names:
+        fail("sessionToolCatalog parsed to an empty name set")
+    return names
+
+
+# read_skill_resource is exempt alongside the catalog: it is injected per
+# skill activation (injectSkillResourceTool in
+# internal/cli/skill_resource_tool.go) into a skill-scoped clone, outside any
+# core/deferred decision the tier split makes, so no root binding can defer it
+# either.
+NON_DEFERRABLE_TOOLS = session_tool_catalog_names() | {"read_skill_resource"}
 
 
 def workspace_tool_names() -> set[str]:

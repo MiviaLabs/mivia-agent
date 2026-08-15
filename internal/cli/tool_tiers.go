@@ -179,8 +179,9 @@ func promptWithDeferredIndex(prompt string, plan toolTierPlan) string {
 }
 
 // advertisedToolSpecs computes the binding's pinned tools[] array (plan
-// tools-advertising/01): core tier then every deferred candidate, in the
-// frozen plan's registry order, truncated to tools.MaxAdvertisedTools. This is
+// tools-advertising/01): core tier, then every deferred candidate in the
+// frozen plan's registry order, then the session-tool tail from
+// sessionToolCatalog, truncated overall to tools.MaxAdvertisedTools. This is
 // the SESSION ADMISSIBLE UNION - what the model may ever be told about for
 // this binding - not the live execution registry, so it must be built from
 // base (the full pre-scope registry), never from a scoped/admitted registry.
@@ -193,16 +194,14 @@ func advertisedToolSpecs(base *tools.Registry, plan toolTierPlan) ([]provider.To
 	if base == nil {
 		return nil, 0
 	}
-	// Reserve one slot for load_tools' own schema when it will be appended
-	// below (plan.Deferred()), so core+deferred truncation leaves room for it
-	// and the FINAL wire array never exceeds tools.MaxAdvertisedTools (a
-	// prior version truncated core+deferred to the full cap and then
-	// appended load_tools on top, silently producing a 129th schema).
-	reserve := 0
-	if plan.Deferred() {
-		reserve = 1
-	}
-	names, dropped := tools.AdvertisedNames(plan.Tiers.Core, plan.Tiers.Deferred, reserve)
+	// The session-tool tail ships below, so reserve exactly as many slots as
+	// the catalog will advertise for this binding (the always-on session
+	// tools, plus load_tools when something is deferred) and the FINAL wire
+	// array never exceeds tools.MaxAdvertisedTools (a prior version truncated
+	// core+deferred to the full cap and then appended schemas on top,
+	// silently producing a 129th).
+	tail := advertisedSessionToolSpecs(plan)
+	names, dropped := tools.AdvertisedNames(plan.Tiers.Core, plan.Tiers.Deferred, len(tail))
 	reg := tools.NewRegistry()
 	for _, name := range names {
 		if tool, ok := base.Get(name); ok {
@@ -210,20 +209,7 @@ func advertisedToolSpecs(base *tools.Registry, plan toolTierPlan) ([]provider.To
 		}
 	}
 	specs := reg.OpenAITools()
-	if plan.Deferred() {
-		// load_tools is a privileged session tool the dispatcher registers
-		// separately (registerSessionTool) onto the EXECUTION registry, not
-		// base, so it is invisible to the lookup above. Its Name/Description/
-		// Parameters read no runtime state, so a zero-value instance is a
-		// faithful schema source for advertising purposes; every caller
-		// (attach and /agent and /model) reaches this same code path, so the
-		// tail position is identical to where the dispatcher actually
-		// registers it.
-		holder := tools.NewRegistry()
-		holder.Register(&loadToolsTool{})
-		specs = append(specs, holder.OpenAITools()...)
-	}
-	return specs, dropped
+	return append(specs, tail...), dropped
 }
 
 // pinAttachAdvertisedToolSpecs computes and pins the initial-attach binding's
