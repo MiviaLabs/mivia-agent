@@ -139,6 +139,42 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 	return nil
 }
 
+// SetSummarizer replaces the context manager's summarizer in place, leaving
+// principal/revision/store untouched. A mid-session model switch
+// (SwitchBinding) publishes a new provider/model/completer but does not
+// rebuild the summarizer on its own - the summarizer was captured once at
+// session setup (see internal/cli's summaryWiring) and otherwise keeps
+// summarizing through the pre-switch model/completer until a fresh session
+// is constructed. Callers that rebuild a *contextmgr.Summarizer against the
+// current binding after a switch use this to publish it; nil clears a
+// summarizer that setup could no longer configure for the new binding
+// rather than leaving a stale one in place.
+func (s *Session) SetSummarizer(summarizer *contextmgr.Summarizer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.contextManager == nil {
+		return
+	}
+	manager := *s.contextManager
+	manager.Summarizer = summarizer
+	s.contextManager = &manager
+}
+
+// CurrentSummarizerBinding reports the provider/model the session's active
+// summarizer is currently captured against, and whether a summarizer is
+// configured at all. Exists for observability/testing of SetSummarizer's
+// refresh contract - a caller that wants to confirm a mid-session model
+// switch actually rebuilt the summarizer (rather than leaving one bound to
+// the pre-switch model) reads this after the switch.
+func (s *Session) CurrentSummarizerBinding() (contextstate.BindingRevision, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.contextManager == nil || s.contextManager.Summarizer == nil {
+		return contextstate.BindingRevision{}, false
+	}
+	return s.contextManager.Summarizer.Binding, true
+}
+
 func (s *Session) SetContextRedactionPolicy(policy contextstate.RedactionPolicy) {
 	s.mu.Lock()
 	s.contextRedaction = policy
