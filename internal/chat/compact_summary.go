@@ -12,14 +12,15 @@ import (
 // buildCompactSummaryRequest derives the manual-compact summary request from
 // the pre-compaction history, the retained preparation, and the captured
 // summarizer policy. The objective is the latest user message; the evidence
-// is the host-side content-free diff of what the compact dropped. The diff
-// is deduplicated in place: many omitted messages share one size bucket, and
-// the envelope validator refuses duplicate evidence items.
+// is the host-side content-free diff of what the compact dropped.
+// OmittedEvidence owns the distinctness rule (many omitted messages share one
+// size bucket, and the envelope validator refuses duplicate evidence items),
+// so this path no longer dedupes a second time.
 func buildCompactSummaryRequest(summarizer *contextmgr.Summarizer, redaction contextstate.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange contextstate.SourceRange, focus string) (contextmgr.SummaryRequest, error) {
 	return contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
 		Version:           contextmgr.SummarySchemaVersion,
 		Objective:         agent.SummaryFieldText(latestUserMessage(pre)),
-		Evidence:          uniqueEvidence(contextmgr.OmittedEvidence(pre, retained)),
+		Evidence:          contextmgr.OmittedEvidence(pre, retained),
 		SourceExcerpts:    contextmgr.SourceExcerpts(pre, retained),
 		SourceRange:       sourceRange,
 		PolicyDigest:      summarizer.Policy.PolicyDigest,
@@ -76,20 +77,4 @@ func summarizeManualCompact(ctx context.Context, cfg contextTurnConfig, input co
 	preparation.Candidate.SummaryMetadata = metadata
 	injected.Name = ""
 	return injected, true
-}
-
-// uniqueEvidence drops duplicate items in place, keeping first-seen order.
-// Many omitted messages share one size bucket, so the raw diff repeats items
-// the envelope validator refuses.
-func uniqueEvidence(items []string) []string {
-	seen := make(map[string]struct{}, len(items))
-	out := make([]string, 0, len(items))
-	for _, item := range items {
-		if _, ok := seen[item]; ok {
-			continue
-		}
-		seen[item] = struct{}{}
-		out = append(out, item)
-	}
-	return out
 }

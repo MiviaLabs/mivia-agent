@@ -65,10 +65,9 @@ func handleSlashCompact(line string, sess *chat.Session, term *Terminal) (bool, 
 // stderr prose is invisible to a frontend parsing stdout.
 func handleSlashCompactJSON(sess *chat.Session, focus string) (bool, bool, error) {
 	w := activeJSONSlashSink.w
-	previous := sess.OnAgentEvent
-	sess.OnAgentEvent = jsonTurnEventCallback(w)
+	previous := sess.SwapOnAgentEvent(jsonTurnEventCallback(w))
 	_, err := sess.CompactWithResult(context.Background(), focus)
-	sess.OnAgentEvent = previous
+	sess.SwapOnAgentEvent(previous)
 	if err != nil {
 		activeJSONSlashSink.Error("context compaction failed: " + err.Error())
 		return true, false, nil

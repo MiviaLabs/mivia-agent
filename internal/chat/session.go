@@ -282,6 +282,18 @@ func (s *Session) sendUser(ctx context.Context, userText, persistedText string, 
 }
 
 func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText string, w io.Writer, onEvent func(agent.Event), turn *TurnOptions) (string, error) {
+	// Publish the turn's callback on the session for the whole turn.
+	// emitContextCompaction reads s.OnAgentEvent, and this callback used to
+	// reach the agent loop only, so an automatic compaction on the plain
+	// (--no-tools) path emitted its typed record to nobody: no "compaction"
+	// NDJSON line for a --json consumer, no TUI banner. The agent path
+	// already prefers this same function (captureAgentTurn takes the override
+	// when set, else this field), so both paths now resolve to one callback
+	// and nothing double-emits.
+	if onEvent != nil {
+		previous := s.SwapOnAgentEvent(onEvent)
+		defer s.SwapOnAgentEvent(previous)
+	}
 	if s.AgentTurnEnabled() {
 		return s.sendAgent(ctx, userText, persistedText, w, onEvent, turn)
 	}

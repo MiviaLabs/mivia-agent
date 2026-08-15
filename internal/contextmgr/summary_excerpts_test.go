@@ -1,6 +1,7 @@
 package contextmgr
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -259,5 +260,114 @@ func TestSourceExcerptsTolerateElidedRetainedMessages(t *testing.T) {
 	// The content-free evidence diff shares the walk; it must agree.
 	if evidence := OmittedEvidence(input, retained); len(evidence) != 0 {
 		t.Fatalf("evidence diff misclassified elided retained messages: %v", evidence)
+	}
+}
+
+// TestOmittedEvidenceIsUnique pins the contract the summary envelope
+// validator requires: evidence items must be distinct. Items are content-free
+// (role plus size bucket, e.g. "user message (~2 KiB)"), so any two dropped
+// messages of the same role landing in the same bucket produce the SAME
+// string - the normal case, not an edge case, once a compaction drops several
+// similar messages.
+//
+// Duplicates made BuildSummaryRequest fail with "summary evidence contains
+// duplicate items", and every summary caller degrades silently on a build
+// error, so automatic compaction produced no summary at all while reporting
+// success. Only the manual /compact path deduped, in its own helper.
+func TestOmittedEvidenceIsUnique(t *testing.T) {
+	same := strings.Repeat("x", 400)
+	input := []provider.Message{
+		{Role: provider.RoleUser, Content: same},
+		{Role: provider.RoleAssistant, Content: same},
+		{Role: provider.RoleUser, Content: same},
+		{Role: provider.RoleAssistant, Content: same},
+		{Role: provider.RoleUser, Content: same},
+		{Role: provider.RoleUser, Content: "kept"},
+	}
+	retained := []provider.Message{{Role: provider.RoleUser, Content: "kept"}}
+
+	evidence := OmittedEvidence(input, retained)
+	if len(evidence) == 0 {
+		t.Fatal("no evidence derived from five dropped messages")
+	}
+	seen := map[string]bool{}
+	for _, item := range evidence {
+		if seen[item] {
+			t.Fatalf("OmittedEvidence returned duplicate item %q in %v", item, evidence)
+		}
+		seen[item] = true
+	}
+
+	// The whole point of uniqueness: the envelope must build.
+	if _, err := BuildSummaryRequest(SummaryBuildInput{
+		Version:           SummarySchemaVersion,
+		Objective:         "objective",
+		Evidence:          evidence,
+		SourceRange:       contextstate.SourceRange{Start: contextstate.SourceID{SessionID: "s", Sequence: 1}, End: contextstate.SourceID{SessionID: "s", Sequence: 2}},
+		PolicyDigest:      strings.Repeat("a", 64),
+		Provider:          "fake",
+		Model:             "model",
+		EndpointAllowlist: []string{"https://summary.invalid"},
+		RedactionPolicy:   contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
+		Budget:            4000,
+		OutputLimit:       512,
+	}); err != nil {
+		t.Fatalf("BuildSummaryRequest rejected OmittedEvidence output: %v", err)
+	}
+}
+
+// TestOmittedEvidenceCapCountsDistinctItems pins that the MaxSummaryItems cap
+// bounds DISTINCT items. Capping before dedup let a run of identical items
+// consume the whole budget and report one fact.
+func TestOmittedEvidenceCapCountsDistinctItems(t *testing.T) {
+	var input []provider.Message
+	for i := 0; i < MaxSummaryItems*3; i++ {
+		input = append(input, provider.Message{Role: provider.RoleUser, Content: strings.Repeat("x", 400)})
+	}
+	input = append(input,
+		provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("y", 400)},
+		provider.Message{Role: provider.RoleUser, Content: "kept"})
+	retained := []provider.Message{{Role: provider.RoleUser, Content: "kept"}}
+
+	evidence := OmittedEvidence(input, retained)
+	if len(evidence) > MaxSummaryItems {
+		t.Fatalf("evidence exceeded the cap: %d > %d", len(evidence), MaxSummaryItems)
+	}
+	// The assistant item sits past a long run of identical user items; a cap
+	// applied before dedup would have dropped it.
+	var sawAssistant bool
+	for _, item := range evidence {
+		if strings.HasPrefix(item, provider.RoleAssistant) {
+			sawAssistant = true
+		}
+	}
+	if !sawAssistant {
+		t.Fatalf("distinct assistant evidence lost behind duplicate user items: %v", evidence)
+	}
+}
+
+// TestOmittedEvidenceCapsDistinctItems exercises the MaxSummaryItems bound
+// itself with genuinely distinct items (distinct tool names), which the
+// duplicate-heavy cases above never reach.
+func TestOmittedEvidenceCapsDistinctItems(t *testing.T) {
+	var input []provider.Message
+	for i := 0; i < MaxSummaryItems*2; i++ {
+		input = append(input, provider.Message{
+			Role: provider.RoleTool, Name: fmt.Sprintf("tool%03d", i), Content: strings.Repeat("x", 400),
+		})
+	}
+	input = append(input, provider.Message{Role: provider.RoleUser, Content: "kept"})
+	retained := []provider.Message{{Role: provider.RoleUser, Content: "kept"}}
+
+	evidence := OmittedEvidence(input, retained)
+	if len(evidence) != MaxSummaryItems {
+		t.Fatalf("evidence length = %d, want the cap %d", len(evidence), MaxSummaryItems)
+	}
+	seen := map[string]bool{}
+	for _, item := range evidence {
+		if seen[item] {
+			t.Fatalf("capped evidence still repeats %q", item)
+		}
+		seen[item] = true
 	}
 }

@@ -94,6 +94,64 @@ func TestTuiCompactShowsIndicatorAndRunsAsync(t *testing.T) {
 	}
 }
 
+// TestTuiCompactReportsTypedCompactionNotice pins the TUI's parity with the
+// --json leg: a manual /compact must surface the typed compaction record
+// (the before/after token delta the session emits through OnAgentEvent), not
+// only applyCompactionDone's percentage line. The bridge callback is
+// attached per turn inside SendUser*, so a compact run outside a turn had no
+// event sink at all and the record reached nobody - the --json leg attaches
+// one for exactly this reason (handleSlashCompactJSON).
+func TestTuiCompactReportsTypedCompactionNotice(t *testing.T) {
+	m := newCompactableTuiModel(t)
+	if !m.handleSlash("/compact") {
+		t.Fatal("/compact was not handled")
+	}
+	cmds := m.takePendingSlashCmds()
+	if len(cmds) != 1 {
+		t.Fatalf("pending slash commands = %d, want the one compact command", len(cmds))
+	}
+	done, ok := cmds[0]().(compactionDoneMsg)
+	if !ok {
+		t.Fatal("compact command did not produce a compactionDoneMsg")
+	}
+	if done.err != nil {
+		t.Fatalf("compact failed: %v", done.err)
+	}
+	if !strings.Contains(done.notice, "->") {
+		t.Fatalf("compactionDoneMsg.notice = %q, want the typed before/after token delta", done.notice)
+	}
+	model, _ := m.handleTUIMessage(done)
+	m = model.(*tuiModel)
+
+	var sawNotice bool
+	for _, block := range m.blocks {
+		if strings.Contains(block.Text, done.notice) {
+			sawNotice = true
+		}
+	}
+	if !sawNotice {
+		t.Fatalf("transcript never showed the typed notice %q", done.notice)
+	}
+}
+
+// TestTuiCompactWithoutTypedEventStillReports pins the degraded leg: a
+// compact that emits no typed record must still report its outcome and must
+// not leave an empty notice line in the transcript.
+func TestTuiCompactWithoutTypedEventStillReports(t *testing.T) {
+	m := newCompactableTuiModel(t)
+	m.compacting = true
+	before := len(m.blocks)
+	model, _ := m.handleTUIMessage(compactionDoneMsg{})
+	m = model.(*tuiModel)
+	if got := len(m.blocks) - before; got != 1 {
+		t.Fatalf("appended %d blocks, want only the outcome line", got)
+	}
+	last := m.blocks[len(m.blocks)-1].Text
+	if !strings.Contains(last, "context compacted") {
+		t.Fatalf("transcript tail = %q, want the compaction result", last)
+	}
+}
+
 // TestTuiCompactRefusesWhileWaiting pins the busy guard: /compact during a
 // turn refuses in place and stages no work.
 func TestTuiCompactRefusesWhileWaiting(t *testing.T) {

@@ -192,17 +192,20 @@ func TestCompactAfterResumeCompactsAgain(t *testing.T) {
 	if err := second.Load(sessionID); err != nil {
 		t.Fatalf("Load(%q): %v", sessionID, err)
 	}
-	err = second.Compact(context.Background(), "")
-	if err == nil {
-		return
+	// Strict on purpose: the plan key folds in the from-revision, so a
+	// second compaction of the same session is a NEW operation and the
+	// resumed process must really compact. Accepting "nothing to compact"
+	// here would let a regression that silently stopped reducing pass.
+	preparation, err := second.CompactWithResult(context.Background(), "")
+	if err != nil {
+		if strings.Contains(err.Error(), "checkpoint conflict") {
+			t.Fatalf("resumed compact collided with the earlier compaction: %v", err)
+		}
+		t.Fatalf("resumed compact: %v", err)
 	}
-	// A resumed, already-small context may legitimately have nothing left
-	// to drop - that is the honest outcome. An operation-key collision
-	// with the previous process's compaction is not.
-	if strings.Contains(err.Error(), "checkpoint conflict") {
-		t.Fatalf("resumed compact collided with the earlier compaction: %v", err)
+	if !preparation.Compacted {
+		t.Fatal("resumed compact reported success without compacting")
 	}
-	t.Fatalf("resumed compact: %v", err)
 }
 
 func TestCompactPublishesStructuralCheckpointImmediately(t *testing.T) {

@@ -33,6 +33,13 @@ type Loop struct {
 	// the next prepare start; the prompt-too-long retry sets it from the
 	// pre-prune history.
 	preCompactSource []provider.Message
+	// injectedSummary is the summary message the run last injected into a
+	// provider request, exposed through InjectedSummary. It is deliberately
+	// NOT part of l.Messages: the request injection stays ephemeral, and the
+	// owning surface is what carries this into the turn's committed active
+	// context so it outlives the turn.
+	injectedSummary    provider.Message
+	hasInjectedSummary bool
 	// PreparationErr records an interrupted recovery failure so the session can
 	// surface the real cause instead of misreporting a checkpoint conflict.
 	PreparationErr error

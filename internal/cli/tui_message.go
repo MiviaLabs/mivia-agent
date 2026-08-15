@@ -36,7 +36,7 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The staged /compact worker finished. Clear the busy state, report
 		// the outcome, and repaint - the message arrives outside key
 		// handling, so nothing else triggers a render.
-		m.applyCompactionDone(msg.err)
+		m.applyCompactionDone(msg)
 		return m, nil
 	case uiTickMsg:
 		// Adapter heartbeat only - do not drain bridge here (tuiTickMsg owns it).
