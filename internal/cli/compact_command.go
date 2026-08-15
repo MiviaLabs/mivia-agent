@@ -38,7 +38,7 @@ func runCompactWithIO(args []string, stdout io.Writer) error {
 	if err := sess.Load(session); err != nil {
 		return fmt.Errorf("compact: %w", err)
 	}
-	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true)
+	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("compact: %w", err)

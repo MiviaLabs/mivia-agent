@@ -122,3 +122,31 @@ func TestLexicalRelRootItself(t *testing.T) {
 		t.Fatalf("LexicalRel(LexicalAbs) = %q, want %q", got, ".")
 	}
 }
+
+// TestLexicalRelUnrestricted allows absolute paths outside the root and
+// returns the cleaned path instead of erroring.
+func TestLexicalRelUnrestricted(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := OpenFullDisk(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Inside path behaves the same as restricted.
+	in := filepath.Join(ws.LexicalAbs, "protected", "x")
+	got, err := ws.LexicalRel(in)
+	if err != nil {
+		t.Fatalf("LexicalRel inside unrestricted: %v", err)
+	}
+	if want := "protected/x"; got != want {
+		t.Fatalf("LexicalRel inside = %q, want %q", got, want)
+	}
+	// Outside path returns the cleaned absolute path instead of erroring.
+	outside := filepath.Join(t.TempDir(), "y")
+	got2, err := ws.LexicalRel(outside)
+	if err != nil {
+		t.Fatalf("LexicalRel outside unrestricted: %v", err)
+	}
+	if want := filepath.ToSlash(filepath.Clean(outside)); got2 != want {
+		t.Fatalf("LexicalRel outside = %q, want %q", got2, want)
+	}
+}

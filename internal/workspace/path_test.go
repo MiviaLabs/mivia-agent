@@ -159,6 +159,72 @@ func TestSameExistingPathUsesFileIdentity(t *testing.T) {
 	}
 }
 
+// TestResolveUnrestricted allows outside paths when Unrestricted is true.
+func TestResolveUnrestricted(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := OpenFullDisk(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ws.Unrestricted {
+		t.Fatal("OpenFullDisk should set Unrestricted")
+	}
+
+	// Inside path still resolves normally.
+	p, err := ws.Resolve("a/b.txt")
+	if err != nil {
+		t.Fatalf("Resolve inside: %v", err)
+	}
+	if !isUnder(ws.Abs, p) {
+		t.Fatalf("inside path not under root: %s", p)
+	}
+
+	// Relative escape is allowed.
+	if _, err := ws.Resolve("../outside"); err != nil {
+		t.Fatalf("Resolve ../outside unrestricted: %v", err)
+	}
+
+	// Absolute path outside is allowed.
+	outside := filepath.Join(os.TempDir(), "mivia-ws-full-"+t.Name())
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(outside) })
+	p3, err := ws.Resolve(outside)
+	if err != nil {
+		t.Fatalf("Resolve absolute outside unrestricted: %v", err)
+	}
+	if p3 != filepath.Clean(outside) {
+		t.Fatalf("resolved = %q, want %q", p3, filepath.Clean(outside))
+	}
+}
+
+// TestOpenFullDiskPreservesRoot verifies OpenFullDisk returns the same Abs/
+// LexicalAbs as Open, just with Unrestricted set.
+func TestOpenFullDiskPreservesRoot(t *testing.T) {
+	dir := t.TempDir()
+	restricted, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrestricted, err := OpenFullDisk(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unrestricted.Abs != restricted.Abs {
+		t.Fatalf("Abs mismatch: %q vs %q", unrestricted.Abs, restricted.Abs)
+	}
+	if unrestricted.LexicalAbs != restricted.LexicalAbs {
+		t.Fatalf("LexicalAbs mismatch: %q vs %q", unrestricted.LexicalAbs, restricted.LexicalAbs)
+	}
+	if !unrestricted.Unrestricted {
+		t.Fatal("Unrestricted not set")
+	}
+	if restricted.Unrestricted {
+		t.Fatal("Open should not set Unrestricted")
+	}
+}
+
 // TestResolveContainmentTable locks the workspace containment contract
 // (DC-10): Resolve evaluates symlinks BEFORE the isUnder check, so every
 // escape variant - relative .., absolute outside, a symlink inside the

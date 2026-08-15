@@ -404,6 +404,109 @@ func TestPathEscapeViaTools(t *testing.T) {
 	}
 }
 
+// TestPathEscapeViaTools_Unrestricted verifies that an unrestricted workspace
+// allows file tools to read and write outside the workspace root.
+func TestPathEscapeViaTools_Unrestricted(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.OpenFullDisk(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := NewDefaultRegistry(DefaultOptions{
+		Workspace: ws,
+	})
+
+	// Create a file outside the workspace.
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "outside.txt")
+	if err := os.WriteFile(outsideFile, []byte("outside-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read outside file should succeed.
+	ctx := context.Background()
+	out, err := reg.Execute(ctx, "read_file", json.RawMessage(
+		fmt.Sprintf(`{"path":"%s"}`, outsideFile),
+	))
+	if err != nil {
+		t.Fatalf("unrestricted read outside: %v", err)
+	}
+	if !strings.Contains(out, "outside-content") {
+		t.Fatalf("unrestricted read outside content: %q", out)
+	}
+
+	// Write outside file should succeed.
+	outsideWrite := filepath.Join(outside, "write-test.txt")
+	out, err = reg.Execute(ctx, "write_file", json.RawMessage(
+		fmt.Sprintf(`{"path":"%s","content":"written-outside"}`, outsideWrite),
+	))
+	if err != nil {
+		t.Fatalf("unrestricted write outside: %v", err)
+	}
+	if !strings.Contains(out, "wrote") {
+		t.Fatalf("write result: %q", out)
+	}
+	data, err := os.ReadFile(outsideWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "written-outside" {
+		t.Fatalf("written file content: %q", string(data))
+	}
+
+	// Inside the workspace still works normally.
+	mustExecWithReg(t, reg, "write_file", map[string]any{
+		"path": "inside.txt", "content": "inside",
+	})
+	out, err = reg.Execute(ctx, "read_file", json.RawMessage(`{"path":"inside.txt"}`))
+	if err != nil {
+		t.Fatalf("unrestricted read inside: %v", err)
+	}
+	if out != "inside" {
+		t.Fatalf("unrestricted read inside content: %q", out)
+	}
+}
+
+// TestWriteDenylistOutsideRoot_Unrestricted verifies that the write-denylist
+// does not re-confine writes to the workspace when Unrestricted is set.
+func TestWriteDenylistOutsideRoot_Unrestricted(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.OpenFullDisk(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Default denylist blocks ".git" inside the workspace; an outside path
+	// containing ".git" in a segment should not be denied.
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+
+	// Create a directory named with .git outside the workspace root.
+	outside := t.TempDir()
+	gitDir := filepath.Join(outside, "some.git")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideFile := filepath.Join(gitDir, "config")
+	_, err = reg.Execute(context.Background(), "write_file", json.RawMessage(
+		fmt.Sprintf(`{"path":"%s","content":"test"}`, outsideFile),
+	))
+	if err != nil {
+		t.Fatalf("write to outside .git dir should succeed in unrestricted mode: %v", err)
+	}
+}
+
+func mustExecWithReg(t *testing.T, reg *Registry, name string, args any) string {
+	t.Helper()
+	raw, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := reg.Execute(context.Background(), name, raw)
+	if err != nil {
+		t.Fatalf("%s: %v (out=%q)", name, err, out)
+	}
+	return out
+}
+
 func TestUnknownTool(t *testing.T) {
 	_, reg := setupWS(t)
 	_, err := reg.Execute(context.Background(), "nope", json.RawMessage(`{}`))

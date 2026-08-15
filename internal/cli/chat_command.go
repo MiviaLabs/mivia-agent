@@ -74,6 +74,9 @@ type chatInvocation struct {
 	// line-mode path - runConfiguredChatOnce rejects it for one-shot -p and
 	// for the interactive TUI/classic-REPL paths.
 	jsonMode bool
+	// fullDisk is --full-disk: lift workspace confinement so file tools may
+	// access anywhere on the filesystem. Operator-invocation only.
+	fullDisk bool
 }
 
 func runChat(args []string) error {
@@ -146,7 +149,7 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 	if err != nil {
 		return chatInvocation{}, err
 	}
-	invocation.noTools, invocation.plainUI, invocation.staleBypass, invocation.jsonMode, invocation.quiet, args = chatFlags(args)
+	invocation.noTools, invocation.plainUI, invocation.staleBypass, invocation.jsonMode, invocation.quiet, invocation.fullDisk, args = chatFlags(args)
 	if len(args) > 0 {
 		return chatInvocation{}, fmt.Errorf("chat: unexpected arguments: %v", args)
 	}
@@ -242,6 +245,9 @@ func prepareChatStartup(res *config.Resolved, invocation chatInvocation) (bool, 
 	useTools := !invocation.noTools
 	applyPrivacyPolicy(res)
 	logEffectiveLimitsOnce(os.Stderr, res, invocation.quiet)
+	if invocation.fullDisk && !invocation.quiet {
+		fmt.Fprintln(os.Stderr, "workspace: FULL DISK ACCESS — file tools are not confined to the workspace")
+	}
 	return useTools, nil
 }
 
@@ -295,7 +301,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
 	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
-	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet)
+	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, invocation.fullDisk)
 	if err != nil {
 		return err
 	}

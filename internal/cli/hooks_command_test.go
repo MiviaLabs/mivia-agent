@@ -258,7 +258,7 @@ func TestHooksListOnNoHooksSaysSo(t *testing.T) {
 // not be silently swallowed either: the operator needs to know it stopped
 // meaning anything.
 func TestStaleBypassFlagIsAcceptedAndReported(t *testing.T) {
-	noTools, plainUI, staleBypass, _, _, rest := chatFlags([]string{"--bypass-hook-trust", "keep"})
+	noTools, plainUI, staleBypass, _, _, _, rest := chatFlags([]string{"--bypass-hook-trust", "keep"})
 	if !staleBypass {
 		t.Fatal("the removed flag must still parse rather than land in rest")
 	}
@@ -272,7 +272,7 @@ func TestStaleBypassFlagIsAcceptedAndReported(t *testing.T) {
 
 // --quiet must parse as a chat flag and suppress the startup notices.
 func TestQuietFlagIsAccepted(t *testing.T) {
-	noTools, plainUI, _, _, quiet, rest := chatFlags([]string{"--quiet", "keep"})
+	noTools, plainUI, _, _, quiet, _, rest := chatFlags([]string{"--quiet", "keep"})
 	if !quiet {
 		t.Fatal("--quiet must parse as a chat flag")
 	}

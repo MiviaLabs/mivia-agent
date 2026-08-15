@@ -40,11 +40,17 @@ func stashMemoryOnState(state *agentSessionState, store memory.Store, res *confi
 	}
 }
 
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *agentSessionState, quiet bool) (func(), error) {
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *agentSessionState, quiet bool, fullDisk bool) (func(), error) {
 	if !useTools {
 		return func() {}, nil
 	}
-	ws, err := workspace.Open(root)
+	var ws *workspace.Root
+	var err error
+	if fullDisk {
+		ws, err = workspace.OpenFullDisk(root)
+	} else {
+		ws, err = workspace.Open(root)
+	}
 	if err != nil {
 		return func() {}, fmt.Errorf("workspace: %w", err)
 	}

@@ -334,7 +334,7 @@ func runSessionsUsage(args []string, stdout io.Writer) error {
 	// instead of silently under-counting by their cost. quiet=true: a
 	// usage query is not a session start and must not print startup
 	// notices into the JSON stream.
-	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true)
+	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("sessions usage: %w", err)
