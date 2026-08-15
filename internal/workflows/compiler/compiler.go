@@ -123,59 +123,39 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 	}
 
 	// Graph checks
-	if err := validateGraph(wf, stepIDs); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateGraph(wf, stepIDs)...)
 
 	// Transition checks
-	if err := validateTransitions(wf, stepIDs, skipCycleValidation); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateTransitions(wf, stepIDs, skipCycleValidation)...)
 
 	// Cycle checks (admission policy; resume of an admitted snapshot skips them)
 	if !skipCycleValidation {
-		if err := validateCycles(wf); err != nil {
-			errs = append(errs, err.Error())
-		}
+		errs = append(errs, validateCycles(wf)...)
 	}
 
 	// Context binding checks
-	if err := validateContextBindings(wf, stepIDs, skipCycleValidation); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateContextBindings(wf, stepIDs, skipCycleValidation)...)
 
 	// Verifier name checks
-	if err := validateVerifierNames(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateVerifierNames(wf)...)
 
 	// On-failure target checks
-	if err := validateOnFailure(wf, stepIDs); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateOnFailure(wf, stepIDs)...)
 
 	// Delivery config validation
 	errs = append(errs, validateDeliverySection(wf, skipCycleValidation)...)
 
 	// Limits and stacking config validation
-	if err := validateLimitsAndStacking(wf, stepIDs); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateLimitsAndStacking(wf, stepIDs)...)
 
 	// Per-step max_turns validation
-	if err := validateStepMaxTurns(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateStepMaxTurns(wf)...)
 
 	// Agent panel validation
-	if err := validatePanels(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validatePanels(wf)...)
 
 	// Executable step kind checks
-	if err := validateExecutableStepKinds(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateExecutableStepKinds(wf)...)
 
 	return errs
 }
@@ -186,50 +166,47 @@ func validateWorkflow(wf *definition.WorkflowFile, skipCycleValidation bool) []s
 // stranded by the admission-only checks, so resume skips them.
 func validateDeliverySection(wf *definition.WorkflowFile, skipCycleValidation bool) []string {
 	var errs []string
-	if err := validateDelivery(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateDelivery(wf)...)
 	if skipCycleValidation {
 		return errs
 	}
-	if err := validateDeliveryProviderSupport(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateDeliveryProviderSupport(wf)...)
 	// Delivery re-entry steps must bind delivery.failure so the repair agent
 	// deterministically sees the rejection that routed it.
-	if err := validateDeliveryReentryHints(wf); err != nil {
-		errs = append(errs, err.Error())
-	}
+	errs = append(errs, validateDeliveryReentryHints(wf)...)
 	return errs
 }
 
 // validateExecutableStepKinds verifies controller support for special steps.
-func validateExecutableStepKinds(wf *definition.WorkflowFile) error {
+func validateExecutableStepKinds(wf *definition.WorkflowFile) []string {
 	_ = wf
 	return nil
 }
 
 // validateOnFailure checks that all on_failure targets reference existing steps or terminals.
-func validateOnFailure(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
+func validateOnFailure(wf *definition.WorkflowFile, stepIDs map[string]bool) []string {
+	var errs []string
 	for _, s := range wf.Steps {
 		target := s.OnFailure
 		if strings.TrimSpace(target) == "" {
 			continue // defaults to "failure" at runtime
 		}
 		if !stepIDs[target] && !definition.ReservedStepIDs[target] {
-			return fmt.Errorf("step %q: on_failure target %q is not a declared step or terminal", s.ID, target)
+			errs = append(errs, fmt.Sprintf("step %q: on_failure target %q is not a declared step or terminal", s.ID, target))
 		}
 	}
-	return nil
+	return errs
 }
 
 // validateTransitions checks for overlapping transitions and loop constraints.
-func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool, skipCycleValidation bool) error {
+func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool, skipCycleValidation bool) []string {
 	// Group transitions by source step
 	fromTransitions := make(map[string][]definition.Transition)
 	for _, t := range wf.Transitions {
 		fromTransitions[t.From] = append(fromTransitions[t.From], t)
 	}
+
+	var errs []string
 
 	for from, transitions := range fromTransitions {
 		// Check for ambiguous overlapping match criteria. Two criteria from the
@@ -245,7 +222,7 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool, s
 				}
 				tj := transitions[j]
 				if transitionCriteriaHazard(ti.Match, tj.Match) {
-					return fmt.Errorf("step %q: transitions to %q and %q have ambiguous overlapping match criteria (add a distinguishing output field)", from, ti.To, tj.To)
+					errs = append(errs, fmt.Sprintf("step %q: transitions to %q and %q have ambiguous overlapping match criteria (add a distinguishing output field)", from, ti.To, tj.To))
 				}
 			}
 		}
@@ -260,27 +237,27 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool, s
 			loopsBySource[t.From] = append(loopsBySource[t.From], t.Loop)
 		}
 		if t.Loop == "" && t.MaxIterations != 0 {
-			return fmt.Errorf("transition %s → %s: max_iterations requires a loop name", t.From, t.To)
+			errs = append(errs, fmt.Sprintf("transition %s → %s: max_iterations requires a loop name", t.From, t.To))
 		}
 		if t.PartialTarget != "" && t.Loop == "" {
-			return fmt.Errorf("transition %s → %s: partial_target requires a loop", t.From, t.To)
+			errs = append(errs, fmt.Sprintf("transition %s → %s: partial_target requires a loop", t.From, t.To))
 		}
 		if t.PartialTarget != "" && !stepIDs[t.PartialTarget] {
-			return fmt.Errorf("transition %s → %s: partial_target %q is not a declared step", t.From, t.To, t.PartialTarget)
+			errs = append(errs, fmt.Sprintf("transition %s → %s: partial_target %q is not a declared step", t.From, t.To, t.PartialTarget))
 		}
 		if t.From == t.To && t.Loop == "" {
 			// Self-loop without a loop name is a no-op transition.
-			return fmt.Errorf("transition from %q to %q is a self-loop without a loop name", t.From, t.To)
+			errs = append(errs, fmt.Sprintf("transition from %q to %q is a self-loop without a loop name", t.From, t.To))
 		}
 		if t.Loop != "" {
 			if t.MaxIterations < 0 && t.MaxIterations != definition.UnlimitedIterations {
-				return fmt.Errorf("loop %q: max_iterations must be > 0, or -1 for unlimited (got %d)", t.Loop, t.MaxIterations)
+				errs = append(errs, fmt.Sprintf("loop %q: max_iterations must be > 0, or -1 for unlimited (got %d)", t.Loop, t.MaxIterations))
 			}
 			if t.MaxIterations == 0 {
-				return fmt.Errorf("loop %q: max_iterations must be > 0, or -1 for unlimited (got 0); omitting the field does not default to unlimited", t.Loop)
+				errs = append(errs, fmt.Sprintf("loop %q: max_iterations must be > 0, or -1 for unlimited (got 0); omitting the field does not default to unlimited", t.Loop))
 			}
 			if t.MaxIterations > 1000 {
-				return fmt.Errorf("loop %q: max_iterations %d exceeds maximum of 1000", t.Loop, t.MaxIterations)
+				errs = append(errs, fmt.Sprintf("loop %q: max_iterations %d exceeds maximum of 1000", t.Loop, t.MaxIterations))
 			}
 		}
 	}
@@ -288,18 +265,18 @@ func validateTransitions(wf *definition.WorkflowFile, stepIDs map[string]bool, s
 	// Check for duplicate loop names
 	for name, count := range seenLoops {
 		if count > 1 {
-			return fmt.Errorf("loop name %q is used by multiple transitions", name)
+			errs = append(errs, fmt.Sprintf("loop name %q is used by multiple transitions", name))
 		}
 	}
 	if !skipCycleValidation {
 		for source, names := range loopsBySource {
 			if len(names) > 1 {
-				return fmt.Errorf("step %q has multiple named loops (%s); a step may have at most one named loop transition", source, strings.Join(names, ", "))
+				errs = append(errs, fmt.Sprintf("step %q has multiple named loops (%s); a step may have at most one named loop transition", source, strings.Join(names, ", ")))
 			}
 		}
 	}
 
-	return nil
+	return errs
 }
 
 // stepExists reports whether the workflow declares a step with this ID.
@@ -313,32 +290,34 @@ func stepExists(wf *definition.WorkflowFile, id string) bool {
 }
 
 // validateLimits checks that the limits configuration is within acceptable bounds.
-func validateLimits(limits definition.Limits) error {
+func validateLimits(limits definition.Limits) []string {
+	var errs []string
 	if limits.MaxStepAttempts < 0 || limits.MaxStepAttempts > 10000 {
-		return fmt.Errorf("limits: max_step_attempts must be in range [0, 10000] (got %d)", limits.MaxStepAttempts)
+		errs = append(errs, fmt.Sprintf("limits: max_step_attempts must be in range [0, 10000] (got %d)", limits.MaxStepAttempts))
 	}
 	if limits.MaxDurationSeconds < 0 || limits.MaxDurationSeconds > 86400 {
-		return fmt.Errorf("limits: max_duration_seconds must be in range [0, 86400] (got %d)", limits.MaxDurationSeconds)
+		errs = append(errs, fmt.Sprintf("limits: max_duration_seconds must be in range [0, 86400] (got %d)", limits.MaxDurationSeconds))
 	}
 	if limits.MaxOnFailureReentries < 0 || limits.MaxOnFailureReentries > 1000 {
-		return fmt.Errorf("limits: max_on_failure_reentries must be in range [0, 1000] (got %d)", limits.MaxOnFailureReentries)
+		errs = append(errs, fmt.Sprintf("limits: max_on_failure_reentries must be in range [0, 1000] (got %d)", limits.MaxOnFailureReentries))
 	}
 	if limits.MaxTransientStepRetries < 0 || limits.MaxTransientStepRetries > 1000 {
-		return fmt.Errorf("limits: max_transient_step_retries must be in range [0, 1000] (got %d)", limits.MaxTransientStepRetries)
+		errs = append(errs, fmt.Sprintf("limits: max_transient_step_retries must be in range [0, 1000] (got %d)", limits.MaxTransientStepRetries))
 	}
-	return nil
+	return errs
 }
 
 // validateStepMaxTurns checks that each step's max_turns is within bounds.
 // 0 means unlimited (the default); negative values and values above the
 // maximum are config errors, mirroring the [limits] knobs.
-func validateStepMaxTurns(wf *definition.WorkflowFile) error {
+func validateStepMaxTurns(wf *definition.WorkflowFile) []string {
+	var errs []string
 	for _, s := range wf.Steps {
 		if s.MaxTurns < 0 || s.MaxTurns > 10000 {
-			return fmt.Errorf("step %q: max_turns must be in range [0, 10000] (got %d)", s.ID, s.MaxTurns)
+			errs = append(errs, fmt.Sprintf("step %q: max_turns must be in range [0, 10000] (got %d)", s.ID, s.MaxTurns))
 		}
 	}
-	return nil
+	return errs
 }
 
 // verifierNameRegex matches lowercase alphanumeric characters and hyphens,
@@ -347,25 +326,25 @@ var verifierNameRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // validateVerifierNames checks that evidence_gate steps have a verifier name
 // or a sandboxed command, and that either is well-formed.
-func validateVerifierNames(wf *definition.WorkflowFile) error {
+func validateVerifierNames(wf *definition.WorkflowFile) []string {
+	var errs []string
 	for _, s := range wf.Steps {
 		if s.Kind != "evidence_gate" {
 			continue
 		}
 		if s.Verifier != "" {
 			if !verifierNameRegex.MatchString(s.Verifier) {
-				return fmt.Errorf("step %q: verifier name %q must be lowercase alphanumeric with hyphens", s.ID, s.Verifier)
+				errs = append(errs, fmt.Sprintf("step %q: verifier name %q must be lowercase alphanumeric with hyphens", s.ID, s.Verifier))
 			}
 			continue
 		}
 		if s.Command == nil {
-			return fmt.Errorf("step %q: evidence_gate requires a verifier or command", s.ID)
-		}
-		if !verifier.IsBareProgramName(s.Command.Program) {
-			return fmt.Errorf("step %q: command program %q must be a bare executable name", s.ID, s.Command.Program)
+			errs = append(errs, fmt.Sprintf("step %q: evidence_gate requires a verifier or command", s.ID))
+		} else if !verifier.IsBareProgramName(s.Command.Program) {
+			errs = append(errs, fmt.Sprintf("step %q: command program %q must be a bare executable name", s.ID, s.Command.Program))
 		}
 	}
-	return nil
+	return errs
 }
 
 // transitionCriteriaOverlap reports whether two match criteria from the same

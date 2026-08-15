@@ -7,22 +7,33 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
-func wantSubstrings(t *testing.T, err error, subs []string) {
+func wantSubstrings(t *testing.T, errs []string, subs []string) {
 	t.Helper()
 	if len(subs) == 0 {
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		if len(errs) > 0 {
+			t.Fatalf("unexpected errors: %v", errs)
 		}
 		return
 	}
-	if err == nil {
-		t.Fatal("want rejection, got nil error")
+	if len(errs) == 0 {
+		t.Fatal("want rejection, got no errors")
 	}
+	joined := strings.Join(errs, "; ")
 	for _, s := range subs {
-		if !strings.Contains(err.Error(), s) {
-			t.Errorf("error %q should contain %q", err.Error(), s)
+		if !strings.Contains(joined, s) {
+			t.Errorf("errors %q should contain %q", joined, s)
 		}
 	}
+}
+
+// errToSlice converts a single error to a string slice for use with
+// wantSubstrings when the function under test still returns error instead
+// of []string.
+func errToSlice(err error) []string {
+	if err == nil {
+		return nil
+	}
+	return []string{err.Error()}
 }
 func covCompile(t *testing.T, wf *definition.WorkflowFile) *CompiledWorkflow {
 	t.Helper()
@@ -88,7 +99,7 @@ func TestCoverageUnreachableStepsThroughCompile(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Compile(tt.wf)
-			wantSubstrings(t, err, tt.wantErr)
+			wantSubstrings(t, errToSlice(err), tt.wantErr)
 		})
 	}
 }

@@ -174,7 +174,7 @@ func validateWorkflowReferences(root, base string, wf *compiler.CompiledWorkflow
 	if err != nil {
 		return fmt.Errorf("load workflow agents: %w", err)
 	}
-	if err := compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skillRegistry); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skillRegistry)); err != nil {
 		return err
 	}
 	if err := validateWorkflowSkillTools(wf, loaded.Registry, skillRegistry); err != nil {
@@ -234,7 +234,7 @@ func validateWorkflowFiles(base string, wf *compiler.CompiledWorkflow) error {
 			}
 		}
 	}
-	return compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas)
+	return sliceErrors("workflow", compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
 }
 
 func validateWorkflowFileReferences(base string, wf *compiler.CompiledWorkflow, step definition.Step, memberID, templateRef, schemaRef string, schemas map[string][]byte) error {

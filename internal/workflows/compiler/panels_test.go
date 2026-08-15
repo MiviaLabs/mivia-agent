@@ -135,7 +135,7 @@ func TestValidatePanelsMemberRules(t *testing.T) {
 			wf := newAgentPanelWorkflow()
 			tc.mutate(&wf.Steps[0])
 			err := validatePanels(wf)
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			if len(err) == 0 || !strings.Contains(strings.Join(err, "; "), tc.wantErr) {
 				t.Fatalf("validatePanels() error = %v, want %q", err, tc.wantErr)
 			}
 		})

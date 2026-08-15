@@ -111,7 +111,7 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.Compil
 	if err != nil {
 		return workflowBuildSetup{}, err
 	}
-	if err := compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skills); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skills)); err != nil {
 		return workflowBuildSetup{}, err
 	}
 	authority, err := workflowBuildRegistry(root, res)

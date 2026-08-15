@@ -365,20 +365,20 @@ func TestSynthesizeStacking_GraphPassesAllValidators(t *testing.T) {
 
 	validators := []struct {
 		name string
-		run  func() error
+		run  func() []string
 	}{
-		{"validateGraph", func() error { return validateGraph(wf, stepIDs) }},
-		{"validateTransitions", func() error { return validateTransitions(wf, stepIDs, false) }},
-		{"validateCycles", func() error { return validateCycles(wf) }},
-		{"validateContextBindings", func() error { return validateContextBindings(wf, stepIDs, false) }},
-		{"validateOnFailure", func() error { return validateOnFailure(wf, stepIDs) }},
-		{"validateLimitsAndStacking", func() error { return validateLimitsAndStacking(wf, stepIDs) }},
-		{"validateStepMaxTurns", func() error { return validateStepMaxTurns(wf) }},
-		{"validatePanels", func() error { return validatePanels(wf) }},
+		{"validateGraph", func() []string { return validateGraph(wf, stepIDs) }},
+		{"validateTransitions", func() []string { return validateTransitions(wf, stepIDs, false) }},
+		{"validateCycles", func() []string { return validateCycles(wf) }},
+		{"validateContextBindings", func() []string { return validateContextBindings(wf, stepIDs, false) }},
+		{"validateOnFailure", func() []string { return validateOnFailure(wf, stepIDs) }},
+		{"validateLimitsAndStacking", func() []string { return validateLimitsAndStacking(wf, stepIDs) }},
+		{"validateStepMaxTurns", func() []string { return validateStepMaxTurns(wf) }},
+		{"validatePanels", func() []string { return validatePanels(wf) }},
 	}
 	for _, v := range validators {
-		if err := v.run(); err != nil {
-			t.Errorf("%s rejected the synthesized graph: %v", v.name, err)
+		if errs := v.run(); len(errs) > 0 {
+			t.Errorf("%s rejected the synthesized graph: %v", v.name, errs)
 		}
 	}
 

@@ -15,19 +15,20 @@ import (
 
 // ValidateAgentReferences checks that every step with kind "agent" or "agent_gate"
 // references an agent file that exists in <workspaceRoot>/.mivia/agents/.
-// Returns an error if any referenced agent is not found.
-func ValidateAgentReferences(wf *definition.WorkflowFile, workspaceRoot string) error {
+// Returns errors for any referenced agent that is not found.
+func ValidateAgentReferences(wf *definition.WorkflowFile, workspaceRoot string) []string {
+	var errs []string
 	agentsDir := workspace.NamespacePath(workspaceRoot, "agents")
 
 	knownAgents, err := discoverAgentFiles(agentsDir)
 	if err != nil {
-		return err
+		return []string{err.Error()}
 	}
 
 	for _, s := range wf.Steps {
 		if s.Kind == "agent" || s.Kind == "agent_gate" || s.Kind == "agent_panel" {
 			if s.Agent != "" && !knownAgents[s.Agent] {
-				return fmt.Errorf("step %q: agent %q not found in %s", s.ID, s.Agent, agentsDir)
+				errs = append(errs, fmt.Sprintf("step %q: agent %q not found in %s", s.ID, s.Agent, agentsDir))
 			}
 		}
 		if s.Kind != "agent_panel" || s.Panel == nil {
@@ -35,64 +36,62 @@ func ValidateAgentReferences(wf *definition.WorkflowFile, workspaceRoot string) 
 		}
 		for _, member := range s.Panel.Members {
 			if !knownAgents[member.Agent] {
-				return fmt.Errorf("step %q: panel member %q: agent %q not found in %s", s.ID, member.ID, member.Agent, agentsDir)
+				errs = append(errs, fmt.Sprintf("step %q: panel member %q: agent %q not found in %s", s.ID, member.ID, member.Agent, agentsDir))
 			}
 		}
 	}
-	return nil
+	return errs
 }
 
 // ValidateAgentSkillReferences checks each selected workflow agent and skill
 // against the resolved agent and skill catalogues. An empty skill is accepted
 // for workflows admitted before explicit skill bindings existed.
-func ValidateAgentSkillReferences(wf *CompiledWorkflow, agentRegistry *agents.AgentRegistry, skillRegistry *skills.Registry) error {
+func ValidateAgentSkillReferences(wf *CompiledWorkflow, agentRegistry *agents.AgentRegistry, skillRegistry *skills.Registry) []string {
+	var errs []string
 	if wf == nil {
-		return fmt.Errorf("compiled workflow is nil")
+		return []string{"compiled workflow is nil"}
 	}
 	if agentRegistry == nil {
-		return fmt.Errorf("workflow agent registry is nil")
+		return []string{"workflow agent registry is nil"}
 	}
 	if skillRegistry == nil {
-		return fmt.Errorf("workflow skill registry is nil")
+		return []string{"workflow skill registry is nil"}
 	}
 	for _, step := range wf.Steps {
 		if step.Kind != "agent" && step.Kind != "agent_gate" && step.Kind != "agent_panel" {
 			continue
 		}
-		if err := validateAgentSkillReference(step.ID, "", step.Agent, step.Skill, agentRegistry, skillRegistry); err != nil {
-			return err
-		}
+		errs = append(errs, validateAgentSkillReference(step.ID, "", step.Agent, step.Skill, agentRegistry, skillRegistry)...)
 		if step.Kind != "agent_panel" || step.Panel == nil {
 			continue
 		}
 		for _, member := range step.Panel.Members {
-			if err := validateAgentSkillReference(step.ID, member.ID, member.Agent, member.Skill, agentRegistry, skillRegistry); err != nil {
-				return err
-			}
+			errs = append(errs, validateAgentSkillReference(step.ID, member.ID, member.Agent, member.Skill, agentRegistry, skillRegistry)...)
 		}
 	}
-	return nil
+	return errs
 }
 
-func validateAgentSkillReference(stepID, memberID, agentName, skillName string, agentRegistry *agents.AgentRegistry, skillRegistry *skills.Registry) error {
+func validateAgentSkillReference(stepID, memberID, agentName, skillName string, agentRegistry *agents.AgentRegistry, skillRegistry *skills.Registry) []string {
+	var errs []string
 	prefix := fmt.Sprintf("step %q", stepID)
 	if memberID != "" {
 		prefix += fmt.Sprintf(": panel member %q", memberID)
 	}
 	agent, ok := agentRegistry.Get(agentName)
 	if !ok {
-		return fmt.Errorf("%s: agent %q not found", prefix, agentName)
+		return []string{fmt.Sprintf("%s: agent %q not found", prefix, agentName)}
 	}
 	if skillName == "" {
 		return nil
 	}
 	if _, ok := skillRegistry.Get(skillName); !ok {
-		return fmt.Errorf("%s: skill %q not found", prefix, skillName)
+		return []string{fmt.Sprintf("%s: skill %q not found", prefix, skillName)}
 	}
 	if !agents.SkillAllowed(&agent, skillName) {
-		return fmt.Errorf("%s: agent %q may not use skill %q", prefix, agent.Name, skillName)
+		return []string{fmt.Sprintf("%s: agent %q may not use skill %q", prefix, agent.Name, skillName)}
 	}
-	return nil
+	return errs
 }
 
 // discoverAgentFiles reads the agents directory and returns a set of known agent names

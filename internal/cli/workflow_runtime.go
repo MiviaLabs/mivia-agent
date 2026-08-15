@@ -38,7 +38,7 @@ func prepareWorkflowRuntime(root, refBase string, wf *compiler.CompiledWorkflow,
 	for name, ref := range snapshot.Schemas {
 		schemaBytes[name] = ref.Bytes
 	}
-	if err := compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemaBytes); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemaBytes)); err != nil {
 		return preparedWorkflowRuntime{}, err
 	}
 	for stepID, runtime := range steps {
