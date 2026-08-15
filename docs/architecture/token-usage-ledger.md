@@ -1,6 +1,8 @@
 # Token Usage Ledger — Design & Implementation Plan
 
-Status: **proposed, not implemented; passed one ADLC Step 0 challenge round**.
+Status: **proposed, not implemented; passed ADLC Step 0 (challenge), Step 1
+(micro-task breakdown), and Step 2 (task validation); locked at Step 3**.
+Ready for Step 4 (TDD implementation).
 This is a design document only; no code in this repo implements it yet.
 
 Revision history:
@@ -109,7 +111,32 @@ each dispositioned. "S" = structural review, "C" = correctness review.
 
 **Gate**: all findings dispositioned above (5 confirmed-blocking → mechanism rewritten; 2 confirmed-non-blocking → adjusted; subagent recording explicitly descoped rather than hand-waved). Scorecard below reflects rev 2.
 
-**Plan scorecard (rev 3)**: compiles/typechecks — N/A, no code written yet, but every referenced type/call site below is verified against actual source, not assumed (including the rev-3-specific `internal/chat/session.go:350-365` `Options` construction and `internal/subagents/multi_step.go:216-247` `loopOptions`, both read directly for this revision). No import cycles — `UsageRecord`/`UsageWriter` now live in `internal/agent` itself (an interface + a plain struct), and `internal/storage` implementing that interface is the same direction `storage` already has no dependents in `agent`/`contextmgr` today, so no new cycle. No breaking API — `agent.Options` gains one field, `contextmgr.ContextManager` gains one field; no signature removed, `TurnResult`/`Commit` untouched by this revision. Testable in isolation — yes, `internal/agent`'s `Emit*` + `internal/storage`'s `RecordUsageEvent` are both unit-testable without a live provider or a full turn. Backward-compatible config — yes, no config at all (S7). Every function has a test — planned below, including the specific "turn never completes" scenario rev 3 exists to fix. **PASS.**
+**Plan scorecard (rev 3)**: compiles/typechecks — N/A, no code written yet, but every referenced type/call site below is verified against actual source, not assumed (including the rev-3-specific `internal/chat/session.go:350-365` `Options` construction and `internal/subagents/multi_step.go:216-247` `loopOptions`, both read directly for this revision). No import cycles — `UsageRecord`/`UsageWriter` live in `internal/contextmgr` (corrected during Step 1 from an initial draft that placed them in `internal/agent`, which would have cycled: `agent` already imports `contextmgr`, so `contextmgr` referencing `agent.UsageWriter` back would have been `agent → contextmgr → agent`); `internal/storage` implementing `contextmgr.UsageWriter` is a new but acyclic edge, independently confirmed by a dedicated Step 2 validator tracing the full transitive import closure. No breaking API — `agent.Options` gains one field, `contextmgr.ContextManager` gains one field; no signature removed, `TurnResult`/`Commit` untouched by this revision. Testable in isolation — yes, `internal/agent`'s `Emit*` + `internal/storage`'s `RecordUsageEvent` are both unit-testable without a live provider or a full turn. Backward-compatible config — yes, no config at all (S7). Every function has a test — planned below, including the specific "turn never completes" scenario rev 3 exists to fix. **PASS.**
+
+## Step 1/2 — task breakdown and validation log
+
+Step 1 sliced Phase 1 into ~30 micro-tasks across 9 waves (1 file per task,
+a preceding test task per production task, a reviewer roughly every 4-6
+tasks — slightly looser than "every 2-3" since several waves are one-line
+ctx-threading changes across otherwise-unrelated files, batched rather than
+artificially fragmented). Held in-context per ADLC's zero-file convention,
+not duplicated here; this log records what Step 2's validation found
+against the real code and how each finding was dispositioned.
+
+Four validators ran in parallel, grouped by subsystem rather than one per
+wave (one per wave would have meant 9+ dispatches for a plan whose waves
+are mostly small and mechanical):
+
+| Validator | Verdict | Finding | Disposition |
+|---|---|---|---|
+| agent + contextmgr | PASS, 1 scope note | `EmitCompaction`'s ctx-threading blast radius extends through `Session.emitContextCompaction` and its 4 `internal/chat` callers, beyond the two `internal/agent/loop.go` sites the validator's brief mentioned | Already covered by the full task table's Wave 5 (T9-T12) — the validator's narrower brief just didn't include that wave; no new task needed, confirmed no gap |
+| storage | PASS, 2 corrections | (1) migration dispatch has a **4th** call site, `contextVersionTable(v)`, not 3; (2) `DeleteSessionSnapshot` has 2 independent successful-delete paths, not 1 | Migration section and Retention section both updated (see below); task table's T6 and T15 revised |
+| chat wiring | PASS, 1 critical correction | `turn_finish.go`'s `commitContextTurn` and `context_integration_turn.go`'s `commitInterruptedPlainContext` both swap to a `commitCtx := context.Background()` local before the emit call — passing the original (possibly-canceled) `ctx` there would be wrong | Write path section now documents exactly which ctx variable to use at each of the 4 call sites (table below the mechanism diagram); T11/T12 task text updated to name `commitCtx` explicitly |
+| import-cycle | PASS, confirms correction | Independently traced the full transitive import closure of `contextmgr` (`contextstate`, `provider`, `remainder`, and their own imports) — none touch `storage` or `agent`; `storage → contextmgr`, `agent → contextmgr` is cycle-free | Confirms the Step 1 package-placement fix (agent → contextmgr → agent was the bug being corrected) |
+
+**Gate**: no REJECTs — every finding was either already covered, or a
+concrete correction folded into this document's Migration/Write
+path/Retention sections and the underlying task list. Step 3: **locked**.
 
 ## Design overview
 
@@ -151,7 +178,25 @@ provider calls / tool steps
                      token_usage_events (SQLite)
 ```
 
-`opts.UsageWriter` is a small interface (`internal/agent`), implemented by
+**Not centralized.** There is no singleton, no global recorder, no
+dispatcher any event routes through. `UsageWriter` is constructed once per
+*session* (one instance per `mivia chat` process's own session setup, see
+below) and each `Emit*` call writes directly, at its own call site, the
+moment its event happens. The only thing resembling centralization is that
+all three event kinds land in one table — a schema-shape choice (finding
+S4), not a write-mechanism one. When multiple `mivia` processes share a
+workspace (the existing hub-relay scenario), each process's own local
+`UsageWriter` writes its own events against the same SQLite file; they
+serialize through the same `writeMu`/WAL mechanism every other durable
+write in this codebase already uses, not through any new coordination
+point this design introduces. This was a deliberate correction from Step 0:
+rev 1's `internal/usageledger.Recorder` *was* a single subscriber every
+event funneled through, and that centralization was inseparable from the
+durability problem Step 0 rejected it for (finding S2/C4/C5) — rev 3 has
+neither the bus subscription nor the single chokepoint.
+
+`opts.UsageWriter` is a small interface defined in `internal/contextmgr`
+(not `internal/agent` — see the correction below), implemented by
 `internal/storage`, and constructed once per session — not per turn — at
 the same place `manager.Summarizer` is wired today
 (`internal/cli/context_setup_session.go`'s `enableSessionContext`), stored
@@ -163,22 +208,46 @@ already assembled there per turn from the session snapshot, so
 `UsageWriter` slots into the same struct literal with no new call site).
 
 ```go
-// internal/agent/options.go (or emit.go) — new interface, no import of storage
+// internal/contextmgr/usage.go — new interface + struct. Package placement
+// correction (caught in Step 1, not assumed correct in rev 3's first draft):
+// internal/agent already imports internal/contextmgr (context.go, emit.go,
+// loop.go, options.go, summary_inject.go all do — verified directly), and
+// internal/contextmgr imports nothing back from internal/agent today. Had
+// UsageWriter/UsageRecord lived in internal/agent as rev 3 first drafted,
+// contextmgr.ContextManager referencing agent.UsageWriter (see below) would
+// have created agent → contextmgr → agent, an import cycle that would not
+// compile. contextmgr is neutral ground both agent and storage can safely
+// depend on (agent already does; storage currently imports neither package,
+// confirmed by grep, so storage → contextmgr is a new but acyclic edge).
 type UsageWriter interface {
     Record(ctx context.Context, record UsageRecord) error
 }
+
+type UsageRecord struct {
+    Kind      string // "token_usage" | "cache_usage" | "compaction"
+    SessionID, TurnID string
+    Provider, Model string
+    InputTokens, OutputTokens, EstimatedTokens int
+    CalibrationRatio float64
+    CachedInputTokens, CacheWriteTokens int
+    BeforeTokens, AfterTokens, ElidedMessages, ElidedBytes int
+    Summarized *bool
+    Reason     string
+    AgentTask, AgentName string
+    AgentDepth int
+}
 ```
 
-`UsageRecord` is the same shape rev 2 defined (kept as-is, see **Schema**);
-it now lives in `internal/agent` rather than `internal/contextmgr` since
-nothing routes it through `contextmgr.TurnResult`/`Commit` anymore — the
-write is fully decoupled from checkpoint commit. `EmitTokenUsage`/
-`EmitCacheUsage`/`EmitCompaction` each grow one call:
+`agent.Options` gains `UsageWriter contextmgr.UsageWriter` (agent already
+imports contextmgr for `Preparation`/`Summarizer`, so this is the existing
+dependency direction, not a new one). `contextmgr.ContextManager` gains
+`UsageWriter contextmgr.UsageWriter` (same package, trivially legal).
+`EmitTokenUsage`/`EmitCacheUsage`/`EmitCompaction` each grow one call:
 
 ```go
 // internal/agent/emit.go, e.g. EmitTokenUsage
 if opts.UsageWriter != nil {
-    if err := opts.UsageWriter.Record(ctx, UsageRecord{
+    if err := opts.UsageWriter.Record(ctx, contextmgr.UsageRecord{
         Kind: "token_usage", SessionID: opts.SessionID, TurnID: opts.TurnID,
         Provider: providerName, Model: model,
         InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
@@ -193,16 +262,36 @@ if opts.UsageWriter != nil {
 ```
 
 `ctx` here needs to come from somewhere `Emit*`'s current signature doesn't
-carry (it takes `opts Options`, not a `context.Context`) — Step 1's task
-breakdown needs to settle whether that's a new parameter on all three
-`Emit*` functions (small, mechanical signature change, all call sites
-already have a `ctx` in scope at `internal/agent/loop.go:444/452`) or a
-`context.Background()` with its own short timeout inside `Record` itself,
-trading "respects the turn's cancellation" for "one less parameter
-threaded through". Recommendation: thread the real `ctx` — a turn that's
-being force-interrupted shouldn't leave a usage write hanging past the
-turn's own cancellation, and `internal/agent/loop.go` already has `ctx` in
-scope at both emit call sites.
+carry (it takes `opts Options`, not a `context.Context`) — resolved at
+Step 1/2 as a new parameter on all three `Emit*` functions (small,
+mechanical signature change; rejected the `context.Background()`-with-its-
+own-timeout alternative, since a turn being force-interrupted shouldn't
+leave a usage write hanging past the turn's own cancellation).
+
+**Which `ctx` variable, exactly, at each of the 4 call sites** — this is
+the one place Step 2 found a real trap, not just mechanical threading. Two
+of `EmitCompaction`'s call sites (reached via `internal/chat`'s
+`Session.emitContextCompaction`, which also gains a `ctx` param) sit inside
+functions that **swap to a `commitCtx := context.Background()` local
+variable** before the emit call, specifically so an interrupted/force-sent
+turn still durably commits even though its original `ctx` was just
+canceled:
+
+| Call site | Function | Which var to pass |
+|---|---|---|
+| `internal/chat/context_control.go:208` | `compact(ctx, ...)` | `ctx` — no swap in this function |
+| `internal/chat/turn_finish.go:166` | `commitContextTurn(ctx, ...)` | **`commitCtx`** — swapped at `turn_finish.go:105-110` when `interrupted` |
+| `internal/chat/context_integration_turn.go:103` | `commitInterruptedPlainContext(ctx, ...)` | **`commitCtx`** — swapped at line ~79, deliberately, per that function's own doc comment ("publish the partial turn durably... under an uncanceled context") |
+| `internal/chat/context_integration_turn.go:163` | `commitPlainContextTurn(ctx, ...)` | `ctx` — no swap in this function |
+
+Using the original (canceled) `ctx` at the two swap sites would be wrong:
+either the usage write observes a context that's already done and fails
+immediately (defeating the point of recording what just happened), or —
+worse — behaves inconsistently with the checkpoint commit it's reporting
+on, which deliberately proceeds under `commitCtx` for exactly this reason.
+`internal/agent/loop.go`'s two `emitTurnUsage`-routed call sites have no
+such trap: `requestStep`'s `ctx` is the plain turn context throughout, no
+swap.
 
 This satisfies Goal 3 differently than rev 2 did: instead of piggybacking
 on the checkpoint transaction's existing failure/success contract, each
@@ -257,47 +346,67 @@ CREATE INDEX idx_token_usage_events_session ON token_usage_events(workspace_id, 
 CREATE INDEX idx_token_usage_events_turn    ON token_usage_events(workspace_id, session_id, turn_id);
 ```
 
-### Migration wiring — three call sites, not one (finding C2)
+### Migration wiring — four call sites, not one (finding C2, revised at Step 2)
 
 `internal/storage/context_schema.go` dispatches by a literal current
-version in three separate places; all three need a v12 addition or the
-migration silently doesn't run in two of the three cases:
+version in **four** separate places (Step 0 found 3; Step 2's storage
+validator, reading the file in full, found a 4th — `contextVersionTable`
+— that Step 0 missed). All four need a v12 addition or the migration
+silently doesn't run, or doesn't self-heal, in some case:
 
-1. `const currentContextSchemaVersion = 11` → bump to `12`.
+1. `const currentContextSchemaVersion = 11` (`context_schema.go:8`) → bump
+   to `12`.
 2. The steady-state open path (`context_schema.go:30-31`) hard-calls
    `ensureContextSchemaV11(db)` when `version == currentContextSchemaVersion`
    — this literal call must become `ensureContextSchemaV12(db)`, or every
    ordinary open of an already-migrated store keeps running v11's narrower
    repair check and **never** runs v12's, even though `currentContextSchemaVersion`
    itself was bumped.
-3. `repairContextSchema`'s dirty-row loop (`context_schema.go:158-182`) has
-   one `if v == N { ensureContextSchemaVN(db) }` branch per version, no
-   generic fallthrough — needs its own `if v == 12 { ensureContextSchemaV12(db) }`
-   branch, or a store left dirty mid-v12-migration reaches
-   `finalizeContextVersion` (which only checks the table witness) but never
-   runs v12's actual repair.
+3. `repairContextSchema`'s dirty-row loop (`context_schema.go:134-185`,
+   confirmed by direct read) has one `if v == N { ensureContextSchemaVN(db) }`
+   branch per version, no generic fallthrough — needs its own
+   `if v == 12 { ensureContextSchemaV12(db) }` branch, or a store left
+   dirty mid-v12-migration reaches `finalizeContextVersion` (which only
+   checks the table witness) but never runs v12's actual repair.
+4. **New**: `contextVersionTable(v)` (`context_schema.go:231-258`) is a
+   *separate* flat `switch` mapping each schema version to its witness
+   table name (used by `finalizeContextVersion`/dirty-repair to check
+   "does this version's table already exist"). It needs its own
+   `case 12: return "token_usage_events"` — without it, the finalize/repair
+   machinery has no way to tell whether v12 already landed on this store,
+   which would make `ensureContextSchemaV12` re-run its repair check on
+   every single open instead of only when actually needed (not incorrect,
+   but silently defeats the idempotent-fast-path intent every other
+   version's entry provides).
 
 Otherwise follows `internal/storage/context_schema_v11.go`'s two-phase
-pattern exactly: `applyContextSchemaV12` creates the table + indexes in one
-migration transaction (`inMigrationTx`, so a crash mid-apply can't leave a
-table without its indexes — verified against `context_schema_v11.go`'s
-`inMigrationTx` usage, not assumed), a second transaction sets
-`PRAGMA user_version = 12` and clears `dirty`; `ensureContextSchemaV12`
-mirrors `ensureContextSchemaV11Tx`'s idempotent existence check for repair.
+pattern, with one simplification Step 2 confirmed: v11's repair check
+(`ensureContextSchemaV11Tx`) is `PRAGMA table_info`-based because v11
+*alters* an existing table (`chat_sessions`) to add a column. v12 *creates*
+a brand-new table, so `ensureContextSchemaV12Tx` doesn't need that
+column-level check at all — a plain `CREATE TABLE IF NOT EXISTS
+token_usage_events(...)` (plus its indexes, also `IF NOT EXISTS`) is the
+whole repair body, simpler than v11's, not a mirror of its complexity.
+`applyContextSchemaV12` creates the table + indexes in one migration
+transaction (`inMigrationTx`, so a crash mid-apply can't leave a table
+without its indexes — verified against `context_schema_v11.go`'s
+`inMigrationTx` usage), a second transaction sets `PRAGMA user_version = 12`
+and clears `dirty`. The migration ladder itself (`context_schema.go`'s
+v10→v11 terminal call, confirmed at line ~104) gets one more rung to v12.
 
 ## Write path implementation notes
 
-`UsageRecord` (`internal/agent`, shown above in **Design overview**) is a
+`UsageRecord` (`internal/contextmgr`, shown above in **Design overview**) is a
 plain struct — `Kind`, `Provider`/`Model`, the token-count fields per kind,
 `Summarized *bool`/`Reason` for compaction, `AgentTask`/`AgentName`/
 `AgentDepth`, `SessionID`/`TurnID`, `CreatedAt` stamped by the writer at
 write time (not by the caller, so clock skew across a long turn doesn't
 matter — each row gets its own real timestamp).
 
-`internal/storage` implements `agent.UsageWriter`:
+`internal/storage` implements `contextmgr.UsageWriter`:
 
 ```go
-func (s *SQLite) RecordUsageEvent(ctx context.Context, workspaceID string, record agent.UsageRecord) error {
+func (s *SQLite) RecordUsageEvent(ctx context.Context, workspaceID string, record contextmgr.UsageRecord) error {
     // one INSERT, its own transaction (or no explicit transaction at all —
     // a single statement is already atomic), guarded by the same
     // s.writeMu/retrySQLiteBusy pattern every other write in this file uses
@@ -375,11 +484,29 @@ or JSON via `writeSessionsJSON`.
 
 ## Retention
 
-`DeleteSessionSnapshot` (`internal/storage/chat_sessions.go`) gains a
+`DeleteSessionSnapshot` (`internal/storage/chat_sessions.go`) needs a
 `DELETE FROM token_usage_events WHERE workspace_id = ? AND session_id = ?`
-in its existing transaction. Finding S5/C3's original orphan-row scenario
-(an async, queued write landing after a delete already committed) cannot
-recur — rev 3 has no queue, every write is synchronous and immediate.
+— **at two sites, not one** (Step 2 correction: the rev-3-draft's "gains a
+DELETE in its existing transaction" undersold this). `DeleteSessionSnapshot`
+has two independent paths that successfully delete a session, confirmed by
+reading the function in full:
+
+1. `deleteSessionSnapshotRow`'s transaction (the direct-name-match path,
+   and its resolve-by-`session_id` retry — both funnel through this same
+   function, so one edit here covers both).
+2. `deleteContextSessionOrOrphanedAdmission` → `deleteCatalogContextSession`'s
+   transaction (the context-session tombstone path, reached when the
+   name-keyed lookup finds nothing).
+
+A `DELETE` added only in (1) would leave orphaned `token_usage_events` rows
+behind every time a session is actually deleted via path (2). Both sites
+need the same `DELETE`, each inside its own already-existing transaction.
+
+Finding S5/C3's original async orphan-row scenario (a queued write landing
+after a delete already committed) still cannot recur — rev 3 has no queue,
+every write is synchronous and immediate; the two-site correction above is
+about covering both of *this codebase's* existing delete paths, not about
+reopening the async race.
 
 A narrower, honestly-stated residual case remains: `mivia sessions delete
 <name>` runs as its own short-lived process against the shared SQLite file
@@ -445,7 +572,7 @@ to one mechanism plus its wiring.
 ## Rollout
 
 1. **Phase 1 (this design)**: schema v12 (all three dispatch sites),
-   `agent.UsageWriter`/`UsageRecord`, `storage.RecordUsageEvent`, wiring
+   `contextmgr.UsageWriter`/`UsageRecord`, `storage.RecordUsageEvent`, wiring
    into `contextmgr.ContextManager` + per-turn `agent.Options`
    (`internal/chat/session.go`), `QueryTokenUsage`/`SummarizeTokenUsage`,
    `mivia sessions usage-history`. Root-loop (tool-enabled) turns only. No
