@@ -8,6 +8,48 @@ import (
 	"testing"
 )
 
+// TestAdvertisedNamesTruncatesDeterministically pins plan tools-advertising/01's
+// per-request cap: the union (core then deferred) truncates to
+// MaxAdvertisedTools, core names are never dropped ahead of deferred ones, and
+// the drop count is reported rather than silently swallowed.
+func TestAdvertisedNamesTruncatesDeterministically(t *testing.T) {
+	core := []string{"read_file"}
+	deferred := make([]string, MaxAdvertisedTools) // one more than fits alongside core
+	for i := range deferred {
+		deferred[i] = "tool_" + string(rune('a'+i%26)) + string(rune('0'+i/26))
+	}
+	names, dropped := AdvertisedNames(core, deferred)
+	if len(names) != MaxAdvertisedTools {
+		t.Fatalf("len(names) = %d, want %d", len(names), MaxAdvertisedTools)
+	}
+	if dropped != 1 {
+		t.Fatalf("dropped = %d, want 1", dropped)
+	}
+	if names[0] != "read_file" {
+		t.Fatalf("names[0] = %q, want the core tool first", names[0])
+	}
+	if !slices.Equal(names[1:], deferred[:MaxAdvertisedTools-1]) {
+		t.Fatal("deferred names were not truncated from the tail in order")
+	}
+	// A repeat call is deterministic: the same truncation every time.
+	again, droppedAgain := AdvertisedNames(core, deferred)
+	if !slices.Equal(names, again) || dropped != droppedAgain {
+		t.Fatal("AdvertisedNames is not deterministic across repeated calls")
+	}
+}
+
+// TestAdvertisedNamesUnderTheCapDropsNothing pins the common case: a union
+// under the cap is untouched and reports zero drops.
+func TestAdvertisedNamesUnderTheCapDropsNothing(t *testing.T) {
+	names, dropped := AdvertisedNames([]string{"read_file"}, []string{"grep", "glob"})
+	if dropped != 0 {
+		t.Fatalf("dropped = %d, want 0", dropped)
+	}
+	if !slices.Equal(names, []string{"read_file", "grep", "glob"}) {
+		t.Fatalf("names = %v, want [read_file grep glob]", names)
+	}
+}
+
 func TestSplitTiersNilCoreIsInert(t *testing.T) {
 	effective := []string{"read_file", "grep", "fetch_url"}
 	got := SplitTiers(effective, nil)

@@ -135,7 +135,7 @@ func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, 
 		Content:   userText,
 		CreatedAt: time.Now(),
 	})
-	toolSpecs := l.Tools.OpenAITools()
+	toolSpecs := l.initialToolSpecs(opts)
 	var lastText string
 	for step := 1; ; step++ {
 		if opts.MaxSteps > 0 && step > opts.MaxSteps {

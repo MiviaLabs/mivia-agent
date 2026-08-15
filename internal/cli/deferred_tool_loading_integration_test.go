@@ -27,6 +27,9 @@ type scriptedCompleter struct {
 	turns []provider.Response
 	// advertised is the tool-name list of each request, in request order.
 	advertised [][]string
+	// toolSpecs is the raw tools[] array of each request, in request order,
+	// for byte-identity assertions (plan tools-advertising/01).
+	toolSpecs [][]provider.ToolSpec
 	// systemPrompts is the system message of each request.
 	systemPrompts []string
 	calls         int
@@ -52,6 +55,7 @@ func (c *scriptedCompleter) ChatTurn(_ context.Context, req provider.Request) (*
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.advertised = append(c.advertised, toolSpecNames(req.Tools))
+	c.toolSpecs = append(c.toolSpecs, req.Tools)
 	c.systemPrompts = append(c.systemPrompts, systemPromptOf(req.Messages))
 	index := c.calls
 	c.calls++
@@ -66,6 +70,14 @@ func (c *scriptedCompleter) requests() ([][]string, []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.advertised), slices.Clone(c.systemPrompts)
+}
+
+// rawToolSpecs returns the raw tools[] array captured on every request, for
+// byte-identity assertions (plan tools-advertising/01).
+func (c *scriptedCompleter) rawToolSpecs() [][]provider.ToolSpec {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.toolSpecs)
 }
 
 func toolSpecNames(specs []provider.ToolSpec) []string {
@@ -216,11 +228,14 @@ func TestDeferredLoadingAdvertisesOnlyCorePlusLoadTools(t *testing.T) {
 
 // --- D6: stage inside the turn, publish at the boundary -----------------
 
-// TestAdmittedToolReachesTheNextRequest is the plan's headline ordering
-// sequence: load_tools stages, the surface generation bumps at the next step
-// boundary, and the NEXT request carries the new schema - never the request
-// that triggered load_tools (w2a publishes mid-turn at the step boundary, so
-// the staging turn's second request already advertises grep).
+// TestAdmittedToolReachesTheNextRequest is the plan tools-advertising/01
+// headline sequence: the wire tools[] array is pinned for the whole binding,
+// so grep is already advertised on request 0 (the load_tools call itself,
+// before anything is admitted) and stays byte-identical across every
+// subsequent request - the admission that follows changes EXECUTION
+// authority (what load_tools makes callable) only, never what is advertised.
+// This is what keeps a provider's implicit prompt-cache prefix intact across
+// a mid-turn load_tools call.
 func TestAdmittedToolReachesTheNextRequest(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{
 		loadToolsCall("c1", `{"names":["grep"]}`),
@@ -235,15 +250,25 @@ func TestAdmittedToolReachesTheNextRequest(t *testing.T) {
 	if len(advertised) < 2 {
 		t.Fatalf("expected at least two requests in the staging turn, got %d", len(advertised))
 	}
-	// Request 0 is the load_tools call itself: the staged tool must not be
-	// advertised on the very request that staged it.
-	if slices.Contains(advertised[0], "grep") {
-		t.Fatalf("request 0 (the load_tools call) already advertised grep: %v", advertised[0])
+	// Request 0 is the load_tools call itself: grep is already advertised
+	// there - it was authorized and part of the union from the start.
+	if !slices.Contains(advertised[0], "grep") {
+		t.Fatalf("request 0 (the load_tools call) did not advertise grep: %v", advertised[0])
 	}
-	// Request 1 is the NEXT request: the step-boundary publication must have
-	// made the staged tool callable there (w2a), mid-turn, before the commit.
-	if !slices.Contains(advertised[1], "grep") {
-		t.Fatalf("request 1 (the next step) did not advertise grep: %v (want the step-boundary publication to make it callable from the next request)", advertised[1])
+	// Request 1 is the next request: the wire array is byte-identical to
+	// request 0's, even though the step-boundary publication ran in between
+	// and made grep callable (execution authority, not advertising).
+	raw := fixture.completer.rawToolSpecs()
+	first, err := json.Marshal(raw[0])
+	if err != nil {
+		t.Fatalf("marshal request 0 tools: %v", err)
+	}
+	second, err := json.Marshal(raw[1])
+	if err != nil {
+		t.Fatalf("marshal request 1 tools: %v", err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("advertised tools[] changed between request 0 and request 1:\n%s\n%s", first, second)
 	}
 	if got := fixture.sess.AdmittedTools(); !slices.Equal(got, []string{"grep"}) {
 		t.Fatalf("admitted = %v, want [grep] after the step-boundary publication", got)
@@ -256,6 +281,14 @@ func TestAdmittedToolReachesTheNextRequest(t *testing.T) {
 	advertised, prompts := fixture.completer.requests()
 	if !slices.Contains(advertised[before], "grep") {
 		t.Fatalf("first request of the next turn = %v, want grep advertised", advertised[before])
+	}
+	raw = fixture.completer.rawToolSpecs()
+	third, err := json.Marshal(raw[before])
+	if err != nil {
+		t.Fatalf("marshal next-turn tools: %v", err)
+	}
+	if string(first) != string(third) {
+		t.Fatalf("advertised tools[] changed across a turn boundary:\n%s\n%s", first, third)
 	}
 	// D8: the frozen index keeps system-prompt bytes stable across the
 	// admission, so the cached prefix survives.
@@ -739,16 +772,16 @@ func TestSchemaMassReportsWhatTheDeferredTierWithholds(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
 	mass := fixture.state.schemaMassSnapshot()
-	if mass.Deferred != 2 {
-		t.Fatalf("deferred count = %d, want 2", mass.Deferred)
+	if mass.Locked != 2 {
+		t.Fatalf("locked count = %d, want 2", mass.Locked)
 	}
-	if mass.HeldTokens <= 0 {
-		t.Fatalf("held tokens = %d, want the withheld schema mass to be measured", mass.HeldTokens)
+	if mass.LockedTokens <= 0 {
+		t.Fatalf("locked tokens = %d, want the locked schema mass to be measured", mass.LockedTokens)
 	}
 	if mass.Tokens <= 0 {
 		t.Fatalf("advertised tokens = %d, want a positive measurement", mass.Tokens)
 	}
-	if !strings.Contains(mass.String(), "deferred") {
-		t.Fatalf("operator line omits the deferred tier: %q", mass.String())
+	if !strings.Contains(mass.String(), "locked") {
+		t.Fatalf("operator line omits the locked tier: %q", mass.String())
 	}
 }

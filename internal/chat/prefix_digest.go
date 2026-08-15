@@ -5,26 +5,28 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
-// toolSchemaDigest fingerprints the registry's OpenAI tool-schema array.
-// json.Marshal of the map slice sorts object keys deterministically, so the
-// digest is stable for an equal registry. The slice ORDER is preserved, which
-// is exactly what the wire sends (tool order is deterministic per binding via
-// ScopedRegistry - plan 51/05 B6), so an order change also changes the digest:
-// INV-68-1 forbids a wire-affecting input absent from the identity. Computed
-// once per identity-capture trigger, never per turn (INV-68-8).
-func toolSchemaDigest(reg *tools.Registry) string {
+// toolSchemaDigest fingerprints the advertised tool-schema array (the pinned
+// binding-lifetime snapshot, not the live execution registry - plan
+// tools-advertising/01: admission changes execution authority, never the
+// wire-advertised tools[]). json.Marshal of the map slice sorts object keys
+// deterministically, so the digest is stable for an equal snapshot. The slice
+// ORDER is preserved, which is exactly what the wire sends, so an order change
+// also changes the digest: INV-68-1 forbids a wire-affecting input absent from
+// the identity. Computed once per identity-capture trigger, never per turn
+// (INV-68-8).
+func toolSchemaDigest(specs []provider.ToolSpec) string {
 	sum := sha256.New()
-	if reg == nil {
+	if len(specs) == 0 {
 		sum.Write([]byte("[]"))
-	} else if raw, err := json.Marshal(reg.OpenAITools()); err == nil {
+	} else if raw, err := json.Marshal(specs); err == nil {
 		sum.Write(raw)
 	} else {
-		// OpenAITools is built from plain maps and cannot fail to marshal;
-		// fall back to the empty-array digest so the identity stays
-		// deterministic rather than carrying a partial hash.
+		// specs is built from plain maps and cannot fail to marshal; fall
+		// back to the empty-array digest so the identity stays deterministic
+		// rather than carrying a partial hash.
 		sum.Write([]byte("[]"))
 	}
 	return hex.EncodeToString(sum.Sum(nil))

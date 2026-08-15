@@ -29,6 +29,31 @@ const MaxAdmissionAttempts = 32
 // that total so a perpetually-deferred stage cannot exceed it either.
 const MaxAdmissionNamesPerCall = 64
 
+// MaxAdvertisedTools bounds the per-request tools[] array to the tightest
+// documented ceiling among supported OpenAI-compatible providers (DeepSeek's
+// chat-completions API caps "tools" at 128 functions). The advertised union
+// (plan tools-advertising/01: core tier plus every deferred candidate, pinned
+// for the binding's lifetime so the wire tools[] array never changes mid-turn)
+// is truncated to this many names, core-then-deferred, when it would exceed
+// the cap. Truncated names stay authorized and executable once admitted; they
+// are simply never advertised for this binding.
+const MaxAdvertisedTools = 128
+
+// AdvertisedNames returns core then deferred tool names for the advertised
+// union, truncated to MaxAdvertisedTools. It reports how many names were
+// dropped by truncation so callers can surface the loss instead of it going
+// silent (no silent caps).
+func AdvertisedNames(core, deferred []string) (names []string, dropped int) {
+	names = make([]string, 0, len(core)+len(deferred))
+	names = append(names, core...)
+	names = append(names, deferred...)
+	if len(names) <= MaxAdvertisedTools {
+		return names, 0
+	}
+	dropped = len(names) - MaxAdvertisedTools
+	return names[:MaxAdvertisedTools], dropped
+}
+
 // TierCandidate is one deferred tool's advertisement metadata. The host builds
 // the candidate list once per agent binding, in live-registry order, so both
 // the frozen prompt index and query matching see the same order.
@@ -100,10 +125,11 @@ func DeferredIndex(candidates []TierCandidate) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("Additional tools are available but not currently loaded. ")
+	b.WriteString("Additional tools below are authorized and their schemas are visible to you, but they are locked. ")
 	b.WriteString("Call ")
 	b.WriteString(LoadToolsToolName)
-	b.WriteString(" to load the ones you need; they become callable on your next turn.\n")
+	b.WriteString(" to load the ones you need; they become callable on your next turn. ")
+	b.WriteString("Calling a locked tool directly is refused but also queues it to load, so retrying the call next turn works too.\n")
 	for _, candidate := range candidates {
 		b.WriteString("- ")
 		b.WriteString(candidate.Name)

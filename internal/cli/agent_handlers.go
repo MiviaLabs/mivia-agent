@@ -95,6 +95,23 @@ func warnDisabledAgentTools(selected *agents.ResolvedAgent, disabled []string) {
 		selected.Name, strings.Join(disabled, ", "))
 }
 
+// warnAdvertisedToolsTruncated reports when the admissible union exceeded
+// tools.MaxAdvertisedTools and was truncated (plan tools-advertising/01). No
+// silent caps: a dropped tool is still authorized and executable once
+// admitted, but the operator should know it will never be advertised for this
+// binding.
+func warnAdvertisedToolsTruncated(selected *agents.ResolvedAgent, dropped int) {
+	if dropped <= 0 {
+		return
+	}
+	name := ""
+	if selected != nil {
+		name = selected.Name
+	}
+	fmt.Fprintf(os.Stderr, "warning: agent %q: %d tool(s) exceed the %d-tool advertising cap and will not be advertised until a future binding\n",
+		name, dropped, tools.MaxAdvertisedTools)
+}
+
 // filterSkillRegistryForGate omits project-origin skills when the workspace
 // gate is off. User skills remain registered.
 func filterSkillRegistryForGate(skillReg *skills.Registry, allowProject bool) *skills.Registry {
@@ -137,4 +154,63 @@ func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected
 	if res != nil {
 		res.SystemPrompt = prompt
 	}
+}
+
+// agentListRows builds ordered rows from a registry. Pure; unit-tested without TUI.
+func agentListRows(reg *agents.AgentRegistry, current string) []agentListRow {
+	if reg == nil {
+		return nil
+	}
+	current = strings.TrimSpace(current)
+	names := reg.Names()
+	out := make([]agentListRow, 0, len(names))
+	for _, name := range names {
+		a, ok := reg.Get(name)
+		if !ok {
+			continue
+		}
+		out = append(out, agentListRow{
+			Name:        a.Name,
+			Description: a.Description,
+			Current:     a.Name == current,
+		})
+	}
+	return out
+}
+
+func currentAgentName(state *agentSessionState) string {
+	if state == nil {
+		return ""
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.Selected == nil {
+		return ""
+	}
+	return state.Selected.Name
+}
+
+func formatAgentAvailable(reg *agents.AgentRegistry) string {
+	if reg == nil || reg.Len() == 0 {
+		return "(none)"
+	}
+	rows := make([]string, 0, reg.Len())
+	for _, name := range reg.Names() {
+		a, ok := reg.Get(name)
+		if ok {
+			rows = append(rows, name+"("+string(a.Provenance.Source)+")")
+		}
+	}
+	return strings.Join(rows, ", ")
+}
+
+func formatAgentSet(name string) string {
+	return "agent set to " + name
+}
+
+func formatAgentCurrent(name string, reg *agents.AgentRegistry) string {
+	if name == "" {
+		name = "(compiled default)"
+	}
+	return fmt.Sprintf("current agent=%s\nusage: /agent <name>\navailable: %s", name, formatAgentAvailable(reg))
 }

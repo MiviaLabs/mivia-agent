@@ -280,7 +280,7 @@ func TestPublishAgentSurfaceAndSetAgentSettingsShareBaseTracking(t *testing.T) {
 	s := newAgentSettingsTestSession(t)
 	block := "- promoted fact: worth remembering"
 
-	s.PublishAgentSurface("agent prompt", 4, nil, nil, nil, block)
+	s.PublishAgentSurface("agent prompt", 4, nil, nil, nil, block, nil)
 	if n := memoryMessageCount(s); n != 1 {
 		t.Fatalf("after PublishAgentSurface: %d memory messages, want 1", n)
 	}

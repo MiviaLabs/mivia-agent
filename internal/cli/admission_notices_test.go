@@ -60,7 +60,7 @@ func TestSlashLoadPrintsAdmissionNotes(t *testing.T) {
 func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
 	previous := classicAgentState
 	t.Cleanup(func() { classicAgentState = previous })
-	classicAgentState = &agentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Deferred: 2, HeldTokens: 210}}
+	classicAgentState = &agentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
 	res := &config.Resolved{ProviderName: "p", Model: "m"}
 	sess := chat.NewSession(res, stubAgentCompleter{})
 	sess.Tools = tierRegistry("read_file")
@@ -70,7 +70,7 @@ func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "4 tools advertised") || !strings.Contains(out, "2 deferred") {
+	if !strings.Contains(out, "4 tools advertised") || !strings.Contains(out, "2 locked") {
 		t.Fatalf("/tools output = %q, want the schema-mass line", out)
 	}
 }
@@ -80,7 +80,7 @@ func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
 func TestTuiToolsDialogReportsSchemaMass(t *testing.T) {
 	m := newSmokeModel(t)
 	m.session.Tools = tierRegistry("read_file")
-	m.agentState = &agentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Deferred: 2, HeldTokens: 210}}
+	m.agentState = &agentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
 	if !m.handleTuiInfoSlash("/tools", []string{"/tools"}) {
 		t.Fatal("/tools was not handled")
 	}
@@ -88,7 +88,7 @@ func TestTuiToolsDialogReportsSchemaMass(t *testing.T) {
 		t.Fatal("/tools opened no overlay")
 	}
 	out := stripANSI(strings.Join(m.overlay.lines, "\n"))
-	if !strings.Contains(out, "4 tools advertised") || !strings.Contains(out, "2 deferred") {
+	if !strings.Contains(out, "4 tools advertised") || !strings.Contains(out, "2 locked") {
 		t.Fatalf("tools overlay = %q, want the schema-mass line", out)
 	}
 }
