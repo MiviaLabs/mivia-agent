@@ -243,7 +243,7 @@ func TestPromptTooLongRetryRefreshesPreparation(t *testing.T) {
 	reprepared := prep.inputs[len(prep.inputs)-1]
 	// The re-prepare must have seen the PRUNED history: smaller than what the
 	// original prepareStep saw, and carrying the compaction notice.
-	if got, want := provider.MessagesTokens(reprepared.Messages), provider.MessagesTokens(prep.inputs[0].Messages); got >= want {
+	if got, want := provider.MessagesTokens(reprepared.Messages, provider.ContextAccountingProfile{}), provider.MessagesTokens(prep.inputs[0].Messages, provider.ContextAccountingProfile{}); got >= want {
 		t.Fatalf("re-prepare saw %d tokens, not smaller than the pre-retry %d (stale preparation)", got, want)
 	}
 	noticeInReprepare := false

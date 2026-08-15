@@ -26,7 +26,7 @@ func planValidationMessages() []provider.Message {
 func TestPrepareRejectsOutOfRangeRecentTailBelowTrigger(t *testing.T) {
 	principal, binding := managerDefaultsPrincipal(t)
 	messages := planValidationMessages()
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestPrepareRejectsOutOfRangeRecentTailBelowTrigger(t *testing.T) {
 func TestPrepareRejectsOutOfRangeRecentTailOnForcedPath(t *testing.T) {
 	principal, binding := managerDefaultsPrincipal(t)
 	messages := planValidationMessages()
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestPrepareRejectsOutOfRangeRecentTailOnForcedPath(t *testing.T) {
 func TestPrepareZeroRecentTailIsDefaultEight(t *testing.T) {
 	principal, binding := managerDefaultsPrincipal(t)
 	messages := planValidationMessages()
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestPrepareZeroRecentTailIsDefaultEight(t *testing.T) {
 func TestPrepareAcceptsValidRecentTailBelowTrigger(t *testing.T) {
 	principal, binding := managerDefaultsPrincipal(t)
 	messages := planValidationMessages()
-	cost, err := provider.EstimatePromptCost(messages, nil)
+	cost, err := provider.EstimatePromptCost(messages, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

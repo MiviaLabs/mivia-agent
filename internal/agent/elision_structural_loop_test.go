@@ -78,7 +78,7 @@ func elisionPrincipalBinding(t *testing.T) (contextstate.Principal, contextstate
 func forceElisionBudget(t *testing.T, history []provider.Message, nextUser string, reg *tools.Registry) int {
 	t.Helper()
 	probe := append(append([]provider.Message{}, history...), provider.Message{Role: provider.RoleUser, Content: nextUser})
-	cost, err := provider.EstimatePromptCost(probe, reg.OpenAITools())
+	cost, err := provider.EstimatePromptCost(probe, reg.OpenAITools(), provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

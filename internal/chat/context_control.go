@@ -48,10 +48,11 @@ func (s *Session) ContextUsage() ContextUsage {
 	if s.Tools != nil {
 		toolSpecs = s.Tools.OpenAITools()
 	}
+	profile := provider.ContextAccountingFor(s.binding.Completer)
 	s.mu.RUnlock()
-	used, err := provider.EstimatePromptCost(messages, toolSpecs)
+	used, err := provider.EstimatePromptCost(messages, toolSpecs, profile)
 	if err != nil {
-		used = provider.MessagesTokens(messages)
+		used = provider.MessagesTokens(messages, profile)
 	}
 	percent := 0
 	if budget > 0 {

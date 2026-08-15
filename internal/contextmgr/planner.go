@@ -50,6 +50,13 @@ type PlanInput struct {
 	// CalibrationRatio scales token estimates to correct for heuristic drift.
 	// 0 means use 1.0 (no correction). Should come from a Calibration.Ratio.
 	CalibrationRatio float64
+	// ContextAccounting carries the bound provider's declared context-billing
+	// profile (provider.ContextAccountingProfile) opaquely: the planner never
+	// interprets its fields itself, only passes it to the provider estimators
+	// it already calls. The zero value is the conservative "bill everything"
+	// default, so a caller that leaves this unset behaves exactly as before
+	// the field existed.
+	ContextAccounting provider.ContextAccountingProfile
 	// Spool: nil = elision mints no refs (plain notices), keeping the planner free of storage side effects.
 	Spool *remainder.Spool
 	// Principal: the session principal that receives the remainder grant when Spool is set.
@@ -123,7 +130,7 @@ func Plan(input PlanInput) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, invalidPlan("request_cost", err.Error())
 	}
-	before := applyCalibration(provider.EstimateMessagesPromptCost(input.Messages, schemaCost), input.CalibrationRatio)
+	before := applyCalibration(provider.EstimateMessagesPromptCost(input.Messages, schemaCost, input.ContextAccounting), input.CalibrationRatio)
 	trigger := percentFloor(input.Budget, 4, 5)
 	target := percentFloor(input.Budget, 1, 2)
 	result := PlanResult{
@@ -144,8 +151,8 @@ func invalidPlan(field, reason string) error {
 	return fmt.Errorf("%w: planner %s: %s", contextstate.ErrInvalidDTO, field, reason)
 }
 
-func promptOverflow(after, budget int, objective provider.Message, schemaCost int, ratio float64) error {
-	objectiveCost := applyCalibration(provider.EstimateMessagesPromptCost([]provider.Message{objective}, schemaCost), ratio)
+func promptOverflow(after, budget int, objective provider.Message, schemaCost int, ratio float64, profile provider.ContextAccountingProfile) error {
+	objectiveCost := applyCalibration(provider.EstimateMessagesPromptCost([]provider.Message{objective}, schemaCost, profile), ratio)
 	if objectiveCost > budget {
 		return fmt.Errorf("%w: current objective cost %d exceeds budget %d", contextstate.ErrPromptBudgetExceeded, objectiveCost, budget)
 	}
@@ -178,9 +185,9 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	for index := range mandatory {
 		selected[index] = struct{}{}
 	}
-	selectedCost := calibratedCost(input.Messages, selected, schemaCost, input.CalibrationRatio)
+	selectedCost := calibratedCost(input.Messages, selected, schemaCost, input.CalibrationRatio, input.ContextAccounting)
 	if selectedCost > input.Budget {
-		return nil, promptOverflow(selectedCost, input.Budget, objective, schemaCost, input.CalibrationRatio)
+		return nil, promptOverflow(selectedCost, input.Budget, objective, schemaCost, input.CalibrationRatio, input.ContextAccounting)
 	}
 	tailLimit := input.RecentTail
 	if tailLimit == 0 {
@@ -209,7 +216,7 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 		// adding this unit rather than re-estimating the entire selection.
 		unitTokens := 0
 		for _, index := range unit {
-			unitTokens += provider.EstimateMessageTokens(input.Messages[index])
+			unitTokens += provider.EstimateMessageTokensAt(input.Messages, index, input.ContextAccounting)
 		}
 		candidateCost := runningCost + applyCalibration(unitTokens, input.CalibrationRatio)
 		if candidateCost > target {
@@ -278,8 +285,8 @@ func unitSelected(unit messageUnit, selected map[int]struct{}) bool {
 	return false
 }
 
-func calibratedCost(messages []provider.Message, selected map[int]struct{}, schemaCost int, ratio float64) int {
-	return applyCalibration(provider.EstimateMessagesPromptCost(messagesFromIndexes(messages, selected), schemaCost), ratio)
+func calibratedCost(messages []provider.Message, selected map[int]struct{}, schemaCost int, ratio float64, profile provider.ContextAccountingProfile) int {
+	return applyCalibration(provider.EstimateMessagesPromptCost(messagesFromIndexes(messages, selected), schemaCost, profile), ratio)
 }
 
 func messagesFromIndexes(messages []provider.Message, selected map[int]struct{}) []provider.Message {

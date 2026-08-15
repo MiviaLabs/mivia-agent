@@ -20,7 +20,12 @@ func estimateTokens(s string) int {
 	return n
 }
 
-// MessageTokens returns the estimated token count for a single message.
+// MessageTokens returns the estimated token count for a single message
+// outside any list context - it always charges ReasoningContent. Use this
+// only for a host-synthesized message that never carries ReasoningContent
+// (a pruning/compaction notice); anything read from real conversation
+// history must go through MessageTokensAt so ReasoningContent is charged per
+// the provider's ContextAccountingProfile.
 func MessageTokens(m Message) int {
 	total := estimateTokens(m.Content)
 	total += estimateTokens(m.ReasoningContent)
@@ -32,13 +37,48 @@ func MessageTokens(m Message) int {
 	return total
 }
 
-// MessagesTokens returns the estimated total token count for a slice of messages.
-func MessagesTokens(msgs []Message) int {
-	total := 0
-	for _, m := range msgs {
-		total += MessageTokens(m)
+// MessageTokensAt is MessageTokens for msgs[index], charging ReasoningContent
+// only when profile bills it for that position (see billsReasoningAt).
+func MessageTokensAt(msgs []Message, index int, profile ContextAccountingProfile) int {
+	m := msgs[index]
+	total := estimateTokens(m.Content)
+	if billsReasoningAt(profile, msgs, index) {
+		total += estimateTokens(m.ReasoningContent)
+	}
+	for _, tc := range m.ToolCalls {
+		total += estimateTokens(tc.Function.Name)
+		total += estimateTokens(tc.Function.Arguments)
 	}
 	return total
+}
+
+// MessagesTokens returns the estimated total token count for a slice of
+// messages, charging ReasoningContent per profile.
+func MessagesTokens(msgs []Message, profile ContextAccountingProfile) int {
+	total := 0
+	for index := range msgs {
+		total += MessageTokensAt(msgs, index, profile)
+	}
+	return total
+}
+
+// billsReasoningAt reports whether msgs[index]'s ReasoningContent is charged
+// under profile. Empty ReasoningContent never contributes regardless of
+// profile. ReasoningBillingTerminalExchange reuses terminalToolExchange (the
+// same walk DeepSeek's reasoning-less-tool-turn gate uses) so the two never
+// disagree about what "the current round" means.
+func billsReasoningAt(profile ContextAccountingProfile, msgs []Message, index int) bool {
+	if msgs[index].ReasoningContent == "" {
+		return false
+	}
+	switch profile.ReasoningBilling {
+	case ReasoningBillingNever:
+		return false
+	case ReasoningBillingTerminalExchange:
+		return terminalToolExchange(msgs, index)
+	default:
+		return true
+	}
 }
 
 const (
@@ -56,15 +96,17 @@ const (
 // This is an accounting helper, not a provider tokenizer. Callers use the
 // same function before pruning, planning, and local hard-budget rejection so
 // boundary decisions do not depend on the surface that made the request.
-func EstimateRequestCost(messages []Message, tools []ToolSpec, outputReserve int) (int, error) {
+func EstimateRequestCost(messages []Message, tools []ToolSpec, outputReserve int, profile ContextAccountingProfile) (int, error) {
 	if outputReserve < 0 {
 		return 0, fmt.Errorf("output reserve must not be negative")
 	}
 	total := requestFrameTokens + outputReserve
-	for _, message := range messages {
+	for index, message := range messages {
 		total += messageFrameTokens + estimateTokens(message.Role)
 		total += estimateTokens(message.Content)
-		total += estimateTokens(message.ReasoningContent)
+		if billsReasoningAt(profile, messages, index) {
+			total += estimateTokens(message.ReasoningContent)
+		}
 		total += estimateTokens(message.Name)
 		total += estimateTokens(message.ToolCallID)
 		for _, call := range message.ToolCalls {
@@ -92,10 +134,36 @@ func EstimateRequestCost(messages []Message, tools []ToolSpec, outputReserve int
 // It cannot fail - the cost is pure arithmetic over fields already in memory,
 // with no marshaling. Returning no error keeps callers from writing an error
 // branch that can never be taken (and never be tested).
+//
+// This variant always charges ReasoningContent - it has no list context to
+// resolve a ContextAccountingProfile's ReasoningBillingTerminalExchange
+// against. Use it only for a host-synthesized message that never carries
+// ReasoningContent (a pruning/compaction notice); a message read from real
+// conversation history must go through EstimateMessageTokensAt.
 func EstimateMessageTokens(msg Message) int {
 	total := messageFrameTokens + estimateTokens(msg.Role)
 	total += estimateTokens(msg.Content)
 	total += estimateTokens(msg.ReasoningContent)
+	total += estimateTokens(msg.Name)
+	total += estimateTokens(msg.ToolCallID)
+	for _, call := range msg.ToolCalls {
+		total += toolFrameTokens + estimateTokens(call.ID)
+		total += estimateTokens(call.Type)
+		total += estimateTokens(call.Function.Name)
+		total += estimateTokens(call.Function.Arguments)
+	}
+	return total
+}
+
+// EstimateMessageTokensAt is EstimateMessageTokens for msgs[index], charging
+// ReasoningContent per profile (see billsReasoningAt).
+func EstimateMessageTokensAt(msgs []Message, index int, profile ContextAccountingProfile) int {
+	msg := msgs[index]
+	total := messageFrameTokens + estimateTokens(msg.Role)
+	total += estimateTokens(msg.Content)
+	if billsReasoningAt(profile, msgs, index) {
+		total += estimateTokens(msg.ReasoningContent)
+	}
 	total += estimateTokens(msg.Name)
 	total += estimateTokens(msg.ToolCallID)
 	for _, call := range msg.ToolCalls {
@@ -129,10 +197,10 @@ func EstimateToolSchemaCost(tools []ToolSpec) (int, error) {
 //
 // It cannot fail: with no tools to marshal, the remaining cost is arithmetic
 // over fields already in memory.
-func EstimateMessagesPromptCost(messages []Message, schemaCost int) int {
+func EstimateMessagesPromptCost(messages []Message, schemaCost int, profile ContextAccountingProfile) int {
 	total := requestFrameTokens
-	for _, message := range messages {
-		total += EstimateMessageTokens(message)
+	for index := range messages {
+		total += EstimateMessageTokensAt(messages, index, profile)
 	}
 	return total + schemaCost
 }
@@ -140,18 +208,18 @@ func EstimateMessagesPromptCost(messages []Message, schemaCost int) int {
 // EstimatePromptCost returns the input-side request cost. Callers whose budget
 // already excludes the reserved completion allowance must use this rather than
 // charging that allowance a second time.
-func EstimatePromptCost(messages []Message, tools []ToolSpec) (int, error) {
-	return EstimateRequestCost(messages, tools, 0)
+func EstimatePromptCost(messages []Message, tools []ToolSpec, profile ContextAccountingProfile) (int, error) {
+	return EstimateRequestCost(messages, tools, 0, profile)
 }
 
 // RequestTokens returns the request cost using MaxTokens as the output
 // reserve. It is the convenient form for a fully assembled provider request.
-func RequestTokens(request Request) (int, error) {
+func RequestTokens(request Request, profile ContextAccountingProfile) (int, error) {
 	reserve := 0
 	if request.MaxTokens != nil {
 		reserve = *request.MaxTokens
 	}
-	return EstimateRequestCost(request.Messages, request.Tools, reserve)
+	return EstimateRequestCost(request.Messages, request.Tools, reserve, profile)
 }
 
 // ValidateToolPairing rejects provider message histories that cannot be sent
@@ -247,8 +315,8 @@ func validateToolCall(call ToolCall) error {
 // PruneMessagesKeepTurns is a smarter pruner that removes entire "turns"
 // (user → assistant/tool exchanges) to preserve conversational coherence.
 // It always keeps the system prompt and the most recent turns within budget.
-func PruneMessagesKeepTurns(msgs []Message, maxTokens int) []Message {
-	if maxTokens <= 0 || len(msgs) <= 1 || MessagesTokens(msgs) <= maxTokens {
+func PruneMessagesKeepTurns(msgs []Message, maxTokens int, profile ContextAccountingProfile) []Message {
+	if maxTokens <= 0 || len(msgs) <= 1 || MessagesTokens(msgs, profile) <= maxTokens {
 		return msgs
 	}
 	system, tail := splitSystemMessage(msgs)
@@ -256,8 +324,8 @@ func PruneMessagesKeepTurns(msgs []Message, maxTokens int) []Message {
 	if budget < 1 {
 		budget = 1
 	}
-	kept := tail[keepTurnStart(groupMessageTurns(tail), len(tail), budget):]
-	return joinPrunedMessages(system, pruneWithinTurn(kept, budget))
+	kept := tail[keepTurnStart(groupMessageTurns(tail, profile), len(tail), budget):]
+	return joinPrunedMessages(system, pruneWithinTurn(kept, budget, profile))
 }
 
 type messageTurn struct{ start, tokens int }
@@ -269,19 +337,19 @@ func splitSystemMessage(msgs []Message) (Message, []Message) {
 	return Message{}, msgs
 }
 
-func groupMessageTurns(msgs []Message) []messageTurn {
+func groupMessageTurns(msgs []Message, profile ContextAccountingProfile) []messageTurn {
 	var turns []messageTurn
 	start, tokens := -1, 0
 	for index, message := range msgs {
 		if message.Role == RoleUser && start >= 0 {
 			turns = append(turns, messageTurn{start, tokens})
-			start, tokens = index, MessageTokens(message)
+			start, tokens = index, MessageTokensAt(msgs, index, profile)
 			continue
 		}
 		if start < 0 {
 			start = index
 		}
-		tokens += MessageTokens(message)
+		tokens += MessageTokensAt(msgs, index, profile)
 	}
 	if start >= 0 {
 		turns = append(turns, messageTurn{start, tokens})
@@ -321,8 +389,8 @@ func keepTurnStart(turns []messageTurn, tailLength, budget int) int {
 // once per dropped exchange (O(k*n)); this is O(n) overall, so
 // PruneMessagesKeepTurns - and with it pruneHistory's two calls per step and
 // retryAfterPromptTooLong's one call - is linear in the history size.
-func pruneWithinTurn(msgs []Message, budget int) []Message {
-	total := MessagesTokens(msgs)
+func pruneWithinTurn(msgs []Message, budget int, profile ContextAccountingProfile) []Message {
+	total := MessagesTokens(msgs, profile)
 	if total <= budget {
 		return msgs
 	}
@@ -344,13 +412,13 @@ func pruneWithinTurn(msgs []Message, budget int) []Message {
 		for _, call := range message.ToolCalls {
 			announced[call.ID] = struct{}{}
 		}
-		start, tokens := scan, MessageTokens(message)
+		start, tokens := scan, MessageTokensAt(msgs, scan, profile)
 		scan++
 		for scan < len(msgs) && msgs[scan].Role == RoleTool {
 			if _, ok := announced[msgs[scan].ToolCallID]; !ok {
 				break
 			}
-			tokens += MessageTokens(msgs[scan])
+			tokens += MessageTokensAt(msgs, scan, profile)
 			scan++
 		}
 		blocks = append(blocks, block{start: start, end: scan, tokens: tokens})

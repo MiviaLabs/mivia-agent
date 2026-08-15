@@ -101,7 +101,7 @@ func TestPlanReasoningElisionDropsAfterTokens(t *testing.T) {
 		t.Fatalf("expected full retention under RecentTail=64: compacted=%v retained=%d", plan.Compacted, len(plan.Messages))
 	}
 	// With everything retained, the no-elision cost is the raw history cost.
-	rawCost := provider.EstimateMessagesPromptCost(messages, 0)
+	rawCost := provider.EstimateMessagesPromptCost(messages, 0, provider.ContextAccountingProfile{})
 	if plan.AfterTokens >= rawCost {
 		t.Fatalf("AfterTokens=%d did not drop below raw cost %d", plan.AfterTokens, rawCost)
 	}

@@ -19,7 +19,7 @@ func retentionMessages() []provider.Message {
 
 func TestPlanRejectsAnOutOfRangeRecentTail(t *testing.T) {
 	messages := retentionMessages()
-	budget, err := provider.EstimateRequestCost(messages, nil, 0)
+	budget, err := provider.EstimateRequestCost(messages, nil, 0, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

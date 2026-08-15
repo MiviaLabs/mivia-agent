@@ -299,7 +299,7 @@ func TestIntegration_ShapedBatchKeepsToolPairingIntact(t *testing.T) {
 		}
 	}
 	// Pruning after a degraded batch must still leave a legal history.
-	pruned := provider.PruneMessagesKeepTurns(loop.Messages, 1000)
+	pruned := provider.PruneMessagesKeepTurns(loop.Messages, 1000, provider.ContextAccountingProfile{})
 	assertToolPairing(t, pruned)
 }
 

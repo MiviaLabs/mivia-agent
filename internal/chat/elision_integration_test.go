@@ -132,7 +132,7 @@ func forceCompactionBudget(t *testing.T, session *Session, nextUser string) {
 	if session.Tools != nil {
 		toolSpecs = session.Tools.OpenAITools()
 	}
-	cost, err := provider.EstimatePromptCost(msgs, toolSpecs)
+	cost, err := provider.EstimatePromptCost(msgs, toolSpecs, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

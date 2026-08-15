@@ -51,7 +51,7 @@ func (l *Loop) retryAfterPromptTooLong(req provider.Request, opts Options, llmCt
 	// mutates its input, so the snapshot stays a valid copy of the rejected
 	// history.
 	prePrune := l.Messages
-	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, pruneTarget)
+	l.Messages = provider.PruneMessagesKeepTurns(l.Messages, pruneTarget, l.contextAccounting())
 	// The compaction must be visible to the model, not just the operator:
 	// earlier tool results were dropped, and the next step has no way to know
 	// unless history says so. RoleUser keeps ValidateToolPairing happy
@@ -86,7 +86,7 @@ func (l *Loop) retryAfterPromptTooLong(req provider.Request, opts Options, llmCt
 	// allowance twice, hard-failing a finite MaxOutputTokens budget even though
 	// the rejected call produced no output. reservePromptOnly charges prompt
 	// only; the cumulative output bound still holds.
-	estimatedTokens, _ = provider.EstimatePromptCost(req.Messages, req.Tools)
+	estimatedTokens, _ = provider.EstimatePromptCost(req.Messages, req.Tools, l.contextAccounting())
 	if err := l.workLimits.reservePromptOnly(estimatedTokens); err != nil {
 		return nil, estimatedTokens, err
 	}

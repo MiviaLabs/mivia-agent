@@ -101,7 +101,7 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 	if name == sessionID {
 		opts.SessionID = sessionID
 	}
-	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs), opts); err != nil {
+	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs, provider.ContextAccountingProfile{}), len(msgs), opts); err != nil {
 		return err
 	}
 	return s.persistAdmission(name)

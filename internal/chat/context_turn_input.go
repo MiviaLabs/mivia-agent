@@ -23,7 +23,8 @@ func prepareInputForContext(messages []provider.Message, budget int, maxTokens *
 	return contextmgr.PrepareInput{
 		Messages: messages, Budget: budget, OutputReserve: outputReserve(maxTokens),
 		CurrentObjective: latestUserMessage(messages), Principal: principal,
-		Revision: contextstate.Revision{}, Binding: captureBindingRevision(binding), WorktreeInstance: instance, Policy: policy,
+		ContextAccounting: provider.ContextAccountingFor(binding.Completer),
+		Revision:          contextstate.Revision{}, Binding: captureBindingRevision(binding), WorktreeInstance: instance, Policy: policy,
 		// The session-owned core-memory frame rides on a named user message
 		// right after the system prompt; compaction must keep it whole, so
 		// every planner invocation preserves that Name (BUG 3).

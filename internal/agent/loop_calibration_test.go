@@ -52,12 +52,12 @@ func TestLoopSkipsZeroInputCalibrationUpdate(t *testing.T) {
 // collapse the ratio from ~1.0 to ~0.009 and poison every downstream planner.
 func TestLoopCalibrationUsesReserveFreePromptEstimate(t *testing.T) {
 	msgs := []provider.Message{{Role: provider.RoleUser, Content: "hello"}}
-	promptEstimate, err := provider.EstimatePromptCost(msgs, nil)
+	promptEstimate, err := provider.EstimatePromptCost(msgs, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	maxTokens := 1000
-	reserveInclusive, err := provider.EstimateRequestCost(msgs, nil, maxTokens)
+	reserveInclusive, err := provider.EstimateRequestCost(msgs, nil, maxTokens, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestPrepareStepWiresCalibrationRatio(t *testing.T) {
 // zero-value ratio (0.0, meaning unity) must be emitted as 1.00, not 0.00.
 func TestLoopEmitsPreUpdateCalibrationRatio(t *testing.T) {
 	msgs := []provider.Message{{Role: provider.RoleUser, Content: "hello"}}
-	est, err := provider.EstimatePromptCost(msgs, nil)
+	est, err := provider.EstimatePromptCost(msgs, nil, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}

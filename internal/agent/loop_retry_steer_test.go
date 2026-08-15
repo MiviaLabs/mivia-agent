@@ -116,7 +116,7 @@ func TestLoopPromptTooLongRetryUsesLiveContextWhenSteerFires(t *testing.T) {
 		recovered:        "recovered",
 	}
 	history := buildOversizedHistory()
-	beforeTokens := provider.MessagesTokens(history)
+	beforeTokens := provider.MessagesTokens(history, provider.ContextAccountingProfile{})
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: history}
 
 	text, err := runLoop(t, loop, context.Background(), "final question",
@@ -133,7 +133,7 @@ func TestLoopPromptTooLongRetryUsesLiveContextWhenSteerFires(t *testing.T) {
 	if len(comp.requests) != 2 {
 		t.Fatalf("recorded requests=%d, want 2", len(comp.requests))
 	}
-	retryTokens := provider.MessagesTokens(comp.requests[1].Messages)
+	retryTokens := provider.MessagesTokens(comp.requests[1].Messages, provider.ContextAccountingProfile{})
 	if retryTokens >= 16<<10 {
 		t.Fatalf("retry request not compacted to the 16K target: %d tokens", retryTokens)
 	}

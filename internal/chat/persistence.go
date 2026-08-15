@@ -216,7 +216,7 @@ func (s *Session) saveToSessionDir(name string, msgs []provider.Message, selecti
 		CreatedAt:    createdAt,
 		UpdatedAt:    time.Now(),
 		TurnCount:    turnCount,
-		TokenCount:   provider.MessagesTokens(msgs),
+		TokenCount:   provider.MessagesTokens(msgs, provider.ContextAccountingProfile{}),
 		ChunkCount:   chunkCount,
 		MessageCount: len(msgs),
 		Dir:          ctxDir,

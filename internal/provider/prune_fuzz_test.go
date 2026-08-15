@@ -9,7 +9,7 @@ package provider
 //   - no panic; the pruned history never grows;
 //   - ValidateToolPairing(pruned) is nil whenever the input was validly paired
 //     (an exchange is never split);
-//   - MessagesTokens(pruned) <= budget when the header plus the newest exchange
+//   - MessagesTokens(pruned, ContextAccountingProfile{}) <= budget when the header plus the newest exchange
 //     fit, and an over-budget result holds no droppable exchange (fail-closed);
 //   - pruning is deterministic;
 //   - a system message, when present, stays at index 0;
@@ -36,7 +36,7 @@ func FuzzPruneMessagesKeepTurns(f *testing.F) {
 		if !ok {
 			t.Skip()
 		}
-		checkPruneFuzzInvariants(t, budget, msgs, PruneMessagesKeepTurns(msgs, budget))
+		checkPruneFuzzInvariants(t, budget, msgs, PruneMessagesKeepTurns(msgs, budget, ContextAccountingProfile{}))
 	})
 }
 
@@ -85,7 +85,7 @@ func checkPruneFuzzInvariants(t *testing.T, budget int, msgs, pruned []Message) 
 	}
 
 	// Determinism: the same input must prune to the same history.
-	again := PruneMessagesKeepTurns(msgs, budget)
+	again := PruneMessagesKeepTurns(msgs, budget, ContextAccountingProfile{})
 	if !samePrunedMessages(pruned, again) {
 		t.Fatal("pruning is not deterministic")
 	}
@@ -94,10 +94,10 @@ func checkPruneFuzzInvariants(t *testing.T, budget int, msgs, pruned []Message) 
 	// still over budget must hold no removable exchange - dropping more was
 	// impossible (only the turn header and plain replies are left). For valid
 	// histories an assistant tool_call with results is always removable.
-	if valid && budget > 0 && MessagesTokens(pruned) > budget {
+	if valid && budget > 0 && MessagesTokens(pruned, ContextAccountingProfile{}) > budget {
 		for _, m := range pruned {
 			if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
-				t.Fatalf("over-budget pruned history (%d > %d) still holds a droppable exchange", MessagesTokens(pruned), budget)
+				t.Fatalf("over-budget pruned history (%d > %d) still holds a droppable exchange", MessagesTokens(pruned, ContextAccountingProfile{}), budget)
 			}
 		}
 	}
@@ -110,10 +110,10 @@ func checkPruneFuzzInvariants(t *testing.T, budget int, msgs, pruned []Message) 
 	// only fires when the early-return path already keeps everything.
 	if valid && budget > 0 && userMessageCount(msgs) == 1 {
 		if start, end, ok := newestExchangeRange(msgs); ok {
-			header := MessagesTokens(msgs[:start]) + MessagesTokens(msgs[end:])
-			newest := MessagesTokens(msgs[start:end])
-			if header+newest <= budget && MessagesTokens(pruned) > budget {
-				t.Fatalf("pruned history (%d) exceeds budget %d although header+newest exchange fit (%d)", MessagesTokens(pruned), budget, header+newest)
+			header := MessagesTokens(msgs[:start], ContextAccountingProfile{}) + MessagesTokens(msgs[end:], ContextAccountingProfile{})
+			newest := MessagesTokens(msgs[start:end], ContextAccountingProfile{})
+			if header+newest <= budget && MessagesTokens(pruned, ContextAccountingProfile{}) > budget {
+				t.Fatalf("pruned history (%d) exceeds budget %d although header+newest exchange fit (%d)", MessagesTokens(pruned, ContextAccountingProfile{}), budget, header+newest)
 			}
 		}
 	}

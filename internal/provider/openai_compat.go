@@ -65,6 +65,9 @@ type OpenAICompat struct {
 	// DeepSeek sets both; z.ai sets replay only so reasoning=off tool turns
 	// still ship. Set once at construction and never mutated.
 	rejectReasoningLessToolTurns bool
+	// contextAccounting mirrors CompatOptions.ContextAccounting. Set once at
+	// construction and never mutated; safe to read without synchronization.
+	contextAccounting ContextAccountingProfile
 }
 
 // CompatOptions configures an OpenAI-compatible client.
@@ -111,6 +114,11 @@ type CompatOptions struct {
 	// RequiresReasoningReplay: z.ai sets replay without this bit so a
 	// reasoning=off multi-step tool run still ships those turns.
 	RejectReasoningLessToolTurns bool
+	// ContextAccounting declares how this provider's server bills prompt
+	// context (see ContextAccountingProfile). The zero value is the
+	// conservative "bill everything" default, so a factory that leaves this
+	// unset behaves exactly as before the field existed.
+	ContextAccounting ContextAccountingProfile
 	// DialContext pins every dial for keyless loopback clients; nil keeps http.DefaultTransport.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
@@ -135,6 +143,7 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		replayReasoning:              opts.RequiresReasoningReplay,
 		replayReasoningField:         opts.ReplayReasoningField,
 		rejectReasoningLessToolTurns: opts.RejectReasoningLessToolTurns,
+		contextAccounting:            opts.ContextAccounting,
 		client: &http.Client{
 			Timeout:       DefaultHTTPTimeout,
 			Transport:     newRetryRoundTripper(compatBaseRoundTripper(opts.DialContext), retry),
@@ -191,6 +200,7 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		replayReasoning:              options.RequiresReasoningReplay,
 		replayReasoningField:         options.ReplayReasoningField,
 		rejectReasoningLessToolTurns: options.RejectReasoningLessToolTurns,
+		contextAccounting:            options.ContextAccounting,
 		client: &http.Client{
 			Timeout:       DefaultHTTPTimeout,
 			Transport:     newRetryRoundTripper(compatBaseRoundTripper(options.DialContext), baseOpts),
@@ -332,23 +342,8 @@ func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, er
 // returned for one assistant message, in precedence order: the canonical
 // resolveReasoningContent picks the response reasoning with precedence
 // reasoning_content > reasoning > reasoning_details concatenation.
-func resolveReasoningContent(reasoningContent, reasoning string, details []reasoningDetailWire) string {
-	if reasoningContent != "" {
-		return reasoningContent
-	}
-	if reasoning != "" {
-		return reasoning
-	}
-	var b strings.Builder
-	for _, d := range details {
-		if d.Text != "" {
-			b.WriteString(d.Text)
-		} else if d.Summary != "" {
-			b.WriteString(d.Summary)
-		}
-	}
-	return b.String()
-}
+// resolveReasoningContent and retryWithoutStreaming live in
+// openai_compat_retry.go.
 
 // ChatStream streams SSE text deltas to w. With tools present, uses ChatTurn
 // streaming so tool_calls still assemble correctly while content is live.
@@ -473,28 +468,3 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 // request-shaping field has to be repeated here. Omitting the reasoning pair
 // would silently downgrade the model on exactly the turn that already produced
 // nothing.
-func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w io.Writer) (string, error) {
-	content, err := c.Chat(ctx, Request{
-		Model:            req.Model,
-		Messages:         req.Messages,
-		Temperature:      req.Temperature,
-		MaxTokens:        req.MaxTokens,
-		ToolChoice:       req.ToolChoice,
-		Timeout:          req.Timeout,
-		Stream:           false,
-		ReasoningLevel:   req.ReasoningLevel,
-		ReasoningDialect: req.ReasoningDialect,
-	})
-	if err != nil {
-		return content, err
-	}
-	// The fallback fires only when nothing was live-written, so writing the
-	// answer here delivers it exactly once. Mirrors the tool-capable path in
-	// chatTurnStream. Nil-safe: ChatStream allows a nil writer.
-	if w != nil {
-		if _, werr := io.WriteString(w, content); werr != nil {
-			return content, werr
-		}
-	}
-	return content, nil
-}

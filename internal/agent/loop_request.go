@@ -45,7 +45,7 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 		go l.steerWatcher(ctx, scope, opts, &steerFired, stepDone)
 	}
 
-	estimatedTokens, _ := provider.EstimatePromptCost(req.Messages, req.Tools)
+	estimatedTokens, _ := provider.EstimatePromptCost(req.Messages, req.Tools, l.contextAccounting())
 	if err := l.workLimits.reserveProvider(estimatedTokens, requestOutputReserve(req)); err != nil {
 		return nil, err
 	}
