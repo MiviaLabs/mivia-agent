@@ -235,6 +235,7 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		"review-synthesis",
 		"secure-change", "simplification-review",
 		"verify-change", "verify-code-change", "workflow-feature-delivery",
+		"workflow-runs-analysis",
 	}
 	got := make(map[string]bool)
 	for _, def := range reg.List() {

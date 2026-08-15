@@ -73,6 +73,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-linux
+      # The sandbox mounts GOMODCACHE read-only, so every module the
+      # sandboxed `go test` needs must already be on disk before it starts.
+      - name: Warm module cache
+        run: go mod download
       - name: Verifier integration sandbox profile
         run: make verifier-integration
 

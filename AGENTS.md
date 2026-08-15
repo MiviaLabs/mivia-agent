@@ -216,6 +216,7 @@ Repo-native:
 | `concurrency-review` | Fan-out, pools, cancel, race |
 | `architecture-review` | Boundaries, abstraction level, over-engineering (ADLC Step 0) |
 | `feature-delivery` | Bounded feature slice delivery |
+| `workflow-runs-analysis` | Read-only validated analysis of workflow-run ledger; process-quality findings |
 
 Workflow panel (read-only, JSON-only; used by the `feature-delivery` `review_panel` members):
 

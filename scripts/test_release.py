@@ -122,8 +122,8 @@ def main() -> None:
     if not setup_path.is_file():
         raise AssertionError(f"{setup_path}: missing Linux setup action")
     setup = setup_path.read_text(encoding="utf-8")
-    if ci.count("uses: ./.github/actions/setup-linux") != 2:
-        raise AssertionError(f"{ci_path}: both Linux jobs must use the setup action")
+    if ci.count("uses: ./.github/actions/setup-linux") != 5:
+        raise AssertionError(f"{ci_path}: all Linux jobs must use the setup action")
     for fragment in (
         "using: composite",
         "bubblewrap ripgrep",
