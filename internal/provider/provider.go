@@ -248,26 +248,37 @@ var (
 	builtinsErr      error
 )
 
+// builtinEntry pairs a provider name with the factory that builds it.
+type builtinEntry struct {
+	name    string
+	factory providerFactory
+}
+
+var builtins = []builtinEntry{
+	{"deepseek", NewDeepSeek},
+	{"openrouter", NewOpenRouter},
+	{"zai", NewZAI},
+	{"ollama", NewOllama},
+	{"llmgateway", NewLLMGateway},
+}
+
+// registerAll registers each entry in order, stopping at the first error.
+func registerAll(registry *factoryRegistry, entries []builtinEntry) error {
+	for _, entry := range entries {
+		if err := registry.register(entry.name, entry.factory); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func registerBuiltins() error {
 	builtinsOnce.Do(func() {
 		registry := newFactoryRegistry()
-		if err := registry.register("deepseek", NewDeepSeek); err != nil {
-			builtinsErr = err
-			return
+		builtinsErr = registerAll(registry, builtins)
+		if builtinsErr == nil {
+			builtinFactories = registry
 		}
-		if err := registry.register("openrouter", NewOpenRouter); err != nil {
-			builtinsErr = err
-			return
-		}
-		if err := registry.register("zai", NewZAI); err != nil {
-			builtinsErr = err
-			return
-		}
-		if err := registry.register("ollama", NewOllama); err != nil {
-			builtinsErr = err
-			return
-		}
-		builtinFactories = registry
 	})
 	return builtinsErr
 }

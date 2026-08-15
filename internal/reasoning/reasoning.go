@@ -129,11 +129,14 @@ func (d Dialect) CanGrade() bool {
 // against current official documentation. DeepSeek uses thinking_effort (the
 // thinking object plus top-level reasoning_effort) and requires
 // reasoning_content replay, which the provider client implements via
-// RequiresReasoningReplay.
+// RequiresReasoningReplay. LLM Gateway's OpenAI-compatible surface accepts the
+// top-level reasoning_effort shorthand and never downgrades effort tiers
+// (https://docs.llmgateway.io/features/reasoning).
 var defaultDialects = map[string]Dialect{
 	"zai":        DialectThinking,
 	"openrouter": DialectOpenAI,
 	"deepseek":   DialectThinkingEffort,
+	"llmgateway": DialectOpenAI,
 }
 
 // DefaultDialect returns the vetted wire dialect for a built-in provider.

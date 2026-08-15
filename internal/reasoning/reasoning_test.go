@@ -169,6 +169,7 @@ func TestDefaultDialectCoversVettedProvidersOnly(t *testing.T) {
 		{"zai", DialectThinking, true},
 		{"openrouter", DialectOpenAI, true},
 		{"deepseek", DialectThinkingEffort, true},
+		{"llmgateway", DialectOpenAI, true},
 		{"kimi", "", false},
 		{"", "", false},
 	}
@@ -331,6 +332,7 @@ func TestResolveFillsTheDialectFromTheVettedDefault(t *testing.T) {
 func TestDefaultDialectCoversTheClientsThatDependOnIt(t *testing.T) {
 	for provider, want := range map[string]Dialect{
 		"zai": DialectThinking, "openrouter": DialectOpenAI, "deepseek": DialectThinkingEffort,
+		"llmgateway": DialectOpenAI,
 	} {
 		got, ok := DefaultDialect(provider)
 		if !ok {
