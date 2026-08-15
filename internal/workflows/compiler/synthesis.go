@@ -430,21 +430,19 @@ func validateSynthesizedGraph(cw *CompiledWorkflow) error {
 	var errs []string
 	validators := []struct {
 		name string
-		run  func() error
+		run  func() []string
 	}{
-		{"validateGraph", func() error { return validateGraph(wf, stepIDs) }},
-		{"validateTransitions", func() error { return validateTransitions(wf, stepIDs, false) }},
-		{"validateCycles", func() error { return validateCycles(wf) }},
-		{"validateContextBindings", func() error { return validateContextBindings(wf, stepIDs, false) }},
-		{"validateOnFailure", func() error { return validateOnFailure(wf, stepIDs) }},
-		{"validateLimitsAndStacking", func() error { return validateLimitsAndStacking(wf, stepIDs) }},
-		{"validateStepMaxTurns", func() error { return validateStepMaxTurns(wf) }},
-		{"validatePanels", func() error { return validatePanels(wf) }},
+		{"validateGraph", func() []string { return validateGraph(wf, stepIDs) }},
+		{"validateTransitions", func() []string { return validateTransitions(wf, stepIDs, false) }},
+		{"validateCycles", func() []string { return validateCycles(wf) }},
+		{"validateContextBindings", func() []string { return validateContextBindings(wf, stepIDs, false) }},
+		{"validateOnFailure", func() []string { return validateOnFailure(wf, stepIDs) }},
+		{"validateLimitsAndStacking", func() []string { return validateLimitsAndStacking(wf, stepIDs) }},
+		{"validateStepMaxTurns", func() []string { return validateStepMaxTurns(wf) }},
+		{"validatePanels", func() []string { return validatePanels(wf) }},
 	}
 	for _, v := range validators {
-		if err := v.run(); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", v.name, err))
-		}
+		errs = append(errs, v.run()...)
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("stacking synthesis validation failed:\n  - %s", strings.Join(errs, "\n  - "))

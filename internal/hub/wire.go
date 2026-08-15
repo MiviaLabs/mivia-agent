@@ -54,6 +54,11 @@ type WireCompaction struct {
 	// for every relayed compaction, including summarized ones, and a second
 	// surface renders the opposite of what happened.
 	Summarized bool `json:"summarized"`
+	// Reason mirrors events.CompactionEvent.Reason: the classified,
+	// content-free explanation for Summarized=false, so a second live
+	// surface (the relaying process) can render the same real cause the
+	// originating process saw instead of a generic fallback.
+	Reason string `json:"reason,omitempty"`
 }
 
 // toWire projects an internal events.Event onto the wire format. Metadata
@@ -77,6 +82,7 @@ func toWire(ev events.Event) WireEvent {
 			SourceRange:    ev.Compaction.SourceRange,
 			SummaryVersion: ev.Compaction.SummaryVersion,
 			Summarized:     ev.Compaction.Summarized,
+			Reason:         ev.Compaction.Reason,
 		}
 	}
 	if ev.Err != nil {
@@ -105,6 +111,7 @@ func fromWire(w WireEvent) events.Event {
 			SourceRange:    w.Compaction.SourceRange,
 			SummaryVersion: w.Compaction.SummaryVersion,
 			Summarized:     w.Compaction.Summarized,
+			Reason:         w.Compaction.Reason,
 		})
 	}
 	if w.ErrorText != "" {

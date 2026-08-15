@@ -29,10 +29,10 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile committed feature-delivery workflow: %v", err)
 	}
-	if err := compiler.ValidateAgentReferences(&workflow, root); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateAgentReferences(&workflow, root)); err != nil {
 		t.Fatalf("validate committed workflow agents: %v", err)
 	}
-	if err := compiler.ValidateSchemaReferences(&workflow, base); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateSchemaReferences(&workflow, base)); err != nil {
 		t.Fatalf("validate committed workflow schemas: %v", err)
 	}
 	for _, step := range workflow.Steps {
@@ -55,7 +55,7 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load committed workflow agents: %v", err)
 	}
-	if err := compiler.ValidateAgentSkillReferences(compiled, loaded.Registry, skillRegistry); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateAgentSkillReferences(compiled, loaded.Registry, skillRegistry)); err != nil {
 		t.Fatalf("validate committed workflow agent skills: %v", err)
 	}
 

@@ -14,45 +14,46 @@ type providerModel struct {
 }
 
 // validatePanels validates static agent_panel member declarations.
-func validatePanels(wf *definition.WorkflowFile) error {
+func validatePanels(wf *definition.WorkflowFile) []string {
+	var errs []string
 	for _, step := range wf.Steps {
 		if step.Kind != "agent_panel" {
 			if step.Panel != nil {
-				return fmt.Errorf("step %q: panel is only valid for kind %q", step.ID, "agent_panel")
+				errs = append(errs, fmt.Sprintf("step %q: panel is only valid for kind %q", step.ID, "agent_panel"))
 			}
 			continue
 		}
 		if step.Panel == nil {
-			return fmt.Errorf("step %q: panel is required for kind %q", step.ID, step.Kind)
+			errs = append(errs, fmt.Sprintf("step %q: panel is required for kind %q", step.ID, step.Kind))
+			continue
 		}
 		if strings.TrimSpace(step.Agent) == "" {
-			return fmt.Errorf("step %q: agent is required for kind %q", step.ID, step.Kind)
+			errs = append(errs, fmt.Sprintf("step %q: agent is required for kind %q", step.ID, step.Kind))
 		}
 		if step.Panel.FailurePolicy != "require_all" {
-			return fmt.Errorf("step %q: panel failure_policy must be \"require_all\"", step.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel failure_policy must be \"require_all\"", step.ID))
 		}
 		if !step.Panel.RequireDistinctBindings {
-			return fmt.Errorf("step %q: panel require_distinct_bindings must be true", step.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel require_distinct_bindings must be true", step.ID))
 		}
 		if len(step.Panel.Members) < 2 || len(step.Panel.Members) > 4 {
-			return fmt.Errorf("step %q: panel must have between 2 and 4 members", step.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel must have between 2 and 4 members", step.ID))
 		}
-		if err := validatePanelMembers(step.ID, step.Panel.Members); err != nil {
-			return err
-		}
+		errs = append(errs, validatePanelMembers(step.ID, step.Panel.Members)...)
 	}
-	return nil
+	return errs
 }
 
-func validatePanelMembers(stepID string, members []definition.PanelMember) error {
+func validatePanelMembers(stepID string, members []definition.PanelMember) []string {
+	var errs []string
 	memberIDs := make(map[string]struct{}, len(members))
 	bindings := make(map[providerModel]struct{}, len(members))
 	for index, member := range members {
 		if strings.TrimSpace(member.ID) == "" {
-			return fmt.Errorf("step %q: panel member[%d]: id is required", stepID, index)
+			errs = append(errs, fmt.Sprintf("step %q: panel member[%d]: id is required", stepID, index))
 		}
 		if member.ID == "synthesis" {
-			return fmt.Errorf("step %q: panel member id %q is reserved", stepID, member.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel member id %q is reserved", stepID, member.ID))
 		}
 		// Wave 5's controller.sourceKeyDigest concatenates MemberID and
 		// FindingID with 0x00/0x1e separators. A member ID carrying one of
@@ -62,26 +63,26 @@ func validatePanelMembers(stepID string, members []definition.PanelMember) error
 		// a member ID is workflow-definition-authored, so it is checked here,
 		// at compile time, once.
 		if textutil.HasControlByte(member.ID) {
-			return fmt.Errorf("step %q: panel member id %q contains a control character", stepID, member.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel member id %q contains a control character", stepID, member.ID))
 		}
 		if _, exists := memberIDs[member.ID]; exists {
-			return fmt.Errorf("step %q: panel has duplicate member id %q", stepID, member.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel has duplicate member id %q", stepID, member.ID))
 		}
 		memberIDs[member.ID] = struct{}{}
 		if strings.TrimSpace(member.Agent) == "" {
-			return fmt.Errorf("step %q: panel member %q: agent is required", stepID, member.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel member %q: agent is required", stepID, member.ID))
 		}
 		if strings.TrimSpace(member.Provider) == "" || strings.TrimSpace(member.Model) == "" {
-			return fmt.Errorf("step %q: panel member %q: provider and model must both be set", stepID, member.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel member %q: provider and model must both be set", stepID, member.ID))
 		}
 		if strings.TrimSpace(member.Skill) == "" {
-			return fmt.Errorf("step %q: panel member %q: skill is required", stepID, member.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel member %q: skill is required", stepID, member.ID))
 		}
 		if strings.TrimSpace(member.Template) == "" {
-			return fmt.Errorf("step %q: panel member %q: template is required", stepID, member.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel member %q: template is required", stepID, member.ID))
 		}
 		if strings.TrimSpace(member.OutputSchema) == "" {
-			return fmt.Errorf("step %q: panel member %q: output_schema is required", stepID, member.ID)
+			errs = append(errs, fmt.Sprintf("step %q: panel member %q: output_schema is required", stepID, member.ID))
 		}
 		// Normalize the binding before comparing: the provider registry resolves
 		// names via strings.ToLower(strings.TrimSpace(name)) (providerregistry)
@@ -98,9 +99,9 @@ func validatePanelMembers(stepID string, members []definition.PanelMember) error
 			model:    strings.TrimSpace(member.Model),
 		}
 		if _, exists := bindings[binding]; exists {
-			return fmt.Errorf("step %q: panel has duplicate provider/model binding %q/%q", stepID, member.Provider, member.Model)
+			errs = append(errs, fmt.Sprintf("step %q: panel has duplicate provider/model binding %q/%q", stepID, member.Provider, member.Model))
 		}
 		bindings[binding] = struct{}{}
 	}
-	return nil
+	return errs
 }

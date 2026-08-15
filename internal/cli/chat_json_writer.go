@@ -146,6 +146,9 @@ type ndjsonCompaction struct {
 	// cannot carry this and a consumer had no way to tell a summarized
 	// compaction from a purely structural one.
 	Summarized bool `json:"summarized"`
+	// Reason is the classified, content-free cause when Summarized is false
+	// (see events.CompactionEvent.Reason). Empty when Summarized is true.
+	Reason string `json:"reason,omitempty"`
 }
 
 // writeTokenUsageLine frames one provider-reported token accounting record
@@ -193,6 +196,7 @@ func compactionPayload(typed events.CompactionEvent) *ndjsonCompaction {
 		ElidedBytes:    typed.ElidedBytes,
 		SummaryVersion: typed.SummaryVersion,
 		Summarized:     typed.Summarized,
+		Reason:         typed.Reason,
 	}
 }
 

@@ -9,10 +9,16 @@ import (
 )
 
 // validateGraph checks reachability, terminal paths, and loop bounds.
-func validateGraph(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
+func validateGraph(wf *definition.WorkflowFile, stepIDs map[string]bool) []string {
+	var errs []string
+
+	// Track known-bad step IDs to suppress cascade noise inside this validator.
+	badSteps := make(map[string]bool)
+
 	// Check initial step exists
 	if !stepIDs[wf.InitialStep] {
-		return fmt.Errorf("initial_step %q is not a declared step", wf.InitialStep)
+		errs = append(errs, fmt.Sprintf("initial_step %q is not a declared step", wf.InitialStep))
+		badSteps[wf.InitialStep] = true
 	}
 
 	// Build adjacency list: step -> reachable next steps
@@ -28,36 +34,39 @@ func validateGraph(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
 		}
 	}
 
-	// BFS reachability from initial_step
+	// BFS reachability from initial_step (skipped when initial_step is bad to
+	// avoid cascade noise: all steps would appear unreachable)
 	visited := make(map[string]bool)
-	queue := []string{wf.InitialStep}
-	visited[wf.InitialStep] = true
+	if !badSteps[wf.InitialStep] {
+		queue := []string{wf.InitialStep}
+		visited[wf.InitialStep] = true
 
-	// Delivery re-entry targets are reachable from the delivery phase, which
-	// runs after the success terminal, outside the step graph.
-	queue = seedDeliveryTargets(wf, stepIDs, visited, queue)
+		// Delivery re-entry targets are reachable from the delivery phase, which
+		// runs after the success terminal, outside the step graph.
+		queue = seedDeliveryTargets(wf, stepIDs, visited, queue)
 
-	for len(queue) > 0 {
-		curr := queue[0]
-		queue = queue[1:]
-		for _, next := range adj[curr] {
-			if !visited[next] {
-				visited[next] = true
-				queue = append(queue, next)
+		for len(queue) > 0 {
+			curr := queue[0]
+			queue = queue[1:]
+			for _, next := range adj[curr] {
+				if !visited[next] {
+					visited[next] = true
+					queue = append(queue, next)
+				}
 			}
 		}
-	}
 
-	// Check for unreachable steps
-	var unreachable []string
-	for id := range stepIDs {
-		if !visited[id] {
-			unreachable = append(unreachable, id)
+		// Check for unreachable steps
+		var unreachable []string
+		for id := range stepIDs {
+			if !visited[id] {
+				unreachable = append(unreachable, id)
+			}
 		}
-	}
-	if len(unreachable) > 0 {
-		sort.Strings(unreachable)
-		return fmt.Errorf("unreachable steps: %s", strings.Join(unreachable, ", "))
+		if len(unreachable) > 0 {
+			sort.Strings(unreachable)
+			errs = append(errs, fmt.Sprintf("unreachable steps: %s", strings.Join(unreachable, ", ")))
+		}
 	}
 
 	// Check that at least one transition leads to a terminal (success or failure)
@@ -72,10 +81,10 @@ func validateGraph(wf *definition.WorkflowFile, stepIDs map[string]bool) error {
 	}
 	// At minimum, success path must exist. Failure path is optional (default on_failure covers it).
 	if !hasSuccessPath {
-		return fmt.Errorf("no transition leads to the success terminal")
+		errs = append(errs, "no transition leads to the success terminal")
 	}
 
-	return nil
+	return errs
 }
 
 // seedDeliveryTargets adds delivery re-entry steps to the reachability
@@ -107,7 +116,7 @@ func seedDeliveryTargets(wf *definition.WorkflowFile, stepIDs map[string]bool, v
 // A named edge with max_iterations > 0 bounds any cycle it belongs to, so such
 // edges are excluded from the uncapped-cycle graph. Reserved terminals
 // (success, failure) and unknown targets are not part of the step graph.
-func validateCycles(wf *definition.WorkflowFile) error {
+func validateCycles(wf *definition.WorkflowFile) []string {
 	// Build step ID set
 	stepIDs := make(map[string]bool, len(wf.Steps))
 	for _, s := range wf.Steps {
@@ -171,5 +180,5 @@ func validateCycles(wf *definition.WorkflowFile) error {
 		return nil
 	}
 
-	return fmt.Errorf("workflow has an unbounded cycle (no loop with max_iterations > 0) but max_step_attempts and max_duration_seconds are both 0; set at least one global limit")
+	return []string{"workflow has an unbounded cycle (no loop with max_iterations > 0) but max_step_attempts and max_duration_seconds are both 0; set at least one global limit"}
 }

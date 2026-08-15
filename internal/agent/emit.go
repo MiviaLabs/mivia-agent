@@ -111,14 +111,17 @@ func EmitTokenUsage(opts Options, providerName, model string, usage provider.Tok
 // EmitCompaction publishes the sealed, content-free progress event after the
 // owning surface has durably committed the preparation. It is intentionally
 // separate from emit so the generic event adapter cannot receive summary data.
-func EmitCompaction(opts Options, preparation contextmgr.Preparation, summarized bool) {
+// reason is only meaningful when summarized is false: the classified,
+// content-free cause (see events.CompactionEvent.Reason). Callers pass "" when
+// they have none to report.
+func EmitCompaction(opts Options, preparation contextmgr.Preparation, summarized bool, reason string) {
 	if !preparation.Compacted {
 		return
 	}
 	typed, err := events.NewCompactionEvent(events.CompactionEventParams{
 		Trigger: "threshold", BeforeTokens: preparation.BeforeTokens, AfterTokens: preparation.AfterTokens,
 		ElidedMessages: preparation.ElidedMessages, ElidedBytes: preparation.ElidedBytes,
-		SourceRange: preparation.Token.Range, SummaryVersion: 1, Summarized: summarized,
+		SourceRange: preparation.Token.Range, SummaryVersion: 1, Summarized: summarized, Reason: reason,
 	})
 	if err != nil {
 		return
@@ -132,7 +135,11 @@ func EmitCompaction(opts Options, preparation contextmgr.Preparation, summarized
 	// the dropped messages were summarized is the difference between
 	// "compaction worked" and "compaction silently threw context away".
 	if !typed.Summarized {
-		detail += " (structural only, no summary)"
+		detail += " (structural only, no summary"
+		if typed.Reason != "" {
+			detail += ": " + typed.Reason
+		}
+		detail += ")"
 	}
 	e := Event{Kind: EventCompaction, Detail: detail, Compaction: &typed}
 	if opts.OnEvent != nil {

@@ -32,7 +32,7 @@ func TestCoverageSynthesizeStackingFailClosed(t *testing.T) {
 			if err == nil {
 				t.Fatal("SynthesizeStacking accepted a reserved or agentless workflow")
 			}
-			wantSubstrings(t, err, []string{tt.wantErr})
+			wantSubstrings(t, errToSlice(err), []string{tt.wantErr})
 		})
 	}
 }
@@ -44,7 +44,7 @@ func TestCoverageSynthesizeStackingDisabledOptOut(t *testing.T) {
 		t.Fatalf("CompiledWorkflow.Stacking = %+v, want nil", cw.Stacking)
 	}
 	synth, err := SynthesizeStacking(cw)
-	wantSubstrings(t, err, nil)
+	wantSubstrings(t, errToSlice(err), nil)
 	if synth != cw {
 		t.Error("SynthesizeStacking returned a different pointer for nil stacking")
 	}
@@ -57,7 +57,7 @@ func TestCoverageSynthesizedStepsInheritAgentWithEmptySkill(t *testing.T) {
 	wf.Steps[0].Skill = "planning"
 	cw := covCompile(t, wf)
 	synth, err := SynthesizeStacking(cw)
-	wantSubstrings(t, err, nil)
+	wantSubstrings(t, errToSlice(err), nil)
 	planAgent := stepByID(t, cw, "plan").Agent
 	for _, id := range []string{"decompose", "chunk_plan_validate"} {
 		s := stepByID(t, synth, id)
@@ -72,14 +72,14 @@ func TestCoverageSynthesizedStepsInheritAgentWithEmptySkill(t *testing.T) {
 func TestCoverageDigestStableAcrossSynthesis(t *testing.T) {
 	cw := compileStackingFixture(t)
 	synth, err := SynthesizeStacking(cw)
-	wantSubstrings(t, err, nil)
+	wantSubstrings(t, errToSlice(err), nil)
 	cw2 := covCompile(t, stackingFixture())
 	if cw2.Digest != cw.Digest || synth.Digest != cw.Digest {
 		t.Errorf("stacked digest unstable: base %q fresh %q synth %q", cw.Digest, cw2.Digest, synth.Digest)
 	}
 	plain := covCompile(t, newMinimalWorkflow("synthesis-digest-plain"))
 	psynth, err := SynthesizeStacking(plain)
-	wantSubstrings(t, err, nil)
+	wantSubstrings(t, errToSlice(err), nil)
 	if psynth != plain {
 		t.Error("SynthesizeStacking returned a different pointer for nil stacking")
 	}

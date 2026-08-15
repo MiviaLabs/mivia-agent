@@ -285,6 +285,12 @@ type ContextManager struct {
 	// PreparationCommitter fields.
 	Summarizer *Summarizer
 	Enabled    bool
+	// SummaryUnavailableReason names why Summarizer is nil, when it is: a
+	// fixed, classified, content-free string set once at session setup (see
+	// internal/cli's summaryDisabledReason). Every compaction path in the
+	// session's lifetime reads it to report a real cause instead of a bare
+	// "not summarized" boolean. Empty when Summarizer is configured.
+	SummaryUnavailableReason string
 }
 
 func (m ContextManager) Prepare(ctx context.Context, input PrepareInput) (Preparation, error) {

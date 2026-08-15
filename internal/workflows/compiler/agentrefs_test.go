@@ -33,12 +33,12 @@ func TestValidateAgentReferences_NoAgentsDir(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err == nil {
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) == 0 {
 		t.Fatal("expected error when .mivia/agents/ doesn't exist and step references agent")
 	}
-	if err.Error() != `step "do-thing": agent "worker" not found in `+filepath.Join(tmpDir, ".mivia", "agents") {
-		t.Errorf("unexpected error: %v", err)
+	if strings.Join(errs, "; ") != `step "do-thing": agent "worker" not found in `+filepath.Join(tmpDir, ".mivia", "agents") {
+		t.Errorf("unexpected error: %v", errs)
 	}
 }
 
@@ -53,9 +53,9 @@ func TestValidateAgentReferences_AgentFound(t *testing.T) {
 	}
 
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected error: %v", errs)
 	}
 }
 
@@ -70,13 +70,13 @@ func TestValidateAgentReferences_AgentNotFound(t *testing.T) {
 	}
 
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err == nil {
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) == 0 {
 		t.Fatal("expected error when agent 'worker' is not in .mivia/agents/")
 	}
 	expected := `step "do-thing": agent "worker" not found in ` + agentsDir
-	if err.Error() != expected {
-		t.Errorf("error = %q, want %q", err.Error(), expected)
+	if strings.Join(errs, "; ") != expected {
+		t.Errorf("error = %q, want %q", strings.Join(errs, "; "), expected)
 	}
 }
 
@@ -85,9 +85,9 @@ func TestValidateAgentReferences_NonAgentStepSkipped(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	wf := agentTestWorkflow("review", "human_gate", "some-agent")
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err != nil {
-		t.Fatalf("expected no error for non-agent step with agent field: %v", err)
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) > 0 {
+		t.Fatalf("expected no error for non-agent step with agent field: %v", errs)
 	}
 }
 
@@ -102,9 +102,9 @@ func TestValidateAgentReferences_YamlExtension(t *testing.T) {
 	}
 
 	wf := agentTestWorkflow("do-review", "agent_gate", "reviewer")
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected error: %v", errs)
 	}
 }
 
@@ -117,8 +117,8 @@ func TestValidateAgentReferences_TOMLExtension(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(agentsDir, "worker.toml"), []byte("name = \"worker\""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateAgentReferences(agentTestWorkflow("do-work", "agent", "worker"), tmpDir); err != nil {
-		t.Fatalf("toml agent reference: %v", err)
+	if errs := ValidateAgentReferences(agentTestWorkflow("do-work", "agent", "worker"), tmpDir); len(errs) > 0 {
+		t.Fatalf("toml agent reference: %v", errs)
 	}
 }
 
@@ -135,12 +135,12 @@ func TestValidateAgentReferences_AgentsDirIsFile(t *testing.T) {
 	}
 
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err == nil {
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) == 0 {
 		t.Fatal("expected error when .mivia/agents is a regular file")
 	}
-	if !strings.Contains(err.Error(), "reading agents directory") {
-		t.Errorf("error %q should mention reading agents directory", err.Error())
+	if !strings.Contains(strings.Join(errs, "; "), "reading agents directory") {
+		t.Errorf("error %q should mention reading agents directory", strings.Join(errs, "; "))
 	}
 }
 
@@ -169,8 +169,8 @@ func TestValidateAgentReferences_SkipsEmptyAgentField(t *testing.T) {
 			{From: "second", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	if err := ValidateAgentReferences(wf, tmpDir); err != nil {
-		t.Fatalf("expected no error: %v", err)
+	if errs := ValidateAgentReferences(wf, tmpDir); len(errs) > 0 {
+		t.Fatalf("expected no error: %v", errs)
 	}
 }
 
@@ -185,9 +185,9 @@ func TestValidateAgentReferences_SkipsSubdirectories(t *testing.T) {
 	}
 
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected error: %v", errs)
 	}
 }
 
@@ -205,9 +205,9 @@ func TestValidateAgentReferences_SkipsSymlinks(t *testing.T) {
 	}
 
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected error: %v", errs)
 	}
 }
 
@@ -235,12 +235,12 @@ func TestValidateAgentReferences_InfoErrorSkipsEntry(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(agentsDir, 0o700) })
 
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err == nil {
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) == 0 {
 		t.Fatal("expected agent not found since entries cannot be inspected")
 	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("error %q should mention not found", err.Error())
+	if !strings.Contains(strings.Join(errs, "; "), "not found") {
+		t.Errorf("error %q should mention not found", strings.Join(errs, "; "))
 	}
 }
 
@@ -281,15 +281,15 @@ func TestValidateAgentSkillReferences(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Compile() error = %v", err)
 			}
-			err = ValidateAgentSkillReferences(compiled, agentRegistry, skillRegistry)
+			errs := ValidateAgentSkillReferences(compiled, agentRegistry, skillRegistry)
 			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("ValidateAgentSkillReferences() error = %v", err)
+				if len(errs) > 0 {
+					t.Fatalf("ValidateAgentSkillReferences() error = %v", errs)
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("ValidateAgentSkillReferences() error = %v, want %q", err, tc.wantErr)
+			if len(errs) == 0 || !strings.Contains(strings.Join(errs, "; "), tc.wantErr) {
+				t.Fatalf("ValidateAgentSkillReferences() error = %v, want %q", errs, tc.wantErr)
 			}
 		})
 	}
@@ -305,9 +305,9 @@ func TestValidateAgentReferences_AgentPanel(t *testing.T) {
 		t.Fatal(err)
 	}
 	wf := newAgentPanelWorkflow()
-	err := ValidateAgentReferences(wf, tmpDir)
-	if err == nil || !strings.Contains(err.Error(), `panel member "correctness": agent "panel-reviewer" not found`) {
-		t.Fatalf("ValidateAgentReferences() error = %v", err)
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) == 0 || !strings.Contains(strings.Join(errs, "; "), `panel member "correctness": agent "panel-reviewer" not found`) {
+		t.Fatalf("ValidateAgentReferences() error = %v", errs)
 	}
 }
 
@@ -334,8 +334,8 @@ func TestValidateAgentSkillReferences_AgentPanel(t *testing.T) {
 	wf.Steps[0].Skill = "review-synthesis"
 	wf.Steps[0].Panel.Members[1].Skill = "secure-change"
 	compiled := &CompiledWorkflow{Steps: wf.Steps}
-	err := ValidateAgentSkillReferences(compiled, agentRegistry, skillRegistry)
-	if err == nil || !strings.Contains(err.Error(), `panel member "security": skill "secure-change" not found`) {
-		t.Fatalf("ValidateAgentSkillReferences() error = %v", err)
+	errs := ValidateAgentSkillReferences(compiled, agentRegistry, skillRegistry)
+	if len(errs) == 0 || !strings.Contains(strings.Join(errs, "; "), `panel member "security": skill "secure-change" not found`) {
+		t.Fatalf("ValidateAgentSkillReferences() error = %v", errs)
 	}
 }

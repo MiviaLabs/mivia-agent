@@ -33,9 +33,9 @@ func TestCoverageValidateAgentReferencesTable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
 			dir := workspace.NamespacePath(root, "agents")
-			wantSubstrings(t, os.MkdirAll(dir, 0o755), nil)
+			wantSubstrings(t, errToSlice(os.MkdirAll(dir, 0o755)), nil)
 			for _, a := range tt.agents {
-				wantSubstrings(t, os.WriteFile(filepath.Join(dir, a), []byte("# "+a), 0o644), nil)
+				wantSubstrings(t, errToSlice(os.WriteFile(filepath.Join(dir, a), []byte("# "+a), 0o644)), nil)
 			}
 			wantSubstrings(t, ValidateAgentReferences(tt.wf, root), tt.wantErr)
 		})
@@ -44,10 +44,10 @@ func TestCoverageValidateAgentReferencesTable(t *testing.T) {
 func TestCoverageAgentGateSkillReferences(t *testing.T) {
 	allowed := []string{"allowed"}
 	agentRegistry := agents.NewRegistry()
-	wantSubstrings(t, agentRegistry.Publish(agents.ResolvedAgent{Name: "worker", Skills: &allowed}), nil)
+	wantSubstrings(t, errToSlice(agentRegistry.Publish(agents.ResolvedAgent{Name: "worker", Skills: &allowed})), nil)
 	skillRegistry := skills.NewRegistry()
 	for _, s := range []string{"allowed", "denied"} {
-		wantSubstrings(t, skillRegistry.Register(skills.Definition{Name: s}), nil)
+		wantSubstrings(t, errToSlice(skillRegistry.Register(skills.Definition{Name: s})), nil)
 	}
 	for _, tt := range []struct {
 		name, skill string
