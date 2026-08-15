@@ -63,7 +63,7 @@ func (s *StorageRepository) CompareAndSetPanelPhase(ctx context.Context, runID s
 	}
 	s.mu.Unlock()
 	if synthesis != nil {
-		if err := s.validatePanelTaskContent(ctx, synthesisTaskID, synthesis.Work); err != nil {
+		if err := s.validatePanelTaskContent(ctx, runID, synthesisTaskID, synthesis.Work); err != nil {
 			return err
 		}
 	}

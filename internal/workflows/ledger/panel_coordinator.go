@@ -422,7 +422,7 @@ func (p PanelCoordinator) request(ctx context.Context, runID, taskID string, wor
 	if err != nil {
 		return coordinator.EnsureRunRequest{}, err
 	}
-	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: input, InputSchema: inputSchema, OutputSchema: outputSchema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}
+	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: input, InputSchema: inputSchema, OutputSchema: outputSchema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true, SessionID: p.workflowRunID}
 	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{task}, work.Policy)
 	if err != nil || fingerprint != work.CoordinatorRequestFingerprint {
 		return coordinator.EnsureRunRequest{}, coordledger.ErrConflict

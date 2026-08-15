@@ -297,10 +297,11 @@ func workflowTask(ctx context.Context, spec AgentStepRequest, prompt string) sub
 		AgentDigest: spec.AgentDigest, Skill: spec.Skill, ProviderName: spec.ProviderName,
 		Model: spec.Model, Scope: spec.Scope, Permission: spec.Permission, Input: mustJSON(prompt),
 		Timeout: spec.Timeout, Budget: spec.Budget, OutputSchema: cloneSchema(spec.OutputSchema),
-		// WorkflowRunID is the always-present per-run identity: a review
-		// panel child gets a caller-derived SessionID below, but a plain
-		// workflow step's ctx carries no caller at all, so this is the
-		// fallback that keeps every step of one run on the same
+		// WorkflowRunID is the always-present per-run identity: a plain
+		// workflow step's ctx carries no caller at all (only a review-panel
+		// child does, and those are built and dispatched through
+		// PanelCoordinator.request/buildPanelTaskSpec, not this function), so
+		// this is the fallback that keeps every step of one run on the same
 		// provider-routing stickiness key.
 		SessionID: spec.WorkflowRunID}
 	if caller, ok := runtime.CallerFrom(ctx); ok {

@@ -131,7 +131,7 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 		// started decoding; the fake handlers in unit tests ignored req.Input
 		// so the shape mismatch only surfaced live).
 		Input: mustJSON(string(envelope)), InputSchema: []byte(`{"type":"string"}`), OutputSchema: schemaRef.Bytes,
-		Deadline: deadline, Limits: synthesisLimits,
+		Deadline: deadline, Limits: synthesisLimits, WorkflowRunID: c.RunID,
 	})
 	if err != nil {
 		return workflowledger.PanelTaskSpec{}, fmt.Errorf("panel step %q synthesis: %w", step.ID, err)

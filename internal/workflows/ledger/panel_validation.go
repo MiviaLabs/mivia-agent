@@ -19,14 +19,19 @@ func (s *StorageRepository) validateInitialPanelAttempt(ctx context.Context, att
 		return nil
 	}
 	for _, member := range attempt.PanelExecution.Members {
-		if err := s.validatePanelTaskContent(ctx, member.TaskID, member.Work); err != nil {
+		if err := s.validatePanelTaskContent(ctx, attempt.RunID, member.TaskID, member.Work); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *StorageRepository) validatePanelTaskContent(ctx context.Context, taskID string, work PanelTaskSpec) error {
+// validatePanelTaskContent reconstructs the same subagents.Task fingerprint
+// PanelCoordinator.request produced at creation. workflowRunID must match
+// what request used as SessionID (the panel's owning run id, threaded there
+// as PanelCoordinator.workflowRunID) or every validation here mismatches and
+// fails closed with ErrConflict even for an untampered task.
+func (s *StorageRepository) validatePanelTaskContent(ctx context.Context, workflowRunID, taskID string, work PanelTaskSpec) error {
 	if err := work.Validate(); err != nil {
 		return err
 	}
@@ -53,7 +58,7 @@ func (s *StorageRepository) validatePanelTaskContent(ctx context.Context, taskID
 	if _, err := compiled.ValidateJSONBytes(content[0]); err != nil {
 		return ErrConflict
 	}
-	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: json.RawMessage(content[0]), InputSchema: inputSchema, OutputSchema: outputSchema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true}
+	task := subagents.Task{ID: taskID, Name: work.TaskName, Input: json.RawMessage(content[0]), InputSchema: inputSchema, OutputSchema: outputSchema, Timeout: work.Timeout, Budget: work.Budget, Scope: work.Scope, AgentName: work.AgentName, AgentDigest: work.AgentDigest, Skill: work.Skill, ProviderName: work.Provider, Model: work.Model, WorkLimits: work.WorkLimits, DisableProviderReplay: true, SessionID: workflowRunID}
 	fingerprint, err := coordinator.RequestFingerprint([]subagents.Task{task}, work.Policy)
 	if err != nil || fingerprint != work.CoordinatorRequestFingerprint {
 		return ErrConflict
