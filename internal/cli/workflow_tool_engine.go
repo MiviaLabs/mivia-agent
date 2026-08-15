@@ -24,7 +24,13 @@ const sessionCancelWait = 3 * time.Second
 // stopActive: a settling controller can hold the flock past the cancel wait
 // bound, and a non-blocking acquire would surface as an opaque lock error
 // while the run keeps running.
-const workflowResolutionLockWait = 5 * time.Second
+//
+// It is a var, not a const, ONLY so tests that assert the held-lock refusal
+// can shorten the wait (shortenWorkflowResolutionLockWait). Those tests pin
+// WHICH error a held lock produces, not how long the surface waits, so paying
+// the real five seconds per surface bought nothing and made internal/cli the
+// critical path of the whole test suite. Production never assigns it.
+var workflowResolutionLockWait = 5 * time.Second
 
 // sessionWorkflowEngine is the production Engine for chat-session workflow tools.
 // New runs use the full CLI admission path (providers, worktrees, coordinator)

@@ -19,7 +19,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
-	hook-test agent-hook-test structure-check commit-check go-check test test-changed race vet build tidy fmt fmt-check \
+	hook-test agent-hook-test structure-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
 	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke release release-test
 
 help:
@@ -41,6 +41,7 @@ help:
 		'  make hook-test         Run Git hook contract tests' \
 		'  make agent-hook-test   Run agent hook guard contract tests' \
 		'  make go-check          gofmt + test + vet + build' \
+		'  make verify-go         go-check + diff-coverage over ONE instrumented suite run' \
 		'  make test              go test ./...' \
 		'  make invariants        Run invariant tests (TUI, agent, security)' \
 		'  make mutation-coverage Explore mutation test readiness for core packages' \
@@ -58,9 +59,18 @@ install-hooks hooks:
 	@scripts/install_git_hooks.sh
 
 # Offline gates only - no network required beyond local tool installs.
+#
+# The Go suite runs ONCE here, instrumented, and the coverage gate reads that
+# same profile (verify-go). Previously verify ran the whole suite three times -
+# go-check, the verifier sandbox profile, and diff-coverage - for about six
+# minutes, of which five and a half were the same tests over and over.
+# verifier-integration is no longer a verify prerequisite: its sandbox test
+# runs the entire repository test profile a second time inside a sandbox. It
+# still runs on master and macOS in CI, and standalone via `make
+# verifier-integration`.
 verify: verify-agent docs-check release-test secret-scan structure-check \
 	semgrep-validate semgrep-test hook-test agent-hook-test \
-	validate-invariants semgrep go-check verifier-integration diff-coverage
+	validate-invariants semgrep verify-go
 
 verify-agent:
 	@python3 scripts/verify_agent_config.py
@@ -153,6 +163,26 @@ go-check: fmt-check
 	@go vet ./...
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
 
+# verify-go is go-check plus the diff-coverage gate over ONE instrumented run
+# of the suite. The two used to be separate full runs of the same tests: an
+# uninstrumented `go test ./...` and then diff-coverage's own -count=1
+# coverage run. Instrumenting costs almost nothing next to running the tests
+# (measured: 114s with -coverpkg=./... against 121s scoped to one package), so
+# one instrumented run replaces both.
+#
+# -count=1 is load-bearing and must not be dropped: `go test` caches coverage
+# output, and a replayed entry carries the block coordinates of the source it
+# was recorded against, so after an edit shifts line numbers the gate reports
+# uncovered lines that no test can fix. scripts/diff_coverage.py documents this
+# at run_coverage_profile.
+verify-go: fmt-check
+	@profile="$$(mktemp -t mivia-verify-cover-XXXXXX.out)"; \
+	trap 'rm -f "$$profile"' EXIT; \
+	go test ./... -count=1 -coverpkg=./... -coverprofile="$$profile"; \
+	go vet ./...; \
+	go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG); \
+	$(MAKE) --no-print-directory diff-coverage DIFF_COVERAGE_PROFILE="$$profile"
+
 test:
 	@go test ./...
 
@@ -172,17 +202,27 @@ invariants:
 mutation-coverage:
 	@python3 scripts/mutation_coverage.py
 
+# DIFF_COVERAGE_PROFILE lets a caller that already ran the instrumented suite
+# (verify-go) hand its profile over instead of paying for a second full run.
+# Unset, the gate runs the suite itself, so `make diff-coverage` standalone is
+# unchanged.
+diff-coverage: DIFF_COVERAGE_PROFILE ?=
 diff-coverage:
 	@python3 scripts/test_diff_coverage.py
-	@BASE_REF="$$(git merge-base HEAD '@{upstream}' 2>/dev/null \
+	@if [ -n "$(DIFF_COVERAGE_PROFILE)" ]; then \
+		profile_arg="--profile $(DIFF_COVERAGE_PROFILE)"; \
+	else \
+		profile_arg=""; \
+	fi; \
+	BASE_REF="$$(git merge-base HEAD '@{upstream}' 2>/dev/null \
 		|| git merge-base HEAD origin/main 2>/dev/null \
 		|| git merge-base HEAD origin/master 2>/dev/null \
 		|| true)"; \
 	if [ -n "$$BASE_REF" ]; then \
-		python3 scripts/diff_coverage.py --base "$$BASE_REF"; \
+		python3 scripts/diff_coverage.py --base "$$BASE_REF" $$profile_arg; \
 	else \
 		echo "diff-coverage: no upstream/origin base ref found; checking staged changes instead"; \
-		python3 scripts/diff_coverage.py --staged; \
+		python3 scripts/diff_coverage.py --staged $$profile_arg; \
 	fi
 
 race:

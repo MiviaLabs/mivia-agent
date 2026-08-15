@@ -90,6 +90,7 @@ func TestWorkflowDeleteCommandMissingRun(t *testing.T) {
 // the workflow execution file lock like the other mutating operator commands:
 // a concurrent holder fails the command instead of racing the ledger claim.
 func TestWorkflowDeleteCommandLockSafety(t *testing.T) {
+	shortenWorkflowResolutionLockWait(t)
 	root, storePath, config, _ := newDeliveryFixture(t)
 	runID := runFixtureToDeliveryPending(t, root, config)
 	release, err := acquireWorkflowExecutionLock(storePath, runID)
