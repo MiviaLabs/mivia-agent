@@ -86,7 +86,22 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 			turns++
 		}
 	}
-	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs), s.sessionSaveOptions()); err != nil {
+	opts := s.sessionSaveOptions()
+	// A save under the live session's own id is the SaveAfterTurn projection:
+	// the catalog row then names the live context session it projects ("id is
+	// id, name is name"). A user-named save (/save) must never carry the live
+	// id, so SessionID is set only when name equals s.SessionID. Session ids
+	// are 26-char base32, so sanitizeSessionName leaves them unchanged and the
+	// comparison against the already-sanitized name parameter is exact. The
+	// storage layer additionally requires a live context_sessions row to
+	// exist before it persists the id.
+	s.mu.RLock()
+	sessionID := s.SessionID
+	s.mu.RUnlock()
+	if name == sessionID {
+		opts.SessionID = sessionID
+	}
+	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs), len(msgs), opts); err != nil {
 		return err
 	}
 	return s.persistAdmission(name)
