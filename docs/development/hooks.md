@@ -21,7 +21,7 @@ This sets `core.hooksPath=.githooks`.
 | `make pre-commit` | Run pre-commit hook |
 | `make pre-push` | Run pre-push hook |
 | `make secret-scan` | Scan tracked files for secrets |
-| `make docs-check` | OWNERS + unique H1 |
+| `make docs-check` | OWNERS + unique H1 + provider-docs↔registry |
 | `make semgrep` | Agent standards scan |
 | `make test` | `go test ./...` |
 | `make race` | `go test -race ./...` |
@@ -43,7 +43,7 @@ This sets `core.hooksPath=.githooks`.
 
 - Full config + **`file-size-check --tracked`** (all tracked files ≤ 500 KiB)
 - **`check_go_structure.py --all`** (full tree; hard failures block push)
-- Secret scan (tracked / range) + docs ownership
+- Secret scan (tracked / range) + docs ownership + **provider-docs↔registry** (`check_provider_docs.py`)
 - Full Semgrep
 - `gofmt -l`, `go test`, `go vet`, `go build -o mivia ./cmd/mivia`
 

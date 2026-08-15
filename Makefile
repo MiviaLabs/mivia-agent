@@ -134,6 +134,7 @@ hook-test:
 agent-hook-test:
 	@python3 scripts/test_agent_hook_guard.py
 	@python3 scripts/test_docs_ownership.py
+	@python3 scripts/test_check_provider_docs.py
 	@python3 scripts/test_secret_scan.py
 
 pre-commit:

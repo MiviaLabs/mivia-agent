@@ -52,6 +52,7 @@ chmod +x \
   scripts/test_git_hooks.py \
   scripts/test_secret_scan.py \
   scripts/test_docs_ownership.py \
+  scripts/test_check_provider_docs.py \
   scripts/test_agent_hook_guard.py \
   scripts/test_semgrep_rules.py \
   scripts/secret-scan \
