@@ -24,6 +24,11 @@ import (
 // read-only session, the same surface the desktop app reads) agree on storage.
 func tuiThreadStore(t *testing.T) (*chat.Session, *storage.SQLite, string) {
 	t.Helper()
+	// Pin HOME before any store-path resolution: openContextStore with an
+	// empty StorePath falls back to GlobalContextStorePath(root), which lives
+	// under $HOME/.mivia. Without this, the tests would write to the real
+	// user store instead of the temp workspace.
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	store, err := openContextStore(root, config.SubagentConfig{})
 	if err != nil {

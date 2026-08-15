@@ -197,7 +197,7 @@ func TestContextSetupSummarySeamPersistsMetadata(t *testing.T) {
 	// is the summary's only durable carrier. What must stay summary-free is
 	// source projection, which INV-AG-32 covers and
 	// TestPlainChatInjectsSummaryIntoStreamRequest asserts.
-	if !strings.Contains(string(snapshot.Active.ActiveContext), "context-summary") {
+	if !strings.Contains(string(snapshot.Active.ActiveContext), "[host-injected context summary") {
 		t.Fatal("ActiveContext dropped the summary of the compacted messages")
 	}
 }

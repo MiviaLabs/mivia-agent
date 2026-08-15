@@ -34,6 +34,22 @@ func (s *Session) persistPlainLegacyTurn(token OperationToken) error {
 	return plainPersistenceError(s.saveAfterTurn(token))
 }
 
+// appendCommitted appends the rendered context summary to a durable artifact
+// (the committed checkpoint's active context or the live history) with the
+// wire Name stripped. The Name marks ephemeral request-path injections (a
+// host hint), and every restore path runs provider.ValidateToolPairing, which
+// refuses NAMED user messages - a named summary made the session unresumable
+// after one more turn. The request-path copy keeps the Name; only these
+// committed copies strip it. Mirrors summarizeManualCompact (manual /compact)
+// and commitContextTurn (AUTO).
+func (s injectedSummary) appendCommitted(messages []provider.Message) []provider.Message {
+	out := s.appendTo(messages)
+	if s.present {
+		out[len(out)-1].Name = ""
+	}
+	return out
+}
+
 func plainPersistenceError(err error) error {
 	if errors.Is(err, ErrStaleOperation) || errors.Is(err, ErrStaleAutosave) {
 		return nil
@@ -63,8 +79,8 @@ func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, 
 			commitCtx := context.Background()
 			result, commitErr := buildContextTurnResult(commitCtx, snapshot.context, &preparation, candidate, ordered, snapshot.myTurn)
 			if commitErr == nil {
-				result.Active = summary.appendTo(result.Active)
-				candidate = summary.appendTo(candidate)
+				result.Active = summary.appendCommitted(result.Active)
+				candidate = summary.appendCommitted(candidate)
 				result.Outcome = contextmgr.OutcomeCancelled
 				commitErr = snapshot.context.manager.Commit(commitCtx, preparation, result)
 			}
@@ -126,8 +142,8 @@ func (s *Session) commitPlainContextTurn(ctx context.Context, reply string, snap
 		// The summary joins the committed active context and the live history,
 		// but never `ordered` above: it is host-generated with no source event
 		// of its own, so the checkpoint is its only durable carrier.
-		result.Active = summary.appendTo(result.Active)
-		candidate = summary.appendTo(candidate)
+		result.Active = summary.appendCommitted(result.Active)
+		candidate = summary.appendCommitted(candidate)
 		err = snapshot.context.manager.Commit(ctx, preparation, result)
 	}
 	if err != nil {

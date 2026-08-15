@@ -50,8 +50,12 @@ BINARY = REPO / "mivia"
 # answers a summarize request only when it sees this, so a scenario cannot
 # pass by mistaking an ordinary turn for a summary call.
 SUMMARY_MARKER = "You summarize an earlier part of a conversation."
-# provider.Message.Name on the rendered summary (agent.SummaryMessageName).
-SUMMARY_NAME = "context-summary"
+# The durable marker for a rendered summary. Both commit paths (manual /compact
+# and the auto agent-loop) persist the summary message ANONYMOUSLY (the wire
+# Name is stripped on the committed copies so restore paths that refuse named
+# user messages stay loadable), so durable surfaces must match the rendered
+# content, not the ephemeral request-path Name (agent.SummaryMessageName).
+SUMMARY_CONTENT = "[host-injected context summary"
 
 # Real providers, in the order they are tried. Each entry is
 # (provider name, env var, model, base_url).
@@ -406,15 +410,15 @@ def scenario_automatic(base: Path, backend: Backend, report: Report) -> None:
     if bodies:
         report.check(
             "the latest checkpoint carries the compaction summary",
-            SUMMARY_NAME in bodies[-1],
+            SUMMARY_CONTENT in bodies[-1],
             detail="no context-summary in the durable active context",
         )
         # Durability across the boundary: the summary must be in a checkpoint
         # written AFTER the one that first compacted, not only in that one.
-        first = next((i for i, b in enumerate(bodies) if SUMMARY_NAME in b), None)
+        first = next((i for i, b in enumerate(bodies) if SUMMARY_CONTENT in b), None)
         report.check(
             "the summary survives later turns, not just the compacting one",
-            first is not None and first < len(bodies) - 1 and SUMMARY_NAME in bodies[-1],
+            first is not None and first < len(bodies) - 1 and SUMMARY_CONTENT in bodies[-1],
             detail="the summary did not outlive the compacting turn",
             evidence=f"first summary checkpoint {first} of {len(bodies)}",
         )
@@ -426,7 +430,7 @@ def scenario_automatic(base: Path, backend: Backend, report: Report) -> None:
 
     report.check(
         "the summary stays out of source projection",
-        SUMMARY_NAME not in exported_source(ws),
+        SUMMARY_CONTENT not in exported_source(ws),
         detail="summary leaked into the durable source events",
     )
     if backend.stub:
@@ -468,7 +472,7 @@ def scenario_manual(base: Path, backend: Backend, report: Report) -> None:
     bodies = checkpoint_bodies(ws)
     report.check(
         "a manual compact persists its summary",
-        bool(bodies) and SUMMARY_NAME in bodies[-1],
+        bool(bodies) and SUMMARY_CONTENT in bodies[-1],
         detail="no context-summary in the durable active context",
     )
     if backend.stub:
@@ -515,7 +519,7 @@ def scenario_agent_loop(base: Path, backend: Backend, report: Report) -> None:
     bodies = checkpoint_bodies(ws)
     report.check(
         "the agent path persists its summary",
-        bool(bodies) and SUMMARY_NAME in bodies[-1],
+        bool(bodies) and SUMMARY_CONTENT in bodies[-1],
         detail="no context-summary in the durable active context",
     )
 
@@ -549,7 +553,7 @@ def scenario_default_on(base: Path, backend: Backend, report: Report) -> None:
     bodies = checkpoint_bodies(ws)
     report.check(
         "a zero-config workspace persists its summary",
-        bool(bodies) and SUMMARY_NAME in bodies[-1],
+        bool(bodies) and SUMMARY_CONTENT in bodies[-1],
         detail="no summary in the durable active context",
     )
     if backend.stub:
@@ -603,7 +607,7 @@ def scenario_gate_off(base: Path, backend: Backend, report: Report) -> None:
         )
         report.check(
             f"{name}: no summary is persisted",
-            not bodies or SUMMARY_NAME not in bodies[-1],
+            not bodies or SUMMARY_CONTENT not in bodies[-1],
             detail="a summary was persisted with the gate off",
         )
         if backend.stub:

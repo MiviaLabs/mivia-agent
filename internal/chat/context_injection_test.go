@@ -166,7 +166,7 @@ func TestPlainChatInjectsSummaryIntoStreamRequest(t *testing.T) {
 	// process) sees a truncated history explaining nothing. This is the same
 	// call the manual /compact path already makes (chat/context_control.go).
 	active := string(snapshot.Active.ActiveContext)
-	if !strings.Contains(active, agent.SummaryMessageName) {
+	if !strings.Contains(active, "[host-injected context summary") {
 		t.Fatalf("durable ActiveContext dropped the summary of the compacted messages: %s", active)
 	}
 	if len(snapshot.Active.SummaryMetadata) != 0 {
@@ -218,10 +218,12 @@ func assertNoSummaryInExport(t *testing.T, records []byte) {
 }
 
 // activeCarriesSummaryMessage reports whether messages carry the rendered
-// context-summary message.
+// context-summary message. Committed copies are anonymous (the wire Name is
+// stripped so restore paths that refuse named user messages stay loadable), so
+// the match keys on the rendered content, like the request-path helper does.
 func activeCarriesSummaryMessage(messages []provider.Message) bool {
 	for _, message := range messages {
-		if message.Name == agent.SummaryMessageName {
+		if message.Name == agent.SummaryMessageName || strings.Contains(message.Content, "[host-injected context summary") {
 			return true
 		}
 	}

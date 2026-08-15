@@ -119,6 +119,14 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 	// only durable carrier. It is appended to Active only - never to `ordered`,
 	// which feeds source projection.
 	summaryMessage, haveSummary := loop.InjectedSummary()
+	// The committed copies of the rendered summary are ANONYMOUS: the wire
+	// Name marks ephemeral request-path injections (a host hint), and every
+	// restore path runs provider.ValidateToolPairing, which refuses NAMED user
+	// messages - a named summary made the session unresumable after one more
+	// turn. The loop's own ephemeral request injection keeps the Name; only
+	// the copies appended below strip it (provider.Message is a struct value,
+	// so mutating this local copy cannot touch the loop's).
+	summaryMessage.Name = ""
 	if err == nil && haveSummary {
 		result.Active = append(cloneContextMessages(result.Active), summaryMessage)
 	}
