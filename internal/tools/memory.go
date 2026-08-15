@@ -99,6 +99,12 @@ func (t *memorySaveTool) Execute(ctx context.Context, args json.RawMessage) (str
 		Why:        in.Why,
 		References: in.References,
 	}
+	// Clamp free-text fields to their rune limits so an over-length summary,
+	// why, title, or body never fails the save. Agents routinely over-shoot
+	// these limits; a hard rejection just makes them retry the same long text.
+	// Clamp keeps the leading content and drops the tail, so the save always
+	// succeeds and the most informative part is retained.
+	entry = entry.Clamp()
 	saved, err := t.store.Save(ctx, entry)
 	if err != nil {
 		return "", err

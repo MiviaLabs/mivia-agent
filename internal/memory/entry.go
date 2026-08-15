@@ -83,6 +83,38 @@ const (
 	maxEntryBytesCap = 65536
 )
 
+// Clamp returns a copy of e with every free-text field truncated to its
+// rune limit, so a save never fails on an over-length field. It is the
+// lenient counterpart to Validate: agents routinely over-shoot the summary
+// (400), why (1000), title (120), and body (2000) limits, and a hard
+// rejection just makes them retry the same long text. Clamp keeps the
+// leading content (the most informative part) and drops the tail. It never
+// changes scope, verdict, tags, or references, and it never makes a field
+// empty that was non-empty.
+func (e Entry) Clamp() Entry {
+	e.Title = truncateRunes(e.Title, maxTitleLen)
+	e.Summary = truncateRunes(e.Summary, maxSummaryLen)
+	e.Why = truncateRunes(e.Why, maxWhyLen)
+	e.Good = truncateRunes(e.Good, maxBodyFieldLen)
+	e.Bad = truncateRunes(e.Bad, maxBodyFieldLen)
+	return e
+}
+
+// truncateRunes returns the longest prefix of s that is at most max runes,
+// never splitting a UTF-8 rune. When s is already within the limit it is
+// returned unchanged.
+func truncateRunes(s string, max int) string {
+	if max <= 0 || utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	end := 0
+	for i := 0; i < max; i++ {
+		_, size := utf8.DecodeRuneInString(s[end:])
+		end += size
+	}
+	return s[:end]
+}
+
 // Validate checks the entry against the limits. It refuses control
 // characters (except LF and TAB), oversized fields, an oversized rendered
 // size, malformed metadata, and content that matches a block pattern.

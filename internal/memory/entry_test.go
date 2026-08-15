@@ -3,6 +3,7 @@ package memory
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestEntryRenderProducesStrictTemplate(t *testing.T) {
@@ -277,6 +278,51 @@ func TestEntryValidateBlockPatterns(t *testing.T) {
 	e.Good = "Token redacted"
 	if err := e.Validate(lim); err != nil {
 		t.Fatalf("clean content refused: %v", err)
+	}
+}
+
+func TestEntryClampTruncatesToRuneLimits(t *testing.T) {
+	e := Entry{
+		Title:   strings.Repeat("t", 130),
+		Summary: strings.Repeat("s", 450),
+		Why:     strings.Repeat("w", 1100),
+		Good:    strings.Repeat("g", 2500),
+		Bad:     strings.Repeat("b", 2500),
+	}
+	c := e.Clamp()
+	if got := utf8.RuneCountInString(c.Title); got != maxTitleLen {
+		t.Errorf("clamped title = %d runes, want %d", got, maxTitleLen)
+	}
+	if got := utf8.RuneCountInString(c.Summary); got != maxSummaryLen {
+		t.Errorf("clamped summary = %d runes, want %d", got, maxSummaryLen)
+	}
+	if got := utf8.RuneCountInString(c.Why); got != maxWhyLen {
+		t.Errorf("clamped why = %d runes, want %d", got, maxWhyLen)
+	}
+	if got := utf8.RuneCountInString(c.Good); got != maxBodyFieldLen {
+		t.Errorf("clamped good = %d runes, want %d", got, maxBodyFieldLen)
+	}
+	if got := utf8.RuneCountInString(c.Bad); got != maxBodyFieldLen {
+		t.Errorf("clamped bad = %d runes, want %d", got, maxBodyFieldLen)
+	}
+	// A clamped entry must pass Validate (no over-length fields remain).
+	c.Scope = ScopeProject
+	c.Verdict = VerdictGood
+	if err := c.Validate(Limits{}); err != nil {
+		t.Fatalf("clamped entry must validate: %v", err)
+	}
+	// Multi-byte runes at the boundary must not be split.
+	mb := Entry{Title: "t", Summary: strings.Repeat("界", 500), Why: "w"}.Clamp()
+	if got := utf8.RuneCountInString(mb.Summary); got != maxSummaryLen {
+		t.Errorf("clamped multibyte summary = %d runes, want %d", got, maxSummaryLen)
+	}
+	if !utf8.ValidString(mb.Summary) {
+		t.Error("clamped multibyte summary is not valid UTF-8")
+	}
+	// Within-limit fields are unchanged.
+	short := Entry{Title: "t", Summary: "s", Why: "w"}.Clamp()
+	if short.Title != "t" || short.Summary != "s" || short.Why != "w" {
+		t.Errorf("within-limit fields changed: %+v", short)
 	}
 }
 
