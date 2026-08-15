@@ -40,6 +40,24 @@ type Loop struct {
 	// context so it outlives the turn.
 	injectedSummary    provider.Message
 	hasInjectedSummary bool
+	// Summary memo: one Summarize attempt per compaction event, keyed by the
+	// compacting preparation's identity (turnCompactionKey). Later steps of
+	// the turn reuse the memoized RENDERED message byte-for-byte instead of
+	// re-summarizing: a fresh Summarize per step is a fresh LLM request with a
+	// unique prefix (near-zero provider prompt-cache hit) that injects
+	// nondeterministic bytes. summaryMemoValid records that an attempt ran
+	// for summaryMemoKey even when it failed, so a failed attempt is not
+	// retried on every later step of the same compaction.
+	summaryMemoKey     string
+	summaryMemoValid   bool
+	summaryMemoMessage provider.Message
+	summaryMemoHasMsg  bool
+	// turnCompactionKey identifies the newest REAL compaction of this turn
+	// (recordPreparation sets it from the raw preparation, before the
+	// turn-level Compacted overlay). A new compaction later in the turn
+	// changes the key, which invalidates the memo and permits exactly one
+	// fresh Summarize.
+	turnCompactionKey string
 	// PreparationErr records an interrupted recovery failure so the session can
 	// surface the real cause instead of misreporting a checkpoint conflict.
 	PreparationErr error

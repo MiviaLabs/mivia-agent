@@ -121,6 +121,11 @@ func (l *Loop) refreshPreparationAfterRetry(ctx context.Context, req provider.Re
 // earlier elision from the sealed event and LastPreparation counters.
 func (l *Loop) recordPreparation(preparation contextmgr.Preparation) {
 	if preparation.Compacted {
+		// The raw (pre-overlay) Compacted flag marks a REAL compaction event.
+		// Its token identity keys the summary memo: a later step whose
+		// preparation only carries the overlay keeps the key, so the memoized
+		// summary is reused; a new compaction changes it.
+		l.turnCompactionKey = compactionIdentity(preparation.Token)
 		if !l.turnCompacted {
 			l.turnCompacted = true
 			l.turnBeforeTokens = preparation.BeforeTokens
@@ -152,6 +157,21 @@ func (l *Loop) resetTurnCompaction() {
 	l.turnElidedBytes = 0
 	l.turnElidedReasoningMessages = 0
 	l.turnElidedReasoningBytes = 0
+	l.turnCompactionKey = ""
+	l.invalidateSummaryMemo()
+	l.summaryMemoKey = ""
+}
+
+// compactionIdentity derives the memo key for one compaction event from its
+// commit token. The planner's idempotency key already fingerprints the
+// operation; the source range is the fallback for callers that construct a
+// preparation without one.
+func compactionIdentity(token contextmgr.CommitToken) string {
+	if token.IdempotencyKey != "" {
+		return token.IdempotencyKey
+	}
+	r := token.Range
+	return fmt.Sprintf("range:%s/%d-%s/%d", r.Start.SessionID, r.Start.Sequence, r.End.SessionID, r.End.Sequence)
 }
 
 func interruptedContext(ctx context.Context, err error) bool {
