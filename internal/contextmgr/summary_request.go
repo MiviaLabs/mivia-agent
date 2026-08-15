@@ -225,14 +225,31 @@ func cloneRedactionPolicy(policy contextstate.RedactionPolicy) contextstate.Reda
 // of one omitted message - never Content, Arguments, digests, or identifiers,
 // mirroring elisionNotice. The result is capped at MaxSummaryItems items and
 // byte-deterministic for identical inputs.
+//
+// Items are DISTINCT, in first-seen order. An item is content-free, so two
+// dropped messages of the same role in the same size bucket render the same
+// string - the ordinary case once a compaction drops several similar
+// messages, not an edge case. The summary envelope validator refuses
+// duplicate evidence, and every caller degrades silently on a build error, so
+// emitting duplicates here meant automatic compaction produced no summary at
+// all while still reporting success. The cap therefore bounds distinct items:
+// applying it before dedup let one repeated item consume the whole budget and
+// report a single fact.
 func OmittedEvidence(input, retained []provider.Message) []string {
 	var evidence []string
+	seen := make(map[string]struct{})
 	for _, index := range omittedMessageIndices(input, retained) {
-		if item := omittedEvidenceItem(input[index]); item != "" {
-			evidence = append(evidence, item)
-			if len(evidence) >= MaxSummaryItems {
-				break
-			}
+		item := omittedEvidenceItem(input[index])
+		if item == "" {
+			continue
+		}
+		if _, duplicate := seen[item]; duplicate {
+			continue
+		}
+		seen[item] = struct{}{}
+		evidence = append(evidence, item)
+		if len(evidence) >= MaxSummaryItems {
+			break
 		}
 	}
 	return evidence
