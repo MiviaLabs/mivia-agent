@@ -183,7 +183,11 @@ claims more than the code did.
 **Evidence.** 95 commits. `30b5643` surfaced workflow file read errors. `51f04e7`
 removed a fake workflow runner and made interrupt and resume honest. `1fb54f4`
 reported the enforced read bound on oversized lines. `820817a` refused a delivery start
-when the origin was unresolved instead of proceeding.
+when the origin was unresolved instead of proceeding. `b151445e` accepted and
+normalized a `[context.summary] provider/model` override that no wiring consumed - every
+compaction kept billing the session's (expensive) model while the config claimed a cheap
+one - and `1befc767` rewired it through a fail-closed completer with the misconfig
+promoted to a load error.
 
 **Probes.**
 - Find every discarded error value. Each one needs a stated reason.
@@ -192,6 +196,11 @@ when the origin was unresolved instead of proceeding.
 - A status must be derived from what happened, never from what was requested.
   `report the effort that results, not the one requested` is the same defect.
 - A missing precondition must refuse the operation, not select a default and continue.
+- A config key that load resolves and normalizes must have a runtime consumer.
+  Normalization is the tell: a key that parse, normalize, and doc but no wiring reads is
+  a silent default-keep - the operator configures the override and the runtime does the
+  default thing with no error, which is exactly how `b151445e`'s summary override
+  shipped dead.
 
 ## DC-10 Path, environment, and isolation escape
 
