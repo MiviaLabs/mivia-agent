@@ -114,6 +114,11 @@ type StatusView struct {
 	Loops      []LoopView     `json:"loops,omitempty"`
 	Delivery   []DeliveryView `json:"delivery,omitempty"`
 	Approvals  []ApprovalView `json:"approvals,omitempty"`
+	// DeliveryClaimHeld/DeliveryClaimAt mirror RunListItem's fields of the
+	// same name - see that doc comment. Only populated for a
+	// DELIVERY_PENDING run.
+	DeliveryClaimHeld bool   `json:"delivery_claim_held,omitempty"`
+	DeliveryClaimAt   string `json:"delivery_claim_at,omitempty"`
 }
 
 // AttemptView summarises one numbered step attempt.
@@ -247,6 +252,19 @@ type RunListItem struct {
 	// A caller rendering a live list (e.g. a desktop app's run list) needs
 	// this without a second per-run round trip through workflow_status.
 	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
+	// DeliveryClaimHeld and DeliveryClaimAt mirror the TUI's own delivery
+	// liveness surface (internal/cli/workflow_run_dialog.go's
+	// workflowRunDeliveryClaim / workflowDeliveryClaimLine): only populated
+	// for a DELIVERY_PENDING run. Held=true with a fresh ClaimAt means a
+	// delivery attempt is actually in flight right now; Held=true with a
+	// stale ClaimAt means one crashed mid-publish; Held=false means the run
+	// is simply parked waiting for someone to call workflow_deliver. Without
+	// this a caller has no way to distinguish "actively delivering" from
+	// "waiting indefinitely" for a DELIVERY_PENDING run - LastHeartbeatAt
+	// freezes once the run's last step attempt finishes and says nothing
+	// about delivery activity.
+	DeliveryClaimHeld bool   `json:"delivery_claim_held,omitempty"`
+	DeliveryClaimAt   string `json:"delivery_claim_at,omitempty"`
 }
 
 // DeliverResult is the response from workflow_deliver.

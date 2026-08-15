@@ -36,6 +36,12 @@ func buildStatusView(ctx context.Context, repo workflowledger.Repository, runID 
 		Worktree:   run.WorktreeName,
 		Attempts:   []AttemptView{},
 	}
+	if run.Status == workflowledger.RunStatusDeliveryPending {
+		if _, at, ok, err := repo.GetRunClaim(ctx, runID); err == nil && ok {
+			view.DeliveryClaimHeld = true
+			view.DeliveryClaimAt = formatTime(at)
+		}
+	}
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return StatusView{}, err

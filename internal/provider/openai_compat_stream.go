@@ -47,6 +47,17 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 
 	content, reasoning, webSearch, toolCalls, finishReason, received, usage, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter, req.Timeout)
 	if err != nil {
+		// A transient 200-in-band provider error delivered nothing. Re-ask the
+		// turn once non-streamed instead of surfacing it as a terminal failure,
+		// unless replay is disabled or content already reached the writer. The
+		// re-ask stays bounded to a single attempt.
+		if IsTransient(err) && !received && !req.DisableProviderReplay {
+			retried, rerr := c.retryWithoutStreaming(callCtx, req, req.StreamWriter)
+			if rerr != nil {
+				return nil, rerr
+			}
+			return &Response{Content: retried}, nil
+		}
 		return nil, err
 	}
 	// Empty stream with no tools → fall back to non-stream once.
@@ -126,7 +137,7 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 			break
 		}
 		if err := c.applyStreamChunk(data, &content, &reasoning, &webSearch, toolsByIdx, &finishReason, &liveWrite, &usage, w); err != nil {
-			return "", "", nil, nil, "", false, nil, err
+			return turnStreamErrorReturn(&content, &reasoning, webSearch, toolsByIdx, finishReason, usage, err)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -160,11 +171,19 @@ func (c *OpenAICompat) readTurnStream(ctx context.Context, body io.Reader, w io.
 		// Tool calls without a finish signal may be incomplete; require the
 		// minimum viable structure (ID + name, valid argument JSON).
 		if err := validateTruncatedToolCalls(toolsByIdx, c.name); err != nil {
-			return "", "", nil, nil, "", false, nil, err
+			return turnStreamErrorReturn(&content, &reasoning, webSearch, toolsByIdx, finishReason, usage, err)
 		}
 		// All tool calls have minimum structure; treat as complete.
 	}
 	return content.String(), reasoning.String(), webSearch, orderedToolCalls(toolsByIdx), finishReason, received, usage, nil
+}
+
+// turnStreamErrorReturn assembles the tuple a read loop returns on failure,
+// reporting whether anything actually reached the wire so the caller never
+// re-asks a turn that already delivered an answer.
+func turnStreamErrorReturn(content, reasoning *strings.Builder, webSearch []WebSearchResult, toolsByIdx map[int]*ToolCall, finishReason string, usage *usageWire, err error) (string, string, []WebSearchResult, []ToolCall, string, bool, *usageWire, error) {
+	received := content.Len() > 0 || reasoning.Len() > 0 || len(webSearch) > 0 || len(toolsByIdx) > 0 || finishReason != "" || usage != nil
+	return content.String(), reasoning.String(), webSearch, orderedToolCalls(toolsByIdx), finishReason, received, usage, err
 }
 
 // validateTruncatedToolCalls rejects tool-call fragments that ended without a
