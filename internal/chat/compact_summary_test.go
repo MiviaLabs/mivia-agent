@@ -92,6 +92,27 @@ func TestBuildCompactSummaryRequestDedupesEvidence(t *testing.T) {
 	}
 }
 
+// TestBuildCompactSummaryRequestSurvivesOversizedToolName pins the fix for a
+// bug where a dropped tool-result message's Name over
+// contextstate.MaxIdentifierBytes (128B, but under the 2048B field-truncation
+// bound) made BuildSummaryRequest's validation reject the whole request -
+// silently discarding the entire manual-compact summary (applyCompactSummary
+// swallows the error) instead of just truncating the one oversized name.
+func TestBuildCompactSummaryRequestSurvivesOversizedToolName(t *testing.T) {
+	summarizer := plainSummarySummarizer(t, &chatSummaryProvider{})
+	redaction := contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
+	oversizedName := strings.Repeat("n", contextstate.MaxIdentifierBytes+200)
+	pre := []provider.Message{
+		{Role: provider.RoleUser, Content: "old question"},
+		{Role: provider.RoleTool, ToolCallID: "call-1", Name: oversizedName, Content: "tool result body"},
+		{Role: provider.RoleUser, Content: "latest objective"},
+	}
+	retained := []provider.Message{pre[2]}
+	if _, err := buildCompactSummaryRequest(summarizer, redaction, 777, pre, retained, compactSummaryRange(t)); err != nil {
+		t.Fatalf("buildCompactSummaryRequest rejected a dropped message with an oversized tool name: %v", err)
+	}
+}
+
 // TestManualCompactSummaryStaysLoadable pins the resume-shape contract: the
 // summary message a manual compact appends to the live history must survive
 // the load path's message-shape validation (provider.ValidateToolPairing
