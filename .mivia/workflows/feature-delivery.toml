@@ -35,18 +35,27 @@ implement_step = "implement"
 merge_policy = "auto"
 split_deferred = true
 
-[[steps]]
-id = "plan"
+# [step_defaults] desugars at decode time into every step whose own field is
+# empty: kind, agent, skill, output_schema, and on_failure below fill the
+# agent steps (plan, plan_tests, implement, the repairs). A step that needs a
+# different value - plan/plan_tests (plan schema), review_panel (self-loop
+# on_failure), the gates - declares its own field, which always wins.
+# template and context are step-specific and stay on each step.
+[step_defaults]
 kind = "agent"
 agent = "workflow-engineer"
 skill = "workflow-feature-delivery"
+output_schema = "schemas/change-summary-v1.json"
+on_failure = "failure"
+
+[[steps]]
+id = "plan"
 template = "templates/plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan_review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "plan_review"
@@ -64,9 +73,6 @@ on_failure = "failure"
 
 [[steps]]
 id = "plan_tests"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/plan-tests.md"
 output_schema = "schemas/plan-v1.json"
 context = [
@@ -74,7 +80,6 @@ context = [
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.test_plan_review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "test_plan_review"
@@ -93,11 +98,7 @@ on_failure = "failure"
 
 [[steps]]
 id = "implement"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/implement.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
@@ -106,7 +107,6 @@ context = [
   { from = "steps.review_integration.output", as = "integration_findings", max_bytes = 4096, optional = true, envelope_only = true },
   { from = "inputs.chunk_plan", as = "chunk_scope", max_bytes = 4096, optional = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "review_panel"
@@ -181,11 +181,7 @@ on_failure = "failure"
 
 [[steps]]
 id = "repair_tests"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
@@ -193,15 +189,10 @@ context = [
   { from = "steps.test_validate.output", as = "failed_evidence", max_bytes = 32768 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "repair_verify"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
@@ -209,15 +200,10 @@ context = [
   { from = "steps.verify.output", as = "failed_evidence", max_bytes = 32768 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "repair_final"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
@@ -225,15 +211,10 @@ context = [
   { from = "steps.code_validate.output", as = "failed_evidence", max_bytes = 32768 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "repair_preflight"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
@@ -241,15 +222,10 @@ context = [
   { from = "steps.preflight_validate.output", as = "failed_evidence", max_bytes = 32768 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "repair_preflight_structure"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/repair.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
@@ -262,7 +238,6 @@ context = [
   # compiler refuses a delivery re-entry step that omits this binding.
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 32768, optional = true },
 ]
-on_failure = "failure"
 
 # repair_pr_metadata fixes only the PR title and summary when the host
 # rejects the agent's change-summary metadata (pr_title/pr_summary). The host
@@ -270,18 +245,13 @@ on_failure = "failure"
 # metadata and feeds back through review, so the run converges and delivers.
 [[steps]]
 id = "repair_pr_metadata"
-kind = "agent"
-agent = "workflow-engineer"
-skill = "workflow-feature-delivery"
 template = "templates/repair-pr-metadata.md"
-output_schema = "schemas/change-summary-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
 ]
-on_failure = "failure"
 
 [[steps]]
 id = "test_validate"

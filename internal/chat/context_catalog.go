@@ -218,11 +218,14 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 // s.binding, still the pre-reclaim default) so the very next context
 // checkpoint's CAS - which expects s.binding to already match the row -
 // doesn't immediately fail with the same "stale binding" error on this
-// session's first real turn.
+// session's first real turn. Matching provider/model NAMES is not enough to
+// take the no-op fast path below: ModelGeneration advances on every rebind
+// independently of those strings, so a reclaim always routes through
+// publishLoadedSession (safe, CAS-free) to pin it.
 func (s *Session) reconcileCatalogBinding(name string, info contextstate.SessionCatalogInfo, msgs []provider.Message, factory func(string, string) (ModelBinding, error), reclaimedBinding *contextstate.BindingRevision) (bool, error) {
 	isContextSession := info.SessionID != ""
 	selection := s.CurrentSelection()
-	if selection.ProviderName == info.Provider && selection.Model == info.Model {
+	if reclaimedBinding == nil && selection.ProviderName == info.Provider && selection.Model == info.Model {
 		token := s.captureOperationToken("catalog-load:" + name)
 		return isContextSession, s.adoptLoadedMessages(token, msgs)
 	}
