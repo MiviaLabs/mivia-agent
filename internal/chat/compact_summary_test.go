@@ -39,7 +39,7 @@ func TestBuildCompactSummaryRequestFields(t *testing.T) {
 		{Role: provider.RoleUser, Content: "latest objective"},
 	}
 	retained := []provider.Message{pre[2]}
-	request, err := buildCompactSummaryRequest(summarizer, redaction, 777, pre, retained, compactSummaryRange(t))
+	request, err := buildCompactSummaryRequest(summarizer, redaction, 777, pre, retained, compactSummaryRange(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestBuildCompactSummaryRequestDedupesEvidence(t *testing.T) {
 		{Role: provider.RoleUser, Content: "latest objective"},
 	}
 	retained := []provider.Message{pre[3]}
-	request, err := buildCompactSummaryRequest(summarizer, redaction, 4096, pre, retained, compactSummaryRange(t))
+	request, err := buildCompactSummaryRequest(summarizer, redaction, 4096, pre, retained, compactSummaryRange(t), "")
 	if err != nil {
 		t.Fatalf("duplicate-size omitted messages broke the request: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestBuildCompactSummaryRequestSurvivesOversizedToolName(t *testing.T) {
 		{Role: provider.RoleUser, Content: "latest objective"},
 	}
 	retained := []provider.Message{pre[2]}
-	if _, err := buildCompactSummaryRequest(summarizer, redaction, 777, pre, retained, compactSummaryRange(t)); err != nil {
+	if _, err := buildCompactSummaryRequest(summarizer, redaction, 777, pre, retained, compactSummaryRange(t), ""); err != nil {
 		t.Fatalf("buildCompactSummaryRequest rejected a dropped message with an oversized tool name: %v", err)
 	}
 }
@@ -153,7 +153,7 @@ func TestManualCompactSummaryStaysLoadable(t *testing.T) {
 			provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("old answer ", 20)},
 		)
 	}
-	if err := session.Compact(context.Background()); err != nil {
+	if err := session.Compact(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if last := session.Messages[len(session.Messages)-1]; !strings.Contains(last.Content, "[host-injected context summary") {
@@ -207,7 +207,7 @@ func TestManualCompactSummarySurvivesRestartWithoutFurtherTurns(t *testing.T) {
 			provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("old answer ", 20)},
 		)
 	}
-	if err := session.Compact(context.Background()); err != nil {
+	if err := session.Compact(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if last := session.Messages[len(session.Messages)-1]; !strings.Contains(last.Content, "[host-injected context summary") {
@@ -246,7 +246,7 @@ func TestApplyCompactSummarySuccess(t *testing.T) {
 		{Role: provider.RoleUser, Content: "old question"},
 		{Role: provider.RoleUser, Content: "latest objective"},
 	}
-	metadata, injected, ok := applyCompactSummary(context.Background(), summarizer, redaction, 0, pre, pre[1:], compactSummaryRange(t))
+	metadata, injected, ok := applyCompactSummary(context.Background(), summarizer, redaction, 0, pre, pre[1:], compactSummaryRange(t), "")
 	if !ok {
 		t.Fatal("applyCompactSummary refused a wired summarizer")
 	}
@@ -272,7 +272,7 @@ func TestApplyCompactSummaryDegradesOnProviderError(t *testing.T) {
 	summarizer := plainSummarySummarizer(t, fake)
 	redaction := contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
 	pre := []provider.Message{{Role: provider.RoleUser, Content: "objective"}}
-	metadata, injected, ok := applyCompactSummary(context.Background(), summarizer, redaction, 0, pre, pre, compactSummaryRange(t))
+	metadata, injected, ok := applyCompactSummary(context.Background(), summarizer, redaction, 0, pre, pre, compactSummaryRange(t), "")
 	if ok || metadata != nil || injected.Name != "" {
 		t.Fatalf("provider error produced ok=%v metadata=%d name=%q, want a clean degrade", ok, len(metadata), injected.Name)
 	}

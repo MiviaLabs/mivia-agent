@@ -13,6 +13,21 @@ import (
 // consumed it - the reasoning was captured and thrown away. It now reaches
 // the live panel as a rolling window and history as a summarised block.
 
+func TestRenderThinkingBlockWrapsLongLinesToWidth(t *testing.T) {
+	// Every other block kind wraps its text to the pane width; thinking
+	// blocks used to emit raw lines regardless of width.
+	longLine := strings.Repeat("reasoning word ", 20)
+	lines := renderThinkingBlock(longLine, false, 0, false, 40)
+	for _, l := range lines {
+		if w := lipgloss.Width(stripANSI(l)); w > 40 {
+			t.Fatalf("thinking line exceeds width 40 (got %d): %q", w, l)
+		}
+	}
+	if len(lines) < 3 {
+		t.Fatalf("expected the long line to wrap across multiple rendered lines, got %d: %v", len(lines), lines)
+	}
+}
+
 func TestThinkingEventReachesBridge(t *testing.T) {
 	b := newStreamBridge()
 	cb := agentEventBridgeCallback(b)
@@ -55,7 +70,7 @@ func TestCollapsedThinkingBlockSummarises(t *testing.T) {
 	// After the turn, thinking folds away - but the fold should say what it
 	// is hiding, not just "thinking".
 	text := strings.Repeat("a line of reasoning\n", 20)
-	lines := renderThinkingBlock(strings.TrimRight(text, "\n"), true, 0, false)
+	lines := renderThinkingBlock(strings.TrimRight(text, "\n"), true, 0, false, 80)
 	plain := stripANSI(strings.Join(lines, "\n"))
 	if !strings.Contains(plain, "thinking") {
 		t.Fatalf("collapsed thinking lost its label: %q", plain)
@@ -121,7 +136,7 @@ func TestFlushThinkingEmptyAppendsNothing(t *testing.T) {
 		t.Fatalf("empty thinking buffer must commit nothing, got %d blocks", len(m.blocks))
 	}
 	// A committed empty-text thinking block still renders a bare summary.
-	out := stripANSI(strings.Join(renderThinkingBlock("", false, 0, false), "\n"))
+	out := stripANSI(strings.Join(renderThinkingBlock("", false, 0, false, 80), "\n"))
 	if !strings.Contains(out, "thinking") {
 		t.Fatalf("empty thinking block must render a bare summary: %q", out)
 	}

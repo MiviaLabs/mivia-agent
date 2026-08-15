@@ -15,7 +15,7 @@ import (
 // is the host-side content-free diff of what the compact dropped. The diff
 // is deduplicated in place: many omitted messages share one size bucket, and
 // the envelope validator refuses duplicate evidence items.
-func buildCompactSummaryRequest(summarizer *contextmgr.Summarizer, redaction contextstate.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange contextstate.SourceRange) (contextmgr.SummaryRequest, error) {
+func buildCompactSummaryRequest(summarizer *contextmgr.Summarizer, redaction contextstate.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange contextstate.SourceRange, focus string) (contextmgr.SummaryRequest, error) {
 	return contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
 		Version:           contextmgr.SummarySchemaVersion,
 		Objective:         agent.SummaryFieldText(latestUserMessage(pre)),
@@ -29,6 +29,7 @@ func buildCompactSummaryRequest(summarizer *contextmgr.Summarizer, redaction con
 		RedactionPolicy:   redaction,
 		Budget:            agent.SummaryRequestBudget(budget),
 		OutputLimit:       agent.SummaryOutputLimitTokens,
+		Focus:             focus,
 	})
 }
 
@@ -38,11 +39,11 @@ func buildCompactSummaryRequest(summarizer *contextmgr.Summarizer, redaction con
 // - builder error, summarizer error, policy refusal, metadata bound - returns
 // ok=false so the structural compact proceeds unchanged. A summary must never
 // fail a manual compact.
-func applyCompactSummary(ctx context.Context, summarizer *contextmgr.Summarizer, redaction contextstate.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange contextstate.SourceRange) ([]byte, provider.Message, bool) {
+func applyCompactSummary(ctx context.Context, summarizer *contextmgr.Summarizer, redaction contextstate.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange contextstate.SourceRange, focus string) ([]byte, provider.Message, bool) {
 	if summarizer == nil {
 		return nil, provider.Message{}, false
 	}
-	request, err := buildCompactSummaryRequest(summarizer, redaction, budget, pre, retained, sourceRange)
+	request, err := buildCompactSummaryRequest(summarizer, redaction, budget, pre, retained, sourceRange, focus)
 	if err != nil {
 		return nil, provider.Message{}, false
 	}
@@ -64,11 +65,11 @@ func applyCompactSummary(ctx context.Context, summarizer *contextmgr.Summarizer,
 // path runs provider.ValidateToolPairing, which refuses NAMED user messages -
 // a named summary made the session unresumable after one more turn. A nil
 // summarizer or any summary failure changes nothing and reports have=false.
-func summarizeManualCompact(ctx context.Context, cfg contextTurnConfig, input contextmgr.PrepareInput, pre []provider.Message, preparation *contextmgr.Preparation) (provider.Message, bool) {
+func summarizeManualCompact(ctx context.Context, cfg contextTurnConfig, input contextmgr.PrepareInput, pre []provider.Message, preparation *contextmgr.Preparation, focus string) (provider.Message, bool) {
 	if cfg.summarizer == nil {
 		return provider.Message{}, false
 	}
-	metadata, injected, ok := applyCompactSummary(ctx, cfg.summarizer, cfg.redaction, input.Budget, pre, preparation.Messages, preparation.Token.Range)
+	metadata, injected, ok := applyCompactSummary(ctx, cfg.summarizer, cfg.redaction, input.Budget, pre, preparation.Messages, preparation.Token.Range, focus)
 	if !ok {
 		return provider.Message{}, false
 	}

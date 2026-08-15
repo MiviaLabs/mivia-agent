@@ -81,16 +81,19 @@ func (s *Session) ContextPreparation() (contextmgr.PreparationManager, contextmg
 
 // Compact prepares and durably publishes the current conversation immediately.
 // It is serialized with turn publication and never sends another provider call.
-func (s *Session) Compact(ctx context.Context) error {
-	_, err := s.compact(ctx)
+// focus is an optional caller-supplied bias string (e.g. `/compact <focus
+// instructions>`, Claude Code parity) telling the summarizer what to
+// prioritize; empty is the existing, unbiased behavior.
+func (s *Session) Compact(ctx context.Context, focus string) error {
+	_, err := s.compact(ctx, focus)
 	return err
 }
 
 // CompactWithResult behaves exactly like Compact but also returns the
 // contextmgr.Preparation the compaction produced, for callers (e.g. the
 // `mivia compact` CLI command) that need to report before/after numbers.
-func (s *Session) CompactWithResult(ctx context.Context) (contextmgr.Preparation, error) {
-	return s.compact(ctx)
+func (s *Session) CompactWithResult(ctx context.Context, focus string) (contextmgr.Preparation, error) {
+	return s.compact(ctx, focus)
 }
 
 // compactLoadSnapshot loads the durable snapshot for the bound session,
@@ -110,7 +113,7 @@ func (s *Session) compactLoadSnapshot(ctx context.Context, cfg contextTurnConfig
 	return nil
 }
 
-func (s *Session) compact(ctx context.Context) (contextmgr.Preparation, error) {
+func (s *Session) compact(ctx context.Context, focus string) (contextmgr.Preparation, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -154,7 +157,7 @@ func (s *Session) compact(ctx context.Context) (contextmgr.Preparation, error) {
 	// the candidate, and append the rendered message to the live history
 	// after the state swap. Any summary failure keeps the structural compact
 	// unchanged; a summary must never fail a manual compact.
-	summaryMessage, haveSummary := summarizeManualCompact(ctx, cfg, input, messages, &preparation)
+	summaryMessage, haveSummary := summarizeManualCompact(ctx, cfg, input, messages, &preparation, focus)
 	// The rendered summary joins the committed active context too, not only
 	// the live history: the message is host-generated with no source event of
 	// its own, so the checkpoint is its only durable carrier. Without it, a

@@ -281,7 +281,7 @@ func TestContextSummaryIntegrationManualCompact(t *testing.T) {
 	}
 	padSessionHistory(session)
 
-	if err := session.Compact(context.Background()); err != nil {
+	if err := session.Compact(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(completer.summaryRequests()) == 0 {
@@ -319,7 +319,7 @@ func TestContextSummaryIntegrationManualCompactDegrades(t *testing.T) {
 	}
 	padSessionHistory(session)
 
-	if err := session.Compact(context.Background()); err != nil {
+	if err := session.Compact(context.Background(), ""); err != nil {
 		t.Fatalf("manual compact failed on an invalid summary reply: %v", err)
 	}
 	if last := session.Messages[len(session.Messages)-1]; last.Name == "context-summary" || strings.Contains(last.Content, "[host-injected context summary") {
@@ -327,5 +327,41 @@ func TestContextSummaryIntegrationManualCompactDegrades(t *testing.T) {
 	}
 	if active := loadActiveSnapshot(t, store, session); len(active.Metadata) != 0 {
 		t.Fatal("invalid summary reply still persisted summary metadata")
+	}
+}
+
+// TestContextSummaryIntegrationManualCompactThreadsFocus pins the /compact
+// [focus instructions] wiring end to end: a caller-supplied focus string
+// reaches the actual LLM summary request prompt, through
+// Session.CompactWithResult -> summarizeManualCompact ->
+// buildCompactSummaryRequest -> contextmgr.BuildSummaryRequest ->
+// summaryUserPrompt.
+func TestContextSummaryIntegrationManualCompactThreadsFocus(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	res := summaryWiringResolved(t, true)
+	completer := &summaryScriptedCompleter{}
+	session := chat.NewSession(res, completer)
+	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.SendUser(context.Background(), "first question", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	padSessionHistory(session)
+
+	if _, err := session.CompactWithResult(context.Background(), "keep the auth discussion"); err != nil {
+		t.Fatal(err)
+	}
+	requests := completer.summaryRequests()
+	if len(requests) == 0 {
+		t.Fatal("manual compact sent no summary request to the completer")
+	}
+	summaryBody := requests[0].Messages[len(requests[0].Messages)-1].Content
+	if !strings.Contains(summaryBody, "focus: keep the auth discussion") {
+		t.Fatalf("summary prompt does not carry the focus instructions: %q", summaryBody)
 	}
 }

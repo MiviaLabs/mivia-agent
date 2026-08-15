@@ -39,11 +39,12 @@ func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 // same "compaction" event a turn's automatic compaction emits - one field
 // mapping, not a second one here. At slash time no turn is in flight, so
 // OnAgentEvent is otherwise unset and nothing double-emits.
-func handleSlashCompact(sess *chat.Session, term *Terminal) (bool, bool, error) {
+func handleSlashCompact(line string, sess *chat.Session, term *Terminal) (bool, bool, error) {
+	focus := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(line, "/compact")), "/compact"))
 	if term == nil && activeJSONSlashSink != nil {
-		return handleSlashCompactJSON(sess)
+		return handleSlashCompactJSON(sess, focus)
 	}
-	if _, err := sess.CompactWithResult(context.Background()); err != nil {
+	if _, err := sess.CompactWithResult(context.Background(), focus); err != nil {
 		reportCompactFailure(term, err)
 		return true, false, nil
 	}
@@ -62,11 +63,11 @@ func handleSlashCompact(sess *chat.Session, term *Terminal) (bool, bool, error) 
 // context_usage refresh follows so a consumer updates its context indicator in
 // the same read. On failure, slash_error is the sole authoritative signal -
 // stderr prose is invisible to a frontend parsing stdout.
-func handleSlashCompactJSON(sess *chat.Session) (bool, bool, error) {
+func handleSlashCompactJSON(sess *chat.Session, focus string) (bool, bool, error) {
 	w := activeJSONSlashSink.w
 	previous := sess.OnAgentEvent
 	sess.OnAgentEvent = jsonTurnEventCallback(w)
-	_, err := sess.CompactWithResult(context.Background())
+	_, err := sess.CompactWithResult(context.Background(), focus)
 	sess.OnAgentEvent = previous
 	if err != nil {
 		activeJSONSlashSink.Error("context compaction failed: " + err.Error())

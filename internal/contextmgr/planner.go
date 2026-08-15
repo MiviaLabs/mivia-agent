@@ -34,6 +34,14 @@ type PlanInput struct {
 	SourceEvents     []contextstate.SourceEvent
 	IdempotencyKey   string
 	RecentTail       int
+	// Revision is the session revision the compaction starts FROM. It is
+	// part of the derived idempotency key: two compactions of the same
+	// retained set off the same source range (a resumed process compacting
+	// an already-compacted session again) are different operations that
+	// commit different work, so sharing a key made the store reject the
+	// second as a conflicting retry. Retries of the SAME compaction carry
+	// the same revision and stay idempotent.
+	Revision contextstate.Revision
 	// PreserveNames lists provider.Message.Name values that structural
 	// retention keeps whole alongside the mandatory set. The chat layer uses
 	// it for the session-owned core-memory context frame so compaction never
@@ -334,8 +342,9 @@ func planIdempotencyKey(input PlanInput, rng contextstate.SourceRange, target in
 		Budget        int
 		Target        int
 		OutputReserve int
+		FromRevision  contextstate.Revision
 		Messages      []plannerMessageFingerprint
-	}{compactionAlgorithm, rng, input.Budget, target, input.OutputReserve, plannerMessages(retained)})
+	}{compactionAlgorithm, rng, input.Budget, target, input.OutputReserve, input.Revision, plannerMessages(retained)})
 	if err != nil {
 		return "", err
 	}

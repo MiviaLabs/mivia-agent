@@ -300,7 +300,37 @@ func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, 
 	return "", nil
 }
 
+// publishModelSwitch publishes a model switch and refreshes the session's
+// summarizer against the new binding afterward. The summarizer is captured
+// once at session setup (summaryWiring) and SwitchBinding itself never
+// rebuilds it - without this refresh, every summary after a mid-session
+// /model switch keeps running through the pre-switch model/completer until
+// the session restarts.
 func publishModelSwitch(sess *chat.Session, res *config.Resolved, providerName, model string) error {
+	if err := publishModelSwitchBinding(sess, res, providerName, model); err != nil {
+		return err
+	}
+	refreshSummarizerAfterModelSwitch(sess, res)
+	return nil
+}
+
+// refreshSummarizerAfterModelSwitch rebuilds the summarizer against the
+// session's now-current binding, same construction summaryWiring uses at
+// setup. A workspace that never configured summarization (summaryWiring's
+// ok=false case) clears any stale summarizer rather than leaving one bound
+// to the old model - SetSummarizer(nil) is itself a no-op when the session
+// has no context manager, and a harmless clear when it does but is
+// unconfigured for summaries.
+func refreshSummarizerAfterModelSwitch(sess *chat.Session, res *config.Resolved) {
+	summarizer, _, ok := summaryWiring(sess, res)
+	if !ok {
+		sess.SetSummarizer(nil)
+		return
+	}
+	sess.SetSummarizer(summarizer)
+}
+
+func publishModelSwitchBinding(sess *chat.Session, res *config.Resolved, providerName, model string) error {
 	if binding, prepared, err := sess.PrepareBinding(providerName, model); prepared {
 		if err != nil {
 			return err

@@ -436,3 +436,153 @@ func TestMigrationV3AtomicDirtyClear(t *testing.T) {
 		t.Fatalf("dirty = %d, want 0", dirty)
 	}
 }
+
+// TestMigrationV11ConvergesFromEveryPriorVersion pins the v11 chain fix:
+// fresh stores and stores at v8, v9, or v10 all land on v11, and v11's
+// contract (chat_sessions.session_id TEXT nullable plus its witness table)
+// is present in every case. Before the fix the v8 and v9 branches returned
+// early at v10, so a store at either version could never reach v11.
+func TestMigrationV11ConvergesFromEveryPriorVersion(t *testing.T) {
+	apply := []func(*sql.DB) error{applyContextSchemaV1, applyContextSchemaV2, applyContextSchemaV3, applyContextSchemaV4, applyContextSchemaV5, applyContextSchemaV6, applyContextSchemaV7, applyContextSchemaV8, applyContextSchemaV9, applyContextSchemaV10}
+	seed := func(t *testing.T, db *sql.DB, versions int) {
+		t.Helper()
+		if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < versions; i++ {
+			if err := apply[i](db); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, db *sql.DB)
+	}{
+		{name: "v0", prepare: func(t *testing.T, db *sql.DB) {}},
+		{name: "v8", prepare: func(t *testing.T, db *sql.DB) { seed(t, db, 8) }},
+		{name: "v9", prepare: func(t *testing.T, db *sql.DB) { seed(t, db, 9) }},
+		{name: "v10", prepare: func(t *testing.T, db *sql.DB) { seed(t, db, 10) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "context.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			test.prepare(t, db)
+			if err := migrateContextSchema(db); err != nil {
+				t.Fatalf("migrateContextSchema from %s: %v", test.name, err)
+			}
+			var version int
+			if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+				t.Fatal(err)
+			}
+			if version != 11 {
+				t.Fatalf("user_version = %d after %s, want 11", version, test.name)
+			}
+			found := false
+			rows, err := db.Query(`PRAGMA table_info(chat_sessions)`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for rows.Next() {
+				var cid, notNull, key int
+				var name, typ string
+				var defaultValue any
+				if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &key); err != nil {
+					rows.Close()
+					t.Fatal(err)
+				}
+				if name == "session_id" {
+					found = typ == "TEXT" && notNull == 0
+				}
+			}
+			if err := rows.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if !found {
+				t.Fatalf("chat_sessions.session_id (TEXT, nullable) is missing after %s", test.name)
+			}
+			if !contextVersionTablePresent(db, 11) {
+				t.Fatalf("chat_sessions_v11_contract is missing after %s", test.name)
+			}
+		})
+	}
+}
+
+// TestMigrationV11BackfillsProjectionSessionID seeds a v10 store whose
+// chat_sessions rows are catalog projections and runs v11. The backfill must
+// copy the live context session id into session_id for rows that project a
+// live, instance-matched context session, and must leave every other row
+// NULL: no live row (foo), a tombstoned row (Y), and a row bound to a
+// different worktree instance than the live session it names (Z).
+func TestMigrationV11BackfillsProjectionSessionID(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)))`); err != nil {
+		t.Fatal(err)
+	}
+	for _, apply := range []func(*sql.DB) error{applyContextSchemaV1, applyContextSchemaV2, applyContextSchemaV3, applyContextSchemaV4, applyContextSchemaV5, applyContextSchemaV6, applyContextSchemaV7, applyContextSchemaV8, applyContextSchemaV9, applyContextSchemaV10} {
+		if err := apply(db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []struct {
+		sessionID  string
+		tombstoned int
+		instanceID any
+	}{
+		{sessionID: "X", tombstoned: 0, instanceID: nil},
+		{sessionID: "bar", tombstoned: 0, instanceID: nil},
+		{sessionID: "Y", tombstoned: 1, instanceID: nil},
+		{sessionID: "Z", tombstoned: 0, instanceID: "wt_1111111111111111"},
+	} {
+		if _, err := db.Exec(`INSERT INTO context_sessions(workspace_id,subject_id,session_id,capability_digest,session_revision,durable_revision,source_sequence,provider,model,binding_generation,tombstoned,instance_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, "workspace", "subject", row.sessionID, "digest", 0, 0, 0, "provider", "model", 0, row.tombstoned, row.instanceID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []struct {
+		name       string
+		instanceID any
+	}{
+		{name: "X", instanceID: nil},
+		{name: "foo", instanceID: nil},
+		{name: "bar", instanceID: nil},
+		{name: "Y", instanceID: nil},
+		{name: "Z", instanceID: "wt_2222222222222222"},
+	} {
+		if _, err := db.Exec(`INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, "workspace", "subject", row.name, "model", "provider", []byte("{}"), "now", "now", 0, 0, 0, row.instanceID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrateContextSchema(db); err != nil {
+		t.Fatalf("migrateContextSchema after v11 backfill seed: %v", err)
+	}
+	for _, want := range []struct {
+		name       string
+		sessionID  string
+		hasSession bool
+	}{
+		{name: "X", sessionID: "X", hasSession: true},
+		{name: "foo"},
+		{name: "bar", sessionID: "bar", hasSession: true},
+		{name: "Y"},
+		{name: "Z"},
+	} {
+		var sessionID sql.NullString
+		if err := db.QueryRow(`SELECT session_id FROM chat_sessions WHERE workspace_id=? AND subject_id=? AND name=?`, "workspace", "subject", want.name).Scan(&sessionID); err != nil {
+			t.Fatalf("read chat_sessions %s session_id: %v", want.name, err)
+		}
+		if sessionID.Valid != want.hasSession || (sessionID.Valid && sessionID.String != want.sessionID) {
+			t.Fatalf("chat_sessions %s session_id = %v, want %q (valid=%v)", want.name, sessionID, want.sessionID, want.hasSession)
+		}
+	}
+}

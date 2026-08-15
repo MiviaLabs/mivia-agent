@@ -202,6 +202,24 @@ func TestLLMSummaryProviderPromptCarriesEnvelope(t *testing.T) {
 	}
 }
 
+// TestLLMSummaryProviderPromptRendersFocusOnlyWhenSet pins the /compact
+// [focus instructions] wiring: a non-empty Focus must appear in the rendered
+// prompt as an explicit line, and an empty Focus (the common, unbiased case)
+// must not add a stray "focus:" line the model has nothing to read from.
+func TestLLMSummaryProviderPromptRendersFocusOnlyWhenSet(t *testing.T) {
+	unfocused := llmSummaryRequestFixture(t)
+	if got := summaryUserPrompt(unfocused); strings.Contains(got, "focus:") {
+		t.Fatalf("prompt with no focus contains a stray focus line: %q", got)
+	}
+
+	focused := llmSummaryRequestFixture(t)
+	focused.Focus = "keep the auth discussion"
+	got := summaryUserPrompt(focused)
+	if !strings.Contains(got, "focus: keep the auth discussion") {
+		t.Fatalf("prompt does not render the focus line: %q", got)
+	}
+}
+
 // TestLLMSummaryProviderDecodesAndRejectsReplies is the decode table: fences
 // are tolerated; malformed, empty, trailing, unknown, and mismatched replies
 // fail. Every case makes exactly one completer call, because the adapter

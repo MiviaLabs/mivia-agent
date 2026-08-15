@@ -41,6 +41,7 @@ What mivia does and how to configure it. Owner: `product`.
 | [Workflow guide](product/workflows-guide.md) | CLI commands, agent tools, authoring, execution, and monitoring |
 | [Agent memory](product/memory.md) | Durable agent memory: scopes, tools, entry format, configuration |
 | [Integrations](product/integrations.md) | External services mivia can talk to: AI providers, web search, MCP servers |
+| [Wire schema](product/wire-schema.md) | NDJSON wire contract for `chat --json`, `external_*` relay events, and session command JSON |
 
 ## Architecture
 

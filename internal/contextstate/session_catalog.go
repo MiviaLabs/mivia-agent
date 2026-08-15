@@ -39,6 +39,11 @@ type SessionSaveOptions struct {
 	Dir              string
 	Worktree         string
 	WorktreeInstance WorktreeInstance
+	// SessionID declares the live context session this save projects ("id is
+	// id, name is name"). The storage layer stamps chat_sessions.session_id
+	// with it only when it matches the catalog name and a live row exists at
+	// write time; every other shape keeps the row a plain snapshot copy.
+	SessionID string
 }
 
 // MaxSessionDirBytes bounds the stored session directory string so a hostile

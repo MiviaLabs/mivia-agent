@@ -69,7 +69,7 @@ func builtInSlashCommands() []SlashCommand {
 		// The hint names unset because it is the only route back on the plain
 		// surface, where there is no picker row to discover it from.
 		{Name: "/effort", Description: "Choose reasoning effort", ArgsHint: "[level|unset]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
-		{Name: "/compact", Description: "Compact context now", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
+		{Name: "/compact", Description: "Compact context now", ArgsHint: "[focus instructions]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin, AutoExecute: true},
 		{Name: "/steps", Description: "Set maximum steps", ArgsHint: "[n]", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
 		{Name: "/save", Description: "Save session", ArgsHint: "<name>", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},
 		{Name: "/load", Description: "Load session", ArgsHint: "<name>", Surface: slashSurfaceBoth, Kind: slashKindBuiltin},

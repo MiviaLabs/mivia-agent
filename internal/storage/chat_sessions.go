@@ -71,7 +71,25 @@ func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Princip
 					return err
 				}
 			}
-			result, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count WHERE chat_sessions.instance_id IS excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, storedName, model, provider, messages, now, now, turns, tokens, messageCount, nullableText(opts.WorktreeInstance.ID))
+			// sessionID records the live context session this row projects
+			// ("id is id, name is name"). A non-empty session_id means the
+			// row is a live projection declared by the saving process
+			// (opts.SessionID == name) and verified live at write time; NULL
+			// means a plain snapshot copy. Worktree rows always stay NULL;
+			// legacy projection rows are backfilled at v11.
+			sessionID := ""
+			if opts.WorktreeInstance.IsZero() && opts.SessionID != "" && opts.SessionID == name {
+				var one int
+				err := tx.QueryRowContext(ctx, `SELECT 1 FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0 AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, opts.SessionID).Scan(&one)
+				if errors.Is(err, sql.ErrNoRows) {
+					sessionID = ""
+				} else if err != nil {
+					return err
+				} else {
+					sessionID = opts.SessionID
+				}
+			}
+			result, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id,session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count,session_id=excluded.session_id WHERE chat_sessions.instance_id IS excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, storedName, model, provider, messages, now, now, turns, tokens, messageCount, nullableText(opts.WorktreeInstance.ID), nullableText(sessionID))
 			if err != nil {
 				return err
 			}
@@ -97,29 +115,24 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 	if err := rejectManagedCatalogKey(ctx, s.db, principal, name); err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
-	live, livePayload, hasLive, err := s.loadLiveContextSession(ctx, principal, name)
-	if err != nil {
-		return nil, contextstate.SessionCatalogInfo{}, err
-	}
-	// A live session's transcript lives in its completed context
-	// checkpoints; the chat_sessions row named by the session id is only a
-	// catalog projection of that state, refreshed by SaveAfterTurn on its
-	// own schedule (every turn in line mode, the save paths in the TUI). A
-	// projection that lags the checkpoints must not shadow the newer state:
-	// serving it made a reload drop every turn after the last projection
-	// write, the user's messages included. A row with no completed
-	// checkpoint (a cleared or never-turned session) serves nothing, and
-	// the snapshot below stays the payload source for it.
-	if hasLive && len(livePayload) > len(emptyContextPayload) {
-		return livePayload, live, nil
-	}
+	// The stored session_id column is the SOLE discriminator between a live
+	// projection and a plain named copy ("id is id, name is name"): a
+	// user-named copy must no longer be shadowed by a same-named live
+	// session, so the catalog row is read first and its session_id decides
+	// what the live context row (if any) is for.
 	var payload []byte
 	var info contextstate.SessionCatalogInfo
-	err = s.db.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &info.Dir, &info.Worktree)
+	var catalogSessionID string
+	err := s.db.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(c.session_id,''),COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &catalogSessionID, &info.Dir, &info.Worktree)
 	if errors.Is(err, sql.ErrNoRows) {
+		// No snapshot row: the live context session is the only source,
+		// exactly as the arm2/--session fallback served it (empty payload
+		// included).
+		live, livePayload, hasLive, err := s.loadLiveContextSession(ctx, principal, name)
+		if err != nil {
+			return nil, contextstate.SessionCatalogInfo{}, err
+		}
 		if hasLive {
-			// No snapshot exists: the live row is the only source, exactly
-			// as the pre-fix fallback arm served it (empty payload included).
 			return livePayload, live, nil
 		}
 		return nil, contextstate.SessionCatalogInfo{}, contextstate.ErrSessionNotFound
@@ -127,21 +140,36 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 	if err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
-	// A turn snapshot's name IS its live session's id (SaveAfterTurn upserts
-	// chat_sessions under s.SessionID after every turn), so a hit here must
-	// still resolve the live context row behind it: LoadSession's caller
-	// decides "snapshot copy" vs "live session to take over" from
-	// info.SessionID alone, and an empty one here made every real "mivia
-	// chat --session <id>" resume fork a new session id - and, after a
-	// mid-session model switch, fail the first checkpoint commit with
-	// "stale binding: context binding changed" ("chat turn failed" on the
-	// wire, the turn lost). The live row here has no completed checkpoint
-	// (it was served above otherwise), so only the live-session identity
-	// (and its title) come from it.
-	if hasLive {
-		info.SessionID = name
-		info.Title = live.Title
+	if catalogSessionID == "" {
+		// Plain snapshot copy: name is just a name. Even when a live session
+		// of the same name exists, the copy is served as-is with no session
+		// id - never a shadow, never a takeover.
+		return append([]byte(nil), payload...), info, nil
 	}
+	live, livePayload, hasLive, err := s.loadLiveContextSession(ctx, principal, catalogSessionID)
+	if err != nil {
+		return nil, contextstate.SessionCatalogInfo{}, err
+	}
+	// A projection's transcript lives in its completed context checkpoints;
+	// the chat_sessions row is only a catalog projection of that state,
+	// refreshed by SaveAfterTurn on its own schedule. A projection that lags
+	// the checkpoints must not shadow the newer state, so the completed live
+	// payload wins when one exists.
+	if hasLive && len(livePayload) > len(emptyContextPayload) {
+		return livePayload, live, nil
+	}
+	if hasLive {
+		// The live session exists but has no completed checkpoint (a cleared
+		// or never-turned session): serve the snapshot, preserving the live
+		// identity (id is id) so the caller still recognizes a live session
+		// to take over instead of forking a new one.
+		info.SessionID = catalogSessionID
+		info.Title = live.Title
+		return append([]byte(nil), payload...), info, nil
+	}
+	// The live row is gone (tombstoned or deleted): the projection is now a
+	// plain copy.
+	info.SessionID = ""
 	return append([]byte(nil), payload...), info, nil
 }
 
@@ -184,12 +212,13 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 		return nil, err
 	}
 	// Arm 1 (turn snapshots) surfaces the live context row behind a
-	// snapshot when one exists: a real session's snapshot is named BY its
-	// session id (SaveAfterTurn), so an empty session_id/title here shadowed
-	// the live row - every picker/sidebar entry showed the raw id, and a
-	// successful rename never became visible (arm 2's NOT EXISTS keeps the
-	// live row itself out of the listing, so there is no duplicate).
-	rows, err := s.db.QueryContext(ctx, `SELECT c.name,COALESCE(s.title,''),c.model,c.provider,COALESCE(s.session_id,''),c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM chat_sessions c LEFT JOIN context_sessions s ON s.workspace_id=c.workspace_id AND s.subject_id=c.subject_id AND s.session_id=c.name AND s.tombstoned=0 AND s.instance_id IS NULL LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id IS NULL UNION ALL SELECT t.session_id,t.title,t.model,t.provider,t.session_id,t.created,t.updated,t.source_sequence,0,t.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM (SELECT cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP) AS created,COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP) AS updated FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 AND cs.instance_id IS NULL AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence) t LEFT JOIN chat_session_dirs d ON d.workspace_id=t.workspace_id AND d.subject_id=t.subject_id AND d.name=t.session_id UNION ALL SELECT 'worktree:' || r.worktree,'','','', '',r.created_at,r.updated_at,0,0,0,r.dir,r.worktree,1,COALESCE(r.instance_id,'') FROM worktree_routes r WHERE r.workspace_id=? AND r.subject_id=? AND (r.instance_id IS NULL OR EXISTS (SELECT 1 FROM worktree_instances wi WHERE wi.workspace_id=r.workspace_id AND wi.worktree=r.worktree AND wi.instance_id=r.instance_id AND wi.state='active')) ORDER BY 7 DESC,1`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
+	// projection when one exists. Identity comes from the stored session_id
+	// column, not the name ("id is id, name is name"): joining on
+	// c.session_id keeps a user-named copy (NULL session_id) untitled and
+	// never re-joins it to a same-named live session, which re-created the
+	// alias/duplicate bug. Legacy projection rows are stamped by the v11
+	// backfill.
+	rows, err := s.db.QueryContext(ctx, `SELECT c.name,COALESCE(s.title,''),c.model,c.provider,COALESCE(s.session_id,''),c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM chat_sessions c LEFT JOIN context_sessions s ON s.workspace_id=c.workspace_id AND s.subject_id=c.subject_id AND s.session_id=c.session_id AND s.tombstoned=0 AND s.instance_id IS NULL LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id IS NULL UNION ALL SELECT t.session_id,t.title,t.model,t.provider,t.session_id,t.created,t.updated,t.source_sequence,0,t.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM (SELECT cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP) AS created,COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP) AS updated FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 AND cs.instance_id IS NULL AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence) t LEFT JOIN chat_session_dirs d ON d.workspace_id=t.workspace_id AND d.subject_id=t.subject_id AND d.name=t.session_id UNION ALL SELECT 'worktree:' || r.worktree,'','','', '',r.created_at,r.updated_at,0,0,0,r.dir,r.worktree,1,COALESCE(r.instance_id,'') FROM worktree_routes r WHERE r.workspace_id=? AND r.subject_id=? AND (r.instance_id IS NULL OR EXISTS (SELECT 1 FROM worktree_instances wi WHERE wi.workspace_id=r.workspace_id AND wi.worktree=r.worktree AND wi.instance_id=r.instance_id AND wi.state='active')) ORDER BY 7 DESC,1`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
 	if err != nil {
 		return nil, err
 	}

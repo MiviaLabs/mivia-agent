@@ -39,7 +39,11 @@ func listedEntry(t *testing.T, store *SQLite, principal contextstate.Principal, 
 
 // TestListSessionsSurfacesLiveRowBehindTurnSnapshot: the snapshot arm must
 // carry the live context row's session_id and title when one exists behind
-// the snapshot, not empty strings.
+// the snapshot, not empty strings. The direct-API save below declares the
+// projection identity via opts.SessionID - the API contract chat's
+// SaveAfterTurn satisfies on every turn; a save without that declaration is
+// a plain named copy and must list untitled
+// (TestListSessionsKeepsPlainSnapshotUntitled).
 func TestListSessionsSurfacesLiveRowBehindTurnSnapshot(t *testing.T) {
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {
@@ -53,7 +57,7 @@ func TestListSessionsSurfacesLiveRowBehindTurnSnapshot(t *testing.T) {
 	if err := store.EnsureSession(context.Background(), contextstate.EnsureSessionRequest{Principal: principal, Binding: mustBinding(t)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveSession(context.Background(), principal, principal.SessionID, []byte(`[{"role":"user","content":"hi"}]`), "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{}); err != nil {
+	if err := store.SaveSession(context.Background(), principal, principal.SessionID, []byte(`[{"role":"user","content":"hi"}]`), "model", "provider", 1, 1, 2, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, "my title", contextstate.WorktreeInstance{}); err != nil {

@@ -51,7 +51,7 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 	case "/status", "/model", "/provider", "/tools", "/workspace", "/agents":
 		return handleSlashInfo(cmd, fields, sess, res, toolsOn, term)
 	case "/compact":
-		return handleSlashCompact(sess, term)
+		return handleSlashCompact(line, sess, term)
 	case "/agent":
 		return handleSlashAgent(fields, sess, res, term, classicAgentState)
 	case "/hooks":

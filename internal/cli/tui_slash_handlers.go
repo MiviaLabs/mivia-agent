@@ -31,7 +31,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 	case "/budget", "/steps":
 		return m.handleTuiLimitsSlash(cmd, fields)
 	case "/compact":
-		return m.handleTuiCompactSlash()
+		return m.handleTuiCompactSlash(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(cmd, "/compact")), "/compact")))
 	case "/new", "/clear", "/sessions", "/worktrees":
 		return m.handleTuiSessionLifecycleSlash(cmd, fields)
 	case "/queue":
