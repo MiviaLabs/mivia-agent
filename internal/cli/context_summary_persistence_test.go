@@ -206,3 +206,58 @@ func TestPlainCompactionEmitsTypedEventToTheTurnCallback(t *testing.T) {
 		t.Fatalf("compaction record reports no reduction: %d -> %d", typed.BeforeTokens, typed.AfterTokens)
 	}
 }
+
+// TestTuiBridgeReceivesAutomaticCompactionBanner is the TUI's end-to-end
+// automatic-compaction proof. It drives a real compacting turn through the
+// EXACT callback tui_start.go passes into SendUserWith* -
+// agentEventBridgeCallback(bridge) - and requires the compaction banner to
+// land in the bridge drain the transcript is rendered from.
+//
+// This is the TUI counterpart of the --json wire check: the session-level
+// callback publication is what lets emitContextCompaction reach the bridge at
+// all, and before it a threshold compaction was invisible in the TUI exactly
+// as it was on the json wire.
+func TestTuiBridgeReceivesAutomaticCompactionBanner(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	res := summaryWiringResolved(t, true)
+	completer := &summaryScriptedCompleter{}
+	session := chat.NewSession(res, completer)
+	if _, err := configureSessionContext(session, t.TempDir(), store, res); err != nil {
+		t.Fatal(err)
+	}
+
+	bridge := newStreamBridge()
+	onEvent := agentEventBridgeCallback(bridge)
+
+	if _, err := session.SendUserWithEvent(context.Background(), "first "+strings.Repeat("x", 2000), io.Discard, onEvent); err != nil {
+		t.Fatal(err)
+	}
+	next := "second question"
+	cost, err := provider.EstimatePromptCost(append(session.MessagesCopy(), provider.Message{Role: provider.RoleUser, Content: next}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetPromptBudget(cost); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.SendUserWithEvent(context.Background(), next, io.Discard, onEvent); err != nil {
+		t.Fatal(err)
+	}
+
+	var banner string
+	for _, evt := range bridge.Drain().Tools {
+		if evt.Name == "context" && evt.Detail != "completed" {
+			banner = evt.Detail
+		}
+	}
+	if banner == "" {
+		t.Fatal("an automatic compaction produced no TUI banner: the transcript would show nothing")
+	}
+	if !strings.Contains(banner, "->") {
+		t.Fatalf("banner = %q, want the before/after token delta", banner)
+	}
+}

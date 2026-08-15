@@ -49,6 +49,11 @@ type WireCompaction struct {
 	ElidedBytes    int                      `json:"elided_bytes"`
 	SourceRange    contextstate.SourceRange `json:"source_range"`
 	SummaryVersion uint32                   `json:"summary_version"`
+	// Summarized must cross the wire. It defaults to false, so omitting it
+	// does not lose information - it asserts "structural only, no summary"
+	// for every relayed compaction, including summarized ones, and a second
+	// surface renders the opposite of what happened.
+	Summarized bool `json:"summarized"`
 }
 
 // toWire projects an internal events.Event onto the wire format. Metadata
@@ -71,6 +76,7 @@ func toWire(ev events.Event) WireEvent {
 			ElidedBytes:    ev.Compaction.ElidedBytes,
 			SourceRange:    ev.Compaction.SourceRange,
 			SummaryVersion: ev.Compaction.SummaryVersion,
+			Summarized:     ev.Compaction.Summarized,
 		}
 	}
 	if ev.Err != nil {
@@ -98,6 +104,7 @@ func fromWire(w WireEvent) events.Event {
 			ElidedBytes:    w.Compaction.ElidedBytes,
 			SourceRange:    w.Compaction.SourceRange,
 			SummaryVersion: w.Compaction.SummaryVersion,
+			Summarized:     w.Compaction.Summarized,
 		})
 	}
 	if w.ErrorText != "" {

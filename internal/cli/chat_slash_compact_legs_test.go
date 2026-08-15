@@ -47,7 +47,7 @@ func TestSlashCompactTerminalLegWritesToThePane(t *testing.T) {
 
 	var pane bytes.Buffer
 	stderr := captureStderr(t)
-	handled, exit, err := handleSlashCompact("/compact", sess, &Terminal{out: &pane})
+	handled, exit, err := handleSlashCompact("/compact", sess, nil, &Terminal{out: &pane})
 	captured := stderr()
 	if err != nil {
 		t.Fatalf("handleSlashCompact: %v", err)
@@ -70,7 +70,7 @@ func TestSlashCompactTerminalLegReportsFailureInThePane(t *testing.T) {
 	sess := newEmptyContextSession(t, ws)
 
 	var pane bytes.Buffer
-	handled, exit, err := handleSlashCompact("/compact", sess, &Terminal{out: &pane})
+	handled, exit, err := handleSlashCompact("/compact", sess, nil, &Terminal{out: &pane})
 	if err != nil {
 		t.Fatalf("handleSlashCompact returned err instead of reporting: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestSlashCompactPlainLineModeLegWritesToStderr(t *testing.T) {
 	defer func() { activeJSONSlashSink = previousSink }()
 
 	stderr := captureStderr(t)
-	handled, exit, err := handleSlashCompact("/compact", sess, nil)
+	handled, exit, err := handleSlashCompact("/compact", sess, nil, nil)
 	captured := stderr()
 	if err != nil {
 		t.Fatalf("handleSlashCompact: %v", err)
@@ -119,7 +119,7 @@ func TestSlashCompactPlainLineModeLegReportsFailureOnStderr(t *testing.T) {
 	defer func() { activeJSONSlashSink = previousSink }()
 
 	stderr := captureStderr(t)
-	handled, exit, err := handleSlashCompact("/compact", sess, nil)
+	handled, exit, err := handleSlashCompact("/compact", sess, nil, nil)
 	captured := stderr()
 	if err != nil {
 		t.Fatalf("handleSlashCompact returned err instead of reporting: %v", err)
@@ -148,7 +148,7 @@ func TestSlashCompactTerminalLegIgnoresAnActiveJSONSink(t *testing.T) {
 	defer func() { activeJSONSlashSink = previousSink }()
 
 	var pane bytes.Buffer
-	if _, _, err := handleSlashCompact("/compact", sess, &Terminal{out: &pane}); err != nil {
+	if _, _, err := handleSlashCompact("/compact", sess, nil, &Terminal{out: &pane}); err != nil {
 		t.Fatalf("handleSlashCompact: %v", err)
 	}
 	if !strings.Contains(pane.String(), "context compacted") {
@@ -168,7 +168,7 @@ func TestSlashCompactFocusReachesEveryLeg(t *testing.T) {
 	defer done()
 
 	var pane bytes.Buffer
-	handled, _, err := handleSlashCompact("/compact keep the auth discussion", sess, &Terminal{out: &pane})
+	handled, _, err := handleSlashCompact("/compact keep the auth discussion", sess, nil, &Terminal{out: &pane})
 	if err != nil {
 		t.Fatalf("handleSlashCompact with focus text: %v", err)
 	}

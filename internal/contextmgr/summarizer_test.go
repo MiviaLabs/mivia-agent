@@ -3,6 +3,7 @@ package contextmgr
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -88,5 +89,57 @@ func TestSummarizerRejectsStaleBinding(t *testing.T) {
 	}
 	if _, err := summarizer.Summarize(context.Background(), request); !errors.Is(err, contextstate.ErrStaleBinding) {
 		t.Fatalf("stale binding error = %v", err)
+	}
+}
+
+// TestSummaryRunsWithoutAConfiguredRedactionPolicy pins the opt-out default's
+// second half. Compaction drops messages permanently, so the summary is the
+// only record of what was removed - it must not be silently disabled by a
+// workspace that never wrote a [privacy] section. The summary is derived from
+// conversation content the SAME provider already received in full, so
+// refusing to send it while sending the conversation protected nothing.
+//
+// What redaction still governs is DURABILITY, not availability: without a
+// configured policy the checkpoint keeps only a digest, never summary
+// content. That split is asserted here so relaxing the gate cannot be
+// mistaken for relaxing the persistence rule.
+func TestSummaryRunsWithoutAConfiguredRedactionPolicy(t *testing.T) {
+	binding, err := contextstate.NewBindingRevision("provider", "model", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := contextstate.PolicySnapshot{
+		SummaryEnabled: true, RedactionConfigured: false, NetworkEnabled: true,
+		Provider: "provider", Model: "model", CredentialScope: "scope",
+		EndpointAllowlist: []string{"https://summary.invalid"},
+	}
+	request := summaryTestRequest(t)
+	request.RedactionPolicy = contextstate.RedactionPolicy{}
+	echo := summaryProviderFunc(func(_ context.Context, req SummaryRequest) (Summary, error) {
+		return Summary{
+			Version: req.Input.Version, Objective: "objective", State: "state",
+			SourceRange: req.SourceRange,
+		}, nil
+	})
+	summarizer, err := NewSummarizer(echo, binding, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := summarizer.Summarize(context.Background(), request)
+	if err != nil {
+		t.Fatalf("an unconfigured redaction policy disabled the summary: %v", err)
+	}
+
+	// Durability protection survives: no summary content in the metadata.
+	metadata, err := summary.Metadata(policy.RedactionConfigured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(metadata), "\"summary\"") {
+		t.Fatalf("summary content persisted without a configured redaction policy: %s", metadata)
+	}
+	if !strings.Contains(string(metadata), "structural-only") {
+		t.Fatalf("metadata did not record the structural-only redaction status: %s", metadata)
 	}
 }

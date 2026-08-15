@@ -583,9 +583,41 @@ func TestStepRequestOrderSummaryThenConcludeNudge(t *testing.T) {
 	}
 }
 
+// stepKeyedCompactingProbe compacts on the listed Prepare calls (1-based),
+// each compaction under a DISTINCT idempotency key. Each compaction is
+// therefore a separate event for the summary memo, unlike
+// compactingPreparationProbe whose fixed key models ONE compaction event
+// re-prepared each step.
+type stepKeyedCompactingProbe struct {
+	compactOn map[int]bool
+	calls     int
+}
+
+func (p *stepKeyedCompactingProbe) Prepare(_ context.Context, input contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	p.calls++
+	rangeValue := contextstate.SourceRange{
+		Start: contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+		End:   contextstate.SourceID{SessionID: input.Principal.SessionID, Sequence: input.Revision.Source},
+	}
+	prep, err := contextmgr.CapturePreparation(input, contextmgr.CheckpointCandidate{
+		SourceRange: rangeValue, ActiveContext: []byte("active"),
+	}, input.Messages, p.compactOn[p.calls], fmt.Sprintf("summary-keyed-%d", p.calls))
+	if err != nil {
+		return contextmgr.Preparation{}, err
+	}
+	prep.BeforeTokens = 1000
+	prep.AfterTokens = 400
+	return prep, nil
+}
+
+func (p *stepKeyedCompactingProbe) Discard(contextmgr.Preparation) {}
+
 // TestSummaryInjectionToolFactsReachLaterRequest drives the recording seam
 // through a real tool call: the write_file execution on step 1 lands in the
-// evidence and changed surfaces of the step-2 request's envelope.
+// evidence and changed surfaces of the step-2 request's envelope. Step 2
+// compacts AGAIN under a new key, so its summary is a fresh Summarize that
+// sees the accumulated facts (a repeat of the SAME compaction event would be
+// served from the memo instead).
 func TestSummaryInjectionToolFactsReachLaterRequest(t *testing.T) {
 	provider := &capturingSummaryProvider{}
 	summarizer := summaryInjectSummarizer(t, provider)
@@ -593,7 +625,8 @@ func TestSummaryInjectionToolFactsReachLaterRequest(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&writeFakeTool{name: "write_file"})
 	loop := &Loop{Completer: completer, Tools: reg}
-	if _, err := loop.Run(context.Background(), "question", summaryProbeOptions(t, &summarizer, &compactingPreparationProbe{compacted: true}, 100_000)); err != nil {
+	probe := &stepKeyedCompactingProbe{compactOn: map[int]bool{1: true, 2: true}}
+	if _, err := loop.Run(context.Background(), "question", summaryProbeOptions(t, &summarizer, probe, 100_000)); err != nil {
 		t.Fatal(err)
 	}
 	if len(completer.requests) < 2 {

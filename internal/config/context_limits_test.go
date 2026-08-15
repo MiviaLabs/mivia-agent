@@ -24,10 +24,15 @@ func loadContextConfig(t *testing.T, body string) ContextConfig {
 // TestContextLimitsAreOperatorOwned pins that the durable ceilings are
 // configuration, uncapped unless the operator says otherwise.
 func TestContextLimitsAreOperatorOwned(t *testing.T) {
-	if got := loadContextConfig(t, ""); got != (ContextConfig{}) {
+	// Summary is behavior policy, not a durable bound, and resolves to a
+	// decided value (opt-out default). Compare the ceilings only.
+	got := loadContextConfig(t, "")
+	got.Summary = ContextSummaryConfig{}
+	if got != (ContextConfig{}) {
 		t.Fatalf("unconfigured context limits = %+v, want every bound uncapped", got)
 	}
-	got := loadContextConfig(t, "\n[context]\nmax_source_event_bytes = 1024\nmax_checkpoint_bytes = 2048\nmax_commit_events = 8\nmax_commit_event_bytes = 4096\nmax_session_state_bytes = 8192\nmax_export_bytes = 16384\nsummary_metadata_bytes = 24576\ncheckpoint_metadata_bytes = 32768\n")
+	got = loadContextConfig(t, "\n[context]\nmax_source_event_bytes = 1024\nmax_checkpoint_bytes = 2048\nmax_commit_events = 8\nmax_commit_event_bytes = 4096\nmax_session_state_bytes = 8192\nmax_export_bytes = 16384\nsummary_metadata_bytes = 24576\ncheckpoint_metadata_bytes = 32768\n")
+	got.Summary = ContextSummaryConfig{}
 	want := ContextConfig{
 		MaxSourceEventBytes: 1024, MaxCheckpointBytes: 2048, MaxCommitEvents: 8,
 		MaxCommitEventBytes: 4096, MaxSessionStateBytes: 8192, MaxExportBytes: 16384,

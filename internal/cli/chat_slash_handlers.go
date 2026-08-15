@@ -39,17 +39,17 @@ func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 // same "compaction" event a turn's automatic compaction emits - one field
 // mapping, not a second one here. At slash time no turn is in flight, so
 // OnAgentEvent is otherwise unset and nothing double-emits.
-func handleSlashCompact(line string, sess *chat.Session, term *Terminal) (bool, bool, error) {
+func handleSlashCompact(line string, sess *chat.Session, res *config.Resolved, term *Terminal) (bool, bool, error) {
 	focus := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(line, "/compact")), "/compact"))
 	if term == nil && activeJSONSlashSink != nil {
-		return handleSlashCompactJSON(sess, focus)
+		return handleSlashCompactJSON(sess, res, focus)
 	}
 	if _, err := sess.CompactWithResult(context.Background(), focus); err != nil {
 		reportCompactFailure(term, err)
 		return true, false, nil
 	}
 	usage := sess.ContextUsage()
-	message := fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens))
+	message := compactResultMessage(sess, res, usage)
 	if term == nil {
 		fmt.Fprintln(os.Stderr, message)
 	} else {
@@ -63,7 +63,7 @@ func handleSlashCompact(line string, sess *chat.Session, term *Terminal) (bool, 
 // context_usage refresh follows so a consumer updates its context indicator in
 // the same read. On failure, slash_error is the sole authoritative signal -
 // stderr prose is invisible to a frontend parsing stdout.
-func handleSlashCompactJSON(sess *chat.Session, focus string) (bool, bool, error) {
+func handleSlashCompactJSON(sess *chat.Session, res *config.Resolved, focus string) (bool, bool, error) {
 	w := activeJSONSlashSink.w
 	previous := sess.SwapOnAgentEvent(jsonTurnEventCallback(w))
 	_, err := sess.CompactWithResult(context.Background(), focus)
@@ -72,8 +72,29 @@ func handleSlashCompactJSON(sess *chat.Session, focus string) (bool, bool, error
 		activeJSONSlashSink.Error("context compaction failed: " + err.Error())
 		return true, false, nil
 	}
+	if reason := summaryDisabledReason(sess, res); reason != "" {
+		activeJSONSlashSink.Info(compactStructuralOnlyNotice(reason))
+	}
 	writeContextUsageLine(w, sess)
 	return true, false, nil
+}
+
+// compactStructuralOnlyNotice explains an instant, LLM-free compaction. A
+// structural-only compact returns at once and makes no provider call, which is
+// correct but reads as a broken summarizer; naming the unmet condition is the
+// difference between "it did nothing" and "it is not configured to do that".
+func compactStructuralOnlyNotice(reason string) string {
+	return "compaction was structural only (no LLM summary): " + reason
+}
+
+// compactResultMessage frames the human-readable /compact result, appending the
+// structural-only explanation when summarization is not configured.
+func compactResultMessage(sess *chat.Session, res *config.Resolved, usage chat.ContextUsage) string {
+	message := fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens))
+	if reason := summaryDisabledReason(sess, res); reason != "" {
+		message += "\n  " + compactStructuralOnlyNotice(reason)
+	}
+	return message
 }
 
 func reportCompactFailure(term *Terminal, err error) {

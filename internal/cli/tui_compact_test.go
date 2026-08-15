@@ -217,3 +217,59 @@ func TestTuiStatusBarBusyWhileCompacting(t *testing.T) {
 		t.Fatalf("compacting detail = %q, want the compaction label", detail)
 	}
 }
+
+// TestTuiCompactReportsStructuralOnlyReason pins the TUI's half of the
+// diagnosability contract. The line-mode and --json legs explain an instant,
+// LLM-free compaction; the TUI is the surface a person actually types
+// /compact into, and it reported only a percentage. A user whose workspace
+// never configured summarization saw the compaction "work" instantly with no
+// hint that the summary they expected was never even attempted.
+func TestTuiCompactReportsStructuralOnlyReason(t *testing.T) {
+	m := newCompactableTuiModel(t)
+	// A real TUI always carries its resolved config; the smoke helper does
+	// not, so supply one whose summary gate is off - the state under test.
+	m.config = summaryWiringResolved(t, false)
+	if reason := summaryDisabledReason(m.session, m.config); reason == "" {
+		t.Fatal("harness precondition: this model should have summarization disabled")
+	}
+	if !m.handleSlash("/compact") {
+		t.Fatal("/compact was not handled")
+	}
+	cmds := m.takePendingSlashCmds()
+	if len(cmds) != 1 {
+		t.Fatalf("pending slash commands = %d, want the one compact command", len(cmds))
+	}
+	done, ok := cmds[0]().(compactionDoneMsg)
+	if !ok {
+		t.Fatal("compact command did not produce a compactionDoneMsg")
+	}
+	if done.err != nil {
+		t.Fatalf("compact failed: %v", done.err)
+	}
+	model, _ := m.handleTUIMessage(done)
+	m = model.(*tuiModel)
+
+	var transcript string
+	for _, block := range m.blocks {
+		transcript += block.Text + "\n"
+	}
+	if !strings.Contains(transcript, "structural only") {
+		t.Fatalf("TUI transcript never explained the structural-only compaction:\n%s", transcript)
+	}
+	if !strings.Contains(transcript, "context.summary") {
+		t.Fatalf("TUI transcript did not name the missing condition:\n%s", transcript)
+	}
+}
+
+// TestTuiCompactStaysQuietWhenSummarizationIsWired pins the other side: a
+// configured workspace must not carry the notice, so it never becomes noise.
+func TestTuiCompactStaysQuietWhenSummarizationIsWired(t *testing.T) {
+	m := newCompactableTuiModel(t)
+	m.compacting = true
+	model, _ := m.handleTUIMessage(compactionDoneMsg{notice: "context compacted: 900 -> 400 tokens"})
+	m = model.(*tuiModel)
+	last := m.blocks[len(m.blocks)-1].Text
+	if strings.Contains(last, "structural only") {
+		t.Fatalf("a compaction that produced a typed summary still claimed structural-only: %q", last)
+	}
+}

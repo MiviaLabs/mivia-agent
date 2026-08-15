@@ -111,14 +111,14 @@ func EmitTokenUsage(opts Options, providerName, model string, usage provider.Tok
 // EmitCompaction publishes the sealed, content-free progress event after the
 // owning surface has durably committed the preparation. It is intentionally
 // separate from emit so the generic event adapter cannot receive summary data.
-func EmitCompaction(opts Options, preparation contextmgr.Preparation) {
+func EmitCompaction(opts Options, preparation contextmgr.Preparation, summarized bool) {
 	if !preparation.Compacted {
 		return
 	}
 	typed, err := events.NewCompactionEvent(events.CompactionEventParams{
 		Trigger: "threshold", BeforeTokens: preparation.BeforeTokens, AfterTokens: preparation.AfterTokens,
 		ElidedMessages: preparation.ElidedMessages, ElidedBytes: preparation.ElidedBytes,
-		SourceRange: preparation.Token.Range, SummaryVersion: 1,
+		SourceRange: preparation.Token.Range, SummaryVersion: 1, Summarized: summarized,
 	})
 	if err != nil {
 		return
@@ -126,6 +126,13 @@ func EmitCompaction(opts Options, preparation contextmgr.Preparation) {
 	detail := fmt.Sprintf("context compacted: %d -> %d tokens", typed.BeforeTokens, typed.AfterTokens)
 	if typed.ElidedMessages > 0 {
 		detail = fmt.Sprintf("%s (%d tool results elided, %d bytes)", detail, typed.ElidedMessages, typed.ElidedBytes)
+	}
+	// Say it in Detail too, not only in the typed field: Detail is what a
+	// plain renderer shows, and a banner that reads the same whether or not
+	// the dropped messages were summarized is the difference between
+	// "compaction worked" and "compaction silently threw context away".
+	if !typed.Summarized {
+		detail += " (structural only, no summary)"
 	}
 	e := Event{Kind: EventCompaction, Detail: detail, Compaction: &typed}
 	if opts.OnEvent != nil {

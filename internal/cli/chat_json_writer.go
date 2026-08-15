@@ -141,6 +141,11 @@ type ndjsonCompaction struct {
 	ElidedMessages int    `json:"elided_messages"`
 	ElidedBytes    int    `json:"elided_bytes"`
 	SummaryVersion uint32 `json:"summary_version"`
+	// Summarized is whether an LLM summary of the dropped messages was really
+	// produced. summary_version is always 1 (its validator refuses 0), so it
+	// cannot carry this and a consumer had no way to tell a summarized
+	// compaction from a purely structural one.
+	Summarized bool `json:"summarized"`
 }
 
 // writeTokenUsageLine frames one provider-reported token accounting record
@@ -187,6 +192,7 @@ func compactionPayload(typed events.CompactionEvent) *ndjsonCompaction {
 		ElidedMessages: typed.ElidedMessages,
 		ElidedBytes:    typed.ElidedBytes,
 		SummaryVersion: typed.SummaryVersion,
+		Summarized:     typed.Summarized,
 	}
 }
 

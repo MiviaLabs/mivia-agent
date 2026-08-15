@@ -74,6 +74,10 @@ func (l *Loop) retryAfterPromptTooLong(req provider.Request, opts Options, llmCt
 		// the excerpt source, so the summary quotes what THIS prune dropped.
 		l.preCompactSource = prePrune
 		l.refreshOmittedEvidenceAfterRetry(prePrune)
+		// This host-side prune is a NEW compaction event: the memoized summary
+		// of the earlier preparation does not describe what this prune drops,
+		// so force one fresh Summarize for the retried request.
+		l.invalidateSummaryMemo()
 		req.Messages = l.injectSummary(llmCtx, opts)
 	}
 	// The compacted retry prompt is genuinely new work (charge it against the

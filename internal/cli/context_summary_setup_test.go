@@ -23,7 +23,7 @@ func summaryWiringResolved(t *testing.T, enabled bool) *config.Resolved {
 	res.Model = "stub-model"
 	res.BaseURL = "https://api.stub.invalid"
 	res.SystemPrompt = "sys"
-	res.Context.Summary.Enabled = enabled
+	res.Context.Summary.Enabled = &enabled
 	return res
 }
 
@@ -42,16 +42,28 @@ func TestSummaryWiringDisabledByDefault(t *testing.T) {
 	}
 }
 
-// TestSummaryWiringRequiresRedaction pins the privacy dependency: without a
-// configured [privacy] policy the summary stays disabled, because the summary
-// gate refuses model output that no redaction policy classifies (INV-SEC-4).
-func TestSummaryWiringRequiresRedaction(t *testing.T) {
+// TestSummaryWiringDoesNotRequireRedaction pins the opt-out default. A
+// workspace with no [privacy] section still gets a summarizer: compaction
+// drops its messages permanently, so gating the only record of what was
+// removed on an unrelated section meant those workspaces compacted blind.
+//
+// Redaction governs DURABILITY, not availability, so the captured policy must
+// report RedactionConfigured honestly - that is what keeps summary content out
+// of the checkpoint (Metadata persists a digest only). A wiring that claimed
+// redaction was configured would silently persist content instead.
+func TestSummaryWiringDoesNotRequireRedaction(t *testing.T) {
 	res := summaryWiringResolved(t, true)
 	res.RedactionPolicy = nil
 	res.Privacy = config.PrivacyConfig{}
-	summarizer, _, ok := summaryWiring(summaryWiringSession(t, res), res)
-	if ok || summarizer != nil {
-		t.Fatal("summary wiring enabled without a configured redaction policy")
+	summarizer, policy, ok := summaryWiring(summaryWiringSession(t, res), res)
+	if !ok || summarizer == nil {
+		t.Fatal("a workspace without [privacy] got no summarizer")
+	}
+	if policy.RedactionConfigured {
+		t.Fatal("wiring claimed a configured redaction policy that does not exist")
+	}
+	if !policy.SummaryEnabled {
+		t.Fatal("wiring did not enable the summary policy")
 	}
 }
 

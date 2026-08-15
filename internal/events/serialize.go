@@ -25,6 +25,7 @@ func UnmarshalCompactionEvent(data []byte) (CompactionEvent, error) {
 		ElidedBytes    int                      `json:"elided_bytes"`
 		SourceRange    contextstate.SourceRange `json:"source_range"`
 		SummaryVersion uint32                   `json:"summary_version"`
+		Summarized     bool                     `json:"summarized"`
 	}
 	if err := contextstate.UnmarshalCanonical(data, &wire); err != nil {
 		return CompactionEvent{}, err
@@ -33,6 +34,7 @@ func UnmarshalCompactionEvent(data []byte) (CompactionEvent, error) {
 		Trigger: wire.Trigger, BeforeTokens: wire.BeforeTokens, AfterTokens: wire.AfterTokens,
 		ElidedMessages: wire.ElidedMessages, ElidedBytes: wire.ElidedBytes,
 		SourceRange: wire.SourceRange, SummaryVersion: wire.SummaryVersion,
+		Summarized: wire.Summarized,
 	})
 }
 

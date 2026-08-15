@@ -17,24 +17,56 @@ import (
 // summary call uses the same credential scope as the main turns.
 const summaryCredentialScope = "env-api-key"
 
-// summaryWiring builds the config-gated LLM summarizer for one session setup.
-// The gate has three conditions, all explicit: the [context.summary] flag, a
-// configured [privacy] redaction policy, and a resolved provider endpoint.
-// Missing any one keeps every compaction path structural-only. A false return
+// summaryDisabledReason names the first unmet condition keeping compaction
+// structural-only, or "" when summarization is wired. A workspace that has not
+// configured it gets an instant /compact that makes no LLM call, which is
+// correct but indistinguishable from a broken summarizer: the operator sees a
+// compaction succeed while the summary they expected never runs. The false
+// return stays a policy state rather than an error; this only makes the state
+// legible.
+func summaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
+	if sess == nil || res == nil {
+		// Nothing to report rather than a guess: silence is safer than a
+		// wrong reason on a caller that has no resolved configuration.
+		return ""
+	}
+	if !res.Context.Summary.SummaryEnabled() {
+		return "[context.summary] enabled is not set"
+	}
+	if strings.TrimSpace(res.BaseURL) == "" {
+		return "the provider endpoint (base_url) did not resolve"
+	}
+	binding := sess.CurrentBinding()
+	if binding.Completer == nil || binding.ProviderName == "" || binding.Model == "" {
+		return "the session has no resolved provider/model binding"
+	}
+	if _, _, ok := summaryWiring(sess, res); !ok {
+		return "the summarizer could not be built from the resolved policy"
+	}
+	return ""
+}
+
+// summaryWiring builds the LLM summarizer for one session setup. It is
+// opt-OUT: [context.summary] defaults to enabled, so the remaining condition
+// is a resolved provider endpoint plus a usable provider/model binding.
+// Missing either keeps every compaction path structural-only. A false return
 // is a policy state, never an error: setup must not fail because a summary
-// cannot run.
+// cannot run - but summaryDisabledReason names the cause so it is never
+// silent.
 //
 // The summarizer captures the session binding once, here. A model switch
 // later in the session does not rebuild it; summaries keep the startup model
 // until a new session starts.
 func summaryWiring(sess *chat.Session, res *config.Resolved) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
-	if sess == nil || res == nil || !res.Context.Summary.Enabled {
+	if sess == nil || res == nil || !res.Context.Summary.SummaryEnabled() {
 		return nil, contextstate.PolicySnapshot{}, false
 	}
+	// [privacy] is no longer a precondition. It governs what the checkpoint
+	// may persist (see PolicySnapshot.RedactionConfigured below, which stays
+	// honest), not whether the summary may run at all - requiring it meant a
+	// workspace without that section compacted with no record of what it
+	// dropped.
 	redaction := contextRedactionPolicy(res)
-	if !redaction.Configured {
-		return nil, contextstate.PolicySnapshot{}, false
-	}
 	endpoint := strings.TrimSpace(res.BaseURL)
 	if endpoint == "" {
 		return nil, contextstate.PolicySnapshot{}, false
@@ -44,7 +76,7 @@ func summaryWiring(sess *chat.Session, res *config.Resolved) (*contextmgr.Summar
 		return nil, contextstate.PolicySnapshot{}, false
 	}
 	policy := contextstate.PolicySnapshot{
-		SummaryEnabled: true, RedactionConfigured: true, NetworkEnabled: true,
+		SummaryEnabled: true, RedactionConfigured: redaction.Configured, NetworkEnabled: true,
 		Provider: binding.ProviderName, Model: binding.Model,
 		CredentialScope:   summaryCredentialScope,
 		EndpointAllowlist: []string{endpoint},

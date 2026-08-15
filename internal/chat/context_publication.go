@@ -58,7 +58,7 @@ func nextContextRevision(preparation contextmgr.Preparation, result contextmgr.T
 	}
 }
 
-func (s *Session) emitContextCompaction(preparation contextmgr.Preparation, turnID uint64) {
+func (s *Session) emitContextCompaction(preparation contextmgr.Preparation, turnID uint64, summarized bool) {
 	s.mu.RLock()
 	onEvent := s.OnAgentEvent
 	bus := s.EventBus
@@ -73,7 +73,7 @@ func (s *Session) emitContextCompaction(preparation contextmgr.Preparation, turn
 	agent.EmitCompaction(agent.Options{
 		OnEvent: onEvent, EventBus: bus, SessionID: sessionID,
 		TurnID: fmt.Sprintf("turn:%d", turnID), EventIdentity: identity,
-	}, preparation)
+	}, preparation, summarized)
 }
 
 func (s *Session) advanceContextHead(store contextstate.Store, principal contextstate.Principal, instance contextstate.WorktreeInstance, expected contextstate.Revision, expectedBinding, newBinding contextstate.BindingRevision, reason string, clearActive bool) error {

@@ -77,8 +77,17 @@ func (m *tuiModel) applyCompactionDone(msg compactionDoneMsg) {
 		m.renderVP()
 		return
 	}
+	// These are independent: a structural-only compaction still emits a typed
+	// record with its before/after tokens, so the notice being present says
+	// nothing about whether a summary was produced. The gate reason is what
+	// distinguishes "compacted and summarized" from "compacted, and the
+	// summary was never attempted". The usage line stays last so the
+	// transcript ends on the result.
 	if msg.notice != "" {
 		m.appendInfo(msg.notice)
+	}
+	if reason := summaryDisabledReason(m.session, m.config); reason != "" {
+		m.appendInfo(compactStructuralOnlyNotice(reason))
 	}
 	usage := m.session.ContextUsage()
 	m.appendInfo(fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens)))

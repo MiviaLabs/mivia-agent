@@ -77,15 +77,34 @@ func (l *Loop) injectSummary(ctx context.Context, opts Options) []provider.Messa
 	if opts.SummaryConfig.Summarizer == nil || !l.HasPreparation || !l.LastPreparation.Compacted {
 		return l.Messages
 	}
-	summary, request, ok := l.summarizeTurn(ctx, opts)
-	if !ok {
+	// One Summarize attempt per compaction event: the memo holds the RENDERED
+	// message, so every later step of the turn injects byte-identical bytes
+	// with no new summarizer request. A different key is a new compaction
+	// event and summarizes again exactly once. A failed attempt is memoized
+	// too, so it is not retried per step.
+	key := l.turnCompactionKey
+	if key == "" {
+		key = compactionIdentity(l.LastPreparation.Token)
+	}
+	if !l.summaryMemoValid || l.summaryMemoKey != key {
+		l.summaryMemoKey = key
+		l.summaryMemoValid = true
+		l.summaryMemoHasMsg = false
+		l.summaryMemoMessage = provider.Message{}
+		if summary, request, ok := l.summarizeTurn(ctx, opts); ok {
+			// Render the provider's sealed summary together with the host-side
+			// omitted-evidence record (request.Input.Evidence): the diff of
+			// what the compaction dropped is the host's own account of what
+			// the model can no longer read, so it is rendered even when the
+			// provider does not echo it.
+			l.summaryMemoMessage = RenderSummaryMessage(summary, request.Input.Evidence)
+			l.summaryMemoHasMsg = true
+		}
+	}
+	if !l.summaryMemoHasMsg {
 		return l.Messages
 	}
-	// Render the provider's sealed summary together with the host-side
-	// omitted-evidence record (request.Input.Evidence): the diff of what the
-	// compaction dropped is the host's own account of what the model can no
-	// longer read, so it is rendered even when the provider does not echo it.
-	injected := RenderSummaryMessage(summary, request.Input.Evidence)
+	injected := l.summaryMemoMessage
 	if SummaryOverBudget(l.LastPreparation.AfterTokens, injected, opts.MaxContextTokens) {
 		return l.Messages
 	}
@@ -106,6 +125,16 @@ func (l *Loop) injectSummary(ctx context.Context, opts Options) []provider.Messa
 // so planning, idempotency, BaseDigest, and checkpoint bytes are untouched.
 func (l *Loop) InjectedSummary() (provider.Message, bool) {
 	return l.injectedSummary, l.hasInjectedSummary
+}
+
+// invalidateSummaryMemo forces the next injectSummary to run a fresh
+// Summarize. The prompt-too-long retry calls it: that retry prunes history
+// host-side and re-derives the omitted evidence, so the memoized summary of
+// the earlier compaction no longer describes what the retried request drops.
+func (l *Loop) invalidateSummaryMemo() {
+	l.summaryMemoValid = false
+	l.summaryMemoHasMsg = false
+	l.summaryMemoMessage = provider.Message{}
 }
 
 // summarizeTurn builds the summary request from real host state - the latest

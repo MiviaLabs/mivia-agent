@@ -225,6 +225,12 @@ func renderCompactionNotice(event events.CompactionEvent) string {
 		}
 		notice = fmt.Sprintf("%s (%d %s elided, %d bytes)", notice, event.ElidedMessages, unit, event.ElidedBytes)
 	}
+	// A compaction with no summary threw the dropped messages away with no
+	// account of them. The banner must not read identically to one that
+	// summarized them.
+	if !event.Summarized {
+		notice += " (structural only, no summary)"
+	}
 	return notice
 }
 
