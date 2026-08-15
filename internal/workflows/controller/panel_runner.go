@@ -53,6 +53,13 @@ type PanelMembersResult struct {
 
 // RunPanelMembers starts every member concurrently and waits for each result.
 // It never starts synthesis.
+//
+// RunPanelMembers is policy-agnostic about member outcomes: it returns every
+// member result (success and failure alike) and never fails the whole panel on
+// a member failure. Each member's failure is preserved in PanelMemberResult.Err
+// for the caller to act on; the caller applies the failure policy. RunPanelMembers
+// only returns a non-nil error for request-level problems (nil limiter or
+// coordinator, empty attempt ID, or no members), which are rejected up front.
 func RunPanelMembers(ctx context.Context, limiter *PanelActorLimiter, req PanelMembersRequest) (PanelMembersResult, error) {
 	if limiter == nil || req.Coordinator == nil || req.AttemptID == "" || len(req.Members) == 0 {
 		return PanelMembersResult{}, fmt.Errorf("panel member request is incomplete")
@@ -67,11 +74,6 @@ func RunPanelMembers(ctx context.Context, limiter *PanelActorLimiter, req PanelM
 		}(index, member)
 	}
 	wg.Wait()
-	for _, result := range results {
-		if result.Err != nil {
-			return PanelMembersResult{Members: results}, fmt.Errorf("panel member %q failed: %w", result.MemberID, result.Err)
-		}
-	}
 	return PanelMembersResult{Members: results}, nil
 }
 

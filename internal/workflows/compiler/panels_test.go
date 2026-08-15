@@ -69,7 +69,7 @@ var panelValidationCases = []panelValidationCase{
 	{
 		name:    "unsupported failure policy",
 		mutate:  func(s *definition.Step) { s.Panel.FailurePolicy = "best_effort" },
-		wantErr: "failure_policy must be \"require_all\"",
+		wantErr: "failure_policy must be \"require_all\" or \"allow_partial\"",
 	},
 	{
 		name:    "distinct bindings required",

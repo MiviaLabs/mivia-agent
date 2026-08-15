@@ -40,6 +40,10 @@ const (
 	// dropping review findings that demand sibling-chunk work, with the
 	// dropped finding ids in Detail.
 	ProgressChunkScopeDropped ProgressKind = "chunk_scope_dropped"
+	// ProgressPanelMemberFailed reports a panel member failing while the
+	// panel attempt continues under the allow_partial failure policy, with
+	// the member id and cause in Detail.
+	ProgressPanelMemberFailed ProgressKind = "panel_member_failed"
 )
 
 // ProgressEvent is one workflow progress observation. The CLI writer marshals

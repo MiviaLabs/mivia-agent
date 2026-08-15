@@ -30,8 +30,8 @@ func validatePanels(wf *definition.WorkflowFile) []string {
 		if strings.TrimSpace(step.Agent) == "" {
 			errs = append(errs, fmt.Sprintf("step %q: agent is required for kind %q", step.ID, step.Kind))
 		}
-		if step.Panel.FailurePolicy != "require_all" {
-			errs = append(errs, fmt.Sprintf("step %q: panel failure_policy must be \"require_all\"", step.ID))
+		if step.Panel.FailurePolicy != definition.PanelFailurePolicyRequireAll && step.Panel.FailurePolicy != definition.PanelFailurePolicyAllowPartial {
+			errs = append(errs, fmt.Sprintf("step %q: panel failure_policy must be \"require_all\" or \"allow_partial\"", step.ID))
 		}
 		if !step.Panel.RequireDistinctBindings {
 			errs = append(errs, fmt.Sprintf("step %q: panel require_distinct_bindings must be true", step.ID))

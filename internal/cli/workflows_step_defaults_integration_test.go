@@ -185,7 +185,7 @@ func TestStepDefaultsDigestSafeForExistingFiles(t *testing.T) {
 	// feature must not move this value. Update ONLY when bug-fix.toml
 	// itself is deliberately edited (e.g. the follow-up that rewrites its
 	// repair steps to use [step_defaults]).
-	const pinnedPreFeatureDigest = "af6c8de8f30952a1db1e58a61b086331a069118e8d801b0152a775c47860b5f2"
+	const pinnedPreFeatureDigest = "348ac591dfd32b86ff6a1986e86931fa13ed6cddb7e8f51369e17c4bce2d4aa6"
 	first, second := digest(), digest()
 	if first != second {
 		t.Fatalf("digest not deterministic: %s != %s", first, second)

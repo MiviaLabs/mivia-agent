@@ -158,7 +158,11 @@ context = [
 on_failure = "review_panel"
 
 [steps.panel]
-failure_policy = "require_all"
+# allow_partial means a single panel member failure does not fail the whole
+# panel when other reviewers succeeded — the failed member is noted and the
+# panel proceeds to synthesis with the successful members; the attempt fails
+# only if all members fail.
+failure_policy = "allow_partial"
 require_distinct_bindings = true
 
 [[steps.panel.members]]

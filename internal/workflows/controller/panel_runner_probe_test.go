@@ -84,14 +84,18 @@ func TestRunPanelMembersAcquiresPermitWhenRemoteJoinIsLost(t *testing.T) {
 		leases[i] = lease
 	}
 	admitted := make(chan struct{}, 1)
-	done := make(chan error, 1)
+	type outcome struct {
+		res PanelMembersResult
+		err error
+	}
+	done := make(chan outcome, 1)
 	go func() {
-		_, err := RunPanelMembers(context.Background(), limiter, PanelMembersRequest{
+		res, err := RunPanelMembers(context.Background(), limiter, PanelMembersRequest{
 			AttemptID:   "attempt",
 			Members:     []PanelMemberRequest{{MemberID: "member", RunID: "member-run"}},
 			Coordinator: remoteJoinRaceMembers{admitted: admitted},
 		})
-		done <- err
+		done <- outcome{res: res, err: err}
 	}()
 	select {
 	case <-admitted:
@@ -105,9 +109,12 @@ func TestRunPanelMembersAcquiresPermitWhenRemoteJoinIsLost(t *testing.T) {
 		t.Fatal("local admission did not begin after a permit released")
 	}
 	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("admission error was lost")
+	case out := <-done:
+		if out.err != nil {
+			t.Fatalf("admission error should not fail the panel, got aggregate error: %v", out.err)
+		}
+		if len(out.res.Members) != 1 || out.res.Members[0].Err == nil {
+			t.Fatal("admission error was not captured in the member's Err")
 		}
 	case <-time.After(time.Second):
 		t.Fatal("panel member did not finish")
@@ -203,8 +210,8 @@ func TestRunPanelMembersRetainsSuccessfulSiblingsOnFailure(t *testing.T) {
 	result, err := RunPanelMembers(context.Background(), NewPanelActorLimiter(), PanelMembersRequest{
 		AttemptID: "attempt", Members: []PanelMemberRequest{{MemberID: "a", RunID: "run-a"}, {MemberID: "b", RunID: "run-b"}, {MemberID: "c", RunID: "run-c"}}, Coordinator: probeMembers{c: c},
 	})
-	if err == nil {
-		t.Fatal("member failure did not fail the panel")
+	if err != nil {
+		t.Fatalf("member failure should not fail the panel, got aggregate error: %v", err)
 	}
 	if len(result.Members) != 3 {
 		t.Fatalf("member results = %d, want 3", len(result.Members))

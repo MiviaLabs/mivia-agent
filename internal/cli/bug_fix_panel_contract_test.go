@@ -92,7 +92,7 @@ func bugFixStep(t *testing.T, workflow definition.WorkflowFile, id string) defin
 // agent_panel, review-synthesizer aggregation with the shared synthesis
 // template and schema, three independent panel-reviewer members (correctness,
 // security, integration) with distinct provider/model pairs and one panel
-// skill each, the require_all policy with distinct bindings, and the
+// skill each, the allow_partial policy with distinct bindings, and the
 // transitions that make it the code-review gate: implement -> review_panel ->
 // review, review_panel -> implement on changes_requested. Without this pin a
 // change could drop a member, weaken require_distinct_bindings, or
@@ -115,14 +115,14 @@ func assertBugFixReviewPanel(t *testing.T, workflow definition.WorkflowFile) {
 	if step.Panel == nil {
 		t.Fatal("step review_panel must declare [steps.panel]")
 	}
-	if step.Panel.FailurePolicy != "require_all" {
-		t.Fatalf("step review_panel failure_policy = %q, want require_all", step.Panel.FailurePolicy)
+	if step.Panel.FailurePolicy != "allow_partial" {
+		t.Fatalf("step review_panel failure_policy = %q, want allow_partial", step.Panel.FailurePolicy)
 	}
 	if !step.Panel.RequireDistinctBindings {
 		t.Fatal("step review_panel require_distinct_bindings must be true")
 	}
 	wantMembers := map[string]struct{ provider, model, skill, template string }{
-		"correctness": {"deepseek", "deepseek-v4-flash", "panel-bug-audit", "templates/bugfix-panel-correctness.md"},
+		"correctness": {"llmgateway", "runware/deepseek-v4-flash", "panel-bug-audit", "templates/bugfix-panel-correctness.md"},
 		"security":    {"openrouter", "tencent/hy3-preview", "panel-secure-change", "templates/bugfix-panel-security.md"},
 		"integration": {"zai", "glm-5-turbo", "panel-architecture-review", "templates/bugfix-panel-integration.md"},
 	}

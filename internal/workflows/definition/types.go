@@ -165,6 +165,18 @@ type MatchCriteria struct {
 // backstop) share one value instead of drifting literals.
 const ProviderGitHub = "github"
 
+// Panel failure-policy constants for agent_panel steps.
+//
+// PanelFailurePolicyRequireAll means any member failure fails the panel
+// attempt.
+//
+// PanelFailurePolicyAllowPartial means the attempt proceeds to synthesis with
+// the successful members and fails only if ALL members fail.
+const (
+	PanelFailurePolicyRequireAll   = "require_all"
+	PanelFailurePolicyAllowPartial = "allow_partial"
+)
+
 type Delivery struct {
 	Kind                  string `toml:"kind" json:"kind,omitempty"`
 	Mode                  string `toml:"mode" json:"mode,omitempty"`

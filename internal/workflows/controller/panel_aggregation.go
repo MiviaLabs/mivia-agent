@@ -271,7 +271,9 @@ func synthesisSkeleton(stepID string, inputs []PanelSynthesisMemberInput) ([]byt
 // or oversized member JSON never reaches synthesis (Fan-in matrix item 2).
 // It stamps provenance for every member from host-known data only, computes
 // the monotonic host verdict from the bounded reports, and enforces every
-// bound in the plan's Bounds table with overflow-safe sums.
+// bound in the plan's Bounds table with overflow-safe sums. A panel with a
+// single surviving member still synthesizes: one successful member is
+// sufficient to build an envelope.
 func BuildSynthesisEnvelope(stepID string, inputs []PanelSynthesisMemberInput) (PanelSynthesisEnvelope, []byte, error) {
 	return BuildSynthesisEnvelopeWithFilter(stepID, inputs, nil)
 }
@@ -284,10 +286,12 @@ func BuildSynthesisEnvelope(stepID string, inputs []PanelSynthesisMemberInput) (
 // or was empty from the start. A verdict with no findings carries no
 // actionable content, and the synthesizer's dispositions validate against
 // the filtered reports only. With a nil filter the builder applies none of
-// this, so non-chunk panels keep the exact legacy behavior.
+// this, so non-chunk panels keep the exact legacy behavior. A panel with a
+// single surviving member still synthesizes: one successful member is
+// sufficient to build an envelope.
 func BuildSynthesisEnvelopeWithFilter(stepID string, inputs []PanelSynthesisMemberInput, filter func(memberID string, report *PanelMemberReport) []string) (PanelSynthesisEnvelope, []byte, error) {
-	if len(inputs) < 2 || len(inputs) > 4 {
-		return PanelSynthesisEnvelope{}, nil, fmt.Errorf("panel synthesis envelope requires 2 to 4 members, got %d", len(inputs))
+	if len(inputs) < 1 || len(inputs) > 4 {
+		return PanelSynthesisEnvelope{}, nil, fmt.Errorf("panel synthesis envelope requires 1 to 4 members, got %d", len(inputs))
 	}
 	seenMembers := make(map[string]struct{}, len(inputs))
 	for _, in := range inputs {
