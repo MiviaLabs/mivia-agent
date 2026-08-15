@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // openaiErrorEnvelope is the standard OpenAI-compatible error shape returned by
@@ -72,7 +73,17 @@ func openaiErrorParser(statusCode int, body []byte) error {
 		if promptTooLong {
 			return fmt.Errorf("%s: provider error (HTTP 200%s): %w", "openai", errType, ErrPromptTooLong)
 		}
-		return fmt.Errorf("%s: provider error (HTTP 200%s)", "openai", errType)
+		err := fmt.Errorf("%s: provider error (HTTP 200%s)", "openai", errType)
+		// An in-band error envelope on HTTP 200 is a provider fault the HTTP
+		// status cannot express. Classify it from the type (or the code when
+		// the type is empty) so the coordinator step-retry layer knows whether
+		// to retry: transient-class faults (server/api/timeout/upstream errors,
+		// overload, rate limit) are retried, while permanent and unknown
+		// classes fail closed and stay non-transient.
+		if openai200ErrorTransient(envelope.Error.Type, envelope.Error.Code) {
+			return &TransientError{Err: err}
+		}
+		return markPermanent(err)
 	case statusCode == http.StatusTooManyRequests:
 		return fmt.Errorf("%s: rate limited (HTTP 429)", "openai")
 	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
@@ -83,4 +94,36 @@ func openaiErrorParser(statusCode int, body []byte) error {
 		}
 		return fmt.Errorf("%s: provider error (HTTP %d%s)", "openai", statusCode, errType)
 	}
+}
+
+// openai200ErrorTransient reports whether an in-band error envelope carried on
+// an HTTP 200 response names a transient-class provider fault that the
+// step-retry layer should retry. It matches on the error type when present,
+// and falls back to the code field (decoded as any) when the type is empty.
+//
+// Only positively-identified transient classes return true; permanent and
+// unknown classes fail closed (false), so a call the provider refused for a
+// stable reason is never re-run. The match is byte/content-free: it inspects
+// the classification type/code strings only, never the provider's message.
+func openai200ErrorTransient(errType string, code any) bool {
+	value := errType
+	if value == "" {
+		s, ok := code.(string)
+		if !ok {
+			return false
+		}
+		value = s
+	}
+	lower := strings.ToLower(value)
+	switch lower {
+	case "server_error", "api_error", "timeout_error", "upstream_error", "internal_error":
+		return true
+	}
+	// Prefix/substring transient classes: overload*, *timeout*, rate_limit*.
+	if strings.HasPrefix(lower, "overloaded") ||
+		strings.HasPrefix(lower, "rate_limit") ||
+		strings.Contains(lower, "timeout") {
+		return true
+	}
+	return false
 }

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"io"
+	"net/http"
 	"strings"
 )
 
@@ -54,4 +55,27 @@ func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w
 		}
 	}
 	return content, nil
+}
+
+// handleStreamError parses an in-band provider error envelope from a stream
+// chunk and returns the (content, error) the read loop should surface, plus
+// whether a non-streamed re-ask was performed. A transient fault that
+// delivered nothing is re-asked once non-streamed; otherwise the accumulated
+// content and the error are returned unchanged.
+func (c *OpenAICompat) handleStreamError(ctx context.Context, req Request, w io.Writer, data, full string, delivered bool) (string, error, bool) {
+	if c.errorParser == nil {
+		return full, nil, false
+	}
+	parserBody := []byte(data)
+	if len(parserBody) > 4096 {
+		parserBody = parserBody[:4096]
+	}
+	if err := c.errorParser(http.StatusOK, parserBody); err != nil {
+		if IsTransient(err) && !delivered && !req.DisableProviderReplay {
+			out, rerr := c.retryWithoutStreaming(ctx, req, w)
+			return out, rerr, true
+		}
+		return full, err, false
+	}
+	return full, nil, false
 }

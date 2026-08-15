@@ -311,3 +311,125 @@ func TestDeepSeekAndOpenRouterGetDefaultParser(t *testing.T) {
 		})
 	}
 }
+
+// --- HTTP-200 in-band error transient/permanent classification (RED) ---
+//
+// These tests lock the contract that a 200 response carrying an in-band error
+// envelope must be classified so provider.IsTransient makes the coordinator
+// step-retry layer behave: transient-class provider faults (server_error,
+// internal_error, rate_limit_exceeded, overloaded_region) must be transient
+// so the step retries; permanent and unknown classes must stay non-transient.
+// Today openaiErrorParser's statusCode == http.StatusOK branch returns a plain
+// error and never wraps TransientError nor calls markPermanent, so these
+// assertion-fail (RED).
+
+// Transient-class provider faults reported in a 200 error envelope must be
+// classified transient so the coordinator step-retry layer retries them.
+func TestOpenAIErrorParser200InBandTransientTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		typ  string
+	}{
+		{"server_error", "server_error"},
+		{"internal_error", "internal_error"},
+		{"rate_limit_exceeded", "rate_limit_exceeded"},
+		{"upstream_error", "upstream_error"},
+		{"timeout", "timeout"},
+		{"overloaded", "overloaded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"error":{"type":"` + tc.typ + `","message":"boom"}}`
+			err := openaiErrorParser(http.StatusOK, []byte(body))
+			if err == nil {
+				t.Fatal("expected an error for in-band error")
+			}
+			if !IsTransient(err) {
+				t.Fatalf("provider fault type %q must be transient, got IsTransient=false: %v", tc.typ, err)
+			}
+		})
+	}
+}
+
+// When the error type is empty, classification must fall back to the code
+// field (decoded as `any`). A transient overload code must be transient.
+func TestOpenAIErrorParser200InBandCodeBasedClassification(t *testing.T) {
+	body := `{"error":{"type":"","code":"overloaded_region"}}`
+	err := openaiErrorParser(http.StatusOK, []byte(body))
+	if err == nil {
+		t.Fatal("expected an error for in-band error")
+	}
+	if !IsTransient(err) {
+		t.Fatalf("code-based overload must be transient, got IsTransient=false: %v", err)
+	}
+}
+
+// Permanent classes reported in a 200 error envelope must stay non-transient:
+// the step-retry layer must NOT retry a call the provider refused permanently.
+func TestOpenAIErrorParser200InBandPermanentTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		typ  string
+		code string
+	}{
+		{"invalid_request_error", "invalid_request_error", ""},
+		{"model_not_found", "model_not_found", "model_not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"error":{"type":"` + tc.typ + `"` + func() string {
+				if tc.code == "" {
+					return `}`
+				}
+				return `,"code":"` + tc.code + `"}`
+			}() + `}`
+			err := openaiErrorParser(http.StatusOK, []byte(body))
+			if err == nil {
+				t.Fatal("expected an error for in-band error")
+			}
+			if IsTransient(err) {
+				t.Fatalf("permanent type %q must NOT be transient, got IsTransient=true: %v", tc.typ, err)
+			}
+		})
+	}
+}
+
+// An unknown class fails closed: it must not be treated as transient, so the
+// step-retry layer only retries faults it can positively identify.
+func TestOpenAIErrorParser200InBandUnknownClassFailsClosed(t *testing.T) {
+	body := `{"error":{"type":"mystery_class"}}`
+	err := openaiErrorParser(http.StatusOK, []byte(body))
+	if err == nil {
+		t.Fatal("expected an error for in-band error")
+	}
+	if IsTransient(err) {
+		t.Fatalf("unknown type %q must fail closed as non-transient, got IsTransient=true: %v", "mystery_class", err)
+	}
+}
+
+// A 200 in-band transient error must still hide the provider's message text
+// (privacy: request-echoing content must never reach err.Error()).
+func TestOpenAIErrorParser200InBandTransientStripsSecret(t *testing.T) {
+	body := `{"error":{"type":"server_error","message":"S3CR3T-request-echo"}}`
+	err := openaiErrorParser(http.StatusOK, []byte(body))
+	if err == nil {
+		t.Fatal("expected an error for in-band error")
+	}
+	if !IsTransient(err) {
+		t.Fatalf("server_error in-band must be transient: %v", err)
+	}
+	if strings.Contains(err.Error(), "S3CR3T-request-echo") {
+		t.Fatalf("request secret leaked in error text: %v", err)
+	}
+}
+
+// The non-200 path must remain unchanged: status 500 surface type info only,
+// never the provider's message text, and behaves as today.
+func TestOpenAIErrorParser200InBandNon200Unchanged(t *testing.T) {
+	body := `{"error":{"type":"server_error","message":"S3CR3T-request-echo"}}`
+	err := openaiErrorParser(http.StatusInternalServerError, []byte(body))
+	if err == nil {
+		t.Fatal("expected an error at HTTP 500")
+	}
+	if strings.Contains(err.Error(), "S3CR3T-request-echo") {
+		t.Fatalf("provider message leaked at HTTP 500: %v", err)
+	}
+}

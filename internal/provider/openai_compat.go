@@ -434,14 +434,8 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 		if data == "[DONE]" {
 			break
 		}
-		if c.errorParser != nil {
-			parserBody := []byte(data)
-			if len(parserBody) > 4096 {
-				parserBody = parserBody[:4096]
-			}
-			if err := c.errorParser(http.StatusOK, parserBody); err != nil {
-				return full.String(), err
-			}
+		if out, err, replayed := c.handleStreamError(ctx, req, w, data, full.String(), full.Len() > 0 || received); replayed || err != nil {
+			return out, err
 		}
 		var chunk chatResponseBody
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
