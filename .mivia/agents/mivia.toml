@@ -9,8 +9,8 @@ description = "Root orchestrator for the current workspace: plans work, dispatch
 # the strong models are spent on the reviewers instead. This binding applies
 # whenever the definition is routed (dispatch, spawn, delegate); the root
 # chat session's model comes from the session binding.
-provider = "deepseek"
-model = "deepseek-v4-flash"
+provider = "llmgateway"
+model = "runware/deepseek-v4-flash"
 max_turns = 0
 system_prompt = """
 You are the root orchestrator for an engineering workspace.
