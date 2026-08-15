@@ -100,6 +100,19 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 		commitCtx = context.Background()
 	}
 	result, err := buildContextTurnResult(commitCtx, contextCfg, &preparation, loop.Messages, ordered, token.TurnID)
+	// A compacting turn showed the model a summary of the messages it dropped,
+	// but only inside its own ephemeral requests. The dropped messages are
+	// gone for good, so unless the summary joins the committed active context
+	// it disappears at this boundary and every later turn sees a truncated
+	// history with no account of what was removed. Manual /compact already
+	// carries its summary across for the same reason: the message is
+	// host-generated with no source event of its own, so the checkpoint is its
+	// only durable carrier. It is appended to Active only - never to `ordered`,
+	// which feeds source projection.
+	summaryMessage, haveSummary := loop.InjectedSummary()
+	if err == nil && haveSummary {
+		result.Active = append(cloneContextMessages(result.Active), summaryMessage)
+	}
 	if err == nil && interrupted {
 		result.Outcome = contextmgr.OutcomeCancelled
 	}
@@ -120,6 +133,12 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 		return nil
 	}
 	s.Messages = cloneContextMessages(loop.Messages)
+	if haveSummary {
+		// Same message, same reason, in the live history the next turn builds
+		// its request from. Kept in step with result.Active above so the
+		// in-memory and durable views of this turn do not diverge.
+		s.Messages = append(s.Messages, summaryMessage)
+	}
 	// Belt-and-braces: the planner preserves the core-memory frame
 	// (PreserveNames), and this guard re-places it from the session mirror if
 	// it was ever dropped, so a compacted turn can never strip the promoted

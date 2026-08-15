@@ -89,7 +89,23 @@ func (l *Loop) injectSummary(ctx context.Context, opts Options) []provider.Messa
 	if SummaryOverBudget(l.LastPreparation.AfterTokens, injected, opts.MaxContextTokens) {
 		return l.Messages
 	}
+	// Record what the model was actually shown so the owning surface can put
+	// it in the turn's committed active context. Without that the summary
+	// lives only in this ephemeral request: the compaction has already dropped
+	// the messages for good, and at the turn boundary the account of them
+	// would be lost too (see InjectedSummary).
+	l.injectedSummary = injected
+	l.hasInjectedSummary = true
 	return InjectSummaryMessage(l.Messages, injected)
+}
+
+// InjectedSummary returns the summary message this run last injected into a
+// provider request, and whether there was one. The owning surface appends it
+// to the turn's committed active context so it survives the turn boundary;
+// the loop itself never writes it into l.Messages, which must stay structural
+// so planning, idempotency, BaseDigest, and checkpoint bytes are untouched.
+func (l *Loop) InjectedSummary() (provider.Message, bool) {
+	return l.injectedSummary, l.hasInjectedSummary
 }
 
 // summarizeTurn builds the summary request from real host state - the latest

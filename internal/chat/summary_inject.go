@@ -15,10 +15,16 @@ import (
 // error, policy refusal, or over-budget - it returns the structural messages
 // unchanged and the turn proceeds without a summary. The caller commits the
 // structural `prepared` slice, never the returned one.
-func injectPlainSummary(ctx context.Context, snapshot plainTurnSnapshot, preparation contextmgr.Preparation, prepared []provider.Message) []provider.Message {
+//
+// The second result carries the rendered summary message to the commit path.
+// The compaction has already dropped the summarized messages for good, so
+// unless that message joins the turn's committed active context the account of
+// them dies with this request and every later turn sees a truncated history
+// explaining nothing.
+func injectPlainSummary(ctx context.Context, snapshot plainTurnSnapshot, preparation contextmgr.Preparation, prepared []provider.Message) ([]provider.Message, injectedSummary) {
 	summarizer := snapshot.context.summarizer
 	if summarizer == nil || !preparation.Compacted {
-		return prepared
+		return prepared, injectedSummary{}
 	}
 	request, err := contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
 		Version:           contextmgr.SummarySchemaVersion,
@@ -35,17 +41,35 @@ func injectPlainSummary(ctx context.Context, snapshot plainTurnSnapshot, prepara
 		OutputLimit:       agent.SummaryOutputLimitTokens,
 	})
 	if err != nil {
-		return prepared
+		return prepared, injectedSummary{}
 	}
 	summary, err := summarizer.Summarize(ctx, request)
 	if err != nil {
-		return prepared
+		return prepared, injectedSummary{}
 	}
 	// Render the sealed summary together with the host-side omitted-evidence
 	// diff (request.Input.Evidence), mirroring the agent-loop path.
 	injected := agent.RenderSummaryMessage(summary, request.Input.Evidence)
 	if agent.SummaryOverBudget(preparation.AfterTokens, injected, snapshot.budget) {
-		return prepared
+		return prepared, injectedSummary{}
 	}
-	return agent.InjectSummaryMessage(prepared, injected)
+	return agent.InjectSummaryMessage(prepared, injected), injectedSummary{message: injected, present: true}
+}
+
+// injectedSummary carries one turn's rendered context summary from the request
+// path to the commit path. The zero value means the turn injected none.
+type injectedSummary struct {
+	message provider.Message
+	present bool
+}
+
+// appendTo returns messages with the summary appended when there is one. It is
+// applied to the committed active context and the live history, never to the
+// `ordered` slice that feeds source projection: the message is host-generated
+// and has no source event of its own.
+func (s injectedSummary) appendTo(messages []provider.Message) []provider.Message {
+	if !s.present {
+		return messages
+	}
+	return append(cloneContextMessages(messages), s.message)
 }

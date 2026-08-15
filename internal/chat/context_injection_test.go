@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -113,11 +114,12 @@ func requestsCarrySummary(requests []provider.Request) bool {
 	return false
 }
 
-// TestPlainChatInjectsSummaryIntoStreamRequest is the plain-chat Phase 2
-// proof: after a compacted preparation, the ChatStream request the fake
-// completer receives carries the context-summary message, while the durable
-// commit, the in-memory session, and the compaction event carry no summary
-// content (INV-AG-32 omission stays).
+// TestPlainChatInjectsSummaryIntoStreamRequest is the plain-chat proof that a
+// compaction's summary both reaches the model and survives the turn. After a
+// compacted preparation the ChatStream request carries the context-summary
+// message, and the durable active context plus the live history keep it so
+// later turns still have an account of the dropped messages. Source
+// projection stays summary-free (INV-AG-32 omission stays).
 func TestPlainChatInjectsSummaryIntoStreamRequest(t *testing.T) {
 	store, _ := openSharedContextStore(t)
 	provider := &chatSummaryProvider{}
@@ -153,24 +155,77 @@ func TestPlainChatInjectsSummaryIntoStreamRequest(t *testing.T) {
 		t.Fatal("summary provider was never called on the compacted plain turn")
 	}
 
-	// Durable commit contains no summary content.
 	snapshot, err := store.Load(context.Background(), principal, session.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The summary MUST reach the durable active context. The compaction has
+	// already dropped the summarized messages for good, so the checkpoint is
+	// the summary's only durable carrier: without it the account of what was
+	// removed dies with this request and every later turn (and every resumed
+	// process) sees a truncated history explaining nothing. This is the same
+	// call the manual /compact path already makes (chat/context_control.go).
 	active := string(snapshot.Active.ActiveContext)
-	if strings.Contains(active, "context summary") || strings.Contains(active, agent.SummaryMessageName) {
-		t.Fatalf("durable ActiveContext carries summary content: %s", active)
+	if !strings.Contains(active, agent.SummaryMessageName) {
+		t.Fatalf("durable ActiveContext dropped the summary of the compacted messages: %s", active)
 	}
 	if len(snapshot.Active.SummaryMetadata) != 0 {
 		t.Fatal("structural-only commit persisted summary metadata")
 	}
-	// The in-memory session history never adopted the ephemeral message.
-	for _, message := range session.MessagesCopy() {
-		if message.Name == agent.SummaryMessageName || strings.Contains(message.Content, "context summary") {
-			t.Fatal("summary leaked into session history")
+	// The live history carries it too, so the next turn's request is built
+	// from a history that still explains the omission.
+	if !activeCarriesSummaryMessage(session.MessagesCopy()) {
+		t.Fatal("session history dropped the summary of the compacted messages")
+	}
+
+	// INV-AG-32 is unaffected and stays enforced here: the two surfaces it
+	// names must remain summary-free. Source projection is the durable event
+	// stream, and the summary is host-generated with no source event of its
+	// own, so it must never appear there.
+	export, err := store.ExportSession(context.Background(), principal, session.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoSummaryInExport(t, export.Records)
+}
+
+// assertNoSummaryInExport fails when a session export carries the summary
+// anywhere in its source projection. Payload bodies are base64 in the JSON, so
+// a raw substring scan alone would silently pass; the payload bytes are
+// decoded and scanned too.
+func assertNoSummaryInExport(t *testing.T, records []byte) {
+	t.Helper()
+	if raw := string(records); strings.Contains(raw, agent.SummaryMessageName) {
+		t.Fatalf("summary leaked into exported source events: %s", raw)
+	}
+	var export struct {
+		Payloads []struct {
+			Bytes []byte `json:"bytes"`
+		} `json:"payloads"`
+	}
+	if err := json.Unmarshal(records, &export); err != nil {
+		t.Fatalf("decode export records: %v", err)
+	}
+	if len(export.Payloads) == 0 {
+		t.Fatal("export carried no payloads; the leak scan would be vacuous")
+	}
+	for _, payload := range export.Payloads {
+		body := string(payload.Bytes)
+		if strings.Contains(body, agent.SummaryMessageName) || strings.Contains(body, "context summary") {
+			t.Fatalf("summary leaked into an exported payload: %s", body)
 		}
 	}
+}
+
+// activeCarriesSummaryMessage reports whether messages carry the rendered
+// context-summary message.
+func activeCarriesSummaryMessage(messages []provider.Message) bool {
+	for _, message := range messages {
+		if message.Name == agent.SummaryMessageName {
+			return true
+		}
+	}
+	return false
 }
 
 // TestPlainChatSummarizerErrorFallsBack pins that a summarizer error on the

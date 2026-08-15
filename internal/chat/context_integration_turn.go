@@ -49,7 +49,7 @@ func plainPersistenceError(err error) error {
 // plainTurnCurrent/token fence as the success path, then return the partial
 // instead of the error. Non-interrupted errors keep today's
 // discard-and-drop behavior.
-func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string, preparation contextmgr.Preparation) (string, error) {
+func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string, preparation contextmgr.Preparation, summary injectedSummary) (string, error) {
 	if isInterruptedTurn(ctx, err) && s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
 		s.contextPublishMu.Lock()
 		if s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
@@ -63,6 +63,8 @@ func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, 
 			commitCtx := context.Background()
 			result, commitErr := buildContextTurnResult(commitCtx, snapshot.context, &preparation, candidate, ordered, snapshot.myTurn)
 			if commitErr == nil {
+				result.Active = summary.appendTo(result.Active)
+				candidate = summary.appendTo(candidate)
 				result.Outcome = contextmgr.OutcomeCancelled
 				commitErr = snapshot.context.manager.Commit(commitCtx, preparation, result)
 			}
@@ -101,7 +103,7 @@ func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, 
 // contextPublishMu fence, then adopt it into the session when the operation
 // token is still current. Stale turns, commit failures, and token drift keep
 // today's exact return semantics (reply/no-op, error, or ErrStaleOperation).
-func (s *Session) commitPlainContextTurn(ctx context.Context, reply string, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText string, preparation contextmgr.Preparation) (string, error) {
+func (s *Session) commitPlainContextTurn(ctx context.Context, reply string, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText string, preparation contextmgr.Preparation, summary injectedSummary) (string, error) {
 	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
 		snapshot.context.manager.PreparationManager.Discard(preparation)
 		return reply, nil
@@ -121,6 +123,11 @@ func (s *Session) commitPlainContextTurn(ctx context.Context, reply string, snap
 	ordered := contextTurnMessages(candidate, userText)
 	result, err := buildContextTurnResult(ctx, snapshot.context, &preparation, candidate, ordered, snapshot.myTurn)
 	if err == nil {
+		// The summary joins the committed active context and the live history,
+		// but never `ordered` above: it is host-generated with no source event
+		// of its own, so the checkpoint is its only durable carrier.
+		result.Active = summary.appendTo(result.Active)
+		candidate = summary.appendTo(candidate)
 		err = snapshot.context.manager.Commit(ctx, preparation, result)
 	}
 	if err != nil {

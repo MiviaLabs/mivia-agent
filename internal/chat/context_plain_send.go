@@ -122,8 +122,9 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 	}
 	prepared := preparation.Messages
 	requestMessages := prepared
+	var summary injectedSummary
 	if snapshot.context.summarizer != nil {
-		requestMessages = injectPlainSummary(ctx, snapshot, preparation, prepared)
+		requestMessages, summary = injectPlainSummary(ctx, snapshot, preparation, prepared)
 	}
 	// The tee captures the already-streamed bytes: on an interrupted turn
 	// ChatStream returns "" as the reply, so the writer is the only record of
@@ -141,7 +142,7 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 		// the user's message or the answer already streamed: the interrupted
 		// branch commits the partial turn durably with OutcomeCancelled; all
 		// other errors keep today's discard-and-drop behavior.
-		return s.commitInterruptedPlainContext(ctx, err, snapshot, prepared, persistedText, captured.String(), preparation)
+		return s.commitInterruptedPlainContext(ctx, err, snapshot, prepared, persistedText, captured.String(), preparation, summary)
 	}
-	return s.commitPlainContextTurn(ctx, reply, snapshot, prepared, persistedText, preparation)
+	return s.commitPlainContextTurn(ctx, reply, snapshot, prepared, persistedText, preparation, summary)
 }
