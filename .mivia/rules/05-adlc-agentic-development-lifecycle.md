@@ -70,12 +70,9 @@ Need to run build/test commands?    → Direct execution (not a tool)
 its own result and status, so a challenge or audit round returns what the surviving
 agents found regardless.
 
-This used to be spelled as a `partial_results: true` argument. That flag was removed
-because it had no observable effect: the coordinator resolves dependencies itself and
-hands the pool an already-ready batch, so the only code that read it could never run.
-**Do not pass it** - `dispatch_tasks` rejects unknown parameters, and a rejected tool
-call is reported to you as a bare `{"status":"failed"}` with no explanation, so a stray
-`partial_results` costs you the whole batch for no visible reason.
+Do not pass `partial_results`. The flag was removed because it had no observable
+effect, and `dispatch_tasks` rejects unknown parameters. A rejected call fails the
+whole batch and is reported as a bare `{"status":"failed"}`.
 
 ---
 
@@ -245,7 +242,7 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
    - **Uncertain**: write a targeted test. If passes → rejected. If fails → confirmed.
 
 3. Loop until zero bugs. The round limit is configured via subagents.max_audit_rounds
-   in mivia.toml (default: 5, set to -1 for unlimited). If the same bug keeps
+   in mivia.toml (default: 0, meaning unlimited). If the same bug keeps
    reappearing after 3 fix attempts, escalate to Step 0 (plan rejected).
 
 4. While auditors run, periodically call inspect_agents to check progress.
@@ -265,6 +262,7 @@ subsystem - across this codebase's history, live e2e against the real
 GitHub repo is what caught nearly every defect in this class; unit tests
 alone did not. AGENTS.md still governs: never run a live e2e workflow
 without the user explicitly asking for it in that session - offer, don't run.
+The runbook lives in `docs/development/agent-workflow.md`.
 
 ---
 
