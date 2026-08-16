@@ -7,6 +7,9 @@ MSG_FILE="${1:?commit message file is required}"
 ROOT="$(git rev-parse --show-toplevel)"
 POLICY_FILE="$ROOT/.mivia/policy/commit-message.json"
 
+# Remove disallowed Co-authored-by trailer lines (silent; Mivia Agent stays).
+python3 "$ROOT/scripts/git-hooks/strip_coauthor.py" "$MSG_FILE"
+
 export MSG_FILE POLICY_FILE
 exec python3 - <<'PY'
 from __future__ import annotations

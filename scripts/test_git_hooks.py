@@ -138,6 +138,7 @@ def test_hooks_executable_and_present() -> None:
         ".githooks/prepare-commit-msg",
         ".githooks/post-commit",
         "scripts/install_git_hooks.sh",
+        "scripts/git-hooks/strip_coauthor.py",
     ):
         path = ROOT / rel
         assert path.is_file(), rel
@@ -293,6 +294,88 @@ def test_commit_msg_feat_skips_regression() -> None:
         path = fh.name
     proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
     assert proc.returncode == 0, proc.stderr
+
+
+CO_AUTHOR_CLAUDE = "Co-authored-by: Claude Opus 5 <noreply@anthropic.com>\n"
+CO_AUTHOR_HOOK_TEST = "Co-authored-by: Hook Test <hook-test@example.invalid>\n"
+CO_AUTHOR_MIVIA = "Co-authored-by: Mivia Agent <noreply@mivia.app>\n"
+
+
+def test_commit_msg_strips_disallowed_coauthor() -> None:
+    """A Co-authored-by line with a disallowed email is removed silently."""
+    scope = first_valid_scope()
+    path = write_msg(
+        f"feat({scope}): drop claude trailer\n\n"
+        "Body text.\n\n"
+        f"{CO_AUTHOR_CLAUDE}"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""  # silent on success
+    text = Path(path).read_text(encoding="utf-8")
+    assert "noreply@anthropic.com" not in text
+    assert "Co-authored-by" not in text
+
+
+def test_commit_msg_strips_hook_test_coauthor() -> None:
+    scope = first_valid_scope()
+    path = write_msg(
+        f"feat({scope}): drop hook test trailer\n\n"
+        "Body text.\n\n"
+        f"{CO_AUTHOR_HOOK_TEST}"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert "hook-test@example.invalid" not in Path(path).read_text(encoding="utf-8")
+
+
+def test_commit_msg_keeps_mivia_agent_coauthor() -> None:
+    """noreply@mivia.app co-author lines are protected and stay."""
+    scope = first_valid_scope()
+    path = write_msg(
+        f"feat({scope}): keep mivia trailer\n\n"
+        "Body text.\n\n"
+        f"{CO_AUTHOR_MIVIA}"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert "noreply@mivia.app" in Path(path).read_text(encoding="utf-8")
+
+
+def test_commit_msg_keeps_other_trailers() -> None:
+    """Only matching Co-authored-by lines are removed; other trailers survive."""
+    scope = first_valid_scope()
+    path = write_msg(
+        f"feat({scope}): keep other trailers\n\n"
+        f"{CO_AUTHOR_CLAUDE}"
+        "Signed-off-by: Mac <mac@mivialabs.com>\n"
+        "Refs: #123\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+    text = Path(path).read_text(encoding="utf-8")
+    assert "noreply@anthropic.com" not in text
+    assert "Signed-off-by" in text
+    assert "Refs: #123" in text
+
+
+def test_strip_coauthor_stdin_mode() -> None:
+    """stdin->stdout mode used by the history rewrite keeps non-matching lines."""
+    proc = subprocess.run(
+        ["python3", str(ROOT / "scripts" / "git-hooks" / "strip_coauthor.py"), "-"],
+        input=(
+            "feat(cli): sample subject\n\n"
+            "Body text.\n\n"
+            f"{CO_AUTHOR_CLAUDE}"
+            f"{CO_AUTHOR_MIVIA}"
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "noreply@anthropic.com" not in proc.stdout
+    assert "Co-authored-by: Mivia Agent <noreply@mivia.app>" in proc.stdout
 
 
 def test_prepare_commit_msg_appends_summary(root: Path) -> None:
@@ -805,6 +888,11 @@ def main() -> None:
     test_commit_msg_required_trailers_come_from_policy()
     test_commit_msg_failure_lists_required_trailers()
     test_commit_msg_feat_skips_regression()
+    test_commit_msg_strips_disallowed_coauthor()
+    test_commit_msg_strips_hook_test_coauthor()
+    test_commit_msg_keeps_mivia_agent_coauthor()
+    test_commit_msg_keeps_other_trailers()
+    test_strip_coauthor_stdin_mode()
     test_summary_file_name_is_mivia()
     test_pre_commit_is_staged_only_and_bounded()
     test_pre_commit_has_invariant_gate()

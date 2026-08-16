@@ -58,7 +58,8 @@ chmod +x \
   scripts/secret-scan \
   scripts/docs-check \
   scripts/git-hooks/file-size-check \
-  scripts/git-hooks/run_without_git_env 2>/dev/null || true
+  scripts/git-hooks/run_without_git_env \
+  scripts/git-hooks/strip_coauthor.py 2>/dev/null || true
 
 # Use absolute path so hooks resolve correctly in all worktrees.
 # --local writes to .git/config (shared across worktrees) which is the
