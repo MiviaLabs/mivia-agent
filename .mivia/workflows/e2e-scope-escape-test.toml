@@ -72,7 +72,7 @@ match = { status = "succeeded" }
 kind = "pull_request"
 mode = "draft"
 provider = "github"
-base = "master"
+base = "main"
 on_failure = "repair"
 title_template = "test(test): {{ inputs.task }}"
 commit_message_template = "Live smoke test for the chunk-scope guard repair path. Safe to close/delete."

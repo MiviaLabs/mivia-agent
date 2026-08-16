@@ -66,7 +66,7 @@ install-hooks hooks:
 # minutes, of which five and a half were the same tests over and over.
 # verifier-integration is no longer a verify prerequisite: its sandbox test
 # runs the entire repository test profile a second time inside a sandbox. It
-# still runs on master and macOS in CI, and standalone via `make
+# still runs on main and macOS in CI, and standalone via `make
 # verifier-integration`.
 verify: verify-agent docs-check release-test secret-scan structure-check \
 	semgrep-validate semgrep-test hook-test agent-hook-test \

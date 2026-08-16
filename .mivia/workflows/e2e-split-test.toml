@@ -74,7 +74,7 @@ match = { status = "succeeded" }
 kind = "pull_request"
 mode = "draft"
 provider = "github"
-base = "master"
+base = "main"
 on_failure = "repair"
 on_diff_size_failure = "repair"
 title_template = "test(test): {{ inputs.task }}"

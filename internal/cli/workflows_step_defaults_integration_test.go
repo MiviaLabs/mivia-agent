@@ -180,14 +180,14 @@ func TestStepDefaultsDigestSafeForExistingFiles(t *testing.T) {
 		}
 		return compiled.Digest
 	}
-	// Pre-feature digest of the shipped file, captured on 2026-08-15 at
+	// Pre-feature digest of the shipped file, re-captured 2026-08-16 (delivery base master→main); prior value captured 2026-08-15 at
 	// commit 6770d98d, BEFORE the [step_defaults] desugar change. The
 	// feature must not move this value. Update ONLY when bug-fix.toml
 	// itself is deliberately edited (e.g. the follow-up that rewrites its
 	// repair steps to use [step_defaults], or a binding change such as the
 	// review-panel correctness member moving from llmgateway/
 	// runware-deepseek-v4-flash to deepseek/deepseek-v4-flash on 2026-08-16).
-	const pinnedPreFeatureDigest = "2e5dbc2d6cac7b63adf4c3c09ace430e217d808cec19a0867f8435e2d1ffae97"
+	const pinnedPreFeatureDigest = "f25b05d658500f2ddb3aed54e5506c2f7323590d99a1402b6085c0dfe17e03fe"
 	first, second := digest(), digest()
 	if first != second {
 		t.Fatalf("digest not deterministic: %s != %s", first, second)

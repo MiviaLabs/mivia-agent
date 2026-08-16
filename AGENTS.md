@@ -124,7 +124,7 @@ When the user does ask for a live delivery-engine smoke test:
 ./mivia workflow run e2e-split-test --input task="short description" --allow-publish
 ./mivia workflow run e2e-pr-metadata-test --input task="short description" --allow-publish
 ./mivia workflow run e2e-scope-escape-test --input task="short description" \
-  --input stack_mode=chunk --input chunk=c1 --input pr_base=master --input stack_part=1/1 \
+  --input stack_mode=chunk --input chunk=c1 --input pr_base=main --input stack_part=1/1 \
   --input chunk_plan='{"id":"c1","title":"scope smoke","files":["testdata/e2e-smoke/scope-ok.md"]}' \
   --allow-publish
 mivia stack drive e2e-split-test   # only if decompose produced a multi-chunk plan

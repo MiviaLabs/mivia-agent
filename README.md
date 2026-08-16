@@ -27,7 +27,7 @@ Tagged [GitHub Releases](https://github.com/MiviaLabs/mivia-agent/releases) prov
 Install the latest stable release on Linux or macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/main/scripts/install.sh | bash
 ```
 
 Open a new shell, or source the profile that the installer reports. Then run `mivia --version`.
@@ -35,7 +35,7 @@ Open a new shell, or source the profile that the installer reports. Then run `mi
 Install the latest stable release in Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/MiviaLabs/mivia-agent/main/scripts/install.ps1 | iex
 mivia --version
 ```
 

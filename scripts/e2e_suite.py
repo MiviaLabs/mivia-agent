@@ -58,7 +58,7 @@ def _random_suffix() -> str:
     """A short, unique-enough token for scenario task text: two smoke runs
     launched in the same process (or two processes started in the same
     second) must never target the same package name, or a rerun's PR
-    collides with whatever a prior run already merged into master."""
+    collides with whatever a prior run already merged into main."""
     return f"{int(time.time())}{os.getpid() % 10000:04d}"
 
 
@@ -101,7 +101,7 @@ class ScriptedScenario:
 # layout intact - this is breadth testing of the real agent pipeline, not a
 # scripted replay. Package names carry _SUITE_SUFFIX (one value per script
 # invocation, shared across every scenario in that run): a fixed name would
-# collide with whatever a PRIOR launch already merged into master the
+# collide with whatever a PRIOR launch already merged into main the
 # moment this suite runs a second time.
 
 _SUITE_SUFFIX = _random_suffix()
@@ -213,7 +213,7 @@ TOPOLOGY_SCENARIOS: list[TopologyScenario] = [
                      "cheap sanity check that the plain single-PR path still works "
                      "alongside the stacking changes. Target package name is randomized "
                      "per run so repeated launches never collide with a package a prior "
-                     "run already merged into master.",
+                     "run already merged into main.",
         task=(
             f"Add one small dependency-free leaf package internal/smoke{_random_suffix()} "
             f"with a single function Unique(in []string) []string that returns the input "
@@ -249,7 +249,7 @@ SCRIPTED_SCENARIOS: list[ScriptedScenario] = [
         workflow="e2e-scope-escape-test",
         task="e2e suite: chunk scope guard repair",
         extra_inputs={
-            "stack_mode": "chunk", "chunk": "c1", "pr_base": "master", "stack_part": "1/1",
+            "stack_mode": "chunk", "chunk": "c1", "pr_base": "main", "stack_part": "1/1",
             "chunk_plan": '{"id":"c1","title":"scope smoke","files":["testdata/e2e-smoke/scope-ok.md"]}',
         },
     ),

@@ -30,7 +30,7 @@ The workflow does not publish a release for an invalid tag. It does not create a
 Install the latest stable release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/main/scripts/install.sh | bash
 ```
 
 Open a new shell, or source the profile that the installer reports. Then run `mivia --version`.
@@ -58,7 +58,7 @@ The installer downloads only the selected version. It downloads `checksums.txt` 
 Install the latest stable release:
 
 ```powershell
-irm https://raw.githubusercontent.com/MiviaLabs/mivia-agent/master/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/MiviaLabs/mivia-agent/main/scripts/install.ps1 | iex
 mivia --version
 ```
 

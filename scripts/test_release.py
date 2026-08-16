@@ -89,7 +89,7 @@ def main() -> None:
         raise AssertionError(f"{powershell_test_path}: missing PowerShell installer test")
     macos_ci = ci.split("  verify-macos:", 1)[1].split("\n  verify-windows:", 1)[0]
     for fragment in (
-        "branches: [master]",
+        "branches: [main]",
         "if: github.event_name == 'pull_request'",
         "if: github.event_name == 'push'",
         # A superseded run gives no signal. Every run group must cancel.

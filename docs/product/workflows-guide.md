@@ -370,7 +370,7 @@ built-in profiles):
 | `preflight_validate` | `python3 scripts/validate_invariants.py` |
 | `preflight_structure` | `python3 scripts/check_go_structure.py --strict --worktree` |
 
-The delivery policy is a draft pull request to GitHub `master`. It requires `--allow-publish`.
+The delivery policy is a draft pull request to GitHub `main`. It requires `--allow-publish`.
 
 ## The shipped workflow: bug-fix
 
@@ -607,7 +607,7 @@ Delivery:
 kind = "pull_request"
 mode = "draft"
 provider = "github"
-base = "master"
+base = "main"
 title_template = "feat: {{ inputs.task }}"
 commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs.task }}"
 ```
