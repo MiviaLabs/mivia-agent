@@ -200,7 +200,10 @@ func elisionNoticeRef(content string) string {
 // distinct retained refs, and each retained ref loads for the grant principal.
 // Retention must never orphan spooled bytes, and a failed plan must never
 // spool anything (the pre-fix pipeline spooled at elision time, before
-// retention ran, so both assertions fail on the old code).
+// retention ran, so both assertions fail on the old code). It also pins
+// plan.AfterTokens <= budget on the spool path — the only path that installs
+// refs — closing the gap where FuzzPlanInvariants asserts the budget invariant
+// only with Spool=nil (H-1).
 func FuzzPlanSpoolInvariants(f *testing.F) {
 	histories := fuzzPlanHistories()
 	f.Add(int64(0), int64(65536), int64(0), true)
@@ -240,6 +243,18 @@ func FuzzPlanSpoolInvariants(f *testing.F) {
 				t.Fatalf("plan failed but %d bodies were spooled", store.Len())
 			}
 			return
+		}
+		// AfterTokens <= Budget must hold on the spool path too: it is the
+		// only path that installs refs (installRetainedElisionRefs). Retention
+		// caps the plain-notice retained cost at target = floor(Budget/2) and
+		// each retained elided tool unit costs >= 36 tokens while the ref swap
+		// adds <= 33 tokens per ref, so AfterTokens <= Budget holds by
+		// construction (see the comment in planCompact). FuzzPlanInvariants
+		// pins the invariant only with Spool=nil, so this closes the gap for
+		// the ref-installing path and guards against notice-format or
+		// target-ratio drift (H-1).
+		if plan.AfterTokens > budget {
+			t.Fatalf("AfterTokens %d exceeds budget %d on the spool path", plan.AfterTokens, budget)
 		}
 		refs := make(map[string]struct{})
 		for _, message := range plan.Messages {

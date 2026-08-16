@@ -27,6 +27,15 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	if err != nil {
 		return PlanResult{}, err
 	}
+	return finalizeCompactPlan(input, result, rng, target, schemaCost, retained, retainedIndexes, deferred, elision, reasoningElision)
+}
+
+// finalizeCompactPlan makes the retained set durable and completes the plan
+// result. planCompact has already decided what survives; this helper
+// pre-validates a caller-supplied idempotency key before the first spool
+// write, spools elided bodies that survived retention and names the refs
+// (H-1), then fingerprints the candidate and assembles the result.
+func finalizeCompactPlan(input PlanInput, result PlanResult, rng contextstate.SourceRange, target, schemaCost int, retained []provider.Message, retainedIndexes []int, deferred []deferredElision, elision, reasoningElision ElisionStats) (PlanResult, error) {
 	// H-1-RESIDUAL: reject an invalid caller-supplied idempotency key BEFORE
 	// the first spool write. planIdempotencyKey can fail on this plan only
 	// when input.IdempotencyKey is non-empty and fails validatePlanKey (the
@@ -49,9 +58,24 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	// idempotency fingerprint, so refs stay deterministic and the key is
 	// unchanged from the pre-fix pipeline.
 	retained = installRetainedElisionRefs(retained, retainedIndexes, deferred, input.Spool, input.Principal)
-	// No budget re-check here: retainMessages already rejects a mandatory set
-	// that exceeds the budget, and everything it adds after that is capped at
-	// target (half the budget).
+	// No budget re-check here: AfterTokens <= Budget holds after
+	// installRetainedElisionRefs by construction. retainMessages caps the
+	// plain-notice retained cost C at target = floor(Budget/2) (each optional
+	// unit is added only while runningCost+unitCost <= target; a mandatory set
+	// over Budget is rejected up front). The ref swap just applied adds at
+	// most 33 tokens per retained elided tool unit (the fixed
+	// "; remainder: <ref> — use read_output to fetch the full body" segment;
+	// every content ref is the fixed 75-byte "ref:output:"+64-hex form), while
+	// each such unit costs at least 36 tokens in the plain retained set
+	// (assistant tool-call message >= 15, elided tool result >= 21 with the
+	// 61-byte/15-token notice). With N retained elided units the plain cost
+	// C >= 32+36N (mandatory set >= 32: request frame 3 + objective >= 6 +
+	// latest tool unit >= 23), and C <= Budget/2 forces Budget >= 64+72N >
+	// 2*33N, so after_ref = C+33N <= Budget/2+33N < Budget. The triaged
+	// overflow range - a budget large enough to fit the plain notices yet
+	// small enough that the ref swap exceeds it - is arithmetically empty; the
+	// FuzzPlanSpoolInvariants budget assertion pins this against notice-format
+	// or target-ratio drift.
 	after := applyCalibration(provider.EstimateMessagesPromptCost(retained, schemaCost, input.ContextAccounting), input.CalibrationRatio)
 	key, err := planIdempotencyKey(input, rng, target, retained)
 	if err != nil {
