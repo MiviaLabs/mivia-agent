@@ -385,3 +385,150 @@ func TestStructuralManagerElideMintsRef(t *testing.T) {
 		t.Fatalf("prepared elision spooled %d bytes, want %d (full original)", len(got), len(big))
 	}
 }
+
+// elisionRetentionFixture builds a transcript in which one oversized prior
+// tool body (droppedBody at the call-old exchange) falls outside the
+// RecentTail=8 cap and is dropped by retention, while a newer oversized body
+// (retainedBody at the call-mid exchange) stays inside the retained tail. Both
+// bodies sit before the current objective and are neither mandatory nor the
+// latest tool unit, so both are elided; only the retained one may be spooled.
+func elisionRetentionFixture() (messages []provider.Message, droppedBody, retainedBody string) {
+	droppedBody = strings.Repeat("x", elisionContentMinBytes+1)
+	retainedBody = strings.Repeat("y", elisionContentMinBytes+1)
+	callOld := plannerToolCall("call-old", "read_file", `{"path":"old.txt"}`)
+	callMid := plannerToolCall("call-mid", "read_file", `{"path":"mid.txt"}`)
+	callNew := plannerToolCall("call-new", "read_file", `{"path":"new.txt"}`)
+	messages = []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "old objective"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{callOld}},
+		{Role: provider.RoleTool, ToolCallID: callOld.ID, Name: callOld.Function.Name, Content: droppedBody},
+		{Role: provider.RoleAssistant, Content: "done"},
+		{Role: provider.RoleUser, Content: "mid1"},
+		{Role: provider.RoleAssistant, Content: "mid1 answer"},
+		{Role: provider.RoleUser, Content: "mid2"},
+		{Role: provider.RoleAssistant, Content: "mid2 answer"},
+		{Role: provider.RoleUser, Content: "mid3"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{callMid}},
+		{Role: provider.RoleTool, ToolCallID: callMid.ID, Name: callMid.Function.Name, Content: retainedBody},
+		{Role: provider.RoleAssistant, Content: "mid done"},
+		{Role: provider.RoleUser, Content: "current objective"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{callNew}},
+		{Role: provider.RoleTool, ToolCallID: callNew.ID, Name: callNew.Function.Name, Content: "small"},
+	}
+	return messages, droppedBody, retainedBody
+}
+
+// TestElisionSpoolSkipsMessagesDroppedByRetention pins H-1: elision used to
+// spool every oversized eligible tool body before retention ran, so a body the
+// recent-tail cap then dropped was written to the store with no retained
+// message naming its ref - an unreachable body with no production cleanup
+// path. The spool must only ever receive bodies that survive retention.
+func TestElisionSpoolSkipsMessagesDroppedByRetention(t *testing.T) {
+	messages, droppedBody, retainedBody := elisionRetentionFixture()
+	store := remainder.NewMemoryStore()
+	spool := remainder.NewSpool(store)
+	principal, err := contextstate.NewPrincipal("workspace", "session-a", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := Plan(PlanInput{
+		Messages:   messages,
+		Budget:     forceCompactBudget(t, messages),
+		Force:      true,
+		RecentTail: 8,
+		Spool:      spool,
+		Principal:  principal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Compacted {
+		t.Fatal("forced plan was not compacted")
+	}
+	if plan.ElidedMessages != 2 {
+		t.Fatalf("ElidedMessages=%d, want 2 (both oversized bodies elided)", plan.ElidedMessages)
+	}
+	// The dropped body must never reach the store: only the retained elided
+	// body may be spooled. Fails before the fix, when elision spooled both
+	// bodies (store.Len()==2, one orphaned and unreachable).
+	if store.Len() != 1 {
+		t.Fatalf("store holds %d bodies, want exactly 1 (the retained elided body only)", store.Len())
+	}
+	// Every retained elision notice must name the SAME ref, and that ref must
+	// load the retained body: no retained notice may reference the dropped
+	// body.
+	var retainedRef string
+	var retainedNotices int
+	for _, msg := range plan.Messages {
+		if msg.Role != provider.RoleTool || !strings.Contains(msg.Content, "context elided prior tool result") {
+			continue
+		}
+		retainedNotices++
+		ref := elidedRefFromNotice(t, msg.Content)
+		if retainedRef != "" && ref != retainedRef {
+			t.Fatalf("retained notices name distinct refs %q and %q: a dropped body was spooled", retainedRef, ref)
+		}
+		retainedRef = ref
+		got, err := spool.Load(context.Background(), principal.SessionID, ref)
+		if err != nil {
+			t.Fatalf("retained notice ref %q not loadable: %v", ref, err)
+		}
+		if string(got) != retainedBody {
+			t.Fatalf("retained notice ref loads %d bytes, want the retained body (%d bytes)", len(got), len(retainedBody))
+		}
+	}
+	if retainedRef == "" {
+		t.Fatal("no retained elision notice names a ref; the retained body was never spooled")
+	}
+	if retainedNotices != 1 {
+		t.Fatalf("retained elision notices=%d, want exactly 1", retainedNotices)
+	}
+	// Safety net: the dropped body appears nowhere in the retained set.
+	for _, msg := range plan.Messages {
+		if strings.Contains(msg.Content, droppedBody) {
+			t.Fatal("retained message still carries the dropped oversized body")
+		}
+	}
+}
+
+// TestElisionFailedPlanNeverSpools pins the H-1-RESIDUAL edge: an invalid
+// caller-supplied IdempotencyKey fails the plan inside planIdempotencyKey,
+// which runs AFTER installRetainedElisionRefs has spooled the retained elided
+// bodies. Without the pre-spool key validation the failed plan leaves an
+// orphaned body in the store (bytes no retained message names, no production
+// cleanup path). A failed plan must never spool anything.
+func TestElisionFailedPlanNeverSpools(t *testing.T) {
+	messages, _, _ := elisionRetentionFixture()
+	store := remainder.NewMemoryStore()
+	spool := remainder.NewSpool(store)
+	principal, err := contextstate.NewPrincipal("workspace", "session-a", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Plan(PlanInput{
+		Messages:   messages,
+		Budget:     forceCompactBudget(t, messages),
+		Force:      true,
+		RecentTail: 8,
+		// Control character: rejected by validatePlanKey (the compaction path
+		// reaches planIdempotencyKey, which validates caller-supplied keys).
+		IdempotencyKey: "compact-\ninvalid",
+		Spool:          spool,
+		Principal:      principal,
+	})
+	if err == nil {
+		t.Fatal("Plan accepted an invalid caller-supplied IdempotencyKey")
+	}
+	if !errors.Is(err, contextstate.ErrInvalidDTO) {
+		t.Fatalf("error = %v, want contextstate.ErrInvalidDTO", err)
+	}
+	// The plan failed after retention would have selected the retained elided
+	// body, so the old ordering had already spooled it (store.Len()==1 before
+	// the fix). With the pre-spool key validation nothing may reach the store.
+	if store.Len() != 0 {
+		t.Fatalf("failed plan spooled %d bodies; a failed plan must never spool (H-1-RESIDUAL)", store.Len())
+	}
+}

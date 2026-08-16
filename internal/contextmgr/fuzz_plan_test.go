@@ -1,12 +1,14 @@
 package contextmgr
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 )
 
 // fuzzPlanHistories are the seeded histories for FuzzPlanInvariants. All of
@@ -142,7 +144,7 @@ func optionalTailIsSuffix(input PlanInput, plan PlanResult) bool {
 		return true
 	}
 	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
-	working, _, _ = elideForCompaction(working, objectiveIndex, mandatory, nil, contextstate.Principal{})
+	working, _, _, _ = elideForCompaction(working, objectiveIndex, mandatory, nil, contextstate.Principal{})
 	fingerprint := func(message provider.Message) string {
 		b, err := contextstate.MarshalCanonical(plannerMessages([]provider.Message{message}))
 		if err != nil {
@@ -178,4 +180,80 @@ func optionalTailIsSuffix(input PlanInput, plan PlanResult) bool {
 		}
 	}
 	return true
+}
+
+// elisionNoticeRef extracts the content ref named by an elision notice, or ""
+// when the notice is the plain ref-less form. It is the non-fatal counterpart
+// of the *testing.T helper elidedRefFromNotice for fuzz targets.
+func elisionNoticeRef(content string) string {
+	const marker = "ref:output:"
+	start := strings.Index(content, marker)
+	if start < 0 {
+		return ""
+	}
+	return content[start : start+len(marker)+64]
+}
+
+// FuzzPlanSpoolInvariants asserts the H-1 spool invariant on every seeded
+// history: after a plan run with a live spool, every stored body is reachable
+// via a ref named in a retained message — store.Len() equals the number of
+// distinct retained refs, and each retained ref loads for the grant principal.
+// Retention must never orphan spooled bytes, and a failed plan must never
+// spool anything (the pre-fix pipeline spooled at elision time, before
+// retention ran, so both assertions fail on the old code).
+func FuzzPlanSpoolInvariants(f *testing.F) {
+	histories := fuzzPlanHistories()
+	f.Add(int64(0), int64(65536), int64(0), true)
+	f.Add(int64(1), int64(65536), int64(64), false)
+	f.Add(int64(2), int64(65536), int64(64), true)
+	f.Add(int64(3), int64(65536), int64(0), true)
+	f.Fuzz(func(t *testing.T, historyBytes, budgetBytes, tailBytes int64, force bool) {
+		mod := func(value, base int64) int { return int(((value % base) + base) % base) }
+		index := mod(historyBytes, int64(len(histories)))
+		budget := mod(budgetBytes, 65536) + 1
+		// Map 0..66 onto the RecentTail domain: 0 is the default-8 marker,
+		// 1..64 are in-range, 65 is over the cap, 66 is the negative case.
+		tail := mod(tailBytes, 67)
+		if tail == 66 {
+			tail = -1
+		}
+		store := remainder.NewMemoryStore()
+		spool := remainder.NewSpool(store)
+		principal, err := contextstate.NewPrincipal("workspace", "session-fuzz", "subject")
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := PlanInput{
+			Messages:   histories[index],
+			Budget:     budget,
+			RecentTail: tail,
+			Force:      force,
+			Spool:      spool,
+			Principal:  principal,
+		}
+		plan, err := Plan(input)
+		if err != nil {
+			// Errors are how the planner refuses; with the fix nothing is
+			// spooled on a failed plan, because spooling happens only after
+			// retention succeeds.
+			if store.Len() != 0 {
+				t.Fatalf("plan failed but %d bodies were spooled", store.Len())
+			}
+			return
+		}
+		refs := make(map[string]struct{})
+		for _, message := range plan.Messages {
+			if ref := elisionNoticeRef(message.Content); ref != "" {
+				refs[ref] = struct{}{}
+			}
+		}
+		if store.Len() != len(refs) {
+			t.Fatalf("store holds %d bodies but retained messages name %d distinct refs: a spooled body is unreachable", store.Len(), len(refs))
+		}
+		for ref := range refs {
+			if _, err := spool.Load(context.Background(), principal.SessionID, ref); err != nil {
+				t.Fatalf("retained ref %q not loadable: %v", ref, err)
+			}
+		}
+	})
 }

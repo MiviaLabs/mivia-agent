@@ -194,7 +194,7 @@ func currentObjective(messages []provider.Message, explicit string) (provider.Me
 	return provider.Message{}, -1, fmt.Errorf("%w: planner current objective is missing", contextstate.ErrPromptBudgetExceeded)
 }
 
-func retainMessages(input PlanInput, objective provider.Message, objectiveIndex, target, schemaCost int) ([]provider.Message, error) {
+func retainMessages(input PlanInput, objective provider.Message, objectiveIndex, target, schemaCost int) ([]provider.Message, []int, error) {
 	units := messageUnits(input.Messages)
 	mandatory := mandatoryIndexes(input.Messages, objectiveIndex, input.PreserveNames)
 
@@ -204,14 +204,14 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	}
 	selectedCost := calibratedCost(input.Messages, selected, schemaCost, input.CalibrationRatio, input.ContextAccounting)
 	if selectedCost > input.Budget {
-		return nil, promptOverflow(selectedCost, input.Budget, objective, schemaCost, input.CalibrationRatio, input.ContextAccounting)
+		return nil, nil, promptOverflow(selectedCost, input.Budget, objective, schemaCost, input.CalibrationRatio, input.ContextAccounting)
 	}
 	tailLimit := input.RecentTail
 	if tailLimit == 0 {
 		tailLimit = defaultRecentTailMessages
 	}
 	if tailLimit < 0 || tailLimit > maxRecentTailMessages {
-		return nil, invalidPlan("recent_tail", fmt.Sprintf("must be between 0 and %d", maxRecentTailMessages))
+		return nil, nil, invalidPlan("recent_tail", fmt.Sprintf("must be between 0 and %d", maxRecentTailMessages))
 	}
 	runningCost := selectedCost
 	tailCount := 0
@@ -247,9 +247,9 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	}
 	retained := messagesFromIndexes(input.Messages, selected)
 	if err := validateMessageShape(retained); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return retained, nil
+	return retained, indexesFromSelection(selected), nil
 }
 
 type messageUnit []int
@@ -306,12 +306,20 @@ func calibratedCost(messages []provider.Message, selected map[int]struct{}, sche
 	return applyCalibration(provider.EstimateMessagesPromptCost(messagesFromIndexes(messages, selected), schemaCost, profile), ratio)
 }
 
-func messagesFromIndexes(messages []provider.Message, selected map[int]struct{}) []provider.Message {
+// indexesFromSelection returns the ascending message indexes in selected. It
+// is the single source of order for retained messages and the retained-index
+// pairing that installRetainedElisionRefs uses, so the two can never disagree.
+func indexesFromSelection(selected map[int]struct{}) []int {
 	indexes := make([]int, 0, len(selected))
 	for index := range selected {
 		indexes = append(indexes, index)
 	}
 	sort.Ints(indexes)
+	return indexes
+}
+
+func messagesFromIndexes(messages []provider.Message, selected map[int]struct{}) []provider.Message {
+	indexes := indexesFromSelection(selected)
 	output := make([]provider.Message, 0, len(indexes))
 	for _, index := range indexes {
 		output = append(output, cloneMessages(messages[index : index+1])[0])

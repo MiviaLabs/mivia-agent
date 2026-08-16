@@ -20,13 +20,35 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	// the returned messages. Input.Messages is never mutated.
 	working := cloneMessages(input.Messages)
 	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
-	working, elision, reasoningElision := elideForCompaction(working, objectiveIndex, mandatory, input.Spool, input.Principal)
+	working, elision, reasoningElision, deferred := elideForCompaction(working, objectiveIndex, mandatory, input.Spool, input.Principal)
 	planInput := input
 	planInput.Messages = working
-	retained, err := retainMessages(planInput, objective, objectiveIndex, target, schemaCost)
+	retained, retainedIndexes, err := retainMessages(planInput, objective, objectiveIndex, target, schemaCost)
 	if err != nil {
 		return PlanResult{}, err
 	}
+	// H-1-RESIDUAL: reject an invalid caller-supplied idempotency key BEFORE
+	// the first spool write. planIdempotencyKey can fail on this plan only
+	// when input.IdempotencyKey is non-empty and fails validatePlanKey (the
+	// derived path marshals plain strings and cannot fail), and a failure
+	// there happens AFTER installRetainedElisionRefs has spooled retained
+	// bodies - bytes no retained message names and no production cleanup path
+	// reaches. Pre-validating here keeps "no spool writes on a failed plan"
+	// total. planIdempotencyKey re-validates on its own path, so this is an
+	// ordering guard, not a second rule.
+	if input.IdempotencyKey != "" {
+		if err := validatePlanKey(input.IdempotencyKey); err != nil {
+			return PlanResult{}, err
+		}
+	}
+	// H-1: spool elided bodies only after retention has decided what survives.
+	// Elision above installs only the plain notice (feeding the cost decision
+	// and retention math); a body that retention drops must never be written
+	// to the store, because an unref'd spooled body is unreachable and has no
+	// production cleanup path. The ref-naming notice is installed before the
+	// idempotency fingerprint, so refs stay deterministic and the key is
+	// unchanged from the pre-fix pipeline.
+	retained = installRetainedElisionRefs(retained, retainedIndexes, deferred, input.Spool, input.Principal)
 	// No budget re-check here: retainMessages already rejects a mandatory set
 	// that exceeds the budget, and everything it adds after that is capped at
 	// target (half the budget).
@@ -129,10 +151,10 @@ const reasoningElisionMarker = "[reasoning elided by context compaction]"
 // planCompact and the fuzz replica (optionalTailIsSuffix) both call this
 // helper, so the pipelines cannot drift. messages must already be a private
 // clone.
-func elideForCompaction(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, spool *remainder.Spool, principal contextstate.Principal) ([]provider.Message, ElisionStats, ElisionStats) {
-	messages, toolStats := elideToolResultsWithSpool(messages, objectiveIndex, mandatory, spool, principal)
+func elideForCompaction(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, spool *remainder.Spool, principal contextstate.Principal) ([]provider.Message, ElisionStats, ElisionStats, []deferredElision) {
+	messages, toolStats, deferred := elideToolResultsWithSpool(messages, objectiveIndex, mandatory, spool, principal)
 	reasoningStats := elideStaleReasoning(messages, objectiveIndex, mandatory)
-	return messages, toolStats, reasoningStats
+	return messages, toolStats, reasoningStats, deferred
 }
 
 // elideStaleReasoning replaces the ReasoningContent of prior-turn assistant
@@ -177,21 +199,38 @@ func elideStaleReasoning(messages []provider.Message, objectiveIndex int, mandat
 // the plain form directly, and it is byte-identical to before the spool
 // grant landed.
 func elideToolResults(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}) ([]provider.Message, ElisionStats) {
-	return elideToolResultsWithSpool(messages, objectiveIndex, mandatory, nil, contextstate.Principal{})
+	messages, stats, _ := elideToolResultsWithSpool(messages, objectiveIndex, mandatory, nil, contextstate.Principal{})
+	return messages, stats
+}
+
+// deferredElision records an elided prior-turn tool body that MAY still be
+// spooled. elideToolResultsWithSpool installs only the plain notice and
+// returns the record; planCompact spools the body AFTER retention decides it
+// survived (installRetainedElisionRefs), so a body that retention drops is
+// never written to the store (H-1). index is the message index in the
+// pre-retention working set, the same index space retainMessages' retained
+// indexes use.
+type deferredElision struct {
+	index        int
+	originalLen  int
+	originalBody string
 }
 
 // elideToolResultsWithSpool replaces eligible prior-turn oversized tool-result
-// bodies with a host-authored notice. messages must already be a private
-// clone; the function mutates Content in place and never changes Role,
-// ToolCallID, Name, or ToolCalls. A candidate is skipped when the notice is
-// not strictly cheaper by messageTokenCost.
+// bodies with the plain host-authored notice. messages must already be a
+// private clone; the function mutates Content in place and never changes
+// Role, ToolCallID, Name, or ToolCalls. A candidate is skipped when the notice
+// is not strictly cheaper by messageTokenCost.
 //
-// When spool is non-nil the full body is spooled before replacement and the
-// minted ref is named in the notice so the model can page the body back with
-// read_output. A nil spool, empty principal, nil store, or store failure yield
-// "" and the plain notice: a failed spool must never invent a ref (INV-AG-10).
-func elideToolResultsWithSpool(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, spool *remainder.Spool, principal contextstate.Principal) ([]provider.Message, ElisionStats) {
+// The full body is NOT stored here. When spool is non-nil and the elision
+// wins, a deferredElision record is returned so planCompact can spool the body
+// after retention and name the minted ref in the notice for read_output. A nil
+// spool, empty principal, nil store, or store failure yield "" at install time
+// and the plain notice stays: a failed spool must never invent a ref
+// (INV-AG-10).
+func elideToolResultsWithSpool(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, spool *remainder.Spool, principal contextstate.Principal) ([]provider.Message, ElisionStats, []deferredElision) {
 	var stats ElisionStats
+	var deferred []deferredElision
 	for index := range messages {
 		if messages[index].Role != provider.RoleTool {
 			continue
@@ -202,15 +241,12 @@ func elideToolResultsWithSpool(messages []provider.Message, objectiveIndex int, 
 		if _, ok := mandatory[index]; ok {
 			continue
 		}
-		originalLen := len(messages[index].Content)
+		originalBody := messages[index].Content
+		originalLen := len(originalBody)
 		if originalLen <= elisionContentMinBytes {
 			continue
 		}
-		ref := ""
-		if spool != nil {
-			ref = spool.Spool(context.Background(), principal.SessionID, []byte(messages[index].Content))
-		}
-		notice := elisionNoticeWithRef(originalLen, ref)
+		notice := elisionNotice(originalLen)
 		candidate := messages[index]
 		candidate.Content = notice
 		if messageTokenCost(candidate) >= messageTokenCost(messages[index]) {
@@ -219,8 +255,41 @@ func elideToolResultsWithSpool(messages []provider.Message, objectiveIndex int, 
 		messages[index].Content = notice
 		stats.Messages++
 		stats.Bytes += originalLen
+		if spool != nil {
+			deferred = append(deferred, deferredElision{index: index, originalLen: originalLen, originalBody: originalBody})
+		}
 	}
-	return messages, stats
+	return messages, stats, deferred
+}
+
+// installRetainedElisionRefs spools the elided bodies that survived retention
+// and swaps the plain notice for the ref-naming notice on the retained
+// messages. retainedIndexes[i] is the pre-retention index of retained[i], the
+// same index space deferredElision.index uses, so the pairing is exact even
+// when two different messages carry identical content (refs are
+// content-addressed and value matching would be unsafe). A nil spool, empty
+// principal, nil store, or store failure yield "" and the plain notice stays
+// (INV-AG-10: a failed spool never invents a ref).
+func installRetainedElisionRefs(retained []provider.Message, retainedIndexes []int, deferred []deferredElision, spool *remainder.Spool, principal contextstate.Principal) []provider.Message {
+	if len(deferred) == 0 || len(retainedIndexes) != len(retained) {
+		return retained
+	}
+	byIndex := make(map[int]deferredElision, len(deferred))
+	for _, record := range deferred {
+		byIndex[record.index] = record
+	}
+	for position, index := range retainedIndexes {
+		record, ok := byIndex[index]
+		if !ok {
+			continue
+		}
+		ref := ""
+		if spool != nil {
+			ref = spool.Spool(context.Background(), principal.SessionID, []byte(record.originalBody))
+		}
+		retained[position].Content = elisionNoticeWithRef(record.originalLen, ref)
+	}
+	return retained
 }
 
 // elisionNotice is the plain, spool-free host notice. It is the ref-less

@@ -174,6 +174,25 @@ func (s *StorageLedgerRepository) CreateRun(ctx context.Context, key string, sna
 		return fmt.Errorf("marshal run snapshot: %w", err)
 	}
 
+	// Admission-time re-probe (PC-1): the deterministic "create-run:"+key ID
+	// below is a durable same-key backstop, but it only collides with rows
+	// written by this fix. A legacy run_created row written by a pre-fix
+	// binary carries a RANDOM event ID with the key inside the payload, so it
+	// slips past that backstop. mem.CreateRun below only reflects the store as
+	// of the catch-up at the top of this method; an instance that committed
+	// such a row since then would register the key unseen and this admission
+	// would duplicate keyed work. Re-probe the store here so the projection
+	// folds any newly committed keyed row, and mem.CreateRun then refuses on
+	// the key. A post-fix writer racing in after this probe is still caught by
+	// the deterministic ID collision at append time; a pre-fix writer racing
+	// in then is the residual mixed-version window no read-side probe can
+	// close.
+	if key != "" {
+		if err := s.ensureBuilt(ctx); err != nil {
+			return err
+		}
+	}
+
 	// Register in the in-memory projection BEFORE the durable append (D4) so a
 	// durable row for a key can only exist after mem.CreateRun succeeded.
 	if err := s.mem.CreateRun(ctx, key, snapshot); err != nil {
@@ -181,6 +200,19 @@ func (s *StorageLedgerRepository) CreateRun(ctx context.Context, key string, sna
 	}
 
 	storeEvt := s.newStoreEvent(snapshot.RunID, storageKindRunCreated, payload)
+	// Mint the run_created event ID deterministically from the idempotency key
+	// when one is supplied (LEDGER-1). The per-instance mem.CreateRun check
+	// above only dedups within one repository: two instances over the same
+	// store (the documented shared-workspace deployment) both pass their
+	// private projection and both commit. With a key-derived ID the store's
+	// events.id PRIMARY KEY (SQLite) / global ID map (Memory) becomes the
+	// durable same-key backstop: the second concurrent CreateRun collides on
+	// the INSERT and surfaces as storage.ErrDuplicate, which the append-failure
+	// path below already maps to ErrDuplicate and rolls back. Empty keys keep
+	// the random newStorageEventID() so keyless runs coexist.
+	if snapshot.IdempotencyKey != "" {
+		storeEvt.ID = "create-run:" + snapshot.IdempotencyKey
+	}
 	if err := s.appendStoreEvent(ctx, storeEvt); err != nil {
 		// Roll back the registration so a failed CreateRun leaves the key free
 		// (mem.DeleteRun removes the run and its idemLookup entries).
@@ -192,27 +224,6 @@ func (s *StorageLedgerRepository) CreateRun(ctx context.Context, key string, sna
 	}
 
 	return nil
-}
-
-func (s *StorageLedgerRepository) GetRun(ctx context.Context, runID string) (RunSnapshot, error) {
-	if err := s.ensureBuilt(ctx); err != nil {
-		return RunSnapshot{}, err
-	}
-	return s.mem.GetRun(ctx, runID)
-}
-
-func (s *StorageLedgerRepository) GetRunByIdempotencyKey(ctx context.Context, key string) (RunSnapshot, error) {
-	if err := s.ensureBuilt(ctx); err != nil {
-		return RunSnapshot{}, err
-	}
-	return s.mem.GetRunByIdempotencyKey(ctx, key)
-}
-
-func (s *StorageLedgerRepository) ListRuns(ctx context.Context, status ...RunStatus) ([]RunSnapshot, error) {
-	if err := s.ensureBuilt(ctx); err != nil {
-		return nil, err
-	}
-	return s.mem.ListRuns(ctx, status...)
 }
 
 func (s *StorageLedgerRepository) CreateTask(ctx context.Context, snap TaskSnapshot) error {
@@ -236,20 +247,6 @@ func (s *StorageLedgerRepository) CreateTask(ctx context.Context, snap TaskSnaps
 		return fmt.Errorf("store append: %w", err)
 	}
 	return nil
-}
-
-func (s *StorageLedgerRepository) GetTask(ctx context.Context, runID, taskID string) (TaskSnapshot, error) {
-	if err := s.ensureBuilt(ctx); err != nil {
-		return TaskSnapshot{}, err
-	}
-	return s.mem.GetTask(ctx, runID, taskID)
-}
-
-func (s *StorageLedgerRepository) ListTasks(ctx context.Context, runID string) ([]TaskSnapshot, error) {
-	if err := s.ensureBuilt(ctx); err != nil {
-		return nil, err
-	}
-	return s.mem.ListTasks(ctx, runID)
 }
 
 func (s *StorageLedgerRepository) AppendEvent(ctx context.Context, event LifecycleEvent) error {
@@ -287,13 +284,6 @@ func (s *StorageLedgerRepository) AppendEvent(ctx context.Context, event Lifecyc
 		return fmt.Errorf("store append: %w", err)
 	}
 	return nil
-}
-
-func (s *StorageLedgerRepository) ListEvents(ctx context.Context, runID string) ([]LifecycleEvent, error) {
-	if err := s.ensureBuilt(ctx); err != nil {
-		return nil, err
-	}
-	return s.mem.ListEvents(ctx, runID)
 }
 
 func (s *StorageLedgerRepository) CompareAndSetTaskStatus(ctx context.Context, runID, taskID string, expectedVersion uint64, newStatus string) error {
