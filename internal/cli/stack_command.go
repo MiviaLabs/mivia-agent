@@ -75,12 +75,33 @@ func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stder
 	if runID == "" {
 		return fmt.Errorf("stack plan: could not read the plan run id from the run output")
 	}
-	if status != string(workflowledger.RunStatusSucceeded) {
-		return fmt.Errorf("stack plan: plan run %s did not succeed (status=%s); fix the plan and re-run", runID, status)
+	line, err := stackPlanOutcomeLine(runID, status)
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(stdout, "stack=%s plan_run=%s status=%s\n", runID, runID, status)
+	fmt.Fprint(stdout, line)
 	fmt.Fprintf(stdout, "drive the stack with: mivia stack drive %s --stack %s\n", name, runID)
 	return nil
+}
+
+// stackPlanOutcomeLine reports the status line `runStackPlan` prints for a
+// finished plan run, or an error when the run did not reach a state that can
+// be driven. A multi-chunk plan under a non-auto merge_policy pauses at
+// delivery_pending by design (errStackAwaitsGrant, see
+// stack_grant_pause.go): the plan itself succeeded, but the stack awaits its
+// first drive. Reporting that as a plan failure misdiagnosed the designed
+// pause (F11); a merge_policy=auto stack either finishes here or blocks
+// inside executeWorkflowRun until it does (never returns delivery_pending to
+// this point), so seeing delivery_pending here is unambiguously the pause.
+func stackPlanOutcomeLine(runID, status string) (string, error) {
+	switch status {
+	case string(workflowledger.RunStatusSucceeded):
+		return fmt.Sprintf("stack=%s plan_run=%s status=%s\n", runID, runID, status), nil
+	case string(workflowledger.RunStatusDeliveryPending):
+		return fmt.Sprintf("stack=%s plan_run=%s status=%s (awaiting first drive)\n", runID, runID, status), nil
+	default:
+		return "", fmt.Errorf("stack plan: plan run %s did not succeed (status=%s); fix the plan and re-run", runID, status)
+	}
 }
 
 // parseRunLine extracts the run_id and status values from a workflow run's

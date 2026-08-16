@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"strconv"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -62,6 +60,37 @@ func (e *Engine) replayDelivery(ctx context.Context, run workflowledger.RunSnaps
 }
 
 func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnapshot) (agenttools.DeliverResult, error) {
+	return e.deliverPendingWithStackGate(ctx, run, true)
+}
+
+// deliverPendingDirect delivers a delivery_pending run through the engine's
+// own publish machinery WITHOUT the drive-before-delivery gate. It mirrors
+// the CLI's workflowStackDeliverRun = deliverRunWithStore (stack_merge.go):
+// the stack drive calls it for the final integration run, whose delivery
+// must not be refused as "the plan run of an undriven stack". The drive
+// itself already verified every chunk merged before admitting the
+// integration run, and the integration run's own decompose output can
+// legitimately re-plan the merged suite as mode=multi (the run re-runs the
+// workflow's decompose inline in single mode) - the operator gate would
+// misread that as a fresh undriven stack and refuse the integration run
+// forever, leaving it delivery_pending for the auto-drive to cascade on.
+func (e *Engine) deliverPendingDirect(ctx context.Context, run workflowledger.RunSnapshot) (agenttools.DeliverResult, error) {
+	return e.deliverPendingWithStackGate(ctx, run, false)
+}
+
+// clearDeliveryAbandon clears the delivery fence's abandon residue for runID
+// so this delivery's fenced writes pass (see deliverPendingWithStackGate for
+// why a poisoned fence would otherwise fail every delivery write).
+func (e *Engine) clearDeliveryAbandon(runID string) {
+	_ = e.ctrlRepo()
+	e.mu.Lock()
+	if e.fence != nil {
+		e.fence.clearAbandon(runID)
+	}
+	e.mu.Unlock()
+}
+
+func (e *Engine) deliverPendingWithStackGate(ctx context.Context, run workflowledger.RunSnapshot, enforceStackGate bool) (agenttools.DeliverResult, error) {
 	runID := run.RunID
 	// A delivery_pending/delivery_failed run has no live controller (the
 	// controller parked and exited), so no dying goroutine can settle it:
@@ -72,12 +101,7 @@ func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnaps
 	// fails every delivery write with ErrConflict and the run stays
 	// delivery_pending forever (resume refuses delivery_pending before
 	// buildResumeController can clear the fence).
-	_ = e.ctrlRepo()
-	e.mu.Lock()
-	if e.fence != nil {
-		e.fence.clearAbandon(runID)
-	}
-	e.mu.Unlock()
+	e.clearDeliveryAbandon(runID)
 	raw, err := e.Repo.GetRunSnapshot(ctx, runID)
 	if err != nil {
 		return agenttools.DeliverResult{}, err
@@ -93,6 +117,19 @@ func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnaps
 	compiled, err := compiler.CompileForResume(&wf)
 	if err != nil {
 		return agenttools.DeliverResult{}, err
+	}
+	// Drive-before-delivery gate (mirrors the CLI's
+	// classifyStackPlanRunDelivery): the plan run of a multi-chunk stack must
+	// not be published while its stack is undriven or incomplete - publishing
+	// it would abandon the confirmed chunk work while reporting the plan run
+	// succeeded. The run stays delivery_pending (resumable via the drive or
+	// `mivia stack drive`). The drive's own integration-run delivery
+	// (deliverPendingDirect) skips this gate: the drive verified completion.
+	if enforceStackGate {
+		if reason := e.undrivenPlanRunReason(ctx, e.Repo, runID, compiled); reason != "" {
+			e.emitDeliveryRefused(runID, reason)
+			return agenttools.DeliverResult{}, fmt.Errorf("workflow run %q: %s", runID, reason)
+		}
 	}
 	policy, ok := delivery.FromCompiled(compiled)
 	if !ok {
@@ -359,137 +396,5 @@ func (e *Engine) settleRunFailure(runID string, runErr error) {
 	}
 	if err := e.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusFailed, nil); err == nil {
 		e.forgetWorktree(runID)
-	}
-}
-
-// progressSink is the package progress sink for localengine terminal
-// operations. Cancel and delivery-completion settle outside a controller (the
-// only other progress source), so those paths publish through this hook.
-// Hosts wire it once at startup with SetProgressSink, typically with a bus
-// adapter such as NewBusProgressSink; nil disables publishing.
-var progressSink controller.ProgressSink
-
-// SetProgressSink wires the package progress sink. Call it once at startup,
-// before any run, from a single goroutine. A nil sink disables publishing.
-func SetProgressSink(s controller.ProgressSink) {
-	progressSink = s
-}
-
-// NewBusProgressSink adapts a controller progress sink to an events.Bus: each
-// terminal progress event is published as one events.Event with the workflow
-// kind mapping and run/step attribution, mirroring the session engine's
-// workflowBusProgressSink adapter.
-func NewBusProgressSink(bus *events.Bus) controller.ProgressSink {
-	return busProgressSink{bus: bus}
-}
-
-// busProgressSink publishes controller progress events onto an events.Bus.
-type busProgressSink struct {
-	bus *events.Bus
-}
-
-// Emit publishes one controller progress event onto the bus.
-func (s busProgressSink) Emit(e controller.ProgressEvent) {
-	if s.bus == nil {
-		return
-	}
-	s.bus.Publish(events.Event{
-		Kind:      localProgressKind(e.Kind),
-		Timestamp: e.Timestamp,
-		Name:      "workflow",
-		Detail:    e.Detail,
-		AgentTask: e.TaskID,
-		AgentName: "workflow:" + e.StepID,
-		Metadata: map[string]string{
-			"run_id":             e.RunID,
-			"step":               e.StepID,
-			"attempt":            strconv.Itoa(e.AttemptNo),
-			"coordinator_run_id": e.CoordinatorRunID,
-			"task_id":            e.TaskID,
-		},
-	})
-}
-
-// localProgressKind maps one localengine terminal progress kind onto the
-// session event kind. Delivery stage and refusal observations reuse the
-// workflow_delivery_stage event kind with the cause in Detail. Unrecognised
-// kinds fall back to a heartbeat tick.
-func localProgressKind(k controller.ProgressKind) events.Kind {
-	switch k {
-	case controller.ProgressStepCompleted:
-		return events.KindWorkflowStepCompleted
-	case controller.ProgressRunFinished, controller.ProgressRunFailed:
-		return events.KindWorkflowRunFinished
-	case controller.ProgressDeliveryStage, controller.ProgressDeliveryRefused, controller.ProgressChunkScopeDropped:
-		return events.KindWorkflowDeliveryStage
-	default:
-		return events.KindWorkflowStepHeartbeat
-	}
-}
-
-// emitProgress delivers one terminal progress event to the package progress
-// sink. A nil sink makes the call a no-op.
-func emitProgress(e controller.ProgressEvent) {
-	if progressSink == nil {
-		return
-	}
-	if e.Timestamp.IsZero() {
-		e.Timestamp = time.Now()
-	}
-	progressSink.Emit(e)
-}
-
-// emitDeliveredRunFinished publishes run_finished(succeeded) after delivery
-// CASes the run to succeeded.
-func emitDeliveredRunFinished(runID string) {
-	emitProgress(controller.ProgressEvent{
-		Kind: controller.ProgressRunFinished, RunID: runID, Detail: "succeeded",
-	})
-}
-
-// deliveryStageEmitter returns the delivery Stage callback for one delivery
-// attempt: each numbered delivery stage is published through the package
-// progress sink as one workflow_delivery_stage event (a nil sink no-ops).
-// The stable stage name and its free-form detail ride together in Detail
-// ("push: push branch wf/x to origin"), attributed to the run and the
-// synthetic "deliver" step.
-func (e *Engine) deliveryStageEmitter(runID string) func(stage, detail string) {
-	return func(stage, detail string) {
-		emitProgress(controller.ProgressEvent{
-			Kind:      controller.ProgressDeliveryStage,
-			RunID:     runID,
-			StepID:    "deliver",
-			Detail:    stage + ": " + detail,
-			Timestamp: time.Now(),
-		})
-	}
-}
-
-// emitDeliveryRefused publishes one workflow_delivery_stage event carrying a
-// delivery refusal (no publication grant, or a pre-attempt refusal): the
-// refusal reason rides in Detail.
-func (e *Engine) emitDeliveryRefused(runID, reason string) {
-	emitProgress(controller.ProgressEvent{
-		Kind:      controller.ProgressDeliveryRefused,
-		RunID:     runID,
-		StepID:    "deliver",
-		Detail:    reason,
-		Timestamp: time.Now(),
-	})
-}
-
-// emitCanceledAttempts publishes one step_completed(canceled) per attempt an
-// operator cancel settled.
-func emitCanceledAttempts(runID string, attempts []workflowledger.StepAttempt) {
-	for _, attempt := range attempts {
-		emitProgress(controller.ProgressEvent{
-			Kind:             controller.ProgressStepCompleted,
-			RunID:            runID,
-			StepID:           attempt.StepID,
-			AttemptNo:        attempt.AttemptNo,
-			TaskID:           attempt.TaskID,
-			CoordinatorRunID: attempt.CoordinatorRunID,
-			Detail:           "canceled",
-		})
 	}
 }

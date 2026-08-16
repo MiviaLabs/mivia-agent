@@ -100,7 +100,7 @@ func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, 
 				}
 				snapshot.context.manager.PreparationManager.Discard(preparation)
 				s.contextPublishMu.Unlock()
-				s.emitContextCompaction(snapshot.context, preparation, snapshot.myTurn, summary.present)
+				s.emitContextCompaction(commitCtx, snapshot.context, preparation, snapshot.myTurn, summary.present)
 				return partial, nil
 			}
 			snapshot.context.manager.PreparationManager.Discard(preparation)
@@ -160,6 +160,6 @@ func (s *Session) commitPlainContextTurn(ctx context.Context, reply string, snap
 	s.contextHead = nextContextRevision(preparation, result)
 	s.mu.Unlock()
 	snapshot.context.manager.PreparationManager.Discard(preparation)
-	s.emitContextCompaction(snapshot.context, preparation, snapshot.myTurn, summary.present)
+	s.emitContextCompaction(ctx, snapshot.context, preparation, snapshot.myTurn, summary.present)
 	return reply, nil
 }

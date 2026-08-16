@@ -7,31 +7,30 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"regexp"
-	"sort"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
-// Stack task statuses (stacking vocabulary; D8: statuses are opaque strings
-// owned by the consumer; the engine only makes transitions durable).
+// Stack task statuses, chunk-plan parsing, stable admission keys, and the
+// topological admission order live in the shared stacking package; these
+// cli-local names are aliases and thin wrappers so the driver keeps its
+// existing call sites (see internal/workflows/stacking).
 const (
-	stackStatusPlanned     = "planned"
-	stackStatusQueued      = "queued"
-	stackStatusBlocked     = "blocked"
-	stackStatusRunning     = "running"
-	stackStatusImplemented = "implemented"
-	stackStatusReviewed    = "reviewed"
-	stackStatusPublished   = "published"
-	stackStatusMerged      = "merged"
-	stackStatusReopened    = "reopened"
-	stackStatusFailed      = "failed"
-	stackStatusSkipped     = "skipped"
+	stackStatusPlanned     = stacking.StatusPlanned
+	stackStatusQueued      = stacking.StatusQueued
+	stackStatusBlocked     = stacking.StatusBlocked
+	stackStatusRunning     = stacking.StatusRunning
+	stackStatusImplemented = stacking.StatusImplemented
+	stackStatusReviewed    = stacking.StatusReviewed
+	stackStatusPublished   = stacking.StatusPublished
+	stackStatusMerged      = stacking.StatusMerged
+	stackStatusReopened    = stacking.StatusReopened
+	stackStatusFailed      = stacking.StatusFailed
+	stackStatusSkipped     = stacking.StatusSkipped
 )
 
 // stackAdmissiblePreStatuses are the statuses nextAdmissionWave selects a
@@ -39,172 +38,84 @@ const (
 // list as its compare-and-swap precondition, so the two never drift apart:
 // a status nextAdmissionWave would offer for admission is always one
 // driveChunk's CAS accepts, and vice versa.
-var stackAdmissiblePreStatuses = []string{stackStatusPlanned, stackStatusQueued, stackStatusBlocked, stackStatusReopened}
+var stackAdmissiblePreStatuses = stacking.AdmissiblePreStatuses
 
 // stackStatusIsAdmissiblePre reports whether status is one nextAdmissionWave
 // and driveChunk's admission CAS both treat as "not yet admitted."
 func stackStatusIsAdmissiblePre(status string) bool {
-	for _, s := range stackAdmissiblePreStatuses {
-		if status == s {
-			return true
-		}
-	}
-	return false
+	return stacking.StatusIsAdmissiblePre(status)
 }
 
-// stackPlanSchema is the schema name recorded on the stack's plan artifact.
-const stackPlanSchema = "chunk-plan-v1"
-
-// stackDecomposeStepID is the engine-synthesized decompose step (compiler
-// s2 contract). The driver uses it to read the plan-mode run's chunk plan.
-const stackDecomposeStepID = "decompose"
-
-// stackIntegrationChunkID is the fixed chunk id of the final full-suite run.
-const stackIntegrationChunkID = "integration"
-
-// stackMaxChunkAttempts bounds reopen retries of a failed chunk run (plan F6
-// engine default). Past the bound a chunk is marked failed and the stack
-// halts.
-const stackMaxChunkAttempts = 3
+const (
+	stackPlanSchema         = stacking.PlanSchema
+	stackDecomposeStepID    = stacking.DecomposeStepID
+	stackIntegrationChunkID = stacking.IntegrationChunkID
+	stackMaxChunkAttempts   = stacking.MaxChunkAttempts
+)
 
 // stackScope binds every stack task to the plan run that produced the chunk
 // plan, so queries never cross stacks (D8 scope binding).
 func stackScope(stackID string) tasks.Scope {
-	return tasks.Scope{Type: tasks.ScopeRun, ID: stackID}
+	return stacking.Scope(stackID)
 }
 
-// ChunkPlan is one entry of a decompose chunk-plan output.
-type ChunkPlan struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Files        []string `json:"files"`
-	EstDiffLines int      `json:"est_diff_lines"`
-	Tests        bool     `json:"tests"`
-	DependsOn    []string `json:"depends_on"`
-}
+// ChunkPlan is one entry of a decompose chunk-plan output (shared type).
+type ChunkPlan = stacking.ChunkPlan
 
-// stackPlanDocument is the decompose output envelope carrying the chunk list.
-type stackPlanDocument struct {
-	StackMode string      `json:"stack_mode"`
-	ChunkPlan stackChunks `json:"chunk_plan"`
-}
-
-type stackChunks struct {
-	Chunks         []ChunkPlan `json:"chunks"`
-	HasMore        bool        `json:"has_more"`
-	RemainingScope string      `json:"remaining_scope"`
-}
-
-// parseStackPlanOutput decodes a decompose step output into the stack mode,
-// its chunk list, and whether decompose declared more scope than this wave
-// planned (§12.1 incremental decompose). stack_mode=single and no_bug are
-// valid and mean there is nothing to stack; malformed output is an error
-// (fail closed). hasMore/remainingScope are always zero-valued for single/
-// no_bug modes, matching decompose.md's contract that incremental planning
-// only applies to multi mode.
+// parseStackPlanOutput decodes a decompose step output (see
+// stacking.ParseStackPlanOutput).
 func parseStackPlanOutput(raw []byte) (mode string, chunks []ChunkPlan, hasMore bool, remainingScope string, err error) {
-	var doc stackPlanDocument
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return "", nil, false, "", fmt.Errorf("stack plan output is not valid JSON: %w", err)
-	}
-	switch doc.StackMode {
-	case "single", "no_bug", "multi":
-	default:
-		return "", nil, false, "", fmt.Errorf("stack plan stack_mode %q is invalid; want single, multi or no_bug", doc.StackMode)
-	}
-	if doc.StackMode != "multi" {
-		return doc.StackMode, doc.ChunkPlan.Chunks, false, "", nil
-	}
-	if doc.ChunkPlan.HasMore && strings.TrimSpace(doc.ChunkPlan.RemainingScope) == "" {
-		return "", nil, false, "", fmt.Errorf("stack plan declares has_more=true with an empty remaining_scope")
-	}
-	return doc.StackMode, doc.ChunkPlan.Chunks, doc.ChunkPlan.HasMore, doc.ChunkPlan.RemainingScope, nil
+	return stacking.ParseStackPlanOutput(raw)
 }
-
-// chunkIDRE constrains chunk ids so an admission key stays unambiguous: a
-// colon inside a chunk id would make "<stack>:<chunk>" unparseable.
-var chunkIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // stackAdmissionKey derives the stable run invocation key for a chunk run
-// (plan F15): re-admission after a restart resolves to the SAME run, never a
-// duplicate. The key is <stack-id>:<chunk-id> (plan D3, §5a step 3).
+// (plan F15): <stack-id>:<chunk-id> (see stacking.AdmissionKey).
 func stackAdmissionKey(stackID, chunkID string) (string, error) {
-	if strings.TrimSpace(stackID) == "" {
-		return "", fmt.Errorf("stack id must not be empty")
-	}
-	if !chunkIDRE.MatchString(chunkID) {
-		return "", fmt.Errorf("chunk id %q must match %s for a stable admission key", chunkID, chunkIDRE)
-	}
-	return stackID + ":" + chunkID, nil
+	return stacking.AdmissionKey(stackID, chunkID)
 }
 
-// stackTopologicalOrder returns chunk ids in admission order (dependencies
-// first) using Kahn's algorithm. Unknown or cyclic dependencies are errors:
-// a stack must never admit a chunk before the chunks it depends on.
+// stackTopologicalOrder returns chunk ids in admission order, dependencies
+// first (see stacking.TopologicalOrder).
 func stackTopologicalOrder(chunks []ChunkPlan) ([]string, error) {
-	byID := make(map[string]ChunkPlan, len(chunks))
-	for _, c := range chunks {
-		byID[c.ID] = c
-	}
-	indegree := make(map[string]int, len(chunks))
-	dependents := make(map[string][]string, len(chunks))
-	for _, c := range chunks {
-		for _, dep := range c.DependsOn {
-			if _, ok := byID[dep]; !ok {
-				return nil, fmt.Errorf("chunk %q depends on unknown chunk %q", c.ID, dep)
-			}
-			indegree[c.ID]++
-			dependents[dep] = append(dependents[dep], c.ID)
-		}
-	}
-	ready := make([]string, 0, len(chunks))
-	for _, c := range chunks {
-		if indegree[c.ID] == 0 {
-			ready = append(ready, c.ID)
-		}
-	}
-	sort.Strings(ready)
-	var order []string
-	for len(ready) > 0 {
-		next := ready[0]
-		ready = ready[1:]
-		order = append(order, next)
-		for _, d := range dependents[next] {
-			indegree[d]--
-			if indegree[d] == 0 {
-				ready = append(ready, d)
-				sort.Strings(ready)
-			}
-		}
-	}
-	if len(order) != len(chunks) {
-		return nil, fmt.Errorf("chunk depends_on graph contains a cycle")
-	}
-	return order, nil
+	return stacking.TopologicalOrder(chunks)
 }
 
 // RunInfo is the driver's read of one chunk run's ledger state.
 type RunInfo struct {
 	Present bool
 	Status  string
+	// ClaimStale reports whether an active-status run's execution claim is
+	// absent or older than its lease (F7 liveness probe: GetRunClaim /
+	// DefaultClaimLease). The caller derives it; reconcileTask stays a pure
+	// function over already-read state.
+	ClaimStale bool
+	// NoDiff reports CONFIRMED no_diff delivery evidence for a succeeded run
+	// (chunkRunNoDiff): an actual no_diff delivery record, never inferred
+	// from the mere absence of pushed evidence. The caller derives it;
+	// reconcileTask stays a pure function over already-read state. A
+	// read failure on the delivery records must resolve to false here (fail
+	// closed), same rule as ClaimStale.
+	NoDiff bool
 }
 
 // ReconcileAction is one idempotent recovery decision for a chunk task.
 type ReconcileAction struct {
-	TaskID    string
-	Action    string
-	NewStatus string // durable status to transition to ("" = none)
-	Attempts  int    // attempt count to record on reopen
-	Note      string
+	TaskID        string
+	Action        string
+	NewStatus     string // durable status to transition to ("" = none)
+	CurrentStatus string // task status before this action (set by reconcileStack)
+	Attempts      int    // attempt count to record on reopen
+	Note          string
 }
 
 // Reconcile actions (§5a step 2).
 const (
-	stackActionLeave      = "leave"
-	stackActionDeliver    = "deliver"
-	stackActionMarkMerged = "mark_merged"
-	stackActionReopen     = "reopen"
-	stackActionMarkFailed = "mark_failed"
+	stackActionLeave         = "leave"
+	stackActionDeliver       = "deliver"
+	stackActionMarkMerged    = "mark_merged"
+	stackActionMarkPublished = "mark_published"
+	stackActionReopen        = "reopen"
+	stackActionMarkFailed    = "mark_failed"
 )
 
 // Run statuses mirrored from the workflow ledger for the pure reconciler.
@@ -256,10 +167,52 @@ func reconcileTask(t tasks.Task, run RunInfo, merged bool, runPushed bool, maxAt
 	}
 	switch run.Status {
 	case runStatusPending, runStatusRunning, runStatusWaitingApproval:
+		if run.ClaimStale {
+			// The admitting process died mid-run (F7): nothing durable will ever
+			// settle this without a resume. `mivia stack drive` self-heals it
+			// (driveChunkInFlight); this note just tells an operator reading
+			// `stack status`/`stack reconcile` output what to do in the
+			// meantime, instead of the misleading "run is active".
+			return leave("run's claim is stale; run `mivia stack drive` to auto-resume it")
+		}
 		return leave("run is active")
 	case runStatusDeliveryPending, runStatusSucceeded:
-		if isInFlightStackStatus(t.Status) {
+		// A CONFIRMED no_diff run (an actual no_diff delivery record, not
+		// merely the absence of pushed evidence - see RunInfo.NoDiff) has no
+		// PR to merge. It is complete; mark it merged so dependents can
+		// proceed. Ambiguous evidence (NoDiff=false, e.g. a ListDeliveries
+		// read failure) must never take this branch: it would durably drop
+		// the chunk's content if a real PR does exist.
+		if run.Status == runStatusSucceeded && run.NoDiff && isInFlightStackStatus(t.Status) {
+			return ReconcileAction{TaskID: t.ID, Action: stackActionMarkMerged, NewStatus: stackStatusMerged, Note: "no diff to publish; run completed without a PR"}
+		}
+		// A real publish (pushed evidence, not no_diff) can land OUTSIDE
+		// driveChunk: a human `mivia workflow deliver <run> --allow-publish`
+		// grant for a reviewed chunk, or a resumed run the recovery sweep
+		// delivered. The task must move to published so
+		// autoMergePublishedChunks and the grant-pause hints see it -
+		// otherwise it stays at its prior in-flight status forever:
+		// driveChunk's admission CAS only claims planned/queued/blocked/
+		// reopened tasks, so a task stuck at running/reviewed is never
+		// re-admitted and never merged.
+		if run.Status == runStatusSucceeded && runPushed && t.Status != stackStatusPublished && isInFlightStackStatus(t.Status) {
+			return ReconcileAction{TaskID: t.ID, Action: stackActionMarkPublished, NewStatus: stackStatusPublished, Note: "run published outside the drive; PR open"}
+		}
+		// Still delivery_pending, no positive publish evidence (F9). A
+		// published task already has its own PR open and its own
+		// grant-only wait; it must not be downgraded to reviewed just
+		// because its run row has not caught up (chunkSettleAfterDelivery
+		// sets published on ANY non-no-diff outcome, including a repair
+		// re-entry that leaves the run at delivery_pending). Every other
+		// in-flight status (typically running, orphaned by a mid-delivery
+		// crash) moves to reviewed so it registers with
+		// stackAwaitsGrantOnly instead of staying wedged at a status its
+		// switch has no case for.
+		if t.Status == stackStatusPublished {
 			return ReconcileAction{TaskID: t.ID, Action: stackActionDeliver, Note: "run reached delivery; publish grant required"}
+		}
+		if isInFlightStackStatus(t.Status) {
+			return ReconcileAction{TaskID: t.ID, Action: stackActionDeliver, NewStatus: stackStatusReviewed, Note: "run reached delivery; publish grant required"}
 		}
 		return leave("run done; no publish state")
 	case runStatusFailed, runStatusCanceled, runStatusTimedOut, runStatusDeliveryFailed:
@@ -342,79 +295,8 @@ func nextAdmissionWave(tasksByID map[string]tasks.Task, merged map[string]bool, 
 	return wave
 }
 
-// MergeChecker reports whether a chunk's PR is merged, from durable git
-// state. The CLI implementation treats the disappearance of the pushed head
-// branch on origin as merged (GitHub's default merge behavior deletes the
-// branch). Tests inject a fake.
-//
-// wasPushed is the driver's durable pushed evidence for the run (a delivery
-// record that reached pushed/succeeded with a commit SHA). Ref absence only
-// means merged when the branch was ever pushed: a never-pushed branch has no
-// remote ref and no PR, and must not read as merged.
-type MergeChecker interface {
-	Merged(ctx context.Context, headBranch string, wasPushed bool) (bool, error)
-}
-
-// gitMergeChecker is the MergeChecker over the repository's origin remote.
-// It never contacts the network: it inspects the local remote-tracking refs,
-// so a missing fetch degrades to "not merged" (the driver leaves the chunk
-// alone) instead of failing the stack.
-type gitMergeChecker struct {
-	git delivery.GitRunner
-	gc  delivery.GitContext
-}
-
-// Merged reports whether the head branch is gone from origin (GitHub's
-// default "delete branch on merge" makes ref absence a merge proxy), with two
-// corrections over the old tracking-ref-only check:
-//
-//   - Never pushed: a branch that was never pushed has no tracking ref AND no
-//     remote ref, so ref absence alone read as merged and a delivery_pending
-//     run completed its stack with the PR never created. Ref absence only
-//     means merged when wasPushed carries durable pushed evidence (a delivery
-//     record that reached pushed/succeeded with a commit SHA).
-//   - Stale tracking ref: nothing prunes refs/remotes/origin/wf/*, so after a
-//     real remote merge the local tracking ref persists and rev-parse alone
-//     reads "not merged" forever. The remote is authoritative: a branch that
-//     exists only as a stale local tracking ref (gone from origin per
-//     ls-remote) is merged.
-func (g gitMergeChecker) Merged(ctx context.Context, headBranch string, wasPushed bool) (bool, error) {
-	if strings.TrimSpace(headBranch) == "" {
-		return false, nil
-	}
-	trackingRef := "refs/remotes/origin/" + headBranch
-	local, _ := g.git.Run(ctx, g.gc, "rev-parse", "--verify", "-q", trackingRef)
-	remote, remoteErr := g.git.Run(ctx, g.gc, "ls-remote", "--heads", "origin", headBranch)
-	if remoteErr != nil {
-		// The remote cannot confirm the branch state (network outage, missing
-		// origin). Degrade to "not merged": the stack keeps waiting instead of
-		// completing on a guess, matching the checker's original network-free
-		// posture. A stale local tracking ref alone must not complete a stack
-		// while the remote is unreachable.
-		return false, nil
-	}
-	hasLocal := strings.TrimSpace(local) != ""
-	hasRemote := strings.TrimSpace(remote) != ""
-	switch {
-	case hasLocal && hasRemote:
-		// Branch still exists both places: the PR (or at least the push) is
-		// open. ls-remote defeats the false-positive local tracking ref a
-		// merge UI can leave behind.
-		return false, nil
-	case hasLocal && !hasRemote:
-		// Stale local tracking ref: the remote merge deleted the branch.
-		// The remote is authoritative - merged.
-		return true, nil
-	case !hasLocal && !hasRemote && wasPushed:
-		// Branch was pushed (durable evidence) and no longer exists on
-		// origin: merged.
-		return true, nil
-	default:
-		// Never pushed: ref absence is not a merge. The stack keeps waiting
-		// for its publish grant.
-		return false, nil
-	}
-}
+// MergeChecker and gitMergeChecker (the merge oracle) live in
+// stack_merge_checker.go.
 
 // stackRunRef finds the run whose stable invocation key is
 // <stack-id>:<chunk-id> in the run ledger (F15). There is at most one live
@@ -469,10 +351,19 @@ func stackAttemptCount(ledger *tasks.Store, stackID, taskID string) int {
 }
 
 // applyReconcileAction persists the durable part of one recovery action.
-// leave and deliver carry no transition (deliver is a driver-side note).
+// leave carries no transition; deliver (F9) now does for most in-flight
+// statuses, but not an already-published task (see reconcileTask's deliver
+// arm) - guard on NewStatus rather than the action, or that case hits
+// TransitionTask with an empty status.
 func applyReconcileAction(ledger *tasks.Store, stackID string, act ReconcileAction) error {
+	if act.NewStatus == "" {
+		return nil
+	}
+	if act.CurrentStatus == act.NewStatus {
+		return nil
+	}
 	switch act.Action {
-	case stackActionMarkMerged, stackActionReopen, stackActionMarkFailed:
+	case stackActionMarkMerged, stackActionMarkPublished, stackActionDeliver, stackActionReopen, stackActionMarkFailed:
 		return ledger.TransitionTask(stackID, act.TaskID, act.NewStatus)
 	default:
 		return nil

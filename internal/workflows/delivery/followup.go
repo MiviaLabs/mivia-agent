@@ -86,6 +86,14 @@ func EnsureFollowUpPublished(ctx context.Context, git GitRunner, pr PRClient, wo
 		Base: parentBranch, Head: deferredBranch, Title: title, Body: body, Draft: true,
 	})
 	if err != nil {
+		// A concurrent driver may have created the same PR between our
+		// FindByHead miss and this Create; re-check before reporting failure.
+		if existing, ferr := pr.FindByHead(ctx, slug, deferredBranch); ferr == nil && existing != nil {
+			if stdout != nil {
+				stdout(fmt.Sprintf("chunk=%s follow-up PR %s %s created by concurrent driver (deferred scope, stacked on %s)\n", label, existing.RemoteID, existing.URL, parentBranch))
+			}
+			return deferredBranch, deferredSHA, *existing, true, nil
+		}
 		return "", "", PRRef{}, false, fmt.Errorf("create follow-up PR: %w", err)
 	}
 	if stdout != nil {

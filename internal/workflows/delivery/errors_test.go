@@ -140,6 +140,10 @@ func (f *failOnceFindPRClient) Create(ctx context.Context, repo string, in PRInp
 	return f.fake.Create(ctx, repo, in)
 }
 
+func (f *failOnceFindPRClient) IsMerged(ctx context.Context, repo, head string) (bool, error) {
+	return f.fake.IsMerged(ctx, repo, head)
+}
+
 // TestDeliverRetryReusesOwnPRAfterTransientFindFailure reproduces the
 // ownership-guard regression end to end: a run whose earlier attempt created
 // the PR and recorded its identity, then hit a transient PR lookup failure on

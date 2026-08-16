@@ -333,8 +333,10 @@ func runSessionsUsage(args []string, stdout io.Writer) error {
 	// so the estimate includes tool schemas exactly like the TUI's number
 	// instead of silently under-counting by their cost. quiet=true: a
 	// usage query is not a session start and must not print startup
-	// notices into the JSON stream.
-	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true, false)
+	// notices into the JSON stream. runRecoverySweep=false (F14): a usage
+	// query is read-only and must not push branches, publish PRs, or drive
+	// stacks as a side effect.
+	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true, false, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("sessions usage: %w", err)

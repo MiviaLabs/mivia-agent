@@ -134,6 +134,10 @@ func (r *coverageRecordingPR) FindByHead(context.Context, string, string) (*deli
 	return nil, nil
 }
 
+func (r *coverageRecordingPR) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (r *coverageRecordingPR) Create(_ context.Context, _ string, in delivery.PRInput) (delivery.PRRef, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

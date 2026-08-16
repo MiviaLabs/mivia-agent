@@ -22,6 +22,14 @@ type SQLite struct {
 	contextFailureStep string
 	closeOnce          sync.Once
 	closeErr           error
+	// usageWriteWG tracks in-flight fire-and-forget usage-event writes
+	// (usageWriter.Record dispatches these off its caller's goroutine so a
+	// contended write never extends a caller-held lock - see usage_events.go).
+	// Close waits for it before checkpointing/closing the underlying db, so a
+	// one-shot process (mivia compact, a single non-interactive chat turn)
+	// cannot exit - and a test cannot remove its TempDir - while one of these
+	// writes is still in flight or hasn't started running yet.
+	usageWriteWG sync.WaitGroup
 }
 
 func OpenSQLite(path string) (*SQLite, error) {
@@ -387,6 +395,12 @@ func (s *SQLite) inTx(ctx context.Context, body func(*sql.Tx) error) error {
 // a "database is closed" error from re-running the checkpoint query.
 func (s *SQLite) Close() error {
 	s.closeOnce.Do(func() {
+		// Wait outside the Once body's mutation of closeErr: every write this
+		// store dispatched asynchronously must land (or fail) before the
+		// checkpoint below, or the checkpoint can run concurrently with (or
+		// before) an in-flight INSERT, and the caller's later os.RemoveAll of
+		// this store's directory can race a write that hasn't started yet.
+		s.usageWriteWG.Wait()
 		var busy, log, checkpointed int
 		if err := s.db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed); err != nil {
 			s.closeErr = err

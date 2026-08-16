@@ -55,7 +55,7 @@ func (t *dispatchTasksTool) Description() string {
 		"costs you the others. " +
 		"Recommended: 2-4 tasks at once. " +
 		"If dispatch_tasks fails, retry with fewer tasks or switch to spawn_agent. " +
-		"Use timeout_seconds to set a per-batch budget: " + timeoutHint() + " " +
+		"Use timeout_seconds to set a per-batch budget. " +
 		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
 		"For large results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."

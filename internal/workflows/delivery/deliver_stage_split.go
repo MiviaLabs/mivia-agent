@@ -31,6 +31,12 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
 	}
+	// Guard: a deferred-file split must never separate a file from its test
+	// companion - the repair agent declared this split, so refuse it before
+	// any commit (see guardDeferredSplitConsistency).
+	if err := guardDeferredSplitConsistency(ctx, git, req, deferred); err != nil {
+		return "", "", err
+	}
 	resetArgs := append([]string{"reset", "--"}, deferred...)
 	if _, err := git.Run(ctx, req.GitCtx, resetArgs...); err != nil {
 		markFailed(ctx, repo, key, req, err)
@@ -69,10 +75,21 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 	}
 
 	// Second commit: deferred_files only, child of the delivered commit.
+	if err := commitDeferredFollowUp(ctx, git, req, deferred, title, head); err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", err
+	}
+	return head, adoptedTree, nil
+}
+
+// commitDeferredFollowUp commits the deferred files as a SECOND commit on the
+// delivered branch, saves that commit under the deferred branch name, and
+// resets the worktree back to the delivered commit - so deferred's content is
+// preserved but never reachable from the branch that gets pushed next.
+func commitDeferredFollowUp(ctx context.Context, git GitRunner, req Request, deferred []string, title, head string) error {
 	addArgs := append([]string{"-c", "core.fsmonitor=false", "add", "--"}, deferred...)
 	if _, err := git.Run(ctx, req.GitCtx, addArgs...); err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
+		return fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
 	}
 	// Reuse the SAME subject that just passed both the PR-title and
 	// commit-message policy checks above - a host-invented subject (for
@@ -87,20 +104,17 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
 		"-c", "user.name="+mviaCommitAuthorName, "-c", "user.email="+mviaCommitAuthorEmail,
 		"commit", "--allow-empty-message", "-m", deferredMsg); err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", fmt.Errorf("cannot commit deferred_files: %w", err)
+		return fmt.Errorf("cannot commit deferred_files: %w", err)
 	}
 	// Save the deferred commit under its own branch, then reset the current
 	// worktree back to the delivered commit: the branch about to be pushed
 	// must never carry deferred_files.
 	branch := DeferredBranchName(req.Branch)
 	if _, err := git.Run(ctx, req.GitCtx, "branch", "-f", branch, "HEAD"); err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", fmt.Errorf("cannot save the deferred follow-up branch: %w", err)
+		return fmt.Errorf("cannot save the deferred follow-up branch: %w", err)
 	}
 	if _, err := git.Run(ctx, req.GitCtx, "reset", "--hard", head); err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", fmt.Errorf("cannot restore the worktree to the delivered commit: %w", err)
+		return fmt.Errorf("cannot restore the worktree to the delivered commit: %w", err)
 	}
-	return head, adoptedTree, nil
+	return nil
 }

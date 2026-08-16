@@ -291,6 +291,11 @@ type ContextManager struct {
 	// session's lifetime reads it to report a real cause instead of a bare
 	// "not summarized" boolean. Empty when Summarizer is configured.
 	SummaryUnavailableReason string
+	// UsageWriter is the optional durable usage-measurement sink. Nil keeps
+	// usage events ephemeral (bus-only, today's production state everywhere
+	// this isn't wired). Constructed once per session, alongside Summarizer,
+	// and copied into agent.Options per turn the same way.
+	UsageWriter UsageWriter
 }
 
 func (m ContextManager) Prepare(ctx context.Context, input PrepareInput) (Preparation, error) {

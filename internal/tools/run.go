@@ -72,29 +72,28 @@ const RunCommandToolName = "run_command"
 
 func (t *runCommandTool) Name() string { return RunCommandToolName }
 func (t *runCommandTool) Description() string {
-	return "LAST RESORT: run an allowlisted program as argv (no shell string). " +
-		"Params: argv (string array; argv[0] is bare program name on allowlist). Prefer over shell commands. " +
+	return "LAST RESORT: run an allowlisted program as argv (no shell string); argv[0] is the bare program name. " +
 		"Prefer read_file (with offset/limit), list_dir, grep, glob, write_file, search_replace, multi_edit for file work. " +
-		"Do not invent shell tools (bash, grep, wc). Examples: [\"make\",\"test\"], [\"git\",\"status\"], [\"npm\",\"test\"]."
+		"Do not invent shell tools (bash, grep, wc). Examples: [\"make\",\"test\"], [\"npm\",\"test\"], [\"git\",\"status\"]."
 }
 func (t *runCommandTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"argv": map[string]any{
 			"type":        "array",
 			"items":       map[string]any{"type": "string"},
-			"description": "Argument vector; argv[0] is the bare program name (must be allowlisted). Not a shell string.",
+			"description": "Argument vector; argv[0] is the bare allowlisted program name.",
 		},
 		"timeout_seconds": map[string]any{
 			"type":        "integer",
-			"description": "Optional per-call timeout in seconds, bounded by the caller step/run grant; without a grant, clamped to the tool-level maximum.",
+			"description": "Per-call timeout in seconds; bounded by the step/run grant, else clamped to the tool maximum.",
 		},
 		"cwd": map[string]any{
 			"type":        "string",
-			"description": "Optional workspace-relative working directory for the command.",
+			"description": "Workspace-relative working directory.",
 		},
 		"stdin": map[string]any{
 			"type":        "string",
-			"description": "Optional string to pipe to the command's standard input.",
+			"description": "String piped to the command's standard input.",
 		},
 	}, []string{"argv"})
 }

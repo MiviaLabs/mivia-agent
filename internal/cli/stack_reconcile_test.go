@@ -33,6 +33,37 @@ func TestReconcileRestartMidStackNoop(t *testing.T) {
 	}
 }
 
+// --- Reconciliation: F7 stale-claim note on an orphaned in-flight run ----
+
+func TestReconcileActiveRunWithLiveClaimLeavesGenericNote(t *testing.T) {
+	task := tasks.Task{ID: "b", Status: stackStatusRunning}
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusRunning, ClaimStale: false}, false, true, 3)
+	if act.Action != stackActionLeave {
+		t.Fatalf("action = %q, want leave", act.Action)
+	}
+	if act.Note != "run is active" {
+		t.Fatalf("note = %q, want the generic active note", act.Note)
+	}
+}
+
+func TestReconcileActiveRunWithStaleClaimNotesSelfHeal(t *testing.T) {
+	// F7: the admitting process died but the run row is still pending/
+	// running/waiting_approval. reconcileTask must never reopen the task
+	// (stackRunRef's stable invocation key means a fresh admission would just
+	// find the SAME orphaned run again), but its note must stop claiming the
+	// run "is active" and point at the self-healing path.
+	for _, status := range []string{runStatusPending, runStatusRunning, runStatusWaitingApproval} {
+		task := tasks.Task{ID: "b", Status: stackStatusRunning}
+		act := reconcileCase(t, task, RunInfo{Present: true, Status: status, ClaimStale: true}, false, true, 3)
+		if act.Action != stackActionLeave {
+			t.Fatalf("status %s: action = %q, want leave (the run, not the task, needs healing)", status, act.Action)
+		}
+		if act.Note == "run is active" {
+			t.Fatalf("status %s: note is still the misleading generic message", status)
+		}
+	}
+}
+
 // --- Reconciliation: run died mid-flight (bounded reopen, then halt) -----
 
 func TestReconcileRunDiedMidFlightReopens(t *testing.T) {
@@ -85,6 +116,13 @@ func TestReconcileDeliveryPendingNotesPublish(t *testing.T) {
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusDeliveryPending}, false, true, 3)
 	if act.Action != stackActionDeliver {
 		t.Fatalf("action = %q, want deliver", act.Action)
+	}
+	// F9: deliver must carry a durable transition to reviewed, or the task
+	// stays at running forever - not admissible (not a pre-status), not
+	// merged, and invisible to stackAwaitsGrantOnly's switch, which has no
+	// case for running. Without NewStatus the poll loop never exits.
+	if act.NewStatus != stackStatusReviewed {
+		t.Fatalf("new status = %q, want reviewed", act.NewStatus)
 	}
 }
 
@@ -340,5 +378,166 @@ func TestStackPRNumber(t *testing.T) {
 	}
 	if got := stackPRNumber(""); got != "" {
 		t.Fatalf("pr number for empty url = %q, want empty", got)
+	}
+}
+
+// --- Reconciliation: no_diff chunks ---------------------------------------
+
+func TestReconcileNoDiffChunkMarkedMerged(t *testing.T) {
+	// A chunk whose run settled succeeded with a CONFIRMED no_diff delivery
+	// record is complete: there is no PR to merge, so it must be marked
+	// merged. RunInfo.NoDiff carries the confirmed evidence (F4 fix); it is
+	// never inferred from the mere absence of pushed evidence (see
+	// TestReconcileAmbiguousEvidenceNeverMarksMerged below).
+	task := tasks.Task{ID: "c1", Status: stackStatusRunning, Deps: []string{"a"}}
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: true}, false, false, 3)
+	if act.Action != stackActionMarkMerged {
+		t.Fatalf("action = %q, want mark_merged", act.Action)
+	}
+	if act.NewStatus != stackStatusMerged {
+		t.Fatalf("new status = %q, want merged", act.NewStatus)
+	}
+}
+
+func TestReconcileNoDiffChunkCrashRecoveryFromPublished(t *testing.T) {
+	// If a confirmed no_diff run landed but the task was already moved to
+	// published, reconcile must still recover it to merged, not leave it
+	// published forever.
+	task := tasks.Task{ID: "c1", Status: stackStatusPublished, Deps: []string{"a"}}
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: true}, false, false, 3)
+	if act.Action != stackActionMarkMerged {
+		t.Fatalf("action = %q, want mark_merged", act.Action)
+	}
+}
+
+// TestReconcileAmbiguousEvidenceNeverMarksMerged pins the fail-closed
+// contract at the reconcileTask layer (reachable-bug audit finding 3): a
+// succeeded run with NEITHER confirmed no_diff evidence NOR pushed evidence
+// (the shape a ListDeliveries read failure produces) must never be marked
+// merged. It stays in the recoverable deliver/grant path instead of the
+// terminal, durable mark_merged transition that would silently drop the
+// chunk's content.
+func TestReconcileAmbiguousEvidenceNeverMarksMerged(t *testing.T) {
+	task := tasks.Task{ID: "c1", Status: stackStatusRunning, Deps: []string{"a"}}
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: false}, false, false, 3)
+	if act.Action == stackActionMarkMerged {
+		t.Fatalf("action = mark_merged with no confirmed evidence; must never mark merged on ambiguous state")
+	}
+}
+
+func TestReconcilePublishedOutsideDriveMarksPublished(t *testing.T) {
+	// A real publish (pushed evidence, not no_diff) that has not merged yet
+	// but happened OUTSIDE driveChunk (e.g. a human `mivia workflow deliver
+	// <run> --allow-publish` grant, or a resumed run the recovery sweep
+	// delivered) must move the task to published so autoMergePublishedChunks
+	// and the grant-pause hints can see it. Leaving it at its prior in-flight
+	// status (the old "deliver" no-op) wedges the chunk forever: driveChunk's
+	// admission CAS only claims planned/queued/blocked/reopened tasks, so a
+	// task stuck at running/reviewed is never re-admitted and never merged
+	// (reachable-bug audit finding 2).
+	task := tasks.Task{ID: "c1", Status: stackStatusRunning, Deps: []string{"a"}}
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: false}, false, true, 3)
+	if act.Action != stackActionMarkPublished {
+		t.Fatalf("action = %q, want mark_published", act.Action)
+	}
+	if act.NewStatus != stackStatusPublished {
+		t.Fatalf("new status = %q, want published", act.NewStatus)
+	}
+}
+
+func TestReconcilePublishedOutsideDriveFromReviewed(t *testing.T) {
+	// The most common trigger: a human grants `mivia workflow deliver <run>
+	// --allow-publish` directly for a "reviewed" chunk (the documented
+	// approve-policy remedy). That publishes the run without ever going
+	// through driveChunk, so reconcile must be the one to move the task to
+	// published.
+	task := tasks.Task{ID: "c1", Status: stackStatusReviewed, Deps: []string{"a"}}
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: false}, false, true, 3)
+	if act.Action != stackActionMarkPublished {
+		t.Fatalf("action = %q, want mark_published", act.Action)
+	}
+}
+
+func TestReconcileAlreadyPublishedStaysSteady(t *testing.T) {
+	// A task already at published with a succeeded+pushed, not-yet-merged
+	// run must not re-fire mark_published every pass; it falls through to
+	// the existing deliver/no-op branch (autoMergePublishedChunks owns
+	// merging it from here).
+	task := tasks.Task{ID: "c1", Status: stackStatusPublished, Deps: []string{"a"}}
+	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: false}, false, true, 3)
+	if act.Action != stackActionDeliver {
+		t.Fatalf("action = %q, want deliver (steady state; already published)", act.Action)
+	}
+}
+
+// TestApplyReconcileActionSkipsRedundantReviewedToReviewed pins the fix
+// for the redundant reviewed->reviewed journal event: when a task already
+// sits at reviewed and the reconcile action targets reviewed again,
+// applyReconcileAction must skip the transition rather than appending a
+// duplicate journal entry every pass while the grant is outstanding.
+func TestApplyReconcileActionSkipsRedundantReviewedToReviewed(t *testing.T) {
+	store := tasks.NewMemoryStore()
+	stackID := "stack-dedup"
+	if _, err := store.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateTask(tasks.Task{ID: "c1", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusReviewed}); err != nil {
+		t.Fatal(err)
+	}
+
+	act := ReconcileAction{TaskID: "c1", Action: stackActionDeliver, NewStatus: stackStatusReviewed, CurrentStatus: stackStatusReviewed}
+	if err := applyReconcileAction(store, stackID, act); err != nil {
+		t.Fatalf("first applyReconcileAction: %v", err)
+	}
+	// Second call must also succeed but must not append a duplicate transition.
+	if err := applyReconcileAction(store, stackID, act); err != nil {
+		t.Fatalf("second applyReconcileAction: %v", err)
+	}
+	trs, err := store.ListTransitions(stackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The task was created at reviewed; no transition should have been
+	// recorded because both calls targeted the same status.
+	var reviewedTransitions int
+	for _, tr := range trs {
+		if tr.TaskID == "c1" && tr.ToStatus == stackStatusReviewed {
+			reviewedTransitions++
+		}
+	}
+	if reviewedTransitions != 0 {
+		t.Fatalf("reviewed->reviewed transitions = %d, want 0 (no redundant journal events)", reviewedTransitions)
+	}
+}
+
+// TestApplyReconcileActionRunsToReviewedOnce pins that the first real
+// reviewed transition still lands: a task moving from running to reviewed
+// records exactly one transition event.
+func TestApplyReconcileActionRunsToReviewedOnce(t *testing.T) {
+	store := tasks.NewMemoryStore()
+	stackID := "stack-real-transition"
+	if _, err := store.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateTask(tasks.Task{ID: "c1", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+
+	act := ReconcileAction{TaskID: "c1", Action: stackActionDeliver, NewStatus: stackStatusReviewed, CurrentStatus: stackStatusRunning}
+	if err := applyReconcileAction(store, stackID, act); err != nil {
+		t.Fatalf("applyReconcileAction: %v", err)
+	}
+	trs, err := store.ListTransitions(stackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviewedTransitions int
+	for _, tr := range trs {
+		if tr.TaskID == "c1" && tr.ToStatus == stackStatusReviewed {
+			reviewedTransitions++
+		}
+	}
+	if reviewedTransitions != 1 {
+		t.Fatalf("running->reviewed transitions = %d, want 1", reviewedTransitions)
 	}
 }

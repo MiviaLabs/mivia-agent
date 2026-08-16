@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -18,7 +19,7 @@ import (
 // run snapshot, numbered attempts, loop counters, approvals, and delivery
 // records. It never contacts a provider or mutates the workspace.
 func executeWorkflowStatus(runID, root, configPath string, stdout, stderr io.Writer) error {
-	repo, closeFn, err := openWorkflowReportContext(root, configPath)
+	repo, store, resolvedRoot, closeFn, err := openWorkflowReportContextWithStore(root, configPath)
 	if err != nil {
 		return err
 	}
@@ -47,6 +48,7 @@ func executeWorkflowStatus(runID, root, configPath string, stdout, stderr io.Wri
 	if run.FinishedAt != nil {
 		fmt.Fprintf(stdout, "finished_at: %s\n", run.FinishedAt.UTC().Format(time.RFC3339))
 	}
+	printStackUndrivenNotice(ctx, stdout, resolvedRoot, store, repo, runID, run.Status)
 
 	if err := printWorkflowAttempts(ctx, stdout, repo, runID); err != nil {
 		return err
@@ -224,6 +226,35 @@ func printWorkflowDeliveries(ctx context.Context, stdout io.Writer, repo workflo
 	return nil
 }
 
+// printStackUndrivenNotice surfaces the exact condition
+// classifyStackPlanRunDelivery would refuse to deliver: a DELIVERY_PENDING run
+// that is the plan run of a multi-chunk stack whose stack has NOT finished
+// driving. Without this, an operator reading `workflow status` sees a plain
+// "status: delivery_pending" that looks identical to a normal, healthy
+// pending delivery - diagnosing a parked stack required manually reading
+// decompose output and cross-checking chunk admission (see the 2026-08-16
+// wfr-SHDHU4YMIGNP4GUM incident). The notice must gate on actual completion
+// (classifyStackPlanRunDelivery), not merely on the run being a multi-chunk
+// plan (stackDecomposedChunks alone): a stack that already drove to
+// completion is no longer refused by `workflow deliver` (F11) - printing
+// "UNDRIVEN...refuses this run" for it would be actively wrong, telling the
+// operator to re-drive a stack that is already done and just awaits its own
+// settle/deliver call. The classification runs WITHOUT the remote merge
+// oracle (remoteMergeOracle=false): workflow status never contacts git or
+// gh, so the display verdict rests on the durable pushed evidence alone. A
+// lookup failure inside classifyStackPlanRunDelivery degrades to no notice
+// (stackPlanRunNotApplicable), matching its own fail-open behavior.
+func printStackUndrivenNotice(ctx context.Context, stdout io.Writer, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, status workflowledger.RunStatus) {
+	if status != workflowledger.RunStatusDeliveryPending {
+		return
+	}
+	if classifyStackPlanRunDelivery(ctx, root, store, repo, runID, false) != stackPlanRunIncomplete {
+		return
+	}
+	chunks, _ := stackDecomposedChunks(ctx, repo, runID)
+	fmt.Fprintf(stdout, "stack: UNDRIVEN - plan run of a %d-chunk stack parked at delivery_pending with the stack never driven; `mivia workflow deliver` refuses this run. Finish it with `mivia stack drive <workflow> --stack %s`; once the stack completes, `mivia workflow deliver %s` settles the plan run\n", chunks, runID, runID)
+}
+
 // shortDigest renders a digest prefix for operator output.
 func shortDigest(digest string) string {
 	if digest == "" {
@@ -238,23 +269,36 @@ func shortDigest(digest string) string {
 // openWorkflowReportContext opens the workspace, config, and workflow store
 // for the read-only workflow commands (status, events).
 func openWorkflowReportContext(root, configPath string) (workflowledger.Repository, func(), error) {
+	repo, _, _, closeFn, err := openWorkflowReportContextWithStore(root, configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return repo, closeFn, nil
+}
+
+// openWorkflowReportContextWithStore is openWorkflowReportContext's full
+// form: it also returns the underlying task-ledger store and the resolved
+// (absolute) workspace root, both needed by report paths that inspect
+// stacking state (e.g. printStackUndrivenNotice's completion check), which
+// openWorkflowReportContext's repo-only callers do not need.
+func openWorkflowReportContextWithStore(root, configPath string) (workflowledger.Repository, *storage.SQLite, string, func(), error) {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
 	work, err := workspace.Open(root)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	configPath = workflowConfigPath(work.Abs, configPath)
 	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	applyPrivacyPolicy(res)
 	applyWorkflowStoreRoot(res, work.Abs)
-	_, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
+	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
-	return repo, closeFn, nil
+	return repo, store, work.Abs, closeFn, nil
 }

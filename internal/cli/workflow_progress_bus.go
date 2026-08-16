@@ -143,7 +143,10 @@ func (e *sessionWorkflowEngine) publishSkippedPlanRunFinished(ctx context.Contex
 	if _, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(runID, run.WorkflowDigest)); err == nil {
 		return // delivered runs publish via publishDeliveredRunFinished
 	}
-	if !stackDriveCompleted(ctx, store, repo, runID, stackPlanMergePolicy(ctx, repo, runID)) {
+	// Display verdict only (a run_finished TUI event for an already-settled
+	// run): the settle paths keep the merge oracle, and an event emitter must
+	// not run network probes, so the durable pushed evidence decides.
+	if !stackDriveCompleted(ctx, e.root, store, repo, runID, stackPlanMergePolicy(ctx, repo, runID), false) {
 		return
 	}
 	sink.Emit(controller.ProgressEvent{

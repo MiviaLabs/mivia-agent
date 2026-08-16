@@ -132,6 +132,10 @@ func (f *fakePRClient) FindByHead(context.Context, string, string) (*PRRef, erro
 	return f.found, nil
 }
 
+func (f *fakePRClient) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (f *fakePRClient) Create(_ context.Context, repo string, in PRInput) (PRRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -442,6 +446,10 @@ type failOncePRClient struct {
 
 func (f *failOncePRClient) FindByHead(ctx context.Context, repo, head string) (*PRRef, error) {
 	return f.fake.FindByHead(ctx, repo, head)
+}
+
+func (f *failOncePRClient) IsMerged(ctx context.Context, repo, head string) (bool, error) {
+	return f.fake.IsMerged(ctx, repo, head)
 }
 
 func (f *failOncePRClient) Create(ctx context.Context, repo string, in PRInput) (PRRef, error) {

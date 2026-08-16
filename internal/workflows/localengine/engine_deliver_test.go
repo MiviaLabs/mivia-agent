@@ -487,6 +487,10 @@ func (r *recordingPR) FindByHead(context.Context, string, string) (*delivery.PRR
 	return nil, nil
 }
 
+func (r *recordingPR) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (r *recordingPR) Create(_ context.Context, _ string, in delivery.PRInput) (delivery.PRRef, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -510,6 +514,10 @@ type failingCreatePR struct{}
 
 func (failingCreatePR) FindByHead(context.Context, string, string) (*delivery.PRRef, error) {
 	return nil, nil
+}
+
+func (failingCreatePR) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
 }
 
 func (failingCreatePR) Create(context.Context, string, delivery.PRInput) (delivery.PRRef, error) {

@@ -32,7 +32,9 @@ import (
 // scenario without a real git repo.
 type alwaysMergedChecker struct{}
 
-func (alwaysMergedChecker) Merged(context.Context, string, bool) (bool, error) { return true, nil }
+func (alwaysMergedChecker) Merged(context.Context, string, string, string, string, bool) (bool, error) {
+	return true, nil
+}
 
 func TestWaitForChunkMergesReturnsWhenADependentBecomesAdmissible(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()

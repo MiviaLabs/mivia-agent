@@ -440,8 +440,8 @@ func (l *Loop) stepRequest(ctx context.Context, toolSpecs []provider.ToolSpec, o
 // reads "estimate X vs actual Y (ratio R)" with R the applied correction -
 // the raw per-turn ratio is Y/X. A zero ratio is the zero-value calibrator
 // meaning unity, so display it as 1.00 rather than a misleading 0.00.
-func (l *Loop) emitTurnUsage(opts Options, req provider.Request, resp *provider.Response, estimatedTokens int) {
-	EmitCacheUsage(opts, l.Completer.Name(), req.Model, resp.CacheUsage)
+func (l *Loop) emitTurnUsage(ctx context.Context, opts Options, req provider.Request, resp *provider.Response, estimatedTokens int) {
+	EmitCacheUsage(ctx, opts, l.Completer.Name(), req.Model, resp.CacheUsage)
 	ratio := l.Calibration.Ratio
 	if ratio <= 0 {
 		ratio = 1
@@ -449,7 +449,7 @@ func (l *Loop) emitTurnUsage(opts Options, req provider.Request, resp *provider.
 	if resp.TokenUsage.Reported && estimatedTokens > 0 && resp.TokenUsage.InputTokens > 0 {
 		l.Calibration.Update(estimatedTokens, resp.TokenUsage.InputTokens)
 	}
-	EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
+	EmitTokenUsage(ctx, opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
 }
 
 // streamRevoker, revokeStreamWriter, teeWriter, and the model-thinking

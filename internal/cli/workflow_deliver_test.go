@@ -47,6 +47,10 @@ func (r *recordingPRClient) Create(ctx context.Context, repo string, in delivery
 	return delivery.PRRef{RemoteID: "1", URL: "https://github.com/o/r/pull/1"}, nil
 }
 
+func (r *recordingPRClient) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (r *recordingPRClient) calls() (creates, finds int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

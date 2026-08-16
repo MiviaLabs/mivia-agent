@@ -1,12 +1,26 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
+
+// recordUsage writes record to opts.UsageWriter when one is set. Best-effort:
+// a write failure is dropped, never returned to or allowed to fail the turn
+// it describes - matches the same "logged and dropped" contract as every
+// other emit-path failure in this file (e.g. a typed-event construction
+// error above), just with nothing yet to log to in this package.
+func recordUsage(ctx context.Context, opts Options, record contextmgr.UsageRecord) {
+	if opts.UsageWriter == nil {
+		return
+	}
+	record.SessionID, record.TurnID = opts.SessionID, opts.TurnID
+	_ = opts.UsageWriter.Record(ctx, record)
+}
 
 // emit delivers an event to both OnEvent callback and EventBus (if set).
 // Always call emit instead of opts.OnEvent directly to ensure EventBus
@@ -49,7 +63,7 @@ func emit(opts Options, e Event) {
 // directly via Completer.ChatStream and never reaches here; extending
 // coverage there would require breaking ChatStream's public signature to
 // carry structured usage back, which is out of scope for this feature.
-func EmitCacheUsage(opts Options, providerName, model string, usage provider.CacheUsage) {
+func EmitCacheUsage(ctx context.Context, opts Options, providerName, model string, usage provider.CacheUsage) {
 	if !usage.Reported {
 		return
 	}
@@ -57,6 +71,11 @@ func EmitCacheUsage(opts Options, providerName, model string, usage provider.Cac
 	if err != nil {
 		return
 	}
+	recordUsage(ctx, opts, contextmgr.UsageRecord{
+		Kind: "cache_usage", Provider: providerName, Model: model,
+		CachedInputTokens: typed.CachedInputTokens, CacheWriteTokens: typed.CacheWriteTokens,
+		InputTokens: typed.InputTokens,
+	})
 	// Show the hit rate so operators can read cache health from one line.
 	// HitPercent guards the division: zero input tokens reads as 0%.
 	detail := fmt.Sprintf("prompt cache: %d/%d tokens cached (%d%%)", typed.CachedInputTokens, typed.InputTokens, typed.HitPercent())
@@ -79,7 +98,7 @@ func EmitCacheUsage(opts Options, providerName, model string, usage provider.Cac
 // estimate-vs-actual drift for one completion turn. It only publishes when
 // the provider actually reported usage. This enables operators to see when
 // the len(s)/4 heuristic diverges from real token accounting.
-func EmitTokenUsage(opts Options, providerName, model string, usage provider.TokenUsage, estimatedTokens int, calibrationRatio float64) {
+func EmitTokenUsage(ctx context.Context, opts Options, providerName, model string, usage provider.TokenUsage, estimatedTokens int, calibrationRatio float64) {
 	if !usage.Reported {
 		return
 	}
@@ -87,6 +106,11 @@ func EmitTokenUsage(opts Options, providerName, model string, usage provider.Tok
 	if err != nil {
 		return
 	}
+	recordUsage(ctx, opts, contextmgr.UsageRecord{
+		Kind: "token_usage", Provider: providerName, Model: model,
+		InputTokens: typed.InputTokens, OutputTokens: typed.OutputTokens,
+		EstimatedTokens: typed.EstimatedTokens, CalibrationRatio: typed.CalibrationRatio,
+	})
 	drift := ""
 	if estimatedTokens > 0 {
 		drift = fmt.Sprintf("estimate %d vs actual %d (ratio %.2f)", estimatedTokens, usage.InputTokens, calibrationRatio)
@@ -114,7 +138,15 @@ func EmitTokenUsage(opts Options, providerName, model string, usage provider.Tok
 // reason is only meaningful when summarized is false: the classified,
 // content-free cause (see events.CompactionEvent.Reason). Callers pass "" when
 // they have none to report.
-func EmitCompaction(opts Options, preparation contextmgr.Preparation, summarized bool, reason string) {
+//
+// This is the one Emit* reached while the caller still holds internal/chat's
+// contextPublishMu, a session-wide lock also taken by /compact, session
+// reset, and model switch - recordUsage itself stays synchronous here
+// (matching EmitTokenUsage/EmitCacheUsage), but the concrete UsageWriter this
+// repo wires in production (storage.usageWriter) dispatches its own write off
+// this call's goroutine and tracks it against the store's own WaitGroup, so
+// Record returns immediately without this function needing to know that.
+func EmitCompaction(ctx context.Context, opts Options, preparation contextmgr.Preparation, summarized bool, reason string) {
 	if !preparation.Compacted {
 		return
 	}
@@ -126,6 +158,12 @@ func EmitCompaction(opts Options, preparation contextmgr.Preparation, summarized
 	if err != nil {
 		return
 	}
+	summarizedCopy := typed.Summarized
+	recordUsage(ctx, opts, contextmgr.UsageRecord{
+		Kind: "compaction", BeforeTokens: typed.BeforeTokens, AfterTokens: typed.AfterTokens,
+		ElidedMessages: typed.ElidedMessages, ElidedBytes: typed.ElidedBytes,
+		Summarized: &summarizedCopy, Reason: typed.Reason,
+	})
 	detail := fmt.Sprintf("context compacted: %d -> %d tokens", typed.BeforeTokens, typed.AfterTokens)
 	if typed.ElidedMessages > 0 {
 		detail = fmt.Sprintf("%s (%d tool results elided, %d bytes)", detail, typed.ElidedMessages, typed.ElidedBytes)

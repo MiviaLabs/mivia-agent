@@ -28,13 +28,13 @@ func (t *extractTool) ResultBudgetBytes() int { return resolveWebResponseBudget(
 
 func (t *extractTool) Name() string { return "extract" }
 func (t *extractTool) Description() string {
-	return "Extract content from a URL using Tavily. Requires TAVILY_API_KEY to be configured. Supports structured content extraction with optional reranking query."
+	return "Extract content from URLs using Tavily. Requires TAVILY_API_KEY."
 }
 func (t *extractTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"url": map[string]any{
 			"type":        "string",
-			"description": "URL to extract content from. Several URLs may be given as a comma-separated list; every one is fetched and billed, and the content of each is returned.",
+			"description": "URL to extract. Accepts a comma-separated list; each URL is fetched, billed, and returned.",
 		},
 		"query": map[string]any{
 			"type":        "string",
@@ -43,12 +43,12 @@ func (t *extractTool) Parameters() map[string]any {
 		"extract_depth": map[string]any{
 			"type":        "string",
 			"enum":        []string{"basic", "advanced"},
-			"description": "Extraction depth: basic (1 credit per 5 URLs) or advanced (2 credits per 5 URLs). Default basic.",
+			"description": "Depth: basic (1 credit/5 URLs, default) or advanced (2 credits/5 URLs).",
 		},
 		"format": map[string]any{
 			"type":        "string",
 			"enum":        []string{"markdown", "text"},
-			"description": "Output format: markdown or text. Default markdown.",
+			"description": "Output format. Default markdown.",
 		},
 	}, []string{"url"})
 }

@@ -33,23 +33,21 @@ func (t *readFileTool) ResultBudgetBytes() int { return t.maxBytes }
 func (t *readFileTool) Name() string { return "read_file" }
 func (t *readFileTool) Description() string {
 	return "Read a text file by relative workspace path. " +
-		"Params: path (required), optional offset (1-based start line), optional limit (max lines). " +
-		"Use offset+limit for large files or excerpts. Do not pass file content, encoding, or other agent-style fields. " +
-		"Prefer this over run_command for reading files."
+		"Use offset+limit for large files or excerpts. Do not pass extra fields (content, encoding, etc.)."
 }
 func (t *readFileTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"path": map[string]any{
 			"type":        "string",
-			"description": "Relative path to the file (required)",
+			"description": "Relative path to the file",
 		},
 		"offset": map[string]any{
 			"type":        "integer",
-			"description": "1-based line number to start reading (default 1). Use with limit for large files.",
+			"description": "1-based line number to start reading (default 1)",
 		},
 		"limit": map[string]any{
 			"type":        "integer",
-			"description": "Maximum number of lines to return (default: all, capped by max read size).",
+			"description": "Max lines to return (default: all, capped by max read size)",
 		},
 	}, []string{"path"})
 }

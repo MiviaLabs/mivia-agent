@@ -42,11 +42,9 @@ func (t *multiEditTool) ResultBudgetBytes() int { return t.maxBytes }
 func (t *multiEditTool) Name() string { return MultiEditToolName }
 
 func (t *multiEditTool) Description() string {
-	return "Apply several exact string replacements to one file in a single call. " +
-		"Params: path, edits (array of {old_string, new_string, optional replace_all}); both required. " +
-		"Edits apply in order to the result of the previous one. Each old_string must match uniquely " +
-		"unless replace_all is true. All-or-nothing: if any edit fails, the file is left untouched. " +
-		"Prefer this over repeated search_replace calls on the same file."
+	return "Apply several exact string replacements to one file in one call. " +
+		"Edits apply in order, each to the result of the previous. All-or-nothing: a failed edit leaves the file untouched. " +
+		"Prefer over repeated search_replace calls on the same file."
 }
 
 func (t *multiEditTool) Parameters() map[string]any {
@@ -57,11 +55,11 @@ func (t *multiEditTool) Parameters() map[string]any {
 		},
 		"edits": map[string]any{
 			"type":        "array",
-			"description": "Edits applied in order (at least one)",
+			"description": "Ordered edits (at least one)",
 			"items": schemaObject(map[string]any{
 				"old_string": map[string]any{
 					"type":        "string",
-					"description": "Exact string to find (must match uniquely unless replace_all=true)",
+					"description": "Exact string to find (unique unless replace_all=true)",
 				},
 				"new_string": map[string]any{
 					"type":        "string",
@@ -69,7 +67,7 @@ func (t *multiEditTool) Parameters() map[string]any {
 				},
 				"replace_all": map[string]any{
 					"type":        "boolean",
-					"description": "Replace all occurrences of this edit's old_string (default false)",
+					"description": "Replace every occurrence of old_string (default false)",
 				},
 			}, []string{"old_string", "new_string"}),
 		},

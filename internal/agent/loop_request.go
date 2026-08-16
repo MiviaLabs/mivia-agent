@@ -74,7 +74,7 @@ func (l *Loop) requestStep(ctx context.Context, req provider.Request, opts Optio
 		return nil, err
 	}
 	if err == nil {
-		l.emitTurnUsage(opts, req, resp, estimatedTokens)
+		l.emitTurnUsage(ctx, opts, req, resp, estimatedTokens)
 	}
 	return resp, err
 }

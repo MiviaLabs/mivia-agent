@@ -73,3 +73,34 @@ func TestIsTransportFaultIgnoresUnrelatedTimeoutText(t *testing.T) {
 	}
 	_ = time.Second // keep time imported for future table entries
 }
+
+func TestIsPermanentMergeError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		// Permanent failures — retrying will never fix these.
+		{"pr closed", errors.New("merge PR 123: pull request is closed"), true},
+		{"pr closed mixed case", errors.New("merge PR 123: Pull request is closed and cannot be merged"), true},
+		{"pr not found", errors.New("merge PR 123: pull request not found"), true},
+		{"not authorized", errors.New("mark PR 123 ready: HTTP 401: not authorized"), true},
+		{"permission denied", errors.New("merge PR 123: permission denied"), true},
+		{"branch not found", errors.New("merge PR 123: branch not found"), true},
+		{"merge conflict", errors.New("merge PR 123: merge conflict"), true},
+		{"required status check", errors.New("merge PR 123: required status check \"ci/lint\" is pending"), true},
+		// Retriable conditions — keep polling.
+		{"pending ci", errors.New("merge PR 123: pull request is not mergeable"), false},
+		{"review required", errors.New("merge PR 123: pull request review is required"), false},
+		{"checks pending", errors.New("merge PR 123: 2 of 3 checks pending"), false},
+		{"transport fault", errors.New("merge PR 123: connection refused"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsPermanentMergeError(tc.err); got != tc.want {
+				t.Fatalf("IsPermanentMergeError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}

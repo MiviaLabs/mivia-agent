@@ -205,7 +205,7 @@ func (s *Session) compact(ctx context.Context, focus string) (contextmgr.Prepara
 	}
 	s.contextHead = nextContextRevision(preparation, result)
 	s.mu.Unlock()
-	s.emitContextCompaction(cfg, preparation, turnID, haveSummary)
+	s.emitContextCompaction(ctx, cfg, preparation, turnID, haveSummary)
 	return preparation, nil
 }
 

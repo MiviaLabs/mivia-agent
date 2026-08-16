@@ -151,3 +151,25 @@ func TestStackGrantHintLinesNameTheDeliverCommand(t *testing.T) {
 		t.Fatalf("hint %q must name the chunk and the exact deliver command", lines[0])
 	}
 }
+
+// TestStackGrantHintLinesWarnsAboutDeferredFollowUpOrder pins the ordering
+// warning: under merge_policy=approve a parent chunk with an unmerged deferred
+// follow-up must tell the human to merge the follow-up first.
+func TestStackGrantHintLinesWarnsAboutDeferredFollowUpOrder(t *testing.T) {
+	lines := stackGrantHintLines([]tasks.Task{
+		{ID: "c1", Status: stackStatusPublished},
+		{ID: "c1-deferred", Status: stackStatusPublished, Deps: []string{"c1"}},
+	}, func(string) string { return "" })
+	if len(lines) != 2 {
+		t.Fatalf("hint lines = %v, want two", lines)
+	}
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, "c1") && strings.Contains(line, "follow-up") && strings.Contains(line, "merge the follow-up") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("hints %v must warn that c1's follow-up must merge first", lines)
+	}
+}

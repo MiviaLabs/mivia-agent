@@ -256,6 +256,28 @@ Delivery honors the reserved stacking inputs when present:
   exhausted repair cycle settles the run terminal (`delivery_failed`).
   Without a stacking configuration the gate is off and single-PR delivery
   is unchanged.
+- With `[stacking] split_deferred = true`, an over-limit diff is first
+  offered to a host-computed automatic split: the host measures the actual
+  per-file diff size (`git diff --cached --numstat`, largest files first)
+  and defers files to a follow-up PR until the kept diff fits, writing the
+  decision into the reserved `deferred_files` input that
+  `freshDeliveryCommitSplit` then executes. The split is refused - a plain
+  `DiffSizeError` - when it would separate a file from its same-directory
+  test companion (`*_test`, `*.test`, `*_spec`, `*.spec`, `test_*`,
+  `Test*`): a delivered commit that ships code without its tests (or tests
+  without their code) can fail the repository's own pre-push hook for
+  reasons the evidence gates never saw. The same guard rejects a repair
+  agent's own `deferred_files` declaration before any commit, so a file and
+  its tests always ship in the same commit (both delivered or both
+  deferred).
+- When a pre-push hook rejects the delivered commit, the recorded failure
+  is led by a delivery-commit inventory: the delivered-commit files
+  (`base..HEAD`), the deferred files, and the worktree changes the
+  delivered commit does not carry. The hint states that the hook verified
+  the DELIVERED COMMIT tree, not the worktree, so a repair agent can tell
+  "the hook rejected the code" from "the hook tested a stale or partial
+  tree" instead of reverting production code to satisfy the delivered
+  commit's stale test expectations.
 - `on_diff_size_failure` names the step that repairs an over-limit diff,
   exactly like `on_failure` names the generic repair step; an empty value
   falls back to `on_failure`, so existing stacking workflows keep their

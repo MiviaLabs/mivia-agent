@@ -63,14 +63,34 @@ func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string,
 		return err
 	}
 	defer closeFn()
-	if err := refuseUndrivenStackPlanRun(ctx, repo, runID); err != nil {
-		return err
-	}
 	finishExecution, err := beginWorkflowExecutionBounded(work.Abs, contextStorePath(work.Abs, res.Subagents), runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}
 	defer finishExecution()
+	// Drive-before-delivery gate: an incomplete multi-chunk stack's plan run
+	// must be refused (checked with the execution lock held, so the verdict
+	// cannot race a concurrent drive); a COMPLETE stack's plan run settles
+	// below via the same skip/deliver branches the session recovery sweep
+	// uses, instead of being refused forever (F11).
+	switch classifyStackPlanRunDelivery(ctx, work.Abs, store, repo, runID, true) {
+	case stackPlanRunIncomplete:
+		return errUndrivenStackPlanRun(runID)
+	case stackPlanRunComplete:
+		if skipParkedPlanRunPublication(ctx, store, repo, runID) {
+			if err := settlePlanRunSkippedDelivery(ctx, repo, runID); err != nil {
+				return err
+			}
+			settled, err := repo.GetRun(ctx, runID)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "run_id=%s status=%s plan PR not created (delivery.deliver_plan_run=false); plan and artifacts recorded in the ledger\n", runID, settled.Status)
+			return nil
+		}
+		// deliver_plan_run=true and the stack is complete: fall through to
+		// deliverRunWithStore below, which publishes the plan run's own PR.
+	}
 	if err := deliverRunWithStore(ctx, work.Abs, res, store, repo, runID, allowPublish, force, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "workflow delivery failed: %v\n", err)
 		return err

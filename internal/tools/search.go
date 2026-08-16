@@ -87,18 +87,17 @@ func (t *grepTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *grepTool) Name() string { return "grep" }
 func (t *grepTool) Description() string {
-	return "Search file contents with a regex. Params: pattern (required); optional path (default \".\"), optional glob (e.g. *.md, *.py, *.ts), optional case_insensitive, optional files_with_matches, optional offset/limit for pagination. " +
-		"Returns path:line:text. Prefer this over shell grep/rg via run_command."
+	return "Search file contents with a regex. Returns path:line:text. Paginate with offset/limit."
 }
 func (t *grepTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
-		"pattern":            map[string]any{"type": "string", "description": "Regular expression pattern"},
+		"pattern":            map[string]any{"type": "string", "description": "Regular expression"},
 		"path":               map[string]any{"type": "string", "description": "Relative file or directory to search (default \".\")"},
-		"glob":               map[string]any{"type": "string", "description": "Optional filename glob filter (e.g. *.py, *.ts, *.md)"},
-		"case_insensitive":   map[string]any{"type": "boolean", "description": "Match without regard to case (default false)"},
-		"files_with_matches": map[string]any{"type": "boolean", "description": "Show only matching file paths, not match lines (default false)"},
-		"offset":             map[string]any{"type": "integer", "description": "Optional 0-based match index to skip (for pagination)"},
-		"limit":              map[string]any{"type": "integer", "description": "Optional max matches to return"},
+		"glob":               map[string]any{"type": "string", "description": "Filename glob filter (e.g. *.py, *.ts)"},
+		"case_insensitive":   map[string]any{"type": "boolean", "description": "Match ignoring case (default false)"},
+		"files_with_matches": map[string]any{"type": "boolean", "description": "Return only matching file paths (default false)"},
+		"offset":             map[string]any{"type": "integer", "description": "0-based match index to skip (pagination)"},
+		"limit":              map[string]any{"type": "integer", "description": "Max matches to return"},
 	}, []string{"pattern"})
 }
 
@@ -363,14 +362,14 @@ func (t *globTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *globTool) Name() string { return "glob" }
 func (t *globTool) Description() string {
-	return "Find file paths by glob pattern. Params: pattern (required), e.g. **/*.md or src/**/*.ts. Optional path (default \".\"). Prefer over shell find."
+	return "Find file paths by glob pattern (e.g. **/*.md, src/**/*.ts)."
 }
 func (t *globTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"pattern": map[string]any{"type": "string", "description": "Glob pattern"},
 		"path":    map[string]any{"type": "string", "description": "Relative directory to search (default \".\")"},
-		"offset":  map[string]any{"type": "integer", "description": "Optional 0-based path index to skip (for pagination)"},
-		"limit":   map[string]any{"type": "integer", "description": "Optional max paths to return"},
+		"offset":  map[string]any{"type": "integer", "description": "0-based path index to skip (pagination)"},
+		"limit":   map[string]any{"type": "integer", "description": "Max paths to return"},
 	}, []string{"pattern"})
 }
 

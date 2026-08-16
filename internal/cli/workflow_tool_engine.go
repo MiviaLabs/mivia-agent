@@ -265,7 +265,13 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 			// reports whether it drove a stack. The hook ctx is the bounded
 			// session attempt ctx (workflowAutoDeliveryAttemptTimeout), so a
 			// stuck drive can be stopped instead of holding the execution flock.
-			return maybeDriveSettledStack(ctx, prepared, runID, true, io.Discard, io.Discard)
+			// Publish authority derives from the merge policy (stackingDrive
+			// AllowPublish): merge_policy=approve - the default - marks chunks
+			// reviewed and pauses for the per-chunk deliver grant instead of
+			// auto-publishing, exactly like the CLI foreground path without
+			// --allow-publish (live finding: hardcoding true made the approve
+			// checkpoint dead in the session path).
+			return maybeDriveSettledStack(ctx, prepared, runID, stackingDriveAllowPublish(prepared.compiled), io.Discard, io.Discard)
 		}, compiledDeliverPlanRun(prepared.compiled))
 		// Delivery completion settles outside the controller (which parked at
 		// delivery_pending and emitted no run_finished), so publish the terminal

@@ -297,6 +297,23 @@ func TestFirstLineHandlesEmptyDescriptions(t *testing.T) {
 	}
 }
 
+// TestFirstLineExportedMatchesInternal is a canary against FirstLine and
+// firstLine ever drifting apart if someone later "helpfully" duplicates the
+// sentence-boundary logic instead of delegating.
+func TestFirstLineExportedMatchesInternal(t *testing.T) {
+	cases := []string{
+		"",
+		"Single sentence.",
+		`Walk a folder (default "."). Params: path.`,
+		"No terminating period here",
+	}
+	for _, c := range cases {
+		if got, want := FirstLine(c), firstLine(c); got != want {
+			t.Fatalf("FirstLine(%q) = %q, want firstLine's %q", c, got, want)
+		}
+	}
+}
+
 func TestScopedRegistryWithTailOnANilRegistry(t *testing.T) {
 	got := ScopedRegistryWithTail(nil, ScopeOptions{Mode: ScopeRoot}, []string{"alpha"})
 	if got == nil || len(got.List()) != 0 {

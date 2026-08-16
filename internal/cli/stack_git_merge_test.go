@@ -1,22 +1,12 @@
 package cli
 
 // Real-git regression tests for stack merge detection (FIX: silent PR loss /
-// never-completing stacks).
+// never-completing stacks / closed-unmerged branches).
 //
-// The stack merge poll previously treated ANY failure of
-// `git rev-parse --verify -q refs/remotes/origin/<head>` as "merged". That is
-// wrong in both directions:
-//
-//  1. A branch that was NEVER pushed has no tracking ref, so ref absence read
-//     as merged and a delivery_pending chunk completed the stack with its PR
-//     never created (silent PR loss). Merged must require durable pushed
-//     evidence (a delivery record that reached pushed/succeeded, or observed
-//     the tracking ref) before ref absence implies merged.
-//  2. After a real remote merge the branch is deleted on origin, but nothing
-//     prunes the local refs/remotes/origin/wf/* tracking ref, so Merged
-//     returned false forever and auto-policy stacks never completed. Merged
-//     must verify against the remote (ls-remote) instead of trusting the
-//     stale local tracking ref.
+// The merge oracle must NOT treat a deleted branch as merged. It now verifies
+// that the pushed head commit is an ancestor of the remote base branch, or (for
+// squash/rebase merges) asks the remote host whether the PR is merged. A
+// closed-unmerged PR whose branch was deleted must keep the stack waiting.
 
 import (
 	"context"
@@ -96,12 +86,11 @@ func seedStackTask(t *testing.T, ledger *tasks.Store, stackID, chunkID string) {
 }
 
 // TestStackGitMergeNeverPushedBranchNotMerged: a branch that was never pushed
-// has no tracking ref and no remote ref. Ref absence must NOT read as merged:
-// the PR was never created and the stack must keep waiting for delivery.
+// has no commit and no pushed evidence. It must NOT read as merged.
 func TestStackGitMergeNeverPushedBranchNotMerged(t *testing.T) {
 	_, gc := scratchStackRepo(t)
 	checker := gitMergeChecker{git: delivery.RealGit{}, gc: gc}
-	merged, err := checker.Merged(context.Background(), "wf/wt-never-pushed", false)
+	merged, err := checker.Merged(context.Background(), "wf/wt-never-pushed", "main", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,14 +100,19 @@ func TestStackGitMergeNeverPushedBranchNotMerged(t *testing.T) {
 }
 
 // TestStackGitMergePushedBranchStillOnRemoteNotMerged: a delivered branch that
-// is still present on origin (PR open) is not merged even when no local
-// tracking ref exists (a plain push creates none).
+// is still present on origin (PR open) is not merged.
 func TestStackGitMergePushedBranchStillOnRemoteNotMerged(t *testing.T) {
 	root, gc := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-open")
+	if err := os.WriteFile(filepath.Join(root, "open.txt"), []byte("open\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, root, "add", "open.txt")
+	gitRun(t, root, "commit", "-m", "open")
 	gitRun(t, root, "push", "origin", "HEAD:refs/heads/wf/wt-open")
+	headCommit := gitRun(t, root, "rev-parse", "wf/wt-open")
 	checker := gitMergeChecker{git: delivery.RealGit{}, gc: gc}
-	merged, err := checker.Merged(context.Background(), "wf/wt-open", true)
+	merged, err := checker.Merged(context.Background(), "wf/wt-open", "main", headCommit, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,32 +121,61 @@ func TestStackGitMergePushedBranchStillOnRemoteNotMerged(t *testing.T) {
 	}
 }
 
-// TestStackGitMergeMergedOnRemoteCompletes: after a real remote merge the
-// branch is deleted on origin while the local tracking ref may persist
-// (nothing prunes refs/remotes/origin/wf/*). The checker must still report
-// merged so auto-policy stacks complete.
+// TestStackGitMergeMergedOnRemoteCompletes: after a real merge into the base
+// branch the head commit is an ancestor of origin/main, even if the remote
+// branch is then deleted. The checker must report merged.
 func TestStackGitMergeMergedOnRemoteCompletes(t *testing.T) {
 	root, gc := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-merged")
-	gitRun(t, root, "push", "-u", "origin", "wf/wt-merged")
-	// A merge UI deletes the branch on the remote only; the local tracking
-	// ref is left behind (nothing prunes refs/remotes/origin/wf/*).
-	gitRun(t, filepath.Join(root, "origin.git"), "update-ref", "-d", "refs/heads/wf/wt-merged")
-	if _, err := exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", "refs/remotes/origin/wf/wt-merged").Output(); err != nil {
-		t.Fatal("test setup: the stale local tracking ref must persist after the remote delete")
-	}
-	if out, err := exec.Command("git", "-C", root, "ls-remote", "--heads", "origin", "wf/wt-merged").Output(); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "merged.txt"), []byte("merged\n"), 0o600); err != nil {
 		t.Fatal(err)
-	} else if len(out) != 0 {
-		t.Fatalf("test setup: remote branch must be gone, ls-remote shows %q", out)
 	}
+	gitRun(t, root, "add", "merged.txt")
+	gitRun(t, root, "commit", "-m", "merged")
+	headCommit := gitRun(t, root, "rev-parse", "wf/wt-merged")
+	gitRun(t, root, "push", "-u", "origin", "wf/wt-merged")
+	// Simulate a real merge on the remote: merge the head branch into main,
+	// push main, then delete the head branch.
+	gitRun(t, root, "checkout", "main")
+	gitRun(t, root, "pull", "origin", "main")
+	gitRun(t, root, "merge", "--no-ff", "-m", "merge wt-merged", "wf/wt-merged")
+	gitRun(t, root, "push", "origin", "main")
+	gitRun(t, filepath.Join(root, "origin.git"), "update-ref", "-d", "refs/heads/wf/wt-merged")
+
 	checker := gitMergeChecker{git: delivery.RealGit{}, gc: gc}
-	merged, err := checker.Merged(context.Background(), "wf/wt-merged", true)
+	merged, err := checker.Merged(context.Background(), "wf/wt-merged", "main", headCommit, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !merged {
-		t.Fatal("branch deleted on origin read as unmerged: a stale tracking ref must not pin the stack forever")
+		t.Fatal("merged commit not detected as an ancestor of origin/main")
+	}
+}
+
+// TestStackGitMergeClosedUnmergedBranchDeletedNotMerged: a human (or GitHub UI)
+// closes a PR unmerged and deletes the branch. The branch is gone from origin
+// but the commit never landed in the base branch, so the checker must NOT
+// report merged.
+func TestStackGitMergeClosedUnmergedBranchDeletedNotMerged(t *testing.T) {
+	root, gc := scratchStackRepo(t)
+	gitRun(t, root, "checkout", "-b", "wf/wt-closed")
+	if err := os.WriteFile(filepath.Join(root, "closed.txt"), []byte("closed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, root, "add", "closed.txt")
+	gitRun(t, root, "commit", "-m", "closed")
+	headCommit := gitRun(t, root, "rev-parse", "wf/wt-closed")
+	gitRun(t, root, "push", "-u", "origin", "wf/wt-closed")
+	// Close and delete the branch without merging.
+	gitRun(t, filepath.Join(root, "origin.git"), "update-ref", "-d", "refs/heads/wf/wt-closed")
+
+	checker := gitMergeChecker{git: delivery.RealGit{}, gc: gc}
+	merged, err := checker.Merged(context.Background(), "wf/wt-closed", "main", headCommit, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged {
+		t.Fatal("closed-unmerged deleted branch read as merged")
 	}
 }
 
@@ -170,7 +193,7 @@ func TestStackReconcileWithRealGitNeverPushedDeliversNotMerged(t *testing.T) {
 	run := workflowledger.RunSnapshot{
 		RunID: "wfr-never-pushed", InvocationKey: stackID + ":a",
 		WorkflowName: "stacked", Status: workflowledger.RunStatusPending,
-		WorktreeName: "wt-never-pushed",
+		WorktreeName: "wt-never-pushed", BaseRef: "main",
 	}
 	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{Inputs: map[string]string{"task": "compile"}})
 	if err != nil {
@@ -178,7 +201,7 @@ func TestStackReconcileWithRealGitNeverPushedDeliversNotMerged(t *testing.T) {
 	}
 	seedDeliveryPendingRun(t, repo, run, snapshotJSON)
 	checker := gitMergeChecker{git: delivery.RealGit{}, gc: gc}
-	actions, err := reconcileStack(ledger, repo, checker, stackID, stackMaxChunkAttempts)
+	actions, err := reconcileStack(context.Background(), ledger, repo, checker, stackID, stackMaxChunkAttempts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,15 +216,85 @@ func TestStackReconcileWithRealGitNeverPushedDeliversNotMerged(t *testing.T) {
 	}
 }
 
+// TestStackReconcileDeliveryPendingWedgeUnwedges is the F9 regression: a
+// chunk task orphaned at running with its run stuck at delivery_pending (the
+// admitting process died, or the session driveCtx expired, between the run
+// settling delivery_pending and driveChunk's own transition) must not stay
+// wedged forever. reconcileTask already detected this state and returned
+// deliver, but applyReconcileAction persisted nothing for it - the task
+// never left running, which has no case in stackAwaitsGrantOnly's switch, so
+// the merge-wait poll never took the durable-pause exit and looped until the
+// context deadline. The fix: deliver now carries NewStatus=reviewed, which
+// both applyReconcileAction persists and stackAwaitsGrantOnly recognizes.
+func TestStackReconcileDeliveryPendingWedgeUnwedges(t *testing.T) {
+	_, gc := scratchStackRepo(t)
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	ledger := tasks.NewMemoryStore()
+	stackID := "stack-orphaned-delivery"
+	seedStackTask(t, ledger, stackID, "a")
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-orphaned", InvocationKey: stackID + ":a",
+		WorkflowName: "stacked", Status: workflowledger.RunStatusPending,
+		WorktreeName: "wt-orphaned", BaseRef: "main",
+	}
+	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{Inputs: map[string]string{"task": "compile"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedDeliveryPendingRun(t, repo, run, snapshotJSON)
+	checker := gitMergeChecker{git: delivery.RealGit{}, gc: gc}
+
+	actions, err := reconcileStack(context.Background(), ledger, repo, checker, stackID, stackMaxChunkAttempts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 1 || actions[0].Action != stackActionDeliver {
+		t.Fatalf("actions = %+v, want exactly one deliver", actions)
+	}
+	if actions[0].NewStatus != stackStatusReviewed {
+		t.Fatalf("deliver NewStatus = %q, want reviewed (or the task stays wedged at running)", actions[0].NewStatus)
+	}
+
+	// applyReconcileAction (called inside reconcileStack) must have actually
+	// persisted the transition, not just decided it.
+	task, err := ledger.GetTask(stackID, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != stackStatusReviewed {
+		t.Fatalf("task status after reconcile = %q, want reviewed", task.Status)
+	}
+
+	// The poll loop's durable-pause exit must now recognize the stack as
+	// grant-only instead of looping: this is what actually breaks the wedge.
+	byID, err := stackTaskMap(ledger, stackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stackAwaitsGrantOnly(byID) {
+		t.Fatalf("stackAwaitsGrantOnly = false after deliver->reviewed; the merge-wait poll would loop forever instead of pausing")
+	}
+}
+
 // TestStackReconcileWithRealGitMergedOnRemoteCompletes drives reconcileStack
-// over a delivered run whose branch was merged and deleted on the remote:
-// durable pushed evidence (a pushed delivery record) plus remote ref absence
-// must mark the chunk merged so the stack completes and dependents admit.
+// over a delivered run whose commit is in the base branch: durable pushed
+// evidence plus base ancestry must mark the chunk merged.
 func TestStackReconcileWithRealGitMergedOnRemoteCompletes(t *testing.T) {
 	root, gc := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-merged")
+	if err := os.WriteFile(filepath.Join(root, "merged.txt"), []byte("merged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, root, "add", "merged.txt")
+	gitRun(t, root, "commit", "-m", "merged")
+	headCommit := gitRun(t, root, "rev-parse", "wf/wt-merged")
 	gitRun(t, root, "push", "-u", "origin", "wf/wt-merged")
-	// Merge-UI deletion on the remote only; the local tracking ref persists.
+	// Merge into main on origin and delete the head branch.
+	gitRun(t, root, "checkout", "main")
+	gitRun(t, root, "pull", "origin", "main")
+	gitRun(t, root, "merge", "--no-ff", "-m", "merge wt-merged", "wf/wt-merged")
+	gitRun(t, root, "push", "origin", "main")
 	gitRun(t, filepath.Join(root, "origin.git"), "update-ref", "-d", "refs/heads/wf/wt-merged")
 
 	repo := workflowledger.NewMemoryRepository()
@@ -212,7 +305,7 @@ func TestStackReconcileWithRealGitMergedOnRemoteCompletes(t *testing.T) {
 	run := workflowledger.RunSnapshot{
 		RunID: "wfr-merged", InvocationKey: stackID + ":a",
 		WorkflowName: "stacked", Status: workflowledger.RunStatusPending,
-		WorktreeName: "wt-merged",
+		WorktreeName: "wt-merged", BaseRef: "main", RemoteURL: "https://github.com/o/r.git",
 	}
 	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{Inputs: map[string]string{"task": "compile"}})
 	if err != nil {
@@ -221,12 +314,12 @@ func TestStackReconcileWithRealGitMergedOnRemoteCompletes(t *testing.T) {
 	seedDeliveryPendingRun(t, repo, run, snapshotJSON)
 	if err := repo.UpsertDelivery(context.Background(), workflowledger.DeliveryRecord{
 		RunID: run.RunID, IdempotencyKey: "wfr-merged::digest",
-		Status: "pushed", CommitSHA: "deadbeef", HeadRef: "wf/wt-merged",
+		Status: "pushed", CommitSHA: headCommit, HeadRef: "wf/wt-merged",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	checker := gitMergeChecker{git: delivery.RealGit{}, gc: gc}
-	actions, err := reconcileStack(ledger, repo, checker, stackID, stackMaxChunkAttempts)
+	actions, err := reconcileStack(context.Background(), ledger, repo, checker, stackID, stackMaxChunkAttempts)
 	if err != nil {
 		t.Fatal(err)
 	}

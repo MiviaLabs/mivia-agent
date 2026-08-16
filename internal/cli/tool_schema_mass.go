@@ -20,7 +20,10 @@ import (
 // admission now changes execution authority only, never what is advertised.
 // Locked/LockedTokens are the subset of that snapshot which is authorized and
 // visible but not yet admitted for execution - "deferred" no longer means
-// "withheld", it means "locked until loaded with load_tools".
+// "withheld", it means "locked until loaded with load_tools". LockedTokens
+// prices the same shortened (one-line) description advertisedToolSpecs
+// actually ships for a locked tool, not its full Description(), so it stays
+// consistent with Tokens.
 type schemaMass struct {
 	Advertised   int
 	Tokens       int
@@ -56,7 +59,7 @@ func measureSchemaMass(advertised []provider.ToolSpec, base *tools.Registry, pla
 			continue
 		}
 		if tool, ok := base.Get(candidate.Name); ok {
-			locked.Register(tool)
+			locked.Register(shortDescTool{tool})
 		}
 	}
 	if len(locked.List()) > 0 {

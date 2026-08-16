@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
@@ -15,13 +16,13 @@ func TestEmitCacheUsagePublishesOnlyWhenReported(t *testing.T) {
 	bus := events.New()
 	bus.Subscribe(events.KindCacheUsage, events.HandlerFunc(func(_ context.Context, event events.Event) { busEvent = event; busFired = true }))
 
-	EmitCacheUsage(Options{OnEvent: func(event Event) { got = event }, EventBus: bus}, "deepseek", "deepseek-v4-pro",
+	EmitCacheUsage(context.Background(), Options{OnEvent: func(event Event) { got = event }, EventBus: bus}, "deepseek", "deepseek-v4-pro",
 		provider.CacheUsage{Reported: false, InputTokens: 100, CachedInputTokens: 80})
 	if got.Kind == EventCacheUsage || busFired {
 		t.Fatalf("unreported usage must not publish, got event=%+v busFired=%v", got, busFired)
 	}
 
-	EmitCacheUsage(Options{OnEvent: func(event Event) { got = event }, EventBus: bus}, "deepseek", "deepseek-v4-pro",
+	EmitCacheUsage(context.Background(), Options{OnEvent: func(event Event) { got = event }, EventBus: bus}, "deepseek", "deepseek-v4-pro",
 		provider.CacheUsage{Reported: true, Style: provider.CacheStyleImplicit, InputTokens: 100, CachedInputTokens: 80, CacheWriteTokens: 0})
 	bus.Flush()
 	if got.Kind != EventCacheUsage || got.CacheUsage == nil {
@@ -44,9 +45,41 @@ func TestEmitCacheUsagePublishesOnlyWhenReported(t *testing.T) {
 	}
 
 	// Zero input tokens must not panic and must read as 0%.
-	EmitCacheUsage(Options{OnEvent: func(event Event) { got = event }}, "deepseek", "deepseek-v4-pro",
+	EmitCacheUsage(context.Background(), Options{OnEvent: func(event Event) { got = event }}, "deepseek", "deepseek-v4-pro",
 		provider.CacheUsage{Reported: true, Style: provider.CacheStyleImplicit, InputTokens: 0, CachedInputTokens: 0})
 	if got.Detail != "prompt cache: 0/0 tokens cached (0%)" {
 		t.Fatalf("zero-input detail = %q", got.Detail)
 	}
+}
+
+func TestEmitCacheUsageRecordsToUsageWriter(t *testing.T) {
+	writer := &fakeUsageWriter{}
+	EmitCacheUsage(context.Background(), Options{UsageWriter: writer, SessionID: "s1", TurnID: "turn:1"}, "deepseek", "deepseek-v4-pro",
+		provider.CacheUsage{Reported: true, Style: provider.CacheStyleImplicit, InputTokens: 100, CachedInputTokens: 80, CacheWriteTokens: 5})
+	records := writer.recordsCopy()
+	if len(records) != 1 {
+		t.Fatalf("records = %v, want 1", records)
+	}
+	rec := records[0]
+	if rec.Kind != "cache_usage" || rec.SessionID != "s1" || rec.TurnID != "turn:1" {
+		t.Fatalf("record identity = %+v", rec)
+	}
+	if rec.InputTokens != 100 || rec.CachedInputTokens != 80 || rec.CacheWriteTokens != 5 {
+		t.Fatalf("record fields = %+v", rec)
+	}
+}
+
+func TestEmitCacheUsageSwallowsWriterError(t *testing.T) {
+	writer := &fakeUsageWriter{err: errors.New("boom")}
+	var got Event
+	EmitCacheUsage(context.Background(), Options{OnEvent: func(e Event) { got = e }, UsageWriter: writer}, "deepseek", "deepseek-v4-pro",
+		provider.CacheUsage{Reported: true, Style: provider.CacheStyleImplicit, InputTokens: 100, CachedInputTokens: 80})
+	if got.Kind != EventCacheUsage {
+		t.Fatalf("event still expected despite writer error, got %+v", got)
+	}
+}
+
+func TestEmitCacheUsageNilUsageWriterIsNoop(t *testing.T) {
+	EmitCacheUsage(context.Background(), Options{}, "deepseek", "deepseek-v4-pro",
+		provider.CacheUsage{Reported: true, Style: provider.CacheStyleImplicit, InputTokens: 100, CachedInputTokens: 80})
 }

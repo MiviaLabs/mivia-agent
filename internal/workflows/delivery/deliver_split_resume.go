@@ -173,7 +173,10 @@ func reexecuteDeferredCommit(ctx context.Context, repo ledger.Repository, git Gi
 		return "", "", err
 	}
 	if !samePathSet(paths, deferred) {
-		return "", "", &RefusalError{Reason: "cannot resume the deferred-file split: the worktree no longer holds exactly the recorded deferred files"}
+		// Name BOTH lists: the recorded deferred files are the resume
+		// contract, and the repair agent must see exactly which staged files
+		// drifted so it can reconcile the worktree instead of guessing.
+		return "", "", &RefusalError{Reason: fmt.Sprintf("cannot resume the deferred-file split: the worktree no longer holds exactly the recorded deferred files (recorded: %s; currently staged: %s)", strings.Join(deferred, ", "), strings.Join(paths, ", "))}
 	}
 	msg := deferredCommitMessage(title, len(deferred))
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",

@@ -75,46 +75,59 @@ func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.R
 				return
 			}
 		}
-		// A FRESH delivery bound, never the (possibly expired) driveCtx: the
-		// delivery claim heartbeat must not die mid-publish.
-		deliverCtx, cancelDeliver := context.WithTimeout(runCtx, workflowDeliveryTimeout)
-		deliverErr := deliverRunWithStore(deliverCtx, root, res, store, repo, runID, true, false, io.Discard, io.Discard)
-		cancelDeliver()
-		// Transport faults stay unrecorded (same rule as settleDeliveryError):
-		// they say nothing about the change, and a later deliver succeeds.
-		if deliverErr != nil && !deliveryFaultTransient(deliverErr) {
-			recordAutoDeliveryFailure(context.Background(), repo, runID, deliverErr)
-		}
-		fresh, getErr := repo.GetRun(context.Background(), runID)
-		if getErr != nil {
-			log.Printf("workflow: run %s auto-delivery repair: re-read after delivery failed: %v", runID, getErr)
+		// Publish authority for a stack chunk/integration run derives from
+		// the stack's merge policy: this loop's own allowPublish=true below
+		// authorizes a non-stacking run's (or a deliver_plan_run=true plan
+		// run's) delivery, never a blanket grant (reachable-bug audit
+		// finding 1; see stackRunPublishWithheld's doc comment).
+		if stackRunPublishWithheld(runCtx, repo, runID, false) {
 			return
 		}
-		// Classify the ledger status AFTER the deliver attempt. A successful
-		// publish settles succeeded; a refusal or an exhausted repair budget
-		// settles delivery_failed; a transient or timeout fault leaves
-		// delivery_pending (retryable later); a repair route returns the run
-		// to running at the named repair step. Only the repair route
-		// re-advances; every other shape stops the loop.
-		//
-		// The classification runs after a NIL deliver error too: a routed
-		// repair makes reopenForRepair return nil (it prints and CASes the
-		// run), so "no error" alone must not be read as "published".
-		switch {
-		case workflowledger.IsTerminalRunStatus(fresh.Status):
-			return
-		case fresh.Status == workflowledger.RunStatusDeliveryPending:
-			return
-		case fresh.Status == workflowledger.RunStatusRunning && fresh.ActiveStepID != "" && !workflowledger.IsTerminalStepID(fresh.ActiveStepID):
-			snap, err = advance(runCtx)
-			if err != nil {
-				settleSessionRunFailure(repo, runID, err)
-				return
-			}
-			continue
-		default:
-			log.Printf("workflow: run %s auto-delivery repair: unexpected status %q; stopping loop", runID, fresh.Status)
+		if !sessionAutoDeliveryAttempt(runCtx, repo, root, res, store, runID) {
 			return
 		}
+		snap, err = advance(runCtx)
+		if err != nil {
+			settleSessionRunFailure(repo, runID, err)
+			return
+		}
+	}
+}
+
+// sessionAutoDeliveryAttempt runs one delivery attempt for runID and
+// classifies the result AFTER the attempt: a successful publish settles
+// succeeded; a refusal or an exhausted repair budget settles delivery_failed;
+// a transient or timeout fault leaves delivery_pending (retryable later); a
+// repair route returns the run to running at the named repair step. Only the
+// repair route (cont=true) tells the caller to re-advance the controller and
+// loop again; every other shape (including a nil deliver error from a routed
+// repair - reopenForRepair prints and CASes the run, so "no error" alone must
+// not be read as "published") stops the loop.
+func sessionAutoDeliveryAttempt(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string) (cont bool) {
+	// A FRESH delivery bound, never the caller's (possibly expired) driveCtx:
+	// the delivery claim heartbeat must not die mid-publish.
+	deliverCtx, cancelDeliver := context.WithTimeout(runCtx, workflowDeliveryTimeout)
+	deliverErr := deliverRunWithStore(deliverCtx, root, res, store, repo, runID, true, false, io.Discard, io.Discard)
+	cancelDeliver()
+	// Transport faults stay unrecorded (same rule as settleDeliveryError):
+	// they say nothing about the change, and a later deliver succeeds.
+	if deliverErr != nil && !deliveryFaultTransient(deliverErr) {
+		recordAutoDeliveryFailure(context.Background(), repo, runID, deliverErr)
+	}
+	fresh, getErr := repo.GetRun(context.Background(), runID)
+	if getErr != nil {
+		log.Printf("workflow: run %s auto-delivery repair: re-read after delivery failed: %v", runID, getErr)
+		return false
+	}
+	switch {
+	case workflowledger.IsTerminalRunStatus(fresh.Status):
+		return false
+	case fresh.Status == workflowledger.RunStatusDeliveryPending:
+		return false
+	case fresh.Status == workflowledger.RunStatusRunning && fresh.ActiveStepID != "" && !workflowledger.IsTerminalStepID(fresh.ActiveStepID):
+		return true
+	default:
+		log.Printf("workflow: run %s auto-delivery repair: unexpected status %q; stopping loop", runID, fresh.Status)
+		return false
 	}
 }

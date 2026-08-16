@@ -149,6 +149,12 @@ func DeferredIndex(candidates []TierCandidate) string {
 	return b.String()
 }
 
+// FirstLine is the exported form of firstLine, for callers outside this
+// package that need the identical one-line summary DeferredIndex uses (e.g.
+// shrinking a deferred tool's advertised wire schema without duplicating the
+// sentence-boundary logic).
+func FirstLine(description string) string { return firstLine(description) }
+
 // firstLine reduces a tool description to a single-sentence one-liner so the
 // frozen index stays small next to the schemas it replaces.
 func firstLine(description string) string {

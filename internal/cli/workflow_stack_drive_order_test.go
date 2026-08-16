@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -459,6 +460,93 @@ func TestMaybeDriveSettledStackNoopForSingleMode(t *testing.T) {
 	}
 	if seeded, err := tasks.NewStore(store).ListTasksByScope(stackScope(runID)); err != nil || len(seeded) != 0 {
 		t.Fatalf("seeded chunk tasks = %v, %v; want zero for a single plan", seeded, err)
+	}
+}
+
+// continuationDriveRecorder stubs workflowStackDriveToCompletion and captures
+// every argument the stack driver is invoked with, so tests can verify that a
+// re-entered `workflow run` drive sees the full chunk list across all admitted
+// decompose waves and the latest wave's hasMore/remainingScope.
+type continuationDriveRecorder struct {
+	called         bool
+	stackID        string
+	chunks         []ChunkPlan
+	hasMore        bool
+	remainingScope string
+	inputs         map[string]string
+}
+
+func (d *continuationDriveRecorder) Drive(_ context.Context, _ *preparedWorkflowRun, _ *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, inputs map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
+	d.called = true
+	d.stackID = stackID
+	d.chunks = append([]ChunkPlan(nil), chunks...)
+	d.hasMore = hasMore
+	d.remainingScope = remainingScope
+	d.inputs = inputs
+	return nil
+}
+
+// TestMaybeDriveSettledStackReconstructsAdmittedContinuationWave pins F5:
+// when a prior process already admitted a decompose continuation wave,
+// maybeDriveSettledStack must reconstruct the full chunk list (wave 0 + wave N)
+// and drive with the latest wave's hasMore/remainingScope. Driving with only
+// wave 0 leaves the wave-N chunks unadmissible and wedges the stack.
+func TestMaybeDriveSettledStackReconstructsAdmittedContinuationWave(t *testing.T) {
+	root, res, store, repo, _ := newWorkflowBuildFixture(t)
+	compiled := compileFeatureDeliveryWorkflow(t)
+	ctx := context.Background()
+	runID := "wfr-stack-continue"
+	planSnap := workflowledger.Snapshot{
+		SchemaVersion: workflowledger.SnapshotSchemaVersion,
+		Inputs:        map[string]string{"task": "x"},
+	}
+	rawPlanSnap, err := workflowledger.MarshalSnapshot(planSnap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: compiled.Name, WorkflowDigest: compiled.Digest,
+		Status: workflowledger.RunStatusPending,
+	}
+	if err := repo.CreateRun(ctx, snap, rawPlanSnap); err != nil {
+		t.Fatal(err)
+	}
+	seedSucceededDecomposeAttempt(t, repo, runID, []byte(wave0DecomposeOutput))
+	// Admit and complete wave 1.
+	createContinuationRun(t, repo, runID, 1, "wfr-wave1-ok", workflowledger.RunStatusSucceeded, time.Now())
+	seedSucceededDecomposeAttempt(t, repo, "wfr-wave1-ok", []byte(wave1DecomposeOutput))
+
+	rec := &continuationDriveRecorder{}
+	original := workflowStackDriveToCompletion
+	t.Cleanup(func() { workflowStackDriveToCompletion = original })
+	workflowStackDriveToCompletion = rec.Drive
+
+	prepared := &preparedWorkflowRun{root: root, res: res, store: store, repo: repo, compiled: compiled}
+	drove, err := maybeDriveSettledStack(ctx, prepared, runID, false, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("maybeDriveSettledStack() error = %v", err)
+	}
+	if !drove {
+		t.Fatal("maybeDriveSettledStack() drove = false, want true for a multi-chunk plan with continuation wave")
+	}
+	if !rec.called || rec.stackID != runID || len(rec.chunks) != 4 {
+		t.Fatalf("stack drive = %+v, want stack %q with 4 chunks", rec, runID)
+	}
+	if !chunkIDsEqual(rec.chunks, "c1", "c2", "c3", "c4") {
+		t.Fatalf("drive chunks = %v, want [c1 c2 c3 c4]", chunkIDs(rec.chunks))
+	}
+	if rec.hasMore {
+		t.Fatalf("drive hasMore = true, want false (wave 1 closed the stack)")
+	}
+	if rec.remainingScope != "" {
+		t.Fatalf("drive remainingScope = %q, want empty", rec.remainingScope)
+	}
+	seeded, err := tasks.NewStore(store).ListTasksByScope(stackScope(runID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seeded) != 4 {
+		t.Fatalf("seeded chunk tasks = %d, want 4", len(seeded))
 	}
 }
 

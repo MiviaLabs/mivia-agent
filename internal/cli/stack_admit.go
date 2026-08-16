@@ -21,17 +21,34 @@ import (
 // until the stack is fully merged or the driver must stop for a human grant
 // (policy A) or a failure (halt-on-failure). It is resumable: re-running
 // drive after a stop picks up from durable state.
-func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+//
+// hasMore declares whether the latest decompose wave reported more scope than
+// it planned (§12.1 incremental decompose). While true, the final integration
+// run must NOT be admitted: it would publish a full-suite PR over only the
+// already-known chunks while later waves' work is still pending. The caller
+// re-drives with hasMore=false once every continuation wave landed, and only
+// then does the tail admit the integration run.
+func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, hasMore bool, stdout, stderr io.Writer) error {
 	repo := prepared.repo
 	checker := gitMergeChecker{
 		git: workflowDeliverGit,
+		pr:  workflowDeliverNewPR(),
 		gc:  delivery.GitContext{Dir: prepared.root, GitDir: filepath.Join(prepared.root, ".git")},
 	}
-	actions, err := reconcileStack(ledger, repo, checker, stackID, stackMaxChunkAttempts)
+	actions, err := reconcileStack(ctx, ledger, repo, checker, stackID, stackMaxChunkAttempts)
 	if err != nil {
 		return fmt.Errorf("stack drive: reconcile: %w", err)
 	}
 	if err := reportReconcileActions(stackID, actions, stdout); err != nil {
+		return err
+	}
+
+	prBase, err := stackPRBase(prepared.compiled)
+	if err != nil {
+		return err
+	}
+	policy := prepared.compiled.Stacking.MergePolicy
+	if err := driveStackAutoRedeliver(ctx, prepared, ledger, stackID, policy, stdout, stderr); err != nil {
 		return err
 	}
 
@@ -44,12 +61,6 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 		return err
 	}
 	merged := stackMergedSet(byID)
-
-	prBase, err := stackPRBase(prepared.compiled)
-	if err != nil {
-		return err
-	}
-	policy := prepared.compiled.Stacking.MergePolicy
 
 	maxConcurrent := 1
 	if prepared.compiled.Stacking.MaxConcurrentChunks > 0 {
@@ -82,8 +93,33 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 		fmt.Fprintf(stdout, "stack %s: chunks remain unmerged; re-run `mivia stack drive` after merges land\n", stackID)
 		return nil
 	}
+	if hasMore {
+		// More decompose scope is declared but not yet admitted: the final
+		// integration run must wait for the continuation wave(s), or it would
+		// publish a full-suite PR missing later chunks' work (live ordering
+		// finding, incremental-decompose IT). The caller re-drives once the
+		// continuation wave merges.
+		fmt.Fprintf(stdout, "stack %s: all current chunks merged; more decompose scope declared - integration run deferred until the continuation wave merges\n", stackID)
+		return nil
+	}
 	fmt.Fprintf(stdout, "all chunks merged; admitting the final integration run\n")
-	return driveIntegrationRun(ctx, prepared, ledger, stackID, prBase, policy, planInputs, stdout, stderr)
+	return driveIntegrationRun(ctx, prepared, ledger, stackID, prBase, policy, planInputs, allowPublish, stdout, stderr)
+}
+
+// driveStackAutoRedeliver retries delivery for chunks reconcile just moved to
+// reviewed (F9): reviewed is not a pre-admission status, so driveWave's own
+// admission loop never re-enters them. Without this, the one-shot `mivia
+// stack drive` command (unlike driveStackToCompletion's chunkMergePollPass)
+// would leave a merge_policy=auto stack needing a manual `workflow deliver`
+// despite the policy saying auto.
+func driveStackAutoRedeliver(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, policy string, stdout, stderr io.Writer) error {
+	if policy != "auto" {
+		return nil
+	}
+	if err := autoDeliverReviewedChunks(ctx, prepared, prepared.repo, ledger, stackID, stdout, stderr); err != nil {
+		return fmt.Errorf("stack drive: %w", err)
+	}
+	return nil
 }
 
 // reportReconcileActions prints one line per reconcile action and returns an
@@ -97,6 +133,8 @@ func reportReconcileActions(stackID string, actions []ReconcileAction, stdout io
 			fmt.Fprintf(stdout, "chunk=%s reopened (%s)\n", a.TaskID, a.Note)
 		case stackActionMarkMerged:
 			fmt.Fprintf(stdout, "chunk=%s marked merged (git)\n", a.TaskID)
+		case stackActionMarkPublished:
+			fmt.Fprintf(stdout, "chunk=%s marked published (PR delivered outside the drive)\n", a.TaskID)
 		case stackActionDeliver:
 			fmt.Fprintf(stdout, "chunk=%s run reached delivery; publish grant required\n", a.TaskID)
 		}
@@ -212,8 +250,7 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 	// the CAS below covers the concurrent-goroutine case within one process.
 	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
 		if isResumableRunStatus(run.Status) {
-			fmt.Fprintf(stdout, "chunk=%s run=%s already in flight (%s); re-run drive after it settles\n", chunkID, run.RunID, run.Status)
-			return true, nil
+			return driveChunkInFlight(ctx, prepared, ledger, stackID, chunkID, run, allowPublish, stdout, stderr)
 		}
 	}
 	// Atomic check-and-claim: only a caller that observes the task still in
@@ -258,17 +295,14 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 			if freshErr != nil {
 				return true, fmt.Errorf("chunk %s: read run status after delivery: %w", chunkID, freshErr)
 			}
-			if chunkDeliverySucceeded(string(fresh.Status)) {
-				_ = ledger.TransitionTask(stackID, chunkID, stackStatusPublished)
-			}
-			fmt.Fprintln(stdout, chunkDeliveryOutcomeMessage(chunkID, snap.RunID, string(fresh.Status)))
+			fmt.Fprintln(stdout, chunkSettleAfterDelivery(prepared.repo, ledger, stackID, chunkID, fresh))
 			return true, nil // sequential create-merge (v1): one chunk per drive pass
 		}
 		_ = ledger.TransitionTask(stackID, chunkID, stackStatusReviewed)
 		fmt.Fprintf(stdout, "chunk=%s awaits the publish grant: mivia workflow deliver %s --allow-publish\n", chunkID, snap.RunID)
 		return true, nil // policy A: the human publish grant is the single checkpoint (D1)
 	case workflowledger.RunStatusSucceeded:
-		_ = ledger.TransitionTask(stackID, chunkID, stackStatusImplemented)
+		chunkSettleSucceeded(prepared.repo, ledger, stackID, chunkID, snap, stdout)
 		return false, nil
 	case workflowledger.RunStatusFailed, workflowledger.RunStatusCanceled, workflowledger.RunStatusTimedOut, workflowledger.RunStatusDeliveryFailed:
 		act, err := reconcileReopenOrFail(ledger, stackID, chunkID)
@@ -285,6 +319,9 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 		return true, nil
 	}
 }
+
+// stackChunkResumeFn and the F7 self-heal (driveChunkInFlight,
+// driveChunkResumedOutcome) live in stack_admit_inflight.go.
 
 // admitStackChunkRun admits and runs one chunk-mode workflow run with the
 // chunk's stable invocation key (F15). It reuses the exact controller build
@@ -409,10 +446,23 @@ func admitDecomposeContinuationRun(prepared *preparedWorkflowRun, stackID string
 var stackDecomposeContinueAdmit = admitDecomposeContinuationRun
 
 // driveIntegrationRun admits the final full-suite run (stack_mode=single runs
-// the workflow's own plan+implement steps inline) after every chunk merged.
-func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, prBase, policy string, planInputs map[string]string, stdout, stderr io.Writer) error {
+// the workflow's own plan+implement steps inline) after every chunk merged. It
+// only ADMITS: publishing the integration PR is the completion pass's job
+// (waitIntegrationRunSettled delivers under allowPublish and auto-merges under
+// merge_policy=auto). A delivery HERE settles the run succeeded BEFORE
+// waitIntegrationRunSettled reads it, so its
+// `policy == "auto" && run.Status == delivery_pending` auto-merge branch never
+// fires: the integration PR is created but never merged, and the stack reports
+// complete with the final PR's branch left on the origin (live finding,
+// 2026-08-16: TestSessionSweepDrivesParkedStackAfterAbortedDrive failed at
+// originHeads with the integration branch still pushed; the earlier no_diff
+// settle masked the skip by never creating a branch at all).
+func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, prBase, policy string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	chunkID := stackIntegrationChunkID
 	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
+		if isResumableRunStatus(run.Status) {
+			return driveIntegrationInFlight(ctx, prepared, run, allowPublish, stdout, stderr)
+		}
 		fmt.Fprintf(stdout, "integration run already exists: run=%s status=%s\n", run.RunID, run.Status)
 		return nil
 	}
@@ -422,10 +472,7 @@ func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, led
 		return fmt.Errorf("integration run failed: %w", err)
 	}
 	fmt.Fprintf(stdout, "integration run=%s status=%s\n", snap.RunID, snap.Status)
-	if snap.Status == workflowledger.RunStatusDeliveryPending && policy == "auto" {
-		return deliverRunWithStore(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, snap.RunID, true, false, stdout, stderr)
-	}
-	if snap.Status == workflowledger.RunStatusDeliveryPending {
+	if snap.Status == workflowledger.RunStatusDeliveryPending && policy != "auto" {
 		fmt.Fprintf(stdout, "integration run awaits the publish grant: mivia workflow deliver %s --allow-publish\n", snap.RunID)
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -15,10 +16,13 @@ import (
 )
 
 // Cancel implements agenttools.Engine.
-// It stops any in-process controller first, then settles via the same
-// execution-lock + CancelRun path as `mivia workflow cancel`. A terminal or
-// delivery_pending run is resolved BEFORE any claim mutation: a refused cancel
-// must never strip a live delivery claim.
+// Refusal gates first (a lock-free status read): a terminal run is an
+// idempotent no-op and a delivery_pending run is refused, both without
+// stopping the in-process controller (F13). Only then does it stop the
+// in-process controller and settle via the same execution-lock + CancelRun
+// path as `mivia workflow cancel` - the stop must precede the lock, because
+// the session's own run goroutine holds the per-run execution flock for its
+// whole lifetime and can only release it once stopped.
 func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agenttools.CancelResult, error) {
 	if e == nil {
 		return agenttools.CancelResult{}, fmt.Errorf("workflow engine is nil")
@@ -29,6 +33,22 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	e.mu.Lock()
 	active := e.active[runID]
 	e.mu.Unlock()
+	// Gate refusals on a LOCK-FREE status read, before the execution lock
+	// and before stopActive: a delivery_pending run may be mid-publish
+	// under a live claim (this or another host), still being driven by this
+	// session's own goroutine, and a refused or idempotent cancel must leave
+	// both the claims and that live drive untouched (F13). The read cannot
+	// sit behind the execution lock: while this session is driving the run,
+	// that lock is held by the run goroutine itself.
+	if status, ok := e.readRunStatusForCancel(ctx, runID); ok {
+		if result, err, resolved := resolveSessionCancelRefusal(runID, status); resolved {
+			return result, err
+		}
+	}
+	// Stop the in-process controller FIRST: the run is neither terminal nor
+	// delivery_pending, so this cancel is going to proceed, and the bounded
+	// lock acquisition below can only succeed once the run goroutine has
+	// exited and released the per-run execution flock it holds.
 	e.stopActive(ctx, runID)
 	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContextBounded(e.root, e.configPath, runID, workflowResolutionLockWait)
 	if err != nil {
@@ -36,20 +56,25 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	}
 	defer closeFn()
 	defer releaseExecution()
-	// Resolve the run BEFORE any claim mutation: a delivery_pending run may be
-	// mid-publish under a live claim (this or another host), and a refused or
-	// idempotent cancel must leave claims untouched.
+	// Re-resolve under the lock: the run may have settled, or parked at
+	// delivery_pending, between the gate read above and the stop. A
+	// delivery_pending park here is a refused cancel exactly as at the gate
+	// (the periodic sweep re-drives the stopped delivery on its next tick).
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return agenttools.CancelResult{}, err
 	}
-	if workflowledger.IsTerminalRunStatus(run.Status) {
-		// Idempotent operator retry: the run is already settled; no claim work.
-		return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
+	if result, err, resolved := resolveSessionCancelRefusal(runID, run.Status); resolved {
+		return result, err
 	}
-	if run.Status == workflowledger.RunStatusDeliveryPending {
-		return agenttools.CancelResult{}, fmt.Errorf("run %q is waiting for delivery; deliver it or leave it for cleanup before cancel", runID)
-	}
+	return e.settleSessionCancel(ctx, active, repo, store, runID)
+}
+
+// settleSessionCancel performs the gated cancel's ledger work: claim (never
+// clear) the run, settle it canceled through the guarded coordinator, and
+// publish the terminal progress events. The caller holds the execution lock
+// and has already stopped the in-process controller.
+func (e *sessionWorkflowEngine) settleSessionCancel(ctx context.Context, active *sessionActiveRun, repo workflowledger.Repository, store *storage.SQLite, runID string) (agenttools.CancelResult, error) {
 	// Never clear a held claim: cancel accepts any run_id, and a blind clear
 	// would strip a live delivery claim (held by this or another host mid-
 	// publish) and enable double-publish. Claim instead; an expired lease may
@@ -73,7 +98,7 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	// settled, so TUI and metrics observe the operator cancel like any other
 	// run terminal event.
 	e.publishCanceledAttempts(runID, attempts)
-	run, err = repo.GetRun(ctx, runID)
+	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return agenttools.CancelResult{}, err
 	}
@@ -89,6 +114,39 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 		}
 	}
 	return agenttools.CancelResult{RunID: runID, Status: string(run.Status)}, nil
+}
+
+// readRunStatusForCancel is Cancel's lock-free gate read. A read failure
+// (unopenable workspace, missing run) reports ok=false: the gated path then
+// falls through to the lock-protected read, which surfaces the same failure
+// as the command's own error.
+func (e *sessionWorkflowEngine) readRunStatusForCancel(ctx context.Context, runID string) (workflowledger.RunStatus, bool) {
+	repo, closeFn, err := openWorkflowReportContext(e.root, e.configPath)
+	if err != nil {
+		return "", false
+	}
+	defer closeFn()
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return "", false
+	}
+	return run.Status, true
+}
+
+// resolveSessionCancelRefusal resolves a cancel verdict up front from the
+// run's status, shared by the lock-free gate read and the lock-protected
+// re-read so the two can never drift: a terminal run is an idempotent
+// success (resolved with its settled result), a delivery_pending run is an
+// error (it waits on publication, not cancellation), and anything else
+// falls through to the actual cancel (resolved=false).
+func resolveSessionCancelRefusal(runID string, status workflowledger.RunStatus) (agenttools.CancelResult, error, bool) {
+	if workflowledger.IsTerminalRunStatus(status) {
+		return agenttools.CancelResult{RunID: runID, Status: string(status)}, nil, true
+	}
+	if status == workflowledger.RunStatusDeliveryPending {
+		return agenttools.CancelResult{}, fmt.Errorf("run %q is waiting for delivery; deliver it or leave it for cleanup before cancel", runID), true
+	}
+	return agenttools.CancelResult{}, nil, false
 }
 
 // newWorkflowCancelHolder mints the run-claim holder for a session-engine

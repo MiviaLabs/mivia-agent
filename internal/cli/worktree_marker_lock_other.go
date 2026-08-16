@@ -3,13 +3,11 @@
 package cli
 
 import (
+	"fmt"
 	"os"
-	"sync"
+	"runtime"
 )
 
-var worktreeMarkerFileMutex sync.Mutex
-
 func lockWorktreeMarkerFile(_ *os.File) (func(), error) {
-	worktreeMarkerFileMutex.Lock()
-	return worktreeMarkerFileMutex.Unlock, nil
+	return nil, fmt.Errorf("workflow execution locks are not supported on %s/%s; build for a unix or windows target", runtime.GOOS, runtime.GOARCH)
 }

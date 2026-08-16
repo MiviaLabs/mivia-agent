@@ -58,7 +58,7 @@ func nextContextRevision(preparation contextmgr.Preparation, result contextmgr.T
 	}
 }
 
-func (s *Session) emitContextCompaction(cfg contextTurnConfig, preparation contextmgr.Preparation, turnID uint64, summarized bool) {
+func (s *Session) emitContextCompaction(ctx context.Context, cfg contextTurnConfig, preparation contextmgr.Preparation, turnID uint64, summarized bool) {
 	s.mu.RLock()
 	onEvent := s.OnAgentEvent
 	bus := s.EventBus
@@ -70,9 +70,14 @@ func (s *Session) emitContextCompaction(cfg contextTurnConfig, preparation conte
 	if identityFactory != nil {
 		identity = identityFactory(binding.ModelGeneration)
 	}
-	agent.EmitCompaction(agent.Options{
+	var usageWriter contextmgr.UsageWriter
+	if cfg.manager != nil {
+		usageWriter = cfg.manager.UsageWriter
+	}
+	agent.EmitCompaction(ctx, agent.Options{
 		OnEvent: onEvent, EventBus: bus, SessionID: sessionID,
 		TurnID: fmt.Sprintf("turn:%d", turnID), EventIdentity: identity,
+		UsageWriter: usageWriter,
 	}, preparation, summarized, summaryUnavailableReason(cfg, summarized))
 }
 

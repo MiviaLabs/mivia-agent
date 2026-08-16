@@ -39,10 +39,8 @@ func (t *fetchURLTool) ResultBudgetBytes() int { return t.resultBudget() }
 
 func (t *fetchURLTool) Name() string { return "fetch_url" }
 func (t *fetchURLTool) Description() string {
-	return "Fetch and read the contents of a URL. Uses SSRF protection to block private/internal addresses. " +
-		"Params: url (required), optional offset (1-based start line), optional limit (max lines). " +
-		"Use offset+limit for large pages. Binary (non-text) responses are refused. " +
-		"Prefer over run_command for reading URLs."
+	return "Fetch and read a URL's text content. Blocks private/internal addresses (SSRF protection). " +
+		"Use offset+limit to page large pages. Binary (non-text) responses are refused."
 }
 func (t *fetchURLTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -52,11 +50,11 @@ func (t *fetchURLTool) Parameters() map[string]any {
 		},
 		"offset": map[string]any{
 			"type":        "integer",
-			"description": "Optional 1-based start line (like read_file's offset)",
+			"description": "1-based start line",
 		},
 		"limit": map[string]any{
 			"type":        "integer",
-			"description": "Optional max lines to return",
+			"description": "Max lines to return",
 		},
 	}, []string{"url"})
 }

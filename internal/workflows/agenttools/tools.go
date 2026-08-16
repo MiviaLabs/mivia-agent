@@ -21,6 +21,12 @@ type Tool interface {
 	Class() string
 }
 
+// agentDefaultNote returns the shared "available by default" clause. Each
+// tool's first sentence already states its use, so the note carries no hint.
+func agentDefaultNote() string {
+	return "Available by default when the workspace defines workflows."
+}
+
 // Tools returns the eight workflow tools bound to svc.
 func Tools(svc *Service) []Tool {
 	if svc == nil {
@@ -50,12 +56,8 @@ func (t *runTool) ResultBudgetBytes() int { return DefaultRunBudgetBytes }
 func (t *runTool) Description() string {
 	return "Admit and start a named workflow from the workspace workflow directory. " +
 		"Returns a durable run_id immediately; the controller advances in the background. " +
-		"Pass resume=true with run_id to resume an interrupted run from the durable snapshot. " +
-		"A delivery-capable workflow (one with an active [delivery] policy) is published " +
-		"automatically by the harness: the workflow's policy is the publication grant, so no " +
-		"allow_publish flag is needed (the explicit workflow_deliver tool keeps allow_publish as " +
-		"its gate). " +
-		"Available to agents by default when the workspace defines workflows; use it when a workflow fits the task."
+		"A delivery-capable workflow publishes automatically per its own [delivery] policy. " +
+		agentDefaultNote()
 }
 func (t *runTool) Parameters() map[string]any {
 	return map[string]any{
@@ -63,28 +65,28 @@ func (t *runTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"workflow": map[string]any{
 				"type":        "string",
-				"description": "Workflow name as discovered under the workspace workflow directory (required unless resume=true)",
+				"description": "Workflow name from the workspace workflow directory; required unless resume=true",
 			},
 			"inputs": map[string]any{
 				"type":                 "object",
-				"description":          "Validated input map for the workflow (name to value); required keys come from the workflow definition",
+				"description":          "Input map (name to value); required keys come from the workflow definition",
 				"additionalProperties": true,
 			},
 			"invocation_key": map[string]any{
 				"type":        "string",
-				"description": "Stable caller key for retrying the same workflow request without creating a second run",
+				"description": "Stable caller key for idempotent retry of the same workflow request",
 			},
 			"allow_publish": map[string]any{
 				"type":        "boolean",
-				"description": "Accepted for compatibility; the harness publishes a delivery-capable workflow automatically (the workflow's [delivery] policy is the grant). The explicit workflow_deliver tool uses allow_publish as its gate",
+				"description": "Accepted for compatibility; not a gate. A delivery-capable workflow publishes automatically per its own [delivery] policy; the real gate is workflow_deliver's allow_publish",
 			},
 			"resume": map[string]any{
 				"type":        "boolean",
-				"description": "When true, resume run_id from the durable ledger snapshot instead of admitting a new run",
+				"description": "Resume run_id from the durable ledger snapshot instead of admitting a new run",
 			},
 			"run_id": map[string]any{
 				"type":        "string",
-				"description": "Existing run id (form wfr-...); required when resume=true",
+				"description": "Existing run id (form wfr-...); required with resume=true",
 			},
 			"force": map[string]any{
 				"type":        "boolean",
@@ -142,8 +144,8 @@ func (t *statusTool) ResultBudgetBytes() int { return t.svc.budget("status") }
 func (t *statusTool) Description() string {
 	return "Report deep status for one workflow run from the durable ledger: " +
 		"state, active step, numbered attempts (output digests, routes, gate verdicts), " +
-		"loop counters, approvals, and delivery records. Read-only; does not mutate run state. " +
-		"Available to agents by default when the workspace defines workflows; use it to observe a run."
+		"loop counters, approvals, and delivery records. Read-only. " +
+		agentDefaultNote()
 }
 func (t *statusTool) Parameters() map[string]any {
 	return map[string]any{
@@ -185,7 +187,7 @@ func (t *eventsTool) Description() string {
 	return "Return a paged, ordered audit trail for one workflow run: sequence, timestamp, " +
 		"kind, and a bounded detail summary. Summaries never include raw prompts or credentials. " +
 		"Read-only; does not mutate run state. " +
-		"Available to agents by default when the workspace defines workflows; use it to audit a run."
+		agentDefaultNote()
 }
 func (t *eventsTool) Parameters() map[string]any {
 	return map[string]any{
@@ -238,9 +240,8 @@ func (t *inspectTool) ResultBudgetBytes() int { return t.svc.budget("inspect") }
 func (t *inspectTool) Description() string {
 	return "Inspect one workflow step attempt: validated output JSON, evidence selection, " +
 		"transition decision, and coordinator run/task references for tool-call tracing. " +
-		"Large output artifacts are paged; offset and limit select the page of output text. " +
-		"Read-only; does not mutate run state. " +
-		"Available to agents by default when the workspace defines workflows; use it to trace a step."
+		"Large output artifacts are paged with offset and limit. Read-only. " +
+		agentDefaultNote()
 }
 func (t *inspectTool) Parameters() map[string]any {
 	return map[string]any{
@@ -257,17 +258,17 @@ func (t *inspectTool) Parameters() map[string]any {
 			"attempt": map[string]any{
 				"type":        "integer",
 				"minimum":     1,
-				"description": "Attempt number for that step (starts at 1)",
+				"description": "Attempt number (starts at 1)",
 			},
 			"limit": map[string]any{
 				"type":        "integer",
 				"minimum":     0,
-				"description": "Maximum output bytes to return in one page (default 0); 0 uses the service default page size",
+				"description": "Maximum output bytes per page; 0 uses the service default page size",
 			},
 			"offset": map[string]any{
 				"type":        "integer",
 				"minimum":     0,
-				"description": "Number of output bytes to skip from the start of the artifact (default 0)",
+				"description": "Output bytes to skip from the start of the artifact",
 			},
 		},
 		"required":             []string{"run_id", "step", "attempt"},
@@ -304,7 +305,7 @@ func (t *listRunsTool) ResultBudgetBytes() int { return t.svc.budget("list") }
 func (t *listRunsTool) Description() string {
 	return "List active and historical workflow runs with state, workflow name, and age. " +
 		"Optional status filter and paging. Read-only; does not mutate run state. " +
-		"Available to agents by default when the workspace defines workflows; use it to find a run."
+		agentDefaultNote()
 }
 func (t *listRunsTool) Parameters() map[string]any {
 	return map[string]any{
@@ -357,9 +358,8 @@ func (t *deliverTool) Class() string          { return "write" }
 func (t *deliverTool) ResultBudgetBytes() int { return DefaultDeliverBudgetBytes }
 func (t *deliverTool) Description() string {
 	return "Perform host-owned delivery for a delivery_pending workflow run. " +
-		"Requires explicit allow_publish=true; without it the call refuses publication. " +
-		"Only eligible runs publish; other statuses are refused. " +
-		"Available to agents by default when the workspace defines workflows; use it to publish a settled run."
+		"Requires explicit allow_publish=true; runs with other statuses are refused. " +
+		agentDefaultNote()
 }
 func (t *deliverTool) Parameters() map[string]any {
 	return map[string]any{
@@ -367,11 +367,11 @@ func (t *deliverTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"run_id": map[string]any{
 				"type":        "string",
-				"description": "Workflow run id waiting for delivery (form wfr-...)",
+				"description": "Run id waiting for delivery (form wfr-...)",
 			},
 			"allow_publish": map[string]any{
 				"type":        "boolean",
-				"description": "Must be true to publish; defaults to false and is never implicit",
+				"description": "Must be true to publish; default false, never implicit",
 			},
 		},
 		"required":             []string{"run_id"},
@@ -405,7 +405,7 @@ func (t *cancelTool) ResultBudgetBytes() int { return DefaultCancelBudgetBytes }
 func (t *cancelTool) Description() string {
 	return "Cancel a running or waiting workflow run. Idempotent: canceling an already-terminal " +
 		"run is a no-op. delivery_pending runs must be delivered or cleaned up first. " +
-		"Available to agents by default when the workspace defines workflows; use it to stop a run."
+		agentDefaultNote()
 }
 func (t *cancelTool) Parameters() map[string]any {
 	return map[string]any{
@@ -453,8 +453,8 @@ func (t *deleteTool) Description() string {
 		"taken over), so an actively executing run can never be deleted. The " +
 		"run disappears from every read surface; its worktree and branch, if " +
 		"any, are not removed (use the workspace cleanup command for those). " +
-		"Shared stored content is never deleted. Available to agents by default " +
-		"when the workspace defines workflows; use it to purge stale runs."
+		"Shared stored content is never deleted. " +
+		agentDefaultNote()
 }
 func (t *deleteTool) Parameters() map[string]any {
 	return map[string]any{

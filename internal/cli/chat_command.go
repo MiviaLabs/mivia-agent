@@ -301,7 +301,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
 	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
-	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, invocation.fullDisk)
+	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, invocation.fullDisk, true)
 	if err != nil {
 		return err
 	}

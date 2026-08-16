@@ -40,10 +40,11 @@ func stashMemoryOnState(state *agentSessionState, store memory.Store, res *confi
 	}
 }
 
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *agentSessionState, quiet bool, fullDisk bool) (func(), error) {
-	if !useTools {
-		return func() {}, nil
-	}
+// buildWorkflowToolOpts builds the base tool options for a chat workspace:
+// the workspace root and the tool policy. It carries no workflow wiring -
+// the event bus provider (and with it the parked-run recovery sweep, F14) is
+// decided by the caller in configureChatWorkspace.
+func buildWorkflowToolOpts(root string, fullDisk bool, res *config.Resolved) (*tools.DefaultOptions, error) {
 	var ws *workspace.Root
 	var err error
 	if fullDisk {
@@ -52,7 +53,7 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		ws, err = workspace.Open(root)
 	}
 	if err != nil {
-		return func() {}, fmt.Errorf("workspace: %w", err)
+		return nil, fmt.Errorf("workspace: %w", err)
 	}
 	var tc config.ToolsConfig
 	var tavilyKey string
@@ -60,52 +61,53 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		tc = res.Tools
 		tavilyKey = res.TavilyAPIKey
 	}
-	opts := tools.DefaultOptions{
-		Workspace:                ws,
-		TavilyAPIKey:             tavilyKey,
-		RunAllowlist:             tc.RunAllowlist,
-		RunAllowlistOnly:         tc.RunAllowlistOnly,
-		RunBlocklist:             tc.RunBlocklist,
-		DisableTools:             tc.DisableTools,
-		EnvAllowlist:             tc.EnvAllowlist,
-		EnvAllowlistOnly:         tc.EnvAllowlistOnly,
-		EnvBlocklist:             tc.EnvBlocklist,
-		EnvAllowKeywordBlocklist: tc.EnvAllowKeywordBlocklist,
-		RunTimeoutSec:            tc.RunTimeoutSec,
-		MaxReadBytes:             tc.MaxReadBytes,
-		MaxWriteKB:               tc.MaxWriteKB,
-		MaxOutputBytes:           tc.MaxOutputBytes,
-		MaxListDirEntries:        tc.MaxListDirEntries,
-		MaxToolResultBytes:       tc.MaxToolResultBytes,
-		MaxTavilyResponseBytes:   tc.MaxTavilyResponseBytes,
-		MaxFetchKB:               tc.MaxFetchKB,
-		// MiB → bytes; resolveToolsConfig already settled 0 → default 256.
-		MemoryBackstopBytes: tc.MemoryBackstopMB << 20,
-		// RedactToolArgs is NOT plumbed here - the single source of truth
-		// is the package atomic set by tools.SetRedactToolArgs at line 40.
+	opts := &tools.DefaultOptions{
+		Workspace:                 ws,
+		TavilyAPIKey:              tavilyKey,
+		RunAllowlist:              tc.RunAllowlist,
+		RunAllowlistOnly:          tc.RunAllowlistOnly,
+		RunBlocklist:              tc.RunBlocklist,
+		DisableTools:              tc.DisableTools,
+		EnvAllowlist:              tc.EnvAllowlist,
+		EnvAllowlistOnly:          tc.EnvAllowlistOnly,
+		EnvBlocklist:              tc.EnvBlocklist,
+		EnvAllowKeywordBlocklist:  tc.EnvAllowKeywordBlocklist,
+		RunTimeoutSec:             tc.RunTimeoutSec,
+		MaxReadBytes:              tc.MaxReadBytes,
+		MaxWriteKB:                tc.MaxWriteKB,
+		MaxOutputBytes:            tc.MaxOutputBytes,
+		MaxListDirEntries:         tc.MaxListDirEntries,
+		MaxToolResultBytes:        tc.MaxToolResultBytes,
+		MaxTavilyResponseBytes:    tc.MaxTavilyResponseBytes,
+		MaxFetchKB:                tc.MaxFetchKB,
+		MemoryBackstopBytes:       tc.MemoryBackstopMB << 20,
 		SecretPathPatterns:        tc.SecretPathPatterns,
 		SecretPathExceptions:      tc.SecretPathExceptions,
 		SearchIgnorePatterns:      tc.SearchIgnorePatterns,
 		MaxInspectRepositoryBytes: tc.MaxInspectRepositoryBytes,
 		DiagnosticsCommands:       tc.DiagnosticsCommands,
 	}
-	// get_diagnostics runs the operator-configured diagnostics commands on this
-	// workspace (see DiagnosticsCommands above). The startup disclosure that
-	// states which commands are configured lives in logDiagnosticsCommandsOnce,
-	// called from runConfiguredChatOnce beside the other startup notices.
-	// Phase 7: attach in-process workflow tools when .mivia/workflows/ exists.
-	// Pass res so the store path matches prepareWorkflowRun / CLI commands.
-	// The bus provider is read when a controller attaches, so sess.EventBus
-	// (created later by runTUI) still receives workflow progress events.
-	wireWorkflowToolOptions(&opts, ws.Abs, res, func() *events.Bus { return sess.EventBus }, quiet)
-	if err := wireSessionMemory(&opts, root, res); err != nil {
+	return opts, nil
+}
+
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *agentSessionState, quiet bool, fullDisk bool, runRecoverySweep bool) (func(), error) {
+	if !useTools {
+		return func() {}, nil
+	}
+	opts, err := buildWorkflowToolOpts(root, fullDisk, res)
+	if err != nil {
+		return func() {}, err
+	}
+	var busProvider func() *events.Bus
+	if runRecoverySweep {
+		busProvider = func() *events.Bus { return sess.EventBus }
+	}
+	wireWorkflowToolOptions(opts, opts.Workspace.Abs, res, busProvider, quiet)
+	if err := wireSessionMemory(opts, root, res); err != nil {
 		return func() {}, err
 	}
 	stashMemoryOnState(state, opts.Memory, res)
-	sess.Tools = tools.NewDefaultRegistry(opts)
-	// The attach-time tool surface is wire-affecting and not one of the four
-	// identity-capture triggers; keep the cached prefix identity fresh so the
-	// first switch/publication compares fresh against fresh (audit RC-1).
+	sess.Tools = tools.NewDefaultRegistry(*opts)
 	sess.RefreshPrefixIdentity()
 	return func() {
 		if opts.Memory != nil {

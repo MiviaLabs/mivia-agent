@@ -243,12 +243,24 @@ func checkChunkDiffSize(ctx context.Context, git GitRunner, req Request) error {
 	if !req.Policy.SplitDeferred {
 		return oversized
 	}
-	deferred, err := computeDeterministicSplit(ctx, git, req.GitCtx, req.BaseCommit, hard)
+	deferred, kept, err := computeDeterministicSplit(ctx, git, req.GitCtx, req.BaseCommit, hard)
 	if err != nil {
 		return err
 	}
 	if len(deferred) == 0 {
 		return oversized
+	}
+	// A split must never separate a file from its test companion: deferring
+	// the largest files (tests are often the largest) while keeping the code
+	// in the delivered commit ships a delivered commit that fails the
+	// repository's own test gate (the pre-push hook) for reasons the
+	// workflow's evidence gates never saw - the observed delivery-repair
+	// death loop, where the repair agent kept reverting production code to
+	// satisfy the delivered commit's stale test expectations. Refuse the
+	// split instead: the repair agent gets a clear, repairable reason BEFORE
+	// any commit or push and shrinks the chunk.
+	if dPath, kPath := deferredSplitSeparatesCompanion(deferred, kept); kPath != "" {
+		return &DiffSizeError{Reason: fmt.Sprintf("delivery: chunk diff size %d exceeds hard limit %d and the automatic split was refused: it would defer %s while keeping its test companion %s in the delivered commit, so the delivered commit would fail the repository's own test gate. Shrink the chunk so the file and its tests ship in the same commit (both in the delivered commit or both deferred).", size, hard, dPath, kPath)}
 	}
 	verified, err := MeasureChunkDiffSize(ctx, git, req.GitCtx, req.BaseCommit, hard, deferred)
 	if err != nil {
@@ -278,38 +290,40 @@ type fileDiffSize struct {
 // computeDeterministicSplit measures the actual per-file diff size (never an
 // agent's claim - see InputDeferredFiles) and greedily defers the LARGEST
 // files first until the remaining (kept) diff fits within hard. Deferring
-// largest-first moves the fewest files out of this delivery. It intentionally
-// does not use --find-renames: a rename line's "old => new" path is
-// ambiguous to stage by exact path, and the selection here only needs to be
-// a good-enough estimate - checkChunkDiffSize re-verifies the actual result
-// with MeasureChunkDiffSize (which does use --find-renames) before trusting
-// it. At least one file always stays kept: a delivered commit with nothing
-// in it defeats the purpose of a split (there is no smaller PR left to
-// review), so deferring literally every file is refused, not attempted. This
-// also naturally refuses a diff with only one file, since deferring it would
-// leave zero kept. Returns nil when it cannot bring the kept diff under hard
-// without deferring everything: the caller falls back to a plain
-// DiffSizeError since no split can help.
-func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext, baseCommit string, hard int) ([]string, error) {
+// largest-first moves the fewest files out of this delivery. It returns both
+// the deferred paths and the kept paths (deferred + kept == every changed
+// file), so the caller can verify the split keeps each file with its test
+// companion. It intentionally does not use --find-renames: a rename line's
+// "old => new" path is ambiguous to stage by exact path, and the selection
+// here only needs to be a good-enough estimate - checkChunkDiffSize
+// re-verifies the actual result with MeasureChunkDiffSize (which does use
+// --find-renames) before trusting it. At least one file always stays kept: a
+// delivered commit with nothing in it defeats the purpose of a split (there
+// is no smaller PR left to review), so deferring literally every file is
+// refused, not attempted. This also naturally refuses a diff with only one
+// file, since deferring it would leave zero kept. Returns nil when it cannot
+// bring the kept diff under hard without deferring everything: the caller
+// falls back to a plain DiffSizeError since no split can help.
+func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext, baseCommit string, hard int) (deferred, kept []string, err error) {
 	if _, err := git.Run(ctx, gc, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
-		return nil, fmt.Errorf("cannot stage the delivery diff for split measurement: %w", err)
+		return nil, nil, fmt.Errorf("cannot stage the delivery diff for split measurement: %w", err)
 	}
 	out, err := git.Run(ctx, gc, "-c", "core.quotePath=false", "diff", "--cached",
 		"--no-ext-diff", "--no-textconv", "--numstat", "--ignore-all-space", baseCommit)
 	if err != nil {
-		return nil, fmt.Errorf("cannot measure per-file delivery diff sizes: %w", err)
+		return nil, nil, fmt.Errorf("cannot measure per-file delivery diff sizes: %w", err)
 	}
-	files, kept, err := numstatPerFile(out)
+	files, total, err := numstatPerFile(out)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(files) < 2 {
-		return nil, nil // nothing separable: one file cannot split into two PRs
+		return nil, nil, nil // nothing separable: one file cannot split into two PRs
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].lines > files[j].lines })
-	var deferred []string
+	keptTotal := total
 	for i, f := range files {
-		if kept <= hard {
+		if keptTotal <= hard {
 			break
 		}
 		if len(deferred) == len(files)-1 {
@@ -319,12 +333,24 @@ func computeDeterministicSplit(ctx context.Context, git GitRunner, gc GitContext
 			continue // deferring a zero-weight (binary/unmeasurable) file never helps
 		}
 		deferred = append(deferred, f.path)
-		kept -= f.lines
+		keptTotal -= f.lines
 	}
-	if kept > hard {
-		return nil, nil
+	if keptTotal > hard {
+		return nil, nil, nil
 	}
-	return deferred, nil
+	keptSet := make(map[string]struct{}, len(files))
+	for _, f := range files {
+		keptSet[f.path] = struct{}{}
+	}
+	for _, p := range deferred {
+		delete(keptSet, p)
+	}
+	kept = make([]string, 0, len(keptSet))
+	for p := range keptSet {
+		kept = append(kept, p)
+	}
+	sort.Strings(kept)
+	return deferred, kept, nil
 }
 
 // ParseDeferredFiles decodes the InputDeferredFiles reserved input: a
@@ -450,3 +476,7 @@ func numstatPerFile(out string) ([]fileDiffSize, int, error) {
 	}
 	return files, total, nil
 }
+
+// The split-companion guard helpers (deferredSplitSeparatesCompanion,
+// testCompanions, subtractPaths, guardDeferredSplitConsistency) live in
+// deliver_split_guard.go.

@@ -62,9 +62,19 @@ func pushDeliveryBranch(ctx context.Context, repo ledger.Repository, git GitRunn
 		}
 	}
 	if err != nil {
-		markFailed(ctx, repo, key, req, err)
-		req.stage("failed", err.Error())
-		return err
+		// The inventory MUST lead the recorded text: markFailed stores at
+		// most maxErrorBytes and truncates from the end, so a long hook
+		// rejection must not push the diagnostic out of the repair hint.
+		// The two-tree divergence (delivered commit vs worktree, e.g. after
+		// the automatic split deferred a file's tests) is exactly the class
+		// of failure a repair agent cannot see in the hook output alone.
+		wrapped := fmt.Errorf("pre-push hook rejection: %w", err)
+		if hint := deliveryInventoryHint(ctx, git, req, existing); hint != "" {
+			wrapped = fmt.Errorf("delivery commit inventory:\n%s\n\n%s", hint, wrapped)
+		}
+		markFailed(ctx, repo, key, req, wrapped)
+		req.stage("failed", wrapped.Error())
+		return wrapped
 	}
 
 	// 13. Record the push.

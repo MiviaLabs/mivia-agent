@@ -50,9 +50,12 @@ func workflowToolService(root string, res *config.Resolved) *agenttools.Service 
 // workflowToolServiceWithBus builds the service like workflowToolService and
 // attaches the session event bus provider to its engine. The provider is read
 // at controller attach time, so a bus created after wiring is still observed.
-// provider may be nil. quiet (--quiet) suppresses the session-start recovery
-// sweep's per-run skip/failure logs, the same way it suppresses the other
-// startup notices.
+// provider may be nil - configureChatWorkspace passes nil for a one-shot,
+// non-interactive caller (sessions usage, compact) precisely so the sweep
+// below does not run (F14); only a genuine interactive session (mivia chat)
+// passes a non-nil provider. quiet (--quiet) suppresses the session-start
+// recovery sweep's per-run skip/failure logs, the same way it suppresses the
+// other startup notices.
 func workflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, quiet bool) *agenttools.Service {
 	if !agenttools.HasWorkflows(root) {
 		return nil
@@ -68,7 +71,8 @@ func workflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	// A workflow that declares a [delivery] policy grants publication: the
 	// harness must honor it always, without flags or manual overrides. When
 	// the harness wires its workflow surface (a non-nil event-bus provider
-	// marks production wiring; tests pass nil), recover runs left unfinished
+	// marks a genuine interactive session; tests and one-shot, non-interactive
+	// CLI commands pass nil), recover runs left unfinished
 	// by an earlier session (restart or crash): publish delivery_pending runs
 	// and resume pending/running/waiting_approval runs whose claim is free or
 	// expired. The one-shot sweep covers the moment of wiring; the periodic

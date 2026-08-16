@@ -236,9 +236,16 @@ func renderCompactionNotice(event events.CompactionEvent) string {
 	}
 	// A compaction with no summary threw the dropped messages away with no
 	// account of them. The banner must not read identically to one that
-	// summarized them.
+	// summarized them, and must not stay silent on why - the classified
+	// Reason is the difference between "it did nothing" and "it is not
+	// configured to do that" (mirrors compactStructuralOnlyNotice for the
+	// manual /compact path).
 	if !event.Summarized {
-		notice += " (structural only, no summary)"
+		notice += " (structural only, no summary"
+		if event.Reason != "" {
+			notice += ": " + event.Reason
+		}
+		notice += ")"
 	}
 	return notice
 }

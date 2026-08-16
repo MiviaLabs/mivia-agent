@@ -220,6 +220,13 @@ func finishExecutedWorkflowRunDelivery(ctx context.Context, prepared *preparedWo
 // when a multi-chunk drive ran to completion) and is a no-op - (false, nil) -
 // for single/no_bug plans, runs without a succeeded decompose output, and
 // workflows without an active stacking delivery policy.
+//
+// The drive reconstructs the FULL chunk list across every already-admitted
+// decompose wave (wave 0 from the plan run plus any continuation waves), not
+// just the plan run's own first wave. A process that crashed after admitting
+// wave N≥1 would otherwise re-enter with only wave-0 chunks, leaving the
+// already-seeded wave-N tasks outside the topological order and wedging the
+// stack (F5).
 func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, planRunID string, allowPublish bool, stdout, stderr io.Writer) (bool, error) {
 	if prepared.compiled.Stacking == nil || !prepared.compiled.Stacking.Enabled {
 		return false, nil
@@ -231,11 +238,22 @@ func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, 
 	if err != nil {
 		return false, nil // no succeeded decompose output: nothing to stack
 	}
-	mode, chunks, hasMore, remainingScope, err := parseStackPlanOutput(planOutput)
+	mode, _, _, _, err := parseStackPlanOutput(planOutput)
 	if err != nil {
 		return false, nil
 	}
-	if mode != "multi" || len(chunks) == 0 {
+	if mode != "multi" {
+		return false, nil
+	}
+	planInputs, err := stackPlanInputs(prepared.repo, planRunID)
+	if err != nil {
+		return false, fmt.Errorf("stack plan inputs: %w", err)
+	}
+	chunks, hasMore, remainingScope, err := loadAllStackChunksForDrive(prepared, planRunID, planOutput, planInputs, stdout, stderr)
+	if err != nil {
+		return false, fmt.Errorf("stack drive: %w", err)
+	}
+	if len(chunks) == 0 {
 		return false, nil
 	}
 	fmt.Fprintf(stdout, "stack %s: multi-chunk plan (%d chunks); driving the stack to completion\n", planRunID, len(chunks))
@@ -243,7 +261,7 @@ func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, 
 	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
 		return false, fmt.Errorf("stack seed: %w", err)
 	}
-	return true, workflowStackDriveToCompletion(ctx, prepared, ledger, planRunID, chunks, hasMore, remainingScope, prepared.inputSnapshot, allowPublish, stdout, stderr)
+	return true, workflowStackDriveToCompletion(ctx, prepared, ledger, planRunID, chunks, hasMore, remainingScope, planInputs, allowPublish, stdout, stderr)
 }
 
 // compiledDeliverPlanRun reports whether the compiled workflow's delivery

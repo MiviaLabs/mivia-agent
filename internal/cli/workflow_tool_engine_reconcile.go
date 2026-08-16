@@ -2,8 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -41,6 +45,7 @@ func init() {
 // behavior.
 func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet bool) {
 	if e == nil || e.root == "" {
+		log.Printf("workflow: session recovery: no root")
 		return
 	}
 	work, err := workspace.Open(e.root)
@@ -70,8 +75,10 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet b
 		workflowledger.RunStatusDeliveryPending,
 	)
 	if err != nil {
+		log.Printf("workflow: session recovery: list parked runs: %v", err)
 		return
 	}
+	log.Printf("workflow: session recovery: %d parked run(s)", len(runs))
 	storePath := contextStorePath(work.Abs, res.Subagents)
 	// Fan out every parked run in parallel. Each run owns its execution file
 	// lock and run claim, so concurrent delivery/resume of different runs
@@ -89,6 +96,15 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet b
 		wg.Add(1)
 		go func(run workflowledger.RunSnapshot) {
 			defer wg.Done()
+			// Orphan follow-up run rows (wfr-followup-* prefix, empty
+			// snapshot) are left by reserveFollowUpRun when the
+			// subsequent EnsureFollowUpPublished fails. The next drive
+			// pass heals them; the sweep must not try to resume them
+			// (the empty snapshot fails digest validation, producing
+			// "snapshot digest does not match" noise every tick).
+			if run.SnapshotDigest == "" && strings.HasPrefix(run.RunID, "wfr-followup-") {
+				return
+			}
 			switch run.Status {
 			case workflowledger.RunStatusDeliveryPending:
 				e.reconcileParkedDelivery(ctx, work.Abs, res, store, repo, storePath, run.RunID, quiet)
@@ -129,6 +145,7 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 	finish, err := beginWorkflowExecution(root, storePath, runID)
 	if err != nil {
 		// Another executor holds this run; leave it parked.
+		log.Printf("workflow: session recovery: %s skip: execution flock held: %v", runID, err)
 		return
 	}
 	if skipParkedPlanRunPublication(ctx, store, repo, runID) {
@@ -143,11 +160,7 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 		// operator to finish with 'mivia stack drive'; settling or delivering
 		// it now would report the plan run succeeded over an incomplete
 		// stack, or publish the plan PR over it (deliver-before-drive).
-		policy := stackPlanMergePolicy(ctx, repo, runID)
-		if !stackDriveCompleted(ctx, store, repo, runID, policy) {
-			if !quiet {
-				log.Printf("workflow: session recovery: plan run %s stack incomplete; leaving parked", runID)
-			}
+		if abort := e.driveParkedStackIfNeeded(ctx, root, res, store, repo, runID, quiet); abort {
 			finish()
 			return
 		}
@@ -156,6 +169,30 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 				log.Printf("workflow: session recovery: settle skipped plan run %s failed: %v", runID, settleErr)
 			}
 		}
+		finish()
+		return
+	}
+	// Drive-before-delivery guard (F10): when DeliverPlanRun is true,
+	// skipParkedPlanRunPublication returns false and control reaches here.
+	// If the run is a multi-chunk stacking plan run whose stack has not driven
+	// to completion, deliverRunWithStore would settle the plan run (no_diff →
+	// succeeded) over an undriven stack — the deliver-before-drive bug.
+	// classifyStackPlanRunDelivery covers the CLI path only
+	// (workflow_deliver.go), not the engine sweep path. Drive the stack
+	// first; then fall through to deliverRunWithStore, which publishes the
+	// plan run PR as DeliverPlanRun=true requests.
+	if _, ok := stackDecomposedChunks(ctx, repo, runID); ok {
+		if abort := e.driveParkedStackIfNeeded(ctx, root, res, store, repo, runID, quiet); abort {
+			finish()
+			return
+		}
+	}
+	// Publish authority for a stack chunk/integration run derives from the
+	// stack's merge policy: the allowPublish=true just below authorizes a
+	// non-stacking run (or a deliver_plan_run=true plan run), never a
+	// blanket grant (reachable-bug audit finding 1; see
+	// stackRunPublishWithheld's doc comment).
+	if stackRunPublishWithheld(ctx, repo, runID, quiet) {
 		finish()
 		return
 	}
@@ -177,6 +214,47 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 		return
 	}
 	e.publishDeliveredRunFinished(ctx, repo, runID)
+}
+
+// driveParkedStackIfNeeded drives a parked multi-chunk plan run's incomplete
+// stack from the recovery sweep. Returns true (abort) when the stack is
+// still incomplete after the drive attempt and the caller must leave the run
+// parked; returns false when the stack is complete (or not a stacking run)
+// and the caller may proceed with delivery or settlement. Used by both the
+// skip-publication path and the deliver-before-delivery guard (F10).
+func (e *sessionWorkflowEngine) driveParkedStackIfNeeded(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID string, quiet bool) bool {
+	policy := stackPlanMergePolicy(ctx, repo, runID)
+	if stackDriveCompleted(ctx, root, store, repo, runID, policy, true) {
+		return false
+	}
+	// The stack is seeded but incomplete: DRIVE it from the recovery
+	// sweep (the durable backstop). The in-session drive can abort for
+	// many reasons (its 30-minute attempt bound, a transient admission
+	// or delivery fault, the session ending), and before this fix
+	// NOTHING else ever advanced a seeded-but-incomplete stack: the
+	// plan run sat parked at delivery_pending forever with zero chunk
+	// runs and zero PRs (the parked-stack wedge). The drive is
+	// idempotent (stable admission keys + task CAS + durable
+	// reconcile), so re-driving from the sweep on every tick is safe;
+	// the per-run execution flock serializes it against the in-session
+	// drive. A drive that outlives its bound returns and the next tick
+	// resumes it.
+	driveCtx, cancelDrive := context.WithTimeout(ctx, workflowAutoDeliveryAttemptTimeout)
+	drove, driveErr := e.driveParkedStack(driveCtx, root, res, store, repo, runID)
+	cancelDrive()
+	if driveErr != nil && !errors.Is(driveErr, errStackAwaitsGrant) {
+		if !quiet {
+			log.Printf("workflow: session recovery: drive parked stack %s failed: %v", runID, driveErr)
+		}
+		return true
+	}
+	if !drove || !stackDriveCompleted(ctx, root, store, repo, runID, policy, true) {
+		if !quiet {
+			log.Printf("workflow: session recovery: plan run %s stack incomplete; leaving parked", runID)
+		}
+		return true
+	}
+	return false
 }
 
 // skipParkedPlanRunPublication reports whether a delivery_pending run has the
@@ -236,32 +314,79 @@ func stackPlanMergePolicy(ctx context.Context, repo workflowledger.Repository, r
 	return compiled.Stacking.MergePolicy
 }
 
+// driveParkedStack continues a parked multi-chunk plan run's stack drive from
+// the recovery sweep (reconcileParkedDelivery). The in-session drive can abort
+// on its attempt bound or any fault; this is the durable re-entry point that
+// keeps the stack advancing until every chunk and the integration run settle,
+// after which the sweep settles the plan run itself. It reconstructs the
+// prepared run (the same prepareWorkflowRun path the CLI uses) from the plan
+// run's durable snapshot, so the drive replays the plan run's declared inputs
+// into every chunk run (D3). Returns whether it drove a stack; the caller
+// re-checks stackDriveCompleted to decide the settle. errStackAwaitsGrant
+// propagates as-is (a durable pause, not a failure).
+func (e *sessionWorkflowEngine) driveParkedStack(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID string) (bool, error) {
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return false, err
+	}
+	raw, err := repo.GetRunSnapshot(ctx, runID)
+	if err != nil {
+		return false, err
+	}
+	_, compiled, _, err := validateWorkflowResumeSnapshot(run, raw)
+	if err != nil {
+		return false, err
+	}
+	if compiled == nil || compiled.Stacking == nil || !compiled.Stacking.Enabled || !compiled.DeliveryActive() {
+		return false, nil // nothing to drive (not a stacking delivery plan run)
+	}
+	snap, err := workflowledger.UnmarshalSnapshot(raw)
+	if err != nil {
+		return false, err
+	}
+	rawInputs := make([]string, 0, len(snap.Inputs))
+	for k, v := range snap.Inputs {
+		rawInputs = append(rawInputs, k+"="+v)
+	}
+	prepared, err := prepareWorkflowRun(run.WorkflowName, root, workflowConfigPath(root, e.configPath), rawInputs)
+	if err != nil {
+		return false, err
+	}
+	defer prepared.closeFn()
+	// Replay the plan run's inputs: the controller's PrepareWorkflowRun keeps
+	// the inputSnapshot from the plan run's OWN admission (it compiled from
+	// the same raw inputs), so chunk runs replay the plan's declared inputs
+	// exactly as the in-session drive would (D3). Publish authority derives
+	// from the merge policy like the session hook: an approve stack (the
+	// default) must pause for the per-chunk deliver grant, never auto-publish
+	// (live finding: the sweep hardcoded true and silently merged approve
+	// stacks, skipping the human checkpoint).
+	return maybeDriveSettledStack(ctx, prepared, runID, stackingDriveAllowPublish(prepared.compiled), io.Discard, io.Discard)
+}
+
 // stackDriveCompleted reports whether a stacking plan run's chunk stack
 // actually drove to completion: the run ledger carries the succeeded decompose
-// output the driver reads (loadStackPlanOutput), every chunk task in the task
-// ledger is merged - the same durable state driveStackToCompletion checks
-// before it settles (allChunksMerged(chunks, stackMergedSet(byID))) - AND the
-// final integration run was admitted and settled. The integration run resolves
-// via its stable admission key (stackRunRef on the integration chunk id;
-// runID IS the stack id here, loadStackPlanOutput keys by it). The gate is
-// deliberately STRICTER than waitIntegrationRunSettled, which reports the
-// stack complete even for an unsettled integration run (its pending/running/
-// waiting_approval fall-through): conservative by design, the sweep never
-// settles a plan run over a stack the driver is still advancing. A
+// output the driver reads (loadStackPlanOutput), every chunk task is merged
+// (allChunksMerged over stackTaskMap), and the final integration run - keyed
+// by its stable admission key; runID IS the stack id - was admitted and
+// settled. The gate is deliberately STRICTER than waitIntegrationRunSettled
+// (which reports complete for an unsettled integration run), so the sweep
+// never settles a plan run over a stack the driver is still advancing. A
 // delivery_pending integration run counts as settled ONLY under the grant
-// merge policy - the driver's completion state there is "awaits the publish
-// grant" (waitIntegrationRunSettled returns nil); under merge_policy=auto the
+// merge policy ("awaits the publish grant"); under merge_policy=auto the
 // driver still auto-merges the integration PR, so delivery_pending is NOT
-// complete there and the plan run stays parked until the merge lands (policy
-// resolves via stackPlanMergePolicy; "" behaves as the grant default). The
-// integration dimension closes the crash-window hole where the bounded drive
-// expired (or the process died) after every chunk merged but before the
-// integration run was admitted or settled: without it the sweep would settle
-// the plan run succeeded over a stack the driver itself refuses to call
-// complete. Any resolution failure (missing run, corrupt output, unseeded
-// plan) returns false, so a seeded-but-incomplete stack stays delivery_pending
-// for the operator to finish with 'mivia stack drive'.
-func stackDriveCompleted(ctx context.Context, store *storage.SQLite, repo workflowledger.Repository, runID, policy string) bool {
+// complete there. Any resolution failure (missing run, corrupt output,
+// unseeded plan) returns false: a seeded-but-incomplete stack stays
+// delivery_pending for 'mivia stack drive' to finish.
+//
+// remoteMergeOracle: settle paths (deliver, stack drive, the sweep) MUST
+// pass true - for a succeeded, pushed integration run under auto policy,
+// the oracle (git merge-base, then gh IsMerged if inconclusive) must
+// confirm the PR actually merged before the plan run may settle.
+// Read-only display surfaces (workflow status's undriven notice, the
+// run_finished event publisher) pass false: the durable pushed evidence
+// settles the DISPLAY verdict, and a read-only surface runs no probes.
+func stackDriveCompleted(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID, policy string, remoteMergeOracle bool) bool {
 	// loadAllStackChunks (not the plan run's own output alone) so a pending
 	// decompose-continuation wave (§12.1: hasMore=true with no continuation
 	// admitted yet) is never mistaken for a complete stack just because every
@@ -301,8 +426,33 @@ func stackDriveCompleted(ctx context.Context, store *storage.SQLite, repo workfl
 		// break that contract (a later drive skips autoMergeOne once the
 		// integration run is terminal).
 		return policy != "auto"
+	case workflowledger.RunStatusSucceeded:
+		// Under merge_policy=auto with durable pushed evidence, the
+		// integration PR must actually be merged before the plan run may
+		// settle. Otherwise a crash between deliverRunWithStore and
+		// waitForIntegrationMerge leaves the final PR open while the
+		// sweep reports the stack complete.
+		if policy != "auto" || !stackRunPushed(repo, intRun) {
+			return true
+		}
+		if !remoteMergeOracle {
+			// Display-only caller: the durable pushed evidence settles the
+			// verdict, and a read-only surface must not run network probes.
+			return true
+		}
+		slug, _ := delivery.ParseOwnerRepo(intRun.RemoteURL)
+		checker := gitMergeChecker{
+			git: workflowDeliverGit,
+			pr:  workflowDeliverNewPR(),
+			gc:  delivery.GitContext{Dir: root, GitDir: filepath.Join(root, ".git")},
+		}
+		merged, err := checker.Merged(ctx, stackHeadBranch(intRun), intRun.BaseRef, stackRunHeadCommit(repo, intRun), slug, true)
+		if err != nil {
+			return false
+		}
+		return merged
 	default:
-		// Any terminal status: the integration run settled.
+		// Any other terminal status: the integration run settled.
 		return true
 	}
 }

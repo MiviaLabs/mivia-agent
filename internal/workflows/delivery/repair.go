@@ -175,11 +175,11 @@ func RepairHint(cause error) string {
 	case IsPRMetadataError(cause):
 		lead = "the pull-request metadata (title/summary) was rejected; fix pr_title and pr_summary in your structured output"
 	case IsDiffSizeError(cause):
-		lead = "the delivered diff is too large; the host already tried its own automatic file split (largest files first) and could not bring it under the hard limit - actually shrink the change (reduce scope, split a large edit, or move separable work out of this chunk); keep tests green and do not commit yourself - the delivery host commits the worktree before the next delivery attempt"
+		lead = "the delivered diff is too large; the host's automatic file split either could not bring it under the hard limit or was refused because it would separate a file from its test companion (the rejection output below says which) - actually shrink the change (reduce scope, split a large edit, or move separable work out of this chunk); a file and its tests must ship in the same commit (both in the delivered commit or both deferred); keep tests green and do not commit yourself - the delivery host commits the worktree before the next delivery attempt"
 	case IsRefusal(cause):
 		lead = "the delivery host permanently refused publication; this is usually not fixable by a workflow step - read the reason below and correct the underlying condition"
 	default:
-		lead = "the delivery gate rejected the change; fix the reported failure in the worktree. If the rejection mentions uncommitted or foreign changes, make sure your repair edits are complete - the delivery host commits the worktree before the next delivery attempt (do not run git commit or push yourself)"
+		lead = "the delivery gate rejected the change; fix the reported failure in the worktree. If the rejection is a hook or gate failure, note that the hook verified the DELIVERED COMMIT tree while the evidence gates verified the worktree; the rejection output above lists the delivered, deferred, and worktree files when they differ. Do not revert production code to satisfy a stale test in the delivered commit - that undoes the fix; make the delivered commit internally consistent instead. If the rejection mentions uncommitted or foreign changes, make sure your repair edits are complete - the delivery host commits the worktree before the next delivery attempt (do not run git commit or push yourself)"
 	}
 	if raw == "" {
 		return lead

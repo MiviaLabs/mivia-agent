@@ -113,6 +113,7 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 		PreparationManager:  contextmgr.StructuralPreparationManager{},
 		CheckpointPublisher: publisher,
 		Enabled:             true,
+		UsageWriter:         storage.NewUsageWriter(store, principal.WorkspaceID),
 	}
 	// The summary gate is explicit: the [context.summary] flag, a configured
 	// [privacy] policy, and a resolved provider endpoint together wire the LLM

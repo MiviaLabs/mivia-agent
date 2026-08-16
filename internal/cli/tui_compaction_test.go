@@ -125,3 +125,27 @@ func TestRenderCompactionNoticeMarksStructuralOnly(t *testing.T) {
 		t.Fatalf("notice = %q, want it to say the compaction produced no summary", notice)
 	}
 }
+
+// TestRenderCompactionNoticeIncludesReason pins that the classified Reason
+// rides the automatic in-turn banner, not just the manual /compact path
+// (compactStructuralOnlyNotice). Without this the operator sees "structural
+// only, no summary" with no way to tell an unwired summarizer from a failed
+// summary call.
+func TestRenderCompactionNoticeIncludesReason(t *testing.T) {
+	event, err := events.NewCompactionEvent(events.CompactionEventParams{
+		Trigger: "threshold", BeforeTokens: 25000, AfterTokens: 17000,
+		SourceRange: contextstate.SourceRange{
+			Start: contextstate.SourceID{SessionID: "session", Sequence: 1},
+			End:   contextstate.SourceID{SessionID: "session", Sequence: 3},
+		},
+		SummaryVersion: 1, Summarized: false,
+		Reason: "no summarizer is configured for this session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notice := renderCompactionNotice(event)
+	if !strings.Contains(notice, "no summarizer is configured for this session") {
+		t.Fatalf("notice = %q, want the classified reason", notice)
+	}
+}

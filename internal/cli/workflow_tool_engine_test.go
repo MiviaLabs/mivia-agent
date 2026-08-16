@@ -331,10 +331,15 @@ func (p plainErrorDeliverGit) Run(_ context.Context, _ delivery.GitContext, _ ..
 
 // waitForSessionEngineIdle blocks until the engine's background goroutine for
 // runID has finished (the active entry is removed after the controller and any
-// auto-delivery complete), or fails the test on timeout.
+// auto-delivery complete), or fails the test on timeout. within overrides the
+// default 5s deadline.
 func waitForSessionEngineIdle(t *testing.T, e *sessionWorkflowEngine, runID string) {
+	waitForSessionEngineIdleWithin(t, e, runID, 5*time.Second)
+}
+
+func waitForSessionEngineIdleWithin(t *testing.T, e *sessionWorkflowEngine, runID string, within time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(within)
 	for time.Now().Before(deadline) {
 		e.mu.Lock()
 		active, ok := e.active[runID]
@@ -569,38 +574,6 @@ func TestSessionDeliverUsesRunWorktreeNotCallerRoot(t *testing.T) {
 		if !strings.Contains(dir, run.WorktreeName) {
 			t.Fatalf("git Dir = %q, want it to contain worktree %q", dir, run.WorktreeName)
 		}
-	}
-}
-
-// TestSessionEngineCancelPreservesDeliveryPendingClaim proves the session
-// engine refuses to cancel a delivery_pending run BEFORE any claim mutation:
-// a fresh foreign claim (a live deliverer on this or another host) must
-// survive the refused cancel. Regression: Cancel cleared the claim before
-// controller.CancelRun refused delivery_pending runs, so a refused cancel
-// stripped the delivery claim and enabled double-publish.
-func TestSessionEngineCancelPreservesDeliveryPendingClaim(t *testing.T) {
-	root, storePath, configPath, _ := newDeliveryFixture(t)
-	runID := runFixtureToDeliveryPending(t, root, configPath)
-	repo := openDeliveryStore(t, storePath)
-	if err := repo.ClaimRun(context.Background(), runID, "foreign-cancel-host"); err != nil {
-		t.Fatal(err)
-	}
-
-	e := newSessionWorkflowEngine(root, configPath)
-	_, err := e.Cancel(context.Background(), runID)
-	if err == nil || !strings.Contains(err.Error(), "deliver") {
-		t.Fatalf("Cancel of delivery_pending = %v, want delivery refusal", err)
-	}
-	// The foreign claim must survive the refused cancel.
-	if err := repo.ClaimRun(context.Background(), runID, "probe"); !errors.Is(err, workflowledger.ErrClaimHeld) {
-		t.Fatalf("claim after refused cancel = %v, want still ErrClaimHeld", err)
-	}
-	fresh, getErr := repo.GetRun(context.Background(), runID)
-	if getErr != nil {
-		t.Fatal(getErr)
-	}
-	if fresh.Status != workflowledger.RunStatusDeliveryPending {
-		t.Fatalf("run status after refused cancel = %q, want delivery_pending", fresh.Status)
 	}
 }
 

@@ -49,11 +49,8 @@ func (t *listDirTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *listDirTool) Name() string { return "list_dir" }
 func (t *listDirTool) Description() string {
-	return "List files and subdirectories in a workspace folder by relative path (default \".\"). " +
-		"Params: optional path; optional depth (default 1, max 16) for a recursive tree; " +
-		"optional include_size (boolean; when omitted defaults to true if depth > 1, false if depth is 1). " +
-		"Recursive mode emits an indented tree with file sizes and collapses ignored/secret directories. " +
-		"Prefer this over run_command for listing."
+	return "List files and subdirectories of a workspace-relative path. " +
+		"depth > 1 emits an indented tree with file sizes and collapses ignored/secret directories."
 }
 func (t *listDirTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -64,7 +61,7 @@ func (t *listDirTool) Parameters() map[string]any {
 		},
 		"include_size": map[string]any{
 			"type":        "boolean",
-			"description": "Include file sizes. When omitted: true if depth > 1, false if depth is 1.",
+			"description": "Include file sizes (default: true if depth > 1, else false).",
 		},
 	}, nil)
 }

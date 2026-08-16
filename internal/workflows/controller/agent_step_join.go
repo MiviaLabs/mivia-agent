@@ -77,12 +77,17 @@ func joinWatchdogTickInterval(bound time.Duration) time.Duration {
 // cancel a live re-dispatched child early. A child silent since the join
 // start is canceled at the bound. Each tick reports a step heartbeat to
 // the optional emitter while the join is still live. The returned stop
-// function ends the ticker and the watchdog goroutine.
+// function ends the ticker and BLOCKS until the watchdog goroutine has
+// exited, so a heartbeat emit already in flight when stop is called can
+// never land after the caller (joinWithCancellation) returns and the run
+// settles — mirrors startDurableHeartbeatTicker's join-on-stop contract.
 func watchJoinLiveness(joinCtx context.Context, cancel context.CancelFunc, taskID string, bound time.Duration, emit func(ProgressEvent)) (stop func()) {
 	anchor := time.Now()
 	ticker := time.NewTicker(joinWatchdogTickInterval(bound))
 	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		defer ticker.Stop()
 		for {
 			select {
@@ -108,7 +113,7 @@ func watchJoinLiveness(joinCtx context.Context, cancel context.CancelFunc, taskI
 	}()
 	return func() {
 		close(done)
-		ticker.Stop()
+		<-exited
 	}
 }
 

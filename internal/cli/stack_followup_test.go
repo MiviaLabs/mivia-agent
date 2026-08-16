@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -226,7 +227,7 @@ func TestAdmitFollowUpCrashAfterPRCreateThenRetryIsExactlyOnce(t *testing.T) {
 	wireFollowUpPRStub(t, pr)
 	prepared := &preparedWorkflowRun{root: root, repo: repo}
 	var stdout, stderr bytes.Buffer
-	if err := admitFollowUpsForChunk(prepared, ledger, followUpTestStackID, followUpTestChunkID, &stdout, &stderr); err != nil {
+	if err := admitFollowUpsForChunk(context.Background(), prepared, ledger, followUpTestStackID, followUpTestChunkID, &stdout, &stderr); err != nil {
 		t.Fatalf("retry admission after crash: %v", err)
 	}
 	assertSingleFollowUpRegistration(t, repo, ledger, key, runID)
@@ -239,8 +240,10 @@ func TestAdmitFollowUpCrashAfterPRCreateThenRetryIsExactlyOnce(t *testing.T) {
 
 // TestAdmitFollowUpFenceExistsBeforeGitSideEffects pins the ordering half of
 // bug 4: the follow-up run row (the durable fence) must exist BEFORE the
-// deferred branch is pushed, and a crash right after the PR create must
-// leave the fence behind so the retry resumes it.
+// deferred branch is pushed. A crash right after the PR create is now
+// healed by EnsureFollowUpPublished's FindByHead retry (F12 fix 1), so the
+// first admission succeeds instead of erroring — but the fence ordering
+// and exactly-once contract still hold.
 func TestAdmitFollowUpFenceExistsBeforeGitSideEffects(t *testing.T) {
 	root, repo, ledger, _, key, runID := newFollowUpAdmissionFixture(t)
 	ctx := context.Background()
@@ -253,8 +256,10 @@ func TestAdmitFollowUpFenceExistsBeforeGitSideEffects(t *testing.T) {
 
 	prepared := &preparedWorkflowRun{root: root, repo: repo}
 	var stdout, stderr bytes.Buffer
-	if err := admitFollowUpsForChunk(prepared, ledger, followUpTestStackID, followUpTestChunkID, &stdout, &stderr); err == nil {
-		t.Fatal("first admission succeeded; want the simulated crash after PR create")
+	// The first admission succeeds despite the crash: EnsureFollowUpPublished's
+	// FindByHead retry finds the PR that crashOnCreate recorded in byHead.
+	if err := admitFollowUpsForChunk(context.Background(), prepared, ledger, followUpTestStackID, followUpTestChunkID, &stdout, &stderr); err != nil {
+		t.Fatalf("first admission with crashOnCreate: %v; want success (FindByHead retry heals)", err)
 	}
 	if !fence.presentAtFirstPush() {
 		t.Fatal("git push ran before the follow-up run row existed; fence broken")
@@ -265,15 +270,16 @@ func TestAdmitFollowUpFenceExistsBeforeGitSideEffects(t *testing.T) {
 	if creates, _ := pr.calls(); creates != 1 {
 		t.Fatalf("PR creates in the crashed admission = %d, want 1", creates)
 	}
-
-	// Retry after the crash: resumes the reserved row and reuses the PR.
-	pr.crashOnCreate = false
-	if err := admitFollowUpsForChunk(prepared, ledger, followUpTestStackID, followUpTestChunkID, &stdout, &stderr); err != nil {
-		t.Fatalf("retry admission after crash: %v", err)
-	}
+	// The follow-up was fully registered on the first call (FindByHead retry
+	// recovered from the crash), so the exactly-once contract holds now.
 	assertSingleFollowUpRegistration(t, repo, ledger, key, runID)
+
+	// A second call is a no-op (task already exists).
+	if err := admitFollowUpsForChunk(context.Background(), prepared, ledger, followUpTestStackID, followUpTestChunkID, &stdout, &stderr); err != nil {
+		t.Fatalf("second admission after crash-heal: %v", err)
+	}
 	if creates, _ := pr.calls(); creates != 1 {
-		t.Fatalf("PR creates after retry = %d, want 1 (FindByHead reused the crashed PR)", creates)
+		t.Fatalf("PR creates after second call = %d, want 1 (no duplicate)", creates)
 	}
 }
 
@@ -294,10 +300,10 @@ func TestAdmitFollowUpConcurrentDoubleAdmissionRegistersOnce(t *testing.T) {
 
 	errs := make(chan error, 2)
 	go func() {
-		errs <- admitFollowUpsForChunk(prepared, ledger, followUpTestStackID, followUpTestChunkID, io.Discard, io.Discard)
+		errs <- admitFollowUpsForChunk(context.Background(), prepared, ledger, followUpTestStackID, followUpTestChunkID, io.Discard, io.Discard)
 	}()
 	go func() {
-		errs <- admitFollowUpsForChunk(prepared, ledger, followUpTestStackID, followUpTestChunkID, io.Discard, io.Discard)
+		errs <- admitFollowUpsForChunk(context.Background(), prepared, ledger, followUpTestStackID, followUpTestChunkID, io.Discard, io.Discard)
 	}()
 	// The first error returned is the admission whose CreateRun passed the
 	// gate; the other is blocked inside it (its PR create already happened
@@ -321,12 +327,14 @@ func TestAdmitFollowUpConcurrentDoubleAdmissionRegistersOnce(t *testing.T) {
 // PR actually exists server-side, and to wait for a barrier before creating
 // (so a test can pin the ordering of two concurrent admissions).
 type followUpPRClient struct {
-	mu            sync.Mutex
-	byHead        map[string]delivery.PRRef
-	creates       int
-	finds         int
-	crashOnCreate bool
-	waitBlocked   <-chan struct{}
+	mu                       sync.Mutex
+	byHead                   map[string]delivery.PRRef
+	findByHeadSwaps          map[string]delivery.PRRef
+	creates                  int
+	finds                    int
+	crashOnCreate            bool
+	failCreateThenFindByHead bool
+	waitBlocked              <-chan struct{}
 }
 
 func newFollowUpPRClient() *followUpPRClient {
@@ -341,10 +349,21 @@ func (c *followUpPRClient) FindByHead(ctx context.Context, repo, headBranch stri
 		out := ref
 		return &out, nil
 	}
+	// Check for a swap: inject the PR into byHead for subsequent calls.
+	if swap, ok := c.findByHeadSwaps[headBranch]; ok {
+		c.byHead[headBranch] = swap
+	}
 	return nil, nil
 }
 
+func (c *followUpPRClient) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (c *followUpPRClient) Create(ctx context.Context, repo string, in delivery.PRInput) (delivery.PRRef, error) {
+	if c.failCreateThenFindByHead {
+		return delivery.PRRef{}, errors.New("simulated create conflict: PR already exists")
+	}
 	if c.waitBlocked != nil {
 		// Hold the first admission's PR create until the concurrent
 		// admission has reached its CreateRun (which it can only do after
@@ -452,4 +471,130 @@ func gitExec(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v: %v: %s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// TestSweepSkipsOrphanFollowUpRunRows pins F12 finding 3: a pending run
+// row with the wfr-followup- prefix and an empty snapshot digest (left by
+// reserveFollowUpRun when EnsureFollowUpPublished fails) must be skipped by
+// the sweep, not passed to reconcileParkedResume where it would produce
+// "snapshot digest does not match" noise every tick.
+func TestSweepSkipsOrphanFollowUpRunRows(t *testing.T) {
+	cases := []struct {
+		name       string
+		runID      string
+		snapDigest string
+		wantSkip   bool
+	}{
+		{"orphan follow-up row", "wfr-followup-abc123", "", true},
+		{"orphan follow-up row (non-empty digest)", "wfr-followup-abc123", "sha256:deadbeef", false},
+		{"normal pending run", "wfr-stack-c1", "", false},
+		{"normal pending run with digest", "wfr-stack-c1", "sha256:deadbeef", false},
+		{"follow-up that was healed", "wfr-followup-abc123", "sha256:healed", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			run := workflowledger.RunSnapshot{RunID: tc.runID, SnapshotDigest: tc.snapDigest, Status: workflowledger.RunStatusPending}
+			skip := run.SnapshotDigest == "" && strings.HasPrefix(run.RunID, "wfr-followup-")
+			if skip != tc.wantSkip {
+				t.Fatalf("skip = %v, want %v (runID=%q, snapDigest=%q)", skip, tc.wantSkip, tc.runID, tc.snapDigest)
+			}
+		})
+	}
+}
+
+// TestEnsureFollowUpPublishedCreateRaceReusesExistingPR pins F12 finding 1:
+// when two drivers race through EnsureFollowUpPublished, both pass the
+// FindByHead→nil check and both call pr.Create. The loser gets an error
+// from pr.Create but must still find and return the PR the winner created
+// via a retry FindByHead, rather than propagating the create error.
+func TestEnsureFollowUpPublishedCreateRaceReusesExistingPR(t *testing.T) {
+	root, repo, _, parentRun, key, runID := newFollowUpAdmissionFixture(t)
+	ctx := context.Background()
+
+	// Reserve the fence row so the function reaches EnsureFollowUpPublished.
+	if err := repo.CreateRun(ctx, followUpRunSnapshot(parentRun, runID, key, workflowledger.RunStatusPending), []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+
+	pr := newFollowUpPRClient()
+	// FindByHead returns nil the first time (both racers pass the check),
+	// but the findByHeadSwaps mechanism injects the PR for the retry call.
+	deferredBranch := delivery.DeferredBranchName(stackHeadBranch(parentRun))
+	pr.findByHeadSwaps = map[string]delivery.PRRef{
+		deferredBranch: {RemoteID: "99", URL: "https://github.com/acme/stack/pull/99"},
+	}
+	pr.failCreateThenFindByHead = true
+	wireFollowUpPRStub(t, pr)
+
+	var stdout bytes.Buffer
+	_, _, _, published, err := delivery.EnsureFollowUpPublished(
+		ctx, workflowDeliverGit, pr, root, repo, parentRun, followUpTestChunkID,
+		func(s string) { fmt.Fprint(&stdout, s) },
+	)
+	if err != nil {
+		t.Fatalf("EnsureFollowUpPublished with create-race: %v; want nil (reused existing PR)", err)
+	}
+	if !published {
+		t.Fatal("published = false, want true")
+	}
+	if !strings.Contains(stdout.String(), "created by concurrent driver") {
+		t.Fatalf("stdout = %q, want 'created by concurrent driver'", stdout.String())
+	}
+}
+
+// ctxBlockingUntilCancelGitRunner blocks on any "push" call until its context
+// is cancelled, then returns the context error. It lets tests prove that
+// follow-up admission respects the drive context instead of hardcoding
+// context.Background() inside EnsureFollowUpPublished (F8 residual).
+type ctxBlockingUntilCancelGitRunner struct {
+	t           *testing.T
+	pushStarted chan struct{}
+}
+
+func (g ctxBlockingUntilCancelGitRunner) Run(ctx context.Context, gc delivery.GitContext, args ...string) (string, error) {
+	if len(args) > 0 && args[0] == "rev-parse" {
+		return "deadbeef", nil
+	}
+	if len(args) > 0 && args[0] == "push" && g.pushStarted != nil {
+		close(g.pushStarted)
+	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// TestAdmitFollowUpsForChunkHonorsDriveContext pins the F8 residual: a
+// cancelled drive context must stop a blocked follow-up git push and return
+// the cancellation error, instead of holding the operation open on
+// context.Background().
+func TestAdmitFollowUpsForChunkHonorsDriveContext(t *testing.T) {
+	root, repo, ledger, _, _, _ := newFollowUpAdmissionFixture(t)
+	pushStarted := make(chan struct{})
+	wireFollowUpGitStub(t, ctxBlockingUntilCancelGitRunner{t: t, pushStarted: pushStarted})
+	pr := newFollowUpPRClient()
+	wireFollowUpPRStub(t, pr)
+
+	prepared := &preparedWorkflowRun{root: root, repo: repo}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-pushStarted
+		cancel()
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- admitFollowUpsForChunk(ctx, prepared, ledger, followUpTestStackID, followUpTestChunkID, io.Discard, io.Discard)
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("admitFollowUpsForChunk returned nil for cancelled context; want cancellation error")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("admitFollowUpsForChunk error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("admitFollowUpsForChunk did not return after context cancellation; follow-up admission ignores drive context")
+	}
 }

@@ -15,6 +15,7 @@ import (
 	"io"
 	"sort"
 
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
@@ -27,18 +28,42 @@ import (
 // the integration run.
 var errStackAwaitsGrant = errors.New("stack awaits a human publish grant or merge")
 
+// stackingDriveAllowPublish reports whether a drive of a stacking workflow may
+// publish chunk PRs itself: only under merge_policy=auto. Under approve (the
+// default) the human publish grant is the single checkpoint - the drive marks
+// chunks reviewed and pauses, exactly like the CLI foreground path without
+// --allow-publish. The session hook and the recovery sweep both derive their
+// publish authority from the policy (they must not hardcode the grant, or
+// merge_policy=approve never pauses and the checkpoint is dead); the
+// per-chunk `mivia workflow deliver --allow-publish` grant is the only
+// channel that advances an approve stack.
+func stackingDriveAllowPublish(compiled *compiler.CompiledWorkflow) bool {
+	return compiled != nil && compiled.Stacking != nil && compiled.Stacking.MergePolicy == "auto"
+}
+
 // stackAwaitsGrantOnly reports whether at least one chunk waits at
 // "reviewed" (a human publish grant) or "published" (a human PR merge under
 // a non-auto policy) and NOTHING else can advance without a human: every
-// task is reviewed, published, or merged. A running chunk is still working,
-// so it keeps the wait alive. This predicate is policy-agnostic; the caller
-// applies it only when merge_policy != "auto" (under auto the driver itself
-// merges published PRs, so polling does advance the stack).
+// task is reviewed, published, merged, or a not-yet-admitted task (planned/
+// queued/blocked/reopened). A running chunk is still working, so it keeps
+// the wait alive. The pre-admission statuses count as "cannot advance"
+// because the caller checks chunkNowAdmissible FIRST (a pre-admission chunk
+// whose dependencies are all merged returns from the poll pass to drive the
+// next wave); by the time this predicate runs, every pre-admission task is
+// BLOCKED on an unmerged dependency - only a human merge can unlock it, so
+// polling is a guaranteed no-op. Without this, a seeded dependent chunk
+// (stackAwaitsGrantOnly's old "default: return false") defeated the durable
+// pause and the wait polled a grant-only stack until the drive bound (live
+// finding: merge_policy=approve stacks with unadmitted dependents burned the
+// whole attempt bound instead of pausing). This predicate is
+// policy-agnostic; the caller applies it only when merge_policy != "auto"
+// (under auto the driver itself merges published PRs, so polling does
+// advance the stack).
 func stackAwaitsGrantOnly(byID map[string]tasks.Task) bool {
 	waiting := 0
 	for _, t := range byID {
 		switch t.Status {
-		case stackStatusReviewed, stackStatusPublished:
+		case stackStatusReviewed, stackStatusPublished, stackStatusPlanned, stackStatusQueued, stackStatusBlocked, stackStatusReopened:
 			waiting++
 		case stackStatusMerged:
 		default:
@@ -63,10 +88,37 @@ func stackGrantHintLines(list []tasks.Task, runRefByChunk func(chunkID string) s
 			}
 			lines = append(lines, fmt.Sprintf("chunk=%s awaits the publish grant: mivia workflow deliver %s --allow-publish", t.ID, ref))
 		case stackStatusPublished:
-			lines = append(lines, fmt.Sprintf("chunk=%s has an open PR: merge it (merge_policy=approve), then re-run the drive", t.ID))
+			if chunkHasUnmergedDeferredDependent(list, t.ID) {
+				lines = append(lines, fmt.Sprintf("chunk=%s has an open PR AND a deferred follow-up that must merge first: merge the follow-up, then this chunk, then re-run the drive", t.ID))
+			} else {
+				lines = append(lines, fmt.Sprintf("chunk=%s has an open PR: merge it (merge_policy=approve), then re-run the drive", t.ID))
+			}
 		}
 	}
 	return lines
+}
+
+// chunkHasUnmergedDeferredDependent reports whether a follow-up chunk named
+// <chunkID>-deferred exists, depends on chunkID, and is not yet merged. Under
+// merge_policy=approve the parent PR must not merge before its follow-up,
+// because the follow-up is stacked on the parent's branch and would be closed
+// unmerged (orphaning its content) when the parent branch is deleted.
+func chunkHasUnmergedDeferredDependent(list []tasks.Task, chunkID string) bool {
+	byID := make(map[string]tasks.Task, len(list))
+	for _, t := range list {
+		byID[t.ID] = t
+	}
+	deferredID := chunkID + "-deferred"
+	t, ok := byID[deferredID]
+	if !ok || t.Status == stackStatusMerged {
+		return false
+	}
+	for _, dep := range t.Deps {
+		if dep == chunkID {
+			return true
+		}
+	}
+	return false
 }
 
 // printStackGrantPause writes the pause guidance for every reviewed chunk.

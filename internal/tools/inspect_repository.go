@@ -50,29 +50,28 @@ type inspectRepositoryTool struct {
 func (t *inspectRepositoryTool) Name() string { return "inspect_repository" }
 
 func (t *inspectRepositoryTool) Description() string {
-	return "Search file contents with a regex across one or more paths and return matches with surrounding line context in one bounded call. " +
-		"Params: query (required regex), optional paths (default [\".\"]), optional glob (e.g. *.md, *.py, *.ts), max_results (required, 1-100), optional context_lines (0-10, default 0). " +
-		"Returns fixed-shape JSON with provenance and truncation state. Prefer this over separate grep and read_file calls when you need match context."
+	return "Search file contents with a regex across one or more paths; returns matches with line context in one bounded call. " +
+		"Returns fixed-shape JSON with provenance and truncation state. Prefer over separate grep and read_file calls when you need match context."
 }
 
 func (t *inspectRepositoryTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
-		"query": map[string]any{"type": "string", "description": "Regular expression pattern (required)"},
+		"query": map[string]any{"type": "string", "description": "Regular expression pattern"},
 		"paths": map[string]any{
 			"type":        "array",
-			"description": "Workspace-relative paths to search (default [\".\"])",
+			"description": "Workspace-relative search roots (default [\".\"])",
 			"items":       map[string]any{"type": "string"},
 		},
-		"glob": map[string]any{"type": "string", "description": "Optional filename glob filter (e.g. *.py, *.ts, *.md)"},
+		"glob": map[string]any{"type": "string", "description": "Filename glob filter (e.g. *.py, *.ts, *.md)"},
 		"max_results": map[string]any{
 			"type":        "integer",
-			"description": "Maximum number of results to return (1-100, required)",
+			"description": "Maximum results (1-100)",
 			"minimum":     float64(1),
 			"maximum":     float64(100),
 		},
 		"context_lines": map[string]any{
 			"type":        "integer",
-			"description": "Lines of context before and after each match (0-10, default 0)",
+			"description": "Context lines before and after each match (0-10, default 0)",
 			"minimum":     float64(0),
 			"maximum":     float64(10),
 		},

@@ -545,10 +545,15 @@ batch_result_budget_bytes = -1
 # Declaring a deferred tool in an agent's tools = [...] is fine and stays fine -
 # only prose instructions are the defect.
 #
-# Measured against this repo's registry with provider.EstimateToolSchemaCost:
-#   deferred ~2082 tok across 7 tools: find_references, list_symbols,
-#   go_to_definition, workflow_events (194), workflow_list_runs (182),
-#   workflow_cancel (130), workflow_delete (313)
+# Measured against this repo's pinned registry surface with
+# provider.EstimateToolSchemaCost (2026-08-16, enforced by
+# internal/cli/tool_schema_budget_test.go - TestCoreToolSchemaBudget):
+#   core tier 19 tools = 3851 tok; advertised total = 9351 tok
+#   (10 deferred with one-line descriptions = 1334 tok, session tail 13 = 4166 tok)
+#   Budgets are ratcheted at +5% margin: core 4043, advertised 9818.
+# Since tools-advertising/01 a deferred tool still ships its full parameter
+# schema on every request; deferral saves only the description bytes it
+# replaces with a one-liner. Do not defer more tools to cut prompt cost.
 #
 # search, fetch_url, and extract are CORE: web research is a first-class
 # root/research capability, not something to discover and load.

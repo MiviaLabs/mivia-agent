@@ -178,6 +178,18 @@ func promptWithDeferredIndex(prompt string, plan toolTierPlan) string {
 	return prompt + "\n\n" + index
 }
 
+// shortDescTool overrides a deferred tool's advertised description with its
+// one-line summary (the same text DeferredIndex puts in the frozen prompt
+// index) while leaving Name/Parameters/Execute untouched. The model already
+// gets the one-liner in the prompt index at bind time and the full
+// description once, at admission time, via load_tools's render - the full
+// text in the wire schema for a still-locked tool is pure duplication. Used
+// only to build throwaway registries for wire-spec / schema-cost rendering,
+// never for execution.
+type shortDescTool struct{ tools.Tool }
+
+func (t shortDescTool) Description() string { return tools.FirstLine(t.Tool.Description()) }
+
 // advertisedToolSpecs computes the binding's pinned tools[] array (plan
 // tools-advertising/01): core tier, then every deferred candidate in the
 // frozen plan's registry order, then the session-tool tail from
@@ -188,8 +200,11 @@ func promptWithDeferredIndex(prompt string, plan toolTierPlan) string {
 // Ordering here is load-bearing: OpenAI-compatible providers invalidate their
 // implicit prompt cache on any change to the tools[] array, INCLUDING a
 // reorder, so this order must stay stable for the binding's whole lifetime.
-// Returns the dropped-name count so callers can log a truncation instead of
-// silently shipping fewer tools than the plan authorizes.
+// A deferred candidate's advertised description is shortened to its one-line
+// summary (shortDescTool); its parameter schema still ships in full, since
+// that is what the model needs to invoke it correctly once admitted. Returns
+// the dropped-name count so callers can log a truncation instead of silently
+// shipping fewer tools than the plan authorizes.
 func advertisedToolSpecs(base *tools.Registry, plan toolTierPlan) ([]provider.ToolSpec, int) {
 	if base == nil {
 		return nil, 0
@@ -202,11 +217,20 @@ func advertisedToolSpecs(base *tools.Registry, plan toolTierPlan) ([]provider.To
 	// silently producing a 129th).
 	tail := advertisedSessionToolSpecs(plan)
 	names, dropped := tools.AdvertisedNames(plan.Tiers.Core, plan.Tiers.Deferred, len(tail))
+	deferredSet := make(map[string]struct{}, len(plan.Tiers.Deferred))
+	for _, name := range plan.Tiers.Deferred {
+		deferredSet[name] = struct{}{}
+	}
 	reg := tools.NewRegistry()
 	for _, name := range names {
-		if tool, ok := base.Get(name); ok {
-			reg.Register(tool)
+		tool, ok := base.Get(name)
+		if !ok {
+			continue
 		}
+		if _, deferred := deferredSet[name]; deferred {
+			tool = shortDescTool{tool}
+		}
+		reg.Register(tool)
 	}
 	specs := reg.OpenAITools()
 	return append(specs, tail...), dropped

@@ -692,6 +692,10 @@ func (noopPR) FindByHead(context.Context, string, string) (*delivery.PRRef, erro
 	return nil, nil
 }
 
+func (noopPR) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (noopPR) Create(context.Context, string, delivery.PRInput) (delivery.PRRef, error) {
 	return delivery.PRRef{}, fmt.Errorf("pr create refused in test")
 }

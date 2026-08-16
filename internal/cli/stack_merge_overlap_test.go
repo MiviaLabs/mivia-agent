@@ -12,6 +12,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,16 +66,27 @@ func TestChunkMergeOverlapEmptyWhenBaseAdvanceIsDisjoint(t *testing.T) {
 	}
 }
 
-func TestChunkMergeOverlapMissingHeadDegradesToNoOverlap(t *testing.T) {
-	// A head branch that never reached origin cannot be diffed; the guard
-	// must degrade to "no overlap" (the merge attempt itself then fails or
-	// waits), never error the whole stack on a probe.
+func TestChunkMergeOverlapMissingHeadFailsClosed(t *testing.T) {
+	// A head branch that never reached origin cannot be diffed, so the
+	// guard has NO evidence. It must report the probe failure (fail
+	// closed) instead of answering "no overlap": an unevaluated guard is
+	// not a passed guard, and autoMergeOne must not merge past it.
 	_, gc := scratchStackRepo(t)
-	overlap, err := chunkMergeOverlap(context.Background(), workflowDeliverGit, gc, "main", "wf/never-pushed")
-	if err != nil {
-		t.Fatalf("chunkMergeOverlap on a missing head: %v", err)
+	_, err := chunkMergeOverlap(context.Background(), workflowDeliverGit, gc, "main", "wf/never-pushed")
+	if err == nil {
+		t.Fatal("chunkMergeOverlap on a missing head returned nil error; want probe failure (fail closed)")
 	}
-	if len(overlap) != 0 {
-		t.Fatalf("overlap = %v, want none for a missing head", overlap)
+}
+
+// TestChunkMergeOverlapFetchFailureFailsClosed pins the asymmetric-transport
+// hazard (F12 overlap-probe degradation): a failed fetch means BOTH refs may
+// be stale, so the guard has nothing to evaluate. It must return a probe
+// error, never a silent "no overlap" that lets a working gh merge path land
+// content the guard never checked.
+func TestChunkMergeOverlapFetchFailureFailsClosed(t *testing.T) {
+	_, gc := scratchStackRepo(t)
+	_, err := chunkMergeOverlap(context.Background(), errorGitRunner{err: errors.New("test: origin unreachable")}, gc, "main", "wf/c1")
+	if err == nil {
+		t.Fatal("chunkMergeOverlap on a failed fetch returned nil error; want probe failure (fail closed)")
 	}
 }

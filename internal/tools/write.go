@@ -55,9 +55,8 @@ func (t *writeFileTool) capWriteResult(out string) string {
 
 func (t *writeFileTool) Name() string { return "write_file" }
 func (t *writeFileTool) Description() string {
-	return "Create or overwrite a whole text file. Params: path, content (both required). " +
-		"Prefer search_replace (or multi_edit for several edits to one file) for small edits. " +
-		"Do not pass encoding or mode fields."
+	return "Create or overwrite a whole text file. " +
+		"For small edits prefer search_replace (multi_edit for several edits to one file)."
 }
 func (t *writeFileTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -221,9 +220,8 @@ func (t *searchReplaceTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *searchReplaceTool) Name() string { return "search_replace" }
 func (t *searchReplaceTool) Description() string {
-	return "Edit a file by exact string replace. Params: path, old_string, new_string (required); optional replace_all (bool). " +
-		"old_string must match uniquely unless replace_all is true. Prefer over full-file rewrite. " +
-		"For several edits to the same file, prefer multi_edit."
+	return "Edit a file by exact string replace. " +
+		"Prefer over full-file rewrite; for several edits to one file prefer multi_edit."
 }
 func (t *searchReplaceTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{

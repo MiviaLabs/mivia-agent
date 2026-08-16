@@ -28,7 +28,7 @@ func TestApplySelectedAgentPromptInjectsMemoryWithNoAgentSelected(t *testing.T) 
 	sess := chat.NewSession(res, nil)
 
 	state := &agentSessionState{}
-	memClose, err := configureChatWorkspace(sess, root, true, res, state, false, false)
+	memClose, err := configureChatWorkspace(sess, root, true, res, state, false, false, false)
 	if err != nil {
 		t.Fatalf("configureChatWorkspace: %v", err)
 	}

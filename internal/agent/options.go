@@ -116,7 +116,12 @@ type Options struct {
 	EventBus       *events.Bus // publishes agent events to extensible delivery
 	// EventIdentity is a validated public identity snapshot for this turn.
 	EventIdentity *events.Identity
-	FinalWriter   io.Writer
+	// UsageWriter, when non-nil, durably records token/cache/compaction usage
+	// measurements alongside the existing EventBus publish. Nil keeps usage
+	// events exactly as ephemeral as they are today (subagent/workflow-engine
+	// loops that never set this field are unaffected).
+	UsageWriter contextmgr.UsageWriter
+	FinalWriter io.Writer
 	// RequireFinalText fails a turn that produced no assistant text anywhere
 	// instead of reporting an empty success. Interactive surfaces set it: a turn
 	// that renders as "done" with no answer is indistinguishable from the agent

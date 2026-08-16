@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -29,6 +30,12 @@ type Engine struct {
 	WorkspaceRoot string
 	// Repo is the shared workflow ledger. Required.
 	Repo workflowledger.Repository
+	// Store is the shared SQLite store backing the stack task ledger
+	// (tasks.NewStore). Required to drive (or verify the drive of) a
+	// multi-chunk stacking plan run; a nil Store degrades the engine to the
+	// operator drive (`mivia stack drive`) and refuses delivery of an
+	// undriven plan run instead of publishing it.
+	Store storage.Store
 	// NewRunner builds the agent-step runner for one admitted run.
 	// Required for agent steps; a nil NewRunner fails closed (no fake success).
 	NewRunner func() controller.AgentStepRunner
@@ -435,7 +442,7 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 	}
 	go func() {
 		defer close(done)
-		_, runErr := controller.RunWithCancelReconciliationRetry(runCtx, ctrl.Run)
+		snap, runErr := controller.RunWithCancelReconciliationRetry(runCtx, ctrl.Run)
 		if runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, controller.ErrPanelMembersComplete) && !errors.Is(runErr, controller.ErrCancelReconciliationPending) {
 			// Surface the failure instead of silently dropping it: a
 			// claim-contention or step error that stops the run must not
@@ -443,6 +450,17 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 			// failed so the run reaches a terminal state the operator can
 			// act on.
 			e.settleRunFailure(ctrl.RunID, runErr)
+		}
+		// Drive-before-delivery: a stacking plan run that parks at its
+		// delivery_pending success terminal must drive its chunk stack
+		// automatically (the CLI path drives in executeWorkflowRun, the
+		// session path in sessionAutoDeliveryRepairLoop; the agent-tools
+		// engine drives here - see engine_stack.go). Runs in its own
+		// goroutine so the run's launch handle (and Wait) return when the
+		// controller parks; the drive is bounded by runCtx (engine
+		// shutdown/Interrupt cancels it).
+		if runErr == nil && snap.Status == workflowledger.RunStatusDeliveryPending {
+			go e.stackDriveAfterPark(runCtx, ctrl.RunID)
 		}
 		// Release the resume probe claim if it is still held (e.g. Run
 		// exited before the first Advance could claim/refresh it). No-op

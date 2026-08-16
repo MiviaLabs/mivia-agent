@@ -36,12 +36,12 @@ import (
 // created without going through checkChunkDiffSize/Deliver at all, so it
 // can never itself declare deferred_files - no recursion is possible, but
 // the skip keeps the scan cheap.
-func admitPendingFollowUps(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, byID map[string]tasks.Task, stdout, stderr io.Writer) error {
+func admitPendingFollowUps(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, byID map[string]tasks.Task, stdout, stderr io.Writer) error {
 	for chunkID := range byID {
 		if strings.HasSuffix(chunkID, "-deferred") {
 			continue
 		}
-		if err := admitFollowUpsForChunk(prepared, ledger, stackID, chunkID, stdout, stderr); err != nil {
+		if err := admitFollowUpsForChunk(ctx, prepared, ledger, stackID, chunkID, stdout, stderr); err != nil {
 			return err
 		}
 	}
@@ -78,8 +78,7 @@ func deferredFollowUpChunkID(parentChunkID string) string {
 // run row is reserved with a DETERMINISTIC run id BEFORE any git/GitHub
 // call, so a retry or a concurrent admission resumes the same registration
 // instead of duplicating run rows, delivery records, or PRs (bug 4).
-func admitFollowUpsForChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID string, stdout, stderr io.Writer) error {
-	ctx := context.Background()
+func admitFollowUpsForChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID string, stdout, stderr io.Writer) error {
 	run, found, err := stackRunRef(prepared.repo, stackID, chunkID)
 	if err != nil || !found {
 		return err
@@ -87,6 +86,21 @@ func admitFollowUpsForChunk(prepared *preparedWorkflowRun, ledger *tasks.Store, 
 	followUpID := deferredFollowUpChunkID(chunkID)
 	if _, err := ledger.GetTask(stackID, followUpID); err == nil {
 		return nil // already admitted
+	}
+	// No deferred commit: the normal case for every non-split delivery. Check
+	// BEFORE reserving the follow-up run row - the row is the durable fence
+	// for a REAL deferred push, and reserving it for a plain delivery leaves
+	// an orphan wfr-followup-* run row (snapshot "{}") that the recovery
+	// sweep counts as a parked run and re-tries to resume forever ("workflow
+	// snapshot digest does not match the admitted snapshot"; live finding,
+	// 2026-08-16: every stack-drive IT sweep logged N parked runs plus
+	// followup resumes skipped). The gate is the same one
+	// delivery.EnsureFollowUpPublished uses (delivery record with
+	// StackRemainingCommits > 0), which is durable by the time this runs -
+	// the split record is written during delivery, before the follow-up
+	// admission pass.
+	if !delivery.HasDeferredFollowUp(ctx, prepared.repo, run.RunID) {
+		return nil
 	}
 	// The durable fence: reserve the follow-up run row (deterministic run
 	// id) before any side effect. A crash after the PR was created, or a

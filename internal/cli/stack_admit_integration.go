@@ -4,72 +4,76 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 )
 
 // integrationRunInputs builds the admission inputs for the final full-suite
-// integration run: it replays the plan run's declared inputs and admits as
-// stack_mode=single (running the workflow's own plan+implement steps
-// inline), never stack_mode=chunk. chunk_plan's chunk/pr_base/stack_part are
-// deliberately absent: stack_mode=chunk REQUIRES stack_part present
-// (validateStackingReservedInputs), and the integration run has none - a bug
-// an adversarial audit found: chunkRunInputs forced stack_mode=chunk here
-// with an always-empty stack_part, so every stack's integration run failed
-// admission the moment every chunk merged.
+// integration run (see stacking.IntegrationRunInputs).
 func integrationRunInputs(planInputs map[string]string, prBase string) (map[string]any, map[string]string) {
-	inputs := make(map[string]any, len(planInputs)+2)
-	snapshot := make(map[string]string, len(planInputs)+2)
-	for k, v := range planInputs {
-		inputs[k] = v
-		snapshot[k] = v
-	}
-	// stack_mode=single forbids chunk_plan (validateStackingReservedInputs),
-	// and a plan run admits with one (the implicit-plan path never checks
-	// it), so the replay must strip it instead of carrying it over.
-	delete(inputs, "chunk_plan")
-	delete(snapshot, "chunk_plan")
-	delete(inputs, "sibling_files")
-	delete(snapshot, "sibling_files")
-	inputs["stack_mode"] = "single"
-	snapshot["stack_mode"] = "single"
-	if prBase != "" {
-		inputs["pr_base"] = prBase
-		snapshot["pr_base"] = prBase
-	}
-	return inputs, snapshot
+	return stacking.IntegrationRunInputs(planInputs, prBase)
 }
 
-// refuseUndrivenStackPlanRun refuses `mivia workflow deliver <runID>` on the
-// PLAN run of a multi-chunk stack: `workflow run`/`resume` drive such a
-// stack's chunks BEFORE delivering the plan run itself (drive-before-
-// delivery ordering, see maybeDriveSettledStack's call sites). Delivering
-// the plan run directly skips that ordering - it settles the plan run's
-// own delivery (no diff for a stacking workflow, so it settles succeeded)
-// without ever driving the chunks or the final integration run, silently
-// abandoning the stack while reporting the plan run "succeeded" (live
-// finding, 2026-08-15). A non-stacking run, a single/no_bug plan, or a
-// chunk/integration run (no decompose attempt of its own) is unaffected.
-func refuseUndrivenStackPlanRun(ctx context.Context, repo workflowledger.Repository, runID string) error {
-	attempts, err := repo.ListStepAttempts(ctx, runID)
-	if err != nil {
-		return nil // best-effort: a lookup failure here must not block a legitimate deliver
+// stackDecomposedChunks reports whether runID is the plan run of a
+// multi-chunk stack (see stacking.DecomposedChunks). ok=false covers every
+// other case (not a stacking plan run, single/no_bug, a malformed decompose
+// output, or a lookup failure) - callers must treat a lookup failure as "not
+// applicable", never as a refusal or a false "undriven" diagnostic.
+func stackDecomposedChunks(ctx context.Context, repo workflowledger.Repository, runID string) (chunks int, ok bool) {
+	return stacking.DecomposedChunks(ctx, repo, runID)
+}
+
+// stackPlanRunGate classifies a run for the drive-before-delivery decision
+// `mivia workflow deliver`/`mivia stack drive` must make before settling or
+// publishing a delivery_pending run's own result.
+type stackPlanRunGate int
+
+const (
+	// stackPlanRunNotApplicable: not the plan run of a multi-chunk stack (a
+	// non-stacking run, a single/no_bug plan, or a chunk/integration run) -
+	// proceed with normal delivery.
+	stackPlanRunNotApplicable stackPlanRunGate = iota
+	// stackPlanRunIncomplete: a multi-chunk plan run whose stack has not yet
+	// driven to completion (stackDriveCompleted false) - must be refused.
+	stackPlanRunIncomplete
+	// stackPlanRunComplete: a multi-chunk plan run whose stack drove to
+	// completion (every chunk merged, integration run settled) - safe to
+	// settle or deliver.
+	stackPlanRunComplete
+)
+
+// classifyStackPlanRunDelivery reports how runID relates to a multi-chunk
+// stack for delivery purposes. `workflow run`/`resume` drive such a stack's
+// chunks BEFORE delivering the plan run itself (drive-before-delivery
+// ordering, see maybeDriveSettledStack's call sites); delivering the plan
+// run directly, without checking whether the stack actually finished,
+// either abandons an undriven stack while reporting the plan run
+// "succeeded" (live finding, 2026-08-15), or - the companion bug - refuses
+// forever a stack that already finished driving, since every multi-chunk
+// plan run keeps its succeeded decompose attempt whether or not the stack
+// it produced ever completed (live finding, 2026-08-16). Completion reuses
+// the same durable check the driver and the session recovery sweep apply
+// (stackDriveCompleted), so a CLI operator sees the identical verdict.
+// remoteMergeOracle is stackDriveCompleted's parameter: settle paths pass
+// true, read-only display surfaces pass false.
+func classifyStackPlanRunDelivery(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, remoteMergeOracle bool) stackPlanRunGate {
+	if _, ok := stackDecomposedChunks(ctx, repo, runID); !ok {
+		return stackPlanRunNotApplicable
 	}
-	var decomposeOutputRef string
-	for _, a := range attempts {
-		if a.StepID == stackDecomposeStepID && a.Status == workflowledger.AttemptStatusSucceeded {
-			decomposeOutputRef = a.OutputRef
-		}
+	policy := stackPlanMergePolicy(ctx, repo, runID)
+	if !stackDriveCompleted(ctx, root, store, repo, runID, policy, remoteMergeOracle) {
+		return stackPlanRunIncomplete
 	}
-	if decomposeOutputRef == "" {
-		return nil // not a plan run with a succeeded decompose step
-	}
-	raw, err := repo.LoadContent(ctx, decomposeOutputRef)
-	if err != nil {
-		return nil
-	}
-	mode, chunks, _, _, err := parseStackPlanOutput(raw)
-	if err != nil || mode != "multi" || len(chunks) == 0 {
-		return nil // single/no_bug, or a malformed plan another gate already rejects
-	}
-	return fmt.Errorf("workflow run %q is the plan run of a %d-chunk stack: deliver it via `mivia workflow run` or `mivia workflow resume %s`, which drive the stack's chunks and integration run before delivering the plan run itself - delivering it directly here would abandon the undriven stack while reporting the plan run succeeded", runID, len(chunks), runID)
+	return stackPlanRunComplete
+}
+
+// errUndrivenStackPlanRun builds the refusal for an incomplete stack's plan
+// run: the operator must finish driving it before its own delivery can
+// settle or publish. The advice names `mivia stack drive` only: `workflow
+// resume` refuses delivery_pending runs, and `workflow run` mints a NEW
+// plan run (a second stack) instead of driving the parked one - both are
+// dead ends for this run.
+func errUndrivenStackPlanRun(runID string) error {
+	return fmt.Errorf("workflow run %q is the plan run of a stack that has not fully driven yet: finish it with `mivia stack drive <workflow> --stack %s`, then settle the plan run with `mivia workflow deliver %s` - delivering it now would abandon the undriven stack while reporting the plan run succeeded", runID, runID, runID)
 }

@@ -78,7 +78,7 @@ Tool names, descriptions, and schemas are project- and language-generic. mivia w
 
 ## Deferred tool loading
 
-Every advertised tool costs schema bytes on every request, whether the model uses it or not. `[tools] core` (or per-agent `tools_core`) names the tools that stay advertised. The rest of the agent's authorized set is deferred. A deferred tool's schema is withheld. The model instead sees a one-line index of what is available. A `load_tools` tool pulls the ones it needs.
+Every advertised tool costs schema bytes on every request, whether the model uses it or not. `[tools] core` (or per-agent `tools_core`) names the tools that stay advertised. The rest of the agent's authorized set is deferred. A deferred tool's advertised description is shortened to a one-line summary; its parameter schema still ships in full, since that is what the model needs to invoke it correctly once loaded. The same one-liner also appears in a one-line index injected into the prompt. The full description is sent once, when the tool is actually admitted, as the result of the `load_tools` call that loads it.
 
 - Unset is the default and is fully inert. Every authorized tool is core. No `load_tools` tool is registered.
 - Loading takes effect on the model's next turn. The current turn's tool list was already sent to the provider.
