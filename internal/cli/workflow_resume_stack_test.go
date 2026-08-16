@@ -74,7 +74,7 @@ func newExecuteResumeStackFixture(t *testing.T, deliverPlanRun bool) (root, conf
 	if err != nil {
 		t.Fatal(err)
 	}
-	remoteURL, err := workflowDeliveryAdmission(compiled, identity, true)
+	remoteURL, originBaseCommit, err := workflowDeliveryAdmission(compiled, identity, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func newExecuteResumeStackFixture(t *testing.T, deliverPlanRun bool) (root, conf
 		RunID: runID, WorkflowName: compiled.Name, WorkflowDigest: compiled.Digest,
 		SnapshotDigest: workflowledger.SnapshotDigest(rawSnapshot), InputDigest: workflowledger.InputDigest(snapshot.Inputs),
 		Status: workflowledger.RunStatusPending, ActiveStepID: compiled.InitialStep,
-		BaseRef: identity.BaseRef, BaseCommit: identity.BaseCommit, OriginBaseCommit: identity.OriginBaseCommit,
+		BaseRef: identity.BaseRef, BaseCommit: identity.BaseCommit, OriginBaseCommit: originBaseCommit,
 		WorktreeName: identity.WorktreeName, RemoteURL: remoteURL,
 	}
 	store, err = openContextStorePath(storePath)

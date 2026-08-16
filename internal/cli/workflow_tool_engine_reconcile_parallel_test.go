@@ -50,7 +50,7 @@ func seedTwoParkedRunningRuns(t *testing.T) (root, configPath string, repo workf
 		if err != nil {
 			t.Fatal(err)
 		}
-		remoteURL, err := workflowDeliveryAdmission(compiled, identity, true)
+		remoteURL, originBaseCommit, err := workflowDeliveryAdmission(compiled, identity, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +61,7 @@ func seedTwoParkedRunningRuns(t *testing.T) (root, configPath string, repo workf
 			RunID: runID, WorkflowName: compiled.Name, WorkflowDigest: compiled.Digest,
 			SnapshotDigest: workflowledger.SnapshotDigest(rawSnapshot), InputDigest: workflowledger.InputDigest(snapshot.Inputs),
 			Status: workflowledger.RunStatusPending, ActiveStepID: compiled.InitialStep,
-			BaseRef: identity.BaseRef, BaseCommit: identity.BaseCommit, OriginBaseCommit: identity.OriginBaseCommit,
+			BaseRef: identity.BaseRef, BaseCommit: identity.BaseCommit, OriginBaseCommit: originBaseCommit,
 			WorktreeName: identity.WorktreeName, RemoteURL: remoteURL,
 		}
 		if err := repo.CreateRun(ctx, run, rawSnapshot); err != nil {

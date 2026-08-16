@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -71,22 +70,18 @@ func (e *Engine) forgetWorktree(runID string) {
 	e.mu.Unlock()
 }
 
-// resolveOriginURL records the delivery origin for the immutable admission
-// record, mirroring the CLI's workflowDeliveryAdmission: the main repository
-// must have an origin remote and the delivery base must sit at the admitted
-// base commit. A delivery workflow without a matching origin cannot publish.
-func resolveOriginURL(ctx context.Context, identity workflowspace.Identity, base string) (string, error) {
+// resolveOriginURL records the delivery origin and target-derived origin
+// base commit for the immutable admission record: the main repository must
+// have an origin remote, and the delivery base must CONTAIN the admitted
+// worktree base commit (delivery.AdmitDeliveryTarget - dedups the CLI's
+// workflowDeliveryAdmission). A delivery workflow without a matching origin
+// cannot publish. The returned originBaseCommit is the target's fetched
+// origin tip, recorded so delivery-time verification detects a rewrite of
+// the TARGET, not the worktree's source branch.
+func resolveOriginURL(ctx context.Context, identity workflowspace.Identity, base string) (originURL, originBaseCommit string, err error) {
 	if identity.MainRoot == "" {
-		return "", fmt.Errorf("workflow identity has no main root")
+		return "", "", fmt.Errorf("workflow identity has no main root")
 	}
 	git := delivery.GitContext{Dir: identity.MainRoot, GitDir: filepath.Join(identity.MainRoot, ".git")}
-	origin, err := delivery.RealGit{}.Run(ctx, git, "remote", "get-url", "origin")
-	if err != nil {
-		return "", fmt.Errorf("workflow requires delivery but the repository has no origin remote: %w", err)
-	}
-	baseCommit, err := delivery.RealGit{}.Run(ctx, git, "rev-parse", "--verify", "--end-of-options", "refs/heads/"+base+"^{commit}")
-	if err != nil || strings.TrimSpace(baseCommit) != identity.BaseCommit {
-		return "", fmt.Errorf("delivery base %q is not at the admitted base commit", base)
-	}
-	return strings.TrimSpace(origin), nil
+	return delivery.AdmitDeliveryTarget(ctx, delivery.RealGit{}, git, base, identity.BaseCommit)
 }

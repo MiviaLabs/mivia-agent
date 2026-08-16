@@ -204,11 +204,14 @@ func (e *Engine) pinNewRunIdentity(ctx context.Context, ctrl *controller.LinearC
 	if identity, ok := e.ensureRunWorktree(ctx, runID, nil); ok {
 		admission.BaseRef, admission.BaseCommit, admission.OriginBaseCommit, admission.WorktreeName = identity.BaseRef, identity.BaseCommit, identity.OriginBaseCommit, identity.WorktreeName
 		if compiled.Delivery != nil && compiled.DeliveryActive() {
-			url, uerr := resolveOriginURL(ctx, identity, compiled.Delivery.Base)
+			url, originBaseCommit, uerr := resolveOriginURL(ctx, identity, compiled.Delivery.Base)
 			if uerr != nil {
 				return fmt.Errorf("resolve delivery origin: %w", uerr)
 			}
+			// Pin the TARGET's fetched origin tip (rewrite detection compares
+			// against the target's history), not identity's source-derived one.
 			admission.RemoteURL = url
+			admission.OriginBaseCommit = originBaseCommit
 		}
 		// Pin the run's git context for the fail-fast diff-size gate. This is
 		// the FRESH-start path: stacking chunk runs are fresh engine starts,

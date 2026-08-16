@@ -623,7 +623,7 @@ func TestWorkflowDeliveryAdmissionProbesPRTool(t *testing.T) {
 		}
 		return sentinel
 	}
-	_, err := workflowDeliveryAdmission(wf, workflowspace.Identity{}, true)
+	_, _, err := workflowDeliveryAdmission(wf, workflowspace.Identity{}, true)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("admission error = %v, want the probe failure", err)
 	}

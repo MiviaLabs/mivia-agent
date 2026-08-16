@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -100,6 +99,11 @@ type workflowBuildSetup struct {
 	identity  workflowspace.Identity
 	cleanup   func()
 	remoteURL string
+	// originBaseCommit is the delivery target's fetched origin tip at
+	// admission (set only on a fresh delivery-active admission). Empty
+	// means workflowAdmission falls back to identity.OriginBaseCommit (the
+	// source branch's tracking ref, or a resumed run's recorded value).
+	originBaseCommit string
 }
 
 func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.CompiledWorkflow, runID string, recorded *workflowledger.RunSnapshot) (workflowBuildSetup, error) {
@@ -141,17 +145,17 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.Compil
 		closeMCP()
 		previousCleanup()
 	}
-	remoteURL, err := workflowBuildRemoteURL(wf, identity, writeCapable, recorded)
+	remoteURL, originBaseCommit, err := workflowBuildRemoteURL(wf, identity, writeCapable, recorded)
 	if err != nil {
 		cleanup()
 		return workflowBuildSetup{}, err
 	}
-	return workflowBuildSetup{skills: skills, loaded: loaded, authority: authority, identity: identity, cleanup: cleanup, remoteURL: remoteURL}, nil
+	return workflowBuildSetup{skills: skills, loaded: loaded, authority: authority, identity: identity, cleanup: cleanup, remoteURL: remoteURL, originBaseCommit: originBaseCommit}, nil
 }
 
-func workflowBuildRemoteURL(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, recorded *workflowledger.RunSnapshot) (string, error) {
+func workflowBuildRemoteURL(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, recorded *workflowledger.RunSnapshot) (originURL, originBaseCommit string, err error) {
 	if recorded != nil || !deliveryRequiresPublication(wf) {
-		return "", nil
+		return "", "", nil
 	}
 	return workflowDeliveryAdmission(wf, identity, writeCapable)
 }
@@ -293,7 +297,16 @@ func applyHarnessSandboxSetting(hc config.HarnessConfig) {
 }
 
 func workflowAdmission(setup workflowBuildSetup, inputs map[string]string, recorded *workflowledger.RunSnapshot) controller.Admission {
-	admission := controller.Admission{BaseRef: setup.identity.BaseRef, BaseCommit: setup.identity.BaseCommit, OriginBaseCommit: setup.identity.OriginBaseCommit, WorktreeName: setup.identity.WorktreeName, InputDigest: workflowledger.InputDigest(inputs), RemoteURL: setup.remoteURL}
+	// The delivery target's fetched origin tip (set only on a fresh
+	// delivery-active admission) overrides identity's source-branch-derived
+	// OriginBaseCommit: delivery-time rewrite detection must compare
+	// against the TARGET branch's history, not the branch this run's
+	// worktree happened to start from.
+	originBaseCommit := setup.identity.OriginBaseCommit
+	if setup.originBaseCommit != "" {
+		originBaseCommit = setup.originBaseCommit
+	}
+	admission := controller.Admission{BaseRef: setup.identity.BaseRef, BaseCommit: setup.identity.BaseCommit, OriginBaseCommit: originBaseCommit, WorktreeName: setup.identity.WorktreeName, InputDigest: workflowledger.InputDigest(inputs), RemoteURL: setup.remoteURL}
 	if recorded != nil {
 		admission.InputDigest, admission.DeadlineAt, admission.RemoteURL = recorded.InputDigest, recorded.DeadlineAt, recorded.RemoteURL
 		// Both of these are compared by sameAdmission, so both must come from the
@@ -312,29 +325,23 @@ var workflowDeliveryProbe = delivery.ProbePRTool
 
 // workflowDeliveryAdmission verifies that a fresh delivery-required run can
 // publish: the workflow must be write-capable, the repository must have an
-// origin remote, and the delivery base must sit at the admitted base commit.
-// It returns the resolved origin URL for the immutable admission record.
-func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool) (string, error) {
+// origin remote, and the delivery base must CONTAIN the admitted worktree
+// base commit (delivery.AdmitDeliveryTarget). It returns the resolved origin
+// URL and the target's fetched origin tip, both for the immutable admission
+// record.
+func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool) (originURL, originBaseCommit string, err error) {
 	if !writeCapable {
-		return "", fmt.Errorf("workflow %s declares delivery but its agents cannot write files; delivery requires a run worktree", wf.Name)
+		return "", "", fmt.Errorf("workflow %s declares delivery but its agents cannot write files; delivery requires a run worktree", wf.Name)
 	}
 	policy, ok := delivery.FromCompiled(wf)
 	if !ok {
-		return "", fmt.Errorf("workflow %s delivery policy is not active", wf.Name)
+		return "", "", fmt.Errorf("workflow %s delivery policy is not active", wf.Name)
 	}
 	if err := workflowDeliveryProbe(policy.Provider); err != nil {
-		return "", err
+		return "", "", err
 	}
 	gitCtx := delivery.GitContext{Dir: identity.MainRoot, GitDir: filepath.Join(identity.MainRoot, ".git")}
-	originURL, err := workflowDeliverGit.Run(context.Background(), gitCtx, "remote", "get-url", "origin")
-	if err != nil {
-		return "", fmt.Errorf("workflow requires delivery but the repository has no origin remote")
-	}
-	baseCommit, err := workflowDeliverGit.Run(context.Background(), gitCtx, "rev-parse", "--verify", "--end-of-options", "refs/heads/"+policy.Base+"^{commit}")
-	if err != nil || strings.TrimSpace(baseCommit) != identity.BaseCommit {
-		return "", fmt.Errorf("delivery base %q is not at the admitted base commit", policy.Base)
-	}
-	return strings.TrimSpace(originURL), nil
+	return delivery.AdmitDeliveryTarget(context.Background(), workflowDeliverGit, gitCtx, policy.Base, identity.BaseCommit)
 }
 
 // deliveryRequiresPublication reports whether the workflow's delivery policy
