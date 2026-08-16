@@ -255,7 +255,23 @@ func verifyRemoteBaseAncestry(ctx context.Context, git GitRunner, req Request, o
 		return fmt.Errorf("cannot resolve fetched remote delivery base %q: %w", req.Policy.Base, err)
 	}
 	fetchedBase := strings.TrimSpace(out)
-	if _, err := git.Run(ctx, req.GitCtx, "merge-base", "--is-ancestor", originBase, fetchedBase); err != nil {
+	// Only a genuine exit-1 verdict (the fetched base does NOT contain the
+	// admitted commit) is a permanent rewrite refusal. A real git failure
+	// (exit 128, a missing or corrupt object) is recoverable: the typed
+	// AncestryUnverifiableError makes RepairTarget yield no repair step, so
+	// the run stays delivery_pending and a later attempt retries, instead of
+	// being reopened for a repair an agent cannot perform.
+	contains, err := mergeBaseIsAncestor(ctx, git, req.GitCtx, originBase, fetchedBase)
+	if err != nil {
+		// Keep the human-readable text in Error() AND preserve the underlying
+		// git failure in the cause chain: a wrapped connect fault still
+		// classifies as transient through IsTransportFault's errors.Is walk.
+		return &AncestryUnverifiableError{
+			Reason: fmt.Sprintf("cannot verify remote delivery base %q ancestry (fetch and retry): %v", req.Policy.Base, err),
+			cause:  err,
+		}
+	}
+	if !contains {
 		return &RefusalError{Reason: fmt.Sprintf("remote delivery base %q was rewritten since admission: it no longer contains the admitted commit %s", req.Policy.Base, originBase)}
 	}
 	return nil

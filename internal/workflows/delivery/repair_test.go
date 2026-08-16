@@ -439,3 +439,21 @@ func TestRepairTarget(t *testing.T) {
 		})
 	}
 }
+
+// TestRepairTargetAncestryUnverifiableYieldsNoRepairRoute pins repair routing
+// for a delivery-time git object failure (exit 128, a missing or corrupt
+// object): an agent cannot repair a git object failure, so RepairTarget must
+// yield NO step even when the workflow declares on_failure. The run then stays
+// delivery_pending with a recorded cause and a later attempt retries, instead
+// of being reopened for a repair that cannot fix it and settling delivery_failed
+// after the repair budget is spent.
+func TestRepairTargetAncestryUnverifiableYieldsNoRepairRoute(t *testing.T) {
+	pol := Policy{OnFailure: "repair_generic", OnPRMetadataFailure: "repair_meta", OnDiffSizeFailure: "repair_size"}
+	err := &AncestryUnverifiableError{Reason: "cannot verify remote delivery base \"main\" ancestry (fetch and retry): git merge-base: exit status 128"}
+	if got := RepairTarget(err, pol); got != "" {
+		t.Fatalf("RepairTarget(AncestryUnverifiableError) = %q, want \"\" (no repair route for a git object failure)", got)
+	}
+	if got := RepairTarget(fmt.Errorf("deliver: %w", err), pol); got != "" {
+		t.Fatalf("RepairTarget(wrapped AncestryUnverifiableError) = %q, want \"\"", got)
+	}
+}

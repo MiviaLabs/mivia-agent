@@ -164,9 +164,22 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
-	if err := e.pinNewRunIdentity(ctx, ctrl, compiled, &admission, runID); err != nil {
+	cleanup, err := e.pinNewRunIdentity(ctx, ctrl, compiled, &admission, runID, inputSnapshot)
+	if err != nil {
 		return agenttools.StartResult{}, err
 	}
+	// A fresh admission created the run worktree before control returns to us.
+	// If a later admission step fails - SetAdmission or StartNew - the worktree
+	// must still be removed so the pre-created worktree does not leak (mirrors
+	// the CLI's admitted flag + built.Cleanup() pair in workflow_run.go). Once
+	// StartNew succeeds the worktree belongs to the run, so the cleanup is
+	// disarmed.
+	disarmCleanup := cleanup == nil
+	defer func() {
+		if !disarmCleanup {
+			cleanup()
+		}
+	}()
 	if err := ctrl.SetAdmission(admission); err != nil {
 		return agenttools.StartResult{}, err
 	}
@@ -174,6 +187,7 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	if err != nil {
 		return agenttools.StartResult{}, err
 	}
+	disarmCleanup = true
 	if !created {
 		existing, getErr := e.Repo.GetRun(ctx, runID)
 		if getErr != nil {
@@ -192,48 +206,8 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	return agenttools.StartResult{RunID: runID, Status: string(run.Status), Workflow: compiled.Name}, nil
 }
 
-// pinNewRunIdentity resolves the fresh run's real base ref/commit and pins it
-// on admission, preferring a git worktree and falling back to the local
-// workspace's checked-out identity. It fails closed (returns an error)
-// instead of leaving newRunController's placeholder Admission (BaseRef
-// "main", BaseCommit "test-base") baked into the durable admission record
-// when neither source can resolve a real base.
-func (e *Engine) pinNewRunIdentity(ctx context.Context, ctrl *controller.LinearController, compiled *compiler.CompiledWorkflow, admission *controller.Admission, runID string) error {
-	// Create (or validate) the run's git worktree and record the identity on
-	// the engine so workflow_deliver resolves the run's real git directory.
-	if identity, ok := e.ensureRunWorktree(ctx, runID, nil); ok {
-		admission.BaseRef, admission.BaseCommit, admission.OriginBaseCommit, admission.WorktreeName = identity.BaseRef, identity.BaseCommit, identity.OriginBaseCommit, identity.WorktreeName
-		if compiled.Delivery != nil && compiled.DeliveryActive() {
-			url, originBaseCommit, uerr := resolveOriginURL(ctx, identity, compiled.Delivery.Base)
-			if uerr != nil {
-				return fmt.Errorf("resolve delivery origin: %w", uerr)
-			}
-			// Pin the TARGET's fetched origin tip (rewrite detection compares
-			// against the target's history), not identity's source-derived one.
-			admission.RemoteURL = url
-			admission.OriginBaseCommit = originBaseCommit
-		}
-		// Pin the run's git context for the fail-fast diff-size gate. This is
-		// the FRESH-start path: stacking chunk runs are fresh engine starts,
-		// so without it the gate would never fire for them.
-		if serr := ctrl.WireGitContext(identity.MainRoot, identity.WorktreeName, identity.Root); serr != nil {
-			return serr
-		}
-		return nil
-	}
-	if base, commit, wt, rerr := resolveLocalIdentity(e.WorkspaceRoot, runID); rerr == nil {
-		admission.BaseRef, admission.BaseCommit, admission.WorktreeName = base, commit, wt
-		return nil
-	} else {
-		// Neither the worktree path nor the local-identity fallback could
-		// resolve a real base ref/commit: admitting the run now would bake
-		// the newRunController placeholder into the durable admission
-		// record. Fail closed instead of starting a run pinned to a
-		// fabricated base.
-		return fmt.Errorf("resolve workflow base identity: %w", rerr)
-	}
-}
-
+// beginInvocationAdmission acquires the invocation-key admission slot for
+// runID, returning owner=true for the sole starter.
 func (e *Engine) beginInvocationAdmission(runID string) (bool, chan struct{}) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -78,10 +79,17 @@ func (e *Engine) forgetWorktree(runID string) {
 // cannot publish. The returned originBaseCommit is the target's fetched
 // origin tip, recorded so delivery-time verification detects a rewrite of
 // the TARGET, not the worktree's source branch.
-func resolveOriginURL(ctx context.Context, identity workflowspace.Identity, base string) (originURL, originBaseCommit string, err error) {
+//
+// The fetch runs under timeout (a context deadline). An offline or hung
+// origin must fail closed after the bound rather than block engine run
+// creation forever and leak the pre-created worktree. The deadline is based
+// on the incoming ctx so a caller cancel still propagates.
+func resolveOriginURL(ctx context.Context, timeout time.Duration, identity workflowspace.Identity, base string) (originURL, originBaseCommit string, err error) {
 	if identity.MainRoot == "" {
 		return "", "", fmt.Errorf("workflow identity has no main root")
 	}
 	git := delivery.GitContext{Dir: identity.MainRoot, GitDir: filepath.Join(identity.MainRoot, ".git")}
-	return delivery.AdmitDeliveryTarget(ctx, delivery.RealGit{}, git, base, identity.BaseCommit)
+	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return delivery.AdmitDeliveryTarget(fetchCtx, delivery.RealGit{}, git, base, identity.BaseCommit)
 }

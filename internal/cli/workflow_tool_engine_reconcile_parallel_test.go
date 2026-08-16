@@ -50,7 +50,7 @@ func seedTwoParkedRunningRuns(t *testing.T) (root, configPath string, repo workf
 		if err != nil {
 			t.Fatal(err)
 		}
-		remoteURL, originBaseCommit, err := workflowDeliveryAdmission(compiled, identity, true)
+		remoteURL, originBaseCommit, err := workflowDeliveryAdmission(compiled, identity, true, "")
 		if err != nil {
 			t.Fatal(err)
 		}

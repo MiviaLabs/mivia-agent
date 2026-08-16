@@ -48,7 +48,7 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 		return workflowControllerBuild{}, err
 	}
 	wf = synth
-	setup, err := prepareWorkflowBuild(root, res, wf, runID, recorded)
+	setup, err := prepareWorkflowBuild(root, res, wf, runID, recorded, delivery.EffectiveBase(wf, inputSnapshot))
 	if err != nil {
 		return workflowControllerBuild{}, err
 	}
@@ -106,7 +106,7 @@ type workflowBuildSetup struct {
 	originBaseCommit string
 }
 
-func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.CompiledWorkflow, runID string, recorded *workflowledger.RunSnapshot) (workflowBuildSetup, error) {
+func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.CompiledWorkflow, runID string, recorded *workflowledger.RunSnapshot, effectiveBase string) (workflowBuildSetup, error) {
 	skills, err := workflowBuildLoadSkills(root)
 	if err != nil {
 		return workflowBuildSetup{}, err
@@ -145,7 +145,7 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.Compil
 		closeMCP()
 		previousCleanup()
 	}
-	remoteURL, originBaseCommit, err := workflowBuildRemoteURL(wf, identity, writeCapable, recorded)
+	remoteURL, originBaseCommit, err := workflowBuildRemoteURL(wf, identity, writeCapable, recorded, effectiveBase)
 	if err != nil {
 		cleanup()
 		return workflowBuildSetup{}, err
@@ -153,11 +153,11 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.Compil
 	return workflowBuildSetup{skills: skills, loaded: loaded, authority: authority, identity: identity, cleanup: cleanup, remoteURL: remoteURL, originBaseCommit: originBaseCommit}, nil
 }
 
-func workflowBuildRemoteURL(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, recorded *workflowledger.RunSnapshot) (originURL, originBaseCommit string, err error) {
+func workflowBuildRemoteURL(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, recorded *workflowledger.RunSnapshot, effectiveBase string) (originURL, originBaseCommit string, err error) {
 	if recorded != nil || !deliveryRequiresPublication(wf) {
 		return "", "", nil
 	}
-	return workflowDeliveryAdmission(wf, identity, writeCapable)
+	return workflowDeliveryAdmission(wf, identity, writeCapable, effectiveBase)
 }
 
 func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup workflowBuildSetup) (*runtime.Dispatcher, SessionDispatcherOpts, ledger.LedgerRepository, error) {
@@ -328,8 +328,13 @@ var workflowDeliveryProbe = delivery.ProbePRTool
 // origin remote, and the delivery base must CONTAIN the admitted worktree
 // base commit (delivery.AdmitDeliveryTarget). It returns the resolved origin
 // URL and the target's fetched origin tip, both for the immutable admission
-// record.
-func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool) (originURL, originBaseCommit string, err error) {
+// record. The base admitted against is the EFFECTIVE base: the caller resolves
+// a valid pr_base input override once (delivery.EffectiveBase), and admission
+// uses it instead of the workflow-declared policy.Base, because delivery
+// honors the same override at publish time. An empty effectiveBase resolves to
+// the declared base. The fetch is bounded by workflowDeliveryTimeout so an
+// offline or hung origin cannot block run creation forever.
+func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, effectiveBase string) (originURL, originBaseCommit string, err error) {
 	if !writeCapable {
 		return "", "", fmt.Errorf("workflow %s declares delivery but its agents cannot write files; delivery requires a run worktree", wf.Name)
 	}
@@ -340,8 +345,16 @@ func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflows
 	if err := workflowDeliveryProbe(policy.Provider); err != nil {
 		return "", "", err
 	}
+	if effectiveBase == "" {
+		effectiveBase = policy.Base
+	}
+	// Bound the admission fetch: an offline or hung origin must not block run
+	// creation forever. The same timeout that bounds one delivery attempt
+	// bounds the admission fetch, so both read workflowDeliveryTimeout.
+	ctx, cancel := context.WithTimeout(context.Background(), workflowDeliveryTimeout)
+	defer cancel()
 	gitCtx := delivery.GitContext{Dir: identity.MainRoot, GitDir: filepath.Join(identity.MainRoot, ".git")}
-	return delivery.AdmitDeliveryTarget(context.Background(), workflowDeliverGit, gitCtx, policy.Base, identity.BaseCommit)
+	return delivery.AdmitDeliveryTarget(ctx, workflowDeliverGit, gitCtx, effectiveBase, identity.BaseCommit)
 }
 
 // deliveryRequiresPublication reports whether the workflow's delivery policy

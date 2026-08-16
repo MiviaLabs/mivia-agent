@@ -14,7 +14,7 @@ Required shape (concise bullets preferred):
 1. **Outcome**
 2. **Changed files** (absolute or repo-relative paths)
 3. **Verification** (commands + result)
-4. **Residual risk / blockers**
+4. **Residual risk**
 
 Forbidden in final responses unless user asked:
 

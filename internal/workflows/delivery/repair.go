@@ -132,12 +132,17 @@ func StoreDeliveryFailureText(ctx context.Context, repo ledger.Repository, cause
 // failure class. Diff-size rejections route to OnDiffSizeFailure (falling
 // back to OnFailure), PR-metadata rejections to OnPRMetadataFailure (falling
 // back to OnFailure), and every other repairable rejection to OnFailure. An
-// empty result means the workflow declares no repair route for the class (the
-// run holds for a person). It is the single classifier shared by the CLI and
-// the local engine, so a delivery rejection routes to the same step on both
-// paths.
+// AncestryUnverifiableError (git itself could not complete the base-ancestry
+// check - a missing or corrupt object) yields an empty result unconditionally:
+// no agent can repair a git object failure, so the run stays delivery_pending
+// with a recorded cause and a later attempt retries. An empty result otherwise
+// means the workflow declares no repair route for the class (the run holds
+// for a person). It is the single classifier shared by the CLI and the local
+// engine, so a delivery rejection routes to the same step on both paths.
 func RepairTarget(err error, p Policy) string {
 	switch {
+	case IsAncestryUnverifiable(err):
+		return ""
 	case IsDiffSizeError(err):
 		if p.OnDiffSizeFailure != "" {
 			return p.OnDiffSizeFailure

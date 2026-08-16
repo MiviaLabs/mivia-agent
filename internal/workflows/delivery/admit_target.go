@@ -53,7 +53,14 @@ func AdmitDeliveryTarget(ctx context.Context, git GitRunner, gc GitContext, base
 	}
 	targetOriginCommit = strings.TrimSpace(tip)
 
-	if _, err := git.Run(ctx, gc, "merge-base", "--is-ancestor", worktreeBaseCommit, targetOriginCommit); err == nil {
+	// The first containment test is the ADMITTING check: exit 0 admits via
+	// the fetched origin tip. A real git failure (exit 128, a missing or
+	// corrupt object) fails closed - it must not silently fall into the
+	// local-ref fallback, which exists only for the ordinary "committed
+	// locally, not yet pushed" state.
+	if contains, err := mergeBaseIsAncestor(ctx, git, gc, worktreeBaseCommit, targetOriginCommit); err != nil {
+		return "", "", fmt.Errorf("cannot verify delivery base %q ancestry: %w", base, err)
+	} else if contains {
 		return originURL, targetOriginCommit, nil
 	}
 	if local, lerr := git.Run(ctx, gc, "rev-parse", "--verify", "--end-of-options", "refs/heads/"+base+"^{commit}"); lerr == nil {
@@ -66,9 +73,14 @@ func AdmitDeliveryTarget(ctx context.Context, git GitRunner, gc GitContext, base
 		// the worktree base commit, and delivery-time rewrite detection
 		// compares that pin against a later fetch of the same history, so the
 		// rewrite would pass undetected and the PR would re-publish commits
-		// the remote dropped.
-		if _, ahead := git.Run(ctx, gc, "merge-base", "--is-ancestor", targetOriginCommit, localTip); ahead == nil {
-			if _, aerr := git.Run(ctx, gc, "merge-base", "--is-ancestor", worktreeBaseCommit, localTip); aerr == nil {
+		// the remote dropped. A merge-base git failure here also fails
+		// closed: the fallback cannot admit what it cannot verify.
+		if ahead, aerr := mergeBaseIsAncestor(ctx, git, gc, targetOriginCommit, localTip); aerr != nil {
+			return "", "", fmt.Errorf("cannot verify local delivery base %q ancestry: %w", base, aerr)
+		} else if ahead {
+			if contains, cerr := mergeBaseIsAncestor(ctx, git, gc, worktreeBaseCommit, localTip); cerr != nil {
+				return "", "", fmt.Errorf("cannot verify local delivery base %q ancestry: %w", base, cerr)
+			} else if contains {
 				return originURL, targetOriginCommit, nil
 			}
 		}

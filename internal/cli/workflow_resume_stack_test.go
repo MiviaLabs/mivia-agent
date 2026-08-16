@@ -74,7 +74,7 @@ func newExecuteResumeStackFixture(t *testing.T, deliverPlanRun bool) (root, conf
 	if err != nil {
 		t.Fatal(err)
 	}
-	remoteURL, originBaseCommit, err := workflowDeliveryAdmission(compiled, identity, true)
+	remoteURL, originBaseCommit, err := workflowDeliveryAdmission(compiled, identity, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
