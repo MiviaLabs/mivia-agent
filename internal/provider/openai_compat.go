@@ -387,20 +387,14 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 		return resp.Content, nil
 	}
 	req.Stream = true
-	httpReq, err := c.newRequest(callCtx, req)
+	resp, req, err := c.doChatRequest(callCtx, req)
 	if err != nil {
-		return "", err
-	}
-	resp, err := c.client.Do(httpReq)
-	if err != nil {
-		err = markTransientReadDeadline(callCtx, req.Timeout, err)
-		return "", fmt.Errorf("%s: request failed: %w", c.name, err)
+		// asTransient mirrors the tools branch (ChatTurn -> chatTurnStream)
+		// and the doChatRequest contract: each call site applies its own
+		// transient decision. It is a no-op for permanent errors.
+		return "", asTransient(err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", c.httpError(resp)
-	}
 
 	return c.readStream(callCtx, req, resp.Body, w)
 }

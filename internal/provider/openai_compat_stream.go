@@ -31,19 +31,11 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 	defer cancel()
 
 	req.Stream = true
-	httpReq, err := c.newRequest(callCtx, req)
+	resp, req, err := c.doChatRequest(callCtx, req)
 	if err != nil {
-		return nil, err
-	}
-	resp, err := c.client.Do(httpReq)
-	if err != nil {
-		err = markTransientReadDeadline(callCtx, req.Timeout, err)
-		return nil, asTransient(fmt.Errorf("%s: request failed: %w", c.name, err))
+		return nil, asTransient(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.httpError(resp)
-	}
 
 	content, reasoning, webSearch, toolCalls, finishReason, received, usage, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter, req.Timeout)
 	if err != nil {
