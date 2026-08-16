@@ -524,7 +524,7 @@ match = { status = "succeeded" }
 kind = "pull_request"
 mode = "draft"
 provider = "github"
-base = "main"
+base = "dev"
 title_template = "fix: bug-fix delivery"
 pr_title_policy = ".mivia/policy/pr-title.toml"
 # A delivery rejection (the common commit-hook refusal) routes here via

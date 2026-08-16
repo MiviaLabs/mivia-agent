@@ -479,7 +479,7 @@ match = { status = "succeeded" }
 kind = "pull_request"
 mode = "draft"
 provider = "github"
-base = "main"
+base = "dev"
 title_template = "feat: {{ inputs.task }}"
 # The PR title and summary come from the agent's change-summary output
 # (pr_title/pr_summary). The host validates them against the PR-title policy
