@@ -78,8 +78,8 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	assertFeatureDeliveryAgentSteps(t, workflow)
 	assertFeatureDeliveryEvidenceGates(t, root, workflow)
 	assertFeatureDeliveryPreflightGate(t, workflow)
-	if workflow.Delivery == nil || workflow.Delivery.Base != "main" {
-		t.Fatalf("feature-delivery base = %#v, want main", workflow.Delivery)
+	if workflow.Delivery == nil || workflow.Delivery.Base != "dev" {
+		t.Fatalf("feature-delivery base = %#v, want dev", workflow.Delivery)
 	}
 
 	assertFeatureDeliveryReviewFeedbackChannel(t, workflow)
