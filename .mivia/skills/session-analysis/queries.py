@@ -28,12 +28,15 @@ Requires Python >= 3.11 (tomllib) with the stdlib sqlite3 module.
 
 import argparse
 import hashlib
+import io
 import json
 import os
+import re
 import sqlite3
 import statistics
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 
 SKILL = "session-analysis"
@@ -132,13 +135,16 @@ def resolve_ledger(root: str, override: str | None) -> str:
 
 
 def derive_workspace_id(root: str) -> str:
-    """workspace-<hex(sha256(canonical root)[:8])> — context_setup_session.go:91-101.
+    """workspace-<hex(sha256(canonical root)[:8])> where [:8] is the first 8
+    BYTES (16 hex chars) — mirror of context_setup_session.go:91-101.
 
     canonical root = realpath(abs(root)); the harness does Abs then EvalSymlinks.
+    Python's hexdigest()[:8] (8 hex chars = 4 bytes) is WRONG and mis-scopes;
+    digest()[:8].hex() matches Go's hex.EncodeToString(digest[:8]).
     """
     canonical = os.path.realpath(os.path.abspath(root))
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return "workspace-" + digest[:8]
+    raw = hashlib.sha256(canonical.encode("utf-8")).digest()
+    return "workspace-" + raw[:8].hex()
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +295,17 @@ def analyze(root: str, ledger: str, window_arg: str, now: datetime, wid: str | N
         chat_total = q("SELECT count(*) AS n FROM chat_sessions")[0]["n"]
         chat_mine = q("SELECT count(*) AS n FROM chat_sessions WHERE workspace_id=?", wid)[0]["n"]
 
+        # Store accounting (SA-2): a context_sessions row is created at session
+        # setup with source_sequence=0 (context_store.go:76) and only becomes
+        # catalog-visible (ListSessions arm 2) once a source event publishes.
+        # Surface the full breakdown so never-published rows are explicit.
+        # Counts only; filters never touch content columns.
+        sa_total = q("SELECT count(*) AS n FROM context_sessions WHERE workspace_id=? AND subject_id=?", wid, SUBJECT_ID)[0]["n"]
+        sa_tomb = q("SELECT count(*) AS n FROM context_sessions WHERE workspace_id=? AND subject_id=? AND tombstoned=1", wid, SUBJECT_ID)[0]["n"]
+        sa_alive = q("SELECT count(*) AS n FROM context_sessions WHERE workspace_id=? AND subject_id=? AND tombstoned=0 AND instance_id IS NULL", wid, SUBJECT_ID)[0]["n"]
+        sa_never = q("SELECT count(*) AS n FROM context_sessions WHERE workspace_id=? AND subject_id=? AND tombstoned=0 AND instance_id IS NULL AND source_sequence=0", wid, SUBJECT_ID)[0]["n"]
+        sa_pub = q("SELECT count(*) AS n FROM context_sessions WHERE workspace_id=? AND subject_id=? AND tombstoned=0 AND instance_id IS NULL AND source_sequence>0", wid, SUBJECT_ID)[0]["n"]
+
         # Catalog rows (harness-parity arms). Row layout mirrors ListSessions
         # scan order: name,title,model,provider,session_id,created,updated,
         # turn,token,message,dir,worktree,flag(0=catalog,1=route),instance.
@@ -416,6 +433,12 @@ def analyze(root: str, ledger: str, window_arg: str, now: datetime, wid: str | N
             "ledger_path": ledger,
             "user_version": uv,
             "workspace_id": wid,
+            "derivation": {
+                "algorithm": "workspace- + hex(sha256(canonical root)[:8]) where [:8] is the first 8 BYTES (16 hex chars)",
+                "harness_site": "internal/cli/context_setup_session.go:100",
+                "hex_chars": 16,
+                "note": "corrected: the previous version derived 8 hex chars (4 bytes) and mis-scoped every run",
+            },
             "subject_id": SUBJECT_ID,
             "window": {"requested": window_label, "start_utc": window_start.isoformat() if window_start else None, "end_utc": now.isoformat()},
             "scope": (
@@ -444,10 +467,18 @@ def analyze(root: str, ledger: str, window_arg: str, now: datetime, wid: str | N
                     "window_sessions": len(window_sessions),
                     "with_admission_record": len(with_adm),
                     "recorded_names_total": len(adm_keys),
+                    "note": "chat_session_admissions rows exist only for sessions whose last save had a non-empty admitted tool set; an empty set deletes the row (internal/storage/session_admissions.go:38-41, 42-43; persistAdmission at snapshot save, internal/chat/context_catalog.go:107 / persistence.go:172). Zero coverage is the normal state for sessions that never admitted tools.",
                 },
                 "model_provider_snapshots": mp,
                 "model_provider_live": lmp,
                 "stale_7d": stale,
+                "store_accounting": {
+                    "total": sa_total,
+                    "tombstoned": sa_tomb,
+                    "alive": sa_alive,
+                    "never_published_source_sequence_0": sa_never,
+                    "published_source_sequence_gt0": sa_pub,
+                },
             },
             "anomalies": anomalies,
             "rows": {
@@ -475,7 +506,10 @@ W = "workspace-test"
 S = SUBJECT_ID
 
 
-def seed(con: sqlite3.Connection) -> None:
+def seed(con: sqlite3.Connection, wid: str = W) -> None:
+    # Fixture-scope workspace id. The nested helpers below close over this
+    # local, so the same golden DDL seeds any workspace id (default: module W).
+    W = wid  # noqa: F841
     cur = con.cursor()
     for ddl in DDL:
         cur.execute(ddl)
@@ -523,6 +557,7 @@ def seed(con: sqlite3.Connection) -> None:
     live("old-live", "m1", "p1", 2, 0, 30, cps=1)               # outside window, stale
     live("gone", "m9", "p9", 1, 1, 0, cps=0)                    # tombstoned -> excluded everywhere
     live("recovered", "unknown", "unknown", 4, 0, 0, cps=0)     # in window, unknown model artifact, stalled too
+    live("seq0-session", "m1", "p1", 0, 0, 0, cps=0)           # never published (seq=0): excluded from catalog, counted in store_accounting
     # --- arm 3: routes
     route("r1", 0)                                               # in window, plain
     route("r2", 0, instance="inst-a")                            # in window, active instance
@@ -583,6 +618,68 @@ def selftest() -> int:
         blob = json.dumps(res)
         expect("no messages value leaked", "x" * 64 in blob, False)
         expect("no title leaked", "secret-title" in blob, False)
+
+        # Block A: workspace-id derivation parity (SA-1 regression guard).
+        # The harness (internal/cli/context_setup_session.go:100) hex-encodes
+        # the first 8 BYTES of sha256(canonical root) = 16 hex chars. The
+        # buggy 8-hex-char form must never return.
+        with tempfile.TemporaryDirectory() as probe_dir:
+            probe_root = os.path.join(probe_dir, "ws")
+            derived = derive_workspace_id(probe_root)
+            expected_wid = "workspace-" + hashlib.sha256(
+                os.path.realpath(os.path.abspath(probe_root)).encode("utf-8")
+            ).digest()[:8].hex()
+            expect("derivation prefix", derived.startswith("workspace-"), True)
+            expect(
+                "derivation is 16 hex chars (8 bytes)",
+                re.fullmatch(r"workspace-[0-9a-f]{16}", derived) is not None,
+                True,
+            )
+            expect("derivation matches Go byte semantics", derived, expected_wid)
+
+        # Block B: CLI end-to-end fixture (hermetic). Proves the full CLI path
+        # (argparse -> root -> derive_workspace_id -> analyze) scopes correctly
+        # and never touches the real global ledger (~/.mivia/context.db).
+        with tempfile.TemporaryDirectory() as cli_dir:
+            cli_root = os.path.realpath(os.path.join(cli_dir, "cli-ws"))
+            cli_wid = "workspace-" + hashlib.sha256(cli_root.encode("utf-8")).digest()[:8].hex()
+            cli_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+            cli_db.close()
+            try:
+                ccon = sqlite3.connect(cli_db.name)
+                seed(ccon, wid=cli_wid)
+                ccon.close()
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = main(argv=["--root", cli_root, "--ledger", cli_db.name, "--window", "all"])
+                cli_out = json.loads(buf.getvalue())
+                expect("cli fixture exit code", rc, 0)
+                expect("cli fixture workspace_id", cli_out.get("workspace_id"), cli_wid)
+                expect(
+                    "cli fixture window counts",
+                    cli_out.get("signals", {}).get("window_counts"),
+                    {"snapshots": 3, "live": 3, "worktree_routes": 3, "total": 9},
+                )
+                expect("cli fixture ledger path", cli_out.get("ledger_path"), cli_db.name)
+            finally:
+                os.unlink(cli_db.name)
+
+        # Block C: store accounting + admissions condition + derivation
+        # disclosure (SA-2 / SA-3 / AR-4). RED until analyze() emits them.
+        sa = s["store_accounting"]
+        expect("store_accounting.total", sa["total"], 6)
+        expect("store_accounting.tombstoned", sa["tombstoned"], 1)
+        expect("store_accounting.alive", sa["alive"], 5)
+        expect("store_accounting.never_published", sa["never_published_source_sequence_0"], 1)
+        expect("store_accounting.published", sa["published_source_sequence_gt0"], 4)
+        expect(
+            "admissions note mentions non-empty set",
+            "non-empty" in s["admissions_coverage"].get("note", ""),
+            True,
+        )
+        expect("derivation field present", "derivation" in res, True)
+        expect("derivation hex_chars", res.get("derivation", {}).get("hex_chars"), 16)
+        expect("no admission value leaked", '"read_file"' in blob, False)
     finally:
         os.unlink(tmp.name)
     if failures:
@@ -596,13 +693,14 @@ def selftest() -> int:
 
 # ---------------------------------------------------------------------------
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=SKILL + " read-only ledger analyzer")
     ap.add_argument("--root", default=os.getcwd(), help="workspace root (default: cwd)")
     ap.add_argument("--ledger", default=None, help="override ledger path (fixtures)")
     ap.add_argument("--window", default="24h", help="24h|7d|all|ISO start (default 24h)")
+    ap.add_argument("--json", action="store_true", help="print JSON (default output format; flag kept for the documented CLI surface)")
     ap.add_argument("--selftest", action="store_true", help="run hermetic golden-DB selftest")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if args.selftest:
         return selftest()

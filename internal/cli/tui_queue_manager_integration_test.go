@@ -23,6 +23,12 @@ type queueDrainCompleter struct {
 	requests  []provider.Request
 	release   chan struct{}
 	firstDone chan struct{}
+	// release2 optionally gates the second ChatTurn call the same way release
+	// gates the first, so a caller that wants to observe the model's state
+	// between "second turn sent" and "second turn finished" has a stable
+	// window instead of a state that a fast fake completer can resolve
+	// before the next poll samples it (DC-flaky-tui-turn-observation).
+	release2 chan struct{}
 }
 
 func (c *queueDrainCompleter) Name() string { return "queue-drain" }
@@ -45,6 +51,13 @@ func (c *queueDrainCompleter) ChatTurn(ctx context.Context, req provider.Request
 		}
 		close(c.firstDone)
 		return &provider.Response{Content: "first answer", FinishReason: "stop"}, nil
+	}
+	if n == 2 && c.release2 != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-c.release2:
+		}
 	}
 	return &provider.Response{Content: "next answer", FinishReason: "stop"}, nil
 }
@@ -349,7 +362,7 @@ func TestIntegrationQueueEditSurvivesTurnEnd(t *testing.T) {
 // next turn and clears the edit, and only when that turn ends does the
 // remaining queued item auto-drain.
 func TestIntegrationQueueEditEnterSendsEditedWhenIdle(t *testing.T) {
-	completer := &queueDrainCompleter{release: make(chan struct{}), firstDone: make(chan struct{})}
+	completer := &queueDrainCompleter{release: make(chan struct{}), firstDone: make(chan struct{}), release2: make(chan struct{})}
 	session := queueSessionHarness(t, completer)
 	sp := startScrollProgram(t, func(m *tuiModel) {
 		m.session = session
@@ -389,9 +402,11 @@ func TestIntegrationQueueEditEnterSendsEditedWhenIdle(t *testing.T) {
 	}
 
 	// Enter while idle sends the edited text as the next turn. The edit must
-	// clear and the untouched item must stay queued until that turn ends; the
-	// combined condition is checked in one probe so the turn-2 drain cannot
-	// race the assertions.
+	// clear and the untouched item must stay queued until that turn ends.
+	// The completer blocks the second ChatTurn call on release2, so "request
+	// 2 sent" is a stable window here rather than a state a fast fake
+	// completer could resolve (request 2 AND its auto-drained follow-up)
+	// before the next poll ever samples it.
 	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
 	if !sp.waitUntil(4*time.Second, func(m *tuiModel) bool {
 		return len(completer.Requests()) == 2 && !m.editingQueued && len(m.pendingQueue) == 1 && m.pendingQueue[0] == "B"
@@ -399,6 +414,7 @@ func TestIntegrationQueueEditEnterSendsEditedWhenIdle(t *testing.T) {
 		st := snapshotQueueEdit(sp, completer)
 		t.Fatalf("enter while idle must send the edited text with B still queued: pending=%v editing=%v draft=%q requests=%d", st.pending, st.editing, st.draft, st.requests)
 	}
+	close(completer.release2)
 
 	// The edited turn ends and the remaining queued item auto-drains.
 	if !sp.waitUntil(4*time.Second, func(m *tuiModel) bool {

@@ -6,6 +6,13 @@ analysis. Keep each field to one line or short bullet; do not add narrative
 sections. The report NEVER contains message content, titles, admission values,
 or payloads.
 
+> MIGRATION (schema v1 → v2): this grammar file (`report-template.md`) and
+> `queries.py` are the two sides of the v1→v2 contract. v2 adds the
+> `derivation`, `store_accounting`, and `admissions_coverage.note` fields;
+> nothing is removed or rekeyed, so v1 consumers keep parsing. The previous
+> `workspace_id` derivation (8 hex chars) mis-scoped every run; the corrected
+> derivation (16 hex chars) is disclosed in the output under `derivation`.
+
 ```md
 ReportFormat: mivia-report/v1
 Skill: session-analysis
@@ -20,7 +27,7 @@ Signals:
 - stalled live (0 completed checkpoints): <n> | copies: <n> | orphan dir rows: <n>
 - admissions coverage: <n> of <n> window sessions | stale (7d): snapshots <n> live <n> routes <n>
 Findings:
-- [SA-n] <severity> <one-line observed claim> | Evidence: <signal + anchor, observation time> | Occurrences: <x of y> | Validation: CONFIRMED (subagent)|CONFIRMED (cross-check)|CONFIRMED (selftest)|INSUFFICIENT_EVIDENCE|NOT_VALIDATABLE | Remediation: <concrete process change and owner>
+- [SA-n] <severity> [SOURCES: <signal names that fed this finding>] <one-line observed claim> | Evidence: <signal + anchor, observation time> | Occurrences: <x of y> | Validation: CONFIRMED (subagent)|CONFIRMED (cross-check)|CONFIRMED (selftest)|INSUFFICIENT_EVIDENCE|NOT_VALIDATABLE | Remediation: <concrete process change and owner>
 Recommendations:
 - <process improvement, clearly labeled inferred when applicable>
 ResidualRisk: none|<short exact risk>
@@ -66,3 +73,25 @@ Result semantics:
 Zero-session window: measured absence is a finding. State the window frame, the
 calibration line (ledger totals vs workspace totals, other-workspace rows
 present), the derived workspace_id, and the per-arm anchor translation table.
+
+## Migration (schema v1 → v2)
+
+| Field | Kind | v1 status | v2 status | Consumers |
+| --- | --- | --- | --- | --- |
+| `workspace_id` | string | present (WRONG: 8 hex chars) | present (corrected: 16 hex chars) | all signals |
+| `derivation` | object | absent | NEW | validation, ops |
+| `store_accounting` | object | absent | NEW | findings SA-2/SA-3 |
+| `admissions_coverage.note` | string | absent | NEW | findings AR-4 |
+| `admissions_coverage.*` | numbers | present | present (unchanged) | findings AR-4 |
+
+Deployment checklist (execute in order, no downtime):
+
+1. ship `queries.py` (new fields) with selftest green — the report gains
+   `derivation` + `store_accounting` + `admissions_coverage.note`;
+2. update consumers (findings templates, dashboards) to the v2 field names;
+3. keep v1 field names parsing for one release (nothing was removed);
+4. delete this section once all consumers are on v2.
+
+Re-verify workspace scoping after deploy: the derived `workspace_id` must be
+16 hex chars; compare against the harness ledger row
+(`SELECT workspace_id FROM context_sessions LIMIT 1`).

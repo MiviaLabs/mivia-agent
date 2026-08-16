@@ -60,9 +60,15 @@ func startTuiThreadProgram(t *testing.T, session *chat.Session) (*scrollProgram,
 // waits for the turn to finish on the real bridge-drain path.
 func sendTuiTurn(t *testing.T, sp *scrollProgram, text string) {
 	t.Helper()
+	// turnSeq is monotonic and never resets, unlike m.waiting: a fast (fake
+	// completer-backed) turn can flip waiting true then false again between
+	// two polls, so polling for waiting==true can land entirely between the
+	// flip and wrongly report the turn "never started".
+	var before uint64
+	sp.probe(func(m *tuiModel) { before = m.turnSeq })
 	sp.send(keyRunes(text))
 	sp.send(tea.KeyMsg{Type: tea.KeyEnter})
-	if !sp.waitUntil(4*time.Second, func(m *tuiModel) bool { return m.waiting }) {
+	if !sp.waitUntil(4*time.Second, func(m *tuiModel) bool { return m.turnSeq > before }) {
 		t.Fatalf("turn %q never started", text)
 	}
 	if !sp.waitUntil(8*time.Second, func(m *tuiModel) bool { return !m.waiting }) {

@@ -24,8 +24,9 @@ Ledger resolution (mirrors `internal/cli/chat_repository_binding.go:124-141`,
    workspace on the machine**. Sessions are isolated inside it by workspace ID.
 
 Principal scoping (mirrors `internal/cli/context_setup_session.go:91-107`):
-`workspace_id = "workspace-" + hex(sha256(realpath(root))[:8])`,
-`subject_id = "local-user"`. Every query is scoped by both. The audit rated
+`workspace_id = "workspace-" + hex(sha256(realpath(root))[:8])` (hex of the first
+8 bytes = 16 hex chars, matching `context_setup_session.go`;
+`hex.EncodeToString(digest[:8])`), `subject_id = "local-user"`. Every query is scoped by both. The audit rated
 "wrong ledger path + no principal derivation" the top failure mode: on a
 machine-shared ledger, an unscoped query reads other workspaces' session
 metadata.

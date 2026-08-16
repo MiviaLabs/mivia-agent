@@ -68,7 +68,9 @@ Ledger resolution (mirrors `chat_repository_binding.go` + `namespace.go`):
 
 Principal scoping (mirrors `context_setup_session.go`):
 
-- `workspace_id = "workspace-" + hex(sha256(realpath(workspace_root))[:8])`
+- `workspace_id = "workspace-" + hex(sha256(realpath(workspace_root))[:8])` — hex
+  of the first **8 bytes** (16 hex chars), matching `context_setup_session.go`
+  (`hex.EncodeToString(digest[:8])`); never 8 hex chars
 - `subject_id = "local-user"`
 
 Every query is scoped by `workspace_id` + `subject_id`. Because the ledger is
