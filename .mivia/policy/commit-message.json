@@ -5,6 +5,7 @@
   "maxSubjectLength": 72,
   "types": [
     "feat",
+    "hardening",
     "fix",
     "docs",
     "chore",
@@ -78,6 +79,7 @@
   },
   "examples": [
     "feat(cli): add version command",
+    "hardening(agent): fence run admission on the idempotency key",
     "fix(hooks): print allowed scopes on commit-msg failure",
     "docs(docs): document commit scopes in contributing",
     "chore(ai): bootstrap agent control surface",
