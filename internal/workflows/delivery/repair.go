@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	ledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -155,6 +156,22 @@ func RepairTarget(err error, p Policy) string {
 	return p.OnFailure
 }
 
+// IsCommitMessageRejection reports whether cause is a git commit failure whose
+// output names the workspace commit-msg hook (git runs that hook after the
+// message is written, so its diagnostics appear in the commit error text).
+// The rejected artifact is the commit MESSAGE, not the worktree: the subject
+// is the agent's pr_title and the body is rendered from the workflow's
+// commit_message_template, so the repair is a structured-output edit, not a
+// worktree edit. Requiring the git failure marker keeps the classifier off
+// any text that merely mentions a commit-msg hook without a failed commit.
+func IsCommitMessageRejection(cause error) bool {
+	if cause == nil {
+		return false
+	}
+	text := cause.Error()
+	return strings.Contains(text, "commit-msg") && strings.Contains(text, "exit status")
+}
+
 // RepairHint renders the harness guidance a repair agent needs to fix a
 // delivery rejection: a short "what to repair" line derived from the failure
 // class, then the raw rejection text. It is project- and language-agnostic:
@@ -183,6 +200,8 @@ func RepairHint(cause error) string {
 		lead = "the delivered diff is too large; the host's automatic file split either could not bring it under the hard limit or was refused because it would separate a file from its test companion (the rejection output below says which) - actually shrink the change (reduce scope, split a large edit, or move separable work out of this chunk); a file and its tests must ship in the same commit (both in the delivered commit or both deferred); keep tests green and do not commit yourself - the delivery host commits the worktree before the next delivery attempt"
 	case IsRefusal(cause):
 		lead = "the delivery host permanently refused publication; this is usually not fixable by a workflow step - read the reason below and correct the underlying condition"
+	case IsCommitMessageRejection(cause):
+		lead = "the workspace commit-msg hook rejected the commit MESSAGE, not the code; the commit SUBJECT is your pr_title and the commit BODY is rendered from the workflow's commit_message_template - fix pr_title in your structured output so the subject satisfies the hook's type/scope/shape rules, and if the rejection names required trailers missing from the body, ensure the rendered commit body carries them (the template renders them, or use a commit type that does not require them); the rejection output below names the exact violation; do not try to fix this with worktree edits alone - the delivery host commits the worktree before the next delivery attempt (do not run git commit or push yourself)"
 	default:
 		lead = "the delivery gate rejected the change; fix the reported failure in the worktree. If the rejection is a hook or gate failure, note that the hook verified the DELIVERED COMMIT tree while the evidence gates verified the worktree; the rejection output above lists the delivered, deferred, and worktree files when they differ. Do not revert production code to satisfy a stale test in the delivered commit - that undoes the fix; make the delivered commit internally consistent instead. If the rejection mentions uncommitted or foreign changes, make sure your repair edits are complete - the delivery host commits the worktree before the next delivery attempt (do not run git commit or push yourself)"
 	}

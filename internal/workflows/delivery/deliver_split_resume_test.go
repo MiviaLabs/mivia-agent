@@ -22,6 +22,25 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
+// TestDeferredCommitMessage pins the host-only deferred follow-up message
+// shape: subject always the passed-through pr_title, the deferred note always
+// present, and - when the workflow renders a commit body - that body appended
+// so required trailers (for example Regression/Class/Sweep on a fix subject)
+// still satisfy a workspace commit-msg hook on the follow-up commit.
+func TestDeferredCommitMessage(t *testing.T) {
+	noBody := deferredCommitMessage("fix(agent): retain interrupted turns", "", 2)
+	if noBody != "fix(agent): retain interrupted turns\n\ndeferred: 2 file(s) split from this chunk's delivery (automatic follow-up)" {
+		t.Fatalf("deferredCommitMessage without a body = %q", noBody)
+	}
+	withBody := deferredCommitMessage("fix(agent): retain interrupted turns", "Regression: TestX\nClass: none (no class fits)\nSweep: searched deliver/, found 0 further sites", 1)
+	if !strings.Contains(withBody, "fix(agent): retain interrupted turns\n\ndeferred: 1 file(s) split from this chunk's delivery (automatic follow-up)") {
+		t.Fatalf("deferredCommitMessage with a body lost the subject or the deferred note: %q", withBody)
+	}
+	if !strings.HasSuffix(withBody, "\n\nRegression: TestX\nClass: none (no class fits)\nSweep: searched deliver/, found 0 further sites") {
+		t.Fatalf("deferredCommitMessage with a body must end with the rendered body (trailers last): %q", withBody)
+	}
+}
+
 // seedSplitCrashState builds the state a crashed split attempt leaves behind:
 // C1 (the delivered commit, only essential.txt) authored by the mivia
 // delivery identity and recorded with CommitSHA/TreeSHA/DeferredFiles BEFORE
@@ -129,6 +148,16 @@ func TestDeliverSplitCrashResumeWindowA(t *testing.T) {
 		t.Fatalf("Create calls = %d, want 1", n)
 	}
 	assertSplitResumeOutcome(t, repoRoot, worktreeRoot, baseCommit, run, repo, c1)
+
+	// The re-executed deferred commit C2 must carry the same policy-rendered
+	// body as the delivered commit, not just the deferred note: a fix subject
+	// whose commit-msg hook demands trailers must pass on this follow-up too.
+	msg := runGitOut(t, worktreeRoot, "log", "-1", "--format=%B", DeferredBranchName("wf/wt-test"))
+	for _, want := range []string{"deferred: 1 file(s) split from this chunk's delivery (automatic follow-up)", "Body."} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("deferred branch commit message = %q, missing %q (the policy body must ride the follow-up commit)", msg, want)
+		}
+	}
 }
 
 // TestDeliverSplitCrashResumeWindowB pins the window-B bug: a crash after C2

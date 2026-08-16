@@ -357,6 +357,10 @@ func TestRepairHintClassifies(t *testing.T) {
 			[]string{"delivered diff is too large", "automatic file split", "hard limit"}},
 		{"permanent refusal", &RefusalError{Reason: "origin remote changed since admission"},
 			[]string{"permanently refused publication", "origin remote changed"}},
+		{"commit message rejection", errors.New("git commit --allow-empty-message -m fix(agent): x: exit status 128: commit-msg: error: fix commits require a Regression: line in the body"),
+			[]string{"commit MESSAGE, not the code", "pr_title", "commit_message_template", "rejection output:", "Regression"}},
+		{"commit-msg mentioned but no git failure stays generic", errors.New("gate: commit-msg contract test failed"),
+			[]string{"the delivery gate rejected the change", "commit-msg contract test failed"}},
 		{"nil cause", nil, []string{"without a recorded cause"}},
 	}
 	for _, tc := range cases {
@@ -368,6 +372,33 @@ func TestRepairHintClassifies(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// IsCommitMessageRejection must fire on a git commit failure whose output
+// carries the workspace commit-msg hook diagnostics, and must stay silent
+// when the text merely mentions a commit-msg hook without a failed commit
+// (a gate or policy text is not evidence of a message rejection).
+func TestIsCommitMessageRejection(t *testing.T) {
+	positive := []error{
+		errors.New("git commit --allow-empty-message -m fix(agent): x: exit status 128: commit-msg: error: fix commits require a Regression: line in the body"),
+		errors.New("cannot commit deferred_files: git commit --allow-empty-message -m fix(agent): x (exit status 128) - commit-msg: error: subject too long"),
+	}
+	for _, err := range positive {
+		if !IsCommitMessageRejection(err) {
+			t.Errorf("IsCommitMessageRejection(%v) = false, want true", err)
+		}
+	}
+	negative := []error{
+		nil,
+		errors.New("gate: commit-msg contract test failed"),
+		errors.New("git commit --allow-empty-message -m fix(agent): x: exit status 128: pre-commit: check_go_structure: 1 hard violation(s)"),
+		errors.New("delivery: pr_title \"x\" does not satisfy requireScope"),
+	}
+	for _, err := range negative {
+		if IsCommitMessageRejection(err) {
+			t.Errorf("IsCommitMessageRejection(%v) = true, want false", err)
+		}
 	}
 }
 

@@ -178,7 +178,11 @@ func reexecuteDeferredCommit(ctx context.Context, repo ledger.Repository, git Gi
 		// drifted so it can reconcile the worktree instead of guessing.
 		return "", "", &RefusalError{Reason: fmt.Sprintf("cannot resume the deferred-file split: the worktree no longer holds exactly the recorded deferred files (recorded: %s; currently staged: %s)", strings.Join(deferred, ", "), strings.Join(paths, ", "))}
 	}
-	msg := deferredCommitMessage(title, len(deferred))
+	bodyText, err := req.Policy.RenderCommitMessage(req.Inputs)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot render commit message for the deferred follow-up: %w", err)
+	}
+	msg := deferredCommitMessage(title, bodyText, len(deferred))
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
 		"-c", "user.name="+mviaCommitAuthorName, "-c", "user.email="+mviaCommitAuthorEmail,
 		"commit", "--allow-empty-message", "-m", msg); err != nil {

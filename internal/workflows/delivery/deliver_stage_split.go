@@ -12,11 +12,20 @@ import (
 // split delivery: the SAME subject that just passed both the PR-title and
 // commit-message policy checks (a host-invented subject is not guaranteed to
 // satisfy an arbitrary workspace's commit-msg hook - wrong type/scope shape,
-// too long), plus a body naming the deferred follow-up. This commit is never
-// pushed on the delivered branch, so it never goes through
-// validateDeliveryCommitSubject itself.
-func deferredCommitMessage(title string, deferredCount int) string {
-	return buildCommitMessage(title, fmt.Sprintf("deferred: %d file(s) split from this chunk's delivery (automatic follow-up)", deferredCount))
+// too long), plus a body naming the deferred follow-up and the SAME
+// policy-rendered body the delivered commit carries. The rendered body is
+// load-bearing: a subject type that requires trailers (for example a fix
+// commit in a workspace whose commit-msg hook demands Regression/Class/Sweep
+// lines) must still pass the hook on this follow-up commit, and the body is
+// the only place the trailers can come from. This commit is never pushed on
+// the delivered branch, so it never goes through validateDeliveryCommitSubject
+// itself.
+func deferredCommitMessage(title, body string, deferredCount int) string {
+	note := fmt.Sprintf("deferred: %d file(s) split from this chunk's delivery (automatic follow-up)", deferredCount)
+	if strings.TrimSpace(body) == "" {
+		return buildCommitMessage(title, note)
+	}
+	return buildCommitMessage(title, note+"\n\n"+strings.TrimSpace(body))
 }
 
 // freshDeliveryCommitSplit stages and commits everything EXCEPT deferred,
@@ -99,8 +108,14 @@ func commitDeferredFollowUp(ctx context.Context, git GitRunner, req Request, def
 	// validateDeliveryCommitSubject itself since it is never pushed on the
 	// delivered branch. Reusing title sidesteps that entirely: it is
 	// proven-valid, and per-workspace commit-msg hooks generally do not
-	// reject a repeated subject.
-	deferredMsg := deferredCommitMessage(title, len(deferred))
+	// reject a repeated subject. The BODY is the same policy-rendered body
+	// the delivered commit used, so trailers the hook demands (for example
+	// Regression/Class/Sweep on a fix commit) are present here too.
+	bodyText, err := req.Policy.RenderCommitMessage(req.Inputs)
+	if err != nil {
+		return fmt.Errorf("cannot render commit message for the deferred follow-up: %w", err)
+	}
+	deferredMsg := deferredCommitMessage(title, bodyText, len(deferred))
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
 		"-c", "user.name="+mviaCommitAuthorName, "-c", "user.email="+mviaCommitAuthorEmail,
 		"commit", "--allow-empty-message", "-m", deferredMsg); err != nil {
