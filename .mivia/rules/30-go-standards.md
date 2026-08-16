@@ -64,7 +64,7 @@ Mechanical policy: `.mivia/policy/go-structure.json`, enforced by `scripts/check
 - Prefer `context.Context` for cancellation and deadlines on all blocking/outbound work.
 - No unbounded goroutine spawns; every fan-out has a documented cap (see `.mivia/rules/50-concurrency-subagents.md`).
 - Document lock ordering where multiple mutexes are held.
-- Race-prone packages must be testable with `-race` in CI once CI exists.
+- Race-prone packages must be testable with `-race` in CI.
 
 ## Dependencies
 
@@ -76,4 +76,4 @@ Mechanical policy: `.mivia/policy/go-structure.json`, enforced by `scripts/check
 
 - Cobra (or the repo’s chosen CLI framework) roots at `cmd/mivia`.
 - Flags have tests for defaults, validation, and help text stability where contracts are user-facing.
-- Exit codes: `0` success; non-zero for user/input errors vs internal failures must be consistent and documented in the canonical CLI doc once it exists.
+- Exit codes: `0` success; non-zero for user/input errors vs internal failures must be consistent and documented in `docs/product/agent.md`.

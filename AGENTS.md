@@ -74,115 +74,9 @@ make semgrep
 
 ## Workflow runs
 
-Start every `feature-delivery` run with this script:
+Start every `feature-delivery` run with `scripts/run-delivery-workflow.sh <label>`; the script sets `--allow-publish` and starts the run in the background. It prints the log path.
 
-```bash
-scripts/run-delivery-workflow.sh <label> <<'TASK'
-...task text, any length, any number of lines...
-TASK
-```
-
-The script sets `--allow-publish` and starts the run in the background. It
-prints the log path, so you can start several runs and watch them together.
-
-Do not call `mivia workflow run feature-delivery` directly. Without
-`--allow-publish` the run does all the work, reaches its success terminal, then
-stops at `delivery_pending` and opens no pull request.
-
-### Live e2e test workflows (`e2e-split-test`, `e2e-pr-metadata-test`, `e2e-scope-escape-test`)
-
-`.mivia/workflows/e2e-split-test.toml`, `.mivia/workflows/e2e-pr-metadata-test.toml`,
-and `.mivia/workflows/e2e-scope-escape-test.toml`
-(plus `.mivia/agents/e2e-engineer.toml` and `.mivia/workflows/templates/e2e-*.md`)
-are real, checked-in workflows that exercise the delivery engine's repair
-paths against the ACTUAL `MiviaLabs/mivia-agent` GitHub repo: real branches
-pushed, real draft PRs opened, real `gh` and DeepSeek API calls.
-
-- `e2e-split-test`: the diff-size gate and automatic split
-  (`[stacking] split_deferred = true`) - its repair template deliberately
-  never shrinks the diff, so the host's own split (and, when the run isn't
-  part of a multi-chunk stack, delivery.EnsureFollowUpPublished) must do
-  all the work.
-- `e2e-pr-metadata-test`: the commit-subject repair path - implement
-  deliberately emits an invalid `pr_title` on its first attempt, proving
-  ValidateCommitSubject's rejection routes to repair and the agent's fix
-  (reading the hint) succeeds on retry.
-- `e2e-scope-escape-test`: the chunk-scope guard repair path - run in chunk
-  mode with an explicit `chunk_plan` input, implement deliberately writes one
-  file outside the declared slice, proving guardChunkScope's refusal routes
-  to repair and the agent's fix (deleting the file per the hint) succeeds on
-  retry.
-
-**Never run either without the user explicitly asking for it in that
-session.** Neither is part of `make verify`, CI, or any other automated
-path, and that must stay true. Each workflow's `description` field repeats
-this warning.
-
-When the user does ask for a live delivery-engine smoke test:
-
-```bash
-./mivia workflow run e2e-split-test --input task="short description" --allow-publish
-./mivia workflow run e2e-pr-metadata-test --input task="short description" --allow-publish
-./mivia workflow run e2e-scope-escape-test --input task="short description" \
-  --input stack_mode=chunk --input chunk=c1 --input pr_base=main --input stack_part=1/1 \
-  --input chunk_plan='{"id":"c1","title":"scope smoke","files":["testdata/e2e-smoke/scope-ok.md"]}' \
-  --allow-publish
-mivia stack drive e2e-split-test   # only if decompose produced a multi-chunk plan
-```
-
-Keep the `task` input short (the rendered PR title/commit subject must pass
-this repo's own `.mivia/policy/commit-message.json`, ≤72 chars, `type(scope):
-subject` shape). After the run settles, close and delete-branch any PR it
-opened - the workflow's own PR body already says "Safe to close/delete."
-Never merge one.
-
-### e2e suite runner (`scripts/e2e_suite.py`)
-
-`scripts/e2e_suite.py` is a small, versioned suite over live e2e scenarios,
-so a live delivery-engine check does not mean inventing a fresh ad hoc task
-prompt every time. Same never-run-without-explicit-ask rule as above; it
-never runs itself and is not part of `make verify`/CI. Three scenario
-kinds: **topology** (drives the real `feature-delivery` workflow with a
-task engineered to force a known chunk-dependency shape - independent
-chunks, a DAG diamond, a wide fan-in, a linear chain, a single-package
-run), **scripted** (the checked-in `e2e-*.toml` workflows above), and
-**bug-fix** (a real `bug-fix.toml` run, scope narrowed to a bug-dense area,
-told to fix only the first confirmed bug rather than hunt exhaustively -
-small and bounded, not an open-ended audit).
-
-```bash
-scripts/e2e_suite.py list                 # see every scenario
-scripts/e2e_suite.py run independent-3    # launch one, backgrounded
-scripts/e2e_suite.py run --all            # launch the whole suite in parallel
-scripts/e2e_suite.py status               # summarize every launched run
-scripts/e2e_suite.py kill --all           # stop every launched driver process
-```
-
-Logs land in `.mivia/run-logs/e2e-suite/`, one file per scenario name, with
-a `manifest.json` tracking pid/log/start time so `status`/`kill` work in a
-later session too. As with the checked-in workflows above: close and
-delete-branch any PR a run opens; never merge one.
-
-### Context-compaction e2e (`scripts/e2e_context_compaction.py`)
-
-Drives the real `mivia` binary through automatic compaction, manual
-`/compact`, the tool-enabled agent loop, and the summary-gate-off path.
-Every assertion reads a surface a user or host app observes - the NDJSON
-wire and the durable SQLite checkpoint - so a regression that unit tests
-pass by construction still fails here.
-
-```bash
-scripts/e2e_context_compaction.py                  # hermetic, no credentials
-scripts/e2e_context_compaction.py --provider real  # real API calls, costs money
-```
-
-The default `stub` backend runs its own local OpenAI-compatible server, so
-it needs no key and is safe anywhere. `--provider real` uses
-`DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `ZAI_API_KEY`, or
-`OLLAMA_API_KEY` from the environment.
-
-Same rule as every other e2e above: never part of `make verify` or CI, and
-never run `--provider real` without the user asking for it in that session.
+**Never run a live e2e workflow** (`e2e-split-test`, `e2e-pr-metadata-test`, `e2e-scope-escape-test`), the e2e suite runner, or the context-compaction e2e **without the user explicitly asking for it in that session.** They are not part of `make verify`, CI, or any automated path. Runbook and commands: `docs/development/agent-workflow.md`.
 
 ## Layout
 
@@ -196,36 +90,6 @@ scripts/             Guards, hooks, scans, contract tests
 semgrep/             Agent-standards static rules
 .githooks/           core.hooksPath entrypoints
 ```
-
-## Skills (use when relevant)
-
-| Skill | Role |
-|-------|------|
-| `verify-code-change` | Evidence ladder after code/config changes |
-| `bug-audit` | Adversarial confirmed-bug hunt only (no false positives) |
-
-Repo-native:
-
-| Skill | Role |
-|-------|------|
-| `verify-change` | Mechanical gates + `mivia-report/v1` for scoped changes |
-| `docs-update` | OWNERS-safe documentation edits |
-| `secure-change` | Auth/secrets/network/tooling review |
-| `simplification-review` | Landed-code over-engineering and pattern-fitness review |
-| `performance-review` | Measurement-driven profiling and benchmark review |
-| `concurrency-review` | Fan-out, pools, cancel, race |
-| `architecture-review` | Boundaries, abstraction level, over-engineering (ADLC Step 0) |
-| `feature-delivery` | Bounded feature slice delivery |
-| `workflow-runs-analysis` | Read-only validated analysis of workflow-run ledger; process-quality findings |
-| `session-analysis` | Read-only validated analysis of chat sessions in the durable chat ledger; metadata-only, process-quality findings |
-
-Workflow panel (read-only, JSON-only; used by the `feature-delivery` `review_panel` members):
-
-| Skill | Role |
-|-------|------|
-| `panel-bug-audit` | Correctness member: reachable bugs, concurrency, persistence, reliability |
-| `panel-secure-change` | Security member: authz, secrets, injection, SSRF, prompt injection |
-| `panel-architecture-review` | Integration member: boundary fitness, dependency direction, abstraction cost |
 
 ## Workflows
 
@@ -275,19 +139,4 @@ On commit-msg failure the hook prints **allowed types and scopes first**, then t
 
 ## Completion report
 
-- Outcome
-- Changed files
-- Verification (commands + results)
-- Residual risk / blockers
-
-Formal audits: `.mivia/templates/agent-report-v1.md` (`mivia-report/v1`).
-Bug-audit: skill-specific finding format only.
-
-## Better than agentkit MVP
-
-| Keep | Improve |
-|------|---------|
-| Hooks + Semgrep + commit policy | Fewer always-on gates that always run |
-| Hook-bypass guard | Docs ownership machine-enforced |
-| Conventional commits | Production skills from mivia-agent-skills |
-| Control surface under `.mivia/` | Binary/product name `mivia`; no skill forks |
+The report shape (Outcome, Changed files, Verification, Residual risk) is defined in `.mivia/rules/01-output-budget.md`. Formal audits: `.mivia/templates/agent-report-v1.md` (`mivia-report/v1`). Bug-audit: skill-specific finding format only.

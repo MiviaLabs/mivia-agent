@@ -315,38 +315,35 @@ If the snippet matches these shapes and nothing else is wrong, answer with
 7. **Clamp / bounds helpers that throw or return error when `lo > hi`** when the
    requirement says to reject invalid bounds - clean. Fail-fast validation is
    not a bug.
-8. **Rust `parse` returning `Result<T, E>`** (including `s.parse::<u16>()`) when
-   the requirement says return an error rather than panic - clean. Only
-   `unwrap`/`expect`/`panic!` would be a defect.
-9. **Tenant/owner-scoped loaders** that pass authenticated `tenantId`/`userId`
+8. **Tenant/owner-scoped loaders** that pass authenticated `tenantId`/`userId`
    into `findByTenantAndId` / `GetForUser` (or equivalent) - clean when the
    requirement is cross-tenant denial and the filter is actually applied. Do
    **not** invent IDOR because a repo interface also has an unscoped method
    that the shown call path never uses.
-10. **std Mutex dropped before `.await`** (scoped lock block ends, then await,
-    then re-lock) when the requirement forbids holding the mutex across await -
-    clean. Do not invent races solely because two lock sections exist.
-11. **`errgroup.WithContext` + `g.Wait()`** returning the first error, with
+9. **std Mutex dropped before `.await`** (scoped lock block ends, then await,
+   then re-lock) when the requirement forbids holding the mutex across await -
+   clean. Do not invent races solely because two lock sections exist.
+10. **`errgroup.WithContext` + `g.Wait()`** returning the first error, with
     workers taking `ctx` into I/O - clean for "cancel siblings on first error."
     Do not invent missing cancel because `httpGet` body is not shown. Same for
     **`g.SetLimit(n)` + loop-local `it := it`** - bounded workers with correct
     capture are clean; do not invent "context not propagated" when `fn(ctx, it)`
     is used.
-12. **`asyncio.shield(commit)` + `rollback` on `CancelledError`** when the
+11. **`asyncio.shield(commit)` + `rollback` on `CancelledError`** when the
     requirement is commit-or-rollback under cancel - clean. Do not invent
     partial-commit bugs that the shown shield/rollback already addresses.
-13. **Disjoint index writes** into a pre-sized slice/array from concurrent workers
+12. **Disjoint index writes** into a pre-sized slice/array from concurrent workers
     (each goroutine writes only `out[i]`) are not data races by themselves when
     indices do not overlap.
-14. **Go `client.Get` + `defer resp.Body.Close()`** before status checks and
+13. **Go `client.Get` + `defer resp.Body.Close()`** before status checks and
     `ReadAll` - body closed on all paths after Get succeeds. Clean.
-15. **Rust `u16::try_from(v).map(...).map_err(|_| "...")`** implementing
+14. **Rust `u16::try_from(v).map(...).map_err(|_| "...")`** implementing
     `TryFrom` - clean. Message string quality is not a defect.
-16. **Rust `Arc<Mutex<T>>` + spawn + join + final lock** - clean shared counter.
-17. **TS/Node `timingSafeEqual` after length equality check** - clean for the
+15. **Rust `Arc<Mutex<T>>` + spawn + join + final lock** - clean shared counter.
+16. **TS/Node `timingSafeEqual` after length equality check** - clean for the
     constant-time equal-buffer contract.
-18. **TS `path.resolve` + `startsWith(BASE)` containment** - clean.
-19. **Java `PreparedStatement` / C# parameterized SQL / static `HttpClient` /
+17. **TS `path.resolve` + `startsWith(BASE)` containment** - clean.
+18. **Java `PreparedStatement` / C# parameterized SQL / static `HttpClient` /
     `Task`-returning save forwarders / Java Optional chains / Python
     `json.loads(Path(...).read_text())` with type check** - clean under the
     stated requirements above.

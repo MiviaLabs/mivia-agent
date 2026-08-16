@@ -1,6 +1,6 @@
 version = 1
 name = "e2e-pr-metadata-test"
-description = "LIVE TEST ONLY - never run without explicit human approval (see AGENTS.md 'Live e2e test workflow'). Pushes a real branch and opens a real draft PR against MiviaLabs/mivia-agent. Deliberately emits an invalid pr_title (no scope, exceeding this repo's commit-message policy) on the first delivery attempt, proving the commit-subject repair path: ValidateCommitSubject rejects it as a repairable PRMetadataError, the repair step reads the hint and fixes pr_title, and delivery succeeds on retry."
+description = "LIVE TEST ONLY - never run without explicit human approval (see docs/development/agent-workflow.md 'Live e2e test workflows'). Pushes a real branch and opens a real draft PR against MiviaLabs/mivia-agent. Deliberately emits an invalid pr_title (no scope, exceeding this repo's commit-message policy) on the first delivery attempt, proving the commit-subject repair path: ValidateCommitSubject rejects it as a repairable PRMetadataError, the repair step reads the hint and fixes pr_title, and delivery succeeds on retry."
 initial_step = "plan"
 
 [inputs.task]

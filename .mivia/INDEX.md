@@ -108,17 +108,6 @@ Machine-readable hook and agent policy:
 - `.mivia/runs/` is for workflow traces and summaries and must be gitignored.
 - Never persist raw prompts, raw model outputs, provider payloads, credentials, or plausible secrets under `.mivia/runs/` or elsewhere in the tree.
 
-## Product Commands (once Go lands)
-
-```bash
-go test ./...
-go vet ./...
-go build -o bin/mivia ./cmd/mivia
-./bin/mivia --help
-```
-
-Use binary name **`mivia`** only. Do not invent or document a `mivia-agent` binary for this product.
-
 ## Documentation Ownership
 
 - Topic ownership and canonical paths are declared in `docs/OWNERS.yaml`.

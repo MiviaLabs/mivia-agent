@@ -71,26 +71,6 @@ Timeouts are advisory; **budgets** (token, step, tool-call) are the real enforce
 - `Budget` bounds total resource consumption
 - These prevent infinite loops without hard timeouts
 
-## Implementation Guidance
-
-## Implementation Status
-
-All rules are implemented as of 2025-07-17:
-
-| Rule | Status | File(s) |
-|------|--------|---------|
-| No hard timeout ceilings | ✅ | `internal/config/defaults.go`, `internal/subagents/subagents.go` |
-| Pool passes through advisory timeouts | ✅ | `internal/subagents/subagents.go:executeOne()` |
-| Handler timeout layering (tighter than parent only) | ✅ | `internal/subagents/multi_step.go:timeoutContext()` |
-| Heartbeat events emitted every 30s | ✅ | `internal/subagents/multi_step.go:emitHeartbeat()` |
-| Heartbeat visible in TUI status bar | ✅ | `internal/cli/brand.go:renderWorkChrome()` |
-| Stalled warning visible in TUI hint line | ✅ | `internal/cli/tui_view.go:chatViewLayout()` |
-| Event-bus heartbeat propagation | ✅ | `internal/subagents/multi_step.go:emitHeartbeat()` (30s) → `internal/cli/dispatcher_handlers.go:OnEventForMultiStep()` → `internal/cli/subagent_progress.go:emitSubagentProgress()` → `events.Bus` (interactive TUI only); workflow steps also emit `controller.ProgressSink` events |
-| Stalled detection (15s quiet since last activity; TUI hint-line warning) | ✅ | `internal/cli/tui_layout.go:104` (`stallQuiet = 15 * time.Second`) |
-| Enriched results (elapsed, steps, step_count) | ✅ | `internal/subagents/multi_step.go`, `internal/cli/dispatch.go` |
-| timeout_seconds override parameter | ✅ | `internal/cli/delegate.go`, `internal/cli/dispatch.go` |
-| Agent prompt awareness | ✅ | `internal/cli/prompt.go`, `.mivia/agents/*.toml` |
-
 **Workflow step heartbeat cadence.** Three clocks keep a running workflow step
 observable:
 

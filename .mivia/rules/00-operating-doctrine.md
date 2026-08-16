@@ -4,9 +4,10 @@ Brand: **MiviaLabs**. Product CLI binary: **`mivia`**. Entrypoint: `cmd/mivia/`.
 
 ## Canonical Source Order
 
-1. `AGENTS.md` - repo-level agent behavior.
-2. `.mivia/` - project control surface (rules, skills, policy, quality).
-3. Tool adapters (`CLAUDE.md`, `.claude/`, `.codex/`, `.agents/`, `.github/`) - thin pointers only.
+1. System / tool instructions
+2. `.mivia/` - project control surface (rules, skills, policy, quality)
+3. `AGENTS.md` - repo-level agent behavior
+4. Task prompt
 
 If an adapter conflicts with `AGENTS.md` or `.mivia/`, follow `AGENTS.md` / `.mivia/` and fix the adapter. Do not invent a second doctrine in adapter files.
 
@@ -32,14 +33,7 @@ If an adapter conflicts with `AGENTS.md` or `.mivia/`, follow `AGENTS.md` / `.mi
 
 ## Verification Contract
 
-Every implementation response must include:
-
-1. **Outcome** - what changed.
-2. **Changed files** - explicit paths.
-3. **Verification** - commands run and pass/fail (or why not run).
-4. **Residual risk** - unproven paths, missing fixtures, or external behavior.
-
-Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
+Every implementation response follows the report shape in `.mivia/rules/01-output-budget.md`. Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
 
 ## Product Naming
 
@@ -55,7 +49,7 @@ Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
 ## Fail Closed
 
 - Protected actions (commit beyond agreed scope, push, PR open, deploy, release, live external calls) require explicit user intent and policy/hook allowance.
-- Malformed hook payloads that request protected actions must be rejected once hook enforcement exists.
+- Malformed hook payloads that request protected actions must be rejected.
 - Prefer deny-by-default for path writes outside the repo and for network unless a surface is designed for it.
 
 ## Long-Running Work

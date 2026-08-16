@@ -67,8 +67,9 @@ Work from the trust boundaries the product actually has, not a generic checklist
 - **Redaction is configuration, never code.** `internal/redact` is the only
   engine; no credential pattern is compiled into the binary
   (`TestNoCompiledRedactionPatterns` fails the build otherwise). A workspace
-  that configures nothing redacts nothing by design. Do not add a "small
-  default" and do not write redaction regex outside `internal/redact`.
+  that configures nothing redacts nothing by design (rationale:
+  `docs/security/overview.md`). Do not add a "small default" and do not write
+  redaction regex outside `internal/redact`.
 - **Secrets and PII are toxic.** In logs, traces, metrics, fixtures, error
   strings, and persisted runs. `prompt` and `reasoning` are deliberately never
   redacted; do not change that.

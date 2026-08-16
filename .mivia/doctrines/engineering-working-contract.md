@@ -106,11 +106,4 @@ Ground findings in a concrete file, symbol, execution path, diff, or reproducibl
 
 ## Final response
 
-Use only the sections that apply:
-
-- **Outcome**
-- **Changed files**
-- **Verification**
-- **Risks or blockers**
-
-Omit empty sections. Keep the response proportionate to the task. Do not claim completion when required verification is blocked.
+Use the report shape in `.mivia/rules/01-output-budget.md`. Omit empty sections. Keep the response proportionate to the task. Do not claim completion when required verification is blocked.
