@@ -141,9 +141,17 @@ base_url = "https://api.z.ai/api/coding/paas/v4"
 # Verify the exact pulled tag with `ollama list` and full GPU residency with
 # `ollama ps` before relying on this entry; context_window_tokens starts
 # conservative like the qwen entry above pending that check.
+#
+# qwen3-coder:30b-a3b-q4_K_M: MoE 30.5B total / ~3B active, tools only, no
+# thinking (no reasoning_efforts/reasoning_dialect - matches the qwen3.6
+# entry's tools-only shape minus reasoning). q4_K_M weights are ~18-19GB,
+# over this card's 16GB, so expect partial CPU offload same as the dense
+# qwen3.6 entry above; context_window_tokens starts conservative pending an
+# `ollama ps` residency check.
 models = [
   { name = "qwen3.6:27b-q4_K_M", context_window_tokens = 32768 },
   { name = "gpt-oss:20b", context_window_tokens = 32768, reasoning_efforts = ["low", "medium", "high"], reasoning = "medium", reasoning_dialect = "openai" },
+  { name = "qwen3-coder:30b-a3b-q4_K_M", context_window_tokens = 32768 },
 ]
 default_model = "qwen3.6:27b-q4_K_M"
 base_url = "http://127.0.0.1:11434/v1"
