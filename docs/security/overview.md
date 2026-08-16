@@ -39,7 +39,12 @@ The filter keeps credentials out of model context by accident. It is not a secur
 
 ## Redaction
 
-Redaction is configuration-only and off by default. `[privacy].redaction_patterns` and `[privacy].redaction_key_names` are the sole source. Recommended values ship in `.mivia/mivia.toml.example`. A workspace that configures neither redacts nothing.
+Redaction is configuration-only and off by default. `[privacy].redaction_patterns` and `[privacy].redaction_key_names` are the sole source. Recommended values ship in `.mivia/mivia.toml.example`. A workspace that configures neither redacts nothing. This fails open by design. What counts as a secret is a property of a workspace. Four compiled lists guessing on the user's behalf drifted apart and were wrong in both directions.
+
+- **One engine.** New code that needs redaction calls `internal/redact`; it does not write its own regex. A `regexp.MustCompile` containing a credential keyword outside `internal/redact` is a defect, and `TestNoCompiledRedactionPatterns` fails the build for it.
+- **No runtime backstop.** Redaction is off unless the workspace configures it. The authoring rules (do not log secrets, keep error messages scrubbed, keep excerpts short) are the first line of defence, not the second. Write as though nothing downstream will clean up after you, because by default nothing will.
+- **`run_command` output is model-visible.** Its body is the tool result. The policy decides what the model reads, not only what an operator reads.
+- Redaction protects what a third party learns about the user. Limiting what a reader learns about mivia is a different problem. Do not solve it here.
 
 Tool argument redaction is opt-in. Set `[privacy] redact_tool_args = true` in TOML or `MIVIA_REDACT_TOOL_ARGS=1` in the environment. When off, `run_command` shows argv and event previews keep argument bodies, still size-capped.
 
