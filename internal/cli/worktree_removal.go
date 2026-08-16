@@ -41,7 +41,7 @@ func removeUnmanagedWorktree(root string, wt *vcs.WorktreeInfo, branchPrefix str
 		}
 		// The directory is already gone; pruning below clears the stale entry.
 	}
-	if err := vcs.Prune(context.Background(), root); err != nil {
+	if err := vcs.Prune(context.Background(), root, wt.Name); err != nil {
 		return err
 	}
 	_, err = cleanupStaleWorktreeRows(store, principal, wt.Name)

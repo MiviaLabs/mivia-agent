@@ -1,6 +1,7 @@
 package vcs
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -66,6 +67,44 @@ func FuzzGitdirPointer(f *testing.F) {
 			}
 		} else if pointer != "" {
 			t.Fatalf("ok=false but pointer is non-empty for input %q", data)
+		}
+	})
+}
+
+// FuzzWorktreePathFromGitdir checks the worktreePathFromGitdir contract: the
+// pure parser must never panic and must return either a non-empty path or "".
+// The .git/worktrees/<name>/gitdir pointer file is git-owned input read from
+// disk, so arbitrary bytes must parse safely. The seed corpus covers empty,
+// malformed, oversized (>1 MiB), duplicate-line, CRLF, absolute/relative, and
+// non-.git-tail inputs.
+func FuzzWorktreePathFromGitdir(f *testing.F) {
+	adminDir := filepath.Join(string(filepath.Separator), "repo", ".git", "worktrees", "wt-a")
+	wtA := filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a", ".git")
+	seeds := []string{
+		"",
+		wtA + "\n",
+		wtA,
+		"../.mivia/worktrees/wt-a/.git\n",
+		"gitdir: /elsewhere/.git\n",
+		wtA + "\n" + wtA + "\n",
+		wtA + "\r\n",
+		filepath.Join(string(filepath.Separator), "repo", "not-a-gitfile") + "\n",
+		strings.Repeat("a", (1<<20)+1),
+		wtA + strings.Repeat("a", 1<<20),
+	}
+	for _, seed := range seeds {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		got := worktreePathFromGitdir([]byte(input), adminDir)
+		if got == "" {
+			return
+		}
+		if !filepath.IsAbs(got) {
+			t.Fatalf("worktreePathFromGitdir returned a relative path %q for input %q", got, input)
+		}
+		if filepath.Base(got) == ".git" {
+			t.Fatalf("worktreePathFromGitdir returned a path still ending in .git: %q", got)
 		}
 	})
 }

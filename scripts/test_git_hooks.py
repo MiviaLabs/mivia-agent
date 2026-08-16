@@ -596,6 +596,11 @@ def test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(root: Path)
     if os.name == "nt" or shutil.which("go") is None:
         return
     root.parent.mkdir(parents=True, exist_ok=True)
+    # `git config --worktree` below needs this extension. A developer clone
+    # that has run `git worktree add` before may already carry it, but a
+    # fresh CI checkout never does - enable it explicitly so both start from
+    # the same state.
+    run(["git", "config", "extensions.worktreeConfig", "true"], ROOT)
     run(["git", "worktree", "add", "--detach", str(root)], ROOT)
     try:
         # Scope these to the WORKTREE only. This is a linked worktree of the

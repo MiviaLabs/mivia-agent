@@ -21,10 +21,16 @@ func TestWorktreeLifecycleLockSurvivesRemovingParentExit(t *testing.T) {
 	testWorktreeLifecycleLockSurvivesParentExit(t, "remove")
 }
 
-func TestWorktreeLifecycleLockSurvivesPruningParentExit(t *testing.T) {
-	testWorktreeLifecycleLockSurvivesParentExit(t, "prune")
-}
-
+// testWorktreeLifecycleLockSurvivesParentExit pins the lock-survival
+// contract: killing the Mivia parent while its Git mutation child is blocked
+// orphans the child, which keeps the lifecycle lock busy until it exits, so a
+// same-name lock is refused and the name cannot be reused mid-mutation. Only
+// the "remove" phase is exercised: `git worktree remove` is the last Git
+// subprocess in the removal flow. Pruning is no longer a Git subprocess (the
+// targeted file-based pruneStaleWorktree replaced the repo-wide `git worktree
+// prune`, which dropped intact worktrees), so there is no orphaned Git child
+// for a prune phase to hold the lock; the prune-phase variant was removed
+// with that behavior.
 func testWorktreeLifecycleLockSurvivesParentExit(t *testing.T, phase string) {
 	if os.Getenv(worktreeLifecycleOrphanHelper) == "1" {
 		runWorktreeLifecycleOrphanHelper(t)

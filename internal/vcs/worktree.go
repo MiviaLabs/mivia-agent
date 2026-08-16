@@ -67,18 +67,18 @@ func CreateWithPrefixLease(ctx context.Context, repoRoot string, name string, ba
 	if err := os.MkdirAll(wtDir, 0o755); err != nil {
 		return nil, err
 	}
-	// Prune stale worktree registrations before adding. A checkout removed
-	// outside Remove (orphan cleanup) stays registered in
-	// .git/worktrees/<name>/ until prune runs, and the stale registration
-	// makes `git worktree add` fail for the same name, wedging the name
-	// permanently. Pruning first clears the stale registration so the add can
-	// re-create the worktree and re-attach the retained branch; prune never
-	// deletes refs, so retained-branch behavior is preserved.
-	prune := exec.CommandContext(ctx, "git", "worktree", "prune")
-	prune.Dir = root
-	prune.Env = pinnedEnv()
-	if out, err := runGitMutation(prune, lease); err != nil {
-		return nil, &gitCommandError{cmd: "worktree prune", output: string(out), err: err}
+	// Prune a stale registration for this name before adding. A checkout
+	// removed outside Remove (orphan cleanup) stays registered in
+	// .git/worktrees/<name>/ until the stale entry is cleared, and the stale
+	// registration makes `git worktree add` fail for the same name, wedging
+	// the name permanently. Clearing it first lets the add re-create the
+	// worktree and re-attach the retained branch; prune never deletes refs,
+	// so retained-branch behavior is preserved. Unlike `git worktree prune`
+	// (which drops any registration whose on-disk .git gitfile is missing,
+	// even when the working tree is intact), the targeted prune removes the
+	// registration only when its recorded working-tree directory is gone.
+	if err := pruneStaleWorktree(ctx, root, sanitised); err != nil {
+		return nil, err
 	}
 	// If the managed branch exists, attach it without changing its tip. This
 	// preserves work that remains on the branch after a worktree is removed.
@@ -131,14 +131,18 @@ func localBranchExists(ctx context.Context, root, branchName string) (bool, erro
 	}
 }
 
-// Remove deletes a worktree by name and prunes stale worktree references.
+// Remove deletes a worktree by name and clears a stale registration for the
+// same name when its recorded working-tree directory is gone. It never drops
+// a registration whose working tree is intact. It preserves all branches.
 func Remove(ctx context.Context, repoRoot string, name string) error {
 	return RemoveWithPrefix(ctx, repoRoot, name, defaultWorktreeBranchPrefix)
 }
 
-// RemoveWithPrefix deletes a worktree by name and prunes stale worktree
-// references. It preserves all branches. This avoids a race when another
-// process changes the worktree branch during removal.
+// RemoveWithPrefix deletes a worktree by name and clears a stale registration
+// for the same name when its recorded working-tree directory is gone; a
+// registration whose working tree is intact is never dropped. It preserves all
+// branches. This avoids a race when another process changes the worktree
+// branch during removal.
 func RemoveWithPrefix(ctx context.Context, repoRoot string, name string, branchPrefix string) error {
 	return RemoveWithPrefixLease(ctx, repoRoot, name, branchPrefix, nil)
 }
@@ -174,30 +178,29 @@ func RemoveWithPrefixLease(ctx context.Context, repoRoot string, name string, br
 	if out, err := runGitMutation(cmd, lease); err != nil {
 		return &gitCommandError{cmd: "worktree remove", output: string(out), err: err}
 	}
-	// Prune stale references.
-	prune := exec.CommandContext(ctx, "git", "worktree", "prune")
-	prune.Dir = root
-	prune.Env = pinnedEnv()
-	_, _ = runGitMutation(prune, lease)
+	// Best-effort cleanup of a same-name stale registration. After a
+	// successful `git worktree remove` the registration is already gone and
+	// this is a no-op; when git left a same-name entry behind (for example
+	// an orphan whose directory vanished), the targeted prune clears it only
+	// when its recorded working-tree directory is confirmed gone. An intact
+	// worktree is never dropped, so this cannot remove a live registration.
+	_ = pruneStaleWorktree(ctx, root, sanitised)
 
 	return nil
 }
 
-// Prune drops Git worktree registrations whose directories are gone. The
+// Prune drops the Git worktree registration for name, but only when the
+// registered working-tree directory no longer exists. An intact working tree
+// is never dropped, even when its on-disk .git gitfile is broken or missing:
+// discoverability of a live worktree outranks clearing a stale entry. The
 // orphan removal path calls it after RemoveWithPrefixLease reports a missing
 // directory, so the stale entry disappears from the worktree list.
-func Prune(ctx context.Context, repoRoot string) error {
+func Prune(ctx context.Context, repoRoot string, name string) error {
 	root, _ := filepath.Abs(repoRoot) // Abs only fails if Getwd fails; git errors otherwise
 	if err := ensureGitRepo(root); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "git", "worktree", "prune")
-	cmd.Dir = root
-	cmd.Env = pinnedEnv()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return &gitCommandError{cmd: "worktree prune", output: string(out), err: err}
-	}
-	return nil
+	return pruneStaleWorktree(ctx, root, name)
 }
 
 func runGitMutation(cmd *exec.Cmd, lease *os.File) ([]byte, error) {
@@ -389,61 +392,9 @@ func ensureGitRepo(dir string) error {
 	return nil
 }
 
-// CurrentBranch returns the currently checked-out branch name for a worktree.
-func CurrentBranch(ctx context.Context, dir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = dir
-	cmd.Env = pinnedEnv()
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// CurrentCommit returns the commit at HEAD in dir.
-func CurrentCommit(ctx context.Context, dir string) (string, error) {
-	return ResolveCommit(ctx, dir, "HEAD")
-}
-
-// ResolveCommit resolves ref to an exact commit.
-func ResolveCommit(ctx context.Context, dir, ref string) (string, error) {
-	if strings.TrimSpace(ref) == "" {
-		return "", fmt.Errorf("resolve commit: ref must not be empty")
-	}
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
-	cmd.Dir = dir
-	cmd.Env = pinnedEnv()
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", &gitCommandError{cmd: "rev-parse", output: string(out), err: err}
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// IsAncestor reports whether ancestor is an ancestor of descendant.
-func IsAncestor(ctx context.Context, dir, ancestor, descendant string) (bool, error) {
-	ancestorCommit, err := ResolveCommit(ctx, dir, ancestor)
-	if err != nil {
-		return false, err
-	}
-	descendantCommit, err := ResolveCommit(ctx, dir, descendant)
-	if err != nil {
-		return false, err
-	}
-	cmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", ancestorCommit, descendantCommit)
-	cmd.Dir = dir
-	cmd.Env = pinnedEnv()
-	if err := cmd.Run(); err == nil {
-		return true, nil
-	} else {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return false, nil
-		}
-		return false, &gitCommandError{cmd: "merge-base --is-ancestor", err: err}
-	}
-}
+// Pruning and revision helpers (pruneStaleWorktree, workingTreePath,
+// worktreePathFromGitdir, CurrentBranch, CurrentCommit, ResolveCommit,
+// IsAncestor) live in prune.go and revision.go.
 
 func parseWorktreeList(output, wtPrefix string) ([]WorktreeInfo, error) {
 	var result []WorktreeInfo

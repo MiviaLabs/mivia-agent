@@ -76,6 +76,7 @@ Repo-native:
 - `performance-review` - measurement-driven profiling and benchmarking; no findings without measurements
 - `feature-delivery` - bounded feature slice with verification
 - `workflow-runs-analysis` - read-only validated analysis of workflow-run ledger; process-quality findings (default window last 24h)
+- `session-analysis` - read-only validated analysis of chat sessions in the durable chat ledger; metadata-only (no message content); default window last 24h; owned by the unrestricted root
 - `memory-housekeeping` - audit the memory store: verify facts, delete stale or duplicate entries, update outdated ones, create missing ones
 
 Workflow panel (read-only, JSON-only; used by the `feature-delivery` and `bug-fix` `review_panel` members):

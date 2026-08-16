@@ -121,3 +121,8 @@ topics:
     path: docs/architecture/token-usage-ledger.md
     owner: architecture
     description: Token usage ledger design - durable per-event usage recording
+
+  session-analysis:
+    path: docs/architecture/session-analysis.md
+    owner: architecture
+    description: Session-analysis skill ledger surface - read-only metadata-only analysis, query parity, privacy perimeter, validation protocol

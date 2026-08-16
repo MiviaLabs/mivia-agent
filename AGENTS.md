@@ -217,6 +217,7 @@ Repo-native:
 | `architecture-review` | Boundaries, abstraction level, over-engineering (ADLC Step 0) |
 | `feature-delivery` | Bounded feature slice delivery |
 | `workflow-runs-analysis` | Read-only validated analysis of workflow-run ledger; process-quality findings |
+| `session-analysis` | Read-only validated analysis of chat sessions in the durable chat ledger; metadata-only, process-quality findings |
 
 Workflow panel (read-only, JSON-only; used by the `feature-delivery` `review_panel` members):
 

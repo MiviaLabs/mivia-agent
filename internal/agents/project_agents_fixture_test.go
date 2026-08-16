@@ -234,6 +234,7 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		"panel-bug-audit", "panel-secure-change", "performance-review",
 		"review-synthesis",
 		"secure-change", "simplification-review",
+		"session-analysis",
 		"verify-change", "verify-code-change", "workflow-feature-delivery",
 		"workflow-runs-analysis",
 	}
