@@ -19,7 +19,7 @@ Two backends:
 NEVER run this from `make verify`, CI, or any automated path, and never run
 the `real` backend without the user explicitly asking in that session: it
 spends their credits. It is a manual check, like the e2e workflows in
-AGENTS.md.
+`docs/development/agent-workflow.md`.
 
     scripts/e2e_context_compaction.py                    # hermetic
     scripts/e2e_context_compaction.py --provider real    # real API calls
