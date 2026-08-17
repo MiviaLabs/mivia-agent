@@ -216,6 +216,11 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 	e.publishDeliveredRunFinished(ctx, repo, runID)
 }
 
+// driveParkedStackImpl is the production implementation behind
+// driveParkedStackIfNeeded. It is a package var so tests can stub or count
+// calls to driveParkedStack without changing the public surface.
+var driveParkedStackImpl = (*sessionWorkflowEngine).driveParkedStack
+
 // driveParkedStackIfNeeded drives a parked multi-chunk plan run's incomplete
 // stack from the recovery sweep. Returns true (abort) when the stack is
 // still incomplete after the drive attempt and the caller must leave the run
@@ -226,6 +231,20 @@ func (e *sessionWorkflowEngine) driveParkedStackIfNeeded(ctx context.Context, ro
 	policy := stackPlanMergePolicy(ctx, repo, runID)
 	if stackDriveCompleted(ctx, root, store, repo, runID, policy, true) {
 		return false
+	}
+	// A terminally failed stack cannot complete, so fail-settle the plan
+	// run once instead of re-driving it forever on every sweep tick.
+	if gate := classifyStackPlanRunDelivery(ctx, root, store, repo, runID, true); gate == stackPlanRunFailed {
+		_, reason := stackPlanRunFailureReason(ctx, root, store, repo, runID)
+		if reason == "" {
+			reason = "stack terminally failed"
+		}
+		if settleErr := settleStackPlanRunFailed(context.Background(), repo, runID, reason); settleErr != nil {
+			if !quiet {
+				log.Printf("workflow: session recovery: settle failed stack plan run %s failed: %v", runID, settleErr)
+			}
+		}
+		return true
 	}
 	// The stack is seeded but incomplete: DRIVE it from the recovery
 	// sweep (the durable backstop). The in-session drive can abort for
@@ -240,9 +259,25 @@ func (e *sessionWorkflowEngine) driveParkedStackIfNeeded(ctx context.Context, ro
 	// drive. A drive that outlives its bound returns and the next tick
 	// resumes it.
 	driveCtx, cancelDrive := context.WithTimeout(ctx, workflowAutoDeliveryAttemptTimeout)
-	drove, driveErr := e.driveParkedStack(driveCtx, root, res, store, repo, runID)
+	drove, driveErr := driveParkedStackImpl(e, driveCtx, root, res, store, repo, runID)
 	cancelDrive()
 	if driveErr != nil && !errors.Is(driveErr, errStackAwaitsGrant) {
+		// A drive error may have left the stack terminally failed (for
+		// example, a chunk task reached stackStatusFailed). Fail-settle
+		// once instead of leaving the run delivery_pending so the next
+		// sweep tick re-drives the dead stack.
+		if gate := classifyStackPlanRunDelivery(ctx, root, store, repo, runID, true); gate == stackPlanRunFailed {
+			reason := driveErr.Error()
+			if _, r := stackPlanRunFailureReason(ctx, root, store, repo, runID); r != "" {
+				reason = r
+			}
+			if settleErr := settleStackPlanRunFailed(context.Background(), repo, runID, reason); settleErr != nil {
+				if !quiet {
+					log.Printf("workflow: session recovery: settle failed stack plan run %s failed: %v", runID, settleErr)
+				}
+			}
+			return true
+		}
 		if !quiet {
 			log.Printf("workflow: session recovery: drive parked stack %s failed: %v", runID, driveErr)
 		}
@@ -451,9 +486,15 @@ func stackDriveCompleted(ctx context.Context, root string, store *storage.SQLite
 			return false
 		}
 		return merged
+	case workflowledger.RunStatusFailed, workflowledger.RunStatusCanceled,
+		workflowledger.RunStatusTimedOut, workflowledger.RunStatusDeliveryFailed:
+		// Terminal failure: the integration run settled but the stack did NOT
+		// complete. A failed stack must not make the plan run look complete.
+		return false
 	default:
-		// Any other terminal status: the integration run settled.
-		return true
+		// Unknown status: fail closed. Only the explicit statuses above are
+		// recognized as stack-complete.
+		return false
 	}
 }
 

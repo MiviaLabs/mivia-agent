@@ -126,3 +126,8 @@ topics:
     path: docs/architecture/session-analysis.md
     owner: architecture
     description: Session-analysis skill ledger surface - read-only metadata-only analysis, query parity, privacy perimeter, validation protocol
+
+  workflow-stack-settle:
+    path: docs/architecture/workflow-stack-settle.md
+    owner: architecture
+    description: Plan for autonomous stack settle - completion sweep, failure propagation, failed_pr_policy knob, lock hygiene

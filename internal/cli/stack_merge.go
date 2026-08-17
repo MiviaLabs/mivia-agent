@@ -59,6 +59,25 @@ func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledg
 // under the file-size gate's function-length cap.
 func chunkMergePollPass(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) (done bool, err error) {
 	repo := prepared.repo
+	actions, err := reconcileStack(ctx, ledger, repo, checker, stackID, stackMaxChunkAttempts)
+	if err != nil {
+		return false, fmt.Errorf("stack drive: reconcile: %w", err)
+	}
+	for _, a := range actions {
+		if a.Action == stackActionMarkFailed {
+			return false, haltStackForFailedChunk(ledger, stackID, a.TaskID, a.Note)
+		}
+	}
+	// A chunk already durably failed (from an EARLIER pass, not this one)
+	// produces no fresh mark-failed action on resume - reconcileTask leaves
+	// a terminal failed task alone every pass - so the halt above only
+	// fires on the transition INTO failed, never on resuming a stack that
+	// already has one. Without this check the wait polled every 20s
+	// forever: not merged (the failed chunk never will be) and not
+	// grant-only (failed isn't reviewed/merged), an adversarial audit found.
+	if id, failed := anyChunkDurablyFailed(ledger, stackID); failed {
+		return false, haltStackForFailedChunk(ledger, stackID, id, "")
+	}
 	// merge_policy=auto: publish the outstanding PRs' merges ourselves.
 	if policy == "auto" {
 		// A chunk reconcile just moved to reviewed (F9: a delivery_pending
@@ -75,25 +94,6 @@ func chunkMergePollPass(ctx context.Context, prepared *preparedWorkflowRun, ledg
 		if err := autoMergePublishedChunks(ctx, prepared, repo, ledger, stackID, stdout, stderr); err != nil {
 			return false, err
 		}
-	}
-	actions, err := reconcileStack(ctx, ledger, repo, checker, stackID, stackMaxChunkAttempts)
-	if err != nil {
-		return false, fmt.Errorf("stack drive: reconcile: %w", err)
-	}
-	for _, a := range actions {
-		if a.Action == stackActionMarkFailed {
-			return false, fmt.Errorf("stack %s halted: chunk %s failed terminally (%s)", stackID, a.TaskID, a.Note)
-		}
-	}
-	// A chunk already durably failed (from an EARLIER pass, not this one)
-	// produces no fresh mark-failed action on resume - reconcileTask leaves
-	// a terminal failed task alone every pass - so the halt above only
-	// fires on the transition INTO failed, never on resuming a stack that
-	// already has one. Without this check the wait polled every 20s
-	// forever: not merged (the failed chunk never will be) and not
-	// grant-only (failed isn't reviewed/merged), an adversarial audit found.
-	if id, failed := anyChunkDurablyFailed(ledger, stackID); failed {
-		return false, fmt.Errorf("stack %s halted: chunk %s failed terminally", stackID, id)
 	}
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {

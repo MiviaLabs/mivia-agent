@@ -45,6 +45,7 @@ func TestValidRunTransition(t *testing.T) {
 		{RunStatusWaitingApproval, RunStatusTimedOut},
 		{RunStatusDeliveryPending, RunStatusSucceeded},
 		{RunStatusDeliveryPending, RunStatusDeliveryFailed},
+		{RunStatusDeliveryPending, RunStatusFailed},
 		// Recovery carve-out: a refused run re-opens for delivery retry, and
 		// a still-refused re-eligibility settles via the self-loop.
 		{RunStatusDeliveryFailed, RunStatusDeliveryPending},

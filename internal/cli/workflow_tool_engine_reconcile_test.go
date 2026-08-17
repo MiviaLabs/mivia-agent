@@ -535,6 +535,56 @@ func TestReconcileParkedDeliveryLeavesIntegrationInProgressParked(t *testing.T) 
 	}
 }
 
+// TestReconcileParkedDeliverySettlesFailedStack proves the recovery sweep
+// fail-settles a delivery_pending stacking plan run whose stack is terminally
+// failed (a chunk task reached stackStatusFailed) instead of re-driving the
+// dead stack forever. The sweep must not call driveParkedStack at all; the
+// plan run ends at RunStatusFailed and no publication is attempted.
+func TestReconcileParkedDeliverySettlesFailedStack(t *testing.T) {
+	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
+	repo := openDeliveryStore(t, storePath)
+	planRunID := seedParkedStackingPlanRun(t, root, storePath, repo)
+	seedSucceededDecomposeAttempt(t, repo, planRunID, []byte(multiChunkPlanOutput))
+
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := tasks.NewStore(store).TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
+		t.Fatalf("transition chunk c2 to failed: %v", err)
+	}
+
+	originalDrive := driveParkedStackImpl
+	t.Cleanup(func() { driveParkedStackImpl = originalDrive })
+	var driveCalls atomic.Int32
+	driveParkedStackImpl = func(_ *sessionWorkflowEngine, _ context.Context, _ string, _ *config.Resolved, _ *storage.SQLite, _ workflowledger.Repository, _ string) (bool, error) {
+		driveCalls.Add(1)
+		return false, nil
+	}
+
+	e := newSessionWorkflowEngine(root, configPath)
+	e.reconcileParkedRuns(context.Background(), false)
+
+	ctx := context.Background()
+	run, err := repo.GetRun(ctx, planRunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("plan run status = %q, want failed (terminally failed stack must be fail-settled)", run.Status)
+	}
+	if driveCalls.Load() != 0 {
+		t.Fatalf("driveParkedStack calls = %d, want 0 (failed stack must not be re-driven)", driveCalls.Load())
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero (failed plan run must not publish)", creates, finds)
+	}
+	if _, err := repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(planRunID, run.WorkflowDigest)); err == nil {
+		t.Fatal("plan run has a delivery record, want none (deliverRunWithStore must not run)")
+	}
+}
+
 // wireParkedResumeStubs replaces the resume machinery like
 // wireExecuteResumeDeliveryStubs, but the build carries a controller-bearing
 // build: the claim handoff (claimWorkflowResumeHandoff) only gates when the

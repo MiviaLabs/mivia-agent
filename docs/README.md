@@ -54,6 +54,7 @@ How mivia is built. Owner: `architecture`.
 | [Skills and resources](architecture/skills.md) | Skill discovery, activation, and scoped resource architecture |
 | [Embedded persistence](architecture/embedded-persistence.md) | Embedded persistence recommendation for sessions, events, and context |
 | [Workflows architecture](architecture/workflows.md) | Workflow contract schemas and templates architecture |
+| [Workflow stack settle](architecture/workflow-stack-settle.md) | Plan for autonomous stack settle: completion sweep, failure propagation, `failed_pr_policy`, lock hygiene |
 
 Architecture decisions live in these canonical docs, not in separate ADR
 files. ADRs are not used in this repository.

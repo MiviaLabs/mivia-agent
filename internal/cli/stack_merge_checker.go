@@ -7,6 +7,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 
@@ -51,7 +52,8 @@ func (g gitMergeChecker) Merged(ctx context.Context, headBranch, baseBranch, hea
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
-		// Missing ref or other git failure: fall through to the remote check.
+		// Missing ref or other git failure: the probe is unavailable.
+		return false, fmt.Errorf("probe merge state: %w", err)
 	}
 
 	// Local check inconclusive (squash/rebase merge, stale refs, missing
@@ -61,8 +63,7 @@ func (g gitMergeChecker) Merged(ctx context.Context, headBranch, baseBranch, hea
 	}
 	merged, err := g.pr.IsMerged(ctx, repoSlug, headBranch)
 	if err != nil {
-		// Remote lookup failed: do not complete the stack on a guess.
-		return false, nil
+		return false, fmt.Errorf("probe merge state: %w", err)
 	}
 	return merged, nil
 }

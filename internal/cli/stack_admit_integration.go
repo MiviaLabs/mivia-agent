@@ -7,6 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // integrationRunInputs builds the admission inputs for the final full-suite
@@ -41,6 +42,11 @@ const (
 	// completion (every chunk merged, integration run settled) - safe to
 	// settle or deliver.
 	stackPlanRunComplete
+	// stackPlanRunFailed: a multi-chunk plan run whose stack has terminally
+	// failed (a chunk task reached stackStatusFailed, or the integration run
+	// settled to a terminal failure status). Callers can fail-settle the plan
+	// run instead of refusing it forever as merely incomplete.
+	stackPlanRunFailed
 )
 
 // classifyStackPlanRunDelivery reports how runID relates to a multi-chunk
@@ -61,11 +67,39 @@ func classifyStackPlanRunDelivery(ctx context.Context, root string, store *stora
 	if _, ok := stackDecomposedChunks(ctx, repo, runID); !ok {
 		return stackPlanRunNotApplicable
 	}
+	if failed, _ := stackPlanRunFailureReason(ctx, root, store, repo, runID); failed {
+		return stackPlanRunFailed
+	}
 	policy := stackPlanMergePolicy(ctx, repo, runID)
 	if !stackDriveCompleted(ctx, root, store, repo, runID, policy, remoteMergeOracle) {
 		return stackPlanRunIncomplete
 	}
 	return stackPlanRunComplete
+}
+
+// stackPlanRunFailureReason reports whether a multi-chunk stack plan run has
+// already reached a terminal failure state. A durably failed chunk task, or
+// an integration run that settled to a terminal failure status, means the
+// stack cannot complete and the plan run should be fail-settled rather than
+// refused as merely incomplete.
+func stackPlanRunFailureReason(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string) (failed bool, reason string) {
+	byID, err := stackTaskMap(tasks.NewStore(store), runID)
+	if err == nil {
+		for taskID, task := range byID {
+			if task.Status == stackStatusFailed {
+				return true, fmt.Sprintf("chunk %s failed terminally", taskID)
+			}
+		}
+	}
+	intRun, found, err := stackRunRef(repo, runID, stackIntegrationChunkID)
+	if err == nil && found {
+		switch intRun.Status {
+		case workflowledger.RunStatusFailed, workflowledger.RunStatusCanceled,
+			workflowledger.RunStatusTimedOut, workflowledger.RunStatusDeliveryFailed:
+			return true, fmt.Sprintf("integration run %s is %s", intRun.RunID, intRun.Status)
+		}
+	}
+	return false, ""
 }
 
 // errUndrivenStackPlanRun builds the refusal for an incomplete stack's plan
@@ -76,4 +110,11 @@ func classifyStackPlanRunDelivery(ctx context.Context, root string, store *stora
 // dead ends for this run.
 func errUndrivenStackPlanRun(runID string) error {
 	return fmt.Errorf("workflow run %q is the plan run of a stack that has not fully driven yet: finish it with `mivia stack drive <workflow> --stack %s`, then settle the plan run with `mivia workflow deliver %s` - delivering it now would abandon the undriven stack while reporting the plan run succeeded", runID, runID, runID)
+}
+
+// errFailedStackPlanRun builds the refusal for a terminally failed stack's
+// plan run. The stack cannot complete, so the operator must inspect or clean
+// it up instead of driving it forever.
+func errFailedStackPlanRun(runID, reason string) error {
+	return fmt.Errorf("workflow run %q is the plan run of a stack that cannot complete: %s - use `mivia stack drive <workflow> --stack %s` to inspect, or delete the run if the failure is unrecoverable", runID, reason, runID)
 }

@@ -10,7 +10,14 @@ package cli
 // workflow's own plan+implement steps inline, per driveIntegrationRun's own
 // doc comment), which requires none of chunk/pr_base/stack_part.
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
+)
 
 func TestIntegrationRunInputsAdmitAsStackModeSingle(t *testing.T) {
 	inputs, snapshot := integrationRunInputs(map[string]string{"task": "whole feature"}, "master")
@@ -71,5 +78,63 @@ func TestIntegrationRunInputsStripSiblingFiles(t *testing.T) {
 	}
 	if _, present := snapshot["sibling_files"]; present {
 		t.Fatalf("snapshot[sibling_files] = %v, want stripped", snapshot["sibling_files"])
+	}
+}
+
+// TestClassifyStackPlanRunDeliveryFailedChunk proves a terminally failed chunk
+// task moves the gate from Incomplete to Failed, so callers can fail-settle
+// the plan run instead of refusing it forever.
+func TestClassifyStackPlanRunDeliveryFailedChunk(t *testing.T) {
+	root, _, store, repo, compiled := newWorkflowBuildFixture(t)
+	ctx := context.Background()
+	runID := "wfr-plan-failed-chunk"
+	snap := workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: compiled.Name, WorkflowDigest: compiled.Digest,
+		Status: workflowledger.RunStatusPending,
+	}
+	if err := repo.CreateRun(ctx, snap, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	seedSucceededDecomposeAttempt(t, repo, runID, []byte(multiChunkPlanOutput))
+
+	_, chunks, _, _, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	if err != nil || len(chunks) != 2 {
+		t.Fatalf("parse chunks = %v, %v; want 2", chunks, err)
+	}
+	ledger := tasks.NewStore(store)
+	if err := seedStackLedger(ledger, runID, chunks); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.TransitionTask(runID, "c2", stackStatusFailed); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, runID, true); got != stackPlanRunFailed {
+		t.Fatalf("classifyStackPlanRunDelivery() = %v, want stackPlanRunFailed for a failed chunk", got)
+	}
+	failed, reason := stackPlanRunFailureReason(ctx, root, store, repo, runID)
+	if !failed {
+		t.Fatal("stackPlanRunFailureReason() = false, want true")
+	}
+	if !strings.Contains(reason, "chunk c2 failed terminally") {
+		t.Fatalf("reason = %q, want substring \"chunk c2 failed terminally\"", reason)
+	}
+}
+
+// TestClassifyStackPlanRunDeliveryFailedIntegration proves a terminally failed
+// integration run moves the gate to Failed.
+func TestClassifyStackPlanRunDeliveryFailedIntegration(t *testing.T) {
+	ctx := context.Background()
+	root, store, repo, stackID := seedFailedIntegrationStack(t, workflowledger.RunStatusFailed)
+
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, stackID, true); got != stackPlanRunFailed {
+		t.Fatalf("classifyStackPlanRunDelivery() = %v, want stackPlanRunFailed for a failed integration run", got)
+	}
+	failed, reason := stackPlanRunFailureReason(ctx, root, store, repo, stackID)
+	if !failed {
+		t.Fatal("stackPlanRunFailureReason() = false, want true")
+	}
+	if !strings.Contains(reason, "integration run") || !strings.Contains(reason, string(workflowledger.RunStatusFailed)) {
+		t.Fatalf("reason = %q, want failed integration run substring", reason)
 	}
 }

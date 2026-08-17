@@ -31,6 +31,7 @@ const (
 	stackStatusReopened    = stacking.StatusReopened
 	stackStatusFailed      = stacking.StatusFailed
 	stackStatusSkipped     = stacking.StatusSkipped
+	stackStatusCanceled    = "canceled"
 )
 
 // stackAdmissiblePreStatuses are the statuses nextAdmissionWave selects a

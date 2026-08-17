@@ -117,6 +117,100 @@ func (g errorGitRunner) Run(context.Context, delivery.GitContext, ...string) (st
 	return "", g.err
 }
 
+// TestStackDriveCompletedFailedIntegrationNotComplete pins the hostile audit
+// finding: a terminally failed integration run must NOT make the stacking plan
+// run look complete. The function must fail closed for every terminal failure
+// status.
+func TestStackDriveCompletedFailedIntegrationNotComplete(t *testing.T) {
+	ctx := context.Background()
+
+	for _, status := range []workflowledger.RunStatus{
+		workflowledger.RunStatusFailed,
+		workflowledger.RunStatusCanceled,
+		workflowledger.RunStatusTimedOut,
+		workflowledger.RunStatusDeliveryFailed,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			root, store, repo, stackID := seedFailedIntegrationStack(t, status)
+			if got := stackDriveCompleted(ctx, root, store, repo, stackID, "auto", true); got {
+				t.Fatalf("stackDriveCompleted = true for integration run status %q; want false", status)
+			}
+		})
+	}
+}
+
+// seedFailedIntegrationStack builds a two-chunk stack whose chunks are all
+// merged and whose integration run settled with the given terminal failure
+// status.
+func seedFailedIntegrationStack(t *testing.T, intStatus workflowledger.RunStatus) (root string, store *storage.SQLite, repo workflowledger.Repository, stackID string) {
+	t.Helper()
+	ctx := context.Background()
+	mem := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = mem.Close() })
+	repo = mem
+
+	root = t.TempDir()
+	storePath := filepath.Join(root, "tasks.db")
+	store, err := openContextStorePath(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	stackID = "wfr-f3-failed-" + string(intStatus)
+
+	// Plan run with the chunk plan output the driver reads.
+	planSnap := workflowledger.RunSnapshot{
+		RunID: stackID, WorkflowName: "stacked", Status: workflowledger.RunStatusPending,
+	}
+	if err := repo.CreateRun(ctx, planSnap, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	seedSucceededDecomposeAttempt(t, repo, stackID, []byte(multiChunkPlanOutput))
+
+	_, chunks, _, _, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	if err != nil || len(chunks) != 2 {
+		t.Fatalf("parse chunks = %v, %v; want 2", chunks, err)
+	}
+	ledger := tasks.NewStore(store)
+	if err := seedStackLedger(ledger, stackID, chunks); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range chunks {
+		if err := ledger.TransitionTask(stackID, c.ID, stackStatusMerged); err != nil {
+			t.Fatalf("transition chunk %s to merged: %v", c.ID, err)
+		}
+	}
+
+	// Integration run admitted and moved to the requested terminal failure status.
+	run := seedIntegrationRunAdmitted(t, repo, stackID, false)
+	setIntegrationRunStatus(t, ctx, repo, run.RunID, intStatus)
+	return root, store, repo, stackID
+}
+
+// setIntegrationRunStatus moves an existing integration run to the requested
+// terminal status through valid transitions.
+func setIntegrationRunStatus(t *testing.T, ctx context.Context, repo workflowledger.Repository, runID string, want workflowledger.RunStatus) {
+	t.Helper()
+
+	// delivery_pending can go directly to delivery_failed; everything else is
+	// reached through running.
+	path := []workflowledger.RunStatus{want}
+	if want != workflowledger.RunStatusDeliveryFailed {
+		path = []workflowledger.RunStatus{workflowledger.RunStatusRunning, want}
+	}
+
+	for _, next := range path {
+		stored, err := repo.GetRun(ctx, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, next, nil); err != nil {
+			t.Fatalf("transition integration run to %q: %v", next, err)
+		}
+	}
+}
+
 type unmergedPRClient struct{}
 
 func (unmergedPRClient) FindByHead(context.Context, string, string) (*delivery.PRRef, error) {

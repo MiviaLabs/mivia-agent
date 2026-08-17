@@ -128,6 +128,11 @@ func driveStackOnePass(prepared *preparedWorkflowRun, stackID string, planInputs
 		return fmt.Errorf("stack drive: %w", err)
 	}
 	if err := driveStack(context.Background(), prepared, ledger, stackID, chunks, planInputs, false, hasMore, stdout, stderr); err != nil {
+		if settled, settleErr := settleFailedStackPlanRunIfNeeded(context.Background(), prepared, stackID, err.Error()); settleErr != nil {
+			return fmt.Errorf("stack drive: settle failed plan run: %w", settleErr)
+		} else if settled {
+			return errFailedStackPlanRun(stackID, err.Error())
+		}
 		return err
 	}
 	byID, err := stackTaskMap(ledger, stackID)
