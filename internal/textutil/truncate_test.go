@@ -609,3 +609,140 @@ func FuzzTruncateEllipsisProperties(f *testing.F) {
 		}
 	})
 }
+
+// TestTruncateRuneSafeSingleByteBudgetWithMultiByteLead pins the DC-6
+// "truncation must produce a valid value of its own type" probe at the
+// extreme: a one-byte budget against a leading rune wider than one byte must
+// yield the empty string, never a split rune and never a byte prefix that is
+// not valid UTF-8. The audited edge is the byte/runewidth boundary: an
+// ASCII-first or multi-byte-first input must behave identically with respect
+// to the byte budget.
+func TestTruncateRuneSafeSingleByteBudgetWithMultiByteLead(t *testing.T) {
+	cases := []struct {
+		s    string
+		want string
+	}{
+		{"éx", ""},  // 2-byte lead rune: 1 byte cannot hold it
+		{"日x", ""},  // 3-byte lead rune
+		{"🙂x", ""},  // 4-byte lead rune
+		{"ax", "a"}, // 1-byte lead rune fits exactly
+		{"xé", "x"},
+		{"x日", "x"},
+		{"x🙂", "x"},
+	}
+	for _, c := range cases {
+		got := TruncateRuneSafe(c.s, 1)
+		if got != c.want {
+			t.Errorf("TruncateRuneSafe(%q, 1) = %q, want %q", c.s, got, c.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("TruncateRuneSafe(%q, 1) = %q, not valid UTF-8", c.s, got)
+		}
+		if len(got) > 1 {
+			t.Errorf("TruncateRuneSafe(%q, 1) = %q, length %d exceeds budget", c.s, got, len(got))
+		}
+		if !strings.HasPrefix(c.s, got) {
+			t.Errorf("TruncateRuneSafe(%q, 1) = %q, not a prefix of the input", c.s, got)
+		}
+	}
+}
+
+// TestTruncateTailSingleByteBudgetWithMultiByteTail pins the tail twin of the
+// one-byte budget probe: a trailing rune wider than one byte cannot fit, so
+// the longest valid suffix is empty or the leading ASCII byte at the tail,
+// never a split rune.
+func TestTruncateTailSingleByteBudgetWithMultiByteTail(t *testing.T) {
+	cases := []struct {
+		s    string
+		want string
+	}{
+		{"xé", ""}, // trailing 2-byte rune cannot fit in 1 byte
+		{"x日", ""}, // trailing 3-byte rune
+		{"x🙂", ""}, // trailing 4-byte rune
+		{"x", "x"}, // single ASCII byte fits exactly
+		{"éx", "x"},
+		{"日x", "x"},
+		{"🙂x", "x"},
+	}
+	for _, c := range cases {
+		got := TruncateTail(c.s, 1)
+		if got != c.want {
+			t.Errorf("TruncateTail(%q, 1) = %q, want %q", c.s, got, c.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("TruncateTail(%q, 1) = %q, not valid UTF-8", c.s, got)
+		}
+		if len(got) > 1 {
+			t.Errorf("TruncateTail(%q, 1) = %q, length %d exceeds budget", c.s, got, len(got))
+		}
+		if !strings.HasSuffix(c.s, got) {
+			t.Errorf("TruncateTail(%q, 1) = %q, not a suffix of the input", c.s, got)
+		}
+	}
+}
+
+// TestTruncateEllipsisMarkerBudgetBoundaries pins the ellipsis-fit boundary:
+// the marker alone fills a 3-byte budget; with a multi-byte lead rune even a
+// 4- or 5-byte budget yields the marker alone when the rune cannot fit beside
+// it; a lead rune that does fit shares the budget. The result never exceeds
+// the budget and always carries the marker when a real cut happens.
+func TestTruncateEllipsisMarkerBudgetBoundaries(t *testing.T) {
+	cases := []struct {
+		s    string
+		max  int
+		want string
+	}{
+		{"日本語", 3, "…"},    // marker alone exactly fills a 3-byte budget
+		{"日本語x", 5, "…"},   // 3-byte lead rune cannot share the 2 free bytes
+		{"🙂ab", 4, "…"},    // 4-byte lead rune cannot share the 1 free byte
+		{"🙂ab", 5, "…"},    // 4-byte lead rune cannot share the 2 free bytes
+		{"éabcd", 5, "é…"}, // 2-byte lead rune shares the 2 free bytes
+		{"éabcd", 4, "…"},  // 2-byte lead rune cannot share the 1 free byte
+	}
+	for _, c := range cases {
+		got := TruncateEllipsis(c.s, c.max)
+		if got != c.want {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, want %q", c.s, c.max, got, c.want)
+		}
+		if len(got) > c.max {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, length %d exceeds budget", c.s, c.max, got, len(got))
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, not valid UTF-8", c.s, c.max, got)
+		}
+		if !strings.HasSuffix(got, ellipsisMarker) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, missing ellipsis marker", c.s, c.max, got)
+		}
+	}
+}
+
+// TestTruncateEllipsisTwoByteBudgetNoMarker pins the maxBytes < 3 fallback: a
+// two-byte budget never appends the marker, equals TruncateRuneSafe exactly,
+// and stays rune-safe even when the first rune is wider than the budget.
+func TestTruncateEllipsisTwoByteBudgetNoMarker(t *testing.T) {
+	cases := []struct {
+		s    string
+		max  int
+		want string
+	}{
+		{"éx", 2, "é"}, // 2-byte rune exactly fills the fallback budget
+		{"ab", 2, "ab"},
+		{"日x", 2, ""}, // 3-byte rune cannot fit in 2 bytes
+		{"🙂x", 2, ""}, // 4-byte rune cannot fit in 2 bytes
+	}
+	for _, c := range cases {
+		got := TruncateEllipsis(c.s, c.max)
+		if got != c.want {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, want %q", c.s, c.max, got, c.want)
+		}
+		if got != TruncateRuneSafe(c.s, c.max) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, want TruncateRuneSafe output %q", c.s, c.max, got, TruncateRuneSafe(c.s, c.max))
+		}
+		if strings.HasSuffix(got, ellipsisMarker) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, must not append the marker when it cannot fit", c.s, c.max, got)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("TruncateEllipsis(%q, %d) = %q, not valid UTF-8", c.s, c.max, got)
+		}
+	}
+}
