@@ -151,6 +151,10 @@ context = [
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+  # --- CUT (fast debug path): review_findings from review ---
+  # { from = "steps.review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  # --- CUT (fast debug path): panel_findings from review_panel ---
+  # { from = "steps.review_panel.output", as = "panel_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 
 # ---- Panel review: 3 independent members + synthesis; the code-review gate ----

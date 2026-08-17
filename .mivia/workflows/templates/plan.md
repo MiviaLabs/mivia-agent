@@ -6,13 +6,8 @@ Read the workspace instructions and the relevant source, interfaces, tests, conf
 and security boundaries. Do not edit files in this step. Do not run commands, commit, push,
 publish, or read secret-like files.
 
-Prior review findings (present on repair iterations only):
+<!-- CUT (fast debug path): "Prior review findings" section (evidence binding review_findings); restore alongside the plan_review step and its binding in feature-delivery.toml -->
 
-{{ evidence.review_findings }}
-
-When review findings are present, address each OPEN finding (by its id) before you resubmit.
-Implement each required change exactly. Do not ignore any finding or repeat a claim the reviewer
-rejected.
 In your output, set addressed_findings to the ids of every prior finding you addressed.
 Use an empty array when you addressed none.
 

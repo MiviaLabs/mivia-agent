@@ -77,6 +77,8 @@ template = "templates/plan.md"
 output_schema = "schemas/plan-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
+  # --- CUT (fast debug path): review_findings from plan_review ---
+  # { from = "steps.plan_review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 
 # --- CUT (fast debug path): plan_review agent_gate ---
@@ -101,6 +103,8 @@ output_schema = "schemas/plan-v1.json"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
+  # --- CUT (fast debug path): review_findings from test_plan_review ---
+  # { from = "steps.test_plan_review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 
 # --- CUT (fast debug path): test_plan_review agent_gate ---
@@ -128,6 +132,8 @@ context = [
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.review_panel.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
   { from = "inputs.chunk_plan", as = "chunk_scope", max_bytes = 4096, optional = true },
+  # --- CUT (fast debug path): integration_findings from review_integration ---
+  # { from = "steps.review_integration.output", as = "integration_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 
 [[steps]]
