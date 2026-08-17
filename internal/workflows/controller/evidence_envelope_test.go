@@ -351,6 +351,50 @@ func TestValidateBindingLimitsMeasuresEnvelope(t *testing.T) {
 	}
 }
 
+// TestValidateBindingLimitsMeasuresRunSalvageEvidence pins W-1: a run.salvage
+// binding is resolved into the EVIDENCE map by contextForStep (linear_context.go),
+// but the generic 2-part branch of validateBindingLimits read inputs["salvage"]
+// (nil -> json "null", 4 bytes), so a declared max_bytes on a partial_target
+// step was silently bypassed and the step context could inflate past its cap.
+// The binding must be measured against evidence[As] like every non-inputs
+// source.
+func TestValidateBindingLimitsMeasuresRunSalvageEvidence(t *testing.T) {
+	salvaged := []SalvagedAttempt{
+		{StepID: "plan", AttemptNo: 1, OutputRef: "sha256:abc", OutputDigest: "sha256:def"},
+		{StepID: "plan_tests", AttemptNo: 2, OutputRef: "sha256:ghi", OutputDigest: "sha256:jkl"},
+		{StepID: "review", AttemptNo: 1, OutputRef: "sha256:mno", OutputDigest: "sha256:pqr"},
+	}
+	raw, err := json.Marshal(salvaged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Negative path: an oversized salvage payload under a declared cap must be
+	// rejected. The inputs map is empty — run.salvage is not an input, and the
+	// pre-fix 2-part branch measured inputs["salvage"] (nil, json "null" = 4
+	// bytes) instead of the resolved evidence value.
+	step := definition.Step{ID: "partial_target", Context: []definition.ContextBinding{
+		{From: "run.salvage", As: "salvage", MaxBytes: 64},
+	}}
+	err = validateBindingLimits(step, map[string]any{}, map[string]any{"salvage": string(raw)})
+	if err == nil || !strings.Contains(err.Error(), "exceeds 64 bytes") {
+		t.Fatalf("oversized run.salvage evidence = %v, want rejection containing %q", err, "exceeds 64 bytes")
+	}
+	// Positive path: a within-cap value passes, and max_bytes<=0 skips
+	// measurement entirely.
+	within := definition.Step{ID: "partial_target", Context: []definition.ContextBinding{
+		{From: "run.salvage", As: "salvage", MaxBytes: 4096},
+	}}
+	if err := validateBindingLimits(within, map[string]any{}, map[string]any{"salvage": `[]`}); err != nil {
+		t.Fatalf("within-cap run.salvage evidence must pass: %v", err)
+	}
+	unbounded := definition.Step{ID: "partial_target", Context: []definition.ContextBinding{
+		{From: "run.salvage", As: "salvage", MaxBytes: 0},
+	}}
+	if err := validateBindingLimits(unbounded, map[string]any{}, map[string]any{"salvage": string(raw)}); err != nil {
+		t.Fatalf("max_bytes<=0 must skip measurement: %v", err)
+	}
+}
+
 // TestBuildEvidenceEnvelopeFitsUnderHTMLEscaping pins the plan v3 P1 fix:
 // json.Marshal HTML-escapes & < > into \u0026 \u003c \u003e (6 bytes each), so
 // a 4KiB preview dense with URL/HTML characters can inflate the MARSHALED

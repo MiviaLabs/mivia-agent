@@ -148,7 +148,7 @@ func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflo
 	if !result.Repairable() {
 		return c.settleHostFailure(writeCtx, run, attempt, step, output)
 	}
-	route, err := c.selectEvidenceFailureRoute(ctx, step, outputMap)
+	route, err := c.selectEvidenceFailureRoute(writeCtx, step, outputMap)
 	if err != nil {
 		// This branch fails the run immediately after the persist (c.fail
 		// below), so the durable route must be terminal — never an un-honored

@@ -51,7 +51,7 @@ func validateBindingLimits(step definition.Step, inputs map[string]any, evidence
 		}
 		var value any
 		parts := strings.Split(binding.From, ".")
-		if len(parts) == 2 {
+		if len(parts) == 2 && parts[0] == "inputs" {
 			value = inputs[parts[1]]
 		} else {
 			value = evidence[binding.As]
