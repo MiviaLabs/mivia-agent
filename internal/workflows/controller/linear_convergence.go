@@ -48,8 +48,20 @@ func (c *LinearController) reviewMadeNoProgress(ctx context.Context, step defini
 	// between two finding sets (A, B, A, B) never repeats consecutively. Such
 	// a run makes no progress but is not detected, so it burns the loop cap
 	// and dies at the 24h duration bound as an undiagnosed timeout.
+	//
+	// The window is the maxConvergenceHistory floor, grown so the guard is
+	// REACHABLE for every legal budget: one settled round plus identicalLimit-1
+	// matched priors must be able to reach identicalRoundLimit, so the window
+	// is at least identicalRoundLimit-1. A window hard-capped below the limit
+	// would make the stall guard unreachable for large budgets (for example 50
+	// identical rounds in a 500-iteration loop), and the loop would exhaust as
+	// a misattributed timeout instead of a diagnosed stall.
 	repeats := 1 // the round being settled
-	for _, prior := range priorOutputAttempts(attempts, step.ID, maxConvergenceHistory) {
+	window := maxConvergenceHistory
+	if limit := identicalRoundLimit(route.MaxIterations); limit-1 > window {
+		window = limit - 1
+	}
+	for _, prior := range priorOutputAttempts(attempts, step.ID, window) {
 		raw, err := c.Repo.LoadContent(ctx, prior.OutputRef)
 		if err != nil {
 			return false, err
@@ -95,10 +107,15 @@ func identicalRoundLimit(maxIterations int) int {
 // stall long before the loop cap or the duration bound.
 const minIdenticalReviewRounds = 3
 
-// maxConvergenceHistory bounds how many prior rounds one review is compared
-// against. It caps the work per round: the loop allows up to 500 iterations,
-// and an unbounded comparison would make the check quadratic in the round
-// count. A window of this size detects any oscillation with a period below it.
+// maxConvergenceHistory is the FLOOR of the zero-progress comparison window,
+// not a hard cap: one review is always compared against at least this many
+// prior rounds, so the per-round work stays bounded on short loops. The window
+// grows to identicalRoundLimit(max_iterations)-1 when the configured budget is
+// large enough that the floor could not reach the stall threshold (window+1
+// must reach the limit), keeping the guard reachable for every legal budget.
+// The compiler caps max_iterations at 1000, so the window is at most 99 and
+// the check stays linear in the round count; the floor still detects any
+// oscillation with a period below it.
 const maxConvergenceHistory = 20
 
 // priorOutputAttempts returns up to limit completed attempts of step that

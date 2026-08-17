@@ -651,3 +651,129 @@ func TestIdenticalRoundLimitScalesWithBudget(t *testing.T) {
 		}
 	}
 }
+
+// zeroProgressHarness seeds runID with priors COMPLETED review attempts, each
+// outputting a changes_requested verdict with one finding whose id is
+// R<k>-<findingID> (so every round normalizes to the same finding id when the
+// caller reuses one findingID), and returns a controller bound to the run.
+// This is the minimal durable-ledger shape reviewMadeNoProgress reads:
+// ListStepAttempts plus LoadContent on each prior OutputRef.
+func zeroProgressHarness(t *testing.T, runID string, priors int, findingID string) *LinearController {
+	t.Helper()
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: 1, DefinitionTOML: []byte("x"), DefinitionDigest: "d",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: "wf", Status: workflowledger.RunStatusPending,
+	}, snapshotJSON); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < priors; i++ {
+		body, err := json.Marshal(map[string]any{
+			"verdict":  "changes_requested",
+			"findings": []any{map[string]any{"id": fmt.Sprintf("R%d-%s", i, findingID)}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref := "sha256:" + workflowledger.DigestHex(body)
+		if err := repo.StoreContent(ctx, ref, body); err != nil {
+			t.Fatal(err)
+		}
+		attempt := workflowledger.StepAttempt{
+			AttemptID: fmt.Sprintf("att-%d", i+1), RunID: runID, StepID: "review", AttemptNo: i + 1,
+		}
+		if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
+			t.Fatal(err)
+		}
+		storedAttempt, err := repo.GetStepAttempt(ctx, runID, attempt.AttemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, storedAttempt.Version, workflowledger.AttemptOutcome{
+			Status: workflowledger.AttemptStatusSucceeded, OutputRef: ref, ToStepID: "implement",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &LinearController{Repo: repo, RunID: runID}
+}
+
+// TestReviewZeroProgressLargeBudgetReachesGuard pins HUNT-1: the zero-progress
+// guard must be REACHABLE for every legal loop budget. Before the fix the
+// comparison window was hard-capped at maxConvergenceHistory=20, so repeats
+// could never exceed 21 (1 current + 20 priors) while identicalRoundLimit(500)
+// is 50: the guard could not fire for any budget >= 220, and a 500-iteration
+// loop with repeated identical findings exhausted the cap as a misattributed
+// timeout instead of the diagnosed stall. 49 identical priors plus the settled
+// round is 50 >= 50, so the guard must fire.
+func TestReviewZeroProgressLargeBudgetReachesGuard(t *testing.T) {
+	ctx := context.Background()
+	ctrl := zeroProgressHarness(t, "wfr-large-budget", 49, "f1")
+	step := definition.Step{ID: "review", Kind: "agent_gate"}
+	output := map[string]any{
+		"verdict":  "changes_requested",
+		"findings": []any{map[string]any{"id": "R50-f1"}},
+	}
+	got, err := ctrl.reviewMadeNoProgress(ctx, step, RouteDecision{Loop: "review_repair", MaxIterations: 500}, output)
+	if err != nil {
+		t.Fatalf("reviewMadeNoProgress error = %v, want nil", err)
+	}
+	if !got {
+		t.Fatal("50 identical rounds within a 500-iteration loop must trip the zero-progress guard")
+	}
+}
+
+// TestReviewZeroProgressLargeBudgetBelowLimitAllowsProgress pins the negative
+// side of the scaled window: identical repeats BELOW identicalRoundLimit must
+// not trip the guard at a large budget. 30 identical priors give 31 repeats,
+// still under 50, so the loop must keep its back-edge.
+func TestReviewZeroProgressLargeBudgetBelowLimitAllowsProgress(t *testing.T) {
+	ctx := context.Background()
+	ctrl := zeroProgressHarness(t, "wfr-large-budget-progress", 30, "f1")
+	step := definition.Step{ID: "review", Kind: "agent_gate"}
+	output := map[string]any{
+		"verdict":  "changes_requested",
+		"findings": []any{map[string]any{"id": "R31-f1"}},
+	}
+	got, err := ctrl.reviewMadeNoProgress(ctx, step, RouteDecision{Loop: "review_repair", MaxIterations: 500}, output)
+	if err != nil {
+		t.Fatalf("reviewMadeNoProgress error = %v, want nil", err)
+	}
+	if got {
+		t.Error("identical repeats below the scaled limit must not trip the zero-progress guard")
+	}
+}
+
+// TestReviewZeroProgressLargeBudgetChangedSetAllowsProgress pins the second
+// negative case: at a large budget a review whose normalized finding set
+// differs from every prior round never trips the guard, even past the window
+// size. 49 priors carry f1; the settled round carries f2, so the sets differ.
+func TestReviewZeroProgressLargeBudgetChangedSetAllowsProgress(t *testing.T) {
+	ctx := context.Background()
+	ctrl := zeroProgressHarness(t, "wfr-large-budget-changed", 49, "f1")
+	step := definition.Step{ID: "review", Kind: "agent_gate"}
+	output := map[string]any{
+		"verdict":  "changes_requested",
+		"findings": []any{map[string]any{"id": "R50-f2"}},
+	}
+	got, err := ctrl.reviewMadeNoProgress(ctx, step, RouteDecision{Loop: "review_repair", MaxIterations: 500}, output)
+	if err != nil {
+		t.Fatalf("reviewMadeNoProgress error = %v, want nil", err)
+	}
+	if got {
+		t.Error("a changed finding set at a large budget must not trip the zero-progress guard")
+	}
+}
