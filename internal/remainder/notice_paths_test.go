@@ -7,6 +7,7 @@ package remainder
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCapWithSpoolLeavesShortResultsAlone(t *testing.T) {
@@ -180,5 +181,44 @@ func TestTrimPartialRuneDropsOnlyTheBrokenTail(t *testing.T) {
 	}
 	if got := trimPartialRune(broken); got != broken {
 		t.Fatalf("a valid prefix was trimmed: %q", got)
+	}
+}
+
+func TestCapWithSpoolTrimsLargeInvalidBodyInLinearTime(t *testing.T) {
+	// P-1 regression: trimPartialRune re-validated the whole string on every
+	// one-byte chop. utf8.ValidString short-circuits at the first invalid
+	// byte, so the old loop's per-chop cost is bounded by the invalid byte's
+	// *position*, not by how much tail remains - a test with the invalid
+	// byte near the start (as an earlier draft of this test had it) stays
+	// fast even on the buggy code and proves nothing. To actually exercise
+	// the O(n^2) blowup, the invalid byte must sit deep in the string, so
+	// each of the many chops needed re-scans a large valid prefix. The fix
+	// walks runes forward exactly once, so cost here must stay linear
+	// regardless of where the invalid byte sits.
+	const prefixLen = 300_000
+	const tailLen = 300_000
+	body := strings.Repeat("a", prefixLen) + "\xff" + strings.Repeat("b", tailLen)
+	// The cap is inclusive (len(result) <= maxBytes returns untruncated), so
+	// the cap must sit strictly below the body length for the body to be
+	// over-cap and actually exercise the trim path.
+	maxBytes := len(body) - 1
+	start := time.Now()
+	out, truncated := CapWithSpool(nil, "p", body, maxBytes)
+	elapsed := time.Since(start)
+
+	if !truncated {
+		t.Fatalf("over-cap body was not truncated")
+	}
+	if !strings.HasPrefix(out, strings.Repeat("a", prefixLen)) {
+		t.Fatalf("kept prefix lost: %q…", out[:min(len(out), 40)])
+	}
+	if strings.Contains(out, "\xff") {
+		t.Fatalf("invalid byte survived trimming")
+	}
+	if len(out) > maxBytes {
+		t.Fatalf("len(out)=%d > cap=%d", len(out), maxBytes)
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("linear trim took %v; O(n^2) chop re-scan regression", elapsed)
 	}
 }
