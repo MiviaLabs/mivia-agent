@@ -99,10 +99,21 @@ func parseStackPart(value string) (k, n int, err error) {
 // another PR's branch, so it merges only before/after that PR). The tag is
 // host-appended AFTER sanitization and policy validation, so the
 // agent-controlled title that passed validation stays intact as the leading
-// words. Unlike followUpPRContent, this path runs inside the repairable
-// validatePRMetadata flow, so a result over GitHub's 256-rune ceiling is a
-// repairable PRMetadataError instead of a silent truncation: the agent must
-// shorten the title itself.
+// words.
+//
+// A result over GitHub's 256-rune ceiling is silently truncated (deriveTitle's
+// own doc comment has the reasoning), matching followUpPRContent exactly -
+// NOT a repairable PRMetadataError. By the time this runs,
+// title already passed sanitizeAgentTitle's OWN ≤256-rune check on its own
+// (prmetadata_validate.go): an overflow at THIS step is caused entirely by
+// the host's own affix pushing an already-valid title over the edge, never
+// by anything the agent did wrong. Rejecting that into the repair loop told
+// the agent to "fix" a title that was already fine, for a reason it can't
+// see (the affix isn't rendered until after validation) - confusing, and
+// it burns a repair attempt on a purely cosmetic overflow instead of making
+// forward progress. Truncating is strictly safer: the PR always gets
+// created, and a rare few-rune-shorter title is a cosmetic cost, not a
+// functional one.
 func appendStackPartTitle(title, stackPart string) (string, error) {
 	if stackPart == "" {
 		return title, nil
@@ -112,15 +123,7 @@ func appendStackPartTitle(title, stackPart string) (string, error) {
 		return "", err
 	}
 	affix := fmt.Sprintf("[stack %d/%d]", k, total)
-	// runes comes from deriveTitle itself (never recomputed here): a
-	// recompute from the raw title would diverge from what deriveTitle
-	// actually measured whenever title carries leading/trailing whitespace
-	// deriveTitle trims, misleading the repair agent about the real overflow.
-	withTag, fits, runes := deriveTitle(title, affix, MaxTitleRunes)
-	if !fits {
-		return "", &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title with the %s tag is %d characters, exceeding GitHub's %d-character limit; shorten the title", affix, runes, MaxTitleRunes)}
-	}
-	return withTag, nil
+	return deriveTitle(title, affix, MaxTitleRunes), nil
 }
 
 // resolveStackingInputs honors the reserved stacking inputs on one delivery

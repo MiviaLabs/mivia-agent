@@ -96,7 +96,7 @@ func followUpPRContent(label, parentBranch string, parentRef *PRRef, deferredFil
 	// parent title is already at MaxTitleRunes at worst, and the affix
 	// would push it over unguarded. Contrast appendStackPartTitle, which
 	// rejects an overflow instead (it CAN route to a repair step).
-	title, _, _ = deriveTitle(baseTitle, "[split 2/2, base: "+shortRef(parentRef, parentBranch)+"]", MaxTitleRunes)
+	title = deriveTitle(baseTitle, "[split 2/2, base: "+shortRef(parentRef, parentBranch)+"]", MaxTitleRunes)
 
 	var sb strings.Builder
 	sb.WriteString("Mechanical split, not an agent-authored description.\n\n")

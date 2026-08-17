@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -82,9 +83,14 @@ func TestParseStackPart(t *testing.T) {
 // TestAppendStackPartTitle pins the host-appended "[stack k/N]" tag: a
 // single-line bracket suffix (the same deriveTitle convention
 // EnsureFollowUpPublished uses for a deferred/split PR), an absent
-// stack_part changes nothing, an invalid value is a PRMetadataError, and a
-// result over GitHub's 256-rune ceiling is a PRMetadataError too (the agent
-// must shorten the title).
+// stack_part changes nothing, an invalid stack_part SHAPE is still a
+// PRMetadataError (a genuinely malformed reserved input, not a length
+// issue), and a result over GitHub's 256-rune ceiling is silently truncated
+// - never a repairable error - because by this point title already passed
+// its own length check alone (sanitizeAgentTitle); an overflow here is
+// caused entirely by the host's own affix, not anything the agent did
+// wrong, so rejecting it into a repair loop would be confusing and would
+// burn an attempt on a purely cosmetic issue instead of making progress.
 func TestAppendStackPartTitle(t *testing.T) {
 	t.Run("appends a single-line bracket tag", func(t *testing.T) {
 		got, err := appendStackPartTitle("feat(agent): chunk three", "3/12")
@@ -110,13 +116,16 @@ func TestAppendStackPartTitle(t *testing.T) {
 			t.Fatalf("appendStackPartTitle err = %v, want a repairable PRMetadataError", err)
 		}
 	})
-	t.Run("over the 256-rune ceiling is a repairable metadata error", func(t *testing.T) {
-		_, err := appendStackPartTitle(strings.Repeat("a", MaxTitleRunes-1), "3/12")
-		if err == nil || !IsPRMetadataError(err) {
-			t.Fatalf("appendStackPartTitle err = %v, want a repairable PRMetadataError", err)
+	t.Run("over the 256-rune ceiling is silently truncated, not a repairable error", func(t *testing.T) {
+		got, err := appendStackPartTitle(strings.Repeat("a", MaxTitleRunes-1), "3/12")
+		if err != nil {
+			t.Fatalf("appendStackPartTitle err = %v, want nil (truncate, don't reject, an overflow the host's own affix caused)", err)
 		}
-		if !strings.Contains(err.Error(), "[stack 3/12]") {
-			t.Fatalf("appendStackPartTitle err = %q, want a hint naming the tag", err)
+		if n := utf8.RuneCountInString(got); n > MaxTitleRunes {
+			t.Fatalf("title is %d runes, want <= %d", n, MaxTitleRunes)
+		}
+		if !strings.HasSuffix(got, "[stack 3/12]") {
+			t.Fatalf("title = %q, want it to end with the full, untruncated tag", got)
 		}
 	})
 }

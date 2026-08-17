@@ -247,8 +247,11 @@ Delivery honors the reserved stacking inputs when present:
   a deferred/split follow-up PR's title uses, since both are the same
   "this PR's base is another PR's branch" relationship. The
   agent-controlled title stays intact as the leading words; the host adds
-  the tag. An invalid `stack_part` or an over-limit result is a repairable
-  `PRMetadataError`.
+  the tag. An invalid `stack_part` shape is a repairable `PRMetadataError`.
+  A tagged title over GitHub's 256-character ceiling is silently
+  truncated, never a repairable error — the overflow is caused by the
+  host's own tag, not anything the agent did wrong, and the agent's title
+  already passed its own length check alone before the tag existed.
 - The actual diff size is checked against `hard_lines` after staging. The
   measurement is the added+deleted line count of `git diff --cached`
   (`--find-renames`, `--ignore-all-space`). A diff exceeding the hard limit

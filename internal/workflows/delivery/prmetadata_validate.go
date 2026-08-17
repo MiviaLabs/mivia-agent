@@ -126,8 +126,10 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 	// Append the host-owned "[stack k/N]" tag AFTER sanitization and policy
 	// validation, mirroring how the body footer is appended after validation:
 	// the agent-controlled title that passed validation stays intact and the
-	// host adds the stack marker. An invalid stack_part or an over-limit
-	// result is a repairable PRMetadataError.
+	// host adds the stack marker. An invalid stack_part SHAPE is a
+	// repairable PRMetadataError; a tagged title over the length ceiling is
+	// silently truncated instead (appendStackPartTitle's own doc comment
+	// has the reasoning) - never an error the agent must repair.
 	title, err = appendStackPartTitle(title, req.Inputs[InputStackPart])
 	if err != nil {
 		return "", "", err

@@ -18,39 +18,35 @@ import (
 // title is a one-line field everywhere it is displayed.
 //
 // It also owns the ONE length-bounding calculation for a derived title: the
-// base is truncated so base+" "+affix never exceeds maxRunes. fits reports
-// whether the UNTRUNCATED result would have fit, and fullRunes is that
-// untruncated result's own rune count - the exact number an overflow caller
-// should report, never a value it recomputes itself. A caller that
-// re-measured independently (e.g. from the raw, untrimmed baseTitle) could
-// diverge from what THIS function actually measured whenever baseTitle
-// carries leading/trailing whitespace deriveTitle trims away, handing a
-// repair agent a misleading count. Centralizing the truncation math here
-// means both callers measure identically; only the RESPONSE to an overflow
-// differs, because they have different recovery paths available:
-//   - appendStackPartTitle runs inside the repairable validatePRMetadata
-//     path and can return a PRMetadataError to route to a repair step, so it
-//     rejects an overflow rather than silently shortening the agent's title.
-//   - followUpPRContent (EnsureFollowUpPublished) has no repair loop; an
-//     overflow there would fail pr.Create outright and leave the deferred
-//     branch permanently unpublished, so it always uses the truncated
-//     result instead of erroring.
-func deriveTitle(baseTitle, affix string, maxRunes int) (title string, fits bool, fullRunes int) {
+// base is truncated (rune-safe - never splits a multi-byte UTF-8 sequence)
+// so base+" "+affix never exceeds maxRunes. Both callers ALWAYS use this
+// result, never erroring on an overflow: by the time either runs, the
+// reused base (an agent's own pr_title, already checked alone by
+// sanitizeAgentTitle; or a parent PR's real title) is already known-valid
+// on its own. An overflow here is caused entirely by the HOST's own affix
+// pushing an already-valid title over the edge - never by anything the
+// title's author did wrong, and the author never even sees the affix
+// before it's appended. Rejecting that into a repair loop would ask an
+// agent to "fix" a title that was already fine, for a reason it has no way
+// to anticipate - confusing, and it burns a repair attempt on a purely
+// cosmetic overflow instead of making forward progress. A stack-part PR
+// created with appendStackPartTitle used to reject this case with a
+// PRMetadataError; it now truncates identically to followUpPRContent, one
+// mechanism for both, no divergent response paths.
+func deriveTitle(baseTitle, affix string, maxRunes int) (title string) {
 	base := strings.TrimRight(strings.TrimSpace(baseTitle), " ")
 	if base == "" {
-		affixRunes := utf8.RuneCountInString(affix)
-		return truncateRunes(affix, maxRunes), affixRunes <= maxRunes, affixRunes
+		return truncateRunes(affix, maxRunes)
 	}
 	full := base + " " + affix
-	fullRunes = utf8.RuneCountInString(full)
-	if fullRunes <= maxRunes {
-		return full, true, fullRunes
+	if utf8.RuneCountInString(full) <= maxRunes {
+		return full
 	}
 	room := maxRunes - utf8.RuneCountInString(affix) - 1 // 1 for the separating space
 	if room <= 0 {
-		return truncateRunes(affix, maxRunes), false, fullRunes
+		return truncateRunes(affix, maxRunes)
 	}
-	return truncateRunes(base, room) + " " + affix, false, fullRunes
+	return truncateRunes(base, room) + " " + affix
 }
 
 // sanitizeReusedTitle makes a title fetched LIVE from GitHub (parentRef.Title
