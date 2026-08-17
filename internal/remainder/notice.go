@@ -104,9 +104,21 @@ func fitTruncation(result string, total, maxBytes int, ref, trailer string) stri
 	return content + trailer + notice
 }
 
+// trimPartialRune returns the longest prefix of s that is valid UTF-8. It
+// walks the string forward with utf8.DecodeRuneInString, so a long valid
+// prefix followed by an invalid byte costs O(n) instead of the O(n^2) rescans
+// of the previous trim-one-byte loop (P-1). A decoded U+FFFD with size 3 is a
+// genuine replacement character and does not stop the walk; only RuneError
+// with size 1 (an invalid or truncated sequence) does. This matches the O(n)
+// invariant TruncateUTF8 establishes in internal/diff/diff.go.
 func trimPartialRune(s string) string {
-	for len(s) > 0 && !utf8.ValidString(s) {
-		s = s[:len(s)-1]
+	i := 0
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			break
+		}
+		i += size
 	}
-	return s
+	return s[:i]
 }
