@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -669,5 +670,65 @@ func TestAcceptThenScopedVerifyPasses(t *testing.T) {
 	remaining := map[string]bool{"s1": true}
 	if err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining); err != nil {
 		t.Fatalf("scoped verify after accept must pass: %v", err)
+	}
+}
+
+// N1: A skill admitted before the ResourceSnapshot Summary field existed
+// carries the legacy pin shape. Resume verification must accept either the
+// current shape (with Summary) or the legacy shape (without Summary), so an
+// upgrade does not report drift on every historical run.
+func TestWorkflowSkillSnapshotAcceptsLegacyPreSummaryPin(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "legacy-skill")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"SKILL.md":       "---\nname: legacy-skill\n---\nlegacy instructions",
+		"resources.toml": "format = 1\n[[resources]]\nid = \"checklist\"\npath = \"checklist.md\"\nsummary = \"Run checks\"\n",
+		"checklist.md":   "legacy resource body",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reg := loadWorkflowSnapshotSkills(t, root)
+	wf := skillTestWorkflow(map[string]string{"s1": "legacy-skill"})
+
+	def, ok := reg.Get("legacy-skill")
+	if !ok {
+		t.Fatal("legacy-skill not found in registry")
+	}
+	current, legacy, err := workflowSkillBytesCurrentAndLegacy(def)
+	if err != nil {
+		t.Fatalf("workflowSkillBytesCurrentAndLegacy: %v", err)
+	}
+	if bytes.Equal(current, legacy) {
+		t.Fatal("current and legacy bytes must differ when Summary is present")
+	}
+
+	// Build a snapshot pinned with the legacy (pre-Summary) shape.
+	prior := &workflowledger.Snapshot{
+		SchemaVersion:    workflowledger.SnapshotSchemaVersion,
+		DefinitionTOML:   []byte("workflow"),
+		DefinitionDigest: "digest",
+		Skills: map[string]workflowledger.RefSnapshot{
+			"legacy-skill": {Digest: digestBytes(legacy), Bytes: legacy},
+		},
+	}
+
+	if err := verifyWorkflowSkillSnapshot(wf, reg, prior); err != nil {
+		t.Fatalf("legacy pre-Summary pin must verify against current skill: %v", err)
+	}
+
+	// A genuinely changed skill must still fail closed.
+	changed := loadWorkflowSnapshotSkills(t, root)
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: legacy-skill\n---\nchanged instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed = loadWorkflowSnapshotSkills(t, root)
+	if err := verifyWorkflowSkillSnapshot(wf, changed, prior); err == nil {
+		t.Fatal("changed skill must still fail closed with a legacy pin")
 	}
 }

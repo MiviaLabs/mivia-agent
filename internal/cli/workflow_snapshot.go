@@ -45,19 +45,19 @@ func verifyWorkflowSkillSnapshotScoped(wf *compiler.CompiledWorkflow, registry *
 		if !ok {
 			return fmt.Errorf("workflow skill %q is missing on resume; restore the skill or use a fresh run", ref.name)
 		}
-		bytes, err := workflowSkillBytes(definition)
+		current, legacy, err := workflowSkillBytesCurrentAndLegacy(definition)
 		if err != nil {
 			return err
 		}
 		pinned, ok := prior.Skills[ref.name]
-		if !ok || pinned.Digest != digestBytes(bytes) || string(pinned.Bytes) != string(bytes) {
+		if !ok || !skillPinMatches(pinned, current, legacy) {
 			steps := remainingStepIDsUsingSkill(stepSkills, ref.name, remaining)
 			return fmt.Errorf("workflow skill %q changed since admission (used by step(s): %s); recover with: --accept-skill-change, restore the skill content, or start a fresh run",
 				ref.name, formatStepList(steps))
 		}
 		if ref.panelKey != "" {
 			binding, ok := prior.PanelBindings[ref.panelKey]
-			if !ok || binding.SkillDigest != digestBytes(bytes) {
+			if !ok || (binding.SkillDigest != digestBytes(current) && binding.SkillDigest != digestBytes(legacy)) {
 				return fmt.Errorf("panel binding %q skill %q changed since admission; recover with: --accept-skill-change, restore the skill content, or start a fresh run", ref.panelKey, ref.name)
 			}
 		}
@@ -170,21 +170,32 @@ func workflowRemainingSteps(ctx context.Context, repo workflowledger.Repository,
 	return remaining, nil
 }
 
-// workflowSkillStepMap returns a map from skill name to step IDs that
-// reference it.
+// workflowSkillStepMap returns a map from skill name to the IDs of the steps
+// that reference it. Panel member references record the bare step ID, not the
+// <step>/<member> binding key: the remaining-step set the error message is
+// filtered against holds step IDs, so a composite key would filter the panel
+// step out and print "(none)" for a skill a remaining step uses.
 func workflowSkillStepMap(wf *compiler.CompiledWorkflow) map[string][]string {
 	m := make(map[string][]string)
 	if wf == nil {
 		return m
 	}
+	appendUnique := func(skill, stepID string) {
+		for _, id := range m[skill] {
+			if id == stepID {
+				return
+			}
+		}
+		m[skill] = append(m[skill], stepID)
+	}
 	for _, step := range wf.Steps {
 		if step.Skill != "" {
-			m[step.Skill] = append(m[step.Skill], step.ID)
+			appendUnique(step.Skill, step.ID)
 		}
 		if step.Kind == "agent_panel" && step.Panel != nil {
 			for _, member := range step.Panel.Members {
 				if member.Skill != "" {
-					m[member.Skill] = append(m[member.Skill], step.ID+"/"+member.ID)
+					appendUnique(member.Skill, step.ID)
 				}
 			}
 		}
@@ -310,9 +321,20 @@ func installWorkflowSkillSnapshotsFromSnapshot(destination map[string]workflowle
 }
 
 func workflowSkillBytes(definition skills.Definition) ([]byte, error) {
+	current, _, err := workflowSkillBytesCurrentAndLegacy(definition)
+	return current, err
+}
+
+// workflowSkillBytesCurrentAndLegacy marshals the pinned byte shape of one
+// skill in two forms: the current form, whose resource snapshots carry the
+// summary, and the legacy pre-Summary form a binary before the Summary field
+// wrote. Resume verification accepts either shape so a run admitted before the
+// Summary field existed is not reported as drifted after an upgrade (N1); new
+// admissions and re-pins always write the current form.
+func workflowSkillBytesCurrentAndLegacy(definition skills.Definition) (current, legacy []byte, err error) {
 	resources, err := definition.SnapshotResources(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("workflow skill %q resource snapshot failed; recover with: restore the skill resource files or start a fresh run: %w", definition.Name, err)
+		return nil, nil, fmt.Errorf("workflow skill %q resource snapshot failed; recover with: restore the skill resource files or start a fresh run: %w", definition.Name, err)
 	}
 	view := workflowSkillSnapshotView{
 		Name: definition.Name, Version: definition.Version, Scope: definition.Scope, Permission: definition.Permission,
@@ -321,7 +343,63 @@ func workflowSkillBytes(definition skills.Definition) ([]byte, error) {
 		Tools: definition.Tools, Resources: resources, Timeout: int64(definition.Timeout), Budget: definition.Budget,
 		InputSchema: definition.InputSchema, OutputSchema: definition.OutputSchema,
 	}
-	return json.Marshal(view)
+	current, err = json.Marshal(view)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Preserve nil: the legacy form marshaled a nil resource list as null, and
+	// the byte comparison below is exact.
+	var legacyResources []legacySkillResourceSnapshot
+	if resources != nil {
+		legacyResources = make([]legacySkillResourceSnapshot, len(resources))
+		for i, resource := range resources {
+			legacyResources[i] = legacySkillResourceSnapshot{ID: resource.ID, Text: resource.Text, Digest: resource.Digest}
+		}
+	}
+	legacyView := legacySkillSnapshotView{
+		Name: view.Name, Version: view.Version, Scope: view.Scope, Permission: view.Permission,
+		Description: view.Description, ShortDescription: view.ShortDescription, ArgsHint: view.ArgsHint,
+		Instructions: view.Instructions, UserInvocable: view.UserInvocable, Triggers: view.Triggers,
+		Tools: view.Tools, Resources: legacyResources, Timeout: view.Timeout, Budget: view.Budget,
+		InputSchema: view.InputSchema, OutputSchema: view.OutputSchema,
+	}
+	legacy, err = json.Marshal(legacyView)
+	if err != nil {
+		return nil, nil, err
+	}
+	return current, legacy, nil
+}
+
+// skillPinMatches reports whether the pin equals the live skill bytes in
+// either the current or the legacy pin shape. Digest and bytes must agree for
+// one shape; a digest-only or bytes-only match is a mismatch, exactly as the
+// single-shape comparison enforced.
+func skillPinMatches(pinned workflowledger.RefSnapshot, current, legacy []byte) bool {
+	if pinned.Digest == digestBytes(current) && string(pinned.Bytes) == string(current) {
+		return true
+	}
+	return pinned.Digest == digestBytes(legacy) && string(pinned.Bytes) == string(legacy)
+}
+
+// legacySkillSnapshotView is the pinned byte shape a binary before the
+// ResourceSnapshot Summary field wrote. Field names and order must stay
+// identical to workflowSkillSnapshotView: the byte comparison is exact.
+type legacySkillSnapshotView struct {
+	Name, Version, Scope, Permission, Description, ShortDescription, ArgsHint, Instructions string
+	UserInvocable                                                                           bool
+	Triggers, Tools                                                                         []string
+	Resources                                                                               []legacySkillResourceSnapshot
+	Timeout                                                                                 int64
+	Budget                                                                                  int
+	InputSchema, OutputSchema                                                               map[string]any
+}
+
+// legacySkillResourceSnapshot is the pre-Summary resource pin shape. Field
+// order (ID, Text, Digest) matches what the old binary marshaled.
+type legacySkillResourceSnapshot struct {
+	ID     string
+	Text   string
+	Digest string
 }
 
 // workflowSkillSnapshotView is the pinned byte shape of one admitted skill.
