@@ -99,7 +99,10 @@ func acceptWorkflowSkillChanges(prior *workflowledger.Snapshot, wf *compiler.Com
 			if prior.PanelBindings == nil {
 				prior.PanelBindings = make(map[string]workflowledger.PanelBindingSnapshot)
 			}
-			binding := prior.PanelBindings[ref.panelKey]
+			binding, ok := prior.PanelBindings[ref.panelKey]
+			if !ok {
+				return nil, fmt.Errorf("panel binding %q is missing", ref.panelKey)
+			}
 			binding.SkillDigest = digest
 			prior.PanelBindings[ref.panelKey] = binding
 		}
@@ -309,7 +312,7 @@ func installWorkflowSkillSnapshotsFromSnapshot(destination map[string]workflowle
 func workflowSkillBytes(definition skills.Definition) ([]byte, error) {
 	resources, err := definition.SnapshotResources(context.Background())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("workflow skill %q resource snapshot failed; recover with: restore the skill resource files or start a fresh run: %w", definition.Name, err)
 	}
 	view := workflowSkillSnapshotView{
 		Name: definition.Name, Version: definition.Version, Scope: definition.Scope, Permission: definition.Permission,

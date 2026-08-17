@@ -2,7 +2,7 @@ package cli
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -31,16 +31,17 @@ func loadWorkflowResumeState(ctx context.Context, repo workflowledger.Repository
 	if err != nil {
 		return fail(err)
 	}
-	if err := validateWorkflowMCPConfigDigest(snapshot, res.MCP); err != nil {
+	if err := validateWorkflowMCPConfigDigest(runID, snapshot, res.MCP); err != nil {
 		return fail(err)
 	}
 	return run, snapshot, raw, compiled, inputs, nil
 }
 
-func validateWorkflowMCPConfigDigest(snapshot workflowledger.Snapshot, current config.MCPConfig) error {
+func validateWorkflowMCPConfigDigest(runID string, snapshot workflowledger.Snapshot, current config.MCPConfig) error {
+	const options = "restore the admitted MCP configuration or start a fresh run"
 	if snapshot.MCPConfigDigest == "" {
 		if current.Enabled && len(current.Servers) > 0 {
-			return fmt.Errorf("workflow snapshot does not pin the enabled MCP configuration; recover with: restore the admitted MCP configuration or start a fresh run")
+			return errors.New(formatWorkflowResumeError(runID, "snapshot does not pin the enabled MCP configuration", nil, options))
 		}
 		return nil
 	}
@@ -49,7 +50,7 @@ func validateWorkflowMCPConfigDigest(snapshot workflowledger.Snapshot, current c
 		return err
 	}
 	if digest != snapshot.MCPConfigDigest {
-		return fmt.Errorf("MCP configuration changed since workflow admission; recover with: restore the admitted MCP configuration or start a fresh run")
+		return errors.New(formatWorkflowResumeError(runID, "MCP configuration changed since workflow admission", nil, options))
 	}
 	return nil
 }

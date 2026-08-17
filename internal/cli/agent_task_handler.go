@@ -313,13 +313,23 @@ func (h *agentTaskHandler) effectiveWorkLimits(binding agentBinding, req runtime
 // definition is still resolved, because admission (is this skill pinned for
 // this run?) and authorization (may this agent invoke it?) are live host-side
 // policy checks; only the executed bytes are pinned.
+func workflowSkillResumeErrorf(name, detail string) error {
+	return fmt.Errorf("workflow skill %q %s; recover with: restore the skill to its admitted content, pass --accept-skill-change, or start a fresh run", name, detail)
+}
+
 func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) (*tools.Registry, string, func(), error) {
 	noop := func() {}
 	if h.opts.SkillReg == nil {
+		if h.opts.WorkflowSkillSnapshots != nil {
+			return nil, "", noop, workflowSkillResumeErrorf(name, fmt.Sprintf("is not authorized for agent %q", h.definition.Name))
+		}
 		return nil, "", noop, fmt.Errorf("agent %q may not invoke skill %q", h.definition.Name, name)
 	}
 	skill, ok := h.opts.SkillReg.Get(name)
 	if !ok {
+		if h.opts.WorkflowSkillSnapshots != nil {
+			return nil, "", noop, workflowSkillResumeErrorf(name, "is not declared")
+		}
 		return nil, "", noop, fmt.Errorf("unknown skill %q", name)
 	}
 	exec := skill
@@ -328,7 +338,7 @@ func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) 
 	if snapshots := h.opts.WorkflowSkillSnapshots; snapshots != nil {
 		pinned, ok := snapshots[name]
 		if !ok {
-			return nil, "", noop, fmt.Errorf("workflow skill %q is not admitted", name)
+			return nil, "", noop, workflowSkillResumeErrorf(name, "is not admitted")
 		}
 		hydrated, resources, err := hydrateWorkflowSkillSnapshot(name, pinned)
 		if err != nil {
@@ -412,10 +422,16 @@ func (h *agentTaskHandler) validateRequest(req runtime.Request) (agentBinding, e
 		return binding, nil
 	}
 	if h.opts.SkillReg == nil {
+		if h.opts.WorkflowSkillSnapshots != nil {
+			return agentBinding{}, workflowSkillResumeErrorf(req.Skill, fmt.Sprintf("is not authorized for agent %q", h.definition.Name))
+		}
 		return agentBinding{}, fmt.Errorf("agent %q may not invoke skill %q", h.definition.Name, req.Skill)
 	}
 	skill, ok := h.opts.SkillReg.Get(req.Skill)
 	if !ok {
+		if h.opts.WorkflowSkillSnapshots != nil {
+			return agentBinding{}, workflowSkillResumeErrorf(req.Skill, "is not declared")
+		}
 		return agentBinding{}, fmt.Errorf("unknown skill %q", req.Skill)
 	}
 	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {

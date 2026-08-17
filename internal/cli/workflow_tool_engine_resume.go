@@ -136,7 +136,7 @@ func (e *sessionWorkflowEngine) openResumeTarget(ctx context.Context, req agentt
 	if err != nil {
 		return fail(err)
 	}
-	if err := validateWorkflowMCPConfigDigest(snapshot, res.MCP); err != nil {
+	if err := validateWorkflowMCPConfigDigest(req.RunID, snapshot, res.MCP); err != nil {
 		return fail(err)
 	}
 	return res, store, repo, run, snapshot, raw, compiled, inputs, closeFn, nil

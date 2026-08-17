@@ -84,21 +84,24 @@ func TestValidateWorkflowMCPConfigDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := workflowledger.Snapshot{MCPConfigDigest: digest}
-	if err := validateWorkflowMCPConfigDigest(snapshot, current); err != nil {
+	if err := validateWorkflowMCPConfigDigest("wfr-test", snapshot, current); err != nil {
 		t.Fatalf("validateWorkflowMCPConfigDigest() error = %v", err)
 	}
 
 	changed := current
 	changed.Servers = append([]config.MCPServerConfig(nil), current.Servers...)
 	changed.Servers[0].Command = "/usr/bin/other-tools"
-	if err := validateWorkflowMCPConfigDigest(snapshot, changed); err == nil {
+	if err := validateWorkflowMCPConfigDigest("wfr-test", snapshot, changed); err == nil {
 		t.Fatal("validateWorkflowMCPConfigDigest() accepted changed MCP configuration")
+	}
+	if err := validateWorkflowMCPConfigDigest("wfr-test", snapshot, changed); err != nil && !strings.Contains(err.Error(), "wfr-test") {
+		t.Fatalf("error must include run ID, got: %v", err)
 	}
 }
 
 func TestValidateWorkflowMCPConfigDigestRejectsLegacySnapshotWithMCP(t *testing.T) {
 	current := config.MCPConfig{Enabled: true, Servers: []config.MCPServerConfig{{ID: "tools"}}}
-	if err := validateWorkflowMCPConfigDigest(workflowledger.Snapshot{}, current); err == nil {
+	if err := validateWorkflowMCPConfigDigest("wfr-test", workflowledger.Snapshot{}, current); err == nil {
 		t.Fatal("validateWorkflowMCPConfigDigest() accepted an unpinned MCP configuration")
 	}
 }

@@ -47,6 +47,24 @@ func TestWorkflowSkillSnapshotRejectsChangedSkillOnResume(t *testing.T) {
 	}
 }
 
+func TestWorkflowSkillBytesWrapsResourceSnapshotError(t *testing.T) {
+	def := skills.Definition{
+		Name:      "bad-resource",
+		Resources: []skills.ResourceDescriptor{{ID: "missing", Summary: "missing resource file"}},
+	}
+	_, err := workflowSkillBytes(def)
+	if err == nil {
+		t.Fatal("expected error for skill with unavailable resources")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "bad-resource") {
+		t.Fatalf("error %q does not contain skill name", msg)
+	}
+	if !strings.Contains(msg, "restore the skill resource files") {
+		t.Fatalf("error %q does not contain recovery guidance", msg)
+	}
+}
+
 func TestWorkflowSkillSnapshotRejectsChangedPanelMemberSkillOnResume(t *testing.T) {
 	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
 		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "security", Skill: "review"}}},
@@ -196,6 +214,49 @@ func TestWorkflowSkillDispatchRejectsTamperedPin(t *testing.T) {
 	defer closeActivation()
 	if err == nil || !strings.Contains(err.Error(), "--accept-skill-change") {
 		t.Fatalf("tampered pin error must route at recovery options, got: %v", err)
+	}
+}
+
+// F10: dispatch-time workflow skill errors route the operator at recovery
+// options instead of returning a bare message.
+func TestWorkflowSkillDispatchRejectsNotAdmitted(t *testing.T) {
+	reg := skillTestRegistry(map[string]string{"audit": "original instructions"})
+	handler := newSkillInjectionHandler(t, reg)
+	handler.opts.WorkflowSkillSnapshots = map[string]workflowledger.RefSnapshot{}
+
+	_, _, _, closeActivation, err := handler.prepareInvokeSurface(runtime.Request{Skill: "audit"})
+	defer closeActivation()
+	if err == nil || !strings.Contains(err.Error(), "is not admitted") || !strings.Contains(err.Error(), "--accept-skill-change") {
+		t.Fatalf("not admitted error must route at recovery options, got: %v", err)
+	}
+}
+
+func TestWorkflowSkillDispatchRejectsNotDeclared(t *testing.T) {
+	reg := skillTestRegistry(map[string]string{"other": "other instructions"})
+	handler := newSkillInjectionHandler(t, reg)
+	handler.opts.WorkflowSkillSnapshots = map[string]workflowledger.RefSnapshot{
+		"audit": {Digest: "sha256:0000", Bytes: []byte("{}")},
+	}
+
+	_, _, _, closeActivation, err := handler.prepareInvokeSurface(runtime.Request{Skill: "audit"})
+	defer closeActivation()
+	if err == nil || !strings.Contains(err.Error(), "is not declared") || !strings.Contains(err.Error(), "--accept-skill-change") {
+		t.Fatalf("not declared error must route at recovery options, got: %v", err)
+	}
+}
+
+func TestWorkflowSkillDispatchRejectsUnauthorizedSkill(t *testing.T) {
+	reg := skillTestRegistry(map[string]string{"audit": "original instructions"})
+	handler := newSkillInjectionHandler(t, reg)
+	handler.opts.WorkflowSkillSnapshots = map[string]workflowledger.RefSnapshot{
+		"audit": {Digest: "sha256:0000", Bytes: []byte("{}")},
+	}
+	handler.opts.SkillReg = nil
+
+	_, _, _, closeActivation, err := handler.prepareInvokeSurface(runtime.Request{Skill: "audit"})
+	defer closeActivation()
+	if err == nil || !strings.Contains(err.Error(), "is not authorized") || !strings.Contains(err.Error(), "--accept-skill-change") {
+		t.Fatalf("unauthorized skill error must route at recovery options, got: %v", err)
 	}
 }
 
@@ -549,6 +610,44 @@ func TestSkillSnapshotScopedMultiSkillOnlyNamesDrifted(t *testing.T) {
 	}
 	if strings.Contains(msg, `"review"`) {
 		t.Fatalf("error must not name stable skill 'review', got: %s", msg)
+	}
+}
+
+// F8: acceptWorkflowSkillChanges must fail closed when a panel skill binding
+// was stripped from the snapshot, instead of fabricating a zero-value binding.
+func TestAcceptWorkflowSkillChangesRejectsMissingPanelBinding(t *testing.T) {
+	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "security", Skill: "review"}}},
+	}}}
+	reg := skillTestRegistry(map[string]string{"review": "original instructions"})
+
+	// Seed the panel binding so pinWorkflowSkills can build the admission snapshot.
+	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: []byte("workflow"), DefinitionDigest: "digest",
+		PanelBindings: map[string]workflowledger.PanelBindingSnapshot{"review/security": {StepID: "review", MemberID: "security"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = pinWorkflowSkills(raw, wf, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := workflowledger.UnmarshalSnapshot(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a stripped snapshot: the skill pin exists but the panel binding
+	// entry was removed after admission.
+	delete(prior.PanelBindings, "review/security")
+
+	_, err = acceptWorkflowSkillChanges(&prior, wf, reg)
+	if err == nil {
+		t.Fatal("acceptWorkflowSkillChanges accepted a missing panel binding")
+	}
+	if !strings.Contains(err.Error(), "panel binding \"review/security\" is missing") {
+		t.Fatalf("error must report missing panel binding, got: %v", err)
 	}
 }
 

@@ -415,6 +415,22 @@ func refuseWorkflowDeliverySettled(runID string, status workflowledger.RunStatus
 	return nil
 }
 
+// formatWorkflowResumeError formats a resume-path drift error so an agent or
+// operator sees the run ID, what changed, which remaining steps reference it,
+// and the recovery options. steps may be nil when the information is unknown
+// or not applicable.
+func formatWorkflowResumeError(runID, what string, steps []string, options string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "workflow run %q: %s", runID, what)
+	if len(steps) > 0 {
+		fmt.Fprintf(&sb, " (used by step(s): %s)", formatStepList(steps))
+	}
+	if options != "" {
+		fmt.Fprintf(&sb, "; recover with: %s", options)
+	}
+	return sb.String()
+}
+
 func reconcileWorkflowTerminal(ctx context.Context, repo workflowledger.Repository, runID string, deliveryActive bool, stdout io.Writer) (bool, error) {
 	plan, err := workflowledger.PlanResume(ctx, repo, runID)
 	if err != nil {
