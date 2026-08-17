@@ -69,7 +69,7 @@ func TestWorkflowRunFailSettlesPlanRunFailed(t *testing.T) {
 
 	originalDrive := workflowStackDriveToCompletion
 	t.Cleanup(func() { workflowStackDriveToCompletion = originalDrive })
-	workflowStackDriveToCompletion = func(_ context.Context, _ *preparedWorkflowRun, ledger *tasks.Store, stackID string, _ []ChunkPlan, _ bool, _ string, _ map[string]string, _ bool, _, _ io.Writer) error {
+	workflowStackDriveToCompletion = func(_ context.Context, _ *preparedWorkflowRun, ledger *tasks.Store, stackID string, _ []ChunkPlan, _ bool, _ bool, _ string, _ map[string]string, _ bool, _, _ io.Writer) error {
 		_ = ledger.TransitionTask(stackID, "c1", stackStatusFailed)
 		return errors.New("stack drive: chunk c1 failed terminally")
 	}
@@ -142,7 +142,7 @@ func TestWorkflowRunSettleFailurePropagates(t *testing.T) {
 
 	originalDrive := workflowStackDriveToCompletion
 	t.Cleanup(func() { workflowStackDriveToCompletion = originalDrive })
-	workflowStackDriveToCompletion = func(_ context.Context, _ *preparedWorkflowRun, ledger *tasks.Store, stackID string, _ []ChunkPlan, _ bool, _ string, _ map[string]string, _ bool, _, _ io.Writer) error {
+	workflowStackDriveToCompletion = func(_ context.Context, _ *preparedWorkflowRun, ledger *tasks.Store, stackID string, _ []ChunkPlan, _ bool, _ bool, _ string, _ map[string]string, _ bool, _, _ io.Writer) error {
 		_ = ledger.TransitionTask(stackID, "c1", stackStatusFailed)
 		return errors.New("stack drive: chunk c1 failed terminally")
 	}

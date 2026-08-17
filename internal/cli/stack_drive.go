@@ -117,7 +117,7 @@ func driveStackOnePass(prepared *preparedWorkflowRun, stackID string, planInputs
 	// loader recovers a wedged wave instead of failing on it (see
 	// loadAllStackChunksForDrive); loadAllStackChunks stays strict for the
 	// reconcile sweep.
-	chunks, hasMore, remainingScope, err := loadAllStackChunksForDrive(prepared, stackID, planOutput, planInputs, stdout, stderr)
+	chunks, hasMore, hasUnsettledWave, remainingScope, err := loadAllStackChunksForDrive(prepared, stackID, planOutput, planInputs, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
@@ -127,7 +127,7 @@ func driveStackOnePass(prepared *preparedWorkflowRun, stackID string, planInputs
 	if err := seedStackLedger(ledger, stackID, chunks); err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
-	if err := driveStack(context.Background(), prepared, ledger, stackID, chunks, planInputs, false, hasMore, stdout, stderr); err != nil {
+	if err := driveStack(context.Background(), prepared, ledger, stackID, chunks, planInputs, false, hasMore, hasUnsettledWave, stdout, stderr); err != nil {
 		if settled, settleErr := settleFailedStackPlanRunIfNeeded(context.Background(), prepared, stackID, err.Error()); settleErr != nil {
 			return fmt.Errorf("stack drive: settle failed plan run: %w", settleErr)
 		} else if settled {
@@ -142,10 +142,10 @@ func driveStackOnePass(prepared *preparedWorkflowRun, stackID string, planInputs
 	if err := admitPendingFollowUps(context.Background(), prepared, ledger, stackID, byID, stdout, stderr); err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
-	if err := admitNextWaveIfReady(prepared, ledger, stackID, chunks, hasMore, remainingScope, planInputs, stdout, stderr); err != nil {
+	if err := admitNextWaveIfReady(prepared, ledger, stackID, chunks, hasMore && !hasUnsettledWave, remainingScope, planInputs, stdout, stderr); err != nil {
 		return err
 	}
-	if err := settleStackIntegrationRunIfReady(context.Background(), prepared, ledger, stackID, chunks, hasMore, stdout, stderr); err != nil {
+	if err := settleStackIntegrationRunIfReady(context.Background(), prepared, ledger, stackID, chunks, hasMore, hasUnsettledWave, stdout, stderr); err != nil {
 		return err
 	}
 	return settleStackPlanRunIfComplete(context.Background(), prepared, stackID, stdout)
@@ -200,12 +200,12 @@ func settleStackPlanRunIfComplete(ctx context.Context, prepared *preparedWorkflo
 // delivery and auto-merge under merge_policy=auto. This closes the gap where
 // the operator path never called waitIntegrationRunSettled and left the final
 // PR open even under auto-merge.
-func settleStackIntegrationRunIfReady(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, stdout, stderr io.Writer) error {
+func settleStackIntegrationRunIfReady(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, stdout, stderr io.Writer) error {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return err
 	}
-	if hasMore || !allChunksMerged(chunks, stackMergedSet(byID)) || !allTasksMerged(byID) {
+	if hasMore || hasUnsettledWave || !allChunksMerged(chunks, stackMergedSet(byID)) || !allTasksMerged(byID) {
 		return nil
 	}
 	checker := gitMergeChecker{
@@ -214,7 +214,7 @@ func settleStackIntegrationRunIfReady(ctx context.Context, prepared *preparedWor
 		gc:  delivery.GitContext{Dir: prepared.root, GitDir: filepath.Join(prepared.root, ".git")},
 	}
 	policy := prepared.compiled.Stacking.MergePolicy
-	return waitIntegrationRunSettled(ctx, prepared, ledger, checker, stackID, policy, false, stdout, stderr)
+	return waitIntegrationRunSettledFn(ctx, prepared, ledger, checker, stackID, policy, false, stdout, stderr)
 }
 
 // driveStackToCompletion drives the stack until every chunk is merged and the
@@ -228,7 +228,7 @@ func settleStackIntegrationRunIfReady(ctx context.Context, prepared *preparedWor
 // returns the cancellation error so the caller can release the run's
 // execution flock instead of polling forever. CLI foreground paths pass
 // context.Background() and stay unbounded by design.
-func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	checker := gitMergeChecker{
 		git: workflowDeliverGit,
 		pr:  workflowDeliverNewPR(),
@@ -247,7 +247,7 @@ func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, 
 		}
 		// One drive pass admits the next ready wave and applies the merge
 		// policy; it halts when a chunk needs a grant or a merge to land.
-		if err := driveStack(ctx, prepared, ledger, stackID, chunks, planInputs, allowPublish, hasMore, stdout, stderr); err != nil {
+		if err := driveStack(ctx, prepared, ledger, stackID, chunks, planInputs, allowPublish, hasMore, hasUnsettledWave, stdout, stderr); err != nil {
 			return err
 		}
 		byID, err := stackTaskMap(ledger, stackID)
@@ -283,8 +283,8 @@ func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, 
 			}
 			continue
 		}
-		if !hasMore {
-			return waitIntegrationRunSettled(ctx, prepared, ledger, checker, stackID, policy, allowPublish, stdout, stderr)
+		if !hasMore && !hasUnsettledWave {
+			return waitIntegrationRunSettledFn(ctx, prepared, ledger, checker, stackID, policy, allowPublish, stdout, stderr)
 		}
 		// Every currently-known chunk merged, but an earlier decompose call
 		// declared more scope than it planned (§12.1). Request the next wave

@@ -158,7 +158,7 @@ func TestLoadAllStackChunksForDriveReAdmitsFailedContinuationWave(t *testing.T) 
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, remaining, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, _, remaining, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no error (failed wave must be re-admitted, not wedged)", err)
 	}
@@ -203,15 +203,18 @@ func TestLoadAllStackChunksForDriveFailedWaveReAdmissionErrorIsActionable(t *tes
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, hasUnsettledWave, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no hard error (re-admission failure must be actionable, not a wedge)", err)
 	}
 	if !chunkIDsEqual(chunks, "c1", "c2") {
 		t.Fatalf("chunks = %v, want the wave-0 chunks [c1 c2] to remain drivable", chunkIDs(chunks))
 	}
-	if hasMore {
-		t.Fatalf("hasMore = true, want false (skipped wave suppresses further wave admission)")
+	if !hasMore {
+		t.Fatalf("hasMore = false, want true (wave-0 declared more scope)")
+	}
+	if !hasUnsettledWave {
+		t.Fatalf("hasUnsettledWave = false, want true (wave was skipped)")
 	}
 	msg := stderr.String()
 	for _, want := range []string{"wfr-wave1-failed", "resume or delete", "sentinel re-admission failure"} {
@@ -237,15 +240,18 @@ func TestLoadAllStackChunksForDrivePendingWaveSkipsWithActionableMessage(t *test
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, hasUnsettledWave, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no hard error (pending wave must be skipped, not wedged)", err)
 	}
 	if !chunkIDsEqual(chunks, "c1", "c2") {
 		t.Fatalf("chunks = %v, want the wave-0 chunks [c1 c2] to remain drivable", chunkIDs(chunks))
 	}
-	if hasMore {
-		t.Fatalf("hasMore = true, want false (skipped wave suppresses further wave admission)")
+	if !hasMore {
+		t.Fatalf("hasMore = false, want true (wave-0 declared more scope)")
+	}
+	if !hasUnsettledWave {
+		t.Fatalf("hasUnsettledWave = false, want true (wave was skipped)")
 	}
 	msg := stderr.String()
 	for _, want := range []string{"wfr-wave1-pending", "resumable", "mivia workflow resume"} {
@@ -274,7 +280,7 @@ func TestLoadAllStackChunksForDriveReplaysAlreadySeededWave(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, _, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no error (seeded wave must be replayed, not wedged)", err)
 	}
@@ -317,7 +323,7 @@ func TestLoadAllStackChunksForDriveHealthyContinuationWaveUnchanged(t *testing.T
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, _, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no error", err)
 	}

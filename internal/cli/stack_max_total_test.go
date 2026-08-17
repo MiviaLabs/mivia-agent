@@ -34,7 +34,7 @@ func TestLoadAllStackChunksForDriveRefusesOverCapStack(t *testing.T) {
 		Stacking: &definition.StackingConfig{Enabled: true, MaxTotalChunks: 3},
 	}}
 	var stdout, stderr bytes.Buffer
-	_, _, _, err := loadAllStackChunksForDrive(prepared, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	_, _, _, _, err := loadAllStackChunksForDrive(prepared, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("loadAllStackChunksForDrive succeeded with 4 chunks against max_total_chunks=3, want a cap error")
 	}
@@ -55,7 +55,7 @@ func TestLoadAllStackChunksForDriveAllowsAtCapStack(t *testing.T) {
 		Stacking: &definition.StackingConfig{Enabled: true, MaxTotalChunks: 4},
 	}}
 	var stdout, stderr bytes.Buffer
-	chunks, _, _, err := loadAllStackChunksForDrive(prepared, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, _, _, _, err := loadAllStackChunksForDrive(prepared, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no error at exactly the cap", err)
 	}

@@ -255,7 +255,7 @@ func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, 
 	if err != nil {
 		return false, fmt.Errorf("stack plan inputs: %w", err)
 	}
-	chunks, hasMore, remainingScope, err := loadAllStackChunksForDrive(prepared, planRunID, planOutput, planInputs, stdout, stderr)
+	chunks, hasMore, hasUnsettledWave, remainingScope, err := loadAllStackChunksForDrive(prepared, planRunID, planOutput, planInputs, stdout, stderr)
 	if err != nil {
 		return false, fmt.Errorf("stack drive: %w", err)
 	}
@@ -267,7 +267,7 @@ func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, 
 	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
 		return false, fmt.Errorf("stack seed: %w", err)
 	}
-	return true, workflowStackDriveToCompletion(ctx, prepared, ledger, planRunID, chunks, hasMore, remainingScope, planInputs, allowPublish, stdout, stderr)
+	return true, workflowStackDriveToCompletion(ctx, prepared, ledger, planRunID, chunks, hasMore, hasUnsettledWave, remainingScope, planInputs, allowPublish, stdout, stderr)
 }
 
 // compiledDeliverPlanRun reports whether the compiled workflow's delivery

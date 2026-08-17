@@ -28,7 +28,7 @@ import (
 // already-known chunks while later waves' work is still pending. The caller
 // re-drives with hasMore=false once every continuation wave landed, and only
 // then does the tail admit the integration run.
-func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, hasMore bool, stdout, stderr io.Writer) error {
+func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, hasMore bool, hasUnsettledWave bool, stdout, stderr io.Writer) error {
 	repo := prepared.repo
 	checker := gitMergeChecker{
 		git: workflowDeliverGit,
@@ -93,7 +93,7 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 		fmt.Fprintf(stdout, "stack %s: chunks remain unmerged; re-run `mivia stack drive` after merges land\n", stackID)
 		return nil
 	}
-	if hasMore {
+	if hasMore || hasUnsettledWave {
 		// More decompose scope is declared but not yet admitted: the final
 		// integration run must wait for the continuation wave(s), or it would
 		// publish a full-suite PR missing later chunks' work (live ordering

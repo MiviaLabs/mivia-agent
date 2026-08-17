@@ -120,7 +120,7 @@ type recordingStackDrive struct {
 	chunks  []ChunkPlan
 }
 
-func (d *recordingStackDrive) Drive(_ context.Context, _ *preparedWorkflowRun, _ *tasks.Store, stackID string, chunks []ChunkPlan, _ bool, _ string, _ map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
+func (d *recordingStackDrive) Drive(_ context.Context, _ *preparedWorkflowRun, _ *tasks.Store, stackID string, chunks []ChunkPlan, _ bool, _ bool, _ string, _ map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
 	d.called = true
 	d.stackID = stackID
 	d.chunks = chunks
@@ -477,7 +477,7 @@ type continuationDriveRecorder struct {
 	inputs         map[string]string
 }
 
-func (d *continuationDriveRecorder) Drive(_ context.Context, _ *preparedWorkflowRun, _ *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, inputs map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
+func (d *continuationDriveRecorder) Drive(_ context.Context, _ *preparedWorkflowRun, _ *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, _ bool, remainingScope string, inputs map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
 	d.called = true
 	d.stackID = stackID
 	d.chunks = append([]ChunkPlan(nil), chunks...)

@@ -175,9 +175,9 @@ type orderRecordingDrive struct {
 	inner *recordingStackDrive
 }
 
-func (d *orderRecordingDrive) Drive(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+func (d *orderRecordingDrive) Drive(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	d.rec.add("drive")
-	return d.inner.Drive(ctx, prepared, ledger, stackID, chunks, hasMore, remainingScope, planInputs, allowPublish, stdout, stderr)
+	return d.inner.Drive(ctx, prepared, ledger, stackID, chunks, hasMore, hasUnsettledWave, remainingScope, planInputs, allowPublish, stdout, stderr)
 }
 
 // TestExecuteWorkflowResumeDrivesSettledStackBeforeDeliverySkippedPlanRun:

@@ -296,6 +296,11 @@ func autoMergeOne(ctx context.Context, prepared *preparedWorkflowRun, repo workf
 	return nil
 }
 
+// waitIntegrationRunSettledFn is the seam for waitIntegrationRunSettled so tests
+// can observe whether the integration gate admitted the run without running real
+// delivery/merge plumbing.
+var waitIntegrationRunSettledFn = waitIntegrationRunSettled
+
 // waitIntegrationRunSettled finishes the last act of a completed stack: the
 // integration run was admitted and settled by the drive pass; publish it when
 // allowed and report the stack's terminal state. With merge_policy=auto the

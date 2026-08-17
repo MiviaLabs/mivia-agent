@@ -102,34 +102,34 @@ func latestDecomposeContinueWave(repo workflowledger.Repository, stackID string)
 // wave admission (hasMore=false) so the drive never auto-requests a wave out
 // of order; the operator resolves the live run and re-runs `mivia stack
 // drive`. The wave-0 output is passed in (already loaded by the caller).
-func loadAllStackChunksForDrive(prepared *preparedWorkflowRun, stackID string, planOutput []byte, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, remainingScope string, err error) {
+func loadAllStackChunksForDrive(prepared *preparedWorkflowRun, stackID string, planOutput []byte, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, err error) {
 	mode, waveChunks, waveHasMore, waveRemaining, err := parseStackPlanOutput(planOutput)
 	if err != nil {
-		return nil, false, "", err
+		return nil, false, false, "", err
 	}
 	if mode != "multi" {
-		return waveChunks, false, "", nil
+		return waveChunks, false, false, "", nil
 	}
 	chunks = append(chunks, waveChunks...)
 	hasMore, remainingScope = waveHasMore, waveRemaining
 	lastWave, err := latestDecomposeContinueWave(prepared.repo, stackID)
 	if err != nil {
-		return nil, false, "", err
+		return nil, false, false, "", err
 	}
 	skippedWave := false
 	for wave := 1; wave <= lastWave; wave++ {
 		run, found, rerr := stackDecomposeContinueRunRef(prepared.repo, stackID, wave)
 		if rerr != nil {
-			return nil, false, "", rerr
+			return nil, false, false, "", rerr
 		}
 		if !found {
-			return nil, false, "", fmt.Errorf("stack %s: decompose continuation wave %d has an invocation key but no run", stackID, wave)
+			return nil, false, false, "", fmt.Errorf("stack %s: decompose continuation wave %d has an invocation key but no run", stackID, wave)
 		}
 		raw, lerr := loadStackPlanOutput(prepared.repo, run.RunID)
 		if lerr == nil {
 			_, waveChunks, waveHasMore, waveRemaining, perr := parseStackPlanOutput(raw)
 			if perr != nil {
-				return nil, false, "", fmt.Errorf("stack %s: decompose continuation wave %d: %w", stackID, wave, perr)
+				return nil, false, false, "", fmt.Errorf("stack %s: decompose continuation wave %d: %w", stackID, wave, perr)
 			}
 			chunks = append(chunks, waveChunks...)
 			hasMore, remainingScope = waveHasMore, waveRemaining
@@ -137,7 +137,7 @@ func loadAllStackChunksForDrive(prepared *preparedWorkflowRun, stackID string, p
 		}
 		waveChunks, waveHasMore, waveRemaining, skipped, rerr := recoverDecomposeContinueWave(prepared, stackID, wave, run, remainingScope, planInputs, stdout, stderr)
 		if rerr != nil {
-			return nil, false, "", rerr
+			return nil, false, false, "", rerr
 		}
 		if skipped {
 			skippedWave = true
@@ -146,15 +146,13 @@ func loadAllStackChunksForDrive(prepared *preparedWorkflowRun, stackID string, p
 		chunks = append(chunks, waveChunks...)
 		hasMore, remainingScope = waveHasMore, waveRemaining
 	}
-	if skippedWave {
-		hasMore = false
-	}
+	hasUnsettledWave = skippedWave
 	if prepared.compiled != nil {
 		if err := enforceMaxTotalChunks(prepared.compiled.Stacking, stackID, len(chunks)); err != nil {
-			return nil, false, "", err
+			return nil, false, false, "", err
 		}
 	}
-	return chunks, hasMore, remainingScope, nil
+	return chunks, hasMore, hasUnsettledWave, remainingScope, nil
 }
 
 // enforceMaxTotalChunks refuses a chunk list that exceeds the workflow's
