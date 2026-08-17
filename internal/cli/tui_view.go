@@ -421,10 +421,10 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 		warningText = fmt.Sprintf("⚠ Last session NOT saved: %s", m.prevAutoSaveWarn)
 	}
 	if warningText != "" {
-		// Truncate if wider than terminal.
-		if len(warningText) > w {
-			warningText = warningText[:w]
-		}
+		// Truncate if wider than terminal. Cell/grapheme-safe: a byte slice
+		// (warningText[:w]) could cut a multi-byte rune and emit invalid
+		// UTF-8 (DC-6 in .mivia/quality/defect-taxonomy.md).
+		warningText = truncateToWidth(warningText, max(1, w))
 		warnBlock = tuiErrorStyle.Render(warningText)
 	}
 
