@@ -532,6 +532,40 @@ func TestRenderTitleGitHubRuneCeiling(t *testing.T) {
 	})
 }
 
+// TestTruncateRunesNeverSplitsAGrapheme pins a real gap an adversarial review
+// pass caught: truncateRunes was rune-safe (never splits a multi-byte UTF-8
+// sequence) but not GRAPHEME-safe. A base character followed by a combining
+// mark - e.g. 'e' (U+0065) + COMBINING ACUTE ACCENT (U+0301), which together
+// render as "é" but are two separate runes - could get split exactly between
+// them: the truncated result kept the bare base character and silently
+// dropped its diacritic, which is valid UTF-8 but visibly wrong text.
+func TestTruncateRunesNeverSplitsAGrapheme(t *testing.T) {
+	// 150 decomposed "e"+combining-acute-accent pairs (300 runes). A cut at
+	// exactly 243 runes (the affix "[stack 22/3]" is 12 runes, room =
+	// 256-12-1 = 243) used to land after the 122nd pair's base character but
+	// before its combining mark.
+	base := strings.Repeat("é", 150)
+	affix := "[stack 22/3]"
+	title := deriveTitle(base, affix, MaxTitleRunes)
+	if !strings.HasSuffix(title, " "+affix) {
+		t.Fatalf("title = %q, want it to end with the untruncated affix %q", title, affix)
+	}
+	baseTrunc := strings.TrimSuffix(title, " "+affix)
+	runes := []rune(baseTrunc)
+	if len(runes)%2 != 0 {
+		t.Fatalf("truncated base has %d runes (odd) - an odd count means the cut landed on a lone base character missing its combining mark; base=%q", len(runes), baseTrunc)
+	}
+	// The last rune of a complete "e"+combining-acute-accent run must be the
+	// mark itself (U+0301) - proof the cut ended on a whole pair, not a bare
+	// base character.
+	if len(runes) > 0 && runes[len(runes)-1] != '́' {
+		t.Fatalf("truncated base ends with %U, want the combining mark U+0301 (a complete pair)", runes[len(runes)-1])
+	}
+	if !utf8.ValidString(title) {
+		t.Fatalf("title is not valid UTF-8: %q", title)
+	}
+}
+
 // TestRenderTemplateAppliesRedaction pins that renderTemplate applies the
 // process-wide redaction policy (redact.Text) to the rendered title and the
 // rendered commit message, so a credential-shaped input never reaches GitHub

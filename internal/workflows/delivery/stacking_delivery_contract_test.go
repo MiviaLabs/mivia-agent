@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -313,6 +314,40 @@ func TestStackingContractStackPartTrailer(t *testing.T) {
 		want := "feat: x [stack 1/1]"
 		if got := pr.created[0].Title; got != want {
 			t.Fatalf("Title = %q, want %q", got, want)
+		}
+	})
+	// TestAppendStackPartTitle's overflow subtest calls appendStackPartTitle
+	// directly with a synthetic title - it doesn't prove sanitizeAgentTitle
+	// ran first. This subtest proves the FULL scenario motivating the
+	// truncate-not-reject design: an agent title that is valid ALONE
+	// (passes sanitizeAgentTitle's own length check) but overflows once the
+	// host's tag is appended must still succeed end to end through Deliver,
+	// never route to a repair step over an overflow the agent's own title
+	// didn't cause.
+	t.Run("a title valid alone but overflowing with the tag still succeeds", func(t *testing.T) {
+		ctx := context.Background()
+		_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+		writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+		nearCeilingTitle := "feat(agent): " + strings.Repeat("a", MaxTitleRunes-utf8.RuneCountInString("feat(agent): "))
+		if n := utf8.RuneCountInString(nearCeilingTitle); n != MaxTitleRunes {
+			t.Fatalf("fixture title has %d runes, want exactly %d (valid alone, at the ceiling)", n, MaxTitleRunes)
+		}
+		seedChangeSummary(t, repo, run, "implement", 1, fmt.Sprintf(`{"pr_title": %q, "pr_summary": "Adds the chunk."}`, nearCeilingTitle))
+		pr := &fakePRClient{}
+		req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x", "stack_part": "3/12"})
+		res, err := Deliver(ctx, repo, RealGit{}, pr, req)
+		if err != nil {
+			t.Fatalf("Deliver must succeed (truncate, not reject) when only the host's own tag causes the overflow: %v", err)
+		}
+		if res.Status != "succeeded" {
+			t.Fatalf("Result = %+v, want succeeded", res)
+		}
+		got := pr.created[0].Title
+		if n := utf8.RuneCountInString(got); n > MaxTitleRunes {
+			t.Fatalf("created title has %d runes, want <= %d", n, MaxTitleRunes)
+		}
+		if !strings.HasSuffix(got, "[stack 3/12]") {
+			t.Fatalf("created title = %q, want it to end with the full, untruncated tag", got)
 		}
 	})
 }

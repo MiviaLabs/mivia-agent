@@ -308,9 +308,20 @@ func truncateRendered(rendered string, maxBytes int, allowNewline bool) (string,
 	return textutil.TruncateRuneSafe(rendered, maxBytes), nil
 }
 
-// truncateRunes caps s to at most maxRunes runes, never splitting a rune. The
-// cut is the byte length of the first maxRunes runes, applied through
-// textutil.TruncateRuneSafe so the byte ceiling and the rune ceiling agree.
+// truncateRunes caps s to at most maxRunes runes, never splitting a rune AND
+// never splitting a GRAPHEME (a base character plus the combining mark(s)
+// that render as part of it, e.g. 'e' (U+0065) + COMBINING ACUTE ACCENT
+// (U+0301), together "é"). A rune boundary is not a grapheme boundary: the
+// initial cut is the byte length of the first maxRunes runes (agreeing with
+// textutil.TruncateRuneSafe's rune-safety), but if the very next rune just
+// past that cut is a combining mark, the cut split a grapheme in two -
+// keeping only the bare base character and silently dropping its
+// diacritic(s), which is valid UTF-8 but visibly wrong text (worse for
+// scripts where combining marks are semantically essential, not merely
+// decorative). backUntilGraphemeBoundary backs the cut up past that base
+// character (and any it stacks with) until the excluded remainder no longer
+// starts with a mark, so the kept prefix always ends on a complete
+// grapheme, one rune shorter rather than one grapheme mangled.
 func truncateRunes(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
@@ -323,7 +334,28 @@ func truncateRunes(s string, maxRunes int) string {
 		_, size := utf8.DecodeRuneInString(s[end:])
 		end += size
 	}
-	return textutil.TruncateRuneSafe(s, end)
+	return textutil.TruncateRuneSafe(s, backUntilGraphemeBoundary(s, end))
+}
+
+// backUntilGraphemeBoundary backs a rune-safe cut point up, one rune at a
+// time, while the rune immediately past it is a combining mark (Unicode
+// category Mn/Mc/Me) - i.e. while cutting there would strand that mark's
+// base character without it. A character can carry more than one combining
+// mark (stacked diacritics), so this backs up however many base characters
+// that requires, not just one.
+func backUntilGraphemeBoundary(s string, end int) int {
+	for end > 0 {
+		next, nsize := utf8.DecodeRuneInString(s[end:])
+		if nsize == 0 || !unicode.In(next, unicode.Mn, unicode.Mc, unicode.Me) {
+			return end
+		}
+		_, lsize := utf8.DecodeLastRuneInString(s[:end])
+		if lsize == 0 {
+			return end
+		}
+		end -= lsize
+	}
+	return end
 }
 
 // findLastSpace returns the index of the last space character within the first
