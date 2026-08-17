@@ -438,6 +438,43 @@ def main() -> None:
     for scope in pr_scopes:
         if not isinstance(scope, str) or not scope.strip():
             fail(f".mivia/policy/pr-title.toml: title.scopes must contain only non-empty strings, got {scope!r}")
+    # pr-title.toml's own header says it "mirrors the repo's own commit
+    # convention" - enforce that literally, not just by prose. A scope valid
+    # for a commit but rejected for its PR title (or vice versa) sends a
+    # repair loop into an unwinnable retry: this is the live bug that burned
+    # run wfr-W55NJLGNPF4HVM63's whole delivery-repair budget on scope
+    # "events", which commit-message.json allowed and pr-title.toml did not.
+    pr_scope_set = set(pr_scopes)
+    commit_scope_set = set(scopes)
+    if pr_scope_set != commit_scope_set:
+        missing = sorted(commit_scope_set - pr_scope_set)
+        extra = sorted(pr_scope_set - commit_scope_set)
+        detail = []
+        if missing:
+            detail.append(f"missing from pr-title.toml: {missing}")
+        if extra:
+            detail.append(f"present in pr-title.toml but not commit-message.json: {extra}")
+        fail(
+            "pr-title.toml title.scopes must match commit-message.json scopes exactly "
+            f"({'; '.join(detail)})"
+        )
+    pr_types_match = re.search(r"\(\?P<type>([^)]+)\)", pattern)
+    if not pr_types_match:
+        fail(".mivia/policy/pr-title.toml: title.pattern must name a (?P<type>...) group")
+    pr_types = pr_types_match.group(1).split("|")
+    commit_types = commit.get("types") or []
+    if set(pr_types) != set(commit_types):
+        missing = sorted(set(commit_types) - set(pr_types))
+        extra = sorted(set(pr_types) - set(commit_types))
+        detail = []
+        if missing:
+            detail.append(f"missing from pr-title.toml pattern: {missing}")
+        if extra:
+            detail.append(f"present in pr-title.toml pattern but not commit-message.json: {extra}")
+        fail(
+            "pr-title.toml title.pattern's type group must match commit-message.json types exactly "
+            f"({'; '.join(detail)})"
+        )
     # Positive-integer bounds with min <= max, when present. The delivery
     # engine treats an absent (or zero/negative) bound as UNLIMITED, so a
     # policy may omit a field; a present value must be a sane positive
