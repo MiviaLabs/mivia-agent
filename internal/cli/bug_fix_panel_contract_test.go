@@ -5,13 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // TestBugFixWorkflowPanelContract keeps the checked-in bug-fix workflow
@@ -58,9 +54,12 @@ func TestBugFixWorkflowPanelContract(t *testing.T) {
 		t.Fatalf("validate committed bug-fix workflow agent skills: %v", err)
 	}
 
-	assertBugFixReviewPanel(t, workflow)
-	assertBugFixPanelFeedback(t, workflow)
-	assertBugFixPanelLimits(t, workflow)
+	// Fast debug path: the review layers (review_panel, review, perf_verify)
+	// are commented out of bug-fix.toml, so the workflow's shape is pinned by
+	// the fast-path assertions instead. Restore the three panel assertions
+	// (assertBugFixReviewPanel / assertBugFixPanelFeedback /
+	// assertBugFixPanelLimits) when the review gates come back.
+	assertBugFixFastPathShape(t, workflow)
 }
 
 func loadCommittedBugFixWorkflow(t *testing.T, root string) (definition.WorkflowFile, string) {
@@ -86,6 +85,30 @@ func bugFixStep(t *testing.T, workflow definition.WorkflowFile, id string) defin
 	}
 	t.Fatalf("bug-fix step %q is missing", id)
 	return definition.Step{}
+}
+
+// assertBugFixFastPathShape pins the temporary fast debug shape of
+// bug-fix.toml: the LLM review layers (review_panel, review, perf_verify) are
+// commented out, so implement and every repair step route straight to the
+// first evidence gate (test_validate). When the review gates are restored,
+// replace this with the panel assertions and re-enable the panel member
+// tests below.
+func assertBugFixFastPathShape(t *testing.T, workflow definition.WorkflowFile) {
+	t.Helper()
+	for _, gone := range []string{"review_panel", "review", "perf_verify"} {
+		for _, step := range workflow.Steps {
+			if step.ID == gone {
+				t.Fatalf("step %q must be absent while the fast debug path is active", gone)
+			}
+		}
+	}
+	assertTransition(t, workflow, "implement", "test_validate", "succeeded")
+	for _, repair := range []string{
+		"repair_tests", "repair_verify", "repair_final",
+		"repair_preflight", "repair_preflight_structure", "repair_pr_metadata",
+	} {
+		assertTransition(t, workflow, repair, "test_validate", "succeeded")
+	}
 }
 
 // assertBugFixReviewPanel pins the bug-fix review_panel step: kind
@@ -225,104 +248,10 @@ func assertBugFixPanelLimits(t *testing.T, workflow definition.WorkflowFile) {
 	}
 }
 
-// TestBugFixPanelMemberTemplatesRenderWithoutRound is a regression test
-// mirroring the feature-delivery one: buildPanelAttempt renders each member's
-// template via contextForStep directly, never through agentStepRequest's
-// inputs.round injection - panel members never receive a round input, unlike
-// agent/agent_gate steps. A member template that unconditionally references
-// {{ inputs.round }} (copied from an agent_gate review template without
-// checking this) fails template.Render on every dispatch, so the panel could
-// never actually run. This renders each committed bug-fix member template
-// with exactly the inputs/evidence shape buildPanelAttempt supplies (task and
-// scope only; no round) and fails if any binding the template references is
-// missing.
-func TestBugFixPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
-	root := committedWorkflowRoot(t)
-	workflow, base := loadCommittedBugFixWorkflow(t, root)
-	step := bugFixStep(t, workflow, "review_panel")
-	if step.Panel == nil {
-		t.Fatal("step review_panel must declare [steps.panel]")
-	}
-	// Mirrors buildPanelAttempt: inputs holds only what the step's own
-	// context binds from "inputs.*" (here, task and scope); evidence holds
-	// every "steps.*.output" binding resolved to a placeholder string.
-	// Neither map ever carries "round".
-	inputs := map[string]any{"task": "example task", "scope": "internal/cli"}
-	evidence := map[string]any{
-		"plan":           "example fix plan",
-		"findings":       "example confirmed findings",
-		"implementation": "example implementation summary",
-		"prior_findings": "",
-		"touched_files":  `["a.go"]`,
-	}
-	for _, member := range step.Panel.Members {
-		templateBytes, err := readWorkflowRef(base, member.Template, template.MaxTemplateBytes)
-		if err != nil {
-			t.Fatalf("panel member %q: read template %q: %v", member.ID, member.Template, err)
-		}
-		if _, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes); err != nil {
-			t.Fatalf("panel member %q: render template %q without a round input: %v", member.ID, member.Template, err)
-		}
-	}
-}
-
-// TestBugFixPanelMembersAdmit is the live-shaped regression test for the
-// enabled agent_panel review gate: every committed bug-fix panel member
-// (panel-reviewer with panel-bug-audit / panel-secure-change /
-// panel-architecture-review) must pass validatePanelAgentTools, the exact
-// admission check workflow_run runs before a run starts, and so must the
-// review-synthesizer. It mirrors the feature-delivery panel admission test
-// (resource-less panel skills + global MCP servers from .mivia/mivia.toml).
-func TestBugFixPanelMembersAdmit(t *testing.T) {
-	root := committedWorkflowRoot(t)
-	workflow, _ := loadCommittedBugFixWorkflow(t, root)
-	step := bugFixStep(t, workflow, "review_panel")
-	if step.Panel == nil {
-		t.Fatal("step review_panel must declare [steps.panel]")
-	}
-	skillRegistry, warnings, err := skills.LoadMarkdownSources(
-		[]skills.Source{{Dir: filepath.Join(root, ".mivia", "skills"), Origin: skills.OriginProject}},
-		skills.LoadOptions{},
-	)
-	if err != nil {
-		t.Fatalf("load committed workflow skills: %v", err)
-	}
-	if len(warnings) != 0 {
-		t.Fatalf("load committed workflow skills warnings: %v", warnings)
-	}
-	loaded, err := loadAgentDefinitions(root, "", skillRegistry)
-	if err != nil {
-		t.Fatalf("load committed workflow agents: %v", err)
-	}
-	ws, err := workspace.Open(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	// Mirrors the live codegraph/context7 surface the loaded agents inherit
-	// from .mivia/mivia.toml ([mcp] servers with global = true).
-	for _, name := range []string{
-		"mcp__codegraph__x636f646567726170685f6578706c6f7265",
-		"mcp__context7__x71756572792d646f6373",
-		"mcp__context7__x7265736f6c7665722d6c6962726172792d6964",
-	} {
-		registry.Register(namedTool{name: name})
-	}
-	opts := SessionDispatcherOpts{Registry: registry, AuthorityRegistry: registry, Config: config.DefaultSubagentConfig, SkillReg: skillRegistry}
-	for _, member := range step.Panel.Members {
-		agent, ok := loaded.Registry.Get(member.Agent)
-		if !ok {
-			t.Fatalf("panel member %q references unknown agent %q", member.ID, member.Agent)
-		}
-		if err := validatePanelAgentTools(agent, member.Skill, opts, false); err != nil {
-			t.Fatalf("panel member %q (%s/%s, skill %q) must admit: %v", member.ID, member.Provider, member.Model, member.Skill, err)
-		}
-	}
-	synthesizer, ok := loaded.Registry.Get(step.Agent)
-	if !ok {
-		t.Fatalf("panel step references unknown synthesizer %q", step.Agent)
-	}
-	if err := validatePanelAgentTools(synthesizer, step.Skill, opts, true); err != nil {
-		t.Fatalf("review-synthesizer must admit: %v", err)
-	}
-}
+// TestBugFixPanelMemberTemplatesRenderWithoutRound and TestBugFixPanelMembersAdmit
+// are DISABLED on the fast debug path: review_panel is commented out of
+// bug-fix.toml (see docs/development/debug-cut.md). They guard the panel
+// member templates rendering without an inputs.round injection and
+// validatePanelAgentTools admission for every member plus the synthesizer.
+// Restore them with the panel; the live bodies are in git history:
+// git show HEAD:internal/cli/bug_fix_panel_contract_test.go

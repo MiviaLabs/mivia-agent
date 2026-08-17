@@ -131,3 +131,8 @@ topics:
     path: docs/architecture/workflow-stack-settle.md
     owner: architecture
     description: Plan for autonomous stack settle - completion sweep, failure propagation, failed_pr_policy knob, lock hygiene
+
+  debug-cut:
+    path: docs/development/debug-cut.md
+    owner: quality
+    description: Fast debug path cut - disabled panel/integration review gates, disabled contract tests registry, restore procedure

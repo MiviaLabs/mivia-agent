@@ -78,7 +78,10 @@ func assertFeatureDeliveryReviewPanel(t *testing.T, workflow definition.Workflow
 		seenPairs[pair] = struct{}{}
 	}
 	assertTransition(t, workflow, "implement", "review_panel", "succeeded")
-	assertTransition(t, workflow, "review_panel", "review_integration", "succeeded")
+	// Fast debug path: review_integration is commented out, so an approved
+	// panel routes straight to the first evidence gate. Restore the
+	// review_panel -> review_integration assertion when the gate returns.
+	assertTransition(t, workflow, "review_panel", "test_validate", "succeeded")
 	assertTransition(t, workflow, "review_panel", "implement", "succeeded")
 }
 

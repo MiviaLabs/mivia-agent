@@ -86,7 +86,9 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	assertFeatureDeliveryReviewPriorFindingsBindings(t, workflow)
 	assertFeatureDeliveryFindingsBindingsCapped(t, workflow)
 	assertFeatureDeliveryReviewPanel(t, workflow)
-	assertFeatureDeliveryIntegrationGate(t, workflow)
+	// assertFeatureDeliveryIntegrationGate(t, workflow) — disabled on the fast
+	// debug path: review_integration is commented out of feature-delivery.toml.
+	// Restore with the step (see docs/development/debug-cut.md).
 	assertFeatureDeliverySchemasRequireInspected(t, base, filepath.Join(root, "internal", "workflows", "testdata"))
 	assertFeatureDeliveryTemplatesInstructPRMetadata(t, root)
 }
@@ -285,9 +287,10 @@ func assertFeatureDeliveryReviewFeedbackChannel(t *testing.T, workflow definitio
 	t.Helper()
 	wantBindings := map[string]string{
 		// step ID -> the reviewer step whose output must reach the agent.
-		"plan":       "steps.plan_review.output",
-		"plan_tests": "steps.test_plan_review.output",
-		"implement":  "steps.review_panel.output",
+		// Fast debug path: plan_review/test_plan_review are commented out, so
+		// plan/plan_tests no longer bind a reviewer; implement keeps the
+		// review_panel channel.
+		"implement": "steps.review_panel.output",
 	}
 	for stepID, reviewerOutput := range wantBindings {
 		step := featureDeliveryStep(t, workflow, stepID)
@@ -325,11 +328,11 @@ func assertFeatureDeliveryReviewPriorFindingsBindings(t *testing.T, workflow def
 	// review_panel replaced the single-reviewer agent_gate review step (Wave 7):
 	// it is kind agent_panel, but carries the same self-binding contract as the
 	// remaining agent_gate reviewers.
+	// Fast debug path: plan_review, test_plan_review, and review_integration
+	// are commented out of the workflow, so review_panel is the only reviewer
+	// left and the only step carrying the self-binding contract.
 	kinds := map[string]string{
-		"plan_review":        "agent_gate",
-		"test_plan_review":   "agent_gate",
-		"review_panel":       "agent_panel",
-		"review_integration": "agent_gate",
+		"review_panel": "agent_panel",
 	}
 	for id, wantKind := range kinds {
 		step := featureDeliveryStep(t, workflow, id)
@@ -359,11 +362,12 @@ func assertFeatureDeliveryReviewPriorFindingsBindings(t *testing.T, workflow def
 // than re-deriving it from an inline payload.
 func assertFeatureDeliveryFindingsBindingsCapped(t *testing.T, workflow definition.WorkflowFile) {
 	t.Helper()
+	// Fast debug path: the plan-phase review gates and the integration gate
+	// are commented out, so their feedback channels are gone; implement keeps
+	// the review_panel channel.
 	want := map[string]map[string]string{
 		// agent step -> finding channel -> reviewer step whose output feeds it.
-		"plan":       {"review_findings": "plan_review"},
-		"plan_tests": {"review_findings": "test_plan_review"},
-		"implement":  {"review_findings": "review_panel", "integration_findings": "review_integration"},
+		"implement": {"review_findings": "review_panel"},
 	}
 	for stepID, channels := range want {
 		step := featureDeliveryStep(t, workflow, stepID)

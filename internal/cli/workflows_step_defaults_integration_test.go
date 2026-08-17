@@ -185,8 +185,12 @@ func TestStepDefaultsDigestSafeForExistingFiles(t *testing.T) {
 	// itself is deliberately edited (e.g. the follow-up that rewrites its
 	// repair steps to use [step_defaults], or a binding change such as the
 	// review-panel correctness member moving from llmgateway/
-	// runware-deepseek-v4-flash to deepseek/deepseek-v4-flash on 2026-08-16).
-	const pinnedPreFeatureDigest = "0cbeb512ef6f4ce981aab05b2cbeadb6c35008daf7946c5f6d1eb0bcdeb49ba6"
+	// runware-deepseek-v4-flash to deepseek/deepseek-v4-flash on 2026-08-16,
+	// or the temporary fast debug path cut on 2026-08-17 that commented out
+	// review_panel/review/perf_verify and routed implement + the repair
+	// steps straight to test_validate — revert this pin when the cut is
+	// reverted).
+	const pinnedPreFeatureDigest = "9a7d43877dbbeb9d0135ddd14ed020c9d6690120f7984ad8513523a3aa84b69b"
 	first, second := digest(), digest()
 	if first != second {
 		t.Fatalf("digest not deterministic: %s != %s", first, second)
