@@ -169,7 +169,16 @@ func driveStackOnePass(prepared *preparedWorkflowRun, stackID string, planInputs
 // mid decompose-continuation-wave) is left parked with no output - this is
 // the routine, non-error `stack drive` outcome under merge_policy=approve.
 func settleStackPlanRunIfComplete(ctx context.Context, prepared *preparedWorkflowRun, stackID string, stdout io.Writer) error {
-	switch classifyStackPlanRunDelivery(ctx, prepared.root, prepared.store, prepared.repo, stackID, true) {
+	// Every gate value has a case: a terminally failed stack must report the
+	// failure (and settle the plan run) instead of falling out of the switch
+	// as if the drive ended cleanly, and an unknown value must not do so
+	// either. Unlike the deliver path this branch publishes nothing, so the
+	// fall-out was a silent-success bug, not a publication bug.
+	switch gate := classifyStackPlanRunDelivery(ctx, prepared.root, prepared.store, prepared.repo, stackID, true); gate {
+	case stackPlanRunNotApplicable, stackPlanRunIncomplete:
+		// Routine `stack drive` outcome: nothing to settle, no output.
+	case stackPlanRunFailed:
+		return refuseFailedStackPlanRunDelivery(ctx, prepared.root, prepared.store, prepared.repo, stackID)
 	case stackPlanRunComplete:
 		if skipParkedPlanRunPublication(ctx, prepared.store, prepared.repo, stackID) {
 			if err := settlePlanRunSkippedDelivery(ctx, prepared.repo, stackID); err != nil {
@@ -179,6 +188,8 @@ func settleStackPlanRunIfComplete(ctx context.Context, prepared *preparedWorkflo
 			return nil
 		}
 		fmt.Fprintf(stdout, "stack %s: plan run ready for delivery: mivia workflow deliver %s --allow-publish\n", stackID, stackID)
+	default:
+		return fmt.Errorf("stack drive: stack %s has an unknown plan run classification (%d)", stackID, int(gate))
 	}
 	return nil
 }

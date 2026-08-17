@@ -73,9 +73,16 @@ func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string,
 	// cannot race a concurrent drive); a COMPLETE stack's plan run settles
 	// below via the same skip/deliver branches the session recovery sweep
 	// uses, instead of being refused forever (F11).
-	switch classifyStackPlanRunDelivery(ctx, work.Abs, store, repo, runID, true) {
+	// The switch is exhaustive and fails closed: only the two cases that fall
+	// out of it reach deliverRunWithStore below, so a gate value added later
+	// cannot silently publish over an ungated stack.
+	switch gate := classifyStackPlanRunDelivery(ctx, work.Abs, store, repo, runID, true); gate {
+	case stackPlanRunNotApplicable:
+		// Not a multi-chunk plan run: normal delivery below.
 	case stackPlanRunIncomplete:
 		return errUndrivenStackPlanRun(runID)
+	case stackPlanRunFailed:
+		return refuseFailedStackPlanRunDelivery(ctx, work.Abs, store, repo, runID)
 	case stackPlanRunComplete:
 		if skipParkedPlanRunPublication(ctx, store, repo, runID) {
 			if err := settlePlanRunSkippedDelivery(ctx, repo, runID); err != nil {
@@ -90,6 +97,8 @@ func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string,
 		}
 		// deliver_plan_run=true and the stack is complete: fall through to
 		// deliverRunWithStore below, which publishes the plan run's own PR.
+	default:
+		return fmt.Errorf("workflow run %q has an unknown stack delivery classification (%d); refusing to publish", runID, int(gate))
 	}
 	if err := deliverRunWithStore(ctx, work.Abs, res, store, repo, runID, allowPublish, force, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "workflow delivery failed: %v\n", err)

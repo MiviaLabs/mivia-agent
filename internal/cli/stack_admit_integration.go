@@ -79,9 +79,20 @@ func classifyStackPlanRunDelivery(ctx context.Context, root string, store *stora
 
 // stackPlanRunFailureReason reports whether a multi-chunk stack plan run has
 // already reached a terminal failure state. A durably failed chunk task, or
-// an integration run that settled to a terminal failure status, means the
-// stack cannot complete and the plan run should be fail-settled rather than
-// refused as merely incomplete.
+// an integration run that settled to a status with NO outgoing transition
+// (failed/canceled/timed_out - see workflowledger.ValidRunTransition), means
+// the stack cannot complete and the plan run should be fail-settled rather
+// than refused as merely incomplete.
+//
+// delivery_failed is deliberately NOT in that set. It is the REPAIRABLE
+// delivery state: ValidRunTransition gives delivery_failed ->
+// delivery_pending|delivery_failed|running, deliverRunWithStore re-delivers
+// such a run, and waitIntegrationRunSettled tells the operator to "fix the
+// refusal and resume or re-deliver before the stack can complete". Counting
+// it as terminal made a commit hook that rejected the integration PR
+// fail-settle the PLAN run to failed - a status with no outgoing edges - so
+// the operator could repair the integration run but never revive the plan
+// run. A delivery_failed integration run classifies as INCOMPLETE.
 func stackPlanRunFailureReason(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string) (failed bool, reason string) {
 	byID, err := stackTaskMap(tasks.NewStore(store), runID)
 	if err == nil {
@@ -89,13 +100,18 @@ func stackPlanRunFailureReason(ctx context.Context, root string, store *storage.
 			if task.Status == stackStatusFailed {
 				return true, fmt.Sprintf("chunk %s failed terminally", taskID)
 			}
+			// A canceled chunk is terminal and unimplemented: its dependency
+			// died, so the stack can never complete either.
+			if task.Status == stackStatusCanceled {
+				return true, fmt.Sprintf("chunk %s was canceled after its dependency failed", taskID)
+			}
 		}
 	}
 	intRun, found, err := stackRunRef(repo, runID, stackIntegrationChunkID)
 	if err == nil && found {
 		switch intRun.Status {
 		case workflowledger.RunStatusFailed, workflowledger.RunStatusCanceled,
-			workflowledger.RunStatusTimedOut, workflowledger.RunStatusDeliveryFailed:
+			workflowledger.RunStatusTimedOut:
 			return true, fmt.Sprintf("integration run %s is %s", intRun.RunID, intRun.Status)
 		}
 	}
