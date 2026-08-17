@@ -222,12 +222,29 @@ func TestDigestHex(t *testing.T) {
 }
 
 // TestSnapshotValidate asserts admission invariants: valid snapshots pass and
-// unsupported versions, empty TOML, and empty digests are rejected.
+// unsupported versions, empty TOML, empty digests, and inconsistent ref
+// digest/bytes are rejected.
 func TestSnapshotValidate(t *testing.T) {
+	schemaBytes := []byte(`{"type":"object"}`)
+	templateBytes := []byte("{{.input}}")
+	skillBytes := []byte(`{"name":"skill"}`)
+	verifierBytes := []byte(`{"name":"verifier"}`)
 	valid := Snapshot{
 		SchemaVersion:    SnapshotSchemaVersion,
 		DefinitionTOML:   []byte("name = \"demo\""),
 		DefinitionDigest: "digest",
+		Schemas: map[string]RefSnapshot{
+			"schema.json": {Digest: refDigestHex(schemaBytes), Bytes: schemaBytes},
+		},
+		Templates: map[string]RefSnapshot{
+			"prompt.txt": {Digest: refDigestHex(templateBytes), Bytes: templateBytes},
+		},
+		Skills: map[string]RefSnapshot{
+			"skill": {Digest: refDigestHex(skillBytes), Bytes: skillBytes},
+		},
+		Verifiers: map[string]RefSnapshot{
+			"verifier": {Digest: refDigestHex(verifierBytes), Bytes: verifierBytes},
+		},
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid snapshot rejected: %v", err)
@@ -241,6 +258,10 @@ func TestSnapshotValidate(t *testing.T) {
 		{"schema version 2", Snapshot{SchemaVersion: 2, DefinitionTOML: []byte("x"), DefinitionDigest: "d"}},
 		{"empty definition TOML", Snapshot{SchemaVersion: SnapshotSchemaVersion, DefinitionTOML: nil, DefinitionDigest: "d"}},
 		{"empty definition digest", Snapshot{SchemaVersion: SnapshotSchemaVersion, DefinitionTOML: []byte("x"), DefinitionDigest: ""}},
+		{"schema digest mismatch", Snapshot{SchemaVersion: SnapshotSchemaVersion, DefinitionTOML: []byte("x"), DefinitionDigest: "d", Schemas: map[string]RefSnapshot{"schema.json": {Digest: "sha256:mismatch", Bytes: schemaBytes}}}},
+		{"template empty digest", Snapshot{SchemaVersion: SnapshotSchemaVersion, DefinitionTOML: []byte("x"), DefinitionDigest: "d", Templates: map[string]RefSnapshot{"prompt.txt": {Digest: "", Bytes: templateBytes}}}},
+		{"skill empty bytes", Snapshot{SchemaVersion: SnapshotSchemaVersion, DefinitionTOML: []byte("x"), DefinitionDigest: "d", Skills: map[string]RefSnapshot{"skill": {Digest: refDigestHex(skillBytes), Bytes: nil}}}},
+		{"verifier empty digest and non-empty bytes", Snapshot{SchemaVersion: SnapshotSchemaVersion, DefinitionTOML: []byte("x"), DefinitionDigest: "d", Verifiers: map[string]RefSnapshot{"verifier": {Digest: "", Bytes: verifierBytes}}}},
 	}
 	for _, tc := range cases {
 		if err := tc.s.Validate(); err == nil {

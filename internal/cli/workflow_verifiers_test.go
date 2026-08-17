@@ -120,6 +120,17 @@ func TestVerifierPinAndResumeVerification(t *testing.T) {
 	if err := verifyWorkflowVerifierSnapshot(wf, map[string]config.VerifierProfile{}, prior); err == nil || !strings.Contains(err.Error(), "missing on resume") {
 		t.Fatalf("deleted definition must fail closed, got %v", err)
 	}
+
+	// A hand-edited or corrupt pin whose digest does not match its own bytes
+	// must fail closed before any live comparison.
+	corrupt := pinnedSnapshot(t, wf, profiles)
+	key := workflowVerifierDefPrefix + "go-test"
+	pinned := corrupt.Verifiers[key]
+	pinned.Digest = "sha256:" + strings.Repeat("0", 64)
+	corrupt.Verifiers[key] = pinned
+	if err := verifyWorkflowVerifierSnapshot(wf, profiles, corrupt); err == nil || !strings.Contains(err.Error(), "pin digest is invalid") {
+		t.Fatalf("corrupt pin digest must fail closed, got %v", err)
+	}
 }
 
 // A snapshot admitted before definitions were pinned has no verifier-def

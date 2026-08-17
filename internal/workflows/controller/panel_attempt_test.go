@@ -214,6 +214,80 @@ func panelStepFixture(t *testing.T, runID string) (*LinearController, workflowle
 	return ctrl, repo, coordLedger, step
 }
 
+// TestBuildPanelAttemptFailsClosedOnMissingTemplate asserts that a panel
+// member whose template key is absent from the snapshot fails admission with
+// a clear error, instead of rendering an empty prompt.
+func TestBuildPanelAttemptFailsClosedOnMissingTemplate(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 3, 0, 0, 0, time.UTC)
+	step := definition.Step{
+		ID: "review", Kind: "agent_panel", Context: []definition.ContextBinding{{From: "inputs.task", As: "task", MaxBytes: 1024}},
+		Panel: &definition.AgentPanel{FailurePolicy: "require_all", Members: []definition.PanelMember{
+			{ID: "security", Agent: "panel-reviewer", Skill: "secure-change", Template: "security", OutputSchema: "report"},
+		}},
+	}
+	schemaBytes := []byte(`{"type":"object"}`)
+	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		PanelBindings: map[string]workflowledger.PanelBindingSnapshot{
+			"review/security": {AgentName: "panel-reviewer", AgentDigest: "sha256:security", ProviderName: "deepseek", Model: "deepseek-v4-flash"},
+		},
+		Templates: map[string]workflowledger.RefSnapshot{},
+		Schemas:   map[string]workflowledger.RefSnapshot{"report": {Digest: "sha256:" + workflowledger.DigestHex(schemaBytes), Bytes: schemaBytes}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-missing-template", snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetTimeSource(func() time.Time { return now }); err != nil {
+		t.Fatal(err)
+	}
+	deadline := now.Add(10 * time.Minute)
+	_, err = ctrl.buildPanelAttempt(context.Background(), workflowledger.RunSnapshot{RunID: ctrl.RunID, DeadlineAt: &deadline}, step, nil)
+	if err == nil || !strings.Contains(err.Error(), "panel template \"security\" is missing") {
+		t.Fatalf("expected missing template error, got %v", err)
+	}
+}
+
+// TestBuildPanelAttemptFailsClosedOnMissingSchema asserts that a panel member
+// whose output schema key is absent from the snapshot fails admission with a
+// clear error, instead of dispatching with an empty schema.
+func TestBuildPanelAttemptFailsClosedOnMissingSchema(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 3, 0, 0, 0, time.UTC)
+	step := definition.Step{
+		ID: "review", Kind: "agent_panel", Context: []definition.ContextBinding{{From: "inputs.task", As: "task", MaxBytes: 1024}},
+		Panel: &definition.AgentPanel{FailurePolicy: "require_all", Members: []definition.PanelMember{
+			{ID: "security", Agent: "panel-reviewer", Skill: "secure-change", Template: "security", OutputSchema: "report"},
+		}},
+	}
+	templateBytes := []byte("Review {{inputs.task}}.")
+	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+		PanelBindings: map[string]workflowledger.PanelBindingSnapshot{
+			"review/security": {AgentName: "panel-reviewer", AgentDigest: "sha256:security", ProviderName: "deepseek", Model: "deepseek-v4-flash"},
+		},
+		Templates: map[string]workflowledger.RefSnapshot{"security": {Digest: "sha256:" + workflowledger.DigestHex(templateBytes), Bytes: templateBytes}},
+		Schemas:   map[string]workflowledger.RefSnapshot{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := workflowledger.NewMemoryRepository()
+	ctrl, err := NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-missing-schema", snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetTimeSource(func() time.Time { return now }); err != nil {
+		t.Fatal(err)
+	}
+	deadline := now.Add(10 * time.Minute)
+	_, err = ctrl.buildPanelAttempt(context.Background(), workflowledger.RunSnapshot{RunID: ctrl.RunID, DeadlineAt: &deadline}, step, nil)
+	if err == nil || !strings.Contains(err.Error(), "panel schema \"report\" is missing") {
+		t.Fatalf("expected missing schema error, got %v", err)
+	}
+}
+
 // TestPanelStepFailsClosedOnInvalidMemberReport: a member report that does
 // not decode against the strict panel-review schema (completedPanelHandler's
 // stub output is a generic "job completed" payload, not a valid verdict/

@@ -96,7 +96,14 @@ func (c *LinearController) buildPanelAttempt(ctx context.Context, run workflowle
 		if !ok {
 			return workflowledger.StepAttempt{}, fmt.Errorf("panel binding %q is missing", step.ID+"/"+member.ID)
 		}
-		templateRef, schemaRef := snapshot.Templates[member.Template], snapshot.Schemas[member.OutputSchema]
+		templateRef, ok := snapshot.Templates[member.Template]
+		if !ok {
+			return workflowledger.StepAttempt{}, fmt.Errorf("panel template %q is missing", member.Template)
+		}
+		schemaRef, ok := snapshot.Schemas[member.OutputSchema]
+		if !ok {
+			return workflowledger.StepAttempt{}, fmt.Errorf("panel schema %q is missing", member.OutputSchema)
+		}
 		prompt, err := template.Render(string(templateRef.Bytes), inputs, evidence, maxBinding(step), maxStepContextBytes)
 		if err != nil {
 			return workflowledger.StepAttempt{}, err

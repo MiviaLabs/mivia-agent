@@ -187,6 +187,9 @@ func verifyWorkflowVerifierSnapshot(wf *compiler.CompiledWorkflow, profiles map[
 		if !ok {
 			return fmt.Errorf("workflow verifier %q was not pinned at admission", name)
 		}
+		if pinned.Digest == "" || digestBytes(pinned.Bytes) != pinned.Digest {
+			return fmt.Errorf("workflow verifier %q pin digest is invalid", name)
+		}
 		profile, ok := profiles[name]
 		if !ok {
 			return fmt.Errorf("workflow verifier %q is missing on resume; restore its [verifiers.%s] table", name, name)
