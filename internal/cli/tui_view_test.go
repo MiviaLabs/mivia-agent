@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func makeTestSession() *chat.Session {
@@ -486,5 +488,128 @@ func TestSessionsSidebarLiveStatusReflectsTurnState(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestShortenModel pins the composer/hero model-name truncation contract: a
+// 24-byte budget, longer names clipped to 21 bytes plus "...". ASCII inputs
+// are exact. (Multibyte names can still be cut mid-rune by the byte slice;
+// that DC-6 defect is outside this delivery slice's scope.)
+func TestShortenModel(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "ascii short", in: "gpt-4o-mini", want: "gpt-4o-mini"},
+		{name: "ascii exactly 24", in: strings.Repeat("a", 24), want: strings.Repeat("a", 24)},
+		{name: "ascii long", in: strings.Repeat("a", 30), want: strings.Repeat("a", 21) + "..."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shortenModel(tc.in); got != tc.want {
+				t.Fatalf("shortenModel(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWelcomeWarningTruncationKeepsUTF8 pins the welcome-banner truncation to
+// cell boundaries. The banner used to be clipped with a BYTE slice
+// (warningText[:w]); when byte w landed inside a multi-byte rune the banner
+// emitted invalid UTF-8, which terminals render as U+FFFD. This is defect
+// class DC-6 in .mivia/quality/defect-taxonomy.md ("A truncation cuts a
+// multi-byte character"). Every case asserts (1) every raw view line is valid
+// UTF-8, (2) the trimmed warning line fits the terminal width, and (3) the
+// warning content survives. The multibyte cut cases (and the exact-boundary
+// case) fail RED against the old byte slice and pass with truncateToWidth.
+func TestWelcomeWarningTruncationKeepsUTF8(t *testing.T) {
+	cases := []welcomeWarningCase{
+		{name: "empty warning", width: 40, wantWarning: false},
+		{name: "ascii short", width: 40, prevWarn: "disk full", wantWarning: true, wantContent: "Last session NOT saved: disk full"},
+		// ASCII long: old behavior preserved exactly (byte cut == cell cut).
+		{name: "ascii long", width: 40, prevWarn: strings.Repeat("x", 60), wantWarning: true, wantContent: "Last session NOT saved: "},
+		// Display width (20) fits even though byte length (31) exceeds w: the
+		// old code over-truncated to 5 runes and cut mid-rune.
+		{name: "multibyte fits by display width", width: 20, welcomeNotice: strings.Repeat("界", 9), wantWarning: true, wantContent: strings.Repeat("界", 9)},
+		// Byte 20 lands inside a 3-byte rune (U+754C).
+		{name: "3-byte cut", width: 20, welcomeNotice: strings.Repeat("界", 30), wantWarning: true, wantContent: "⚠"},
+		// Byte 25 lands inside a 2-byte rune (U+00E9).
+		{name: "2-byte cut", width: 25, welcomeNotice: strings.Repeat("é", 40), wantWarning: true, wantContent: "⚠"},
+		// Byte 26 lands inside a 4-byte rune (U+1F600).
+		{name: "4-byte cut", width: 26, welcomeNotice: strings.Repeat("😀", 30), wantWarning: true, wantContent: "⚠"},
+		// "⚠ Last session NOT saved: " (26 cols) + 7×界 (14 cols) = exactly
+		// 40 display columns; the fix must keep all 7 runes (no off-by-one).
+		{name: "exact boundary at width", width: 40, prevWarn: strings.Repeat("界", 7), wantWarning: true, wantContent: strings.Repeat("界", 7)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertWelcomeWarningUTF8(t, tc)
+		})
+	}
+}
+
+// welcomeWarningCase is a table entry for TestWelcomeWarningTruncationKeepsUTF8.
+type welcomeWarningCase struct {
+	name          string
+	width         int
+	welcomeNotice string
+	prevWarn      string
+	wantWarning   bool
+	wantContent   string
+}
+
+func assertWelcomeWarningUTF8(t *testing.T, tc welcomeWarningCase) {
+	// width < 70 forces the deterministic text hero, so the only ⚠
+	// in the frame is the warning banner itself.
+	m := newTUIModel(makeTestSession(), nil, true)
+	m.ready = true
+	m.mode = modeWelcome
+	m.height = 40
+	m.width = tc.width
+	m.welcomeNotice = tc.welcomeNotice
+	m.prevAutoSaveWarn = tc.prevWarn
+
+	raw := m.View()
+	plain := stripANSI(raw)
+	rawLines := strings.Split(raw, "\n")
+	plainLines := strings.Split(plain, "\n")
+	if len(rawLines) != len(plainLines) {
+		t.Fatalf("raw/stripped line count mismatch: %d vs %d", len(rawLines), len(plainLines))
+	}
+
+	var warnLine string
+	for i := range plainLines {
+		if !utf8.ValidString(rawLines[i]) {
+			t.Fatalf("line %d is invalid UTF-8 (U+FFFD risk): %q", i, rawLines[i])
+		}
+		if strings.Contains(plainLines[i], "⚠") {
+			if warnLine != "" {
+				t.Fatalf("multiple ⚠ lines: %q and %q", warnLine, plainLines[i])
+			}
+			// lipgloss.JoinVertical pads every line to the widest line in
+			// the frame (the hint line can exceed the terminal width), so
+			// the padded frame line is wider than the banner content and
+			// would fail the width assertion below for every subtest.
+			// Measure the banner on its trimmed content instead.
+			warnLine = strings.TrimRight(plainLines[i], " ")
+		}
+	}
+	if !tc.wantWarning {
+		if warnLine != "" {
+			t.Fatalf("empty warning rendered a banner: %q", warnLine)
+		}
+		return
+	}
+	if warnLine == "" {
+		t.Fatalf("expected a ⚠ warning line in:\n%s", plain)
+	}
+	if w := lipgloss.Width(warnLine); w > tc.width {
+		t.Fatalf("warning line width %d exceeds terminal width %d: %q", w, tc.width, warnLine)
+	}
+	if tc.wantContent != "" && !strings.Contains(warnLine, tc.wantContent) {
+		t.Fatalf("warning line missing %q:\n%q", tc.wantContent, warnLine)
 	}
 }
