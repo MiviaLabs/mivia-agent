@@ -254,6 +254,38 @@ func TestSplitFlowSequence_Empty(t *testing.T) {
 	}
 }
 
+// splitFlowSequence rejects items that unquote to "" - the same contract as
+// blockItem - so the empty-item rejection lives at the split boundary, not in
+// a downstream silent drop.
+func TestSplitFlowSequenceRejectsEmptyItem(t *testing.T) {
+	for name, in := range map[string]string{
+		"trailing comma":      "a,",
+		"bare comma":          ",",
+		"double comma":        "a,,b",
+		"double-quoted empty": `""`,
+		"single-quoted empty": "''",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := splitFlowSequence(in); err == nil {
+				t.Fatalf("expected error for %q", in)
+			}
+		})
+	}
+}
+
+// The split fix must not over-reject: the genuinely empty inner string (from
+// "[]") yields nil and a single bare item still splits.
+func TestSplitFlowSequenceKeepsValidInput(t *testing.T) {
+	items, err := splitFlowSequence("")
+	if err != nil || items != nil {
+		t.Fatalf("empty: items=%v err=%v", items, err)
+	}
+	items, err = splitFlowSequence("a")
+	if err != nil || len(items) != 1 || items[0] != "a" {
+		t.Fatalf("single: items=%v err=%v", items, err)
+	}
+}
+
 func TestSplitFlowSequence_Quoted(t *testing.T) {
 	items, err := splitFlowSequence(`"a,b",c,"d,e"`)
 	if err != nil {
@@ -356,6 +388,66 @@ func TestParseFrontmatterSkipsCommentsAndBlanksInBlockSequence(t *testing.T) {
 func TestParseFrontmatterRejectsEmptyListItem(t *testing.T) {
 	if _, err := ParseFrontmatter([]byte("---\ntriggers:\n  -\n---\nbody\n")); err == nil {
 		t.Fatal("expected empty list item to be rejected")
+	}
+}
+
+// A flow sequence must reject an item that unquotes to "" exactly like a
+// block sequence does (blockItem): a trailing comma, a bare comma, a doubled
+// comma, or a quoted-empty item is malformed, not a silently dropped entry
+// (the loader's sanitizeTriggers would otherwise drop it after the fact).
+func TestParseFrontmatterRejectsEmptyFlowListItem(t *testing.T) {
+	for name, in := range map[string]string{
+		"trailing comma with space": "---\ntriggers: [review, ]\n---\nbody\n",
+		"trailing comma":            "---\ntriggers: [a,]\n---\nbody\n",
+		"bare comma":                "---\ntriggers: [,]\n---\nbody\n",
+		"double comma":              "---\ntriggers: [a,,b]\n---\nbody\n",
+		"double-quoted empty":       "---\ntriggers: [\"\"]\n---\nbody\n",
+		"single-quoted empty":       "---\ntriggers: ['']\n---\nbody\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseFrontmatter([]byte(in))
+			if err == nil {
+				t.Fatal("expected empty flow list item to be rejected")
+			}
+			if !strings.Contains(err.Error(), "empty") {
+				t.Fatalf("error must name the empty item, got %v", err)
+			}
+		})
+	}
+}
+
+// The flow fix must not over-reject: genuinely empty '[]' stays an empty
+// list, and ordinary and quoted flow sequences still parse.
+func TestParseFrontmatterKeepsValidFlowSequences(t *testing.T) {
+	for name, in := range map[string]string{
+		"empty list":    "---\ntriggers: []\n---\nbody\n",
+		"two items":     "---\ntriggers: [a, b]\n---\nbody\n",
+		"quoted commas": "---\ntriggers: [\"a,b\", c]\n---\nbody\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, err := ParseFrontmatter([]byte(in))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			items, ok := m["triggers"].([]string)
+			if !ok {
+				t.Fatalf("triggers is %T, want []string", m["triggers"])
+			}
+			switch name {
+			case "empty list":
+				if len(items) != 0 {
+					t.Fatalf("triggers = %v, want empty", items)
+				}
+			case "two items":
+				if len(items) != 2 || items[0] != "a" || items[1] != "b" {
+					t.Fatalf("triggers = %v", items)
+				}
+			case "quoted commas":
+				if len(items) != 2 || items[0] != "a,b" || items[1] != "c" {
+					t.Fatalf("triggers = %v", items)
+				}
+			}
+		})
 	}
 }
 

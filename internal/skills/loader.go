@@ -271,12 +271,20 @@ func loadSkillDirAt(root *os.Root, dir, sourcePath string, origin Origin) (Defin
 	if name == "" {
 		name = dir
 	}
+	// Sanitize before validating: SanitizeModelFacingText strips characters
+	// (control bytes, backslash, double quote) that survive TrimSpace and the
+	// empty / `\` check below. A check on the raw value would let a name such
+	// as a raw control byte pass and then sanitize to "", registering a
+	// degenerate skill under the empty name in the resilient loader, which
+	// writes registry.items directly (bypassing Registry.Register's
+	// empty-name guard) and would surface an empty enum/name on the
+	// model-facing tool surface.
+	name, _ = SanitizeModelFacingText(name, nameMaxLen)
 	name = strings.TrimSpace(name)
 	if name == "" || strings.ContainsAny(name, `/\\`) {
 		return Definition{}, false, "", fmt.Errorf("skill %q has invalid name", dir)
 	}
-	// Sanitize every field that reaches the model-facing tool surface.
-	name, _ = SanitizeModelFacingText(name, nameMaxLen)
+	// Sanitize every remaining field that reaches the model-facing tool surface.
 	description, _ := SanitizeModelFacingText(parsed.description, descriptionMaxLen)
 	def := Definition{
 		Name:             name,

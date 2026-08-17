@@ -6,8 +6,9 @@ import "testing"
 // parser with arbitrary bytes. ParseFrontmatter is a pure, bounded
 // []byte -> (map[string]any, error) function with no IO or global state, so a
 // crash here is a genuine parser defect. The seed corpus covers empty input,
-// scalars, flow and block sequences, unbalanced quotes, and oversized input
-// (> maxFrontmatterBytes); the fuzz engine explores every boundary from there.
+// scalars, flow and block sequences, empty flow items, unbalanced quotes, and
+// oversized input (> maxFrontmatterBytes); the fuzz engine explores every
+// boundary from there.
 func FuzzParseFrontmatterNeverPanics(f *testing.F) {
 	seeds := []string{
 		"",
@@ -16,6 +17,11 @@ func FuzzParseFrontmatterNeverPanics(f *testing.F) {
 		"---\nname: review\ndescription: Review code\n---\nbody",
 		"---\ntriggers: [review, audit, check]\n---",
 		"---\ntriggers:\n  - review\n  - audit\n---",
+		"---\ntriggers: [a,]\n---",
+		"---\ntriggers: [review, ]\n---",
+		"---\ntriggers: [,]\n---",
+		"---\ntriggers: [\"\"]\n---",
+		"---\ntriggers: ['']\n---",
 		"---\nname: 'unclosed\n---",
 		"---\ntriggers: [\"a,b]\n---",
 		"---\nname: \"\n---",
@@ -51,6 +57,11 @@ func FuzzParseSkillMarkdownNeverPanics(f *testing.F) {
 		"---\nname: review\ndescription: Review code\n---\nbody",
 		"---\ntriggers: [review, audit, check]\n---",
 		"---\ntriggers:\n  - review\n  - audit\n---",
+		"---\ntriggers: [a,]\n---",
+		"---\ntriggers: [review, ]\n---",
+		"---\ntriggers: [,]\n---",
+		"---\ntriggers: [\"\"]\n---",
+		"---\ntriggers: ['']\n---",
 		"---\nname: 'unclosed\n---",
 		"---\ntriggers: [\"a,b]\n---",
 		"---\nname: \"\n---",
