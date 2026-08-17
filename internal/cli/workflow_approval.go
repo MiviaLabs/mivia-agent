@@ -24,7 +24,7 @@ const workflowApprovalDefaultActor = "operator"
 // the run continue, mirroring executeWorkflowResume's preamble (file lock,
 // then controller resolution under the lock).
 func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, runID, workflowResolutionLockWait)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(context.Background(), root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func executeWorkflowApprove(runID, approvalID, root, configPath, actor string, s
 // approve, it reads the before-snapshot BEFORE building the controller, so an
 // unknown run fails fast at the before-read instead of inside the controller.
 func executeWorkflowReject(runID, approvalID, root, configPath, actor, reason string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, runID, workflowResolutionLockWait)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(context.Background(), root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func emitCLIRunTerminalProgress(runID string, before, settled workflowledger.Run
 // run), mirroring controller.CancelRun's contract: the caller holds the
 // workflow execution file lock and a live execution claim.
 func executeWorkflowCancel(runID, root, configPath string, stdout, stderr io.Writer) error {
-	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, runID, workflowResolutionLockWait)
+	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContextBounded(context.Background(), root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func openWorkflowResolutionContext(root, configPath, runID string) (func(), work
 // openWorkflowResolutionContextBounded is openWorkflowResolutionContext with a
 // bounded wait for the execution lock: cancel and deliver call it so a still-
 // settling controller does not surface as an opaque lock error.
-func openWorkflowResolutionContextBounded(root, configPath, runID string, lockWait time.Duration) (func(), workflowledger.Repository, *storage.SQLite, func(), error) {
+func openWorkflowResolutionContextBounded(ctx context.Context, root, configPath, runID string, lockWait time.Duration) (func(), workflowledger.Repository, *storage.SQLite, func(), error) {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
@@ -246,7 +246,7 @@ func openWorkflowResolutionContextBounded(root, configPath, runID string, lockWa
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	releaseExecution, err := acquireWorkflowExecutionLockBounded(contextStorePath(work.Abs, res.Subagents), runID, lockWait)
+	releaseExecution, err := acquireWorkflowExecutionLockBounded(ctx, contextStorePath(work.Abs, res.Subagents), runID, lockWait)
 	if err != nil {
 		closeFn()
 		return nil, nil, nil, nil, err

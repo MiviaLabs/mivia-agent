@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +36,7 @@ func lockStorePath(t *testing.T) string {
 // TestAcquireWorkflowExecutionLockBoundedSucceedsWhenFree pins the bounded
 // variant still acquires immediately when the lock is free.
 func TestAcquireWorkflowExecutionLockBoundedSucceedsWhenFree(t *testing.T) {
-	release, err := acquireWorkflowExecutionLockBounded(lockStorePath(t), "wfr-free", 2*time.Second)
+	release, err := acquireWorkflowExecutionLockBounded(context.Background(), lockStorePath(t), "wfr-free", 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +54,7 @@ func TestAcquireWorkflowExecutionLockBoundedTimesOutWithClearError(t *testing.T)
 	}
 	defer hold()
 
-	_, err = acquireWorkflowExecutionLockBounded(storePath, "wfr-held", 250*time.Millisecond)
+	_, err = acquireWorkflowExecutionLockBounded(context.Background(), storePath, "wfr-held", 250*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected a busy-lock error")
 	}
@@ -79,7 +81,7 @@ func TestBeginWorkflowExecutionBoundedWaitsForHeldLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	finish, err := beginWorkflowExecutionBounded(root, storePath, "wfr-bounded-begin", 250*time.Millisecond)
+	finish, err := beginWorkflowExecutionBounded(context.Background(), root, storePath, "wfr-bounded-begin", 250*time.Millisecond)
 	if err == nil {
 		if finish != nil {
 			finish()
@@ -92,7 +94,7 @@ func TestBeginWorkflowExecutionBoundedWaitsForHeldLock(t *testing.T) {
 
 	hold()
 
-	finish, err = beginWorkflowExecutionBounded(root, storePath, "wfr-bounded-begin", 2*time.Second)
+	finish, err = beginWorkflowExecutionBounded(context.Background(), root, storePath, "wfr-bounded-begin", 2*time.Second)
 	if err != nil {
 		t.Fatalf("begin after release: %v", err)
 	}
@@ -104,4 +106,35 @@ func TestBeginWorkflowExecutionBoundedWaitsForHeldLock(t *testing.T) {
 		t.Fatalf("plain acquire after begin's release = %v, want success", err)
 	}
 	again()
+}
+
+// TestBeginWorkflowExecutionBoundedHonorsContext pins that the bounded begin
+// path returns immediately on a cancelled context instead of sleeping through
+// the full maxWait.
+func TestBeginWorkflowExecutionBoundedHonorsContext(t *testing.T) {
+	storePath := lockStorePath(t)
+	originalHooks := workflowExecutionHooks
+	workflowExecutionHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
+	t.Cleanup(func() { workflowExecutionHooks = originalHooks })
+	root := t.TempDir()
+
+	hold, err := acquireWorkflowExecutionLock(storePath, "wfr-bounded-ctx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	_, err = beginWorkflowExecutionBounded(ctx, root, storePath, "wfr-bounded-ctx", 5*time.Second)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("begin with cancelled context = %v, want context.Canceled", err)
+	}
+	if elapsed >= 500*time.Millisecond {
+		t.Fatalf("begin with cancelled context took %s; want well under maxWait", elapsed)
+	}
 }

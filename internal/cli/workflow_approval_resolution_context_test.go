@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -128,7 +129,7 @@ func TestOpenWorkflowResolutionContextBoundedWorkspaceOpenError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	release, repo, store, closeFn, err := openWorkflowResolutionContextBounded(notADir, "", "wfr-test", time.Second)
+	release, repo, store, closeFn, err := openWorkflowResolutionContextBounded(context.Background(), notADir, "", "wfr-test", time.Second)
 	if err == nil {
 		t.Fatal("expected an error when root names a regular file")
 	}
@@ -146,7 +147,7 @@ func TestOpenWorkflowResolutionContextBoundedConfigLoadError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	release, repo, store, closeFn, err := openWorkflowResolutionContextBounded(root, badConfig, "wfr-test", time.Second)
+	release, repo, store, closeFn, err := openWorkflowResolutionContextBounded(context.Background(), root, badConfig, "wfr-test", time.Second)
 	if err == nil {
 		t.Fatal("expected an error when configPath names malformed TOML")
 	}
@@ -161,7 +162,7 @@ func TestOpenWorkflowResolutionContextBoundedOpenStoreError(t *testing.T) {
 	root := t.TempDir()
 	configPath := workflowApprovalTestBlockedStoreConfig(t)
 
-	release, repo, store, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, "wfr-test", time.Second)
+	release, repo, store, closeFn, err := openWorkflowResolutionContextBounded(context.Background(), root, configPath, "wfr-test", time.Second)
 	if err == nil {
 		t.Fatal("expected an error when the store directory cannot be created")
 	}
@@ -184,7 +185,7 @@ func TestOpenWorkflowResolutionContextBoundedLockAcquireError(t *testing.T) {
 	// the execution lock externally so the second, bounded open must fail.
 	// An explicit isolated config path avoids config.Load's ambient search
 	// (see workflowApprovalTestIsolatedConfigPath).
-	release1, _, _, closeFn1, err := openWorkflowResolutionContextBounded(root, workflowApprovalTestIsolatedConfigPath(t), runID, time.Second)
+	release1, _, _, closeFn1, err := openWorkflowResolutionContextBounded(context.Background(), root, workflowApprovalTestIsolatedConfigPath(t), runID, time.Second)
 	if err != nil {
 		t.Fatalf("priming open failed: %v", err)
 	}
@@ -198,7 +199,7 @@ func TestOpenWorkflowResolutionContextBoundedLockAcquireError(t *testing.T) {
 	}
 	defer holdRelease()
 
-	release2, repo2, store2, closeFn2, err := openWorkflowResolutionContextBounded(root, workflowApprovalTestIsolatedConfigPath(t), runID, 250*time.Millisecond)
+	release2, repo2, store2, closeFn2, err := openWorkflowResolutionContextBounded(context.Background(), root, workflowApprovalTestIsolatedConfigPath(t), runID, 250*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected the bounded lock acquire to time out while the lock is held")
 	}

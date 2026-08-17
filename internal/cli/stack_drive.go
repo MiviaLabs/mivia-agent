@@ -331,7 +331,7 @@ func resolveAndClaimStackDrive(ctx context.Context, prepared *preparedWorkflowRu
 // must not invoke it, and any partially-acquired flock is released before
 // returning.
 func claimStackDrive(ctx context.Context, repo workflowledger.Repository, workspaceRoot, storePath, stackID string) (release func(), err error) {
-	releaseExecution, err := beginWorkflowExecutionBounded(workspaceRoot, storePath, stackID, workflowResolutionLockWait)
+	releaseExecution, err := beginWorkflowExecutionBounded(ctx, workspaceRoot, storePath, stackID, workflowResolutionLockWait)
 	if err != nil {
 		return nil, fmt.Errorf("stack drive: plan run %q: %w", stackID, err)
 	}

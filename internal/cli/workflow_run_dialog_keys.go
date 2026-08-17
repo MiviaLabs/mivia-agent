@@ -316,7 +316,7 @@ func (m *tuiModel) workflowDialogActionCmd(action workflowConfirmAction) tea.Cmd
 // actor is fixed to workflowApprovalDefaultActor so operator scripts and tests
 // see deterministic approval records.
 func resolveWorkflowDialogApproval(runID, approvalID, root, configPath, actor string, reject bool) error {
-	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(root, configPath, runID, workflowResolutionLockWait)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(context.Background(), root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}

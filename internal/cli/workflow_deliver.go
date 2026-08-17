@@ -63,7 +63,7 @@ func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string,
 		return err
 	}
 	defer closeFn()
-	finishExecution, err := beginWorkflowExecutionBounded(work.Abs, contextStorePath(work.Abs, res.Subagents), runID, workflowResolutionLockWait)
+	finishExecution, err := beginWorkflowExecutionBounded(ctx, work.Abs, contextStorePath(work.Abs, res.Subagents), runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}

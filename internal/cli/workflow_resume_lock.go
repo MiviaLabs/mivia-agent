@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -13,13 +15,28 @@ const workflowExecutionLockDir = ".mivia-workflow-locks"
 var (
 	workflowExecutionLockOpen = openMarkerExcludeLockFile
 	workflowExecutionLockStat = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
-	workflowExecutionLockFile = lockWorktreeMarkerFile
+	workflowExecutionLockFile = lockWorkflowExecutionFile
 	workflowExecutionHooks    = installHookSession
 	workflowStoreAbs          = filepath.Abs
 	workflowStoreStat         = os.Stat
 	workflowExecutionOpenRoot = os.OpenRoot
 	workflowExecutionOpenDir  = func(root *os.Root, path string) (*os.Root, error) { return root.OpenRoot(path) }
 )
+
+// lockWorkflowExecutionFile wraps the low-level file-lock primitive so the
+// workflow execution lock reports its own name instead of borrowing the Git
+// exclude lock's message. The primitive is not changed; the wording is fixed
+// at this workflow-specific call site.
+func lockWorkflowExecutionFile(file *os.File) (func(), error) {
+	unlock, err := lockWorktreeMarkerFile(file)
+	if err != nil {
+		if strings.HasSuffix(err.Error(), "lock is busy") {
+			return nil, fmt.Errorf("lock workflow execution: lock is busy")
+		}
+		return nil, fmt.Errorf("lock workflow execution: %w", err)
+	}
+	return unlock, nil
+}
 
 func beginWorkflowExecution(workspaceRoot, storePath, runID string) (func(), error) {
 	release, err := acquireWorkflowExecutionLock(storePath, runID)
@@ -42,8 +59,8 @@ func beginWorkflowExecution(workspaceRoot, storePath, runID string) (func(), err
 // flock: cancel and deliver use it because the plain lock fails with an
 // opaque "lock is busy" error while the in-process controller is still
 // releasing the flock after the cancel wait bound.
-func beginWorkflowExecutionBounded(workspaceRoot, storePath, runID string, maxWait time.Duration) (func(), error) {
-	release, err := acquireWorkflowExecutionLockBounded(storePath, runID, maxWait)
+func beginWorkflowExecutionBounded(ctx context.Context, workspaceRoot, storePath, runID string, maxWait time.Duration) (func(), error) {
+	release, err := acquireWorkflowExecutionLockBounded(ctx, storePath, runID, maxWait)
 	if err != nil {
 		return nil, err
 	}
@@ -63,19 +80,29 @@ func beginWorkflowExecutionBounded(workspaceRoot, storePath, runID string, maxWa
 // Cancel and deliver use it because the non-blocking admission lock fails
 // with an opaque "lock is busy" error while the in-process controller is
 // still releasing the flock after the cancel wait bound.
-func acquireWorkflowExecutionLockBounded(storePath, runID string, maxWait time.Duration) (func(), error) {
+func acquireWorkflowExecutionLockBounded(ctx context.Context, storePath, runID string, maxWait time.Duration) (func(), error) {
 	deadline := time.Now().Add(maxWait)
-	var lastErr error
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		release, err := acquireWorkflowExecutionLock(storePath, runID)
 		if err == nil {
 			return release, nil
 		}
-		lastErr = err
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("acquire workflow execution lock: %w (still held after %s; the run may still be settling - retry shortly)", lastErr, maxWait)
+			return nil, fmt.Errorf("%w (still held after %s; the run may still be settling - retry shortly)", err, maxWait)
 		}
-		time.Sleep(200 * time.Millisecond)
+		remaining := time.Until(deadline)
+		sleep := 200 * time.Millisecond
+		if remaining < sleep {
+			sleep = remaining
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(sleep):
+		}
 	}
 }
 

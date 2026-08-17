@@ -253,7 +253,12 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 		e.active = make(map[string]*sessionActiveRun)
 	}
 	runner, _ := built.Controller.Runner.(*controller.CoordinatorRunner)
-	e.active[runID] = &sessionActiveRun{cancel: cancel, done: done, runner: runner, closeFn: func() { finishExecution(); built.Dispatcher.Close(); prepared.closeFn() }}
+	// The run goroutine owns the execution flock for the run's whole lifetime.
+	// Capture the release function here so the goroutine can release the flock
+	// BEFORE closing done: callers waiting on done must be able to assume the
+	// lock is free once done closes.
+	releaseExecution := finishExecution
+	e.active[runID] = &sessionActiveRun{cancel: cancel, done: done, runner: runner, closeFn: func() { built.Dispatcher.Close(); prepared.closeFn() }}
 	e.mu.Unlock()
 	go func() {
 		sessionAutoDeliveryRepairLoop(runCtx, prepared.repo, prepared.root, prepared.res, prepared.store, runID, func(ctx context.Context) (workflowledger.RunSnapshot, error) {
@@ -281,12 +286,18 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 		// delivery record; publish its terminal event from the stack-ledger
 		// marker.
 		e.publishSkippedPlanRunFinished(context.Background(), prepared.store, prepared.repo, runID)
-		// done closes as soon as the run loop itself has exited (and released
-		// any claim it held), before resource teardown below: stopActive's
-		// callers must be able to observe "the loop stopped" without that
-		// implying "resources are already closed" - otherwise a concurrent
-		// Cancel waiting on done would always find runner's backing store
-		// already closed by the time it can reuse it.
+		// Release the per-run execution flock BEFORE closing done. The run loop
+		// has exited, so no further controller work can race with a waiter that
+		// observes done closed. Releasing here lets Deliver wait on done and then
+		// safely contend for the flock, instead of racing the goroutine's own
+		// cleanup below.
+		releaseExecution()
+		// done closes as soon as the run loop itself has exited and the flock is
+		// released, before resource teardown below: stopActive's callers must be
+		// able to observe "the loop stopped" without that implying "resources are
+		// already closed" - otherwise a concurrent Cancel waiting on done would
+		// always find runner's backing store already closed by the time it can
+		// reuse it.
 		close(done)
 		e.mu.Lock()
 		active := e.active[runID]

@@ -50,7 +50,7 @@ func (e *sessionWorkflowEngine) Cancel(ctx context.Context, runID string) (agent
 	// lock acquisition below can only succeed once the run goroutine has
 	// exited and released the per-run execution flock it holds.
 	e.stopActive(ctx, runID)
-	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContextBounded(e.root, e.configPath, runID, workflowResolutionLockWait)
+	releaseExecution, repo, store, closeFn, err := openWorkflowResolutionContextBounded(ctx, e.root, e.configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return agenttools.CancelResult{}, err
 	}
@@ -182,7 +182,7 @@ func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string, force 
 	if strings.TrimSpace(runID) == "" {
 		return agenttools.DeleteResult{}, fmt.Errorf("run_id is required")
 	}
-	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(e.root, e.configPath, runID, workflowResolutionLockWait)
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(ctx, e.root, e.configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return agenttools.DeleteResult{}, err
 	}
@@ -232,6 +232,23 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 			preStatus = pre.Status
 		}
 		preClose()
+	}
+	// If the run is already in delivery_pending, an active session goroutine may
+	// be driving its stack under the per-run execution flock. Wait for that
+	// goroutine to finish (and release the flock) before contending for the lock,
+	// so Deliver does not fail with "lock is busy" while the drive is still in
+	// progress. Only delivery_pending is waited on; a running plan run is not
+	// blocked because it is not yet at the drive-before-delivery gate.
+	if preStatus == workflowledger.RunStatusDeliveryPending {
+		e.mu.Lock()
+		active := e.active[runID]
+		e.mu.Unlock()
+		if active != nil {
+			select {
+			case <-active.done:
+			case <-time.After(workflowResolutionLockWait):
+			}
+		}
 	}
 	if err := executeWorkflowDeliver(ctx, runID, e.root, e.configPath, allowPublish, false, &stdout, &stderr); err != nil {
 		// Prefer structured status when the ledger still opens after a refusal.

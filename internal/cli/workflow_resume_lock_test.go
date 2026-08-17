@@ -183,3 +183,58 @@ func TestWorkflowExecutionLockDoesNotDirtyCheckout(t *testing.T) {
 		t.Fatalf("git status = %q, error = %v", output, err)
 	}
 }
+
+// TestLockBusyErrorNamesWorkflowExecution pins that a held workflow execution
+// lock surfaces a workflow-specific message, not the low-level Git exclude lock
+// wording borrowed from the shared file-lock primitive.
+func TestLockBusyErrorNamesWorkflowExecution(t *testing.T) {
+	shortenWorkflowResolutionLockWait(t)
+	rootPath := t.TempDir()
+	storePath := filepath.Join(rootPath, "context.db")
+	const runID = "wfr-busy-name"
+
+	// Remove unrelated hook-session behavior so the only failure path under test
+	// is the execution-lock acquire.
+	prevHooks := workflowExecutionHooks
+	workflowExecutionHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
+	t.Cleanup(func() { workflowExecutionHooks = prevHooks })
+
+	acquired := make(chan struct{})
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		release, err := acquireWorkflowExecutionLock(storePath, runID)
+		if err != nil {
+			t.Errorf("holder acquire: %v", err)
+			close(acquired)
+			return
+		}
+		close(acquired)
+		<-done
+		release()
+	}()
+	<-acquired
+
+	assertLockErrorNamesWorkflowExecution := func(surface string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatalf("%s succeeded while lock held; want workflow execution lock error", surface)
+		}
+		if !strings.Contains(err.Error(), "workflow execution") {
+			t.Fatalf("%s error = %v; want message containing \"workflow execution\"", surface, err)
+		}
+		if strings.Contains(err.Error(), "Git exclude") {
+			t.Fatalf("%s error = %v; message must not contain \"Git exclude\"", surface, err)
+		}
+	}
+
+	_, err := beginWorkflowExecution(rootPath, storePath, runID)
+	assertLockErrorNamesWorkflowExecution("beginWorkflowExecution", err)
+
+	_, err = beginWorkflowExecutionBounded(context.Background(), rootPath, storePath, runID, testWorkflowResolutionLockWait)
+	assertLockErrorNamesWorkflowExecution("beginWorkflowExecutionBounded", err)
+
+	close(done)
+	<-finished
+}
