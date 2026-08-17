@@ -255,7 +255,7 @@ func foldToSingleLine(s string) string {
 	b.Grow(len(s))
 	space := false
 	for _, r := range s {
-		if r == '\n' || r == '\r' || r == '\t' || r == ' ' {
+		if r == '\n' || r == '\r' || r == '\t' || r == ' ' || r == '\u2028' || r == '\u2029' {
 			space = true
 			continue
 		}

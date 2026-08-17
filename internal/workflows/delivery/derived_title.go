@@ -66,7 +66,7 @@ func sanitizeReusedTitle(title string) string {
 	var b strings.Builder
 	b.Grow(len(title))
 	for _, r := range title {
-		if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
+		if (unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t') || r == '\u2028' || r == '\u2029' {
 			continue
 		}
 		b.WriteRune(r)

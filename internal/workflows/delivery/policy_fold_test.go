@@ -30,6 +30,28 @@ func TestRenderTitleFoldsTabs(t *testing.T) {
 	}
 }
 
+// Unicode line separator (U+2028) and paragraph separator (U+2029) are not
+// control characters but must still fold to a space to keep the single-line
+// invariant.
+func TestRenderTitleFoldsUnicodeLineSeparators(t *testing.T) {
+	p := Policy{TitleTemplate: "{{ inputs.task }}"}
+	got, err := p.RenderTitle(map[string]string{"task": "fix: caf\u2028é"})
+	if err != nil {
+		t.Fatalf("U+2028 in a title must fold, not fail: %v", err)
+	}
+	if got != "fix: caf é" {
+		t.Fatalf("title = %q, want %q (U+2028 must be folded to a space)", got, "fix: caf é")
+	}
+	// Also test U+2029 paragraph separator.
+	got2, err := p.RenderTitle(map[string]string{"task": "a\u2029b"})
+	if err != nil {
+		t.Fatalf("U+2029 in a title must fold, not fail: %v", err)
+	}
+	if got2 != "a b" {
+		t.Fatalf("title = %q, want %q (U+2029 must be folded to a space)", got2, "a b")
+	}
+}
+
 // A control character that is not whitespace still fails. Such a character
 // signals corrupt or hostile input, not a multi-line message.
 func TestRenderTitleStillRejectsNonWhitespaceControl(t *testing.T) {
