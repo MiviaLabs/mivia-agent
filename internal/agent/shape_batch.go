@@ -245,6 +245,12 @@ func emitBatchShaping(opts Options, report shapeReport) {
 // result after it takes tier 3. Bytes entering history are therefore bounded
 // by budget + floor + framing regardless of how many calls the batch held
 // (F6) - the bound does not depend on MaxToolCallsPerBatch being set.
+//
+// The ref-only tier (plan tools/06) sits BEFORE these tiers: it elides a
+// result by spooling its whole body and charging only the notice's bytes, and
+// it does NOT spend the rest of the budget. A result that fits after a
+// ref-only elision is still emitted unchanged (tier 1): the elision already
+// bought its saving up front, so it must not punish its siblings.
 func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeReport) {
 	shaped := make([]string, len(parts))
 	report := shapeReport{budget: budget, results: len(parts)}
@@ -272,13 +278,25 @@ func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeR
 			}
 			continue
 		}
-		// A degrade always spends the rest of the budget, even when the built
-		// envelope came in a few bytes under its target: the target was
-		// already >= remaining, so what is left is notice-sized slack, not
-		// budget. Carrying that slack forward would let the NEXT result claim
-		// the floor as well, and "at most one straddling result pays the
-		// floor" (F6) is the whole reason the bound is finite.
-		remaining = 0
+		// A budget-tier degrade always spends the rest of the budget, even
+		// when the built envelope came in a few bytes under its target: the
+		// target was already >= remaining, so what is left is notice-sized
+		// slack, not budget. Carrying that slack forward would let the NEXT
+		// result claim the floor as well, and "at most one straddling result
+		// pays the floor" (F6) is the whole reason the bound is finite.
+		if state.refOnly {
+			// The ref-only tier (plan tools/06) is not a straddle: it elided
+			// the result BEFORE the budget tiers saw it, charging only its
+			// notice's bytes. Those bytes are paid out of the budget like any
+			// other emitted body, and the rest stays available to the results
+			// that follow - a result that fits is still emitted unchanged.
+			remaining -= len(body)
+			if remaining < 0 {
+				remaining = 0
+			}
+		} else {
+			remaining = 0
+		}
 		report.degraded++
 		lastDegraded, lastState = i, state
 	}
@@ -286,8 +304,11 @@ func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeR
 	// D8: the status line is composed INTO the last degraded result's
 	// envelope, never inserted into an already-built body. Recomposition is
 	// pure - resolveDegrade did the I/O - so this costs no second spool round
-	// trip and cannot change any other result's charge: everything after the
-	// first degrade is already tier 3.
+	// trip and cannot change any other result's charge: the bodies that
+	// follow were already decided against the remaining budget, and the line
+	// only rides inside the envelope the straddle already reserved. A
+	// ref-only last degrade returns its fallback verbatim, so no status line
+	// is ever glued onto a ref-only notice.
 	if lastDegraded >= 0 {
 		shaped[lastDegraded] = composeDegraded(lastState,
 			statusLine(report.degraded, len(parts), remaining, budget))
@@ -314,9 +335,11 @@ func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeR
 func shapeOne(p resultParts, remaining int, env shapeEnv) (string, degradeState, bool) {
 	// Ref-only tier (plan tools/06): a tool opted out of inlining is elided
 	// before the budget tiers see it. The notice is carried in fallback so
-	// the D8 status-line recomposition returns it verbatim.
+	// the D8 status-line recomposition returns it verbatim, and refOnly marks
+	// the elision so shapeBatch charges its notice's bytes instead of
+	// spending the rest of the budget on it.
 	if notice, ok := refOnlyTier(env, p, p.toolName); ok {
-		return notice, degradeState{fallback: notice}, true
+		return notice, degradeState{fallback: notice, refOnly: true}, true
 	}
 	if len(p.cappedBody) <= remaining {
 		return p.cappedBody, degradeState{}, false
@@ -391,6 +414,12 @@ type degradeState struct {
 	// the C1 failure class - it would clip the ref embedded in its own notice
 	// - so the artifact is kept intact and charged as-is instead.
 	fallback string
+	// refOnly marks a degrade that came from the ref-only tier (plan
+	// tools/06): the whole body was already spooled before the budget tiers
+	// saw it, and the notice's bytes are the only charge. It is not a
+	// budget-tier straddle, so it does not spend the rest of the budget:
+	// results that fit after it are still emitted unchanged (tier 1).
+	refOnly bool
 }
 
 func resolveDegrade(p resultParts, target int, env shapeEnv) degradeState {
