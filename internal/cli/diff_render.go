@@ -10,6 +10,12 @@ func renderDiffBody(body string, width, maxLines int) []string {
 		return nil
 	}
 	lines := strings.Split(redactPreview(body), "\n")
+	// The body's final line terminator leaves a trailing empty split element
+	// that is not a real diff line; drop it so truncation counts are honest
+	// (a genuinely empty diff line always carries a +, -, or space prefix).
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
 	if len(lines) > maxLines {
 		lines = changeCentricWindow(lines, maxLines)
 	}
@@ -49,23 +55,50 @@ func changeCentricWindow(lines []string, maxLines int) []string {
 	for start > 0 && !strings.HasPrefix(lines[start], "@@") {
 		start--
 	}
-	end := start + maxLines
-	if end > len(lines) {
-		end = len(lines)
-		start = end - maxLines
+	if start+maxLines > len(lines) {
+		start = len(lines) - maxLines
 		if start < 0 {
 			start = 0
 		}
 	}
-	window := append([]string(nil), lines[start:end]...)
-	if start > 0 {
+
+	// Reserve the omission-marker slots from the maxLines budget before
+	// sizing the content window, so the rebuilt window never exceeds the
+	// budget and every omitted body line is reported exactly once.
+	leading := start > 0
+	content := maxLines
+	if leading {
+		content--
+	}
+	if start+content < len(lines) {
+		content-- // lines follow the shown span; a trailing marker is needed
+	}
+	if content < 1 {
+		// Markers would crowd out every content line: drop the leading marker
+		// so the content plus a single trailing marker fit the budget.
+		leading = false
+		content = maxLines
+		if start+content < len(lines) {
+			content--
+		}
+		if content < 0 {
+			content = 0
+		}
+	}
+	if content > len(lines)-start {
+		content = len(lines) - start
+	}
+
+	window := append([]string(nil), lines[start:start+content]...)
+	if leading {
 		window = append([]string{fmt.Sprintf("… %d lines omitted", start)}, window...)
 	}
-	if end < len(lines) {
-		window = append(window, fmt.Sprintf("… %d lines omitted", len(lines)-end))
-	}
-	if len(window) > maxLines {
-		window = append(window[:maxLines-1], fmt.Sprintf("… %d lines omitted", len(lines)-maxLines+1))
+	if start+content < len(lines) {
+		omitted := len(lines) - (start + content)
+		if !leading {
+			omitted += start // the dropped leading marker's lines are omitted too
+		}
+		window = append(window, fmt.Sprintf("… %d lines omitted", omitted))
 	}
 	return window
 }
