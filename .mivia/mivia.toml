@@ -490,6 +490,20 @@ env_blocklist = ["GIT_DIR", "GIT_WORK_TREE"]
 # A project that omits this key leaves all of these writable by workflow
 # agents, including its own workflow definition - choose deliberately.
 #
+# DELIBERATE DEVIATION (2026-08-17): ".mivia/policy" was removed from this
+# list so workflow agents can repair evidence-gate failures in-loop. The
+# pre-repair guard (controller.blockedPathsFromGateFailures) refuses to route a
+# failed gate to a repair agent when the gate's failure evidence names a
+# write-blocklisted path, and scripts/check_go_structure.py always echoes
+# "Policy: .mivia/policy/go-structure.json", so every structure-gate failure
+# settled the run terminal with no repair possible. With the entry removed,
+# agents may edit hook-policy gates (commit-message.json, pr-title.toml,
+# agent-hook-bypass.json, docs-ownership.json). Compensating controls: the
+# repo rule "never raise baselines to silence failures - split code", the
+# review panel, and the settle-time output guard (controller.blockedCause).
+# The shipped example (.mivia/mivia.toml.example) keeps the secure default;
+# do not relax it to match this deviation.
+#
 # Removing a default entry is a trust decision. .mivia/mivia.toml carries
 # this very blocklist: an agent that can edit it can remove its own
 # restrictions, including the entries below. .git carries commit history and
@@ -498,7 +512,6 @@ env_blocklist = ["GIT_DIR", "GIT_WORK_TREE"]
 # step genuinely needs the path. An entry in BOTH keys is a load error.
 write_path_blocklist = [
     ".mivia/agents",   # agent definitions
-    ".mivia/policy",   # hook-policy gates
     ".mivia/rules",    # durable rules
     ".mivia/skills",   # skill definitions
     ".mivia/workflows",# workflow definitions and templates
