@@ -62,31 +62,22 @@ func changeCentricWindow(lines []string, maxLines int) []string {
 		}
 	}
 
-	// Reserve the omission-marker slots from the maxLines budget before
-	// sizing the content window, so the rebuilt window never exceeds the
-	// budget and every omitted body line is reported exactly once.
-	leading := start > 0
-	content := maxLines
-	if leading {
-		content--
-	}
-	if start+content < len(lines) {
-		content-- // lines follow the shown span; a trailing marker is needed
-	}
-	if content < 1 {
-		// Markers would crowd out every content line: drop the leading marker
-		// so the content plus a single trailing marker fit the budget.
-		leading = false
-		content = maxLines
-		if start+content < len(lines) {
-			content--
+	leading, content := reserveContentBudget(start, maxLines, len(lines))
+	if content > 0 && first >= start+content {
+		// A tight budget can spend every content slot on leading context
+		// before ever reaching the line that changed - a "change-centric"
+		// window must never do that. Re-anchor start so the change is the
+		// last content line shown, using whatever budget is left for
+		// leading context; content lines fall as low as 0 the closer start
+		// gets to first (see reserveContentBudget), so first is always
+		// covered by the time start reaches it.
+		for s := max(0, first-maxLines+1); s <= first; s++ {
+			l, c := reserveContentBudget(s, maxLines, len(lines))
+			if c > 0 && first < s+c {
+				start, leading, content = s, l, c
+				break
+			}
 		}
-		if content < 0 {
-			content = 0
-		}
-	}
-	if content > len(lines)-start {
-		content = len(lines) - start
 	}
 
 	window := append([]string(nil), lines[start:start+content]...)
@@ -101,6 +92,51 @@ func changeCentricWindow(lines []string, maxLines int) []string {
 		window = append(window, fmt.Sprintf("… %d lines omitted", omitted))
 	}
 	return window
+}
+
+// reserveContentBudget decides whether a window starting at start needs a
+// leading omission marker, and returns the content-line budget left after
+// reserving marker slots from maxLines - both markers' slots are taken out
+// of the budget before slicing, so the final window never exceeds maxLines
+// and the reported omission counts always cover the rest of the body
+// exactly once. total is the full body's line count.
+func reserveContentBudget(start, maxLines, total int) (leading bool, content int) {
+	leading = start > 0
+	content = maxLines
+	if leading {
+		content--
+	}
+	if start+content < total {
+		content-- // lines follow the shown span; a trailing marker is needed
+	}
+	if content < 1 {
+		// Markers would crowd out every content line: drop the leading marker
+		// so the content plus a single trailing marker fit the budget.
+		leading = false
+		content = maxLines
+		if start+content < total {
+			content--
+		}
+		if content < 0 {
+			content = 0
+		}
+		if start > 0 && start+content >= total {
+			// The dropped leading marker's start lines are only accounted
+			// for if the trailing marker actually fires - its "omitted +=
+			// start" compensation (in the caller) is what covers them.
+			// Without this, content reaching all the way to total leaves
+			// no trailing marker and the start lines vanish uncounted.
+			// Force room for the marker instead.
+			content = total - start - 1
+			if content < 0 {
+				content = 0
+			}
+		}
+	}
+	if content > total-start {
+		content = total - start
+	}
+	return leading, content
 }
 
 // renderCollapsedEditBlock renders a file edit in history: a summary row

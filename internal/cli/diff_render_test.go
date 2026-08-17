@@ -107,17 +107,22 @@ func TestDiffWindowOmissionCountsReconcile(t *testing.T) {
 	}
 }
 
-// TestChangeCentricWindowGolden pins the fixed output for the concrete body:
-// the change line is no longer silently dropped and the trailing marker
-// counts exactly the lines that follow the shown window.
+// TestChangeCentricWindowGolden pins the fixed output for the concrete body
+// at maxLines=6 - the same budget renderCollapsedEditBlock's peekLines uses
+// for every collapsed diff in the TUI. Reserving marker slots from a tight
+// budget can spend every content slot on leading context before ever
+// reaching the line that changed; a "change-centric" window must not do
+// that, so this also pins that the change line ("-old") is always the last
+// content line shown, at the cost of one line of leading context, rather
+// than silently falling into the trailing omitted count.
 func TestChangeCentricWindowGolden(t *testing.T) {
 	want := []string{
-		"… 3 lines omitted",
-		"@@ -1,8 +1,8 @@",
+		"… 4 lines omitted",
 		" a",
 		" b",
 		" c",
-		"… 8 lines omitted",
+		"-old",
+		"… 7 lines omitted",
 	}
 	got := changeCentricWindow(concreteDiffLines(), 6)
 	if !sameStrings(got, want) {
@@ -127,8 +132,10 @@ func TestChangeCentricWindowGolden(t *testing.T) {
 
 // TestDiffWindowTinyBudgets sweeps the concrete body with maxLines 1..5:
 // no panic, the window never exceeds the budget, and the omission counts
-// always reconcile. It also pins the drop-leading contract (maxLines=2) and
-// the marker-only window (maxLines=1).
+// always reconcile. It also pins the drop-leading contract (maxLines=2,
+// which now shows the change line itself rather than only the @@ header -
+// with just one content slot available, the change outranks the header)
+// and the marker-only window (maxLines=1, too tight for any content line).
 func TestDiffWindowTinyBudgets(t *testing.T) {
 	body := concreteDiffLines()
 	for _, m := range []int{1, 2, 3, 4, 5} {
@@ -142,7 +149,7 @@ func TestDiffWindowTinyBudgets(t *testing.T) {
 				m, shown, omitted, shown+omitted, len(body), win)
 		}
 	}
-	if got, want := changeCentricWindow(body, 2), []string{"@@ -1,8 +1,8 @@", "… 14 lines omitted"}; !sameStrings(got, want) {
+	if got, want := changeCentricWindow(body, 2), []string{"-old", "… 14 lines omitted"}; !sameStrings(got, want) {
 		t.Fatalf("maxLines=2: got %q want %q", got, want)
 	}
 	if got, want := changeCentricWindow(body, 1), []string{"… 15 lines omitted"}; !sameStrings(got, want) {
