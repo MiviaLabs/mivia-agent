@@ -67,7 +67,14 @@ func stackAwaitsGrantOnly(byID map[string]tasks.Task) bool {
 		switch t.Status {
 		case stackStatusReviewed, stackStatusPublished, stackStatusPlanned, stackStatusQueued, stackStatusBlocked, stackStatusReopened:
 			waiting++
-		case stackStatusMerged, stackStatusCanceled:
+		case stackStatusMerged, stackStatusCanceled, stackStatusFailed, stackStatusSkipped:
+			// Terminal and dead (or done): none of these wait for a human or
+			// defeat the durable pause. stackStatusFailed is currently
+			// unreachable here in practice (anyChunkDurablyFailed halts the
+			// drive before this runs), and no production path writes
+			// stackStatusSkipped yet - both are listed defensively so this
+			// switch stays a superset of stacking.TerminalStatuses instead of
+			// a second, independently-maintained terminal list.
 		default:
 			return false
 		}
