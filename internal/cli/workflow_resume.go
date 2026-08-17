@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"time"
 
@@ -35,6 +36,15 @@ var (
 	// settles cannot park resume forever (runs WITH a deadline bound the join to
 	// the time remaining before it; see workflowResumeJoinCtx). Injectable for tests.
 	workflowResumeJoinBound = 10 * time.Minute
+	// workflowResumeClaimHeartbeatInterval refreshes the pre-Run handoff claim
+	// while joinInFlightAttempts runs. The join can outlast DefaultClaimLease,
+	// so the claim must be kept alive until the controller's own Advance
+	// heartbeat takes over. Matches the controller heartbeat cadence
+	// (DefaultClaimLease / 3). Injectable for tests.
+	workflowResumeClaimHeartbeatInterval = workflowledger.DefaultClaimLease / 3
+	// workflowResumeClaimHeartbeatHook is called after each successful handoff
+	// claim heartbeat refresh. It exists only for deterministic tests.
+	workflowResumeClaimHeartbeatHook func()
 )
 
 func executeWorkflowResume(runID, root, configPath string, force, allowPublish, acceptVerifierChange, acceptSkillChange bool, stdout, stderr io.Writer) error {
@@ -238,7 +248,9 @@ func workflowResumeDeliveryMode(compiled *compiler.CompiledWorkflow) string {
 }
 
 // prepareWorkflowResumeExecution handles the shared resume handoff. It claims
-// the run with the final controller holder before it joins recorded children.
+// the run with the final controller holder before it joins recorded children,
+// and heartbeats that handoff claim during the join so the claim lease never
+// expires before the controller's own Advance heartbeat takes over.
 func prepareWorkflowResumeExecution(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID string, force bool, stdout io.Writer) error {
 	if built.Controller == nil {
 		return joinInFlightAttempts(ctx, built, repo, runID, stdout)
@@ -246,7 +258,10 @@ func prepareWorkflowResumeExecution(ctx context.Context, built workflowControlle
 	if err := claimWorkflowResumeHandoff(ctx, repo, runID, built.Controller.Holder, force); err != nil {
 		return fmt.Errorf("claim workflow resume handoff: %w", err)
 	}
-	if err := joinInFlightAttempts(ctx, built, repo, runID, stdout); err != nil {
+	joinCtx, stopHeartbeat := startWorkflowResumeHandoffHeartbeat(ctx, repo, runID, built.Controller.Holder)
+	err := joinInFlightAttempts(joinCtx, built, repo, runID, stdout)
+	stopHeartbeat()
+	if err != nil {
 		_ = repo.ReleaseRun(context.Background(), runID, built.Controller.Holder)
 		return err
 	}
@@ -273,6 +288,46 @@ func claimWorkflowResumeHandoff(ctx context.Context, repo workflowledger.Reposit
 		return fmt.Errorf("workflow run %q is still active; retry after the claim lease expires or pass --force after the prior executor stopped", runID)
 	}
 	return err
+}
+
+// startWorkflowResumeHandoffHeartbeat keeps the pre-Run handoff claim alive
+// while joinInFlightAttempts runs. The join can outlast DefaultClaimLease, so
+// the claim must be refreshed until the controller's own Advance heartbeat
+// takes over. It returns a derived context that is cancelled when the claim is
+// lost (another holder takes it), and a stop function that must be called when
+// the join finishes.
+func startWorkflowResumeHandoffHeartbeat(parent context.Context, repo workflowledger.Repository, runID, holder string) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(parent)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(workflowResumeClaimHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := repo.RefreshRunClaim(context.Background(), runID, holder); err != nil {
+					if errors.Is(err, workflowledger.ErrClaimHeld) || errors.Is(err, workflowledger.ErrClaimNotHeld) {
+						cancel()
+						return
+					}
+					log.Printf("workflow: resume handoff heartbeat for run %s failed (continuing): %v", runID, err)
+				} else if workflowResumeClaimHeartbeatHook != nil {
+					workflowResumeClaimHeartbeatHook()
+				}
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return ctx, func() {
+		close(stop)
+		<-done
+		cancel()
+	}
 }
 
 // releaseWorkflowResumeHandoff clears a preflight claim when controller startup

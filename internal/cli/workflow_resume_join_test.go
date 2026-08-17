@@ -396,3 +396,180 @@ func TestExecuteWorkflowResumeJoinBoundedByFixedBound(t *testing.T) {
 		t.Fatalf("attempts = %+v, want wfa-one-1 left in-flight/running", attempts)
 	}
 }
+
+// workflowResumeBlockingJoinRunner is a controller runner whose JoinStep blocks
+// until the caller unblocks it. It mirrors a coordinator child whose run takes
+// longer than the claim lease to settle.
+type workflowResumeBlockingJoinRunner struct {
+	mu     sync.Mutex
+	joined []controller.AgentStepRequest
+	block  chan struct{}
+}
+
+func (r *workflowResumeBlockingJoinRunner) JoinStep(ctx context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, bool, error) {
+	r.mu.Lock()
+	r.joined = append(r.joined, req)
+	r.mu.Unlock()
+	select {
+	case <-r.block:
+		return controller.AgentStepResult{}, false, nil
+	case <-ctx.Done():
+		return controller.AgentStepResult{}, false, ctx.Err()
+	}
+}
+
+func (r *workflowResumeBlockingJoinRunner) RunStep(_ context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, error) {
+	return controller.AgentStepResult{CoordinatorRunID: req.CoordinatorRunID, TaskID: req.TaskID, EvidenceJSON: []byte(`[]`), Status: "completed"}, nil
+}
+
+// newHandoffHeartbeatFixture creates a running workflow with one in-flight
+// attempt and a controller over the given runner, for direct tests of
+// prepareWorkflowResumeExecution's claim handoff heartbeat.
+func newHandoffHeartbeatFixture(t *testing.T, runner controller.AgentStepRunner) (repo *workflowledger.StorageRepository, runID string, ctrl *controller.LinearController) {
+	t.Helper()
+	ctx := context.Background()
+	repo = workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	runID = "wfr-handoff-heartbeat"
+
+	root, _ := newForcedResumeFixture(t)
+	compiled, rawDefinition := compileResumeWorkflowFixture(t, root)
+	snapshot := newForcedResumeSnapshot(t, root, compiled, rawDefinition)
+	rawSnapshot, err := workflowledger.MarshalSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run := workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: compiled.Name, WorkflowDigest: compiled.Digest,
+		SnapshotDigest: workflowledger.SnapshotDigest(rawSnapshot),
+		InputDigest:    workflowledger.InputDigest(snapshot.Inputs),
+		Status:         workflowledger.RunStatusPending, ActiveStepID: compiled.InitialStep,
+	}
+	if err := repo.CreateRun(ctx, run, rawSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateStepAttempt(ctx, workflowledger.StepAttempt{
+		AttemptID: "wfa-one-1", RunID: runID, StepID: "one", AttemptNo: 1,
+		Status: workflowledger.AttemptStatusRunning, CoordinatorRunID: "coord-rec", TaskID: "task-rec",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	steps := map[string]controller.StepRuntime{
+		"one": {Agent: agents.ResolvedAgent{Name: "one"}, ProviderName: "openrouter", Model: "test/model"},
+		"two": {Agent: agents.ResolvedAgent{Name: "two"}, ProviderName: "openrouter", Model: "test/model"},
+	}
+	ctrl, err = controller.NewLinearController(repo, runner, compiled, steps, map[string]any{"task": "test"}, runID, rawSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, runID, ctrl
+}
+
+// TestPrepareWorkflowResumeExecutionHeartbeatsHandoffClaim proves the pre-Run
+// handoff claim is refreshed during a long in-flight join. Without the
+// heartbeat, a third party could take over the "expired" claim while the join
+// is still settling attempts.
+func TestPrepareWorkflowResumeExecutionHeartbeatsHandoffClaim(t *testing.T) {
+	repo, runID, ctrl := newHandoffHeartbeatFixture(t, &workflowResumeBlockingJoinRunner{block: make(chan struct{})})
+	ctx := context.Background()
+
+	originalInterval := workflowResumeClaimHeartbeatInterval
+	t.Cleanup(func() { workflowResumeClaimHeartbeatInterval = originalInterval })
+	workflowResumeClaimHeartbeatInterval = time.Millisecond
+
+	refreshed := make(chan struct{}, 8)
+	originalHook := workflowResumeClaimHeartbeatHook
+	t.Cleanup(func() { workflowResumeClaimHeartbeatHook = originalHook })
+	workflowResumeClaimHeartbeatHook = func() { refreshed <- struct{}{} }
+
+	runner := ctrl.Runner.(*workflowResumeBlockingJoinRunner)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- prepareWorkflowResumeExecution(ctx, workflowControllerBuild{Controller: ctrl}, repo, runID, true, io.Discard)
+	}()
+
+	// Wait for several successful heartbeats so the claim has been refreshed.
+	for range 3 {
+		select {
+		case <-refreshed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("heartbeat did not refresh within the test timeout")
+		}
+	}
+
+	// The heartbeat keeps the claim fresh: a third-party takeover using a short
+	// expiry window must be refused.
+	if err := repo.TakeoverExpiredRunClaim(ctx, runID, "third-party", 50*time.Millisecond); !errors.Is(err, workflowledger.ErrClaimHeld) {
+		t.Fatalf("third-party expired takeover = %v, want ErrClaimHeld (heartbeat kept resumer alive)", err)
+	}
+
+	runner.mu.Lock()
+	if len(runner.joined) != 1 || runner.joined[0].TaskID != "task-rec" {
+		t.Fatalf("joined requests = %+v, want the recorded child identity", runner.joined)
+	}
+	runner.mu.Unlock()
+
+	close(runner.block)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("prepareWorkflowResumeExecution() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("prepareWorkflowResumeExecution did not return after the join was unblocked")
+	}
+}
+
+// TestPrepareWorkflowResumeExecutionCancelsJoinWhenClaimLost proves the
+// heartbeat fails fast when another holder takes the claim: it cancels the join
+// context so the resume does not wait up to the full join bound only to fail a
+// fenced settle write.
+func TestPrepareWorkflowResumeExecutionCancelsJoinWhenClaimLost(t *testing.T) {
+	repo, runID, ctrl := newHandoffHeartbeatFixture(t, &workflowResumeBlockingJoinRunner{block: make(chan struct{})})
+	ctx := context.Background()
+
+	originalInterval := workflowResumeClaimHeartbeatInterval
+	t.Cleanup(func() { workflowResumeClaimHeartbeatInterval = originalInterval })
+	workflowResumeClaimHeartbeatInterval = time.Millisecond
+
+	refreshed := make(chan struct{}, 8)
+	originalHook := workflowResumeClaimHeartbeatHook
+	t.Cleanup(func() { workflowResumeClaimHeartbeatHook = originalHook })
+	workflowResumeClaimHeartbeatHook = func() { refreshed <- struct{}{} }
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- prepareWorkflowResumeExecution(ctx, workflowControllerBuild{Controller: ctrl}, repo, runID, true, io.Discard)
+	}()
+
+	// Wait for the first heartbeat, then forcefully take the claim away.
+	select {
+	case <-refreshed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("heartbeat did not refresh within the test timeout")
+	}
+	if err := repo.TakeoverRunClaim(ctx, runID, "third-party"); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatalf("prepareWorkflowResumeExecution() error = nil, want join cancelled after claim loss")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("prepareWorkflowResumeExecution() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("prepareWorkflowResumeExecution did not return after the claim was lost")
+	}
+}
