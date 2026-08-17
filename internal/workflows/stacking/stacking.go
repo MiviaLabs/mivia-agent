@@ -150,11 +150,23 @@ func AdmissionKey(stackID, chunkID string) (string, error) {
 }
 
 // TopologicalOrder returns chunk ids in admission order (dependencies first)
-// using Kahn's algorithm. Unknown or cyclic dependencies are errors: a stack
-// must never admit a chunk before the chunks it depends on.
+// using Kahn's algorithm. Unknown, duplicated, or cyclic dependencies are
+// errors: a stack must never admit a chunk before the chunks it depends on,
+// and a duplicated id must never emit a duplicated admission order. Without
+// the duplicate check, two chunks sharing a zero-indegree id both land in the
+// ready queue, the loop emits the id twice, len(order) == len(chunks) still
+// holds, and the driver silently gets a wrong order: duplicated wave entries,
+// inflated "k/N" stack_part labels (ChunkPartIndex returns the first
+// occurrence), and admission of the same chunk twice. The deterministic
+// chunk-plan gate rejects duplicate ids per wave, but a continuation wave can
+// reuse an id from an earlier wave (loadAllStackChunks concatenates the
+// waves), so the shared ordering must fail closed on its own.
 func TopologicalOrder(chunks []ChunkPlan) ([]string, error) {
 	byID := make(map[string]ChunkPlan, len(chunks))
 	for _, c := range chunks {
+		if _, dup := byID[c.ID]; dup {
+			return nil, fmt.Errorf("chunk id %q appears more than once", c.ID)
+		}
 		byID[c.ID] = c
 	}
 	indegree := make(map[string]int, len(chunks))
@@ -209,7 +221,9 @@ func ChunkPartIndex(chunkID string, order []string) (int, error) {
 }
 
 // LoadStackPlanOutput reads the succeeded decompose step output of a
-// plan-mode run from the run ledger (F1/F8: the plan is a run output).
+// plan-mode run from the run ledger (F1/F8: the plan is a run output). When
+// the plan run's decompose step ran more than once, the LATEST succeeded
+// attempt that produced an output is authoritative.
 func LoadStackPlanOutput(ctx context.Context, repo workflowledger.Repository, stackID string) ([]byte, error) {
 	attempts, err := repo.ListStepAttempts(ctx, stackID)
 	if err != nil {
@@ -218,33 +232,67 @@ func LoadStackPlanOutput(ctx context.Context, repo workflowledger.Repository, st
 		}
 		return nil, err
 	}
+	// The decompose step can run several times in ONE plan run: the
+	// chunk_plan_validate gate rejects the first plan and the decompose_repair
+	// loop re-runs it (compiler synthesis, MaxIterations 3), leaving MULTIPLE
+	// succeeded decompose attempts. The operative plan is the LAST one - the
+	// plan that passed the gate - so select the latest succeeded decompose
+	// attempt that produced an output, exactly like DecomposedChunks and the
+	// controller's latestOutputAttempt. Returning the first would hand the
+	// driver the REJECTED plan: the stack would be seeded, driven, and
+	// verified against chunks the deterministic gate refused, while the
+	// delivery gate (DecomposedChunks) counts the accepted plan's chunks.
+	var latest workflowledger.StepAttempt
+	found := false
 	for _, a := range attempts {
 		if a.StepID == DecomposeStepID && a.Status == workflowledger.AttemptStatusSucceeded && a.OutputRef != "" {
-			data, err := repo.LoadContent(ctx, a.OutputRef)
-			if err != nil {
-				return nil, err
+			if !found || a.AttemptNo > latest.AttemptNo {
+				latest, found = a, true
 			}
-			return data, nil
 		}
 	}
-	return nil, fmt.Errorf("plan run %q has no succeeded decompose output", stackID)
+	if !found {
+		return nil, fmt.Errorf("plan run %q has no succeeded decompose output", stackID)
+	}
+	data, err := repo.LoadContent(ctx, latest.OutputRef)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // DecomposedChunks reports whether runID is the plan run of a multi-chunk
-// stack: a succeeded decompose step attempt whose output parses as mode=multi
-// with at least one chunk. ok=false covers every other case (not a stacking
-// plan run, single/no_bug, a malformed decompose output, or a lookup
-// failure) - callers must treat a lookup failure as "not applicable", never
-// as a refusal or a false "undriven" diagnostic.
+// stack: the LATEST succeeded decompose step attempt that produced an output
+// parses as mode=multi with at least one chunk (same selection rule as
+// LoadStackPlanOutput and the controller's latestOutputAttempt; a later
+// succeeded attempt with no output must not shadow the recorded plan).
+// ok=false covers every other case (not a stacking plan run, single/no_bug, a
+// malformed decompose output, or a lookup failure) - callers must treat a
+// lookup failure as "not applicable", never as a refusal or a false
+// "undriven" diagnostic.
 func DecomposedChunks(ctx context.Context, repo workflowledger.Repository, runID string) (chunks int, ok bool) {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return 0, false
 	}
+	// Select the latest succeeded decompose attempt by AttemptNo, exactly like
+	// LoadStackPlanOutput and the controller's latestOutputAttempt. Iteration
+	// order is not part of the Repository contract (ListStepAttempts orders by
+	// event sequence, which is a storage implementation detail), so taking the
+	// last match in slice order can hand the delivery gate a DIFFERENT plan
+	// than the driver seeds and drives when a repository returns attempts out
+	// of AttemptNo order. A later succeeded attempt without an OutputRef still
+	// must not shadow the recorded plan (the filter below).
 	var decomposeOutputRef string
+	latestAttemptNo := 0
+	found := false
 	for _, a := range attempts {
-		if a.StepID == DecomposeStepID && a.Status == workflowledger.AttemptStatusSucceeded {
-			decomposeOutputRef = a.OutputRef
+		if a.StepID == DecomposeStepID && a.Status == workflowledger.AttemptStatusSucceeded && a.OutputRef != "" {
+			if !found || a.AttemptNo > latestAttemptNo {
+				decomposeOutputRef = a.OutputRef
+				latestAttemptNo = a.AttemptNo
+				found = true
+			}
 		}
 	}
 	if decomposeOutputRef == "" {
