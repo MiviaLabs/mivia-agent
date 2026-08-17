@@ -26,7 +26,12 @@ func (c *LinearController) startClaimHeartbeat(cancel context.CancelFunc) func()
 		for {
 			select {
 			case <-ticker.C:
-				if err := c.Repo.RefreshRunClaim(context.Background(), c.RunID, c.Holder); err != nil {
+				// Bound the best-effort claim refresh so a wedged store call cannot
+				// deadlock Advance cleanup waiting on the heartbeat goroutine.
+				refreshCtx, release := context.WithTimeout(context.Background(), durableHeartbeatTimeout)
+				err := c.Repo.RefreshRunClaim(refreshCtx, c.RunID, c.Holder)
+				release()
+				if err != nil {
 					if errors.Is(err, workflowledger.ErrClaimHeld) || errors.Is(err, workflowledger.ErrClaimNotHeld) {
 						cancel()
 						return

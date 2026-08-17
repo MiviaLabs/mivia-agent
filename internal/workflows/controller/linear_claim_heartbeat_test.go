@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -99,6 +100,63 @@ func TestLinearClaimHeartbeatCancelsOnLostClaim(t *testing.T) {
 
 	repo := &heartbeatLostRepo{}
 	assertHeartbeatCancels(t, repo)
+}
+
+// TestLinearClaimHeartbeatStopReturnsWhenRefreshBlocks pins that stop() does not
+// wait forever if a single RefreshRunClaim call is wedged. Without a bounded
+// context the heartbeat goroutine would never return and Advance cleanup would
+// deadlock.
+func TestLinearClaimHeartbeatStopReturnsWhenRefreshBlocks(t *testing.T) {
+	old := claimHeartbeatInterval
+	claimHeartbeatInterval = 5 * time.Millisecond
+	t.Cleanup(func() { claimHeartbeatInterval = old })
+
+	repo := &heartbeatBlockingRepo{block: make(chan struct{}), called: make(chan struct{})}
+	ctrl := &LinearController{Repo: repo, RunID: "wfr-block", Holder: "holder-a"}
+	stop := ctrl.startClaimHeartbeat(func() {})
+	defer close(repo.block)
+
+	// Wait until the heartbeat has actually entered RefreshRunClaim.
+	select {
+	case <-repo.called:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat never entered RefreshRunClaim")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * durableHeartbeatTimeout):
+		t.Fatal("stop did not return while RefreshRunClaim was blocked")
+	}
+}
+
+// heartbeatBlockingRepo simulates a store call that respects context
+// cancellation. Only the first RefreshRunClaim blocks until the context is
+// canceled; later calls return immediately so the test can verify that stop()
+// returns after the bounded timeout.
+type heartbeatBlockingRepo struct {
+	workflowledger.Repository
+	block  chan struct{}
+	called chan struct{}
+	once   sync.Once
+	long   sync.Once
+}
+
+func (r *heartbeatBlockingRepo) RefreshRunClaim(ctx context.Context, _, _ string) error {
+	r.once.Do(func() { close(r.called) })
+	r.long.Do(func() {
+		select {
+		case <-r.block:
+		case <-ctx.Done():
+		}
+	})
+	return ctx.Err()
 }
 
 func assertHeartbeatCancels(t *testing.T, repo workflowledger.Repository) {
