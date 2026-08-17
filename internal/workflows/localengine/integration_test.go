@@ -562,14 +562,20 @@ func TestResumeDeliveryFailedPointsAtDeliver(t *testing.T) {
 	}, []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := engine.Repo.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
+	for _, to := range []workflowledger.RunStatus{
+		workflowledger.RunStatusRunning,
+		workflowledger.RunStatusDeliveryPending,
+		workflowledger.RunStatusDeliveryFailed,
+	} {
+		fresh, err := engine.Repo.GetRun(ctx, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := engine.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, to, nil); err != nil {
+			t.Fatalf("transition to %s: %v", to, err)
+		}
 	}
-	if err := engine.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil); err != nil {
-		t.Fatal(err)
-	}
-	_, err = mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
+	_, err := mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
 		ctx, json.RawMessage(fmt.Sprintf(`{"resume":true,"run_id":%q,"force":true}`, runID)))
 	if err == nil || !strings.Contains(err.Error(), "failed delivery") || !strings.Contains(err.Error(), "workflow_deliver") {
 		t.Fatalf("resume delivery_failed error = %v, want deliver pointer", err)

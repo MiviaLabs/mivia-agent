@@ -100,6 +100,19 @@ func TestSQLiteClaimSuccessAndGuardBranches(t *testing.T) {
 	if err := store.TakeoverClaim(ctx, "run-1", "h2"); err != nil {
 		t.Fatalf("TakeoverClaim: %v", err)
 	}
+	taken, err := store.GetClaim(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("GetClaim after takeover: %v", err)
+	}
+	if taken.Holder != "h2" {
+		t.Fatalf("holder after takeover = %q, want h2", taken.Holder)
+	}
+	if taken.Fence <= 1 {
+		t.Fatalf("fence after takeover = %d, want > 1", taken.Fence)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, taken.AcquiredAt); err != nil {
+		t.Fatalf("acquired_at %q is not RFC3339 nano: %v", taken.AcquiredAt, err)
+	}
 
 	if err := store.TakeoverExpiredClaim(ctx, "run-1", "", time.Hour); !errors.Is(err, ErrClaimNotHeld) {
 		t.Fatalf("TakeoverExpiredClaim empty holder = %v, want ErrClaimNotHeld", err)
