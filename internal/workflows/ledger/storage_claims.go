@@ -54,7 +54,20 @@ func (s *StorageRepository) RefreshRunClaim(ctx context.Context, runID, holder s
 	}
 	fenced, ok := s.store.(storage.FencedLeaseStore)
 	if !ok {
-		return ErrClaimNotHeld
+		// Backends without fence support keep the pre-fencing semantics: a
+		// refresh is a same-holder claim (insert-or-refresh). Returning
+		// ErrClaimNotHeld here instead would make every heartbeat read its own
+		// live claim as lost and cancel the step within one interval.
+		if err := s.store.ClaimRun(ctx, runID, holder); err != nil {
+			if errors.Is(err, storage.ErrClaimHeld) {
+				return ErrClaimHeld
+			}
+			return err
+		}
+		s.mu.Lock()
+		s.claimedRuns[runID] = storage.Claim{RunID: runID, Holder: holder}
+		s.mu.Unlock()
+		return nil
 	}
 	claim, err := fenced.RefreshClaimFenced(ctx, runID, holder)
 	if err != nil {
