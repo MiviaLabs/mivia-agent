@@ -551,6 +551,31 @@ func TestResumeTerminalRunRefused(t *testing.T) {
 	}
 }
 
+// TestResumeDeliveryFailedPointsAtDeliver proves a delivery_failed run is
+// refused with a concrete recovery pointer instead of a generic terminal error.
+func TestResumeDeliveryFailedPointsAtDeliver(t *testing.T) {
+	engine, svc := scriptedTwoStep(t)
+	ctx := context.Background()
+	runID := "wfr-delivery-failed"
+	if err := engine.Repo.CreateRun(ctx, workflowledger.RunSnapshot{
+		RunID: runID, Status: workflowledger.RunStatusPending,
+	}, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := engine.Repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusDeliveryFailed, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err = mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
+		ctx, json.RawMessage(fmt.Sprintf(`{"resume":true,"run_id":%q,"force":true}`, runID)))
+	if err == nil || !strings.Contains(err.Error(), "failed delivery") || !strings.Contains(err.Error(), "workflow_deliver") {
+		t.Fatalf("resume delivery_failed error = %v, want deliver pointer", err)
+	}
+}
+
 func TestIntegrationRaceConcurrentTools(t *testing.T) {
 	// Exercised under go test -race via parallel start + status + cancel.
 	root := writeTwoStepWorkspace(t)

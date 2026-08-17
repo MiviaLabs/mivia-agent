@@ -250,6 +250,9 @@ func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agent
 	if run.Status == workflowledger.RunStatusDeliveryPending {
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is waiting for delivery; call workflow_deliver", req.RunID)
 	}
+	if run.Status == workflowledger.RunStatusDeliveryFailed {
+		return agenttools.StartResult{}, fmt.Errorf("workflow run %q failed delivery; call workflow_deliver", req.RunID)
+	}
 	if workflowledger.IsTerminalRunStatus(run.Status) {
 		// Terminal runs are not resumed. Callers must start a new run or deliver.
 		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is terminal (status %s); resume requires a non-terminal run", req.RunID, run.Status)
