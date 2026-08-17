@@ -31,8 +31,15 @@ const (
 	stackStatusReopened    = stacking.StatusReopened
 	stackStatusFailed      = stacking.StatusFailed
 	stackStatusSkipped     = stacking.StatusSkipped
-	stackStatusCanceled    = "canceled"
+	stackStatusCanceled    = stacking.StatusCanceled
 )
+
+// stackStatusIsTerminal reports whether a chunk task status is terminal: no
+// drive pass may re-admit it, re-open it, or re-mark it (see
+// stacking.TerminalStatuses).
+func stackStatusIsTerminal(status string) bool {
+	return stacking.StatusIsTerminal(status)
+}
 
 // stackAdmissiblePreStatuses are the statuses nextAdmissionWave selects a
 // chunk from. driveChunk's admission guard (TransitionTaskCAS) uses the same
@@ -134,8 +141,11 @@ const (
 
 // reconcileTask derives the idempotent recovery action for one non-terminal
 // chunk task from its run and git merge state (plan §5a). Terminal task
-// statuses (merged, failed, skipped) always leave. Every decision is derived
-// from durable state only.
+// statuses (stacking.TerminalStatuses: merged, failed, skipped, canceled)
+// always leave, BEFORE any other rule - a canceled dependent keeps a failed
+// run row, so a later short-circuit would let the reopen arm re-admit it,
+// and its branch can even report merged. Every decision is derived from
+// durable state only.
 //
 // Rules: running -> leave; succeeded+delivery_pending -> deliver (publish
 // grant); merged (git) with durable pushed evidence -> mark merged, unblock
@@ -150,8 +160,7 @@ func reconcileTask(t tasks.Task, run RunInfo, merged bool, runPushed bool, maxAt
 	leave := func(note string) ReconcileAction {
 		return ReconcileAction{TaskID: t.ID, Action: stackActionLeave, Note: note}
 	}
-	switch t.Status {
-	case stackStatusMerged, stackStatusFailed, stackStatusSkipped:
+	if stackStatusIsTerminal(t.Status) {
 		return leave("")
 	}
 	if merged && runPushed {

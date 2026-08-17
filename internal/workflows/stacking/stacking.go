@@ -44,7 +44,31 @@ const (
 	StatusReopened    = "reopened"
 	StatusFailed      = "failed"
 	StatusSkipped     = "skipped"
+	// StatusCanceled marks a chunk that a drive gave up on because a chunk
+	// it depends on failed terminally. It is TERMINAL: no drive pass may
+	// re-admit it, re-open it, or mark it merged. A canceled chunk was
+	// never implemented, so its content is absent from the stack.
+	StatusCanceled = "canceled"
 )
+
+// TerminalStatuses are the statuses no drive pass may move a chunk out of.
+// Every enumeration of "leave this task alone" must derive from this list,
+// or a terminal task is resurrected by the next pass: a canceled dependent
+// whose run row is failed fell to the reopen path and was re-admitted,
+// because the reconciler's short-circuit named only merged/failed/skipped
+// (audit finding R3, 2026-08-17).
+var TerminalStatuses = []string{StatusMerged, StatusFailed, StatusSkipped, StatusCanceled}
+
+// StatusIsTerminal reports whether status is one a drive pass must leave
+// alone.
+func StatusIsTerminal(status string) bool {
+	for _, s := range TerminalStatuses {
+		if status == s {
+			return true
+		}
+	}
+	return false
+}
 
 // AdmissiblePreStatuses are the statuses a drive pass selects a chunk from.
 // Drive admission guards (TransitionTaskCAS) use the same list as their

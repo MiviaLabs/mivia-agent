@@ -298,3 +298,22 @@ func FuzzTopologicalOrder(f *testing.F) {
 		}
 	})
 }
+
+// TestStatusIsTerminalCoversCanceled pins the terminal vocabulary: a canceled
+// chunk (a dependent given up on after its dependency failed) is terminal, so
+// no drive pass re-admits or re-marks it.
+func TestStatusIsTerminalCoversCanceled(t *testing.T) {
+	for _, s := range []string{StatusMerged, StatusFailed, StatusSkipped, StatusCanceled} {
+		if !StatusIsTerminal(s) {
+			t.Fatalf("StatusIsTerminal(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{StatusPlanned, StatusQueued, StatusBlocked, StatusRunning, StatusImplemented, StatusReviewed, StatusPublished, StatusReopened} {
+		if StatusIsTerminal(s) {
+			t.Fatalf("StatusIsTerminal(%q) = true, want false", s)
+		}
+	}
+	if StatusIsAdmissiblePre(StatusCanceled) {
+		t.Fatal("StatusIsAdmissiblePre(canceled) = true; a canceled chunk must never be admitted")
+	}
+}

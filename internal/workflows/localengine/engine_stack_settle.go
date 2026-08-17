@@ -199,11 +199,12 @@ func stackHasProgress(byID map[string]tasks.Task, hasMergeOracle bool) bool {
 			if hasMergeOracle {
 				return true
 			}
-		case stacking.StatusFailed:
+		case stacking.StatusFailed, stacking.StatusCanceled:
 			// A failed chunk is terminal (the operator reconcile leaves
 			// failed tasks alone) and blocks its dependents forever: the
 			// drive must halt instead of polling an uncompletable stack
-			// (STACK-2, 2026-08-16).
+			// (STACK-2, 2026-08-16). A canceled chunk carries the same
+			// verdict: it exists only because a dependency failed.
 			return false
 		}
 	}

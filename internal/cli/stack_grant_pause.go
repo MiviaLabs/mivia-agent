@@ -51,7 +51,9 @@ func stackingDriveAllowPublish(compiled *compiler.CompiledWorkflow) bool {
 // whose dependencies are all merged returns from the poll pass to drive the
 // next wave); by the time this predicate runs, every pre-admission task is
 // BLOCKED on an unmerged dependency - only a human merge can unlock it, so
-// polling is a guaranteed no-op. Without this, a seeded dependent chunk
+// polling is a guaranteed no-op. A canceled chunk counts like a merged one:
+// it is terminal and dead, so it neither waits for a human nor disables the
+// pause. Without this, a seeded dependent chunk
 // (stackAwaitsGrantOnly's old "default: return false") defeated the durable
 // pause and the wait polled a grant-only stack until the drive bound (live
 // finding: merge_policy=approve stacks with unadmitted dependents burned the
@@ -65,7 +67,7 @@ func stackAwaitsGrantOnly(byID map[string]tasks.Task) bool {
 		switch t.Status {
 		case stackStatusReviewed, stackStatusPublished, stackStatusPlanned, stackStatusQueued, stackStatusBlocked, stackStatusReopened:
 			waiting++
-		case stackStatusMerged:
+		case stackStatusMerged, stackStatusCanceled:
 		default:
 			return false
 		}
