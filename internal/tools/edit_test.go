@@ -655,3 +655,22 @@ func TestMultiEditReportsReadFailure(t *testing.T) {
 		t.Fatal("expected a read failure on an unreadable file")
 	}
 }
+
+// firstChangedLine must mirror diff.Compute's trailing-newline drop.
+// Old "a\nb\n" ends with \n; new "a\nb\n\nc" does not end with \n and
+// differs beyond the trimmed suffix, so Compute drops old's terminal "".
+// Without the drop, firstChangedLine sees ["a","b",""] vs ["a","b","","c"]
+// and returns 4; with the drop it sees ["a","b"] vs ["a","b","","c"] and
+// returns 3 — which gives the correct hunk header @@ -1,2 +1,4 @@.
+func TestFirstChangedLineMirrorsComputeTrailingNewlineDrop(t *testing.T) {
+	old := "a\nb\n"
+	new := "a\nb\n\nc"
+	anchor := firstChangedLine(old, new)
+	if want := 3; anchor != want {
+		t.Fatalf("firstChangedLine anchor = %d, want %d", anchor, want)
+	}
+	unified := generateUnifiedDiffAt("test.txt", old, new, anchor)
+	if !strings.Contains(unified, "@@ -1,2 +1,4 @@") {
+		t.Fatalf("expected hunk header @@ -1,2 +1,4 @@, got:\n%s", unified)
+	}
+}

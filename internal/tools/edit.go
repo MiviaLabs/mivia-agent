@@ -236,6 +236,14 @@ func formatEditDiffResult(header, path, oldContent, newContent string, budget in
 func firstChangedLine(oldContent, newContent string) int {
 	oldLines := strings.Split(oldContent, "\n")
 	newLines := strings.Split(newContent, "\n")
+	// Mirror internal/diff.Compute's trailing-newline drop: when old ends
+	// with "\n" and new does not and the contents still differ beyond that
+	// newline, Compute discards old's empty terminal element before diffing.
+	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" &&
+		(len(newLines) == 0 || newLines[len(newLines)-1] != "") &&
+		strings.TrimSuffix(oldContent, "\n") != newContent {
+		oldLines = oldLines[:len(oldLines)-1]
+	}
 	i := 0
 	for i < len(oldLines) && i < len(newLines) && oldLines[i] == newLines[i] {
 		i++
