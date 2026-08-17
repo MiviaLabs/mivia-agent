@@ -192,6 +192,15 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
     excludes = policy.get("excludeGlobs") or []
     hard_fail = 0
     warnings = 0
+    # File-LOC soft warnings never strict-promote: a file drifting past its
+    # soft line count is not the kind of new-debt signal --strict exists to
+    # catch (that's commentBlockLines.hard and funcLines.hard, both already
+    # unconditional gates), and promoting it let an unrelated file's WARN
+    # hard-fail a run whose only real violation was a repairable comment
+    # block - worse, one where the offending file sat outside the workflow
+    # write blocklist while the WARN'd file sat inside it, making the run
+    # unrepairable by any workflow agent.
+    file_warnings = 0
 
     for path in paths:
         if not path.is_file():
@@ -225,7 +234,7 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
                     f"(soft {soft}, baseline max {base_max}). Prefer splitting.",
                     file=sys.stderr,
                 )
-                warnings += 1
+                file_warnings += 1
         else:
             if lines > hard:
                 print(
@@ -240,7 +249,7 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
                     f"Consider splitting soon.",
                     file=sys.stderr,
                 )
-                warnings += 1
+                file_warnings += 1
 
         # Functions - skip grandfathered whole-file debt (until split), still warn soft.
         funcs = parse_functions(path)
@@ -302,14 +311,21 @@ def check_paths(paths: list[Path], policy: dict, *, strict: bool) -> int:
     if strict and warnings:
         hard_fail += warnings
         print(f"check_go_structure: strict mode promotes {warnings} warning(s) to hard failures", file=sys.stderr)
-    if warnings and not hard_fail:
+    total_warnings = warnings + file_warnings
+    if file_warnings:
         print(
-            f"check_go_structure: {warnings} warning(s), 0 hard failures",
+            f"check_go_structure: {file_warnings} file-LOC warning(s) never strict-promote "
+            "(not a new-debt signal on their own); split when convenient.",
+            file=sys.stderr,
+        )
+    if total_warnings and not hard_fail:
+        print(
+            f"check_go_structure: {total_warnings} warning(s), 0 hard failures",
             file=sys.stderr,
         )
     if hard_fail:
         print(
-            f"\ncheck_go_structure: {hard_fail} hard violation(s), {warnings} warning(s).\n"
+            f"\ncheck_go_structure: {hard_fail} hard violation(s), {total_warnings} warning(s).\n"
             f"Policy: {POLICY_PATH.relative_to(ROOT)}\n"
             f"Split files/functions or (only when reducing debt) lower baseline maxLines.\n",
             file=sys.stderr,
