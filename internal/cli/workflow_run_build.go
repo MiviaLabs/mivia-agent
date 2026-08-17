@@ -35,7 +35,7 @@ type workflowControllerBuild struct {
 	Cleanup    func()
 }
 
-func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, priorRaw []byte, recorded *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, priorRaw []byte, recorded *workflowledger.RunSnapshot, remaining map[string]bool, preloadedSkills *skills.Registry) (workflowControllerBuild, error) {
 	// A stacking run EXECUTES the synthesized graph: decompose and
 	// chunk_plan_validate are real steps whose agents must be resolved, whose
 	// templates and schemas must be pinned, and whose routing digests must be
@@ -48,7 +48,7 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 		return workflowControllerBuild{}, err
 	}
 	wf = synth
-	setup, err := prepareWorkflowBuild(root, res, wf, runID, recorded, delivery.EffectiveBase(wf, inputSnapshot))
+	setup, err := prepareWorkflowBuild(root, res, wf, runID, recorded, delivery.EffectiveBase(wf, inputSnapshot), preloadedSkills)
 	if err != nil {
 		return workflowControllerBuild{}, err
 	}
@@ -57,7 +57,7 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 		setup.cleanup()
 		return workflowControllerBuild{}, err
 	}
-	runtime, baseline, err := prepareWorkflowBuildRuntime(root, refBase, res, wf, inputSnapshot, definitionTOML, prior, priorRaw, setup, opts)
+	runtime, baseline, err := prepareWorkflowBuildRuntime(root, refBase, res, wf, inputSnapshot, definitionTOML, prior, priorRaw, setup, opts, remaining)
 	if err != nil {
 		dispatcher.Close()
 		setup.cleanup()
@@ -106,16 +106,23 @@ type workflowBuildSetup struct {
 	originBaseCommit string
 }
 
-func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.CompiledWorkflow, runID string, recorded *workflowledger.RunSnapshot, effectiveBase string) (workflowBuildSetup, error) {
-	skills, err := workflowBuildLoadSkills(root)
+func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.CompiledWorkflow, runID string, recorded *workflowledger.RunSnapshot, effectiveBase string, preloadedSkills *skills.Registry) (workflowBuildSetup, error) {
+	// A resume passes the registry it already loaded for acceptance so the
+	// whole invocation observes one load (R5); every other caller passes nil
+	// and loads here.
+	skillReg := preloadedSkills
+	if skillReg == nil {
+		loadedSkills, err := workflowBuildLoadSkills(root)
+		if err != nil {
+			return workflowBuildSetup{}, err
+		}
+		skillReg = loadedSkills
+	}
+	loaded, err := workflowBuildLoadAgents(root, "", skillReg)
 	if err != nil {
 		return workflowBuildSetup{}, err
 	}
-	loaded, err := workflowBuildLoadAgents(root, "", skills)
-	if err != nil {
-		return workflowBuildSetup{}, err
-	}
-	if err := sliceErrors("workflow", compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skills)); err != nil {
+	if err := sliceErrors("workflow", compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skillReg)); err != nil {
 		return workflowBuildSetup{}, err
 	}
 	authority, err := workflowBuildRegistry(root, res)
@@ -150,7 +157,7 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.Compil
 		cleanup()
 		return workflowBuildSetup{}, err
 	}
-	return workflowBuildSetup{skills: skills, loaded: loaded, authority: authority, identity: identity, cleanup: cleanup, remoteURL: remoteURL, originBaseCommit: originBaseCommit}, nil
+	return workflowBuildSetup{skills: skillReg, loaded: loaded, authority: authority, identity: identity, cleanup: cleanup, remoteURL: remoteURL, originBaseCommit: originBaseCommit}, nil
 }
 
 func workflowBuildRemoteURL(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, recorded *workflowledger.RunSnapshot, effectiveBase string) (originURL, originBaseCommit string, err error) {
@@ -174,12 +181,12 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 	return dispatcher, opts, legacy, nil
 }
 
-func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]string, definition []byte, prior *workflowledger.Snapshot, priorRaw []byte, setup workflowBuildSetup, opts SessionDispatcherOpts) (preparedWorkflowRuntime, *verifier.GoModuleBaseline, error) {
+func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]string, definition []byte, prior *workflowledger.Snapshot, priorRaw []byte, setup workflowBuildSetup, opts SessionDispatcherOpts, remaining map[string]bool) (preparedWorkflowRuntime, *verifier.GoModuleBaseline, error) {
 	runtime, err := prepareWorkflowRuntime(root, refBase, wf, setup.loaded.Registry, prior, priorRaw, definition, inputs, opts)
 	if err != nil {
 		return preparedWorkflowRuntime{}, nil, err
 	}
-	if err := verifyWorkflowSkillSnapshot(wf, setup.skills, prior); err != nil {
+	if err := verifyWorkflowSkillSnapshotScoped(wf, setup.skills, prior, remaining); err != nil {
 		return preparedWorkflowRuntime{}, nil, err
 	}
 	if err := verifyWorkflowVerifierSnapshot(wf, res.Verifiers, prior); err != nil {
@@ -200,7 +207,20 @@ func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf 
 			return preparedWorkflowRuntime{}, nil, err
 		}
 	}
-	if err := installWorkflowSkillSnapshots(opts.WorkflowSkillSnapshots, runtime.Snapshot); err != nil {
+	// Install the skill pins the dispatcher hydrates and executes at dispatch
+	// time (activateSkill). On a resume the controller snapshot carries the
+	// STORED admission bytes verbatim (priorRaw) for StartNew byte comparison,
+	// but the DISPATCHER must see the pins that verification accepted: when
+	// --accept-skill-change rewrote the in-memory prior, that rewrite is what
+	// the build-time guard verified, so dispatch must hydrate from the same
+	// accepted pins or the resumed step dies at dispatch on a stale pin. A
+	// fresh run has no prior, so runtime.Snapshot already carries the
+	// just-pinned skills and is used as-is.
+	if prior != nil {
+		if err := installWorkflowSkillSnapshotsFromSnapshot(opts.WorkflowSkillSnapshots, prior); err != nil {
+			return preparedWorkflowRuntime{}, nil, err
+		}
+	} else if err := installWorkflowSkillSnapshots(opts.WorkflowSkillSnapshots, runtime.Snapshot); err != nil {
 		return preparedWorkflowRuntime{}, nil, err
 	}
 	needBaseline, err := workflowNeedsGoBaseline(wf, res.Verifiers, prior)

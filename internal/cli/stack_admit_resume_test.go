@@ -200,7 +200,7 @@ func TestDriveIntegrationRunResumesOrphanedRun(t *testing.T) {
 
 	resumeCalled := false
 	origResume := stackChunkResumeFn
-	stackChunkResumeFn = func(runID, root, configPath string, force, allowPub, acceptVerifier bool, stdout, stderr io.Writer) error {
+	stackChunkResumeFn = func(runID, root, configPath string, force, allowPub, acceptVerifier, acceptSkillChange bool, stdout, stderr io.Writer) error {
 		resumeCalled = true
 		return nil
 	}
@@ -255,7 +255,7 @@ func TestDriveIntegrationRunParksOnLiveClaim(t *testing.T) {
 
 	resumeCalled := false
 	origResume := stackChunkResumeFn
-	stackChunkResumeFn = func(runID, root, configPath string, force, allowPub, acceptVerifier bool, stdout, stderr io.Writer) error {
+	stackChunkResumeFn = func(runID, root, configPath string, force, allowPub, acceptVerifier, acceptSkillChange bool, stdout, stderr io.Writer) error {
 		resumeCalled = true
 		return nil
 	}
@@ -317,7 +317,7 @@ func TestDriveIntegrationRunResumedFailureLeavesForCompletion(t *testing.T) {
 	}
 
 	origResume := stackChunkResumeFn
-	stackChunkResumeFn = func(runID, root, configPath string, force, allowPub, acceptVerifier bool, stdout, stderr io.Writer) error {
+	stackChunkResumeFn = func(runID, root, configPath string, force, allowPub, acceptVerifier, acceptSkillChange bool, stdout, stderr io.Writer) error {
 		return nil
 	}
 	defer func() { stackChunkResumeFn = origResume }()

@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -37,7 +37,7 @@ var (
 	workflowResumeJoinBound = 10 * time.Minute
 )
 
-func executeWorkflowResume(runID, root, configPath string, force, allowPublish, acceptVerifierChange bool, stdout, stderr io.Writer) error {
+func executeWorkflowResume(runID, root, configPath string, force, allowPublish, acceptVerifierChange, acceptSkillChange bool, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
@@ -81,12 +81,16 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish, 
 			return err
 		}
 	}
+	remaining, skillsReg, err := prepareWorkflowResumeAdmission(ctx, repo, work.Abs, compiled, runID, acceptSkillChange, &snapshot, stderr)
+	if err != nil {
+		return err
+	}
 	uninstallHooks, err := workflowResumeInstallHooks(work.Abs, false, false)
 	if err != nil {
 		return err
 	}
 	defer uninstallHooks()
-	built, err := workflowResumeBuild(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, runID, &snapshot, priorRaw, &run)
+	built, err := workflowResumeBuild(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, runID, &snapshot, priorRaw, &run, remaining, skillsReg)
 	if err != nil {
 		return err
 	}
@@ -106,6 +110,33 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish, 
 	// ReleaseRun is a no-op when the caller is not the current holder.
 	defer releaseWorkflowResumeHandoff(repo, runID, built.Controller)
 	return runWorkflowResumeAndSettle(ctx, built, repo, runID, work.Abs, res, store, run.WorkflowName, compiled, allowPublish, stdout, stderr)
+}
+
+// prepareWorkflowResumeAdmission loads the skill registry once (R5) so the
+// acceptance rewrite and the build verify against the same bytes, applies
+// --accept-skill-change, and derives the set of steps still to run (R3).
+func prepareWorkflowResumeAdmission(ctx context.Context, repo workflowledger.Repository, root string, compiled *compiler.CompiledWorkflow, runID string, acceptSkillChange bool, snapshot *workflowledger.Snapshot, stderr io.Writer) (map[string]bool, *skills.Registry, error) {
+	registry, err := workflowBuildLoadSkills(root)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load skills: %w", err)
+	}
+	if acceptSkillChange {
+		if err := applyAcceptedSkillChanges(snapshot, compiled, registry, stderr); err != nil {
+			return nil, nil, err
+		}
+	}
+	// Derive the set of steps still to run from the ledger so the skill guard
+	// (R3) does not hold the resume hostage to a drifted skill that only
+	// completed steps used: the PlanResume-derived active step plus every step
+	// reachable from it through declared transitions and on_failure routes.
+	// A step outside that set can never run again. When the active step is
+	// unknown to the graph the result is nil and the guard checks all steps
+	// (safe default).
+	remaining, err := workflowRemainingSteps(ctx, repo, runID, compiled)
+	if err != nil {
+		return nil, nil, err
+	}
+	return remaining, registry, nil
 }
 
 // runWorkflowResumeAndSettle runs the resumed controller and settles the run
@@ -327,104 +358,6 @@ func refuseWorkflowDeliverySettled(runID string, status workflowledger.RunStatus
 		return fmt.Errorf("workflow run %q failed delivery; recover with: mivia workflow deliver %s --allow-publish (re-runs eligibility; add --force after a prior deliverer stopped)", runID, runID)
 	}
 	return nil
-}
-
-func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) (workflowledger.Snapshot, *compiler.CompiledWorkflow, map[string]any, error) {
-	if run.SnapshotDigest == "" || run.SnapshotDigest != workflowledger.SnapshotDigest(raw) {
-		return workflowledger.Snapshot{}, nil, nil, fmt.Errorf("workflow snapshot digest does not match the admitted snapshot")
-	}
-	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
-	if err != nil {
-		return workflowledger.Snapshot{}, nil, nil, err
-	}
-	if err := snapshot.Validate(); err != nil {
-		return workflowledger.Snapshot{}, nil, nil, err
-	}
-	if run.InputDigest == "" || run.InputDigest != workflowledger.InputDigest(snapshot.Inputs) {
-		return workflowledger.Snapshot{}, nil, nil, fmt.Errorf("workflow input digest does not match the admitted inputs")
-	}
-	wf, _, err := definition.ParseWorkflowTOML(snapshot.DefinitionTOML, run.WorkflowName+".toml")
-	if err != nil {
-		return workflowledger.Snapshot{}, nil, nil, err
-	}
-	// Resume is recovery, not admission: the definition was already admitted,
-	// so the unbounded-cycle admission check must not strand an in-flight run.
-	compiled, err := compiler.CompileForResume(&wf)
-	if err != nil {
-		return workflowledger.Snapshot{}, nil, nil, err
-	}
-	// The engine-reserved stacking inputs (D3) were merged into the admitted
-	// contract, so resume accepts them too (a no-op for non-stacking runs).
-	compiler.MergeStackingInputs(compiled)
-	// The two RECORDED digests must agree: the run row and its snapshot must
-	// describe one admission, not two.
-	// They are deliberately NOT compared against compiled.Digest. That digest
-	// is sha256 over the marshalled Go struct, so it moves whenever the
-	// definition types gain a field, even when the workflow text does not
-	// change by one byte. Comparing against it asserts that this binary hashes
-	// the definition the way the admitting binary did, which is a fact about
-	// the binary, not about the definition. Every in-flight run then fails to
-	// resume after an upgrade, and resume is the recovery path an upgrade must
-	// survive.
-	// Dropping the comparison loses no integrity. The definition text is
-	// already proven: run.SnapshotDigest pins the whole snapshot above, the
-	// snapshot carries definition_toml, and resume parses THAT text rather
-	// than any file on disk. The text cannot differ from the admitted text.
-	if snapshot.DefinitionDigest != run.WorkflowDigest {
-		return workflowledger.Snapshot{}, nil, nil, fmt.Errorf("workflow definition digest does not match the admitted definition")
-	}
-	if err := validateWorkflowSnapshotReferences(compiled, snapshot); err != nil {
-		return workflowledger.Snapshot{}, nil, nil, err
-	}
-	if snapshot.Delivery != nil {
-		if compiled.Delivery == nil ||
-			compiled.Delivery.Mode != snapshot.Delivery.Mode ||
-			compiled.Delivery.Provider != snapshot.Delivery.Provider ||
-			compiled.Delivery.Base != snapshot.Delivery.Base {
-			return workflowledger.Snapshot{}, nil, nil, fmt.Errorf("snapshot delivery policy does not match the admitted definition")
-		}
-	}
-	inputs := make(map[string]any, len(snapshot.Inputs))
-	for key, value := range snapshot.Inputs {
-		def, ok := compiled.Inputs[key]
-		if !ok {
-			return workflowledger.Snapshot{}, nil, nil, fmt.Errorf("snapshot contains unknown workflow input %q", key)
-		}
-		parsed, parseErr := parseWorkflowInputValue(value, def.Type)
-		if parseErr != nil {
-			return workflowledger.Snapshot{}, nil, nil, parseErr
-		}
-		inputs[key] = parsed
-	}
-	return snapshot, compiled, inputs, nil
-}
-
-func validateWorkflowSnapshotReferences(wf *compiler.CompiledWorkflow, snapshot workflowledger.Snapshot) error {
-	schemas := make(map[string][]byte, len(snapshot.Schemas))
-	for name, ref := range snapshot.Schemas {
-		if ref.Digest == "" || digestBytes(ref.Bytes) != ref.Digest {
-			return fmt.Errorf("snapshot schema %q digest is invalid", name)
-		}
-		schemas[name] = ref.Bytes
-	}
-	for _, step := range wf.Steps {
-		// Agent-less steps (human_gate, evidence_gate) have no agent
-		// admission to pin; only agent-bearing steps are checked.
-		if step.Agent == "" {
-			continue
-		}
-		agent, ok := snapshot.Agents[step.Agent]
-		if !ok || agent.Digest == "" {
-			return fmt.Errorf("snapshot agent %q admission is incomplete", step.Agent)
-		}
-		if step.Template != "" {
-			ref, ok := snapshot.Templates[step.Template]
-			if !ok || ref.Digest == "" || digestBytes(ref.Bytes) != ref.Digest {
-				return fmt.Errorf("snapshot template %q digest is invalid", step.Template)
-			}
-		}
-	}
-	return sliceErrors("workflow", compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
 }
 
 func reconcileWorkflowTerminal(ctx context.Context, repo workflowledger.Repository, runID string, deliveryActive bool, stdout io.Writer) (bool, error) {

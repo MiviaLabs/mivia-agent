@@ -191,7 +191,7 @@ func (e *sessionWorkflowEngine) buildAndStart(ctx context.Context, prepared *pre
 		prepared.closeFn()
 		return agenttools.StartResult{}, err
 	}
-	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil, nil)
+	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		finishExecution()
 		prepared.closeFn()

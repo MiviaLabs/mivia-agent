@@ -25,7 +25,7 @@ func TestExecuteWorkflowResumeRecoversUnclaimedNonterminalRun(t *testing.T) {
 	root, run := newForcedResumeFixture(t)
 	configPath := filepath.Join(root, "config.toml")
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(run.RunID, root, configPath, false, false, false, &stdout, io.Discard); err != nil {
+	if err := executeWorkflowResume(run.RunID, root, configPath, false, false, false, false, &stdout, io.Discard); err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "status=succeeded") {
@@ -147,7 +147,7 @@ func addForcedResumeReferences(t *testing.T, root string, compiled *compiler.Com
 }
 
 func TestExecuteWorkflowResumeEarlyErrors(t *testing.T) {
-	if err := executeWorkflowResume("wfr-test", filepath.Join(t.TempDir(), "missing"), "", false, false, false, io.Discard, io.Discard); err == nil {
+	if err := executeWorkflowResume("wfr-test", filepath.Join(t.TempDir(), "missing"), "", false, false, false, false, io.Discard, io.Discard); err == nil {
 		t.Fatal("executeWorkflowResume() error = nil for a missing workspace")
 	}
 	root := t.TempDir()
@@ -155,7 +155,7 @@ func TestExecuteWorkflowResumeEarlyErrors(t *testing.T) {
 	if err := os.WriteFile(badConfig, []byte("bad = ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := executeWorkflowResume("wfr-test", root, badConfig, false, false, false, io.Discard, io.Discard); err == nil {
+	if err := executeWorkflowResume("wfr-test", root, badConfig, false, false, false, false, io.Discard, io.Discard); err == nil {
 		t.Fatal("executeWorkflowResume() error = nil for invalid config")
 	}
 }

@@ -55,11 +55,14 @@ type ResourceContent struct {
 }
 
 // ResourceSnapshot is the durable, path-free value of one declared resource.
-// It contains only the model-safe identifier, body, and content digest.
+// It contains only the model-safe identifier, summary, body, and content
+// digest. The summary rides along so a snapshot-hydrated activation renders
+// the same model-facing resource catalogue as a live activation.
 type ResourceSnapshot struct {
-	ID     string
-	Text   string
-	Digest string
+	ID      string
+	Summary string
+	Text    string
+	Digest  string
 }
 
 // SnapshotResources returns durable values for all declared resources. It
@@ -79,9 +82,53 @@ func (d Definition) SnapshotResources(ctx context.Context) ([]ResourceSnapshot, 
 		if err != nil {
 			return nil, err
 		}
-		snapshots = append(snapshots, ResourceSnapshot{ID: content.ID, Text: content.Text, Digest: content.Digest})
+		snapshots = append(snapshots, ResourceSnapshot{ID: content.ID, Summary: resource.Summary, Text: content.Text, Digest: content.Digest})
 	}
 	return snapshots, nil
+}
+
+// ActivateSnapshot returns an activation that serves pinned resource bytes
+// from memory. No filesystem access occurs: the snapshots carry the admitted
+// resource bodies, and each snapshot's inner digest is verified here before
+// the activation is handed out. It fails closed when a declared resource has
+// no snapshot, a snapshot names an undeclared resource, a digest mismatches,
+// or the aggregate body size exceeds the activation byte budget.
+func ActivateSnapshot(d Definition, snapshots []ResourceSnapshot) (*SkillActivation, error) {
+	resources := make(map[string]ResourceDescriptor, len(d.Resources))
+	for _, resource := range d.Resources {
+		resources[resource.ID] = resource
+	}
+	cache := make(map[string]ResourceContent, len(snapshots))
+	used := 0
+	for _, snapshot := range snapshots {
+		if _, ok := resources[snapshot.ID]; !ok {
+			return nil, fmt.Errorf("skill resource snapshot %q is not declared", snapshot.ID)
+		}
+		if len(snapshot.Text) > maxResourceBytes {
+			return nil, fmt.Errorf("skill resource snapshot %q exceeds the byte limit", snapshot.ID)
+		}
+		sum := sha256.Sum256([]byte(snapshot.Text))
+		if hex.EncodeToString(sum[:]) != snapshot.Digest {
+			return nil, fmt.Errorf("skill resource snapshot %q digest is invalid", snapshot.ID)
+		}
+		used += len(snapshot.Text)
+		if used > maxActivationResourceBytes {
+			return nil, fmt.Errorf("skill resource quota exceeded")
+		}
+		cache[snapshot.ID] = ResourceContent{ID: snapshot.ID, Text: snapshot.Text, Size: len(snapshot.Text), Digest: snapshot.Digest}
+	}
+	for id := range resources {
+		if _, ok := cache[id]; !ok {
+			return nil, fmt.Errorf("skill resource snapshot %q is missing", id)
+		}
+	}
+	return &SkillActivation{
+		definition: d,
+		resources:  resources,
+		cache:      cache,
+		used:       used,
+		key:        fmt.Sprintf("skill-resource:%d", nextActivationID.Add(1)),
+	}, nil
 }
 
 // SkillActivation is an opaque, per-invocation capability for one selected

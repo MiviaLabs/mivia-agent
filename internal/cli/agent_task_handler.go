@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -304,6 +305,14 @@ func (h *agentTaskHandler) effectiveWorkLimits(binding agentBinding, req runtime
 // the skill's prompt and (when it declares resources) a registry carrying the
 // scoped resource reader. The returned closer releases the activation and must
 // be deferred by the caller for the lifetime of the run.
+//
+// When the invocation runs under a workflow admission (WorkflowSkillSnapshots
+// is set), the EXECUTED content comes from the pinned admission bytes, never
+// from the live skill source: the definition is hydrated from the pin and its
+// resources are served from the pinned snapshots in memory (R1). The registry
+// definition is still resolved, because admission (is this skill pinned for
+// this run?) and authorization (may this agent invoke it?) are live host-side
+// policy checks; only the executed bytes are pinned.
 func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) (*tools.Registry, string, func(), error) {
 	noop := func() {}
 	if h.opts.SkillReg == nil {
@@ -313,26 +322,33 @@ func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) 
 	if !ok {
 		return nil, "", noop, fmt.Errorf("unknown skill %q", name)
 	}
+	exec := skill
+	var pinnedResources []skills.ResourceSnapshot
+	pinnedRun := false
 	if snapshots := h.opts.WorkflowSkillSnapshots; snapshots != nil {
 		pinned, ok := snapshots[name]
 		if !ok {
 			return nil, "", noop, fmt.Errorf("workflow skill %q is not admitted", name)
 		}
-		current, err := workflowSkillBytes(skill)
+		hydrated, resources, err := hydrateWorkflowSkillSnapshot(name, pinned)
 		if err != nil {
 			return nil, "", noop, err
 		}
-		if pinned.Digest != digestBytes(current) || string(pinned.Bytes) != string(current) {
-			return nil, "", noop, fmt.Errorf("workflow skill %q changed after admission", name)
-		}
+		exec, pinnedResources, pinnedRun = hydrated, resources, true
 	}
 	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
 		return nil, "", noop, err
 	}
-	systemPrompt := skill.Instructions
+	systemPrompt := exec.Instructions
 	closeActivation := noop
-	if len(skill.Resources) > 0 {
-		activation, err := skill.Activate()
+	if len(exec.Resources) > 0 {
+		var activation *skills.SkillActivation
+		var err error
+		if pinnedRun {
+			activation, err = skills.ActivateSnapshot(exec, pinnedResources)
+		} else {
+			activation, err = skill.Activate()
+		}
 		if err != nil {
 			return nil, "", noop, err
 		}
@@ -344,8 +360,8 @@ func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) 
 		}
 		systemPrompt = activation.Prompt(true)
 	}
-	if strings.TrimSpace(skill.Description) != "" {
-		systemPrompt = skill.Description + "\n\n" + systemPrompt
+	if strings.TrimSpace(exec.Description) != "" {
+		systemPrompt = exec.Description + "\n\n" + systemPrompt
 	}
 	return registry, systemPrompt, closeActivation, nil
 }

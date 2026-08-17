@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -229,4 +230,53 @@ func loadResourceTestDefinition(t *testing.T, body []byte) Definition {
 		t.Fatal("resource skill missing")
 	}
 	return definition
+}
+
+func TestActivateSnapshotServesPinnedResourcesFromMemory(t *testing.T) {
+	definition := loadResourceTestDefinition(t, []byte("resource body"))
+	snapshots, err := definition.SnapshotResources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshots[0].Summary != "Template" {
+		t.Fatalf("snapshot summary = %q, want the declared summary to ride the pin", snapshots[0].Summary)
+	}
+	pinned := Definition{
+		Name:         "review",
+		Instructions: "pinned instructions",
+		Resources:    []ResourceDescriptor{{ID: "template", Summary: snapshots[0].Summary}},
+	}
+	activation, err := ActivateSnapshot(pinned, snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := activation.Read(context.Background(), "template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content.Text != "resource body" {
+		t.Fatalf("snapshot read = %q, want the pinned body", content.Text)
+	}
+	prompt := activation.Prompt(true)
+	if !strings.Contains(prompt, "pinned instructions") || !strings.Contains(prompt, "Template") {
+		t.Fatalf("snapshot prompt must render pinned instructions and summaries, got: %q", prompt)
+	}
+	activation.Close()
+	if _, err := activation.Read(context.Background(), "template"); err == nil {
+		t.Fatal("read after close must fail")
+	}
+
+	// Digest mismatch, missing snapshot, and undeclared snapshot all fail closed.
+	tampered := []ResourceSnapshot{{ID: "template", Summary: "Template", Text: "tampered", Digest: snapshots[0].Digest}}
+	if _, err := ActivateSnapshot(pinned, tampered); err == nil {
+		t.Fatal("a digest-mismatched snapshot was accepted")
+	}
+	if _, err := ActivateSnapshot(pinned, nil); err == nil {
+		t.Fatal("a missing snapshot was accepted")
+	}
+	extra := append([]ResourceSnapshot{}, snapshots...)
+	extra = append(extra, ResourceSnapshot{ID: "other", Text: "x"})
+	if _, err := ActivateSnapshot(pinned, extra); err == nil {
+		t.Fatal("an undeclared snapshot was accepted")
+	}
 }

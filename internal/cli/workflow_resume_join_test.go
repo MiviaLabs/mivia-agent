@@ -15,6 +15,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -78,7 +79,7 @@ func TestExecuteWorkflowResumeJoinsInFlightAttempt(t *testing.T) {
 	ctx := context.Background()
 	configPath := filepath.Join(root, "config.toml")
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, &stdout, io.Discard); err != nil {
+	if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, &stdout, io.Discard); err != nil {
 		t.Fatalf("executeWorkflowResume(force) error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "status=succeeded") {
@@ -193,7 +194,7 @@ func newJoinResumeRun(t *testing.T, runner controller.AgentStepRunner, deadline 
 	workflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 		return nil, repo, func() {}, nil
 	}
-	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 		return workflowControllerBuild{
 			Controller: ctrl,
 			Dispatcher: workflowTestDispatcher{},
@@ -265,12 +266,12 @@ func TestExecuteWorkflowResumeRefusesNilControllerWithInFlightAttempts(t *testin
 	workflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 		return nil, repo, func() {}, nil
 	}
-	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 		return workflowControllerBuild{Dispatcher: workflowTestDispatcher{}}, nil
 	}
 	workflowResumeSetAdmission = func(workflowControllerBuild) error { return nil }
 	workflowResumeSetForce = func(workflowControllerBuild) error { return nil }
-	err = executeWorkflowResume(run.RunID, root, filepath.Join(root, "config.toml"), true, false, false, io.Discard, io.Discard)
+	err = executeWorkflowResume(run.RunID, root, filepath.Join(root, "config.toml"), true, false, false, false, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "cannot join") {
 		t.Fatalf("executeWorkflowResume() error = %v, want nil-controller join refusal", err)
 	}
@@ -307,7 +308,7 @@ func resumeJoinMustReturn(t *testing.T, runID, root string, stdout io.Writer) er
 	}
 	done := make(chan resumeResult, 1)
 	go func() {
-		err := executeWorkflowResume(runID, root, filepath.Join(root, "config.toml"), true, false, false, stdout, io.Discard)
+		err := executeWorkflowResume(runID, root, filepath.Join(root, "config.toml"), true, false, false, false, stdout, io.Discard)
 		done <- resumeResult{err: err}
 	}()
 	select {

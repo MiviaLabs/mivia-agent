@@ -40,7 +40,7 @@ func loadWorkflowResumeState(ctx context.Context, repo workflowledger.Repository
 func validateWorkflowMCPConfigDigest(snapshot workflowledger.Snapshot, current config.MCPConfig) error {
 	if snapshot.MCPConfigDigest == "" {
 		if current.Enabled && len(current.Servers) > 0 {
-			return fmt.Errorf("workflow snapshot does not pin the enabled MCP configuration")
+			return fmt.Errorf("workflow snapshot does not pin the enabled MCP configuration; recover with: restore the admitted MCP configuration or start a fresh run")
 		}
 		return nil
 	}
@@ -49,7 +49,7 @@ func validateWorkflowMCPConfigDigest(snapshot workflowledger.Snapshot, current c
 		return err
 	}
 	if digest != snapshot.MCPConfigDigest {
-		return fmt.Errorf("MCP configuration changed since workflow admission")
+		return fmt.Errorf("MCP configuration changed since workflow admission; recover with: restore the admitted MCP configuration or start a fresh run")
 	}
 	return nil
 }

@@ -333,7 +333,7 @@ func admitStackChunkRun(prepared *preparedWorkflowRun, stackID, chunkID string, 
 		return workflowledger.RunSnapshot{}, err
 	}
 	defer finishExecution()
-	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, inputs, inputSnapshot, prepared.raw, runID, nil, nil, nil)
+	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, inputs, inputSnapshot, prepared.raw, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		return workflowledger.RunSnapshot{}, err
 	}
@@ -395,7 +395,7 @@ func admitDecomposeContinuationRun(prepared *preparedWorkflowRun, stackID string
 		return nil, false, "", err
 	}
 	defer finishExecution()
-	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, inputs, snapshot, prepared.raw, runID, nil, nil, nil)
+	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, inputs, snapshot, prepared.raw, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		return nil, false, "", err
 	}

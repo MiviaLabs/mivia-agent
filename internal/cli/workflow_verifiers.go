@@ -196,7 +196,7 @@ func verifyWorkflowVerifierSnapshot(wf *compiler.CompiledWorkflow, profiles map[
 			return err
 		}
 		if pinned.Digest != digestBytes(bytes) || string(pinned.Bytes) != string(bytes) {
-			return fmt.Errorf("workflow verifier %q changed since admission", name)
+			return fmt.Errorf("workflow verifier %q changed since admission; recover with: --accept-verifier-change, restore its [verifiers.%s] table, or start a fresh run", name, name)
 		}
 	}
 	return nil

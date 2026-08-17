@@ -80,7 +80,7 @@ timeout_seconds = 10
 	// The server definition comes from the shared test helper.
 	res.MCP = serverConfig().MCP
 
-	setup, err := prepareWorkflowBuild(root, res, wf, "wfrun-p1-4", nil, "")
+	setup, err := prepareWorkflowBuild(root, res, wf, "wfrun-p1-4", nil, "", nil)
 	if err != nil {
 		t.Fatalf("prepareWorkflowBuild() error = %v", err)
 	}

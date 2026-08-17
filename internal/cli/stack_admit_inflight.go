@@ -28,7 +28,7 @@ import (
 // dependency analysis only traces variable INITIALIZER expressions, so a
 // nil-initialized var assigned inside init() carries no such dependency.
 // Production always resolves to executeWorkflowResume; tests may override it.
-var stackChunkResumeFn func(runID, root, configPath string, force, allowPublish, acceptVerifierChange bool, stdout, stderr io.Writer) error
+var stackChunkResumeFn func(runID, root, configPath string, force, allowPublish, acceptVerifierChange, acceptSkillChange bool, stdout, stderr io.Writer) error
 
 func init() {
 	stackChunkResumeFn = executeWorkflowResume
@@ -55,7 +55,7 @@ func driveChunkInFlight(ctx context.Context, prepared *preparedWorkflowRun, ledg
 		fmt.Fprintf(stdout, "chunk=%s run=%s already in flight (%s), held by %s, refreshed %s ago; re-run drive after it settles\n", chunkID, run.RunID, run.Status, holder, time.Since(acquiredAt).Round(time.Second))
 		return true, nil
 	}
-	if err := stackChunkResumeFn(run.RunID, prepared.root, prepared.res.ConfigPath, false, allowPublish, false, stdout, stderr); err != nil {
+	if err := stackChunkResumeFn(run.RunID, prepared.root, prepared.res.ConfigPath, false, allowPublish, false, false, stdout, stderr); err != nil {
 		// Most commonly a genuine race: another executor claimed the run
 		// between the probe above and this call. Fall back to the honest
 		// park message rather than halting the stack over it.
@@ -116,7 +116,7 @@ func driveIntegrationInFlight(ctx context.Context, prepared *preparedWorkflowRun
 		fmt.Fprintf(stdout, "integration run=%s already in flight (%s), held by %s, refreshed %s ago; re-run drive after it settles\n", run.RunID, run.Status, holder, time.Since(acquiredAt).Round(time.Second))
 		return nil
 	}
-	if err := stackChunkResumeFn(run.RunID, prepared.root, prepared.res.ConfigPath, false, allowPublish, false, stdout, stderr); err != nil {
+	if err := stackChunkResumeFn(run.RunID, prepared.root, prepared.res.ConfigPath, false, allowPublish, false, false, stdout, stderr); err != nil {
 		fmt.Fprintf(stdout, "integration run=%s already in flight (%s); auto-resume failed (%v); re-run drive after it settles\n", run.RunID, run.Status, err)
 		return nil
 	}

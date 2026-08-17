@@ -44,54 +44,22 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttool
 	if strings.TrimSpace(req.RunID) == "" {
 		return resumePrepared{}, fmt.Errorf("resume requires run_id")
 	}
-	root := e.root
-	if strings.TrimSpace(root) == "" {
-		root = "."
-	}
-	work, err := workspace.Open(root)
+	res, store, repo, run, snapshot, priorRaw, compiled, inputs, closeFn, err := e.openResumeTarget(ctx, req)
 	if err != nil {
 		return resumePrepared{}, err
 	}
-	configPath := workflowConfigPath(work.Abs, e.configPath)
-	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
-	if err != nil {
-		return resumePrepared{}, err
-	}
-	applyPrivacyPolicy(res)
-	applyWorkflowStoreRoot(res, work.Abs)
-	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
-	if err != nil {
-		return resumePrepared{}, err
-	}
-	run, err := repo.GetRun(ctx, req.RunID)
+	finishExecution, err := beginWorkflowExecution(workForResume(e, req), contextStorePath(workForResume(e, req), res.Subagents), req.RunID)
 	if err != nil {
 		closeFn()
 		return resumePrepared{}, err
 	}
-	if err := refuseNonResumable(run); err != nil {
-		closeFn()
-		return resumePrepared{}, err
-	}
-	raw, err := repo.GetRunSnapshot(ctx, req.RunID)
+	remaining, err := workflowRemainingSteps(ctx, repo, req.RunID, compiled)
 	if err != nil {
+		finishExecution()
 		closeFn()
 		return resumePrepared{}, err
 	}
-	snapshot, compiled, inputs, err := validateWorkflowResumeSnapshot(run, raw)
-	if err != nil {
-		closeFn()
-		return resumePrepared{}, err
-	}
-	if err := validateWorkflowMCPConfigDigest(snapshot, res.MCP); err != nil {
-		closeFn()
-		return resumePrepared{}, err
-	}
-	finishExecution, err := beginWorkflowExecution(work.Abs, contextStorePath(work.Abs, res.Subagents), req.RunID)
-	if err != nil {
-		closeFn()
-		return resumePrepared{}, err
-	}
-	built, err := workflowResumeBuild(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, req.RunID, &snapshot, raw, &run)
+	built, err := workflowResumeBuild(workForResume(e, req), res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, req.RunID, &snapshot, priorRaw, &run, remaining, nil)
 	if err != nil {
 		finishExecution()
 		closeFn()
@@ -116,7 +84,62 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req agenttool
 		closeFn()
 		return resumePrepared{}, err
 	}
-	return resumePrepared{runID: req.RunID, workflow: run.WorkflowName, root: work.Abs, built: built, closeFn: closeFn, finishExec: finishExecution, repo: repo, store: store, res: res, compiled: compiled, inputs: inputs, inputSnapshot: snapshot.Inputs, raw: snapshot.DefinitionTOML}, nil
+	return resumePrepared{runID: req.RunID, workflow: run.WorkflowName, root: workForResume(e, req), built: built, closeFn: closeFn, finishExec: finishExecution, repo: repo, store: store, res: res, compiled: compiled, inputs: inputs, inputSnapshot: snapshot.Inputs, raw: snapshot.DefinitionTOML}, nil
+}
+
+// workForResume resolves the engine's workspace root for a resume.
+func workForResume(e *sessionWorkflowEngine, req agenttools.StartRequest) string {
+	root := e.root
+	if strings.TrimSpace(root) == "" {
+		return "."
+	}
+	return root
+}
+
+// openResumeTarget opens the workspace and store for a resume and validates the
+// admitted snapshot, returning the resolved config, store, repo, run row,
+// snapshot, its raw admission bytes, the compiled workflow and inputs, and the
+// store close function.
+func (e *sessionWorkflowEngine) openResumeTarget(ctx context.Context, req agenttools.StartRequest) (*config.Resolved, *storage.SQLite, workflowledger.Repository, workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *compiler.CompiledWorkflow, map[string]any, func(), error) {
+	root := workForResume(e, req)
+	work, err := workspace.Open(root)
+	if err != nil {
+		return nil, nil, nil, workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, nil, nil, err
+	}
+	configPath := workflowConfigPath(work.Abs, e.configPath)
+	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
+	if err != nil {
+		return nil, nil, nil, workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, nil, nil, err
+	}
+	applyPrivacyPolicy(res)
+	applyWorkflowStoreRoot(res, work.Abs)
+	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
+	if err != nil {
+		return nil, nil, nil, workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, nil, nil, err
+	}
+	fail := func(err error) (*config.Resolved, *storage.SQLite, workflowledger.Repository, workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *compiler.CompiledWorkflow, map[string]any, func(), error) {
+		closeFn()
+		return nil, nil, nil, workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, nil, nil, err
+	}
+	run, err := repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return fail(err)
+	}
+	if err := refuseNonResumable(run); err != nil {
+		return fail(err)
+	}
+	raw, err := repo.GetRunSnapshot(ctx, req.RunID)
+	if err != nil {
+		return fail(err)
+	}
+	snapshot, compiled, inputs, err := validateWorkflowResumeSnapshot(run, raw)
+	if err != nil {
+		return fail(err)
+	}
+	if err := validateWorkflowMCPConfigDigest(snapshot, res.MCP); err != nil {
+		return fail(err)
+	}
+	return res, store, repo, run, snapshot, raw, compiled, inputs, closeFn, nil
 }
 
 func refuseNonResumable(run workflowledger.RunSnapshot) error {

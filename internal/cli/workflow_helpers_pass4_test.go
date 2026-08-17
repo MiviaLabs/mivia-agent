@@ -67,7 +67,7 @@ func TestExecuteWorkflowResumeInjectedFailures(t *testing.T) {
 			return nil, selected, func() {}, nil
 		}
 		workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
-		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 			return workflowControllerBuild{
 				Controller: &controller.LinearController{Holder: "resume-test"},
 				Dispatcher: workflowTestDispatcher{},
@@ -90,14 +90,14 @@ func runResumeReadFailureTests(t *testing.T, root, configPath string, repo workf
 		workflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 			return nil, nil, func() {}, sentinel
 		}
-		err := executeWorkflowResume(run.RunID, "", configPath, true, false, false, io.Discard, io.Discard)
+		err := executeWorkflowResume(run.RunID, "", configPath, true, false, false, false, io.Discard, io.Discard)
 		if !errors.Is(err, sentinel) {
 			t.Fatalf("store error = %v", err)
 		}
 	})
 	t.Run("snapshot read", func(t *testing.T) {
 		reset(workflowSnapshotFailureRepository{Repository: repo, err: sentinel})
-		err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard)
+		err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard)
 		if !errors.Is(err, sentinel) {
 			t.Fatalf("snapshot error = %v", err)
 		}
@@ -106,7 +106,7 @@ func runResumeReadFailureTests(t *testing.T, root, configPath string, repo workf
 		bad := run
 		bad.SnapshotDigest = "bad"
 		reset(workflowRunFailureRepository{Repository: repo, run: bad})
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); err == nil {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard); err == nil {
 			t.Fatal("executeWorkflowResume() accepted a bad snapshot digest")
 		}
 	})
@@ -117,37 +117,37 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 	t.Run("hooks", func(t *testing.T) {
 		reset(repo)
 		workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return nil, sentinel }
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
 			t.Fatalf("hook error = %v", err)
 		}
 	})
 	t.Run("build", func(t *testing.T) {
 		reset(repo)
-		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 			return workflowControllerBuild{}, sentinel
 		}
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
 			t.Fatalf("build error = %v", err)
 		}
 	})
 	t.Run("admission", func(t *testing.T) {
 		reset(repo)
 		workflowResumeSetAdmission = func(workflowControllerBuild) error { return sentinel }
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
 			t.Fatalf("admission error = %v", err)
 		}
 	})
 	t.Run("force", func(t *testing.T) {
 		reset(repo)
 		workflowResumeSetForce = func(workflowControllerBuild) error { return sentinel }
-		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
+		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
 			t.Fatalf("force error = %v", err)
 		}
 	})
 	t.Run("claim", func(t *testing.T) {
 		failing := &workflowFailureRepository{Repository: repo, takeoverErr: sentinel}
 		reset(failing)
-		err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard)
+		err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard)
 		if !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "claim workflow resume handoff") {
 			t.Fatalf("claim error = %v", err)
 		}
@@ -157,7 +157,7 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 		workflowResumeRun = func(context.Context, workflowControllerBuild) (workflowledger.RunSnapshot, error) {
 			return workflowledger.RunSnapshot{}, sentinel
 		}
-		err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, io.Discard, io.Discard)
+		err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard)
 		if !errors.Is(err, sentinel) {
 			t.Fatalf("run error = %v", err)
 		}
@@ -393,7 +393,7 @@ func TestExecuteWorkflowRunCleansFailedAdmission(t *testing.T) {
 	originalBuild := workflowRunBuild
 	originalAdmission := workflowRunSetAdmission
 	cleaned := false
-	workflowRunBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+	workflowRunBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 		return workflowControllerBuild{Dispatcher: workflowTestDispatcher{}, Cleanup: func() { cleaned = true }}, nil
 	}
 	workflowRunSetAdmission = func(workflowControllerBuild) error { return sentinel }
@@ -428,7 +428,7 @@ func TestBuildWorkflowControllerDependencyFailures(t *testing.T) {
 	}
 	t.Cleanup(reset)
 	call := func() error {
-		_, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-build-failure", nil, nil, nil)
+		_, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-build-failure", nil, nil, nil, nil, nil)
 		return err
 	}
 	runEarlyWorkflowBuildFailureTests(t, sentinel, reset, call)
@@ -459,7 +459,7 @@ max_turns = 1
 		definition.Step{ID: "review", Kind: "agent_gate", Agent: "two", Template: "templates/two.md", OutputSchema: "schemas/out.json"},
 		definition.Step{ID: "verify", Kind: "evidence_gate", Verifier: "go-test", OutputSchema: "schemas/out.json"},
 	)
-	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-evidence-wiring", nil, nil, nil)
+	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-evidence-wiring", nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildWorkflowController() error = %v", err)
 	}

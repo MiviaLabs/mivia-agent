@@ -67,7 +67,7 @@ func TestExecuteWorkflowResumeReturnsMissingRun(t *testing.T) {
 	storePath := filepath.Join(root, "workflow.db")
 	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
 	writeWorkflowRunFixture(t, root, "http://127.0.0.1:1", storePath)
-	err := executeWorkflowResume("wfr-missing", root, filepath.Join(root, "config.toml"), false, false, false, io.Discard, io.Discard)
+	err := executeWorkflowResume("wfr-missing", root, filepath.Join(root, "config.toml"), false, false, false, false, io.Discard, io.Discard)
 	if !errors.Is(err, workflowledger.ErrNotFound) {
 		t.Fatalf("executeWorkflowResume() error = %v, want not found", err)
 	}

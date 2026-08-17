@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -437,7 +438,7 @@ func (it *stackDriveIT) installDriveSeams() {
 // runtimes the production build path would, in the run's per-run worktree
 // (the isolation selectWorkflowWorkspace provides), so the controller sees a
 // faithful build result without invoking real tool runs.
-func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, compiled *compiler.CompiledWorkflow, _ string, _ map[string]any, inputSnapshot map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, compiled *compiler.CompiledWorkflow, _ string, _ map[string]any, inputSnapshot map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
 	identity, cleanup, err := selectWorkflowWorkspace(context.Background(), buildRoot, id, true, nil)
 	if err != nil {
 		return workflowControllerBuild{}, err
@@ -496,7 +497,7 @@ func (it *stackDriveIT) startPlanRun(bound time.Duration) string {
 		t.Fatal(err)
 	}
 	runID := newCLIWorkflowRunID()
-	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil, nil)
+	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

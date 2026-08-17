@@ -75,7 +75,7 @@ func workflowAgent(stepID, agentName string, registry *agents.AgentRegistry, pri
 	if prior != nil {
 		pinned, ok := prior.Agents[agent.Name]
 		if !ok || pinned.Digest != digest {
-			return agents.ResolvedAgent{}, "", fmt.Errorf("agent %q changed since workflow admission", agent.Name)
+			return agents.ResolvedAgent{}, "", fmt.Errorf("agent %q changed since workflow admission; recover with: restore the agent definition to its admitted content or start a fresh run", agent.Name)
 		}
 	}
 	snapshot.Agents[agent.Name] = workflowledger.AgentSnapshot{Digest: digest}
@@ -118,7 +118,7 @@ func loadPanelMemberBindings(base string, step definition.Step, registry *agents
 			pinned, ok := prior.PanelBindings[key]
 			pinned.SkillDigest = ""
 			if !ok || pinned != binding {
-				return fmt.Errorf("panel binding %q changed since workflow admission", key)
+				return fmt.Errorf("panel binding %q changed since workflow admission; recover with: restore the agent and reference content to its admitted state or start a fresh run", key)
 			}
 		}
 		snapshot.PanelBindings[key] = binding

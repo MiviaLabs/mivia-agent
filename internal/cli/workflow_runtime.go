@@ -121,7 +121,7 @@ func authorizeWorkflowPanelBindings(wf *compiler.CompiledWorkflow, registry *age
 				return fmt.Errorf("panel binding %q: %w", key, err)
 			}
 			if resume && (binding.ProviderName != member.Provider || binding.Model != member.Model) {
-				return fmt.Errorf("panel binding %q changed since workflow admission", key)
+				return fmt.Errorf("panel binding %q changed since workflow admission; recover with: restore the panel member provider/model to its admitted pair or start a fresh run", key)
 			}
 		}
 		synthesizer, ok := registry.Get(step.Agent)
@@ -194,7 +194,7 @@ func resolveWorkflowPanelSynthesisBindings(wf *compiler.CompiledWorkflow, regist
 			pinned := prior.PanelBindings[key]
 			pinned.SkillDigest = ""
 			if pinned != next {
-				return fmt.Errorf("panel synthesis binding %q changed since workflow admission", key)
+				return fmt.Errorf("panel synthesis binding %q changed since workflow admission; recover with: restore the agent and reference content to its admitted state or start a fresh run", key)
 			}
 		}
 		snapshot.PanelBindings[key] = next

@@ -224,7 +224,7 @@ func TestAdmissionPinsEffectivePRBase(t *testing.T) {
 	workflowDeliveryProbe = func(string) error { return nil }
 	workflowDeliverGit = captured
 
-	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "x"}, map[string]string{"task": "x", delivery.InputPRBase: "main"}, []byte("definition"), "wfr-f6-prbase", nil, nil, nil)
+	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "x"}, map[string]string{"task": "x", delivery.InputPRBase: "main"}, []byte("definition"), "wfr-f6-prbase", nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestAdmissionPinsDeclaredBaseWithoutPRBase(t *testing.T) {
 	workflowDeliveryProbe = func(string) error { return nil }
 	workflowDeliverGit = captured
 
-	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "x"}, map[string]string{"task": "x"}, []byte("definition"), "wfr-f6-declared", nil, nil, nil)
+	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "x"}, map[string]string{"task": "x"}, []byte("definition"), "wfr-f6-declared", nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestAdmissionFallsBackOnInvalidPRBase(t *testing.T) {
 	workflowDeliveryProbe = func(string) error { return nil }
 	workflowDeliverGit = captured
 
-	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "x"}, map[string]string{"task": "x", delivery.InputPRBase: "inva lid!!"}, []byte("definition"), "wfr-f6-fallback", nil, nil, nil)
+	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "x"}, map[string]string{"task": "x", delivery.InputPRBase: "inva lid!!"}, []byte("definition"), "wfr-f6-fallback", nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

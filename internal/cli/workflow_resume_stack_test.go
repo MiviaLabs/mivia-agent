@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -138,7 +139,7 @@ func wireExecuteResumeStackStubs(t *testing.T, storePath string, repo workflowle
 		return store, repo, func() { _ = store.Close() }, nil
 	}
 	workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
-	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot) (workflowControllerBuild, error) {
+	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 		return workflowControllerBuild{Dispatcher: workflowTestDispatcher{}}, nil
 	}
 	workflowResumeSetAdmission = func(workflowControllerBuild) error { return nil }
@@ -203,7 +204,7 @@ func TestExecuteWorkflowResumeDrivesSettledStackBeforeDeliverySkippedPlanRun(t *
 	wireExecuteResumeStackStubs(t, storePath, repo, runID, settleResumeStackFixtureToDeliveryPending(t, repo, runID))
 
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(runID, root, configPath, false, true, false, &stdout, io.Discard); err != nil {
+	if err := executeWorkflowResume(runID, root, configPath, false, true, false, false, &stdout, io.Discard); err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v; stdout = %q", err, stdout.String())
 	}
 	if !drive.inner.called || drive.inner.stackID != runID || len(drive.inner.chunks) != 2 {
@@ -266,7 +267,7 @@ func TestExecuteWorkflowResumeCrashRecoveryDrivesStackBeforeDeliverySkippedPlanR
 	})
 
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(runID, root, configPath, false, true, false, &stdout, io.Discard); err != nil {
+	if err := executeWorkflowResume(runID, root, configPath, false, true, false, false, &stdout, io.Discard); err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v; stdout = %q", err, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "status=delivery_pending") {
@@ -319,7 +320,7 @@ func TestExecuteWorkflowResumeDrivesSettledStackBeforeDeliveryPublishesPlanRun(t
 	wireExecuteResumeStackStubs(t, storePath, repo, runID, settleResumeStackFixtureToDeliveryPending(t, repo, runID))
 
 	var stdout bytes.Buffer
-	if err := executeWorkflowResume(runID, root, configPath, false, true, false, &stdout, io.Discard); err != nil {
+	if err := executeWorkflowResume(runID, root, configPath, false, true, false, false, &stdout, io.Discard); err != nil {
 		t.Fatalf("executeWorkflowResume() error = %v; stdout = %q", err, stdout.String())
 	}
 	if !drive.inner.called || drive.inner.stackID != runID || len(drive.inner.chunks) != 2 {
