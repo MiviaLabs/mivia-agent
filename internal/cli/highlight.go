@@ -157,24 +157,9 @@ func highlightTokens(line string, def langDef) string {
 		}
 
 		// Try to match a keyword/builtin/type at this position.
-		word := matchWord(line, i)
-		if word != "" {
-			lower := strings.ToLower(word)
-			if contains(def.keywords, lower) {
-				out.WriteString(ansiCyan + word + ansiReset)
-				i += len(word)
-				continue
-			}
-			if contains(def.types, lower) {
-				out.WriteString(ansiBlue + word + ansiReset)
-				i += len(word)
-				continue
-			}
-			if contains(def.builtins, lower) {
-				out.WriteString(ansiYellow + word + ansiReset)
-				i += len(word)
-				continue
-			}
+		if n := matchKeywordToken(line, i, def, &out); n > 0 {
+			i += n
+			continue
 		}
 
 		// Number literal.
@@ -195,6 +180,35 @@ func highlightTokens(line string, def langDef) string {
 	return out.String()
 }
 
+// matchKeywordToken writes the span for a known keyword/type/builtin starting
+// at i and returns the bytes consumed, or 0 when i is not the start of such a
+// word. Plain non-digit words are emitted whole so the token loop never
+// rescans a long identifier run at every byte position (O(n²) on a 1 MiB
+// single word); digit-containing words keep the per-byte path so embedded
+// numbers are still colored magenta.
+func matchKeywordToken(line string, i int, def langDef, out *strings.Builder) int {
+	word := matchWord(line, i)
+	if word == "" {
+		return 0
+	}
+	lower := strings.ToLower(word)
+	switch {
+	case contains(def.keywords, lower):
+		out.WriteString(ansiCyan + word + ansiReset)
+		return len(word)
+	case contains(def.types, lower):
+		out.WriteString(ansiBlue + word + ansiReset)
+		return len(word)
+	case contains(def.builtins, lower):
+		out.WriteString(ansiYellow + word + ansiReset)
+		return len(word)
+	case !containsDigit(word):
+		out.WriteString(word)
+		return len(word)
+	}
+	return 0
+}
+
 func extraPatternMatch(line string, i int, rules []patternRule, regions []strRegion, out *strings.Builder) (bool, int) {
 	for _, rule := range rules {
 		loc := rule.re.FindStringIndex(line[i:])
@@ -202,6 +216,14 @@ func extraPatternMatch(line string, i int, rules []patternRule, regions []strReg
 			continue
 		}
 		start, end := i+loc[0], i+loc[1]
+		if end <= start {
+			// Zero-width match (e.g. yaml's `^\s*-?\s*` on a line with no
+			// leading whitespace). Accepting it would return the scan position
+			// unchanged, so highlightTokens would loop forever, growing the
+			// output buffer unboundedly. Skipping it lets the keyword/number/
+			// emit-byte fallback advance the scan.
+			continue
+		}
 		if regionsOverlap(regions, start, end) {
 			continue
 		}
@@ -284,6 +306,18 @@ func isIdentCont(c byte) bool {
 
 func isDigit(c byte) bool {
 	return c >= '0' && c <= '9'
+}
+
+// containsDigit reports whether s contains an ASCII digit. It guards the
+// whole-word fast path in highlightTokens: words with digits keep the per-byte
+// fallback so embedded numbers are still colored magenta.
+func containsDigit(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if isDigit(s[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 func isHexDigit(c byte) bool {

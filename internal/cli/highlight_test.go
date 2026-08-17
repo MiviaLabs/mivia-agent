@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestHighlightGo checks Go keyword and type highlighting.
@@ -302,6 +303,26 @@ func TestHighlightGoNumber(t *testing.T) {
 	}
 }
 
+// TestHighlightNumberInWordPreserved pins that digits embedded inside an
+// identifier keep the per-byte number rendering (magenta span). The whole-word
+// fast path in highlightTokens must not swallow embedded numbers, so a
+// digit-containing identifier deliberately takes the slow per-byte path.
+// The input's trailing "\n" renders a trailing empty code line ("\n  ") per
+// highlightCodeBlock's line-per-newline contract, which is also pinned by
+// TestThemeByteStabilityHighlight and TestYAMLHighlightContentPreserved.
+func TestHighlightNumberInWordPreserved(t *testing.T) {
+	code := "x42y\n"
+	got := highlightCodeBlock("go", code)
+	t.Logf("Number in word:\n%s", got)
+
+	if plain := stripANSI(got); plain != "  x42y\n  " {
+		t.Fatalf("stripANSI(highlightCodeBlock(%q)) = %q, want %q", code, plain, "  x42y\n  ")
+	}
+	if !strings.Contains(got, ansiMagenta) {
+		t.Fatalf("expected magenta for embedded number 42, got %q", got)
+	}
+}
+
 // TestHighlightMultiLineComment checks opening and closing of /* */.
 func TestHighlightMultiLineComment(t *testing.T) {
 	code := "/* multi\nline\ncomment */\nvar x int\n"
@@ -377,5 +398,202 @@ func TestHighlightInlineCodeNotHighlighted(t *testing.T) {
 		// Actually inline code uses `ansiYellow` which might be in the output.
 		// It should NOT have the full code block background.
 		t.Log("inline code should not have dark background (format differs)")
+	}
+}
+
+// runWithinTimeout runs fn in a goroutine and fails the test if it does not
+// complete within d. This keeps the CI suite from hanging even when a
+// non-termination regression of the yaml highlighter is present.
+func runWithinTimeout(t *testing.T, d time.Duration, name string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+		t.Fatalf("%s did not terminate within %s: non-terminating highlight loop", name, d)
+	}
+}
+
+// TestExtraPatternMatchSkipsZeroWidthMatch is the RED regression test for the
+// zero-width-match acceptance in extraPatternMatch. The yaml rule `^\s*-?\s*`
+// matches the empty string at every position, so pre-fix extraPatternMatch
+// returned (true, i) for a line with no leading whitespace, writing an empty
+// ANSI span and returning the scan position unchanged; highlightTokens then
+// looped forever, growing its output buffer unboundedly. The corrected
+// contract: a zero-width rule match is skipped, so a line with no real rule
+// match yields (false, 0) and an empty output.
+func TestExtraPatternMatchSkipsZeroWidthMatch(t *testing.T) {
+	def := langDefs["yaml"]
+	var out strings.Builder
+	matched, next := extraPatternMatch("value", 0, def.extraPattern, nil, &out)
+	if matched {
+		t.Fatalf("extraPatternMatch(%q, 0, yaml rules) = (true, %d, %q): zero-width rule match must be skipped", "value", next, out.String())
+	}
+	if next != 0 {
+		t.Fatalf("next = %d, want 0", next)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("out = %q, want empty", out.String())
+	}
+}
+
+// TestExtraPatternMatchAdvancesOnMatch pins the progress invariant of
+// extraPatternMatch: whenever it reports a match, the next scan position must
+// be strictly greater than the current one. Pre-fix the yaml rule 1 matched
+// the empty string at i=0 and returned (true, 0), violating the invariant and
+// hanging highlightTokens.
+func TestExtraPatternMatchAdvancesOnMatch(t *testing.T) {
+	def := langDefs["yaml"]
+	for _, line := range []string{"name: value", "- item", "  key: v"} {
+		for i := 0; i <= len(line); i++ {
+			var out strings.Builder
+			matched, next := extraPatternMatch(line, i, def.extraPattern, nil, &out)
+			if matched && next <= i {
+				t.Fatalf("extraPatternMatch(%q, %d) matched but did not advance: next=%d (out=%q)", line, i, next, out.String())
+			}
+		}
+	}
+}
+
+// TestYAMLHighlightTerminates runs one line at a time through the reachable
+// highlightCodeBlock path. Every case must terminate (goroutine + timeout; the
+// pre-fix code hung on every yaml line) and, for ESC-free input, preserve
+// content exactly: stripANSI(result) == "  " + line.
+func TestYAMLHighlightTerminates(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"key", "name: value", "  name: value"},
+		{"list marker", "- item", "  - item"},
+		{"indented key", "  indented: x", "    indented: x"},
+		{"single-quoted", "'quoted'", "  'quoted'"},
+		{"double-quoted", "\"quoted\"", "  \"quoted\""},
+		{"two identical strings", "'x' 'x'", "  'x' 'x'"},
+		{"dangling key", "name:", "  name:"},
+		{"dangling list marker", "- ", "  - "},
+		{"lone quote", "'unclosed", "  'unclosed"},
+		{"comment", "# comment", "  # comment"},
+		{"whitespace only", "   ", "     "},
+		{"tab", "\tkey: v", "  \tkey: v"},
+		{"unicode", "ключ: значение", "  ключ: значение"},
+		{"pipes", "a|b|c", "  a|b|c"},
+		{"digits and spaces", "1 1 1 1", "  1 1 1 1"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			runWithinTimeout(t, 2*time.Second, "highlightCodeBlock(yaml)", func() {
+				got = highlightCodeBlock("yaml", tc.line)
+			})
+			if plain := stripANSI(got); plain != tc.want {
+				t.Fatalf("stripANSI(highlightCodeBlock(%q)) = %q, want %q (raw %q)", tc.line, plain, tc.want, got)
+			}
+		})
+	}
+
+	// A raw ESC byte in model-supplied content must not hang the highlighter.
+	// stripANSI cannot give an exact value here (a raw ESC merges with the
+	// following ANSI span), so we assert termination and non-empty output only.
+	var got string
+	runWithinTimeout(t, 2*time.Second, "highlightCodeBlock(yaml) ESC", func() {
+		got = highlightCodeBlock("yaml", "\x1b[31m")
+	})
+	if len(got) == 0 {
+		t.Fatal("ESC line produced empty output")
+	}
+}
+
+// TestYAMLHighlightOversizedTerminates bounds the highlighter's output growth
+// on oversized input. Pre-fix the yaml zero-width match grew the ANSI buffer
+// without bound; post-fix output is linear in the input size.
+func TestYAMLHighlightOversizedTerminates(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"1MiB single line", strings.Repeat("a", 1024*1024)},
+		{"1000-line block", strings.Repeat("name: value\n", 1000)},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			runWithinTimeout(t, 2*time.Second, "highlightCodeBlock oversized", func() {
+				got = highlightCodeBlock("yaml", tc.content)
+			})
+			if len(got) > 8*len(tc.content)+4096 {
+				t.Fatalf("output grew to %d bytes for %d input bytes (unbounded growth?)", len(got), len(tc.content))
+			}
+			lines := strings.Split(tc.content, "\n")
+			parts := make([]string, len(lines))
+			for i, l := range lines {
+				parts[i] = "  " + l
+			}
+			if plain := stripANSI(got); plain != strings.Join(parts, "\n") {
+				t.Fatalf("content not preserved for %s: stripANSI output differs", tc.name)
+			}
+		})
+	}
+}
+
+// TestRenderMarkdownYAMLTerminates exercises the reachable end-to-end path:
+// model-supplied markdown containing a ```yaml fence through RenderMarkdown.
+// Balanced and unbalanced (no closing fence) inputs must all terminate; the
+// pre-fix code hung on the first yaml code line.
+func TestRenderMarkdownYAMLTerminates(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  string
+		want   string // plain text that must survive
+		chrome bool   // expect both ╭ and ╰ fence chrome
+	}{
+		{"balanced", "```yaml\nname: value\n```\n", "name: value", true},
+		{"list and nested", "```yaml\n- item\n  nested: x\n```\n", "- item", true},
+		{"unbalanced fence", "```yaml\nname: value", "name: value", false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			runWithinTimeout(t, 2*time.Second, "RenderMarkdown yaml", func() {
+				got = RenderMarkdown(tc.input, 80)
+			})
+			if tc.chrome && (!strings.Contains(got, "╭") || !strings.Contains(got, "╰")) {
+				t.Fatalf("RenderMarkdown(%q) missing fence chrome: %q", tc.input, got)
+			}
+			if plain := stripANSI(got); !strings.Contains(plain, tc.want) {
+				t.Fatalf("RenderMarkdown(%q) lost code content %q: %q", tc.input, tc.want, plain)
+			}
+		})
+	}
+}
+
+// TestYAMLHighlightContentPreserved pins exact content preservation across a
+// multi-line yaml block, including an empty interior line and the empty-block
+// short-circuit.
+func TestYAMLHighlightContentPreserved(t *testing.T) {
+	if got := highlightCodeBlock("yaml", ""); got != "" {
+		t.Fatalf("highlightCodeBlock(yaml, \"\") = %q, want empty", got)
+	}
+
+	code := "name: value\n  nested: x\n- item\n"
+	got := highlightCodeBlock("yaml", code)
+	want := "  name: value\n    nested: x\n  - item\n  "
+	if plain := stripANSI(got); plain != want {
+		t.Fatalf("stripANSI(highlightCodeBlock(%q)) = %q, want %q (raw %q)", code, plain, want, got)
+	}
+
+	code = "a\n\nb"
+	got = highlightCodeBlock("yaml", code)
+	want = "  a\n  \n  b"
+	if plain := stripANSI(got); plain != want {
+		t.Fatalf("stripANSI(highlightCodeBlock(%q)) = %q, want %q", code, plain, want)
 	}
 }
