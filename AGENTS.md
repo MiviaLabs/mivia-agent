@@ -17,6 +17,20 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 
 Do not fork policy into adapters. Fix `.mivia/` or this file instead.
 
+### `.agents/memories/`
+
+`.agents/memories/*.md` is a documented, deliberate exception to "thin
+adapters only": team-shared, cross-tool operational memory - facts and
+corrected preferences about how to work in THIS repo, not policy - following
+the open `.agents` protocol (https://dotagentsprotocol.com/). Each file uses
+that protocol's frontmatter (`id`, `title`, `content`, `importance`, `tags`).
+It is git-committed, so it is not a substitute for `.mivia/rules/*` (durable
+policy) or a private per-machine agent memory store; a fact that becomes a
+hard rule belongs in `.mivia/rules/`, not here.
+
+Read every file under `.agents/memories/` at the start of a task, the same
+way you read this file.
+
 ## Mandatory process - read before any work
 
 **ADLC (Agentic Development Lifecycle)** is the mandatory engineering process for all feature work, bug fixes, refactors, and cross-package changes in this repo.
