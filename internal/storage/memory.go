@@ -265,8 +265,48 @@ func (m *Memory) TakeoverClaim(_ context.Context, runID, holder string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.claims[runID] = Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339)}
+	existing, ok := m.claims[runID]
+	fence := existing.Fence + 1
+	if !ok {
+		fence = 1
+	}
+	m.claims[runID] = Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339Nano), Fence: fence}
 	return nil
+}
+
+func (m *Memory) TakeoverClaimFenced(_ context.Context, runID, holder string) (Claim, error) {
+	if holder == "" {
+		return Claim{}, ErrClaimNotHeld
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.claims[runID]
+	fence := existing.Fence + 1
+	if !ok {
+		fence = 1
+	}
+	claim := Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339Nano), Fence: fence}
+	m.claims[runID] = claim
+	return claim, nil
+}
+
+// RefreshClaimFenced refreshes the claim's acquired_at ONLY when holder already
+// owns the claim row. A missing row (or a row owned by another holder) returns
+// ErrClaimNotHeld, so a heartbeat can never insert itself back into a claim it
+// lost (F2).
+func (m *Memory) RefreshClaimFenced(_ context.Context, runID, holder string) (Claim, error) {
+	if holder == "" {
+		return Claim{}, ErrClaimNotHeld
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.claims[runID]
+	if !ok || existing.Holder != holder {
+		return Claim{}, ErrClaimNotHeld
+	}
+	existing.AcquiredAt = time.Now().UTC().Format(time.RFC3339Nano)
+	m.claims[runID] = existing
+	return existing, nil
 }
 
 func (m *Memory) TakeoverExpiredClaim(_ context.Context, runID, holder string, maxAge time.Duration) error {

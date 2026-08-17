@@ -12,9 +12,10 @@ import (
 var claimHeartbeatInterval = workflowledger.DefaultClaimLease / 3
 
 // startClaimHeartbeat refreshes the claim while one step executes.
-// When another holder takes the claim, it cancels the step context.
-// A transient claim error does not cancel the step. The ticker retries
-// on the next interval.
+// When another holder takes the claim, or the claim row is gone (the step was
+// resumed by another holder that released it), it cancels the step context: it
+// never re-acquires the claim itself. A transient claim error does not cancel
+// the step. The ticker retries on the next interval.
 func (c *LinearController) startClaimHeartbeat(cancel context.CancelFunc) func() {
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -25,8 +26,8 @@ func (c *LinearController) startClaimHeartbeat(cancel context.CancelFunc) func()
 		for {
 			select {
 			case <-ticker.C:
-				if err := c.Repo.ClaimRun(context.Background(), c.RunID, c.Holder); err != nil {
-					if errors.Is(err, workflowledger.ErrClaimHeld) {
+				if err := c.Repo.RefreshRunClaim(context.Background(), c.RunID, c.Holder); err != nil {
+					if errors.Is(err, workflowledger.ErrClaimHeld) || errors.Is(err, workflowledger.ErrClaimNotHeld) {
 						cancel()
 						return
 					}

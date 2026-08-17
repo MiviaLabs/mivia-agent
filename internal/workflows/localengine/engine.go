@@ -39,8 +39,11 @@ type Engine struct {
 	// NewRunner builds the agent-step runner for one admitted run.
 	// Required for agent steps; a nil NewRunner fails closed (no fake success).
 	NewRunner func() controller.AgentStepRunner
-	// AgentRegistry supplies immutable agent definitions for panel admission.
-	// Panel work fails closed when the registry cannot resolve a member.
+	// AgentRegistry supplies immutable agent definitions for panel admission
+	// and for agent-step routing pins. Panel work fails closed when the
+	// registry cannot resolve a member. Agent steps pin and re-verify their
+	// definition digests when the registry is set, and keep the legacy
+	// synthetic-digest mode when it is nil.
 	AgentRegistry *agents.AgentRegistry
 	// NewRunID mints run IDs. Nil uses a secure random wfr- id.
 	NewRunID func() string
@@ -360,12 +363,11 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 		e.fence.clearAbandon(req.RunID)
 	}
 	e.mu.Unlock()
-	// Step schemas are pinned in the admitted snapshot (SchemaVersion 1 carries
-	// them as snapshot.Schemas); rebuild the runtimes from those bytes so a
-	// resumed run enforces the output_schema admitted at start, never a schema
-	// changed, deleted, or renamed on disk after admission (CLI parity with
-	// loadStepReferences' prior-snapshot path). No filesystem reads on resume.
-	steps, err := buildStepRuntimesFromSnapshot(compiled, snapshot.Schemas)
+	// Step schemas and templates are pinned in the admitted snapshot
+	// (SchemaVersion 1 carries them as snapshot.Schemas / snapshot.Templates);
+	// rebuild the runtimes from those bytes so a resumed run enforces the
+	// references admitted at start. No filesystem reads on resume.
+	steps, err := e.buildResumeStepRuntimes(compiled, snapshot, req.RunID)
 	if err != nil {
 		return nil, err
 	}
@@ -399,6 +401,24 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 		}
 	}
 	return ctrl, nil
+}
+
+// buildResumeStepRuntimes verifies pinned agents against the live registry and
+// rebuilds step runtimes from the admitted snapshot. A run admitted before
+// agent pinning carries no pins and resumes in the legacy synthetic-digest
+// mode it was admitted with (CLI parity with workflowAgent's prior check).
+func (e *Engine) buildResumeStepRuntimes(compiled *compiler.CompiledWorkflow, snapshot workflowledger.Snapshot, runID string) (map[string]controller.StepRuntime, error) {
+	var agentPins map[string]workflowledger.AgentSnapshot
+	if len(snapshot.Agents) > 0 {
+		if e.AgentRegistry == nil {
+			return nil, fmt.Errorf("workflow run %q was admitted with pinned agent definitions but no agent registry is configured", runID)
+		}
+		if err := verifyStepAgents(compiled, e.AgentRegistry, snapshot.Agents); err != nil {
+			return nil, err
+		}
+		agentPins = snapshot.Agents
+	}
+	return buildStepRuntimesFromSnapshot(compiled, snapshot.Schemas, snapshot.Templates, agentPins)
 }
 
 func (e *Engine) launch(ctrl *controller.LinearController) {

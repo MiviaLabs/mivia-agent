@@ -332,12 +332,14 @@ func claimWorkflowDeliveryRun(ctx context.Context, repo workflowledger.Repositor
 
 // startWorkflowDeliveryClaimHeartbeat refreshes the delivery run claim with
 // the SAME holder while the attempt runs, so a publish that outlives the claim
-// lease cannot be taken over by a second host mid-publish (DC-2). A failed
-// refresh is terminal for the heartbeat: it stops instead of retry-spinning
-// (the claim was taken or the store failed; hammering it cannot help). The
-// returned stop func closes the stop channel and WAITS for the goroutine to
-// exit, so the caller releases the claim only after the last possible refresh
-// has run.
+// lease cannot be taken over by a second host mid-publish (DC-2). It refreshes
+// ONLY (never re-creates the row): a claim that was taken over and released by
+// a second host leaves no row, and refreshing must treat that as lost instead
+// of re-inserting this holder (F2). A failed refresh is terminal for the
+// heartbeat: it stops instead of retry-spinning (the claim was taken or the
+// store failed; hammering it cannot help). The returned stop func closes the
+// stop channel and WAITS for the goroutine to exit, so the caller releases the
+// claim only after the last possible refresh has run.
 func startWorkflowDeliveryClaimHeartbeat(ctx context.Context, repo workflowledger.Repository, runID, holder string) (stop func()) {
 	stopCh := make(chan struct{})
 	var wg sync.WaitGroup
@@ -350,7 +352,7 @@ func startWorkflowDeliveryClaimHeartbeat(ctx context.Context, repo workflowledge
 		for {
 			select {
 			case <-ticker.C:
-				if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+				if err := repo.RefreshRunClaim(ctx, runID, holder); err != nil {
 					return
 				}
 			case <-stopCh:

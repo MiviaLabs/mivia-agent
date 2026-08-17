@@ -44,11 +44,46 @@ func (s *SQLite) TakeoverClaim(ctx context.Context, id, h string) error {
 	if h == "" {
 		return ErrClaimNotHeld
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO run_claims(run_id, holder, acquired_at) VALUES(?, ?, datetime('now')) ON CONFLICT(run_id) DO UPDATE SET holder=excluded.holder, acquired_at=excluded.acquired_at`, id, h)
+	// The takeover bumps the fence on an existing row (and seeds it on a fresh
+	// insert) so a previous holder's captured fence never survives a takeover:
+	// without the bump, a stale holder with a matching fence value kept write
+	// access after the owner changed (F2).
+	_, err := s.db.ExecContext(ctx, `INSERT INTO run_claims(run_id, holder, acquired_at, fence) VALUES(?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 1) ON CONFLICT(run_id) DO UPDATE SET holder=excluded.holder, acquired_at=excluded.acquired_at, fence = fence + 1`, id, h)
 	if err != nil {
 		return fmt.Errorf("take over claim %q: %w", id, err)
 	}
 	return nil
+}
+
+func (s *SQLite) TakeoverClaimFenced(ctx context.Context, id, h string) (Claim, error) {
+	if h == "" {
+		return Claim{}, ErrClaimNotHeld
+	}
+	var claim Claim
+	err := s.db.QueryRowContext(ctx, `INSERT INTO run_claims(run_id, holder, acquired_at, fence) VALUES(?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 1) ON CONFLICT(run_id) DO UPDATE SET holder=excluded.holder, acquired_at=excluded.acquired_at, fence = fence + 1 RETURNING run_id, holder, acquired_at, fence`, id, h).Scan(&claim.RunID, &claim.Holder, &claim.AcquiredAt, &claim.Fence)
+	if err != nil {
+		return Claim{}, fmt.Errorf("take over claim %q: %w", id, err)
+	}
+	return claim, nil
+}
+
+// RefreshClaimFenced refreshes the claim's acquired_at ONLY when holder already
+// owns the claim row. A missing row (or a row owned by another holder) refreshes
+// nothing and returns ErrClaimNotHeld, so a heartbeat can never insert itself
+// back into a claim it lost (F2).
+func (s *SQLite) RefreshClaimFenced(ctx context.Context, id, h string) (Claim, error) {
+	if h == "" {
+		return Claim{}, ErrClaimNotHeld
+	}
+	var claim Claim
+	err := s.db.QueryRowContext(ctx, `UPDATE run_claims SET acquired_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE run_id = ? AND holder = ? RETURNING run_id, holder, acquired_at, fence`, id, h).Scan(&claim.RunID, &claim.Holder, &claim.AcquiredAt, &claim.Fence)
+	if err == sql.ErrNoRows {
+		return Claim{}, ErrClaimNotHeld
+	}
+	if err != nil {
+		return Claim{}, fmt.Errorf("refresh claim %q: %w", id, err)
+	}
+	return claim, nil
 }
 
 func (s *SQLite) TakeoverExpiredClaim(ctx context.Context, id, h string, maxAge time.Duration) error {

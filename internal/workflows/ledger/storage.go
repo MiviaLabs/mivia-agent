@@ -42,9 +42,11 @@ type StorageRepository struct {
 	// holder is a random per-process identifier for run execution claims.
 	// It identifies which process (repository instance) holds a run claim.
 	holder string
-	// claimedRuns tracks the runs this instance has claimed (runID → holder),
-	// so Close() can release them all (simulating crash cleanup).
-	claimedRuns map[string]string
+	// claimedRuns tracks the runs this instance has claimed (runID → the stored
+	// claim, including its fence). A stored claim is what fenced writes and
+	// releases are authorized by: a write/release only lands while the live
+	// claim row still matches this (holder, fence) pair.
+	claimedRuns map[string]storage.Claim
 	// runLocks serializes mutations per run (intra-process). Cross-process
 	// writers are fenced by the execution claim (ClaimRun).
 	runLocks map[string]*sync.Mutex
@@ -78,7 +80,7 @@ func NewStorageRepository(store storage.Store) *StorageRepository {
 	return &StorageRepository{
 		store:        store,
 		holder:       newHolderID(),
-		claimedRuns:  make(map[string]string),
+		claimedRuns:  make(map[string]storage.Claim),
 		runLocks:     make(map[string]*sync.Mutex),
 		now:          time.Now,
 		applied:      make(map[string]uint64),
@@ -111,18 +113,22 @@ func (s *StorageRepository) Close() error {
 		return nil
 	}
 	s.closed = true
-	claims := make(map[string]string, len(s.claimedRuns))
-	for runID, holder := range s.claimedRuns {
-		claims[runID] = holder
+	claims := make(map[string]storage.Claim, len(s.claimedRuns))
+	for runID, claim := range s.claimedRuns {
+		claims[runID] = claim
 	}
-	s.claimedRuns = make(map[string]string)
+	s.claimedRuns = make(map[string]storage.Claim)
 	s.mu.Unlock()
 
 	// Release all claims held by this instance (crash cleanup simulation).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	for runID, holder := range claims {
-		_ = s.store.ReleaseClaim(ctx, runID, holder)
+	for runID, claim := range claims {
+		if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
+			_ = fenced.ReleaseClaimFenced(ctx, claim)
+		} else {
+			_ = s.store.ReleaseClaim(ctx, runID, claim.Holder)
+		}
 	}
 	return nil
 }
@@ -355,12 +361,25 @@ func (s *StorageRepository) nextSequence(runID string) uint64 {
 // the in-memory state matches durable state before returning.
 func (s *StorageRepository) appendEvent(ctx context.Context, evt storage.Event, rollback func()) error {
 	holder, bound := claimHolderFromContext(ctx)
+	s.mu.RLock()
+	claim := s.claimedRuns[evt.RunID]
+	s.mu.RUnlock()
 	if !bound {
-		s.mu.RLock()
-		holder = s.claimedRuns[evt.RunID]
-		s.mu.RUnlock()
+		holder = claim.Holder
 	}
-	err := s.store.AppendClaimed(ctx, evt, holder)
+	// Fenced append: the write lands only while the live claim row still
+	// matches this instance's stored (holder, fence). A run whose claim was
+	// taken over (fence bumped) or released by another holder fails here even
+	// when the caller still names a dangling holder and even when the run is
+	// momentarily unclaimed (F2). Backends without fence support and claims
+	// never acquired through the fenced path fall back to the holder-only
+	// append.
+	var err error
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
+		err = fenced.AppendClaimedFenced(ctx, evt, claim)
+	} else {
+		err = s.store.AppendClaimed(ctx, evt, holder)
+	}
 	if errors.Is(err, storage.ErrClaimHeld) {
 		err = ErrClaimHeld
 	}

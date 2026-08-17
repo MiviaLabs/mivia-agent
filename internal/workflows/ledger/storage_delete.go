@@ -35,13 +35,13 @@ func (s *StorageRepository) DeleteRun(ctx context.Context, runID string) error {
 		return err
 	}
 	tombstone := storage.Event{ID: EventID(runID, eventKindRunDeleted, fmt.Sprintf("%d", seq)), RunID: runID, Sequence: int(seq), Kind: eventKindRunDeleted, Payload: payload}
-	holder, bound := claimHolderFromContext(ctx)
-	if !bound {
-		s.mu.RLock()
-		holder = s.claimedRuns[runID]
-		s.mu.RUnlock()
+	s.mu.RLock()
+	claim := s.claimedRuns[runID]
+	s.mu.RUnlock()
+	if holder, bound := claimHolderFromContext(ctx); bound {
+		claim.Holder = holder
 	}
-	if err := s.store.AppendAndDeleteRun(ctx, tombstone, storage.Claim{RunID: runID, Holder: holder}); err != nil {
+	if err := s.store.AppendAndDeleteRun(ctx, tombstone, claim); err != nil {
 		s.rollbackAndRebuild(ctx, runID, func() { s.proj[runID] = prev })
 		if errors.Is(err, storage.ErrClaimHeld) {
 			return ErrClaimHeld

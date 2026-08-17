@@ -54,8 +54,9 @@ const stackChunkPlanReviewValid = `{"valid":true,"reasons":[]}`
 
 // writeStackingWorkspace writes a minimal stacking-enabled workflow: authored
 // plan + implement steps, explicit [stacking] plan_step/implement_step, and
-// no templates/schemas (the authored steps declare none, and the
-// engine-synthesized steps need no files in the scripted-runner harness).
+// the placeholder template files for the engine-synthesized decompose and
+// chunk_plan_validate steps. Admission now pins template bytes like any other
+// agent step reference.
 func writeStackingWorkspace(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -63,6 +64,21 @@ func writeStackingWorkspace(t *testing.T) string {
 	wfRoot := filepath.Join(root, ".mivia", "workflows")
 	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	// Placeholder templates for the engine-synthesized steps. Their content
+	// is unused by the scripted runner, but admission pins them so resume
+	// cannot be altered by a changed workspace file.
+	templatesDir := filepath.Join(wfRoot, "templates")
+	if err := os.MkdirAll(templatesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"decompose.md":           "synthetic decompose template",
+		"chunk-plan-validate.md": "synthetic chunk plan validate template",
+	} {
+		if err := os.WriteFile(filepath.Join(templatesDir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The engine-synthesized steps reference engine-reserved output schemas;
 	// admission loads and pins them exactly like declared steps'.
@@ -368,6 +384,21 @@ func writeStackingWorkspaceMultiPhase(t *testing.T) string {
 	wfRoot := filepath.Join(root, ".mivia", "workflows")
 	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	// Placeholder templates for the engine-synthesized steps. Their content
+	// is unused by the scripted runner, but admission pins them so resume
+	// cannot be altered by a changed workspace file.
+	templatesDir := filepath.Join(wfRoot, "templates")
+	if err := os.MkdirAll(templatesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"decompose.md":           "synthetic decompose template",
+		"chunk-plan-validate.md": "synthetic chunk plan validate template",
+	} {
+		if err := os.WriteFile(filepath.Join(templatesDir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The engine-synthesized steps reference engine-reserved output schemas;
 	// admission loads and pins them exactly like declared steps'.

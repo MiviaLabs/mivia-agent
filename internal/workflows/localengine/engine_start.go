@@ -23,15 +23,37 @@ func (e *Engine) newRunController(compiled *compiler.CompiledWorkflow, raw []byt
 	if err != nil {
 		return nil, controller.Admission{}, err
 	}
-	templates, bindings, err := loadPanelSnapshotAssets(baseDir, compiled, schemas, e.AgentRegistry)
+	templates, err := loadStepTemplates(baseDir, compiled)
 	if err != nil {
 		return nil, controller.Admission{}, err
 	}
-	steps, err := buildStepRuntimesFromSnapshot(compiled, schemas)
+	panelTemplates, bindings, err := loadPanelSnapshotAssets(baseDir, compiled, schemas, e.AgentRegistry)
 	if err != nil {
 		return nil, controller.Admission{}, err
 	}
-	snapshot, err := workflowledger.MarshalSnapshot(newRunSnapshot(compiled, raw, inputSnapshot, schemas, templates, bindings))
+	// One template ref names one file, so an agent step and a panel member that
+	// share a ref must pin identical bytes; a conflict means the pins disagree
+	// about one path and admission must fail rather than pick one.
+	for name, ref := range panelTemplates {
+		if existing, ok := templates[name]; ok && existing.Digest != ref.Digest {
+			return nil, controller.Admission{}, fmt.Errorf("template %q pinned with conflicting bytes", name)
+		}
+		templates[name] = ref
+	}
+	// Agent pins need the registry; a host without one keeps the legacy
+	// synthetic-digest mode (its runner does not verify definition digests).
+	var agentPins map[string]workflowledger.AgentSnapshot
+	if e.AgentRegistry != nil {
+		agentPins, err = resolveStepAgents(compiled, e.AgentRegistry)
+		if err != nil {
+			return nil, controller.Admission{}, err
+		}
+	}
+	steps, err := buildStepRuntimesFromSnapshot(compiled, schemas, templates, agentPins)
+	if err != nil {
+		return nil, controller.Admission{}, err
+	}
+	snapshot, err := workflowledger.MarshalSnapshot(newRunSnapshot(compiled, raw, inputSnapshot, schemas, templates, bindings, agentPins))
 	if err != nil {
 		return nil, controller.Admission{}, err
 	}
@@ -45,8 +67,8 @@ func (e *Engine) newRunController(compiled *compiler.CompiledWorkflow, raw []byt
 	return ctrl, controller.Admission{InvocationKey: invocationKey, BaseRef: "main", BaseCommit: "test-base", WorktreeName: "workflow-" + runID, InputDigest: workflowledger.InputDigest(inputSnapshot)}, nil
 }
 
-func newRunSnapshot(compiled *compiler.CompiledWorkflow, raw []byte, inputs map[string]string, schemas, templates map[string]workflowledger.RefSnapshot, bindings map[string]workflowledger.PanelBindingSnapshot) workflowledger.Snapshot {
-	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: append([]byte(nil), raw...), DefinitionDigest: compiled.Digest, Inputs: inputs, Schemas: schemas, Templates: templates, PanelBindings: bindings}
+func newRunSnapshot(compiled *compiler.CompiledWorkflow, raw []byte, inputs map[string]string, schemas, templates map[string]workflowledger.RefSnapshot, bindings map[string]workflowledger.PanelBindingSnapshot, agents map[string]workflowledger.AgentSnapshot) workflowledger.Snapshot {
+	snapshot := workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: append([]byte(nil), raw...), DefinitionDigest: compiled.Digest, Inputs: inputs, Schemas: schemas, Templates: templates, PanelBindings: bindings, Agents: agents}
 	if compiled.Delivery != nil && compiled.DeliveryActive() {
 		snapshot.Delivery = &workflowledger.DeliverySnapshot{Mode: compiled.Delivery.Mode, Provider: compiled.Delivery.Provider, Base: compiled.Delivery.Base}
 	}

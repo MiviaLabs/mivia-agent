@@ -176,6 +176,13 @@ type Repository interface {
 	// ErrClaimHeld if another holder owns it. Same-holder refresh succeeds.
 	ClaimRun(ctx context.Context, runID, holder string) error
 
+	// RefreshRunClaim refreshes the claim's acquired_at ONLY when holder
+	// already owns the claim row. It never inserts a missing row: a holder
+	// whose claim is gone returns ErrClaimNotHeld. Run execution heartbeats
+	// use this so a displaced or expired holder is treated as lost instead of
+	// reclaiming itself (F2).
+	RefreshRunClaim(ctx context.Context, runID, holder string) error
+
 	// TakeoverRunClaim atomically replaces any existing claim with holder.
 	TakeoverRunClaim(ctx context.Context, runID, holder string) error
 	TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error

@@ -122,6 +122,21 @@ func writeStackDriveWorkspace(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
+	// Placeholder templates for the engine-synthesized steps. Their content
+	// is unused by the scripted runner, but admission pins them so resume
+	// cannot be altered by a changed workspace file.
+	templatesDir := filepath.Join(wfRoot, "templates")
+	if err := os.MkdirAll(templatesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"decompose.md":           "synthetic decompose template",
+		"chunk-plan-validate.md": "synthetic chunk plan validate template",
+	} {
+		if err := os.WriteFile(filepath.Join(templatesDir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for name, body := range map[string]string{
 		"stack-drive-me":    stackDriveWorkflowTOML("stack-drive-me", "auto", false),
 		"stack-approve-me":  stackDriveWorkflowTOML("stack-approve-me", "approve", false),

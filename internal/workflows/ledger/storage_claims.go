@@ -21,19 +21,57 @@ func (s *StorageRepository) ClaimRun(ctx context.Context, runID, holder string) 
 	if holder == "" {
 		return ErrClaimNotHeld
 	}
-	if err := s.store.ClaimRun(ctx, runID, holder); err != nil {
+	var claim storage.Claim
+	var err error
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
+		claim, err = fenced.ClaimRunFenced(ctx, runID, holder)
+	} else {
+		err = s.store.ClaimRun(ctx, runID, holder)
+		claim = storage.Claim{RunID: runID, Holder: holder}
+	}
+	if err != nil {
 		if errors.Is(err, storage.ErrClaimHeld) {
 			return ErrClaimHeld
 		}
 		return err
 	}
 	s.mu.Lock()
-	s.claimedRuns[runID] = holder
+	s.claimedRuns[runID] = claim
 	s.mu.Unlock()
 	return nil
 }
 
-// TakeoverRunClaim atomically replaces any existing execution claim.
+// RefreshRunClaim refreshes the claim's acquired_at ONLY when this repository
+// already holds the claim row. It never inserts a missing row. When the row is
+// gone or owned by another holder it returns ErrClaimNotHeld, the signal a
+// heartbeat uses to treat the claim as lost and stop executing (F2).
+func (s *StorageRepository) RefreshRunClaim(ctx context.Context, runID, holder string) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
+	if holder == "" {
+		return ErrClaimNotHeld
+	}
+	fenced, ok := s.store.(storage.FencedLeaseStore)
+	if !ok {
+		return ErrClaimNotHeld
+	}
+	claim, err := fenced.RefreshClaimFenced(ctx, runID, holder)
+	if err != nil {
+		if errors.Is(err, storage.ErrClaimNotHeld) {
+			return ErrClaimNotHeld
+		}
+		return err
+	}
+	s.mu.Lock()
+	s.claimedRuns[runID] = claim
+	s.mu.Unlock()
+	return nil
+}
+
+// TakeoverRunClaim atomically replaces any existing execution claim. The
+// replacement bumps the claim fence so a previous holder's captured fence no
+// longer authorizes writes.
 func (s *StorageRepository) TakeoverRunClaim(ctx context.Context, runID, holder string) error {
 	if err := s.checkOpen(); err != nil {
 		return err
@@ -41,11 +79,19 @@ func (s *StorageRepository) TakeoverRunClaim(ctx context.Context, runID, holder 
 	if holder == "" {
 		return ErrClaimNotHeld
 	}
-	if err := s.store.TakeoverClaim(ctx, runID, holder); err != nil {
+	var claim storage.Claim
+	var err error
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
+		claim, err = fenced.TakeoverClaimFenced(ctx, runID, holder)
+	} else {
+		err = s.store.TakeoverClaim(ctx, runID, holder)
+		claim = storage.Claim{RunID: runID, Holder: holder}
+	}
+	if err != nil {
 		return err
 	}
 	s.mu.Lock()
-	s.claimedRuns[runID] = holder
+	s.claimedRuns[runID] = claim
 	s.mu.Unlock()
 	return nil
 }
@@ -62,7 +108,15 @@ func (s *StorageRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, 
 	if !ok {
 		return ErrClaimHeld
 	}
-	if err := lease.TakeoverExpiredClaim(ctx, runID, holder, maxAge); err != nil {
+	var claim storage.Claim
+	var err error
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
+		claim, err = fenced.TakeoverExpiredClaimFenced(ctx, runID, holder, maxAge)
+	} else {
+		err = lease.TakeoverExpiredClaim(ctx, runID, holder, maxAge)
+		claim = storage.Claim{RunID: runID, Holder: holder}
+	}
+	if err != nil {
 		if errors.Is(err, storage.ErrClaimHeld) {
 			return ErrClaimHeld
 		}
@@ -72,17 +126,32 @@ func (s *StorageRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, 
 		return err
 	}
 	s.mu.Lock()
-	s.claimedRuns[runID] = holder
+	s.claimedRuns[runID] = claim
 	s.mu.Unlock()
 	return nil
 }
 
-// ReleaseRun releases the claim. Only the current holder may release it.
+// ReleaseRun releases the claim. Only the current holder may release it. The
+// release is fenced: it removes the claim only while this repository's stored
+// (holder, fence) still matches the live row, so a stale release can never
+// strip a newer holder's claim.
 func (s *StorageRepository) ReleaseRun(ctx context.Context, runID, holder string) error {
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	if err := s.store.ReleaseClaim(ctx, runID, holder); err != nil {
+	s.mu.RLock()
+	claim := s.claimedRuns[runID]
+	s.mu.RUnlock()
+	var err error
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
+		if claim.Holder != holder {
+			return ErrClaimNotHeld
+		}
+		err = fenced.ReleaseClaimFenced(ctx, claim)
+	} else {
+		err = s.store.ReleaseClaim(ctx, runID, holder)
+	}
+	if err != nil {
 		if errors.Is(err, storage.ErrClaimNotHeld) {
 			return ErrClaimNotHeld
 		}

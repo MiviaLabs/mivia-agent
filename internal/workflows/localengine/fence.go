@@ -249,6 +249,10 @@ func (f *abandonFence) ClaimRun(ctx context.Context, runID, holder string) error
 	return f.mutate(runID, func() error { return f.inner.ClaimRun(ctx, runID, holder) })
 }
 
+func (f *abandonFence) RefreshRunClaim(ctx context.Context, runID, holder string) error {
+	return f.mutate(runID, func() error { return f.inner.RefreshRunClaim(ctx, runID, holder) })
+}
+
 func (f *abandonFence) TakeoverRunClaim(ctx context.Context, runID, holder string) error {
 	rm := f.acquireRunLock(runID)
 	rm.mu.Lock()
