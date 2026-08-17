@@ -247,3 +247,191 @@ func TestChatTurnStreamReplaysTransient200InBandContentWinsNoReplay(t *testing.T
 		t.Fatalf("content-delivered stream with in-band error made %d requests, want 1 (no re-ask)", got)
 	}
 }
+
+// --- RED: top-level web_search on SSE chunks is silently dropped ---
+//
+// The wire struct chatResponseBody decodes a top-level "web_search" field on
+// every SSE chunk (openai_compat.go), and the non-stream ChatTurn path honors
+// body.WebSearch first. The stream path's applyStreamChunk only ever appends
+// ch.Delta.WebSearch and never reads chunk.WebSearch, so a provider that emits
+// search results at the chunk top level (choices may still carry a content
+// delta, and the trailing/usage-style chunks commonly carry an empty choices
+// array) loses them entirely: Response.WebSearch comes back empty.
+//
+// These tests are RED on the current code (empty WebSearch and/or a 2-call
+// non-stream re-bill) and go GREEN after the minimal fix.
+
+// TestChatTurnStreamSurfacesTopLevelWebSearch (case a): an SSE chunk carrying
+// top-level web_search alongside a content delta must surface the entries in
+// Response.WebSearch, with no re-ask (calls==1).
+func TestChatTurnStreamSurfacesTopLevelWebSearch(t *testing.T) {
+	chunks := []string{
+		`{"choices":[{"delta":{"content":"answer"}}],"web_search":[{"title":"one","link":"https://example.com"}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+	}
+	srv, calls := countingSSEServer(t, chunks, true)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("made %d upstream requests, want 1 (no re-ask)", got)
+	}
+	if resp.Content != "answer" {
+		t.Fatalf("content=%q, want %q", resp.Content, "answer")
+	}
+	if len(resp.WebSearch) != 1 || resp.WebSearch[0].Title != "one" || resp.WebSearch[0].Link != "https://example.com" {
+		t.Fatalf("WebSearch=%+v, want the top-level entry {title:one link:https://example.com}", resp.WebSearch)
+	}
+}
+
+// TestChatTurnStreamCapturesTopLevelWebSearchOnEmptyChoicesChunk (case b): an
+// empty-choices chunk carrying top-level web_search must be captured - the
+// mirror of the trailing-usage-only chunk case, which already appends before
+// the choices-length guard. Two sub-cases: (b1) a trailing empty-choices chunk
+// after content preserves its entry (calls==1); (b2) a sole-signal
+// web_search-only empty-choices chunk must count as received so the non-stream
+// fallback is NOT re-triggered (calls==1 and the entry surfaces).
+func TestChatTurnStreamCapturesTopLevelWebSearchOnEmptyChoicesChunk(t *testing.T) {
+	tests := []struct {
+		name       string
+		chunks     []string
+		wantCalls  int32
+		wantTitles []string
+	}{
+		{
+			name: "trailing empty-choices chunk preserves the entry",
+			chunks: []string{
+				`{"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}`,
+				`{"choices":[],"web_search":[{"title":"trailing"}]}`,
+			},
+			wantCalls:  1,
+			wantTitles: []string{"trailing"},
+		},
+		{
+			name: "sole-signal web_search-only chunk counts as received",
+			chunks: []string{
+				`{"choices":[],"web_search":[{"title":"only"}]}`,
+			},
+			wantCalls:  1,
+			wantTitles: []string{"only"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, calls := countingSSEServer(t, tt.chunks, true)
+			defer srv.Close()
+
+			c := streamingClient(t, srv)
+			resp, err := c.ChatTurn(context.Background(), Request{
+				Model: "m", Stream: true,
+				Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			})
+			if err != nil {
+				t.Fatalf("ChatTurn: %v", err)
+			}
+			if got := atomic.LoadInt32(calls); got != tt.wantCalls {
+				t.Fatalf("made %d upstream requests, want %d (no re-bill)", got, tt.wantCalls)
+			}
+			if len(resp.WebSearch) != len(tt.wantTitles) {
+				t.Fatalf("WebSearch=%+v, want %d entries", resp.WebSearch, len(tt.wantTitles))
+			}
+			for i, want := range tt.wantTitles {
+				if resp.WebSearch[i].Title != want {
+					t.Fatalf("WebSearch[%d].Title=%q, want %q (entries=%+v)", i, resp.WebSearch[i].Title, want, resp.WebSearch)
+				}
+			}
+		})
+	}
+}
+
+// TestChatTurnStreamAccumulatesTopLevelWebSearchInOrder (case c): two chunks
+// each carrying top-level web_search accumulate in arrival order with no
+// dedupe - including a same-entry-twice sub-case.
+func TestChatTurnStreamAccumulatesTopLevelWebSearchInOrder(t *testing.T) {
+	tests := []struct {
+		name       string
+		chunks     []string
+		wantTitles []string
+	}{
+		{
+			name: "ordered accumulation across chunks",
+			chunks: []string{
+				`{"choices":[{"delta":{"content":"a"}}],"web_search":[{"title":"one"}]}`,
+				`{"choices":[{"delta":{"content":"b"}}],"web_search":[{"title":"two"}]}`,
+				`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			},
+			wantTitles: []string{"one", "two"},
+		},
+		{
+			name: "same entry twice is not deduped",
+			chunks: []string{
+				`{"choices":[{"delta":{"content":"a"}}],"web_search":[{"title":"dup"}]}`,
+				`{"choices":[{"delta":{"content":"b"}}],"web_search":[{"title":"dup"}]}`,
+				`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			},
+			wantTitles: []string{"dup", "dup"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, calls := countingSSEServer(t, tt.chunks, true)
+			defer srv.Close()
+
+			c := streamingClient(t, srv)
+			resp, err := c.ChatTurn(context.Background(), Request{
+				Model: "m", Stream: true,
+				Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			})
+			if err != nil {
+				t.Fatalf("ChatTurn: %v", err)
+			}
+			if got := atomic.LoadInt32(calls); got != 1 {
+				t.Fatalf("made %d upstream requests, want 1", got)
+			}
+			if len(resp.WebSearch) != len(tt.wantTitles) {
+				t.Fatalf("WebSearch=%+v, want %d entries in order", resp.WebSearch, len(tt.wantTitles))
+			}
+			for i, want := range tt.wantTitles {
+				if resp.WebSearch[i].Title != want {
+					t.Fatalf("WebSearch[%d].Title=%q, want %q (entries=%+v)", i, resp.WebSearch[i].Title, want, resp.WebSearch)
+				}
+			}
+		})
+	}
+}
+
+// TestChatTurnStreamSkipsMalformedChunkThenProcessesLaterChunks (case d): a
+// garbage chunk (invalid JSON) and a JSON type-mismatch chunk are skipped
+// without a crash, and a following valid content chunk still delivers with
+// calls==1. Passes unchanged on the current code (preservation).
+func TestChatTurnStreamSkipsMalformedChunkThenProcessesLaterChunks(t *testing.T) {
+	chunks := []string{
+		`not json at all`,
+		`{"choices":[{"delta":{"content":123}}]}`,
+		`{"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}`,
+	}
+	srv, calls := countingSSEServer(t, chunks, true)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model: "m", Stream: true,
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("made %d upstream requests, want 1", got)
+	}
+	if resp.Content != "answer" || resp.FinishReason != "stop" {
+		t.Fatalf("content=%q finish=%q, want answer/stop", resp.Content, resp.FinishReason)
+	}
+}
