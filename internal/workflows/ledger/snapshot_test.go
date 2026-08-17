@@ -250,6 +250,16 @@ func TestSnapshotValidate(t *testing.T) {
 		t.Fatalf("valid snapshot rejected: %v", err)
 	}
 
+	// An empty-bytes ref whose digest is the empty-content digest is a
+	// legitimate pin (an empty template file) and must pass.
+	emptyPinned := valid
+	emptyPinned.Templates = map[string]RefSnapshot{
+		"empty.txt": {Digest: refDigestHex(nil)},
+	}
+	if err := emptyPinned.Validate(); err != nil {
+		t.Fatalf("empty-content pin rejected: %v", err)
+	}
+
 	cases := []struct {
 		name string
 		s    Snapshot

@@ -206,8 +206,15 @@ func validateRefSnapshot(kind, name string, ref RefSnapshot) error {
 	if ref.Digest == "" {
 		return fmt.Errorf("snapshot %s %q digest is empty", kind, name)
 	}
+	// Empty content is a legitimate pin (an empty template file is admissible)
+	// when the digest proves the admission pinned empty bytes deliberately.
+	// The JSON round-trip drops empty Bytes (omitempty), so the digest is the
+	// only durable signal; reject empty bytes whose digest is anything else.
 	if len(ref.Bytes) == 0 {
-		return fmt.Errorf("snapshot %s %q bytes are empty", kind, name)
+		if ref.Digest != refDigestHex(nil) {
+			return fmt.Errorf("snapshot %s %q bytes are empty but digest %q is not the empty-content digest", kind, name, ref.Digest)
+		}
+		return nil
 	}
 	want := refDigestHex(ref.Bytes)
 	if ref.Digest != want {
