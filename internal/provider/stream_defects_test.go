@@ -490,15 +490,198 @@ func TestChatStreamExplicitEmptyFinishReasonStillFallsBack(t *testing.T) {
 	}
 }
 
+// TestChatStreamEmptyReasoningDetailsEntryStillFallsBack closes the R0-1 gap
+// on the no-tools path (PC-1). readStream's received gate (deltaCountsAsReceived)
+// counted ANY non-empty reasoning_details array as received, even an entry with
+// neither text nor summary. readTurnStream folds only text/summary entries into
+// the reasoning builder that gates its payload, so the same wire shape falls
+// back to a non-streamed re-ask on the tools path (2 calls) while the plain
+// path returned a silent empty reply after 1 call. An entry with no payload
+// must not suppress the fallback on either path. RED on the current code
+// (1 call, empty output); GREEN after the fix (fallback, 2 calls).
+func TestChatStreamEmptyReasoningDetailsEntryStillFallsBack(t *testing.T) {
+	chunks := []string{
+		`{"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text"}]}}]}`,
+	}
+	srv, calls := countingSSEServer(t, chunks, true)
+	defer srv.Close()
+
+	c := streamingClient(t, srv)
+	out, err := c.ChatStream(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if got := atomic.LoadInt32(calls); got != 2 {
+		t.Fatalf("empty reasoning_details entry made %d upstream requests, want 2 (stream + fallback)", got)
+	}
+	if out != "fallback" {
+		t.Fatalf("ChatStream returned %q, want %q (fallback was suppressed)", out, "fallback")
+	}
+}
+
+// TestChatStreamReasoningDetailsWithTextCountsAsReceived locks the positive
+// boundary on the no-tools path: a reasoning_details entry carrying text or
+// summary IS a delivered shape and must count as received (no fallback, 1
+// call), matching readTurnStream's reasoning.Len()>0 payload term and
+// resolveReasoningContent's text/summary-only concatenation.
+func TestChatStreamReasoningDetailsWithTextCountsAsReceived(t *testing.T) {
+	tests := []struct {
+		name  string
+		chunk string
+	}{
+		{"text entry", `{"choices":[{"delta":{"reasoning_details":[{"type":"thinking","text":"think"}]}}]}`},
+		{"summary entry", `{"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","summary":"sum"}]}}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, calls := countingSSEServer(t, []string{tt.chunk}, true)
+			defer srv.Close()
+
+			c := streamingClient(t, srv)
+			out, err := c.ChatStream(context.Background(), Request{
+				Model:    "m",
+				Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			}, nil)
+			if err != nil {
+				t.Fatalf("ChatStream: %v", err)
+			}
+			if got := atomic.LoadInt32(calls); got != 1 {
+				t.Fatalf("payload-bearing reasoning_details stream made %d upstream requests, want 1 (no fallback)", got)
+			}
+			// The no-tools path returns only accumulated content; reasoning
+			// stays internal to the received gate.
+			if out != "" {
+				t.Fatalf("ChatStream returned %q, want empty", out)
+			}
+		})
+	}
+}
+
+// TestChatStreamTopLevelWebSearchCountsAsReceived (WS-1) locks the no-tools
+// path's received gate. readStream cannot surface web_search entries (it
+// returns content only), but a chunk carrying TOP-LEVEL web_search is a
+// delivered shape and must count as received, mirroring readTurnStream's
+// len(webSearch)>0 payload gate. Without the fix a web_search-only turn looks
+// like an empty stream, retryWithoutStreaming re-asks it non-streamed, and the
+// same turn is billed twice. Two shapes are covered: a sole-signal
+// web_search-only empty-choices chunk, and a choices-bearing chunk whose delta
+// is empty. RED on the unfixed code (2-call re-bill), GREEN after the fix
+// (1 call, empty content returned as-is).
+func TestChatStreamTopLevelWebSearchCountsAsReceived(t *testing.T) {
+	tests := []struct {
+		name   string
+		chunks []string
+	}{
+		{
+			name: "sole-signal web_search-only empty-choices chunk",
+			chunks: []string{
+				`{"choices":[],"web_search":[{"title":"only"}]}`,
+			},
+		},
+		{
+			name: "choices-bearing chunk with empty delta and top-level web_search",
+			chunks: []string{
+				`{"choices":[{"delta":{}}],"web_search":[{"title":"only"}]}`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, calls := countingSSEServer(t, tt.chunks, false)
+			defer srv.Close()
+
+			c := streamingClient(t, srv)
+			out, err := c.ChatStream(context.Background(), Request{
+				Model:    "m",
+				Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			}, nil)
+			if err != nil {
+				t.Fatalf("ChatStream: %v", err)
+			}
+			if got := atomic.LoadInt32(calls); got != 1 {
+				t.Fatalf("made %d upstream requests, want 1 (web_search-only turn must not be re-asked)", got)
+			}
+			if out != "" {
+				t.Fatalf("ChatStream returned %q, want empty (only web_search was delivered)", out)
+			}
+		})
+	}
+}
+
+// readTurnReceivedShared mirrors readTurnStream's received flag on the
+// dimensions both stream paths share: content, the reasoning builder
+// (reasoning_content, reasoning, and payload-bearing reasoning_details),
+// top-level body.WebSearch, finish_reason, and usage. tool_calls and
+// delta-level web_search are excluded: readTurnStream tracks those in its
+// payload while the no-tools readStream cannot receive them, so disagreement
+// on those dimensions is an expected scope difference, not a bug.
+func reasoningDeltaCarriesPayload(reasoningContent, reasoning string, details []reasoningDetailWire) bool {
+	if reasoningContent != "" || reasoning != "" {
+		return true
+	}
+	for _, d := range details {
+		if d.Text != "" || d.Summary != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func readTurnReceivedShared(body chatResponseBody) bool {
+	finishReason := ""
+	contentLen, reasoningLen, webSearchLen := 0, 0, 0
+	if len(body.Choices) > 0 {
+		ch := body.Choices[0]
+		finishReason = ch.FinishReason
+		if ch.Delta.Content != "" {
+			contentLen = 1 // content.Len() > 0 in readTurnStream
+		}
+		if reasoningDeltaCarriesPayload(ch.Delta.ReasoningContent, ch.Delta.Reasoning, ch.Delta.ReasoningDetails) {
+			reasoningLen = 1 // reasoning.Len() > 0 in readTurnStream
+		}
+		if len(ch.Delta.WebSearch) > 0 {
+			webSearchLen = 1 // delta-level append into the same accumulator
+		}
+	}
+	if len(body.WebSearch) > 0 {
+		webSearchLen = 1 // top-level append
+	}
+	// payload := content || reasoning || webSearch (tools excluded above)
+	return contentLen > 0 || reasoningLen > 0 || webSearchLen > 0 ||
+		finishReason != "" || body.Usage != nil
+}
+
+// readStreamReceivedShared mirrors readStream's received flag on the shared
+// dimensions. It models readStream's gate by calling the production predicate
+// deltaCountsAsReceived (plus the top-level body.WebSearch term), so a
+// divergence between the two paths' received rules is reported here instead
+// of hidden by a hand-rewritten copy: reasoning and reasoning_details are
+// received dimensions on both paths, and an empty reasoning_details entry
+// must not count on either (R0-1). An empty-choices chunk still counts as
+// received when it carries usage or top-level web_search, matching readStream.
+func readStreamReceivedShared(body chatResponseBody) bool {
+	if len(body.Choices) == 0 {
+		return body.Usage != nil || len(body.WebSearch) > 0
+	}
+	ch := body.Choices[0]
+	return deltaCountsAsReceived(ch.Delta.Content, ch.Delta.ReasoningContent, ch.Delta.Reasoning, ch.FinishReason, ch.Delta.ReasoningDetails, body.Usage) ||
+		len(body.WebSearch) > 0
+}
+
 // FuzzReadStreamReceived compares the received-flag behaviour of readStream
-// against readTurnStream for identical single-chunk JSON inputs on their shared
-// dimensions. reasoning_content is a shared dimension: readStream counts a
-// non-empty delta as a completion signal exactly like readTurnStream's payload
-// computation (reasoning.Len()>0) does. Chunks whose delta carries tool_calls
-// or web_search are still skipped: readTurnStream tracks those in its payload
-// (len(toolsByIdx)>0, len(webSearch)>0) while the no-tools readStream cannot
-// receive them, so disagreement on those dimensions is an expected scope
-// difference, not a bug.
+// against readTurnStream for identical single-chunk JSON inputs on their
+// shared dimensions (see readTurnReceivedShared and readStreamReceivedShared).
+// The reasoning shape is shared in full: readStream counts reasoning_content,
+// reasoning, and a reasoning_details entry carrying text or summary exactly
+// like readTurnStream's reasoning.Len()>0 payload term, and an entry with
+// neither counts on NO path (R0-1). TOP-LEVEL body.WebSearch is shared too:
+// both paths count it as a received signal, so the motivating sole-signal
+// shape {"choices":[{"delta":{}}],"web_search":[{"title":"x"}]} must agree on
+// received=true. Chunks whose delta carries tool_calls or delta-level
+// web_search are skipped, since readStream cannot receive those dimensions.
 func FuzzReadStreamReceived(f *testing.F) {
 	seeds := []string{
 		`{"choices":[{"delta":{}}]}`,
@@ -507,9 +690,15 @@ func FuzzReadStreamReceived(f *testing.F) {
 		`{"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}`,
 		`{"choices":[{"delta":{},"finish_reason":""}]}`,
 		`{"choices":[],"usage":{"prompt_tokens":1}}`,
+		`{"choices":[],"web_search":[{"title":"x"}]}`,
 		`{"choices":[{"delta":{"content":"x"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1}}`,
 		`{"choices":[{"delta":{"reasoning_content":"think"}}]}`,
 		`{"choices":[{"delta":{"reasoning_content":"think"},"finish_reason":"stop"}]}`,
+		`{"choices":[{"delta":{"reasoning":"think"}}]}`,
+		`{"choices":[{"delta":{"reasoning_details":[{"type":"thinking","text":"think"}]}}]}`,
+		`{"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","summary":"s"}]}}]}`,
+		`{"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text"}]}}]}`,
+		`{"choices":[{"delta":{}}],"web_search":[{"title":"x"}]}`,
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -520,58 +709,23 @@ func FuzzReadStreamReceived(f *testing.F) {
 		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Skip()
 		}
-		// Empty stream (bare [DONE]) — no chunk to evaluate.
-		if len(body.Choices) == 0 && body.Usage == nil {
+		// Empty stream (bare [DONE]) — no chunk to evaluate. An empty-choices
+		// chunk carrying usage or top-level web_search IS a chunk: both paths
+		// count those as received, so it must be evaluated, not skipped.
+		if len(body.Choices) == 0 && body.Usage == nil && len(body.WebSearch) == 0 {
 			t.Skip()
 		}
-		// Skip chunks whose delta carries dimensions readTurnStream
-		// tracks but readStream does not.
+		// Skip chunks whose delta carries dimensions readTurnStream tracks but
+		// readStream does not (tool_calls, delta-level web_search). TOP-LEVEL
+		// body.WebSearch is NOT skipped: both paths count it as received.
 		hasToolCalls := len(body.Choices) > 0 && len(body.Choices[0].Delta.ToolCalls) > 0
-		hasWebSearch := len(body.Choices) > 0 && len(body.Choices[0].Delta.WebSearch) > 0
-		if hasToolCalls || hasWebSearch {
+		hasDeltaWebSearch := len(body.Choices) > 0 && len(body.Choices[0].Delta.WebSearch) > 0
+		if hasToolCalls || hasDeltaWebSearch {
 			t.Skip()
 		}
-
-		// readTurnStream received on shared dimensions:
-		//   payload := content.Len()>0 || reasoning.Len()>0 || len(webSearch)>0 || len(toolsByIdx)>0
-		//   received := payload || finishReason != "" || usage != nil
-		contentLen := 0
-		if len(body.Choices) > 0 && body.Choices[0].Delta.Content != "" {
-			contentLen = 1 // content.Len() > 0 in readTurnStream
-		}
-		reasoningLen := 0
-		if len(body.Choices) > 0 && body.Choices[0].Delta.ReasoningContent != "" {
-			reasoningLen = 1 // reasoning.Len() > 0 in readTurnStream
-		}
-		payload := contentLen > 0 || reasoningLen > 0 // webSearch, tools excluded
-		finishReason := ""
-		if len(body.Choices) > 0 {
-			finishReason = body.Choices[0].FinishReason
-		}
-		readTurnReceived := payload || finishReason != "" || body.Usage != nil
-
-		// readStream received on shared dimensions:
-		//   (a) delta.Content != ""
-		//   (b) delta.ReasoningContent != ""
-		//   (c) FinishReason != ""
-		//   (d) Usage != nil
-		// Empty-choices usage guard: Usage != nil sets received=true even
-		// when len(chunk.Choices) == 0.
-		var readStreamReceived bool
-		if len(body.Choices) == 0 {
-			if body.Usage != nil {
-				readStreamReceived = true
-			}
-		} else {
-			readStreamReceived = body.Choices[0].Delta.Content != "" ||
-				body.Choices[0].Delta.ReasoningContent != "" ||
-				body.Choices[0].FinishReason != "" ||
-				body.Usage != nil
-		}
-
-		if readStreamReceived != readTurnReceived {
+		if readStreamReceivedShared(body) != readTurnReceivedShared(body) {
 			t.Errorf("received mismatch for %q: readStream=%v readTurnStream=%v",
-				string(raw), readStreamReceived, readTurnReceived)
+				string(raw), readStreamReceivedShared(body), readTurnReceivedShared(body))
 		}
 	})
 }
