@@ -93,13 +93,15 @@ func parseStackPart(value string) (k, n int, err error) {
 	return k, n, nil
 }
 
-// appendStackPartTitle appends the "Stack-Part: k/N" trailer to a resolved PR
-// title, following the repo's trailer convention: a "Label: value" line
-// separated from the body by a blank line. The trailer is host-appended AFTER
-// sanitization and policy validation, mirroring how the body footer is
-// appended after validation, so the agent-controlled title that passed
-// validation stays intact as the first line. A result over GitHub's 256-rune
-// ceiling is a repairable PRMetadataError: the agent must shorten the title.
+// appendStackPartTitle appends a "[stack k/N]" tag to a resolved PR title,
+// via derivedPRTitle - the SAME single-line, bracket-affix convention
+// EnsureFollowUpPublished uses for a deferred/split PR's title, since both
+// are the same underlying relationship (this PR's base is another PR's
+// branch, so it merges only after that PR). The tag is host-appended AFTER
+// sanitization and policy validation, so the agent-controlled title that
+// passed validation stays intact as the leading words. A result over
+// GitHub's 256-rune ceiling is a repairable PRMetadataError: the agent must
+// shorten the title.
 func appendStackPartTitle(title, stackPart string) (string, error) {
 	if stackPart == "" {
 		return title, nil
@@ -108,12 +110,12 @@ func appendStackPartTitle(title, stackPart string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	trailer := fmt.Sprintf("Stack-Part: %d/%d", k, total)
-	withTrailer := title + "\n\n" + trailer
-	if runes := utf8.RuneCountInString(withTrailer); runes > MaxTitleRunes {
-		return "", &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title with the %s trailer is %d characters, exceeding GitHub's %d-character limit; shorten the title", trailer, runes, MaxTitleRunes)}
+	affix := fmt.Sprintf("[stack %d/%d]", k, total)
+	withTag := derivedPRTitle(title, affix)
+	if runes := utf8.RuneCountInString(withTag); runes > MaxTitleRunes {
+		return "", &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title with the %s tag is %d characters, exceeding GitHub's %d-character limit; shorten the title", affix, runes, MaxTitleRunes)}
 	}
-	return withTrailer, nil
+	return withTag, nil
 }
 
 // resolveStackingInputs honors the reserved stacking inputs on one delivery

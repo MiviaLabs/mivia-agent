@@ -79,18 +79,19 @@ func TestParseStackPart(t *testing.T) {
 	}
 }
 
-// TestAppendStackPartTitle pins the host-appended Stack-Part trailer: the
-// trailer follows the repo's "Label: value" trailer convention after a blank
-// line, an absent stack_part changes nothing, an invalid value is a
-// PRMetadataError, and a result over GitHub's 256-rune ceiling is a
-// PRMetadataError too (the agent must shorten the title).
+// TestAppendStackPartTitle pins the host-appended "[stack k/N]" tag: a
+// single-line bracket suffix (the same derivedPRTitle convention
+// EnsureFollowUpPublished uses for a deferred/split PR), an absent
+// stack_part changes nothing, an invalid value is a PRMetadataError, and a
+// result over GitHub's 256-rune ceiling is a PRMetadataError too (the agent
+// must shorten the title).
 func TestAppendStackPartTitle(t *testing.T) {
-	t.Run("appends the trailer after a blank line", func(t *testing.T) {
+	t.Run("appends a single-line bracket tag", func(t *testing.T) {
 		got, err := appendStackPartTitle("feat(agent): chunk three", "3/12")
 		if err != nil {
 			t.Fatalf("appendStackPartTitle: %v", err)
 		}
-		want := "feat(agent): chunk three\n\nStack-Part: 3/12"
+		want := "feat(agent): chunk three [stack 3/12]"
 		if got != want {
 			t.Fatalf("title = %q, want %q", got, want)
 		}
@@ -114,8 +115,8 @@ func TestAppendStackPartTitle(t *testing.T) {
 		if err == nil || !IsPRMetadataError(err) {
 			t.Fatalf("appendStackPartTitle err = %v, want a repairable PRMetadataError", err)
 		}
-		if !strings.Contains(err.Error(), "Stack-Part") {
-			t.Fatalf("appendStackPartTitle err = %q, want a hint naming the trailer", err)
+		if !strings.Contains(err.Error(), "[stack 3/12]") {
+			t.Fatalf("appendStackPartTitle err = %q, want a hint naming the tag", err)
 		}
 	})
 }
@@ -261,11 +262,11 @@ func TestStackingContractPRBaseInvalid(t *testing.T) {
 	}
 }
 
-// TestStackingContractStackPartTrailer: a stack_part input appends the
-// "Stack-Part: k/N" trailer to the PR title for both the agent-provided title
-// and the legacy template fallback.
+// TestStackingContractStackPartTrailer: a stack_part input appends a
+// "[stack k/N]" tag to the PR title for both the agent-provided title and the
+// legacy template fallback.
 func TestStackingContractStackPartTrailer(t *testing.T) {
-	t.Run("agent title carries the trailer", func(t *testing.T) {
+	t.Run("agent title carries the tag", func(t *testing.T) {
 		ctx := context.Background()
 		_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
 		writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
@@ -282,12 +283,12 @@ func TestStackingContractStackPartTrailer(t *testing.T) {
 		if n := pr.createdCount(); n != 1 {
 			t.Fatalf("Create calls = %d, want 1", n)
 		}
-		want := "feat(agent): chunk three\n\nStack-Part: 3/12"
+		want := "feat(agent): chunk three [stack 3/12]"
 		if got := pr.created[0].Title; got != want {
 			t.Fatalf("Title = %q, want %q", got, want)
 		}
 	})
-	t.Run("legacy template title carries the trailer", func(t *testing.T) {
+	t.Run("legacy template title carries the tag", func(t *testing.T) {
 		ctx := context.Background()
 		_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
 		writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
@@ -300,7 +301,7 @@ func TestStackingContractStackPartTrailer(t *testing.T) {
 		if res.Status != "succeeded" {
 			t.Fatalf("Result = %+v, want succeeded", res)
 		}
-		want := "feat: x\n\nStack-Part: 1/1"
+		want := "feat: x [stack 1/1]"
 		if got := pr.created[0].Title; got != want {
 			t.Fatalf("Title = %q, want %q", got, want)
 		}

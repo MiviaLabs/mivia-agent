@@ -235,7 +235,7 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 		if got.RemoteID != "12" || got.URL != "https://github.com/o/r/pull/12" || !got.Draft || got.BaseRefOID != "aaa111" {
 			t.Errorf("FindByHead = %+v, want RemoteID 12 with PR url, Draft=true, BaseRefOID aaa111", got)
 		}
-		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "open", "--json", "number,url,isDraft,headRepositoryOwner"}
+		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "open", "--json", "number,url,title,isDraft,headRepositoryOwner"}
 		if gotArgs := readRecordedArgs(t); !slices.Equal(gotArgs, want) {
 			t.Errorf("argv = %q, want %q", gotArgs, want)
 		}

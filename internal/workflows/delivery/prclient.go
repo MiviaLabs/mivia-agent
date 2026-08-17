@@ -18,6 +18,7 @@ import (
 type PRRef struct {
 	RemoteID   string
 	URL        string
+	Title      string
 	Draft      bool
 	BaseRefOID string // the PR's current base commit (gh baseRefOid)
 }
@@ -82,7 +83,7 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		"--repo", repo,
 		"--head", headBranch,
 		"--state", "open",
-		"--json", "number,url,isDraft,headRepositoryOwner",
+		"--json", "number,url,title,isDraft,headRepositoryOwner",
 	}
 	out, err := runGH(ctx, "pr list", args...)
 	if err != nil {
@@ -91,6 +92,7 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 	var prs []struct {
 		Number        int    `json:"number"`
 		URL           string `json:"url"`
+		Title         string `json:"title"`
 		Draft         bool   `json:"isDraft"`
 		HeadRepoOwner struct {
 			Login string `json:"login"`
@@ -114,7 +116,7 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		if err != nil {
 			return nil, err
 		}
-		return &PRRef{RemoteID: number, URL: pr.URL, Draft: pr.Draft, BaseRefOID: baseOID}, nil
+		return &PRRef{RemoteID: number, URL: pr.URL, Title: pr.Title, Draft: pr.Draft, BaseRefOID: baseOID}, nil
 	}
 	return nil, nil
 }
