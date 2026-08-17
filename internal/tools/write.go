@@ -164,7 +164,11 @@ func (t *writeFileTool) formatWriteResult(rel, content string, existed bool, old
 	if oldContent == "" {
 		return header
 	}
-	return t.capWriteResult(header + "\n" + generateUnifiedDiffAt(rel, oldContent, content, 1))
+	// Anchor the diff's first hunk at the first line that actually changed.
+	// The previous hardcoded anchor of 1 misreported hunk line numbers for any
+	// overwrite whose changes do not start at line 1; edit.go and edit_result.go
+	// both anchor from the contents, and so must this path.
+	return t.capWriteResult(header + "\n" + generateUnifiedDiffAt(rel, oldContent, content, firstChangedLine(oldContent, content)))
 }
 
 // writeRegularFileContents writes content via non-blocking open + fstat so a
