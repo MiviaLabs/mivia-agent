@@ -179,11 +179,13 @@ func reconcileTask(t tasks.Task, run RunInfo, merged bool, runPushed bool, maxAt
 	case runStatusPending, runStatusRunning, runStatusWaitingApproval:
 		if run.ClaimStale {
 			// The admitting process died mid-run (F7): nothing durable will ever
-			// settle this without a resume. `mivia stack drive` self-heals it
-			// (driveChunkInFlight); this note just tells an operator reading
-			// `stack status`/`stack reconcile` output what to do in the
-			// meantime, instead of the misleading "run is active".
-			return leave("run's claim is stale; run `mivia stack drive` to auto-resume it")
+			// settle this without a resume. This note tells an operator reading
+			// `stack status`/`stack reconcile` output the correct manual path,
+			// instead of the misleading "run is active". Note: `mivia stack
+			// drive` does NOT auto-resume this case because nextAdmissionWave
+			// admits only planned/queued/blocked/reopened tasks; a task
+			// already at running is never re-admitted into the drive wave.
+			return leave("run's claim is stale; run `mivia workflow resume <run-id>` to resume it")
 		}
 		return leave("run is active")
 	case runStatusDeliveryPending, runStatusSucceeded:

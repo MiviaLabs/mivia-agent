@@ -66,7 +66,9 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 	if prepared.compiled.Stacking.MaxConcurrentChunks > 0 {
 		maxConcurrent = prepared.compiled.Stacking.MaxConcurrentChunks
 	}
-
+	if err := driveStackResumeStaleClaims(ctx, prepared, ledger, stackID, order, stdout, stderr); err != nil {
+		return err
+	}
 	for {
 		wave := nextAdmissionWave(byID, merged, order)
 		if len(wave) == 0 {

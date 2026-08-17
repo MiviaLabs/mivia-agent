@@ -335,3 +335,65 @@ func TestDriveIntegrationRunResumedFailureLeavesForCompletion(t *testing.T) {
 		t.Fatalf("run status = %q, want failed (driveIntegrationInFlight must leave the failure for waitIntegrationRunSettled)", fresh.Status)
 	}
 }
+
+// TestDriveStackResumeStaleClaimsResumesOrphanedRunningTask proves that a
+// chunk whose task is running with a stale execution claim is auto-resumed
+// by driveStackResumeStaleClaims instead of being skipped by the drive
+// (nextAdmissionWave only admits planned/queued/blocked/reopened tasks).
+// The MemoryRepository has no ClaimReader, so GetRunClaim always returns
+// ok=false (stale claim).
+func TestDriveStackResumeStaleClaimsResumesOrphanedRunningTask(t *testing.T) {
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	ledger := tasks.NewMemoryStore()
+	stackID := "stack-stale-claim-resume"
+	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+		t.Fatal(err)
+	}
+
+	chunkID := "c1"
+	if err := ledger.CreateTask(tasks.Task{ID: chunkID, PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+
+	run := workflowledger.RunSnapshot{
+		RunID: "wfr-stale-claim", InvocationKey: stackID + ":" + chunkID,
+		WorkflowName: "stacked", BaseRef: "main",
+		Status: workflowledger.RunStatusPending,
+	}
+	snapshotJSON, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{Inputs: map[string]string{"task": "compile"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateRun(context.Background(), run, snapshotJSON); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(context.Background(), run.RunID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	resumeCalled := false
+	origResume := stackChunkResumeFn
+	stackChunkResumeFn = func(runID, root, configPath string, force, allowPub, acceptVerifier, acceptSkillChange bool, stdout, stderr io.Writer) error {
+		resumeCalled = true
+		return nil
+	}
+	defer func() { stackChunkResumeFn = origResume }()
+
+	prepared := &preparedWorkflowRun{repo: repo, res: &config.Resolved{}}
+	var stdout bytes.Buffer
+	order := []string{chunkID}
+	if err := driveStackResumeStaleClaims(context.Background(), prepared, ledger, stackID, order, &stdout, io.Discard); err != nil {
+		t.Fatalf("driveStackResumeStaleClaims: %v", err)
+	}
+	if !resumeCalled {
+		t.Fatal("stackChunkResumeFn was not called; the stale-claim running task was not resumed")
+	}
+	if !strings.Contains(stdout.String(), "auto-resuming") {
+		t.Fatalf("output %q must mention auto-resuming", stdout.String())
+	}
+}

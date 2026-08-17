@@ -127,3 +127,37 @@ func driveIntegrationInFlight(ctx context.Context, prepared *preparedWorkflowRun
 	fmt.Fprintf(stdout, "integration run=%s resumed; status=%s\n", fresh.RunID, fresh.Status)
 	return nil
 }
+
+// driveStackResumeStaleClaims rescues in-flight chunk runs whose task is at
+// running (not an admissible pre-status) but whose execution claim is stale
+// (F7): the admitting process died mid-run. nextAdmissionWave never picks
+// running tasks, so without this pass the drive skips them entirely and the
+// stack stalls. Each stale-claim chunk is routed to driveChunkInFlight which
+// resumes it through the same non-force expired-claim takeover path that
+// `mivia workflow resume` uses.
+func driveStackResumeStaleClaims(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, order []string, stdout, stderr io.Writer) error {
+	for _, chunkID := range order {
+		t, err := ledger.GetTask(stackID, chunkID)
+		if err != nil {
+			continue
+		}
+		if t.Status != stackStatusRunning {
+			continue
+		}
+		run, found, err := stackRunRef(prepared.repo, stackID, chunkID)
+		if err != nil || !found {
+			continue
+		}
+		if !isResumableRunStatus(run.Status) {
+			continue
+		}
+		if !stackRunClaimStale(prepared.repo, run.RunID) {
+			continue
+		}
+		fmt.Fprintf(stdout, "chunk=%s task is running with stale claim; auto-resuming\n", chunkID)
+		if _, err := driveChunkInFlight(ctx, prepared, ledger, stackID, chunkID, run, true, stdout, stderr); err != nil {
+			return fmt.Errorf("stack drive: stale-claim resume chunk %s: %w", chunkID, err)
+		}
+	}
+	return nil
+}
