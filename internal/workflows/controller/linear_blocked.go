@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/blockedpath"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // blockedPathsFromOutput returns the write-blocklisted paths that a SUCCEEDED
@@ -80,6 +82,46 @@ func (c *LinearController) blockedPathsFromOutput(ctx context.Context, output ma
 						add(p)
 					}
 				}
+			}
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// gateFailurePathRe extracts path-like tokens from an evidence gate's
+// Check.Failures lines (e.g. "NOTE comment block: internal/foo/bar.go
+// L5-30 (...)"). Deliberately loose - it over-matches non-path tokens like
+// "L5-30", which IsBlockedPath then filters out because they never share a
+// prefix with a blocklist entry.
+var gateFailurePathRe = regexp.MustCompile(`[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+`)
+
+// blockedPathsFromGateFailures returns the write-blocklisted paths named in a
+// FAILED evidence gate's own Check.Failures lines, before any repair step is
+// dispatched. This is the pre-repair analogue of blockedPathsFromOutput: that
+// function only catches a repair AGENT's output after it already spent an
+// attempt; this one catches the underlying gate failure naming an unwritable
+// file up front, so a run whose only fix requires editing a blocklisted path
+// never enters the repair loop at all - it fails immediately with the file
+// list, instead of burning a repair attempt that was never going to be
+// admitted.
+func (c *LinearController) blockedPathsFromGateFailures(result verifier.Result) []string {
+	if len(c.WritePathBlocklist) == 0 {
+		return nil
+	}
+	var paths []string
+	seen := make(map[string]bool)
+	for _, check := range result.Checks {
+		if check.Status != "failed" {
+			continue
+		}
+		for _, line := range check.Failures {
+			for _, token := range gateFailurePathRe.FindAllString(line, -1) {
+				if !blockedpath.IsBlockedPath(token, c.WritePathBlocklist) || seen[token] {
+					continue
+				}
+				seen[token] = true
+				paths = append(paths, token)
 			}
 		}
 	}

@@ -145,6 +145,14 @@ func (c *LinearController) verifierProfile(step definition.Step) (verifier.Profi
 func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, step definition.Step, result verifier.Result, output []byte, outputMap map[string]any) (workflowledger.RunSnapshot, bool, error) {
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
+	// A gate failure that names a write-blocklisted path is never a
+	// repair-loop candidate: no workflow agent can write that path, so
+	// dispatching repair_* would only burn an attempt before failing with
+	// the same message settleHostFailure below would give post-hoc. Fail
+	// fast here instead, before the repair route is even selected.
+	if blocked := c.blockedPathsFromGateFailures(result); len(blocked) > 0 {
+		return c.settleBlockedGateFailure(writeCtx, run, attempt, step, output, blocked)
+	}
 	if !result.Repairable() {
 		return c.settleHostFailure(writeCtx, run, attempt, step, output)
 	}
