@@ -566,8 +566,8 @@ func TestPrepareWorkflowResumeExecutionCancelsJoinWhenClaimLost(t *testing.T) {
 		if err == nil {
 			t.Fatalf("prepareWorkflowResumeExecution() error = nil, want join cancelled after claim loss")
 		}
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("prepareWorkflowResumeExecution() error = %v, want context.Canceled", err)
+		if !errors.Is(err, errResumeHandoffClaimLost) {
+			t.Fatalf("prepareWorkflowResumeExecution() error = %v, want errResumeHandoffClaimLost", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("prepareWorkflowResumeExecution did not return after the claim was lost")
