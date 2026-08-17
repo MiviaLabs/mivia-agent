@@ -78,7 +78,12 @@ func followUpPRContent(label, parentBranch string, parentRef *PRRef, deferredFil
 	baseTitle := label
 	baseLink := parentBranch
 	if parentRef != nil && strings.TrimSpace(parentRef.Title) != "" {
-		baseTitle = parentRef.Title
+		// sanitizeReusedTitle: parentRef.Title came LIVE from GitHub
+		// (pr.FindByHead), not from our own sanitizeAgentTitle - a human
+		// could have hand-edited the parent PR's title after creation,
+		// bypassing that check entirely. Strip control characters and fold
+		// to one line before ever reusing it as another PR's title base.
+		baseTitle = sanitizeReusedTitle(parentRef.Title)
 	}
 	if parentRef != nil {
 		if link := prLinkMarkdown(*parentRef); link != "" {

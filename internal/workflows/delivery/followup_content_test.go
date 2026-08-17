@@ -39,6 +39,37 @@ func TestFollowUpPRContentLinksTheParentPR(t *testing.T) {
 	}
 }
 
+// TestFollowUpPRContentSanitizesReusedTitle pins a real gap an adversarial
+// review pass caught: parentRef.Title comes LIVE from GitHub (pr.FindByHead),
+// not from our own sanitizeAgentTitle - a human can hand-edit a PR's title
+// on GitHub after creation, bypassing every host-side check that ran once at
+// creation time. followUpPRContent must never trust that text blindly: a
+// control character or embedded newline must never reach pr.Create's
+// --title= argv.
+func TestFollowUpPRContentSanitizesReusedTitle(t *testing.T) {
+	parentRef := &PRRef{
+		RemoteID: "142",
+		URL:      "https://github.com/MiviaLabs/mivia-agent/pull/142",
+		Title:    "fix(agent): retain\x00interrupted\x1b[31mturns\nwith a second line",
+	}
+	title, _ := followUpPRContent("wfr-inv-abc123", "wf/wt-test", parentRef, nil)
+	if strings.ContainsAny(title, "\x00\x1b") {
+		t.Fatalf("title must never carry a control character from a hand-edited parent title, got %q", title)
+	}
+	if strings.ContainsAny(title, "\n\r") {
+		t.Fatalf("title must be single-line (a PR title is a one-line field), got %q", title)
+	}
+	// The ESC byte (a control char) is stripped, but the printable
+	// characters it happened to precede ("[31m", an ANSI SGR sequence
+	// missing its ESC) are ordinary text, not control characters - they are
+	// NOT stripped. Sanitization removes control bytes, not arbitrary
+	// "looks like an escape code" substrings.
+	wantPrefix := "fix(agent): retaininterrupted[31mturns with a second line"
+	if !strings.HasPrefix(title, wantPrefix) {
+		t.Fatalf("title = %q, want it to start with the sanitized parent title %q", title, wantPrefix)
+	}
+}
+
 // TestFollowUpPRContentTitleNeverExceedsGitHubLimit pins a real bug a review
 // pass caught: a reused parent title can already be at MaxTitleRunes (GitHub
 // itself truncates a created title to that limit - prmetadata_validate.go),

@@ -2,7 +2,10 @@ package delivery
 
 import (
 	"strings"
+	"unicode"
 	"unicode/utf8"
+
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // deriveTitle is the ONE title+affix+length primitive both stacking
@@ -48,6 +51,31 @@ func deriveTitle(baseTitle, affix string, maxRunes int) (title string, fits bool
 		return truncateRunes(affix, maxRunes), false, fullRunes
 	}
 	return truncateRunes(base, room) + " " + affix, false, fullRunes
+}
+
+// sanitizeReusedTitle makes a title fetched LIVE from GitHub (parentRef.Title
+// in followUpPRContent) safe to reuse as another PR's title base. Unlike
+// sanitizeAgentTitle (prmetadata_validate.go), which runs once at PR
+// creation and REJECTS a bad agent-authored title via a repairable
+// PRMetadataError, a reused title has already been published - a human or
+// another tool may have hand-edited it on GitHub after creation, bypassing
+// sanitizeAgentTitle entirely, and followUpPRContent has no repair loop to
+// reject into. So this strips rather than rejects: control characters
+// (including one a hand-edit could introduce that sanitizeAgentTitle would
+// have caught at creation time) are dropped, embedded newlines/tabs fold to
+// spaces via foldToSingleLine, and any secret-shaped substring is redacted -
+// the same three transforms sanitizeAgentTitle applies, minus its
+// reject-on-control-character step.
+func sanitizeReusedTitle(title string) string {
+	var b strings.Builder
+	b.Grow(len(title))
+	for _, r := range title {
+		if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return redact.Text(foldToSingleLine(b.String()))
 }
 
 // prLinkMarkdown renders ref as a markdown link ("[#142](url)") so every PR
