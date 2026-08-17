@@ -263,12 +263,19 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 		// delivery_pending success terminal must drive its chunk stack
 		// automatically (the CLI path drives in executeWorkflowRun, the
 		// session path in sessionAutoDeliveryRepairLoop; the agent-tools
-		// engine drives here - see engine_stack.go). Runs in its own
-		// goroutine so the run's launch handle (and Wait) return when the
-		// controller parks; the drive is bounded by runCtx (engine
-		// shutdown/Interrupt cancels it).
-		if runErr == nil && snap.Status == workflowledger.RunStatusDeliveryPending {
-			go e.stackDriveAfterPark(runCtx, ctrl.RunID)
+		// engine drives here - see engine_stack.go). The drive runs in its
+		// own goroutine so the run's launch handle (and Wait) return when
+		// the controller parks, but it keeps the run registered in e.active
+		// for its whole lifetime - it defers cancel() and calls
+		// releaseActiveRun on exit - so Interrupt and a re-launch can cancel
+		// the drive; the drive is bounded by runCtx for its lifetime.
+		driveSpawned := runErr == nil && snap.Status == workflowledger.RunStatusDeliveryPending
+		if driveSpawned {
+			go func() {
+				defer cancel()
+				defer e.releaseActiveRun(ctrl.RunID, done)
+				e.stackDriveAfterPark(runCtx, ctrl.RunID)
+			}()
 		}
 		// Release the resume probe claim if it is still held (e.g. Run
 		// exited before the first Advance could claim/refresh it). No-op
@@ -277,12 +284,23 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 		_ = e.Repo.ReleaseRun(context.Background(), ctrl.RunID, ctrl.Holder)
 		// Final durable trace with the terminal status and delivery hints.
 		e.writeRunTrace(ctrl.RunID)
-		e.mu.Lock()
-		if cur, ok := e.active[ctrl.RunID]; ok && cur.done == done {
-			delete(e.active, ctrl.RunID)
+		if !driveSpawned {
+			e.releaseActiveRun(ctrl.RunID, done)
 		}
-		e.mu.Unlock()
 	}()
+}
+
+// releaseActiveRun removes the run's active handle when it still points at
+// the given done channel. A re-launch may have replaced the handle while the
+// previous controller or drive goroutine was still finishing up
+// (cur.done != done): only the handle that owns this done channel is
+// released, so the newer handle is never stripped.
+func (e *Engine) releaseActiveRun(runID string, done chan struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if cur, ok := e.active[runID]; ok && cur.done == done {
+		delete(e.active, runID)
+	}
 }
 
 // Wait blocks until the background run for runID exits or ctx is done.

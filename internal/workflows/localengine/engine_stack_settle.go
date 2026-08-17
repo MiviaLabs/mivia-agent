@@ -313,6 +313,24 @@ func (e *Engine) stackDriveCompleted(ctx context.Context, repo workflowledger.Re
 	}
 	switch run.Status {
 	case workflowledger.RunStatusSucceeded:
+		// Under merge_policy=auto with an oracle, a succeeded integration
+		// run that actually pushed a diff must have its PR merged before the
+		// plan run may publish: a crash between the drive's integration
+		// delivery and its merge wait would leave the final PR open while
+		// this gate reports the stack complete and an explicit
+		// workflow_deliver publishes the plan run anyway (mirrors the CLI's
+		// remoteMergeOracle gate, stack_drive_completed_test.go). The guard
+		// is exactly waitForIntegrationSettle's - auto + oracle + durable
+		// pushed evidence (not a confirmed no_diff): a no_diff run publishes
+		// no PR and needs no merge, and approve policy and the no-oracle
+		// degrade keep the pre-existing behavior. Fail closed: an oracle
+		// error or a still-open PR both leave the stack resumable.
+		if compiled.Stacking.MergePolicy == "auto" && e.PR != nil && !stacking.ChunkRunNoDiff(ctx, repo, run) {
+			merged, err := e.prMerged(ctx, run)
+			if err != nil || !merged {
+				return false
+			}
+		}
 		return true
 	case workflowledger.RunStatusDeliveryPending:
 		return compiled.Stacking.MergePolicy == "approve" // awaits the publish grant
