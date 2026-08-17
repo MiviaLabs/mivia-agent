@@ -62,7 +62,18 @@ func buildStepRuntimesFromSnapshot(wf *compiler.CompiledWorkflow, schemas, templ
 			runtime.Model = pin.Model
 		}
 		if step.Template != "" {
-			if ref, ok := templates[step.Template]; ok {
+			ref, ok := templates[step.Template]
+			if !ok {
+				// The admission generation that pins agents also pins agent-step
+				// templates. A missing pin with agent pins present is therefore a
+				// snapshot integrity gap, not a legacy run. Older snapshots that
+				// predate template pinning degrade to the admitted template-less
+				// dispatch (the whole-snapshot digest proves the absence is admission
+				// truth).
+				if agentPins != nil {
+					return nil, fmt.Errorf("step %q: template %q: missing from the run snapshot", step.ID, step.Template)
+				}
+			} else {
 				if ref.Digest == "" || digestRefBytes(ref.Bytes) != ref.Digest {
 					return nil, fmt.Errorf("step %q: template %q: snapshot digest is invalid", step.ID, step.Template)
 				}
@@ -172,7 +183,7 @@ func resolveStepAgents(wf *compiler.CompiledWorkflow, registry *agents.AgentRegi
 		// has no session provider to resolve a model-only declaration against,
 		// and a half-pair would fail the dispatcher's binding completeness
 		// check. An empty pair keeps session-following behavior.
-		if agent.Provider != "" {
+		if agent.Provider != "" && agent.Model != "" {
 			pin.ProviderName, pin.Model = agent.Provider, agent.Model
 		}
 		pins[step.Agent] = pin

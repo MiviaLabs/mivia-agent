@@ -289,6 +289,15 @@ func TestBuildStepRuntimesFromSnapshotTemplatePins(t *testing.T) {
 	if steps["plan"].Template != "" {
 		t.Fatalf("legacy degrade must keep the admitted empty Template, got %q", steps["plan"].Template)
 	}
+
+	// N6: the admission generation that pins agents also pins agent-step
+	// templates, so a missing template pin with agent pins present is a
+	// snapshot integrity gap, not a legacy run.
+	if _, err := buildStepRuntimesFromSnapshot(wf, nil, nil, map[string]workflowledger.AgentSnapshot{
+		"planner": {Digest: "sha256:real"},
+	}); err == nil {
+		t.Fatal("a missing template pin with agent pins present must fail closed")
+	}
 }
 
 // TestBuildStepRuntimesFromSnapshotAgentPins pins the agent-pin rules: with
@@ -345,6 +354,31 @@ func TestResolveStepAgentsPinsDefinition(t *testing.T) {
 	}
 	if pin.ProviderName != "deepseek" || pin.Model != "deepseek-v4" {
 		t.Fatalf("pin binding = %s/%s, want the declared pair", pin.ProviderName, pin.Model)
+	}
+
+	// A half-pair must not be pinned: the engine has no session provider to
+	// resolve a model-only declaration, and a provider-only declaration is
+	// equally incomplete.
+	halfCompiled := &compiler.CompiledWorkflow{Steps: []definition.Step{
+		{ID: "provider-only", Kind: "agent", Agent: "provider-only"},
+		{ID: "model-only", Kind: "agent", Agent: "model-only"},
+	}}
+	halfRegistry := agents.NewRegistry()
+	if err := halfRegistry.Publish(agents.ResolvedAgent{Name: "provider-only", Provider: "deepseek"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := halfRegistry.Publish(agents.ResolvedAgent{Name: "model-only", Model: "deepseek-v4"}); err != nil {
+		t.Fatal(err)
+	}
+	halfPins, err := resolveStepAgents(halfCompiled, halfRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := halfPins["provider-only"]; p.ProviderName != "" || p.Model != "" {
+		t.Fatalf("provider-only pin = %+v, want empty pair", p)
+	}
+	if p := halfPins["model-only"]; p.ProviderName != "" || p.Model != "" {
+		t.Fatalf("model-only pin = %+v, want empty pair", p)
 	}
 
 	wf.Steps = append(wf.Steps, definition.Step{ID: "ghost", Kind: "agent", Agent: "ghost"})
