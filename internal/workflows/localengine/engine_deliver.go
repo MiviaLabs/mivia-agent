@@ -386,7 +386,7 @@ func (e *Engine) settleRunFailure(runID string, runErr error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	holder := "wfsettle-" + randomToken(5)
-	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
+	if err := e.claimOrTakeoverExpired(ctx, runID, holder); err != nil {
 		return // another holder owns the run
 	}
 	defer func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }()

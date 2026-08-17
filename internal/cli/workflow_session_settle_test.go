@@ -275,6 +275,48 @@ func TestSessionRunFailureLeavesWaitingApprovalRunAlone(t *testing.T) {
 	}
 }
 
+// A fresh foreign claim (a live holder that took over the run and is
+// between two of its own per-step claims) must survive settleSessionRunFailure
+// untouched: ClaimRun is insert-or-refresh and would otherwise let a
+// displaced executor's settle attempt claim the run in that gap and mark it
+// failed out from under the new holder.
+func TestSessionRunFailureSettleRefusesFreshForeignClaim(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	run := workflowledger.RunSnapshot{RunID: "wfr-session-foreign-claim", Status: workflowledger.RunStatusPending, ActiveStepID: "one"}
+	if err := repo.CreateRun(ctx, run, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, run.RunID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClaimRun(ctx, run.RunID, "other-holder"); err != nil {
+		t.Fatal(err)
+	}
+
+	settleSessionRunFailure(repo, run.RunID, errors.New("boom"))
+
+	after, err := repo.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != workflowledger.RunStatusRunning {
+		t.Fatalf("foreign-claimed run status = %q, want running (the owner settles it)", after.Status)
+	}
+	holder, _, ok, err := repo.GetRunClaim(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || holder != "other-holder" {
+		t.Fatalf("claim = (holder %q, ok %v), want the foreign holder intact", holder, ok)
+	}
+}
+
 // A run that already settled is never overwritten.
 func TestSessionRunFailureDoesNotOverwriteATerminalRun(t *testing.T) {
 	ctx := context.Background()

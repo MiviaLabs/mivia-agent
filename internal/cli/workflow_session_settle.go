@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -59,7 +60,7 @@ func settleSessionRunFailure(repo workflowledger.Repository, runID string, runEr
 	ctx, cancel := context.WithTimeout(context.Background(), sessionSettleTimeout)
 	defer cancel()
 	holder := "wfsettle-" + newCLIWorkflowRunID()
-	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+	if err := claimOrTakeoverExpiredRun(ctx, repo, runID, holder); err != nil {
 		return // another holder owns the run and will settle or continue it
 	}
 	defer func() { _ = repo.ReleaseRun(context.Background(), runID, holder) }()
@@ -117,6 +118,31 @@ func settleSessionRunFailure(repo workflowledger.Repository, runID string, runEr
 	}
 	// Genuinely mid-flight: nothing else will settle it.
 	_ = repo.CompareAndSetRunStatus(ctx, runID, fresh.Version, workflowledger.RunStatusFailed, nil)
+}
+
+// claimOrTakeoverExpiredRun claims runID for holder, taking over the existing
+// claim only when its lease has actually expired — mirrors
+// localengine.Engine.claimOrTakeoverExpired. ClaimRun is insert-or-refresh
+// and succeeds unconditionally when no claim row exists, so a bare ClaimRun
+// here would let a displaced settle attempt claim a run between two of a live
+// holder's per-step claims and mark it failed out from under it. A fresh
+// foreign claim is refused outright; only a claim whose lease already expired
+// may be taken over.
+func claimOrTakeoverExpiredRun(ctx context.Context, repo workflowledger.Repository, runID, holder string) error {
+	if err := repo.ClaimRun(ctx, runID, holder); err != nil {
+		if errors.Is(err, workflowledger.ErrClaimHeld) {
+			takeoverErr := repo.TakeoverExpiredRunClaim(ctx, runID, holder, workflowledger.DefaultClaimLease)
+			if errors.Is(takeoverErr, workflowledger.ErrClaimNotHeld) {
+				return repo.ClaimRun(ctx, runID, holder)
+			}
+			if takeoverErr != nil {
+				return fmt.Errorf("workflow run %q is claimed by another executor", runID)
+			}
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // settleSessionRunFailureDeliveryAwareTarget derives whether the run's
