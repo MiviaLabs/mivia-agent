@@ -368,14 +368,15 @@ func (s *StorageRepository) appendEvent(ctx context.Context, evt storage.Event, 
 		holder = claim.Holder
 	}
 	// Fenced append: the write lands only while the live claim row still
-	// matches this instance's stored (holder, fence). A run whose claim was
-	// taken over (fence bumped) or released by another holder fails here even
-	// when the caller still names a dangling holder and even when the run is
-	// momentarily unclaimed (F2). Backends without fence support and claims
-	// never acquired through the fenced path fall back to the holder-only
-	// append.
+	// matches this instance's stored (holder, fence), and only when that stored
+	// claim belongs to the writer (the context-bound holder, or the instance's
+	// own holder when unbound). A writer whose claim was taken over on this
+	// instance (the stored claim now names the new holder) or released is
+	// refused even when the run is momentarily unclaimed. Backends without
+	// fence support and claims never acquired through the fenced path fall back
+	// to the holder-only append.
 	var err error
-	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
+	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 && (holder == "" || claim.Holder == holder) {
 		err = fenced.AppendClaimedFenced(ctx, evt, claim)
 	} else {
 		err = s.store.AppendClaimed(ctx, evt, holder)

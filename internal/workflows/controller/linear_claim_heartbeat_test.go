@@ -36,6 +36,18 @@ func (r *heartbeatHeldRepo) RefreshRunClaim(context.Context, string, string) err
 	return workflowledger.ErrClaimHeld
 }
 
+// heartbeatLostRepo reports that the claim row is gone (the run was taken over
+// and released by another holder), which a heartbeat must treat as lost.
+type heartbeatLostRepo struct {
+	workflowledger.Repository
+	calls atomic.Int32
+}
+
+func (r *heartbeatLostRepo) RefreshRunClaim(context.Context, string, string) error {
+	r.calls.Add(1)
+	return workflowledger.ErrClaimNotHeld
+}
+
 func TestLinearClaimHeartbeatContinuesOnTransientError(t *testing.T) {
 	old := claimHeartbeatInterval
 	claimHeartbeatInterval = 2 * time.Millisecond
@@ -73,8 +85,26 @@ func TestLinearClaimHeartbeatCancelsOnErrClaimHeld(t *testing.T) {
 	t.Cleanup(func() { claimHeartbeatInterval = old })
 
 	repo := &heartbeatHeldRepo{}
+	assertHeartbeatCancels(t, repo)
+}
+
+// TestLinearClaimHeartbeatCancelsOnLostClaim pins that a missing claim row (the
+// run was taken over and released by another holder, so RefreshRunClaim returns
+// ErrClaimNotHeld) cancels the step: the displaced holder must not keep
+// executing concurrently with the new holder.
+func TestLinearClaimHeartbeatCancelsOnLostClaim(t *testing.T) {
+	old := claimHeartbeatInterval
+	claimHeartbeatInterval = 5 * time.Millisecond
+	t.Cleanup(func() { claimHeartbeatInterval = old })
+
+	repo := &heartbeatLostRepo{}
+	assertHeartbeatCancels(t, repo)
+}
+
+func assertHeartbeatCancels(t *testing.T, repo workflowledger.Repository) {
+	t.Helper()
 	canceled := make(chan struct{}, 1)
-	ctrl := &LinearController{Repo: repo, RunID: "wfr-held-heartbeat", Holder: "holder-a"}
+	ctrl := &LinearController{Repo: repo, RunID: "wfr-heartbeat-cancel", Holder: "holder-a"}
 	stop := ctrl.startClaimHeartbeat(func() {
 		select {
 		case canceled <- struct{}{}:
@@ -85,6 +115,6 @@ func TestLinearClaimHeartbeatCancelsOnErrClaimHeld(t *testing.T) {
 	select {
 	case <-canceled:
 	case <-time.After(time.Second):
-		t.Fatalf("cancel did not fire within one interval; ClaimRun calls = %d", repo.calls.Load())
+		t.Fatal("cancel did not fire within one interval")
 	}
 }
