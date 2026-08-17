@@ -95,5 +95,6 @@ func TestPanelMembersReceiveChunkScope(t *testing.T) {
 // (the step once graded a chunk's diff against the WHOLE task spec and raised
 // unfixable "missing sibling packages", killing chunk runs via
 // reviewMadeNoProgress; confirmed live 2026-08-15). Restore it with the step
-// (see docs/development/debug-cut.md); the live body is in git history:
-// git show HEAD:internal/cli/stack_chunk_scope_templates_test.go
+// (see docs/development/debug-cut.md); the live body is in git history at
+// the last commit before the cut (HEAD moves, this SHA does not):
+// git show ce7538ad:internal/cli/stack_chunk_scope_templates_test.go

@@ -25,8 +25,11 @@ Revert that pin when the cut is reverted.
 ## Disabled tests
 
 Contract tests that pin the cut steps cannot run while the steps are
-commented out. They are disabled in place (commented out) rather than
-deleted, so the regression guards survive the cut. Each entry records what it
+commented out. `assertFeatureDeliveryIntegrationGate`'s call site is disabled
+in place (commented out). The other three test bodies were removed instead -
+commenting out a ~30-70 line test function would have exceeded the repo's
+30-line comment-block gate - and are recoverable only from git history at
+`ce7538ad` (see the restore procedure below). Each entry records what it
 guarded and when to restore it:
 
 | File | Disabled test | Guards | Restore when |
@@ -42,10 +45,10 @@ guarded and when to restore it:
    transitions (bug-fix: implement + repair steps back through
    `review_panel`/`review`/`perf_verify`; feature-delivery: re-add
    `plan_review`/`test_plan_review`/`review_integration`).
-2. Re-enable the disabled tests. The live bodies are in git history, exactly
-   as committed before the cut:
-   - `git show HEAD:internal/cli/bug_fix_panel_contract_test.go`
-   - `git show HEAD:internal/cli/stack_chunk_scope_templates_test.go`
+2. Re-enable the disabled tests. The live bodies are in git history at
+   `ce7538ad`, the last commit before the cut - not `HEAD`, which moves:
+   - `git show ce7538ad:internal/cli/bug_fix_panel_contract_test.go`
+   - `git show ce7538ad:internal/cli/stack_chunk_scope_templates_test.go`
    - re-add the `assertFeatureDeliveryIntegrationGate(t, workflow)` call in
      `internal/cli/feature_delivery_contract_test.go`
 3. Re-capture the `bug-fix.toml` digest pin in

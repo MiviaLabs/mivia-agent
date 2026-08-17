@@ -253,5 +253,6 @@ func assertBugFixPanelLimits(t *testing.T, workflow definition.WorkflowFile) {
 // bug-fix.toml (see docs/development/debug-cut.md). They guard the panel
 // member templates rendering without an inputs.round injection and
 // validatePanelAgentTools admission for every member plus the synthesizer.
-// Restore them with the panel; the live bodies are in git history:
-// git show HEAD:internal/cli/bug_fix_panel_contract_test.go
+// Restore them with the panel; the live bodies are in git history at the
+// last commit before the cut (HEAD moves, this SHA does not):
+// git show ce7538ad:internal/cli/bug_fix_panel_contract_test.go
