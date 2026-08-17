@@ -38,6 +38,28 @@ func TestFollowUpPRContentLinksTheParentPR(t *testing.T) {
 	}
 }
 
+// TestFollowUpPRContentMergeOrderIsThisPRFirst pins the merge-order
+// direction: this PR is created with Base: parentBranch, Head:
+// deferredBranch (followup.go's pr.Create call), so it merges INTO the
+// parent branch - meaning THIS PR merges first, and the parent PR carries
+// the deferred commit along when IT merges second. Stating the reverse
+// would tell a reviewer to merge the parent first, which either fails (this
+// PR's base branch would already be gone) or silently drops the deferred
+// scope from main.
+func TestFollowUpPRContentMergeOrderIsThisPRFirst(t *testing.T) {
+	parentRef := &PRRef{RemoteID: "142", URL: "https://github.com/MiviaLabs/mivia-agent/pull/142", Title: "fix(agent): retain interrupted turns"}
+	_, body := followUpPRContent("wfr-inv-abc123", "wf/wt-test", parentRef, []string{"a.go"})
+	link := "[#142](https://github.com/MiviaLabs/mivia-agent/pull/142)"
+	want := "Merge order: this PR -> " + link + "."
+	if !strings.Contains(body, want) {
+		t.Fatalf("body missing %q (this PR must merge BEFORE its base #142); body:\n%s", want, body)
+	}
+	wrong := "Merge order: " + link + " -> this PR."
+	if strings.Contains(body, wrong) {
+		t.Fatalf("body states the merge order backwards (%q); this PR's base is the parent branch, so it merges first, not last", wrong)
+	}
+}
+
 // TestFollowUpPRContentFallsBackWithoutParentRef pins the degraded path: a
 // failed parent lookup must never block publication, and must never fail
 // silently either - the label/branch name is a legible fallback identifier.

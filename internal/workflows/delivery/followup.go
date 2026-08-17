@@ -97,7 +97,14 @@ func followUpPRContent(label, parentBranch string, parentRef *PRRef, deferredFil
 	} else {
 		fmt.Fprintf(&sb, "File(s) deferred from %s to fit the stacking diff-size limit.\n", baseLink)
 	}
-	sb.WriteString("\nBase: " + baseLink + ". Merge order: " + baseLink + " -> this PR.")
+	// This PR's base IS parentBranch (pr.Create below: Base: parentBranch,
+	// Head: deferredBranch), so it merges INTO the parent branch - meaning
+	// this PR merges FIRST, and only then does the parent PR (parentBranch
+	// -> main) carry the deferred commit along with it. Getting this
+	// backwards would tell a reviewer to merge the parent first, which
+	// either fails (this PR's base branch would already be gone) or
+	// silently drops the deferred scope from the eventual main history.
+	sb.WriteString("\nBase: " + baseLink + ". Merge order: this PR -> " + baseLink + ".")
 	return title, sb.String()
 }
 
