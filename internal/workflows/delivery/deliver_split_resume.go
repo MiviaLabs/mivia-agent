@@ -60,7 +60,7 @@ func resumeDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git 
 		if aerr != nil {
 			return "", "", aerr
 		}
-		return reexecuteDeferredCommit(ctx, repo, git, req, deferred, branch, adoptedC1, adoptedTree, title)
+		return reexecuteDeferredCommit(ctx, repo, git, req, deferred, branch, adoptedC1, adoptedTree, title, body)
 	}
 
 	// Window A: HEAD is the recorded delivered commit and the deferred files
@@ -74,7 +74,7 @@ func resumeDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git 
 			}
 			return c1, c1Tree, nil
 		}
-		return reexecuteDeferredCommit(ctx, repo, git, req, deferred, branch, c1, c1Tree, title)
+		return reexecuteDeferredCommit(ctx, repo, git, req, deferred, branch, c1, c1Tree, title, body)
 	}
 
 	// Windows B/C: HEAD is the deferred commit C2 (parent C1). Verify it is
@@ -163,7 +163,7 @@ func verifyMiviaCommitOnTop(ctx context.Context, git GitRunner, gc GitContext, p
 // must still be present in the worktree: C2 is committed from EXACTLY those
 // paths, saved under the deferred branch, and the worktree is reset back to
 // c1. It returns c1 and its tree unchanged.
-func reexecuteDeferredCommit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, deferred []string, branch, c1, c1Tree, title string) (string, string, error) {
+func reexecuteDeferredCommit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, deferred []string, branch, c1, c1Tree, title, body string) (string, string, error) {
 	addArgs := append([]string{"-c", "core.fsmonitor=false", "add", "--"}, deferred...)
 	if _, err := git.Run(ctx, req.GitCtx, addArgs...); err != nil {
 		return "", "", fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
@@ -181,6 +181,9 @@ func reexecuteDeferredCommit(ctx context.Context, repo ledger.Repository, git Gi
 	bodyText, err := req.Policy.RenderCommitMessage(req.Inputs)
 	if err != nil {
 		return "", "", fmt.Errorf("cannot render commit message for the deferred follow-up: %w", err)
+	}
+	if strings.TrimSpace(bodyText) == "" {
+		bodyText = body
 	}
 	msg := deferredCommitMessage(title, bodyText, len(deferred))
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",

@@ -84,7 +84,9 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 	}
 
 	// Second commit: deferred_files only, child of the delivered commit.
-	if err := commitDeferredFollowUp(ctx, git, req, deferred, title, head); err != nil {
+	// Pass bodyText (already resolved with the empty-render fallback above)
+	// so the follow-up body matches the delivered commit body.
+	if err := commitDeferredFollowUp(ctx, git, req, deferred, title, head, bodyText); err != nil {
 		markFailed(ctx, repo, key, req, err)
 		return "", "", err
 	}
@@ -95,7 +97,7 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 // delivered branch, saves that commit under the deferred branch name, and
 // resets the worktree back to the delivered commit - so deferred's content is
 // preserved but never reachable from the branch that gets pushed next.
-func commitDeferredFollowUp(ctx context.Context, git GitRunner, req Request, deferred []string, title, head string) error {
+func commitDeferredFollowUp(ctx context.Context, git GitRunner, req Request, deferred []string, title, head, body string) error {
 	addArgs := append([]string{"-c", "core.fsmonitor=false", "add", "--"}, deferred...)
 	if _, err := git.Run(ctx, req.GitCtx, addArgs...); err != nil {
 		return fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
@@ -114,6 +116,9 @@ func commitDeferredFollowUp(ctx context.Context, git GitRunner, req Request, def
 	bodyText, err := req.Policy.RenderCommitMessage(req.Inputs)
 	if err != nil {
 		return fmt.Errorf("cannot render commit message for the deferred follow-up: %w", err)
+	}
+	if strings.TrimSpace(bodyText) == "" {
+		bodyText = body
 	}
 	deferredMsg := deferredCommitMessage(title, bodyText, len(deferred))
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",

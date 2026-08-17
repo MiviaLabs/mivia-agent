@@ -25,6 +25,58 @@ import (
 	"testing"
 )
 
+// TestDeliverSplitEmptyTemplateFallsBackToBody pins the empty-render fallback
+// in commitDeferredFollowUp: when CommitMessageTemplate is empty (or renders
+// to whitespace), RenderCommitMessage returns empty and the deferred commit
+// message must fall back to the PR body rather than carry no body at all. A
+// fix subject whose commit-msg hook demands trailers (Regression/Class/Sweep)
+// must still pass on this follow-up commit.
+func TestDeliverSplitEmptyTemplateFallsBackToBody(t *testing.T) {
+	ctx := context.Background()
+	_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorktreeFile(t, worktreeRoot, "essential.txt", "essential change\n")
+	writeWorktreeFile(t, worktreeRoot, "deferred.txt", "deferred change\n")
+
+	trailers := "Regression: TestEmptyTemplate\nClass: none\nSweep: 0 sites"
+	deferredJSON, err := json.Marshal([]string{"deferred.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := Policy{
+		Kind:                  "pull_request",
+		Mode:                  "draft",
+		Provider:              "github",
+		Base:                  "main",
+		TitleTemplate:         "fix(agent): empty template fallback",
+		CommitMessageTemplate: "",
+	}
+	req := newRequest(run, gc, baseCommit, originURL, policy,
+		map[string]string{"task": "x", InputDeferredFiles: string(deferredJSON)})
+	key := DeliveryKey(run.RunID, run.WorkflowDigest)
+	title := "fix(agent): empty template fallback"
+	body := trailers
+	deferredFiles, err := ParseDeferredFiles(string(deferredJSON))
+	if err != nil {
+		t.Fatalf("ParseDeferredFiles: %v", err)
+	}
+
+	c1, _, cerr := freshDeliveryCommitSplit(ctx, repo, RealGit{}, req, key, "", deferredFiles, title, body)
+	if cerr != nil {
+		t.Fatalf("freshDeliveryCommitSplit: %v", cerr)
+	}
+	if c1 == "" {
+		t.Fatal("freshDeliveryCommitSplit returned empty C1")
+	}
+
+	msg := runGitOut(t, worktreeRoot, "log", "-1", "--format=%B", DeferredBranchName("wf/wt-test"))
+	if !strings.Contains(msg, trailers) {
+		t.Fatalf("deferred commit message = %q, must contain the body trailers (empty template fallback): %q", msg, trailers)
+	}
+	if !strings.Contains(msg, "deferred: 1 file(s) split from this chunk's delivery (automatic follow-up)") {
+		t.Fatalf("deferred commit message = %q, must contain the deferred note", msg)
+	}
+}
+
 func TestDeliverSplitsCommitWhenDeferredFilesPresent(t *testing.T) {
 	ctx := context.Background()
 	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
