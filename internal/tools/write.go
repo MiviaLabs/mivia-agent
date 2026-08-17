@@ -164,7 +164,7 @@ func (t *writeFileTool) formatWriteResult(rel, content string, existed bool, old
 	if oldContent == "" {
 		return header
 	}
-	return t.capWriteResult(header + "\n" + generateUnifiedDiffAt(rel, oldContent, content, 1))
+	return t.capWriteResult(header + "\n" + generateUnifiedDiffAt(rel, oldContent, content, firstChangedLine(oldContent, content)))
 }
 
 // writeRegularFileContents writes content via non-blocking open + fstat so a

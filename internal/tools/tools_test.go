@@ -367,6 +367,36 @@ func TestWriteFileOverwriteDiffCap(t *testing.T) {
 	}
 }
 
+// An overwrite diff must anchor its first hunk at the first line that
+// actually changed, matching the in-place edit tools (edit.go anchors via
+// firstChangedLine, edit_result.go via the edit's oldLine). write.go used to
+// hardcode anchor 1, so overwriting an 11-line file whose first change lands
+// at line 8 reported "@@ -1,7 +1,7 @@" instead of "@@ -5,7 +5,7 @@" (3
+// context lines before line 8).
+func TestWriteFileOverwriteDiffAnchoredAtFirstChangedLine(t *testing.T) {
+	_, reg := setupWS(t)
+	var old strings.Builder
+	for i := 1; i <= 7; i++ {
+		fmt.Fprintf(&old, "l%d\n", i)
+	}
+	old.WriteString("old8\nold9\nold10\nold11\n")
+	mustExec(t, reg, "write_file", map[string]any{"path": "anchor.txt", "content": old.String()})
+
+	var next strings.Builder
+	for i := 1; i <= 7; i++ {
+		fmt.Fprintf(&next, "l%d\n", i)
+	}
+	next.WriteString("new8\nnew9\nnew10\nnew11\n")
+	out := mustExec(t, reg, "write_file", map[string]any{"path": "anchor.txt", "content": next.String()})
+
+	if !strings.Contains(out, "@@ -5,7 +5,7 @@") {
+		t.Fatalf("hunk header not anchored at the first changed line: %q", out)
+	}
+	if strings.Contains(out, "@@ -1,7 +1,7 @@") {
+		t.Fatalf("hunk header still anchored at line 1: %q", out)
+	}
+}
+
 func TestCountLines(t *testing.T) {
 	if got := countLines(""); got != 0 {
 		t.Fatalf("empty: %d", got)
