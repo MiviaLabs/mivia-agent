@@ -291,7 +291,11 @@ func unquote(s string) (string, error) {
 // splitFlowSequence splits a comma-separated flow sequence inner string
 // with awareness of quoted values, so commas inside quotes are preserved.
 // A scan that ends inside an open quote is a hard error rather than a
-// silently kept stray delimiter.
+// silently kept stray delimiter. An item that unquotes to "" is rejected
+// exactly like blockItem rejects an empty block item: a trailing comma
+// ([a, ]), a bare comma ([,]), a doubled comma ([a,,b]), or a quoted-empty
+// item ([""]) is malformed, not a silently dropped entry. The genuinely
+// empty inner string (from "[]") stays valid and yields nil.
 func splitFlowSequence(inner string) ([]string, error) {
 	inner = strings.TrimSpace(inner)
 	if inner == "" {
@@ -314,6 +318,9 @@ func splitFlowSequence(inner string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
+			if item == "" {
+				return nil, fmt.Errorf("empty list item")
+			}
 			items = append(items, item)
 			current.Reset()
 		default:
@@ -327,6 +334,9 @@ func splitFlowSequence(inner string) ([]string, error) {
 		item, err := unquote(strings.TrimSpace(current.String()))
 		if err != nil {
 			return nil, err
+		}
+		if item == "" {
+			return nil, fmt.Errorf("empty list item")
 		}
 		items = append(items, item)
 	}

@@ -764,3 +764,98 @@ func TestSkillToolsEmptyListIsNonNilEmpty(t *testing.T) {
 		t.Fatalf("Tools=%v", def.Tools)
 	}
 }
+
+// A frontmatter name made entirely of characters SanitizeModelFacingText
+// strips (a raw control byte like \x01, or a bare backslash) survives
+// TrimSpace and the raw empty / `\` check and then sanitizes to "". The
+// resilient loader must skip the skill with a warning rather than register a
+// degenerate entry under the empty name, which would surface as an empty
+// enum/name on the model-facing tool surface.
+func TestLoadMarkdownSourcesSkipsSkillWhoseNameSanitizesToEmpty(t *testing.T) {
+	for name, body := range map[string]string{
+		"raw control byte": "---\nname: \x01\n---\nbody\n",
+		"bare backslash":   "---\nname: \\\n---\nbody\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "ctrl")
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			reg, warnings, err := LoadMarkdownSources([]Source{{Dir: root, Origin: OriginProject}}, LoadOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := reg.Get(""); ok {
+				t.Fatalf("degenerate skill registered under the empty name: %#v", reg.List())
+			}
+			if len(reg.List()) != 0 {
+				t.Fatalf("registry must be empty, got %#v", reg.List())
+			}
+			if got := reg.ListModelFacing(nil); len(got) != 0 {
+				t.Fatalf("model-facing surface must be empty, got %#v", got)
+			}
+			if len(warnings) != 1 || !strings.Contains(warnings[0], "skip") {
+				t.Fatalf("warnings = %v, want a skip notice", warnings)
+			}
+		})
+	}
+}
+
+// The strict single-source loader must fail closed on a name that sanitizes
+// to "", not silently register a degenerate empty-named skill.
+func TestLoadMarkdownRejectsNameThatSanitizesToEmpty(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "ctrl")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: \x01\n---\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadMarkdown(root); err == nil {
+		t.Fatal("expected strict loader to reject a name that sanitizes to empty")
+	}
+}
+
+// The fix must not over-reject: a name containing characters that sanitize
+// away is still registered under its sanitized form.
+func TestLoadMarkdownSanitizesNameBeforeRegistering(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: rev\x01iew\n---\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := loadMarkdown(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, ok := reg.Get("review")
+	if !ok {
+		t.Fatalf("skill under sanitized name 'review' missing: %#v", reg.List())
+	}
+	if def.Name != "review" {
+		t.Fatalf("name = %q, want review", def.Name)
+	}
+}
+
+// Sanitize-then-check must not loosen the existing `/` `\\` name rejection.
+func TestLoadMarkdownRejectsSlashNameAfterSanitize(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: a/b\n---\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadMarkdown(root); err == nil {
+		t.Fatal("expected name containing / to be rejected")
+	}
+}
