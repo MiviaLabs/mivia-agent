@@ -566,6 +566,66 @@ func TestTruncateRunesNeverSplitsAGrapheme(t *testing.T) {
 	}
 }
 
+// TestRenderTitleByteCapFallbackNeverSplitsAGrapheme closes a gap an
+// adversarial review pass caught in the FIRST grapheme-safety fix:
+// truncateRunes was made grapheme-safe, but RenderTitle's word-boundary
+// truncation (truncateRendered, MaxTitleBytes) has its own separate
+// no-space-boundary fallback that used to call textutil.TruncateRuneSafe
+// directly - bypassing truncateRunes/backUntilGraphemeBoundary entirely.
+// truncateRunes' later pass over the ALREADY byte-truncated result was a
+// no-op (its rune count was already under MaxTitleRunes), so the
+// grapheme-mangling byte cut survived untouched. This is the byte-cap path,
+// not the rune-cap path TestTruncateRunesNeverSplitsAGrapheme covers.
+func TestRenderTitleByteCapFallbackNeverSplitsAGrapheme(t *testing.T) {
+	// 200 decomposed "e"+combining-acute-accent pairs, no spaces (a single
+	// unbroken token), so RenderTitle's word-boundary search finds nothing
+	// and falls through to the byte-cap-only path.
+	// Built via explicit escape (not a typed "é" literal): a decomposed pair
+	// must be 'e' (U+0065) + COMBINING ACUTE ACCENT (U+0301) as two distinct
+	// runes, and different editors/encodings can silently normalize a typed
+	// "é" to the PRECOMPOSED U+00E9 (one rune) instead - which would make
+	// this test pass trivially without ever exercising the bug.
+	decomposedE := "é"
+	p := Policy{TitleTemplate: "{{ inputs.title }}", MaxTitleBytes: 50}
+	got, err := p.RenderTitle(map[string]string{"title": strings.Repeat(decomposedE, 200)})
+	if err != nil {
+		t.Fatalf("RenderTitle: %v", err)
+	}
+	runes := []rune(got)
+	if len(runes)%2 != 0 {
+		t.Fatalf("title has %d runes (odd) - an odd count means the byte-cap cut landed on a lone base character missing its combining mark; title=%q", len(runes), got)
+	}
+	if len(runes) > 0 && runes[len(runes)-1] != '́' {
+		t.Fatalf("title ends with %U, want the combining mark U+0301 (a complete pair); title=%q", runes[len(runes)-1], got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("title is not valid UTF-8: %q", got)
+	}
+}
+
+// TestBackUntilGraphemeBoundaryDegenerateAllMarksFallsBack pins a second gap
+// the same review pass caught: backUntilGraphemeBoundary's backup loop, given
+// a prefix that is ENTIRELY combining marks with no base character at all
+// (malformed/unusual input - marks conventionally never lead), backs `end`
+// all the way to 0 and collapses a non-empty, maxRunes>0 request into an
+// EMPTY result - a silent "return nothing" truncateRunes' own early-return
+// guards (maxRunes<=0, RuneCountInString(s)<=maxRunes) do not anticipate or
+// prevent. There is no base character to back up TO in that case, so
+// backUntilGraphemeBoundary must fall back to the original (grapheme-unsafe
+// but non-empty) cut instead of emptying the result.
+func TestBackUntilGraphemeBoundaryDegenerateAllMarksFallsBack(t *testing.T) {
+	got := truncateRunes(strings.Repeat("́", 10), 3)
+	if got == "" {
+		t.Fatal(`truncateRunes(all-combining-marks, 3) = "", want a non-empty fallback (3 marks, grapheme-unsafe but not silently emptied)`)
+	}
+	if n := utf8.RuneCountInString(got); n != 3 {
+		t.Fatalf("truncateRunes(all-combining-marks, 3) has %d runes, want 3", n)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("result is not valid UTF-8: %q", got)
+	}
+}
+
 // TestRenderTemplateAppliesRedaction pins that renderTemplate applies the
 // process-wide redaction policy (redact.Text) to the rendered title and the
 // rendered commit message, so a credential-shaped input never reaches GitHub

@@ -279,22 +279,22 @@ func truncateRendered(rendered string, maxBytes int, allowNewline bool) (string,
 		return rendered, nil
 	}
 	if allowNewline {
-		// Commit-message truncation, rune-safe so a multi-byte rune at the
-		// cut is never split. The "..." marker bytes are reserved BEFORE the
-		// rune-safe cut: carving them out of the END of the prefix with a raw
-		// slice could strip 3 bytes off a 4-byte rune that ended exactly at
-		// maxBytes, leaving a dangling lead byte in the value that reaches
+		// Commit-message truncation, rune- and grapheme-safe so a multi-byte
+		// rune, or a base character plus its combining mark, at the cut is
+		// never split. The "..." marker bytes are reserved BEFORE the cut:
+		// carving them out of the END of the prefix with a raw slice could
+		// strip 3 bytes off a 4-byte rune that ended exactly at maxBytes,
+		// leaving a dangling lead byte in the value that reaches
 		// `git commit -m` (E1, DC-6).
 		if maxBytes > 3 {
-			return textutil.TruncateRuneSafe(rendered, maxBytes-3) + "...", nil
+			return truncateBytesGraphemeSafe(rendered, maxBytes-3) + "...", nil
 		}
-		// The marker cannot fit; truncate rune-safely at the raw cap. The
-		// caller still learns truncation happened because the input exceeded
-		// maxBytes.
-		return textutil.TruncateRuneSafe(rendered, maxBytes), nil
+		// The marker cannot fit; truncate at the raw cap. The caller still
+		// learns truncation happened because the input exceeded maxBytes.
+		return truncateBytesGraphemeSafe(rendered, maxBytes), nil
 	}
 	// Word-boundary truncation for titles. A space is one byte, so cutting at
-	// a space is always a rune boundary.
+	// a space is always a rune (and grapheme) boundary.
 	cut := maxBytes
 	if cut > len(rendered) {
 		cut = len(rendered)
@@ -302,26 +302,44 @@ func truncateRendered(rendered string, maxBytes int, allowNewline bool) (string,
 	if lastSpace := findLastSpace(rendered, cut-1); lastSpace > 0 {
 		return rendered[:lastSpace], nil
 	}
-	// No space boundary (a long unbroken token or CJK text): truncate
-	// rune-safely so the cut never splits a multi-byte rune, which would
-	// otherwise publish invalid UTF-8 in the PR title.
-	return textutil.TruncateRuneSafe(rendered, maxBytes), nil
+	// No space boundary (a long unbroken token, CJK text, or decomposed
+	// combining-mark text): truncate rune- and grapheme-safely so the cut
+	// never splits a multi-byte rune (publishing invalid UTF-8) or strands a
+	// base character without its combining mark (publishing valid but
+	// visibly wrong text).
+	return truncateBytesGraphemeSafe(rendered, maxBytes), nil
 }
 
-// truncateRunes caps s to at most maxRunes runes, never splitting a rune AND
-// never splitting a GRAPHEME (a base character plus the combining mark(s)
-// that render as part of it, e.g. 'e' (U+0065) + COMBINING ACUTE ACCENT
-// (U+0301), together "é"). A rune boundary is not a grapheme boundary: the
-// initial cut is the byte length of the first maxRunes runes (agreeing with
-// textutil.TruncateRuneSafe's rune-safety), but if the very next rune just
-// past that cut is a combining mark, the cut split a grapheme in two -
-// keeping only the bare base character and silently dropping its
-// diacritic(s), which is valid UTF-8 but visibly wrong text (worse for
-// scripts where combining marks are semantically essential, not merely
-// decorative). backUntilGraphemeBoundary backs the cut up past that base
-// character (and any it stacks with) until the excluded remainder no longer
-// starts with a mark, so the kept prefix always ends on a complete
-// grapheme, one rune shorter rather than one grapheme mangled.
+// truncateBytesGraphemeSafe truncates s to at most maxBytes bytes, first
+// snapping the cut to a rune boundary (textutil.TruncateRuneSafe's existing
+// guarantee), then backing it up further via backUntilGraphemeBoundary -
+// the SAME grapheme-boundary logic truncateRunes uses (both operate on byte
+// offsets into s), so a byte-capped truncation gets the identical guarantee
+// a rune-capped one does: the result never strands a base character without
+// its combining mark.
+func truncateBytesGraphemeSafe(s string, maxBytes int) string {
+	cut := len(textutil.TruncateRuneSafe(s, maxBytes))
+	return s[:backUntilGraphemeBoundary(s, cut)]
+}
+
+// truncateRunes caps s to at most maxRunes runes, never splitting a rune, and
+// never splitting a base character from a COMBINING MARK that renders as
+// part of it (Unicode category Mn/Mc/Me, e.g. 'e' (U+0065) + COMBINING ACUTE
+// ACCENT (U+0301), together "é"). Scoped deliberately to that one grapheme
+// mechanism, not full Unicode grapheme-cluster segmentation (UAX #29): a
+// ZWJ-joined emoji sequence or a regional-indicator flag pair is also a
+// multi-rune grapheme but is NOT formed via a combining mark, so a cut can
+// still split one of those. A rune boundary is not a combining-mark
+// boundary: the initial cut is the byte length of the first maxRunes runes
+// (agreeing with textutil.TruncateRuneSafe's rune-safety), but if the very
+// next rune just past that cut is a combining mark, the cut split a
+// character from its diacritic - keeping only the bare base character and
+// silently dropping the mark(s), which is valid UTF-8 but visibly wrong text
+// (worse for scripts where combining marks are semantically essential, not
+// merely decorative). backUntilGraphemeBoundary backs the cut up past that
+// base character (and any it stacks with) until the excluded remainder no
+// longer starts with a mark, so the kept prefix always ends on a complete
+// base+mark(s) grapheme, one character shorter rather than one mangled.
 func truncateRunes(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
@@ -343,7 +361,17 @@ func truncateRunes(s string, maxRunes int) string {
 // base character without it. A character can carry more than one combining
 // mark (stacked diacritics), so this backs up however many base characters
 // that requires, not just one.
+//
+// If the entire prefix up to end is combining marks with no base character
+// at all (malformed/unusual input: a leading run of marks), the naive
+// backup would reach 0 and collapse a non-empty request into an EMPTY
+// result - a behavior change from "truncate to at most N runes" to
+// "silently return nothing" that the caller's own maxRunes>0 guard does not
+// anticipate. There is no base character to back up TO in that case, so
+// this returns the ORIGINAL end instead: a grapheme-unsafe cut is still
+// strictly better than truncating a non-empty request down to nothing.
 func backUntilGraphemeBoundary(s string, end int) int {
+	original := end
 	for end > 0 {
 		next, nsize := utf8.DecodeRuneInString(s[end:])
 		if nsize == 0 || !unicode.In(next, unicode.Mn, unicode.Mc, unicode.Me) {
@@ -355,7 +383,7 @@ func backUntilGraphemeBoundary(s string, end int) int {
 		}
 		end -= lsize
 	}
-	return end
+	return original
 }
 
 // findLastSpace returns the index of the last space character within the first
