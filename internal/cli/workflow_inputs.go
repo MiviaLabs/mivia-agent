@@ -1,10 +1,7 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -46,40 +43,8 @@ func parseWorkflowInputs(raw []string, defs map[string]definition.InputDef) (map
 }
 
 // parseWorkflowInputValue decodes one input value against the declared type.
-// String inputs pass through verbatim; typed inputs must be single JSON
-// values of the declared type.
+// It delegates to the shared definition parser so the CLI and the local engine
+// resume paths produce identical values for typed inputs.
 func parseWorkflowInputValue(value, typ string) (any, error) {
-	if typ == "string" {
-		return value, nil
-	}
-	decoder := json.NewDecoder(bytes.NewReader([]byte(value)))
-	decoder.UseNumber()
-	var parsed any
-	if err := decoder.Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("value is not valid %s JSON", typ)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return nil, fmt.Errorf("value contains more than one JSON value")
-	}
-	valid := false
-	switch typ {
-	case "boolean":
-		_, valid = parsed.(bool)
-	case "integer":
-		number, ok := parsed.(json.Number)
-		valid = ok && !strings.ContainsAny(number.String(), ".eE")
-	case "number":
-		_, valid = parsed.(json.Number)
-	case "object":
-		_, valid = parsed.(map[string]any)
-	case "array":
-		_, valid = parsed.([]any)
-	default:
-		return nil, fmt.Errorf("unsupported input type %q", typ)
-	}
-	if !valid {
-		return nil, fmt.Errorf("value does not match type %q", typ)
-	}
-	return parsed, nil
+	return definition.ParseInputValue(value, typ)
 }
