@@ -62,6 +62,14 @@ func (s *deleteHookStore) ReleaseClaimFenced(ctx context.Context, claim storage.
 	return s.Store.(storage.FencedLeaseStore).ReleaseClaimFenced(ctx, claim)
 }
 
+func (s *deleteHookStore) TakeoverClaimFenced(ctx context.Context, runID, holder string) (storage.Claim, error) {
+	return s.Store.(storage.FencedLeaseStore).TakeoverClaimFenced(ctx, runID, holder)
+}
+
+func (s *deleteHookStore) RefreshClaimFenced(ctx context.Context, runID, holder string) (storage.Claim, error) {
+	return s.Store.(storage.FencedLeaseStore).RefreshClaimFenced(ctx, runID, holder)
+}
+
 func TestDeleteRunCleansClaimsWhenCatchUpDroppedRunFirst(t *testing.T) {
 	ctx := context.Background()
 	runID := "run-race-delete"
