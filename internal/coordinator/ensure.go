@@ -70,7 +70,7 @@ func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*Run
 	if err != nil {
 		return nil, fmt.Errorf("ensure run: list tasks: %w", err)
 	}
-	if len(storedTasks) != 0 && len(storedTasks) != len(req.Tasks) {
+	if len(storedTasks) != 0 && len(storedTasks) < len(req.Tasks) {
 		return nil, fmt.Errorf("ensure run: partial task admission for run %q", snap.RunID)
 	}
 	if len(storedTasks) > 0 {
@@ -279,7 +279,7 @@ func (c *coordinator) joinSingleTaskAdmission(ctx context.Context, req EnsureRun
 	if err != nil {
 		return nil, fmt.Errorf("join single admission: list winner tasks: %w", err)
 	}
-	if len(tasks) != 1 || !sameStoredWork(req.Tasks[0], tasks[0]) {
+	if !anyStoredTaskMatches(req.Tasks[0], tasks) {
 		return nil, ErrIdempotencyConflict
 	}
 	if isTerminalRunStatus(run.Status) {
@@ -360,6 +360,23 @@ func validateStoredAdmission(requested []subagents.Task, stored []ledger.TaskSna
 		}
 	}
 	return nil
+}
+
+// anyStoredTaskMatches reports whether any stored task in the run matches the
+// requested task's work. A run can hold more stored tasks than the request
+// admits when same-run referrals added tasks after admission (SpawnReferral),
+// so an idempotent rejoin must resolve the admitted task as a member of the
+// stored set rather than demanding an exact one-task count. The request-level
+// identity check (RequestFingerprint over req.Tasks) still proves the rejoin
+// is exactly the admitted work, so a referral-only or altered-input rejoin
+// still conflicts before this membership is consulted.
+func anyStoredTaskMatches(req subagents.Task, stored []ledger.TaskSnapshot) bool {
+	for _, snap := range stored {
+		if sameStoredWork(req, snap) {
+			return true
+		}
+	}
+	return false
 }
 
 func sameStoredWork(task subagents.Task, snap ledger.TaskSnapshot) bool {
