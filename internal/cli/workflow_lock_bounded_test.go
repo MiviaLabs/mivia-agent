@@ -108,6 +108,113 @@ func TestBeginWorkflowExecutionBoundedWaitsForHeldLock(t *testing.T) {
 	again()
 }
 
+// TestLockWorkflowExecutionFileWrapsNonBusyError pins that
+// lockWorkflowExecutionFile forwards a non-busy failure from the underlying
+// marker-lock primitive under its own "lock workflow execution" wording
+// (workflow_resume_lock.go:36), not the busy-specific rewrite reserved for
+// "lock is busy" (line 34). A closed file descriptor makes the low-level
+// flock fail with EBADF, a non-busy errno, without needing a real contended
+// lock.
+func TestLockWorkflowExecutionFileWrapsNonBusyError(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "marker-lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = lockWorkflowExecutionFile(file)
+	if err == nil {
+		t.Fatal("closed marker descriptor acquired a workflow execution lock")
+	}
+	if !strings.HasPrefix(err.Error(), "lock workflow execution: ") {
+		t.Fatalf("error = %q, want the generic \"lock workflow execution: %%w\" wrap", err.Error())
+	}
+	if strings.Contains(err.Error(), "lock is busy") {
+		t.Fatalf("error = %q, want a non-busy error routed through the generic wrap, not the busy rewrite", err.Error())
+	}
+}
+
+// TestAcquireWorkflowExecutionLockBoundedRetryLoopRespectsDeadline pins the
+// retry-sleep loop's deadline-clamped sleep (workflow_resume_lock.go:96-100).
+// A single contended attempt against an already-held lock costs about 1.03s
+// (the underlying flock primitive retries internally for up to 100*10ms
+// before reporting busy - see lockWorktreeMarkerFile), and the deadline is
+// only rechecked BETWEEN attempts, never during one. With maxWait set just
+// past one attempt's cost, the loop's first attempt leaves under 200ms
+// remaining, forcing the clamp at line 99 (sleep = remaining) rather than the
+// unclamped 200ms tick; the loop then starts a second, uncancellable attempt
+// before the deadline check fires again. This pins the known overshoot shape
+// (roughly one extra attempt's worth of time, not an unbounded hang) with a
+// real timing assertion rather than just checking the error text.
+func TestAcquireWorkflowExecutionLockBoundedRetryLoopRespectsDeadline(t *testing.T) {
+	storePath := lockStorePath(t)
+	hold, err := acquireWorkflowExecutionLock(storePath, "wfr-deadline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold()
+
+	const maxWait = 1150 * time.Millisecond
+	start := time.Now()
+	_, err = acquireWorkflowExecutionLockBounded(context.Background(), storePath, "wfr-deadline", maxWait)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a busy-lock error")
+	}
+	if !strings.Contains(err.Error(), "still held after") {
+		t.Fatalf("error %q should explain the held lock and suggest a retry", err.Error())
+	}
+	if elapsed < maxWait {
+		t.Fatalf("elapsed = %s, want at least maxWait %s", elapsed, maxWait)
+	}
+	// The deadline is only rechecked between attempts, so overshoot is bounded
+	// by one extra ~1.03s attempt plus scheduling slack, not unbounded.
+	const maxOvershoot = 1600 * time.Millisecond
+	if overshoot := elapsed - maxWait; overshoot > maxOvershoot {
+		t.Fatalf("elapsed = %s (maxWait %s, overshoot %s); want overshoot bounded by roughly one retry attempt (%s)", elapsed, maxWait, overshoot, maxOvershoot)
+	}
+}
+
+// TestAcquireWorkflowExecutionLockBoundedCtxCancelDuringSleep pins that the
+// retry loop's select (workflow_resume_lock.go:101-104) reacts to context
+// cancellation that arrives mid-sleep, not just a context already cancelled
+// before the loop starts (TestBeginWorkflowExecutionBoundedHonorsContext
+// covers that earlier short-circuit at the top of the loop). The cancel fires
+// during the outer 200ms sleep tick that follows the first (uncancellable,
+// ~1.03s) contended attempt, so a prompt return proves the select's
+// ctx.Done() case actually won the race against time.After(sleep), not that
+// the loop simply never got that far.
+func TestAcquireWorkflowExecutionLockBoundedCtxCancelDuringSleep(t *testing.T) {
+	storePath := lockStorePath(t)
+	hold, err := acquireWorkflowExecutionLock(storePath, "wfr-ctx-mid-sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	const cancelAfter = 1150 * time.Millisecond
+	timer := time.AfterFunc(cancelAfter, cancel)
+	defer timer.Stop()
+
+	start := time.Now()
+	_, err = acquireWorkflowExecutionLockBounded(ctx, storePath, "wfr-ctx-mid-sleep", 5*time.Second)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("bounded acquire with mid-sleep cancel = %v, want context.Canceled", err)
+	}
+	// A second contended attempt alone costs ~1.03s; returning well under that
+	// after cancelAfter proves the select reacted to ctx.Done() mid-sleep
+	// instead of finishing the sleep tick and starting another attempt.
+	if elapsed >= cancelAfter+800*time.Millisecond {
+		t.Fatalf("elapsed = %s, want prompt return near cancelAfter %s, not a further contended attempt or the full 5s maxWait", elapsed, cancelAfter)
+	}
+}
+
 // TestBeginWorkflowExecutionBoundedHonorsContext pins that the bounded begin
 // path returns immediately on a cancelled context instead of sleeping through
 // the full maxWait.

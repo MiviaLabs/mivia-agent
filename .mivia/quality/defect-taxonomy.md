@@ -420,6 +420,46 @@ locked out for the rest of the turn instead of being allowed to overwrite on a t
   (idle-vs-busy render branches are a common split) leaves the regression reachable
   from the other site.
 
+## DC-18 Terminal status enumeration drift
+
+**Mechanism.** A domain adds a new terminal status value (a status no further
+transition may move a task or run out of) alongside existing ones. The status is not
+declared in one shared source of truth; instead, every place that must treat "terminal"
+specially - a reconciler's short-circuit, a grant-pause predicate, a progress-halt
+check, a failure classifier - hand-lists the terminal set as a literal switch or map.
+The new status is added to the domain but not to every hand-list. Any site the addition
+missed treats the new status as non-terminal and applies its normal in-flight rule to
+it, so a task that should never move again gets re-admitted, reopened, or re-marked by
+whichever site was missed.
+
+This is DC-1's mirror image: DC-1 is a recoverable condition routed into a terminal
+state with no way out; DC-18 is a genuinely terminal state that keeps an unintended way
+out because one enumeration site did not learn about it.
+
+**Evidence.** A stack drive's `cancelStackDependents` (added to halt the dependents of
+a terminally failed chunk) wrote a new `"canceled"` status that
+`internal/workflows/stacking` did not declare and that the reconciler's terminal
+short-circuit (`merged, failed, skipped`) did not name. A canceled dependent whose run
+row read failed/canceled/timed_out fell to the reconciler's reopen path and was
+re-admitted by the next drive wave - the exact resurrection the cancel was written to
+prevent. The same gap disabled a grant-pause exit and let a canceled chunk's branch be
+re-marked merged. Fixed by declaring `stacking.StatusCanceled` and a single
+`stacking.TerminalStatuses`/`StatusIsTerminal` source of truth, then routing every
+enumeration site through it instead of leaving each with its own list.
+
+**Probes.**
+- When a fix adds a new terminal status, grep for every existing enumeration of the
+  statuses that were already terminal (a switch, a map literal, an `AdmissiblePreStatuses`-shaped
+  list) in the same domain. Each one is a candidate site the new status must join.
+- Prefer one declared set (a slice or map the domain package owns) over repeated
+  literal switches. A second literal enumeration of the same status set is the
+  precondition for this class, not a stylistic nit.
+- For the new status, write one regression test per enumeration site proving the site
+  now treats it as terminal - not one test for the status added to the domain.
+- The direction matters: confirm the new status has NO outgoing transition anywhere
+  (worth checking against DC-1 in the same sweep), then confirm every site that reads
+  "is this terminal" agrees.
+
 ## Chain control
 
 The history shows chains: one class produced 35, 45, or 26 separate fixes. A chain

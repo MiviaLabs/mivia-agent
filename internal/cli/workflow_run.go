@@ -183,7 +183,7 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 			// adversarial audit found exactly this).
 			return nil
 		}
-		if settled, settleErr := settleFailedStackPlanRunIfNeeded(context.Background(), prepared, built.Controller.RunID, err.Error()); settleErr != nil {
+		if settled, settleErr := settleFailedStackPlanRunIfNeededFn(context.Background(), prepared, built.Controller.RunID, err.Error()); settleErr != nil {
 			return fmt.Errorf("workflow run: settle failed plan run: %w", settleErr)
 		} else if settled {
 			return errFailedStackPlanRun(built.Controller.RunID, err.Error())

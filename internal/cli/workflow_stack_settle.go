@@ -71,3 +71,10 @@ func settleFailedStackPlanRunIfNeeded(ctx context.Context, prepared *preparedWor
 	}
 	return true, nil
 }
+
+// settleFailedStackPlanRunIfNeededFn is a seam over
+// settleFailedStackPlanRunIfNeeded: executeWorkflowRun builds its own store
+// and repo internally with no injectable seam of its own, so a test that
+// needs to force this function's settleErr branch (a transient store fault
+// during the CAS itself) substitutes a fake here instead.
+var settleFailedStackPlanRunIfNeededFn = settleFailedStackPlanRunIfNeeded

@@ -174,7 +174,7 @@ func settleStackPlanRunIfComplete(ctx context.Context, prepared *preparedWorkflo
 	// as if the drive ended cleanly, and an unknown value must not do so
 	// either. Unlike the deliver path this branch publishes nothing, so the
 	// fall-out was a silent-success bug, not a publication bug.
-	switch gate := classifyStackPlanRunDelivery(ctx, prepared.root, prepared.store, prepared.repo, stackID, true); gate {
+	switch gate := classifyStackPlanRunDeliveryFn(ctx, prepared.root, prepared.store, prepared.repo, stackID, true); gate {
 	case stackPlanRunNotApplicable, stackPlanRunIncomplete:
 		// Routine `stack drive` outcome: nothing to settle, no output.
 	case stackPlanRunFailed:

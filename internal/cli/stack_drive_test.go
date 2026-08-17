@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
@@ -90,6 +91,67 @@ func seedPlanRunDeliveryPending(t *testing.T, repo workflowledger.Repository, pl
 	}
 }
 
+// seedStackDriveGateFixtureBase builds a delivery_pending mini-stack plan run
+// with its two decomposed chunks seeded into the ledger (both still
+// "planned"), so callers can layer either a terminal failure (for the Failed
+// gate) or leave it as-is (for the Incomplete gate) on top.
+func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *preparedWorkflowRun {
+	t.Helper()
+	root := t.TempDir()
+	storePath := filepath.Join(root, "workflow.db")
+	writeWorkflowRunFixture(t, root, "https://example.com", storePath)
+	miniStackPath := filepath.Join(root, ".mivia", "workflows", "mini-stack.toml")
+	if err := os.WriteFile(miniStackPath, []byte(miniStackWorkflowTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := prepareWorkflowRun("mini-stack", root, filepath.Join(root, "config.toml"), []string{"task=x"})
+	if err != nil {
+		t.Fatalf("prepareWorkflowRun() error = %v", err)
+	}
+	t.Cleanup(prepared.closeFn)
+
+	seedPlanRunDeliveryPending(t, prepared.repo, planRunID, prepared.compiled.Digest)
+	seedSucceededDecomposeAttempt(t, prepared.repo, planRunID, []byte(multiChunkPlanOutput))
+
+	_, chunks, _, _, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := tasks.NewStore(prepared.store)
+	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
+		t.Fatal(err)
+	}
+	return prepared
+}
+
+// seedStackDriveFailedGateFixture builds a delivery_pending plan run whose
+// stack has one chunk directly marked failed (no need to exhaust the retry
+// budget): enough for classifyStackPlanRunDelivery to report stackPlanRunFailed
+// so callers that switch on the gate (settleStackPlanRunIfComplete,
+// driveStackOnePass's settle-on-error path, settleFailedStackPlanRunIfNeeded)
+// can be tested directly.
+func seedStackDriveFailedGateFixture(t *testing.T) (*preparedWorkflowRun, string) {
+	t.Helper()
+	const planRunID = "wfr-drive-failed-gate"
+	prepared := seedStackDriveGateFixtureBase(t, planRunID)
+	ledger := tasks.NewStore(prepared.store)
+	if err := ledger.TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
+		t.Fatal(err)
+	}
+	return prepared, planRunID
+}
+
+// seedStackDriveIncompleteGateFixture builds a delivery_pending plan run whose
+// stack has not driven at all (both chunks still "planned"): classifyStack-
+// PlanRunDelivery reports stackPlanRunIncomplete, not stackPlanRunFailed, so
+// callers that gate on Failed specifically (settleFailedStackPlanRunIfNeeded)
+// can be proven to no-op on it.
+func seedStackDriveIncompleteGateFixture(t *testing.T) (*preparedWorkflowRun, string) {
+	t.Helper()
+	const planRunID = "wfr-drive-incomplete-gate"
+	return seedStackDriveGateFixtureBase(t, planRunID), planRunID
+}
+
 // seedExhaustedFailedChunk pre-seeds a chunk whose retry budget is exhausted
 // (reopened stackMaxChunkAttempts times) with a failed run row: reconcile will
 // mark it terminally failed, halting the drive pass.
@@ -131,5 +193,70 @@ func seedExhaustedFailedChunk(t *testing.T, prepared *preparedWorkflowRun, planR
 		if err := prepared.repo.CompareAndSetRunStatus(ctx, chunkRun.RunID, stored.Version, next, nil); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// TestSettleStackPlanRunIfCompleteFailedGateRefusesAndSettles pins the
+// stackPlanRunFailed case of settleStackPlanRunIfComplete's switch: a stack
+// whose gate already reads Failed must be refused (not silently treated as
+// the routine "nothing to settle" outcome) and the plan run must land at the
+// failed terminal.
+func TestSettleStackPlanRunIfCompleteFailedGateRefusesAndSettles(t *testing.T) {
+	prepared, planRunID := seedStackDriveFailedGateFixture(t)
+
+	err := settleStackPlanRunIfComplete(context.Background(), prepared, planRunID, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "cannot complete") {
+		t.Fatalf("settleStackPlanRunIfComplete() error = %v, want errFailedStackPlanRun", err)
+	}
+	run, getErr := prepared.repo.GetRun(context.Background(), planRunID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if run.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("plan run status = %q, want failed", run.Status)
+	}
+}
+
+// TestDriveStackOnePassSettleFailurePropagates pins driveStackOnePass's
+// settleErr != nil branch: when driveStack fails AND the fail-settle attempt
+// itself errors (e.g. a transient store fault), the settle error must
+// surface wrapped, and the plan run must be left exactly as it was
+// (delivery_pending) rather than silently advancing.
+func TestDriveStackOnePassSettleFailurePropagates(t *testing.T) {
+	prepared, planRunID := seedStackDriveFailSettleFixture(t)
+	prepared.repo = &failingCASRepository{Repository: prepared.repo, failStatus: workflowledger.RunStatusFailed}
+
+	err := driveStackOnePass(prepared, planRunID, map[string]string{"task": "x"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "settle failed plan run") {
+		t.Fatalf("driveStackOnePass() error = %v, want it to surface the settle failure", err)
+	}
+	run, getErr := prepared.repo.GetRun(context.Background(), planRunID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if run.Status != workflowledger.RunStatusDeliveryPending {
+		t.Fatalf("plan run status = %q, want delivery_pending (settle failed, must not silently advance)", run.Status)
+	}
+}
+
+// TestSettleStackPlanRunIfCompleteUnknownGateFailsClosed pins the fail-closed
+// default case: a gate value outside the 4 declared stackPlanRunGate
+// constants must refuse with an error naming the unknown value, never fall
+// through as if the drive had ended cleanly. classifyStackPlanRunDelivery
+// itself can never produce a 5th value; the seam
+// classifyStackPlanRunDeliveryFn lets this test simulate one anyway, so a
+// future gate value added without updating this switch is caught here
+// instead of by production fail-open behavior.
+func TestSettleStackPlanRunIfCompleteUnknownGateFailsClosed(t *testing.T) {
+	prepared, planRunID := seedStackDriveIncompleteGateFixture(t)
+	orig := classifyStackPlanRunDeliveryFn
+	classifyStackPlanRunDeliveryFn = func(context.Context, string, *storage.SQLite, workflowledger.Repository, string, bool) stackPlanRunGate {
+		return stackPlanRunGate(99)
+	}
+	defer func() { classifyStackPlanRunDeliveryFn = orig }()
+
+	err := settleStackPlanRunIfComplete(context.Background(), prepared, planRunID, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unknown plan run classification") {
+		t.Fatalf("settleStackPlanRunIfComplete() error = %v, want the unknown-classification refusal", err)
 	}
 }

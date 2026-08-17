@@ -76,7 +76,7 @@ func executeWorkflowDeliver(ctx context.Context, runID, root, configPath string,
 	// The switch is exhaustive and fails closed: only the two cases that fall
 	// out of it reach deliverRunWithStore below, so a gate value added later
 	// cannot silently publish over an ungated stack.
-	switch gate := classifyStackPlanRunDelivery(ctx, work.Abs, store, repo, runID, true); gate {
+	switch gate := classifyStackPlanRunDeliveryFn(ctx, work.Abs, store, repo, runID, true); gate {
 	case stackPlanRunNotApplicable:
 		// Not a multi-chunk plan run: normal delivery below.
 	case stackPlanRunIncomplete:

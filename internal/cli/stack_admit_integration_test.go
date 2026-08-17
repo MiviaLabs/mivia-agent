@@ -121,6 +121,44 @@ func TestClassifyStackPlanRunDeliveryFailedChunk(t *testing.T) {
 	}
 }
 
+// TestStackPlanRunFailureReasonCanceledChunk proves a canceled chunk task (no
+// failed chunk in the map) is enough on its own to report the stack
+// terminally failed: a canceled chunk exists only because a dependency died,
+// so the stack can never complete either.
+func TestStackPlanRunFailureReasonCanceledChunk(t *testing.T) {
+	root, _, store, repo, compiled := newWorkflowBuildFixture(t)
+	ctx := context.Background()
+	runID := "wfr-plan-canceled-chunk"
+	snap := workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: compiled.Name, WorkflowDigest: compiled.Digest,
+		Status: workflowledger.RunStatusPending,
+	}
+	if err := repo.CreateRun(ctx, snap, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	seedSucceededDecomposeAttempt(t, repo, runID, []byte(multiChunkPlanOutput))
+
+	_, chunks, _, _, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
+	if err != nil || len(chunks) != 2 {
+		t.Fatalf("parse chunks = %v, %v; want 2", chunks, err)
+	}
+	ledger := tasks.NewStore(store)
+	if err := seedStackLedger(ledger, runID, chunks); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.TransitionTask(runID, "c2", stackStatusCanceled); err != nil {
+		t.Fatal(err)
+	}
+
+	failed, reason := stackPlanRunFailureReason(ctx, root, store, repo, runID)
+	if !failed {
+		t.Fatal("stackPlanRunFailureReason() = false, want true for a canceled chunk")
+	}
+	if !strings.Contains(reason, "canceled") {
+		t.Fatalf("reason = %q, want it to mention canceled", reason)
+	}
+}
+
 // TestClassifyStackPlanRunDeliveryFailedIntegration proves a terminally failed
 // integration run moves the gate to Failed.
 func TestClassifyStackPlanRunDeliveryFailedIntegration(t *testing.T) {

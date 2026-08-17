@@ -77,6 +77,13 @@ func classifyStackPlanRunDelivery(ctx context.Context, root string, store *stora
 	return stackPlanRunComplete
 }
 
+// classifyStackPlanRunDeliveryFn is a seam over classifyStackPlanRunDelivery:
+// a test can substitute a fake returning a value outside the 4 declared
+// stackPlanRunGate constants to exercise a caller's fail-closed default case,
+// which the real function can never produce (its only 4 return statements
+// name the 4 constants).
+var classifyStackPlanRunDeliveryFn = classifyStackPlanRunDelivery
+
 // stackPlanRunFailureReason reports whether a multi-chunk stack plan run has
 // already reached a terminal failure state. A durably failed chunk task, or
 // an integration run that settled to a status with NO outgoing transition
@@ -93,6 +100,13 @@ func classifyStackPlanRunDelivery(ctx context.Context, root string, store *stora
 // fail-settle the PLAN run to failed - a status with no outgoing edges - so
 // the operator could repair the integration run but never revive the plan
 // run. A delivery_failed integration run classifies as INCOMPLETE.
+// stackPlanRunFailureReasonFn is a seam over stackPlanRunFailureReason: a
+// test can substitute a fake returning failed=true with an empty reason to
+// exercise a caller's defensive empty-reason fallback, a combination the
+// real function's invariant (every failed=true return also sets a non-empty
+// reason) never produces on its own.
+var stackPlanRunFailureReasonFn = stackPlanRunFailureReason
+
 func stackPlanRunFailureReason(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string) (failed bool, reason string) {
 	byID, err := stackTaskMap(tasks.NewStore(store), runID)
 	if err == nil {

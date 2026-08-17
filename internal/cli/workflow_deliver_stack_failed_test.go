@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -160,5 +161,36 @@ func TestWorkflowDeliverKeepsPlanRunAliveWhenIntegrationDeliveryFailed(t *testin
 	}
 	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
 		t.Fatalf("PR client calls: creates=%d finds=%d, want zero (no publish over an incomplete stack)", creates, finds)
+	}
+}
+
+// TestWorkflowDeliverUnknownGateFailsClosed pins the fail-closed default case
+// in executeWorkflowDeliver's gate switch: a stackPlanRunGate value outside
+// the 4 declared constants must refuse to publish, never fall through to
+// deliverRunWithStore. classifyStackPlanRunDelivery can never itself produce
+// a 5th value; the classifyStackPlanRunDeliveryFn seam simulates one so a
+// future gate value added without updating this switch is caught here
+// instead of by production fail-open behavior.
+func TestWorkflowDeliverUnknownGateFailsClosed(t *testing.T) {
+	root, storePath, configPath, prRecorder := newDeliveryFixture(t)
+	repo := openDeliveryStore(t, storePath)
+	planRunID := seedGrantPolicyParkedStackingPlanRun(t, root, storePath, repo)
+
+	orig := classifyStackPlanRunDeliveryFn
+	classifyStackPlanRunDeliveryFn = func(context.Context, string, *storage.SQLite, workflowledger.Repository, string, bool) stackPlanRunGate {
+		return stackPlanRunGate(99)
+	}
+	defer func() { classifyStackPlanRunDeliveryFn = orig }()
+
+	var stdout strings.Builder
+	err := runWorkflowWithIO([]string{"deliver", planRunID, "--workspace", root, "--config", configPath, "--allow-publish"}, &stdout, io.Discard)
+	if err == nil {
+		t.Fatalf("deliver error = nil, want the unknown-classification refusal; stdout = %q", stdout.String())
+	}
+	if !strings.Contains(err.Error(), "unknown stack delivery classification") {
+		t.Fatalf("deliver error = %v, want the unknown-classification refusal", err)
+	}
+	if creates, finds := prRecorder.calls(); creates != 0 || finds != 0 {
+		t.Fatalf("PR client calls: creates=%d finds=%d, want zero (an unknown gate must never publish)", creates, finds)
 	}
 }
