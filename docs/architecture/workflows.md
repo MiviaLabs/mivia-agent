@@ -242,10 +242,13 @@ Delivery honors the reserved stacking inputs when present:
   validates the branch name (allowed characters, length ≤ 100, no `..` or
   leading `-`). Invalid values are repairable `PRMetadataError`s.
 - `stack_part` (canonical `k/N` form) is validated for shape. The host
-  appends a `Stack-Part: k/N` trailer to the PR title after sanitization
-  and policy validation. The agent-controlled title stays intact; the host
-  adds the marker. An invalid `stack_part` or an over-limit result is a
-  repairable `PRMetadataError`.
+  appends a single-line `[stack k/N]` tag to the PR title after
+  sanitization and policy validation — the same bracket-affix convention
+  a deferred/split follow-up PR's title uses, since both are the same
+  "this PR's base is another PR's branch" relationship. The
+  agent-controlled title stays intact as the leading words; the host adds
+  the tag. An invalid `stack_part` or an over-limit result is a repairable
+  `PRMetadataError`.
 - The actual diff size is checked against `hard_lines` after staging. The
   measurement is the added+deleted line count of `git diff --cached`
   (`--find-renames`, `--ignore-all-space`). A diff exceeding the hard limit

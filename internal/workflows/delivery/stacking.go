@@ -94,14 +94,16 @@ func parseStackPart(value string) (k, n int, err error) {
 }
 
 // appendStackPartTitle appends a "[stack k/N]" tag to a resolved PR title,
-// via derivedPRTitle - the SAME single-line, bracket-affix convention
-// EnsureFollowUpPublished uses for a deferred/split PR's title, since both
-// are the same underlying relationship (this PR's base is another PR's
-// branch, so it merges only after that PR). The tag is host-appended AFTER
-// sanitization and policy validation, so the agent-controlled title that
-// passed validation stays intact as the leading words. A result over
-// GitHub's 256-rune ceiling is a repairable PRMetadataError: the agent must
-// shorten the title.
+// via deriveTitle - the SAME single-line, bracket-affix convention and
+// length math EnsureFollowUpPublished uses for a deferred/split PR's title,
+// since both are the same underlying relationship (this PR's base is
+// another PR's branch, so it merges only before/after that PR). The tag is
+// host-appended AFTER sanitization and policy validation, so the
+// agent-controlled title that passed validation stays intact as the leading
+// words. Unlike followUpPRContent, this path runs inside the repairable
+// validatePRMetadata flow, so a result over GitHub's 256-rune ceiling is a
+// repairable PRMetadataError instead of a silent truncation: the agent must
+// shorten the title itself.
 func appendStackPartTitle(title, stackPart string) (string, error) {
 	if stackPart == "" {
 		return title, nil
@@ -111,8 +113,9 @@ func appendStackPartTitle(title, stackPart string) (string, error) {
 		return "", err
 	}
 	affix := fmt.Sprintf("[stack %d/%d]", k, total)
-	withTag := derivedPRTitle(title, affix)
-	if runes := utf8.RuneCountInString(withTag); runes > MaxTitleRunes {
+	withTag, fits := deriveTitle(title, affix, MaxTitleRunes)
+	if !fits {
+		runes := utf8.RuneCountInString(title) + utf8.RuneCountInString(affix) + 1
 		return "", &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title with the %s tag is %d characters, exceeding GitHub's %d-character limit; shorten the title", affix, runes, MaxTitleRunes)}
 	}
 	return withTag, nil

@@ -67,7 +67,7 @@ func deferredFileList(raw string) []string {
 // followUpPRContent builds the title and body for a deferred follow-up PR.
 // When parentRef is non-nil and carries a title (the common case - the
 // parent PR that EnsureFollowUpPublished is following up on), the title
-// reuses the parent's own agent-authored title via derivedPRTitle, and the
+// reuses the parent's own agent-authored title via deriveTitle, and the
 // body links every PR it mentions (never a bare "#142") plus lists the real
 // deferred files instead of a generic "the scope the diff-size gate
 // deferred" sentence. When parentRef lookup failed (rare: the parent PR is
@@ -85,7 +85,13 @@ func followUpPRContent(label, parentBranch string, parentRef *PRRef, deferredFil
 			baseLink = link
 		}
 	}
-	title = derivedPRTitle(baseTitle, "[split 2/2, base: "+shortRef(parentRef, parentBranch)+"]")
+	// deriveTitle's truncated result is used unconditionally here (the fits
+	// bool is ignored): this path has no repair loop, so the title must
+	// never overflow GitHub's limit and fail pr.Create outright - a reused
+	// parent title is already at MaxTitleRunes at worst, and the affix
+	// would push it over unguarded. Contrast appendStackPartTitle, which
+	// rejects an overflow instead (it CAN route to a repair step).
+	title, _ = deriveTitle(baseTitle, "[split 2/2, base: "+shortRef(parentRef, parentBranch)+"]", MaxTitleRunes)
 
 	var sb strings.Builder
 	sb.WriteString("Mechanical split, not an agent-authored description.\n\n")

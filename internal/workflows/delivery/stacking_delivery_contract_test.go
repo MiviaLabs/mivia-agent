@@ -80,7 +80,7 @@ func TestParseStackPart(t *testing.T) {
 }
 
 // TestAppendStackPartTitle pins the host-appended "[stack k/N]" tag: a
-// single-line bracket suffix (the same derivedPRTitle convention
+// single-line bracket suffix (the same deriveTitle convention
 // EnsureFollowUpPublished uses for a deferred/split PR), an absent
 // stack_part changes nothing, an invalid value is a PRMetadataError, and a
 // result over GitHub's 256-rune ceiling is a PRMetadataError too (the agent

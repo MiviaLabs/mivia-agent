@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -35,6 +36,28 @@ func TestFollowUpPRContentLinksTheParentPR(t *testing.T) {
 	}
 	if strings.Contains(body, "wfr-inv-abc123") {
 		t.Fatalf("body must not fall back to the raw run ID when the parent PR was found; body:\n%s", body)
+	}
+}
+
+// TestFollowUpPRContentTitleNeverExceedsGitHubLimit pins a real bug a review
+// pass caught: a reused parent title can already be at MaxTitleRunes (GitHub
+// itself truncates a created title to that limit - prmetadata_validate.go),
+// so appending the "[split 2/2, base: ...]" affix unguarded reliably
+// overflows GitHub's 256-rune ceiling. Unlike appendStackPartTitle (which
+// runs inside the repairable validatePRMetadata path and can return a
+// PRMetadataError to trigger a repair step), EnsureFollowUpPublished has no
+// repair loop: an over-length title here would fail pr.Create outright and
+// leave the deferred branch permanently unpublished. The title must always
+// fit, even when that means truncating the reused parent title.
+func TestFollowUpPRContentTitleNeverExceedsGitHubLimit(t *testing.T) {
+	longTitle := strings.Repeat("a", MaxTitleRunes) // already at the ceiling
+	parentRef := &PRRef{RemoteID: "142", URL: "https://github.com/MiviaLabs/mivia-agent/pull/142", Title: longTitle}
+	title, _ := followUpPRContent("wfr-inv-abc123", "wf/wt-test", parentRef, nil)
+	if n := utf8.RuneCountInString(title); n > MaxTitleRunes {
+		t.Fatalf("title is %d runes, want <= %d (GitHub's limit); title:\n%s", n, MaxTitleRunes, title)
+	}
+	if !strings.HasSuffix(title, "[split 2/2, base: #142]") {
+		t.Fatalf("title must still end with the full affix even when the base is truncated, got %q", title)
 	}
 }
 

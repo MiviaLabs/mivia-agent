@@ -123,7 +123,7 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 			return "", "", verr
 		}
 	}
-	// Append the host-owned Stack-Part trailer AFTER sanitization and policy
+	// Append the host-owned "[stack k/N]" tag AFTER sanitization and policy
 	// validation, mirroring how the body footer is appended after validation:
 	// the agent-controlled title that passed validation stays intact and the
 	// host adds the stack marker. An invalid stack_part or an over-limit
