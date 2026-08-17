@@ -10,15 +10,15 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-// heartbeatTransientRepo fails ClaimRun for the first failures calls and
-// succeeds afterwards. It simulates a transient SQLite fault.
+// heartbeatTransientRepo fails RefreshRunClaim for the first failures calls
+// and succeeds afterwards. It simulates a transient SQLite fault.
 type heartbeatTransientRepo struct {
 	workflowledger.Repository
 	failures int
 	calls    atomic.Int32
 }
 
-func (r *heartbeatTransientRepo) ClaimRun(context.Context, string, string) error {
+func (r *heartbeatTransientRepo) RefreshRunClaim(context.Context, string, string) error {
 	if r.calls.Add(1) <= int32(r.failures) {
 		return errors.New("sqlite busy")
 	}
@@ -31,7 +31,7 @@ type heartbeatHeldRepo struct {
 	calls atomic.Int32
 }
 
-func (r *heartbeatHeldRepo) ClaimRun(context.Context, string, string) error {
+func (r *heartbeatHeldRepo) RefreshRunClaim(context.Context, string, string) error {
 	r.calls.Add(1)
 	return workflowledger.ErrClaimHeld
 }

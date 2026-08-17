@@ -251,11 +251,11 @@ type claimCountingRepository struct {
 	once    sync.Once
 }
 
-func (r *claimCountingRepository) ClaimRun(ctx context.Context, runID, holder string) error {
+func (r *claimCountingRepository) RefreshRunClaim(ctx context.Context, runID, holder string) error {
 	if r.claims.Add(1) >= 2 && r.renewed != nil {
 		r.once.Do(func() { close(r.renewed) })
 	}
-	return r.Repository.ClaimRun(ctx, runID, holder)
+	return r.Repository.RefreshRunClaim(ctx, runID, holder)
 }
 
 func TestLinearControllerRenewsClaimDuringStep(t *testing.T) {
