@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,28 @@ func TestExtractFailuresJUnit(t *testing.T) {
 	f := extractFailures([]byte(out))
 	if len(f) == 0 || !strings.Contains(f[0], "Tests run: 5, Failures: 2") {
 		t.Fatalf("extractFailures missing junit summary; got %q", f)
+	}
+}
+
+// TestExtractFailuresHardStructureLineIsAlwaysCaptured pins the guarantee a
+// structural gate's repair step depends on: a "HARD <check>: <path> ...
+// <fix hint>" line (check_go_structure.py's HARD comment-block/file-LOC/
+// function-LOC format) is captured by the explicit ^HARD marker, not by the
+// output-tail fallback. Without the marker, enough distinct WARN/NOTE lines
+// from the same run push the one HARD line - the agent's only actionable
+// hint about which file and lines to shorten - out of the tail window
+// entirely, and the repair step gets no hint at all.
+func TestExtractFailuresHardStructureLineIsAlwaysCaptured(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("HARD comment block: internal/foo/bar.go L5-L40 (36 lines, max 30). Move the rationale to docs/ and link it.\n")
+	for i := 0; i < 25; i++ {
+		sb.WriteString(fmt.Sprintf("WARN file LOC: internal/other/noise%d.go has 600 lines (soft max 500). Consider splitting soon.\n", i))
+	}
+	sb.WriteString("check_go_structure: 1 hard violation(s), 25 warning(s).\n")
+	f := extractFailures([]byte(sb.String()))
+	joined := strings.Join(f, "\n")
+	if !strings.Contains(joined, "HARD comment block: internal/foo/bar.go L5-L40") {
+		t.Fatalf("extractFailures dropped the HARD comment-block hint when buried above the tail window; got %q", f)
 	}
 }
 

@@ -53,6 +53,15 @@ var failureLinePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`Tests run:.*Failures`), // junit/maven
 	regexp.MustCompile(`AssertionError`),       // python
 	regexp.MustCompile(`Assertion failed`),     // c/c++
+	// "HARD <check>: <path> ... <fix hint>" is the severity-prefix
+	// convention structural gates use (e.g. check_go_structure.py's HARD
+	// comment block/file LOC/function LOC lines). Matching it explicitly
+	// guarantees a hard violation's file, line range, and repair
+	// instruction always reach the repair step's failed_evidence, instead
+	// of depending on the output-tail fallback below - which silently
+	// drops the hint whenever enough distinct WARN/NOTE lines from the
+	// same run push it out of the last maxFailureLines entries.
+	regexp.MustCompile(`^HARD `),
 }
 
 // extractFailures returns a bounded list of failure diagnostic lines from a
