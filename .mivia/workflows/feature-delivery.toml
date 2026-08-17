@@ -44,10 +44,12 @@ max_on_failure_reentries = 3
 # engine default 12 so large plans may split into up to 20 chunks).
 # soft_lines=350 (raised from the engine default 200 so medium changes stay
 # one chunk/PR; hard_lines keeps the engine default 400 as the hard ceiling).
-# max_files uses the engine default 5. merge_policy=auto: the run publishes
-# each chunk PR and merges it itself (mark ready -> CI green -> squash-merge) -
-# a 100-chunk stack needs zero human merges. Set merge_policy="approve" to
-# keep the human publish grant per PR instead.
+# max_files uses the engine default 5. merge_policy=approve (changed from
+# auto on 2026-08-17 so a merged chunk PR never lands without a human
+# merging it): the run publishes each chunk PR, then pauses for the human
+# publish grant - mark ready, CI green, human squash-merge. merge_policy="auto"
+# would let the run merge each chunk PR itself (zero human merges for a big
+# stack); revert only deliberately.
 [stacking]
 plan_step = "plan"
 implement_step = "implement"
