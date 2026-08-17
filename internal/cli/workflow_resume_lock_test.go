@@ -11,9 +11,90 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+// TestSessionLaunchResumeReleasesExecutionLockBeforeDoneCloses is a regression
+// test: launchResume used to close done and only then run finishExec (via
+// closeGuarded -> closeFn), releasing the execution flock AFTER done closed.
+// A waiter woken by done closing (e.g. Deliver, workflow_tool_engine_ops.go)
+// could then race the still-held flock. finishExec must complete before done
+// closes, matching launchStartedWorkflow's established ordering.
+func TestSessionLaunchResumeReleasesExecutionLockBeforeDoneCloses(t *testing.T) {
+	ctx := context.Background()
+	repo := workflowledger.NewMemoryRepository()
+	t.Cleanup(func() { _ = repo.Close() })
+	const runID = "wfr-resume-lock-order"
+	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{RunID: runID, Status: workflowledger.RunStatusPending}, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, workflowledger.RunStatusRunning, nil); err != nil {
+		t.Fatal(err)
+	}
+	linear := &controller.LinearController{Holder: "session-resumer"}
+	if err := repo.ClaimRun(ctx, runID, linear.Holder); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	finishRun := make(chan struct{})
+	originalRun := workflowResumeRun
+	workflowResumeRun = func(context.Context, workflowControllerBuild) (workflowledger.RunSnapshot, error) {
+		close(started)
+		<-finishRun
+		return workflowledger.RunSnapshot{}, errors.New("injected run failure")
+	}
+	t.Cleanup(func() { workflowResumeRun = originalRun })
+
+	finishExecCalled := make(chan struct{})
+	allowFinish := make(chan struct{})
+	closed := make(chan struct{})
+
+	engine := newSessionWorkflowEngine(".", "")
+	prepared := resumePrepared{
+		runID:    runID,
+		workflow: "test",
+		built: workflowControllerBuild{
+			Controller: linear,
+			Dispatcher: workflowTestDispatcher{},
+		},
+		repo: repo,
+		finishExec: func() {
+			close(finishExecCalled)
+			<-allowFinish
+		},
+		closeFn: func() { close(closed) },
+	}
+	if _, err := engine.launchResume(ctx, prepared); err != nil {
+		t.Fatalf("launchResume() error = %v", err)
+	}
+	engine.mu.Lock()
+	active := engine.active[runID]
+	engine.mu.Unlock()
+	if active == nil {
+		t.Fatal("launchResume did not register an active run")
+	}
+
+	<-started
+	close(finishRun)
+
+	<-finishExecCalled
+	select {
+	case <-active.done:
+		t.Fatal("done closed before finishExec (the execution flock release) completed")
+	default:
+	}
+
+	close(allowFinish)
+	<-active.done
+	<-closed
+}
 
 func TestWorkflowForceResumeStopsBeforeClaimWorkWhenLockIsHeld(t *testing.T) {
 	shortenWorkflowResolutionLockWait(t)

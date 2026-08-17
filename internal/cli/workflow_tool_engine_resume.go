@@ -164,7 +164,6 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 		runner, _ = p.built.Controller.Runner.(*controller.CoordinatorRunner)
 	}
 	e.active[p.runID] = &sessionActiveRun{cancel: cancel, done: done, runner: runner, closeFn: func() {
-		p.finishExec()
 		if p.built.Dispatcher != nil {
 			p.built.Dispatcher.Close()
 		}
@@ -214,8 +213,10 @@ func (e *sessionWorkflowEngine) launchResume(ctx context.Context, p resumePrepar
 		// delivery record; publish its terminal event from the stack-ledger
 		// marker.
 		e.publishSkippedPlanRunFinished(context.Background(), p.store, p.repo, p.runID)
-		// done closes once the run loop itself has exited, before resource
-		// teardown below - see launchStartedWorkflow's matching comment.
+		// Release the flock before close(done): a waiter woken by done (Deliver,
+		// Cancel) must be able to contend for it immediately - see
+		// launchStartedWorkflow's matching comment.
+		p.finishExec()
 		close(done)
 		e.mu.Lock()
 		active := e.active[p.runID]

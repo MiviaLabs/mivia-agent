@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -64,6 +65,11 @@ const (
 // remoteMergeOracle is stackDriveCompleted's parameter: settle paths pass
 // true, read-only display surfaces pass false.
 func classifyStackPlanRunDelivery(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, remoteMergeOracle bool) stackPlanRunGate {
+	// An integration run (<stack>:integration) also records decompose chunks
+	// when it re-plans mode=multi; it is never a stack plan run itself.
+	if snap, err := repo.GetRun(ctx, runID); err == nil && snap.InvocationKey != "" && strings.HasSuffix(snap.InvocationKey, ":"+stackIntegrationChunkID) {
+		return stackPlanRunNotApplicable
+	}
 	if _, ok := stackDecomposedChunks(ctx, repo, runID); !ok {
 		return stackPlanRunNotApplicable
 	}

@@ -81,6 +81,30 @@ func TestIntegrationRunInputsStripSiblingFiles(t *testing.T) {
 	}
 }
 
+// TestClassifyStackPlanRunDeliveryNotApplicableForIntegrationRun proves an
+// integration run (invocation key "<stack>:integration") that also has
+// decompose chunks (from re-planning mode=multi) is never misclassified as a
+// stack plan run. Without this guard, classifyStackPlanRunDelivery returned
+// stackPlanRunIncomplete and errUndrivenStackPlanRun seeded a phantom stack.
+func TestClassifyStackPlanRunDeliveryNotApplicableForIntegrationRun(t *testing.T) {
+	root, _, store, repo, compiled := newWorkflowBuildFixture(t)
+	ctx := context.Background()
+	runID := "wfr-integration-decompose"
+	snap := workflowledger.RunSnapshot{
+		RunID: runID, WorkflowName: compiled.Name, WorkflowDigest: compiled.Digest,
+		Status:        workflowledger.RunStatusPending,
+		InvocationKey: "s1:" + stackIntegrationChunkID,
+	}
+	if err := repo.CreateRun(ctx, snap, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	seedSucceededDecomposeAttempt(t, repo, runID, []byte(multiChunkPlanOutput))
+
+	if got := classifyStackPlanRunDelivery(ctx, root, store, repo, runID, true); got != stackPlanRunNotApplicable {
+		t.Fatalf("classifyStackPlanRunDelivery() = %v, want stackPlanRunNotApplicable for an integration run with decompose chunks", got)
+	}
+}
+
 // TestClassifyStackPlanRunDeliveryFailedChunk proves a terminally failed chunk
 // task moves the gate from Incomplete to Failed, so callers can fail-settle
 // the plan run instead of refusing it forever.
