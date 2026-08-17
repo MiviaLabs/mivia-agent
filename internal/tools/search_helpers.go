@@ -79,6 +79,14 @@ func stripHTMLTags(s string) string {
 		}
 		out.WriteRune(r)
 	}
+	if inEntity {
+		// An unterminated entity is not an entity: the '&' that opened it was
+		// never emitted, so flush it and the accumulated runes as literal text
+		// instead of silently dropping everything after the '&' ("AT&T" must
+		// keep "&T and more", not truncate to "AT").
+		out.WriteRune('&')
+		out.WriteString(entity.String())
+	}
 	return out.String()
 }
 

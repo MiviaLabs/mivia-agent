@@ -59,6 +59,26 @@ func TestStripHTMLTagsEntities(t *testing.T) {
 	}
 }
 
+// stripHTMLTags must not drop an unterminated entity at the end of the input.
+// The scanner entered entity mode on '&' followed by a letter or '#' and only
+// flushed on ';', so a trailing "&T and more" was swallowed and every
+// character after the '&' vanished from the output ("AT&T" became "AT").
+func TestStripHTMLTagsUnterminatedEntity(t *testing.T) {
+	cases := []struct{ name, input, want string }{
+		{"unterminated entity mid-word", "AT&T and more", "AT&T and more"},
+		{"lone ampersand", "&", "&"},
+		{"entity-like fragment", "x &y z", "x &y z"},
+		{"valid entity still decodes", "&amp;", "&"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripHTMLTags(tc.input); got != tc.want {
+				t.Errorf("stripHTMLTags(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsTextContentTypeEmpty(t *testing.T) {
 	if isTextContentType("") {
 		t.Fatal("expected false for empty content type")
