@@ -183,8 +183,9 @@ func sanitizeAgentTitle(title string) (string, error) {
 			return "", &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title contains control character %q; fix the agent-provided title", r)}
 		}
 	}
-	if n := utf8.RuneCountInString(title); n > MaxTitleRunes {
+	out := redact.Text(foldToSingleLine(title))
+	if n := utf8.RuneCountInString(out); n > MaxTitleRunes {
 		return "", &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title has %d characters, exceeding GitHub's %d-character limit; fix the agent-provided title", n, MaxTitleRunes)}
 	}
-	return redact.Text(foldToSingleLine(title)), nil
+	return out, nil
 }
