@@ -74,7 +74,13 @@ func classify(event Event, handler Handler, result execution) verdict {
 // script or a typo in argv - would otherwise have disabled it.
 func noVerdictOutcome(event Event, handler Handler, result execution) verdict {
 	if event == EventPreToolUse && handler.OnTimeout == OnTimeoutBlock {
-		return verdict{denied: true, reason: result.reason}
+		// The reason is model-visible, so it is bounded here at the single
+		// choke point every noVerdict reason crosses (could-not-start embeds
+		// the OS start error, which for a start failure carries the FULL
+		// resolved program path; validate.go imposes no argv[0] length cap, so
+		// that path can exceed maxReasonBytes on its own). The bound never
+		// changes the verdict - deny stays deny.
+		return verdict{denied: true, reason: bound(result.reason, maxReasonBytes)}
 	}
 	// The operator warning keeps the exact file; the model-visible reason above
 	// carries the hook's name only.
