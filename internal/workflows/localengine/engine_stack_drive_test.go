@@ -15,12 +15,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -740,4 +742,376 @@ func countStackReopens(t *testing.T, ledger *tasks.Store, stackID, chunkID strin
 		}
 	}
 	return n
+}
+
+// unmergedStackPR is a PR oracle that behaves like a real host that never
+// merges: FindByHead misses until a PR is created for the head, then returns
+// the open (Draft matching the delivery mode) PR; IsMerged is always false.
+// FindByHead calls are counted, so tests can pin both the delivery gate's
+// merge confirmation (H-1) and the drive's unmerged-PR polling (P-1).
+type unmergedStackPR struct {
+	mu      sync.Mutex
+	finds   map[string]int
+	created map[string]delivery.PRRef
+}
+
+func (p *unmergedStackPR) FindByHead(_ context.Context, _, head string) (*delivery.PRRef, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.finds == nil {
+		p.finds = map[string]int{}
+	}
+	p.finds[head]++
+	if ref, ok := p.created[head]; ok {
+		r := ref
+		return &r, nil
+	}
+	return nil, nil
+}
+
+func (p *unmergedStackPR) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (p *unmergedStackPR) Create(_ context.Context, _ string, in delivery.PRInput) (delivery.PRRef, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.created == nil {
+		p.created = map[string]delivery.PRRef{}
+	}
+	ref := delivery.PRRef{
+		RemoteID: "pr-open-" + strconv.Itoa(len(p.created)+1),
+		URL:      "https://example.com/pull/" + strconv.Itoa(len(p.created)+1),
+		Draft:    in.Draft,
+	}
+	p.created[in.Head] = ref
+	return ref, nil
+}
+
+// preCreate records an already-open PR for a head, the H-1 seeded integration
+// PR that predates this engine instance (the oracle can see it, it is just
+// never merged).
+func (p *unmergedStackPR) preCreate(head string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.created == nil {
+		p.created = map[string]delivery.PRRef{}
+	}
+	p.created[head] = delivery.PRRef{RemoteID: "pr-open", URL: "https://example.com/pull/open", Draft: true}
+}
+
+func (p *unmergedStackPR) findCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, c := range p.finds {
+		n += c
+	}
+	return n
+}
+
+// TestEngineStackGateRefusesPublishWhenIntegrationPRUnmerged pins H-1: the
+// drive-before-delivery gate (stackDriveCompleted) must confirm, under
+// merge_policy=auto, that the succeeded integration run's PR actually merged
+// before an explicit workflow_deliver may publish the plan run. The seeded
+// state is exactly what a crash between the drive's integration delivery and
+// its merge wait leaves behind: every chunk merged, the integration run
+// settled succeeded with durable pushed evidence (CommitSHA +
+// WorktreeName/RemoteURL), and the PR oracle reports the final PR still open.
+// Pre-fix the gate passed on the succeeded status alone and the publish
+// proceeded (settling the plan run delivery_failed on the missing worktree
+// instead of refusing); post-fix the gate refuses and the run stays
+// delivery_pending (resumable). The negative path pins that the same durable
+// state under the approve (grant) policy must still pass the gate.
+func TestEngineStackGateRefusesPublishWhenIntegrationPRUnmerged(t *testing.T) {
+	t.Run("auto refuses publish while the integration PR is open", func(t *testing.T) {
+		engine, _, _, stackID := seedFullyDrivenStackWithOpenIntegrationPR(t, "auto")
+		_, err := engine.Deliver(context.Background(), stackID, true)
+		if err == nil || !strings.Contains(err.Error(), "has not fully driven") {
+			t.Fatalf("Deliver on a fully driven stack with an unmerged integration PR = %v, want the drive-before-delivery gate refusal", err)
+		}
+		// The refused publish must not have moved the run.
+		run, err := engine.Repo.GetRun(context.Background(), stackID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.Status != workflowledger.RunStatusDeliveryPending {
+			t.Fatalf("plan run status after the refused deliver = %q, want delivery_pending", run.Status)
+		}
+	})
+	t.Run("approve policy passes the gate on the same durable state", func(t *testing.T) {
+		engine, _, _, stackID := seedFullyDrivenStackWithOpenIntegrationPR(t, "approve")
+		_, err := engine.Deliver(context.Background(), stackID, true)
+		if err != nil && strings.Contains(err.Error(), "has not fully driven") {
+			t.Fatalf("Deliver under approve policy on a fully driven stack = %v, want the gate to pass (no undriven refusal)", err)
+		}
+	})
+}
+
+// seedFullyDrivenStackWithOpenIntegrationPR builds a multi-chunk stack whose
+// drive reached completion except for the final integration merge: the task
+// ledger shows every chunk merged, the integration run settled succeeded with
+// durable pushed evidence, and the PR oracle reports the integration PR still
+// open. The plan run parks at delivery_pending (deliver_plan_run=true).
+func seedFullyDrivenStackWithOpenIntegrationPR(t *testing.T, mergePolicy string) (*localengine.Engine, workflowledger.Repository, *storage.SQLite, string) {
+	t.Helper()
+	ctx := context.Background()
+	root := t.TempDir()
+	repo := workflowledger.NewMemoryRepository()
+	db, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	workflowName := "stack-drive-me"
+	if mergePolicy == "approve" {
+		workflowName = "stack-approve-me"
+	}
+	oracle := &unmergedStackPR{}
+	engine := &localengine.Engine{
+		WorkspaceRoot: root,
+		Repo:          repo,
+		Store:         db,
+		PR:            oracle,
+	}
+	stackID := "wfr-h1-open-pr"
+	toml := stackDriveWorkflowTOML(workflowName, mergePolicy, true)
+	// The seeded integration PR predates this engine instance: register it on
+	// the oracle so FindByHead can see the open PR (it is just never merged).
+	oracle.preCreate("wf/wt-integration")
+	snapshot := workflowledger.Snapshot{
+		SchemaVersion:    1,
+		DefinitionTOML:   []byte(toml),
+		DefinitionDigest: workflowledger.DigestHex([]byte(toml)),
+		Inputs:           map[string]string{"task": "build"},
+	}
+	snapshotJSON, err := workflowledger.MarshalSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedDeliveryPendingRun(t, repo, workflowledger.RunSnapshot{RunID: stackID, WorkflowName: workflowName, BaseRef: "main"}, snapshotJSON)
+
+	// The plan run's succeeded decompose output: the chunk plan the drive and
+	// the gate both read.
+	seedSucceededDecomposeAttempt(t, repo, stackID, []byte(stackValidMultiPlan))
+
+	_, chunks, _, _, err := stacking.ParseStackPlanOutput([]byte(stackValidMultiPlan))
+	if err != nil || len(chunks) != 2 {
+		t.Fatalf("parse stack plan = %v, %v; want 2 chunks", chunks, err)
+	}
+	ledger := tasks.NewStore(db)
+	if err := stacking.SeedStackLedger(ctx, ledger, stackID, chunks); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range chunks {
+		if err := ledger.TransitionTask(stackID, c.ID, stacking.StatusMerged); err != nil {
+			t.Fatalf("transition chunk %s to merged: %v", c.ID, err)
+		}
+	}
+
+	// The final integration run: <stack>:integration, settled succeeded, with
+	// a durable pushed delivery record and an open PR the oracle can see.
+	intRunID := stackID + "-integration"
+	seedDeliveryPendingRun(t, repo, workflowledger.RunSnapshot{
+		RunID: intRunID, InvocationKey: stackID + ":" + stacking.IntegrationChunkID,
+		WorkflowName: workflowName, BaseRef: "main",
+		WorktreeName: "wt-integration", RemoteURL: "https://github.com/acme/stack.git",
+	}, snapshotJSON)
+	setRunStatus(t, repo, intRunID, workflowledger.RunStatusSucceeded)
+	if err := repo.UpsertDelivery(ctx, workflowledger.DeliveryRecord{
+		RunID: intRunID, IdempotencyKey: "k1", Mode: "draft", BaseRef: "main",
+		HeadRef: "wf/wt-integration", CommitSHA: "abc123", Status: "pushed", UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return engine, repo, db, stackID
+}
+
+// seedDeliveryPendingRun admits a run row and settles it to delivery_pending
+// through the valid pending -> running -> delivery_pending transitions.
+func seedDeliveryPendingRun(t *testing.T, repo workflowledger.Repository, run workflowledger.RunSnapshot, snapshotJSON []byte) {
+	t.Helper()
+	run.Status = workflowledger.RunStatusPending
+	if err := repo.CreateRun(context.Background(), run, snapshotJSON); err != nil {
+		t.Fatal(err)
+	}
+	step := func(to workflowledger.RunStatus) {
+		t.Helper()
+		stored, err := repo.GetRun(context.Background(), run.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompareAndSetRunStatus(context.Background(), run.RunID, stored.Version, to, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step(workflowledger.RunStatusRunning)
+	step(workflowledger.RunStatusDeliveryPending)
+}
+
+// setRunStatus moves an existing run to the requested status through valid
+// transitions, routing through running when no direct edge exists.
+func setRunStatus(t *testing.T, repo workflowledger.Repository, runID string, want workflowledger.RunStatus) {
+	t.Helper()
+	ctx := context.Background()
+	for {
+		stored, err := repo.GetRun(ctx, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.Status == want {
+			return
+		}
+		next := want
+		if !workflowledger.ValidRunTransition(stored.Status, want) {
+			next = workflowledger.RunStatusRunning
+		}
+		if err := repo.CompareAndSetRunStatus(ctx, runID, stored.Version, next, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// seedSucceededDecomposeAttempt records a succeeded decompose step attempt
+// with a stored output on the given run, the shape stacking.LoadStackPlanOutput
+// reads.
+func seedSucceededDecomposeAttempt(t *testing.T, repo workflowledger.Repository, runID string, output []byte) {
+	t.Helper()
+	ctx := context.Background()
+	ref := "sha256:" + workflowledger.DigestHex(output)
+	if err := repo.StoreContent(ctx, ref, output); err != nil {
+		t.Fatal(err)
+	}
+	attempt := workflowledger.StepAttempt{AttemptID: "wfa-decompose-1", RunID: runID, StepID: stacking.DecomposeStepID, AttemptNo: 1}
+	if err := repo.RecordStepAttemptOutcome(ctx, attempt, workflowledger.AttemptOutcome{
+		Status: workflowledger.AttemptStatusSucceeded, OutputRef: ref, OutputDigest: workflowledger.DigestHex(output),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// stackDriveWriteRunner settles every agent step like the scripted runner
+// but, on implement, writes a REAL file into the run's worktree so delivery
+// has a diff to commit and push - a pushed PR the merge oracle can poll - and
+// the stack reaches the published-never-merged state, mirroring the CLI
+// fixture's stackITRunner. Without it a chunk delivery records no_diff and the
+// stack completes without ever opening a PR.
+type stackDriveWriteRunner struct {
+	root string
+	repo workflowledger.Repository
+
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (r *stackDriveWriteRunner) RunStep(ctx context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, error) {
+	r.mu.Lock()
+	if r.calls == nil {
+		r.calls = map[string]int{}
+	}
+	r.calls[req.StepID]++
+	r.mu.Unlock()
+	out := json.RawMessage(`{"ok":true}`)
+	switch req.StepID {
+	case "plan":
+		out = json.RawMessage(`{"summary":"p"}`)
+	case "decompose":
+		out = json.RawMessage(stackValidMultiPlan)
+	case "chunk_plan_validate":
+		out = json.RawMessage(`{"valid":true,"reasons":[]}`)
+	case "implement":
+		if err := r.writeChunkFile(ctx, req); err != nil {
+			return controller.AgentStepResult{}, err
+		}
+		out = json.RawMessage(`{"summary":"implemented"}`)
+	}
+	return controller.AgentStepResult{
+		CoordinatorRunID: "coord-" + req.StepID + "-" + strconv.Itoa(req.AttemptNo),
+		TaskID:           req.TaskID,
+		Output:           out,
+		EvidenceJSON:     []byte(`[]`),
+	}, nil
+}
+
+// writeChunkFile writes the run's change into its real worktree so delivery
+// publishes a real diff. The chunk plan declares the exact file each chunk
+// may touch (delivery's diff-size gate enforces the declared slice), so the
+// runner writes that declared file, mirroring the CLI stackITRunner.
+func (r *stackDriveWriteRunner) writeChunkFile(ctx context.Context, req controller.AgentStepRequest) error {
+	run, err := r.repo.GetRun(ctx, req.WorkflowRunID)
+	if err != nil {
+		return err
+	}
+	wt, err := vcs.Resolve(ctx, r.root, run.WorktreeName)
+	if err != nil || wt == nil {
+		return fmt.Errorf("resolve worktree %q: %w", run.WorktreeName, err)
+	}
+	chunk, _ := req.Inputs["chunk"].(string)
+	file := "a.go"
+	if chunk == "c2" {
+		file = "b.go"
+	}
+	if chunk == "" {
+		file = "integration.txt"
+	}
+	return os.WriteFile(filepath.Join(wt.Path, file), []byte("implemented "+chunk+"\n"), 0o600)
+}
+
+// TestEngineStackDriveAfterParkInterruptible pins P-1: the run's active
+// handle must survive the controller's park at delivery_pending for the whole
+// lifetime of the automatic stack drive, so Interrupt can cancel the drive's
+// unmerged-PR poll. Pre-fix launch dropped the entry the moment the controller
+// parked, so Interrupt answered "not active in this engine" and the drive
+// polled a never-merging PR oracle forever. The drive keeps the run registered
+// and defers cancel()/releaseActiveRun on exit; Interrupt then stops the poll.
+func TestEngineStackDriveAfterParkInterruptible(t *testing.T) {
+	root := writeStackDriveWorkspace(t)
+	repo := workflowledger.NewMemoryRepository()
+	db, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	oracle := &unmergedStackPR{}
+	engine := &localengine.Engine{
+		WorkspaceRoot: root,
+		Repo:          repo,
+		Store:         db,
+		PR:            oracle,
+		NewRunner: func() controller.AgentStepRunner {
+			return &stackDriveWriteRunner{root: root, repo: repo}
+		},
+	}
+	svc := mustService(t, engine, repo)
+	started := startStackingRunFor(t, svc, "stack-drive-me", nil)
+	waitRun(t, engine, started.RunID)
+
+	// The drive delivers the first wave with a real diff, opens a PR, and
+	// then polls the oracle waiting for a merge that never comes.
+	deadline := time.Now().Add(60 * time.Second)
+	for oracle.findCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the drive never polled the merge oracle; the stack did not reach the published-never-merged state")
+		}
+		<-time.After(100 * time.Millisecond)
+	}
+
+	// Pre-fix: Interrupt refuses because launch dropped the handle when the
+	// controller parked. Post-fix the drive keeps the run registered, so
+	// Interrupt cancels the poll.
+	if err := engine.Interrupt(started.RunID); err != nil {
+		t.Fatalf("Interrupt on the parked, drive-polling run: %v", err)
+	}
+	// Let any in-flight pass observe the cancellation, then verify the poll
+	// truly stopped (the pre-fix leak kept polling forever).
+	<-time.After(2500 * time.Millisecond)
+	before := oracle.findCount()
+	<-time.After(3500 * time.Millisecond) // more than one 2s poll interval
+	if got := oracle.findCount(); got != before {
+		t.Fatalf("merge-oracle polls kept growing after Interrupt: %d -> %d; the drive must be cancelled", before, got)
+	}
+	// The plan run stays non-terminal (resumable), as Interrupt guarantees.
+	if run := getRunInterrupt(t, repo, started.RunID, 0); workflowledger.IsTerminalRunStatus(run.Status) {
+		t.Fatalf("plan run status after Interrupt = %q, want non-terminal", run.Status)
+	}
 }
