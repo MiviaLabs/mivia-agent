@@ -351,8 +351,8 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) (result Result) {
 	// a completed-map re-delivery - is answered with the same POST-hook result
 	// as the owner. The result.Err == nil guard preserves the pre-existing
 	// write set: only the execute-success path reaches this tail with Err ==
-	// nil; failure/block/cancel paths release ID-keyed waiters through
-	// deliverTerminal and never populate d.completed.
+	// nil; failure/block/cancel paths release ID-keyed waiters through the
+	// owner's deferred releaseIDKeyed and never populate d.completed.
 	if result.Err == nil {
 		d.mu.Lock()
 		d.completeIDKeyed(req, result)
