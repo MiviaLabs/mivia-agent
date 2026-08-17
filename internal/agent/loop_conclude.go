@@ -20,6 +20,13 @@ const (
 	// concludeToolCallsLeft is how few tool-call reservations may remain
 	// before the loop tells the model to conclude.
 	concludeToolCallsLeft = 4
+	// concludeStepsLeft is how few model steps may remain (MaxSteps - Step)
+	// before the loop tells the model to conclude. Step is stamped on the
+	// loop's own Options copy at the top of every runStep, before the request
+	// is built, so the diff is exact: at MaxSteps-1 the model gets the wrap-up
+	// nudge, and a model that ignores it still hits the hard max-steps abort
+	// unchanged.
+	concludeStepsLeft = 1
 )
 
 // concludeMessage is the host instruction injected when a work bound is close.
@@ -31,11 +38,13 @@ const concludeMessage = "Work-limit notice: you are close to your deadline or st
 // approaching a bound it would otherwise hard-abort on, or "" when no bound is
 // close. Checks, in order: the wall-clock deadline on ctx; the cumulative
 // output budget (fewer than one full per-call allowance left, when both caps
-// are set); and the tool-call budget (fewer than concludeToolCallsLeft
-// reservations left). A model that heeds it returns its best valid result; a
-// model that ignores it still hits the hard bound exactly as today. The
-// instruction repeats per request only while the bound stays close.
-func (l *Loop) concludeInstruction(ctx context.Context) string {
+// are set); the tool-call budget (fewer than concludeToolCallsLeft
+// reservations left); and the step budget (concludeStepsLeft or fewer model
+// steps remaining, when MaxSteps bounds the run). A model that heeds it
+// returns its best valid result; a model that ignores it still hits the hard
+// bound exactly as today. The instruction repeats per request only while the
+// bound stays close.
+func (l *Loop) concludeInstruction(ctx context.Context, opts Options) string {
 	if l == nil || l.workLimits == nil {
 		return ""
 	}
@@ -54,6 +63,9 @@ func (l *Loop) concludeInstruction(ctx context.Context) string {
 		if remaining := limits.MaxToolCalls - l.workLimits.toolCalls; remaining < concludeToolCallsLeft {
 			return concludeMessage
 		}
+	}
+	if opts.MaxSteps > 0 && opts.MaxSteps-opts.Step <= concludeStepsLeft {
+		return concludeMessage
 	}
 	return ""
 }

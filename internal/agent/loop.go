@@ -406,12 +406,13 @@ func (l *Loop) stepRequest(ctx context.Context, toolSpecs []provider.ToolSpec, o
 		messages = l.injectSummary(ctx, opts)
 	}
 	// Soft conclude: when a work bound (deadline, output budget, tool-call
-	// budget) is close, tell the model to wrap up so it returns its best valid
-	// result instead of the bound hard-aborting the run mid-work. The
-	// instruction is appended to an EPHEMERAL copy — never to l.Messages — so
-	// history, checkpoints, and replays stay untouched. Order is pinned:
-	// structural messages, then the injected summary, then this nudge last.
-	if conclude := l.concludeInstruction(ctx); conclude != "" {
+	// budget, or step budget) is close, tell the model to wrap up so it
+	// returns its best valid result instead of the bound hard-aborting the run
+	// mid-work. The instruction is appended to an EPHEMERAL copy — never to
+	// l.Messages — so history, checkpoints, and replays stay untouched. Order
+	// is pinned: structural messages, then the injected summary, then this
+	// nudge last.
+	if conclude := l.concludeInstruction(ctx, opts); conclude != "" {
 		cp := make([]provider.Message, 0, len(messages)+1)
 		cp = append(cp, messages...)
 		// The Name marks this as a host injection: the DeepSeek reject gate
