@@ -38,7 +38,13 @@ func selectWorkflowWorkspace(ctx context.Context, sourceRoot, runID string, writ
 			return workflowspace.Identity{}, nil, fmt.Errorf("write-capable workflow run %q has no recorded worktree", runID)
 		}
 		resolved, err := workflowspace.Resolve(ctx, sourceRoot, identity)
-		return resolved, func() {}, err
+		if err != nil {
+			if writeCapable {
+				return workflowspace.Identity{}, nil, fmt.Errorf("workflow run %q cannot resume: recorded worktree %q is unavailable; unfinished edits cannot be recovered; recreate the worktree from branch %q if it survives, else start a fresh run: %w", runID, recorded.WorktreeName, workflowBranchPrefix+recorded.WorktreeName, err)
+			}
+			return workflowspace.Identity{}, nil, err
+		}
+		return resolved, func() {}, nil
 	}
 	if !writeCapable {
 		identity, err := workflowWorkspaceEnsure(ctx, sourceRoot, runID, workflowspace.IsolationReadOnly)

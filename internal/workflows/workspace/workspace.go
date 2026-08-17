@@ -243,7 +243,7 @@ func validateWorktree(ctx context.Context, identity Identity) (Identity, error) 
 		return Identity{}, err
 	}
 	if !ok {
-		return Identity{}, fmt.Errorf("workflow commit %s does not contain base commit %s", commit, identity.BaseCommit)
+		return Identity{}, fmt.Errorf("workflow commit %s does not contain base commit %s; the base branch may have been force-pushed; start a fresh run", commit, identity.BaseCommit)
 	}
 	identity.Root = worktree.Path
 	identity.Branch = wantBranch
