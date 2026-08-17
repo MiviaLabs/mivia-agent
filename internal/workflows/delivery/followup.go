@@ -90,12 +90,12 @@ func followUpPRContent(label, parentBranch string, parentRef *PRRef, deferredFil
 			baseLink = link
 		}
 	}
-	// deriveTitle's truncated result is used unconditionally here (the fits
-	// bool is ignored): this path has no repair loop, so the title must
-	// never overflow GitHub's limit and fail pr.Create outright - a reused
-	// parent title is already at MaxTitleRunes at worst, and the affix
-	// would push it over unguarded. Contrast appendStackPartTitle, which
-	// rejects an overflow instead (it CAN route to a repair step).
+	// deriveTitle's result is used unconditionally here: this path has no
+	// repair loop, so the title must never overflow GitHub's limit and fail
+	// pr.Create outright - a reused parent title is already at MaxTitleRunes
+	// at worst, and the affix would push it over unguarded.
+	// appendStackPartTitle truncates identically (its own doc comment has the
+	// reasoning): one mechanism, one response, for both derived-title paths.
 	title = deriveTitle(baseTitle, "[split 2/2, base: "+shortRef(parentRef, parentBranch)+"]", MaxTitleRunes)
 
 	var sb strings.Builder

@@ -251,7 +251,11 @@ Delivery honors the reserved stacking inputs when present:
   A tagged title over GitHub's 256-character ceiling is silently
   truncated, never a repairable error — the overflow is caused by the
   host's own tag, not anything the agent did wrong, and the agent's title
-  already passed its own length check alone before the tag existed.
+  already passed its own length check alone before the tag existed. The
+  tag is a pull-request-only affix: the delivery commit's subject is the
+  agent's own untagged title, so the workspace commit-message policy's
+  `maxSubjectLength` and the repo's commit-msg hook measure the title the
+  agent authored — the tag never consumes that budget.
 - The actual diff size is checked against `hard_lines` after staging. The
   measurement is the added+deleted line count of `git diff --cached`
   (`--find-renames`, `--ignore-all-space`). A diff exceeding the hard limit

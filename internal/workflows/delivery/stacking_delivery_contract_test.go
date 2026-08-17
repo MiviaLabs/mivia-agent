@@ -352,6 +352,47 @@ func TestStackingContractStackPartTrailer(t *testing.T) {
 	})
 }
 
+// TestStackPartTagStaysOutOfCommitSubject pins the boundary between the PR
+// title and the commit subject: the host-owned "[stack k/N]" tag is a
+// pull-request concern only. The commit subject is the agent's own resolved
+// pr_title, untagged - so the workspace commit-message policy's
+// maxSubjectLength (and the repo's own commit-msg hook, which fires on the
+// delivery commit) measures the title the agent actually authored, never a
+// subject inflated by an affix the agent cannot see or control. A title that
+// is valid alone must deliver successfully even when the tagged PR title
+// would exceed the workspace's subject cap: the overflow is caused by the
+// host's own tag, so it must never become a repairable "shorten pr_title"
+// rejection (the same truncate-don't-reject reasoning as the GitHub 256-rune
+// ceiling).
+func TestStackPartTagStaysOutOfCommitSubject(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorkspacePolicy(t, repoRoot, worktreeRoot, `{"version": 1, "requireScope": true, "maxSubjectLength": 72}`)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	// 62 runes: conforms to the 72-rune subject cap on its own, but
+	// 62 + len(" [stack 3/12]") = 75 would exceed it if the tag counted.
+	agentTitle := "feat(agent): " + strings.Repeat("a", 49)
+	if n := utf8.RuneCountInString(agentTitle + " [stack 3/12]"); n <= 72 {
+		t.Fatalf("fixture title + tag = %d runes, want > 72 so the tag decides the outcome", n)
+	}
+	seedChangeSummary(t, repo, run, "implement", 1, `{"pr_title": "`+agentTitle+`", "pr_summary": "Adds the chunk."}`)
+	pr := &fakePRClient{}
+	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x", "stack_part": "3/12"})
+	res, err := Deliver(ctx, repo, RealGit{}, pr, req)
+	if err != nil {
+		t.Fatalf("Deliver must succeed: the host's own tag must not consume the agent's commit-subject budget: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	if want := agentTitle + " [stack 3/12]"; pr.created[0].Title != want {
+		t.Fatalf("PR title = %q, want %q (tag on the pull request)", pr.created[0].Title, want)
+	}
+	if msg := runGitOut(t, worktreeRoot, "log", "-1", "--format=%s"); msg != agentTitle {
+		t.Fatalf("commit subject = %q, want the agent's own untagged title %q", msg, agentTitle)
+	}
+}
+
 // TestStackingContractStackPartInvalid: a malformed stack_part is rejected
 // with a repairable PRMetadataError naming the problem, before any PR create,
 // delivery record, or push.

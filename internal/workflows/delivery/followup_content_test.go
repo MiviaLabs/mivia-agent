@@ -74,12 +74,11 @@ func TestFollowUpPRContentSanitizesReusedTitle(t *testing.T) {
 // pass caught: a reused parent title can already be at MaxTitleRunes (GitHub
 // itself truncates a created title to that limit - prmetadata_validate.go),
 // so appending the "[split 2/2, base: ...]" affix unguarded reliably
-// overflows GitHub's 256-rune ceiling. Unlike appendStackPartTitle (which
-// runs inside the repairable validatePRMetadata path and can return a
-// PRMetadataError to trigger a repair step), EnsureFollowUpPublished has no
-// repair loop: an over-length title here would fail pr.Create outright and
-// leave the deferred branch permanently unpublished. The title must always
-// fit, even when that means truncating the reused parent title.
+// overflows GitHub's 256-rune ceiling. EnsureFollowUpPublished has no repair
+// loop: an over-length title here would fail pr.Create outright and leave the
+// deferred branch permanently unpublished. The title must always fit, even
+// when that means truncating the reused parent title - the same
+// truncate-don't-reject response appendStackPartTitle uses.
 func TestFollowUpPRContentTitleNeverExceedsGitHubLimit(t *testing.T) {
 	longTitle := strings.Repeat("a", MaxTitleRunes) // already at the ceiling
 	parentRef := &PRRef{RemoteID: "142", URL: "https://github.com/MiviaLabs/mivia-agent/pull/142", Title: longTitle}
