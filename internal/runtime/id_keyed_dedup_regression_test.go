@@ -19,6 +19,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -216,5 +217,133 @@ func TestIDKeyedInFlightDupDoesNotDoubleChargeBudget(t *testing.T) {
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("handler executed %d times, want exactly 2 (owner + fresh)", got)
+	}
+}
+
+// TestIDKeyedInFlightDuplicateCarriesBlockedHookRuns pins R-1: a same-ID
+// duplicate that registers while the owner is parked inside a DENYING
+// PreInvokeHook must receive the owner's blocked result WITH the gate's
+// HookRuns (HEAD serves HookRuns == nil because deliverTerminal delivered the
+// pre-hook envelope to the waiter, and only the owner's copy got
+// blocked.HookRuns = verdict.Runs afterwards -> RED). The handler must never
+// run: the denial happens before execute.
+func TestIDKeyedInFlightDuplicateCarriesBlockedHookRuns(t *testing.T) {
+	hookEntered := make(chan struct{})
+	hookRelease := make(chan struct{})
+	d := New(Policy{PreInvokeHook: func(context.Context, Request) HookVerdict {
+		close(hookEntered)
+		<-hookRelease
+		return HookVerdict{Denied: true, Reason: "gate says no", Runs: []HookRun{{Event: "PreToolUse", Program: "gate.sh", Denied: true, Output: "nope"}}}
+	}})
+	var calls atomic.Int32
+	if err := d.Register(Tool, "t", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
+		calls.Add(1)
+		return json.RawMessage(`{"ran":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	input := json.RawMessage(`{"argv":["blocked"]}`)
+	ownerDone := make(chan Result, 1)
+	go func() {
+		ownerDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", Input: input, Budget: 1})
+	}()
+	<-hookEntered
+
+	waiterDone := make(chan Result, 1)
+	go func() {
+		waiterDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", Input: input, Budget: 1})
+	}()
+	waitForIDKeyedWaiterRegistered(t, d, "same")
+	close(hookRelease)
+
+	owner := <-ownerDone
+	waiter := <-waiterDone
+	if !errors.Is(owner.Err, blockedError) {
+		t.Fatalf("owner Err = %v, want blockedError", owner.Err)
+	}
+	if owner.Metadata.Status != "blocked" {
+		t.Fatalf("owner status = %q, want blocked", owner.Metadata.Status)
+	}
+	if waiter.Metadata.Status != "duplicate" {
+		t.Fatalf("waiter status = %q, want duplicate", waiter.Metadata.Status)
+	}
+	if waiter.Err == nil || !errors.Is(waiter.Err, blockedError) {
+		t.Fatalf("waiter Err = %v, want the owner's blockedError", waiter.Err)
+	}
+	if len(owner.HookRuns) != 1 || !owner.HookRuns[0].Denied {
+		t.Fatalf("owner HookRuns = %+v, want the denying gate's single run", owner.HookRuns)
+	}
+	if len(waiter.HookRuns) != 1 || waiter.HookRuns[0] != owner.HookRuns[0] {
+		t.Fatalf("blocked-path duplicate HookRuns = %+v, want the owner's %+v (pre-hook envelope served?)", waiter.HookRuns, owner.HookRuns)
+	}
+	if string(waiter.Output) != string(owner.Output) {
+		t.Fatalf("blocked-path duplicate Output = %s, want the owner's %s", waiter.Output, owner.Output)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("handler executed %d times, want exactly 0 (denied before execute)", got)
+	}
+}
+
+// TestIDKeyedInFlightDuplicateCarriesFailureHookContext pins R-2: a same-ID
+// duplicate that registers while the owner is inside a FAILING handler must
+// receive the owner's POST-hook failure - HookContext, HookRuns, Err and
+// Output all identical (HEAD serves an empty HookContext because
+// deliverTerminal delivered the pre-hook failure envelope to the waiter ->
+// RED). The handler must run exactly once: the duplicate still collapses onto
+// the owner.
+func TestIDKeyedInFlightDuplicateCarriesFailureHookContext(t *testing.T) {
+	d := New(Policy{PostInvokeHook: func(context.Context, Request, Result) HookResult {
+		return HookResult{Context: idKeyedHookContext, Runs: []HookRun{{Event: "PostToolUse", Program: "fmt.sh"}}}
+	}})
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	if err := d.Register(Tool, "t", handlerFunc(func(context.Context, Request) (json.RawMessage, error) {
+		calls.Add(1)
+		close(started)
+		<-release
+		return nil, errors.New("boom")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	input := json.RawMessage(`{"argv":["failing"]}`)
+	ownerDone := make(chan Result, 1)
+	go func() {
+		ownerDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", Input: input, Budget: 1})
+	}()
+	<-started
+
+	waiterDone := make(chan Result, 1)
+	go func() {
+		waiterDone <- d.Invoke(context.Background(), Request{ID: "same", Kind: Tool, Name: "t", Input: input, Budget: 1})
+	}()
+	waitForIDKeyedWaiterRegistered(t, d, "same")
+	close(release)
+
+	owner := <-ownerDone
+	waiter := <-waiterDone
+	if owner.Err == nil {
+		t.Fatalf("owner Err = nil, want the handler failure")
+	}
+	if waiter.Metadata.Status != "duplicate" {
+		t.Fatalf("waiter status = %q, want duplicate", waiter.Metadata.Status)
+	}
+	if waiter.Err == nil || waiter.Err.Error() != owner.Err.Error() {
+		t.Fatalf("waiter Err = %v, want the owner's %v", waiter.Err, owner.Err)
+	}
+	if owner.HookContext != idKeyedHookContext {
+		t.Fatalf("owner HookContext = %q, want %q", owner.HookContext, idKeyedHookContext)
+	}
+	if waiter.HookContext != idKeyedHookContext {
+		t.Fatalf("failure-path duplicate HookContext = %q, want the owner's post-hook %q (pre-hook envelope served?)", waiter.HookContext, idKeyedHookContext)
+	}
+	if len(waiter.HookRuns) != 1 || waiter.HookRuns[0] != owner.HookRuns[0] {
+		t.Fatalf("failure-path duplicate HookRuns = %+v, want the owner's %+v", waiter.HookRuns, owner.HookRuns)
+	}
+	if string(waiter.Output) != string(owner.Output) {
+		t.Fatalf("failure-path duplicate Output = %s, want the owner's %s", waiter.Output, owner.Output)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("handler executed %d times, want exactly 1", got)
 	}
 }

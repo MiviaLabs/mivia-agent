@@ -160,13 +160,14 @@ func checkFuzzDedupInvariants(t *testing.T, d *Dispatcher, ownerReq Request, own
 	// Non-turn, non-skip: the ID-keyed completed map is the dedup authority.
 	// Invoke's tail writes it only on the COMPLETED path (completeIDKeyed, after
 	// the ceiling check): handler failures and over-ceiling destroy return BEFORE
-	// that write, and failResult/deliverTerminal touch only the ID-keyed waiter
-	// channel, never d.completed. So the map holds exactly the results that
-	// completed - presence ⟺ Err == nil - and a same-ID reissue of a FAILED
-	// call re-runs today (pre-existing semantics, unchanged by this slice; the
-	// step-aware turn bucket is the map that records success AND failure). Both
-	// directions are asserted so a future change to record failures for
-	// same-ID failure dedup must update this test deliberately.
+	// that write, and the owner's deferred releaseIDKeyed drains the ID-keyed
+	// waiter channel with the final post-hook result, never d.completed. So the
+	// map holds exactly the results that completed - presence ⟺ Err == nil -
+	// and a same-ID reissue of a FAILED call re-runs today (pre-existing
+	// semantics, unchanged by this slice; the step-aware turn bucket is the map
+	// that records success AND failure). Both directions are asserted so a
+	// future change to record failures for same-ID failure dedup must update
+	// this test deliberately.
 	if owner.Err == nil && !completedOwner {
 		t.Errorf("non-turn success did not record its ID-keyed completed entry")
 	}
