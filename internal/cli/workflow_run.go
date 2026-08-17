@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -124,11 +125,11 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	logMCPWarnings(stderr, prepared.res)
 	defer prepared.closeFn()
 	runID := newCLIWorkflowRunID()
-	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
+	releaseExecution, err := beginWorkflowRunExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
 	if err != nil {
 		return err
 	}
-	defer finishExecution()
+	defer releaseExecution()
 	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		return err
@@ -191,7 +192,7 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 		return err
 	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {
-		return finishExecutedWorkflowRunDelivery(context.Background(), prepared, built.Controller.RunID, name, drove, allowPublish, stdout, stderr)
+		return finishExecutedWorkflowRunDelivery(context.Background(), prepared, built.Controller.RunID, name, configPath, drove, allowPublish, releaseExecution, stdout, stderr)
 	}
 	return nil
 }
@@ -204,7 +205,7 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 // succeeded (the same terminal a delivered run reaches) instead of parking at
 // delivery_pending forever. The delivery mode comes from the compiled
 // workflow (nil-safe), mirroring executeWorkflowResume.
-func finishExecutedWorkflowRunDelivery(ctx context.Context, prepared *preparedWorkflowRun, runID, name string, drove, allowPublish bool, stdout, stderr io.Writer) error {
+func finishExecutedWorkflowRunDelivery(ctx context.Context, prepared *preparedWorkflowRun, runID, name, configPath string, drove, allowPublish bool, release func(), stdout, stderr io.Writer) error {
 	if drove && !compiledDeliverPlanRun(prepared.compiled) {
 		if err := settlePlanRunSkippedDelivery(ctx, prepared.repo, runID); err != nil {
 			return err
@@ -216,7 +217,7 @@ func finishExecutedWorkflowRunDelivery(ctx context.Context, prepared *preparedWo
 	if prepared.compiled.Delivery != nil {
 		mode = prepared.compiled.Delivery.Mode
 	}
-	return finishWorkflowRunDelivery(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, runID, name, mode, allowPublish, stdout, stderr)
+	return finishWorkflowRunDelivery(ctx, prepared.root, configPath, prepared.res, prepared.store, prepared.repo, runID, name, mode, allowPublish, release, stdout, stderr)
 }
 
 // maybeDriveSettledStack continues a just-settled plan-mode run into the
@@ -392,8 +393,11 @@ func prepareWorkflowRun(name, root, configPath string, rawInputs []string) (*pre
 
 // finishWorkflowRunDelivery completes a run that settled at delivery_pending:
 // with --allow-publish it performs delivery and prints the settled status;
-// without it prints the non-publication explanation.
-func finishWorkflowRunDelivery(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName, mode string, allowPublish bool, stdout, stderr io.Writer) error {
+// without it prints the non-publication explanation. This is the shared
+// settle point for both `workflow run` and `workflow resume`'s foreground
+// paths, both of which own the run until it reaches a terminal status ("CLI
+// foreground paths are unbounded by design", executeWorkflowRun).
+func finishWorkflowRunDelivery(ctx context.Context, root, configPath string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName, mode string, allowPublish bool, release func(), stdout, stderr io.Writer) error {
 	if allowPublish {
 		if err := deliverRunWithStore(ctx, root, res, store, repo, runID, allowPublish, false, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "workflow delivery failed: %v\n", err)
@@ -404,11 +408,53 @@ func finishWorkflowRunDelivery(ctx context.Context, root string, res *config.Res
 			return err
 		}
 		fmt.Fprintf(stdout, "run_id=%s status=%s\n", runID, settled.Status)
+		if settled.Status == workflowledger.RunStatusRunning {
+			// A repairable delivery rejection routed the run back to its
+			// repair step (delivery.ReopenForRepair). Drive it forward
+			// instead of stopping and telling a human to run `workflow
+			// resume` by hand - a run whose foreground process already
+			// exited here used to sit parked (ledger status "running", no
+			// live process) until someone noticed and ran the printed
+			// recovery command. reenterRepairedRun releases the execution
+			// lock first and re-enters through executeWorkflowResume, which
+			// reacquires it: the same release-then-resume pattern the
+			// session recovery sweep already uses for this exact scenario
+			// (reconcileParkedDelivery). ReopenForRepair's own
+			// MaxDeliveryRepairs budget bounds the number of re-entries.
+			return reenterRepairedRun(runID, root, configPath, allowPublish, release, stdout, stderr)
+		}
 		return nil
 	}
 	fmt.Fprintf(stdout, "workflow %s reached its success terminal; delivery mode=%s requires --allow-publish\n", workflowName, mode)
 	fmt.Fprintf(stdout, "deliver with: mivia workflow deliver %s --allow-publish\n", runID)
 	return nil
+}
+
+// reenterRepairedRun re-drives a run that ReopenForRepair (see
+// internal/workflows/delivery/repair.go) just reopened to RunStatusRunning
+// after a repairable delivery rejection. release must release the caller's
+// already-held workflow execution lock; the lock is not reentrant
+// (acquireWorkflowExecutionLock, workflow_resume_lock.go), and
+// executeWorkflowResume reacquires it itself. Recursing while still holding
+// it would deadlock (a second acquire from the same process fails "lock is
+// busy"), so release runs first, exactly mirroring reconcileParkedDelivery's
+// proven release-then-resume handling of this identical scenario
+// (workflow_tool_engine_reconcile.go).
+func reenterRepairedRun(runID, root, configPath string, allowPublish bool, release func(), stdout, stderr io.Writer) error {
+	release()
+	return executeWorkflowResume(runID, root, configPath, false, allowPublish, false, false, stdout, stderr)
+}
+
+// beginWorkflowRunExecution acquires the run's execution lock and wraps the
+// release in sync.OnceFunc: a repairable delivery rejection releases it early
+// (see reenterRepairedRun), so the caller's own deferred release must become
+// a safe no-op instead of double-releasing.
+func beginWorkflowRunExecution(root, storePath, runID string) (func(), error) {
+	finish, err := beginWorkflowExecution(root, storePath, runID)
+	if err != nil {
+		return nil, err
+	}
+	return sync.OnceFunc(finish), nil
 }
 
 func openWorkflowStore(root string, cfg config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {

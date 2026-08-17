@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -51,10 +52,14 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish, 
 		return err
 	}
 	defer closeFn()
-	releaseExecution, err := acquireWorkflowExecutionLockBounded(context.Background(), contextStorePath(work.Abs, res.Subagents), runID, workflowResolutionLockWait)
+	rawReleaseExecution, err := acquireWorkflowExecutionLockBounded(context.Background(), contextStorePath(work.Abs, res.Subagents), runID, workflowResolutionLockWait)
 	if err != nil {
 		return err
 	}
+	// Wrapped so a repairable delivery rejection can release the execution
+	// lock early (see reenterRepairedRun) without this deferred call
+	// double-releasing when the function returns.
+	releaseExecution := sync.OnceFunc(rawReleaseExecution)
 	defer releaseExecution()
 
 	ctx := context.Background()
@@ -67,7 +72,7 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish, 
 		return err
 	}
 	if terminal {
-		return finishWorkflowResumeTerminal(ctx, work.Abs, res, store, repo, runID, run.WorkflowName, compiled, allowPublish, stdout, stderr)
+		return finishWorkflowResumeTerminal(ctx, work.Abs, configPath, res, store, repo, runID, run.WorkflowName, compiled, allowPublish, releaseExecution, stdout, stderr)
 	}
 	if acceptVerifierChange {
 		if err := applyAcceptedVerifierChanges(&snapshot, compiled, res.Verifiers, stderr); err != nil {
@@ -102,7 +107,7 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish, 
 	// below was not reached. Releasing with a stale holder is harmless:
 	// ReleaseRun is a no-op when the caller is not the current holder.
 	defer releaseWorkflowResumeHandoff(repo, runID, built.Controller)
-	return runWorkflowResumeAndSettle(ctx, built, repo, runID, work.Abs, res, store, run.WorkflowName, compiled, allowPublish, stdout, stderr)
+	return runWorkflowResumeAndSettle(ctx, built, repo, runID, work.Abs, configPath, res, store, run.WorkflowName, compiled, allowPublish, releaseExecution, stdout, stderr)
 }
 
 // prepareWorkflowResumeAdmission loads the skill registry once (R5) so the
@@ -140,7 +145,7 @@ func prepareWorkflowResumeAdmission(ctx context.Context, repo workflowledger.Rep
 // settleCLIRunFailure (DC-9), and a delivery_pending settlement routes to
 // finishWorkflowResumeSettled (drive-before-delivery, mirroring executeWorkflowRun). executeWorkflowResume's deferred
 // releaseWorkflowResumeHandoff stays as the safety net for the pre-Run path.
-func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID, workRoot string, res *config.Resolved, store *storage.SQLite, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, stdout, stderr io.Writer) error {
+func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID, workRoot, configPath string, res *config.Resolved, store *storage.SQLite, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, release func(), stdout, stderr io.Writer) error {
 	snap, err := workflowResumeRun(ctx, built)
 	// Release the preflight handoff claim BEFORE settling: settle claims the
 	// run with its own holder, so a still-held handoff (the controller stopped
@@ -157,7 +162,7 @@ func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBui
 		return err
 	}
 	if snap.Status == workflowledger.RunStatusDeliveryPending {
-		return finishWorkflowResumeSettled(ctx, workRoot, res, store, repo, runID, workflowName, compiled, allowPublish, stdout, stderr)
+		return finishWorkflowResumeSettled(ctx, workRoot, configPath, res, store, repo, runID, workflowName, compiled, allowPublish, release, stdout, stderr)
 	}
 	return nil
 }
@@ -165,7 +170,7 @@ func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBui
 // finishWorkflowResumeTerminal completes a run reconcileWorkflowTerminal
 // already settled, when that settlement landed on delivery_pending; the
 // settled stack drives before delivery exactly as the normal resume path.
-func finishWorkflowResumeTerminal(ctx context.Context, workRoot string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, stdout, stderr io.Writer) error {
+func finishWorkflowResumeTerminal(ctx context.Context, workRoot, configPath string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, release func(), stdout, stderr io.Writer) error {
 	settled, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
@@ -173,7 +178,7 @@ func finishWorkflowResumeTerminal(ctx context.Context, workRoot string, res *con
 	if settled.Status != workflowledger.RunStatusDeliveryPending {
 		return nil
 	}
-	return finishWorkflowResumeSettled(ctx, workRoot, res, store, repo, runID, workflowName, compiled, allowPublish, stdout, stderr)
+	return finishWorkflowResumeSettled(ctx, workRoot, configPath, res, store, repo, runID, workflowName, compiled, allowPublish, release, stdout, stderr)
 }
 
 // finishWorkflowResumeSettled completes a resume that settled at
@@ -183,7 +188,7 @@ func finishWorkflowResumeTerminal(ctx context.Context, workRoot string, res *con
 // (delivery.deliver_plan_run=false) settles succeeded with the 'plan PR not
 // created' notice instead of delivering. The preparedWorkflowRun is rebuilt
 // from the run snapshot: both resume settle points reach here without it.
-func finishWorkflowResumeSettled(ctx context.Context, root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, stdout, stderr io.Writer) error {
+func finishWorkflowResumeSettled(ctx context.Context, root, configPath string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, release func(), stdout, stderr io.Writer) error {
 	raw, err := repo.GetRunSnapshot(ctx, runID)
 	if err != nil {
 		return err
@@ -215,7 +220,7 @@ func finishWorkflowResumeSettled(ctx context.Context, root string, res *config.R
 		fmt.Fprintf(stdout, "run_id=%s status=%s plan PR not created (delivery.deliver_plan_run=false); plan and artifacts recorded in the ledger\n", runID, workflowledger.RunStatusSucceeded)
 		return nil
 	}
-	return finishWorkflowRunDelivery(ctx, root, res, store, repo, runID, workflowName, workflowResumeDeliveryMode(compiled), allowPublish, stdout, stderr)
+	return finishWorkflowRunDelivery(ctx, root, configPath, res, store, repo, runID, workflowName, workflowResumeDeliveryMode(compiled), allowPublish, release, stdout, stderr)
 }
 
 // workflowResumeDeliveryMode returns the compiled workflow's delivery mode,

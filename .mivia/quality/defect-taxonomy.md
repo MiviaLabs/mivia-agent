@@ -478,6 +478,40 @@ After you confirm a defect, and before you commit the fix:
 A fix report that closes one site of a known class, with no sweep result, is
 incomplete.
 
+## DC-19 Re-entrant state with no owner to drive it
+
+**Mechanism.** A recoverable failure routes a run back to a non-terminal, re-enterable
+state (the state machine is fine: DC-1's return edge exists). But the foreground process
+that reached the failure exits after CASing the state, instead of continuing to drive the
+run forward. The state is genuinely resumable, and nothing is dishonest about it (DC-9
+does not apply: the printed status is accurate) - but no live process is doing the
+resuming, so the run sits parked until an operator notices the printed recovery command
+and runs it by hand.
+
+**Evidence.** `delivery.ReopenForRepair` (internal/workflows/delivery/repair.go) CASes a
+run back to `RunStatusRunning` at its repair step after a repairable delivery rejection,
+bounded by `MaxDeliveryRepairs`. `finishWorkflowRunDelivery` (internal/cli/workflow_run.go),
+the shared settle point for both `mivia workflow run --allow-publish` and `mivia workflow
+resume`, printed the new status and returned - the foreground process then exited, leaving
+two live runs parked at `running` for 20+ minutes each with no process touching them,
+looking hung. The session engine's periodic recovery sweep already had the correct
+pattern for the identical scenario (`reconcileParkedDelivery`,
+internal/cli/workflow_tool_engine_reconcile.go: release the execution lock, then re-enter
+through `resumeCLI`) - the sweep and the CLI foreground paths were fixed independently and
+drifted.
+
+**Probes.**
+- A command whose contract is "own this run until it reaches a terminal status" (grep for
+  that claim in comments) must not return control to the shell/caller on a re-entrant
+  non-terminal status without itself continuing to drive the run.
+- When a fix adds a new automatic re-entry to a background or scheduled process (a sweep,
+  a session engine), check every foreground/one-shot CLI entry point that reaches the same
+  state machine for the identical gap - the two paths are not the same code and do not
+  automatically share a fix.
+- A single-purpose command whose contract is "act once and report" (e.g. `workflow
+  deliver`) is not automatically in scope for this probe; confirm the command's own
+  contract (and its tests) before extending "own until terminal" to it.
+
 ## Maintenance
 
 Update this document when a `fix` commit does not match any class, or when a class
