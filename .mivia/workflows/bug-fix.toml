@@ -205,6 +205,8 @@ context = [
 # template = "templates/bugfix-panel-security.md"
 # output_schema = "schemas/panel-review-v1.json"
 #
+# The "integration" member is the GLM reviewer (zai / glm-5-turbo) - the
+# panel's third, architecture-review lens.
 # [[steps.panel.members]]
 # id = "integration"
 # agent = "panel-reviewer"
