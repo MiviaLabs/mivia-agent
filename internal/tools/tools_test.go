@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -364,6 +366,45 @@ func TestWriteFileOverwriteDiffCap(t *testing.T) {
 	}
 	if strings.Contains(out, "-x\n") || strings.Contains(out, "+x\n") {
 		t.Fatalf("oversize overwrite emitted file content: %q", out)
+	}
+}
+
+// TestWriteFileOverwriteDiffAnchoredAtFirstChangedLine: an overwrite whose
+// first change is not at line 1 must number its hunk from the first changed
+// line. write_file used to pass a hardcoded anchor of 1 to
+// generateUnifiedDiffAt, so an overwrite changing only the last line of a
+// 11-line file reported "@@ -1,4 +1,4 @@" instead of "@@ -8,4 +8,4 @@".
+func TestWriteFileOverwriteDiffAnchoredAtFirstChangedLine(t *testing.T) {
+	_, reg := setupWS(t)
+	var keep strings.Builder
+	for i := 0; i < 10; i++ {
+		keep.WriteString("keep\n")
+	}
+	mustExec(t, reg, "write_file", map[string]any{
+		"path": "h.txt", "content": keep.String() + "target\n",
+	})
+	out := mustExec(t, reg, "write_file", map[string]any{
+		"path": "h.txt", "content": keep.String() + "changed\n",
+	})
+	// First changed line is 11; 3 lines of leading context put the hunk at
+	// line 8. A hunk anchored at 1 (the pre-fix behavior) must not appear.
+	if !strings.Contains(out, "@@ -8,4 +8,4 @@") {
+		t.Fatalf("overwrite hunk header not anchored at the first changed line: %q", out)
+	}
+	if strings.Contains(out, "@@ -1,") {
+		t.Fatalf("overwrite hunk header anchored at line 1: %q", out)
+	}
+	// In-bounds: the reported old-side hunk range (start,count) must stay
+	// inside the old side's raw line count (11 lines: 10 "keep" + "target").
+	rawOldLines := len(strings.Split(keep.String()+"target\n", "\n")) - 1
+	m := regexp.MustCompile(`@@ -(\d+),(\d+) \+(\d+),(\d+) @@`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no hunk header in overwrite result: %q", out)
+	}
+	start, _ := strconv.Atoi(m[1])
+	count, _ := strconv.Atoi(m[2])
+	if start+count-1 > rawOldLines {
+		t.Fatalf("old-side hunk range %d..%d exceeds the file's %d lines: %q", start, start+count-1, rawOldLines, out)
 	}
 }
 
