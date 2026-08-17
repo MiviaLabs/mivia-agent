@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
@@ -267,5 +268,130 @@ func TestJoinInFlightEvidenceGateAttemptLeavesItForAdvance(t *testing.T) {
 	}
 	if !stale || !fresh {
 		t.Fatalf("attempts = %+v, want attempt 1 interrupted and attempt 2 succeeded", attempts)
+	}
+}
+
+// ctxSensitiveRepo wraps the memory repository and models the SQLite backend's
+// ctx-honoring reads: when the passed ctx is already done, GetLoopCounters and
+// ListStepAttempts fail with ctx.Err() instead of returning a stale projection.
+// Everything else delegates to the embedded memory repository (which ignores
+// ctx), so only the route-computation reads behave like the real backend.
+type ctxSensitiveRepo struct {
+	*workflowledger.StorageRepository
+}
+
+func (r *ctxSensitiveRepo) GetLoopCounters(ctx context.Context, runID string) ([]workflowledger.LoopCounter, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.StorageRepository.GetLoopCounters(ctx, runID)
+}
+
+func (r *ctxSensitiveRepo) ListStepAttempts(ctx context.Context, runID string) ([]workflowledger.StepAttempt, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.StorageRepository.ListStepAttempts(ctx, runID)
+}
+
+// TestEvidenceGateFailureRouteUsesDetachedContext pins W-2: routeEvidenceFailure
+// computed the failed-evidence route with the CALLER ctx, whose loop-counter and
+// salvage ledger reads fail when the caller ctx is already expired at the run
+// deadline (the SQLite backend honors ctx). The failure was then misrecorded as
+// a terminal Failed run routed to "failure" and the repair loop-counter
+// increment was lost. Route computation must use the same detached persistence
+// context as the success path (selectRoute) and settleSucceededRoute.
+func newDetachedRouteFixture(t *testing.T) (*LinearController, *ctxSensitiveRepo, workflowledger.StepAttempt, definition.Step, workflowledger.RunSnapshot) {
+	t.Helper()
+	wf := &definition.WorkflowFile{
+		Version: 1, Name: "evidence-detached-route", InitialStep: "verify",
+		Inputs: map[string]definition.InputDef{"task": {Type: "string", Required: true}},
+		Limits: definition.Limits{MaxStepAttempts: 8},
+		Steps: []definition.Step{
+			{ID: "verify", Kind: "evidence_gate", Verifier: "failing-check", OnFailure: "failure"},
+			{ID: "repair", Kind: "agent", Agent: "dev"},
+		},
+		Transitions: []definition.Transition{
+			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
+			{From: "verify", To: "repair", Match: definition.MatchCriteria{Status: "failed"}, Loop: "repair", MaxIterations: 2},
+			{From: "repair", To: "verify", Match: definition.MatchCriteria{Status: "succeeded"}},
+		},
+	}
+	compiled, err := compiler.Compile(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := verifier.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "failing-check", result: verifier.Result{
+		Status: "failed", Checks: []verifier.Check{{Name: "go test ./...", Status: "failed"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	repo := &ctxSensitiveRepo{StorageRepository: workflowledger.NewMemoryRepository()}
+	t.Cleanup(func() { _ = repo.Close() })
+	ctrl, err := NewLinearController(repo, &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{}}, compiled, map[string]StepRuntime{
+		"repair": {Agent: agents.ResolvedAgent{Name: "dev"}},
+	}, map[string]any{"task": "x"}, "wfr-detached-route", []byte("snap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.SetVerifiers(cat); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Seed the RUNNING verify attempt advanceEvidenceGate would have admitted.
+	attempt := workflowledger.StepAttempt{AttemptID: "wfa-verify-1", RunID: ctrl.RunID, StepID: "verify", AttemptNo: 1, Status: workflowledger.AttemptStatusRunning}
+	if err := repo.CreateStepAttempt(context.Background(), attempt); err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := repo.GetStepAttempt(context.Background(), ctrl.RunID, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, ok := ctrl.WorkflowStep("verify")
+	if !ok {
+		t.Fatal("verify step not declared")
+	}
+	run, err := repo.GetRun(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctrl, repo, seeded, step, run
+}
+
+func TestEvidenceGateFailureRouteUsesDetachedContext(t *testing.T) {
+	ctrl, repo, seeded, step, run := newDetachedRouteFixture(t)
+	// The caller ctx is already expired, exactly as at a run deadline.
+	expiredCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	result := verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "go test ./...", Status: "failed"}}}
+	output, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputMap := map[string]any{"status": "failed", "checks": checksAsAny(result.Checks)}
+	got, _, err := ctrl.routeEvidenceFailure(expiredCtx, run, seeded, step, result, output, outputMap)
+	if err != nil {
+		t.Fatalf("routeEvidenceFailure with expired caller ctx: %v, want the repairable failure routed on the detached persistence ctx", err)
+	}
+	if got.Status == workflowledger.RunStatusFailed {
+		t.Fatalf("run status = %q, want a non-terminal run after a repairable gate failure", got.Status)
+	}
+	attempts, err := repo.ListStepAttempts(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify, ok := latestAttempt(attempts, "verify")
+	if !ok || verify.Status != workflowledger.AttemptStatusFailed || verify.ToStepID != "repair" {
+		t.Fatalf("verify attempt = %+v, want failed routed to the declared repair step", verify)
+	}
+	counters, err := repo.GetLoopCounters(context.Background(), ctrl.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counters) != 1 || counters[0].LoopName != "repair" || counters[0].Iterations != 1 {
+		t.Fatalf("loop counters = %+v, want repair == 1", counters)
 	}
 }
