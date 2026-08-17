@@ -10,10 +10,19 @@ func (t *runCommandTool) filterEnv(env []string) []string {
 // workspace env policy. It is the single shared implementation for run_command
 // and get_diagnostics: the two tools must never drift apart on what a child
 // process may see (locked plan v2 item 11, review gate rev2 finding 2).
+//
+// The result is guaranteed NON-NIL: an empty allowlist yields an empty slice
+// ([]string{}), never nil. Assigning nil to exec.Cmd.Env makes os/exec
+// inherit the parent's FULL environment (os/exec.Cmd.Env contract), which
+// would leak operator secrets to allowlisted child programs under the default
+// configuration; an empty non-nil slice gives the child NO environment
+// (fail-closed). Both buildCommand call sites rely on this guarantee.
 func filterEnvFor(env []string, exactSet map[string]bool, prefixSet []string, blockedExact map[string]bool, keywordBlock []string) []string {
 	// A nil exactSet is an empty allowlist, not a request for defaults: with
-	// nothing configured, no variable is passed through.
-	var out []string
+	// nothing configured, no variable is passed through. The make() (not a nil
+	// var) is the fail-closed contract: the caller assigns the result to
+	// cmd.Env, where nil means inherit-everything.
+	out := make([]string, 0, len(env))
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
 		uk := strings.ToUpper(key)

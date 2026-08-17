@@ -268,6 +268,26 @@ func TestFilterEnv_DropsSecretsKeepsSafe(t *testing.T) {
 	}
 }
 
+// TestFilterEnvEmptyAllowlistReturnsNonNil pins the fail-closed contract of
+// the shared environment filter: a zero-valued tool - the default
+// configuration, where [tools].env_allowlist is unset - must return an EMPTY,
+// NON-NIL slice. Assigning nil to exec.Cmd.Env makes os/exec inherit the
+// parent's FULL environment (os/exec.Cmd.Env documentation), leaking operator
+// secrets to allowlisted child programs; the empty non-nil slice gives the
+// child NO environment, matching env.go's documented contract "With it unset,
+// child processes inherit no environment". The len==0 assertion is the
+// negative path proving fail-closed even when the child env is empty.
+func TestFilterEnvEmptyAllowlistReturnsNonNil(t *testing.T) {
+	tool := &runCommandTool{}
+	got := tool.filterEnv([]string{"PATH=/usr/bin:/bin", "SECRET=supersekret", "HOME=/root"})
+	if got == nil {
+		t.Fatal("empty allowlist must yield an empty NON-NIL slice; nil cmd.Env inherits the parent's full environment")
+	}
+	if len(got) != 0 {
+		t.Fatalf("empty allowlist must pass nothing through, got %v", got)
+	}
+}
+
 // useRedactionPolicy installs a process-wide policy for the duration of a test.
 // Redaction is configuration, so every assertion that a credential disappears
 // has to say which configuration made it disappear.
