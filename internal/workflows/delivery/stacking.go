@@ -18,7 +18,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
@@ -113,9 +112,12 @@ func appendStackPartTitle(title, stackPart string) (string, error) {
 		return "", err
 	}
 	affix := fmt.Sprintf("[stack %d/%d]", k, total)
-	withTag, fits := deriveTitle(title, affix, MaxTitleRunes)
+	// runes comes from deriveTitle itself (never recomputed here): a
+	// recompute from the raw title would diverge from what deriveTitle
+	// actually measured whenever title carries leading/trailing whitespace
+	// deriveTitle trims, misleading the repair agent about the real overflow.
+	withTag, fits, runes := deriveTitle(title, affix, MaxTitleRunes)
 	if !fits {
-		runes := utf8.RuneCountInString(title) + utf8.RuneCountInString(affix) + 1
 		return "", &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title with the %s tag is %d characters, exceeding GitHub's %d-character limit; shorten the title", affix, runes, MaxTitleRunes)}
 	}
 	return withTag, nil
