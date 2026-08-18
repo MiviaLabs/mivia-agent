@@ -546,4 +546,20 @@ max_repairs = 5
 # been driven. The default is false: the plan run settles succeeded with its
 # plan and artifacts recorded in the ledger, and the chunk PRs carry the work.
 deliver_plan_run = false
-commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs.task }}"
+# commit_message_template's body wins unconditionally over the agent's own
+# pr_summary whenever it renders non-empty (freshDeliveryCommitSingle,
+# internal/workflows/delivery/deliver_stage.go: pr_summary is only a fallback
+# for an EMPTY template render, never a preference between the two) - so this
+# template must be safe for every commit TYPE the agent's pr_title can carry,
+# not just "feat". Unlike bug-fix.toml (always type fix), a feature-delivery
+# chunk's agent-chosen title can legitimately be "fix(scope): ..." per the PR
+# title policy, and the repo's commit-msg hook requires Regression/Class/Sweep
+# trailers on any commit typed fix. Before this fix the template carried none,
+# so every feature-delivery chunk whose agent picked a fix(...) title failed
+# delivery on the first attempt, 100% of the time (reproduced live on
+# wfr-MASR36MV6LQRBSYC's chunks c1 and c2, both rejected and stuck in repair
+# with no branch ever pushed to origin, 2026-08-18). These trailers are inert
+# on a non-fix commit (the hook only REQUIRES them for fix; it does not
+# forbid them on feat/chore/etc), so carrying them unconditionally is safe
+# for every type - matching bug-fix.toml's already-proven pattern.
+commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs.task }}\n\nRegression: none (regression coverage is added by the implement step and verified by the workflow's evidence gates)\nClass: none (workflow-delivered change; the finding class, when applicable, is recorded in the delivery PR body)\nSweep: none (not applicable outside a bug-fix hunt; the plan step scopes this task directly)"
