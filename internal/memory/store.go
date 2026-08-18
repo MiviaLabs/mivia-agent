@@ -182,7 +182,7 @@ type sqliteStore struct {
 	orgDB     *sql.DB // nil when OrgPath is empty
 	cfg       Config
 	mu        sync.Mutex // serializes Save across the two files (cap check + insert)
-	fts       bool       // FTS5 available at open; gates the FTS MATCH search path
+	fts       bool       // FTS5 available at open; gates FTS index sync in Save/consolidation (Search always runs the LIKE path)
 }
 
 func openSQLiteStore(cfg Config) (*sqliteStore, error) {
@@ -432,11 +432,10 @@ func (s *sqliteStore) searchDB(ctx context.Context, db *sql.DB, scope Scope, org
 	if p.zeroToken {
 		return s.searchLike(ctx, db, scope, org, text, p, limit)
 	}
-	parts, clean := parseFTSQuery(text)
 	return relaxSearch(p.tokens, func(tokens []string) ([]Result, error) {
 		pp := p
 		pp.tokens = tokens
-		return s.searchTokens(ctx, db, scope, org, text, pp, parts, clean, len(p.tokens)-len(tokens), limit)
+		return s.searchLike(ctx, db, scope, org, text, pp, limit)
 	})
 }
 
