@@ -179,6 +179,91 @@ func TestJSONValueBoundsRecursion(t *testing.T) {
 	_ = p.JSONValue(deep) // must return rather than overflow
 }
 
+// The configured placeholder is operator text, not a regexp replacement
+// template. Go's ReplaceAllString interprets $ in the replacement: $0
+// re-emits the matched secret itself (redaction would echo the very text it
+// exists to hide), $1/${name} expand to capture groups that are usually
+// absent (silent corruption), and $$ collapses to a single dollar. The
+// JSONValue key-elision path inserts the same placeholder literally, so the
+// two paths must agree on a literal placeholder. Text must therefore
+// substitute the placeholder verbatim (ReplaceAllLiteralString), never
+// through template expansion.
+func TestTextPlaceholderIsLiteral(t *testing.T) {
+	// Positive: a placeholder carrying a $ sequence regexp would expand.
+	p, err := Compile([]string{`secret`}, nil, "[$1]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Text("value secret here"); got != "value [$1] here" {
+		t.Fatalf("Text() = %q, want %q (placeholder must be inserted literally)", got, "value [$1] here")
+	}
+
+	// Negative: $0 must not re-emit the matched secret.
+	p0, err := Compile([]string{`secret`}, nil, "$0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p0.Text("value secret here"); strings.Contains(got, "secret") {
+		t.Fatalf("Text() re-emitted the matched secret: %q", got)
+	}
+
+	// Negative: ${name} for an absent named group must not vanish.
+	pn, err := Compile([]string{`secret`}, nil, "[${name}]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pn.Text("value secret here"); got != "value [${name}] here" {
+		t.Fatalf("Text() = %q, want %q (named expansion must stay literal)", got, "value [${name}] here")
+	}
+
+	// JSONValue's key elision and Text must agree on the same placeholder:
+	// both insert it verbatim.
+	jv, err := Compile([]string{`secret`}, []string{"token"}, "[$1]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := map[string]any{"token": "value secret here"}
+	elided, ok := jv.JSONValue(value).(map[string]any)
+	if !ok {
+		t.Fatalf("JSONValue type = %T, want map[string]any", jv.JSONValue(value))
+	}
+	if elided["token"] != "[$1]" {
+		t.Fatalf("JSONValue key elision = %q, want literal placeholder %q", elided["token"], "[$1]")
+	}
+}
+
+// FuzzTextPlaceholderLiteral sweeps the literal-placeholder contract over
+// arbitrary (input, placeholder) pairs: whenever the input contains a match,
+// the placeholder must appear verbatim in the output. Template expansion
+// violates this for any placeholder whose $ sequence expands ($0 re-emits
+// the match, $1/${name} expand to empty), so the property pins the
+// ReplaceAllLiteralString fix against regression.
+func FuzzTextPlaceholderLiteral(f *testing.F) {
+	f.Add("value secret here", "[$1]")
+	f.Add("value secret here", "$0")
+	f.Add("secret", "${name}")
+	f.Add("a secret b secret c", "$$")
+	f.Add("no match", "$1")
+	f.Add("value secret here", "---")
+	f.Add("value secret here", "…")
+
+	f.Fuzz(func(t *testing.T, s, placeholder string) {
+		// Newlines and NUL are legal config text but make the assertion and
+		// the failure message ambiguous; they do not change the contract.
+		if strings.ContainsAny(placeholder, "\r\n\x00") {
+			t.Skip()
+		}
+		p, err := Compile([]string{`secret`}, nil, placeholder)
+		if err != nil {
+			t.Skip()
+		}
+		got := p.Text(s)
+		if strings.Contains(s, "secret") && !strings.Contains(got, placeholder) {
+			t.Fatalf("Text(%q) = %q: placeholder %q not inserted verbatim", s, got, placeholder)
+		}
+	})
+}
+
 // fakePEM assembles a private-key-shaped fixture at runtime. Writing the block
 // as a literal trips scripts/secret_scan.py, which cannot tell a test fixture
 // from a real leak - and it should not have to.
