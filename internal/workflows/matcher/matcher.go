@@ -168,22 +168,42 @@ func scalarString(value any) (string, bool) {
 		return "false", true
 	case json.Number:
 		return v.String(), true
-	case float64:
-		// encoding/json uses float64 for numbers by default.
-		if v == float64(int64(v)) {
-			return strconv.FormatInt(int64(v), 10), true
+	case float64, float32:
+		// Canonicalize through encoding/json's own float serializer so the
+		// matched string is exactly the form the engine writes for the value
+		// (json.Marshal). strconv 'g' diverges from it for values in
+		// [1e-6, 1e-4), [2^63, 1e21), and for single-digit negative exponents
+		// ("1e-07" vs "1e-7"), so a criterion written as the value's JSON
+		// form silently failed to match and the route fell to zero_match.
+		// NaN and ±Inf are not JSON numbers: json.Marshal rejects them, so
+		// they never match instead of stringifying to "NaN"/"+Inf".
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return "", false
 		}
-		return strconv.FormatFloat(v, 'g', -1, 64), true
-	case float32:
-		return strconv.FormatFloat(float64(v), 'g', -1, 32), true
+		return string(raw), true
 	case int:
 		return strconv.Itoa(v), true
-	case int64:
-		return strconv.FormatInt(v, 10), true
+	case int8:
+		return strconv.FormatInt(int64(v), 10), true
+	case int16:
+		return strconv.FormatInt(int64(v), 10), true
 	case int32:
 		return strconv.FormatInt(int64(v), 10), true
+	case int64:
+		return strconv.FormatInt(v, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10), true
 	case uint64:
 		return strconv.FormatUint(v, 10), true
+	case uintptr:
+		return strconv.FormatUint(uint64(v), 10), true
 	case map[string]any, []any:
 		return "", false
 	default:
