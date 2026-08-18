@@ -195,6 +195,26 @@ func parseFTSQuery(q string) ([]ftsPart, bool) {
 	return parts, true
 }
 
+// ftsPartsAllPlainTokens reports whether every parsed FTS5 query part is a
+// plain bare token. Prefix and phrase parts are excluded: FTS5 MATCH
+// semantics for 'run*' (token prefix) and '"cache invalidation"' (contiguous
+// token sequence) differ from the LIKE path's substring semantics, so a query
+// with such a part must always run the authoritative LIKE path to keep
+// FTS-enabled and FTS-disabled results identical (the ensureFTSIndex
+// contract). Empty input is false: the MATCH gate needs at least one plain
+// part to be taken.
+func ftsPartsAllPlainTokens(parts []ftsPart) bool {
+	if len(parts) == 0 {
+		return false
+	}
+	for _, part := range parts {
+		if part.kind != ftsPartToken {
+			return false
+		}
+	}
+	return true
+}
+
 // buildFTSMatch renders clean FTS5 query parts into a MATCH string. Bare
 // stopword terms are dropped so the FTS candidate set stays aligned with the
 // shared tokenizer's token-AND (the tokenizer drops the same stopwords);
@@ -385,12 +405,16 @@ func (s *sqliteStore) searchFTS(ctx context.Context, db *sql.DB, scope Scope, or
 
 // searchTokens runs one token-AND search for the parsed query p. On a build
 // with FTS5 it prefers the FTS MATCH path for clean queries and falls back to
-// the LIKE path when the index is missing or the query is not clean. The full
-// FTS parts (prefix tokens, phrases) are used only for the unrelaxed query
-// (drop == 0); a relaxed search rebuilds the MATCH from the reduced token set
-// so the FTS candidate set stays aligned with the LIKE token-AND.
+// the LIKE path when the index is missing or the query is not clean. The
+// MATCH path is taken only when every parsed FTS part is a plain token
+// (ftsPartsAllPlainTokens): any query with a prefix or phrase part always
+// runs the LIKE path, whose substring semantics are authoritative, so
+// FTS-enabled and FTS-disabled results stay identical. The full FTS parts
+// (plain tokens) are used only for the unrelaxed query (drop == 0); a relaxed
+// search rebuilds the MATCH from the reduced token set so the FTS candidate
+// set stays aligned with the LIKE token-AND.
 func (s *sqliteStore) searchTokens(ctx context.Context, db *sql.DB, scope Scope, org, text string, p parsedQuery, parts []ftsPart, clean bool, drop int, limit int) ([]Result, error) {
-	if s.fts && clean && len(p.tokens) > 0 && len(parts) > 0 {
+	if s.fts && clean && len(p.tokens) > 0 && len(parts) > 0 && ftsPartsAllPlainTokens(parts) {
 		var match string
 		if drop == 0 {
 			match = buildFTSMatch(parts)
