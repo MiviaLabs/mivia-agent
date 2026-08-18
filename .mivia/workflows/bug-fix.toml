@@ -72,19 +72,21 @@ max_duration_seconds = 0
 max_on_failure_reentries = 3
 
 # Stacking is opt-in: this table (with the required plan_step/implement_step)
-# puts the workflow in the stacking engine. merge_policy=auto matches
-# feature-delivery.toml: a bug-fix run's PR merges itself once CI is green,
-# same as any other stacked delivery - a confirmed, regression-tested fix is
-# not held for a human publish grant by default. max_chunks=20 (raised from the
+# puts the workflow in the stacking engine. max_chunks=20 (raised from the
 # engine default 12 so large plans may split into up to 20 chunks).
 # soft_lines=350 (raised from the engine default 200 so medium changes stay
 # one chunk/PR; hard_lines keeps the engine default 400 as the hard ceiling).
-# max_files uses the engine default 5.
+# max_files uses the engine default 5. merge_policy=approve (changed from
+# auto on 2026-08-18 to match feature-delivery.toml's 2026-08-17 fix: a
+# merged chunk PR must never land without a human merging it, including for a
+# bug-fix run - a confirmed, regression-tested fix is still not exempt from
+# human publish grant). merge_policy="auto" would let the run merge each
+# chunk PR itself; revert only deliberately.
 [stacking]
 plan_step = "fix_plan"
 implement_step = "implement"
 split_deferred = true
-merge_policy = "auto"
+merge_policy = "approve"
 max_chunks = 20
 soft_lines = 350
 
