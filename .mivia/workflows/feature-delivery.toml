@@ -53,7 +53,7 @@ max_on_failure_reentries = 3
 [stacking]
 plan_step = "plan"
 implement_step = "implement"
-merge_policy = "auto"
+merge_policy = "approve"
 split_deferred = true
 max_chunks = 20
 soft_lines = 350
