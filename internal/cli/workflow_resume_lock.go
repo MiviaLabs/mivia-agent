@@ -110,6 +110,15 @@ var (
 	lockPollBackoffMax  = 5 * time.Second
 )
 
+// lockAttemptResult carries a contended acquireWorkflowExecutionLock
+// outcome from the attempt goroutine in acquireWorkflowExecutionLockBounded
+// back to its caller (or to the abandon-cleanup goroutine, if the caller
+// already gave up on a context cancellation).
+type lockAttemptResult struct {
+	release func()
+	err     error
+}
+
 func acquireWorkflowExecutionLockBounded(ctx context.Context, storePath, runID string, maxWait time.Duration) (func(), error) {
 	deadline := time.Now().Add(maxWait)
 	backoff := lockPollBackoffBase
@@ -117,7 +126,32 @@ func acquireWorkflowExecutionLockBounded(ctx context.Context, storePath, runID s
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		release, err := acquireWorkflowExecutionLock(storePath, runID)
+		// acquireWorkflowExecutionLock's contended path blocks for up to ~1s
+		// inside lockWorktreeMarkerFile's flock retry loop, which is not
+		// context-aware. Running it in a goroutine and racing it against
+		// ctx.Done() keeps a mid-attempt cancellation prompt instead of
+		// silently waiting out that ~1s. If ctx wins the race, the attempt
+		// goroutine is abandoned but not leaked: the cleanup goroutine below
+		// releases the lock immediately if the abandoned attempt later
+		// succeeds, so a cancelled caller never leaves the lock held.
+		attempt := make(chan lockAttemptResult, 1)
+		go func() {
+			release, err := acquireWorkflowExecutionLock(storePath, runID)
+			attempt <- lockAttemptResult{release: release, err: err}
+		}()
+		var release func()
+		var err error
+		select {
+		case res := <-attempt:
+			release, err = res.release, res.err
+		case <-ctx.Done():
+			go func() {
+				if res := <-attempt; res.err == nil {
+					res.release()
+				}
+			}()
+			return nil, ctx.Err()
+		}
 		if err == nil {
 			return release, nil
 		}
