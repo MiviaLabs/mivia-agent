@@ -412,3 +412,94 @@ func TestScopeAllMergeParityMultiToken(t *testing.T) {
 		})
 	}
 }
+
+// TestFTSPorterStemmingParityAcrossBackends is the regression test for the
+// porter-stemming divergence in the former FTS MATCH search path: the FTS5
+// porter tokenizer stems index and query terms, so MATCH 'cache' matched a
+// stored 'caching' (both stem to 'cach'), while the authoritative LIKE path
+// requires the literal substring 'cache', which 'caching' does not contain.
+// Before the fix the FTS-enabled sqlite path returned the 'caching' row while
+// the FTS-disabled and in-memory paths did not, breaking the identical-results
+// contract. The corpus also pins the overlap direction ('cached' DOES contain
+// the substring 'cache' and must match on every path) and the exact-token row,
+// so a fix that simply disabled stemming could not be mistaken for correct.
+func TestFTSPorterStemmingParityAcrossBackends(t *testing.T) {
+	ctx := context.Background()
+	fixtures := []string{
+		"caching strategies", // 'cache' is NOT a substring of 'caching': no match on any path
+		"cached keys",        // 'cache' IS a substring of 'cached': match on every path
+		"cache busting",      // exact token
+	}
+	queries := []string{"cache", "caching"}
+	want := map[string][]string{
+		"cache":   {"cache busting", "cached keys"},
+		"caching": {"caching strategies"},
+	}
+
+	ftsOn := parityStore(t, BackendSQLite)
+	saveParityFixtures(ctx, t, ftsOn, fixtures)
+	ftsOff := parityStore(t, BackendSQLite)
+	ftsOff.(*sqliteStore).fts = false
+	saveParityFixtures(ctx, t, ftsOff, fixtures)
+	mem := parityStore(t, BackendMemory)
+	saveParityFixtures(ctx, t, mem, fixtures)
+
+	enabled := searchParityQueries(ctx, t, ftsOn, queries)
+	disabled := searchParityQueries(ctx, t, ftsOff, queries)
+	memoryResults := searchParityQueries(ctx, t, mem, queries)
+	for _, q := range queries {
+		if !equalStrings(enabled[q], disabled[q]) {
+			t.Errorf("query %q: FTS-enabled %v != FTS-disabled %v: porter stemming must not expand the result set", q, enabled[q], disabled[q])
+		}
+		if !equalStrings(enabled[q], memoryResults[q]) {
+			t.Errorf("query %q: FTS-enabled %v != memory %v", q, enabled[q], memoryResults[q])
+		}
+		if !equalStrings(enabled[q], want[q]) {
+			t.Errorf("query %q = %v, want %v", q, enabled[q], want[q])
+		}
+	}
+}
+
+// TestFTSTokenSubstringInsideTokenParityAcrossBackends is the regression test
+// for the substring-inside-token divergence in the former FTS MATCH search
+// path: an FTS5 MATCH term matches whole tokens only, so MATCH 'cache' missed
+// a stored 'memcache' (token 'memcache' != 'cache'), while the authoritative
+// LIKE path matches the substring and returns the row. Before the fix the
+// FTS-enabled sqlite path silently dropped the row that the FTS-disabled and
+// in-memory paths returned. A zero-hit negative query is included so the
+// negative path is pinned on all three paths too.
+func TestFTSTokenSubstringInsideTokenParityAcrossBackends(t *testing.T) {
+	ctx := context.Background()
+	fixtures := []string{
+		"memcache guide", // 'cache' is a substring inside the token 'memcache'
+		"cache busting",  // exact token
+	}
+	queries := []string{"cache", "zzzabsent"}
+	want := map[string][]string{
+		"cache":     {"cache busting", "memcache guide"},
+		"zzzabsent": nil,
+	}
+
+	ftsOn := parityStore(t, BackendSQLite)
+	saveParityFixtures(ctx, t, ftsOn, fixtures)
+	ftsOff := parityStore(t, BackendSQLite)
+	ftsOff.(*sqliteStore).fts = false
+	saveParityFixtures(ctx, t, ftsOff, fixtures)
+	mem := parityStore(t, BackendMemory)
+	saveParityFixtures(ctx, t, mem, fixtures)
+
+	enabled := searchParityQueries(ctx, t, ftsOn, queries)
+	disabled := searchParityQueries(ctx, t, ftsOff, queries)
+	memoryResults := searchParityQueries(ctx, t, mem, queries)
+	for _, q := range queries {
+		if !equalStrings(enabled[q], disabled[q]) {
+			t.Errorf("query %q: FTS-enabled %v != FTS-disabled %v: a term inside a longer stored token must still match", q, enabled[q], disabled[q])
+		}
+		if !equalStrings(enabled[q], memoryResults[q]) {
+			t.Errorf("query %q: FTS-enabled %v != memory %v", q, enabled[q], memoryResults[q])
+		}
+		if !equalStrings(enabled[q], want[q]) {
+			t.Errorf("query %q = %v, want %v", q, enabled[q], want[q])
+		}
+	}
+}
