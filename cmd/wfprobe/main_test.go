@@ -29,6 +29,17 @@ func TestSnapshotStore_UniquePrivateStaging(t *testing.T) {
 	}
 	defer store.Close()
 
+	// A run of the legacy probe can leave the shared fixed staging directory
+	// os.TempDir()/wfprobe behind on the host (the old code created it and
+	// never removed it). Clear any such leftover up front, and again after the
+	// test, so the assertions below measure only what the implementation under
+	// test does: it must never create or reuse that fixed path.
+	fixed := filepath.Join(os.TempDir(), "wfprobe")
+	if err := os.RemoveAll(fixed); err != nil {
+		t.Fatalf("clearing legacy fixed staging path %q: %v", fixed, err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(fixed) })
+
 	tmp1, cleanup1, err := snapshotStore(context.Background(), srcDir)
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +53,6 @@ func TestSnapshotStore_UniquePrivateStaging(t *testing.T) {
 	if tmp1 == tmp2 {
 		t.Fatalf("two invocations reused the same staging dir %q", tmp1)
 	}
-	fixed := filepath.Join(os.TempDir(), "wfprobe")
 	for _, tmp := range []string{tmp1, tmp2} {
 		if tmp == fixed {
 			t.Fatalf("snapshot reused the shared fixed staging path %q", fixed)
