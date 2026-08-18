@@ -42,7 +42,21 @@ func (c *LinearController) blockedPathsFromOutput(ctx context.Context, output ma
 
 	if raw, ok := output["blocked_paths"].([]any); ok {
 		for _, item := range raw {
-			if s, ok := item.(string); ok {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			// An empty c.WritePathBlocklist means the host has no configured
+			// denylist to check against, so the self-report is trusted as-is
+			// (unchanged prior behavior). A non-empty blocklist means the host
+			// DOES have ground truth: validate the claim against it exactly
+			// like every other signal below, instead of trusting an agent's
+			// unverified claim that a write was host-refused. Without this, a
+			// step that conflates "out of my task scope" with "host blocked"
+			// (or hallucinates a refusal that never happened) can force any
+			// run into a terminal, non-repairable failure over a path the
+			// host never actually blocked.
+			if len(c.WritePathBlocklist) == 0 || blockedpath.IsBlockedPath(s, c.WritePathBlocklist) {
 				add(s)
 			}
 		}
