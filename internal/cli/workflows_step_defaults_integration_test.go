@@ -180,9 +180,14 @@ func TestStepDefaultsDigestSafeForExistingFiles(t *testing.T) {
 		}
 		return compiled.Digest
 	}
-	// Pre-feature digest of the shipped file, re-captured 2026-08-18 (bug-fix.toml's
+	// Pre-feature digest of the shipped file, re-captured 2026-08-18 (hunt's
+	// on_failure now self-loops to "hunt" instead of inheriting
+	// [step_defaults]'s terminal on_failure = "failure": a schema-repair
+	// failure on hunt used to end the whole run even though [limits]
+	// max_on_failure_reentries = 3 had reentry budget left, observed on run
+	// wfr-3OU756MYKYKOSMQ4); prior value same day (bug-fix.toml's
 	// [stacking] merge_policy flipped auto->approve, and repair_pr_metadata gained a
-	// steps.implement.output binding as prior_metadata); prior value captured 2026-08-17
+	// steps.implement.output binding as prior_metadata); before that 2026-08-17
 	// (delivery base main→dev, commit 6013b7f2); before that 2026-08-16 (delivery base
 	// master→main). The feature must not move this value. Update ONLY when bug-fix.toml
 	// itself is deliberately edited (e.g. the follow-up that rewrites its
@@ -193,7 +198,7 @@ func TestStepDefaultsDigestSafeForExistingFiles(t *testing.T) {
 	// review_panel/review/perf_verify and routed implement + the repair
 	// steps straight to test_validate — revert this pin when the cut is
 	// reverted).
-	const pinnedPreFeatureDigest = "51798fa1af5cc11f3685477f2cd47e9aac15cc532fbb6c22697eb35bb43e98f6"
+	const pinnedPreFeatureDigest = "13283539a02b4cdd7d4f614d857e9f35417780731455f79e2febbb9873bb9c9b"
 	first, second := digest(), digest()
 	if first != second {
 		t.Fatalf("digest not deterministic: %s != %s", first, second)

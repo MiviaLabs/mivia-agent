@@ -124,6 +124,14 @@ context = [
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.triage.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
+# A schema violation re-enters hunt instead of going terminal; re-entries
+# are bounded by [limits] max_on_failure_reentries (= 3), same self-loop
+# pattern as review_panel elsewhere in this workflow family. Before this,
+# hunt inherited [step_defaults]'s terminal on_failure = "failure", so one
+# schema-repair failure killed the whole run even though the loop and the
+# reentry budget both had room left (bug-fix-fast.toml carried the same
+# gap, observed on run wfr-3OU756MYKYKOSMQ4, 2026-08-17).
+on_failure = "hunt"
 
 # ---- Triage: independent confirmation of each finding ----
 [[steps]]
