@@ -183,13 +183,23 @@ func chunkRunNoDiff(repo workflowledger.Repository, run workflowledger.RunSnapsh
 
 // chunkSettleAfterDelivery transitions the chunk task after an in-drive
 // delivery attempt and returns the status line the driver should print. A
-// no_diff outcome marks the chunk merged; a real publish marks it published.
+// no_diff outcome marks the chunk merged; a real publish (fresh.Status ==
+// succeeded, per chunkDeliverySucceeded) marks it published. deliverRunWithStore
+// returns nil both on a real publish and on a repairable rejection that
+// ReopenForRepair re-entered (the run settles back to running, not
+// succeeded - see chunkDeliverySucceeded's doc comment and
+// stack_deliver_repair_test.go for the live finding this guards against): a
+// repair re-entry must NOT mark the chunk published, or the stack ledger
+// permanently lies about a chunk with no PR at all, and the merge-wait loop
+// polls a merge that can never land.
 func chunkSettleAfterDelivery(repo workflowledger.Repository, ledger *tasks.Store, stackID, chunkID string, fresh workflowledger.RunSnapshot) string {
 	if chunkRunNoDiff(repo, fresh) {
 		_ = ledger.TransitionTask(stackID, chunkID, stackStatusMerged)
 		return fmt.Sprintf("chunk=%s has no diff; marking merged", chunkID)
 	}
-	_ = ledger.TransitionTask(stackID, chunkID, stackStatusPublished)
+	if chunkDeliverySucceeded(string(fresh.Status)) {
+		_ = ledger.TransitionTask(stackID, chunkID, stackStatusPublished)
+	}
 	return chunkDeliveryOutcomeMessage(chunkID, fresh.RunID, string(fresh.Status))
 }
 
