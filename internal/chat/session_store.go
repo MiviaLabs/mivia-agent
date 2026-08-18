@@ -95,13 +95,9 @@ func (fs *FileSessionStore) Save(name string, msgs []provider.Message, model, pr
 		return err
 	}
 
-	// Count user turns.
-	turnCount := 0
-	for _, m := range msgs {
-		if m.Role == provider.RoleUser {
-			turnCount++
-		}
-	}
+	// Count real conversational turns, excluding the session-owned core-memory
+	// frame (see conversationalTurnCount).
+	turnCount := conversationalTurnCount(msgs)
 
 	// Preserve fields this write does not own if re-saving: CreatedAt, and the
 	// admitted tool set, which is written by SaveAdmission through the same

@@ -30,7 +30,13 @@ func decodeCatalogMessages(data []byte) ([]provider.Message, error) {
 	if err := contextstate.UnmarshalCanonical(data, &msgs); err != nil {
 		return nil, fmt.Errorf("decode session messages: %w", err)
 	}
-	if err := provider.ValidateToolPairing(msgs); err != nil {
+	// The catalog row legitimately carries the session-owned core-memory
+	// frame (a named user message), which the pairing rule would reject; it
+	// is exempted from the Name check exactly the way checkpoint restore
+	// does (validateRestoredMessages/maskMemoryFrameNames), so a
+	// memory-enabled context session is resumable instead of refused. Every
+	// other shape defect still fails closed.
+	if err := provider.ValidateToolPairing(maskMemoryFrameNames(msgs)); err != nil {
 		return nil, fmt.Errorf("session message shape: %w", err)
 	}
 	return msgs, nil
@@ -80,12 +86,7 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 	if err != nil {
 		return err
 	}
-	turns := 0
-	for _, msg := range msgs {
-		if msg.Role == provider.RoleUser {
-			turns++
-		}
-	}
+	turns := conversationalTurnCount(msgs)
 	opts := s.sessionSaveOptions()
 	// A save under the live session's own id is the SaveAfterTurn projection:
 	// the catalog row then names the live context session it projects ("id is

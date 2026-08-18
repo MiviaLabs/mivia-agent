@@ -248,17 +248,15 @@ func (s *Session) MessagesCopy() []provider.Message {
 	return out
 }
 
-// UserTurns counts user messages in history.
+// UserTurns counts the conversational turns in the live session: user-role
+// messages except the session-owned core-memory frame. It routes through the
+// same helper the durable sites use (conversationalTurnCount), so the live
+// TUI/CLI turn display never disagrees with the saved-sessions list for the
+// same memory-enabled session (review LIVE-TURNS-1).
 func (s *Session) UserTurns() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	n := 0
-	for _, m := range s.Messages {
-		if m.Role == provider.RoleUser {
-			n++
-		}
-	}
-	return n
+	return conversationalTurnCount(s.Messages)
 }
 
 // SendUser handles one user turn (plain stream or agent loop).

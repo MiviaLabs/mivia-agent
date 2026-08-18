@@ -195,13 +195,11 @@ func (s *Session) saveToSessionDir(name string, msgs []provider.Message, selecti
 		return err
 	}
 
-	// Count user turns (actual conversational turns).
-	turnCount := 0
-	for _, m := range msgs {
-		if m.Role == provider.RoleUser {
-			turnCount++
-		}
-	}
+	// Count real conversational turns. The session-owned core-memory frame is
+	// a user-role message that must not count as a turn (see
+	// conversationalTurnCount); pre-fix, every memory-enabled session's
+	// meta.json read realTurns+1.
+	turnCount := conversationalTurnCount(msgs)
 
 	// Build metadata. Preserve original CreatedAt if this is a re-save.
 	createdAt := time.Now()

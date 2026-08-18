@@ -115,6 +115,38 @@ func isMemoryContextMessage(m provider.Message) bool {
 	return m.Role == provider.RoleUser && m.Name == MemoryContextMessageName
 }
 
+// conversationalTurnCount counts the real conversational turns in a transcript
+// destined for durable metadata (meta.json turn_count, catalog
+// chat_sessions.turn_count): user-role messages except the session-owned
+// core-memory frame. The frame is session surface, not conversation - the
+// codebase's own convention treats it as display/skip metadata (storage's
+// FirstUserMessage skips it, memoryContextFramePrefix is labeled
+// "display/skip metadata") - so counting it inflated every memory-enabled
+// session's persisted turn_count and the session picker showed the wrong
+// number.
+//
+// The skip predicate is exactly isMemoryContextMessage: user role AND the
+// sentinel Name, never content shape. A pasted frame look-alike with no Name,
+// or a real user turn that merely begins with summary-like or frame-like
+// header text, carries no Name and is a real turn: it is counted. No other
+// message class is excluded - this helper changes nothing beyond dropping the
+// session-owned frame, so a real user turn is never silently undercounted. An
+// assistant carrying the sentinel Name is not a user turn and is not counted
+// either way.
+//
+// Session.UserTurns() routes through this helper too (review LIVE-TURNS-1):
+// the live TUI/CLI turn display reads it, so it must agree with the durable
+// count for the same session.
+func conversationalTurnCount(msgs []provider.Message) int {
+	n := 0
+	for _, m := range msgs {
+		if m.Role == provider.RoleUser && !isMemoryContextMessage(m) {
+			n++
+		}
+	}
+	return n
+}
+
 // IsMemoryContextFrameContent reports whether content is shaped like a
 // rendered memory-context frame. Display-only helper for skip decisions
 // (session titling, first-user-card rendering) where legacy un-named frames
