@@ -3,6 +3,14 @@ name = "bug-fix"
 description = "Hunt for at most 2 confirmed reachable performance or logic bugs in a scope, triage the findings, fix them with regression tests, and deliver a pull request."
 initial_step = "hunt"
 
+# This is the SLOW, exhaustive hunt (bug-audit skill: invariant-first,
+# mandatory same-class sweep per finding). When speed matters more than
+# exhaustive coverage, dispatch bug-fix-fast.toml instead - same shape,
+# same delivery, only the hunt step's skill/template differ (fast-bug-audit,
+# templates/bugfix-hunt-fast.md). Picking this file by habit when
+# bug-fix-fast would serve better is the exact failure mode both files'
+# headers exist to prevent.
+
 # ============================================================================
 # TEMPORARY FAST DEBUG PATH (comment-out cut, NOT the canonical shape).
 # Disabled to shorten runs while debugging/testing:
