@@ -314,7 +314,9 @@ func cloneModelSpecs(models []ModelSpec) []ModelSpec {
 // later layer's explicit keys win over an earlier layer's the same way a
 // second Decode call already would - the probes must follow that same
 // per-layer, later-wins order to stay consistent with the struct fields
-// they annotate.
+// they annotate. Like the struct decode, a probe never clears a presence
+// flag an earlier layer set when this layer omits the key: absence
+// preserves, an explicit later key wins.
 func decodeConfigInto(data []byte, path string, file *File) error {
 	dec := toml.NewDecoder(bytes.NewReader(data)).EnableUnmarshalerInterface()
 	if err := dec.Decode(file); err != nil {
@@ -425,10 +427,15 @@ func workspaceOverlayConfigPath(workspaceRoot, basePath string) (string, bool) {
 // probeInlineOutputBytes re-parses data for an explicit [subagents]
 // inline_output_bytes key and records its presence on file.Subagents. A *int
 // field keeps presence (nil = absent) distinct from value (0 is a real
-// "always use refs" configuration). The main decode already accepted data
-// into the superset File struct, so re-unmarshalling the same bytes into this
-// narrower probe struct cannot fail; the error is discarded rather than
-// plumbed through as an untestable path.
+// "always use refs" configuration). Presence is monotonic across the base
+// and overlay layers: an explicit key in a layer (the later layer winning on
+// value, matching the struct decode) sets inlineOutputBytesSet; a layer that
+// omits the key leaves the flag as it was, so an operator-set 0 in the base
+// config survives a workspace overlay that does not mention the key. The
+// main decode already accepted data into the superset File struct, so
+// re-unmarshalling the same bytes into this narrower probe struct cannot
+// fail; the error is discarded rather than plumbed through as an untestable
+// path.
 func probeInlineOutputBytes(data []byte, file *File) {
 	var probe struct {
 		Subagents struct {
@@ -436,7 +443,9 @@ func probeInlineOutputBytes(data []byte, file *File) {
 		} `toml:"subagents"`
 	}
 	_ = toml.Unmarshal(data, &probe)
-	file.Subagents.inlineOutputBytesSet = probe.Subagents.InlineOutputBytes != nil
+	if probe.Subagents.InlineOutputBytes != nil {
+		file.Subagents.inlineOutputBytesSet = true
+	}
 }
 
 // loadSelectedWorktreeConfig reads the selected config file again to preserve
