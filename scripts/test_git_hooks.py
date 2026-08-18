@@ -856,6 +856,46 @@ def test_semgrep_engine_failure_detector() -> None:
             assert proc.returncode == expected, (log.name, proc.returncode, proc.stdout)
 
 
+def extract_symlink_filter() -> str:
+    source = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
+    start = source.index("# BEGIN symlink filter")
+    end = source.index("# END symlink filter", start) + len("# END symlink filter")
+    return source[start:end]
+
+
+def test_pre_commit_symlink_filter_excludes_symlinks_from_semgrep_scan() -> None:
+    """semgrep refuses to scan a staged symlink path directly (it errors
+    with "Semgrep skips symbolic links... pass the target it points to
+    directly" instead of producing findings), so a staged symlink - e.g. a
+    skill alias under .claude/skills or .agents/skills pointing back into
+    .mivia/skills - failed the whole pre-commit semgrep gate before this
+    fix, not just that one file. This pins the extracted filter fragment in
+    isolation: given a STAGED_FILES array holding a real file and a symlink,
+    it must leave only the real file in STAGED_FILES."""
+    if os.name == "nt":
+        return
+    filter_fragment = extract_symlink_filter()
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        real_file = tmp_path / "real.go"
+        real_file.write_text("package main\n", encoding="utf-8")
+        link = tmp_path / "link.go"
+        link.symlink_to(real_file)
+
+        script = tmp_path / "run.sh"
+        script.write_text(
+            f'STAGED_FILES=("{real_file}" "{link}")\n'
+            f"{filter_fragment}\n"
+            'printf \'%s\\n\' "${STAGED_FILES[@]}"\n',
+            encoding="utf-8",
+        )
+        proc = run(["bash", str(script)], ROOT, check=True)
+        remaining = proc.stdout.splitlines()
+        assert str(real_file) in remaining, remaining
+        assert str(link) not in remaining, remaining
+        assert len(remaining) == 1, remaining
+
+
 def test_pre_commit_semgrep_engine_resilience() -> None:
     pre = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
     assert "semgrep_engine_failure() {" in pre
