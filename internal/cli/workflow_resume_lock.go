@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,16 +27,34 @@ var (
 // lockWorkflowExecutionFile wraps the low-level file-lock primitive so the
 // workflow execution lock reports its own name instead of borrowing the Git
 // exclude lock's message. The primitive is not changed; the wording is fixed
-// at this workflow-specific call site.
+// at this workflow-specific call site. lockWorktreeMarkerFile is shared with
+// the actual Git-exclude marker lock, so every error string it can produce
+// says "Git exclude" - not just the busy case a prior fix special-cased. That
+// left every other failure (permission denied, I/O error, ...) reporting the
+// wrong lock's name to a caller trying to diagnose a stuck workflow delivery
+// or resume. renameGitExcludeLockError rewrites the whole family generically.
 func lockWorkflowExecutionFile(file *os.File) (func(), error) {
 	unlock, err := lockWorktreeMarkerFile(file)
 	if err != nil {
-		if strings.HasSuffix(err.Error(), "lock is busy") {
-			return nil, fmt.Errorf("lock workflow execution: lock is busy")
-		}
-		return nil, fmt.Errorf("lock workflow execution: %w", err)
+		return nil, renameGitExcludeLockError(err)
 	}
 	return unlock, nil
+}
+
+// gitExcludeLockPrefix is the exact prefix lockWorktreeMarkerFile uses for
+// every error it returns (both the wrapped-cause and the bare "lock is busy"
+// shapes, on every platform). renameGitExcludeLockError swaps it for
+// workflow-execution wording; a message that does not carry this prefix (not
+// possible from the current primitive, but checked so this stays a rename,
+// not a lossy rewrite) is wrapped instead of mangled.
+const gitExcludeLockPrefix = "lock Git exclude:"
+
+func renameGitExcludeLockError(err error) error {
+	msg := err.Error()
+	if rest, ok := strings.CutPrefix(msg, gitExcludeLockPrefix); ok {
+		return fmt.Errorf("lock workflow execution:%s", rest)
+	}
+	return fmt.Errorf("lock workflow execution: %w", err)
 }
 
 func beginWorkflowExecution(workspaceRoot, storePath, runID string) (func(), error) {
@@ -80,8 +99,20 @@ func beginWorkflowExecutionBounded(ctx context.Context, workspaceRoot, storePath
 // Cancel and deliver use it because the non-blocking admission lock fails
 // with an opaque "lock is busy" error while the in-process controller is
 // still releasing the flock after the cancel wait bound.
+// lockPollBackoffBase and lockPollBackoffMax bound the exponential backoff
+// between poll attempts: starting small keeps a short-lived contention (a
+// deliver mid-git-push) resolving fast, capping at 5s keeps a long wait
+// (workflowResolutionLockWait=60s) from polling so slowly that the holder's
+// release goes unnoticed for seconds after the fact. Vars, not consts, so a
+// test can shrink both without waiting out the real backoff curve.
+var (
+	lockPollBackoffBase = 200 * time.Millisecond
+	lockPollBackoffMax  = 5 * time.Second
+)
+
 func acquireWorkflowExecutionLockBounded(ctx context.Context, storePath, runID string, maxWait time.Duration) (func(), error) {
 	deadline := time.Now().Add(maxWait)
+	backoff := lockPollBackoffBase
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -93,15 +124,24 @@ func acquireWorkflowExecutionLockBounded(ctx context.Context, storePath, runID s
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("%w (still held after %s; the run may still be settling - retry shortly)", err, maxWait)
 		}
-		remaining := time.Until(deadline)
-		sleep := 200 * time.Millisecond
-		if remaining < sleep {
+		// Exponential backoff with full jitter (0..backoff): a fixed poll
+		// interval means every waiter retries in lockstep, so a lock that
+		// frees for one poll window can be lost to another waiter that polled
+		// a moment earlier - jitter spreads retries out instead.
+		sleep := time.Duration(rand.Int63n(int64(backoff)) + 1)
+		if remaining := time.Until(deadline); remaining < sleep {
 			sleep = remaining
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(sleep):
+		}
+		if backoff < lockPollBackoffMax {
+			backoff *= 2
+			if backoff > lockPollBackoffMax {
+				backoff = lockPollBackoffMax
+			}
 		}
 	}
 }

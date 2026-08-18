@@ -23,14 +23,19 @@ const sessionCancelWait = 3 * time.Second
 // workflowResolutionLockWait bounds the execution-lock wait for cancel after
 // stopActive: a settling controller can hold the flock past the cancel wait
 // bound, and a non-blocking acquire would surface as an opaque lock error
-// while the run keeps running.
+// while the run keeps running. 60s (raised from 5s per
+// docs/architecture/workflow-stack-settle.md's P2): a still-settling deliver
+// (git push + PR + ledger CAS) or a same-run session controller finishing its
+// own auto-delivery repair loop routinely holds the per-run flock for tens of
+// seconds, not five - the short bound surfaced as a false "still held" refusal
+// on legitimate, in-progress work with nothing actually stuck.
 //
 // It is a var, not a const, ONLY so tests that assert the held-lock refusal
 // can shorten the wait (shortenWorkflowResolutionLockWait). Those tests pin
 // WHICH error a held lock produces, not how long the surface waits, so paying
-// the real five seconds per surface bought nothing and made internal/cli the
+// the real wait per surface bought nothing and made internal/cli the
 // critical path of the whole test suite. Production never assigns it.
-var workflowResolutionLockWait = 5 * time.Second
+var workflowResolutionLockWait = 60 * time.Second
 
 // sessionWorkflowEngine is the production Engine for chat-session workflow tools.
 // New runs use the full CLI admission path (providers, worktrees, coordinator)
