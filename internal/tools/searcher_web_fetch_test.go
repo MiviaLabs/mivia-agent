@@ -79,6 +79,67 @@ func TestStripHTMLTagsUnterminatedEntity(t *testing.T) {
 	}
 }
 
+// stripHTMLTags must decode hex numeric character references (&#x41; → 'A')
+// exactly like decimal ones, and must emit malformed or out-of-range numeric
+// references as literal text instead of silently dropping them (fail-visible).
+// RED today: writeEntity parses numeric entities with fmt.Sscanf(code[1:],
+// "%d"), so "&#x41;" parses no digits, num stays 0, and the reference vanishes.
+func TestStripHTMLTagsHexNumericEntity(t *testing.T) {
+	cases := []struct{ name, input, want string }{
+		{"hex A", "&#x41;", "A"},
+		{"hex dollar", "&#x24;", "$"},
+		{"hex emoji", "&#x1F600;", "\U0001F600"},
+		{"uppercase hex marker", "&#X41;", "A"},
+		{"decimal guard", "&#65;", "A"},
+		{"adjacent hex entities", "&#x41;&#x42;", "AB"},
+		{"invalid hex digits literal", "&#xZZ;", "&#xZZ;"},
+		{"bare hex marker literal", "&#x;", "&#x;"},
+		{"bare hash literal", "&#;", "&#;"},
+		{"zero literal", "&#0;", "&#0;"},
+		{"negative literal", "&#-1;", "&#-1;"},
+		{"above max code point literal", "&#x110000;", "&#x110000;"},
+		{"max code point boundary literal", "&#x10FFFF;", "&#x10FFFF;"},
+		{"decimal above max literal", "&#1114112;", "&#1114112;"},
+		{"overflow literal", "&#99999999999999999999;", "&#99999999999999999999;"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripHTMLTags(tc.input); got != tc.want {
+				t.Errorf("stripHTMLTags(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// stripHTMLTags must not lose text when a second '&' (or a '<') appears inside
+// an unterminated entity: the accumulated buffer is literal text and must be
+// flushed, and the new rune reprocessed in the normal flow, never swallowed by
+// a state reset. RED today: the scanner checks the '<' and '&' branches before
+// the inEntity branch, so "x &y &z" returns "x &z" and "A&B < 5" is mangled.
+func TestStripHTMLTagsMidTextEntity(t *testing.T) {
+	cases := []struct{ name, input, want string }{
+		{"duplicate ampersands", "x &y &z", "x &y &z"},
+		{"tag inside entity text", "A&B < 5", "A&B < 5"},
+		{"entity then real tag", "AT&T <b>bold</b>", "AT&T bold"},
+		{"unterminated entity mid-word", "AT&T and more", "AT&T and more"},
+		{"entity-like fragment", "x &y z", "x &y z"},
+		{"lone ampersand", "&", "&"},
+		{"double entity", "&amp;&amp;", "&&"},
+		{"entity then space text", "&amp; T", "& T"},
+		{"empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripHTMLTags(tc.input); got != tc.want {
+				t.Errorf("stripHTMLTags(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// Unterminated tags at the end of input are intentionally still dropped
+// (e.g. "a <b" becomes "a "): that residual is out of scope for this fix,
+// so no test asserts their preservation.
 func TestIsTextContentTypeEmpty(t *testing.T) {
 	if isTextContentType("") {
 		t.Fatal("expected false for empty content type")

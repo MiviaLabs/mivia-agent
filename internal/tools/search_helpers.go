@@ -1,7 +1,7 @@
 package tools
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -9,12 +9,13 @@ import (
 // stripHTMLTags removes HTML/XML tags and decodes common entities.
 // Block-level closing tags (</p>, </li>, </div>, etc.) and self-closing
 // tags (<br>, <hr>) produce newlines in the output.
+// Unterminated entities are preserved as literal text (fail-visible, never
+// silently dropped).
 func stripHTMLTags(s string) string {
 	var out strings.Builder
 	inTag := false
 	inEntity := false
-	var entity strings.Builder
-	var tagBuf strings.Builder
+	var entity, tagBuf strings.Builder
 
 	for i, r := range s {
 		if inTag {
@@ -29,6 +30,22 @@ func stripHTMLTags(s string) string {
 				processTag(&out, tagContent)
 			}
 			continue
+		}
+		if inEntity {
+			if r == ';' {
+				inEntity = false
+				writeEntity(&out, entity.String())
+				continue
+			}
+			if isEntityNameChar(r) {
+				entity.WriteRune(r)
+				continue
+			}
+			// Unterminated entity: flush '&'+buffer as literal text, then
+			// reprocess this rune so a second '&' or '<' cannot reset the
+			// buffer and swallow the earlier text.
+			flushLiteralEntity(&out, &entity)
+			inEntity = false
 		}
 		if r == '<' {
 			// Only treat as tag if followed by a valid HTML tag-start character.
@@ -58,36 +75,39 @@ func stripHTMLTags(s string) string {
 			entity.Reset()
 			continue
 		}
-		if inEntity {
-			if r == ';' {
-				inEntity = false
-				writeEntity(&out, entity.String())
-				continue
-			}
-			entity.WriteRune(r)
-			continue
-		}
 		// Normalize whitespace: collapse runs, but preserve newlines from block tags.
 		if isWhitespace(r) {
-			if out.Len() > 0 {
-				last := out.String()[out.Len()-1]
-				if last != ' ' && last != '\n' {
-					out.WriteRune(' ')
-				}
-			}
+			writeCollapsedSpace(&out)
 			continue
 		}
 		out.WriteRune(r)
 	}
 	if inEntity {
-		// An unterminated entity is not an entity: the '&' that opened it was
-		// never emitted, so flush it and the accumulated runes as literal text
-		// instead of silently dropping everything after the '&' ("AT&T" must
-		// keep "&T and more", not truncate to "AT").
-		out.WriteRune('&')
-		out.WriteString(entity.String())
+		flushLiteralEntity(&out, &entity)
 	}
 	return out.String()
+}
+
+// flushLiteralEntity writes an unterminated entity — the '&' that opened it
+// plus everything accumulated so far — as literal text and resets the
+// accumulator, so the caller can exit entity mode without losing text
+// (fail-visible: unterminated entities are never silently dropped).
+func flushLiteralEntity(out *strings.Builder, entity *strings.Builder) {
+	out.WriteRune('&')
+	out.WriteString(entity.String())
+	entity.Reset()
+}
+
+// writeCollapsedSpace writes a single space when the output does not already
+// end in a space or newline, so whitespace runs collapse while newlines
+// produced by block tags survive.
+func writeCollapsedSpace(out *strings.Builder) {
+	if out.Len() > 0 {
+		last := out.String()[out.Len()-1]
+		if last != ' ' && last != '\n' {
+			out.WriteRune(' ')
+		}
+	}
 }
 
 func writeEntity(out *strings.Builder, code string) {
@@ -104,17 +124,45 @@ func writeEntity(out *strings.Builder, code string) {
 		out.WriteRune(' ')
 	default:
 		if strings.HasPrefix(code, "#") {
-			var num int
-			fmt.Sscanf(code[1:], "%d", &num)
-			if num > 0 && num < 0x10FFFF {
-				out.WriteRune(rune(num))
+			if n, ok := parseNumericEntity(code); ok {
+				out.WriteRune(n)
+				return
 			}
-		} else {
-			out.WriteRune('&')
-			out.WriteString(code)
-			out.WriteRune(';')
 		}
+		out.WriteRune('&')
+		out.WriteString(code)
+		out.WriteRune(';')
 	}
+}
+
+// parseNumericEntity decodes a numeric character reference body (the code
+// captured between '&' and ';', starting with '#', e.g. "#x41" or "#65"). It
+// returns the decoded rune and true only for well-formed references whose
+// value is a valid HTML code point (0 < n < 0x10FFFF). Malformed, out-of-range,
+// and overflowing references report false so the caller can emit the reference
+// as literal text (fail-visible) rather than silently dropping it.
+func parseNumericEntity(code string) (rune, bool) {
+	body := code[1:] // strip the leading '#'
+	base := 10
+	if len(body) > 1 && (body[0] == 'x' || body[0] == 'X') {
+		body = body[1:]
+		base = 16
+	}
+	n, err := strconv.ParseUint(body, base, 32)
+	if err != nil || n == 0 || n >= 0x10FFFF {
+		return 0, false
+	}
+	return rune(n), true
+}
+
+// isEntityNameChar reports whether r may accumulate inside an HTML entity
+// name or numeric character reference. Only letters, digits, and '#' do; any
+// other rune terminates the open entity as literal text.
+func isEntityNameChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') ||
+		(r >= 'A' && r <= 'Z') ||
+		(r >= '0' && r <= '9') ||
+		r == '#'
 }
 
 // processTag handles a single parsed HTML tag (without angle brackets) and may
