@@ -360,40 +360,85 @@ func TestExecuteWorkflowResumeJoinBoundedByRunDeadline(t *testing.T) {
 	}
 }
 
-// TestExecuteWorkflowResumeJoinBoundedByFixedBound: a run with no deadline of
-// its own bounds the in-flight join by the injectable workflowResumeJoinBound,
-// so resume returns with a clear error instead of hanging on a child that never
-// settles.
-func TestExecuteWorkflowResumeJoinBoundedByFixedBound(t *testing.T) {
-	runner := &workflowResumeHangingJoinRunner{}
-	originalBound := workflowResumeJoinBound
-	t.Cleanup(func() { workflowResumeJoinBound = originalBound })
-	workflowResumeJoinBound = 100 * time.Millisecond
+// workflowResumeSlowJoinRunner settles genuinely, but only after a delay -
+// long enough to prove resume waited for the real outcome instead of cutting
+// the join off at a short fixed bound.
+type workflowResumeSlowJoinRunner struct {
+	mu     sync.Mutex
+	joined []controller.AgentStepRequest
+	delay  time.Duration
+	result controller.AgentStepResult
+}
 
+func (r *workflowResumeSlowJoinRunner) JoinStep(ctx context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, bool, error) {
+	r.mu.Lock()
+	r.joined = append(r.joined, req)
+	r.mu.Unlock()
+	select {
+	case <-time.After(r.delay):
+		return r.result, true, nil
+	case <-ctx.Done():
+		return controller.AgentStepResult{}, false, ctx.Err()
+	}
+}
+
+func (r *workflowResumeSlowJoinRunner) RunStep(_ context.Context, req controller.AgentStepRequest) (controller.AgentStepResult, error) {
+	return controller.AgentStepResult{CoordinatorRunID: req.CoordinatorRunID, TaskID: req.TaskID, EvidenceJSON: []byte(`[]`), Status: "completed"}, nil
+}
+
+// TestExecuteWorkflowResumeNoDeadlineJoinAwaitsGenuineCompletion is the
+// regression for wfr-HHR2BWDUAK2PETK7: a run with no configured deadline
+// (max_duration_seconds=0, unlimited) must NOT have its in-flight join cut
+// short by an artificial fixed bound of resume's own invention. Before the
+// fix, workflowResumeJoinCtx substituted a fixed 10-minute
+// workflowResumeJoinBound for "no deadline," and that bound flowed all the
+// way into the live coordinator join: it fired at a fixed wall-clock mark
+// even while the child was still actively heartbeating, canceled the
+// still-progressing child, and let the canceled outcome settle as a genuine
+// terminal result - the run was marked permanently timed_out on work that
+// was never stalled. This pins that a slow-but-genuinely-completing join is
+// awaited to its real outcome, not abandoned early.
+func TestExecuteWorkflowResumeNoDeadlineJoinAwaitsGenuineCompletion(t *testing.T) {
+	delay := 300 * time.Millisecond
+	runner := &workflowResumeSlowJoinRunner{
+		delay: delay,
+		result: controller.AgentStepResult{
+			CoordinatorRunID: "coord-rec", TaskID: "task-rec",
+			Output: json.RawMessage(`{"ok":true}`), EvidenceJSON: []byte(`[]`), Status: "completed",
+		},
+	}
 	root, repo, run, _, _ := newJoinResumeRun(t, runner, nil)
 	start := time.Now()
-	err := resumeJoinMustReturn(t, run.RunID, root, io.Discard)
+	var stdout bytes.Buffer
+	err := executeWorkflowResume(run.RunID, root, filepath.Join(root, "config.toml"), true, false, false, false, &stdout, io.Discard)
 	elapsed := time.Since(start)
-	if elapsed > 5*time.Second {
-		t.Fatalf("executeWorkflowResume took %v to return; want within the injectable join bound", elapsed)
+	if elapsed < delay {
+		t.Fatalf("executeWorkflowResume returned after %v, before the child's own %v settle delay - the join was cut short by something other than the child's real completion", elapsed, delay)
 	}
-	if err == nil {
-		t.Fatalf("executeWorkflowResume() error = nil, want the join-bound expiry error")
+	if err != nil {
+		t.Fatalf("executeWorkflowResume() error = %v, want the slow-but-genuine join to succeed", err)
 	}
-	if !strings.Contains(err.Error(), "join in-flight attempt") || !strings.Contains(err.Error(), "wfa-one-1") {
-		t.Fatalf("executeWorkflowResume() error = %v, want a clear in-flight join error", err)
+	if !strings.Contains(stdout.String(), "status=succeeded") {
+		t.Fatalf("resume output = %q, want status=succeeded", stdout.String())
 	}
 	runner.mu.Lock()
 	if len(runner.joined) != 1 || runner.joined[0].TaskID != "task-rec" {
 		t.Fatalf("joined requests = %+v, want the recorded child identity", runner.joined)
 	}
 	runner.mu.Unlock()
+	// The joined attempt (step "one") settles succeeded and the run continues
+	// to dispatch step "two" fresh, exactly like a normal join - matching
+	// TestExecuteWorkflowResumeJoinsInFlightAttempt's fixture behavior.
 	attempts, err := repo.ListStepAttempts(context.Background(), run.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(attempts) != 1 || attempts[0].Status != workflowledger.AttemptStatusRunning {
-		t.Fatalf("attempts = %+v, want wfa-one-1 left in-flight/running", attempts)
+	if len(attempts) != 2 {
+		t.Fatalf("attempts = %d, want 2 (joined one + fresh two)", len(attempts))
+	}
+	one := attempts[0]
+	if one.AttemptID != "wfa-one-1" || one.Status != workflowledger.AttemptStatusSucceeded {
+		t.Fatalf("joined attempt = %+v, want succeeded from the slow-but-genuine join", one)
 	}
 }
 

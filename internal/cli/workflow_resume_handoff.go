@@ -13,11 +13,6 @@ import (
 )
 
 var (
-	// workflowResumeJoinBound bounds the pre-Run in-flight attempt join for runs
-	// that carry no deadline of their own, so a coordinator child whose run never
-	// settles cannot park resume forever (runs WITH a deadline bound the join to
-	// the time remaining before it; see workflowResumeJoinCtx). Injectable for tests.
-	workflowResumeJoinBound = 10 * time.Minute
 	// workflowResumeClaimRefreshTimeout bounds one handoff-claim refresh so a
 	// wedged store call cannot deadlock the heartbeat's stop path.
 	workflowResumeClaimRefreshTimeout = 5 * time.Second
@@ -166,12 +161,25 @@ func joinInFlightAttempts(ctx context.Context, built workflowControllerBuild, re
 	if err != nil {
 		return err
 	}
-	// The join is bounded so a child whose coordinator run never settles cannot
-	// park resume forever: bound to the run's own deadline when present (time.Until
-	// it), otherwise a fixed workflowResumeJoinBound. On expiry the join is
-	// abandoned with a clear error and the attempt stays in-flight for the
-	// controller's normal reconciliation (Advance interrupts and re-dispatches it
-	// under the run claim on a subsequent resume).
+	// The join is bounded to the run's own deadline when present (time.Until
+	// it) so a child whose coordinator run never settles cannot park resume
+	// past the run's own configured limit. A run with NO configured deadline
+	// (max_duration_seconds=0, "unlimited" by explicit operator choice) gets
+	// an unbounded join context here: joinWithCancellation's own
+	// controller-side watchdog (defaultJoinWatchdog, liveness-gated - it
+	// cancels only when the child goes SILENT past the bound, never merely
+	// because wall-clock time has passed) already protects against a
+	// genuinely stuck/orphaned child, so this context does not need its own
+	// redundant wall-clock cap. Before this fix, a fixed workflowResumeJoinBound
+	// substituted here for "no deadline" and was passed all the way into the
+	// live join: it fired at a fixed wall-clock mark even while the child was
+	// actively heartbeating, and joinWithCancellation (agent_step_join.go)
+	// canceled the still-progressing coordinator task and let the canceled
+	// outcome settle as a genuine result - not "leave it in-flight for
+	// reconciliation" as documented, but a permanent run_status=timed_out on
+	// work that was never stalled (reproduced live on wfr-HHR2BWDUAK2PETK7:
+	// steady 30s heartbeats for ~9.5m, then run_failed "context deadline
+	// exceeded", status=timed_out).
 	joinCtx, cancelJoin := workflowResumeJoinCtx(ctx, run)
 	defer cancelJoin()
 	for _, inFlight := range plan.AttemptsInFlight {
@@ -191,13 +199,17 @@ func joinInFlightAttempts(ctx context.Context, built workflowControllerBuild, re
 	return nil
 }
 
-// workflowResumeJoinCtx derives the bounded context for the pre-Run in-flight
-// attempt join: the run's own deadline when present (time.Until it), otherwise
-// the fixed workflowResumeJoinBound. An already-expired deadline yields an
-// immediately-expired context so the join fails fast instead of hanging.
+// workflowResumeJoinCtx derives the context for the pre-Run in-flight attempt
+// join: the run's own deadline when present (time.Until it), so the join
+// never outlives a deadline the operator actually configured. An
+// already-expired deadline yields an immediately-expired context so the join
+// fails fast instead of hanging. A run with no configured deadline
+// (max_duration_seconds=0, unlimited) gets an unbounded context - see the
+// call site's comment for why that is safe (the controller's own
+// liveness-gated join watchdog still catches a genuinely stuck child).
 func workflowResumeJoinCtx(parent context.Context, run workflowledger.RunSnapshot) (context.Context, context.CancelFunc) {
 	if run.DeadlineAt != nil {
 		return context.WithDeadline(parent, *run.DeadlineAt)
 	}
-	return context.WithTimeout(parent, workflowResumeJoinBound)
+	return context.WithCancel(parent)
 }
