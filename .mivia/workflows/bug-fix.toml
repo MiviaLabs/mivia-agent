@@ -357,13 +357,19 @@ context = [
 
 # repair_pr_metadata fixes only the PR title and summary when the host rejects
 # the change-summary metadata. It is the delivery.on_pr_metadata_failure target
-# and must bind delivery.failure.
+# and must bind delivery.failure. It also binds steps.implement.output as
+# prior_metadata so the repair agent can see the actual pr_title/pr_summary it
+# must shorten/adjust - without it, the agent has no reference for what it is
+# repairing and can fabricate an unrelated pr_title/pr_summary pair (seen
+# live on wfr-4UA7AUXKJBHUN3AY / PR #233, where the repaired title and body
+# described work that was never implemented).
 [[steps]]
 id = "repair_pr_metadata"
 template = "templates/bugfix-repair-metadata.md"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
+  { from = "steps.implement.output", as = "prior_metadata", max_bytes = 4096 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
 ]
 

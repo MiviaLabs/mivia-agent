@@ -278,6 +278,11 @@ context = [
 # rejects the agent's change-summary metadata (pr_title/pr_summary). The host
 # sends the rejection hint as delivery.failure evidence; the step rewrites the
 # metadata and feeds back through review, so the run converges and delivers.
+# It also binds steps.implement.output as prior_metadata: pr_title/pr_summary
+# live on implement's output, not plan/plan_tests, and without a direct
+# binding the repair agent has no reference for what it is repairing and can
+# fabricate an unrelated pr_title/pr_summary pair instead of shortening the
+# real one (seen live on the bug-fix workflow's equivalent step, PR #233).
 [[steps]]
 id = "repair_pr_metadata"
 template = "templates/repair-pr-metadata.md"
@@ -285,6 +290,7 @@ context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
   { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
+  { from = "steps.implement.output", as = "prior_metadata", max_bytes = 4096 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
 ]
 
