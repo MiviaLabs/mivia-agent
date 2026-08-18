@@ -97,3 +97,38 @@ func assertFeatureDeliveryTemplatesInstructPRMetadata(t *testing.T, root string)
 		t.Fatalf(".mivia/workflows/templates/repair-pr-metadata.md is %d lines, want <= 120", lines)
 	}
 }
+
+// TestFeatureDeliveryRepairPRMetadataDoesNotBindUnusedPlan is the regression
+// for a token-efficiency audit finding (2026-08-18): repair_pr_metadata's
+// context bound steps.plan.output (24000 bytes) and steps.plan_tests.output
+// (16000 bytes) - 40KB inlined into every metadata-repair attempt - but
+// templates/repair-pr-metadata.md never references {{ evidence.plan }} or
+// {{ evidence.test_plan }} (confirmed by grep before removing the bindings).
+// This step only repairs pr_title/pr_summary text, never code or scope; the
+// code-repair steps (repair_tests, repair_verify, ...) genuinely need
+// plan/test_plan for their scope guardrails, but repair_pr_metadata does not.
+// Pins both sides: the step must not carry the dead bindings, and the
+// template must still never reference them (so a future re-add of one side
+// without the other is caught).
+func TestFeatureDeliveryRepairPRMetadataDoesNotBindUnusedPlan(t *testing.T) {
+	root := committedWorkflowRoot(t)
+	workflow, base := loadCommittedFeatureDeliveryWorkflow(t, root)
+	step := featureDeliveryStep(t, workflow, "repair_pr_metadata")
+
+	for _, binding := range step.Context {
+		if binding.As == "plan" || binding.As == "test_plan" {
+			t.Fatalf("repair_pr_metadata binds unused context %q (from %q) - templates/repair-pr-metadata.md never references it", binding.As, binding.From)
+		}
+	}
+
+	raw, err := os.ReadFile(filepath.Join(base, "templates", "repair-pr-metadata.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair := string(raw)
+	for _, ref := range []string{"{{ evidence.plan }}", "{{ evidence.test_plan }}"} {
+		if strings.Contains(repair, ref) {
+			t.Fatalf("templates/repair-pr-metadata.md references %s; if this is now genuinely needed, re-add the matching context binding in feature-delivery.toml's repair_pr_metadata step instead of leaving it unbound", ref)
+		}
+	}
+}

@@ -283,13 +283,18 @@ context = [
 # binding the repair agent has no reference for what it is repairing and can
 # fabricate an unrelated pr_title/pr_summary pair instead of shortening the
 # real one (seen live on the bug-fix workflow's equivalent step, PR #233).
+# Does NOT bind steps.plan.output/steps.plan_tests.output: this step only
+# repairs pr_title/pr_summary text, never code or scope, and
+# templates/repair-pr-metadata.md never references {{ evidence.plan }} or
+# {{ evidence.test_plan }} - confirmed by grep before removing them
+# (2026-08-18 token-efficiency audit). Carrying them here was dead weight
+# copied from the code-repair steps, which genuinely need plan/test_plan for
+# their scope guardrails; this step does not.
 [[steps]]
 id = "repair_pr_metadata"
 template = "templates/repair-pr-metadata.md"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 12000 },
-  { from = "steps.plan.output", as = "plan", max_bytes = 24000 },
-  { from = "steps.plan_tests.output", as = "test_plan", max_bytes = 16000 },
   { from = "steps.implement.output", as = "prior_metadata", max_bytes = 4096 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
 ]
