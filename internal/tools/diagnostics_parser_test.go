@@ -18,6 +18,7 @@ package tools
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -483,4 +484,195 @@ func TestDiagnosticsParseControlCharHygiene(t *testing.T) {
 		{Severity: "info", Message: "noiseline", Raw: true},
 	})
 	wantSummary(t, out, 2, 1, 0, 1, 1)
+}
+
+// TestDiagnosticsParseJSONUnusablePositionRaw pins the chunk c2 rule: a JSON
+// position that is present but not a usable whole number - fractional (1.5),
+// negative (-3), or overflowing int (1e20) - must never be truncated or
+// coerced into a fabricated line/column. The element becomes a raw row
+// echoing the object, exactly as a wrong-typed position does (finding P2).
+func TestDiagnosticsParseJSONUnusablePositionRaw(t *testing.T) {
+	for _, tc := range []struct{ name, input string }{
+		{"fractional line", `[{"file":"a.go","line":1.5,"message":"m"}]`},
+		{"fractional column", `[{"file":"a.go","line":1,"column":2.5,"message":"m"}]`},
+		{"negative line", `[{"file":"a.go","line":-3,"message":"m"}]`},
+		{"negative column", `[{"file":"a.go","line":1,"column":-2,"message":"m"}]`},
+		{"overflowing line", `[{"file":"a.go","line":1e20,"message":"m"}]`},
+		{"overflowing column", `[{"file":"a.go","line":1,"column":1e300,"message":"m"}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := parseForTest(t, tc.input, "")
+			if len(out.Rows) != 1 {
+				t.Fatalf("rows = %d, want 1", len(out.Rows))
+			}
+			r := out.Rows[0]
+			if !r.Raw {
+				t.Errorf("row %+v: unusable position must demote to a raw row", r)
+			}
+			if r.Severity != "info" {
+				t.Errorf("raw row severity = %q, want %q", r.Severity, "info")
+			}
+			if r.Line != 0 || r.Column != 0 {
+				t.Errorf("raw row carries fabricated position %d:%d; want 0:0", r.Line, r.Column)
+			}
+			if !strings.HasPrefix(r.Message, "{") {
+				t.Errorf("raw row message = %q, want the echoed object", r.Message)
+			}
+			wantSummary(t, out, 0, 0, 0, 1, 0)
+		})
+	}
+}
+
+// TestDiagnosticsParseJSONIntegralFloatPosition pins that an integral JSON
+// number (2.0) is a usable position: it stays a structured row with the exact
+// value, so demotion never misfires on legitimately float-typed JSON numbers
+// (chunk c2 guard).
+func TestDiagnosticsParseJSONIntegralFloatPosition(t *testing.T) {
+	out := parseForTest(t, `[{"file":"a.go","line":2.0,"column":3.0,"message":"m"}]`, "")
+	requireRows(t, out, []diagnosticsRow{
+		{Severity: "info", Message: "m", File: "a.go", Line: 2, Column: 3},
+	})
+	wantSummary(t, out, 0, 0, 1, 0, 1)
+}
+
+// TestDiagnosticsParseJSONPositionIntBoundary pins finding C2-1: the first
+// float64 that overflows int (2^63 on 64-bit int, 2^31 on 32-bit) must demote
+// to a raw row. float64(maxInt)+1 IS that boundary, and it is the value the
+// old round-trip check alone accepted on saturating-conversion targets (arm64,
+// arm): int(boundary) became MaxInt, float64(MaxInt) rounded back to the
+// boundary, and the parser fabricated a line the producer never emitted. An
+// integral, exactly representable value below the boundary stays a structured
+// row, so the guard never rejects a position that fits int (finding C2-2: the
+// below-boundary probe must be portable across 32-bit and 64-bit int widths).
+func TestDiagnosticsParseJSONPositionIntBoundary(t *testing.T) {
+	boundary := float64(int(^uint(0)>>1)) + 1
+	out := parseForTest(t,
+		`[{"file":"a.go","line":`+strconv.FormatFloat(boundary, 'g', -1, 64)+`,"message":"m"}]`, "")
+	if len(out.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(out.Rows))
+	}
+	r := out.Rows[0]
+	if !r.Raw {
+		t.Errorf("row %+v: position at the int boundary must demote to a raw row", r)
+	}
+	if r.Line != 0 || r.Column != 0 {
+		t.Errorf("raw row carries fabricated position %d:%d; want 0:0", r.Line, r.Column)
+	}
+	wantSummary(t, out, 0, 0, 0, 1, 0)
+
+	// Finding C2-2: the below-boundary probe must be portable. math.Nextafter
+	// is integral on 64-bit int (2^63-2^11) but fractional on 32-bit int
+	// (2^31-2^-21), where usablePositionNumber correctly rejects it as
+	// non-integral before any boundary check - so a structured-row assertion
+	// on it fails on GOARCH=386/arm. float64(maxInt-1024) is integral and
+	// exactly representable below the boundary on both widths (on 64-bit int
+	// it rounds to 2^63-2^11, the largest float64 below 2^63), pinning the
+	// "fits int stays structured" property identically on every platform.
+	below := float64(maxInt - 1024)
+	out2 := parseForTest(t,
+		`[{"file":"a.go","line":`+strconv.FormatFloat(below, 'g', -1, 64)+`,"message":"m"}]`, "")
+	if len(out2.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(out2.Rows))
+	}
+	r2 := out2.Rows[0]
+	if r2.Raw {
+		t.Errorf("row %+v: position just below the int boundary must stay structured", r2)
+	}
+	if int64(r2.Line) != int64(below) {
+		t.Errorf("line = %d, want %d", r2.Line, int64(below))
+	}
+	wantSummary(t, out2, 0, 0, 1, 0, 1)
+}
+
+// TestDiagnosticsParseLineOverflowPositionRaw pins finding PC-1: a line-mode
+// position that overflows int (e.g., 2^63) must demote to a raw row, never a
+// structured row with a fabricated Line/Column of 0 the producer never
+// emitted. This is the line-mode counterpart of the JSON demotion rule
+// (finding P2/chunk c2): parsePositionNumber's error path must not degrade a
+// digits-only value to zero just because it does not fit int.
+func TestDiagnosticsParseLineOverflowPositionRaw(t *testing.T) {
+	overflow := "9223372036854775808" // 2^63: overflows int on every platform
+	for _, tc := range []struct{ name, input string }{
+		{"overflowing line", "a.go:" + overflow + ":1: error: boom"},
+		{"overflowing column", "a.go:1:" + overflow + ": error: boom"},
+		{"overflowing line vet shape", "a.go:" + overflow + ": boom"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := parseForTest(t, tc.input+"\n", "")
+			if len(out.Rows) != 1 {
+				t.Fatalf("rows = %d, want 1", len(out.Rows))
+			}
+			r := out.Rows[0]
+			if !r.Raw {
+				t.Errorf("row %+v: overflowing position must demote to a raw row", r)
+			}
+			if r.Severity != "info" {
+				t.Errorf("raw row severity = %q, want %q", r.Severity, "info")
+			}
+			if r.Line != 0 || r.Column != 0 {
+				t.Errorf("raw row carries fabricated position %d:%d; want 0:0", r.Line, r.Column)
+			}
+			if !strings.HasPrefix(r.Message, "a.go:") {
+				t.Errorf("raw row message = %q, want the full line echoed verbatim", r.Message)
+			}
+			wantSummary(t, out, 0, 0, 0, 1, 0)
+		})
+	}
+}
+
+// TestDiagnosticsParseLineMaxIntPositionStaysStructured pins the line-mode
+// counterpart of the C2-2 boundary guard: a position at exactly maxInt (the
+// largest value int holds on this platform) parses and stays a structured row;
+// only values that do not fit int demote. It is portable across 32-bit and
+// 64-bit int widths because maxInt is derived from the platform.
+func TestDiagnosticsParseLineMaxIntPositionStaysStructured(t *testing.T) {
+	maxStr := strconv.Itoa(maxInt)
+	out := parseForTest(t, "a.go:"+maxStr+":1: error: boom\n", "")
+	requireRows(t, out, []diagnosticsRow{
+		{Severity: "error", Message: "boom", File: "a.go", Line: maxInt, Column: 1},
+	})
+	wantSummary(t, out, 1, 0, 0, 0, 1)
+}
+
+// TestDiagnosticsParseJSONPositionAliasValueFallback pins that an unusable
+// position VALUE at a higher-priority alias (column 1.5) falls through to a
+// usable lower-priority alias (col 6), matching the wrong-type fallback
+// (finding P3): a bad value never suppresses a good one.
+func TestDiagnosticsParseJSONPositionAliasValueFallback(t *testing.T) {
+	out := parseForTest(t, `[{"column":1.5,"col":6,"message":"m"}]`, "")
+	requireRows(t, out, []diagnosticsRow{
+		{Severity: "info", Message: "m", Column: 6},
+	})
+	wantSummary(t, out, 0, 0, 1, 0, 0)
+}
+
+// FuzzParseDiagnosticsOutputProperties pins the parser's totality contract
+// under arbitrary input: it must never panic, never error, never drop a row
+// (len(rows) == summary.total), and a structured row must never carry a
+// fabricated negative position (int(float) overflow produced exactly that
+// before the chunk c2 fix). The seed corpus covers line mode, JSON
+// array/object mode, and the hostile-position shapes.
+func FuzzParseDiagnosticsOutputProperties(f *testing.F) {
+	f.Add(`[{"file":"a.go","line":1.5,"column":-2,"message":"m"}]`)
+	f.Add(`[{"file":"b.go","line":1e20,"message":"m"}]`)
+	f.Add(`{"diagnostics":[{"line":-3,"msg":"m"}]}`)
+	f.Add("x.go:1:2: error: boom")
+	f.Add("a.go:9223372036854775808:1: error: boom")
+	f.Add("plain line\nanother line\n")
+	f.Add("")
+	f.Fuzz(func(t *testing.T, input string) {
+		out := parseForTest(t, input, "")
+		s := out.Summary
+		if s.Total != s.Errors+s.Warnings+s.Infos+s.Raw {
+			t.Fatalf("summary.total %d != errors+warnings+infos+raw", s.Total)
+		}
+		if len(out.Rows) != s.Total {
+			t.Fatalf("len(rows) %d != summary.total %d", len(out.Rows), s.Total)
+		}
+		for _, r := range out.Rows {
+			if !r.Raw && (r.Line < 0 || r.Column < 0) {
+				t.Fatalf("structured row carries fabricated negative position: %+v", r)
+			}
+		}
+	})
 }
