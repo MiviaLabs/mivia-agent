@@ -478,3 +478,24 @@ func batchMsgs(t *testing.T, cmd tea.Cmd) []tea.Msg {
 	}
 	return out
 }
+
+// TestReservedRowsGrowsWithChrome pins that the transcript's eviction
+// budget shrinks as chrome appears. If it did not, an approval prompt or
+// the status line would push the frame past the terminal height, which
+// is the erase bug the live window exists to prevent.
+func TestReservedRowsGrowsWithChrome(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	bare := s.reservedRows()
+
+	s.statusline.Start("thinking", fixedNow())
+	withStatus := s.reservedRows()
+	if withStatus <= bare {
+		t.Errorf("got %d, want more than %d once the status line is active", withStatus, bare)
+	}
+
+	s.approval.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
+	withBoth := s.reservedRows()
+	if withBoth <= withStatus {
+		t.Errorf("got %d, want more than %d once the approval prompt is armed", withBoth, withStatus)
+	}
+}

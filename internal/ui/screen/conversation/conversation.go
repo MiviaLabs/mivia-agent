@@ -116,14 +116,17 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.transcript = next
 		return s, cmd
 	case transcript.CommitMsg:
-		// The one place transcript's own CommitMsg becomes a real
-		// tea.Println: finalized content leaves the managed frame and
-		// joins native terminal scrollback, which is what makes the
-		// inline transcript survive content taller than the terminal.
-		return s, tea.Println(msg.Text)
+		// Evicted content leaves the managed frame for native scrollback.
+		// It is NOT printed here: tea.Println is a documented no-op while
+		// the altscreen is active, so printing directly would silently
+		// destroy transcript lines whenever a modal happened to be open.
+		// app.Model owns the decision because only the router knows the
+		// stack depth.
+		return s, func() tea.Msg { return app.PrintMsg{Text: msg.Text} }
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
 		s.composer.SetWidth(msg.Width)
+		s.transcript.SetSize(msg.Width, msg.Height, s.reservedRows())
 		return s, nil
 	case app.ThemeChangedMsg:
 		s.Theme, s.Tier = msg.Theme, msg.Tier
@@ -190,6 +193,21 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		readCmd = waitForEvent(s.active.Events())
 	}
 	return s, tea.Batch(flushCmd, readCmd)
+}
+
+// reservedRows is how many rows the non-transcript chrome claims. The
+// transcript's eviction budget is the remaining height, so this must
+// account for every row View can draw below the transcript, plus one
+// spare so the frame never exactly fills the terminal.
+func (s Screen) reservedRows() int {
+	rows := 1 + 1 // composer, plus the reserve
+	if s.approval.Active() {
+		rows += 2 // title and hint
+	}
+	if s.statusline.Active() {
+		rows++
+	}
+	return rows
 }
 
 func (s Screen) View() string {

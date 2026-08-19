@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -224,6 +226,106 @@ func TestWindowSizeMsgStoredAndBroadcastToEveryScreen(t *testing.T) {
 		if _, ok := sc.received[0].(tea.WindowSizeMsg); !ok {
 			t.Errorf("%s screen got %T, want tea.WindowSizeMsg", name, sc.received[0])
 		}
+	}
+}
+
+// printText runs a Cmd and returns the text of the tea.Println it
+// produced. printLineMessage is unexported, so this inspects it via %+v
+// rather than a type assertion.
+func printText(t *testing.T, cmd tea.Cmd) string {
+	t.Helper()
+	if cmd == nil {
+		return ""
+	}
+	return fmt.Sprintf("%+v", cmd())
+}
+
+// TestPrintMsgIsQueuedWhileAModalIsOpen pins the highest-risk defect in
+// the live-window design. tea.Println is a documented no-op under the
+// altscreen, and the altscreen is active exactly while a modal sits on
+// the stack. Printing directly would silently destroy transcript lines
+// whenever a dialog happened to be open mid-stream.
+func TestPrintMsgIsQueuedWhileAModalIsOpen(t *testing.T) {
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+
+	// Depth 1: printed straight through.
+	next, cmd := m.Update(PrintMsg{Text: "before"})
+	m = next.(Model)
+	if got := printText(t, cmd); !strings.Contains(got, "before") {
+		t.Errorf("got %q, want an immediate print at depth 1", got)
+	}
+
+	next, _ = m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	m = next.(Model)
+
+	// Depth 2: queued, never printed.
+	for _, text := range []string{"queued one", "queued two"} {
+		next, cmd = m.Update(PrintMsg{Text: text})
+		m = next.(Model)
+		if cmd != nil {
+			t.Errorf("text %q printed while a modal was open; it must be queued", text)
+		}
+	}
+	if len(m.pendingPrints) != 2 {
+		t.Fatalf("got %d queued prints, want 2", len(m.pendingPrints))
+	}
+
+	// Popping back to depth 1 flushes, in order, as one print.
+	next, cmd = m.Update(PopScreenMsg{})
+	m = next.(Model)
+	got := printText(t, cmd)
+	i1, i2 := strings.Index(got, "queued one"), strings.Index(got, "queued two")
+	if i1 < 0 || i2 < 0 {
+		t.Fatalf("got %q, want both queued entries flushed", got)
+	}
+	if i1 > i2 {
+		t.Error("queued prints were flushed out of order")
+	}
+	if len(m.pendingPrints) != 0 {
+		t.Error("expected the queue drained after the flush")
+	}
+}
+
+func TestPrintMsgFlushesOnEscPop(t *testing.T) {
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	m = next.(Model)
+	next, _ = m.Update(PrintMsg{Text: "while open"})
+	m = next.(Model)
+
+	next, cmd := m.Update(keyMsg("esc"))
+	m = next.(Model)
+	if got := printText(t, cmd); !strings.Contains(got, "while open") {
+		t.Errorf("got %q, want the queue flushed when Esc pops the modal", got)
+	}
+}
+
+func TestPrintMsgFlushesAfterThemeSelection(t *testing.T) {
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, themes)
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "picker"}})
+	m = next.(Model)
+	next, _ = m.Update(PrintMsg{Text: "during pick"})
+	m = next.(Model)
+
+	// Selecting a theme also pops, so it must flush too.
+	next, cmd := m.Update(ThemeSelectedMsg{Name: themes[0].Name})
+	m = next.(Model)
+	if len(m.pendingPrints) != 0 {
+		t.Error("expected the queue drained when the picker closed on selection")
+	}
+	if cmd == nil {
+		t.Fatal("expected a Cmd batch containing the flush")
+	}
+}
+
+func TestPrintMsgEmptyTextIsIgnored(t *testing.T) {
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	if _, cmd := m.Update(PrintMsg{Text: ""}); cmd != nil {
+		t.Error("expected empty text to produce no print")
 	}
 }
 

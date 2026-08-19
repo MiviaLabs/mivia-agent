@@ -113,7 +113,7 @@ func TestHandleEventEveryKind(t *testing.T) {
 		{Kind: uievent.KindTurnEnd, Body: uievent.TurnEndBody{Reason: "completed"}},
 	}
 	got := strings.Join(handleAndCollectCommits(t, m, events), "\n")
-	for _, want := range []string{"hi", "full reply", "3 words hidden", "run_command", "output line", "1/2", "done", "boom", "step 1", "step 2", "context 80% full", "failed", "10 in"} {
+	for _, want := range []string{"hi", "full reply", "3 words", "hidden", "run_command", "output line", "1 of 2", "done", "boom", "step 1", "step 2", "context 80% full", "failed", "10 in"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("commits missing %q:\n%s", want, got)
 		}

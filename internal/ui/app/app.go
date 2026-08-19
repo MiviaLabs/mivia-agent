@@ -6,6 +6,8 @@
 package app
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -47,6 +49,17 @@ type ThemeChangedMsg struct {
 	Tier  theme.Tier
 }
 
+// PrintMsg asks the router to write text permanently above the managed
+// frame, into the terminal's own scrollback.
+//
+// Only the router may do this. tea.Println is a documented no-op while
+// the altscreen is active, and the altscreen is active exactly when a
+// modal sits on the stack. A screen printing directly would silently
+// destroy transcript content whenever a dialog happened to be open, so
+// prints arriving at depth > 1 are queued and flushed on the return to
+// depth 1, in arrival order.
+type PrintMsg struct{ Text string }
+
 var _ tea.Model = Model{}
 
 // Model is the root tea.Model: current theme/tier, terminal size, and the
@@ -63,6 +76,9 @@ type Model struct {
 	Height int
 
 	stack []Screen
+	// pendingPrints holds scrollback writes that arrived while a modal
+	// was open, in arrival order.
+	pendingPrints []string
 }
 
 // New returns a router with base as the only (non-poppable) screen.
@@ -112,8 +128,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// for standalone use outside a Screen, but here the router
 			// is the single owner).
 			if len(m.stack) > 1 {
-				m.stack = m.stack[:len(m.stack)-1]
-				return m, nil
+				return m.pop()
 			}
 		}
 	case PushScreenMsg:
@@ -121,9 +136,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, msg.Screen.Init()
 	case PopScreenMsg:
 		if len(m.stack) > 1 {
-			m.stack = m.stack[:len(m.stack)-1]
+			return m.pop()
 		}
 		return m, nil
+	case PrintMsg:
+		return m.print(msg.Text)
 	case ThemeSelectedMsg:
 		var cmds []tea.Cmd
 		if th, ok := m.themeByName(msg.Name); ok {
@@ -138,7 +155,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if len(m.stack) > 1 {
-			m.stack = m.stack[:len(m.stack)-1]
+			next, popCmd := m.pop()
+			m = next.(Model)
+			cmds = append(cmds, popCmd)
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -150,6 +169,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := top.Update(msg)
 	m.stack[len(m.stack)-1] = next
 	return m, cmd
+}
+
+// print writes text to scrollback, or queues it when a modal is open.
+func (m Model) print(text string) (tea.Model, tea.Cmd) {
+	if text == "" {
+		return m, nil
+	}
+	if len(m.stack) > 1 {
+		m.pendingPrints = append(m.pendingPrints, text)
+		return m, nil
+	}
+	return m, tea.Println(text)
+}
+
+// pop removes the top screen and, when that returns the stack to depth 1
+// and leaves the altscreen, flushes everything queued while it was open.
+//
+// The queue is flushed as ONE Println: tea.Batch documents "no ordering
+// guarantees", so one Cmd per queued entry could reorder scrollback.
+func (m Model) pop() (tea.Model, tea.Cmd) {
+	m.stack = m.stack[:len(m.stack)-1]
+	if len(m.stack) > 1 || len(m.pendingPrints) == 0 {
+		return m, nil
+	}
+	flushed := strings.Join(m.pendingPrints, "\n")
+	m.pendingPrints = nil
+	return m, tea.Println(flushed)
 }
 
 // View renders the top of the stack inline (build spec section 3.1) for
