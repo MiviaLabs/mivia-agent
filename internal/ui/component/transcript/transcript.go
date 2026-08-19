@@ -126,34 +126,16 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		return m.pushBlock(Block{
 			Kind:  uievent.KindTextEnd,
 			Prose: true,
-			Body:  strings.Split(render.Text(m.Theme, m.Tier, b.Text), "\n"),
+			Body:  m.proseLines(render.Text(m.Theme, m.Tier, b.Text)),
 		})
 	case uievent.TurnStartBody:
 		return m.pushBlock(Block{
 			Kind:  uievent.KindTurnStart,
 			Prose: true,
-			Body:  userLines(m.Theme, m.Tier, b.Input),
+			Body:  userLines(m.Theme, m.Tier, m.width, b.Input),
 		})
-	case uievent.ToolPendingBody:
-		return m.pushBlock(Block{
-			Kind: uievent.KindToolPending,
-			Header: Header{
-				Label: b.Name, Detail: render.FormatArgs(b.Args),
-				State: "pending", Role: theme.RoleWarning,
-			},
-		})
-	case uievent.ToolStartBody:
-		return m.pushBlock(Block{
-			Kind: uievent.KindToolStart,
-			Header: Header{
-				Label: b.Name, Detail: render.FormatArgs(b.Args),
-				State: "running", Role: theme.RoleInfo,
-			},
-		})
-	case uievent.ToolOutputBody:
-		return m.pushBlock(toolOutputBlock(m.Theme, m.Tier, b))
-	case uievent.ToolEndBody:
-		return m.pushBlock(toolEndBlockValue(m.Theme, m.Tier, b))
+	case uievent.ToolPendingBody, uievent.ToolStartBody, uievent.ToolOutputBody, uievent.ToolEndBody:
+		return m.handleToolEvent(ev.Body)
 	case uievent.PlanBody:
 		return m.pushBlock(planBlockValue(m.Theme, m.Tier, b))
 	case uievent.NoticeBody:
@@ -173,8 +155,141 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 			},
 		})
 	case uievent.TurnEndBody:
-		// No block: turn-state belongs to the statusline component, not
-		// the transcript.
+		// A completed turn commits nothing: turn-state belongs to the
+		// statusline. A turn that did NOT complete must say so, and must
+		// keep whatever partial text had streamed. Dropping the partial
+		// text with no explanation is the transcript lying about why it
+		// stopped, which section 13 forbids.
+		if b.Reason == "" || b.Reason == turnReasonCompleted {
+			m.clearPending()
+			return m, nil
+		}
+		return m.endTurnUnfinished(b.Reason)
+	}
+	return m, nil
+}
+
+// turnReasonCompleted is the one reason that commits no block.
+const turnReasonCompleted = "completed"
+
+// progressBarWidth is the cell count of the subagent progress bar, from
+// the wireframes-panes.md section 4 drawing.
+const progressBarWidth = 30
+
+// shortResultCols is the longest tool result that may sit in the header's
+// meta column. Anything longer is a message, not a metric, and goes in
+// the body where it can wrap instead of squeezing the detail out.
+const shortResultCols = 16
+
+// endTurnUnfinished flushes any partial stream as prose, then records
+// why the turn stopped.
+func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
+	var out []string
+	if partial := m.pending.String(); partial != "" {
+		var cmd tea.Cmd
+		m, cmd = m.pushBlock(Block{
+			Kind:  uievent.KindTextEnd,
+			Prose: true,
+			Body:  strings.Split(partial, "\n"),
+		})
+		if cmd != nil {
+			if msg, ok := cmd().(CommitMsg); ok {
+				out = append(out, msg.Text)
+			}
+		}
+	}
+	m.clearPending()
+
+	// Label only. TurnEndBody carries just the reason, so inventing a
+	// detail or a duration here would be fabrication; section 13's
+	// richer line lands when the contract carries those fields.
+	next, cmd := m.pushBlock(Block{
+		Kind:   uievent.KindTurnEnd,
+		Header: Header{Label: reason, Role: theme.RoleWarning},
+	})
+	if cmd != nil {
+		if msg, ok := cmd().(CommitMsg); ok {
+			out = append(out, msg.Text)
+		}
+	}
+	return next, commit(strings.Join(out, "\n"))
+}
+
+// handleToolEvent owns the four kinds that describe one tool call.
+// Split out of HandleEvent to keep that function within the repo's
+// per-function line budget; the routing is unchanged.
+func (m Model) handleToolEvent(body uievent.Body) (Model, tea.Cmd) {
+	switch b := body.(type) {
+	case uievent.ToolPendingBody:
+		return m.pushBlock(Block{
+			Kind: uievent.KindToolPending, CallID: b.ToolCallID,
+			Header: Header{
+				Label: b.Name, Detail: render.FormatArgs(b.Args),
+				State: "pending", Role: theme.RoleWarning,
+			},
+		})
+	case uievent.ToolStartBody:
+		// The same call, already on screen as pending: advance its state
+		// rather than stacking a second header for one tool call.
+		if out, ok := m.updateLive(b.ToolCallID, func(blk *Block) {
+			blk.Kind = uievent.KindToolStart
+			blk.Header.State, blk.Header.Role = "running", theme.RoleInfo
+			if d := render.FormatArgs(b.Args); d != "" {
+				blk.Header.Detail = d
+			}
+		}); ok {
+			return m, commit(out)
+		}
+		return m.pushBlock(Block{
+			Kind: uievent.KindToolStart, CallID: b.ToolCallID,
+			Header: Header{
+				Label: b.Name, Detail: render.FormatArgs(b.Args),
+				State: "running", Role: theme.RoleInfo,
+			},
+		})
+	case uievent.ToolOutputBody:
+		// Output belongs in the call's own body, not in a block of its own.
+		if lines := outputLines(b); len(lines) > 0 {
+			if out, ok := m.updateLive(b.ToolCallID, func(blk *Block) {
+				blk.Body = append(blk.Body, lines...)
+			}); ok {
+				return m, commit(out)
+			}
+		}
+		return m.pushBlock(toolOutputBlock(m.Theme, m.Tier, b))
+	case uievent.ToolEndBody:
+		end := toolEndBlockValue(m.Theme, m.Tier, b)
+		if out, ok := m.updateLive(b.ToolCallID, func(blk *Block) {
+			blk.Kind = uievent.KindToolEnd
+			// Keep the detail the start event established - the path or
+			// the command - and move the result into meta beside the
+			// duration. That is the section 4 column layout:
+			//   v read_file  <path>            48 lines   12ms   ok
+			detail := blk.Header.Detail
+			result := end.Header.Detail
+			blk.Header = end.Header
+			if detail != "" && b.Diff == nil {
+				blk.Header.Detail = detail
+				switch {
+				case result == "":
+				case len(result) <= shortResultCols:
+					// A short result is a metric: it belongs beside the
+					// duration, as "48 lines  12ms".
+					blk.Header.Meta = result + "  " + blk.Header.Meta
+				default:
+					// A long result - a failure message, a stack line -
+					// goes in the body. Forcing it into the right-aligned
+					// meta column clips the detail down to nothing.
+					blk.Body = append([]string{result}, blk.Body...)
+				}
+			}
+			if len(end.Body) > 0 {
+				blk.Body = append(blk.Body, end.Body...)
+			}
+		}); ok {
+			return m, commit(out)
+		}
+		return m.pushBlock(end)
 	}
 	return m, nil
 }
@@ -197,13 +312,33 @@ func (m *Model) clearPending() {
 	m.pendingKind = ""
 }
 
+// proseLines wraps assistant prose to the reading measure. Already
+// styled text (a tinted code block) is passed through unwrapped: it
+// carries escape sequences that a width-counting wrap would mismeasure,
+// and code should not be reflowed anyway.
+func (m Model) proseLines(text string) []string {
+	measure := render.ProseMeasure(m.width)
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "\x1b") {
+			out = append(out, line)
+			continue
+		}
+		out = append(out, render.Wrap(line, measure)...)
+	}
+	return out
+}
+
 // userLines renders the user's turn: the accent marker on the first row,
-// continuation rows aligned under the text (wireframes-panes.md 4).
-func userLines(t theme.Theme, tier theme.Tier, input string) []string {
+// continuation rows indented two columns under it (wireframes-panes.md
+// section 4).
+func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string {
 	marker := render.Role(t, tier, theme.RoleAccent).Render("> ")
-	raw := strings.Split(input, "\n")
-	out := make([]string, 0, len(raw))
-	for i, line := range raw {
+	// The marker occupies two columns, so the text measure is that much
+	// narrower and continuations align under the first character.
+	wrapped := render.Wrap(input, render.ProseMeasure(width)-2)
+	out := make([]string, 0, len(wrapped))
+	for i, line := range wrapped {
 		if i == 0 {
 			out = append(out, marker+line)
 			continue
@@ -250,9 +385,33 @@ func (m Model) View() string {
 	return strings.Join(rows, "\n")
 }
 
+// outputLines is the body a tool.output event contributes. Progress
+// events carry their log; a chunk carries its own lines. Every line is
+// kept: discarding all but the first was a silent truncation.
+func outputLines(b uievent.ToolOutputBody) []string {
+	if b.Progress != nil {
+		p := b.Progress
+		if bar := render.ProgressBar(progressBarWidth, p.Step, p.TotalSteps); bar != "" {
+			return append([]string{bar}, p.Log...)
+		}
+		return p.Log
+	}
+	if b.Chunk == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(b.Chunk, "\n"), "\n")
+}
+
 func toolOutputBlock(t theme.Theme, tier theme.Tier, b uievent.ToolOutputBody) Block {
 	if b.Progress != nil {
 		p := b.Progress
+		// The bar leads the body, above the step log
+		// (wireframes-panes.md section 4).
+		body := make([]string, 0, len(p.Log)+1)
+		if bar := render.ProgressBar(progressBarWidth, p.Step, p.TotalSteps); bar != "" {
+			body = append(body, render.Role(t, tier, theme.RoleFGSubtle).Render(bar))
+		}
+		body = append(body, p.Log...)
 		return Block{
 			Kind: uievent.KindToolOutput,
 			Header: Header{
@@ -262,7 +421,7 @@ func toolOutputBlock(t theme.Theme, tier theme.Tier, b uievent.ToolOutputBody) B
 				Role:   theme.RoleInfo,
 				Detail: fmt.Sprintf("%.0fs", p.ElapsedSeconds),
 			},
-			Body: p.Log,
+			Body: body,
 		}
 	}
 	if b.Chunk == "" {

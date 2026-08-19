@@ -64,8 +64,21 @@ func TestHeaderRowIdenticalCollapsedAndExpanded(t *testing.T) {
 	openHeader := strings.SplitN(open.Render(th, theme.TierASCII, 80), "\n", 2)[0]
 	closedHeader := closed.Render(th, theme.TierASCII, 80)
 
-	if strings.TrimPrefix(openHeader, "v") != strings.TrimPrefix(closedHeader, ">") {
-		t.Errorf("header differs beyond the marker:\nopen:   %q\nclosed: %q", openHeader, closedHeader)
+	// The two must differ in exactly one byte: the marker glyph. Any
+	// other difference means a row moved when the block collapsed, which
+	// is what section 5 forbids.
+	if len(openHeader) != len(closedHeader) {
+		t.Fatalf("header length changed on collapse:\nopen:   %q\nclosed: %q", openHeader, closedHeader)
+	}
+	diffs := 0
+	for i := range openHeader {
+		if openHeader[i] != closedHeader[i] {
+			diffs++
+		}
+	}
+	if diffs != 1 {
+		t.Errorf("header differs in %d bytes, want exactly 1 (the marker):\nopen:   %q\nclosed: %q",
+			diffs, openHeader, closedHeader)
 	}
 }
 

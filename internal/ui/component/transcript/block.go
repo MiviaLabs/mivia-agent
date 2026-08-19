@@ -31,6 +31,11 @@ type Block struct {
 	ID   string
 	Kind uievent.Kind
 
+	// CallID ties every event of one tool call to one block, so pending
+	// -> running -> ok/failed updates the same header in place instead of
+	// stacking three blocks for one call.
+	CallID string
+
 	Header Header
 	Body   []string
 
@@ -116,29 +121,14 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 			Render(b.headerPlain())
 	}
 
-	left := b.collapseMarker() + " " + render.Role(t, tier, theme.RoleFGMuted).Render(b.Header.Label)
-	if b.Header.Detail != "" {
-		left += " " + render.Role(t, tier, theme.RoleFG).Render(b.Header.Detail)
-	}
-
-	var right string
-	if b.Header.Meta != "" {
-		right = render.Role(t, tier, theme.RoleFGSubtle).Render(b.Header.Meta)
-	}
-	if b.Header.State != "" {
-		role := b.Header.Role
-		if role == "" {
-			role = theme.RoleFGMuted
-		}
-		if right != "" {
-			right += "  "
-		}
-		right += render.Role(t, tier, role).Render(b.Header.State)
-	}
-	if right == "" {
-		return left
-	}
-	return left + "  " + right
+	return render.Header(t, tier, width, render.HeaderSpec{
+		Marker:    b.collapseMarker(),
+		Label:     b.Header.Label,
+		Detail:    b.Header.Detail,
+		Meta:      b.Header.Meta,
+		State:     b.Header.State,
+		StateRole: b.Header.Role,
+	})
 }
 
 // headerPlain is the header with no styling, used for the focused run

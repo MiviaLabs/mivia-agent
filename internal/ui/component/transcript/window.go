@@ -97,6 +97,38 @@ func (m *Model) reindexFocus(n int) {
 	}
 }
 
+// findLive returns the index of the live block for a tool call, or -1.
+// Only the live window is searched: a block already in scrollback is
+// frozen and cannot be updated.
+func (m Model) findLive(callID string) int {
+	if callID == "" {
+		return -1
+	}
+	for i, b := range m.blocks {
+		if b.CallID == callID {
+			return i
+		}
+	}
+	return -1
+}
+
+// updateLive mutates the live block for a tool call and re-evicts,
+// because the change may have altered its height. It reports false when
+// the block is no longer live, so the caller can push a fresh one.
+func (m *Model) updateLive(callID string, fn func(*Block)) (string, bool) {
+	i := m.findLive(callID)
+	if i < 0 {
+		return "", false
+	}
+	fn(&m.blocks[i])
+	// A block that grew past the collapse threshold closes itself, the
+	// same rule it would have got on first render.
+	if m.blocks[i].Collapsible && defaultCollapsed(m.blocks[i].Body) {
+		m.blocks[i].Collapsed = true
+	}
+	return m.evict(), true
+}
+
 // Retained returns the blocks that left the live window but are still
 // held for the pager, oldest first.
 func (m Model) Retained() []Block {
