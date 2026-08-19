@@ -57,6 +57,7 @@ func (e errConversation) Send(context.Context, intent.Send) (ports.TurnHandle, e
 func (errConversation) History() []ports.Message  { return nil }
 func (errConversation) Model() ports.ModelInfo    { return ports.ModelInfo{} }
 func (errConversation) ContextUsage() ports.Usage { return ports.Usage{} }
+func (errConversation) Title() string             { return "error session" }
 
 func typeText(t *testing.T, s Screen, text string) Screen {
 	t.Helper()
@@ -541,14 +542,15 @@ func TestTopBarHasAOneRowMargin(t *testing.T) {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	scr := next.(Screen)
 	lines := strings.Split(scr.View(), "\n")
-	if len(lines) < 2 {
+	if len(lines) < scr.topbar.Height()+1 {
 		t.Fatalf("got %d view lines, want at least a top bar and a margin row", len(lines))
 	}
 	// The final layout pass pads every line to the terminal width, so the
 	// margin row is width spaces, not a literal empty string - assert on
 	// content, not exact bytes.
-	if strings.TrimSpace(lines[1]) != "" {
-		t.Errorf("line 1 (right under the top bar) = %q, want a blank margin row", lines[1])
+	marginLine := lines[scr.topbar.Height()]
+	if strings.TrimSpace(marginLine) != "" {
+		t.Errorf("line %d (right under the top bar) = %q, want a blank margin row", scr.topbar.Height(), marginLine)
 	}
 }
 
@@ -572,7 +574,7 @@ func TestReservedRowsGrowsWithTheApprovalPrompt(t *testing.T) {
 // transcript was still budgeting for, and View drew more rows than the
 // terminal had.
 func TestViewNeverExceedsTerminalHeight(t *testing.T) {
-	const width, height = 80, 10
+	const width, height = 80, 11
 
 	// A long pace keeps the turn open, so the status line stays armed.
 	s := newScreen(t, replay.New([]uievent.Event{
@@ -656,7 +658,7 @@ func TestShrinkKeepsEveryBlock(t *testing.T) {
 	}
 	before := len(scr.transcript.Blocks())
 
-	next, _ = scr.Update(tea.WindowSizeMsg{Width: 80, Height: 6})
+	next, _ = scr.Update(tea.WindowSizeMsg{Width: 80, Height: 7})
 	scr = next.(Screen)
 	if got := len(scr.transcript.Blocks()); got != before {
 		t.Errorf("got %d blocks after the shrink, want all %d kept", got, before)
@@ -665,8 +667,8 @@ func TestShrinkKeepsEveryBlock(t *testing.T) {
 		t.Error("the oldest block was lost on a shrink")
 	}
 	// And the view fits the smaller terminal.
-	if rows := len(strings.Split(scr.View(), "\n")); rows > 6 {
-		t.Errorf("view is %d rows in a 6-row terminal", rows)
+	if rows := len(strings.Split(scr.View(), "\n")); rows > 7 {
+		t.Errorf("view is %d rows in a 7-row terminal", rows)
 	}
 }
 

@@ -36,6 +36,7 @@ type Harness struct {
 	pace time.Duration
 
 	mu       sync.Mutex
+	title    string
 	scenario []turnScript
 	turnIdx  int
 	model    ports.ModelInfo
@@ -52,13 +53,14 @@ type Harness struct {
 // common case in tests). An unknown scenario name is an error naming
 // the known set (see Scenarios).
 func New(scenarioName string, pace time.Duration) (*Harness, error) {
-	scenario, err := loadScenario(scenarioName)
+	loaded, err := loadScenario(scenarioName)
 	if err != nil {
 		return nil, err
 	}
 	return &Harness{
 		pace:     pace,
-		scenario: scenario,
+		title:    loaded.Title,
+		scenario: loaded.Scripts,
 		model:    ports.ModelInfo{Name: demoModels[0], Provider: "demo", ContextWindow: demoContextWindow},
 		agent:    ports.DefaultAgentName,
 		usage: ports.Usage{
@@ -74,6 +76,13 @@ func New(scenarioName string, pace time.Duration) (*Harness, error) {
 		pendingCh: make(chan ports.ApprovalRequest, uikitconfig.DemoPendingApprovalBuffer),
 		waiting:   make(map[string]chan ports.Decision),
 	}, nil
+}
+
+// Title returns the current session/scenario title.
+func (h *Harness) Title() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.title
 }
 
 // History returns every user message sent so far, oldest first.

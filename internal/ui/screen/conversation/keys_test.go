@@ -11,7 +11,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
-	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/files"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/transcript"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
@@ -637,7 +636,7 @@ func TestStatusRowStatesWhenScrolledAway(t *testing.T) {
 		}})
 		scr = n.(Screen)
 	}
-	if got := ansi.Strip(scr.statusRow()); got != "?:help  ctrl+o:transcript  ctrl+c:quit" {
+	if got := ansi.Strip(scr.statusRow()); got != "?:help  ctrl+o:transcript  ctrl+n:files  ctrl+c:quit" {
 		t.Errorf("got %q, want only the persistent key hint while following", got)
 	}
 
@@ -894,38 +893,26 @@ func TestViewHasAOneColumnGutter(t *testing.T) {
 	}
 }
 
-// TestTabNextPushesTheFilesTabWithSessionFiles: ctrl+n from chat pushes
-// the Files tab, and the tab carries every diff the session observed.
-func TestTabNextPushesTheFilesTabWithSessionFiles(t *testing.T) {
-	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	next, _ := s.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+// TestCtrlNWhilePanelFocusedIsHandledByThePanel pins the dispatch
+// order: with the panel's list focused, ctrl+n is consumed by the panel
+// (focus returns to the composer, panel stays open) rather than
+// reaching the global cycle's close step. The full cycle, layout, and
+// live-update coverage lives in filespanel_test.go.
+func TestCtrlNWhilePanelFocusedIsHandledByThePanel(t *testing.T) {
+	s := sized(t, 1)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
 	scr := next.(Screen)
-	for _, ev := range []uievent.Event{
-		{Kind: uievent.KindToolEnd, Body: uievent.ToolEndBody{
-			ToolCallID: "c1", OK: true,
-			Diff: &uievent.Diff{Path: "x.go", Added: 1, Hunks: []uievent.DiffHunk{{
-				Header: "@@ -1 +1 @@", Lines: []uievent.DiffLine{{Kind: uievent.DiffLineAdd, Text: "n"}},
-			}}},
-		}},
-	} {
-		n, _ := scr.Update(uievent.EventMsg{Event: ev})
-		scr = n.(Screen)
+	scr, _ = press(t, scr, ctrl('n')) // open + focus
+	if !scr.panel.open || !scr.panel.focused {
+		t.Fatalf("precondition: panel open and focused, got open=%v focused=%v", scr.panel.open, scr.panel.focused)
 	}
-	next, cmd := scr.Update(ctrl('n'))
-	scr = next.(Screen)
-	if cmd == nil {
-		t.Fatal("ctrl+n produced no command")
+	scr, _ = press(t, scr, ctrl('n')) // focused: hand focus back, stay open
+	if !scr.panel.open || scr.panel.focused {
+		t.Errorf("second ctrl+n: open=%v focused=%v, want open with composer focus", scr.panel.open, scr.panel.focused)
 	}
-	msg := cmd()
-	push, ok := msg.(app.PushScreenMsg)
-	if !ok {
-		t.Fatalf("ctrl+n yielded %T, want PushScreenMsg", msg)
-	}
-	tab, ok := push.Screen.(files.Model)
-	if !ok {
-		t.Fatalf("pushed %T, want the files tab", push.Screen)
-	}
-	if len(tab.Entries()) != 1 || tab.Entries()[0].Path != "x.go" {
-		t.Errorf("files tab carries %v, want the session's x.go edit", tab.Entries())
+	// The composer takes keys again: typing lands in the input.
+	scr, _ = press(t, scr, key("h"))
+	if got := scr.composer.Value(); got != "h" {
+		t.Errorf("composer value %q after defocus, want \"h\"", got)
 	}
 }

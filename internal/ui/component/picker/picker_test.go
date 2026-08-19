@@ -130,6 +130,47 @@ func TestEnterEmitsSelectMsg(t *testing.T) {
 	}
 }
 
+// TestRebindKeepsFilterAndClampsCursor: a live-updating list refreshes
+// its rows through Rebind, so an in-progress filter survives and the
+// cursor never points past the re-filtered list.
+func TestRebindKeepsFilterAndClampsCursor(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"a1", "b1", "b2"})
+	m, _ = m.Update(keyMsg("b"))
+	m, _ = m.Update(downKey()) // cursor on "b2"
+	if m.Filter() != "b" {
+		t.Fatalf("precondition: filter %q, want \"b\"", m.Filter())
+	}
+	m.Rebind([]string{"a1", "b1", "b2", "b3"})
+	if m.Filter() != "b" {
+		t.Errorf("rebind reset the filter to %q; a live update must not wipe it", m.Filter())
+	}
+	if got, ok := m.Selected(); !ok || got != "b2" {
+		t.Errorf("after rebind selected %q ok=%v, want the clamped cursor still on \"b2\"", got, ok)
+	}
+	// A rebind that shrinks the visible list below the cursor clamps it.
+	m.Rebind([]string{"a1"})
+	if m.Filter() != "b" {
+		t.Fatalf("rebind must keep the filter, got %q", m.Filter())
+	}
+	if got, ok := m.Selected(); ok && got != "a1" {
+		t.Errorf("cursor not clamped: selected %q, want the sole row or none", got)
+	}
+}
+
+// TestRebindHoldsCursorOnUnfilteredList: with no filter, row indexes are
+// stable across a rebind, so a caller can hold a selection by index.
+func TestRebindHoldsCursorOnUnfilteredList(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"a", "b"})
+	m, _ = m.Update(downKey())
+	m.Rebind([]string{"a", "b", "c"})
+	if got, _ := m.Selected(); got != "b" {
+		t.Errorf("rebind moved the selection to %q, want \"b\" held", got)
+	}
+	if m.CursorRow() != 1 {
+		t.Errorf("CursorRow = %d, want 1", m.CursorRow())
+	}
+}
+
 func TestEscEmitsCancelMsg(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, []string{"a"})
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})

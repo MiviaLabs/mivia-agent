@@ -47,7 +47,7 @@ func TestUnknownWindowOmitsTheShare(t *testing.T) {
 	}
 }
 
-// TestNarrowWidthTruncates: the bar is one row at every width.
+// TestNarrowWidthTruncates: the bar is one row at every width without breadcrumbs.
 func TestNarrowWidthTruncates(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, ports.ModelInfo{
 		Name: "mivia-deep", Provider: "demo", ContextWindow: 125_000,
@@ -57,5 +57,94 @@ func TestNarrowWidthTruncates(t *testing.T) {
 	}
 	if m.Height() != 1 {
 		t.Errorf("Height = %d, want 1", m.Height())
+	}
+}
+
+func TestEmptyBreadcrumbSingleRow(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, ports.ModelInfo{Name: "mivia-fast", Provider: "demo"}, ports.Usage{}, 80)
+	if m.Height() != 1 {
+		t.Errorf("Height = %d, want 1", m.Height())
+	}
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 1 {
+		t.Errorf("got %d lines, want 1", len(lines))
+	}
+}
+
+func TestSetBreadcrumbSingleSegment(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, ports.ModelInfo{Name: "mivia-fast", Provider: "demo"}, ports.Usage{}, 80)
+	m.SetBreadcrumb([]string{"Morning Check-in"})
+	if m.Height() != 2 {
+		t.Errorf("Height = %d, want 2", m.Height())
+	}
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2:\n%s", len(lines), m.View())
+	}
+	bRow := ansi.Strip(lines[1])
+	if bRow != "Morning Check-in" {
+		t.Errorf("breadcrumb row = %q, want %q", bRow, "Morning Check-in")
+	}
+}
+
+func TestSetBreadcrumbMultipleSegments(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, ports.ModelInfo{Name: "mivia-fast", Provider: "demo"}, ports.Usage{}, 80)
+	m.SetBreadcrumb([]string{"Morning Check-in", "Agent 1", "Task: implement feature X"})
+	if m.Height() != 2 {
+		t.Errorf("Height = %d, want 2", m.Height())
+	}
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2:\n%s", len(lines), m.View())
+	}
+	bRow := ansi.Strip(lines[1])
+	want := "Morning Check-in › Agent 1 › Task: implement feature X"
+	if bRow != want {
+		t.Errorf("breadcrumb row = %q, want %q", bRow, want)
+	}
+}
+
+func TestBreadcrumbNarrowWidthTruncates(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, ports.ModelInfo{Name: "mivia-fast", Provider: "demo"}, ports.Usage{}, 30)
+	m.SetBreadcrumb([]string{"Morning Check-in", "Agent 1", "Task: implement feature X"})
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2", len(lines))
+	}
+	bRow := lines[1]
+	if w := ansi.StringWidth(bRow); w > 30 {
+		t.Errorf("breadcrumb width %d exceeds 30: %q", w, bRow)
+	}
+	stripped := ansi.Strip(bRow)
+	if !strings.Contains(stripped, "Task: implement feature X") {
+		t.Errorf("truncated breadcrumb %q does not contain the active segment", stripped)
+	}
+	if !strings.HasPrefix(stripped, "…") {
+		t.Errorf("truncated breadcrumb %q missing ellipsis prefix", stripped)
+	}
+}
+
+func TestBreadcrumbASCIITier(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, ports.ModelInfo{Name: "mivia-fast", Provider: "demo"}, ports.Usage{}, 80)
+	m.SetBreadcrumb([]string{"Morning Check-in", "Agent 1", "Task: implement feature X"})
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2", len(lines))
+	}
+	bRow := ansi.Strip(lines[1])
+	want := "Morning Check-in > Agent 1 > Task: implement feature X"
+	if bRow != want {
+		t.Errorf("ASCII breadcrumb row = %q, want %q", bRow, want)
+	}
+
+	// Narrow ASCII truncation
+	m.SetWidth(25)
+	lines = strings.Split(m.View(), "\n")
+	bRowNarrow := ansi.Strip(lines[1])
+	if !strings.HasPrefix(bRowNarrow, "...") {
+		t.Errorf("ASCII truncated breadcrumb %q missing '...' prefix", bRowNarrow)
+	}
+	if w := ansi.StringWidth(lines[1]); w > 25 {
+		t.Errorf("width %d exceeds 25: %q", w, lines[1])
 	}
 }

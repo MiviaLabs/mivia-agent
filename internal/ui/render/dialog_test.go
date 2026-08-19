@@ -172,3 +172,34 @@ func TestDialogOnADegenerateTerminal(t *testing.T) {
 		}
 	}
 }
+
+// TestDialogBodyRowsStaysInsideWhatDialogShows: the exported body-row
+// count a scroller uses must never exceed the rows a real Dialog of the
+// same height actually renders - an overcount makes the tail of the
+// body unreachable.
+func TestDialogBodyRowsStaysInsideWhatDialogShows(t *testing.T) {
+	for _, h := range []int{10, 14, 20, 30} {
+		fit := DialogBodyRows(h)
+		if fit < 1 {
+			t.Fatalf("DialogBodyRows(%d) = %d, want at least 1", h, fit)
+		}
+		// Render a dialog whose body is exactly one row longer than the
+		// claimed fit; the first fit rows must be visible and the
+		// overflow row clipped.
+		body := make([]string, fit+1)
+		for i := range body {
+			body[i] = "row-" + strings.Repeat("x", i+1)
+		}
+		got := Dialog(dialogTheme(t), theme.TierASCII, 60, h, "t", strings.Join(body, "\n"), "hint")
+		plain := ansi.Strip(got)
+		if !strings.Contains(plain, body[0]) {
+			t.Errorf("height %d: first body row missing:\n%s", h, plain)
+		}
+		if strings.Contains(plain, body[fit]) {
+			t.Errorf("height %d: DialogBodyRows(%d)=%d overcounts - the overflow row is still shown", h, h, fit)
+		}
+		if DialogBodyRows(h+10) <= fit {
+			t.Errorf("DialogBodyRows(%d) not smaller than DialogBodyRows(%d); more height must show more body", h+10, h)
+		}
+	}
+}

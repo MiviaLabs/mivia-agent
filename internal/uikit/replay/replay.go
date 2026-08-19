@@ -83,7 +83,7 @@ func (c *Conversation) Send(ctx context.Context, _ intent.Send) (ports.TurnHandl
 	return &turnHandle{id: id, events: ch, cancel: cancel}, nil
 }
 
-// History, Model, and ContextUsage are static: the replay fake has no
+// History, Model, ContextUsage, and Title are static: the replay fake has no
 // real conversation state to report.
 func (c *Conversation) History() []ports.Message { return nil }
 
@@ -92,6 +92,8 @@ func (c *Conversation) Model() ports.ModelInfo {
 }
 
 func (c *Conversation) ContextUsage() ports.Usage { return ports.Usage{} }
+
+func (c *Conversation) Title() string { return "Replay Session" }
 
 type turnHandle struct {
 	id     string

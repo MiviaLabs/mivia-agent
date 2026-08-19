@@ -22,7 +22,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
-	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/files"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
@@ -70,11 +69,11 @@ type Screen struct {
 	// generated keymap - is drawn in place instead. Any key clears it.
 	overlay string
 
-	// files is the session's touched-file list for the Files tab: a
-	// derived view over the tool-end diffs the transcript already
-	// renders. It accumulates here because this screen sees every
-	// event; the Files tab takes a snapshot on entry.
-	files []files.Entry
+	// panel is the session's touched-files pane: a derived, live view
+	// over the tool-end diffs the transcript already renders. It
+	// accumulates here because this screen sees every event; see
+	// filespanel.go.
+	panel panel
 
 	// mouseHint names the terminal's mouse-override key (rule 6.5). It
 	// is appended to the help overlay so the escape hatch is on screen,
@@ -103,12 +102,15 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		composer:   composer.New(th, tier, width),
 		statusline: statusline.New(th, tier),
 		approval:   approval.New(th, tier),
+		panel:      newPanel(th, tier),
 		keys:       keymap.New(keymap.Default()),
 		now:        now,
 	}
 	s.approval.SetWidth(contentWidth(width))
 	s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
-	s.topbar.SetTabs([]string{"chat", "files"}, 0)
+	if title := conv.Title(); title != "" {
+		s.topbar.SetBreadcrumb([]string{title})
+	}
 	return s
 }
 
@@ -166,7 +168,18 @@ func contentWidth(width int) int {
 
 // resize gives the transcript the rows the chrome does not claim.
 func (s *Screen) resize() {
-	s.transcript.SetSize(contentWidth(s.width), s.height-s.reservedRows())
+	s.transcript.SetSize(s.chatWidth(), s.transcriptHeight())
+}
+
+// reflow re-applies the chat column's width to every component that
+// renders into it. Toggling the panel and resizing the terminal both
+// change that width; Update's reservedRows comparison cannot see a
+// width-only change, so the explicit call is the only reliable trigger.
+func (s *Screen) reflow() {
+	w := s.chatWidth()
+	s.composer.SetWidth(w)
+	s.approval.SetWidth(w)
+	s.resize()
 }
 
 func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
@@ -180,8 +193,11 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.approval.Clear()
 		s.active = nil
 		// Session values move at turn boundaries: refresh the top bar's
-		// model and context share now, not per token.
+		// model, context share, and title now, not per token.
 		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+		if title := s.conv.Title(); title != "" {
+			s.topbar.SetBreadcrumb([]string{title})
+		}
 		return s, nil
 	case approval.DecisionMsg:
 		if s.approver != nil {
@@ -212,6 +228,13 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 			s.approval = s.approval.ScrollBy(step)
 			return s, nil
 		}
+		// The content dialog covers the chat column; scrolling a
+		// transcript the user cannot see acts on something invisible
+		// (the same rule that dismisses overlays on any key). The dialog
+		// scrolls by keyboard only.
+		if s.panel.dialog {
+			return s, nil
+		}
 		s.transcript = s.transcript.ScrollBy(step)
 		return s, nil
 	case tea.MouseClickMsg:
@@ -223,10 +246,9 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s, nil
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
-		s.composer.SetWidth(contentWidth(msg.Width))
-		s.approval.SetWidth(contentWidth(msg.Width))
 		s.topbar.SetWidth(contentWidth(msg.Width))
-		s.resize()
+		s.panel.offset = 0
+		s.reflow()
 		return s, nil
 	case app.ThemeChangedMsg:
 		s.Theme, s.Tier = msg.Theme, msg.Tier
@@ -235,6 +257,7 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.statusline.SetTheme(msg.Theme, msg.Tier)
 		s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
 		s.topbar.SetTheme(msg.Theme, msg.Tier)
+		s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
 		return s, nil
 	}
 	return s, nil
@@ -268,6 +291,10 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	case uievent.ToolPendingBody:
 		s.approval.SetRequest(b)
 		s.statusline.SetLabel("pending")
+		// The approval prompt claims the chat column and every key; a
+		// content dialog open over that column would hide the prompt it
+		// pre-empts, so it closes.
+		s.panel.dialog = false
 	case uievent.ToolStartBody:
 		s.approval.Clear()
 		s.statusline.SetLabel("running")
@@ -275,10 +302,11 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		s.approval.Clear()
 		s.statusline.SetLabel("thinking")
 		if b.Diff != nil {
-			// The Files tab's data: every completed edit accumulates as
-			// a touched file. Deletions carry no diff in the event
-			// vocabulary, so only edits and creations record here.
-			s.files = append(s.files, files.NewEntry(*b.Diff))
+			// The panel's data, fed live: every completed edit appears
+			// as a touched file the moment it happens, exactly as the
+			// transcript renders it. Deletions carry no diff in the
+			// event vocabulary, so only edits and creations record here.
+			s.panel.appendLive(*b.Diff)
 		}
 	case uievent.TurnEndBody:
 		s.approval.Clear()
@@ -308,34 +336,30 @@ func (s Screen) reservedRows() int {
 	return rows
 }
 
-// View draws the cockpit: the transcript fills the surface, the approval
-// prompt and the status row sit above the composer, and the composer is
-// the last row.
+// View draws the cockpit. The transcript area fills the surface between
+// the top bar's margin and the chrome below (approval prompt, status
+// row, composer), and the composer is the last row. With the panel open
+// wide, that whole assembly moves into the split's left reading pane
+// with the file list in the right nav pane (panelFrameRows); narrow, the
+// list replaces the transcript area and the chrome keeps its place.
 //
 // The transcript always returns exactly its own height, padded, so
 // nothing below it moves as output streams in (ux-rules.md rule 2.8).
 func (s Screen) View() string {
-	var lines []string
-	lines = append(lines, s.topbar.View(), "")
+	lines := append(strings.Split(s.topbar.View(), "\n"), "")
+	if s.panelIsSplit() {
+		lines = append(lines, s.panelFrameRows()...)
+		return s.gutter(lines)
+	}
 	switch {
-	case s.modelPicker != nil:
-		dw, dh := s.dialogSize()
-		content := renderPickerDialog(s.Theme, s.Tier, dw, dh, "select a model", *s.modelPicker)
-		lines = append(lines, overlayRows(content, s.height-s.reservedRows())...)
-	case s.agentPicker != nil:
-		dw, dh := s.dialogSize()
-		content := renderPickerDialog(s.Theme, s.Tier, dw, dh, "select an agent", *s.agentPicker)
-		lines = append(lines, overlayRows(content, s.height-s.reservedRows())...)
-	case s.overlay != "":
-		lines = append(lines, overlayRows(s.overlay, s.height-s.reservedRows())...)
+	case s.modelPicker != nil || s.agentPicker != nil || s.overlay != "":
+		lines = append(lines, s.centerRows()...)
+	case s.panel.open:
+		lines = append(lines, s.narrowPanelRows()...)
 	default:
 		lines = append(lines, s.transcript.Rows()...)
 	}
-	if v := s.approval.View(); v != "" {
-		lines = append(lines, strings.Split(v, "\n")...)
-	}
-	lines = append(lines, s.statusRow())
-	lines = append(lines, strings.Split(s.composer.View(), "\n")...)
+	lines = append(lines, s.chatTailRows()...)
 	return s.gutter(lines)
 }
 
@@ -411,18 +435,19 @@ func (s *Screen) Notice(text string) {
 // (docs/design/ux-rules.md rule 2.7). Its right side carries the compact
 // key hint, generated from the keymap table so it cannot drift from the
 // help screen; transient state (turn status, scroll affordances) takes
-// the left. The whole row is one line, truncated to the terminal width.
+// the left. The whole row is one line, truncated to the chat column's
+// width - inside the split's left pane it must not exceed the pane.
 func (s Screen) statusRow() string {
 	line := s.statusText()
 	hint := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).
-		Render(s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDQuit))
+		Render(s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDQuit))
 	if line == "" {
 		line = hint
 	} else {
 		line += "  " + hint
 	}
 	if s.width > 2 {
-		line = ansi.Truncate(line, contentWidth(s.width), "")
+		line = ansi.Truncate(line, s.chatWidth(), "")
 	}
 	return line
 }
@@ -432,6 +457,12 @@ func (s Screen) statusRow() string {
 func (s Screen) statusText() string {
 	if v := s.statusline.View(s.now()); v != "" {
 		return v
+	}
+	// Narrow panel open: the transcript is hidden behind the list, so
+	// its scroll affordances would narrate something the user cannot
+	// see.
+	if s.panel.open && !s.panelIsSplit() {
+		return ""
 	}
 	if !s.transcript.Following() {
 		if n := s.transcript.NewWhilePaused(); n > 0 {

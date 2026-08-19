@@ -23,28 +23,17 @@ import (
 const Wordmark = "mivia"
 
 // Model is the top bar's state: an idle mark (the animated instance
-// lives in the status line, which owns the turn) plus the session
-// values ports.Conversation reports.
+// lives in the status line, which owns the turn), the session
+// values ports.Conversation reports, and an optional breadcrumb trail.
 type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
 
-	mark  mark.Model
-	info  ports.ModelInfo
-	usage ports.Usage
-	width int
-
-	// tabs is the cockpit's ordered tab strip; active is the index of
-	// the tab this bar belongs to. Named entries, not a boolean, so a
-	// third tab is a one-line change at the call sites.
-	tabs   []string
-	active int
-}
-
-// SetTabs names the tab strip and marks this bar's own tab active.
-func (m *Model) SetTabs(names []string, active int) {
-	m.tabs = names
-	m.active = active
+	mark       mark.Model
+	info       ports.ModelInfo
+	usage      ports.Usage
+	breadcrumb []string
+	width      int
 }
 
 // New returns a top bar showing the given session values. width is the
@@ -68,9 +57,25 @@ func (m *Model) SetSession(info ports.ModelInfo, usage ports.Usage) {
 	m.info, m.usage = info, usage
 }
 
-// Height is the row count View draws: always one. A fixed row is the
-// whole point - the cockpit reserves it whether or not it has content.
-func (m Model) Height() int { return 1 }
+// SetBreadcrumb records the ordered breadcrumb segments (e.g. [sessionTitle]
+// or [sessionTitle, agentName, taskDesc]).
+func (m *Model) SetBreadcrumb(segments []string) {
+	if len(segments) == 0 {
+		m.breadcrumb = nil
+		return
+	}
+	m.breadcrumb = make([]string, len(segments))
+	copy(m.breadcrumb, segments)
+}
+
+// Height is the row count View draws: 2 when a breadcrumb is present,
+// 1 otherwise.
+func (m Model) Height() int {
+	if len(m.breadcrumb) > 0 {
+		return 2
+	}
+	return 1
+}
 
 // contextPercent is the share of the context window in use, from the
 // cumulative in+out token counts. ok is false when the window size is
@@ -87,27 +92,75 @@ func (m Model) contextPercent() (int, bool) {
 	return pct, true
 }
 
-// View renders the one row. The right side states the model, provider,
-// and context share; an unknown window omits the share rather than
-// guessing.
+func (m Model) breadcrumbRow() string {
+	if len(m.breadcrumb) == 0 {
+		return ""
+	}
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
+
+	sep := " › "
+	ellipsis := "… "
+	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+		sep = " > "
+		ellipsis = "... "
+	}
+
+	buildTrail := func(startIdx int) string {
+		if startIdx >= len(m.breadcrumb) {
+			return ""
+		}
+		var b strings.Builder
+		if startIdx > 0 {
+			b.WriteString(subtle.Render(ellipsis))
+		}
+		for i := startIdx; i < len(m.breadcrumb); i++ {
+			if i > startIdx {
+				b.WriteString(subtle.Render(sep))
+			}
+			if i == len(m.breadcrumb)-1 {
+				b.WriteString(fg.Render(m.breadcrumb[i]))
+			} else {
+				b.WriteString(subtle.Render(m.breadcrumb[i]))
+			}
+		}
+		return b.String()
+	}
+
+	row := buildTrail(0)
+	if m.width <= 0 || ansi.StringWidth(row) <= m.width {
+		return row
+	}
+
+	// Try eliding leading segments one by one so segment boundaries are preserved
+	for start := 1; start < len(m.breadcrumb); start++ {
+		candidate := buildTrail(start)
+		if ansi.StringWidth(candidate) <= m.width {
+			return candidate
+		}
+	}
+
+	// If even the last segment with ellipsis doesn't fit, truncate from the left
+	prefix := subtle.Render(ellipsis)
+	if m.width >= ansi.StringWidth(prefix) {
+		row = ansi.TruncateLeft(row, m.width, prefix)
+	} else {
+		row = ansi.TruncateLeft(row, m.width, "")
+	}
+	if ansi.StringWidth(row) > m.width {
+		row = ansi.Truncate(row, m.width, "")
+	}
+	return row
+}
+
+// View renders the top bar. The first row states the mark/wordmark on the
+// left, and model/provider/context share on the right. When breadcrumbs
+// are present, a second row renders the trail.
 func (m Model) View() string {
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 
 	left := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
-	if len(m.tabs) > 0 {
-		// The strip sits after the wordmark: the active tab in the
-		// foreground, the rest subtle.
-		cells := make([]string, 0, len(m.tabs))
-		for i, tab := range m.tabs {
-			if i == m.active {
-				cells = append(cells, fg.Render(tab))
-				continue
-			}
-			cells = append(cells, subtle.Render(tab))
-		}
-		left += subtle.Render("   ") + strings.Join(cells, subtle.Render("  "))
-	}
 	right := subtle.Render(m.info.Provider+"/") + fg.Render(m.info.Name)
 	if pct, ok := m.contextPercent(); ok {
 		right += subtle.Render(fmt.Sprintf("  %d%% ctx", pct))
@@ -119,7 +172,13 @@ func (m Model) View() string {
 			gap = 1
 		}
 		line = left + strings.Repeat(" ", gap) + right
-		return ansi.Truncate(line, m.width, "")
+		line = ansi.Truncate(line, m.width, "")
+	} else {
+		line = left + " " + right
 	}
-	return left + " " + right
+
+	if len(m.breadcrumb) > 0 {
+		return line + "\n" + m.breadcrumbRow()
+	}
+	return line
 }

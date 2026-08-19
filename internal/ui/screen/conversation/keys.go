@@ -4,7 +4,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
-	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/files"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
@@ -15,46 +16,42 @@ import (
 //
 // The order IS the precedence rule, and it is the whole reason the
 // keymap is a table rather than a switch. Enter means accept-completion,
-// approve, toggle-block or send depending on what is on screen; Esc
-// means dismiss-menu, unfocus, or cancel-the-turn. Resolving that by
-// asking each context in order keeps one answer per state, and
-// keymap.Collisions proves no context answers twice.
+// approve, toggle-block, open-file or send depending on what is on
+// screen; Esc means dismiss-menu, defocus-panel, unfocus, or
+// cancel-the-turn. Resolving that by asking each context in order keeps
+// one answer per state, and keymap.Collisions proves no context answers
+// twice.
 //
 //	approval  - a pending tool call blocks everything else
-//	completion- the menu claims Enter/Tab/Up/Down/Esc while it is open
+//	picker    - an open /model or /agents dialog claims every key
+//	panel     - while the files panel's list holds focus (its content
+//	            dialog first: any key closes it, three keys survive)
+//	overlay   - the help overlay clears on any key
 //	transcript- only while a block holds the focus
 //	global    - always available
 //	composer  - the resting state, and the fallback for plain text
+//
+// The panel and the overlay cannot both claim a key: the overlay opens
+// only from the composer's "?" and /help, both of which require the
+// composer's focus, which the panel's list never has at that moment.
 func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
-	if s.approval.Active() {
-		// Scroll keys window the inline diff preview. Only the scroll IDs
-		// are consumed here: a matched decision key (o/a/d/esc/enter) must
-		// still reach approval.Update below, or this branch would silently
-		// eat deny.
-		if id, ok := s.keys.Match(keymap.ContextApproval, msg.String()); ok {
-			switch id {
-			case keymap.IDScrollUp:
-				s.approval = s.approval.ScrollBy(-1)
-				return s, nil
-			case keymap.IDScrollDown:
-				s.approval = s.approval.ScrollBy(1)
-				return s, nil
-			}
-		}
-		// ctrl+c stays the emergency exit even under the modal: quit()
-		// clears the approval and cancels the turn itself. Everything
-		// else the prompt does not answer is swallowed - a pending tool
-		// call blocks the rest of the screen.
-		if id, ok := s.keys.Match(keymap.ContextGlobal, msg.String()); ok && id == keymap.IDQuit {
-			next, cmd, _ := s.quit()
-			return next, cmd
-		}
-		next, cmd := s.approval.Update(msg)
-		s.approval = next
-		return s, cmd
+	if next, cmd, handled := s.handleApprovalKey(msg); handled {
+		return next, cmd
 	}
 
 	if next, cmd, handled := s.handleOpenPickerKey(msg); handled {
+		return next, cmd
+	}
+
+	// Any key other than a second ctrl+c ends the quit-armed state, so a
+	// stray keystroke cannot leave the session one press from exiting.
+	// This runs before the branches that return early for their keys
+	// (the panel's list, the overlay) for the same reason.
+	if msg.String() != "ctrl+c" {
+		s.quitArmed = false
+	}
+
+	if next, cmd, handled := s.handlePanelKey(msg); handled {
 		return next, cmd
 	}
 
@@ -70,12 +67,6 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	}
 
 	key := msg.String()
-	// Any key other than a second ctrl+c ends the quit-armed state, so a
-	// stray keystroke cannot leave the session one press from exiting.
-	if key != "ctrl+c" {
-		s.quitArmed = false
-	}
-
 	if s.composer.MenuActive() {
 		if id, ok := s.keys.Match(keymap.ContextCompletion, key); ok {
 			return s.completionAction(id)
@@ -102,6 +93,38 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	return s, cmd
 }
 
+// handleApprovalKey routes a key when the approval prompt is active.
+func (s Screen) handleApprovalKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if !s.approval.Active() {
+		return s, nil, false
+	}
+	// Scroll keys window the inline diff preview. Only the scroll IDs
+	// are consumed here: a matched decision key (o/a/d/esc/enter) must
+	// still reach approval.Update below, or this branch would silently
+	// eat deny.
+	if id, ok := s.keys.Match(keymap.ContextApproval, msg.String()); ok {
+		switch id {
+		case keymap.IDScrollUp:
+			s.approval = s.approval.ScrollBy(-1)
+			return s, nil, true
+		case keymap.IDScrollDown:
+			s.approval = s.approval.ScrollBy(1)
+			return s, nil, true
+		}
+	}
+	// ctrl+c stays the emergency exit even under the modal: quit()
+	// clears the approval and cancels the turn itself. Everything
+	// else the prompt does not answer is swallowed - a pending tool
+	// call blocks the rest of the screen.
+	if id, ok := s.keys.Match(keymap.ContextGlobal, msg.String()); ok && id == keymap.IDQuit {
+		next, cmd, _ := s.quit()
+		return next, cmd, true
+	}
+	next, cmd := s.approval.Update(msg)
+	s.approval = next
+	return s, cmd, true
+}
+
 // handleOpenPickerKey routes a key to an open /model or /agents
 // picker: it is a modal, exactly like the approval prompt, and the
 // transcript/composer beneath it must not react to a key the user
@@ -118,13 +141,126 @@ func (s Screen) handleOpenPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, b
 	return s, nil, false
 }
 
+// handlePanelKey routes a key into the open, focused panel: its content
+// dialog first (any key closes it; the view toggle, the half-page
+// scrolls, and ctrl+c survive), then the list. The list is a focusable
+// pane, not a modal: ctrl+c, ctrl+n, ctrl+t, and ctrl+o stay live over
+// it (a ctrl-modified key carries no Text, so the picker would silently
+// swallow them), esc hands focus back to the composer WITHOUT closing
+// the panel, the files bindings navigate, and every other key feeds the
+// list's filter. handled is false when the panel does not hold focus,
+// so the ordinary chat flow resumes.
+func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if !s.panel.open || !s.panel.focused {
+		return s, nil, false
+	}
+	if msg.String() == "ctrl+c" {
+		next, cmd, _ := s.quit()
+		return next, cmd, true
+	}
+	if id, ok := s.keys.Match(keymap.ContextGlobal, msg.String()); ok {
+		switch id {
+		case keymap.IDPanelToggle:
+			// The middle state of ctrl+n's cycle: focus returns to the
+			// composer; the panel stays open and live beside it.
+			s.panelFocus(false)
+			return s, nil, true
+		case keymap.IDThemeDialog, keymap.IDOpenPager:
+			// Still reachable: the conversation is on screen beside the
+			// panel, so its global surfaces stay one key away.
+			return s, nil, false
+		}
+	}
+	if s.panel.dialog {
+		return s.panelDialogKey(msg), nil, true
+	}
+	if id, ok := s.keys.Match(keymap.ContextFiles, msg.String()); ok {
+		switch id {
+		case keymap.IDCancel:
+			s.panelFocus(false)
+			return s, nil, true
+		case keymap.IDFileToggleView:
+			s.panel.sourceView = !s.panel.sourceView
+			s.panel.offset = 0
+			return s, nil, true
+		case keymap.IDPagerHalfUp:
+			s.scrollPanel(-1)
+			return s, nil, true
+		case keymap.IDPagerHalfDown:
+			s.scrollPanel(1)
+			return s, nil, true
+		case keymap.IDPagerRowUp:
+			msg = tea.KeyPressMsg{Code: tea.KeyUp}
+		case keymap.IDPagerRowDown:
+			msg = tea.KeyPressMsg{Code: tea.KeyDown}
+		}
+	}
+	// Everything else feeds the list: arrows move the selection, typing
+	// filters, and Enter selects. The SelectMsg is consumed here, not
+	// returned as a Cmd - the dialog is this screen's own state, not a
+	// routed message.
+	next, cmd := s.panel.list.Update(msg)
+	s.panel.list = next
+	s.panel.offset = 0 // a moved selection restarts the content at its top
+	if cmd != nil {
+		if _, ok := cmd().(picker.SelectMsg); ok {
+			s.panel.dialog, s.panel.offset = true, 0
+		}
+	}
+	return s, nil, true
+}
+
+// panelDialogKey applies the content dialog's one rule: any key closes
+// it back to the list, except the view toggle, the half-page scrolls,
+// and the emergency exit (which closes it and runs the ordinary quit
+// flow, so the second-press warning lands on a visible status row).
+func (s Screen) panelDialogKey(msg tea.KeyPressMsg) app.Screen {
+	if msg.String() == "ctrl+c" {
+		s.panel.dialog = false
+		next, _, _ := s.quit()
+		return next
+	}
+	if id, ok := s.keys.Match(keymap.ContextFiles, msg.String()); ok {
+		switch id {
+		case keymap.IDFileToggleView:
+			s.panel.sourceView = !s.panel.sourceView
+			s.panel.offset = 0
+			return s
+		case keymap.IDPagerHalfUp:
+			s.scrollPanel(-1)
+			return s
+		case keymap.IDPagerHalfDown:
+			s.scrollPanel(1)
+			return s
+		}
+	}
+	s.panel.dialog, s.panel.offset = false, 0
+	return s
+}
+
+// panelFocus moves keyboard focus between the panel's list and the
+// composer. Handing focus back closes a pending content dialog - the
+// dialog belongs to browsing - and taking it clears any transcript
+// block focus, so the two focus axes never overlap.
+func (s *Screen) panelFocus(focused bool) {
+	s.panel.focused = focused
+	if focused {
+		s.transcript = s.transcript.ClearFocus()
+	} else {
+		s.panel.dialog = false
+	}
+}
+
 // handleClick routes one mouse click. The row layout mirrors View:
 // transcript rows, then the approval prompt, then the status row, then
 // the completion menu, then the input line as the last row.
 //
 // Left button only. A click on a collapsed block header expands it; a
 // click on a completion row accepts it; a click on the input line
-// places the cursor.
+// places the cursor. With the panel open wide, all of that lives inside
+// the left reading pane, so clicks shift past the pane's borders and
+// the nav pane ignores clicks; narrow, the list covers the transcript
+// area and answers nothing.
 func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return s, nil
@@ -133,11 +269,34 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		s.overlay = ""
 		return s, tea.ClearScreen
 	}
-	transcriptRows := s.height - s.reservedRows()
+	x, y := msg.X, msg.Y
+	transcriptTop := 2 // top bar, then its margin row
+	if s.panelIsSplit() {
+		reading, _ := render.SplitWidths(contentWidth(s.width))
+		// Column 0 is the gutter; the reading pane runs to the nav
+		// pane's left edge. Clicks on the nav pane are not panel
+		// actions, so they stop here.
+		if x > reading {
+			return s, nil
+		}
+		x-- // the pane's left border
+		y-- // the pane's top border
+		transcriptTop = 3
+	} else if s.panel.open {
+		if y-transcriptTop < s.transcriptHeight() {
+			return s, nil // the list covers the transcript area
+		}
+	}
+	transcriptRows := s.transcriptHeight()
 	// The composer's frame puts the input above the bottom border, so
 	// the input row and its first column both shift; the composer owns
-	// the exact numbers (InputRowFromBottom, InputColumnOffset).
-	inputRow := s.height - 1 - s.composer.InputRowFromBottom()
+	// the exact numbers (InputRowFromBottom, InputColumnOffset). Under
+	// the split, the pane's bottom border takes the screen's last row.
+	bottom := s.height - 1
+	if s.panelIsSplit() {
+		bottom--
+	}
+	inputRow := bottom - s.composer.InputRowFromBottom()
 	colOffset := s.composer.InputColumnOffset()
 	menuRows := s.composer.Height() - 3
 	if menuRows < 0 {
@@ -145,21 +304,29 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	}
 
 	switch {
-	case msg.Y < transcriptRows:
-		next, expanded := s.transcript.ExpandBlockAtScreenRow(msg.Y)
+	case y-transcriptTop < transcriptRows && s.transcriptShown():
+		next, expanded := s.transcript.ExpandBlockAtScreenRow(y - transcriptTop)
 		if expanded {
 			s.transcript = next
 		}
-	case msg.Y == inputRow:
+	case y == inputRow:
 		// One column in for the gutter, then the composer's own border
 		// offset: the click lands on the input's column space.
-		s.composer.ClickToColumn(msg.X - 1 - colOffset)
+		s.composer.ClickToColumn(x - 1 - colOffset)
 	// The menu sits above the frame's top border, which sits above the
 	// input row: menu rows run from inputRow-1-menuRows to inputRow-2.
-	case s.composer.MenuActive() && msg.Y >= inputRow-1-menuRows && msg.Y < inputRow-1:
-		s.composer.MenuClickRow(msg.Y - (inputRow - 1 - menuRows))
+	case s.composer.MenuActive() && y >= inputRow-1-menuRows && y < inputRow-1:
+		s.composer.MenuClickRow(y - (inputRow - 1 - menuRows))
 	}
 	return s, nil
+}
+
+// transcriptShown reports whether the transcript itself is the content
+// of its area right now - not a picker dialog, the overlay, or the
+// panel's content dialog. Clicks that hit the area while something else
+// draws there must not act on the transcript hidden behind it.
+func (s Screen) transcriptShown() bool {
+	return s.modelPicker == nil && s.agentPicker == nil && s.overlay == "" && !s.panel.dialog
 }
 
 func (s Screen) completionAction(id keymap.ID) (app.Screen, tea.Cmd) {
@@ -237,12 +404,20 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	case keymap.IDScrollBottom:
 		s.transcript = s.transcript.ScrollToBottom()
 		return s, nil, true
-	case keymap.IDTabNext:
-		// ctrl+n cycles the cockpit's tabs. The Files tab takes a value
-		// snapshot of the session's touched files, the same pattern the
-		// pager uses for the conversation.
-		tab := files.New(s.Theme, s.Tier, s.files)
-		return s, func() tea.Msg { return app.PushScreenMsg{Screen: tab} }, true
+	case keymap.IDPanelToggle:
+		// ctrl+n drives the panel's three states. This site handles the
+		// two the global context can see: closed opens the panel focused
+		// in its list, and open-with-the-composer-focused closes it. The
+		// middle state - the list focused - claims ctrl+n earlier, in
+		// handlePanelKey, to hand focus back without closing.
+		if s.panel.open {
+			s.panel.open, s.panel.focused, s.panel.dialog = false, false, false
+		} else {
+			s.panel.openPanel()
+			s.transcript = s.transcript.ClearFocus()
+		}
+		s.reflow()
+		return s, nil, true
 	case keymap.IDOpenPager:
 		// Rule 6.2: transcript mode replaces terminal find. The pager
 		// takes a VALUE snapshot of the conversation; blocks re-render

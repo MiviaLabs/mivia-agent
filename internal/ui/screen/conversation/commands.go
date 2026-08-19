@@ -120,13 +120,14 @@ func (s Screen) openHelp() Screen {
 	return s
 }
 
-// dialogSize is the area an inline dialog actually occupies: the
-// terminal minus the gutter columns and the chrome rows (top bar,
-// status row, composer) that stay pinned around it. Sizing the dialog
-// to the full terminal instead recenters it against rows it never
-// gets, and its bottom border and hint land below the cut.
+// dialogSize is the area an inline dialog actually occupies: the chat
+// column minus the chrome rows (top bar, status row, composer) that stay
+// pinned around it - and the chat column is the split's left pane when
+// the panel is open wide. Sizing the dialog to the full terminal
+// instead recenters it against rows it never gets, and its bottom
+// border and hint land below the cut.
 func (s Screen) dialogSize() (int, int) {
-	return contentWidth(s.width), s.height - s.reservedRows()
+	return s.chatWidth(), s.transcriptHeight()
 }
 
 // handlePickerKey routes one key press to an open picker modal (/model

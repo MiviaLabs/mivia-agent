@@ -29,6 +29,27 @@ func New(t theme.Theme, tier theme.Tier, items []string) Model {
 	return Model{Theme: t, Tier: tier, items: items}
 }
 
+// Rebind swaps the item set, keeping the filter and clamping the cursor
+// to the re-filtered list. A live-updating list (the files panel)
+// refreshes its rows through this, so an in-progress filter survives a
+// rebuild that picker.New would reset.
+func (m *Model) Rebind(items []string) {
+	m.items = items
+	m.cursor = min(m.cursor, len(m.visible())-1)
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+}
+
+// Filter exposes the active filter: a caller that rebinds and holds a
+// cursor by row index needs to know whether that row is even visible.
+func (m Model) Filter() string { return m.filter }
+
+// CursorRow is the cursor's row within the visible list, so a caller
+// that windows the list into a pane can keep the highlighted row on
+// screen.
+func (m Model) CursorRow() int { return m.cursor }
+
 // MoveTo places the cursor on the item at index, clamped to the list.
 // Callers that rebuild a picker (a live-updating list) use it to hold
 // the selection steady across the rebuild.

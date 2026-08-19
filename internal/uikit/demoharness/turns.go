@@ -19,25 +19,45 @@ var testdataFS embed.FS
 // tool.pending leaves both empty: the data alone decides whether a turn
 // needs a decision, not a code branch per turn.
 type turnScript struct {
+	Title     string          `json:"title,omitempty"`
 	Before    []uievent.Event `json:"before"`
 	OnApprove []uievent.Event `json:"on_approve,omitempty"`
 	OnDeny    []uievent.Event `json:"on_deny,omitempty"`
 }
 
-// scenarios maps a --scenario name to its ordered turn-script files.
+type scenarioDef struct {
+	Title string
+	Files []string
+}
+
+type loadedScenario struct {
+	Title   string
+	Scripts []turnScript
+}
+
+// scenarios maps a --scenario name to its ordered turn-script files and title.
 // DefaultScenario is the one scenario that visits every turn shape the
 // demo harness supports: small talk, a tool call, a diff, a failing
 // tool, a plan, reasoning, a usage summary, an approval, and a
 // diff-previewing approval.
-var scenarios = map[string][]string{
+var scenarios = map[string]scenarioDef{
 	"full-tour": {
-		"smalltalk.json", "tool_call.json", "diff.json", "tool_fail.json",
-		"plan.json", "reasoning.json", "usage.json", "approval.json",
-		"approval_diff.json", "delete.json",
+		Title: "Cockpit Feature Tour",
+		Files: []string{
+			"smalltalk.json", "tool_call.json", "diff.json", "tool_fail.json",
+			"plan.json", "reasoning.json", "usage.json", "approval.json",
+			"approval_diff.json", "delete.json",
+		},
 	},
-	"smalltalk":     {"smalltalk.json"},
-	"approval":      {"approval.json"},
-	"approval-diff": {"approval_diff.json"},
+	"smalltalk": {
+		Files: []string{"smalltalk.json"},
+	},
+	"approval": {
+		Files: []string{"approval.json"},
+	},
+	"approval-diff": {
+		Files: []string{"approval_diff.json"},
+	},
 }
 
 // DefaultScenario names the scenario New uses when no --scenario flag
@@ -57,22 +77,29 @@ func Scenarios() []string {
 
 // loadScenario reads and decodes every turn-script file for name, in
 // order. An unknown name is an error naming the known set.
-func loadScenario(name string) ([]turnScript, error) {
-	files, ok := scenarios[name]
+func loadScenario(name string) (loadedScenario, error) {
+	scen, ok := scenarios[name]
 	if !ok {
-		return nil, fmt.Errorf("demoharness: unknown scenario %q (known: %s)", name, strings.Join(Scenarios(), ", "))
+		return loadedScenario{}, fmt.Errorf("demoharness: unknown scenario %q (known: %s)", name, strings.Join(Scenarios(), ", "))
 	}
-	out := make([]turnScript, 0, len(files))
-	for _, f := range files {
+	scripts := make([]turnScript, 0, len(scen.Files))
+	for _, f := range scen.Files {
 		data, err := testdataFS.ReadFile("testdata/" + f)
 		if err != nil {
-			return nil, fmt.Errorf("demoharness: read %s: %w", f, err)
+			return loadedScenario{}, fmt.Errorf("demoharness: read %s: %w", f, err)
 		}
 		var ts turnScript
 		if err := json.Unmarshal(data, &ts); err != nil {
-			return nil, fmt.Errorf("demoharness: decode %s: %w", f, err)
+			return loadedScenario{}, fmt.Errorf("demoharness: decode %s: %w", f, err)
 		}
-		out = append(out, ts)
+		scripts = append(scripts, ts)
 	}
-	return out, nil
+	title := scen.Title
+	if title == "" && len(scripts) > 0 && scripts[0].Title != "" {
+		title = scripts[0].Title
+	}
+	if title == "" {
+		title = name
+	}
+	return loadedScenario{Title: title, Scripts: scripts}, nil
 }

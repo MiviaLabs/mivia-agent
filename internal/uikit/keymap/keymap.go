@@ -36,7 +36,7 @@ const (
 	ContextDialog Context = "dialog"
 	// ContextPager applies inside the full-screen pager.
 	ContextPager Context = "pager"
-	// ContextFiles applies inside the Files tab's panes.
+	// ContextFiles applies while the files panel's list holds focus.
 	ContextFiles Context = "files"
 )
 
@@ -99,8 +99,8 @@ const (
 	IDDumpScrollback ID = "dump-scrollback"
 	IDEditTranscript ID = "edit-transcript"
 
-	// Files tab (phase 1 of the file browser).
-	IDTabNext        ID = "tab-next"
+	// Files panel (the touched-files pane beside the conversation).
+	IDPanelToggle    ID = "panel-toggle"
 	IDFileToggleView ID = "file-toggle-view"
 )
 
@@ -135,10 +135,11 @@ func Default() []Binding {
 		{ID: IDThemeDialog, Context: ContextGlobal, Keys: []string{"ctrl+t"}, Help: "theme"},
 		{ID: IDOpenPager, Context: ContextGlobal, Keys: []string{"ctrl+o"}, Help: "open the pager", Short: "transcript"},
 		{ID: IDToggleReason, Context: ContextGlobal, Keys: []string{"ctrl+r"}, Help: "show or hide reasoning"},
-		// ctrl+n cycles the cockpit's tabs (chat, files). No context
-		// claims it anywhere else; n alone is transcript copy-block's
-		// neighbour, but ctrl-modified it is free.
-		{ID: IDTabNext, Context: ContextGlobal, Keys: []string{"ctrl+n"}, Help: "switch tab", Short: "tabs"},
+		// ctrl+n drives the files panel: open it focused, hand focus
+		// back to the composer, close it. No context claims it anywhere
+		// else; n alone is transcript copy-block's neighbour, but
+		// ctrl-modified it is free.
+		{ID: IDPanelToggle, Context: ContextGlobal, Keys: []string{"ctrl+n"}, Help: "open, focus, or close the files panel", Short: "files"},
 
 		// Scrolling. The cockpit owns the surface, so the application
 		// scrolls: the terminal has no scrollback of its own to offer
@@ -220,11 +221,12 @@ func pagerBindings() []Binding {
 	}
 }
 
-// filesBindings is the Files tab's section. Arrows and the less
-// spellings move the LIST selection - the list is the tab's primary
-// control, and the right pane follows it. The content pane scrolls by
-// half pages on the readline-free ctrl+d/ctrl+u, d flips diff/source,
-// and ctrl+n is global and pops back to chat.
+// filesBindings is the files panel's section. The panel is a pane
+// beside the conversation, not a tab takeover: arrows and the less
+// spellings move the LIST selection while the panel holds focus, d
+// flips the content dialog between diff and source, ctrl+d/ctrl+u
+// scroll that content by half pages, and esc hands focus back to the
+// composer without closing the panel.
 func filesBindings() []Binding {
 	return []Binding{
 		{ID: IDPagerRowUp, Context: ContextFiles, Keys: []string{"up", "k"}, Help: "previous file"},
@@ -232,6 +234,7 @@ func filesBindings() []Binding {
 		{ID: IDPagerHalfDown, Context: ContextFiles, Keys: []string{"ctrl+d"}, Help: "scroll the content half a page down"},
 		{ID: IDPagerHalfUp, Context: ContextFiles, Keys: []string{"ctrl+u"}, Help: "scroll the content half a page up"},
 		{ID: IDFileToggleView, Context: ContextFiles, Keys: []string{"d"}, Help: "diff or source", Short: "diff"},
+		{ID: IDCancel, Context: ContextFiles, Keys: []string{"esc"}, Help: "return to the composer, panel stays open"},
 	}
 }
 

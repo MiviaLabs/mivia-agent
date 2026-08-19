@@ -29,10 +29,11 @@ func TestScenariosSortedAndNonEmpty(t *testing.T) {
 }
 
 func TestLoadScenarioFullTourCoversEveryTurnShape(t *testing.T) {
-	scripts, err := loadScenario("full-tour")
+	loaded, err := loadScenario("full-tour")
 	if err != nil {
 		t.Fatal(err)
 	}
+	scripts := loaded.Scripts
 	if len(scripts) != 10 {
 		t.Fatalf("got %d scripts, want 10 (one per required turn shape)", len(scripts))
 	}
@@ -80,15 +81,40 @@ func TestLoadScenarioSmalltalkAndApproval(t *testing.T) {
 	}
 }
 
+func TestEveryScenarioHasDistinctTitle(t *testing.T) {
+	expected := map[string]string{
+		"full-tour":     "Cockpit Feature Tour",
+		"smalltalk":     "Morning Check-in",
+		"approval":      "Delete Cache Directory",
+		"approval-diff": "Refactor Config Constant",
+	}
+	titles := make(map[string]string)
+	for name, wantTitle := range expected {
+		h, err := New(name, 0)
+		if err != nil {
+			t.Fatalf("New(%q): %v", name, err)
+		}
+		got := h.Title()
+		if got != wantTitle {
+			t.Errorf("scenario %q Title() = %q, want %q", name, got, wantTitle)
+		}
+		if existing, dup := titles[got]; dup {
+			t.Errorf("scenario %q has duplicate title %q (already used by %q)", name, got, existing)
+		}
+		titles[got] = name
+	}
+}
+
 // TestApprovalDiffScriptCarriesAProposedDiff pins the wiring the inline
 // diff preview depends on: the approval-diff scenario's tool.pending
 // event decodes with a Diff, so the approval prompt has something to
 // show before the tool runs.
 func TestApprovalDiffScriptCarriesAProposedDiff(t *testing.T) {
-	scripts, err := loadScenario("approval-diff")
+	loaded, err := loadScenario("approval-diff")
 	if err != nil {
 		t.Fatal(err)
 	}
+	scripts := loaded.Scripts
 	last := scripts[0].Before[len(scripts[0].Before)-1]
 	pend, ok := last.Body.(uievent.ToolPendingBody)
 	if !ok {
@@ -116,13 +142,13 @@ func TestLoadScenarioReportsFileAndDecodeErrors(t *testing.T) {
 	orig := scenarios["approval-diff"]
 	defer func() { scenarios["approval-diff"] = orig }()
 
-	scenarios["approval-diff"] = []string{"does-not-exist.json"}
+	scenarios["approval-diff"] = scenarioDef{Files: []string{"does-not-exist.json"}}
 	_, err := loadScenario("approval-diff")
 	if err == nil || !strings.Contains(err.Error(), "read does-not-exist.json") {
 		t.Errorf("missing file: got %v, want a read error naming the file", err)
 	}
 
-	scenarios["approval-diff"] = []string{"bad.json"}
+	scenarios["approval-diff"] = scenarioDef{Files: []string{"bad.json"}}
 	_, err = loadScenario("approval-diff")
 	if err == nil || !strings.Contains(err.Error(), "decode bad.json") {
 		t.Errorf("bad JSON: got %v, want a decode error naming the file", err)

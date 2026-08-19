@@ -5,12 +5,23 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
+// colAt is the display column of needle in row (strings.Index counts
+// bytes, and the pane borders are multi-byte runes).
+func colAt(row, needle string) int {
+	i := strings.Index(row, needle)
+	if i < 0 {
+		return -1
+	}
+	return ansi.StringWidth(row[:i])
+}
+
 func TestSplitFramesTwoPanesAtTheNamedRatio(t *testing.T) {
-	got := Split(loadTheme(t), theme.TierASCII, 100, 10, Left, "left", "right")
+	got := Split(loadTheme(t), theme.TierASCII, 100, 10, Left, "reading", "nav")
 	rows := strings.Split(got, "\n")
 	if len(rows) != 10 {
 		t.Fatalf("%d rows, want 10 (exact height contract)", len(rows))
@@ -23,33 +34,34 @@ func TestSplitFramesTwoPanesAtTheNamedRatio(t *testing.T) {
 			t.Errorf("row %d width %d, want 100 (exact width contract)", i, w)
 		}
 	}
-	// The left pane is SplitLeftShare of the width: on the content row,
-	// "left" sits inside the first 32 columns and "right" beyond them.
+	// The nav pane is SplitNavShare of the width, on the RIGHT: on the
+	// content row, "reading" sits in the first 70 columns and "nav"
+	// beyond them.
 	var contentRow string
 	for _, r := range rows {
-		if strings.Contains(r, "left") {
+		if strings.Contains(r, "reading") {
 			contentRow = r
 			break
 		}
 	}
 	if contentRow == "" {
-		t.Fatalf("no row shows the left pane's content:\n%s", got)
+		t.Fatalf("no row shows the panes' content:\n%s", got)
 	}
-	if i := strings.Index(contentRow, "left"); i > 32 {
-		t.Errorf("left content at column %d, want inside the 30%% pane: %q", i, contentRow)
+	if i := colAt(contentRow, "reading"); i > 2 {
+		t.Errorf("reading content at column %d, want inside the left pane: %q", i, contentRow)
 	}
-	if i := strings.Index(contentRow, "right"); i < 30 {
-		t.Errorf("right content at column %d, want beyond the 30%% pane: %q", i, contentRow)
+	if i := colAt(contentRow, "nav"); i < 60 {
+		t.Errorf("nav content at column %d, want inside the right pane's 30%% share: %q", i, contentRow)
 	}
 }
 
-// TestSplitCapsTheLeftPaneOnWideTerminals: past SplitLeftMax the
-// navigation pane stops growing and the content pane takes the rest.
-func TestSplitCapsTheLeftPaneOnWideTerminals(t *testing.T) {
-	got := Split(loadTheme(t), theme.TierASCII, 300, 10, Left, "left", "right")
+// TestSplitCapsTheNavPaneOnWideTerminals: past SplitNavMax the
+// navigation pane stops growing and the reading pane takes the rest.
+func TestSplitCapsTheNavPaneOnWideTerminals(t *testing.T) {
+	got := Split(loadTheme(t), theme.TierASCII, 300, 10, Left, "reading", "nav")
 	var contentRow string
 	for _, r := range strings.Split(got, "\n") {
-		if strings.Contains(r, "left") {
+		if strings.Contains(r, "nav") {
 			contentRow = r
 			break
 		}
@@ -57,11 +69,11 @@ func TestSplitCapsTheLeftPaneOnWideTerminals(t *testing.T) {
 	if contentRow == "" {
 		t.Fatalf("no content row:\n%s", got)
 	}
-	if i := strings.Index(contentRow, "left"); i > SplitLeftMax+2 {
-		t.Errorf("left content at column %d, want inside the %d-column cap: %q", i, SplitLeftMax, contentRow)
+	if i := colAt(contentRow, "nav"); i < SplitNavMax {
+		t.Errorf("nav content at column %d, want beyond the %d-column cap: %q", i, SplitNavMax, contentRow)
 	}
-	if i := strings.Index(contentRow, "right"); i < SplitLeftMax {
-		t.Errorf("right content at column %d, want the space beyond the cap: %q", i, contentRow)
+	if i := colAt(contentRow, "reading"); i > 2 {
+		t.Errorf("reading content at column %d, want the space beyond the cap: %q", i, contentRow)
 	}
 }
 
@@ -72,5 +84,63 @@ func TestSplitDropsSurplusRowsNotScrolls(t *testing.T) {
 	got := Split(loadTheme(t), theme.TierASCII, 80, 6, Right, tall, tall)
 	if n := strings.Count(got, "line"); n > 12 {
 		t.Errorf("kept %d content rows in 6-row panes; Split must drop, not scroll", n)
+	}
+}
+
+// TestSplitWidthsMatchesWhatSplitDraws: callers size pane content by
+// SplitWidths, so the exported arithmetic and the drawn frame must agree
+// - the nav share lands on the right pane, capped at SplitNavMax.
+func TestSplitWidthsMatchesWhatSplitDraws(t *testing.T) {
+	for _, w := range []int{100, 118, 160, 300, 400} {
+		reading, nav := SplitWidths(w)
+		if want := w - nav; reading != want {
+			t.Errorf("width %d: reading %d, want %d", w, reading, want)
+		}
+		if nav > SplitNavMax {
+			t.Errorf("width %d: nav %d exceeds the %d cap", w, nav, SplitNavMax)
+		}
+		if nav != w*SplitNavShare/100 && nav != SplitNavMax {
+			t.Errorf("width %d: nav %d is neither the share nor the cap", w, nav)
+		}
+	}
+	if reading, nav := SplitWidths(100); reading != 70 || nav != 30 {
+		t.Errorf("SplitWidths(100) = %d, %d; want 70, 30", reading, nav)
+	}
+}
+
+// TestSplitDialogReplacesTheReadingPaneKeepsTheNavPane: the dialog
+// composes into the left pane's area at the split's exact frame size,
+// and the nav pane's content stays visible beside it rather than
+// hiding behind the dialog.
+func TestSplitDialogReplacesTheReadingPaneKeepsTheNavPane(t *testing.T) {
+	got := SplitDialog(loadTheme(t), theme.TierASCII, 120, 20, "a.go", "+ added line", "any key closes", "navrow")
+	rows := strings.Split(got, "\n")
+	if len(rows) != 20 {
+		t.Fatalf("%d rows, want 20 (exact height contract)", len(rows))
+	}
+	reading, _ := SplitWidths(120)
+	for i, r := range rows {
+		if w := lipgloss.Width(r); w != 120 {
+			t.Errorf("row %d width %d, want 120 (exact width contract)", i, w)
+		}
+	}
+	var navRow string
+	for _, r := range rows {
+		if strings.Contains(r, "navrow") {
+			navRow = r
+			break
+		}
+	}
+	if navRow == "" {
+		t.Fatalf("nav pane content missing from the composed frame:\n%s", got)
+	}
+	if i := colAt(navRow, "navrow"); i < reading {
+		t.Errorf("nav content at column %d, want inside the right pane (beyond %d): %q", i, reading, navRow)
+	}
+	if !strings.Contains(got, "+ added line") || !strings.Contains(got, "any key closes") {
+		t.Errorf("dialog content missing from the composed frame:\n%s", got)
+	}
+	if strings.Count(got, "╭") != 2 {
+		t.Errorf("framed %d boxes, want 2 (the dialog and the nav pane)", strings.Count(got, "╭"))
 	}
 }

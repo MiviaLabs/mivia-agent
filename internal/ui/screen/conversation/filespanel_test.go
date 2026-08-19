@@ -1,0 +1,518 @@
+package conversation
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+)
+
+// diffEvent is one tool-end diff, the event vocabulary the panel feeds on.
+func diffEvent(id, path string, added, removed int, after ...string) uievent.EventMsg {
+	return uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{
+			ToolCallID: id, OK: true,
+			Diff: &uievent.Diff{
+				Path: path, Added: added, Removed: removed,
+				Hunks: []uievent.DiffHunk{{
+					Header: "@@ -1 +1 @@",
+					Lines:  []uievent.DiffLine{{Kind: uievent.DiffLineAdd, Text: "hunk " + path}},
+				}},
+				After: after,
+			},
+		},
+	}}
+}
+
+// panelScreen is a wide screen with the session's diffs already folded
+// into the panel and a couple of transcript notices for chat-column
+// content.
+func panelScreen(t *testing.T, width, height int, diffs ...uievent.EventMsg) Screen {
+	t.Helper()
+	s := sized(t, 2)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	scr := next.(Screen)
+	for _, d := range diffs {
+		n, _ := scr.Update(d)
+		scr = n.(Screen)
+	}
+	return scr
+}
+
+func sampleDiffs() []uievent.EventMsg {
+	return []uievent.EventMsg{
+		diffEvent("c1", "a.go", 3, 1, "package a"),
+		diffEvent("c2", "b.go", 2, 0, "package b"),
+		// a second edit to a.go: latest wins.
+		diffEvent("c3", "a.go", 9, 2, "package a", "// second edit"),
+	}
+}
+
+// openPanel presses ctrl+n to open the panel focused in its list.
+func openPanel(t *testing.T, s Screen) Screen {
+	t.Helper()
+	next, _ := s.Update(ctrl('n'))
+	scr := next.(Screen)
+	if !scr.panel.open || !scr.panel.focused {
+		t.Fatalf("ctrl+n left the panel open=%v focused=%v, want open and focused", scr.panel.open, scr.panel.focused)
+	}
+	return scr
+}
+
+// assertExactFrame pins the cockpit's frame contract: the view is
+// exactly height rows, every row exactly width columns, and no row
+// touches either screen edge.
+func assertExactFrame(t *testing.T, view string, width, height int) {
+	t.Helper()
+	rows := strings.Split(view, "\n")
+	if len(rows) != height {
+		t.Fatalf("view is %d rows, want %d:\n%s", len(rows), height, view)
+	}
+	for i, row := range rows {
+		if w := ansi.StringWidth(row); w != width {
+			t.Errorf("row %d width %d, want %d: %q", i, w, width, ansi.Strip(row))
+		}
+		plain := ansi.Strip(row)
+		if plain[0] != ' ' || plain[len(plain)-1] != ' ' {
+			t.Errorf("row %d touches a screen edge: %q", i, plain)
+		}
+	}
+}
+
+// TestPanelCollapsesRepeatedPathsLatestWins: the panel answers the
+// file's state, not its history - live events included.
+func TestPanelCollapsesRepeatedPathsLatestWins(t *testing.T) {
+	s := panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...)
+	if len(s.panel.entries) != 2 {
+		t.Fatalf("got %d entries, want 2 (a.go collapsed to its latest)", len(s.panel.entries))
+	}
+	if s.panel.entries[0].Path != "a.go" || len(s.panel.entries[0].Diff.After) != 2 {
+		t.Errorf("a.go did not keep its latest edit: %+v", s.panel.entries[0].Diff)
+	}
+}
+
+// TestPanelKindDerivedFromTheDiff: removals present means edited, none
+// means created.
+func TestPanelKindDerivedFromTheDiff(t *testing.T) {
+	s := panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...)
+	if s.panel.entries[0].Kind != fileEdited {
+		t.Errorf("a.go kind %q, want edited (it has removals)", s.panel.entries[0].Kind)
+	}
+	if s.panel.entries[1].Kind != fileCreated {
+		t.Errorf("b.go kind %q, want created (adds only)", s.panel.entries[1].Kind)
+	}
+}
+
+// TestPanelDeletedDiffClaimsTheDeletedKind: a whole-file removal states
+// itself, rather than reading as an edit that happens to only remove.
+func TestPanelDeletedDiffClaimsTheDeletedKind(t *testing.T) {
+	if e := newEntry(uievent.Diff{Path: "gone.go", Removed: 12, Deleted: true}); e.Kind != fileDeleted {
+		t.Errorf("kind %q, want deleted", e.Kind)
+	}
+}
+
+// TestPanelLiveAppendHoldsTheSelection: while the panel is open, a
+// streamed tool-end diff appears in the list immediately, and the
+// cursor stays on the path the user selected - a live update must not
+// move the selection.
+func TestPanelLiveAppendHoldsTheSelection(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // select b.go
+	s = next.(Screen)
+	if sel, _ := s.panel.list.Selected(); !strings.Contains(sel, "b.go") {
+		t.Fatalf("precondition: selection is %q, want b.go", sel)
+	}
+
+	next, _ = s.Update(diffEvent("c9", "c.go", 1, 0))
+	s = next.(Screen)
+	if len(s.panel.entries) != 3 || s.panel.entries[2].Path != "c.go" {
+		t.Fatalf("live diff did not append: %+v", s.panel.entries)
+	}
+	if sel, _ := s.panel.list.Selected(); !strings.Contains(sel, "b.go") {
+		t.Errorf("live append moved the selection to %q, want b.go held", sel)
+	}
+
+	// A second edit to an existing path folds in place, latest wins.
+	next, _ = s.Update(diffEvent("c10", "c.go", 4, 4))
+	s = next.(Screen)
+	if len(s.panel.entries) != 3 || s.panel.entries[2].Kind != fileEdited {
+		t.Errorf("re-edit did not fold in place: %+v", s.panel.entries)
+	}
+	if sel, _ := s.panel.list.Selected(); !strings.Contains(sel, "b.go") {
+		t.Errorf("fold moved the selection to %q", sel)
+	}
+}
+
+// TestPanelFilterSurvivesLiveUpdates: the panel is persistent, so a
+// filter typed into the list must survive the live rebuilds a
+// background turn causes.
+func TestPanelFilterSurvivesLiveUpdates(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	next, _ := s.Update(key("b")) // filter "b": only b.go matches
+	s = next.(Screen)
+	if f := s.panel.list.Filter(); f != "b" {
+		t.Fatalf("precondition: filter %q, want \"b\"", f)
+	}
+	next, _ = s.Update(diffEvent("c9", "c.go", 1, 0))
+	s = next.(Screen)
+	if f := s.panel.list.Filter(); f != "b" {
+		t.Fatalf("live update wiped the filter to %q", f)
+	}
+	if sel, ok := s.panel.list.Selected(); !ok || !strings.Contains(sel, "b.go") {
+		t.Errorf("after live update selected %q ok=%v, want still b.go through the filter", sel, ok)
+	}
+}
+
+// TestPanelEmptyStateNamesItself: no touched files is a stated empty
+// state, not a blank pane.
+func TestPanelEmptyStateNamesItself(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24))
+	if !strings.Contains(s.View(), "no files touched yet") {
+		t.Errorf("empty state missing:\n%s", s.View())
+	}
+}
+
+// TestPanelToggleCycle: ctrl+n walks closed -> open with the list
+// focused -> open with the composer focused -> closed, and no state
+// leaves the key dead.
+func TestPanelToggleCycle(t *testing.T) {
+	s := panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...)
+
+	s = openPanel(t, s) // closed -> open + focused
+
+	next, _ := s.Update(ctrl('n')) // focused -> composer, panel stays
+	s = next.(Screen)
+	if !s.panel.open || s.panel.focused {
+		t.Fatalf("second ctrl+n: open=%v focused=%v, want open with composer focus", s.panel.open, s.panel.focused)
+	}
+	// The composer takes keys while the panel stays on screen.
+	next, _ = s.Update(key("h"))
+	s = next.(Screen)
+	if got := s.composer.Value(); got != "h" {
+		t.Fatalf("composer value %q after defocus, want \"h\" (panel must not eat typing)", got)
+	}
+
+	next, _ = s.Update(ctrl('n')) // open + composer -> closed
+	s = next.(Screen)
+	if s.panel.open || s.panel.focused {
+		t.Fatalf("third ctrl+n: open=%v focused=%v, want closed", s.panel.open, s.panel.focused)
+	}
+	// The transcript renders the diffs too, so the list's row-label form
+	// ("path  kind") is the panel-shaped string to test for.
+	if strings.Contains(s.View(), "a.go  edited") {
+		t.Error("closed panel still draws the list")
+	}
+}
+
+// TestPanelEscReturnsFocusToComposerPanelStaysOpen: esc while the list
+// holds focus is the defocus key, not the close key - the panel stays
+// visible and live.
+func TestPanelEscReturnsFocusToComposerPanelStaysOpen(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	s = next.(Screen)
+	if s.panel.focused {
+		t.Error("esc did not hand focus back to the composer")
+	}
+	if !s.panel.open {
+		t.Error("esc closed the panel; it must stay open")
+	}
+	if !strings.Contains(s.View(), "a.go") {
+		t.Errorf("panel content vanished after esc:\n%s", s.View())
+	}
+}
+
+// TestPanelWideSplitFrameContract: at and above the wide breakpoint the
+// cockpit is a split - the chat column left, the file list right, both
+// framed - and the whole frame keeps its exact size and gutter.
+func TestPanelWideSplitFrameContract(t *testing.T) {
+	for _, w := range []int{uikitconfig.BreakpointWide, 200} {
+		s := openPanel(t, panelScreen(t, w, 30, sampleDiffs()...))
+		view := s.View()
+		assertExactFrame(t, view, w, 30)
+		plain := ansi.Strip(view)
+		for _, want := range []string{"notice-a", "notice-b", "a.go", "b.go", "edited", "created"} {
+			if !strings.Contains(plain, want) {
+				t.Errorf("width %d: split view missing %q:\n%s", w, want, plain)
+			}
+		}
+		// Two split panes plus the composer's own frame box.
+		if got := strings.Count(view, "╭"); got != 3 {
+			t.Errorf("width %d: framed %d boxes, want 3 (two panes + the composer frame)", w, got)
+		}
+		// The top bar names the product, not a tab strip that no longer
+		// exists.
+		top := ansi.Strip(strings.Split(view, "\n")[0])
+		if strings.Contains(top, "files") {
+			t.Errorf("width %d: top bar still carries a tab strip: %q", w, top)
+		}
+	}
+}
+
+// TestPanelDialogSitsInTheLeftColumnWithListStillVisible: Enter on the
+// selection opens the content as a dialog sized to the LEFT pane, with
+// the list still visible beside it - not a full-terminal takeover.
+func TestPanelDialogSitsInTheLeftColumnWithListStillVisible(t *testing.T) {
+	w := uikitconfig.BreakpointWide
+	s := openPanel(t, panelScreen(t, w, 30, sampleDiffs()...))
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if !s.panel.dialog {
+		t.Fatal("enter did not open the content dialog")
+	}
+	view := s.View()
+	assertExactFrame(t, view, w, 30)
+
+	reading, _ := render.SplitWidths(w - 2)
+	rows := strings.Split(view, "\n")
+	dialogCol, listCol := -1, -1
+	for _, r := range rows {
+		if i := strings.Index(r, "@@ -1 +1 @@"); i >= 0 && dialogCol < 0 {
+			dialogCol = ansi.StringWidth(r[:i])
+		}
+		// b.go is the entry NOT selected, so it only draws in the list
+		// pane beside the dialog.
+		if i := strings.Index(r, "b.go"); i >= 0 && listCol < 0 {
+			listCol = ansi.StringWidth(r[:i])
+		}
+	}
+	if dialogCol < 0 {
+		t.Fatalf("dialog body missing:\n%s", view)
+	}
+	if listCol < 0 || listCol < reading {
+		t.Fatalf("list pane not visible beside the dialog (b.go at column %d, left pane ends at %d):\n%s", listCol, reading, view)
+	}
+	if !strings.Contains(ansi.Strip(view), "a.go") {
+		t.Error("dialog title does not name the selected file")
+	}
+
+	// Any key closes the dialog back to list + chat.
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	s = next.(Screen)
+	if s.panel.dialog {
+		t.Error("esc did not close the content dialog")
+	}
+	if !s.panel.open || !s.panel.focused {
+		t.Error("closing the dialog must leave the panel open with the list focused")
+	}
+	if !strings.Contains(s.View(), "notice-a") {
+		t.Error("chat column did not return after the dialog closed")
+	}
+}
+
+// TestPanelDialogDiffSourceToggle: d flips the dialog between the diff
+// and the post-edit source; d again returns to the diff.
+func TestPanelDialogDiffSourceToggle(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	next, _ = s.Update(key("d"))
+	s = next.(Screen)
+	if !s.panel.sourceView || !strings.Contains(s.View(), "// second edit") {
+		t.Errorf("source view does not show the after content:\n%s", s.View())
+	}
+	next, _ = s.Update(key("d"))
+	s = next.(Screen)
+	if s.panel.sourceView || !strings.Contains(s.View(), "@@") {
+		t.Errorf("diff view did not return:\n%s", s.View())
+	}
+}
+
+// TestPanelDialogScrollReachesTheTail: the half-page scrolls must make
+// the last row of a long diff reachable, not strand it below the clip.
+func TestPanelDialogScrollReachesTheTail(t *testing.T) {
+	long := uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", OK: true,
+			Diff: &uievent.Diff{Path: "long.go", Added: 40, Removed: 2,
+				Hunks: []uievent.DiffHunk{{
+					Header: "@@ -1 +1 @@",
+					Lines: func() []uievent.DiffLine {
+						lines := make([]uievent.DiffLine, 40)
+						for i := range lines {
+							lines[i] = uievent.DiffLine{Kind: uievent.DiffLineAdd, Text: "tailrow-" + strings.Repeat("y", i+1)}
+						}
+						return lines
+					}(),
+				}},
+			},
+		},
+	}}
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 16, long))
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	last := "tailrow-" + strings.Repeat("y", 40)
+	// A short pane windows only a few rows at a time and steps by half
+	// that, so the tail can be many presses away - but it must be
+	// reachable.
+	for i := 0; i < 80 && !strings.Contains(s.View(), last); i++ {
+		n, _ := s.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+		s = n.(Screen)
+	}
+	if !strings.Contains(s.View(), last) {
+		t.Errorf("half-page scrolls never reached the diff's last row:\n%s", s.View())
+	}
+}
+
+// TestPanelNarrowCollapsesToListFullWidth: below the wide breakpoint
+// there is no room for two panes - the list replaces the transcript
+// area, the chrome below keeps its place, and Enter opens a
+// full-width dialog.
+func TestPanelNarrowCollapsesToListFullWidth(t *testing.T) {
+	s := openPanel(t, panelScreen(t, 80, 24, sampleDiffs()...))
+	view := s.View()
+	assertExactFrame(t, view, 80, 24)
+	plain := ansi.Strip(view)
+	if !strings.Contains(plain, "a.go") {
+		t.Errorf("narrow view is not the list:\n%s", plain)
+	}
+	for _, hidden := range []string{"@@", "notice-a"} {
+		if strings.Contains(plain, hidden) {
+			t.Errorf("narrow view still shows %q (no room for the chat column):\n%s", hidden, plain)
+		}
+	}
+	if !strings.Contains(plain, "> ") {
+		t.Errorf("composer vanished under the narrow panel:\n%s", plain)
+	}
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if !s.panel.dialog || !strings.Contains(s.View(), "@@") {
+		t.Errorf("enter did not open the full-width content dialog:\n%s", s.View())
+	}
+	assertExactFrame(t, s.View(), 80, 24)
+
+	next, _ = s.Update(key("x")) // any key closes it
+	s = next.(Screen)
+	if s.panel.dialog {
+		t.Error("a key did not close the narrow dialog")
+	}
+}
+
+// TestPanelLiveEntryAppearsWhileComposerFocused is the panel's
+// defining contract: with the panel open and focus back on the
+// composer, a sent message whose turn edits a file grows the panel's
+// list on screen without the user touching the panel - and neither
+// closes the panel nor steals the composer's focus.
+func TestPanelLiveEntryAppearsWhileComposerFocused(t *testing.T) {
+	until := make(chan uievent.Event, 4)
+	conv := &scriptedConversation{events: until}
+	s := New(loadTheme(t), theme.TierASCII, nil, conv, nil, 40, fixedNow)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
+	s = next.(Screen)
+
+	s = openPanel(t, s)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape}) // focus back to composer
+	s = next.(Screen)
+	if s.panel.focused || !s.panel.open {
+		t.Fatal("precondition: panel open, composer focused")
+	}
+
+	// Type and send a message; the turn's reply carries a tool-end diff.
+	next, _ = s.Update(keyMsg("edit the file"))
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if s.active == nil {
+		t.Fatal("enter did not start the turn")
+	}
+	next, _ = s.Update(diffEvent("c1", "live.go", 2, 1, "package live"))
+	s = next.(Screen)
+
+	if len(s.panel.entries) != 1 || s.panel.entries[0].Path != "live.go" {
+		t.Fatalf("the turn's diff did not reach the panel: %+v", s.panel.entries)
+	}
+	if !s.panel.open || s.panel.focused {
+		t.Errorf("the live update moved focus: open=%v focused=%v, want open with composer focus", s.panel.open, s.panel.focused)
+	}
+	if got := s.composer.Value(); got != "" {
+		t.Errorf("composer kept %q after send", got)
+	}
+	if !strings.Contains(s.View(), "live.go") {
+		t.Errorf("panel view does not show the new entry:\n%s", s.View())
+	}
+}
+
+// TestPanelApprovalClosesTheDialog: an approval prompt claims the chat
+// column and every key, so a content dialog covering that column must
+// close rather than hide the decision the user must make.
+func TestPanelApprovalClosesTheDialog(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if !s.panel.dialog {
+		t.Fatal("precondition: the content dialog is open")
+	}
+	next, _ = s.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolPending,
+		Body: uievent.ToolPendingBody{ToolCallID: "c9", Name: "run_command"},
+	}})
+	s = next.(Screen)
+	if s.panel.dialog {
+		t.Error("a pending approval did not close the content dialog")
+	}
+	if !s.approval.Active() {
+		t.Error("the approval prompt is not armed")
+	}
+}
+
+// TestPanelKeysDoNotArmQuit: a ctrl+c that arms the second-press quit
+// must be disarmed by any later panel key, or a stray armed quit
+// survives a browsing session and the next ctrl+c quits instead of
+// cancelling.
+func TestPanelKeysDoNotArmQuit(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	s.active = fakeHandle{id: "t1"} // a running turn: the first ctrl+c cancels + arms
+
+	next, _ := s.Update(ctrl('c'))
+	s = next.(Screen)
+	if !s.quitArmed {
+		t.Fatal("precondition: the first ctrl+c arms the quit")
+	}
+
+	next, _ = s.Update(key("j")) // a panel key: moves the list selection
+	s = next.(Screen)
+	if s.quitArmed {
+		t.Error("a panel key left the quit armed; only a second ctrl+c may keep it")
+	}
+
+	// With the arm cleared, this ctrl+c cancels again rather than
+	// quitting the session.
+	next, cmd := s.Update(ctrl('c'))
+	s = next.(Screen)
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Error("ctrl+c quit the session: the panel key did not disarm the earlier arm")
+		}
+	}
+}
+
+// scriptedConversation is a ports.Conversation whose turns the test
+// drives by writing events into the handle's channel.
+type scriptedConversation struct {
+	events chan uievent.Event
+}
+
+func (c *scriptedConversation) Send(context.Context, intent.Send) (ports.TurnHandle, error) {
+	return scriptedHandle{ch: c.events}, nil
+}
+func (c *scriptedConversation) History() []ports.Message  { return nil }
+func (c *scriptedConversation) Model() ports.ModelInfo    { return ports.ModelInfo{} }
+func (c *scriptedConversation) ContextUsage() ports.Usage { return ports.Usage{} }
+func (c *scriptedConversation) Title() string             { return "scripted" }
+
+type scriptedHandle struct{ ch chan uievent.Event }
+
+func (h scriptedHandle) ID() string                   { return "scripted" }
+func (h scriptedHandle) Events() <-chan uievent.Event { return h.ch }
+func (h scriptedHandle) Cancel()                      {}

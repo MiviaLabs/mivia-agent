@@ -19,6 +19,26 @@ const (
 	dialogMarginY = 2
 )
 
+// DialogBodyRows is how many body rows a Dialog framed to height can
+// show, after its margins, border, padding, title, separators, and hint.
+// A caller that windows scrollable body content by rows must use this
+// number: scrolling by a larger step leaves tail rows unreachable,
+// because Dialog clips what does not fit.
+func DialogBodyRows(height int) int {
+	marginY := dialogMarginY
+	for marginY > 0 && height-2*marginY-2-2 < 5 {
+		marginY--
+	}
+	// When the clip cap bites, it drops the body's trailing blank
+	// separator along with surplus rows, so the body's own share is the
+	// cap less title, leading blank, and hint - three rows, not four.
+	body := height - 2*marginY - 2 - 2 - 3
+	if body < 1 {
+		return 1
+	}
+	return body
+}
+
 // Dialog renders title, body, and hint inside a bordered, inset-filled
 // box centered on a width x height terminal. It is the one centered
 // dialog primitive: this renderer has no compositing layer, so the

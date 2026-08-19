@@ -37,6 +37,7 @@ func (c *fakeConversation) Send(ctx context.Context, in intent.Send) (TurnHandle
 func (c *fakeConversation) History() []Message  { return c.history }
 func (c *fakeConversation) Model() ModelInfo    { return c.model }
 func (c *fakeConversation) ContextUsage() Usage { return c.usage }
+func (c *fakeConversation) Title() string       { return "fake title" }
 
 var _ Conversation = (*fakeConversation)(nil)
 var _ TurnHandle = (*fakeTurnHandle)(nil)

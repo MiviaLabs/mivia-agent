@@ -55,6 +55,7 @@ type Conversation interface {
 	History() []Message
 	Model() ModelInfo
 	ContextUsage() Usage
+	Title() string
 }
 
 // TurnHandle represents one in-flight or completed turn. Events() is the
