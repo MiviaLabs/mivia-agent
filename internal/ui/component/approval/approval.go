@@ -157,7 +157,11 @@ func (m Model) View() string {
 	if m.width > 0 {
 		inner = m.width
 	}
-	return render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, inner, body)
+	topHint := "[ ⚠ Approval Required ]"
+	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+		topHint = "[ ! Approval Required ]"
+	}
+	return render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorderFocus, inner, body, topHint)
 }
 
 // ScrollBy moves the diff preview window by n lines and returns the
