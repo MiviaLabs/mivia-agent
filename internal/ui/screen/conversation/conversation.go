@@ -15,9 +15,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
-	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -44,6 +44,14 @@ type Screen struct {
 	active ports.TurnHandle
 	now    func() time.Time
 
+	// keys is the one dispatch table. See keys.go for the context order.
+	keys *keymap.Map
+
+	// quitArmed is true between the first ctrl+c and the second. Any
+	// other key clears it, so the session is never left one keystroke
+	// from exiting because of a stray press.
+	quitArmed bool
+
 	// width and height are the live terminal size, from WindowSizeMsg.
 	// Nothing here may assume a size: the layout work that consumes
 	// height lands with the cockpit architecture, but the size must be
@@ -66,6 +74,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		composer:   composer.New(th, tier, width),
 		statusline: statusline.New(th, tier),
 		approval:   approval.New(th, tier),
+		keys:       keymap.New(keymap.Default()),
 		now:        now,
 	}
 }
@@ -112,10 +121,7 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	if commit == nil {
 		return scr, cmd
 	}
-	// Sequence, not Batch: tea.Batch documents "no ordering guarantees",
-	// and cmd may itself carry content evicted earlier in this same
-	// update. Scrollback order is the transcript's whole contract.
-	return scr, tea.Sequence(cmd, commit)
+	return scr, tea.Batch(cmd, commit)
 }
 
 // resize re-budgets the transcript from the current size and chrome, and
@@ -136,6 +142,7 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s.handleTurnEvent(msg.ev)
 	case turnEndedMsg:
 		s.statusline.Stop()
+		s.approval.Clear()
 		s.active = nil
 		return s, nil
 	case approval.DecisionMsg:
@@ -174,27 +181,6 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
-	if s.approval.Active() {
-		next, cmd := s.approval.Update(msg)
-		s.approval = next
-		return s, cmd
-	}
-	switch msg.String() {
-	case "ctrl+t":
-		if len(s.themes) == 0 {
-			return s, nil
-		}
-		next := themepicker.New(s.Theme, s.Tier, s.themes)
-		return s, func() tea.Msg { return app.PushScreenMsg{Screen: next} }
-	case "enter":
-		return s.send()
-	}
-	next, cmd := s.composer.Update(msg)
-	s.composer = next
-	return s, cmd
-}
-
 func (s Screen) send() (app.Screen, tea.Cmd) {
 	text := s.composer.Value()
 	if text == "" || s.active != nil {
@@ -219,8 +205,11 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	next, flushCmd := s.transcript.HandleEvent(ev)
 	s.transcript = next
 
-	if b, ok := ev.Body.(uievent.ToolPendingBody); ok {
+	switch b := ev.Body.(type) {
+	case uievent.ToolPendingBody:
 		s.approval.SetRequest(b)
+	case uievent.ToolStartBody, uievent.ToolEndBody, uievent.TurnEndBody:
+		s.approval.Clear()
 	}
 
 	var readCmd tea.Cmd
@@ -235,7 +224,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 // account for every row View can draw below the transcript, plus one
 // spare so the frame never exactly fills the terminal.
 func (s Screen) reservedRows() int {
-	rows := 1 + 1 // composer, plus the reserve
+	rows := s.composer.Height() + 1 // the composer and its menu, plus the reserve
 	if s.approval.Active() {
 		rows += 2 // title and hint
 	}
@@ -267,3 +256,8 @@ func (s Screen) View() string {
 	}
 	return out
 }
+
+// SetCommands supplies the slash-completion candidates. The command set
+// belongs to the harness, so the screen takes it rather than inventing
+// one.
+func (s *Screen) SetCommands(cmds []composer.Command) { s.composer.SetCommands(cmds) }

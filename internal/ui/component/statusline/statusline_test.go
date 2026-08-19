@@ -93,3 +93,50 @@ func TestSetLabelDoesNotResetElapsed(t *testing.T) {
 		t.Errorf("got %q, want label updated and elapsed clock preserved", got)
 	}
 }
+
+// TestNoticeShowsWithoutATurn pins the case the copy key needs: there is
+// no turn in flight, but the action still has to say what it did.
+func TestNoticeShowsWithoutATurn(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	if m.Active() {
+		t.Fatal("a new status line draws nothing")
+	}
+	m.Notice("copied the block")
+	if !m.Active() {
+		t.Error("a notice must claim its row, or the layout will not reserve it")
+	}
+	if got := m.View(time.Now()); !strings.Contains(got, "copied the block") {
+		t.Errorf("got %q, want the notice text", got)
+	}
+
+	m.ClearNotice()
+	if m.Active() || m.View(time.Now()) != "" {
+		t.Error("ClearNotice left the line drawing")
+	}
+}
+
+// TestStartClearsAPendingNotice: a notice belongs to the action that
+// raised it, so a new turn must not inherit it.
+func TestStartClearsAPendingNotice(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Notice("copied the block")
+	m.Start("thinking", time.Now())
+	if got := m.View(time.Now()); strings.Contains(got, "copied") {
+		t.Errorf("got %q, want the new turn's line, not the stale notice", got)
+	}
+}
+
+// TestNoticeWinsOverTheTurnLine: the notice is the newer information,
+// and the turn line returns as soon as it is cleared.
+func TestNoticeTakesTheRowWhileSet(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.Start("thinking", time.Now())
+	m.Notice("copied the block")
+	if got := m.View(time.Now()); !strings.Contains(got, "copied") {
+		t.Errorf("got %q, want the notice", got)
+	}
+	m.ClearNotice()
+	if got := m.View(time.Now()); !strings.Contains(got, "thinking") {
+		t.Errorf("got %q, want the turn line back", got)
+	}
+}

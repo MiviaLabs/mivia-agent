@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/jsonout"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
@@ -38,6 +39,25 @@ const replayPace = 30 * time.Millisecond
 // takes over there. It exists so the composer is constructible before
 // the terminal size is known, not as an assumption about it.
 const initialComposerWidth = 80
+
+// mockCommands is the slash-command set for the replay build. The real
+// list comes from the harness, which is not wired yet (build spec steps
+// 2, 3, 8). It is defined here rather than inside the composer so the
+// component stays free of any assumption about who supplies it.
+func mockCommands() []composer.Command {
+	return []composer.Command{
+		{Name: "agent", Desc: "pick the agent for this turn"},
+		{Name: "agents", Desc: "list the available agents"},
+		{Name: "clear", Desc: "clear the transcript"},
+		{Name: "compact", Desc: "compact the context"},
+		{Name: "context", Desc: "show context usage"},
+		{Name: "cost", Desc: "show the session spend"},
+		{Name: "help", Desc: "show the keymap"},
+		{Name: "model", Desc: "pick the model and effort"},
+		{Name: "quit", Desc: "exit mivia-ui"},
+		{Name: "theme", Desc: "pick a theme"},
+	}
+}
 
 type config struct {
 	demo          bool
@@ -124,6 +144,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, env []string) int {
 	// initialComposerWidth only holds until Bubble Tea delivers the first
 	// WindowSizeMsg, which it does at startup before the first render.
 	screen := conversation.New(th, tier, themes, conv, replay.NewApprover(), initialComposerWidth, nil)
+	screen.SetCommands(mockCommands())
 	root := app.New(screen, th, tier, themes)
 
 	p := tea.NewProgram(root, tea.WithOutput(stdout))

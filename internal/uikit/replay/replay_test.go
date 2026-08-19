@@ -177,3 +177,34 @@ func TestConversationContextDoneDuringUnreadSend(t *testing.T) {
 		t.Fatal("channel did not close within 1s of context cancellation before any read")
 	}
 }
+
+// TestConversationPaceDelaysBetweenEvents pins the pace parameter, which is
+// the only reason Send waits at all. A three-event fixture at a non-zero pace
+// must take at least two inter-event gaps to drain. The bound is a lower
+// bound, so a slow machine cannot make it flake; a build that drops the wait
+// drains in microseconds and fails.
+func TestConversationPaceDelaysBetweenEvents(t *testing.T) {
+	const pace = 20 * time.Millisecond
+	c := New(fixtureEvents(), pace)
+
+	start := time.Now()
+	handle, err := c.Send(context.Background(), intent.Send{Text: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []uievent.Event
+	for ev := range handle.Events() {
+		got = append(got, ev)
+	}
+	elapsed := time.Since(start)
+
+	if len(got) != 3 {
+		t.Fatalf("got %d events, want 3", len(got))
+	}
+	if got[0].Kind != uievent.KindTurnStart || got[2].Kind != uievent.KindTurnEnd {
+		t.Errorf("paced replay changed the order: %v", got)
+	}
+	if elapsed < 2*pace {
+		t.Errorf("paced replay finished in %v, want at least %v at pace %v", elapsed, 2*pace, pace)
+	}
+}

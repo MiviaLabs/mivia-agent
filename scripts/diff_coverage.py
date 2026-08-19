@@ -7,8 +7,9 @@ git-diff added/modified lines in non-test .go files onto a coverage profile
 instrumented across every package (-coverpkg=./...) and fails on any changed
 statement line with a zero hit count, or on any changed file whose package
 produced no coverage data at all (never linked into a tested binary). A changed
-file that contributes no statements at all (declarations only) inside a package
-that IS covered has nothing to execute and is not reported.
+file that contributes no statements at all (declarations only) has nothing to
+execute and is not reported: either the package IS covered and the file simply
+holds no blocks, or Go's own instrumenter finds no statement in the file.
 
 Modes:
   --staged                staged changes vs HEAD (fast local loop)
@@ -178,6 +179,36 @@ def executable_lines(text: str | None, lines: set[int]) -> set[int]:
     return lines - non_executable_lines(text)
 
 
+def file_has_statements(root: Path, path: str, text: str | None) -> bool:
+    """Report whether Go finds a single executable statement in text.
+
+    A profile can prove that a package was linked only if the package holds at
+    least one statement. A package of nothing but const, var, type and
+    interface declarations - `ports`, a defaults table - emits no counters, so
+    it is absent from every profile even when its own tests run. Reading that
+    absence as "never linked" fails the package on lines that no test can ever
+    execute, which is a gate no change can satisfy.
+
+    The verdict comes from `go tool cover`, the same instrumenter that writes
+    the profile, so "statement" means here exactly what it means there. This
+    does not widen the exemption: one statement anywhere in the file makes the
+    file checkable again, and a never-linked package that holds real code still
+    fails. Any error answers True, which keeps the gate fail-closed.
+    """
+    if text is None or shutil.which("go") is None:
+        return True
+    with tempfile.TemporaryDirectory(prefix="mivia-diffcov-stmt-") as tmp:
+        probe = Path(tmp) / Path(path).name
+        probe.write_text(text, encoding="utf-8")
+        proc = subprocess.run(
+            ["go", "tool", "cover", "-mode=set", "-var=miviaDiffCovProbe", str(probe)],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+    if proc.returncode != 0:
+        return True
+    return "miviaDiffCovProbe.Count[" in proc.stdout
+
+
 def run_coverage_profile(root: Path) -> Path:
     if shutil.which("go") is None:
         print("diff_coverage: go not found on PATH", file=sys.stderr)
@@ -282,10 +313,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     per_file_lines = {}
+    per_file_text: dict[str, str | None] = {}
     for f in files:
-        lines = executable_lines(tip_file_text(root, diff_args, f), changed_lines(root, diff_args, f))
+        text = tip_file_text(root, diff_args, f)
+        lines = executable_lines(text, changed_lines(root, diff_args, f))
         if lines:
             per_file_lines[f] = lines
+            per_file_text[f] = text
     if not per_file_lines:
         print("diff_coverage: no changed non-test Go lines in scope; skipping")
         return 0
@@ -311,12 +345,14 @@ def main(argv: list[str] | None = None) -> int:
     no_statements: list[str] = []
     for f, lines in sorted(per_file_lines.items()):
         if f not in blocks_by_file:
-            if str(Path(f).parent) in covered_packages:
-                # The package IS linked into a tested binary, so the profile is
-                # real; this file simply contributed no blocks. That means it
-                # holds no statements in THIS build - declarations only, or a
-                # build constraint excluded it on this platform. Neither can be
-                # executed by any test, so the file is recorded as unchecked
+            if str(Path(f).parent) in covered_packages or not file_has_statements(root, f, per_file_text[f]):
+                # The file contributed no blocks for one of two reasons. Either
+                # the package IS linked into a tested binary and the profile is
+                # real, so this file holds no statements in THIS build -
+                # declarations only, or a build constraint excluded it on this
+                # platform. Or the whole package is declarations, so it emits no
+                # counters and can never appear in any profile. Neither case can
+                # be executed by any test, so the file is recorded as unchecked
                 # rather than failed: flagging it makes an edit to a
                 # declarations file unfixable.
                 no_statements.append(f)

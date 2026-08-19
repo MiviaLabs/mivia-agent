@@ -76,8 +76,3 @@ func TestSetWidthClampsBelowPrompt(t *testing.T) {
 		t.Errorf("got %q, want the composer still usable at a clamped width", got)
 	}
 }
-
-func TestSetSuggestionsDoesNotPanic(t *testing.T) {
-	m := New(loadTheme(t), theme.TierASCII, 40)
-	m.SetSuggestions([]string{"/help", "/agent"})
-}

@@ -119,7 +119,9 @@ func Default() []Binding {
 		// Transcript, scoped to the live window.
 		{ID: IDFocusNext, Context: ContextTranscript, Keys: []string{"tab"}, Help: "focus the next block"},
 		{ID: IDFocusPrev, Context: ContextTranscript, Keys: []string{"shift+tab"}, Help: "focus the previous block"},
-		{ID: IDToggleBlock, Context: ContextTranscript, Keys: []string{" ", "enter"}, Help: "collapse or expand"},
+		// "space", not " ": bubbletea/v2 Key.String reports the space bar
+		// as the word. A literal " " here silently never matches.
+		{ID: IDToggleBlock, Context: ContextTranscript, Keys: []string{"space", "enter"}, Help: "collapse or expand"},
 		{ID: IDExpandAll, Context: ContextTranscript, Keys: []string{"ctrl+e"}, Help: "expand all"},
 		{ID: IDCollapseAll, Context: ContextTranscript, Keys: []string{"ctrl+g"}, Help: "collapse all"},
 		{ID: IDCopyBlock, Context: ContextTranscript, Keys: []string{"y"}, Help: "copy the block"},
@@ -223,9 +225,6 @@ func joinKeys(keys []string) string {
 	for i, k := range keys {
 		if i > 0 {
 			out += " / "
-		}
-		if k == " " {
-			k = "space"
 		}
 		out += k
 	}

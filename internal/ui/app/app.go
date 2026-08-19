@@ -120,7 +120,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
-			return m, tea.Quit
+			// Modals quit immediately; the base screen manages its own turn
+			// cancellation and double-press quit guard (UX Rule 1.3).
+			if len(m.stack) > 1 {
+				return m, tea.Quit
+			}
 		case "esc":
 			// A modal on top of the base screen: the router owns Esc as
 			// "dismiss the modal" globally, so it never reaches the
@@ -132,8 +136,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case PushScreenMsg:
-		m.stack = append(m.stack, msg.Screen)
-		return m, msg.Screen.Init()
+		sc := msg.Screen
+		var resizeCmd tea.Cmd
+		if m.Width > 0 && m.Height > 0 {
+			var next Screen
+			next, resizeCmd = sc.Update(tea.WindowSizeMsg{Width: m.Width, Height: m.Height})
+			sc = next
+		}
+		m.stack = append(m.stack, sc)
+		return m, tea.Batch(sc.Init(), resizeCmd)
 	case PopScreenMsg:
 		if len(m.stack) > 1 {
 			return m.pop()

@@ -27,6 +27,12 @@ type Model struct {
 	label   string
 	started time.Time
 	frame   int
+
+	// notice is a one-line message shown INSTEAD of the turn line, and
+	// only until the next turn starts. It carries the outcome of an
+	// action that has no other visible result: a clipboard write, or the
+	// armed second half of a two-press quit.
+	notice string
 }
 
 // TickMsg advances the spinner frame.
@@ -45,6 +51,7 @@ func New(t theme.Theme, tier theme.Tier) Model {
 // (e.g. "thinking", "running tool") and returns the Cmd that starts the
 // spinner clock.
 func (m *Model) Start(label string, now time.Time) tea.Cmd {
+	m.notice = ""
 	m.active = true
 	m.label = label
 	m.started = now
@@ -59,8 +66,19 @@ func (m *Model) SetLabel(label string) { m.label = label }
 // Stop clears the status line (turn ended or was cancelled).
 func (m *Model) Stop() { m.active = false }
 
-// Active reports whether a turn is in flight.
-func (m Model) Active() bool { return m.active }
+// Notice shows a one-line message until the next turn starts.
+//
+// A clipboard write is the case that needs it. tea.SetClipboard emits
+// OSC 52, which VTE and Terminal.app ignore silently, so the line states
+// what was ATTEMPTED. It never claims the paste buffer now holds the
+// text, because this process cannot find that out.
+func (m *Model) Notice(text string) { m.notice = text }
+
+// ClearNotice removes any pending notice.
+func (m *Model) ClearNotice() { m.notice = "" }
+
+// Active reports whether the line draws anything.
+func (m Model) Active() bool { return m.active || m.notice != "" }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if _, ok := msg.(TickMsg); !ok || !m.active {
@@ -73,6 +91,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // View renders the line as of now. now is a parameter rather than
 // time.Now() so the render stays deterministic for golden tests.
 func (m Model) View(now time.Time) string {
+	if m.notice != "" {
+		return render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(m.notice)
+	}
 	if !m.active {
 		return ""
 	}

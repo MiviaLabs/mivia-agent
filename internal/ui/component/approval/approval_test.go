@@ -47,6 +47,21 @@ func TestViewShowsPendingRequest(t *testing.T) {
 	}
 }
 
+func TestClearDismissesPendingRequest(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
+	if !m.Active() {
+		t.Fatal("expected Active() after SetRequest")
+	}
+	m.Clear()
+	if m.Active() {
+		t.Error("expected inactive after Clear()")
+	}
+	if got := m.View(); got != "" {
+		t.Errorf("got %q, want empty view after Clear()", got)
+	}
+}
+
 func keyMsg(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Text: s, Code: rune(s[0])}
 }

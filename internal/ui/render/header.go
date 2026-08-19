@@ -168,7 +168,7 @@ func clipDetail(detail string, room int) string {
 // and stops counting real columns. Header fields are CONTENT, never
 // markup: the styling is applied here, not carried in.
 func headerSanitizer(r rune) rune {
-	if r < 0x20 || r == 0x7f {
+	if r < 0x20 || r == 0x7f || unicode.Is(unicode.Cc, r) {
 		return ' '
 	}
 	// Format characters are dropped, not spaced. They are invisible, they
@@ -188,16 +188,21 @@ func headerSanitizer(r rune) rune {
 // them makes the width additive again, and U+FFFD is what a terminal
 // would have drawn anyway.
 func sanitizeField(s string) string {
-	return strings.Map(headerSanitizer, strings.ToValidUTF8(s, "�"))
+	return strings.Map(headerSanitizer, strings.ToValidUTF8(s, ""))
 }
 
-func sanitizeSpec(spec HeaderSpec) HeaderSpec {
+// SanitizeSpec cleans every string field in spec of control and format characters.
+func SanitizeSpec(spec HeaderSpec) HeaderSpec {
 	spec.Marker = sanitizeField(spec.Marker)
 	spec.Label = sanitizeField(spec.Label)
 	spec.Detail = sanitizeField(spec.Detail)
 	spec.Meta = sanitizeField(spec.Meta)
 	spec.State = sanitizeField(spec.State)
 	return spec
+}
+
+func sanitizeSpec(spec HeaderSpec) HeaderSpec {
+	return SanitizeSpec(spec)
 }
 
 func styleHeader(t theme.Theme, tier theme.Tier, spec HeaderSpec, lead, detail, gap, right string) string {

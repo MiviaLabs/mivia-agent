@@ -265,6 +265,54 @@ def test_declarations_only_file_in_a_covered_package_passes() -> None:
         assert "no statements" in proc.stdout, proc.stdout
 
 
+def test_declarations_only_package_passes() -> None:
+    """False positive #4: a package of pure declarations emits no counters.
+
+    An interface or constants package appears in NO coverage profile, however
+    well tested, because it holds no statement to instrument. Reading that
+    absence as "never linked into a tested binary" failed every line of the
+    package on a gate no test could satisfy.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        decl = root / "ports"
+        decl.mkdir()
+        (decl / "ports.go").write_text(
+            "package ports\n\n"
+            "// Store is a declaration; there is nothing here to execute.\n"
+            "type Store interface {\n\tGet(key string) (string, bool)\n}\n\n"
+            "const DefaultWidth = 80\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "no statements" in proc.stdout, proc.stdout
+
+
+def test_one_statement_in_an_untested_package_still_fails() -> None:
+    """Guard on the exemption above: it must key on "no statements", not on
+    "package missing from the profile". The same package plus a single
+    executable function is checkable again, and untested, so it must fail."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        decl = root / "ports"
+        decl.mkdir()
+        (decl / "ports.go").write_text(
+            "package ports\n\n"
+            "type Store interface {\n\tGet(key string) (string, bool)\n}\n\n"
+            "const DefaultWidth = 80\n\n"
+            "func Widen(n int) int {\n\treturn n + DefaultWidth\n}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert "ports/ports.go" in proc.stdout
+
+
 def test_coverage_profile_run_disables_the_test_cache() -> None:
     """False positive #3: a cached test result replays STALE block coordinates.
 

@@ -144,6 +144,12 @@ func (m *Model) reindexFocus(n int) {
 	if m.focus >= len(m.blocks) {
 		m.focus = len(m.blocks) - 1 // -1 when nothing is live: the composer
 	}
+	// Re-apply the per-block flag Render reads. Moving the index without
+	// it would leave the focus ring drawn on whichever block happened to
+	// inherit the old position.
+	for i := range m.blocks {
+		m.blocks[i].Focused = i == m.focus
+	}
 }
 
 // findLive returns the index of the live block for a tool call, or -1.

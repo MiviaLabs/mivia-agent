@@ -128,15 +128,56 @@ func TestPopScreenMsgWithModalPops(t *testing.T) {
 	}
 }
 
-func TestCtrlCQuits(t *testing.T) {
+func TestCtrlCDelegatesToBaseScreen(t *testing.T) {
+	// ctrl+c on base screen must be delegated so the screen can manage
+	// turn cancellation vs double-press quit (UX Rule 1.3).
+	base := stubScreen{name: "base"}
+	m := New(base, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(keyMsg("ctrl+c"))
+	m = next.(Model)
+	gotBase := m.stack[0].(stubScreen)
+	if len(gotBase.received) != 1 {
+		t.Fatalf("expected ctrl+c forwarded to base screen, got %d msgs", len(gotBase.received))
+	}
+	if k, ok := gotBase.received[0].(tea.KeyPressMsg); !ok || k.String() != "ctrl+c" {
+		t.Errorf("got %+v, want ctrl+c KeyPressMsg", gotBase.received[0])
+	}
+}
+
+func TestCtrlCQuitsFromModal(t *testing.T) {
 	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	m = next.(Model)
 	_, cmd := m.Update(keyMsg("ctrl+c"))
 	if cmd == nil {
-		t.Fatal("expected a Cmd for ctrl+c")
+		t.Fatal("expected a Cmd for ctrl+c from modal")
 	}
 	msg := cmd()
 	if _, ok := msg.(tea.QuitMsg); !ok {
 		t.Errorf("got %T, want tea.QuitMsg", msg)
+	}
+}
+
+func TestPushScreenMsgInitializesScreenWithTerminalDimensions(t *testing.T) {
+	base := stubScreen{name: "base"}
+	m := New(base, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = next.(Model)
+
+	modal := stubScreen{name: "modal"}
+	next, _ = m.Update(PushScreenMsg{Screen: modal})
+	m = next.(Model)
+
+	gotModal := m.stack[1].(stubScreen)
+	if len(gotModal.received) != 1 {
+		t.Fatalf("expected WindowSizeMsg sent to pushed screen, got %d msgs", len(gotModal.received))
+	}
+	sz, ok := gotModal.received[0].(tea.WindowSizeMsg)
+	if !ok {
+		t.Fatalf("got %T, want tea.WindowSizeMsg", gotModal.received[0])
+	}
+	if sz.Width != 100 || sz.Height != 40 {
+		t.Errorf("got %dx%d, want 100x40", sz.Width, sz.Height)
 	}
 }
 

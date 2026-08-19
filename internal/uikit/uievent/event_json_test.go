@@ -3,6 +3,7 @@ package uievent
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -77,9 +78,25 @@ func TestEventUnmarshalUnknownKind(t *testing.T) {
 }
 
 func TestEventUnmarshalMalformedEnvelope(t *testing.T) {
+	// A syntactically invalid document never reaches Event.UnmarshalJSON:
+	// encoding/json rejects it in the scanner first. The envelope branch is
+	// reachable only through a document that parses but whose envelope
+	// FIELDS have the wrong types, so both inputs are pinned here.
 	var e Event
 	if err := json.Unmarshal([]byte(`not json`), &e); err == nil {
 		t.Fatal("expected error for malformed envelope")
+	}
+
+	var typed Event
+	err := json.Unmarshal([]byte(`{"kind":"turn.start","seq":"one"}`), &typed)
+	if err == nil {
+		t.Fatal("expected error for a non-numeric seq")
+	}
+	if !strings.Contains(err.Error(), "uievent: unmarshal envelope") {
+		t.Errorf("error = %q, want it to name the envelope stage", err)
+	}
+	if typed.Kind != "" || typed.Body != nil {
+		t.Errorf("event = %#v, want it left untouched on envelope failure", typed)
 	}
 }
 

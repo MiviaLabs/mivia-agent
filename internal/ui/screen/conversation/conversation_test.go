@@ -610,3 +610,44 @@ func TestShrinkCommitsEvictedTranscript(t *testing.T) {
 		t.Errorf("got %q, want the oldest evicted notice", got.Text)
 	}
 }
+
+func TestTurnEventClearsApprovalOnToolStartOrTurnEnd(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	// Arm approval
+	next, _ := s.Update(turnEventMsg{ev: uievent.Event{
+		Kind: uievent.KindToolPending,
+		Body: uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"},
+	}})
+	scr := next.(Screen)
+	if !scr.approval.Active() {
+		t.Fatal("expected approval active after ToolPending")
+	}
+
+	// ToolStart clears approval
+	next, _ = scr.Update(turnEventMsg{ev: uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "run_command"},
+	}})
+	scr = next.(Screen)
+	if scr.approval.Active() {
+		t.Error("expected approval cleared after ToolStart")
+	}
+
+	// Arm approval again, then TurnEnd clears approval
+	next, _ = scr.Update(turnEventMsg{ev: uievent.Event{
+		Kind: uievent.KindToolPending,
+		Body: uievent.ToolPendingBody{ToolCallID: "c2", Name: "run_command"},
+	}})
+	scr = next.(Screen)
+	if !scr.approval.Active() {
+		t.Fatal("expected approval active after ToolPending")
+	}
+	next, _ = scr.Update(turnEventMsg{ev: uievent.Event{
+		Kind: uievent.KindTurnEnd,
+		Body: uievent.TurnEndBody{Reason: "completed"},
+	}})
+	scr = next.(Screen)
+	if scr.approval.Active() {
+		t.Error("expected approval cleared after TurnEnd")
+	}
+}

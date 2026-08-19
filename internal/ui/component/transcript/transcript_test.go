@@ -277,3 +277,47 @@ func TestViewClearsOnceCommitted(t *testing.T) {
 		t.Errorf("got %q, want an empty View() once the span is committed (it now lives in scrollback, not the model)", got)
 	}
 }
+
+func TestToolOutputProgressUpdatesProgressBarInPlace(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24, 4)
+
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "subagent"},
+	})
+
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{
+			ToolCallID: "c1",
+			Progress: &uievent.Progress{
+				Step: 1, TotalSteps: 3, Status: "running", ElapsedSeconds: 5,
+				Log: []string{"step 1 log"},
+			},
+		},
+	})
+
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{
+			ToolCallID: "c1",
+			Progress: &uievent.Progress{
+				Step: 2, TotalSteps: 3, Status: "running", ElapsedSeconds: 10,
+				Log: []string{"step 1 log", "step 2 log"},
+			},
+		},
+	})
+
+	live := m.Live()
+	if len(live) != 1 {
+		t.Fatalf("got %d live blocks, want 1", len(live))
+	}
+	body := strings.Join(live[0].Body, "\n")
+	if strings.Count(body, "33%") > 0 {
+		t.Errorf("expected 33%% progress bar replaced, but found in body: %q", body)
+	}
+	if strings.Count(body, "66%") != 1 {
+		t.Errorf("expected 66%% progress bar once, got body: %q", body)
+	}
+}

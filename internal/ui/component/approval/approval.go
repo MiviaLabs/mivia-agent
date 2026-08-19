@@ -37,6 +37,9 @@ func New(t theme.Theme, tier theme.Tier) Model {
 // SetRequest arms the prompt for a new pending tool call.
 func (m *Model) SetRequest(b uievent.ToolPendingBody) { m.active = &b }
 
+// Clear dismisses the prompt without emitting a decision (e.g. tool started out-of-band or turn ended).
+func (m *Model) Clear() { m.active = nil }
+
 // Active reports whether a request is currently awaiting a decision.
 func (m Model) Active() bool { return m.active != nil }
 

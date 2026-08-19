@@ -3,6 +3,8 @@ package keymap
 import (
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // reservedKeys must never be bound IN ANY CONTEXT. docs/design/ux-rules.md
@@ -159,12 +161,27 @@ func TestHelpOmitsHiddenBindings(t *testing.T) {
 	}
 }
 
-func TestHelpRendersSpaceReadably(t *testing.T) {
-	rows := New([]Binding{
-		{ID: IDToggleBlock, Context: ContextTranscript, Keys: []string{" ", "enter"}, Help: "toggle"},
-	}).Help()
-	if len(rows) != 1 || rows[0].Keys != "space / enter" {
-		t.Errorf("got %+v, want the space key spelled out", rows)
+// TestSpaceIsBoundByItsReportedName pins the spelling against the real
+// key event. bubbletea/v2 Key.String reports the space bar as "space", so
+// a binding of " " matches nothing and the toggle key is silently dead.
+func TestSpaceIsBoundByItsReportedName(t *testing.T) {
+	reported := tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}.String()
+	m := New(Default())
+	if id, ok := m.Match(ContextTranscript, reported); !ok || id != IDToggleBlock {
+		t.Errorf("Match(transcript, %q) = (%q,%v), want the toggle binding", reported, id, ok)
+	}
+	if _, ok := m.Match(ContextTranscript, " "); ok {
+		t.Error("a literal space still resolves; the binding must use the reported name")
+	}
+	rows := m.Help()
+	found := false
+	for _, r := range rows {
+		if strings.Contains(r.Keys, "space") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the generated help does not spell the space key")
 	}
 }
 

@@ -179,15 +179,22 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 // headerPlain is the header with no styling, used for the focused run
 // and for width measurement.
 func (b Block) headerPlain() string {
-	out := b.collapseMarker() + " " + b.Header.Label
-	if b.Header.Detail != "" {
-		out += " " + b.Header.Detail
+	spec := render.SanitizeSpec(render.HeaderSpec{
+		Marker: b.collapseMarker(),
+		Label:  b.Header.Label,
+		Detail: b.Header.Detail,
+		Meta:   b.Header.Meta,
+		State:  b.Header.State,
+	})
+	out := spec.Marker + " " + spec.Label
+	if spec.Detail != "" {
+		out += " " + spec.Detail
 	}
-	if b.Header.Meta != "" {
-		out += "  " + b.Header.Meta
+	if spec.Meta != "" {
+		out += "  " + spec.Meta
 	}
-	if b.Header.State != "" {
-		out += "  " + b.Header.State
+	if spec.State != "" {
+		out += "  " + spec.State
 	}
 	return out
 }

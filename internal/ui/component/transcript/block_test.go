@@ -160,6 +160,19 @@ func TestFocusedHeaderUsesReverseVideoAndKeepsTheMarker(t *testing.T) {
 	}
 }
 
+func TestFocusedHeaderSanitizesControlCharacters(t *testing.T) {
+	th := loadTheme(t)
+	b := Block{
+		Header:      Header{Label: "run_command", Detail: "error:\nline 2\tindented", State: "failed"},
+		Collapsible: true,
+		Focused:     true,
+	}
+	got := b.Render(th, theme.TierASCII, 80)
+	if strings.ContainsAny(got, "\n\r\t") {
+		t.Errorf("focused header contains control characters or newlines: %q", got)
+	}
+}
+
 func TestIsEmpty(t *testing.T) {
 	if !(Block{}).isEmpty() {
 		t.Error("a zero block is empty")
