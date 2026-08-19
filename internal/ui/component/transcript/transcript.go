@@ -76,6 +76,9 @@ func New(t theme.Theme, tier theme.Tier) Model {
 	return Model{Theme: t, Tier: tier, focus: -1, follow: true}
 }
 
+// Empty reports whether the transcript has no conversation blocks and no active streaming tail.
+func (m Model) Empty() bool { return len(m.blocks) == 0 && m.pending == "" }
+
 // FlushMsg ticks the repaint clock while a text/reasoning span streams.
 type FlushMsg struct{}
 

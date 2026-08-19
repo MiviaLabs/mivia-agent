@@ -592,6 +592,8 @@ func (s Screen) centerRows() []string {
 		return overlayRows(renderSessionPickerDialog(s.Theme, s.Tier, dw, dh, *s.sessionPicker, s.now()), s.transcriptHeight())
 	case s.overlay != "":
 		return overlayRows(s.overlay, s.transcriptHeight())
+	case !s.embedded && s.transcript.Empty():
+		return s.welcome.Rows(s.chatWidth(), s.transcriptHeight())
 	default:
 		return s.transcript.Rows()
 	}

@@ -712,3 +712,33 @@ func TestTurnEventClearsApprovalOnToolStartOrTurnEnd(t *testing.T) {
 		t.Error("expected approval cleared after TurnEnd")
 	}
 }
+
+func TestWelcomeBannerRendersOnEmptyTranscript(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	scr := next.(Screen)
+	view := ansi.Strip(scr.View())
+	if !strings.Contains(view, "M I V I A   A G E N T") && !strings.Contains(view, "Mivia Agent") {
+		t.Errorf("empty transcript view missing Mivia Agent banner:\n%s", view)
+	}
+	if !strings.Contains(view, "Mac Lisowski") {
+		t.Errorf("empty transcript view missing author credit:\n%s", view)
+	}
+	if !strings.Contains(view, "MIT License") {
+		t.Errorf("empty transcript view missing MIT license:\n%s", view)
+	}
+
+	// Starting a turn replaces the welcome banner
+	next, _ = scr.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindTurnStart,
+		Body: uievent.TurnStartBody{Input: "hello agent"},
+	}})
+	scr = next.(Screen)
+	turnView := ansi.Strip(scr.View())
+	if strings.Contains(turnView, "Mac Lisowski") {
+		t.Errorf("active conversation view should not retain welcome credits:\n%s", turnView)
+	}
+	if !strings.Contains(turnView, "hello agent") {
+		t.Errorf("active conversation view missing user input:\n%s", turnView)
+	}
+}

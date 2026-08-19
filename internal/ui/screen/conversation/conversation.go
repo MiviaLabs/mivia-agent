@@ -21,6 +21,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/welcome"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -71,6 +72,7 @@ type Screen struct {
 	composer   composer.Model
 	statusline statusline.Model
 	approval   approval.Model
+	welcome    welcome.Model
 
 	active ports.TurnHandle
 	now    func() time.Time
@@ -121,6 +123,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		composer:   composer.New(th, tier, width),
 		statusline: statusline.New(th, tier),
 		approval:   approval.New(th, tier),
+		welcome:    welcome.New(th, tier),
 		panel:      newPanel(th, tier),
 		keys:       keymap.New(keymap.Default()),
 		now:        now,
@@ -275,6 +278,7 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
 		s.topbar.SetTheme(msg.Theme, msg.Tier)
 		s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
+		s.welcome.SetTheme(msg.Theme, msg.Tier)
 		return s, nil
 	}
 	return s, nil
@@ -421,6 +425,8 @@ func (s Screen) View() string {
 		lines = append(lines, s.centerRows()...)
 	case !s.embedded && s.panel.open:
 		lines = append(lines, s.narrowPanelRows()...)
+	case !s.embedded && s.transcript.Empty():
+		lines = append(lines, s.welcome.Rows(s.chatWidth(), s.transcriptHeight())...)
 	default:
 		lines = append(lines, s.transcript.Rows()...)
 	}
