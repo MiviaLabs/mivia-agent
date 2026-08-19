@@ -267,14 +267,22 @@ func (m Model) View() string {
 		line = ansi.Truncate(line, m.width-frameInset, "")
 	}
 	if m.width >= minFramedWidth {
-		// The input is always the focused control, so it takes the
-		// focus-role border. Clip to the wrap width like the approval
-		// prompt: a line lipgloss wraps would add a row Height() does
-		// not claim. The menu stays above the frame, attached to the
-		// input it completes (rule 2.8: the input stays pinned last).
-		// Single-line content: lipgloss's Width() is the box total, border
-		// included, so the frame is exactly the terminal wide.
-		line = render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, m.width, line)
+		// Plain RoleBorder, not RoleBorderFocus: the composer's frame is
+		// permanent, always-present chrome, not a state indicator - it is
+		// framed on every screen whether or not the input actually has
+		// keyboard focus at this instant (a modal dialog can be open on
+		// top of it). RoleBorderFocus is reserved for chrome that is
+		// asking for attention right now (the approval prompt) or that
+		// distinguishes a focused pane from an unfocused one (a split
+		// layout) - using it here made every screen's default border
+		// read as bright/urgent with nothing to contrast it against.
+		// Clip to the wrap width like the approval prompt: a line
+		// lipgloss wraps would add a row Height() does not claim. The
+		// menu stays above the frame, attached to the input it completes
+		// (rule 2.8: the input stays pinned last). Single-line content:
+		// lipgloss's Width() is the box total, border included, so the
+		// frame is exactly the terminal wide.
+		line = render.Bordered(m.Theme, m.Tier, theme.RoleBorder, m.width, line)
 	} else if m.width > 0 && ansi.StringWidth(line) > m.width {
 		line = ansi.Truncate(line, m.width, "")
 	}
