@@ -748,3 +748,73 @@ func TestStatusRowAlwaysShowsTheHint(t *testing.T) {
 		t.Errorf("status row width %d exceeds 20: %q", w, row)
 	}
 }
+
+// pendingDiffScreen returns a screen with a 31-line diff awaiting
+// approval, sized and ready to scroll.
+func pendingDiffScreen(t *testing.T) Screen {
+	t.Helper()
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	scr := next.(Screen)
+	scr.approval.SetRequest(uievent.ToolPendingBody{
+		ToolCallID: "c1", Name: "edit_file",
+		Diff: &uievent.Diff{
+			Path: "a.go",
+			Hunks: []uievent.DiffHunk{{
+				Header: "@@ -1 +1 @@",
+				Lines: func() []uievent.DiffLine {
+					lines := make([]uievent.DiffLine, 30)
+					for i := range lines {
+						lines[i] = uievent.DiffLine{Kind: uievent.DiffLineAdd, Text: fmt.Sprintf("line %d", i)}
+					}
+					return lines
+				}(),
+			}},
+		},
+	})
+	return scr
+}
+
+// TestApprovalScrollKeysWindowTheDiff pins the key routing: up/down (and
+// the k/j spellings) scroll the preview, the request stays pending, and
+// the decision keys still resolve after scrolling.
+func TestApprovalScrollKeysWindowTheDiff(t *testing.T) {
+	scr := pendingDiffScreen(t)
+	for _, k := range []string{"down", "j"} {
+		var msg tea.KeyPressMsg
+		if k == "down" {
+			msg = tea.KeyPressMsg{Code: tea.KeyDown}
+		} else {
+			msg = tea.KeyPressMsg{Code: 'j'}
+		}
+		next, _ := scr.Update(msg)
+		scr = next.(Screen)
+	}
+	if !strings.Contains(ansi.Strip(scr.View()), "lines 3-12 of 31") {
+		t.Errorf("two scroll keys did not move the window by 2:\n%s", scr.View())
+	}
+	if !scr.approval.Active() {
+		t.Fatal("a scroll key resolved the approval")
+	}
+	next, cmd := scr.Update(tea.KeyPressMsg{Code: 'o'})
+	scr = next.(Screen)
+	if cmd == nil || scr.approval.Active() {
+		t.Error("o no longer approves after scrolling")
+	}
+}
+
+// TestApprovalWheelScrollsThePreviewNotTheTranscript pins the mouse
+// routing: while an approval is pending, the wheel windows the diff
+// preview and the transcript behind it does not move.
+func TestApprovalWheelScrollsThePreviewNotTheTranscript(t *testing.T) {
+	scr := pendingDiffScreen(t)
+	before := scr.transcript.Offset()
+	next, _ := scr.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	scr = next.(Screen)
+	if !strings.Contains(ansi.Strip(scr.View()), "lines") {
+		t.Error("wheel did not reach the approval preview")
+	}
+	if got := scr.transcript.Offset(); got != before {
+		t.Errorf("wheel moved the transcript (%d -> %d) behind a modal approval", before, got)
+	}
+}

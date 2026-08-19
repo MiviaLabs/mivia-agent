@@ -275,21 +275,85 @@ func TestViewShowsDiffPreview(t *testing.T) {
 	}
 }
 
-// TestViewCapsLongDiffs pins the cap: a diff beyond
-// ApprovalDiffPreviewLines is cut with a "N more lines" note, and
-// Height() agrees with the rows View() actually claims.
-func TestViewCapsLongDiffs(t *testing.T) {
+// TestViewWindowsAndScrollsLongDiffs pins the scrollable preview: a
+// diff beyond ApprovalDiffPreviewLines shows a fixed window with a
+// position row, ScrollBy moves the window and clamps at both ends, the
+// height never changes with the offset, and Height() agrees with the
+// rows View() actually claims.
+func TestViewWindowsAndScrollsLongDiffs(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	d := previewDiff(t, 30) // 31 rendered lines, cap 10
+	d := previewDiff(t, 30) // 31 rendered lines, window 10
 	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file", Diff: d})
 	got := m.View()
-	if !strings.Contains(got, "21 more lines") {
-		t.Errorf("capped view missing the more-lines note:\n%s", got)
+	if !strings.Contains(got, "lines 1-10 of 31") {
+		t.Errorf("windowed view missing the position row:\n%s", got)
 	}
 	if strings.Contains(got, "+ line 10") {
-		t.Errorf("capped view shows a line beyond the cap:\n%s", got)
+		t.Errorf("window shows a line beyond the window:\n%s", got)
 	}
-	if want := m.Height(); want != len(strings.Split(got, "\n")) {
-		t.Errorf("Height() = %d, want %d (View's row count)", want, len(strings.Split(got, "\n")))
+	rows := len(strings.Split(got, "\n"))
+	if m.Height() != rows {
+		t.Errorf("Height() = %d, want %d (View's row count)", m.Height(), rows)
+	}
+
+	m = m.ScrollBy(5)
+	if !strings.Contains(m.View(), "lines 6-15 of 31") {
+		t.Errorf("scrolled view missing position 6-15:\n%s", m.View())
+	}
+	if !strings.Contains(m.View(), "+ line 10") {
+		t.Errorf("scrolled view does not show line 10:\n%s", m.View())
+	}
+	if m.Height() != rows {
+		t.Errorf("Height changed with offset: %d, want %d", m.Height(), rows)
+	}
+
+	m = m.ScrollBy(1000) // clamp at the end
+	if !strings.Contains(m.View(), "lines 22-31 of 31") {
+		t.Errorf("unclamped scroll:\n%s", m.View())
+	}
+	m = m.ScrollBy(-1000) // clamp at the start
+	if !strings.Contains(m.View(), "lines 1-10 of 31") {
+		t.Errorf("unclamped scroll-up:\n%s", m.View())
+	}
+}
+
+// TestScrollByIsANoOpWithoutADiff: a pending tool call with no diff has
+// nothing to window, so scroll keys and the wheel must do nothing
+// rather than panic or shift state.
+func TestScrollByIsANoOpWithoutADiff(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
+	before := m.View()
+	m = m.ScrollBy(3)
+	if m.View() != before || m.Height() != len(strings.Split(before, "\n")) {
+		t.Error("scroll changed the diff-less prompt")
+	}
+}
+
+// TestSetRequestResetsTheScrollOffset: a second pending request starts
+// at the top of its own diff, not wherever the previous one was left.
+func TestSetRequestResetsTheScrollOffset(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Diff: previewDiff(t, 30)})
+	m = m.ScrollBy(20)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c2", Diff: previewDiff(t, 30)})
+	if !strings.Contains(m.View(), "lines 1-10 of 31") {
+		t.Errorf("new request kept a stale offset:\n%s", m.View())
+	}
+}
+
+// TestScrollDoesNotEatDecisionKeys pins the routing: the scroll window
+// moves on up/down, and the decision keys still resolve while it is
+// scrolled.
+func TestScrollDoesNotEatDecisionKeys(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Diff: previewDiff(t, 30)})
+	m = m.ScrollBy(4)
+	next, cmd := m.Update(keyMsg("o"))
+	if cmd == nil {
+		t.Fatal("o no longer resolves after scrolling")
+	}
+	if next.Active() {
+		t.Error("approve did not clear the request")
 	}
 }

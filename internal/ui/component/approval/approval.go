@@ -3,6 +3,9 @@
 package approval
 
 import (
+	"fmt"
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
@@ -22,6 +25,11 @@ type Model struct {
 	Tier  theme.Tier
 
 	active *uievent.ToolPendingBody
+
+	// offset is the first rendered diff line the preview window shows.
+	// It is only meaningful while active carries a diff, and it never
+	// changes the prompt's height (see View).
+	offset int
 }
 
 // DecisionMsg is emitted when the user resolves the active request.
@@ -35,11 +43,19 @@ func New(t theme.Theme, tier theme.Tier) Model {
 	return Model{Theme: t, Tier: tier}
 }
 
-// SetRequest arms the prompt for a new pending tool call.
-func (m *Model) SetRequest(b uievent.ToolPendingBody) { m.active = &b }
+// SetRequest arms the prompt for a new pending tool call. The scroll
+// offset restarts at the top: a new request is a new diff, and a stale
+// offset could land the first view halfway through it.
+func (m *Model) SetRequest(b uievent.ToolPendingBody) {
+	m.active = &b
+	m.offset = 0
+}
 
 // Clear dismisses the prompt without emitting a decision (e.g. tool started out-of-band or turn ended).
-func (m *Model) Clear() { m.active = nil }
+func (m *Model) Clear() {
+	m.active = nil
+	m.offset = 0
+}
 
 // Active reports whether a request is currently awaiting a decision.
 func (m Model) Active() bool { return m.active != nil }
@@ -78,6 +94,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 // View renders the prompt, or "" when nothing is pending.
+//
+// The diff preview is a FIXED-height window (ApprovalDiffPreviewLines)
+// into the full diff at the current scroll offset, with a position row
+// ("lines X-Y of Z") when the diff is longer than the window. Fixed
+// height matters: scrolling must never change the rows the prompt
+// claims, or every wrapped line above it reflows on every keystroke
+// (ux-rules.md rule 2.7).
 func (m Model) View() string {
 	if m.active == nil {
 		return ""
@@ -85,15 +108,18 @@ func (m Model) View() string {
 	title := render.Role(m.Theme, m.Tier, theme.RoleWarning).Bold(true).Render(
 		"approve " + m.active.Name + " " + render.FormatArgs(m.active.Args))
 	// The hint states the complete truth for this state: every key listed
-	// works, and no key that works is omitted. "v view diff" stays absent:
-	// the diff is already on screen, capped, so there is nothing left to
-	// open.
+	// works, and no key that works is omitted. The scroll keys live in the
+	// keymap's approval context; they are absent here because this line
+	// names decision keys only - scrolling has its own position row.
 	hint := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
 		"o once    a always    d deny    D deny always")
 	body := title
-	if m.active.Diff != nil {
-		if preview := render.DiffPreview(m.Theme, m.Tier, *m.active.Diff, uikitconfig.ApprovalDiffPreviewLines); preview != "" {
-			body += "\n" + preview
+	if diff := m.diffWindow(); len(diff) > 0 {
+		body += "\n" + strings.Join(diff, "\n")
+		if m.scrollable() {
+			body += "\n" + render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
+				fmt.Sprintf("lines %d-%d of %d  up/down:scroll",
+					m.offset+1, m.offset+len(diff), m.diffTotal()))
 		}
 	}
 	body += "\n" + hint
@@ -103,36 +129,76 @@ func (m Model) View() string {
 	return render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, body)
 }
 
+// ScrollBy moves the diff preview window by n lines and returns the
+// model. The offset clamps to [0, total-window], so scrolling past
+// either end is a no-op, never an empty window.
+func (m Model) ScrollBy(n int) Model {
+	if !m.scrollable() {
+		return m
+	}
+	max := m.diffTotal() - m.windowHeight()
+	m.offset = clamp(m.offset+n, 0, max)
+	return m
+}
+
+// diffTotal is the full rendered line count of the pending diff.
+func (m Model) diffTotal() int {
+	if m.active == nil || m.active.Diff == nil {
+		return 0
+	}
+	return render.DiffLineCount(*m.active.Diff)
+}
+
+// windowHeight is how many diff lines the preview shows at once.
+func (m Model) windowHeight() int {
+	return min(m.diffTotal(), uikitconfig.ApprovalDiffPreviewLines)
+}
+
+// scrollable reports whether the diff is longer than its window.
+func (m Model) scrollable() bool {
+	return m.diffTotal() > uikitconfig.ApprovalDiffPreviewLines
+}
+
+// diffWindow is the styled diff lines currently visible.
+func (m Model) diffWindow() []string {
+	if m.active == nil || m.active.Diff == nil {
+		return nil
+	}
+	lines := render.DiffLines(m.Theme, m.Tier, *m.active.Diff)
+	end := m.offset + m.windowHeight()
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if m.offset > end {
+		m.offset = end
+	}
+	return lines[m.offset:end]
+}
+
 // Height is the number of terminal rows View() claims, border included,
 // so the enclosing screen can reserve them without re-rendering. It is
-// 0 when nothing is pending.
+// 0 when nothing is pending, and CONSTANT while scrolling: the window
+// never grows or shrinks with the offset.
 func (m Model) Height() int {
 	if m.active == nil {
 		return 0
 	}
-	body := 2 // title and hint
-	if m.active.Diff != nil {
-		if n := diffPreviewHeight(*m.active.Diff, uikitconfig.ApprovalDiffPreviewLines); n > 0 {
-			body += n
+	rows := 2 // title and hint
+	if n := m.windowHeight(); n > 0 {
+		rows += n
+		if m.scrollable() {
+			rows++ // the position row
 		}
 	}
-	return body + 2 // the border's top and bottom rows
+	return rows + 2 // the border's top and bottom rows
 }
 
-// diffPreviewHeight is the row count of render.DiffPreview's output:
-// shown diff lines, plus one for the "N more lines" note when the cap
-// cut anything.
-func diffPreviewHeight(d uievent.Diff, maxLines int) int {
-	if maxLines <= 0 || len(d.Hunks) == 0 {
-		return 0
+func clamp(n, lo, hi int) int {
+	if n < lo {
+		return lo
 	}
-	total := len(d.Hunks)
-	for _, hunk := range d.Hunks {
-		total += len(hunk.Lines)
+	if n > hi {
+		return hi
 	}
-	shown := min(total, maxLines)
-	if total > maxLines {
-		shown++
-	}
-	return shown
+	return n
 }

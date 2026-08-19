@@ -122,7 +122,7 @@ type Binding struct {
 // word-rubout and is "close tab" in many emulators, so collapse-all
 // moved off it too.
 func Default() []Binding {
-	return []Binding{
+	return append([]Binding{
 		// Global.
 		{ID: IDCancel, Context: ContextGlobal, Keys: []string{"esc"}, Help: "cancel the turn, keep the text"},
 		{ID: IDQuit, Context: ContextGlobal, Keys: []string{"ctrl+c"}, Help: "cancel; press twice to quit", Short: "quit"},
@@ -163,25 +163,34 @@ func Default() []Binding {
 		{ID: IDCopyBlock, Context: ContextTranscript, Keys: []string{"y"}, Help: "copy the block"},
 		{ID: IDCancel, Context: ContextTranscript, Keys: []string{"esc"}, Help: "return to the composer"},
 
-		// Approval. wireframes-panes.md section 7.
+		// Approval. wireframes-panes.md section 7. up/down (and the less
+		// spellings k/j) scroll the inline diff preview; the decision keys
+		// are letters the arrows never collide with.
 		{ID: IDApproveOnce, Context: ContextApproval, Keys: []string{"o", "enter"}, Help: "once"},
 		{ID: IDApproveAlways, Context: ContextApproval, Keys: []string{"a"}, Help: "always"},
 		{ID: IDDenyOnce, Context: ContextApproval, Keys: []string{"d", "esc"}, Help: "deny"},
 		{ID: IDDenyAlways, Context: ContextApproval, Keys: []string{"D"}, Help: "deny always"},
 		{ID: IDDenyAlways, Context: ContextApproval, Keys: []string{"shift+d"}, Hidden: true},
+		{ID: IDScrollUp, Context: ContextApproval, Keys: []string{"up", "k"}, Help: "scroll the diff preview one line up"},
+		{ID: IDScrollDown, Context: ContextApproval, Keys: []string{"down", "j"}, Help: "scroll the diff preview one line down"},
 
 		// Dialogs.
 		{ID: IDDialogUp, Context: ContextDialog, Keys: []string{"up"}, Help: "previous"},
 		{ID: IDDialogDown, Context: ContextDialog, Keys: []string{"down"}, Help: "next"},
 		{ID: IDDialogAccept, Context: ContextDialog, Keys: []string{"enter"}, Help: "apply"},
 		{ID: IDDialogCancel, Context: ContextDialog, Keys: []string{"esc"}, Help: "cancel"},
+	}, pagerBindings()...)
+}
 
-		// Pager (transcript mode). Keys follow less, because less is the
-		// muscle memory every terminal user already has (cockpit-
-		// research.md rule 6.2). ctrl+u and ctrl+d are readline keys:
-		// readline owns the line editor, and a pager is not one. less
-		// itself binds ctrl+d as half a page down. ctrl+s stays unbound -
-		// it is XOFF in any context (ux-rules.md rule 1.2).
+// pagerBindings is the pager (transcript mode) section of Default,
+// split out only to keep Default inside the function-size budget. Keys
+// follow less, because less is the muscle memory every terminal user
+// already has (cockpit-research.md rule 6.2). ctrl+u and ctrl+d are
+// readline keys: readline owns the line editor, and a pager is not one.
+// less itself binds ctrl+d as half a page down. ctrl+s stays unbound -
+// it is XOFF in any context (ux-rules.md rule 1.2).
+func pagerBindings() []Binding {
+	return []Binding{
 		{ID: IDSearchStart, Context: ContextPager, Keys: []string{"/"}, Help: "search the conversation", Short: "search"},
 		{ID: IDSearchNext, Context: ContextPager, Keys: []string{"n"}, Help: "next match"},
 		{ID: IDSearchPrev, Context: ContextPager, Keys: []string{"N"}, Help: "previous match"},

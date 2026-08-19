@@ -1,7 +1,6 @@
 package render
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -17,66 +16,29 @@ import (
 // (wireframes-panes.md section 11), and rendering them here too printed
 // them twice.
 func Diff(t theme.Theme, tier theme.Tier, d uievent.Diff) string {
+	return strings.Join(DiffLines(t, tier, d), "\n")
+}
+
+// DiffLines is Diff as one string per rendered line, so surfaces that
+// window into a diff (the scrollable approval preview) can slice it
+// without re-parsing styled text.
+func DiffLines(t theme.Theme, tier theme.Tier, d uievent.Diff) []string {
 	if len(d.Hunks) == 0 {
-		return ""
+		return nil
 	}
-	var b strings.Builder
-	for i, hunk := range d.Hunks {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(Role(t, tier, theme.RoleDiffHunk).Render(hunk.Header))
+	var out []string
+	for _, hunk := range d.Hunks {
+		out = append(out, Role(t, tier, theme.RoleDiffHunk).Render(hunk.Header))
 		for _, line := range hunk.Lines {
-			b.WriteByte('\n')
-			b.WriteString(diffLine(t, tier, line))
+			out = append(out, diffLine(t, tier, line))
 		}
 	}
-	return b.String()
+	return out
 }
 
-// DiffPreview renders at most maxLines diff lines (hunk headers count)
-// followed by a subtle "N more lines" note when the diff is longer. It
-// is Diff with a cap, for surfaces that cannot grow with the diff -
-// the approval prompt, which owns a fixed slice of the cockpit.
-func DiffPreview(t theme.Theme, tier theme.Tier, d uievent.Diff, maxLines int) string {
-	if maxLines <= 0 || len(d.Hunks) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	shown := 0
-	more := diffLineCount(d) - maxLines
-	if more < 0 {
-		more = 0
-	}
-outer:
-	for i, hunk := range d.Hunks {
-		if i > 0 && shown < maxLines {
-			b.WriteByte('\n')
-		}
-		if shown < maxLines {
-			b.WriteString(Role(t, tier, theme.RoleDiffHunk).Render(hunk.Header))
-			shown++
-		}
-		for _, line := range hunk.Lines {
-			if shown >= maxLines {
-				break outer
-			}
-			b.WriteByte('\n')
-			b.WriteString(diffLine(t, tier, line))
-			shown++
-		}
-	}
-	if more > 0 {
-		b.WriteByte('\n')
-		b.WriteString(Role(t, tier, theme.RoleFGSubtle).
-			Render(fmt.Sprintf("%d more lines", more)))
-	}
-	return b.String()
-}
-
-// diffLineCount is every line Diff would render: one per hunk header
+// DiffLineCount is how many lines Diff renders: one per hunk header
 // plus one per diff line.
-func diffLineCount(d uievent.Diff) int {
+func DiffLineCount(d uievent.Diff) int {
 	n := len(d.Hunks)
 	for _, hunk := range d.Hunks {
 		n += len(hunk.Lines)

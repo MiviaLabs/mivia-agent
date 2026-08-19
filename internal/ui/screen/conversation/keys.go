@@ -27,6 +27,20 @@ import (
 //	composer  - the resting state, and the fallback for plain text
 func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	if s.approval.Active() {
+		// Scroll keys window the inline diff preview. Only the scroll IDs
+		// are consumed here: a matched decision key (o/a/d/esc/enter) must
+		// still reach approval.Update below, or this branch would silently
+		// eat deny.
+		if id, ok := s.keys.Match(keymap.ContextApproval, msg.String()); ok {
+			switch id {
+			case keymap.IDScrollUp:
+				s.approval = s.approval.ScrollBy(-1)
+				return s, nil
+			case keymap.IDScrollDown:
+				s.approval = s.approval.ScrollBy(1)
+				return s, nil
+			}
+		}
 		next, cmd := s.approval.Update(msg)
 		s.approval = next
 		return s, cmd

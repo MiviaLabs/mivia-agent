@@ -177,6 +177,13 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		if msg.Button == tea.MouseWheelUp {
 			step = -step
 		}
+		if s.approval.Active() {
+			// The approval prompt is modal for keys; the wheel follows it,
+			// scrolling the diff preview instead of the transcript behind
+			// it.
+			s.approval = s.approval.ScrollBy(step)
+			return s, nil
+		}
 		s.transcript = s.transcript.ScrollBy(step)
 		return s, nil
 	case tea.MouseClickMsg:

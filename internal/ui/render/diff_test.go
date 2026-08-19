@@ -63,11 +63,10 @@ func TestDiffSeparatesMultipleHunks(t *testing.T) {
 	}
 }
 
-// TestDiffPreviewCapsAndCounts pins the preview: it shows the first
-// maxLines rendered lines (hunk headers count), appends a "N more lines"
-// note only when the cap cut something, and renders nothing for a diff
-// with no hunks.
-func TestDiffPreviewCapsAndCounts(t *testing.T) {
+// TestDiffLinesWindowsByIndex pins the sliceable form: one string per
+// rendered line, hunk headers included, so a windowing surface can index
+// it without re-parsing styled text.
+func TestDiffLinesWindowsByIndex(t *testing.T) {
 	d := uievent.Diff{
 		Path: "a.go",
 		Hunks: []uievent.DiffHunk{
@@ -81,16 +80,14 @@ func TestDiffPreviewCapsAndCounts(t *testing.T) {
 			}},
 		},
 	}
-	got := DiffPreview(loadTheme(t), theme.TierASCII, d, 4)
-	plain := strings.ReplaceAll(ansi.Strip(got), "\n", "|")
-	want := "@@ -1,3 +1,3 @@|- old|+ new|  same|2 more lines"
-	if plain != want {
-		t.Errorf("DiffPreview = %q, want %q", plain, want)
+	lines := DiffLines(loadTheme(t), theme.TierASCII, d)
+	if len(lines) != DiffLineCount(d) || len(lines) != 6 {
+		t.Fatalf("DiffLines = %d lines, DiffLineCount = %d, want 6", len(lines), DiffLineCount(d))
 	}
-	if got := DiffPreview(loadTheme(t), theme.TierASCII, d, 10); strings.Contains(got, "more lines") {
-		t.Errorf("uncapped preview carries a more-lines note:\n%s", got)
+	if got := ansi.Strip(strings.Join(lines[4:6], "\n")); got != "@@ -9,2 +9,2 @@\n+ later" {
+		t.Errorf("window [4:6] = %q", got)
 	}
-	if got := DiffPreview(loadTheme(t), theme.TierASCII, uievent.Diff{Path: "a.go"}, 4); got != "" {
-		t.Errorf("empty diff rendered %q, want empty", got)
+	if DiffLines(loadTheme(t), theme.TierASCII, uievent.Diff{Path: "a.go"}) != nil {
+		t.Error("empty diff rendered lines, want nil")
 	}
 }
