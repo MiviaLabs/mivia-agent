@@ -279,7 +279,7 @@ func TestAuditOllamaLoadAndSelectableMatrix(t *testing.T) {
 }
 
 // TestAuditShippedExampleLoads pins that the shipped .mivia/mivia.toml.example
-// loads with the real loader in every documented shape: as shipped (deepseek
+// loads with the real loader in every documented shape: as shipped (openrouter
 // active, ollama cloud profile), with ollama active and no key, with ollama
 // active and a key, and with the local-daemon profile (loopback, no key).
 func TestAuditShippedExampleLoads(t *testing.T) {
@@ -320,7 +320,7 @@ func TestAuditShippedExampleLoads(t *testing.T) {
 	}
 
 	// (b) Active provider switched to ollama, still no key: loads, key missing.
-	cloud := bytes.ReplaceAll(raw, []byte("name = \"deepseek\""), []byte("name = \"ollama\""))
+	cloud := bytes.ReplaceAll(raw, []byte("name = \"openrouter\""), []byte("name = \"ollama\""))
 	_, group = loadExample(cloud)
 	if group.Selectable {
 		t.Fatal("ollama cloud without key must be unselectable")

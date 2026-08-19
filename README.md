@@ -24,6 +24,14 @@ Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need 
 
 Tagged [GitHub Releases](https://github.com/MiviaLabs/mivia-agent/releases) provide archives for Linux, macOS, and Windows. Each release supports amd64 and arm64. See the [release guide](docs/development/release.md) for release checks and pinned installs.
 
+Piping a script into `bash` runs it with your shell's privileges. Inspect it first, or pin an exact tag, with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh -o /tmp/mivia-install.sh
+sed -n '1,240p' /tmp/mivia-install.sh
+sh /tmp/mivia-install.sh v0.1.0
+```
+
 Install the latest stable release on Linux or macOS:
 
 ```bash
@@ -40,14 +48,6 @@ mivia --version
 ```
 
 The installers verify the archive checksum before extraction. They use a user-owned directory and do not require administrator rights. Unix installs update a shell profile. A child `bash` process cannot update the parent shell, so open a new shell or source the reported profile. PowerShell also updates the current process when it can.
-
-For a pinned release, inspect the script before you run it:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh -o /tmp/mivia-install.sh
-sed -n '1,240p' /tmp/mivia-install.sh
-sh /tmp/mivia-install.sh v0.1.0
-```
 
 Use `MIVIA_NO_PATH_UPDATE=1` on Unix or `-NoPathUpdate` in PowerShell to skip PATH changes. Latest installation requires at least one published stable release. Pre-release tags require an explicit version.
 
@@ -92,8 +92,8 @@ configured AI provider. Five providers are built in:
 
 | Provider | Default model | Default API base URL |
 |----------|---------------|-----------------------|
-| DeepSeek (default) | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
-| OpenRouter | `openai/gpt-4o-mini` | `https://openrouter.ai/api/v1` |
+| OpenRouter (default) | `openai/gpt-5.6-luna` | `https://openrouter.ai/api/v1` |
+| DeepSeek | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
 | ZAI (z.ai) | `glm-5.2` | `https://api.z.ai/api/paas/v4` |
 | Ollama | `gpt-oss:120b` | `https://ollama.com/v1` |
 | LLM Gateway | `deepseek-v4-pro` | `https://api.llmgateway.io/v1` |
@@ -104,7 +104,7 @@ declare its model catalog in the settings file (there is no remote model
 discovery). Configure a provider and its API key under
 [Configuration](docs/product/config.md#provider-support); see
 [Integrations](docs/product/integrations.md) for the external-service picture.
-Default provider: DeepSeek, model `deepseek-v4-flash`; switch with
+Default provider: OpenRouter, model `openai/gpt-5.6-luna`; switch with
 `--provider` or in `[provider] name = ...`.
 
 Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributing.md). Provider and config options: see [Configuration](docs/product/config.md).
@@ -144,7 +144,7 @@ flowchart LR
     Chat --> Provider["AI provider"]
 ```
 
-Most work under `mivia chat` runs locally. The provider, web search, configured MCP servers, lifecycle hooks, and workflow delivery are separate data or execution paths. Review their settings before use.
+Most work under `mivia chat` runs locally; the provider, web search, MCP, hooks, and delivery paths above are the exceptions.
 
 ## Docs
 

@@ -6,9 +6,9 @@
 # env_file = "./.env"
 
 [provider]
-# Default provider: deepseek. Default model: deepseek-v4-flash.
-# Other providers: openrouter, zai, llmgateway.
-name = "deepseek"
+# Default provider: openrouter. Default model: openai/gpt-5.6-luna.
+# Other providers: deepseek, zai, ollama, llmgateway.
+name = "openrouter"
 # "auto" (default) captures and publishes provider-reported prompt-cache
 # usage accounting (cache hit/miss token counts) when a response reports it.
 # "off" disables capture only - it cannot disable a provider's own automatic
@@ -92,11 +92,13 @@ base_url = "https://ollama.com/v1"
 # base_url = "http://127.0.0.1:11434/v1"
 
 [providers.openrouter]
-# Override CLI provider with --provider openrouter
+# Shipped default provider. Override with --provider <name>.
 # OpenRouter normalizes reasoning_effort per upstream model, so it needs no
 # reasoning_dialect either. Use reasoning_dialect = "openrouter" for the
 # canonical nested reasoning object.
 models = [
+  { name = "openai/gpt-5.6-luna", context_window_tokens = 400000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "xhigh", "max"], reasoning = "medium", reasoning_dialect = "openrouter" },
+  # A smaller, cheaper alternative for quick turns:
   { name = "openai/gpt-4o-mini", context_window_tokens = 128000 },
   # On/off reasoning only (no graded effort): "high" = thinking on. Tool
   # calling supported; no structured outputs (response_format unsupported).
@@ -111,7 +113,7 @@ models = [
   # prompts 90 days, trains nothing).
   { name = "poolside/laguna-s-2.1", context_window_tokens = 1048576, max_output_tokens = 131072, reasoning_efforts = ["off", "max"], reasoning = "max", reasoning_dialect = "openrouter_onoff" },
 ]
-default_model = "openai/gpt-4o-mini"
+default_model = "openai/gpt-5.6-luna"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
 

@@ -5,13 +5,13 @@ privacy, and orchestration limits. Two inputs: a settings file (`mivia.toml`)
 and an API key, kept out of the settings file, in your environment.
 
 ```bash
-export DEEPSEEK_API_KEY=sk-REPLACE-ME
+export OPENROUTER_API_KEY=sk-REPLACE-ME
 mivia doctor   # confirms mivia can find the key; never prints it
 mivia chat
 ```
 
-Default provider: DeepSeek, model `deepseek-v4-flash`. Run `mivia setup` or
-copy the example settings file before `doctor` or `chat`; an API key alone
+Default provider: OpenRouter, model `openai/gpt-5.6-luna`. Run `mivia setup`
+or copy the example settings file before `doctor` or `chat`; an API key alone
 does not create the required model catalog.
 
 ## Where mivia looks for settings
@@ -37,10 +37,11 @@ The workspace `.env` stays beside the project files at `./.env`. Tools such as d
 
 | Setting | Default |
 |---------|---------|
-| Provider | `deepseek` |
-| DeepSeek example model | `deepseek-v4-flash` (declare it in your settings) |
+| Provider | `openrouter` |
+| OpenRouter model | `openai/gpt-5.6-luna` (declare it under `providers.openrouter`) |
+| OpenRouter cheaper alternative | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
+| DeepSeek example model | `deepseek-v4-flash` (declare it under `providers.deepseek`) |
 | DeepSeek advanced example | `deepseek-v4-pro` (declare it, then set `default_model` or use `--model`) |
-| OpenRouter example | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
 | ZAI example | `glm-5.2` (declare it under `providers.zai`) |
 | Ollama example | `gpt-oss:120b` (declare it under `providers.ollama`) |
 
@@ -49,7 +50,7 @@ The workspace `.env` stays beside the project files at `./.env`. Tools such as d
 Set the provider API key in the process environment or an env file. Then run `mivia doctor` to confirm that mivia can find it.
 
 ```bash
-export DEEPSEEK_API_KEY=sk-REPLACE-ME
+export OPENROUTER_API_KEY=sk-REPLACE-ME
 mivia doctor
 mivia chat -p "hi"
 ```
@@ -67,7 +68,14 @@ cp .env.example .env
 env_file = "./.env"
 
 [provider]
-name = "deepseek"
+name = "openrouter"
+
+[providers.openrouter]
+models = [
+  { name = "openai/gpt-5.6-luna", context_window_tokens = 400000, max_output_tokens = 128000 },
+  { name = "openai/gpt-4o-mini", context_window_tokens = 128000 },
+]
+default_model = "openai/gpt-5.6-luna"
 
 [providers.deepseek]
 models = [
@@ -77,10 +85,6 @@ models = [
 default_model = "deepseek-v4-flash"
 # For harder tasks:
 # default_model = "deepseek-v4-pro"
-
-[providers.openrouter]
-models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
-default_model = "openai/gpt-4o-mini"
 
 [providers.zai]
 models = [{ name = "glm-5.2", context_window_tokens = 200000, max_output_tokens = 128000 }]
