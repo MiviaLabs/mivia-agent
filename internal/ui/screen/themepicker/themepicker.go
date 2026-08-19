@@ -40,14 +40,19 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	if cmd == nil {
 		return s, nil
 	}
+	// picker.Model's Update only ever produces a non-nil Cmd for "enter"
+	// (SelectMsg) or "esc" (CancelMsg) - see internal/ui/component/picker.
+	// The fallthrough below is unreachable through picker's real
+	// behavior today; it exists so this stays correct (drop the Msg,
+	// not panic) if that vocabulary ever grows without a matching case
+	// here landing first.
 	switch m := cmd().(type) {
 	case picker.SelectMsg:
 		return s, func() tea.Msg { return app.ThemeSelectedMsg{Name: m.Item} }
 	case picker.CancelMsg:
 		return s, func() tea.Msg { return app.PopScreenMsg{} }
-	default:
-		return s, cmd
 	}
+	return s, nil
 }
 
 func (s Screen) View() string {

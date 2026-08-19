@@ -114,12 +114,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// View renders the top of the stack inline (build spec section 3.1) for
+// the base screen, and full alt-screen for any pushed modal - v2 does
+// this declaratively via View.AltScreen, not a Program-level option.
 func (m Model) View() tea.View {
 	top, ok := m.top()
 	if !ok {
 		return tea.NewView("")
 	}
-	return tea.NewView(top.View())
+	v := tea.NewView(top.View())
+	v.AltScreen = len(m.stack) > 1
+	return v
 }
 
 func (m Model) themeByName(name string) (theme.Theme, bool) {

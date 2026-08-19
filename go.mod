@@ -28,7 +28,10 @@ require (
 	charm.land/bubbletea/v2 v2.0.8 // indirect
 	charm.land/lipgloss/v2 v2.0.6 // indirect
 	git.sr.ht/~jamesponddotco/xstd-go v0.9.0 // indirect
+	github.com/aymanbagabas/go-udiff v0.4.1 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886 // indirect
+	github.com/charmbracelet/x/exp/golden v0.0.0-20251109135125-8916d276318f // indirect
+	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260816001655-68d539dca504 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
