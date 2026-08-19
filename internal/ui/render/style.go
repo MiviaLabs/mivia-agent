@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
@@ -70,6 +71,39 @@ func Bordered(t theme.Theme, tier theme.Tier, r theme.Role, width int, content s
 		st = st.BorderForeground(lipgloss.Color(strconv.Itoa(s.ANSI16)))
 	}
 	return st.Render(content)
+}
+
+// BorderedWithHint wraps content in a rounded border with an optional right-aligned hint in the top border row.
+func BorderedWithHint(t theme.Theme, tier theme.Tier, r theme.Role, width int, content, hint string) string {
+	box := Bordered(t, tier, r, width, content)
+	if hint == "" || width < 40 {
+		return box
+	}
+	lines := strings.Split(box, "\n")
+	if len(lines) < 3 {
+		return box
+	}
+
+	tl, tr, horiz := "╭", "╮", "─"
+
+	borderStyle := Role(t, tier, r)
+	hintStyle := Role(t, tier, theme.RoleFGSubtle)
+
+	formattedHint := " " + hintStyle.Render(hint) + " "
+	hintW := ansi.StringWidth(formattedHint)
+	if hintW+4 >= width {
+		return box
+	}
+
+	leftBarLen := max(2, width-2-hintW-2)
+	rightBarLen := max(1, width-2-leftBarLen-hintW)
+
+	topRow := borderStyle.Render(tl+strings.Repeat(horiz, leftBarLen)) +
+		formattedHint +
+		borderStyle.Render(strings.Repeat(horiz, rightBarLen)+tr)
+
+	lines[0] = topRow
+	return strings.Join(lines, "\n")
 }
 
 // FormatArgs renders a tool-call argument map as a stable, sorted

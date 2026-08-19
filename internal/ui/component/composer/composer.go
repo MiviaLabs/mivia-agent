@@ -53,6 +53,7 @@ const cursorReserve = 1
 func New(t theme.Theme, tier theme.Tier, width int) Model {
 	ti := textinput.New()
 	ti.Prompt = "" // the theme-styled accent prompt is rendered by this package's View, not textinput's own
+	ti.Placeholder = "Ask a question, describe a change, or type / for commands..."
 	ti.Focus()
 	m := Model{Theme: t, Tier: tier, input: ti}
 	m.SetWidth(width)
@@ -274,22 +275,17 @@ func (m Model) View() string {
 		line = ansi.Truncate(line, m.width-frameInset, "")
 	}
 	if m.width >= minFramedWidth {
-		// Plain RoleBorder, not RoleBorderFocus: the composer's frame is
-		// permanent, always-present chrome, not a state indicator - it is
-		// framed on every screen whether or not the input actually has
-		// keyboard focus at this instant (a modal dialog can be open on
-		// top of it). RoleBorderFocus is reserved for chrome that is
-		// asking for attention right now (the approval prompt) or that
-		// distinguishes a focused pane from an unfocused one (a split
-		// layout) - using it here made every screen's default border
-		// read as bright/urgent with nothing to contrast it against.
-		// Clip to the wrap width like the approval prompt: a line
-		// lipgloss wraps would add a row Height() does not claim. The
-		// menu stays above the frame, attached to the input it completes
-		// (rule 2.8: the input stays pinned last). Single-line content:
-		// lipgloss's Width() is the box total, border included, so the
-		// frame is exactly the terminal wide.
-		line = render.Bordered(m.Theme, m.Tier, theme.RoleBorder, m.width, line)
+		hint := "[ ↵ Send  •  / Commands ]"
+		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+			hint = "[ Enter: Send  •  / Commands ]"
+		}
+		if m.input.Value() != "" {
+			hint = "[ ↵ Send  •  Esc Cancel ]"
+			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+				hint = "[ Enter: Send  •  Esc Cancel ]"
+			}
+		}
+		line = render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, m.width, line, hint)
 	} else if m.width > 0 && ansi.StringWidth(line) > m.width {
 		line = ansi.Truncate(line, m.width, "")
 	}
