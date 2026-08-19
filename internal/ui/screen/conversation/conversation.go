@@ -285,8 +285,9 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 // that moves. A row that is always there also never reflows the
 // transcript when it changes (docs/design/ux-rules.md rule 2.7).
 func (s Screen) reservedRows() int {
-	// the top bar, the composer and its menu, and the status row
-	rows := s.topbar.Height() + s.composer.Height() + 1
+	// the top bar, a one-row margin under it so content never touches its
+	// edge, the composer and its menu, and the status row
+	rows := s.topbar.Height() + 1 + s.composer.Height() + 1
 	if s.approval.Active() {
 		rows += s.approval.Height() // bordered box: title, optional diff preview, hint, and the border rows
 	}
@@ -301,7 +302,7 @@ func (s Screen) reservedRows() int {
 // nothing below it moves as output streams in (ux-rules.md rule 2.8).
 func (s Screen) View() string {
 	var lines []string
-	lines = append(lines, s.topbar.View())
+	lines = append(lines, s.topbar.View(), "")
 	switch {
 	case s.modelPicker != nil:
 		dw, dh := s.dialogSize()

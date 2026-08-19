@@ -527,6 +527,31 @@ func TestStatusRowIsPermanent(t *testing.T) {
 	}
 }
 
+// TestTopBarHasAOneRowMargin pins the blank row between the top bar and
+// whatever renders under it (transcript, dialog, or overlay), so content
+// never touches the bar's edge. reservedRows must budget for it, and
+// View's second line must be the blank margin itself.
+func TestTopBarHasAOneRowMargin(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	want := s.topbar.Height() + 1 + s.composer.Height() + 1
+	if got := s.reservedRows(); got != want {
+		t.Errorf("reservedRows() = %d, want %d (topbar + 1 margin row + composer + status)", got, want)
+	}
+
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	scr := next.(Screen)
+	lines := strings.Split(scr.View(), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("got %d view lines, want at least a top bar and a margin row", len(lines))
+	}
+	// The final layout pass pads every line to the terminal width, so the
+	// margin row is width spaces, not a literal empty string - assert on
+	// content, not exact bytes.
+	if strings.TrimSpace(lines[1]) != "" {
+		t.Errorf("line 1 (right under the top bar) = %q, want a blank margin row", lines[1])
+	}
+}
+
 // TestReservedRowsGrowsWithTheApprovalPrompt pins the chrome that DOES
 // claim extra rows.
 func TestReservedRowsGrowsWithTheApprovalPrompt(t *testing.T) {
