@@ -21,6 +21,13 @@ func sampleSessions(now time.Time) []ports.SessionSummary {
 			UpdatedAt: now.Add(-5 * time.Minute),
 			Active:    true,
 			State:     "running",
+			Lines: []string{
+				"> refactor storage engine",
+				"Reading storage drivers in internal/storage...",
+				"◈ running tool: list_files",
+				"  found 12 storage implementation files",
+				"Refactored memory caching layer.",
+			},
 		},
 		{
 			ID:        "s-2",
@@ -28,6 +35,10 @@ func sampleSessions(now time.Time) []ports.SessionSummary {
 			UpdatedAt: now.Add(-2 * time.Hour),
 			Active:    false,
 			State:     "done",
+			Lines: []string{
+				"> profile transport buffers",
+				"Closed lingering idle TCP sockets.",
+			},
 		},
 		{
 			ID:        "s-3",
@@ -152,5 +163,72 @@ func TestSessionPickerViewRendering(t *testing.T) {
 	}
 	if !strings.Contains(dialog, "[enter] resume") {
 		t.Errorf("dialog missing hint:\n%s", dialog)
+	}
+}
+
+func TestSessionPickerPreviewToggleAndScroll(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	th := loadTheme(t)
+	sp := newSessionPicker(th, theme.TierASCII, sampleSessions(now))
+
+	// Right arrow toggles preview ON
+	sp, _ = sp.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	if !sp.preview {
+		t.Fatal("expected preview mode to be true after Right arrow")
+	}
+
+	// Down arrow scrolls preview content
+	sp, _ = sp.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if sp.previewOffset != 1 {
+		t.Errorf("previewOffset = %d, want 1 after Down arrow", sp.previewOffset)
+	}
+
+	// Up arrow scrolls back
+	sp, _ = sp.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if sp.previewOffset != 0 {
+		t.Errorf("previewOffset = %d, want 0 after Up arrow", sp.previewOffset)
+	}
+
+	// Enter in preview mode still selects session
+	_, cmd := sp.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected Cmd from Enter in preview mode")
+	}
+	msg := cmd()
+	selectMsg, ok := msg.(picker.SelectMsg)
+	if !ok || selectMsg.Item != "s-1" {
+		t.Errorf("Enter emitted %+v, want SelectMsg for s-1", msg)
+	}
+
+	// Left arrow toggles preview OFF
+	sp, _ = sp.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if sp.preview {
+		t.Fatal("expected preview mode to be false after Left arrow")
+	}
+}
+
+func TestSessionPickerPreviewRendering(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	th := loadTheme(t)
+	sp := newSessionPicker(th, theme.TierASCII, sampleSessions(now))
+	sp.preview = true
+
+	view := sp.PreviewView(th, theme.TierASCII, 60, 15, now)
+	plain := ansi.Strip(view)
+
+	if !strings.Contains(plain, "Refactor Storage Engine") {
+		t.Errorf("preview missing title:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Reading storage drivers") {
+		t.Errorf("preview missing transcript lines:\n%s", plain)
+	}
+
+	// Dialog rendering in preview mode
+	dialog := renderSessionPickerDialog(th, theme.TierASCII, 80, 24, sp, now)
+	if !strings.Contains(dialog, "preview: Refactor Storage Engine") {
+		t.Errorf("dialog in preview mode missing preview title:\n%s", dialog)
+	}
+	if !strings.Contains(dialog, "[←/→] list") {
+		t.Errorf("dialog in preview mode missing list navigation hint:\n%s", dialog)
 	}
 }

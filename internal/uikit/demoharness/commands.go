@@ -87,6 +87,13 @@ var demoSessions = []ports.SessionSummary{
 		UpdatedAt: time.Now().Add(-2 * time.Minute),
 		Active:    true,
 		State:     "running",
+		Lines: []string{
+			"> explore the new cockpit interface",
+			"Starting the interactive tour of cockpit components...",
+			"◈ running tool: spawn_agent (scout)",
+			"  [step 2/3] listed 14 exported constants",
+			"Streaming summary of UI thresholds and responsive layout...",
+		},
 	},
 	{
 		ID:        "sess-2",
@@ -94,6 +101,12 @@ var demoSessions = []ports.SessionSummary{
 		UpdatedAt: time.Now().Add(-25 * time.Minute),
 		Active:    false,
 		State:     "done",
+		Lines: []string{
+			"> refactor DemoScenarioPace to defaults.go",
+			"Moved DemoScenarioPace constant to internal/uikit/config/defaults.go.",
+			"✓ edited internal/uikit/config/defaults.go (+14 -2)",
+			"All unit and invariant tests passing.",
+		},
 	},
 	{
 		ID:        "sess-3",
@@ -101,6 +114,12 @@ var demoSessions = []ports.SessionSummary{
 		UpdatedAt: time.Now().Add(-2 * time.Hour),
 		Active:    false,
 		State:     "done",
+		Lines: []string{
+			"> clean up temporary build artifacts in .cache",
+			"Found 18 stale cache entries totaling 42 MB.",
+			"✓ removed directory .cache/build (18 files deleted)",
+			"Cache cleanup completed successfully.",
+		},
 	},
 	{
 		ID:        "sess-4",
@@ -108,6 +127,12 @@ var demoSessions = []ports.SessionSummary{
 		UpdatedAt: time.Now().Add(-24 * time.Hour),
 		Active:    false,
 		State:     "done",
+		Lines: []string{
+			"> what tasks are pending for today?",
+			"Reviewed open PRs and issues across the repository.",
+			"1. Review cockpit breadcrumb and session restore PR.",
+			"2. Run verification suite on release candidate.",
+		},
 	},
 }
 

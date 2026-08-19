@@ -108,7 +108,8 @@ type SessionSummary struct {
 	Title     string
 	UpdatedAt time.Time
 	Active    bool
-	State     string // e.g. "idle", "thinking", "running", "streaming", "done"
+	State     string   // e.g. "idle", "thinking", "running", "streaming", "done"
+	Lines     []string // recent transcript or activity lines for preview
 }
 
 // SessionMeta describes a saved session for listing/loading.
