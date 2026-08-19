@@ -28,8 +28,8 @@ func TestWelcomeBannerFullRendering(t *testing.T) {
 	}
 
 	view := ansi.Strip(m.View(80, 20))
-	if !strings.Contains(view, "M I V I A   A G E N T") {
-		t.Errorf("missing Mivia Agent title in view:\n%s", view)
+	if !strings.Contains(view, "█▀▄▀█") {
+		t.Errorf("missing enlarged Mivia Agent typography in view:\n%s", view)
 	}
 	if !strings.Contains(view, "⬖") {
 		t.Errorf("missing diamond logo mark in view:\n%s", view)
@@ -42,6 +42,9 @@ func TestWelcomeBannerFullRendering(t *testing.T) {
 	}
 	if !strings.Contains(view, "thinking") {
 		t.Errorf("missing state legend in view:\n%s", view)
+	}
+	if !strings.Contains(view, "ctrl+n:sidebar") {
+		t.Errorf("missing ctrl+n:sidebar hint in view:\n%s", view)
 	}
 }
 
@@ -70,6 +73,9 @@ func TestWelcomeASCIITierRendering(t *testing.T) {
 	view := ansi.Strip(m.View(80, 20))
 	if !strings.Contains(view, "<>") {
 		t.Errorf("ASCII tier missing ASCII diamond logo:\n%s", view)
+	}
+	if !strings.Contains(view, "M I V I A   A G E N T") {
+		t.Errorf("ASCII tier missing ASCII Mivia Agent title:\n%s", view)
 	}
 	if !strings.Contains(view, "Mac Lisowski") {
 		t.Errorf("ASCII tier missing author:\n%s", view)

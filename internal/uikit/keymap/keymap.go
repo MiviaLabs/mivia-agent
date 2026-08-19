@@ -140,7 +140,7 @@ func Default() []Binding {
 		// back to the composer, close it. No context claims it anywhere
 		// else; n alone is transcript copy-block's neighbour, but
 		// ctrl-modified it is free.
-		{ID: IDPanelToggle, Context: ContextGlobal, Keys: []string{"ctrl+n"}, Help: "open, focus, or close the files panel", Short: "files"},
+		{ID: IDPanelToggle, Context: ContextGlobal, Keys: []string{"ctrl+n"}, Help: "open, focus, or close the sidebar", Short: "sidebar"},
 
 		// Scrolling. The cockpit owns the surface, so the application
 		// scrolls: the terminal has no scrollback of its own to offer

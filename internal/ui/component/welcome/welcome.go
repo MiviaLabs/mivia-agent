@@ -58,13 +58,18 @@ func (m Model) bannerLines() []string {
 
 	lines = append(lines, accent.Render(logoMark))
 	lines = append(lines, "")
-	lines = append(lines, accent.Render("M I V I A   A G E N T"))
+	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+		lines = append(lines, accent.Render("M I V I A   A G E N T"))
+	} else {
+		lines = append(lines, accent.Render("█▀▄▀█ █ █   █ █ ▄▀█   ▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀"))
+		lines = append(lines, accent.Render("█ █ █ █  ▀▄▀  █ █▀█   █▀█ █▄█ ██▄ █ ▀█  █ "))
+	}
 	lines = append(lines, fg.Render("Autonomous Coding Assistant"))
 	lines = append(lines, "")
 	lines = append(lines, subtle.Render("Author: Mac Lisowski  •  MIT License"))
 	lines = append(lines, m.renderLegend())
 	lines = append(lines, "")
-	lines = append(lines, subtle.Render("type a prompt or / for commands  •  tab:sidebar  •  ctrl+c:quit"))
+	lines = append(lines, subtle.Render("type a prompt or / for commands  •  ctrl+n:sidebar  •  ctrl+c:quit"))
 	return lines
 }
 
@@ -78,7 +83,7 @@ func (m Model) compactLines() []string {
 	return []string{
 		accent.Render(markGlyph+"Mivia Agent") + subtle.Render(" — Autonomous Coding Assistant"),
 		subtle.Render("Author: Mac Lisowski  •  MIT License"),
-		subtle.Render("type a prompt or / for commands  •  tab:sidebar  •  ctrl+c:quit"),
+		subtle.Render("type a prompt or / for commands  •  ctrl+n:sidebar  •  ctrl+c:quit"),
 	}
 }
 
@@ -89,7 +94,7 @@ func (m Model) Rows(width, height int) []string {
 	}
 
 	var content []string
-	if height < 10 || width < 45 {
+	if height < 12 || width < 48 {
 		content = m.compactLines()
 	} else {
 		content = m.bannerLines()
